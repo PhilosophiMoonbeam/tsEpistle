@@ -58,8 +58,87 @@ describe('product build and publication metadata', () => {
     expect(helmChart).toContain(`appVersion: '${productDefinition.version}'`)
     expect(helmValues).toContain(`repository: ${productDefinition.containerRepository}`)
     expect(helmWorkflow).toContain('helm package')
-    expect(packer).toContain(`${productDefinition.containerRepository}:\${application_version}`)
+    expect(packer).toContain('@sha256:[0-9a-f]{64}$')
+    expect(packer).toContain('"application_image=${var.application_image}"')
+    expect(packer).toContain('"$application_image"')
+    expect(packer).not.toContain(`${productDefinition.containerRepository}:\${application_version}`)
     expect(deploymentSurface).not.toMatch(/ghcr\.io\/requarks|charts\.js\.wiki|wiki-update-companion/)
+  })
+
+  test('runs the canonical static contract before PR and protected-branch tests and validates changed chart sources', () => {
+    const workflow = read('.github/workflows/build.yml')
+    const staticCommands = JSON.parse(read('package.json')).scripts['ci:static']
+    const actionlint = read('.github/actionlint.yaml')
+    const helmContract = read('server/test/scripts/check-helm-lifecycle-contract.sh')
+    for (const command of ['dependencies:check', 'licenses:check', 'openapi:check', 'placeholders:check', 'agents:release-check']) {
+      expect(staticCommands).toContain(`bun run ${command}`)
+    }
+    expect(actionlint).toContain('config-variables: []')
+    const prQuality = workflow.slice(workflow.indexOf('  pr-quality:'), workflow.indexOf('\n  quality:'))
+    const protectedQuality = workflow.slice(workflow.indexOf('  quality:'), workflow.indexOf('\n  agent-postgres:'))
+
+    for (const qualityJob of [prQuality, protectedQuality]) {
+      const staticContract = qualityJob.indexOf('run: bun run ci:static')
+      expect(staticContract).toBeGreaterThan(-1)
+      expect(staticContract).toBeLessThan(qualityJob.indexOf('run: bun run test'))
+      expect(staticContract).toBeLessThan(qualityJob.indexOf('run: bun run build'))
+    }
+
+    expect(prQuality).toContain('git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- dev/helm/')
+    expect(prQuality.match(/if: steps\.chart-changes\.outputs\.changed == 'true'/g)).toHaveLength(2)
+    expect(prQuality).toContain('run: server/test/scripts/check-helm-lifecycle-contract.sh')
+    expect(workflow.match(/server\/test\/scripts\/check-helm-lifecycle-contract\.sh/g)).toHaveLength(2)
+    expect(workflow).not.toContain('helm lint dev/helm')
+    const releaseHelm = workflow.slice(workflow.indexOf('    - name: Package Helm Chart'), workflow.indexOf('\n    - name: Stage Release Artifacts'))
+    expect(releaseHelm.indexOf('server/test/scripts/check-helm-lifecycle-contract.sh')).toBeLessThan(releaseHelm.indexOf('helm package --destination dist dev/helm'))
+    expect(helmContract).toContain('helm lint dev/helm')
+    expect(helmContract).toContain('helm template wiki dev/helm')
+    expect(helmContract).toContain('helm install wiki dev/helm')
+    expect(helmContract).toContain('--dry-run=client')
+    expect(`${prQuality}\n${helmContract}`).not.toContain('kind create cluster')
+    expect(`${prQuality}\n${helmContract}`).not.toContain('helm package')
+  })
+
+  test('serializes each ref and freshness-fences all mutable canary promotion from immutable descriptors', () => {
+    const workflow = read('.github/workflows/build.yml')
+    const amd64 = workflow.slice(workflow.indexOf('  publish-amd64:'), workflow.indexOf('\n  arm:'))
+    const arm64 = workflow.slice(workflow.indexOf('  arm:'), workflow.indexOf('\n  publish-canary:'))
+    const canary = workflow.slice(workflow.indexOf('  publish-canary:'), workflow.indexOf('\n  beta:'))
+    const release = workflow.slice(workflow.indexOf('  release:'))
+
+    expect(workflow).toContain('group: build-${{ github.ref }}')
+    expect(workflow).toContain('cancel-in-progress: true')
+    expect(amd64).not.toContain(':canary')
+    expect(arm64).not.toContain(':canary')
+    expect(amd64).toContain('candidate-amd64-${{ github.run_id }}-${{ github.run_attempt }}')
+    expect(arm64).toContain('candidate-arm64-${{ github.run_id }}-${{ github.run_attempt }}')
+
+    expect(canary).toContain("if: github.event_name == 'push' && github.ref == 'refs/heads/main'")
+    expect(canary).toContain('needs: [publish-amd64, arm]')
+    expect(canary).toContain('image-amd64-descriptor.txt')
+    expect(canary).toContain('image-arm64-descriptor.txt')
+    expect(canary).toContain('agent-browser-amd64-descriptor.txt')
+    expect(canary).toContain('agent-browser-arm64-descriptor.txt')
+    expect(canary).toContain('remote_main="$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"')
+    const freshnessFence = canary.indexOf('if [ "$remote_main" != "$GITHUB_SHA" ]')
+    const firstPromotion = canary.indexOf('docker buildx imagetools create')
+    expect(freshnessFence).toBeGreaterThan(-1)
+    expect(firstPromotion).toBeGreaterThan(freshnessFence)
+    expect(canary.match(/docker buildx imagetools create/g)).toHaveLength(4)
+    for (const tag of [
+      '$IMAGE_REPOSITORY:canary',
+      '$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT',
+      '$IMAGE_REPOSITORY:canary-arm64-$REL_VERSION_STRICT',
+      '$agent_browser_repository:canary',
+      '$agent_browser_repository:canary-$REL_VERSION_STRICT',
+      '$agent_browser_repository:canary-arm64-$REL_VERSION_STRICT'
+    ]) {
+      expect(canary).toContain(`--tag "${tag}"`)
+    }
+
+    expect(release).toContain('image_amd64="$(read_descriptor image-descriptors/image-amd64-descriptor.txt "$IMAGE_REPOSITORY")"')
+    expect(release).toContain('image_arm64="$(read_descriptor image-descriptors/image-arm64-descriptor.txt "$IMAGE_REPOSITORY")"')
+    expect(release).toContain('docker buildx imagetools inspect "$IMAGE_REPOSITORY@$image_digest"')
   })
 
   test('release artifacts include complete revision-specific Corresponding Source', () => {

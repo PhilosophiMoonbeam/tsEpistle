@@ -19,7 +19,7 @@ The executable contract is `shared/api-access.ts` together with `server/test/cor
 
 ## Compatibility policy
 
-Within `/api/v1`, releases may add endpoints, optional request fields and parameters, response fields, response status codes, or enum values. They must not make existing request-body properties required; add required query, path, or header parameters; remove documented endpoints, parameters, responses, required response fields, enum values, or authentication requirements; narrow accepted numeric or string ranges; or change documented field types and meanings.
+Within `/api/v1`, releases may add endpoints, optional request fields and parameters, response fields, response status codes, or enum values. They must not add required request-body properties; add required query, path, or header parameters; remove documented endpoints, parameters, responses, required response fields, enum values, or authentication requirements; narrow accepted numeric or string ranges; or change documented field types and meanings.
 
 A breaking contract requires a new major path such as `/api/v2`. The prior major remains available until its separately announced removal date.
 

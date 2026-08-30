@@ -33,6 +33,17 @@ The image tag defaults to the chart `appVersion`. Prefer an immutable platform o
 
 Each pod receives its Kubernetes pod name as `INSTANCE_ID`. Lease ownership and cross-instance notifications therefore identify the exact process that handled the work; do not override this variable with a value shared by multiple replicas.
 
+## Access without an Ingress
+
+When `ingress.enabled=false` and the Service uses its default `ClusterIP` type, forward local port 8080 to Service port 80:
+
+```console
+kubectl --namespace default port-forward service/wiki-tsfranki 8080:80
+curl --fail http://127.0.0.1:8080/healthz
+```
+
+Replace `default` and `wiki-tsfranki` with the release namespace and generated Service name when they differ. Keep the port-forward process running while accessing the application at <http://127.0.0.1:8080>.
+
 ## External PostgreSQL
 
 Disable the bundled PostgreSQL StatefulSet and reference an existing Secret:
@@ -73,7 +84,7 @@ Create the Secret before installing the release. `externalPostgresql.databaseURL
 
 6. Confirm the Deployment is available, `/healthz` returns HTTP 200, login works, and a read/write page check succeeds.
 
-tsFranki runs database migrations during startup. Do not run mixed application versions against one database during an upgrade.
+tsFranki runs database migrations during startup, so the Deployment intentionally uses the `Recreate` strategy to prevent old and new application versions from sharing one database during an upgrade. Kubernetes stops the old application pods before starting the new version; this avoids mixed-version operation at the cost of application downtime while the replacement pod migrates and becomes ready. Plan every upgrade as a maintenance window.
 
 ## Backup verification
 

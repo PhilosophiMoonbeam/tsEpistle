@@ -1,4 +1,4 @@
 self-hosted-runner:
   labels:
     - tsfranki-ci
-config-variables: null
+config-variables: []

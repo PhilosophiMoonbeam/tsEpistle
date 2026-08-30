@@ -35,4 +35,4 @@ The maintainers will acknowledge the report through the private advisory, assess
 
 ## Release provenance
 
-Official releases are GitHub releases from this repository. Each release contains Linux and Windows archives, corresponding source, the Helm chart, an SPDX SBOM, a production dependency license inventory, and `SHA256SUMS`; container images are published under `ghcr.io/philosophimoonbeam/wiki` with BuildKit provenance and SBOM attestations. The running application exposes its exact source revision.
+Official releases are GitHub releases from this repository. The only supported upstream database upgrade source is exactly Wiki.js 2.5.314. Each release contains a Linux archive, corresponding source, the Helm chart, an SPDX SBOM, a production dependency license inventory, and `SHA256SUMS`; container images are published under `ghcr.io/philosophimoonbeam/wiki` with BuildKit provenance and SBOM attestations. Official binary artifacts are the Linux archive and Linux container images; Windows archives are not published or supported. The running application exposes its exact source revision.

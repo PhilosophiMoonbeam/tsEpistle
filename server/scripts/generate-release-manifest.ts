@@ -25,6 +25,16 @@ const imageDigest = requireEnv('IMAGE_DIGEST')
 const agentBrowserImageRepository = requireEnv('AGENT_BROWSER_IMAGE_REPOSITORY')
 const agentBrowserImageDigest = requireEnv('AGENT_BROWSER_IMAGE_DIGEST')
 
+const imageRepositoryPattern = /^[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+$/
+const requireCleanImageRepository = (name: string, value: string): void => {
+  if (!imageRepositoryPattern.test(value)) {
+    throw new Error(`${name} must be an OCI repository without a tag or digest`)
+  }
+}
+
+requireCleanImageRepository('IMAGE_REPOSITORY', imageRepository)
+requireCleanImageRepository('AGENT_BROWSER_IMAGE_REPOSITORY', agentBrowserImageRepository)
+
 if (!/^[0-9a-f]{40}$/.test(revision)) throw new Error('WIKI_BUILD_REVISION must be a full lowercase Git SHA')
 if (new Date(buildDate).toISOString() !== buildDate) throw new Error('WIKI_BUILD_DATE must be an ISO 8601 UTC timestamp')
 if (releaseTag !== `v${version}`) throw new Error(`Release tag ${releaseTag} does not match product version ${version}`)
@@ -77,6 +87,5 @@ const manifest = {
 
 fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 
-const checksumEntries = [...artifacts, describeArtifact(manifestPath)]
-  .sort((left, right) => left.name.localeCompare(right.name))
+const checksumEntries = [...artifacts, describeArtifact(manifestPath)].sort((left, right) => left.name.localeCompare(right.name))
 fs.writeFileSync(checksumsPath, `${checksumEntries.map(artifact => `${artifact.sha256}  ${artifact.name}`).join('\n')}\n`)

@@ -3,7 +3,7 @@ import { describe, expect, it } from '../bun-test.mts'
 import { compareOpenApiCompatibility } from '../../scripts/check-openapi.ts'
 
 describe('OpenAPI compatibility comparison', () => {
-  it('rejects making an existing request-body property required', () => {
+  it('rejects adding a required request-body property', () => {
     const baseline = {
       paths: {
         '/items': {
@@ -15,8 +15,7 @@ describe('OpenAPI compatibility comparison', () => {
                     type: 'object',
                     required: ['name'],
                     properties: {
-                      name: { type: 'string' },
-                      description: { type: 'string' }
+                      name: { type: 'string' }
                     }
                   }
                 }
@@ -50,7 +49,7 @@ describe('OpenAPI compatibility comparison', () => {
     }
 
     expect(compareOpenApiCompatibility(baseline, current)).toEqual([
-      'openapi.paths./items.post.requestBody.content.application/json.schema.required now includes existing request property "description"'
+      'openapi.paths./items.post.requestBody.content.application/json.schema.required now includes request property "description"'
     ])
   })
 

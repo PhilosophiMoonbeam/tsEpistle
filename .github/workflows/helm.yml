@@ -35,21 +35,11 @@ jobs:
           chart_version="$(helm show chart dev/helm | sed -n 's/^appVersion: *//p')"
           test "$package_version" = "$chart_version"
 
-      - name: Verify Database Secret Contract
-        shell: bash
-        run: |
-          if helm template wiki dev/helm >/dev/null 2>&1; then
-            echo "Chart unexpectedly rendered with the empty default database password" >&2
-            exit 1
-          fi
-          helm template wiki dev/helm \
-            --set postgresql.existingSecret=wiki-postgresql \
-            >/dev/null
+      - name: Verify Chart Contract
+        run: server/test/scripts/check-helm-lifecycle-contract.sh
 
-      - name: Lint and Package Chart
-        run: |
-          helm lint dev/helm --set postgresql.postgresqlPassword=ci-validation-only
-          helm package --destination dist dev/helm
+      - name: Package Chart
+        run: helm package --destination dist dev/helm
 
       - name: Upload Chart Artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

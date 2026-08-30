@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 
 import { expect, test } from '@playwright/test'
@@ -41,11 +42,69 @@ async function measureSurface(page: Page, path: string, readySelector: string): 
   })
 }
 
-function expectWithinBudgets(surface: string, metrics: SurfaceMetrics) {
-  expect(metrics.domContentLoadedMilliseconds, `${surface} DOMContentLoaded budget`).toBeLessThanOrEqual(budgets.domContentLoadedMilliseconds)
-  expect(metrics.largestContentfulPaintMilliseconds, `${surface} LCP must be observed`).toBeGreaterThan(0)
-  expect(metrics.largestContentfulPaintMilliseconds, `${surface} LCP budget`).toBeLessThanOrEqual(budgets.largestContentfulPaintMilliseconds)
-  expect(metrics.cumulativeLayoutShift, `${surface} CLS budget`).toBeLessThanOrEqual(budgets.cumulativeLayoutShift)
+type RuntimePerformanceViolation = {
+  invariant: string
+  surface: string
+  measured: number
+  threshold: number
+}
+
+function violatedRuntimeInvariants(surfaces: Record<string, SurfaceMetrics>, interactionReadyMilliseconds: number): RuntimePerformanceViolation[] {
+  const violations: RuntimePerformanceViolation[] = []
+  for (const [surface, metrics] of Object.entries(surfaces)) {
+    if (metrics.domContentLoadedMilliseconds > budgets.domContentLoadedMilliseconds) {
+      violations.push({
+        invariant: 'domContentLoadedMilliseconds <= budgets.domContentLoadedMilliseconds',
+        surface,
+        measured: metrics.domContentLoadedMilliseconds,
+        threshold: budgets.domContentLoadedMilliseconds
+      })
+    }
+    if (metrics.largestContentfulPaintMilliseconds <= 0) {
+      violations.push({
+        invariant: 'largestContentfulPaintMilliseconds > 0',
+        surface,
+        measured: metrics.largestContentfulPaintMilliseconds,
+        threshold: 0
+      })
+    }
+    if (metrics.largestContentfulPaintMilliseconds > budgets.largestContentfulPaintMilliseconds) {
+      violations.push({
+        invariant: 'largestContentfulPaintMilliseconds <= budgets.largestContentfulPaintMilliseconds',
+        surface,
+        measured: metrics.largestContentfulPaintMilliseconds,
+        threshold: budgets.largestContentfulPaintMilliseconds
+      })
+    }
+    if (metrics.cumulativeLayoutShift > budgets.cumulativeLayoutShift) {
+      violations.push({
+        invariant: 'cumulativeLayoutShift <= budgets.cumulativeLayoutShift',
+        surface,
+        measured: metrics.cumulativeLayoutShift,
+        threshold: budgets.cumulativeLayoutShift
+      })
+    }
+  }
+  if (interactionReadyMilliseconds > budgets.interactionReadyMilliseconds) {
+    violations.push({
+      invariant: 'viewToEditorMilliseconds <= budgets.interactionReadyMilliseconds',
+      surface: 'view-to-editor',
+      measured: interactionReadyMilliseconds,
+      threshold: budgets.interactionReadyMilliseconds
+    })
+  }
+  return violations
+}
+
+function writeReportAtomically(report: object): void {
+  const temporaryPath = `${outputPath}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    fs.writeFileSync(temporaryPath, `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' })
+    fs.renameSync(temporaryPath, outputPath)
+  } catch (error: unknown) {
+    fs.rmSync(temporaryPath, { force: true })
+    throw error
+  }
 }
 
 test('keeps representative content and administration surfaces within runtime budgets', async ({ page }) => {
@@ -60,7 +119,7 @@ test('keeps representative content and administration surfaces within runtime bu
       for (const entry of list.getEntries()) state.largestContentfulPaintMilliseconds = entry.startTime
     }).observe({ type: 'largest-contentful-paint', buffered: true })
     new PerformanceObserver(list => {
-      for (const entry of list.getEntries() as Array<PerformanceEntry & { hadRecentInput?: boolean, value?: number }>) {
+      for (const entry of list.getEntries() as Array<PerformanceEntry & { hadRecentInput?: boolean; value?: number }>) {
         if (!entry.hadRecentInput) state.cumulativeLayoutShift += entry.value ?? 0
       }
     }).observe({ type: 'layout-shift', buffered: true })
@@ -79,14 +138,17 @@ test('keeps representative content and administration surfaces within runtime bu
   await page.getByRole('button', { name: /save|saved/i }).waitFor({ state: 'visible' })
   const interactionReadyMilliseconds = Date.now() - startedAt
 
-  fs.writeFileSync(outputPath, `${JSON.stringify({
+  const violatedInvariants = violatedRuntimeInvariants(surfaces, interactionReadyMilliseconds)
+  const report = {
     schemaVersion: 1,
+    status: violatedInvariants.length === 0 ? 'passed' : 'failed',
     budgets,
     surfaces,
     interactions: {
       viewToEditorMilliseconds: interactionReadyMilliseconds
-    }
-  }, null, 2)}\n`)
-  for (const [surface, metrics] of Object.entries(surfaces)) expectWithinBudgets(surface, metrics)
-  expect(interactionReadyMilliseconds, 'view-to-editor interaction budget').toBeLessThanOrEqual(budgets.interactionReadyMilliseconds)
+    },
+    violatedInvariants
+  }
+  writeReportAtomically(report)
+  expect(report.violatedInvariants, 'runtime performance invariants').toEqual([])
 })

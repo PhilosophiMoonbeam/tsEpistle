@@ -400,7 +400,7 @@ bun server/scripts/agent-maintenance.ts
 
 Set `AGENT_MAINTENANCE_DATABASE_URL`. Optional positive bounds are `AGENT_MAINTENANCE_BATCH_SIZE`, `AGENT_MAINTENANCE_SAVED_SESSION_DAYS`, `AGENT_MAINTENANCE_MCP_CONTENT_DAYS`, `AGENT_MAINTENANCE_AUDIT_DAYS`, `AGENT_MAINTENANCE_COMPACT_DELTA_DAYS`, and `AGENT_MAINTENANCE_MAX_BATCHES`.
 
-Schedule at least hourly with single-job concurrency. The command emits one bounded JSON summary and exits nonzero on failure. Alert on repeated failure, growing expiry backlog, or `recovery_required` runs. Continue maintenance while capabilities are disabled and during an N-1 compatibility rollback. Stop it only during database restore or destructive down migration.
+Schedule at least hourly with single-job concurrency. The command emits one bounded JSON summary. `maintenance: "complete"` is emitted with exit status zero only after a zero-change batch proves the current drain is empty. If every allowed batch changes rows, the command instead emits `maintenance: "exhausted"`, `truncated: true`, and `remainingRisk.rowsMayRemain: true`, then exits nonzero; it never reports that run as complete. Alert immediately on this exhausted/truncated signal and rerun with enough scheduled capacity to observe a zero-change batch. Also alert on repeated command failure, growing expiry backlog, or `recovery_required` runs. Continue maintenance while capabilities are disabled and during an N-1 compatibility rollback. Stop it only during database restore or destructive down migration.
 
 ## Security and privacy
 

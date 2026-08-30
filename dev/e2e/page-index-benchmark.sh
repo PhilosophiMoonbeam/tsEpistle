@@ -28,7 +28,18 @@ for attempt in {1..90}; do
   fi
   sleep 1
 done
+rm -f "$report"
 
-WIKI_BENCHMARK_DATABASE_URL="postgresql://wiki:Password123!@127.0.0.1:${port}/wiki_page_index_benchmark" \
-PAGE_INDEX_BENCHMARK_FILE="$report" \
-bun server/scripts/benchmark-page-index.ts
+if WIKI_BENCHMARK_DATABASE_URL="postgresql://wiki:Password123!@127.0.0.1:${port}/wiki_page_index_benchmark" \
+  PAGE_INDEX_BENCHMARK_FILE="$report" \
+  bun server/scripts/benchmark-page-index.ts; then
+  benchmark_status=0
+else
+  benchmark_status=$?
+fi
+
+if [ ! -s "$report" ]; then
+  echo "Page-index benchmark exited without a diagnostic report at $report" >&2
+  benchmark_status=1
+fi
+exit "$benchmark_status"

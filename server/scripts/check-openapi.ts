@@ -153,15 +153,16 @@ function compareRequestSchema(
   if (!isRecord(baselineSchema) || !isRecord(currentSchema)) return
   if (alreadyCompared(baselineSchema, currentSchema, compared)) return
 
+  const baselineRequired = requiredNames(baselineSchema)
+  for (const name of requiredNames(currentSchema)) {
+    if (!baselineRequired.has(name)) {
+      failures.push(`${location}.required now includes request property ${JSON.stringify(name)}`)
+    }
+  }
+
   const baselineProperties = baselineSchema.properties
   const currentProperties = currentSchema.properties
   if (baselineProperties !== undefined && currentProperties !== undefined && isRecord(baselineProperties) && isRecord(currentProperties)) {
-    const baselineRequired = requiredNames(baselineSchema)
-    for (const name of requiredNames(currentSchema)) {
-      if (!baselineRequired.has(name) && Object.hasOwn(baselineProperties, name)) {
-        failures.push(`${location}.required now includes existing request property ${JSON.stringify(name)}`)
-      }
-    }
     for (const [name, property] of Object.entries(baselineProperties)) {
       const currentProperty = currentProperties[name]
       if (currentProperty !== undefined) {

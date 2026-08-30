@@ -121,7 +121,7 @@ describe('release manifest generation', () => {
     expect(browserDigestChecksums).toContain(`${sha256(browserDigestManifest)}  release-manifest.json`)
   })
 
-  it('rejects a missing browser repository and a missing or malformed browser digest', () => {
+  it('rejects missing, malformed, or mutable image provenance', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wiki-release-manifest-invalid-'))
     temporaryDirectories.push(directory)
     const artifactPath = path.join(directory, 'artifact.tar.gz')
@@ -132,6 +132,29 @@ describe('release manifest generation', () => {
       path.join(directory, 'SHA256SUMS'),
       artifactPath
     ]
+
+    const missingPrimaryDigestEnv = releaseEnvironment()
+    delete missingPrimaryDigestEnv.IMAGE_DIGEST
+    expect(() =>
+      execFileSync(process.execPath, args, {
+        cwd: process.cwd(),
+        env: missingPrimaryDigestEnv,
+        stdio: 'pipe'
+      })
+    ).toThrow()
+
+    for (const imageRepository of ['ghcr.io/philosophimoonbeam/wiki:latest', `ghcr.io/philosophimoonbeam/wiki@sha256:${'a'.repeat(64)}`]) {
+      expect(() =>
+        execFileSync(process.execPath, args, {
+          cwd: process.cwd(),
+          env: {
+            ...releaseEnvironment(),
+            IMAGE_REPOSITORY: imageRepository
+          },
+          stdio: 'pipe'
+        })
+      ).toThrow()
+    }
 
     const missingRepositoryEnv = releaseEnvironment()
     delete missingRepositoryEnv.AGENT_BROWSER_IMAGE_REPOSITORY

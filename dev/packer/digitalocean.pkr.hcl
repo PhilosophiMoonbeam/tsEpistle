@@ -12,8 +12,31 @@ variable "api_token" {
   sensitive = true
 }
 
-variable "application_version" {
+variable "application_image" {
   type = string
+
+  validation {
+    condition     = can(regex("^ghcr\\.io/philosophimoonbeam/wiki@sha256:[0-9a-f]{64}$", var.application_image))
+    error_message = "application_image must be the canonical application repository pinned to a sha256 digest."
+  }
+}
+
+variable "release_version" {
+  type = string
+
+  validation {
+    condition     = length(trimspace(var.release_version)) > 0
+    error_message = "release_version must not be empty."
+  }
+}
+
+variable "source_revision" {
+  type = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{40}$", var.source_revision))
+    error_message = "source_revision must be a full lowercase Git SHA."
+  }
 }
 
 locals {
@@ -72,7 +95,7 @@ build {
   provisioner "shell" {
     environment_vars = [
       "application_name=${local.application_name}",
-      "application_version=${var.application_version}",
+      "application_image=${var.application_image}",
       "DEBIAN_FRONTEND=noninteractive",
       "LC_ALL=C",
       "LANG=en_US.UTF-8",
@@ -85,5 +108,16 @@ build {
       "scripts/900-cleanup.sh",
       "scripts/999-img-check.sh"
     ]
+  }
+
+  post-processor "manifest" {
+    output     = "packer-manifest.json"
+    strip_path = true
+    custom_data = {
+      application_digest = split("@", var.application_image)[1]
+      application_image  = var.application_image
+      release_version    = var.release_version
+      source_revision    = var.source_revision
+    }
   }
 }

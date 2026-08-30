@@ -1,6 +1,10 @@
-# Visual Markdown with CKEditor implementation plan
+# Historical Visual Markdown with CKEditor implementation plan
 
-Status: ready for implementation
+Status: historical record — superseded by the current Tiptap implementation and contract; not ready for implementation
+
+Supersession notice: this CKEditor proposal is retained only as historical design context. Do not implement it or use it as an active product contract. The current implementation uses Tiptap for both Visual Markdown and Visual HTML while preserving the persisted `visual-markdown` and `ckeditor` editor keys; `package.json`, `client/components/editor/tiptap/`, and `server/modules/editor/visual-markdown/definition.yml` define the current engine and canonical-content contract.
+
+All goals, phases, candidate files, acceptance gates, and CKEditor statements below describe the superseded proposal rather than current or pending work.
 
 ## Goal
 

@@ -1,6 +1,10 @@
 # tsFranki completion and Scarlett design-synthesis roadmap
 
-Status: authoritative product roadmap
+Status: historical record — superseded; not an active product roadmap
+
+Current authority: [`scarlett-upstream-ledger.json`](./scarlett-upstream-ledger.json) is the sole current authority for Scarlett candidate identity, upstream revision, workstream, disposition, state, and acceptance contract.
+
+This document preserves the assessment and decisions recorded on 2026-08-15. All roadmap language below—including implementation-readiness, editor-engine, upgrade-source, artifact, and framework statements—is historical context, not a current product or support promise. Current public support contracts are `README.md` and `SECURITY.md`; current implementation contracts are the package metadata and code.
 
 Last assessed: 2026-08-15T21:39:55Z
 
@@ -15,7 +19,7 @@ Assessed revisions:
 - upstream fetch verification: `2026-08-15T21:36:46Z`; the remote still resolved to the recorded commit with zero commits of divergence
 - common ancestor of the tsFranki code baseline and upstream Scarlett: `b5b4b0880ae26f4b137242267b6674b51af8688c` from 2022-04-03
 
-This is a living plan. Update the revision ledger and candidate dispositions whenever upstream Scarlett moves. Never silently replace a disposition: record the new evidence and reason. The machine-readable source of candidate identity, workstream, disposition, state, and acceptance contract is [`scarlett-upstream-ledger.json`](./scarlett-upstream-ledger.json); `pnpm run scarlett:report` refreshes the comparison and `.github/workflows/scarlett-upstream.yml` alerts on upstream movement.
+At the time of assessment, this was maintained as a living plan: the revision ledger and candidate dispositions were updated whenever upstream Scarlett moved, and dispositions retained their evidence and reasons. The machine-readable ledger linked above now supersedes this prose as the sole current Scarlett authority; `bun run scarlett:report` refreshes its comparison and `.github/workflows/scarlett-upstream.yml` alerts on upstream movement.
 
 ## Mission
 

@@ -1,41 +1,32 @@
+import { randomUUID } from 'node:crypto'
+import fs from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
-import knexModule from 'knex'
+import knexModule, { type Knex } from 'knex'
 
 import { scopePageQueryForOwner } from '../helpers/page-access.ts'
 import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT, type PageIndexCandidate } from '../repositories/page-index.ts'
 
-const connection = process.env.WIKI_BENCHMARK_DATABASE_URL
-if (!connection) throw new Error('WIKI_BENCHMARK_DATABASE_URL is required')
-
-const outputPath = process.env.PAGE_INDEX_BENCHMARK_FILE
+const outputPath = process.env.PAGE_INDEX_BENCHMARK_FILE ?? 'page-index-benchmark.json'
 const iterations = Number(process.env.PAGE_INDEX_BENCHMARK_ITERATIONS ?? 30)
 const warmups = Number(process.env.PAGE_INDEX_BENCHMARK_WARMUPS ?? 5)
 const maxP95Milliseconds = Number(process.env.PAGE_INDEX_MAX_P95_MS ?? 250)
 if (!Number.isSafeInteger(iterations) || iterations < 5) throw new Error('PAGE_INDEX_BENCHMARK_ITERATIONS must be at least 5')
 if (!Number.isSafeInteger(warmups) || warmups < 1) throw new Error('PAGE_INDEX_BENCHMARK_WARMUPS must be positive')
 
-const db = knexModule({ client: 'pg', connection, pool: { min: 1, max: 1 } })
-const databaseNameResult = await db.raw<{ rows: Array<{ name: string }> }>('SELECT current_database() AS name')
-const databaseName = databaseNameResult.rows[0]?.name ?? ''
-if (!databaseName.endsWith('_page_index_benchmark')) {
-  throw new Error(`Refusing to benchmark in non-dedicated database ${databaseName || '<unknown>'}`)
-}
+let db: Knex
 
 type Principal = 'anonymous' | 'owner' | 'restricted-group' | 'administrator'
 
-const percentile = (sorted: number[], quantile: number): number =>
-  sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * quantile) - 1)] ?? 0
+const percentile = (sorted: number[], quantile: number): number => sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * quantile) - 1)] ?? 0
 
-const selectVisible = (
-  candidates: PageIndexCandidate[],
-  principal: Principal
-): PageIndexCandidate[] => candidates.filter(page => {
-  if (page.visibility === 'private') return principal === 'administrator' || (principal === 'owner' && page.ownerId === 7)
-  if (principal === 'restricted-group') {
-    return !page.tags.some(tag => tag.tag === 'restricted') && !page.path.startsWith('guide/denied/')
-  }
-  return true
-})
+const selectVisible = (candidates: PageIndexCandidate[], principal: Principal): PageIndexCandidate[] =>
+  candidates.filter(page => {
+    if (page.visibility === 'private') return principal === 'administrator' || (principal === 'owner' && page.ownerId === 7)
+    if (principal === 'restricted-group') {
+      return !page.tags.some(tag => tag.tag === 'restricted') && !page.path.startsWith('guide/denied/')
+    }
+    return true
+  })
 
 const prepareDataset = async (): Promise<void> => {
   await db.schema.dropTableIfExists('pageTags')
@@ -61,7 +52,11 @@ const prepareDataset = async (): Promise<void> => {
     table.integer('tagId').notNullable()
     table.index(['pageId', 'tagId'], 'page_index_benchmark_page_tags')
   })
-  await db('tags').insert([{ id: 1, tag: 'docs' }, { id: 2, tag: 'restricted' }, { id: 3, tag: 'deep' }])
+  await db('tags').insert([
+    { id: 1, tag: 'docs' },
+    { id: 2, tag: 'restricted' },
+    { id: 3, tag: 'deep' }
+  ])
   await db.raw(`
     INSERT INTO pages (id, "localeCode", path, title, description, visibility, "ownerId", "updatedAt")
     SELECT sequence,
@@ -89,7 +84,7 @@ const prepareDataset = async (): Promise<void> => {
   await db.raw('ANALYZE tags')
 }
 
-interface PrincipalMetrics {
+export interface PrincipalMetrics {
   principal: Principal
   items: number
   p50Milliseconds: number
@@ -104,11 +99,114 @@ interface PrincipalMetrics {
   sharedBlocksHit: number
 }
 
-const benchmarkPrincipal = async (
-  principal: Principal,
-  ownerId: number | null,
-  includeAll: boolean
-): Promise<PrincipalMetrics> => {
+interface BenchmarkThresholds {
+  maxP95Milliseconds: number
+  queriesPerIteration: number
+  maxPeakConnectionsUsed: number
+}
+
+export interface BenchmarkViolation {
+  invariant: string
+  principal: Principal
+  measured: number
+  threshold: number
+}
+
+export interface PageIndexBenchmarkReport {
+  schemaVersion: 1
+  status: 'passed' | 'failed'
+  postgresVersion: string
+  dataset: {
+    pages: number
+    benchmarkLocalePages: number
+    overflowCandidates: number
+  }
+  iterations: number
+  warmups: number
+  thresholds: BenchmarkThresholds
+  principals: PrincipalMetrics[]
+  projectionRequired: boolean
+  violatedInvariants: BenchmarkViolation[]
+}
+
+export const createBenchmarkReport = (input: {
+  postgresVersion: string
+  dataset: PageIndexBenchmarkReport['dataset']
+  iterations: number
+  warmups: number
+  maxP95Milliseconds: number
+  principals: PrincipalMetrics[]
+  projectionRequired: boolean
+}): PageIndexBenchmarkReport => {
+  const thresholds: BenchmarkThresholds = {
+    maxP95Milliseconds: input.maxP95Milliseconds,
+    queriesPerIteration: 2,
+    maxPeakConnectionsUsed: 1
+  }
+  const violatedInvariants: BenchmarkViolation[] = []
+  for (const metric of input.principals) {
+    if (metric.p95Milliseconds > thresholds.maxP95Milliseconds) {
+      violatedInvariants.push({
+        invariant: 'p95Milliseconds <= thresholds.maxP95Milliseconds',
+        principal: metric.principal,
+        measured: metric.p95Milliseconds,
+        threshold: thresholds.maxP95Milliseconds
+      })
+    }
+    if (metric.queriesPerIteration !== thresholds.queriesPerIteration) {
+      violatedInvariants.push({
+        invariant: 'queriesPerIteration === thresholds.queriesPerIteration',
+        principal: metric.principal,
+        measured: metric.queriesPerIteration,
+        threshold: thresholds.queriesPerIteration
+      })
+    }
+    if (metric.peakConnectionsUsed > thresholds.maxPeakConnectionsUsed) {
+      violatedInvariants.push({
+        invariant: 'peakConnectionsUsed <= thresholds.maxPeakConnectionsUsed',
+        principal: metric.principal,
+        measured: metric.peakConnectionsUsed,
+        threshold: thresholds.maxPeakConnectionsUsed
+      })
+    }
+  }
+
+  return {
+    schemaVersion: 1,
+    status: violatedInvariants.length === 0 ? 'passed' : 'failed',
+    postgresVersion: input.postgresVersion,
+    dataset: input.dataset,
+    iterations: input.iterations,
+    warmups: input.warmups,
+    thresholds,
+    principals: input.principals,
+    projectionRequired: input.projectionRequired,
+    violatedInvariants
+  }
+}
+
+const writeBenchmarkReportAtomically = async (path: string, serialized: string): Promise<void> => {
+  const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`
+  try {
+    await fs.writeFile(temporaryPath, serialized, { flag: 'wx' })
+    await fs.rename(temporaryPath, path)
+  } catch (error: unknown) {
+    await fs.rm(temporaryPath, { force: true })
+    throw error
+  }
+}
+
+export const publishBenchmarkReport = async (report: PageIndexBenchmarkReport, path: string | undefined): Promise<void> => {
+  const serialized = `${JSON.stringify(report, null, 2)}\n`
+  if (path) await writeBenchmarkReportAtomically(path, serialized)
+  process.stdout.write(serialized)
+  if (report.status === 'failed') {
+    const violations = report.violatedInvariants.map(violation => `${violation.principal}: ${violation.invariant}`).join('; ')
+    throw new Error(`Page index benchmark failed: ${violations}`)
+  }
+}
+
+const benchmarkPrincipal = async (principal: Principal, ownerId: number | null, includeAll: boolean): Promise<PrincipalMetrics> => {
   const durations: number[] = []
   let maxHeapGrowthBytes = 0
   let queryCount = 0
@@ -149,14 +247,17 @@ const benchmarkPrincipal = async (
       ? `AND visibility = 'public'`
       : `AND (visibility = 'public' OR (visibility = 'private' AND "ownerId" = ?))`
   const bindings = ownerId === null || includeAll ? ['en', 'guide/'] : ['en', 'guide/', ownerId]
-  const explained = await db.raw<{ rows: Array<{ 'QUERY PLAN': unknown }> }>(`
+  const explained = await db.raw<{ rows: Array<{ 'QUERY PLAN': unknown }> }>(
+    `
     EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
     SELECT id, path, "localeCode", title, description, visibility, "ownerId", "updatedAt"
     FROM pages
     WHERE "localeCode" = ? AND starts_with(path, ?) ${visibilitySql}
     ORDER BY path ASC
     LIMIT ${PAGE_INDEX_CANDIDATE_LIMIT}
-  `, bindings)
+  `,
+    bindings
+  )
   const document = explained.rows[0]?.['QUERY PLAN']
   if (!Array.isArray(document) || !document[0] || typeof document[0] !== 'object') throw new Error('PostgreSQL returned an invalid EXPLAIN document')
   const root = Reflect.get(document[0], 'Plan')
@@ -194,58 +295,63 @@ const benchmarkPrincipal = async (
   }
 }
 
-try {
-  await prepareDataset()
-  const principals: PrincipalMetrics[] = []
-  for (const specification of [
-    { principal: 'anonymous', ownerId: null, includeAll: false },
-    { principal: 'owner', ownerId: 7, includeAll: false },
-    { principal: 'restricted-group', ownerId: null, includeAll: false },
-    { principal: 'administrator', ownerId: null, includeAll: true }
-  ] satisfies Array<{ principal: Principal, ownerId: number | null, includeAll: boolean }>) {
-    principals.push(await benchmarkPrincipal(specification.principal, specification.ownerId, specification.includeAll))
+export const runPageIndexBenchmark = async (): Promise<void> => {
+  const connection = process.env.WIKI_BENCHMARK_DATABASE_URL
+  if (!connection) throw new Error('WIKI_BENCHMARK_DATABASE_URL is required')
+  db = knexModule({ client: 'pg', connection, pool: { min: 1, max: 1 } })
+  try {
+    const databaseNameResult = await db.raw<{ rows: Array<{ name: string }> }>('SELECT current_database() AS name')
+    const databaseName = databaseNameResult.rows[0]?.name ?? ''
+    if (!databaseName.endsWith('_page_index_benchmark')) {
+      throw new Error(`Refusing to benchmark in non-dedicated database ${databaseName || '<unknown>'}`)
+    }
+    await prepareDataset()
+    const principals: PrincipalMetrics[] = []
+    for (const specification of [
+      { principal: 'anonymous', ownerId: null, includeAll: false },
+      { principal: 'owner', ownerId: 7, includeAll: false },
+      { principal: 'restricted-group', ownerId: null, includeAll: false },
+      { principal: 'administrator', ownerId: null, includeAll: true }
+    ] satisfies Array<{ principal: Principal; ownerId: number | null; includeAll: boolean }>) {
+      principals.push(await benchmarkPrincipal(specification.principal, specification.ownerId, specification.includeAll))
+    }
+    await db('pages').insert({
+      id: 100_001,
+      localeCode: 'en',
+      path: 'overflow/page-5001',
+      title: 'Overflow 5001',
+      description: null,
+      visibility: 'public',
+      ownerId: null,
+      updatedAt: new Date('2026-01-02T00:00:00.000Z')
+    })
+    await db.raw(`
+      INSERT INTO pages (id, "localeCode", path, title, description, visibility, "ownerId", "updatedAt")
+      SELECT 100001 + sequence, 'en', 'overflow/page-' || sequence, 'Overflow ' || sequence, NULL, 'public', NULL, TIMESTAMP '2026-01-02 00:00:00'
+      FROM generate_series(1, 5000) AS sequence
+    `)
+    const overflow = await listPageIndexCandidates(db, {
+      locale: 'en',
+      path: 'overflow',
+      scope: query => {
+        scopePageQueryForOwner(query, null, { table: 'pages' })
+      }
+    })
+    if (overflow.length !== PAGE_INDEX_CANDIDATE_LIMIT) throw new Error('The repository did not expose the 5,001-candidate overflow sentinel')
+    const version = await db.raw<{ rows: Array<{ server_version: string }> }>('SHOW server_version')
+    const report = createBenchmarkReport({
+      postgresVersion: version.rows[0]?.server_version ?? 'unknown',
+      dataset: { pages: 7200, benchmarkLocalePages: 4800, overflowCandidates: overflow.length },
+      iterations,
+      warmups,
+      maxP95Milliseconds,
+      principals,
+      projectionRequired: false
+    })
+    await publishBenchmarkReport(report, outputPath)
+  } finally {
+    await db.destroy()
   }
-  await db('pages').insert({
-    id: 100_001,
-    localeCode: 'en',
-    path: 'overflow/page-5001',
-    title: 'Overflow 5001',
-    description: null,
-    visibility: 'public',
-    ownerId: null,
-    updatedAt: new Date('2026-01-02T00:00:00.000Z')
-  })
-  await db.raw(`
-    INSERT INTO pages (id, "localeCode", path, title, description, visibility, "ownerId", "updatedAt")
-    SELECT 100001 + sequence, 'en', 'overflow/page-' || sequence, 'Overflow ' || sequence, NULL, 'public', NULL, TIMESTAMP '2026-01-02 00:00:00'
-    FROM generate_series(1, 5000) AS sequence
-  `)
-  const overflow = await listPageIndexCandidates(db, {
-    locale: 'en',
-    path: 'overflow',
-    scope: query => { scopePageQueryForOwner(query, null, { table: 'pages' }) }
-  })
-  if (overflow.length !== PAGE_INDEX_CANDIDATE_LIMIT) throw new Error('The repository did not expose the 5,001-candidate overflow sentinel')
-  if (principals.some(metric => metric.p95Milliseconds > maxP95Milliseconds)) {
-    throw new Error(`Page index p95 exceeded ${maxP95Milliseconds} ms`)
-  }
-  if (principals.some(metric => metric.queriesPerIteration !== 2 || metric.peakConnectionsUsed > 1)) {
-    throw new Error('Page index repository exceeded its two-query, one-connection contract')
-  }
-  const version = await db.raw<{ rows: Array<{ server_version: string }> }>('SHOW server_version')
-  const report = {
-    schemaVersion: 1,
-    postgresVersion: version.rows[0]?.server_version ?? 'unknown',
-    dataset: { pages: 7200, benchmarkLocalePages: 4800, overflowCandidates: overflow.length },
-    iterations,
-    warmups,
-    maxP95Milliseconds,
-    principals,
-    projectionRequired: false
-  }
-  const serialized = `${JSON.stringify(report, null, 2)}\n`
-  if (outputPath) await import('node:fs/promises').then(fs => fs.writeFile(outputPath, serialized))
-  process.stdout.write(serialized)
-} finally {
-  await db.destroy()
 }
+
+if (import.meta.main) await runPageIndexBenchmark()

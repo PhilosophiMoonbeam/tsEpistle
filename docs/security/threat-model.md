@@ -9,7 +9,7 @@
 | Last reviewed | 2026-08-30 |
 | Review owner | tsFranki maintainers |
 | External reviewer | Unassigned — blocks the first external release |
-| Covered source | `main` at or after `d2548d8a` |
+| Covered source | `4045f25fc35a57a38746cd42b32bb50d59d44456` |
 
 This is a living release artifact. Update it whenever an authentication flow, externally reachable route, renderer, extension, worker payload, import/export path, database migration, secret boundary, or deployment topology changes. Every release candidate must resolve each open finding below, record an explicit risk acceptance, or remain blocked.
 
@@ -71,19 +71,23 @@ A Wiki.js source database whose ledger extends beyond `2.5.128.js` is unsupporte
 | PATH-1 | Archive, filename, upload, import, or export path traversal | Filename sanitation, canonical data roots, page path segment filtering, allowlisted archive package roots | `server/controllers/upload.ts`; `server/helpers/page.ts`; `server/core/asar.ts`; upload/import/export tests | External review must include every archive extractor and operator-supplied path. |
 | DATA-1 | Unknown, partial, newer, locked, unsupported-version, or same-name/different-lineage PostgreSQL state is mutated, or rollback restores mismatched state | Non-mutating migration preflight; immutable legacy manifest through `2.5.159.js`; fork-owned `tsfranki-NNNNNN-description` namespace; durable schema-lineage marker rooted at upstream cutoff `2.5.128.js`; structural attestation for pre-marker tsFranki ledgers; PostgreSQL 15–18 startup guard; pinned source fixture; checksum-verified `pg_dump`/`pg_restore`; paired `/wiki/data` snapshot; old-version boot and authentication after restore | `server/core/db.ts`; `server/db/migration-contract.ts`; `server/db/migration-preflight.ts`; `server/db/migrations/tsfranki-000001-schema-lineage.ts`; database tests; `dev/e2e/upgrade-smoke.sh`; `.github/workflows/build.yml` | The release matrix covers Wiki.js 2.5.314 through upstream migration `2.5.128.js` and synthetic PostgreSQL 15–18 state. A future upstream ledger beyond that cutoff requires an explicit, source-specific adoption bridge; matching migration names are never treated as proof of matching schema lineage. Operators must canary a restored copy of production data and preserve both snapshots as one recovery point. |
 | DATA-2 | Backup or migration secrets leak through files, logs, examples, or artifacts | File-backed Compose/Helm secrets; documented restrictive permissions; release artifacts exclude runtime data and credentials | `dev/examples/docker-compose.yml`; `dev/helm/templates/postgresql-secret.yaml`; deployment documentation | Operators control dump destinations, encryption, retention, and access. Recovery CI must use synthetic credentials only. |
-| ADMIN-1 | Administrative endpoint or terminal crosses permission boundary | REST controllers require explicit `manage:*` permissions and return JSON `403` before model mutation; no arbitrary command terminal is shipped | Controller tests under `server/test/controllers/api.*.test.*` | Deployment shell and database access remain outside the application boundary. Any future terminal feature requires a separate threat review and is release-blocking by default. |
+| ADMIN-1 | Administrative endpoint or terminal crosses permission boundary | REST controllers require explicit `manage:*` permissions and return JSON `403` before model mutation; no arbitrary command terminal is shipped | Controller tests under `server/test/controllers` | Deployment shell and database access remain outside the application boundary. Any future terminal feature requires a separate threat review and is release-blocking by default. |
 | SCRIPT-1 | A delegated content author installs same-origin JavaScript and crosses user or administrative boundaries | `write:scripts` is treated as system-equivalent authority when granting, retaining, or assigning group permissions; page script writes still require the permission and applicable page rule | `server/operations/groups.ts`; `server/models/pages.ts`; `server/core/auth.ts`; `server/test/operations.groups.test.ts` | Operators must grant `write:scripts` only to principals trusted like system administrators and review already-published scripts when authority changes. Such code runs on the ordinary origin and can act with each viewer's signed-in application authority; CSP and content sanitation are not a sandbox for it. |
-| SUPPLY-1 | Dependency compromise or artifact/source mismatch | Frozen lockfile, policy-checked install, pinned build images/actions, exact revision metadata, corresponding source, SBOM, license inventory, checksums, OCI provenance labels | `package.json`; `pnpm-lock.yaml`; `.github/workflows/build.yml`; `server/scripts/export-build-environment.ts`; product-build tests | Independent provenance verification and external review remain required before the first external release. |
+| SUPPLY-1 | Dependency compromise or artifact/source mismatch | Frozen lockfile, policy-checked install, pinned build images/actions, exact revision metadata, corresponding source, SBOM, license inventory, checksums, OCI provenance labels | `package.json`; `bun.lock`; `.github/workflows/build.yml`; `server/scripts/export-build-environment.ts`; `server/scripts/check-threat-model.ts`; product-build tests | Independent provenance verification and external review remain required before the first external release. |
 
 ## Executable security gate
 
-Run the focused security contract before the broader project gates:
+Run the dependency and focused security contracts before the broader project gates:
 
 ```console
-pnpm test:security
-pnpm audit --prod
-pnpm typecheck:server
+bun run dependencies:check
+bun run licenses:check
+bun run test:security
+bun audit --production
+bun run typecheck:server
 ```
+
+`server/scripts/check-threat-model.ts` requires the covered source to be the exact full Git revision above, present locally and an ancestor of `HEAD`. It rejects later changes to application security-boundary source under `server`, `shared`, or `client`, as well as dependency manifests, lockfiles, and patches. Documentation, delivery configuration, tests, and this executable review gate may follow the reviewed application revision; the gate also verifies every cited repository path, Bun lockfile, package script, and package-manager command prefix.
 
 The full release matrix additionally owns browser non-disclosure, proxy topology, database upgrade/restore, multi-instance, Helm, accessibility, and provenance scenarios. A focused pass does not substitute for those gates.
 

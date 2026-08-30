@@ -31,7 +31,7 @@ When a release is published:
 4. test the upgrade against a restored copy of production data;
 5. roll back by restoring both the pre-upgrade database and data-directory snapshots—database migrations are not guaranteed to be reversible.
 
-tsFranki supports PostgreSQL 15, 16, 17, and 18 and requires a current minor release within one of those major lines. Startup rejects older and newer major versions before running application migrations. Release CI performs fresh-install and retained Wiki.js 2.5.314 PostgreSQL upgrade checks on every supported major. Other database engines are unsupported; no cross-engine converter is shipped. Older Wiki.js or tsFranki database sources are unsupported unless a later release explicitly adds a retained upgrade fixture. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
+tsFranki supports PostgreSQL 15, 16, 17, and 18 and requires a current minor release within one of those major lines. Startup rejects older and newer major versions before running application migrations. The only supported upstream database upgrade source is exactly Wiki.js 2.5.314. Release CI performs fresh-install and retained Wiki.js 2.5.314 PostgreSQL upgrade checks on every supported major. Other database engines are unsupported; no cross-engine converter is shipped. Older Wiki.js or tsFranki database sources are unsupported unless a later release explicitly adds a retained upgrade fixture. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
 
 ### Verify release provenance
 
@@ -53,7 +53,7 @@ Replace `IMAGE_DIGEST` with the digest in `release-manifest.json`. The tag relea
 
 ## Install and operate
 
-The release page is the source for the versioned Linux archive, corresponding source archive, Helm chart, SPDX SBOM, dependency license inventory, and checksums.
+The release page is the source for the versioned Linux archive, corresponding source archive, Helm chart, SPDX SBOM, dependency license inventory, and checksums. Official binary artifacts are the Linux archive and Linux container images; Windows archives are not published or supported.
 
 For a local PostgreSQL deployment using Docker Compose:
 

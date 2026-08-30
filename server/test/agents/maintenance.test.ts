@@ -349,7 +349,7 @@ describe('agent retention maintenance', () => {
     expect(await knex('agentSessions').where({ id: 'session-active' }).first()).toBeUndefined()
   })
 
-  it('removes saved conversations after ninety inactive days and preserves recent history', async () => {
+  it('removes expired saved conversations and exposes a subsequent zero-change drain batch', async () => {
     await knex('agentSessions').insert([
       { id: 'saved-stale', ownerId: 7, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: old, lastActivityAt: old, version: 1 },
       {
@@ -380,6 +380,8 @@ describe('agent retention maintenance', () => {
     const result = await runAgentMaintenance(knex, { batchSize: 1, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
 
     expect(result.tombstonedSessions).toBe(1)
+    const drained = await runAgentMaintenance(knex, { batchSize: 1, savedSessionDays: 90, mcpContentDays: 7, auditDays: 90, compactDeltaDays: 1 }, now)
+    expect(Object.values(drained).reduce((total, count) => total + count, 0)).toBe(0)
     expect(await knex('agentSessions').where({ id: 'saved-stale' }).first()).toBeUndefined()
     expect(await knex('agentSessions').where({ id: 'saved-foldered' }).first()).toBeDefined()
     expect(await knex('agentSessions').where({ id: 'saved-recent' }).first()).toBeDefined()

@@ -13,6 +13,7 @@ jobs:
     name: Build DigitalOcean Image
     runs-on: [self-hosted, linux, x64, tsfranki-ci]
     permissions:
+      attestations: read
       contents: read
 
     steps:
@@ -23,19 +24,92 @@ jobs:
       with:
         version: 1.16.0
 
-    - name: Verify Released Application Image
+    - name: Resolve Verified Release Application Image
+      id: release
       env:
         GH_TOKEN: ${{ github.token }}
         APPLICATION_VERSION: ${{ inputs.version }}
       run: |
-        gh release view "v$APPLICATION_VERSION" --repo "$GITHUB_REPOSITORY"
-        docker manifest inspect "ghcr.io/philosophimoonbeam/wiki:$APPLICATION_VERSION" >/dev/null
+        release_dir="$(mktemp -d)"
+        trap 'rm -rf "$release_dir"' EXIT
+
+        gh release download "v$APPLICATION_VERSION" \
+          --repo "$GITHUB_REPOSITORY" \
+          --dir "$release_dir" \
+          --pattern release-manifest.json \
+          --pattern SHA256SUMS
+        gh attestation verify "$release_dir/release-manifest.json" --repo "$GITHUB_REPOSITORY"
+        (
+          cd "$release_dir"
+          sha256sum --check --strict --ignore-missing SHA256SUMS
+        )
+
+        manifest="$release_dir/release-manifest.json"
+        jq -e --arg version "$APPLICATION_VERSION" '
+          (.schemaVersion == 1)
+          and (.product.version == $version)
+          and (.release.tag == ("v" + $version))
+          and (.release.revision | type == "string" and test("^[0-9a-f]{40}$"))
+          and (.containerImage.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+          and (.containerImage.reference == ("ghcr.io/philosophimoonbeam/wiki@" + .containerImage.digest))
+        ' "$manifest" >/dev/null
+
+        echo "application_image=$(jq -er '.containerImage.reference' "$manifest")" >> "$GITHUB_OUTPUT"
+        echo "application_digest=$(jq -er '.containerImage.digest' "$manifest")" >> "$GITHUB_OUTPUT"
+        echo "source_revision=$(jq -er '.release.revision' "$manifest")" >> "$GITHUB_OUTPUT"
+        echo "release_version=$(jq -er '.product.version' "$manifest")" >> "$GITHUB_OUTPUT"
 
     - name: Build Droplet Image
       env:
         PKR_VAR_api_token: ${{ secrets.DO_TOKEN }}
-        PKR_VAR_application_version: ${{ inputs.version }}
+        PKR_VAR_application_image: ${{ steps.release.outputs.application_image }}
+        PKR_VAR_release_version: ${{ steps.release.outputs.release_version }}
+        PKR_VAR_source_revision: ${{ steps.release.outputs.source_revision }}
       working-directory: dev/packer
       run: |
         packer init .
         packer build .
+
+    - name: Record Snapshot Provenance
+      env:
+        APPLICATION_DIGEST: ${{ steps.release.outputs.application_digest }}
+        APPLICATION_IMAGE: ${{ steps.release.outputs.application_image }}
+        RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
+        SOURCE_REVISION: ${{ steps.release.outputs.source_revision }}
+      working-directory: dev/packer
+      run: |
+        jq -e \
+          --arg application_digest "$APPLICATION_DIGEST" \
+          --arg application_image "$APPLICATION_IMAGE" \
+          --arg release_version "$RELEASE_VERSION" \
+          --arg source_revision "$SOURCE_REVISION" '
+            (.builds | length == 1)
+            and (.builds[0].artifact_id | type == "string" and length > 0)
+            and (.builds[0].custom_data == {
+              application_digest: $application_digest,
+              application_image: $application_image,
+              release_version: $release_version,
+              source_revision: $source_revision
+            })
+          ' packer-manifest.json >/dev/null
+        jq \
+          --arg application_digest "$APPLICATION_DIGEST" \
+          --arg application_image "$APPLICATION_IMAGE" \
+          --arg release_version "$RELEASE_VERSION" \
+          --arg source_revision "$SOURCE_REVISION" '
+            .builds[0] | {
+              schemaVersion: 1,
+              snapshotId: .artifact_id,
+              applicationDigest: $application_digest,
+              applicationImage: $application_image,
+              sourceRevision: $source_revision,
+              releaseVersion: $release_version
+            }
+          ' packer-manifest.json > snapshot-provenance.json
+
+    - name: Upload Snapshot Provenance
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: digitalocean-snapshot-provenance-${{ inputs.version }}
+        path: dev/packer/snapshot-provenance.json
+        if-no-files-found: error

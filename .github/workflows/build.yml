@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   BUN_VERSION: 1.4.0
   WIKI_UPGRADE_SOURCE_IMAGE: ghcr.io/requarks/wiki:2.5.314@sha256:68f0d1848261ae76492ba358e30a96a76fed5d97a3fff381656082bf90f70d7e
@@ -26,16 +30,40 @@ jobs:
 
     steps:
     - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      with:
+        fetch-depth: 0
     - uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76 # v2
       with:
         bun-version: ${{ env.BUN_VERSION }}
     - name: Install Dependencies
       run: bun install --frozen-lockfile
-    - name: Typecheck
+    - name: Run Static Contract
+      run: bun run ci:static
+    - name: Detect Helm Chart Changes
+      id: chart-changes
+      shell: bash
+      env:
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
       run: |
-        bun run typecheck:shared
-        bun run typecheck:client
-        bun run typecheck:server
+        if git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- dev/helm/; then
+          changed=false
+        else
+          status=$?
+          test "$status" -eq 1
+          changed=true
+        fi
+        echo "changed=$changed" >> "$GITHUB_OUTPUT"
+    - name: Install Pinned Helm
+      if: steps.chart-changes.outputs.changed == 'true'
+      shell: bash
+      run: |
+        curl --fail --silent --show-error --location --output "$RUNNER_TEMP/helm.tar.gz" https://get.helm.sh/helm-v4.0.4-linux-amd64.tar.gz
+        echo "29454bc351f4433e66c00f5d37841627cbbcc02e4c70a6d796529d355237671c  $RUNNER_TEMP/helm.tar.gz" | sha256sum --check
+        tar -xzf "$RUNNER_TEMP/helm.tar.gz" -C "$RUNNER_TEMP"
+        echo "$RUNNER_TEMP/linux-amd64" >> "$GITHUB_PATH"
+    - name: Validate Helm Source Contract
+      if: steps.chart-changes.outputs.changed == 'true'
+      run: server/test/scripts/check-helm-lifecycle-contract.sh
     - name: Run Unit Tests
       run: bun run test
     - name: Build Vite Assets
@@ -59,10 +87,8 @@ jobs:
     - name: Install Dependencies
       run: bun install --frozen-lockfile
 
-    - name: Validate Dependency and License Policy
-      run: |
-        bun run dependencies:check
-        bun run licenses:check
+    - name: Run Static Contract
+      run: bun run ci:static
 
     - name: Upload License Inventory
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -72,24 +98,6 @@ jobs:
         if-no-files-found: error
         retention-days: 30
 
-    - name: Lint
-      run: bun run lint
-
-    - name: Typecheck Shared Contracts
-      run: bun run typecheck:shared
-
-    - name: Typecheck Client
-      run: bun run typecheck:client
-
-    - name: Typecheck Server
-      run: bun run typecheck:server
-
-    - name: Validate Versioned OpenAPI Contract
-      run: bun run openapi:check
-    - name: Reject Production Placeholders
-      run: bun run placeholders:check
-    - name: Validate Frozen Agent Release Inputs
-      run: bun run agents:release-check
 
 
     - name: Run Bun Tests
@@ -650,7 +658,7 @@ jobs:
         name: test-image
         path: test-image
 
-    - name: Promote Tested AMD64 Candidate
+    - name: Validate Tested AMD64 Candidate
       shell: bash
       run: |
         gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
@@ -662,15 +670,9 @@ jobs:
         test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$candidate")" = 'linux/amd64'
         docker buildx imagetools inspect "$IMAGE_REPOSITORY@$expected_amd64_digest" --raw > tested-amd64-manifest.json
         test "$(jq --exit-status --raw-output '.config.digest' tested-amd64-manifest.json)" = "$expected_image_id"
-
-        docker buildx imagetools create \
-          --prefer-index=false \
-          --tag "$IMAGE_REPOSITORY:canary" \
-          --tag "$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT" \
-          "$IMAGE_REPOSITORY@$expected_amd64_digest"
         printf '%s@%s\n' "$IMAGE_REPOSITORY" "$expected_amd64_digest" > image-amd64-descriptor.txt
 
-    - name: Build and Push AMD64 Agent Browser Image
+    - name: Build and Push AMD64 Agent Browser Candidate
       id: build-agent-browser-amd64
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
       env:
@@ -682,9 +684,7 @@ jobs:
         provenance: mode=max
         sbom: true
         push: true
-        tags: |
-          ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary
-          ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary-${{ env.REL_VERSION_STRICT }}
+        tags: ${{ env.IMAGE_REPOSITORY }}-agent-browser:candidate-amd64-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Capture AMD64 Agent Browser Descriptor
       shell: bash
@@ -761,7 +761,7 @@ jobs:
         mkdir -p build
         tar -xzf "$GITHUB_WORKSPACE/drop/tsfranki-linux.tar.gz" -C "$GITHUB_WORKSPACE/build" --exclude=node_modules
 
-    - name: Build and Push ARM64 Images
+    - name: Build and Push ARM64 Candidate
       id: build-app-arm64
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
       env:
@@ -781,10 +781,9 @@ jobs:
         provenance: mode=max
         sbom: true
         push: true
-        tags: |
-          ${{ env.IMAGE_REPOSITORY }}:canary-arm64-${{ env.REL_VERSION_STRICT }}
+        tags: ${{ env.IMAGE_REPOSITORY }}:candidate-arm64-${{ github.run_id }}-${{ github.run_attempt }}
 
-    - name: Build and Push ARM64 Agent Browser Image
+    - name: Build and Push ARM64 Agent Browser Candidate
       id: build-agent-browser-arm64
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
       env:
@@ -796,8 +795,7 @@ jobs:
         provenance: mode=max
         sbom: true
         push: true
-        tags: |
-          ${{ env.IMAGE_REPOSITORY }}-agent-browser:canary-arm64-${{ env.REL_VERSION_STRICT }}
+        tags: ${{ env.IMAGE_REPOSITORY }}-agent-browser:candidate-arm64-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Capture ARM64 Image Descriptors
       shell: bash
@@ -836,6 +834,90 @@ jobs:
           agent-browser-arm64-descriptor.txt
         if-no-files-found: error
         retention-days: 30
+
+  publish-canary:
+    name: Promote Synchronized Canary Images
+    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [publish-amd64, arm]
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - name: Set Build Metadata
+      shell: bash
+      run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Download AMD64 Image Descriptors
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: amd64-image-descriptors
+        path: image-descriptors
+
+    - name: Download ARM64 Image Descriptors
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: arm64-image-descriptors
+        path: image-descriptors
+
+    - name: Freshness Fence and Promote Mutable Canary Tags
+      shell: bash
+      run: |
+        read_descriptor() {
+          local descriptor_file="$1"
+          local repository="$2"
+          local descriptor
+          local digest
+          descriptor="$(cat "$descriptor_file")"
+          digest="${descriptor#"$repository"@}"
+          test "$descriptor" = "$repository@$digest"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker buildx imagetools inspect "$descriptor" --raw > /dev/null
+          printf '%s\n' "$descriptor"
+        }
+
+        image_amd64="$(read_descriptor image-descriptors/image-amd64-descriptor.txt "$IMAGE_REPOSITORY")"
+        image_arm64="$(read_descriptor image-descriptors/image-arm64-descriptor.txt "$IMAGE_REPOSITORY")"
+        agent_browser_repository="$IMAGE_REPOSITORY-agent-browser"
+        agent_browser_amd64="$(read_descriptor image-descriptors/agent-browser-amd64-descriptor.txt "$agent_browser_repository")"
+        agent_browser_arm64="$(read_descriptor image-descriptors/agent-browser-arm64-descriptor.txt "$agent_browser_repository")"
+
+        remote_main="$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
+        if [ "$remote_main" != "$GITHUB_SHA" ]; then
+          echo "Refusing stale canary promotion: run $GITHUB_SHA is not current main $remote_main." >&2
+          exit 1
+        fi
+        docker buildx imagetools create \
+          --prefer-index=false \
+          --tag "$IMAGE_REPOSITORY:canary" \
+          --tag "$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT" \
+          "$image_amd64"
+        docker buildx imagetools create \
+          --prefer-index=false \
+          --tag "$IMAGE_REPOSITORY:canary-arm64-$REL_VERSION_STRICT" \
+          "$image_arm64"
+        docker buildx imagetools create \
+          --prefer-index=false \
+          --tag "$agent_browser_repository:canary" \
+          --tag "$agent_browser_repository:canary-$REL_VERSION_STRICT" \
+          "$agent_browser_amd64"
+        docker buildx imagetools create \
+          --prefer-index=false \
+          --tag "$agent_browser_repository:canary-arm64-$REL_VERSION_STRICT" \
+          "$agent_browser_arm64"
 
   beta:
     name: Publish Preview Images
@@ -1033,7 +1115,7 @@ jobs:
       shell: bash
       run: |
         test "$WIKI_PRODUCT_VERSION" = "$(helm show chart dev/helm | sed -n 's/^appVersion: *//p')"
-        helm lint dev/helm --set postgresql.postgresqlPassword=ci-validation-only
+        server/test/scripts/check-helm-lifecycle-contract.sh
         helm package --destination dist dev/helm
 
     - name: Stage Release Artifacts
