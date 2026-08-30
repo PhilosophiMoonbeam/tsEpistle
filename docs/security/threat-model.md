@@ -9,7 +9,7 @@
 | Last reviewed | 2026-08-30 |
 | Review owner | tsFranki maintainers |
 | External reviewer | Unassigned — blocks the first external release |
-| Covered source | `8f2f1ab9fa82cf6fe433ce3987c8d0efd38d7a78` |
+| Covered source | `4b47f5f3798f1168f6b82f17cad8513fcd655214` |
 
 This is a living release artifact. Update it whenever an authentication flow, externally reachable route, renderer, extension, worker payload, import/export path, database migration, secret boundary, or deployment topology changes. Every release candidate must resolve each open finding below, record an explicit risk acceptance, or remain blocked.
 
