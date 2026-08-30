@@ -46,11 +46,72 @@ wikiStore.refreshAuth()
 const vuetify = createVuetify({
   locale: { rtl: { [siteConfig.lang]: siteConfig.rtl }, locale: siteConfig.lang },
   defaults: {
-    VCard: { elevation: 1 },
-    VTextField: { variant: 'outlined' },
-    VTextarea: { variant: 'outlined' },
-    VSelect: { variant: 'outlined' },
-    VAutocomplete: { variant: 'outlined' }
+    VCard: {
+      elevation: 0,
+      rounded: 'lg',
+      variant: 'elevated'
+    },
+    VBtn: {
+      elevation: 0
+    },
+    VTextField: {
+      baseColor: 'on-surface',
+      color: 'primary',
+      rounded: 'lg',
+      variant: 'outlined'
+    },
+    VTextarea: {
+      baseColor: 'on-surface',
+      color: 'primary',
+      rounded: 'lg',
+      variant: 'outlined'
+    },
+    VSelect: {
+      baseColor: 'on-surface',
+      color: 'primary',
+      rounded: 'lg',
+      variant: 'outlined'
+    },
+    VAutocomplete: {
+      baseColor: 'on-surface',
+      color: 'primary',
+      rounded: 'lg',
+      variant: 'outlined'
+    },
+    VCombobox: {
+      baseColor: 'on-surface',
+      color: 'primary',
+      rounded: 'lg',
+      variant: 'outlined'
+    },
+    VChip: {
+      rounded: 'lg',
+      variant: 'tonal'
+    },
+    VDialog: {
+      scrim: 'on-surface',
+      transition: 'dialog-transition'
+    },
+    VMenu: {
+      offset: 8,
+      transition: 'fade-transition'
+    },
+    VTooltip: {
+      location: 'bottom',
+      offset: 8,
+      openDelay: 400,
+      transition: 'fade-transition'
+    },
+    VDataTable: {
+      density: 'comfortable',
+      hover: true
+    },
+    VNavigationDrawer: {
+      elevation: 0
+    },
+    VAppBar: {
+      elevation: 0
+    }
   },
   theme: {
     defaultTheme: resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode),

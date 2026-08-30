@@ -1,10 +1,80 @@
-.v-tabs.grad-tabs {
-  border-bottom: 1px solid rgba(var(--v-border-color), .11);
-  border-radius: var(--wiki-control-radius) var(--wiki-control-radius) 0 0;
-  background:
-    linear-gradient(
-      to top,
-      color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, transparent),
-      transparent
-    );
+.v-tabs {
+  --wiki-tab-edge: var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
+
+  color: rgba(var(--v-theme-on-surface), .72);
+
+  .v-tab {
+    min-height: 2.75rem;
+    border-radius: var(--wiki-radius-xs, .375rem);
+    font-size: .75rem;
+    font-weight: 640;
+    letter-spacing: .025em;
+    transition:
+      color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
+      background-color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
+
+    &:focus-visible {
+      outline: .1875rem solid var(--wiki-focus-color, rgb(var(--v-theme-focus)));
+      outline-offset: -.1875rem;
+    }
+  }
+
+  .v-tab--selected {
+    font-weight: 720;
+
+    .v-tab__overlay {
+      opacity: .065;
+    }
+  }
+
+  .v-tab__slider {
+    height: .1875rem;
+    border-radius: var(--wiki-radius-pill, 999rem) var(--wiki-radius-pill, 999rem) 0 0;
+    box-shadow: 0 -.125rem .5rem color-mix(in srgb, currentColor 18%, transparent);
+  }
+
+  .v-tab.v-btn--disabled {
+    opacity: .46;
+  }
+
+  &.grad-tabs {
+    border-bottom: 1px solid var(--wiki-tab-edge);
+    border-radius: var(--wiki-control-radius, .75rem) var(--wiki-control-radius, .75rem) 0 0;
+    background:
+      linear-gradient(
+        to bottom,
+        color-mix(
+          in srgb,
+          var(--wiki-ambient-accent, rgb(var(--v-theme-primary))) 4%,
+          transparent
+        ),
+        transparent 70%
+      ),
+      var(
+        --wiki-surface-sunken,
+        color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface)))
+      );
+  }
+}
+
+@media (hover: hover) {
+  .v-tabs .v-tab:hover:not(.v-btn--disabled):not(.v-tab--selected) {
+    color: rgb(var(--v-theme-on-surface));
+    background: color-mix(in srgb, currentColor 5%, transparent);
+  }
+}
+
+@media (pointer: coarse) {
+  .v-tabs .v-tab {
+    min-height: 3rem;
+    padding-inline: var(--wiki-space-4, 1rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v-tabs .v-tab,
+  .v-tabs .v-tab__slider,
+  .v-tabs .v-tab__overlay {
+    transition: none !important;
+  }
 }

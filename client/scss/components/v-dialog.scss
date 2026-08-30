@@ -1,66 +1,133 @@
 .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content > :is(.v-card, .v-sheet),
 .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content > form > :is(.v-card, .v-sheet) {
-  border: 1px solid rgba(var(--v-border-color), .13);
-  border-radius: var(--wiki-panel-radius);
-  background: rgb(var(--v-theme-surface));
-  box-shadow: 0 24px 72px rgba(var(--v-shadow-color), .24);
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .22));
+  border-radius: var(--wiki-panel-radius, 1rem);
+  background:
+    radial-gradient(
+      circle at 50% 0,
+      color-mix(
+        in srgb,
+        var(--wiki-ambient-accent, rgb(var(--v-theme-primary))) 7%,
+        transparent
+      ),
+      transparent 18rem
+    ),
+    var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
+  box-shadow: var(--wiki-shadow-lg, 0 1.75rem 5rem rgba(var(--v-theme-on-surface), .2));
 }
 
 .v-dialog.v-dialog--fullscreen > .v-overlay__content > :is(.v-card, .v-sheet),
 .v-dialog.v-dialog--fullscreen > .v-overlay__content > form > :is(.v-card, .v-sheet) {
   border: 0;
   border-radius: 0;
+  background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
   box-shadow: none;
 }
 
-.dialog-header {
-  --dialog-accent: var(--v-theme-primary);
+.v-dialog {
+  .v-card-title {
+    color: rgb(var(--v-theme-on-surface));
+    font-weight: 700;
+    letter-spacing: -.015em;
+  }
 
-  display: flex;
-  min-height: 62px;
-  align-items: center;
-  padding: 0 20px;
-  border-bottom: 1px solid color-mix(in srgb, rgb(var(--dialog-accent)) 22%, transparent);
-  border-inline-start: 4px solid rgb(var(--dialog-accent));
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, rgb(var(--dialog-accent)) 11%, rgb(var(--v-theme-surface))),
-      rgb(var(--v-theme-surface)) 72%
+  .v-card-text {
+    color: rgba(var(--v-theme-on-surface), .82);
+    line-height: 1.6;
+  }
+
+  .v-card-actions {
+    min-height: 4rem;
+    gap: var(--wiki-space-2, .5rem);
+    padding: var(--wiki-space-3, .75rem) var(--wiki-space-4, 1rem);
+    border-top: 1px solid var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
+    background: color-mix(
+      in srgb,
+      var(--wiki-surface-sunken, rgb(var(--v-theme-background))) 68%,
+      var(--wiki-surface-raised, rgb(var(--v-theme-surface)))
     );
-  color: rgb(var(--v-theme-on-surface));
-  font-size: 1.05rem;
-  font-weight: 700;
-  letter-spacing: -.015em;
-
-  &.is-short {
-    min-height: 48px;
-    padding-inline: 16px;
-  }
-
-  .v-icon {
-    color: rgb(var(--dialog-accent)) !important;
-  }
-
-  &.is-red {
-    --dialog-accent: var(--v-theme-error);
-  }
-
-  &.is-orange {
-    --dialog-accent: var(--v-theme-warning);
-  }
-
-  &.is-indigo {
-    --dialog-accent: var(--v-theme-accent);
-  }
-
-  &.is-dark {
-    --dialog-accent: var(--v-theme-on-surface);
-  }
-
-  &.is-teal {
-    --dialog-accent: var(--v-theme-secondary);
   }
 }
 
+.dialog-header {
+  --dialog-accent: var(--wiki-accent-spectral, rgb(var(--v-theme-primary)));
 
+  display: flex;
+  min-height: 4rem;
+  align-items: center;
+  gap: var(--wiki-space-3, .75rem);
+  padding: var(--wiki-space-3, .75rem) var(--wiki-space-5, 1.25rem);
+  border-bottom: 1px solid color-mix(in srgb, var(--dialog-accent) 22%, transparent);
+  border-inline-start: .25rem solid var(--dialog-accent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(
+        in srgb,
+        var(--dialog-accent) 10%,
+        var(--wiki-surface-raised, rgb(var(--v-theme-surface)))
+      ),
+      var(--wiki-surface-raised, rgb(var(--v-theme-surface))) 72%
+    );
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1.0625rem;
+  font-weight: 720;
+  letter-spacing: -.018em;
+  line-height: 1.3;
+
+  &.is-short {
+    min-height: 3rem;
+    padding-block: var(--wiki-space-2, .5rem);
+    padding-inline: var(--wiki-space-4, 1rem);
+  }
+
+  :is(h1, h2, h3) {
+    margin: 0;
+    color: inherit;
+    font: inherit;
+  }
+
+  .v-icon {
+    color: var(--dialog-accent) !important;
+  }
+
+  &.is-red {
+    --dialog-accent: rgb(var(--v-theme-error));
+  }
+
+  &.is-orange {
+    --dialog-accent: rgb(var(--v-theme-warning));
+  }
+
+  &.is-indigo {
+    --dialog-accent: rgb(var(--v-theme-accent));
+  }
+
+  &.is-dark {
+    --dialog-accent: rgb(var(--v-theme-on-surface));
+  }
+
+  &.is-teal {
+    --dialog-accent: rgb(var(--v-theme-secondary));
+  }
+}
+
+@media (max-width: 599px) {
+  .dialog-header {
+    min-height: 3.5rem;
+    padding-inline: var(--wiki-space-4, 1rem);
+  }
+
+  .v-dialog .v-card-actions {
+    min-height: 3.5rem;
+    padding: var(--wiki-space-2, .5rem) var(--wiki-space-3, .75rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v-dialog .v-overlay__content,
+  .v-dialog .v-overlay__scrim {
+    transition-duration: .001ms !important;
+  }
+}

@@ -1,92 +1,145 @@
+.v-btn {
+  --wiki-button-shadow: var(--wiki-shadow-xs, 0 1px 2px rgba(var(--v-theme-on-surface), .12));
+  --wiki-button-hover-shadow: var(--wiki-shadow-sm, 0 .25rem .75rem rgba(var(--v-theme-on-surface), .16));
+
+  -webkit-tap-highlight-color: transparent;
+  font-weight: 650;
+  transition:
+    transform var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease-out, cubic-bezier(.16, 1, .3, 1)),
+    box-shadow var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
+    border-color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
+
+  &:not(.v-btn--icon):not(.is-icon):not([class*='rounded']):not([class*='radius-']) {
+    border-radius: var(--wiki-control-radius, .75rem);
+    letter-spacing: .012em;
+    text-transform: none;
+  }
+
+  &:is(.v-btn--variant-flat, .v-btn--variant-elevated) {
+    box-shadow: var(--wiki-button-shadow);
+  }
+
+  &.v-btn--variant-outlined {
+    border-color: color-mix(
+      in srgb,
+      currentColor 42%,
+      var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14))
+    );
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow:
+      var(
+        --wiki-focus-ring,
+        0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-focus)) 44%, transparent)
+      ),
+      var(--wiki-button-shadow);
+  }
+
+  &:active:not(.v-btn--disabled):not(.v-btn--loading):not([aria-disabled='true']):not(:focus-visible) {
+    transform: translateY(0);
+    box-shadow:
+      var(--wiki-shadow-inset, inset 0 1px 2px rgba(var(--v-theme-on-surface), .18)),
+      var(--wiki-button-shadow);
+  }
+
+  &.v-btn--disabled,
+  &[aria-disabled='true'] {
+    transform: none;
+    box-shadow: none;
+    cursor: default;
+    filter: saturate(.7);
+  }
+
+  &.v-btn--loading {
+    transform: none;
+    box-shadow: var(--wiki-button-shadow);
+    cursor: progress;
+  }
+
+  .v-btn__overlay {
+    transition: opacity var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
+  }
+}
+
 .v-btn.is-icon {
   min-width: auto;
-}
-
-.btn-animate-rotate {
-  i {
-    transform: rotate(0deg);
-  }
-
-  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-    i {
-      transition: transform .18s ease-out;
-    }
-
-    &:hover i {
-      transform: rotate(360deg);
-    }
-  }
-}
-
-.btn-animate-grow {
-  i {
-    transform: scale(1);
-  }
-
-  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-    i {
-      transition: transform .18s ease-out;
-    }
-
-    &:hover i {
-      transform: scale(1.25);
-    }
-  }
-}
-
-.btn-animate-edit {
-  i {
-    transform: rotate(0deg);
-  }
-
-  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-    i {
-      transition: transform .18s ease-out;
-    }
-
-    &:hover i {
-      transform: rotate(-45deg);
-    }
-  }
-}
-
-.btn-animate-wrench {
-  i {
-    transform: rotate(0deg);
-  }
-
-  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-    i {
-      transition: transform .18s ease-out;
-    }
-
-    &:hover i {
-      transform: rotate(45deg);
-    }
-  }
-}
-
-.btn-animate-app {
-  i {
-    transform: translate3d(0, 0, 0);
-    transform-style: preserve-3d;
-  }
-
-  @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-    i {
-      transition: transform .18s ease-out;
-    }
-
-    &:hover i {
-      transform: scale(.7) rotateX(-180deg);
-    }
-  }
-}
-
-.v-btn:not(.v-btn--icon):not(.is-icon):not([class*='rounded']):not([class*='radius-']) {
-  border-radius: var(--wiki-control-radius);
+  aspect-ratio: 1;
 }
 
 .btn-normalcase {
   text-transform: none;
+}
+
+:is(
+  .btn-animate-rotate,
+  .btn-animate-grow,
+  .btn-animate-edit,
+  .btn-animate-wrench,
+  .btn-animate-app
+) i {
+  transition: transform var(--wiki-motion-normal, 180ms) var(--wiki-motion-ease-out, cubic-bezier(.16, 1, .3, 1));
+}
+
+@media (hover: hover) {
+  .v-btn:hover:not(.v-btn--disabled):not(.v-btn--loading):not([aria-disabled='true']):not(:active):not(:focus-visible) {
+    transform: translateY(-1px);
+    box-shadow: var(--wiki-button-hover-shadow);
+  }
+
+  .btn-animate-rotate:hover i {
+    transform: rotate(180deg);
+  }
+
+  .btn-animate-grow:hover i {
+    transform: scale(1.1);
+  }
+
+  .btn-animate-edit:hover i {
+    transform: rotate(-12deg);
+  }
+
+  .btn-animate-wrench:hover i {
+    transform: rotate(14deg);
+  }
+
+  .btn-animate-app:hover i {
+    transform: scale(.88) rotateX(-90deg);
+  }
+}
+
+@media (pointer: coarse) {
+  .v-btn:not(.v-btn--size-x-small) {
+    min-height: 2.75rem;
+  }
+
+  .v-btn:is(.v-btn--icon, .is-icon):not(.v-btn--size-x-small) {
+    min-width: 2.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v-btn,
+  .v-btn .v-btn__overlay,
+  :is(
+    .btn-animate-rotate,
+    .btn-animate-grow,
+    .btn-animate-edit,
+    .btn-animate-wrench,
+    .btn-animate-app
+  ) i {
+    transition: none !important;
+  }
+
+  .v-btn,
+  :is(
+    .btn-animate-rotate,
+    .btn-animate-grow,
+    .btn-animate-edit,
+    .btn-animate-wrench,
+    .btn-animate-app
+  ) i {
+    transform: none !important;
+  }
 }

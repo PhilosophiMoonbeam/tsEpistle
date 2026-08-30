@@ -1,4 +1,113 @@
 .v-data-table {
+  overflow: hidden;
+  border: 1px solid var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
+  border-radius: var(--wiki-control-radius, .75rem);
+  background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
+  box-shadow: var(--wiki-shadow-xs, 0 1px 2px rgba(var(--v-theme-on-surface), .08));
+  color: rgb(var(--v-theme-on-surface));
+  font-variant-numeric: tabular-nums;
+
+  .v-table__wrapper {
+    scrollbar-color:
+      var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .22))
+      transparent;
+  }
+
+  table {
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  thead > tr > th {
+    height: 2.75rem;
+    padding-inline: var(--wiki-space-3, .75rem);
+    border-bottom: 1px solid var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .22));
+    background: var(
+      --wiki-surface-sunken,
+      color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, rgb(var(--v-theme-surface)))
+    );
+    color: rgba(var(--v-theme-on-surface), .68);
+    font-size: var(--wiki-label-size, .6875rem);
+    font-weight: 740;
+    letter-spacing: .055em;
+    line-height: 1.25;
+    text-transform: uppercase;
+  }
+
+  tbody > tr {
+    transition: background-color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
+
+    > td {
+      height: 2.875rem;
+      padding-inline: var(--wiki-space-3, .75rem);
+      border-bottom: 1px solid var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
+      color: rgba(var(--v-theme-on-surface), .84);
+      line-height: 1.45;
+    }
+
+    &:last-child > td {
+      border-bottom: 0;
+    }
+
+    &[aria-selected='true'] {
+      background: color-mix(
+        in srgb,
+        var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 9%,
+        transparent
+      );
+    }
+
+    &:is([aria-disabled='true'], [disabled]) {
+      opacity: .52;
+    }
+  }
+
+  tbody > tr:focus-within:not([aria-selected='true']):not([aria-disabled='true']):not([disabled]) {
+    background: color-mix(
+      in srgb,
+      var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 6%,
+      transparent
+    );
+  }
+
+  .v-data-table-header__sort-icon {
+    opacity: .62;
+    transition:
+      opacity var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
+      transform var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease-out, cubic-bezier(.16, 1, .3, 1));
+  }
+
+  .v-data-table-header__content:focus-visible {
+    outline: .125rem solid var(--wiki-focus-color, rgb(var(--v-theme-focus)));
+    outline-offset: .125rem;
+    border-radius: var(--wiki-radius-xs, .375rem);
+  }
+
+  .v-data-table__progress {
+    color: var(--wiki-accent-spectral, rgb(var(--v-theme-primary)));
+  }
+
+  .v-data-table-rows-no-data > td {
+    height: 8rem;
+    color: rgba(var(--v-theme-on-surface), .64);
+    text-align: center;
+  }
+
+  .v-data-table-footer {
+    min-height: 3.5rem;
+    gap: var(--wiki-space-2, .5rem);
+    border-top: 1px solid var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
+    background: var(
+      --wiki-surface-sunken,
+      color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface)))
+    );
+    color: rgba(var(--v-theme-on-surface), .72);
+  }
+
+  &[aria-busy='true'] tbody {
+    opacity: .58;
+  }
+
   .is-clickable {
     cursor: pointer;
 
@@ -6,23 +115,85 @@
       position: relative;
 
       &::after {
-        content: '';
         position: absolute;
         inset: 0;
         pointer-events: none;
+        content: '';
       }
     }
 
-    &:is(:hover, :focus-visible, :focus-within):not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
-      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
+    &[aria-selected='true'] > :first-child::after {
+      border-inline-start: .1875rem solid var(--wiki-accent-spectral, rgb(var(--v-theme-primary)));
     }
 
-    &:active:not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
-      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, transparent);
+    &:focus-visible > :is(td, th)::after {
+      border-block: .125rem solid var(--wiki-focus-color, rgb(var(--v-theme-focus)));
+    }
+
+    &:focus-visible > :first-child::after {
+      border-inline-start: .125rem solid var(--wiki-focus-color, rgb(var(--v-theme-focus)));
+    }
+
+    &:focus-visible > :last-child::after {
+      border-inline-end: .125rem solid var(--wiki-focus-color, rgb(var(--v-theme-focus)));
     }
 
     &:is([aria-disabled='true'], [disabled]) {
       cursor: default;
     }
+  }
+}
+
+@media (hover: hover) {
+  .v-data-table tbody > tr:hover:not([aria-selected='true']):not([aria-disabled='true']):not([disabled]) {
+    background: color-mix(
+      in srgb,
+      var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 5%,
+      transparent
+    );
+  }
+
+  .v-data-table .is-clickable:hover:not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
+    background: color-mix(
+      in srgb,
+      var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 4%,
+      transparent
+    );
+  }
+
+  .v-data-table .is-clickable:active:not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
+    background: color-mix(
+      in srgb,
+      var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 9%,
+      transparent
+    );
+  }
+}
+
+@media (max-width: 599px) {
+  .v-data-table {
+    thead > tr > th,
+    tbody > tr > td {
+      padding-inline: var(--wiki-space-2, .5rem);
+    }
+
+    .v-data-table-footer {
+      min-height: 3rem;
+      flex-wrap: wrap;
+      padding: var(--wiki-space-2, .5rem);
+    }
+  }
+}
+
+@media (pointer: coarse) {
+  .v-data-table tbody > tr > td {
+    height: 3.25rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v-data-table tbody > tr,
+  .v-data-table .v-data-table-header__sort-icon {
+    transition: none !important;
   }
 }

@@ -30,6 +30,159 @@
 
 @include meta.load-css('pages/error');
 
+// Luminous Archive foundation: editorial type, mineral surfaces and a quiet
+// coordinate field shared by every application shell.
+.v-application {
+  background: rgb(var(--v-theme-background));
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.v-application__wrap {
+  background-color: rgb(var(--v-theme-background));
+  background-image:
+    radial-gradient(circle at 8% -6%, color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, transparent), transparent 27rem),
+    radial-gradient(circle at 94% 24%, color-mix(in srgb, rgb(var(--v-theme-secondary)) 7%, transparent), transparent 24rem),
+    linear-gradient(color-mix(in srgb, rgb(var(--v-theme-on-background)) 3.5%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, rgb(var(--v-theme-on-background)) 3.5%, transparent) 1px, transparent 1px);
+  background-position: center top;
+  background-size: auto, auto, var(--wiki-grid-size) var(--wiki-grid-size), var(--wiki-grid-size) var(--wiki-grid-size);
+}
+
+.v-application :where(h1, h2, h3, h4, h5, h6) {
+  scroll-margin-block-start: calc(var(--wiki-space-12) + var(--v-layout-top, 0px));
+}
+
+.v-application :where(p, li, dd) {
+  text-wrap: pretty;
+}
+
+.v-application :where(strong, b) {
+  color: rgb(var(--v-theme-on-surface));
+  font-weight: 700;
+}
+
+.v-application a:not(.v-btn):not(.v-list-item):not(.v-tab):not(.v-chip) {
+  color: rgb(var(--v-theme-primary));
+  text-decoration-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 42%, transparent);
+  text-decoration-thickness: .08em;
+  text-underline-offset: .2em;
+  transition:
+    color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    text-decoration-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+  &:hover {
+    color: color-mix(in srgb, rgb(var(--v-theme-primary)) 76%, rgb(var(--v-theme-on-surface)) 24%);
+    text-decoration-color: currentColor;
+  }
+}
+
+.v-card.v-card--variant-elevated {
+  border: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-sm);
+}
+
+.v-card-title {
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-heading);
+  font-weight: 700;
+  letter-spacing: -.02em;
+  line-height: 1.25;
+}
+
+.v-card-subtitle,
+.v-card-text {
+  line-height: 1.6;
+}
+
+.v-card-subtitle {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  opacity: 1;
+}
+
+.v-app-bar {
+  border-block-end: 1px solid var(--wiki-surface-border);
+  background: var(--wiki-surface-raised) !important;
+  box-shadow: var(--wiki-shadow-xs) !important;
+}
+
+.v-navigation-drawer {
+  border-color: var(--wiki-surface-border) !important;
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs);
+}
+
+.v-overlay__scrim {
+  background: rgb(var(--v-theme-on-surface));
+}
+
+.v-overlay__content > :where(.v-list, .v-sheet):not(.v-card),
+.v-menu > .v-overlay__content > :where(.v-list, .v-sheet) {
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
+}
+
+.v-tooltip > .v-overlay__content {
+  border: 1px solid var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-radius-xs);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 94%, rgb(var(--v-theme-surface)) 6%);
+  box-shadow: var(--wiki-shadow-sm);
+  color: rgb(var(--v-theme-surface));
+  font-size: var(--wiki-label-size);
+  font-weight: 650;
+  letter-spacing: .025em;
+}
+
+.v-empty-state {
+  margin: var(--wiki-space-4);
+  padding: var(--wiki-space-8);
+  border: 1px dashed var(--wiki-surface-border-strong);
+  border-radius: var(--wiki-panel-radius);
+  background: var(--wiki-surface-sunken);
+}
+
+.v-empty-state__title {
+  color: rgb(var(--v-theme-on-surface));
+  font-family: var(--wiki-font-heading);
+  font-weight: 700;
+  letter-spacing: -.02em;
+}
+
+.v-empty-state__text,
+.v-data-table-rows-no-data > td {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+}
+
+.v-data-table-rows-no-data > td {
+  padding-block: var(--wiki-space-10) !important;
+}
+
+@media (max-width: 599px) {
+  .v-application__wrap {
+    background-size: auto, auto, var(--wiki-grid-size) var(--wiki-grid-size), var(--wiki-grid-size) var(--wiki-grid-size);
+  }
+
+  .v-empty-state {
+    margin: var(--wiki-space-2);
+    padding: var(--wiki-space-6) var(--wiki-space-4);
+  }
+}
+
+@media print {
+  .v-application__wrap {
+    background-image: none !important;
+  }
+
+  .v-card,
+  .v-app-bar,
+  .v-navigation-drawer,
+  .v-overlay__content {
+    box-shadow: none !important;
+  }
+}
+
 // Shared public-state surfaces. State modifiers provide semantic accents without
 // introducing a second palette or changing the active light/dark theme.
 .onboarding,
@@ -59,10 +212,10 @@
       linear-gradient(90deg, color-mix(in srgb, rgb(var(--v-theme-on-background)) 7%, transparent) 1px, transparent 1px);
     background-position: 0 0;
     background-repeat: repeat;
-    background-size: 44px 44px;
+    background-size: var(--wiki-grid-size) var(--wiki-grid-size);
     content: '';
-    mask-image: linear-gradient(to bottom, #000, transparent 85%);
-    opacity: .8;
+    mask-image: linear-gradient(to bottom, rgb(var(--v-theme-on-background)), transparent 85%);
+    opacity: .64;
   }
 
   &::after {
@@ -87,11 +240,11 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: clamp(34px, 6vw, 66px);
-    border: 1px solid color-mix(in srgb, rgb(var(--v-border-color)) 55%, transparent);
+    padding: clamp(var(--wiki-space-8), 6vw, calc(var(--wiki-space-12) + var(--wiki-space-4)));
+    border: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-hero-radius);
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, transparent);
-    box-shadow: var(--wiki-shadow-lg);
+    background: var(--wiki-surface-raised);
+    box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
     text-align: center;
   }
 
@@ -114,13 +267,13 @@
 
   .text-body-large {
     max-width: 520px;
-    color: rgba(var(--v-theme-on-surface), .72);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
     line-height: 1.6;
     text-wrap: balance;
   }
 
   .v-btn {
-    min-height: 46px;
+    min-height: var(--wiki-control-height);
     font-weight: 670;
     text-transform: none;
   }
