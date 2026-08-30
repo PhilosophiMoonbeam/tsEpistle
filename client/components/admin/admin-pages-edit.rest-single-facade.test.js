@@ -68,7 +68,7 @@ describe('admin pages edit REST single facade', () => {
     expect(script).toMatch(/mounted\s*\(\s*\)\s*\{\s*this\.loadPage\(\)\s*\}/)
   })
 
-  it('keeps only the latest routed page response, error, and loading completion', async () => {
+  it('keeps only the latest routed page response and error while releasing every loading owner', async () => {
     const page1 = deferred()
     const page2 = deferred()
     const errors = []
@@ -97,6 +97,7 @@ describe('admin pages edit REST single facade', () => {
     expect(viewModel.page).toBe(latestPage)
     expect(viewModel.resolvedPageRouteId).toBe(2)
     expect(viewModel.loading).toBe(false)
+    expect(stoppedLoads).toEqual(['admin-pages-refresh'])
 
     page1.resolve({ id: 1, title: 'Page 1' })
     await firstLoad
@@ -104,7 +105,7 @@ describe('admin pages edit REST single facade', () => {
     expect(viewModel.resolvedPageRouteId).toBe(2)
     expect(viewModel.loading).toBe(false)
     expect(errors).toEqual([])
-    expect(stoppedLoads).toEqual(['admin-pages-refresh'])
+    expect(stoppedLoads).toEqual(['admin-pages-refresh', 'admin-pages-refresh'])
   })
 
   it('does not surface an error from a superseded route request', async () => {

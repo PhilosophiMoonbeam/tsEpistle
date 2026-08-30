@@ -27,7 +27,9 @@ describe('HTML renderer private-link isolation', () => {
 
   const render = async ({ visibility, ownerId }) => {
     const pageQuery = makePageQuery([{ id: 9, localeCode: 'en', path: 'secret' }])
-    const insert = vi.fn().mockResolvedValue(undefined)
+    const ignore = vi.fn().mockResolvedValue(undefined)
+    const onConflict = vi.fn().mockReturnValue({ ignore })
+    const insert = vi.fn().mockReturnValue({ onConflict })
     global.WIKI = {
       auth: { checkAccess: vi.fn().mockReturnValue(false) },
       config: {
@@ -55,7 +57,7 @@ describe('HTML renderer private-link isolation', () => {
         $relatedQuery: vi.fn().mockResolvedValue([])
       }
     })
-    return { html, ...pageQuery }
+    return { html, ignore, insert, onConflict, ...pageQuery }
   }
 
   it('resolves links from public pages against public destinations only', async () => {
@@ -64,6 +66,8 @@ describe('HTML renderer private-link isolation', () => {
     expect(result.scopedWhere).toHaveBeenCalledWith('visibility', 'public')
     expect(result.scopedOrWhere).not.toHaveBeenCalled()
     expect(result.html).toContain('is-valid-page')
+    expect(result.onConflict).toHaveBeenCalledWith(['pageId', 'localeCode', 'path'])
+    expect(result.ignore).toHaveBeenCalledWith()
   })
 
   it('allows private pages to resolve only public and same-owner private destinations', async () => {

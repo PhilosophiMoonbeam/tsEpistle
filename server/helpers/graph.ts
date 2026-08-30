@@ -9,7 +9,7 @@ interface ErrorLike {
 }
 
 interface ErrorRuntime {
-  logger?: { error(value: unknown): void }
+  logger?: { error?: (value: unknown) => void }
 }
 
 export const isPublicGraphError = (value: unknown): value is Error => {
@@ -47,7 +47,7 @@ const graphHelper = {
       : unexpectedError
     if (error === unexpectedError) {
       const runtime = (globalThis as typeof globalThis & { WIKI?: unknown }).WIKI as ErrorRuntime | undefined
-      runtime?.logger?.error(value)
+      runtime?.logger?.error?.(value)
     }
     return complete ? { responseResult: error } : error
   }

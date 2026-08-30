@@ -142,7 +142,7 @@ describe('admin pages edit REST delete facade', () => {
     const pendingDelete = viewModel.deletePage()
     viewModel.$route.params.id = '3'
     await options.watch['$route.params.id'].call(viewModel)
-    expect(stoppedLoads).toEqual(['admin-pages-refresh', 'page-delete', 'admin-pages-refresh'])
+    expect(stoppedLoads).toEqual(['admin-pages-refresh', 'admin-pages-refresh'])
     viewModel.deletePageDialog = true
     viewModel.loading = true
 
@@ -157,7 +157,7 @@ describe('admin pages edit REST delete facade', () => {
     expect(notifications).toEqual([])
     expect(errors).toEqual([])
     expect(redirects).toEqual([])
-    expect(stoppedLoads).toEqual(['admin-pages-refresh', 'page-delete', 'admin-pages-refresh'])
+    expect(stoppedLoads).toEqual(['admin-pages-refresh', 'admin-pages-refresh', 'page-delete'])
   })
 
   it('does not apply a superseded page delete failure to the newly routed page', async () => {
@@ -189,7 +189,7 @@ describe('admin pages edit REST delete facade', () => {
     const pendingDelete = viewModel.deletePage()
     viewModel.$route.params.id = '3'
     await options.watch['$route.params.id'].call(viewModel)
-    expect(stoppedLoads).toEqual(['admin-pages-refresh', 'page-delete', 'admin-pages-refresh'])
+    expect(stoppedLoads).toEqual(['admin-pages-refresh', 'admin-pages-refresh'])
     viewModel.deletePageDialog = true
     viewModel.loading = true
 
@@ -202,6 +202,6 @@ describe('admin pages edit REST delete facade', () => {
     expect(viewModel.loading).toBe(true)
     expect(errors).toEqual([])
     expect(redirects).toEqual([])
-    expect(stoppedLoads).toEqual(['admin-pages-refresh', 'page-delete', 'admin-pages-refresh'])
+    expect(stoppedLoads).toEqual(['admin-pages-refresh', 'admin-pages-refresh', 'page-delete'])
   })
 })

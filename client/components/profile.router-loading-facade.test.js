@@ -16,7 +16,10 @@ describe('profile router loading facade migration guard', () => {
 
     expect(routerSource).toContain("import { wikiStore } from './store/index.ts'")
     expect(routerSource).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)[^}]*\}\s+from\s+['"]\.\/helpers\/root-ui-store['"]/)
-    expect(routerSource).toMatch(/if\s*\(\s*isProfile\s*\)\s*\{\s*router\.beforeEach\s*\(\s*\(\s*\)\s*=>\s*\{\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]profile['"]\s*\)\s*\}\s*\)\s*router\.afterEach\s*\(\s*\(\s*\)\s*=>\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]profile['"]\s*\)\s*\}\s*\)\s*\}/)
+    expect(routerSource).toMatch(/const\s+profileLoadingKey\s*=\s*['"]profile['"]/)
+    expect(routerSource).toMatch(
+      /if\s*\(\s*isProfile\s*\)\s*\{\s*router\.beforeEach\s*\(\s*\(\s*\)\s*=>\s*\{\s*loadingStart\s*\(\s*wikiStore\s*,\s*profileLoadingKey\s*\)\s*\}\s*\)\s*router\.afterEach\s*\(\s*\(\s*\)\s*=>\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*profileLoadingKey\s*\)\s*\}\s*\)\s*\}/
+    )
 
     expect(componentScript).not.toMatch(/\/\*\s*global\s+WIKI\s*\*\//)
     expect(componentScript).not.toContain('WIKI.$store')

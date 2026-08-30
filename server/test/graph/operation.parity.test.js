@@ -361,7 +361,19 @@ describe('REST and GraphQL shared operation parity', () => {
       )
 
       expectEquivalentOperationInputs(operationMocks.pages.list, normalizedQuery)
-      expect(restResponse.json).toHaveBeenCalledWith(pages)
+      expect(restResponse.json).toHaveBeenCalledWith([{
+        id: 12,
+        path: 'guide',
+        locale: 'en',
+        title: 'Guide',
+        description: 'A guide',
+        visibility: 'public',
+        ownerId: null,
+        contentType: 'markdown',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        tags: ['docs', 'api']
+      }])
       expect(restNext).not.toHaveBeenCalled()
       expect(graphResult).toBe(pages)
 
@@ -453,12 +465,12 @@ describe('REST and GraphQL shared operation parity', () => {
     it('passes the required deletion revision identically and preserves stale conflict semantics', async () => {
       const requester = { id: 1, permissions: ['delete:pages'] }
       const expectedSourceRevision = '17'
-      const expectedInput = { requester, id: 12, expectedSourceRevision }
+      const expectedInput = { requester, sessionId: 'session-1', id: 12, expectedSourceRevision }
       const restResponse = makeResponse()
       operationMocks.pages.remove.mockResolvedValue(undefined)
 
       await adapters.pages.router.handler('delete', '/:id')(
-        { user: requester, params: { id: '12' }, body: { expectedSourceRevision } },
+        { user: requester, sessionID: 'session-1', params: { id: '12' }, body: { expectedSourceRevision } },
         restResponse
       )
       const graphResult = await adapters.pages.resolver.PageMutation.delete(

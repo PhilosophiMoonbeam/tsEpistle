@@ -12,9 +12,7 @@ interface PanelAgents {
   cancelSessionTransition: () => void
 }
 
-interface PanelEmit {
-  (event: 'close' | 'reset'): void
-}
+type PanelEmit = (event: 'close' | 'reset') => void
 
 interface PanelHarness {
   emit: PanelEmit

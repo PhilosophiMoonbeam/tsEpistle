@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test'
 
-class ModelStub {
-  static ManyToManyRelation = Symbol('ManyToManyRelation')
-}
+const ModelStub = Object.assign(function ModelStub() {}, {
+  ManyToManyRelation: Symbol('ManyToManyRelation')
+})
 
 class RelatedModelStub {}
 

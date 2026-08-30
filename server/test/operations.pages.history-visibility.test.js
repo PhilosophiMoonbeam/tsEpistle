@@ -24,7 +24,11 @@ describe('page history visibility boundaries', () => {
       data: { searchEngine: null },
       Error: { PageNotFound, PageHistoryForbidden, PageRestoreForbidden, PageViewForbidden, PageUpdateForbidden, PageDeleteForbidden, PageMoveForbidden },
       models: {
-        knex: vi.fn(),
+        knex: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            first: vi.fn().mockResolvedValue(undefined)
+          })
+        }),
         pages: {
           query: vi.fn(),
           getPageFromDb: vi.fn(),
@@ -45,7 +49,7 @@ describe('page history visibility boundaries', () => {
   })
 
   it('passes the requester into history queries so private revisions remain scoped after publication', async () => {
-    const requester = { id: 8, permissions: ['read:history'] }
+    const requester = { id: 8, permissions: ['read:pages', 'read:history'] }
     global.WIKI.models.pages.query.mockReturnValue(pageQuery({
       id: 17,
       path: 'published',
@@ -53,10 +57,17 @@ describe('page history visibility boundaries', () => {
       visibility: 'public',
       ownerId: null
     }))
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
+      id: 17,
+      path: 'published',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null
+    })
     global.WIKI.models.pageHistory.getHistory.mockResolvedValue({ trail: [], total: 0 })
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
-    await operations.getHistory({ requester, id: 17, offsetPage: 0, offsetSize: 25 })
+    await operations.getHistory({ requester, sessionId: 'session-1', id: 17, offsetPage: 0, offsetSize: 25 })
     expect(global.WIKI.models.pageHistory.getHistory).toHaveBeenCalledWith({
       pageId: 17,
       offsetPage: 0,
@@ -84,7 +95,7 @@ describe('page history visibility boundaries', () => {
   })
 
   it('cannot restore a hidden private revision after the page is published', async () => {
-    const requester = { id: 8, permissions: ['write:pages'] }
+    const requester = { id: 8, permissions: ['read:pages', 'write:pages'] }
     global.WIKI.models.pages.query.mockReturnValue(pageQuery({
       id: 17,
       path: 'published',
@@ -93,16 +104,23 @@ describe('page history visibility boundaries', () => {
       ownerId: null,
       sourceRevision: '8'
     }))
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
+      id: 17,
+      path: 'published',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null
+    })
     global.WIKI.models.pageHistory.getVersion.mockResolvedValue(undefined)
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
-    await expect(Promise.resolve(operations.restore({ requester, pageId: 17, versionId: 4, expectedSourceRevision: '8' }))).rejects.toBeInstanceOf(PageNotFound)
+    await expect(Promise.resolve(operations.restore({ requester, sessionId: 'session-1', pageId: 17, versionId: 4, expectedSourceRevision: '8' }))).rejects.toBeInstanceOf(PageNotFound)
     expect(global.WIKI.models.pageHistory.getVersion).toHaveBeenCalledWith({ pageId: 17, versionId: 4, requester })
     expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
   })
 
   it('rejects a stale restore before reading or overwriting the selected revision', async () => {
-    const requester = { id: 8, permissions: ['write:pages'] }
+    const requester = { id: 8, permissions: ['read:pages', 'write:pages'] }
     global.WIKI.models.pages.query.mockReturnValue(pageQuery({
       id: 17,
       path: 'published',
@@ -111,10 +129,18 @@ describe('page history visibility boundaries', () => {
       ownerId: null,
       sourceRevision: '9'
     }))
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
+      id: 17,
+      path: 'published',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null
+    })
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
     await expect(Promise.resolve(operations.restore({
       requester,
+      sessionId: 'session-1',
       pageId: 17,
       versionId: 4,
       expectedSourceRevision: '8'
@@ -124,7 +150,7 @@ describe('page history visibility boundaries', () => {
   })
 
   it('restores canonical content, editor, content type, and tags with a source-revision compare-and-swap', async () => {
-    const requester = { id: 8, permissions: ['write:pages'] }
+    const requester = { id: 8, permissions: ['read:pages', 'write:pages'] }
     const sourceRevision = '8'
     global.WIKI.models.pages.query.mockReturnValue(pageQuery({
       id: 17,
@@ -132,8 +158,16 @@ describe('page history visibility boundaries', () => {
       localeCode: 'en',
       visibility: 'public',
       ownerId: null,
-      sourceRevision
+      sourceRevision,
+      updatedAt: '2026-08-15T00:00:00.000Z'
     }))
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
+      id: 17,
+      path: 'published',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null
+    })
     global.WIKI.models.pageHistory.getVersion.mockResolvedValue({
       versionId: 4,
       content: '# Earlier',
@@ -149,7 +183,7 @@ describe('page history visibility boundaries', () => {
     })
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
-    await operations.restore({ requester, pageId: 17, versionId: 4, expectedSourceRevision: sourceRevision })
+    await operations.restore({ requester, sessionId: 'session-1', pageId: 17, versionId: 4, expectedSourceRevision: sourceRevision })
 
     expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledWith({
       id: 17,
@@ -161,12 +195,13 @@ describe('page history visibility boundaries', () => {
       editor: 'visual-markdown',
       tags: ['release'],
       action: 'restored',
+      expectedUpdatedAt: '2026-08-15T00:00:00.000Z',
       expectedSourceRevision: sourceRevision
     })
   })
 
   it('reauthorizes both the current page and move destination against live page rules', async () => {
-    const requester = { id: 8, permissions: ['write:pages'] }
+    const requester = { id: 8, permissions: ['read:pages', 'write:pages'] }
     global.WIKI.auth.checkAccess.mockImplementation((user, permissions, context) =>
       permissions.some(permission => user?.permissions?.includes(permission)) && context?.path !== 'restricted/next'
     )
@@ -178,12 +213,20 @@ describe('page history visibility boundaries', () => {
       ownerId: null,
       tags: [{ id: 1, tag: 'release' }]
     }))
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
+      id: 17,
+      path: 'published',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null
+    })
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
     await expect(Promise.resolve(operations.authorizeMutation({
       kind: 'move',
       input: { id: 17, destinationPath: 'restricted/next', destinationLocale: 'en' },
-      requester
+      requester,
+      sessionId: 'session-1'
     }))).rejects.toBeInstanceOf(PageMoveForbidden)
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(requester, expect.arrayContaining(['write:pages']), expect.objectContaining({ path: 'restricted/next', locale: 'en' }))
   })

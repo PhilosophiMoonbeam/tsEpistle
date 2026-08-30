@@ -11,45 +11,263 @@ import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
 import { up as addAgentGoals } from '../../db/migrations/2.5.157.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 
-interface TestSessionState { agentCsrfToken?: string }
+interface TestSessionState {
+  agentCsrfToken?: string
+}
 
 const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('users', table => table.integer('id').primary())
   await db('users').insert([{ id: 7 }, { id: 8 }])
   await db.schema.createTable('agentConversationFolders', table => {
-    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('name').notNullable(); table.string('normalizedName').notNullable(); table.integer('version').notNullable(); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.unique(['ownerId', 'normalizedName'])
+    table.uuid('id').primary()
+    table.integer('ownerId').notNullable()
+    table.string('name').notNullable()
+    table.string('normalizedName').notNullable()
+    table.integer('version').notNullable()
+    table.dateTime('createdAt').notNullable()
+    table.dateTime('updatedAt').notNullable()
+    table.unique(['ownerId', 'normalizedName'])
   })
   await db.schema.createTable('agentSessions', table => {
-    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('title').notNullable(); table.string('titleSource').notNullable().defaultTo('none'); table.string('retention').notNullable(); table.uuid('folderId').nullable(); table.uuid('providerProfileId').nullable(); table.string('executionMode').notNullable(); table.integer('version').notNullable(); table.text('summary').nullable(); table.integer('summaryThroughOrdinal').nullable(); table.text('memorySnapshot').notNullable().defaultTo('{"agent":[],"user":[]}'); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('lastActivityAt').notNullable(); table.dateTime('expiresAt').nullable(); table.dateTime('deletedAt').nullable()
+    table.uuid('id').primary()
+    table.integer('ownerId').notNullable()
+    table.string('title').notNullable()
+    table.string('titleSource').notNullable().defaultTo('none')
+    table.string('retention').notNullable()
+    table.uuid('folderId').nullable()
+    table.uuid('providerProfileId').nullable()
+    table.string('executionMode').notNullable()
+    table.integer('version').notNullable()
+    table.text('summary').nullable()
+    table.integer('summaryThroughOrdinal').nullable()
+    table.text('memorySnapshot').notNullable().defaultTo('{"agent":[],"user":[]}')
+    table.dateTime('createdAt').notNullable()
+    table.dateTime('updatedAt').notNullable()
+    table.dateTime('lastActivityAt').notNullable()
+    table.dateTime('expiresAt').nullable()
+    table.dateTime('deletedAt').nullable()
   })
   await db.schema.createTable('agentMemories', table => {
-    table.uuid('id').primary(); table.integer('ownerId').notNullable(); table.string('target').notNullable(); table.text('content').notNullable(); table.string('contentSha256').notNullable(); table.integer('version').notNullable(); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable(); table.unique(['ownerId', 'target', 'contentSha256'])
+    table.uuid('id').primary()
+    table.integer('ownerId').notNullable()
+    table.string('target').notNullable()
+    table.text('content').notNullable()
+    table.string('contentSha256').notNullable()
+    table.integer('version').notNullable()
+    table.dateTime('createdAt').notNullable()
+    table.dateTime('updatedAt').notNullable()
+    table.unique(['ownerId', 'target', 'contentSha256'])
   })
   await db.schema.createTable('agentMessages', table => {
-    table.uuid('id').primary(); table.uuid('sessionId').notNullable(); table.uuid('runId').nullable(); table.integer('ordinal').notNullable(); table.string('role').notNullable(); table.string('status').notNullable(); table.text('content').notNullable(); table.text('citations').nullable(); table.binary('providerStateCiphertext').nullable(); table.string('providerStateSha256').nullable(); table.dateTime('createdAt').notNullable(); table.dateTime('updatedAt').notNullable()
+    table.uuid('id').primary()
+    table.uuid('sessionId').notNullable()
+    table.uuid('runId').nullable()
+    table.integer('ordinal').notNullable()
+    table.string('role').notNullable()
+    table.string('status').notNullable()
+    table.text('content').notNullable()
+    table.text('citations').nullable()
+    table.binary('providerStateCiphertext').nullable()
+    table.string('providerStateSha256').nullable()
+    table.dateTime('createdAt').notNullable()
+    table.dateTime('updatedAt').notNullable()
   })
   await db.schema.createTable('agentRuns', table => {
-    table.uuid('id').primary(); table.uuid('sessionId').notNullable(); table.uuid('userMessageId').notNullable(); table.uuid('assistantMessageId').notNullable(); table.integer('ownerId').notNullable(); table.uuid('clientRequestId').notNullable(); table.string('clientRequestSha256').notNullable(); table.string('profileResolutionSha256').notNullable(); table.string('status').notNullable(); table.integer('attempts').notNullable(); table.integer('maxAttempts').notNullable(); table.integer('eventSequence').notNullable(); table.dateTime('availableAt').notNullable(); table.string('leaseOwner').nullable(); table.uuid('leaseToken').nullable(); table.dateTime('leaseExpiresAt').nullable(); table.dateTime('cancelRequestedAt').nullable(); table.boolean('sideEffectsStarted').notNullable(); table.uuid('providerProfileVersionId').notNullable(); table.string('transportKind').notNullable(); table.string('model').notNullable(); table.string('executionMode').notNullable(); table.integer('profilePolicyVersion').notNullable(); table.integer('defaultGeneration').notNullable(); table.string('capabilityRevision').notNullable(); table.string('pricingRevision').notNullable(); table.integer('promptVersion').notNullable(); table.integer('inputTokens').notNullable(); table.integer('outputTokens').notNullable(); table.integer('estimatedCostMicros').nullable(); table.binary('runtimeStateCiphertext').nullable(); table.string('errorCode').nullable(); table.text('errorMessage').nullable(); table.dateTime('queuedAt').notNullable(); table.dateTime('startedAt').nullable(); table.dateTime('updatedAt').notNullable(); table.dateTime('completedAt').nullable()
+    table.uuid('id').primary()
+    table.uuid('sessionId').notNullable()
+    table.uuid('userMessageId').notNullable()
+    table.uuid('assistantMessageId').notNullable()
+    table.integer('ownerId').notNullable()
+    table.uuid('clientRequestId').notNullable()
+    table.string('clientRequestSha256').notNullable()
+    table.string('profileResolutionSha256').notNullable()
+    table.string('status').notNullable()
+    table.integer('attempts').notNullable()
+    table.integer('maxAttempts').notNullable()
+    table.integer('eventSequence').notNullable()
+    table.dateTime('availableAt').notNullable()
+    table.string('leaseOwner').nullable()
+    table.uuid('leaseToken').nullable()
+    table.dateTime('leaseExpiresAt').nullable()
+    table.dateTime('cancelRequestedAt').nullable()
+    table.boolean('sideEffectsStarted').notNullable()
+    table.uuid('providerProfileVersionId').notNullable()
+    table.string('transportKind').notNullable()
+    table.string('model').notNullable()
+    table.string('executionMode').notNullable()
+    table.integer('profilePolicyVersion').notNullable()
+    table.integer('defaultGeneration').notNullable()
+    table.string('capabilityRevision').notNullable()
+    table.string('pricingRevision').notNullable()
+    table.integer('promptVersion').notNullable()
+    table.integer('inputTokens').notNullable()
+    table.integer('outputTokens').notNullable()
+    table.integer('estimatedCostMicros').nullable()
+    table.binary('runtimeStateCiphertext').nullable()
+    table.string('errorCode').nullable()
+    table.text('errorMessage').nullable()
+    table.dateTime('queuedAt').notNullable()
+    table.dateTime('startedAt').nullable()
+    table.dateTime('updatedAt').notNullable()
+    table.dateTime('completedAt').nullable()
   })
   await addAgentTaskLedger(db)
   await addAgentGoals(db)
   await db.schema.createTable('agentEvents', table => {
-    table.uuid('id').primary(); table.uuid('runId').notNullable(); table.integer('sequence').notNullable(); table.string('type').notNullable(); table.integer('attempt').notNullable(); table.integer('schemaVersion').notNullable(); table.string('dataSha256').notNullable(); table.text('data').notNullable(); table.dateTime('createdAt').notNullable()
+    table.uuid('id').primary()
+    table.uuid('runId').notNullable()
+    table.integer('sequence').notNullable()
+    table.string('type').notNullable()
+    table.integer('attempt').notNullable()
+    table.integer('schemaVersion').notNullable()
+    table.string('dataSha256').notNullable()
+    table.text('data').notNullable()
+    table.dateTime('createdAt').notNullable()
   })
-  await db.schema.createTable('agentUserSkillPreferences', table => { table.integer('ownerId'); table.uuid('skillId'); table.integer('ordinal'); table.dateTime('selectedAt') })
-  await db.schema.createTable('agentSkillVersions', table => { table.uuid('id').primary(); table.uuid('skillId'); table.bigInteger('sourceRevision'); table.dateTime('sourceUpdatedAt'); table.integer('sourceHistoryId'); table.text('frontmatter'); table.text('skillMarkdown'); table.binary('resourceBundle'); table.text('resourceManifest'); table.string('contentHash'); table.string('approvalStatus'); table.integer('approvedBy'); table.dateTime('approvedAt'); table.dateTime('createdAt') })
-  await db.schema.createTable('agentSkills', table => { table.uuid('id').primary(); table.string('name'); table.integer('rootPageId'); table.text('rootPath'); table.integer('assetFolderId'); table.string('status'); table.string('exposureMode'); table.uuid('currentVersionId'); table.boolean('isAgentDiscoverable').notNullable().defaultTo(true); table.integer('ownerUserId'); table.dateTime('deletedAt'); table.integer('createdBy'); table.integer('updatedBy'); table.dateTime('createdAt'); table.dateTime('updatedAt') })
-  await db.schema.createTable('agentSkillGrants', table => { table.uuid('skillId'); table.integer('groupId') })
-  await db.schema.createTable('userGroups', table => { table.integer('userId'); table.integer('groupId') })
-  await db.schema.createTable('agentRunSkills', table => { table.uuid('runId'); table.uuid('skillVersionId'); table.integer('ordinal') })
-  await db.schema.createTable('pages', table => { table.integer('id'); table.string('localeCode'); table.text('path'); table.string('title'); table.string('contentType') })
-  await db.schema.createTable('agentProposals', table => { table.uuid('id'); table.uuid('sessionId'); table.uuid('runId').nullable(); table.string('sourceKind'); table.string('actionName'); table.string('risk'); table.string('status'); table.string('summary'); table.integer('pageId'); table.integer('baseSourceRevision'); table.string('authoritySha256'); table.string('inputHash'); table.string('patchSha256'); table.string('resultCanonicalSha256'); table.string('diffSha256'); table.text('diff'); table.dateTime('contentPurgedAt'); table.dateTime('expiresAt'); table.dateTime('createdAt') })
-  await db.schema.alterTable('agentProposals', table => { table.text('operation') })
-  await db.schema.createTable('agentApprovals', table => { table.uuid('id'); table.uuid('proposalId'); table.string('status'); table.dateTime('requestedAt'); table.dateTime('expiresAt'); table.dateTime('decidedAt'); table.text('decisionNote') })
-  await db.schema.createTable('agentArtifacts', table => { table.uuid('id'); table.uuid('sessionId'); table.uuid('runId'); table.integer('ownerId'); table.string('kind'); table.string('mimeType'); table.integer('byteLength'); table.binary('payload'); table.string('sha256'); table.integer('width'); table.integer('height'); table.dateTime('createdAt'); table.dateTime('expiresAt') })
-  await db.schema.createTable('agentSkillUses', table => { table.uuid('id'); table.uuid('skillVersionId'); table.uuid('runId'); table.uuid('sessionId'); table.integer('requesterUserId'); table.integer('requesterApiKeyId'); table.uuid('transportRequestId'); table.string('externalSessionSha256'); table.text('resourcePath'); table.string('purpose'); table.string('contentHash'); table.dateTime('createdAt') })
-  await db.schema.createTable('agentQuotaDaily', table => { table.integer('ownerId'); table.date('day'); table.bigInteger('reservedTokens'); table.bigInteger('consumedTokens'); table.bigInteger('reservedCostMicros'); table.bigInteger('consumedCostMicros'); table.dateTime('updatedAt'); table.primary(['ownerId', 'day']) })
-  await db.schema.createTable('agentQuotaReservations', table => { table.uuid('runId').primary(); table.integer('ownerId'); table.date('day'); table.bigInteger('reservedTokens'); table.bigInteger('reservedCostMicros'); table.bigInteger('consumedTokens'); table.bigInteger('consumedCostMicros'); table.string('status'); table.dateTime('expiresAt'); table.dateTime('heartbeatAt'); table.dateTime('reconciledAt').nullable() })
+  await db.schema.createTable('agentUserSkillPreferences', table => {
+    table.integer('ownerId')
+    table.uuid('skillId')
+    table.integer('ordinal')
+    table.dateTime('selectedAt')
+  })
+  await db.schema.createTable('agentSkillVersions', table => {
+    table.uuid('id').primary()
+    table.uuid('skillId')
+    table.bigInteger('sourceRevision')
+    table.dateTime('sourceUpdatedAt')
+    table.integer('sourceHistoryId')
+    table.text('frontmatter')
+    table.text('skillMarkdown')
+    table.binary('resourceBundle')
+    table.text('resourceManifest')
+    table.string('contentHash')
+    table.string('approvalStatus')
+    table.integer('approvedBy')
+    table.dateTime('approvedAt')
+    table.dateTime('createdAt')
+  })
+  await db.schema.createTable('agentSkills', table => {
+    table.uuid('id').primary()
+    table.string('name')
+    table.integer('rootPageId')
+    table.text('rootPath')
+    table.integer('assetFolderId')
+    table.string('status')
+    table.string('exposureMode')
+    table.uuid('currentVersionId')
+    table.boolean('isAgentDiscoverable').notNullable().defaultTo(true)
+    table.integer('ownerUserId')
+    table.dateTime('deletedAt')
+    table.integer('createdBy')
+    table.integer('updatedBy')
+    table.dateTime('createdAt')
+    table.dateTime('updatedAt')
+  })
+  await db.schema.createTable('agentSkillGrants', table => {
+    table.uuid('skillId')
+    table.integer('groupId')
+  })
+  await db.schema.createTable('userGroups', table => {
+    table.integer('userId')
+    table.integer('groupId')
+  })
+  await db.schema.createTable('agentRunSkills', table => {
+    table.uuid('runId')
+    table.uuid('skillVersionId')
+    table.integer('ordinal')
+  })
+  await db.schema.createTable('pages', table => {
+    table.integer('id')
+    table.string('localeCode')
+    table.text('path')
+    table.string('title')
+    table.string('contentType')
+  })
+  await db.schema.createTable('agentProposals', table => {
+    table.uuid('id')
+    table.uuid('sessionId')
+    table.uuid('runId').nullable()
+    table.string('sourceKind')
+    table.string('actionName')
+    table.string('risk')
+    table.string('status')
+    table.string('summary')
+    table.integer('pageId')
+    table.integer('baseSourceRevision')
+    table.string('authoritySha256')
+    table.string('inputHash')
+    table.string('patchSha256')
+    table.string('resultCanonicalSha256')
+    table.string('diffSha256')
+    table.text('diff')
+    table.dateTime('contentPurgedAt')
+    table.dateTime('expiresAt')
+    table.dateTime('createdAt')
+  })
+  await db.schema.alterTable('agentProposals', table => {
+    table.text('operation')
+  })
+  await db.schema.createTable('agentApprovals', table => {
+    table.uuid('id')
+    table.uuid('proposalId')
+    table.string('status')
+    table.dateTime('requestedAt')
+    table.dateTime('expiresAt')
+    table.dateTime('decidedAt')
+    table.text('decisionNote')
+  })
+  await db.schema.createTable('agentArtifacts', table => {
+    table.uuid('id')
+    table.uuid('sessionId')
+    table.uuid('runId')
+    table.integer('ownerId')
+    table.string('kind')
+    table.string('mimeType')
+    table.integer('byteLength')
+    table.binary('payload')
+    table.string('sha256')
+    table.integer('width')
+    table.integer('height')
+    table.dateTime('createdAt')
+    table.dateTime('expiresAt')
+  })
+  await db.schema.createTable('agentSkillUses', table => {
+    table.uuid('id')
+    table.uuid('skillVersionId')
+    table.uuid('runId')
+    table.uuid('sessionId')
+    table.integer('requesterUserId')
+    table.integer('requesterApiKeyId')
+    table.uuid('transportRequestId')
+    table.string('externalSessionSha256')
+    table.text('resourcePath')
+    table.string('purpose')
+    table.string('contentHash')
+    table.dateTime('createdAt')
+  })
+  await db.schema.createTable('agentQuotaDaily', table => {
+    table.integer('ownerId')
+    table.date('day')
+    table.bigInteger('reservedTokens')
+    table.bigInteger('consumedTokens')
+    table.bigInteger('reservedCostMicros')
+    table.bigInteger('consumedCostMicros')
+    table.dateTime('updatedAt')
+    table.primary(['ownerId', 'day'])
+  })
+  await db.schema.createTable('agentQuotaReservations', table => {
+    table.uuid('runId').primary()
+    table.integer('ownerId')
+    table.date('day')
+    table.bigInteger('reservedTokens')
+    table.bigInteger('reservedCostMicros')
+    table.bigInteger('consumedTokens')
+    table.bigInteger('consumedCostMicros')
+    table.string('status')
+    table.dateTime('expiresAt')
+    table.dateTime('heartbeatAt')
+    table.dateTime('reconciledAt').nullable()
+  })
 }
 
 describe('ordinary-origin agent session API', () => {
@@ -78,46 +296,76 @@ describe('ordinary-origin agent session API', () => {
         return { inputTokens: 3, outputTokens: 5, costMicros: 8, suggestions: [{ id: 'continue', label: 'Continue', prompt: 'Continue' }] }
       }
     }
-    runtime = new AgentProductRuntime(db, {
-      async resolve() {
-        return {
-          profileResolutionSha256: 'a'.repeat(64),
-          providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
-          transportKind: 'test',
-          model: 'deterministic',
-          executionMode: 'agent',
-          profilePolicyVersion: 1,
-          defaultGeneration: 1,
-          capabilityRevision: 'test-v1',
-          pricingRevision: 'test-v1',
-          promptVersion: 1,
-          quota: { tokens: 100, costMicros: 100 },
-          quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
-          reservationMilliseconds: 60_000
+    runtime = new AgentProductRuntime(
+      db,
+      {
+        async resolve() {
+          return {
+            profileResolutionSha256: 'a'.repeat(64),
+            providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
+            transportKind: 'test',
+            model: 'deterministic',
+            executionMode: 'agent',
+            profilePolicyVersion: 1,
+            defaultGeneration: 1,
+            capabilityRevision: 'test-v1',
+            pricingRevision: 'test-v1',
+            promptVersion: 1,
+            quota: { tokens: 100, costMicros: 100 },
+            quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+            reservationMilliseconds: 60_000
+          }
         }
+      },
+      fakeEngine,
+      {
+        workerId: 'test-worker',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }
       }
-    }, fakeEngine, {
-      workerId: 'test-worker',
-      globalConcurrency: 1,
-      perUserConcurrency: 1,
-      goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }
-    })
+    )
     const app = express()
     app.use(cookieParser())
     app.use(session({ secret: 'ordinary-host-test-secret', resave: false, saveUninitialized: true }))
-    app.get('/seed', (req, res) => { const state = req.session as typeof req.session & TestSessionState; state.agentCsrfToken = csrf; res.sendStatus(204) })
-    app.use(createAgentsHostController({
-      auth: {
-        authenticate(req, _res, next) {
-          req.authContext = { kind: 'user', userId: ownerId, ownershipUserId: ownerId, principal: { id: ownerId } }
-          req.user = { id: ownerId, groups: [], permissions: administrator ? ['manage:system'] : ['use:agents'] } as Express.User
-          next()
-        }
-      },
-      config: { host: 'https://wiki.example.test', sessionSecret: 'profile-resolution-secret', agents: { enabled: true, provider: { enabled: true }, goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }, retention: { temporarySessionHours: 24 }, skills: { enabled: true, namespace: 'system/agent-skills' }, proposals: { enabled: false }, writes: { enabled: false, create: { enabled: false }, patch: { enabled: false }, move: { enabled: false }, restore: { enabled: false }, delete: { enabled: false } } } },
-      models: { knex: db },
-      agentRuntime: runtime
-    }))
+    app.get('/seed', (req, res) => {
+      const state = req.session as typeof req.session & TestSessionState
+      state.agentCsrfToken = csrf
+      res.sendStatus(204)
+    })
+    app.use(
+      createAgentsHostController({
+        auth: {
+          authenticate(req, _res, next) {
+            req.authContext = { kind: 'user', userId: ownerId, ownershipUserId: ownerId, principal: { id: ownerId } }
+            req.user = { id: ownerId, groups: [], permissions: administrator ? ['manage:system'] : ['use:agents'] } as Express.User
+            next()
+          }
+        },
+        config: {
+          host: 'https://wiki.example.test',
+          sessionSecret: 'profile-resolution-secret',
+          agents: {
+            enabled: true,
+            provider: { enabled: true },
+            goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 },
+            retention: { temporarySessionHours: 24 },
+            skills: { enabled: true, namespace: 'system/agent-skills' },
+            proposals: { enabled: false },
+            writes: {
+              enabled: false,
+              create: { enabled: false },
+              patch: { enabled: false },
+              move: { enabled: false },
+              restore: { enabled: false },
+              delete: { enabled: false }
+            }
+          }
+        },
+        models: { knex: db },
+        agentRuntime: runtime
+      })
+    )
     server = app.listen(0, '127.0.0.1')
     const listening = Promise.withResolvers<void>()
     server.once('listening', listening.resolve)
@@ -130,25 +378,34 @@ describe('ordinary-origin agent session API', () => {
 
   afterAll(async () => {
     const closed = Promise.withResolvers<void>()
-    server.close(error => error ? closed.reject(error) : closed.resolve())
+    server.close(error => (error ? closed.reject(error) : closed.resolve()))
     await closed.promise
     await runtime.shutdown()
     await db.destroy()
   })
 
-
   it('requires same-origin metadata and CSRF for session mutations', async () => {
     const body = JSON.stringify({ retention: 'saved', providerProfileId: null })
-    const denied = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin' }, body })
+    const denied = await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin' },
+      body
+    })
     expect(denied.status).toBe(403)
-    const accepted = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }, body })
+    const accepted = await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf },
+      body
+    })
     expect(accepted.status).toBe(201)
-    const state = await accepted.json() as { session: { id: string, profileResolutionToken: string } }
+    const state = (await accepted.json()) as { session: { id: string; profileResolutionToken: string } }
     expect(state.session.profileResolutionToken).toMatch(/^[A-Za-z0-9_-]{43}$/)
     const own = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     expect(own.status).toBe(200)
     const emptyHistory = await fetch(`${baseUrl}/_api/agents/sessions`, { headers: { cookie } })
-    expect((await emptyHistory.json() as { sessions: Array<{ id: string }> }).sessions).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: state.session.id })]))
+    expect(((await emptyHistory.json()) as { sessions: Array<{ id: string }> }).sessions).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: state.session.id })])
+    )
     ownerId = 8
     const foreign = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     expect(foreign.status).toBe(404)
@@ -157,7 +414,24 @@ describe('ordinary-origin agent session API', () => {
   it('keeps conversation diagnostics hidden from non-admins and exports any session for system admins', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000059'
     const now = '2026-08-17T00:00:00.000Z'
-    await db('agentSessions').insert({ id: sessionId, ownerId: 8, title: 'Diagnostic session', titleSource: 'manual', retention: 'saved', providerProfileId: null, executionMode: 'agent', version: 1, summary: null, summaryThroughOrdinal: null, memorySnapshot: '{"agent":[],"user":[]}', createdAt: now, updatedAt: now, lastActivityAt: now, expiresAt: null, deletedAt: null })
+    await db('agentSessions').insert({
+      id: sessionId,
+      ownerId: 8,
+      title: 'Diagnostic session',
+      titleSource: 'manual',
+      retention: 'saved',
+      providerProfileId: null,
+      executionMode: 'agent',
+      version: 1,
+      summary: null,
+      summaryThroughOrdinal: null,
+      memorySnapshot: '{"agent":[],"user":[]}',
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      expiresAt: null,
+      deletedAt: null
+    })
 
     const denied = await fetch(`${baseUrl}/_api/agents/admin/sessions/${sessionId}/diagnostics.json`, { headers: { cookie } })
     expect(denied.status).toBe(403)
@@ -176,15 +450,76 @@ describe('ordinary-origin agent session API', () => {
     })
   })
 
-
   it('replays validated SSE events and closes at the terminal sequence', async () => {
     const now = '2026-08-17T00:00:00.000Z'
     const sessionId = '00000000-0000-4000-8000-000000000061'
     const runId = '00000000-0000-4000-8000-000000000062'
-    await db('agentSessions').insert({ id: sessionId, ownerId: 7, title: '', retention: 'saved', providerProfileId: null, executionMode: 'agent', version: 1, summary: null, summaryThroughOrdinal: null, createdAt: now, updatedAt: now, lastActivityAt: now, expiresAt: null, deletedAt: null })
-    await db('agentRuns').insert({ id: runId, sessionId, userMessageId: '00000000-0000-4000-8000-000000000063', assistantMessageId: '00000000-0000-4000-8000-000000000064', ownerId: 7, clientRequestId: '00000000-0000-4000-8000-000000000065', clientRequestSha256: 'a'.repeat(64), profileResolutionSha256: 'b'.repeat(64), status: 'succeeded', attempts: 1, maxAttempts: 3, eventSequence: 1, availableAt: now, leaseOwner: null, leaseToken: null, leaseExpiresAt: null, cancelRequestedAt: null, sideEffectsStarted: false, providerProfileVersionId: '00000000-0000-4000-8000-000000000066', transportKind: 'openai-responses', model: 'test', executionMode: 'agent', profilePolicyVersion: 1, defaultGeneration: 1, capabilityRevision: 'v1', pricingRevision: 'v1', promptVersion: 1, inputTokens: 0, outputTokens: 0, estimatedCostMicros: null, errorCode: null, errorMessage: null, queuedAt: now, startedAt: now, updatedAt: now, completedAt: now })
+    await db('agentSessions').insert({
+      id: sessionId,
+      ownerId: 7,
+      title: '',
+      retention: 'saved',
+      providerProfileId: null,
+      executionMode: 'agent',
+      version: 1,
+      summary: null,
+      summaryThroughOrdinal: null,
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      expiresAt: null,
+      deletedAt: null
+    })
+    await db('agentRuns').insert({
+      id: runId,
+      sessionId,
+      userMessageId: '00000000-0000-4000-8000-000000000063',
+      assistantMessageId: '00000000-0000-4000-8000-000000000064',
+      ownerId: 7,
+      clientRequestId: '00000000-0000-4000-8000-000000000065',
+      clientRequestSha256: 'a'.repeat(64),
+      profileResolutionSha256: 'b'.repeat(64),
+      status: 'succeeded',
+      attempts: 1,
+      maxAttempts: 3,
+      eventSequence: 1,
+      availableAt: now,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      cancelRequestedAt: null,
+      sideEffectsStarted: false,
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000066',
+      transportKind: 'openai-responses',
+      model: 'test',
+      executionMode: 'agent',
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: 'v1',
+      pricingRevision: 'v1',
+      promptVersion: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCostMicros: null,
+      errorCode: null,
+      errorMessage: null,
+      queuedAt: now,
+      startedAt: now,
+      updatedAt: now,
+      completedAt: now
+    })
     const data = JSON.stringify({ runId, status: 'succeeded' })
-    await db('agentEvents').insert({ id: '00000000-0000-4000-8000-000000000067', runId, sequence: 1, type: 'run.completed', attempt: 1, schemaVersion: 1, dataSha256: createHash('sha256').update(data).digest('hex'), data, createdAt: now })
+    await db('agentEvents').insert({
+      id: '00000000-0000-4000-8000-000000000067',
+      runId,
+      sequence: 1,
+      type: 'run.completed',
+      attempt: 1,
+      schemaVersion: 1,
+      dataSha256: createHash('sha256').update(data).digest('hex'),
+      data,
+      createdAt: now
+    })
     const response = await fetch(`${baseUrl}/_api/agents/runs/${runId}/events`, { headers: { cookie, accept: 'text/event-stream' } })
     expect(response.status).toBe(200)
     expect(response.headers.get('x-accel-buffering')).toBe('no')
@@ -194,18 +529,37 @@ describe('ordinary-origin agent session API', () => {
   })
   it('submits, executes, reconnects, and replays a deterministic engine run through REST and SSE', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
-    const created = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', providerProfileId: null }) })
-    const state = await created.json() as { session: { id: string, version: number, profileResolutionToken: string } }
+    const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+    })
+    const state = (await created.json()) as { session: { id: string; version: number; profileResolutionToken: string } }
     const request = {
       clientRequestId: '00000000-0000-4000-8000-000000000071',
       expectedSessionVersion: state.session.version,
       profileResolutionToken: state.session.profileResolutionToken,
       content: 'Answer deterministically.',
-      currentPage: { id: 42, locale: 'en', path: 'home', observedUpdatedAt: '2026-08-17T00:00:00.000Z' },
+      currentPage: { id: 42, locale: 'en', path: 'home', observedUpdatedAt: '2026-08-17T00:00:00.000Z' }
     }
     const admitted = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, { method: 'POST', headers, body: JSON.stringify(request) })
     expect(admitted.status).toBe(202)
-    const admission = await admitted.json() as { run: { id: string, sessionId: string, status: string, attempt: number, eventSequence: number, canCancel: boolean, createdAt: string, startedAt: string | null, completedAt: string | null, errorCode: string | null, errorMessage: string | null }, replayed: boolean }
+    const admission = (await admitted.json()) as {
+      run: {
+        id: string
+        sessionId: string
+        status: string
+        attempt: number
+        eventSequence: number
+        canCancel: boolean
+        createdAt: string
+        startedAt: string | null
+        completedAt: string | null
+        errorCode: string | null
+        errorMessage: string | null
+      }
+      replayed: boolean
+    }
     expect(admission).toMatchObject({
       replayed: false,
       run: {
@@ -223,25 +577,28 @@ describe('ordinary-origin agent session API', () => {
     })
     const retry = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/messages`, { method: 'POST', headers, body: JSON.stringify(request) })
     expect(retry.status).toBe(202)
-    expect((await retry.json() as { run: { id: string }, replayed: boolean })).toMatchObject({ run: { id: admission.run.id }, replayed: true })
+    expect((await retry.json()) as { run: { id: string }; replayed: boolean }).toMatchObject({ run: { id: admission.run.id }, replayed: true })
 
     expect(await runtime.runOnce()).toBe(true)
     expect(engineCurrentPage).toEqual(request.currentPage)
     expect(engineMemory).toEqual({ user: [], agent: [] })
     const reconnected = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
-    const thread = await reconnected.json() as { messages: Array<{ role: string, status: string, content: string }> }
+    const thread = (await reconnected.json()) as { messages: Array<{ role: string; status: string; content: string }> }
     expect(thread.messages.at(-1)).toMatchObject({ role: 'assistant', status: 'complete', content: 'Hello from the deterministic engine.' })
     const completed = await fetch(`${baseUrl}/_api/agents/runs/${admission.run.id}`, { headers: { cookie } })
     expect(await completed.json()).toMatchObject({ run: { status: 'succeeded' } })
     const populatedHistory = await fetch(`${baseUrl}/_api/agents/sessions`, { headers: { cookie } })
-    expect((await populatedHistory.json() as { sessions: Array<{ id: string }> }).sessions).toEqual(expect.arrayContaining([expect.objectContaining({ id: state.session.id })]))
+    expect(((await populatedHistory.json()) as { sessions: Array<{ id: string }> }).sessions).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: state.session.id })])
+    )
     const events = await fetch(`${baseUrl}/_api/agents/runs/${admission.run.id}/events`, { headers: { cookie, accept: 'text/event-stream' } })
     const replay = await events.text()
     expect(replay).toContain('event: message.delta')
     expect(replay).toContain('event: message.completed')
     expect(replay).toContain('event: suggestions.updated')
     expect(replay).toContain('"model":{"costMicros":8,"inputTokens":3,"outputTokens":5}')
-    expect(replay).toContain('"utility":{"inputTokens":0,"outputTokens":0,"purpose":"conversation_title"}')
+    expect(replay).toContain('"orchestration":{"costMicros":0,"inputTokens":0,"outputTokens":0,"taskCount":0}')
+    expect(replay).toContain('"utility":{"costMicros":0,"inputTokens":0,"outputTokens":0,"purpose":"conversation_title"}')
   })
   it('creates an explicit durable goal and completes it through the host gate', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
@@ -250,7 +607,7 @@ describe('ordinary-origin agent session API', () => {
       headers,
       body: JSON.stringify({ retention: 'saved', providerProfileId: null })
     })
-    const state = await created.json() as { session: { id: string, version: number, profileResolutionToken: string } }
+    const state = (await created.json()) as { session: { id: string; version: number; profileResolutionToken: string } }
     const goalId = '00000000-0000-4000-8000-000000000074'
     const admitted = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}/goals`, {
       method: 'POST',
@@ -279,8 +636,13 @@ describe('ordinary-origin agent session API', () => {
         { role: 'assistant', content: 'Hello from the deterministic engine.' }
       ]
     })
-    expect(await db('agentRuns').where({ goalId }).first('goalContinuation', 'completionOutcome')).toEqual({ goalContinuation: 0, completionOutcome: 'complete' })
-    expect((await db('agentEvents').join('agentRuns', 'agentRuns.id', 'agentEvents.runId').where({ 'agentRuns.goalId': goalId }).pluck('agentEvents.type'))).toEqual(expect.arrayContaining(['goal.created', 'run.completionAssessed', 'goal.status']))
+    expect(await db('agentRuns').where({ goalId }).first('goalContinuation', 'completionOutcome')).toEqual({
+      goalContinuation: 0,
+      completionOutcome: 'complete'
+    })
+    expect(
+      await db('agentEvents').join('agentRuns', 'agentRuns.id', 'agentEvents.runId').where({ 'agentRuns.goalId': goalId }).pluck('agentEvents.type')
+    ).toEqual(expect.arrayContaining(['goal.created', 'run.completionAssessed', 'goal.status']))
   })
   it('applies user skill preferences at the latest version across conversations', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
@@ -291,7 +653,7 @@ describe('ordinary-origin agent session API', () => {
       body: JSON.stringify({ name: 'qa-helper', skillMarkdown: markdown, isAgentDiscoverable: false })
     })
     expect(createdResponse.status).toBe(201)
-    const created = (await createdResponse.json() as { skill: { id: string; versionId: string; isAgentDiscoverable: boolean } }).skill
+    const created = ((await createdResponse.json()) as { skill: { id: string; versionId: string; isAgentDiscoverable: boolean } }).skill
     expect(created.isAgentDiscoverable).toBe(false)
     expect(await (await fetch(`${baseUrl}/_api/agents/skills`, { headers: { cookie } })).json()).toMatchObject({
       skills: [{ id: created.id, versionId: created.versionId, exposureMode: 'owner', isAgentDiscoverable: false }]
@@ -308,20 +670,30 @@ describe('ordinary-origin agent session API', () => {
     })
     expect(preferenceResponse.status).toBe(200)
     expect(await preferenceResponse.json()).toEqual({ skillIds: [created.id] })
-    const firstSessionResponse = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', providerProfileId: null }) })
-    const firstThread = await firstSessionResponse.json() as { session: { id: string; version: number; profileResolutionToken: string; skills: Array<{ skillId: string; versionId: string }> } }
+    const firstSessionResponse = await fetch(`${baseUrl}/_api/agents/sessions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+    })
+    const firstThread = (await firstSessionResponse.json()) as {
+      session: { id: string; version: number; profileResolutionToken: string; skills: Array<{ skillId: string; versionId: string }> }
+    }
     expect(firstThread.session.skills).toMatchObject([{ skillId: created.id, versionId: created.versionId }])
 
     const updatedResponse = await fetch(`${baseUrl}/_api/agents/personal-skills/${created.id}`, {
       method: 'PUT',
       headers,
-      body: JSON.stringify({ expectedVersionId: created.versionId, skillMarkdown: markdown.replace('acceptance criteria', 'acceptance criteria and evidence'), isAgentDiscoverable: true })
+      body: JSON.stringify({
+        expectedVersionId: created.versionId,
+        skillMarkdown: markdown.replace('acceptance criteria', 'acceptance criteria and evidence'),
+        isAgentDiscoverable: true
+      })
     })
     expect(updatedResponse.status).toBe(200)
-    const updated = (await updatedResponse.json() as { skill: { versionId: string } }).skill
+    const updated = ((await updatedResponse.json()) as { skill: { versionId: string } }).skill
     expect(updated.versionId).not.toBe(created.versionId)
 
-    const refreshed = await (await fetch(`${baseUrl}/_api/agents/sessions/${firstThread.session.id}`, { headers: { cookie } })).json() as typeof firstThread
+    const refreshed = (await (await fetch(`${baseUrl}/_api/agents/sessions/${firstThread.session.id}`, { headers: { cookie } })).json()) as typeof firstThread
     expect(refreshed.session.skills).toMatchObject([{ skillId: created.id, versionId: updated.versionId }])
     const admittedResponse = await fetch(`${baseUrl}/_api/agents/sessions/${firstThread.session.id}/messages`, {
       method: 'POST',
@@ -334,20 +706,28 @@ describe('ordinary-origin agent session API', () => {
       })
     })
     expect(admittedResponse.status).toBe(202)
-    const admitted = await admittedResponse.json() as { run: { id: string } }
-    expect(await db('agentRunSkills').where({ runId: admitted.run.id }).select('skillVersionId', 'ordinal')).toEqual([{ skillVersionId: updated.versionId, ordinal: 0 }])
+    const admitted = (await admittedResponse.json()) as { run: { id: string } }
+    expect(await db('agentRunSkills').where({ runId: admitted.run.id }).select('skillVersionId', 'ordinal')).toEqual([
+      { skillVersionId: updated.versionId, ordinal: 0 }
+    ])
     expect(await runtime.runOnce()).toBe(true)
     expect(engineSkills).toEqual([{ id: updated.versionId, name: 'qa-helper' }])
     expect(await db('agentSkillVersions').where({ skillId: created.id }).orderBy('createdAt').pluck('id')).toEqual([created.versionId, updated.versionId])
 
-    const secondSession = await (await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', providerProfileId: null }) })).json() as typeof firstThread
+    const secondSession = (await (
+      await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'POST', headers, body: JSON.stringify({ retention: 'saved', providerProfileId: null }) })
+    ).json()) as typeof firstThread
     expect(secondSession.session.skills).toMatchObject([{ skillId: created.id, versionId: updated.versionId }])
 
-    expect((await fetch(`${baseUrl}/_api/agents/personal-skills/${created.id}`, {
-      method: 'DELETE',
-      headers,
-      body: JSON.stringify({ expectedVersionId: updated.versionId })
-    })).status).toBe(200)
+    expect(
+      (
+        await fetch(`${baseUrl}/_api/agents/personal-skills/${created.id}`, {
+          method: 'DELETE',
+          headers,
+          body: JSON.stringify({ expectedVersionId: updated.versionId })
+        })
+      ).status
+    ).toBe(200)
     expect(await (await fetch(`${baseUrl}/_api/agents/skills`, { headers: { cookie } })).json()).toEqual({ skills: [] })
   })
   it('serves intact unexpired screenshot artifacts only to their owner', async () => {
@@ -380,18 +760,20 @@ describe('ordinary-origin agent session API', () => {
   it('keeps foldered conversations, resets retention on exit, and preserves individual deletion', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const inactiveSince = new Date('2026-05-01T00:00:00.000Z')
-    const created = await (await fetch(`${baseUrl}/_api/agents/sessions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
-    })).json() as { session: { id: string; version: number } }
+    const created = (await (
+      await fetch(`${baseUrl}/_api/agents/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+      })
+    ).json()) as { session: { id: string; version: number } }
     const folderResponse = await fetch(`${baseUrl}/_api/agents/conversation-folders`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ name: '  Durable   work  ' })
     })
     expect(folderResponse.status).toBe(201)
-    const folder = (await folderResponse.json() as { folder: { id: string; name: string; version: number } }).folder
+    const folder = ((await folderResponse.json()) as { folder: { id: string; name: string; version: number } }).folder
     expect(folder).toMatchObject({ name: 'Durable work', version: 1 })
 
     ownerId = 8
@@ -446,14 +828,19 @@ describe('ordinary-origin agent session API', () => {
     expect(await createdMemory.json()).toMatchObject({ changed: true, target: 'user', entries: ['Prefers concise, evidence-first answers.'], limit: 1_375 })
 
     ownerId = 8
-    expect(await (await fetch(`${baseUrl}/_api/agents/memories`, { headers: { cookie } })).json()).toMatchObject({ user: { entries: [] }, agent: { entries: [] } })
+    expect(await (await fetch(`${baseUrl}/_api/agents/memories`, { headers: { cookie } })).json()).toMatchObject({
+      user: { entries: [] },
+      agent: { entries: [] }
+    })
     ownerId = 7
 
-    const createdSession = await (await fetch(`${baseUrl}/_api/agents/sessions`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ retention: 'saved', providerProfileId: null })
-    })).json() as { session: { id: string } }
+    const createdSession = (await (
+      await fetch(`${baseUrl}/_api/agents/sessions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+      })
+    ).json()) as { session: { id: string } }
     expect(JSON.parse(String((await db('agentSessions').where({ id: createdSession.session.id }).first('memorySnapshot'))?.memorySnapshot))).toEqual({
       agent: [],
       user: ['Prefers concise, evidence-first answers.']
@@ -464,7 +851,6 @@ describe('ordinary-origin agent session API', () => {
     expect((await db('agentMemories').where({ ownerId: 7 })).map(row => row.content)).toEqual(['Prefers concise, evidence-first answers.'])
   })
 })
-
 
 describe('ordinary-origin agent API routing', () => {
   let db: Knex
@@ -485,40 +871,42 @@ describe('ordinary-origin agent API routing', () => {
       Reflect.set(req.session, 'agentCsrfToken', csrf)
       res.sendStatus(204)
     })
-    app.use(createAgentsHostController({
-      auth: {
-        authenticate(req, _res, next) {
-          ordinaryAuthCalls += 1
-          req.authContext = { kind: 'user', userId: 7, ownershipUserId: 7, principal: { id: 7 } }
-          req.user = { id: 7, groups: [], permissions } as Express.User
-          next()
-        },
-      },
-      config: {
-        host: 'https://wiki.example.test',
-        sessionSecret: 'embedded-profile-resolution-secret',
-        agents: {
-          enabled: true,
-          provider: { enabled: false },
-          retention: { temporarySessionHours: 24 },
-          skills: { enabled: false, namespace: 'system/agent-skills' },
-          browser: { enabled: false },
-          mcp: { enabled: false },
-          proposals: { enabled: false },
-          writes: {
-            enabled: false,
-            create: { enabled: false },
-            patch: { enabled: false },
-            move: { enabled: false },
-            restore: { enabled: false },
-            delete: { enabled: false }
+    app.use(
+      createAgentsHostController({
+        auth: {
+          authenticate(req, _res, next) {
+            ordinaryAuthCalls += 1
+            req.authContext = { kind: 'user', userId: 7, ownershipUserId: 7, principal: { id: 7 } }
+            req.user = { id: 7, groups: [], permissions } as Express.User
+            next()
           }
+        },
+        config: {
+          host: 'https://wiki.example.test',
+          sessionSecret: 'embedded-profile-resolution-secret',
+          agents: {
+            enabled: true,
+            provider: { enabled: false },
+            retention: { temporarySessionHours: 24 },
+            skills: { enabled: false, namespace: 'system/agent-skills' },
+            browser: { enabled: false },
+            mcp: { enabled: false },
+            proposals: { enabled: false },
+            writes: {
+              enabled: false,
+              create: { enabled: false },
+              patch: { enabled: false },
+              move: { enabled: false },
+              restore: { enabled: false },
+              delete: { enabled: false }
+            }
+          }
+        },
+        models: {
+          knex: db
         }
-      },
-      models: {
-        knex: db
-      }
-    }))
+      })
+    )
     app.get('/ordinary', (_req, res) => res.sendStatus(204))
     server = app.listen(0, '127.0.0.1')
     const listening = Promise.withResolvers<void>()
@@ -532,7 +920,7 @@ describe('ordinary-origin agent API routing', () => {
 
   afterAll(async () => {
     const closed = Promise.withResolvers<void>()
-    server.close(error => error ? closed.reject(error) : closed.resolve())
+    server.close(error => (error ? closed.reject(error) : closed.resolve()))
     await closed.promise
     await db.destroy()
   })

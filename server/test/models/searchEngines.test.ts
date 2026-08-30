@@ -33,9 +33,9 @@ beforeEach(async () => {
   data = { searchEngine: previousEngine }
   warn = vi.fn()
   const enabledEngine = { key: 'postgres', isEnabled: true, config: { dictLanguage: 'english' } }
-  class SearchEngineStore {
-    static query = vi.fn(() => ({ findOne: vi.fn(async () => enabledEngine) }))
-  }
+  const SearchEngineStore = Object.assign(() => undefined, {
+    query: vi.fn(() => ({ findOne: vi.fn(async () => enabledEngine) }))
+  })
   const knex = vi.fn()
 
   wikiGlobal.WIKI = {

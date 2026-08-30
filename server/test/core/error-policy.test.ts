@@ -91,6 +91,18 @@ describe('server unexpected-error policy', () => {
     expect(logger.error).toHaveBeenCalledWith(cause)
   })
 
+  it('still masks unexpected GraphQL errors when error logging is unavailable', () => {
+    global.WIKI = { logger: {} }
+    const cause = new Error('database password is secret')
+
+    expect(graphHelper.generateError(cause, false)).toEqual({
+      succeeded: false,
+      errorCode: 1,
+      slug: 'unexpected',
+      message: 'An unexpected error occurred.'
+    })
+  })
+
   it('keeps classified GraphQL validation and conflict contracts public without logging', () => {
     const validation = Object.assign(new Error('The input is invalid.'), {
       code: 1012,

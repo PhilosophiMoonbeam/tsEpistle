@@ -31,7 +31,7 @@ describe('admin-pages-visualize loading facade migration guard', () => {
     expect(stopLoadingCalls).toHaveLength(1)
   })
 
-  test('only the latest locale request presents errors or completes refresh loading', async () => {
+  test('only the latest locale request presents errors while every request releases refresh loading', async () => {
     const pendingRequests = new Map()
     const fetchPageLinks = (_fetch, locale) =>
       new Promise((resolve, reject) => {
@@ -75,6 +75,7 @@ describe('admin-pages-visualize loading facade migration guard', () => {
     expect(loadingEvents).toEqual([
       ['start', 'admin-pages-refresh'],
       ['start', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh'],
       ['stop', 'admin-pages-refresh']
     ])
   })
