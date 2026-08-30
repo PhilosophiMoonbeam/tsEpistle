@@ -74,6 +74,7 @@ export const useAgentsStore = defineStore('agents', {
       const sessionListVersion = this.sessionListVersion + 1
       this.workspaceVersion = workspaceVersion
       this.sessionListVersion = sessionListVersion
+      this.csrfToken = csrfToken
       this.routeSync = options.routeSync ?? true
       this.contextPage = options.currentPage ?? null
       this.loading = true

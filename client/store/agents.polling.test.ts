@@ -165,6 +165,49 @@ describe('Agent chat refresh fallback', () => {
   })
 })
 
+describe('Agent store initialization', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('stores the supplied CSRF token before creating the fallback session', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const created = threadForSession('00000000-0000-4000-8000-000000000060', '00000000-0000-4000-8000-000000000061')
+    let sessionListRequest = 0
+    const json = { headers: { 'content-type': 'application/json' } }
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === '/_api/agents/sessions' && method === 'GET') {
+        sessionListRequest += 1
+        const sessions = sessionListRequest === 1 ? [] : [summaryForThread(created)]
+        return Promise.resolve(new Response(JSON.stringify({ sessions }), { status: 200, ...json }))
+      }
+      if (path === '/_api/agents/conversation-folders' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify({ folders: [] }), { status: 200, ...json }))
+      }
+      if (path === '/_api/agents/profiles' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify({ profiles: [] }), { status: 200, ...json }))
+      }
+      if (path === '/_api/agents/skills' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify({ skills: [] }), { status: 200, ...json }))
+      }
+      if (path === '/_api/agents/sessions' && method === 'POST') {
+        return Promise.resolve(new Response(JSON.stringify(created), { status: 201, ...json }))
+      }
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+    store.connectCurrentRun = vi.fn()
+
+    await store.initialize('initialized-csrf', { routeSync: false })
+
+    const createCall = fetcher.mock.calls.find(call => call[0] === '/_api/agents/sessions' && call[1]?.method === 'POST')
+    expect(store.csrfToken).toBe('initialized-csrf')
+    expect(new Headers(createCall?.[1]?.headers).get('x-wiki-csrf')).toBe('initialized-csrf')
+  })
+})
+
 describe('Agent session selection', () => {
   afterEach(() => {
     vi.restoreAllMocks()
