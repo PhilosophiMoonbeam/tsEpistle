@@ -46,6 +46,7 @@ interface AccessUser extends Express.User {
 
 interface StoredUser extends AccessUser {
   id: number
+  isActive: boolean
   email: string
   name: string
   pictureUrl: string | null
@@ -204,6 +205,7 @@ interface EffectivePermissions {
 
 interface AuthService {
   activateStrategies(): Promise<void>
+  authenticateUserToken(token: string): Promise<StoredUser | null>
   authenticate(req: Request, res: Response, next: NextFunction): void
   checkAccess(user: AccessUser | undefined, permissions?: string[], page?: PageContext | false): boolean
   checkAssignUserToGroupAccess(requester: AccessUser, groupIds?: number[]): Promise<boolean>
@@ -302,6 +304,34 @@ const isDedicatedMcpRequest = (req: Request): boolean =>
 const isRevokeRequest = (value: unknown): value is RevokeRequest =>
   isRecord(value) && typeof value.id === 'number' && (value.kind === undefined || typeof value.kind === 'string')
 const createAuthenticationError = (message: string, status: number, code: string): AuthenticationError => Object.assign(new Error(message), { code, status })
+const loadCurrentUser = (wiki: WikiContext, id: unknown): UserLookup =>
+  wiki.models.users
+    .query()
+    .findById(id)
+    .withGraphFetched('groups')
+    .modifyGraph('groups', builder => {
+      builder.select('groups.id', 'permissions')
+    })
+const verifyUserToken = (wiki: WikiContext, token: string): JwtUser | null => {
+  try {
+    const user = jwt.verify(token, wiki.config.certs.public, {
+      audience: wiki.config.auth.audience,
+      issuer: 'urn:wiki.js',
+      algorithms: ['RS256']
+    })
+    return isJwtUser(user) ? user : null
+  } catch {
+    return null
+  }
+}
+const userTokenNeedsRevalidation = (user: JwtUser, revocationList: NodeCache, startedAt: DateTime): boolean => {
+  const userRevalidation = revocationList.get<number>(`u${String(user.id)}`)
+  if ((userRevalidation !== undefined && user.iat < userRevalidation) || DateTime.fromSeconds(user.iat) <= startedAt) return true
+  return user.groups.some(groupId => {
+    const groupRevalidation = revocationList.get<number>(`g${String(groupId)}`)
+    return groupRevalidation !== undefined && user.iat < groupRevalidation
+  })
+}
 
 const auth: AuthService = {
   strategies: {},
@@ -316,13 +346,7 @@ const auth: AuthService = {
     passport.deserializeUser<unknown>(async (id, done) => {
       try {
         const wiki = getWiki()
-        const user = await wiki.models.users
-          .query()
-          .findById(id)
-          .withGraphFetched('groups')
-          .modifyGraph('groups', builder => {
-            builder.select('groups.id', 'permissions')
-          })
+        const user = await loadCurrentUser(wiki, id)
         done(user ? null : new Error(wiki.lang.t('auth:errors:usernotfound')), user ?? null)
       } catch (error: unknown) {
         done(asError(error), null)
@@ -399,19 +423,8 @@ const auth: AuthService = {
         mustRevalidate = true
       }
 
-      if (isJwtUser(user) && !mustRevalidate) {
-        const userRevalidation = this.revocationList.get<number>(`u${String(user.id)}`)
-        if ((userRevalidation !== undefined && user.iat < userRevalidation) || DateTime.fromSeconds(user.iat) <= wiki.startedAt) {
-          mustRevalidate = true
-        } else {
-          for (const groupId of user.groups) {
-            const groupRevalidation = this.revocationList.get<number>(`g${String(groupId)}`)
-            if (groupRevalidation !== undefined && user.iat < groupRevalidation) {
-              mustRevalidate = true
-              break
-            }
-          }
-        }
+      if (isJwtUser(user) && !mustRevalidate && userTokenNeedsRevalidation(user, this.revocationList, wiki.startedAt)) {
+        mustRevalidate = true
       }
 
       if (mustRevalidate) {
@@ -499,6 +512,24 @@ const auth: AuthService = {
       req.authContext = { kind: 'user', userId: user.id, ownershipUserId: user.id, principal: user }
       req.logIn(user, { session: false }, loginError => (loginError ? next(loginError) : next()))
     })(req, res, next)
+  },
+  async authenticateUserToken(token) {
+    const wiki = getWiki()
+    const claims = verifyUserToken(wiki, token)
+    if (
+      !claims ||
+      !Number.isSafeInteger(claims.id) ||
+      claims.id <= 0 ||
+      claims.id === 2 ||
+      userTokenNeedsRevalidation(claims, this.revocationList, wiki.startedAt)
+    )
+      return null
+
+    const user = await loadCurrentUser(wiki, claims.id)
+    if (!user?.isActive) return null
+    user.permissions = user.getGlobalPermissions?.() ?? []
+    user.groups = user.getGroups?.() ?? []
+    return user
   },
 
   checkAccess(user, permissions = [], page = false) {

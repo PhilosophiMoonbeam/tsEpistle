@@ -55,6 +55,21 @@ const threadForSession = (sessionId: string, runId: string): AgentThreadState =>
   }
 }
 
+const summaryForThread = (thread: AgentThreadState) => ({
+  id: thread.session.id,
+  title: thread.session.title,
+  retention: thread.session.retention,
+  folderId: thread.session.folderId,
+  executionMode: thread.session.executionMode,
+  version: thread.session.version,
+  providerProfileId: thread.session.providerProfileId,
+  createdAt: thread.session.createdAt,
+  updatedAt: thread.session.updatedAt,
+  lastActivityAt: thread.session.lastActivityAt,
+  expiresAt: thread.session.expiresAt,
+  deletedAt: null
+})
+
 const deferred = <T>() => {
   let resolve!: (value: T) => void
   const promise = new Promise<T>(complete => {
@@ -266,6 +281,78 @@ describe('Agent session selection', () => {
     expect(store.thread).toBe(displayedThread)
     expect(store.source).toBeNull()
     expect(connectCurrentRun).not.toHaveBeenCalled()
+  })
+})
+
+describe('Agent session mutation transitions', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('lets a session creation commit after a newer selection and reconciles it without replacing the selection', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    store.routeSync = false
+    store.thread = activeThread()
+    const created = threadForSession('00000000-0000-4000-8000-000000000040', '00000000-0000-4000-8000-000000000041')
+    const selected = threadForSession('00000000-0000-4000-8000-000000000050', '00000000-0000-4000-8000-000000000051')
+    const pendingCreation = deferred<Response>()
+    const json = { headers: { 'content-type': 'application/json' } }
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === '/_api/agents/sessions' && method === 'POST') return pendingCreation.promise
+      if (path === `/_api/agents/sessions/${selected.session.id}` && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify(selected), { status: 200, ...json }))
+      }
+      if (path === '/_api/agents/sessions' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify({ sessions: [summaryForThread(created), summaryForThread(selected)] }), { status: 200, ...json }))
+      }
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+    store.connectCurrentRun = vi.fn()
+
+    const creating = store.newSession('saved')
+    const createCall = fetcher.mock.calls.find(call => call[0] === '/_api/agents/sessions' && call[1]?.method === 'POST')
+    expect(createCall?.[1]?.signal).toBeUndefined()
+
+    expect(await store.openSession(selected.session.id)).toBe(true)
+    pendingCreation.resolve(new Response(JSON.stringify(created), { status: 201, ...json }))
+    await creating
+
+    expect(store.thread?.session.id).toBe(selected.session.id)
+    expect(store.sessions.map(session => session.id)).toEqual([created.session.id, selected.session.id])
+  })
+
+  it('lets deletion commit after workspace close, drops the deleted thread, and does not create a stale replacement', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    store.routeSync = false
+    const deleted = activeThread()
+    store.thread = deleted
+    store.sessions = [summaryForThread(deleted)]
+    const pendingDeletion = deferred<Response>()
+    const json = { headers: { 'content-type': 'application/json' } }
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${deleted.session.id}` && method === 'DELETE') return pendingDeletion.promise
+      if (path === '/_api/agents/sessions' && method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), { status: 200, ...json }))
+      }
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    const removing = store.removeSession(deleted.session.id)
+    store.closeWorkspace()
+    pendingDeletion.resolve(new Response(null, { status: 204 }))
+    await removing
+
+    expect(store.thread).toBeNull()
+    expect(store.sessions).toEqual([])
+    expect(fetcher.mock.calls.some(call => call[0] === '/_api/agents/sessions' && call[1]?.method === 'POST')).toBe(false)
   })
 })
 

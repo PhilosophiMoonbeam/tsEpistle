@@ -29,14 +29,6 @@ interface PageReference {
   path: string
 }
 
-interface StoredPageLink extends PageReference {
-  id: number
-}
-
-interface PageLinkInsert extends PageReference {
-  pageId: number
-}
-
 interface ParsedPagePath {
   locale: string
   path: string
@@ -48,7 +40,6 @@ interface RendererPage {
   path: string
   visibility: PageVisibility
   ownerId: number | null
-  $relatedQuery(relation: 'links'): Promise<unknown>
 }
 
 interface RendererContext {
@@ -74,20 +65,9 @@ function isPageReference(value: unknown): value is PageReference {
   )
 }
 
-function isStoredPageLink(value: unknown): value is StoredPageLink {
-  return isPageReference(value) && 'id' in value && typeof value.id === 'number'
-}
-
 function requirePageReferences(value: unknown): PageReference[] {
   if (!Array.isArray(value) || !value.every(isPageReference)) {
     throw new TypeError('Page reference query returned invalid data')
-  }
-  return value
-}
-
-function requireStoredPageLinks(value: unknown): StoredPageLink[] {
-  if (!Array.isArray(value) || !value.every(isStoredPageLink)) {
-    throw new TypeError('Related page links query returned invalid data')
   }
   return value
 }
@@ -108,22 +88,6 @@ async function invokeRenderer(moduleValue: unknown, input: CheerioAPI | string, 
     throw new TypeError('Renderer module does not export an init function')
   }
   return await Reflect.apply(init, renderer, [input, config])
-}
-
-async function insertPageLinks(rows: PageLinkInsert[]): Promise<void> {
-  const query: unknown = wiki.models.pageLinks.query()
-  if (typeof query !== 'object' || query === null || !('insert' in query) || typeof query.insert !== 'function') {
-    throw new TypeError('Page links query does not support inserts')
-  }
-  const insertQuery: unknown = Reflect.apply(query.insert, query, [rows])
-  if (typeof insertQuery !== 'object' || insertQuery === null || !('onConflict' in insertQuery) || typeof insertQuery.onConflict !== 'function') {
-    throw new TypeError('Page links query does not support conflict handling')
-  }
-  const conflictQuery: unknown = Reflect.apply(insertQuery.onConflict, insertQuery, [['pageId', 'localeCode', 'path']])
-  if (typeof conflictQuery !== 'object' || conflictQuery === null || !('ignore' in conflictQuery) || typeof conflictQuery.ignore !== 'function') {
-    throw new TypeError('Page links query does not support conflict ignoring')
-  }
-  await Reflect.apply(conflictQuery.ignore, conflictQuery, [])
 }
 
 function requireBodyHtml($: CheerioAPI): string {
@@ -261,8 +225,6 @@ const plugin = {
     // Detect internal link states
     // --------------------------------
 
-    const pastLinks = requireStoredPageLinks(await this.page.$relatedQuery('links'))
-
     if (internalRefs.length > 0) {
       // -> Find matching pages
       const pageQuery = wiki.models.pages
@@ -301,40 +263,6 @@ const plugin = {
           $(elm).addClass(`is-invalid-page`)
         }
       })
-
-      // -> Add missing links
-      const missingLinks = _.differenceWith(internalRefs, pastLinks, (nLink, pLink) => {
-        return nLink.localeCode === pLink.localeCode && nLink.path === pLink.path
-      })
-      if (missingLinks.length > 0) {
-        if (wiki.config.db.type === 'postgres') {
-          await insertPageLinks(
-            missingLinks.map(lnk => ({
-              pageId: this.page.id,
-              path: lnk.path,
-              localeCode: lnk.localeCode
-            }))
-          )
-        } else {
-          for (const lnk of missingLinks) {
-            await wiki.models.pageLinks.query().insert({
-              pageId: this.page.id,
-              path: lnk.path,
-              localeCode: lnk.localeCode
-            })
-          }
-        }
-      }
-    }
-
-    // -> Remove outdated links
-    if (pastLinks) {
-      const outdatedLinks = _.differenceWith(pastLinks, internalRefs, (nLink, pLink) => {
-        return nLink.localeCode === pLink.localeCode && nLink.path === pLink.path
-      })
-      if (outdatedLinks.length > 0) {
-        await wiki.models.pageLinks.query().delete().whereIn('id', _.map(outdatedLinks, 'id'))
-      }
     }
 
     // --------------------------------

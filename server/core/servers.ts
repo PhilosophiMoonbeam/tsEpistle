@@ -9,7 +9,6 @@ import { useServer } from 'graphql-ws/use/ws'
 import type { Disposable } from 'graphql-ws'
 import { WebSocketServer } from 'ws'
 import _ from 'lodash'
-import jwt, { type JwtPayload } from 'jsonwebtoken'
 import { execute as graphqlExecute, subscribe as graphqlSubscribe } from 'graphql'
 
 import { createGraphQLArtifacts, type GraphRuntime } from '../graph/index.ts'
@@ -39,15 +38,27 @@ export interface ServerWiki extends GraphRuntime {
   app: Express
   collaboration: { install(server: NodeServer): void; dispose(server?: NodeServer | null): Promise<void> }
   config: ServerConfig
+  auth: SubscriptionAuthService
   logger: GraphRuntime['logger'] & Record<'debug' | 'error' | 'info' | 'warn', (...values: unknown[]) => void>
 }
 
-interface AuthClaims extends JwtPayload {
-  permissions: string[]
+interface SubscriptionPrincipal extends Record<string, unknown> {
+  permissions?: string[]
+}
+
+interface SubscriptionAuthentication {
+  token: string
+  user: SubscriptionPrincipal
+}
+
+interface SubscriptionAuthService {
+  authenticateUserToken(token: string): Promise<SubscriptionPrincipal | null>
+  checkAccess(user: SubscriptionPrincipal | undefined, permissions?: string[]): boolean
 }
 
 interface SubscriptionExtra extends Record<PropertyKey, unknown> {
-  user?: AuthClaims
+  token?: string
+  user?: SubscriptionPrincipal
 }
 
 type NodeServer = http.Server | https.Server
@@ -84,7 +95,7 @@ interface ServersCore {
   startHTTPS(): Promise<void>
   startGraphQL(): Promise<void>
   installGraphQLSubscriptions(server: NodeServer): void
-  authenticateGraphQLSubscription(connectionParams: unknown, request: http.IncomingMessage): AuthClaims
+  authenticateGraphQLSubscription(connectionParams: unknown, request: http.IncomingMessage): Promise<SubscriptionAuthentication>
   disposeGraphQLSubscriptions(server?: NodeServer | null): Promise<void>
   closeConnections(mode?: 'all' | 'http' | 'https'): void
   stopServers(): Promise<void>
@@ -145,10 +156,6 @@ async function closeServer(server: NodeServer): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.close(error => (error ? reject(error) : resolve()))
   })
-}
-
-function isAuthClaims(value: string | JwtPayload): value is AuthClaims {
-  return typeof value !== 'string' && Array.isArray(value.permissions) && value.permissions.every(permission => typeof permission === 'string')
 }
 
 export default function createServersCore(wiki: ServerWiki): ServersCore {
@@ -274,16 +281,20 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
             const root = args.rootValue as ExecutionRoot
             return root.subscribe(args)
           },
-          onConnect: context => {
-            context.extra.user = this.authenticateGraphQLSubscription(context.connectionParams, context.extra.request)
+          onConnect: async context => {
+            const authentication = await this.authenticateGraphQLSubscription(context.connectionParams, context.extra.request)
+            context.extra.token = authentication.token
+            context.extra.user = authentication.user
           },
           onSubscribe: async (context, _id, params) => {
+            const authentication = await this.authenticateGraphQLSubscription({ token: context.extra.token }, context.extra.request)
+            context.extra.user = authentication.user
             const request = context.extra.request
             const req = {
               headers: request.headers,
               ip: request.socket?.remoteAddress,
               socket: request.socket,
-              user: context.extra.user
+              user: authentication.user
             }
             const {
               schema: envelopedSchema,
@@ -307,6 +318,10 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
             }
             const errors = validate(args.schema, args.document)
             return errors.length > 0 ? errors : args
+          },
+          onNext: async context => {
+            const authentication = await this.authenticateGraphQLSubscription({ token: context.extra.token }, context.extra.request)
+            context.extra.user = authentication.user
           }
         },
         wsServer
@@ -315,7 +330,7 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
       graph.subscriptions.push({ cleanup, server, upgradeListener })
     },
 
-    authenticateGraphQLSubscription(connectionParams: unknown, request: http.IncomingMessage): AuthClaims {
+    async authenticateGraphQLSubscription(connectionParams: unknown, request: http.IncomingMessage): Promise<SubscriptionAuthentication> {
       let token =
         typeof connectionParams === 'object' && connectionParams !== null && 'token' in connectionParams && typeof connectionParams.token === 'string'
           ? connectionParams.token
@@ -324,20 +339,12 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
         const cookieHeader = request.headers.cookie || ''
         token = cookieHeader ? parseCookie(cookieHeader).jwt || null : null
       }
-      if (!token) {
-        throw new Error('Unauthorized')
-      }
+      if (!token) throw new Error('Unauthorized')
 
       try {
-        const user = jwt.verify(token, wiki.config.certs.public, {
-          audience: wiki.config.auth.audience,
-          issuer: 'urn:wiki.js',
-          algorithms: ['RS256']
-        })
-        if (!isAuthClaims(user) || !user.permissions.includes('manage:system')) {
-          throw new Error('Forbidden')
-        }
-        return user
+        const user = await wiki.auth.authenticateUserToken(token)
+        if (!user || !wiki.auth.checkAccess(user, ['manage:system'])) throw new Error('Unauthorized')
+        return { token, user }
       } catch {
         throw new Error('Unauthorized')
       }

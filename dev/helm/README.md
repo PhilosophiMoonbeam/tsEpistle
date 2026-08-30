@@ -86,6 +86,8 @@ Create the Secret before installing the release. `externalPostgresql.databaseURL
 
 tsFranki runs database migrations during startup, so the Deployment intentionally uses the `Recreate` strategy to prevent old and new application versions from sharing one database during an upgrade. Kubernetes stops the old application pods before starting the new version; this avoids mixed-version operation at the cost of application downtime while the replacement pod migrates and becomes ready. Plan every upgrade as a maintenance window.
 
+The Helm lifecycle CI installs the supported previous release from an explicit `repository:tag@sha256:digest` reference before upgrading to the candidate. The smoke gate refuses a missing, mutable, unresolved, or same-image previous release and records each distinct Docker image revision in its Helm revision values before testing upgrade and rollback. Keep this input pinned to an immutable application release that remains inside the supported upgrade window; never create the initial revision by retagging the candidate.
+
 ## Backup verification
 
 Back up PostgreSQL in custom format and prove that the archive can restore before changing the application:

@@ -15,14 +15,26 @@ type FixtureManifest = {
   packageManager: string
   scripts: Record<string, string>
 }
+type ThreatModelReview = {
+  externalReviewer?: string
+  openFindings?: string[]
+  resolvedFindings?: string[]
+}
 
-function threatModel(revision: string, commands = requiredCommands, extraEvidence = ''): string {
+function threatModel(revision: string, commands = requiredCommands, extraEvidence = '', review: ThreatModelReview = {}): string {
+  const externalReviewer = review.externalReviewer ?? 'Unassigned — blocks the first external release'
+  const openFindings = review.openFindings ?? [
+    '| SEC-EXT-001 — independent security review not yet performed | Release blocker | Maintainers | Freeze revision, record reviewer/scope, resolve findings, retain retest evidence. |',
+    '| SEC-ADAPTER-001 — deployment integrations require operator review | Medium | Operator | Complete enabled integration canaries. |'
+  ]
+  const resolvedFindings = review.resolvedFindings ?? ['| SEC-AUTH-001 — browser security journeys | Resolved 2026-08-15. Focused browser journeys pass. |']
   return `# Test threat model
 
 ## Status and review contract
 
 | Field | Value |
 | --- | --- |
+| External reviewer | ${externalReviewer} |
 | Covered source | \`${revision}\` |
 
 | Evidence | Paths |
@@ -35,9 +47,17 @@ function threatModel(revision: string, commands = requiredCommands, extraEvidenc
 ${commands.join('\n')}
 \`\`\`
 
-## Findings
+## Open findings and accepted limitations
 
-None.
+| Finding | Severity | Owner | Required disposition |
+| --- | --- | --- | --- |
+${openFindings.join('\n')}
+
+## Resolved findings
+
+| Finding | Resolution evidence |
+| --- | --- |
+${resolvedFindings.join('\n')}
 `
 }
 
@@ -100,6 +120,12 @@ describe('threat-model contract parser', () => {
     expect(contract.reviewedRevision).toBe(fullRevision)
     expect(contract.commands).toEqual(requiredCommands)
     expect(contract.citedPaths).toEqual(['package.json', 'bun.lock', 'server/core/auth.ts', 'server/scripts/check-threat-model.ts'])
+    expect(contract.externalReviewer).toBe('Unassigned — blocks the first external release')
+    expect(contract.openFindings).toEqual([
+      { id: 'SEC-EXT-001', severity: 'Release blocker' },
+      { id: 'SEC-ADAPTER-001', severity: 'Medium' }
+    ])
+    expect(contract.resolvedFindingIds).toEqual(['SEC-AUTH-001'])
   })
 
   it.each(['main', `${fullRevision}..HEAD`, fullRevision.slice(0, 12)])('rejects branch, range, or abbreviated coverage %s', coveredSource => {
@@ -109,6 +135,19 @@ describe('threat-model contract parser', () => {
   it('rejects stale lock evidence and omitted canonical commands', () => {
     expect(() => parseThreatModel(threatModel(fullRevision).replace('bun.lock', 'pnpm-lock.yaml'))).toThrow('Bun and bun.lock exclusively')
     expect(() => parseThreatModel(threatModel(fullRevision, requiredCommands.slice(1)))).toThrow('bun run dependencies:check')
+  })
+
+  it('rejects missing review declarations and contradictory finding dispositions', () => {
+    expect(() => parseThreatModel(threatModel(fullRevision).replace('| External reviewer | Unassigned — blocks the first external release |\n', ''))).toThrow(
+      'External reviewer'
+    )
+    expect(() =>
+      parseThreatModel(
+        threatModel(fullRevision, requiredCommands, '', {
+          resolvedFindings: ['| SEC-EXT-001 — independent security review not yet performed | Resolved after independent retest. |']
+        })
+      )
+    ).toThrow('exactly one open or resolved disposition: SEC-EXT-001')
   })
 })
 
@@ -166,5 +205,59 @@ describe('threat-model repository gate', () => {
     const failures = await checkThreatModel(wrongManager.rootPath)
     expect(failures).toContain('packageManager must select a versioned Bun release')
     expect(failures).toContain('Security command prefix does not match packageManager: bun run test:security')
+  })
+
+  it('keeps ordinary checks usable while strict release state enforces independent review and blocker resolution', async () => {
+    const unassigned = createRepository()
+    write(
+      unassigned.rootPath,
+      'docs/security/threat-model.md',
+      threatModel(unassigned.reviewedRevision, requiredCommands, '', {
+        openFindings: ['| SEC-ADAPTER-001 — deployment integrations require operator review | Medium | Operator | Complete enabled integration canaries. |'],
+        resolvedFindings: ['| SEC-EXT-001 — independent security review not yet performed | Resolved after independent retest. |']
+      })
+    )
+    commit(unassigned.rootPath, 'record completed findings without assigning reviewer')
+    expect(await checkThreatModel(unassigned.rootPath)).toEqual([])
+    expect(await checkThreatModel(unassigned.rootPath, { release: true })).toContain('External reviewer is unassigned; release publication is blocked')
+
+    const blocked = createRepository()
+    write(
+      blocked.rootPath,
+      'docs/security/threat-model.md',
+      threatModel(blocked.reviewedRevision, requiredCommands, '', { externalReviewer: 'Independent Security LLC, 2026-08-20 through 2026-08-29' })
+    )
+    commit(blocked.rootPath, 'assign external reviewer with blocker open')
+    expect(await checkThreatModel(blocked.rootPath)).toEqual([])
+    expect(await checkThreatModel(blocked.rootPath, { release: true })).toContain('Unresolved release blockers: SEC-EXT-001')
+
+    const releasable = createRepository()
+    write(
+      releasable.rootPath,
+      'docs/security/threat-model.md',
+      threatModel(releasable.reviewedRevision, requiredCommands, '', {
+        externalReviewer: 'Independent Security LLC, 2026-08-20 through 2026-08-29',
+        openFindings: ['| SEC-ADAPTER-001 — deployment integrations require operator review | Medium | Operator | Complete enabled integration canaries. |'],
+        resolvedFindings: [
+          '| SEC-EXT-001 — independent security review not yet performed | Resolved 2026-08-29 after fix verification and independent retest. |'
+        ]
+      })
+    )
+    commit(releasable.rootPath, 'record independent review and resolve release blocker')
+    expect(await checkThreatModel(releasable.rootPath, { release: true })).toEqual([])
+  })
+})
+
+describe('release workflow threat-model boundary', () => {
+  it('runs strict release-state checks immediately before preview and release publication', () => {
+    const workflow = readFileSync(path.join(process.cwd(), '.github/workflows/build.yml'), 'utf8')
+    expect(workflow.match(/run: bun server\/scripts\/check-threat-model\.ts --release/g)).toHaveLength(2)
+    for (const publication of ['Preview', 'Release']) {
+      expect(workflow).toMatch(
+        new RegExp(
+          `- name: Enforce Threat Model Release State\\n\\s+run: bun server/scripts/check-threat-model\\.ts --release\\n\\n\\s+- name: Verify Descriptors and Push ${publication} Manifests`
+        )
+      )
+    }
   })
 })

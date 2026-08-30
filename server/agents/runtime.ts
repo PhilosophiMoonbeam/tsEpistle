@@ -106,13 +106,22 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
   #nextId = 1
   #tail = Promise.resolve()
 
-  constructor(knex: Knex, claim: AgentRunClaim, maximumTokens?: number, maximumToolCalls?: number) {
+  constructor(
+    knex: Knex,
+    claim: AgentRunClaim,
+    maximumTokens?: number,
+    maximumToolCalls?: number,
+    initialUsage: Readonly<AgentUsageTotals> = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
+  ) {
     this.#knex = knex
     this.#runId = claim.id
     this.#ownerId = claim.ownerId
     this.#providerProfileVersionId = claim.providerProfileVersionId
     this.#maximumTokens = maximumTokens
     this.#maximumToolCalls = maximumToolCalls
+    this.#consumedInputTokens = nonNegativeUsage(initialUsage.inputTokens, 'Persisted provider input tokens')
+    this.#consumedOutputTokens = nonNegativeUsage(initialUsage.outputTokens, 'Persisted provider output tokens')
+    this.#consumedCostMicros = nonNegativeUsage(initialUsage.costMicros, 'Persisted provider cost')
   }
 
   async #initialize(): Promise<void> {
@@ -330,6 +339,13 @@ export interface AgentPriorRunActivity {
   readonly tools: readonly AgentPriorToolActivity[]
 }
 
+export interface AgentRecoveredAction {
+  readonly actionCallId: string
+  readonly actionName: AgentActionName
+  readonly actionInput: unknown
+  readonly output: unknown
+}
+
 export interface AgentEngineRequest {
   readonly run: AgentRunClaim
   readonly purpose?: 'root' | 'planner' | 'subagent'
@@ -349,6 +365,7 @@ export interface AgentEngineRequest {
   readonly skills: readonly AgentEngineSkill[]
   readonly dispatchBudget?: AgentDispatchBudget
   readonly priorActivity?: readonly AgentPriorRunActivity[]
+  readonly recoveredAction?: AgentRecoveredAction
   readonly signal: AbortSignal
 }
 
@@ -687,10 +704,6 @@ export class AgentProductRuntime {
     }
   }
 
-  #dispatchBudget(claim: AgentRunClaim, maximumTokens?: number, maximumToolCalls?: number): AgentRunDispatchBudget {
-    return new AgentRunDispatchBudget(this.#knex, claim, maximumTokens, maximumToolCalls)
-  }
-
   async submit(input: SubmitAgentMessageInput): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> {
     const resolved = await this.#resolver.resolve({ ownerId: input.ownerId, sessionId: input.sessionId, profileResolutionToken: input.profileResolutionToken })
     this.#assertResolvedAdmission(resolved)
@@ -904,9 +917,12 @@ export class AgentProductRuntime {
     }
   }
 
-  async #orchestrationTelemetry(
-    claim: AgentRunClaim
-  ): Promise<{ readonly usage: AgentUsageTotals; readonly modelUsage: AgentUsageTotals; readonly budget: AgentChildBudgetUsage }> {
+  async #orchestrationTelemetry(claim: AgentRunClaim): Promise<{
+    readonly usage: AgentUsageTotals
+    readonly modelUsage: AgentUsageTotals
+    readonly modelTurns: number
+    readonly budget: AgentChildBudgetUsage
+  }> {
     const rows = (await this.#knex('agentEvents')
       .where({ runId: claim.id })
       .whereIn('type', ['task.planCreated', 'model.turn'])
@@ -916,6 +932,7 @@ export class AgentProductRuntime {
     const modelUsage: AgentUsageTotals = { inputTokens: 0, outputTokens: 0, costMicros: 0 }
     let consumedOutputCharacters = 0
     let consumedTokens = 0
+    let modelTurns = 0
     for (const row of rows) {
       if (sha256(row.data) !== row.dataSha256) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Stored orchestration event hash is invalid', 500)
       let data: unknown
@@ -936,6 +953,7 @@ export class AgentProductRuntime {
         continue
       }
       if (typeof Reflect.get(data, 'taskId') !== 'string' || typeof Reflect.get(data, 'subagentRunId') !== 'string') {
+        modelTurns += 1
         modelUsage.inputTokens += inputTokens
         modelUsage.outputTokens += outputTokens
         modelUsage.costMicros += costMicros
@@ -956,7 +974,7 @@ export class AgentProductRuntime {
           : turnContent.length
     }
     const budget: AgentChildBudgetUsage = { outputCharacters: consumedOutputCharacters, tokens: consumedTokens }
-    return { usage, modelUsage, budget }
+    return { usage, modelUsage, modelTurns, budget }
   }
 
   async #executeResearchTask(
@@ -1258,6 +1276,12 @@ export class AgentProductRuntime {
         return state === undefined ? { role: message.role, content: message.content } : { role: message.role, content: message.content, providerState: state }
       })
       const continuation = await readAgentApprovalContinuation(this.#knex, claim)
+      let orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
+      const persistedProviderUsage = {
+        inputTokens: orchestrationTelemetry.usage.inputTokens + orchestrationTelemetry.modelUsage.inputTokens,
+        outputTokens: orchestrationTelemetry.usage.outputTokens + orchestrationTelemetry.modelUsage.outputTokens,
+        costMicros: orchestrationTelemetry.usage.costMicros + orchestrationTelemetry.modelUsage.costMicros
+      }
       const startingGoalUsage = goal === null ? null : await this.#goalUsage(goal.id)
       const startingGoalTokens = goal === null ? undefined : goal.maxTokens - (startingGoalUsage?.tokens ?? 0)
       const startingGoalToolCalls = goal === null ? undefined : goal.maxToolCalls - (startingGoalUsage?.toolCalls ?? 0)
@@ -1265,7 +1289,7 @@ export class AgentProductRuntime {
         throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
       if (startingGoalToolCalls !== undefined && startingGoalToolCalls < 0)
         throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal action budget was exhausted', 409)
-      dispatchBudget = this.#dispatchBudget(claim, startingGoalTokens, startingGoalToolCalls)
+      dispatchBudget = new AgentRunDispatchBudget(this.#knex, claim, startingGoalTokens, startingGoalToolCalls, persistedProviderUsage)
       if (claim.status === 'awaiting_approval' && continuation === null) {
         throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISSING', 'Awaiting approval run has no durable action continuation', 500)
       }
@@ -1292,7 +1316,6 @@ export class AgentProductRuntime {
           tasks = (await this.#planResearch(claim, latestUserMessage, executionSignal, dispatchBudget, startingGoalTokens)).tasks
         }
       }
-      let orchestrationTelemetry = await this.#orchestrationTelemetry(claim)
       if (continuation === null && this.#orchestration.enabled && claim.executionMode === 'agent' && tasks.some(task => task.status === 'pending')) {
         await this.#executeResearchTasks(claim, tasks, memory, skills, currentPage, orchestrationTelemetry.budget, executionSignal, dispatchBudget)
         tasks = await listAgentRunTasks(this.#knex, claim.id)
@@ -1301,6 +1324,7 @@ export class AgentProductRuntime {
       orchestrationUsage.inputTokens = orchestrationTelemetry.usage.inputTokens
       orchestrationUsage.outputTokens = orchestrationTelemetry.usage.outputTokens
       orchestrationUsage.costMicros = orchestrationTelemetry.usage.costMicros
+      const modelTurnsBeforeExecution = orchestrationTelemetry.modelTurns
       const research = tasks.length === 0 ? undefined : await this.#researchContext(claim, tasks)
       const goalUsage = goal === null ? null : await this.#goalUsage(goal.id)
       const currentRunEventTokens =
@@ -1360,11 +1384,19 @@ export class AgentProductRuntime {
       orchestrationUsage.inputTokens = orchestrationTelemetry.usage.inputTokens
       orchestrationUsage.outputTokens = orchestrationTelemetry.usage.outputTokens
       orchestrationUsage.costMicros = orchestrationTelemetry.usage.costMicros
-      const modelUsage = {
+      const resultModelUsage = {
         inputTokens: nonNegativeUsage(result.inputTokens, 'Model input tokens'),
         outputTokens: nonNegativeUsage(result.outputTokens, 'Model output tokens'),
         costMicros: nonNegativeUsage(result.costMicros, 'Model cost')
       }
+      const modelUsage =
+        orchestrationTelemetry.modelTurns > modelTurnsBeforeExecution
+          ? { ...orchestrationTelemetry.modelUsage }
+          : {
+              inputTokens: orchestrationTelemetry.modelUsage.inputTokens + resultModelUsage.inputTokens,
+              outputTokens: orchestrationTelemetry.modelUsage.outputTokens + resultModelUsage.outputTokens,
+              costMicros: orchestrationTelemetry.modelUsage.costMicros + resultModelUsage.costMicros
+            }
       const titleUsage =
         continuation === null
           ? await this.#generateConversationTitle(claim, sessionRow, messages, content, executionSignal, dispatchBudget)
@@ -1442,8 +1474,10 @@ export class AgentProductRuntime {
     } catch (error) {
       const reportedCode =
         typeof error === 'object' && error !== null && typeof Reflect.get(error, 'code') === 'string' ? String(Reflect.get(error, 'code')) : null
-      const errorCode =
-        reportedCode === 'AGENT_BUDGET_LIMITED' || reportedCode === 'AGENT_CHILD_BUDGET_EXCEEDED' || (goalDeadlineAt !== null && goalDeadlineAt <= Date.now())
+      const recoveryRequired = reportedCode === 'AGENT_ACTION_RECOVERY_REQUIRED'
+      const errorCode = recoveryRequired
+        ? 'AGENT_ACTION_RECOVERY_REQUIRED'
+        : reportedCode === 'AGENT_BUDGET_LIMITED' || reportedCode === 'AGENT_CHILD_BUDGET_EXCEEDED' || (goalDeadlineAt !== null && goalDeadlineAt <= Date.now())
           ? 'AGENT_BUDGET_LIMITED'
           : 'AGENT_ENGINE_FAILED'
       if (signal.aborted || errorCode === 'AGENT_BUDGET_LIMITED') {
@@ -1461,11 +1495,10 @@ export class AgentProductRuntime {
         ownsRunningRun = owned?.status === 'running'
         if (ownsRunningRun && !quotaReconciled) {
           const telemetry = await this.#orchestrationTelemetry(claim)
-          const consumed = dispatchBudget?.consumed
-          const consumedInputTokens = consumed?.inputTokens ?? telemetry.usage.inputTokens + telemetry.modelUsage.inputTokens
-          const consumedOutputTokens = consumed?.outputTokens ?? telemetry.usage.outputTokens + telemetry.modelUsage.outputTokens
+          const consumedInputTokens = telemetry.usage.inputTokens + telemetry.modelUsage.inputTokens
+          const consumedOutputTokens = telemetry.usage.outputTokens + telemetry.modelUsage.outputTokens
           const consumedTokens = consumedInputTokens + consumedOutputTokens
-          const consumedCostMicros = consumed?.costMicros ?? telemetry.usage.costMicros + telemetry.modelUsage.costMicros
+          const consumedCostMicros = telemetry.usage.costMicros + telemetry.modelUsage.costMicros
           await reconcileAgentRunQuota(this.#knex, {
             runId: claim.id,
             ownerId: claim.ownerId,
@@ -1484,12 +1517,22 @@ export class AgentProductRuntime {
       if (signal.aborted) throw error
       if (ownsRunningRun) {
         try {
-          await this.#appendPresentationEvent(claim, 'run.failed', { runId: claim.id, status: 'failed', errorCode })
+          await this.#appendPresentationEvent(claim, recoveryRequired ? 'run.partial' : 'run.failed', {
+            runId: claim.id,
+            status: recoveryRequired ? 'partial' : 'failed',
+            errorCode
+          })
         } catch {
           /* the coordinator owns terminal recovery when the lease is already gone */
         }
         await this.#knex('agentMessages').where({ id: claim.assistantMessageId, runId: claim.id }).update({ status: 'failed', updatedAt: new Date() })
       }
+      if (recoveryRequired)
+        return {
+          status: 'partial',
+          errorCode,
+          errorMessage: 'The approved action completed, but its assistant response requires recovery'
+        }
       return { status: 'failed', errorCode, errorMessage: errorCode === 'AGENT_BUDGET_LIMITED' ? 'Agent goal budget was exhausted' : 'Agent inference failed' }
     } finally {
       clearTimeout(goalDeadlineTimer)

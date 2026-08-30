@@ -68,11 +68,7 @@ const normalizedAssetPath = (value: string): string | null => {
 
 export const extractProtectedAssetPaths = (content: string, render: string): string[] => {
   const values = new Set<string>()
-  const patterns = [
-    /(?:src|href)\s*=\s*["']([^"'#]+)["']/gi,
-    /!?\[[^\]]*\]\(([^\s)#]+)(?:\s+[^)]*)?\)/g,
-    /url\(\s*["']?([^"')#]+)["']?\s*\)/gi
-  ]
+  const patterns = [/(?:src|href)\s*=\s*["']([^"'#]+)["']/gi, /!?\[[^\]]*\]\(([^\s)#]+)(?:\s+[^)]*)?\)/g, /url\(\s*["']?([^"')#]+)["']?\s*\)/gi]
   for (const source of [content, render]) {
     for (const pattern of patterns) {
       pattern.lastIndex = 0
@@ -85,12 +81,7 @@ export const extractProtectedAssetPaths = (content: string, render: string): str
   return [...values].sort()
 }
 
-export const syncProtectedPageAssets = async (
-  knex: Knex | Knex.Transaction,
-  pageId: number,
-  content: string,
-  render: string
-): Promise<void> => {
+export const syncProtectedPageAssets = async (knex: Knex | Knex.Transaction, pageId: number, content: string, render: string): Promise<void> => {
   const protection = await knex<ProtectionRow>('pageAccessPasswords').where({ pageId }).first()
   if (!protection) return
   const paths = extractProtectedAssetPaths(content, render)
@@ -156,10 +147,7 @@ export const setPageProtection = async (input: {
   return { protected: true, version, updatedBy: userId, updatedAt: now }
 }
 
-export const removePageProtection = async (input: {
-  requester: PagePrincipal
-  pageId: number
-}): Promise<{ protected: false }> => {
+export const removePageProtection = async (input: { requester: PagePrincipal; pageId: number }): Promise<{ protected: false }> => {
   const page = await manageablePage(input.requester, input.pageId)
   await wiki.models.knex('pageAccessPasswords').where({ pageId: page.id }).delete()
   const contents = await wiki.models.pages.query().findById(page.id).select('render')
@@ -168,12 +156,7 @@ export const removePageProtection = async (input: {
   return { protected: false }
 }
 
-export const unlockPage = async (input: {
-  requester: PagePrincipal
-  pageId: number
-  password: string
-  sessionId: string
-}): Promise<void> => {
+export const unlockPage = async (input: { requester: PagePrincipal; pageId: number; password: string; sessionId: string }): Promise<void> => {
   if (!input.sessionId || typeof input.password !== 'string') throw new ApplicationError('Access denied', { status: 403, code: 'PAGE_LOCKED' })
   const [protection, page] = await Promise.all([
     wiki.models.knex<ProtectionRow>('pageAccessPasswords').where({ pageId: input.pageId }).first(),
@@ -196,30 +179,22 @@ export const unlockPage = async (input: {
   })
 }
 
-export const pageRequiresUnlock = async (input: {
-  requester: PagePrincipal
-  pageId: number
-  sessionId: string
-  now?: Date
-}): Promise<boolean> => {
+export const pageRequiresUnlock = async (input: { requester: PagePrincipal; pageId: number; sessionId: string; now?: Date }): Promise<boolean> => {
   if (managesSystem(input.requester)) return false
   const protection = await wiki.models.knex<ProtectionRow>('pageAccessPasswords').where({ pageId: input.pageId }).first()
   if (!protection) return false
   const now = input.now ?? new Date()
   await wiki.models.knex('pageUnlockGrants').where('expiresAt', '<=', now).delete()
   if (!input.sessionId) return true
-  const grant = await wiki.models.knex('pageUnlockGrants')
+  const grant = await wiki.models
+    .knex('pageUnlockGrants')
     .where({ pageId: input.pageId, sessionId: input.sessionId, userId: principalId(input.requester), passwordVersion: protection.version })
     .where('expiresAt', '>', now)
     .first()
   return !grant
 }
 
-export const assertPageUnlocked = async (input: {
-  requester: PagePrincipal
-  pageId: number
-  sessionId: string
-}): Promise<void> => {
+export const assertPageUnlocked = async (input: { requester: PagePrincipal; pageId: number; sessionId: string }): Promise<void> => {
   const page = await wiki.models.pages.getPageFromDb(input.pageId)
   if (!page || !canReadPage(input.requester, page)) {
     throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
@@ -227,12 +202,7 @@ export const assertPageUnlocked = async (input: {
   if (await pageRequiresUnlock(input)) throw new ApplicationError('Access denied', { status: 403, code: 'PAGE_LOCKED' })
 }
 
-export const protectedAssetRequiresUnlock = async (input: {
-  requester: PagePrincipal
-  assetPath: string
-  sessionId: string
-  now?: Date
-}): Promise<boolean> => {
+export const protectedAssetRequiresUnlock = async (input: { requester: PagePrincipal; assetPath: string; sessionId: string; now?: Date }): Promise<boolean> => {
   if (managesSystem(input.requester)) return false
   const links = await wiki.models.knex<{ pageId: number; assetPath: string }>('pageProtectedAssets').where({ assetPath: input.assetPath }).select('pageId')
   if (links.length === 0) return false
@@ -240,7 +210,8 @@ export const protectedAssetRequiresUnlock = async (input: {
   await wiki.models.knex('pageUnlockGrants').where('expiresAt', '<=', now).delete()
   if (!input.sessionId) return true
   const pageIds = links.map(link => link.pageId)
-  const grant = await wiki.models.knex('pageUnlockGrants')
+  const grants = await wiki.models
+    .knex<{ pageId: number }>('pageUnlockGrants')
     .join('pageAccessPasswords', 'pageAccessPasswords.pageId', 'pageUnlockGrants.pageId')
     .whereIn('pageUnlockGrants.pageId', pageIds)
     .where({
@@ -249,7 +220,7 @@ export const protectedAssetRequiresUnlock = async (input: {
     })
     .whereRaw('?? = ??', ['pageUnlockGrants.passwordVersion', 'pageAccessPasswords.version'])
     .where('pageUnlockGrants.expiresAt', '>', now)
-    .first()
-  return !grant
+    .select('pageUnlockGrants.pageId')
+  const pages = await Promise.all(grants.map(grant => wiki.models.pages.getPageFromDb(grant.pageId)))
+  return !pages.some(page => page && canReadPage(input.requester, page))
 }
-

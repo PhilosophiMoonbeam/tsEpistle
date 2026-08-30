@@ -7,6 +7,10 @@ on:
         description: 'App Version'
         required: true
         type: string
+      apt_snapshot:
+        description: 'Immutable Ubuntu archive timestamp (YYYYMMDDTHHMMSSZ)'
+        required: true
+        type: string
 
 jobs:
   build-do-image:
@@ -59,12 +63,23 @@ jobs:
         echo "source_revision=$(jq -er '.release.revision' "$manifest")" >> "$GITHUB_OUTPUT"
         echo "release_version=$(jq -er '.product.version' "$manifest")" >> "$GITHUB_OUTPUT"
 
+    - name: Resolve Immutable Runtime Inputs
+      id: runtime
+      env:
+        APT_SNAPSHOT: ${{ inputs.apt_snapshot }}
+        DO_TOKEN: ${{ secrets.DO_TOKEN }}
+      run: dev/packer/scripts/resolve-runtime-inputs.sh
+
     - name: Build Droplet Image
       env:
         PKR_VAR_api_token: ${{ secrets.DO_TOKEN }}
         PKR_VAR_application_image: ${{ steps.release.outputs.application_image }}
         PKR_VAR_release_version: ${{ steps.release.outputs.release_version }}
         PKR_VAR_source_revision: ${{ steps.release.outputs.source_revision }}
+        PKR_VAR_apt_snapshot: ${{ steps.runtime.outputs.apt_snapshot }}
+        PKR_VAR_base_image_id: ${{ steps.runtime.outputs.base_image_id }}
+        PKR_VAR_docker_package_manifest_sha256: ${{ steps.runtime.outputs.docker_package_manifest_sha256 }}
+        PKR_VAR_postgres_image: ${{ steps.runtime.outputs.postgres_image }}
       working-directory: dev/packer
       run: |
         packer init .
@@ -76,18 +91,41 @@ jobs:
         APPLICATION_IMAGE: ${{ steps.release.outputs.application_image }}
         RELEASE_VERSION: ${{ steps.release.outputs.release_version }}
         SOURCE_REVISION: ${{ steps.release.outputs.source_revision }}
+        APT_SNAPSHOT: ${{ steps.runtime.outputs.apt_snapshot }}
+        BASE_IMAGE_ID: ${{ steps.runtime.outputs.base_image_id }}
+        DOCKER_PACKAGE_MANIFEST_SHA256: ${{ steps.runtime.outputs.docker_package_manifest_sha256 }}
+        POSTGRES_DIGEST: ${{ steps.runtime.outputs.postgres_digest }}
+        POSTGRES_IMAGE: ${{ steps.runtime.outputs.postgres_image }}
       working-directory: dev/packer
       run: |
         jq -e \
           --arg application_digest "$APPLICATION_DIGEST" \
           --arg application_image "$APPLICATION_IMAGE" \
           --arg release_version "$RELEASE_VERSION" \
-          --arg source_revision "$SOURCE_REVISION" '
-            (.builds | length == 1)
+          --arg source_revision "$SOURCE_REVISION" \
+          --arg apt_snapshot "$APT_SNAPSHOT" \
+          --arg base_image_id "$BASE_IMAGE_ID" \
+          --arg docker_package_manifest_sha256 "$DOCKER_PACKAGE_MANIFEST_SHA256" \
+          --arg postgres_digest "$POSTGRES_DIGEST" \
+          --arg postgres_image "$POSTGRES_IMAGE" \
+          --slurpfile runtime_inputs runtime-inputs/runtime-inputs.json '
+            ($runtime_inputs[0]) as $runtime
+            | ($runtime.schemaVersion == 1)
+            and ($runtime.digitalOceanBaseImage.id == $base_image_id)
+            and ($runtime.ubuntuAptSnapshot.id == $apt_snapshot)
+            and ($runtime.postgresqlImage.reference == $postgres_image)
+            and ($runtime.postgresqlImage.digest == $postgres_digest)
+            and ($runtime.dockerPackages.manifestSha256 == $docker_package_manifest_sha256)
+            and (.builds | length == 1)
             and (.builds[0].artifact_id | type == "string" and length > 0)
             and (.builds[0].custom_data == {
               application_digest: $application_digest,
               application_image: $application_image,
+              apt_snapshot: $apt_snapshot,
+              base_image_id: $base_image_id,
+              docker_package_manifest_sha256: $docker_package_manifest_sha256,
+              postgres_digest: $postgres_digest,
+              postgres_image: $postgres_image,
               release_version: $release_version,
               source_revision: $source_revision
             })
@@ -96,14 +134,16 @@ jobs:
           --arg application_digest "$APPLICATION_DIGEST" \
           --arg application_image "$APPLICATION_IMAGE" \
           --arg release_version "$RELEASE_VERSION" \
-          --arg source_revision "$SOURCE_REVISION" '
+          --arg source_revision "$SOURCE_REVISION" \
+          --slurpfile runtime_inputs runtime-inputs/runtime-inputs.json '
             .builds[0] | {
-              schemaVersion: 1,
+              schemaVersion: 2,
               snapshotId: .artifact_id,
               applicationDigest: $application_digest,
               applicationImage: $application_image,
               sourceRevision: $source_revision,
-              releaseVersion: $release_version
+              releaseVersion: $release_version,
+              runtimeInputs: $runtime_inputs[0]
             }
           ' packer-manifest.json > snapshot-provenance.json
 

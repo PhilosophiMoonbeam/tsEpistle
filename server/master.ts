@@ -31,6 +31,7 @@ import { siteBannerOrDefault } from '../shared/site-banner.ts'
 import { normalizeAvailableEditors } from '../shared/page-editors.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 import { normalizePageGutterCustomCss, normalizePageGutterStyle } from '../shared/page-gutters.ts'
+import pageHelper from './helpers/page.ts'
 
 import { AgentProviderRegistry, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
 import { DatabaseAgentSecretRegistry, decodeAgentProviderSecretKeys, environmentSecretValue } from './agents/providers/secrets.ts'
@@ -47,6 +48,7 @@ import { parseAgentOperationalLimits, type AgentOperationalLimits } from './agen
 import { loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
 import pageOperations from './operations/pages.ts'
 import { PageKnowledgeLifecycle } from './knowledge/lifecycle.ts'
+import { PageProjectionLifecycle } from './core/page-mutation-outbox.ts'
 const { collectEntry } = viteAssets
 
 interface MasterConfig extends Record<string, unknown> {
@@ -135,10 +137,20 @@ interface MasterWiki extends Record<string, unknown> {
   config: MasterConfig
   lang: { attachMiddleware(app: Express): void }
   mail: unknown
+  events: {
+    outbound: {
+      emit(event: string, ...args: unknown[]): boolean
+    }
+  }
   models: {
     analytics: { getCode(options: { cache: boolean }): Promise<unknown> }
     knex: Knex
     locales: { getNavLocales(options: { cache: boolean }): Promise<unknown> }
+    pages: {
+      getPageFromDb(pageId: number): Promise<unknown | null>
+      renderPage(page: unknown): Promise<unknown>
+      deletePageFromCache(hash: string): Promise<void>
+    }
     users: {
       refreshToken(user: number | Express.User, options: { audience: string }): Promise<{ token: string; user: Express.User }>
     }
@@ -324,16 +336,36 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     wiki.agentRuntime = agentRuntime
   }
   const knowledgeLifecycle = new PageKnowledgeLifecycle(wiki.models.knex, `knowledge-${process.pid}`, utilityModel)
+  const projectionLifecycle = new PageProjectionLifecycle(wiki.models.knex, `page-projection-${process.pid}`, {
+    async renderPage(pageId): Promise<void> {
+      const page = await wiki.models.pages.getPageFromDb(pageId)
+      if (!page) return
+      await wiki.models.pages.renderPage(page)
+    },
+    async evictLocation(location): Promise<void> {
+      const hash = pageHelper.generateHash({
+        path: location.path,
+        locale: location.locale,
+        visibility: location.visibility,
+        ownerId: location.ownerId
+      })
+      await wiki.models.pages.deletePageFromCache(hash)
+      wiki.events.outbound.emit('deletePageFromCache', hash)
+    }
+  })
   let agentTimer: NodeJS.Timeout | undefined
   let knowledgeTimer: NodeJS.Timeout | undefined
+  let projectionTimer: NodeJS.Timeout | undefined
   let agentRun: Promise<unknown> | undefined
   let knowledgeRun: Promise<unknown> | undefined
+  let projectionRun: Promise<unknown> | undefined
   let workersStarted = false
   let workersStopped = false
   let workersShutdown: Promise<void> | undefined
   const agentTick = (): void => {
     if (workersStopped || agentRun || !agentRuntime) return
-    agentRun = agentRuntime.runOnce()
+    agentRun = agentRuntime
+      .runOnce()
       .catch(() => undefined)
       .finally(() => {
         agentRun = undefined
@@ -341,12 +373,24 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   }
   const knowledgeTick = (): void => {
     if (workersStopped || knowledgeRun) return
-    knowledgeRun = knowledgeLifecycle.runOnce()
+    knowledgeRun = knowledgeLifecycle
+      .runOnce()
       .catch((error: unknown) => {
         wiki.logger.warn(error instanceof Error ? error.message : String(error))
       })
       .finally(() => {
         knowledgeRun = undefined
+      })
+  }
+  const projectionTick = (): void => {
+    if (workersStopped || projectionRun) return
+    projectionRun = projectionLifecycle
+      .runOnce()
+      .catch((error: unknown) => {
+        wiki.logger.warn(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => {
+        projectionRun = undefined
       })
   }
   wiki.backgroundWorkers = {
@@ -358,6 +402,9 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
         agentTimer = setInterval(agentTick, agentLimits.provider.pollingMilliseconds)
         agentTimer.unref()
       }
+      projectionTick()
+      projectionTimer = setInterval(projectionTick, 1_000)
+      projectionTimer.unref()
       knowledgeTick()
       knowledgeTimer = setInterval(knowledgeTick, 1_000)
       knowledgeTimer.unref()
@@ -367,12 +414,11 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
         workersStopped = true
         clearInterval(agentTimer)
         clearInterval(knowledgeTimer)
+        clearInterval(projectionTimer)
         const runtime = agentRuntime
-        const pending = [
-          runtime ? Promise.resolve().then(() => runtime.shutdown()) : undefined,
-          agentRun,
-          knowledgeRun
-        ].filter((promise): promise is Promise<unknown> => promise !== undefined)
+        const pending = [runtime ? Promise.resolve().then(() => runtime.shutdown()) : undefined, agentRun, knowledgeRun, projectionRun].filter(
+          (promise): promise is Promise<unknown> => promise !== undefined
+        )
         const results = await Promise.allSettled(pending)
         const failure = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')
         if (failure) throw failure.reason

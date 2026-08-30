@@ -113,7 +113,6 @@ export interface WikiModels {
   }
   comments: { query(): QueryBuilder<UnknownRecord> }
   editors: { getDefaultEditor(): Promise<string> }
-  pageLinks: { query(): QueryBuilder<UnknownRecord> }
   pages: {
     cleanHTML(value: string): string
     createPage(value: UnknownRecord): Promise<WikiPage>
@@ -167,9 +166,7 @@ export interface WikiRuntime {
 
 export const wiki = WIKI as unknown as WikiRuntime
 
-export const asError = (value: unknown): Error => (
-  value instanceof Error ? value : new Error(String(value))
-)
+export const asError = (value: unknown): Error => (value instanceof Error ? value : new Error(String(value)))
 
 export interface AuthenticationConfig {
   [key: string]: unknown
@@ -309,10 +306,7 @@ export interface StorageContext<C extends StorageConfig = StorageConfig> {
   mode?: string
 }
 
-export interface StoragePlugin<
-  C extends StorageConfig = StorageConfig,
-  Context extends StorageContext<C> = StorageContext<C>
-> {
+export interface StoragePlugin<C extends StorageConfig = StorageConfig, Context extends StorageContext<C> = StorageContext<C>> {
   activated(this: Context): Promise<void>
   deactivated(this: Context): Promise<void>
   init(this: Context): Promise<void>
@@ -367,10 +361,7 @@ export interface SearchResult {
   totalHits: number
 }
 
-export interface SearchPlugin<
-  C extends SearchConfig = SearchConfig,
-  Context extends SearchContext<C> = SearchContext<C>
-> {
+export interface SearchPlugin<C extends SearchConfig = SearchConfig, Context extends SearchContext<C> = SearchContext<C>> {
   activate(this: Context): Promise<void>
   deactivate(this: Context): Promise<void>
   init(this: Context): Promise<void>

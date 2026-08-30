@@ -21,6 +21,9 @@ const originalWiki = wikiGlobal.WIKI
 let tempRoot: string
 let Page: typeof PageModel
 let transactionPageProjection: Record<string, unknown> | undefined
+let cacheIdentityMarker:
+  | { id: number; hash: string; sourceRevision: string | number; path: string; localeCode: string; visibility: 'public' | 'private'; ownerId: number | null }
+  | undefined
 
 const pageErrorNames = [
   'PageDeleteForbidden',
@@ -36,6 +39,7 @@ const pageErrorNames = [
 beforeEach(async () => {
   tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-page-cache-'))
   transactionPageProjection = undefined
+  cacheIdentityMarker = undefined
   const projectionQuery = {
     select: vi.fn(),
     where: vi.fn(),
@@ -52,8 +56,30 @@ beforeEach(async () => {
     }),
     { raw: vi.fn() }
   )
+  const markerQuery = {
+    select: vi.fn(),
+    where: vi.fn(),
+    first: vi.fn()
+  }
+  markerQuery.select.mockReturnValue(markerQuery)
+  markerQuery.where.mockImplementation((identity: Record<string, unknown>) => {
+    const matches =
+      cacheIdentityMarker !== undefined &&
+      cacheIdentityMarker.path === identity.path &&
+      cacheIdentityMarker.localeCode === identity.localeCode &&
+      cacheIdentityMarker.visibility === identity.visibility &&
+      cacheIdentityMarker.ownerId === identity.ownerId
+    markerQuery.first.mockResolvedValue(matches ? cacheIdentityMarker : undefined)
+    return markerQuery
+  })
   const transaction = vi.fn(async (callback: (trx: typeof knexTransaction) => Promise<unknown>) => callback(knexTransaction))
-  const knex = Object.assign(vi.fn(), { transaction })
+  const knex = Object.assign(
+    vi.fn((table?: string) => {
+      if (table !== 'pages') throw new Error(`Unexpected table ${String(table)}`)
+      return markerQuery
+    }),
+    { transaction }
+  )
   const errors = Object.fromEntries(pageErrorNames.map(name => [name, class extends Error {}]))
 
   wikiGlobal.WIKI = {
@@ -129,7 +155,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       publishEndDate: '',
       publishStartDate: '',
       render: '<p>stale old-path render</p>',
-      sourceRevision: undefined,
+      sourceRevision: '1',
       tags: [],
       title: 'Moved page',
       toc: '[]',
@@ -143,6 +169,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       updatedAt: '2026-08-29T02:00:00.000Z'
     }
     transactionPageProjection = movedPage
+    cacheIdentityMarker = oldPage
     const oldLookup = { path: oldPath, locale, visibility: 'private' as const, ownerId }
     const newLookup = { path: newPath, locale, visibility: 'private' as const, ownerId }
 
@@ -175,6 +202,7 @@ describe('models/pages.updatePage cache invalidation', () => {
     }) as never)
     vi.spyOn(Page, 'getPageFromDb').mockImplementation(async opts => (typeof opts === 'number' ? (movedPage as never) : undefined))
     vi.spyOn(Page, 'renderPage').mockImplementation(async page => {
+      cacheIdentityMarker = page
       await Page.savePageToCache(page)
     })
     vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
@@ -203,5 +231,51 @@ describe('models/pages.updatePage cache invalidation', () => {
       render: '<p>fresh new-path render</p>'
     })
     expect(await Page.getPage(oldLookup)).toBeUndefined()
+  })
+
+  it('fails a stale public cache read closed after a committed privacy transition', async () => {
+    const pageHelper = (await import('../../helpers/page.ts')).default
+    const publicIdentity = { path: 'security/private-now', locale: 'en', visibility: 'public' as const, ownerId: null }
+    const publicHash = pageHelper.generateHash(publicIdentity)
+    const publicPage = {
+      id: 77,
+      sourceRevision: '4',
+      authorId: 7,
+      authorName: 'Owner',
+      creatorId: 7,
+      creatorName: 'Owner',
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-29T01:00:00.000Z',
+      description: 'Formerly public',
+      editorKey: 'markdown',
+      extra: {},
+      hash: publicHash,
+      isPublished: true,
+      localeCode: 'en',
+      ownerId: null,
+      path: publicIdentity.path,
+      publishEndDate: '',
+      publishStartDate: '',
+      contentType: 'markdown',
+      render: '<p>must not escape after commit</p>',
+      tags: [],
+      title: 'Private now',
+      toc: '[]',
+      visibility: 'public' as const
+    }
+    cacheIdentityMarker = publicPage
+    await Page.savePageToCache(publicPage as never)
+    await expect(Page.getPageFromCache(publicIdentity)).resolves.toMatchObject({ render: publicPage.render })
+
+    cacheIdentityMarker = {
+      ...publicPage,
+      sourceRevision: '5',
+      hash: pageHelper.generateHash({ ...publicIdentity, visibility: 'private', ownerId: 7 }),
+      visibility: 'private',
+      ownerId: 7
+    }
+
+    await expect(Page.getPageFromCache(publicIdentity)).resolves.toBe(false)
+    await expect(fs.pathExists(path.join(tempRoot, 'data', 'cache', `${publicHash}.bin`))).resolves.toBe(false)
   })
 })

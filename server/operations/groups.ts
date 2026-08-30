@@ -1,5 +1,7 @@
 import { createRequire } from 'node:module'
 
+import type { Knex } from 'knex'
+
 import errors from './errors.ts'
 
 const { ApplicationError } = errors
@@ -63,11 +65,6 @@ interface UserQuery {
   findById(id: number): Promise<UserRecord | undefined>
 }
 
-interface KnexQuery {
-  where(criteria: Record<string, unknown>): KnexQuery
-  first(): Promise<Record<string, unknown> | undefined>
-}
-
 interface WikiOperations {
   auth: {
     checkExclusiveAccess(requester: Express.User | undefined, permissions: readonly string[], overrides: readonly string[]): boolean
@@ -77,9 +74,9 @@ interface WikiOperations {
   data: { groups: { defaultPermissions: unknown; defaultPageRules: unknown } }
   events: { outbound: { emit(event: string, payload?: Record<string, unknown>): void } }
   models: {
-    groups: { query(): GroupQuery; relatedQuery(relation: 'users'): GroupAggregateQuery }
+    groups: { query(transaction?: Knex.Transaction): GroupQuery; relatedQuery(relation: 'users'): GroupAggregateQuery }
     users: { query(): UserQuery }
-    knex(table: string): KnexQuery
+    knex: Knex
   }
 }
 
@@ -238,6 +235,8 @@ const reload = async (): Promise<void> => {
   await wiki.auth.reloadGroups()
   wiki.events.outbound.emit('reloadGroups')
 }
+const lockGroup = async (transaction: Knex.Transaction, id: number): Promise<GroupRecord | undefined> =>
+  transaction<GroupRecord>('groups').where({ id }).forUpdate().first()
 
 const list = (): GroupQuery =>
   wiki.models.groups
@@ -277,32 +276,34 @@ const assignUser = async ({ requester, groupId: groupIdValue, userId: userIdValu
     throw new ApplicationError('Cannot assign the Guest user to a group.', { code: 'GROUP_ASSIGN_GUEST' })
   }
 
-  const group = await get(groupId)
-  if (!group) {
-    throw new ApplicationError('Invalid Group ID', { code: 'GROUP_NOT_FOUND', status: 404 })
-  }
+  await wiki.models.knex.transaction(async transaction => {
+    const group = await lockGroup(transaction, groupId)
+    if (!group) {
+      throw new ApplicationError('Invalid Group ID', { code: 'GROUP_NOT_FOUND', status: 404 })
+    }
 
-  const permissions = Array.isArray(group.permissions) ? group.permissions : []
-  assertTargetAuthority(
-    requester,
-    hasAdministrativePermissions(permissions),
-    hasSystemPermissions(permissions),
-    ['manage:users', 'write:groups'],
-    targetAuthorityErrors.assign
-  )
+    const permissions = Array.isArray(group.permissions) ? group.permissions : []
+    assertTargetAuthority(
+      requester,
+      hasAdministrativePermissions(permissions),
+      hasSystemPermissions(permissions),
+      ['manage:users', 'write:groups'],
+      targetAuthorityErrors.assign
+    )
 
-  const user = await wiki.models.users.query().findById(userId)
-  if (!user) {
-    throw new ApplicationError('Invalid User ID', { code: 'USER_NOT_FOUND', status: 404 })
-  }
+    const user = await transaction<UserRecord>('users').where({ id: userId }).first()
+    if (!user) {
+      throw new ApplicationError('Invalid User ID', { code: 'USER_NOT_FOUND', status: 404 })
+    }
 
-  const relation = await wiki.models.knex('userGroups').where({ userId, groupId }).first()
-  if (relation) {
-    throw new ApplicationError('User is already assigned to group.', { code: 'GROUP_ASSIGN_EXISTS' })
-  }
+    const relation = await transaction('userGroups').where({ userId, groupId }).first()
+    if (relation) {
+      throw new ApplicationError('User is already assigned to group.', { code: 'GROUP_ASSIGN_EXISTS' })
+    }
 
-  await group.$relatedQuery('users').relate(user.id)
-  revoke(user.id, 'u')
+    await transaction('userGroups').insert({ userId: user.id, groupId })
+  })
+  revoke(userId, 'u')
 }
 
 const unassignUser = async ({ requester, groupId: groupIdValue, userId: userIdValue }: GroupAssignmentInput): Promise<void> => {
@@ -373,51 +374,54 @@ const update = async (input: GroupUpdateInput): Promise<void> => {
     throw new ApplicationError('Some Page Rules contains unsafe or exponential time regex.', { code: 'GROUP_PAGE_RULE_UNSAFE' })
   }
 
-  const group = await get(id)
-  if (!group) {
-    throw new ApplicationError('Invalid Group ID', { code: 'GROUP_NOT_FOUND', status: 404 })
-  }
-  const currentPermissions = Array.isArray(group.permissions) ? group.permissions : []
-  const isProtectedGroup = group.isSystem || id === 1 || id === 2
-  const identityChanged = group.name !== name
-  const authorityChanged = currentPermissions.length !== permissions.length || currentPermissions.some((permission, index) => permission !== permissions[index])
+  await wiki.models.knex.transaction(async transaction => {
+    const group = await lockGroup(transaction, id)
+    if (!group) {
+      throw new ApplicationError('Invalid Group ID', { code: 'GROUP_NOT_FOUND', status: 404 })
+    }
+    const currentPermissions = Array.isArray(group.permissions) ? group.permissions : []
+    const isProtectedGroup = group.isSystem || id === 1 || id === 2
+    const identityChanged = group.name !== name
+    const authorityChanged =
+      currentPermissions.length !== permissions.length || currentPermissions.some((permission, index) => permission !== permissions[index])
 
-  if ((id === 1 || id === 2) && identityChanged) {
-    throw new ApplicationError('Cannot rename this group.', { code: 'GROUP_UPDATE_PROTECTED' })
-  }
-  if (id === 1 && authorityChanged) {
-    throw new ApplicationError('Cannot change the Administrators group permissions.', { code: 'GROUP_UPDATE_PROTECTED' })
-  }
-  if (
-    isProtectedGroup &&
-    (identityChanged || authorityChanged) &&
-    wiki.auth.checkExclusiveAccess(requester, ['write:groups', 'manage:groups'], ['manage:system'])
-  ) {
-    throw new ApplicationError('You are not authorized to change this system group identity or authority.', {
-      code: 'GROUP_UPDATE_SYSTEM_FORBIDDEN',
-      status: 403
-    })
-  }
-  assertTargetAuthority(
-    requester,
-    hasAdministrativePermissions(currentPermissions) || hasAdministrativePermissions(permissions),
-    hasSystemPermissions(currentPermissions) || hasSystemPermissions(permissions),
-    ['write:groups'],
-    targetAuthorityErrors.update
-  )
+    if ((id === 1 || id === 2) && identityChanged) {
+      throw new ApplicationError('Cannot rename this group.', { code: 'GROUP_UPDATE_PROTECTED' })
+    }
+    if (id === 1 && authorityChanged) {
+      throw new ApplicationError('Cannot change the Administrators group permissions.', { code: 'GROUP_UPDATE_PROTECTED' })
+    }
+    if (
+      isProtectedGroup &&
+      (identityChanged || authorityChanged) &&
+      wiki.auth.checkExclusiveAccess(requester, ['write:groups', 'manage:groups'], ['manage:system'])
+    ) {
+      throw new ApplicationError('You are not authorized to change this system group identity or authority.', {
+        code: 'GROUP_UPDATE_SYSTEM_FORBIDDEN',
+        status: 403
+      })
+    }
+    assertTargetAuthority(
+      requester,
+      hasAdministrativePermissions(currentPermissions) || hasAdministrativePermissions(permissions),
+      hasSystemPermissions(currentPermissions) || hasSystemPermissions(permissions),
+      ['write:groups'],
+      targetAuthorityErrors.update
+    )
 
-  const updatedRows = await wiki.models.groups
-    .query()
-    .patch({
-      name,
-      redirectOnLogin: redirectOnLogin || '/',
-      permissions,
-      pageRules
-    })
-    .where('id', id)
-  if (updatedRows !== 1) {
-    throw new ApplicationError('Invalid Group ID', { code: 'GROUP_NOT_FOUND', status: 404 })
-  }
+    const updatedRows = await wiki.models.groups
+      .query(transaction)
+      .patch({
+        name,
+        redirectOnLogin: redirectOnLogin || '/',
+        permissions,
+        pageRules
+      })
+      .where('id', id)
+    if (updatedRows !== 1) {
+      throw new ApplicationError('Invalid Group ID', { code: 'GROUP_NOT_FOUND', status: 404 })
+    }
+  })
 
   revoke(id, 'g')
   await reload()

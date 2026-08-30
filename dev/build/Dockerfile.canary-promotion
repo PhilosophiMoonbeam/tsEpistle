@@ -1,0 +1,2 @@
+FROM scratch
+COPY canary-promotion.json /canary-promotion.json

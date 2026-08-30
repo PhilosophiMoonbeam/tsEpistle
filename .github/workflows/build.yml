@@ -18,7 +18,7 @@ concurrency:
 
 env:
   BUN_VERSION: 1.4.0
-  WIKI_UPGRADE_SOURCE_IMAGE: ghcr.io/requarks/wiki:2.5.314@sha256:68f0d1848261ae76492ba358e30a96a76fed5d97a3fff381656082bf90f70d7e
+  WIKI_HELM_PREVIOUS_IMAGE: ghcr.io/requarks/wiki:2.5.314@sha256:68f0d1848261ae76492ba358e30a96a76fed5d97a3fff381656082bf90f70d7e
 
 jobs:
   pr-quality:
@@ -594,6 +594,9 @@ jobs:
         chmod 0755 "$tools_dir/kubectl"
         echo "$tools_dir" >> "$GITHUB_PATH"
 
+    - name: Resolve Supported Previous Helm Release
+      run: docker pull "$WIKI_HELM_PREVIOUS_IMAGE"
+
     - name: Create Lifecycle Cluster
       run: |
         kind delete cluster --name wiki-lifecycle || true
@@ -608,6 +611,7 @@ jobs:
       env:
         WIKI_TEST_IMAGE_REPOSITORY: tsfranki
         WIKI_TEST_IMAGE_TAG: test-${{ env.WIKI_BUILD_REVISION }}
+        WIKI_TEST_PREVIOUS_IMAGE: ${{ env.WIKI_HELM_PREVIOUS_IMAGE }}
         POSTGRES_TEST_IMAGE_REPOSITORY: wiki-postgres-test
         POSTGRES_TEST_IMAGE_TAG: '15'
       run: dev/e2e/helm-lifecycle-smoke.sh
@@ -873,7 +877,7 @@ jobs:
         name: arm64-image-descriptors
         path: image-descriptors
 
-    - name: Freshness Fence and Promote Mutable Canary Tags
+    - name: Assemble Immutable Canary Promotion Record
       shell: bash
       run: |
         read_descriptor() {
@@ -889,17 +893,109 @@ jobs:
           printf '%s\n' "$descriptor"
         }
 
+        freshness_fence() {
+          local remote_main
+          remote_main="$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
+          if [ "$remote_main" != "$GITHUB_SHA" ]; then
+            echo "Refusing stale canary promotion: run $GITHUB_SHA is not current main $remote_main." >&2
+            exit 1
+          fi
+        }
+
         image_amd64="$(read_descriptor image-descriptors/image-amd64-descriptor.txt "$IMAGE_REPOSITORY")"
         image_arm64="$(read_descriptor image-descriptors/image-arm64-descriptor.txt "$IMAGE_REPOSITORY")"
         agent_browser_repository="$IMAGE_REPOSITORY-agent-browser"
         agent_browser_amd64="$(read_descriptor image-descriptors/agent-browser-amd64-descriptor.txt "$agent_browser_repository")"
         agent_browser_arm64="$(read_descriptor image-descriptors/agent-browser-arm64-descriptor.txt "$agent_browser_repository")"
+        promotion_repository="$IMAGE_REPOSITORY-canary-promotion"
+        candidate_tag="candidate-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-        remote_main="$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
-        if [ "$remote_main" != "$GITHUB_SHA" ]; then
-          echo "Refusing stale canary promotion: run $GITHUB_SHA is not current main $remote_main." >&2
-          exit 1
+        [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+        jq -n \
+          --arg main_sha "$GITHUB_SHA" \
+          --arg image_amd64 "$image_amd64" \
+          --arg image_arm64 "$image_arm64" \
+          --arg agent_browser_amd64 "$agent_browser_amd64" \
+          --arg agent_browser_arm64 "$agent_browser_arm64" '{
+            schemaVersion: 1,
+            mainSha: $main_sha,
+            images: {
+              application: {amd64: $image_amd64, arm64: $image_arm64},
+              agentBrowser: {amd64: $agent_browser_amd64, arm64: $agent_browser_arm64}
+            }
+          }' > canary-promotion.json
+
+        immutable_record="$promotion_repository:$GITHUB_SHA"
+        publish_immutable_record=false
+        if docker buildx imagetools inspect "$immutable_record" --raw > canary-promotion-manifest.json 2> canary-promotion-inspect-error.txt; then
+          record_descriptor="$immutable_record"
+        else
+          inspect_error="$(cat canary-promotion-inspect-error.txt)"
+          if [[ ! "$inspect_error" =~ ([Nn]ot[[:space:]][Ff]ound|manifest[[:space:]]unknown|404) ]]; then
+            printf '%s\n' "$inspect_error" >&2
+            exit 1
+          fi
+
+          docker buildx build \
+            --file dev/build/Dockerfile.canary-promotion \
+            --platform linux/amd64 \
+            --provenance=false \
+            --sbom=false \
+            --push \
+            --tag "$promotion_repository:$candidate_tag" \
+            --annotation "manifest:io.tsfranki.canary-promotion.schema-version=1" \
+            --annotation "manifest:io.tsfranki.canary-promotion.main-sha=$GITHUB_SHA" \
+            --annotation "manifest:org.opencontainers.image.revision=$GITHUB_SHA" \
+            --annotation "manifest:io.tsfranki.canary-promotion.application-amd64=$image_amd64" \
+            --annotation "manifest:io.tsfranki.canary-promotion.application-arm64=$image_arm64" \
+            --annotation "manifest:io.tsfranki.canary-promotion.agent-browser-amd64=$agent_browser_amd64" \
+            --annotation "manifest:io.tsfranki.canary-promotion.agent-browser-arm64=$agent_browser_arm64" \
+            --metadata-file canary-promotion-metadata.json \
+            .
+          record_digest="$(jq --exit-status --raw-output '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' canary-promotion-metadata.json)"
+          record_descriptor="$promotion_repository@$record_digest"
+          docker buildx imagetools inspect "$record_descriptor" --raw > canary-promotion-manifest.json
+          publish_immutable_record=true
         fi
+
+        jq --exit-status \
+          --arg main_sha "$GITHUB_SHA" \
+          --arg image_amd64 "$image_amd64" \
+          --arg image_arm64 "$image_arm64" \
+          --arg agent_browser_amd64 "$agent_browser_amd64" \
+          --arg agent_browser_arm64 "$agent_browser_arm64" '
+            (.annotations["io.tsfranki.canary-promotion.schema-version"] == "1")
+            and (.annotations["io.tsfranki.canary-promotion.main-sha"] == $main_sha)
+            and (.annotations["org.opencontainers.image.revision"] == $main_sha)
+            and (.annotations["io.tsfranki.canary-promotion.application-amd64"] == $image_amd64)
+            and (.annotations["io.tsfranki.canary-promotion.application-arm64"] == $image_arm64)
+            and (.annotations["io.tsfranki.canary-promotion.agent-browser-amd64"] == $agent_browser_amd64)
+            and (.annotations["io.tsfranki.canary-promotion.agent-browser-arm64"] == $agent_browser_arm64)
+          ' canary-promotion-manifest.json
+
+        freshness_fence
+        if [ "$publish_immutable_record" = true ]; then
+          docker buildx imagetools create \
+            --prefer-index=false \
+            --tag "$immutable_record" \
+            "$record_descriptor"
+        fi
+        record_descriptor="$immutable_record"
+
+        printf '%s\n' "$image_amd64" > canary-image-amd64.txt
+        printf '%s\n' "$image_arm64" > canary-image-arm64.txt
+        printf '%s\n' "$agent_browser_amd64" > canary-agent-browser-amd64.txt
+        printf '%s\n' "$agent_browser_arm64" > canary-agent-browser-arm64.txt
+        printf '%s\n' "$record_descriptor" > canary-promotion-record.txt
+
+    - name: Update Non-authoritative Convenience Canary Tags
+      shell: bash
+      run: |
+        image_amd64="$(cat canary-image-amd64.txt)"
+        image_arm64="$(cat canary-image-arm64.txt)"
+        agent_browser_amd64="$(cat canary-agent-browser-amd64.txt)"
+        agent_browser_arm64="$(cat canary-agent-browser-arm64.txt)"
+        agent_browser_repository="$IMAGE_REPOSITORY-agent-browser"
         docker buildx imagetools create \
           --prefer-index=false \
           --tag "$IMAGE_REPOSITORY:canary" \
@@ -918,6 +1014,21 @@ jobs:
           --prefer-index=false \
           --tag "$agent_browser_repository:canary-arm64-$REL_VERSION_STRICT" \
           "$agent_browser_arm64"
+
+    - name: Freshness Fence and Commit Authoritative Canary Set
+      shell: bash
+      run: |
+        promotion_repository="$IMAGE_REPOSITORY-canary-promotion"
+        record_descriptor="$(cat canary-promotion-record.txt)"
+        remote_main="$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"
+        if [ "$remote_main" != "$GITHUB_SHA" ]; then
+          echo "Refusing stale canary promotion: run $GITHUB_SHA is not current main $remote_main." >&2
+          exit 1
+        fi
+        docker buildx imagetools create \
+          --prefer-index=false \
+          --tag "$promotion_repository:canary-set" \
+          "$record_descriptor"
 
   beta:
     name: Publish Preview Images
@@ -955,6 +1066,9 @@ jobs:
       with:
         name: arm64-image-descriptors
         path: image-descriptors
+
+    - name: Enforce Threat Model Release State
+      run: bun server/scripts/check-threat-model.ts --release
 
     - name: Verify Descriptors and Push Preview Manifests
       shell: bash
@@ -1034,6 +1148,9 @@ jobs:
       with:
         name: release-image-descriptors
         path: image-descriptors
+
+    - name: Enforce Threat Model Release State
+      run: bun server/scripts/check-threat-model.ts --release
 
     - name: Verify Descriptors and Push Release Manifests
       shell: bash

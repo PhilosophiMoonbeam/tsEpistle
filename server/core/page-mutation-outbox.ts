@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { z } from 'zod'
 import { canonicalJson as encodeCanonicalJson, CanonicalJsonError } from '../helpers/canonical-json.ts'
+import { load } from 'cheerio'
 
 export const PAGE_PROJECTION_EFFECT_KINDS = ['render', 'links', 'knowledge'] as const
 export type PageProjectionEffectKind = (typeof PAGE_PROJECTION_EFFECT_KINDS)[number]
@@ -63,6 +64,9 @@ export interface PageProjectionSink {
   readonly kind: PageProjectionEffectKind
   reconcile(payload: PageProjectionPayload, signal: AbortSignal): Promise<PageProjectionSinkResult>
 }
+export type PageProjectionSinks =
+  | ReadonlyMap<PageProjectionEffectKind, PageProjectionSink>
+  | Readonly<Partial<Record<PageProjectionEffectKind, PageProjectionSink>>>
 
 export interface ClaimedPageProjectionEffect {
   readonly id: string
@@ -301,11 +305,14 @@ const finishClaim = async (knex: Knex, claim: Pick<ClaimedPageProjectionEffect, 
 export const executePageMutationEffect = async (
   knex: Knex,
   claim: ClaimedPageProjectionEffect,
-  sinks: ReadonlyMap<PageProjectionEffectKind, PageProjectionSink>,
+  sinks: PageProjectionSinks,
   signal: AbortSignal
 ): Promise<void> => {
   if (signal.aborted) throw new PageMutationOutboxError('PROJECTION_ABORTED', 'Page projection execution was aborted')
-  const sink = sinks.get(claim.payload.effectKind)
+  const sink =
+    'get' in sinks && typeof sinks.get === 'function'
+      ? sinks.get(claim.payload.effectKind)
+      : (sinks as Readonly<Partial<Record<PageProjectionEffectKind, PageProjectionSink>>>)[claim.payload.effectKind]
   if (!sink || sink.kind !== claim.payload.effectKind) {
     await finishClaim(knex, claim, { status: 'failed', result: JSON.stringify({ error: 'No conforming projection sink is registered' }) })
     throw new PageMutationOutboxError('MISSING_PROJECTION_SINK', `No conforming sink is registered for ${claim.payload.effectKind}`)
@@ -338,4 +345,308 @@ export const executePageMutationEffect = async (
     result: canonicalJson(result.data.result),
     postcondition: canonicalJson(result.data.postcondition)
   })
+}
+
+interface ProjectionPageRow {
+  readonly id: number
+  readonly sourceRevision: string | number
+  readonly content: string
+  readonly render: string
+  readonly localeCode: string
+  readonly path: string
+  readonly visibility: 'public' | 'private'
+  readonly ownerId: number | null
+}
+
+interface PageLinkIdentity {
+  readonly localeCode: string
+  readonly path: string
+}
+
+interface PageLinkRow extends PageLinkIdentity {
+  readonly pageId: number
+}
+
+export type PageProjectionLocation = NonNullable<PageProjectionPayload['location']>
+
+export interface PageProjectionRuntime {
+  renderPage(pageId: number): Promise<void>
+  evictLocation(location: PageProjectionLocation): Promise<void>
+}
+
+const loadProjectionPage = async (knex: Knex | Knex.Transaction, pageId: number): Promise<ProjectionPageRow | undefined> =>
+  knex<ProjectionPageRow>('pages')
+    .select('id', 'sourceRevision', 'content', 'render', 'localeCode', 'path', 'visibility', 'ownerId')
+    .where({ id: pageId })
+    .first()
+
+const pageLocationMatches = (page: ProjectionPageRow, location: PageProjectionLocation): boolean =>
+  page.localeCode === location.locale && page.path === location.path && page.visibility === location.visibility && page.ownerId === location.ownerId
+
+const isExactProjectionSource = (page: ProjectionPageRow, payload: PageProjectionPayload): boolean =>
+  payload.location !== null &&
+  payload.sourceSha256 !== null &&
+  revisionString(page.sourceRevision) === payload.sourceRevision &&
+  sha256(page.content) === payload.sourceSha256 &&
+  pageLocationMatches(page, payload.location)
+
+const supersededResult = (page: ProjectionPageRow | undefined, projection: PageProjectionEffectKind): PageProjectionSinkResult => ({
+  result: { projection, superseded: true },
+  postcondition: {
+    satisfied: true,
+    observedSourceRevision: page === undefined ? null : revisionString(page.sourceRevision),
+    detail: 'Exact source revision is no longer current; no projection was written'
+  }
+})
+
+const evictPreviousIdentity = async (runtime: PageProjectionRuntime, payload: PageProjectionPayload): Promise<boolean> => {
+  if (payload.previousLocation === null) return false
+  if (payload.location !== null && canonicalJson(payload.previousLocation) === canonicalJson(payload.location)) return false
+  await runtime.evictLocation(payload.previousLocation)
+  return true
+}
+
+class RenderProjectionSink implements PageProjectionSink {
+  readonly kind = 'render' as const
+  readonly #knex: Knex
+  readonly #runtime: PageProjectionRuntime
+
+  constructor(knex: Knex, runtime: PageProjectionRuntime) {
+    this.#knex = knex
+    this.#runtime = runtime
+  }
+
+  async reconcile(payload: PageProjectionPayload, signal: AbortSignal): Promise<PageProjectionSinkResult> {
+    const previousIdentityEvicted = await evictPreviousIdentity(this.#runtime, payload)
+    if (signal.aborted) throw signal.reason
+    const before = await loadProjectionPage(this.#knex, payload.pageId)
+    if (payload.desiredState === 'absent') {
+      if (before !== undefined) return supersededResult(before, this.kind)
+      return {
+        result: { projection: this.kind, removed: true, previousIdentityEvicted },
+        postcondition: {
+          satisfied: true,
+          observedSourceRevision: payload.sourceRevision,
+          detail: 'Page is absent and its former cache identity is evicted'
+        }
+      }
+    }
+    if (before === undefined || revisionString(before.sourceRevision) !== payload.sourceRevision) return supersededResult(before, this.kind)
+    if (!isExactProjectionSource(before, payload)) {
+      return {
+        result: { projection: this.kind, rendered: false },
+        postcondition: {
+          satisfied: false,
+          observedSourceRevision: revisionString(before.sourceRevision),
+          detail: 'Current page identity or source hash does not match immutable render intent'
+        }
+      }
+    }
+
+    await this.#runtime.renderPage(payload.pageId)
+    if (signal.aborted) throw signal.reason
+    const after = await loadProjectionPage(this.#knex, payload.pageId)
+    if (after === undefined || revisionString(after.sourceRevision) !== payload.sourceRevision) return supersededResult(after, this.kind)
+    const satisfied = isExactProjectionSource(after, payload) && after.render.length > 0
+    return {
+      result: { projection: this.kind, rendered: satisfied, previousIdentityEvicted },
+      postcondition: {
+        satisfied,
+        observedSourceRevision: revisionString(after.sourceRevision),
+        detail: satisfied
+          ? 'Rendered bytes are persisted for the exact current source revision and the former cache identity is evicted'
+          : 'Render persistence did not prove the exact current source revision'
+      }
+    }
+  }
+}
+
+const extractRenderedPageLinks = (render: string, defaultLocale: string): readonly PageLinkIdentity[] => {
+  const $ = load(render)
+  const links = new Map<string, PageLinkIdentity>()
+  $('a.is-internal-link').each((_index, element) => {
+    const href = $(element).attr('href')
+    if (!href) return
+    try {
+      const segments = decodeURIComponent(new URL(href, 'http://projection.invalid').pathname)
+        .split('/')
+        .filter(segment => segment.length > 0 && segment !== '.' && segment !== '..')
+      if (segments[0]?.length === 1) segments.shift()
+      const explicitLocale = segments[0] && /^[a-z]{2}(?:-[a-z]{2})?$/i.test(segments[0]) ? segments.shift() : undefined
+      const localeCode = explicitLocale ?? defaultLocale
+      const pagePath = segments.join('/') || 'home'
+      links.set(`${localeCode}\u0000${pagePath}`, { localeCode, path: pagePath })
+    } catch {
+      // The renderer already ignores malformed internal references; projection persistence does the same.
+    }
+  })
+  return [...links.values()].sort((left, right) =>
+    left.localeCode === right.localeCode ? left.path.localeCompare(right.path) : left.localeCode.localeCompare(right.localeCode)
+  )
+}
+
+class LinksProjectionSink implements PageProjectionSink {
+  readonly kind = 'links' as const
+  readonly #knex: Knex
+  readonly #runtime: PageProjectionRuntime
+
+  constructor(knex: Knex, runtime: PageProjectionRuntime) {
+    this.#knex = knex
+    this.#runtime = runtime
+  }
+
+  async reconcile(payload: PageProjectionPayload, signal: AbortSignal): Promise<PageProjectionSinkResult> {
+    const previousIdentityEvicted = await evictPreviousIdentity(this.#runtime, payload)
+    if (signal.aborted) throw signal.reason
+    const before = await loadProjectionPage(this.#knex, payload.pageId)
+    if (payload.desiredState === 'absent') {
+      if (before !== undefined) return supersededResult(before, this.kind)
+      await this.#knex('pageLinks').where({ pageId: payload.pageId }).delete()
+      const remaining = await this.#knex('pageLinks').where({ pageId: payload.pageId }).first('id')
+      return {
+        result: { projection: this.kind, removed: remaining === undefined, previousIdentityEvicted },
+        postcondition: {
+          satisfied: remaining === undefined,
+          observedSourceRevision: payload.sourceRevision,
+          detail: remaining === undefined ? 'Page and its persisted links are absent and the former cache identity is evicted' : 'Persisted links remain'
+        }
+      }
+    }
+    const location = payload.location
+    if (location === null) {
+      return {
+        result: { projection: this.kind, replaced: false },
+        postcondition: {
+          satisfied: false,
+          observedSourceRevision: before === undefined ? null : revisionString(before.sourceRevision),
+          detail: 'Present link projection intent has no current location'
+        }
+      }
+    }
+    if (before === undefined || revisionString(before.sourceRevision) !== payload.sourceRevision) return supersededResult(before, this.kind)
+    if (!isExactProjectionSource(before, payload)) {
+      return {
+        result: { projection: this.kind, replaced: false },
+        postcondition: {
+          satisfied: false,
+          observedSourceRevision: revisionString(before.sourceRevision),
+          detail: 'Current page identity or source hash does not match immutable link intent'
+        }
+      }
+    }
+    const renderEffect = await this.#knex<PageMutationOutboxRow>('pageMutationOutbox')
+      .where({ pageId: payload.pageId, sourceRevision: payload.sourceRevision, effectKind: 'render', status: 'succeeded' })
+      .first('id')
+    if (!renderEffect) throw new PageMutationOutboxError('RENDER_PROJECTION_NOT_READY', 'Exact render projection has not completed')
+    const links = extractRenderedPageLinks(before.render, location.locale)
+
+    const outcome = await this.#knex.transaction(async transaction => {
+      const current = await transaction<ProjectionPageRow>('pages')
+        .select('id', 'sourceRevision', 'content', 'render', 'localeCode', 'path', 'visibility', 'ownerId')
+        .where({ id: payload.pageId })
+        .forUpdate()
+        .first()
+      if (!current || revisionString(current.sourceRevision) !== payload.sourceRevision) return { superseded: true, observed: current }
+      if (!isExactProjectionSource(current, payload) || current.render !== before.render) {
+        return { superseded: false, observed: current, invalid: true }
+      }
+      await transaction('pageLinks').where({ pageId: payload.pageId }).delete()
+      if (links.length > 0) {
+        await transaction('pageLinks').insert(links.map(link => ({ pageId: payload.pageId, ...link })))
+      }
+      const persistedRows = await transaction<PageLinkRow>('pageLinks')
+        .select('localeCode', 'path')
+        .where({ pageId: payload.pageId })
+        .orderBy('localeCode')
+        .orderBy('path')
+      const persisted = persistedRows.map(row => ({ localeCode: row.localeCode, path: row.path }))
+      const satisfied = canonicalJson(persisted) === canonicalJson(links)
+      return { superseded: false, observed: current, invalid: false, satisfied }
+    })
+    if (outcome.superseded) return supersededResult(outcome.observed, this.kind)
+    const observedSourceRevision = outcome.observed === undefined ? null : revisionString(outcome.observed.sourceRevision)
+    const satisfied = outcome.invalid !== true && outcome.satisfied === true
+    return {
+      result: { projection: this.kind, replaced: satisfied, linkCount: links.length, previousIdentityEvicted },
+      postcondition: {
+        satisfied,
+        observedSourceRevision,
+        detail: satisfied
+          ? 'Persisted links exactly match the revision-fenced rendered projection and the former cache identity is evicted'
+          : 'Link persistence did not prove the exact current rendered revision'
+      }
+    }
+  }
+}
+
+const PAGE_PROJECTION_LEASE_MILLISECONDS = 60_000
+const PAGE_PROJECTION_HEARTBEAT_MILLISECONDS = 20_000
+
+export class PageProjectionLifecycle {
+  readonly #knex: Knex
+  readonly #workerId: string
+  readonly #sinks: Readonly<Partial<Record<PageProjectionEffectKind, PageProjectionSink>>>
+  #running = false
+
+  constructor(knex: Knex, workerId: string, runtime: PageProjectionRuntime) {
+    this.#knex = knex
+    this.#workerId = workerId
+    this.#sinks = {
+      render: new RenderProjectionSink(knex, runtime),
+      links: new LinksProjectionSink(knex, runtime)
+    }
+  }
+
+  async #executeClaim(claim: ClaimedPageProjectionEffect, signal: AbortSignal): Promise<void> {
+    const controller = new AbortController()
+    const abort = (): void => controller.abort(signal.reason)
+    if (signal.aborted) abort()
+    else signal.addEventListener('abort', abort, { once: true })
+    let renewal = Promise.resolve()
+    const heartbeat = async (): Promise<void> => {
+      if (controller.signal.aborted) return
+      const now = new Date()
+      const updated = await this.#knex('pageMutationOutbox')
+        .where({ id: claim.id, status: 'running', leaseToken: claim.leaseToken })
+        .update({
+          leaseExpiresAt: new Date(now.valueOf() + PAGE_PROJECTION_LEASE_MILLISECONDS).toISOString(),
+          updatedAt: now.toISOString()
+        })
+      if (updated !== 1) controller.abort(new PageMutationOutboxError('PROJECTION_LEASE_LOST', 'Page projection effect lease was lost'))
+    }
+    const heartbeatTimer = setInterval(() => {
+      renewal = renewal.then(heartbeat).catch(error => controller.abort(error))
+    }, PAGE_PROJECTION_HEARTBEAT_MILLISECONDS)
+    heartbeatTimer.unref()
+    try {
+      await executePageMutationEffect(this.#knex, claim, this.#sinks, controller.signal)
+    } finally {
+      clearInterval(heartbeatTimer)
+      signal.removeEventListener('abort', abort)
+      await renewal
+    }
+  }
+
+  async runOnce(signal = new AbortController().signal): Promise<{ processed: number }> {
+    if (this.#running) return { processed: 0 }
+    this.#running = true
+    try {
+      const claims = await claimPageMutationEffects(this.#knex, {
+        leaseOwner: this.#workerId,
+        limit: 10,
+        leaseMs: PAGE_PROJECTION_LEASE_MILLISECONDS,
+        effects: ['render', 'links']
+      })
+      for (const claim of claims) {
+        try {
+          await this.#executeClaim(claim, signal)
+        } catch {
+          // executePageMutationEffect records retry/terminal state before returning the failure.
+        }
+      }
+      return { processed: claims.length }
+    } finally {
+      this.#running = false
+    }
+  }
 }

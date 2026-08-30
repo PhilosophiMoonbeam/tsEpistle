@@ -711,10 +711,37 @@ describe('Ax agent engine', () => {
     expect(text).toHaveBeenCalledWith('The page is ready.')
   })
 
-  it('resumes one reclaimed pre-fence approval action identity without provider reinference', async () => {
-    const create = vi.fn(async () => {
-      throw new Error('provider inference must not run during action continuation')
-    })
+  it('resumes one reclaimed pre-fence approval action identity and feeds its durable result back into synthesis', async () => {
+    let providerContent = 'The reclaimed page was created.'
+    let providerFailure = false
+    const providerCalls: Readonly<AxChatRequest<unknown>>[] = []
+    const create = vi.fn(async () => ({
+      service: {
+        chat: async (input: Readonly<AxChatRequest<unknown>>) => {
+          if (providerFailure) throw new Error('synthesis transport failed')
+          providerCalls.push(input)
+          return {
+            results: [{ index: 0, content: providerContent }],
+            modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
+          }
+        }
+      },
+      capabilities: {
+        streaming: false,
+        toolCalling: 'native' as const,
+        parallelToolCalls: true,
+        structuredOutput: 'native-json-schema' as const,
+        usage: 'terminal' as const,
+        cancellation: true,
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_000
+      },
+      transportKind: 'openai-responses' as const,
+      model: 'gpt-test',
+      capabilityRevision: 'cap-1',
+      pricingRevision: 'price-1',
+      pricing
+    }))
     const factory = { create } as unknown as AgentProviderFactory
     const proposalIds = new Set<string>()
     const apply = vi.fn(async () => {})
@@ -791,7 +818,8 @@ describe('Ax agent engine', () => {
       checkpointSha256: createHash('sha256').update(canonicalJson(checkpointBody)).digest('hex')
     }
     const event = vi.fn(async () => {})
-    const sink = { text: async () => {}, event }
+    const text = vi.fn(async () => {})
+    const sink = { text, event }
     const engine = new AxAgentEngine(factory, actions)
 
     await expect(
@@ -825,13 +853,13 @@ describe('Ax agent engine', () => {
     close.mockClear()
 
     await expect(engine.resumeAction(resumed, checkpoint, sink)).resolves.toMatchObject({
-      inputTokens: 0,
-      outputTokens: 0,
-      costMicros: 0
+      inputTokens: 3,
+      outputTokens: 4,
+      costMicros: 11
     })
 
-    expect(open).toHaveBeenCalledOnce()
-    expect(create).not.toHaveBeenCalled()
+    expect(open).toHaveBeenCalledTimes(2)
+    expect(create).toHaveBeenCalledOnce()
     expect(invoke).toHaveBeenCalledOnce()
     expect(invoke).toHaveBeenCalledWith('pages.prepareCreate', checkpoint.actionInput, signal, 'proposal-call-1')
     expect(proposalIds).toEqual(new Set([checkpoint.proposalId]))
@@ -846,19 +874,50 @@ describe('Ax agent engine', () => {
       }
     ])
     expect(invokingAgentRunLease(signal)).toBeNull()
-    expect(event).toHaveBeenCalledOnce()
-    expect(event).toHaveBeenCalledWith(
-      'tool.completed',
-      expect.objectContaining({
-        actionCallId: 'proposal-call-1',
-        actionName: 'pages.prepareCreate'
-      })
-    )
-    const completed = event.mock.calls[0]?.[1] as { result: string } | undefined
+    expect(event.mock.calls.map(([type]) => type)).toEqual(['tool.completed', 'model.turn', 'evidence.provenance'])
+    const completed = event.mock.calls.find(([type]) => type === 'tool.completed')?.[1] as { result: string } | undefined
     expect(completed).toBeDefined()
     expect(JSON.parse(completed!.result)).toMatchObject({ proposalId: checkpoint.proposalId, status: 'applied' })
     expect(JSON.parse(completed!.result).status).not.toBe('recovery_required')
-    expect(close).toHaveBeenCalledOnce()
+    expect(providerCalls).toHaveLength(1)
+    expect(providerCalls[0]?.chatPrompt).toContainEqual({
+      role: 'assistant',
+      functionCalls: [
+        {
+          id: checkpoint.actionCallId,
+          type: 'function',
+          function: { name: 'wiki_prepare_page_create', params: canonicalJson(checkpoint.actionInput) }
+        }
+      ]
+    })
+    expect(providerCalls[0]?.chatPrompt).toContainEqual(
+      expect.objectContaining({
+        role: 'function',
+        functionId: checkpoint.actionCallId,
+        result: expect.stringContaining(`"proposalId":"${checkpoint.proposalId}"`)
+      })
+    )
+    expect(text).toHaveBeenCalledWith('The reclaimed page was created.')
+    expect(close).toHaveBeenCalledTimes(2)
+
+    providerContent = ''
+    text.mockClear()
+    event.mockClear()
+    await expect(engine.resumeAction(resumed, checkpoint, sink)).rejects.toMatchObject({
+      code: 'AGENT_ACTION_RECOVERY_REQUIRED',
+      status: 409
+    })
+    expect(text).not.toHaveBeenCalled()
+    expect(event.mock.calls.map(([type]) => type)).toEqual(['tool.completed', 'model.turn', 'evidence.provenance'])
+
+    providerContent = 'unused'
+    providerFailure = true
+    event.mockClear()
+    await expect(engine.resumeAction(resumed, checkpoint, sink)).rejects.toMatchObject({
+      code: 'AGENT_ACTION_RECOVERY_REQUIRED',
+      status: 409
+    })
+    expect(event.mock.calls.map(([type]) => type)).toEqual(['tool.completed'])
   })
 
   it('fails closed when a generation-only provider emits a tool call', async () => {

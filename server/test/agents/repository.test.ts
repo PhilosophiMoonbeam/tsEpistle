@@ -254,6 +254,10 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.dateTime('decidedAt').nullable()
     table.text('decisionNote').nullable()
   })
+  await knex.schema.createTable('agentProviderProfileVersions', table => {
+    table.uuid('id').primary()
+    table.text('policies').notNullable()
+  })
   await knex.schema.createTable('agentQuotaDaily', table => {
     table.integer('ownerId').notNullable()
     table.date('day').notNullable()
@@ -331,6 +335,19 @@ describe('durable agent repositories', () => {
     await appendAgentMessage(knex, { id: userMessageId, ownerId: 7, sessionId, role: 'user', status: 'complete', content: 'Question' })
     await appendAgentMessage(knex, { id: assistantMessageId, ownerId: 7, sessionId, role: 'assistant', status: 'streaming', content: '' })
     await insertRun(knex)
+    await knex('agentProviderProfileVersions').insert({
+      id: '00000000-0000-4000-8000-000000000007',
+      policies: JSON.stringify({
+        allowedModes: ['agent'],
+        dailyTokens: 1_000,
+        dailyCostMicros: 1_000,
+        reservationTokens: 100,
+        reservationCostMicros: 100,
+        reservationMilliseconds: 60_000,
+        promptVersion: 1,
+        maxAttempts: 3
+      })
+    })
     await knex('agentMessages').whereIn('id', [userMessageId, assistantMessageId]).update({ runId })
   })
 
@@ -744,6 +761,175 @@ describe('durable agent repositories', () => {
     })
   })
 
+  it('reconciles terminal retry usage from every persisted root model turn', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000070',
+      runId,
+      ownerId: 7,
+      type: 'task.planCreated',
+      attempt: 1,
+      data: { taskIds: [], taskCount: 0, inputTokens: 2, outputTokens: 1, costMicros: 4 }
+    })
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000071',
+      runId,
+      ownerId: 7,
+      type: 'model.turn',
+      attempt: 1,
+      data: {
+        turn: 1,
+        outcome: 'tool_calls',
+        inputTokens: 11,
+        outputTokens: 3,
+        costMicros: 17,
+        content: '',
+        contentTruncated: false,
+        actionCallIds: ['proposal-call']
+      }
+    })
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 1,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null
+    })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 100, costMicros: 100 },
+      { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      new Date('2026-08-17T00:05:00.000Z'),
+      now
+    )
+    let reservedExposure = 0
+    const engine: AgentEngine = {
+      async execute(request, sink) {
+        if (!request.dispatchBudget) throw new Error('dispatch budget missing')
+        const reservation = await request.dispatchBudget.reserve({ tokens: 84, costMicros: 30 })
+        reservedExposure = Number((await knex('agentQuotaReservations').where({ runId }).first('reservedTokens'))?.reservedTokens)
+        await request.dispatchBudget.reconcile(reservation, { inputTokens: 5, outputTokens: 2, costMicros: 9 })
+        await sink.text('Recovered answer')
+        return { inputTokens: 5, outputTokens: 2, costMicros: 9 }
+      }
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      { workerId: 'worker-retry-usage', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
+
+    expect(await runtime.runOnce()).toBe(true)
+    expect(reservedExposure).toBe(101)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'estimatedCostMicros')).toMatchObject({
+      status: 'succeeded',
+      inputTokens: 18,
+      outputTokens: 6,
+      estimatedCostMicros: 30
+    })
+    expect(await knex('agentQuotaReservations').where({ runId }).first('status', 'consumedTokens', 'consumedCostMicros')).toMatchObject({
+      status: 'consumed',
+      consumedTokens: 24,
+      consumedCostMicros: 30
+    })
+    const usageEvent = await knex('agentEvents').where({ runId, type: 'usage.updated' }).first('data')
+    expect(JSON.parse(String(usageEvent?.data))).toMatchObject({
+      inputTokens: 18,
+      outputTokens: 6,
+      costMicros: 30,
+      model: { inputTokens: 16, outputTokens: 5, costMicros: 26 },
+      orchestration: { inputTokens: 2, outputTokens: 1, costMicros: 4 }
+    })
+  })
+
+  it('reconciles persisted retry turns when recovered synthesis terminalizes partial', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    await appendAgentEvent(knex, {
+      id: '00000000-0000-4000-8000-000000000072',
+      runId,
+      ownerId: 7,
+      type: 'model.turn',
+      attempt: 1,
+      data: {
+        turn: 1,
+        outcome: 'tool_calls',
+        inputTokens: 7,
+        outputTokens: 3,
+        costMicros: 13,
+        content: '',
+        contentTruncated: false,
+        actionCallIds: ['proposal-call']
+      }
+    })
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 1,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      availableAt: now,
+      completedAt: null
+    })
+    await reserveAgentRunQuota(
+      knex,
+      runId,
+      7,
+      { tokens: 100, costMicros: 100 },
+      { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      new Date('2026-08-17T00:05:00.000Z'),
+      now
+    )
+    const engine: AgentEngine = {
+      async execute(_request, sink) {
+        await sink.event('model.turn', {
+          turn: 1,
+          outcome: 'answer_rejected',
+          inputTokens: 4,
+          outputTokens: 2,
+          costMicros: 8,
+          content: '',
+          contentTruncated: false,
+          actionCallIds: []
+        })
+        throw Object.assign(new Error('retry synthesis failed'), { code: 'AGENT_ACTION_RECOVERY_REQUIRED' })
+      }
+    }
+    const runtime = new AgentProductRuntime(
+      knex,
+      {
+        async resolve() {
+          throw new Error('not used')
+        }
+      },
+      engine,
+      { workerId: 'worker-retry-failure-usage', globalConcurrency: 1, perUserConcurrency: 1 }
+    )
+
+    expect(await runtime.runOnce()).toBe(true)
+    expect(await knex('agentRuns').where({ id: runId }).first('status', 'inputTokens', 'outputTokens', 'estimatedCostMicros')).toMatchObject({
+      status: 'partial',
+      inputTokens: 11,
+      outputTokens: 5,
+      estimatedCostMicros: 21
+    })
+    expect(await knex('agentQuotaReservations').where({ runId }).first('status', 'consumedTokens', 'consumedCostMicros')).toMatchObject({
+      status: 'consumed',
+      consumedTokens: 16,
+      consumedCostMicros: 21
+    })
+    expect(await knex('agentEvents').where({ runId }).orderBy('sequence').pluck('type')).toContain('run.partial')
+    expect(await knex('agentMessages').where({ id: assistantMessageId }).first('status', 'content')).toEqual({ status: 'failed', content: '' })
+  })
+
   it('retains quota and durable approval state during worker shutdown', async () => {
     const now = new Date('2026-08-17T00:00:00.000Z')
     await knex('agentRuns').where({ id: runId }).update({
@@ -1043,6 +1229,16 @@ describe('durable agent repositories', () => {
       },
       {
         async execute(_request, sink) {
+          await sink.event('model.turn', {
+            turn: 1,
+            outcome: 'answer_accepted',
+            inputTokens: 10,
+            outputTokens: 5,
+            costMicros: 0,
+            content: 'I found a stale runner configuration.',
+            contentTruncated: false,
+            actionCallIds: []
+          })
           await sink.text('I found a stale runner configuration.')
           return { inputTokens: 10, outputTokens: 5, costMicros: 0 }
         }

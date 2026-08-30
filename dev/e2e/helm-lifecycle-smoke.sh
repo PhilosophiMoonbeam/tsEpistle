@@ -3,6 +3,7 @@ set -euo pipefail
 
 : "${WIKI_TEST_IMAGE_REPOSITORY:?WIKI_TEST_IMAGE_REPOSITORY is required}"
 : "${WIKI_TEST_IMAGE_TAG:?WIKI_TEST_IMAGE_TAG is required}"
+: "${WIKI_TEST_PREVIOUS_IMAGE:?WIKI_TEST_PREVIOUS_IMAGE is required}"
 : "${POSTGRES_TEST_IMAGE_REPOSITORY:?POSTGRES_TEST_IMAGE_REPOSITORY is required}"
 : "${POSTGRES_TEST_IMAGE_TAG:?POSTGRES_TEST_IMAGE_TAG is required}"
 
@@ -11,8 +12,33 @@ NAMESPACE=wiki-lifecycle
 APP=wiki-lifecycle
 ADMIN_EMAIL=helm-lifecycle@example.com
 ADMIN_PASSWORD=HelmLifecycle123!
-INITIAL_IMAGE_TAG="${WIKI_TEST_IMAGE_TAG}-helm-initial"
-INITIAL_IMAGE="$WIKI_TEST_IMAGE_REPOSITORY:$INITIAL_IMAGE_TAG"
+CANDIDATE_IMAGE="$WIKI_TEST_IMAGE_REPOSITORY:$WIKI_TEST_IMAGE_TAG"
+if [[ "$WIKI_TEST_PREVIOUS_IMAGE" =~ ^(.+):([^/@]+)@(sha256:[0-9a-f]{64})$ ]]; then
+  PREVIOUS_IMAGE_REPOSITORY=${BASH_REMATCH[1]}
+  PREVIOUS_IMAGE_TAG=${BASH_REMATCH[2]}
+  PREVIOUS_IMAGE_DIGEST=${BASH_REMATCH[3]}
+else
+  echo 'WIKI_TEST_PREVIOUS_IMAGE must be an immutable tagged digest (repository:tag@sha256:digest).' >&2
+  exit 1
+fi
+INITIAL_IMAGE="$PREVIOUS_IMAGE_REPOSITORY@$PREVIOUS_IMAGE_DIGEST"
+
+if ! INITIAL_IMAGE_REVISION=$(docker image inspect --format '{{.Id}}' "$WIKI_TEST_PREVIOUS_IMAGE" 2>/dev/null); then
+  echo "Supported previous-release image is not resolved locally: $WIKI_TEST_PREVIOUS_IMAGE" >&2
+  exit 1
+fi
+if ! CANDIDATE_IMAGE_REVISION=$(docker image inspect --format '{{.Id}}' "$CANDIDATE_IMAGE" 2>/dev/null); then
+  echo "Candidate image is not resolved locally: $CANDIDATE_IMAGE" >&2
+  exit 1
+fi
+if [[ ! "$INITIAL_IMAGE_REVISION" =~ ^sha256:[0-9a-f]{64}$ || ! "$CANDIDATE_IMAGE_REVISION" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo 'Application images did not resolve to immutable Docker image revisions.' >&2
+  exit 1
+fi
+if [ "$INITIAL_IMAGE_REVISION" = "$CANDIDATE_IMAGE_REVISION" ]; then
+  echo "Previous release and candidate resolve to the same application revision: $INITIAL_IMAGE_REVISION" >&2
+  exit 1
+fi
 KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-wiki-lifecycle}"
 APPLICATION_CONTAINER=
 UPGRADE_LOG=
@@ -31,7 +57,6 @@ cleanup() {
   if [ -n "${UPGRADE_LOG:-}" ]; then
     rm -f "$UPGRADE_LOG"
   fi
-  docker image rm "$INITIAL_IMAGE" >/dev/null 2>&1 || true
   helm uninstall "$RELEASE" --namespace "$NAMESPACE" >/dev/null 2>&1 || true
   kubectl delete namespace "$NAMESPACE" --wait=false >/dev/null 2>&1 || true
 }
@@ -134,16 +159,46 @@ assert_service_port_forward_health() {
   return 1
 }
 
-docker image tag "$WIKI_TEST_IMAGE_REPOSITORY:$WIKI_TEST_IMAGE_TAG" "$INITIAL_IMAGE"
-kind load docker-image --name "$KIND_CLUSTER_NAME" "$INITIAL_IMAGE"
+assert_application_revision() {
+  local stage=$1
+  local helm_revision=$2
+  local expected_image=$3
+  local expected_application_revision=$4
+  local actual_image
+  local actual_application_revision
+  local recorded_application_revision
+  local actual_helm_revision
+
+  actual_image=$(kubectl --namespace "$NAMESPACE" get deployment "$APP" \
+    --output jsonpath='{.spec.template.spec.containers[0].image}')
+  actual_application_revision=$(kubectl --namespace "$NAMESPACE" get deployment "$APP" \
+    --output jsonpath='{.spec.template.metadata.annotations.lifecycle-image-revision}')
+  recorded_application_revision=$(helm get values "$RELEASE" --namespace "$NAMESPACE" \
+    --revision "$helm_revision" --output json |
+    jq --exit-status --raw-output '.podAnnotations["lifecycle-image-revision"]')
+  actual_helm_revision=$(helm history "$RELEASE" --namespace "$NAMESPACE" --output json |
+    jq --exit-status --raw-output 'last | .revision')
+
+  [ "$actual_image" = "$expected_image" ]
+  [ "$actual_application_revision" = "$expected_application_revision" ]
+  [ "$recorded_application_revision" = "$expected_application_revision" ]
+  [ "$actual_helm_revision" = "$helm_revision" ]
+  printf 'Helm lifecycle evidence: stage=%s helmRevision=%s image=%s applicationRevision=%s\n' \
+    "$stage" "$helm_revision" "$actual_image" "$actual_application_revision"
+}
+
+
+kind load docker-image --name "$KIND_CLUSTER_NAME" "$WIKI_TEST_PREVIOUS_IMAGE"
 
 helm install "$RELEASE" dev/helm \
   --namespace "$NAMESPACE" \
   --create-namespace \
   --set fullnameOverride="$APP" \
   --set ingress.enabled=false \
-  --set image.repository="$WIKI_TEST_IMAGE_REPOSITORY" \
-  --set-string image.tag="$INITIAL_IMAGE_TAG" \
+  --set image.repository="$PREVIOUS_IMAGE_REPOSITORY" \
+  --set-string image.tag="$PREVIOUS_IMAGE_TAG" \
+  --set-string image.digest="$PREVIOUS_IMAGE_DIGEST" \
+  --set-string podAnnotations.lifecycle-image-revision="$INITIAL_IMAGE_REVISION" \
   --set image.imagePullPolicy=Never \
   --set persistence.size=1Gi \
   --set postgresql.postgresqlPassword='Password123!' \
@@ -157,6 +212,7 @@ helm install "$RELEASE" dev/helm \
 
 APPLICATION_CONTAINER=$(kubectl --namespace "$NAMESPACE" get deployment "$APP" \
   --output jsonpath='{.spec.template.spec.containers[0].name}')
+assert_application_revision installed 1 "$INITIAL_IMAGE" "$INITIAL_IMAGE_REVISION"
 assert_service_port_forward_health
 
 setup_response=$(app_request \
@@ -182,8 +238,11 @@ UPGRADE_LOG=$(mktemp)
 helm upgrade "$RELEASE" dev/helm \
   --namespace "$NAMESPACE" \
   --reuse-values \
+  --set image.repository="$WIKI_TEST_IMAGE_REPOSITORY" \
+  --set-string image.digest= \
   --set-string image.tag="$WIKI_TEST_IMAGE_TAG" \
   --set-string podAnnotations.lifecycle-stage=upgraded \
+  --set-string podAnnotations.lifecycle-image-revision="$CANDIDATE_IMAGE_REVISION" \
   --rollback-on-failure \
   --wait \
   --timeout 10m >"$UPGRADE_LOG" 2>&1 &
@@ -205,16 +264,14 @@ fi
 assert_no_mixed_application_versions
 
 [ "$(kubectl --namespace "$NAMESPACE" get deployment "$APP" --output jsonpath='{.spec.template.metadata.annotations.lifecycle-stage}')" = upgraded ]
-[ "$(kubectl --namespace "$NAMESPACE" get deployment "$APP" --output jsonpath='{.spec.template.spec.containers[0].image}')" = "$WIKI_TEST_IMAGE_REPOSITORY:$WIKI_TEST_IMAGE_TAG" ]
-[ "$(helm history "$RELEASE" --namespace "$NAMESPACE" --output json | jq --raw-output 'last | .revision')" = 2 ]
+assert_application_revision upgraded 2 "$CANDIDATE_IMAGE" "$CANDIDATE_IMAGE_REVISION"
 jwt=$(wait_for_login)
 assert_page "$jwt" "$page_id"
 helm test "$RELEASE" --namespace "$NAMESPACE" --timeout 5m
 
 helm rollback "$RELEASE" 1 --namespace "$NAMESPACE" --wait --timeout 10m
 [ -z "$(kubectl --namespace "$NAMESPACE" get deployment "$APP" --output jsonpath='{.spec.template.metadata.annotations.lifecycle-stage}')" ]
-[ "$(kubectl --namespace "$NAMESPACE" get deployment "$APP" --output jsonpath='{.spec.template.spec.containers[0].image}')" = "$INITIAL_IMAGE" ]
-[ "$(helm history "$RELEASE" --namespace "$NAMESPACE" --output json | jq --raw-output 'last | .revision')" = 3 ]
+assert_application_revision rolled-back 3 "$INITIAL_IMAGE" "$INITIAL_IMAGE_REVISION"
 jwt=$(wait_for_login)
 assert_page "$jwt" "$page_id"
 helm test "$RELEASE" --namespace "$NAMESPACE" --timeout 5m

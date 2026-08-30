@@ -653,11 +653,25 @@ export class AxAgentEngine implements AgentEngine {
         cacheHit: false,
         reusedActionCallId: null
       })
-      return {
-        inputTokens: 0,
-        outputTokens: 0,
-        costMicros: 0,
-        ...(actionSession.authoritySha256 === null ? {} : { authoritySha256: actionSession.authoritySha256 })
+      actionSession.close()
+      actionSession = null
+      try {
+        return await this.execute(
+          {
+            ...request,
+            recoveredAction: {
+              actionCallId: checkpoint.actionCallId,
+              actionName: checkpoint.actionName,
+              actionInput: checkpoint.actionInput,
+              output
+            }
+          },
+          sink
+        )
+      } catch (error) {
+        if (request.signal.aborted) throw error
+        if (error instanceof AgentRepositoryError && error.code === 'AGENT_ACTION_RECOVERY_REQUIRED') throw error
+        throw new AgentRepositoryError('AGENT_ACTION_RECOVERY_REQUIRED', 'The approved action completed, but provider synthesis could not be recovered', 409)
       }
     } catch (error) {
       throw publicError(error)
@@ -815,6 +829,36 @@ export class AxAgentEngine implements AgentEngine {
             : { role: 'user' as const, content: message.content }
         )
     ]
+    if (request.recoveredAction !== undefined) {
+      if (request.purpose !== 'root' || tools === null)
+        throw new AgentRepositoryError('AGENT_ACTION_RECOVERY_REQUIRED', 'The completed action cannot be resumed without provider tools', 409)
+      const providerName = providerFunctionName(request.recoveredAction.actionName)
+      if (tools.actionNames.get(providerName) !== request.recoveredAction.actionName)
+        throw new AgentRepositoryError('AGENT_ACTION_RECOVERY_REQUIRED', 'The completed action is no longer available for provider synthesis', 409)
+      if (tools.mode === 'native') {
+        chatPrompt.push(
+          {
+            role: 'assistant',
+            functionCalls: [
+              {
+                id: request.recoveredAction.actionCallId,
+                type: 'function',
+                function: { name: providerName, params: canonicalJson(request.recoveredAction.actionInput) }
+              }
+            ]
+          },
+          { role: 'function', functionId: request.recoveredAction.actionCallId, result: JSON.stringify(request.recoveredAction.output) }
+        )
+      } else {
+        const call = JSON.stringify({ name: providerName, arguments: request.recoveredAction.actionInput })
+          .replaceAll('<', '\\u003c')
+          .replaceAll('>', '\\u003e')
+        chatPrompt.push(
+          { role: 'assistant', content: `<wiki-tool-call>${call}</wiki-tool-call>` },
+          { role: 'user', content: promptToolResultMessage(request.recoveredAction.actionCallId, providerName, request.recoveredAction.output) }
+        )
+      }
+    }
     let inputTokens = 0
     let outputTokens = 0
     let costMicros = 0
@@ -881,6 +925,12 @@ export class AxAgentEngine implements AgentEngine {
             })
             continue
           }
+          if (request.recoveredAction !== undefined && result.content.trim().length === 0)
+            throw new AgentRepositoryError(
+              'AGENT_ACTION_RECOVERY_REQUIRED',
+              'The approved action completed, but its assistant response could not be recovered',
+              409
+            )
           if (result.content.length > 0) await sink.text(result.content)
           if (request.purpose !== 'subagent' && actionSession && this.#actions?.saveSnapshot)
             await this.#actions.saveSnapshot(request, await actionSession.snapshot(request.signal))

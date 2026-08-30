@@ -311,6 +311,25 @@ This skill intentionally omits deletion. Keep destructive deletion in a separate
 
 ## Browser worker
 
+For a canary deployment, treat `ghcr.io/philosophimoonbeam/wiki-canary-promotion:canary-set` as the only commit point for the application/browser-worker set. The ordinary `:canary` image tags are non-authoritative conveniences and can temporarily name different runs while publication is in progress. Resolve the set once with the checked-in verifier; it validates the record, its exact main revision, all four architecture descriptors, and the matching immutable record keyed by that revision:
+
+```sh
+eval "$(dev/resolve-canary-promotion.sh --format=env)"
+printf 'Deploying validated main revision %s\n' "$WIKI_CANARY_MAIN_SHA"
+docker pull "$WIKI_IMAGE"
+docker pull "$WIKI_AGENT_BROWSER_IMAGE"
+```
+
+`WIKI_IMAGE` and `WIKI_AGENT_BROWSER_IMAGE` are digest references selected for the host architecture. The resolver also exports `WIKI_CANARY_APPLICATION_AMD64`, `WIKI_CANARY_APPLICATION_ARM64`, `WIKI_CANARY_AGENT_BROWSER_AMD64`, and `WIKI_CANARY_AGENT_BROWSER_ARM64` for schedulers that place both architectures. Pass the application digest to Helm rather than a mutable tag:
+
+```sh
+helm upgrade --install wiki dev/helm \
+  --set-string image.repository="${WIKI_IMAGE%@*}" \
+  --set-string image.digest="${WIKI_IMAGE#*@}"
+```
+
+Use `WIKI_AGENT_BROWSER_IMAGE` as the final image argument to the hardened browser-worker invocation below. Never resolve the application and browser-worker convenience tags separately: an interrupted tag update does not advance `canary-set`, and therefore must not advance deployment.
+
 For a packaged release, deploy the application and browser worker using the immutable `containerImage.reference` and `agentBrowserImage.reference` values in `release-manifest.json`; do not resolve the release tags independently.
 
 Build `dev/build/Dockerfile.agent-browser`. It pins Playwright/Chromium, runs as `pwuser`, launches Chromium with its sandbox enabled, and executes outside the Wiki application process.

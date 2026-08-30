@@ -12,7 +12,6 @@ describe('core/servers GraphQL transports', () => {
     vi.unmockModule('graphql-yoga', import.meta.url)
     vi.unmockModule('graphql-ws/use/ws', import.meta.url)
     vi.unmockModule('ws', import.meta.url)
-    vi.unmockModule('jsonwebtoken', import.meta.url)
     vi.unmockModule('../../graph/index.ts', import.meta.url)
     vi.restoreAllMocks()
   })
@@ -40,16 +39,12 @@ describe('core/servers GraphQL transports', () => {
     const WebSocketServer = vi.fn(function () {
       return wsServer
     })
-    const verify = vi.fn()
 
     vi.mockModule('graphql-yoga', import.meta.url, () => ({ createYoga, maskError }))
     vi.mockModule('graphql-ws/use/ws', import.meta.url, () => ({ useServer }))
     vi.mockModule('ws', import.meta.url, () => ({
       default: { Server: WebSocketServer },
       WebSocketServer
-    }))
-    vi.mockModule('jsonwebtoken', import.meta.url, () => ({
-      default: { verify }
     }))
     const createGraphQLArtifacts = vi.fn().mockResolvedValue({ schema: { kind: 'schema' } })
     vi.mockModule('../../graph/index.ts', import.meta.url, () => ({ createGraphQLArtifacts }))
@@ -65,7 +60,13 @@ describe('core/servers GraphQL transports', () => {
       error: vi.fn(),
       info: vi.fn()
     }
+    const authenticateUserToken = vi.fn()
+    const checkAccess = vi.fn(user => user?.permissions?.includes('manage:system') === true)
     global.WIKI = {
+      auth: {
+        authenticateUserToken,
+        checkAccess
+      },
       IS_DEBUG: false,
       app,
       collaboration,
@@ -85,7 +86,21 @@ describe('core/servers GraphQL transports', () => {
     const { default: createServers } = await vi.importFresh('../../core/servers.ts', import.meta.url)
     const servers = createServers(global.WIKI)
     const createHttpServer = () => ({ on: vi.fn(), off: vi.fn() })
-    return { servers, collaboration, createGraphQLArtifacts, createYoga, maskError, yoga, useServer, cleanup, WebSocketServer, wsServer, verify, createHttpServer }
+    return {
+      servers,
+      collaboration,
+      createGraphQLArtifacts,
+      createYoga,
+      maskError,
+      yoga,
+      useServer,
+      cleanup,
+      WebSocketServer,
+      wsServer,
+      authenticateUserToken,
+      checkAccess,
+      createHttpServer
+    }
   }
 
   it('resolves HTTP startup only after the listener is ready', async () => {
@@ -197,9 +212,9 @@ describe('core/servers GraphQL transports', () => {
 
 
   it('accepts a valid connection token for manage:system users', async () => {
-    const { servers, useServer, verify, createHttpServer } = await setupModule()
+    const { servers, useServer, authenticateUserToken, checkAccess, createHttpServer } = await setupModule()
     const user = { id: 7, permissions: ['manage:system'] }
-    verify.mockReturnValue(user)
+    authenticateUserToken.mockResolvedValue(user)
 
     await servers.startGraphQL()
     servers.installGraphQLSubscriptions(createHttpServer())
@@ -208,38 +223,151 @@ describe('core/servers GraphQL transports', () => {
       connectionParams: { token: 'direct-token' },
       extra: { request: { headers: {} } }
     }
-    protocol.onConnect(context)
+    await protocol.onConnect(context)
 
-    expect(context.extra.user).toBe(user)
-    expect(verify).toHaveBeenCalledWith('direct-token', 'PUBLIC-KEY', {
-      audience: 'urn:test-audience',
-      issuer: 'urn:wiki.js',
-      algorithms: ['RS256']
-    })
+    expect(context.extra).toMatchObject({ token: 'direct-token', user })
+    expect(authenticateUserToken).toHaveBeenCalledWith('direct-token')
+    expect(checkAccess).toHaveBeenCalledWith(user, ['manage:system'])
   })
 
   it('falls back to the jwt cookie', async () => {
-    const { servers, verify } = await setupModule()
+    const { servers, authenticateUserToken } = await setupModule()
     const user = { id: 9, permissions: ['manage:system'] }
-    verify.mockReturnValue(user)
+    authenticateUserToken.mockResolvedValue(user)
 
-    expect(servers.authenticateGraphQLSubscription({}, {
+    await expect(servers.authenticateGraphQLSubscription({}, {
       headers: { cookie: 'foo=bar; jwt=cookie-token' }
-    })).toBe(user)
-    expect(verify).toHaveBeenCalledWith('cookie-token', 'PUBLIC-KEY', expect.any(Object))
+    })).resolves.toEqual({ token: 'cookie-token', user })
+    expect(authenticateUserToken).toHaveBeenCalledWith('cookie-token')
   })
 
   it('rejects missing, invalid, and underprivileged credentials', async () => {
-    const { servers, verify } = await setupModule()
+    const { servers, authenticateUserToken } = await setupModule()
     const request = { headers: {} }
 
-    expect(() => servers.authenticateGraphQLSubscription({}, request)).toThrow('Unauthorized')
-    verify.mockImplementationOnce(() => {
-      throw new Error('invalid token')
+    await expect(servers.authenticateGraphQLSubscription({}, request)).rejects.toThrow('Unauthorized')
+    authenticateUserToken.mockRejectedValueOnce(new Error('invalid token'))
+    await expect(servers.authenticateGraphQLSubscription({ token: 'invalid-token' }, request)).rejects.toThrow('Unauthorized')
+    authenticateUserToken.mockResolvedValueOnce({ id: 8, permissions: ['read:pages'] })
+    await expect(servers.authenticateGraphQLSubscription({ token: 'underprivileged-token' }, request)).rejects.toThrow('Unauthorized')
+  })
+
+  it('revalidates an active authorized principal before subscribing and before each event delivery', async () => {
+    const { servers, useServer, yoga, authenticateUserToken, createHttpServer } = await setupModule()
+    const user = { id: 7, permissions: ['manage:system'] }
+    authenticateUserToken.mockResolvedValue(user)
+    yoga.getEnveloped.mockReturnValue({
+      schema: { kind: 'schema' },
+      execute: vi.fn(),
+      subscribe: vi.fn(),
+      contextFactory: vi.fn().mockResolvedValue({ user }),
+      parse: vi.fn().mockReturnValue({ kind: 'document' }),
+      validate: vi.fn().mockReturnValue([])
     })
-    expect(() => servers.authenticateGraphQLSubscription({ token: 'invalid-token' }, request)).toThrow('Unauthorized')
-    verify.mockReturnValueOnce({ id: 8, permissions: ['read:pages'] })
-    expect(() => servers.authenticateGraphQLSubscription({ token: 'underprivileged-token' }, request)).toThrow('Unauthorized')
+
+    await servers.startGraphQL()
+    servers.installGraphQLSubscriptions(createHttpServer())
+    const protocol = useServer.mock.calls[0][0]
+    const context = {
+      connectionParams: { token: 'direct-token' },
+      extra: { request: { headers: {}, socket: {} } }
+    }
+    await protocol.onConnect(context)
+    await expect(protocol.onSubscribe(context, 'operation-1', { query: 'subscription { loggingLiveTrail { level } }' })).resolves.toMatchObject({
+      schema: { kind: 'schema' },
+      document: { kind: 'document' }
+    })
+    await expect(protocol.onNext(context)).resolves.toBeUndefined()
+
+    expect(authenticateUserToken).toHaveBeenCalledTimes(3)
+    expect(authenticateUserToken).toHaveBeenNthCalledWith(1, 'direct-token')
+    expect(authenticateUserToken).toHaveBeenNthCalledWith(2, 'direct-token')
+    expect(authenticateUserToken).toHaveBeenNthCalledWith(3, 'direct-token')
+  })
+
+  it.each(['revoked', 'inactive', 'expired'])('rejects a %s principal at connection time', async () => {
+    const { servers, useServer, authenticateUserToken, createHttpServer } = await setupModule()
+    authenticateUserToken.mockResolvedValue(null)
+
+    await servers.startGraphQL()
+    servers.installGraphQLSubscriptions(createHttpServer())
+    const protocol = useServer.mock.calls[0][0]
+    const context = {
+      connectionParams: { token: 'stale-token' },
+      extra: { request: { headers: {} } }
+    }
+
+    await expect(protocol.onConnect(context)).rejects.toThrow('Unauthorized')
+  })
+
+  it('rejects authority revoked after connection before starting a subscription', async () => {
+    const { servers, useServer, authenticateUserToken, createHttpServer } = await setupModule()
+    const user = { id: 7, permissions: ['manage:system'] }
+    authenticateUserToken.mockResolvedValueOnce(user).mockResolvedValueOnce(null)
+
+    await servers.startGraphQL()
+    servers.installGraphQLSubscriptions(createHttpServer())
+    const protocol = useServer.mock.calls[0][0]
+    const context = {
+      connectionParams: { token: 'revoked-token' },
+      extra: { request: { headers: {} } }
+    }
+    await protocol.onConnect(context)
+
+    await expect(protocol.onSubscribe(context, 'operation-1', { query: 'subscription { loggingLiveTrail { level } }' })).rejects.toThrow('Unauthorized')
+  })
+
+  it.each(['revoked', 'inactive', 'expired'])('blocks event delivery when an active %s principal becomes unauthorized', async () => {
+    const { servers, useServer, yoga, authenticateUserToken, createHttpServer } = await setupModule()
+    const user = { id: 7, permissions: ['manage:system'] }
+    authenticateUserToken.mockResolvedValueOnce(user).mockResolvedValueOnce(user).mockResolvedValueOnce(null)
+    yoga.getEnveloped.mockReturnValue({
+      schema: { kind: 'schema' },
+      execute: vi.fn(),
+      subscribe: vi.fn(),
+      contextFactory: vi.fn().mockResolvedValue({ user }),
+      parse: vi.fn().mockReturnValue({ kind: 'document' }),
+      validate: vi.fn().mockReturnValue([])
+    })
+
+    await servers.startGraphQL()
+    servers.installGraphQLSubscriptions(createHttpServer())
+    const protocol = useServer.mock.calls[0][0]
+    const context = {
+      connectionParams: { token: 'stale-token' },
+      extra: { request: { headers: {}, socket: {} } }
+    }
+    await protocol.onConnect(context)
+    await protocol.onSubscribe(context, 'operation-1', { query: 'subscription { loggingLiveTrail { level } }' })
+
+    await expect(protocol.onNext(context)).rejects.toThrow('Unauthorized')
+  })
+
+  it('blocks event delivery after the current user loses manage:system', async () => {
+    const { servers, useServer, yoga, authenticateUserToken, createHttpServer } = await setupModule()
+    const administrator = { id: 7, permissions: ['manage:system'] }
+    const demotedUser = { id: 7, permissions: ['read:pages'] }
+    authenticateUserToken.mockResolvedValueOnce(administrator).mockResolvedValueOnce(administrator).mockResolvedValueOnce(demotedUser)
+    yoga.getEnveloped.mockReturnValue({
+      schema: { kind: 'schema' },
+      execute: vi.fn(),
+      subscribe: vi.fn(),
+      contextFactory: vi.fn().mockResolvedValue({ user: administrator }),
+      parse: vi.fn().mockReturnValue({ kind: 'document' }),
+      validate: vi.fn().mockReturnValue([])
+    })
+
+    await servers.startGraphQL()
+    servers.installGraphQLSubscriptions(createHttpServer())
+    const protocol = useServer.mock.calls[0][0]
+    const context = {
+      connectionParams: { token: 'demoted-token' },
+      extra: { request: { headers: {}, socket: {} } }
+    }
+    await protocol.onConnect(context)
+    await protocol.onSubscribe(context, 'operation-1', { query: 'subscription { loggingLiveTrail { level } }' })
+
+    await expect(protocol.onNext(context)).rejects.toThrow('Unauthorized')
   })
 
   it('disposes the graphql-ws handler and WebSocket server', async () => {

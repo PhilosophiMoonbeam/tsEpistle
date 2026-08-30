@@ -1,4 +1,3 @@
-
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
@@ -6,6 +5,7 @@ import {
   claimPageMutationEffects,
   enqueuePageMutationEffects,
   executePageMutationEffect,
+  PageProjectionLifecycle,
   PageMutationOutboxError,
   type PageProjectionSink
 } from '../../core/page-mutation-outbox.ts'
@@ -41,35 +41,57 @@ beforeEach(async () => {
     table.dateTime('updatedAt').notNullable()
     table.unique(['pageId', 'sourceRevision', 'effectKind'])
   })
+  await knex.schema.createTable('pages', table => {
+    table.integer('id').primary()
+    table.bigInteger('sourceRevision').notNullable()
+    table.text('content').notNullable()
+    table.text('render').notNullable()
+    table.string('localeCode').notNullable()
+    table.string('path').notNullable()
+    table.string('visibility').notNullable()
+    table.integer('ownerId').nullable()
+  })
+  await knex.schema.createTable('pageLinks', table => {
+    table.increments('id').primary()
+    table.integer('pageId').notNullable()
+    table.string('localeCode').notNullable()
+    table.string('path').notNullable()
+    table.unique(['pageId', 'localeCode', 'path'])
+  })
 })
 
 afterEach(async () => {
   await knex.destroy()
 })
 
-const enqueue = (overrides: Partial<Parameters<typeof enqueuePageMutationEffects>[1]> = {}) => enqueuePageMutationEffects(knex, {
-  pageId: 42,
-  sourceRevision: '8',
-  desiredState: 'present',
-  action: 'update',
-  source: '# Start\n',
-  location,
-  ...overrides
-})
+const enqueue = (overrides: Partial<Parameters<typeof enqueuePageMutationEffects>[1]> = {}) =>
+  enqueuePageMutationEffects(knex, {
+    pageId: 42,
+    sourceRevision: '8',
+    desiredState: 'present',
+    action: 'update',
+    source: '# Start\n',
+    location,
+    ...overrides
+  })
 
 describe('page mutation projection outbox', () => {
   it('commits immutable render, link, and knowledge intent atomically with the source transaction', async () => {
-    await expect(Promise.resolve(knex.transaction(async transaction => {
-      await enqueuePageMutationEffects(transaction, {
-        pageId: 42,
-        sourceRevision: '8',
-        desiredState: 'present',
-        action: 'update',
-        source: '# Start\n',
-        location
-      })
-      throw new Error('source write failed')
-    }))).rejects.toThrow('source write failed')
+    await expect(
+      Promise.resolve(
+        knex.transaction(async transaction => {
+          await enqueuePageMutationEffects(transaction, {
+            pageId: 42,
+            sourceRevision: '8',
+            desiredState: 'present',
+            action: 'update',
+            source: '# Start\n',
+            location
+          })
+          throw new Error('source write failed')
+        })
+      )
+    ).rejects.toThrow('source write failed')
     expect(await knex('pageMutationOutbox')).toEqual([])
 
     const ids = await enqueue()
@@ -139,15 +161,22 @@ describe('page mutation projection outbox', () => {
     await enqueue({ effects: ['render'] })
     const [missingClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'worker-a' })
     if (!missingClaim) throw new Error('claim missing')
-    await expect(Promise.resolve(executePageMutationEffect(knex, missingClaim, new Map(), new AbortController().signal))).rejects.toMatchObject({ code: 'MISSING_PROJECTION_SINK' })
+    await expect(Promise.resolve(executePageMutationEffect(knex, missingClaim, new Map(), new AbortController().signal))).rejects.toMatchObject({
+      code: 'MISSING_PROJECTION_SINK'
+    })
     expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'failed' })
 
     await knex('pageMutationOutbox').delete()
     await enqueue({ effects: ['render'] })
     const [badClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'worker-b' })
     if (!badClaim) throw new Error('claim missing')
-    const badSink = { kind: 'render' as const, reconcile: async () => ({ result: {}, postcondition: { satisfied: false, observedSourceRevision: null, detail: 'mismatch' } }) }
-    await expect(Promise.resolve(executePageMutationEffect(knex, badClaim, new Map([['render', badSink]]), new AbortController().signal))).rejects.toBeInstanceOf(PageMutationOutboxError)
+    const badSink = {
+      kind: 'render' as const,
+      reconcile: async () => ({ result: {}, postcondition: { satisfied: false, observedSourceRevision: null, detail: 'mismatch' } })
+    }
+    await expect(
+      Promise.resolve(executePageMutationEffect(knex, badClaim, new Map([['render', badSink]]), new AbortController().signal))
+    ).rejects.toBeInstanceOf(PageMutationOutboxError)
     expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'failed' })
   })
 
@@ -157,12 +186,111 @@ describe('page mutation projection outbox', () => {
     await enqueue({ effects: ['links'] })
     const [claim] = await claimPageMutationEffects(knex, { leaseOwner: 'worker', now: new Date() })
     if (!claim) throw new Error('claim missing')
-    const sink = { kind: 'links' as const, reconcile: async () => { throw new Error('temporary') } }
+    const sink = {
+      kind: 'links' as const,
+      reconcile: async () => {
+        throw new Error('temporary')
+      }
+    }
     await expect(Promise.resolve(executePageMutationEffect(knex, claim, new Map([['links', sink]]), new AbortController().signal))).rejects.toThrow('temporary')
     expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'retry', attempts: 1, leaseToken: null })
     await knex('pageMutationOutbox').update({ status: 'running', leaseToken: '00000000-0000-4000-8000-000000000099' })
-    const goodSink = { kind: 'links' as const, reconcile: async () => ({ result: {}, postcondition: { satisfied: true, observedSourceRevision: '8', detail: 'ok' } }) }
-    await expect(Promise.resolve(executePageMutationEffect(knex, claim, new Map([['links', goodSink]]), new AbortController().signal))).rejects.toMatchObject({ code: 'PROJECTION_LEASE_LOST' })
+    const goodSink = {
+      kind: 'links' as const,
+      reconcile: async () => ({ result: {}, postcondition: { satisfied: true, observedSourceRevision: '8', detail: 'ok' } })
+    }
+    await expect(Promise.resolve(executePageMutationEffect(knex, claim, new Map([['links', goodSink]]), new AbortController().signal))).rejects.toMatchObject({
+      code: 'PROJECTION_LEASE_LOST'
+    })
     vi.useRealTimers()
+  })
+})
+
+describe('production page projection lifecycle', () => {
+  it('renders and persists links only after exact revision-fenced postconditions', async () => {
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 8,
+      content: '# Start\n',
+      render: '<p>old render</p>',
+      localeCode: 'en',
+      path: 'docs/start',
+      visibility: 'public',
+      ownerId: null
+    })
+    await enqueue({ effects: ['render', 'links'], previousLocation: { ...location, path: 'docs/old' } })
+    const evicted: string[] = []
+    const renderPage = vi.fn(async (pageId: number) => {
+      await knex('pages')
+        .where({ id: pageId, sourceRevision: 8 })
+        .update({ render: '<p><a class="is-internal-link is-valid-page" href="/en/target">target</a></p>' })
+    })
+    const lifecycle = new PageProjectionLifecycle(knex, 'projection-worker', {
+      renderPage,
+      evictLocation: async previous => {
+        evicted.push(`${previous.locale}/${previous.path}/${previous.visibility}`)
+      }
+    })
+
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 2 })
+
+    expect(renderPage).toHaveBeenCalledWith(42)
+    expect(evicted).toEqual(['en/docs/old/public', 'en/docs/old/public'])
+    expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 42, localeCode: 'en', path: 'target' }])
+    expect(await knex('pageMutationOutbox').select('effectKind', 'status').orderBy('effectKind')).toEqual([
+      { effectKind: 'links', status: 'succeeded' },
+      { effectKind: 'render', status: 'succeeded' }
+    ])
+  })
+
+  it('fences superseded revisions without rendering or overwriting current links', async () => {
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 8,
+      content: '# Start\n',
+      render: '<a class="is-internal-link" href="/en/old">old</a>',
+      localeCode: 'en',
+      path: 'docs/start',
+      visibility: 'public',
+      ownerId: null
+    })
+    await knex('pageLinks').insert({ pageId: 42, localeCode: 'en', path: 'current' })
+    await enqueue({ effects: ['render', 'links'] })
+    await knex('pages').where({ id: 42 }).update({
+      sourceRevision: 9,
+      content: '# New\n',
+      render: '<a class="is-internal-link" href="/en/current">current</a>'
+    })
+    const renderPage = vi.fn(async () => undefined)
+    const lifecycle = new PageProjectionLifecycle(knex, 'fence-worker', { renderPage, evictLocation: async () => undefined })
+
+    await lifecycle.runOnce()
+
+    expect(renderPage).not.toHaveBeenCalled()
+    expect(await knex('pageLinks').select('localeCode', 'path')).toEqual([{ localeCode: 'en', path: 'current' }])
+    expect(await knex('pageMutationOutbox').whereNot({ status: 'succeeded' })).toHaveLength(0)
+  })
+
+  it('retries link publication until the immutable render effect is terminal', async () => {
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 8,
+      content: '# Start\n',
+      render: '<a class="is-internal-link" href="/en/target">target</a>',
+      localeCode: 'en',
+      path: 'docs/start',
+      visibility: 'public',
+      ownerId: null
+    })
+    await enqueue({ effects: ['links'] })
+    const lifecycle = new PageProjectionLifecycle(knex, 'retry-worker', {
+      renderPage: async () => undefined,
+      evictLocation: async () => undefined
+    })
+
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
+
+    expect(await knex('pageMutationOutbox').first('status', 'attempts')).toMatchObject({ status: 'retry', attempts: 1 })
+    expect(await knex('pageLinks')).toHaveLength(0)
   })
 })

@@ -64,14 +64,16 @@ export const useAgentsStore = defineStore('agents', {
     goalBusy: false,
     sessionTransitionVersion: 0,
     sessionTransitionController: null as AbortController | null,
+    sessionListVersion: 0,
     workspaceVersion: 0
   }),
   actions: {
     async initialize(csrfToken: string, options: AgentStoreInitializeOptions = {}) {
       this.cancelSessionTransition()
       const workspaceVersion = this.workspaceVersion + 1
+      const sessionListVersion = this.sessionListVersion + 1
       this.workspaceVersion = workspaceVersion
-      this.csrfToken = csrfToken
+      this.sessionListVersion = sessionListVersion
       this.routeSync = options.routeSync ?? true
       this.contextPage = options.currentPage ?? null
       this.loading = true
@@ -87,7 +89,7 @@ export const useAgentsStore = defineStore('agents', {
         if (this.workspaceVersion !== workspaceVersion) return
         this.profiles = profiles
         this.skills = skills
-        this.sessions = sessions
+        if (this.sessionListVersion === sessionListVersion) this.sessions = sessions
         this.folders = folders
         if (pathMatch?.[1]) {
           await this.openSession(pathMatch[1])
@@ -111,17 +113,20 @@ export const useAgentsStore = defineStore('agents', {
       const version = this.sessionTransitionVersion + 1
       this.sessionTransitionVersion = version
       this.sessionTransitionController?.abort()
+      this.sessionTransitionController = null
+      return version
+    },
+    beginSessionReadTransition() {
+      const version = this.beginSessionTransition()
       const controller = markRaw(new AbortController())
       this.sessionTransitionController = controller
       return { version, controller }
     },
-    isSessionTransitionCurrent(version: number, controller: AbortController) {
-      return !controller.signal.aborted && this.sessionTransitionVersion === version
+    isSessionTransitionCurrent(version: number) {
+      return this.sessionTransitionVersion === version
     },
     cancelSessionTransition() {
-      this.sessionTransitionVersion += 1
-      this.sessionTransitionController?.abort()
-      this.sessionTransitionController = null
+      this.beginSessionTransition()
     },
     closeWorkspace() {
       this.workspaceVersion += 1
@@ -130,21 +135,29 @@ export const useAgentsStore = defineStore('agents', {
       this.closeStream()
     },
     async newSession(retention: 'temporary' | 'saved') {
-      const { version, controller } = this.beginSessionTransition()
-      const fetcher = ((input: RequestInfo | URL, init?: RequestInit) => window.fetch(input, { ...init, signal: controller.signal })) as typeof fetch
+      const version = this.beginSessionTransition()
       const disposableSessionId = this.thread && this.thread.messages.length === 0 && !this.thread.session.currentRun ? this.thread.session.id : null
       try {
-        if (disposableSessionId) await deleteAgentSession(fetcher, this.csrfToken, disposableSessionId)
-        const created = await createAgentThread(fetcher, this.csrfToken, { retention, providerProfileId: null })
-        if (!this.isSessionTransitionCurrent(version, controller)) return
-        this.sessionTransitionController = null
-        this.closeStream()
-        this.applyCreatedThread(created)
-        if (this.routeSync) window.history.replaceState(null, '', `/sessions/${created.session.id}`)
+        if (disposableSessionId) {
+          await deleteAgentSession(window.fetch.bind(window), this.csrfToken, disposableSessionId)
+          if (this.thread?.session.id === disposableSessionId) {
+            this.closeStream()
+            this.thread = null
+            this.launchPage = null
+          }
+        }
+        const created = await createAgentThread(window.fetch.bind(window), this.csrfToken, { retention, providerProfileId: null })
+        if (this.isSessionTransitionCurrent(version)) {
+          this.closeStream()
+          this.applyCreatedThread(created)
+          if (this.routeSync) window.history.replaceState(null, '', `/sessions/${created.session.id}`)
+        }
         await this.reloadSessions()
       } catch (error) {
-        if (!this.isSessionTransitionCurrent(version, controller)) return
-        this.sessionTransitionController = null
+        try {
+          await this.reloadSessions()
+        } catch {}
+        if (!this.isSessionTransitionCurrent(version)) return
         throw error
       }
     },
@@ -158,11 +171,11 @@ export const useAgentsStore = defineStore('agents', {
       this.connectCurrentRun()
     },
     async openSession(sessionId: string): Promise<boolean> {
-      const { version, controller } = this.beginSessionTransition()
+      const { version, controller } = this.beginSessionReadTransition()
       const fetcher = ((input: RequestInfo | URL, init?: RequestInit) => window.fetch(input, { ...init, signal: controller.signal })) as typeof fetch
       try {
         const candidate = await getAgentThread(fetcher, this.csrfToken, sessionId)
-        if (!this.isSessionTransitionCurrent(version, controller)) return false
+        if (!this.isSessionTransitionCurrent(version)) return false
         this.sessionTransitionController = null
         this.closeStream()
         this.thread = candidate
@@ -171,7 +184,7 @@ export const useAgentsStore = defineStore('agents', {
         this.connectCurrentRun()
         return true
       } catch (error) {
-        if (!this.isSessionTransitionCurrent(version, controller)) return false
+        if (!this.isSessionTransitionCurrent(version)) return false
         this.sessionTransitionController = null
         throw error
       }
@@ -184,7 +197,10 @@ export const useAgentsStore = defineStore('agents', {
       this.thread = refreshed
     },
     async reloadSessions() {
-      this.sessions = await listAgentSessions(window.fetch.bind(window), this.csrfToken)
+      const version = this.sessionListVersion + 1
+      this.sessionListVersion = version
+      const sessions = await listAgentSessions(window.fetch.bind(window), this.csrfToken)
+      if (this.sessionListVersion === version) this.sessions = sessions
     },
     async reloadFolders() {
       this.folders = await listAgentConversationFolders(window.fetch.bind(window), this.csrfToken)
@@ -370,14 +386,30 @@ export const useAgentsStore = defineStore('agents', {
       this.skills = await listAgentSkills(window.fetch.bind(window), this.csrfToken)
     },
     async removeSession(sessionId: string) {
-      this.cancelSessionTransition()
-      await deleteAgentSession(window.fetch.bind(window), this.csrfToken, sessionId)
-      if (this.thread?.session.id === sessionId) {
+      const version = this.beginSessionTransition()
+      try {
+        await deleteAgentSession(window.fetch.bind(window), this.csrfToken, sessionId)
+      } catch (error) {
+        try {
+          await this.reloadSessions()
+        } catch {}
+        if (!this.isSessionTransitionCurrent(version)) return
+        throw error
+      }
+      const removedDisplayedSession = this.thread?.session.id === sessionId
+      if (removedDisplayedSession) {
         this.closeStream()
         this.thread = null
+        this.launchPage = null
+      }
+      if (this.isSessionTransitionCurrent(version) && removedDisplayedSession) {
         await this.newSession('saved')
-      } else {
+        return
+      }
+      try {
         await this.reloadSessions()
+      } catch (error) {
+        if (this.isSessionTransitionCurrent(version)) throw error
       }
     },
     async resetHistory() {

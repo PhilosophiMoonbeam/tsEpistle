@@ -99,8 +99,9 @@ describe('product build and publication metadata', () => {
     expect(`${prQuality}\n${helmContract}`).not.toContain('helm package')
   })
 
-  test('serializes each ref and freshness-fences all mutable canary promotion from immutable descriptors', () => {
+  test('commits the complete canary set once from a revision-bound immutable promotion record', () => {
     const workflow = read('.github/workflows/build.yml')
+    const resolver = read('dev/resolve-canary-promotion.sh')
     const amd64 = workflow.slice(workflow.indexOf('  publish-amd64:'), workflow.indexOf('\n  arm:'))
     const arm64 = workflow.slice(workflow.indexOf('  arm:'), workflow.indexOf('\n  publish-canary:'))
     const canary = workflow.slice(workflow.indexOf('  publish-canary:'), workflow.indexOf('\n  beta:'))
@@ -115,16 +116,38 @@ describe('product build and publication metadata', () => {
 
     expect(canary).toContain("if: github.event_name == 'push' && github.ref == 'refs/heads/main'")
     expect(canary).toContain('needs: [publish-amd64, arm]')
-    expect(canary).toContain('image-amd64-descriptor.txt')
-    expect(canary).toContain('image-arm64-descriptor.txt')
-    expect(canary).toContain('agent-browser-amd64-descriptor.txt')
-    expect(canary).toContain('agent-browser-arm64-descriptor.txt')
-    expect(canary).toContain('remote_main="$(git ls-remote --exit-code origin refs/heads/main | cut -f1)"')
-    const freshnessFence = canary.indexOf('if [ "$remote_main" != "$GITHUB_SHA" ]')
-    const firstPromotion = canary.indexOf('docker buildx imagetools create')
-    expect(freshnessFence).toBeGreaterThan(-1)
-    expect(firstPromotion).toBeGreaterThan(freshnessFence)
-    expect(canary.match(/docker buildx imagetools create/g)).toHaveLength(4)
+    for (const descriptor of [
+      'image-amd64-descriptor.txt',
+      'image-arm64-descriptor.txt',
+      'agent-browser-amd64-descriptor.txt',
+      'agent-browser-arm64-descriptor.txt'
+    ]) {
+      expect(canary).toContain(descriptor)
+    }
+    expect(canary).toContain('dev/build/Dockerfile.canary-promotion')
+    expect(canary).toContain('mainSha: $main_sha')
+    expect(canary).toContain('application: {amd64: $image_amd64, arm64: $image_arm64}')
+    expect(canary).toContain('agentBrowser: {amd64: $agent_browser_amd64, arm64: $agent_browser_arm64}')
+    expect(canary).toContain('immutable_record="$promotion_repository:$GITHUB_SHA"')
+    expect(canary).toContain('if docker buildx imagetools inspect "$immutable_record" --raw')
+    expect(canary).toContain('record_descriptor="$immutable_record"')
+    expect(canary).toContain('--tag "$immutable_record"')
+
+    const firstFreshnessFence = canary.indexOf('\n        freshness_fence\n')
+    const immutableRecord = canary.indexOf('--tag "$immutable_record"')
+    const convenienceTags = canary.indexOf('- name: Update Non-authoritative Convenience Canary Tags')
+    const finalFreshnessFence = canary.lastIndexOf('if [ "$remote_main" != "$GITHUB_SHA" ]')
+    const authoritativeCommit = canary.indexOf('--tag "$promotion_repository:canary-set"')
+    expect(firstFreshnessFence).toBeGreaterThan(-1)
+    expect(immutableRecord).toBeGreaterThan(firstFreshnessFence)
+    expect(convenienceTags).toBeGreaterThan(immutableRecord)
+    expect(finalFreshnessFence).toBeGreaterThan(convenienceTags)
+    expect(authoritativeCommit).toBeGreaterThan(finalFreshnessFence)
+    expect(canary.match(/\$promotion_repository:canary-set/g)).toHaveLength(1)
+    expect(resolver).toContain('pointer_reference="${promotion_repository}:canary-set"')
+    expect(resolver).toContain('immutable_manifest="$(docker buildx imagetools inspect "$promotion_repository:$revision" --raw)"')
+    expect(resolver).not.toContain('${application_repository}:canary')
+
     for (const tag of [
       '$IMAGE_REPOSITORY:canary',
       '$IMAGE_REPOSITORY:canary-$REL_VERSION_STRICT',
@@ -134,11 +157,92 @@ describe('product build and publication metadata', () => {
       '$agent_browser_repository:canary-arm64-$REL_VERSION_STRICT'
     ]) {
       expect(canary).toContain(`--tag "${tag}"`)
+      expect(canary.indexOf(`--tag "${tag}"`)).toBeLessThan(authoritativeCommit)
     }
 
     expect(release).toContain('image_amd64="$(read_descriptor image-descriptors/image-amd64-descriptor.txt "$IMAGE_REPOSITORY")"')
     expect(release).toContain('image_arm64="$(read_descriptor image-descriptors/image-arm64-descriptor.txt "$IMAGE_REPOSITORY")"')
     expect(release).toContain('docker buildx imagetools inspect "$IMAGE_REPOSITORY@$image_digest"')
+  })
+
+  test('resolves deployment images only when the canary pointer matches its immutable revision record', () => {
+    const temporaryDirectory = fs.mkdtempSync('/tmp/wiki-canary-promotion-')
+    const fakeBin = path.join(temporaryDirectory, 'bin')
+    const pointerManifest = path.join(temporaryDirectory, 'pointer.json')
+    const immutableManifest = path.join(temporaryDirectory, 'immutable.json')
+    const revision = 'a'.repeat(40)
+    const applicationAmd64 = `registry.test/wiki@sha256:${'b'.repeat(64)}`
+    const applicationArm64 = `registry.test/wiki@sha256:${'c'.repeat(64)}`
+    const agentBrowserAmd64 = `registry.test/wiki-agent-browser@sha256:${'d'.repeat(64)}`
+    const agentBrowserArm64 = `registry.test/wiki-agent-browser@sha256:${'e'.repeat(64)}`
+    const manifest = JSON.stringify({
+      schemaVersion: 2,
+      mediaType: 'application/vnd.oci.image.manifest.v1+json',
+      annotations: {
+        'io.tsfranki.canary-promotion.schema-version': '1',
+        'io.tsfranki.canary-promotion.main-sha': revision,
+        'org.opencontainers.image.revision': revision,
+        'io.tsfranki.canary-promotion.application-amd64': applicationAmd64,
+        'io.tsfranki.canary-promotion.application-arm64': applicationArm64,
+        'io.tsfranki.canary-promotion.agent-browser-amd64': agentBrowserAmd64,
+        'io.tsfranki.canary-promotion.agent-browser-arm64': agentBrowserArm64
+      }
+    })
+
+    try {
+      fs.mkdirSync(fakeBin)
+      fs.writeFileSync(pointerManifest, manifest)
+      fs.writeFileSync(immutableManifest, manifest)
+      const fakeDocker = path.join(fakeBin, 'docker')
+      fs.writeFileSync(fakeDocker, `#!/bin/sh
+if [ "$4" = "$WIKI_CANARY_PROMOTION_REPOSITORY:${revision}" ]; then
+  cat "$CANARY_IMMUTABLE_MANIFEST"
+else
+  cat "$CANARY_POINTER_MANIFEST"
+fi
+`)
+      fs.chmodSync(fakeDocker, 0o755)
+      const env = {
+        ...process.env,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        WIKI_CANARY_PROMOTION_REPOSITORY: 'registry.test/wiki-canary-promotion',
+        WIKI_IMAGE_REPOSITORY: 'registry.test/wiki',
+        CANARY_POINTER_MANIFEST: pointerManifest,
+        CANARY_IMMUTABLE_MANIFEST: immutableManifest
+      }
+
+      const resolved = JSON.parse(execFileSync('bash', ['dev/resolve-canary-promotion.sh', '--format=json'], {
+        cwd: rootPath,
+        encoding: 'utf8',
+        env
+      }))
+      expect(resolved).toEqual({
+        schemaVersion: 1,
+        mainSha: revision,
+        images: {
+          application: { amd64: applicationAmd64, arm64: applicationArm64 },
+          agentBrowser: { amd64: agentBrowserAmd64, arm64: agentBrowserArm64 }
+        }
+      })
+
+      const deploymentEnvironment = execFileSync('bash', ['dev/resolve-canary-promotion.sh', '--format=env'], {
+        cwd: rootPath,
+        encoding: 'utf8',
+        env: { ...env, WIKI_CANARY_ARCHITECTURE: 'arm64' }
+      })
+      expect(deploymentEnvironment).toContain(`export WIKI_CANARY_MAIN_SHA='${revision}'`)
+      expect(deploymentEnvironment).toContain(`export WIKI_IMAGE='${applicationArm64}'`)
+      expect(deploymentEnvironment).toContain(`export WIKI_AGENT_BROWSER_IMAGE='${agentBrowserArm64}'`)
+
+      fs.writeFileSync(immutableManifest, '{}')
+      expect(() => execFileSync('bash', ['dev/resolve-canary-promotion.sh', '--format=json'], {
+        cwd: rootPath,
+        env,
+        stdio: 'ignore'
+      })).toThrow()
+    } finally {
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true })
+    }
   })
 
   test('release artifacts include complete revision-specific Corresponding Source', () => {

@@ -48,6 +48,7 @@ interface PageExtra extends UnknownRecord {
 
 interface CachedPage {
   id: number
+  sourceRevision: string
   authorId: number
   authorName: string
   createdAt: string
@@ -78,6 +79,16 @@ interface CachedPage {
 interface CachedPageResult extends Omit<CachedPage, 'ownerId'> {
   path: string
   localeCode: string
+  ownerId: number | null
+}
+
+interface PageCacheIdentityMarker {
+  id: number
+  hash: string
+  sourceRevision: string | number
+  path: string
+  localeCode: string
+  visibility: PageVisibility
   ownerId: number | null
 }
 
@@ -669,6 +680,7 @@ export default class Page extends Model {
   static get cacheSchema(): JSBinType<CachedPage> {
     return new JSBinType<CachedPage>({
       id: 'uint',
+      sourceRevision: 'string',
       authorId: 'uint',
       authorName: 'string',
       createdAt: 'string',
@@ -1907,6 +1919,7 @@ export default class Page extends Model {
       cachePath,
       wiki.models.pages.cacheSchema.encode({
         id: page.id,
+        sourceRevision: String(page.sourceRevision),
         authorId: page.authorId,
         authorName: page.authorName,
         createdAt: page.createdAt,
@@ -1943,7 +1956,34 @@ export default class Page extends Model {
     const cachePath = path.resolve(wiki.ROOTPATH, wiki.config.dataPath, `cache/${pageHash}.bin`)
     try {
       const pageBuffer = await fs.readFile(cachePath)
-      const page = wiki.models.pages.cacheSchema.decode(pageBuffer)
+      let page: CachedPage
+      try {
+        page = wiki.models.pages.cacheSchema.decode(pageBuffer)
+      } catch {
+        await fs.remove(cachePath)
+        return false
+      }
+      const marker = await wiki.models
+        .knex<PageCacheIdentityMarker>('pages')
+        .select('id', 'hash', 'sourceRevision', 'path', 'localeCode', 'visibility', 'ownerId')
+        .where({
+          path: opts.path,
+          localeCode: opts.locale,
+          visibility: opts.visibility,
+          ownerId: opts.ownerId
+        })
+        .first()
+      if (
+        marker === undefined ||
+        marker.hash !== pageHash ||
+        marker.id !== page.id ||
+        String(marker.sourceRevision) !== page.sourceRevision ||
+        marker.visibility !== page.visibility ||
+        marker.ownerId !== (page.ownerId === 0 ? null : page.ownerId)
+      ) {
+        await fs.remove(cachePath)
+        return false
+      }
       return {
         ...page,
         path: opts.path,

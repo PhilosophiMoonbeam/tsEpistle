@@ -20,10 +20,22 @@ type PackageManifest = {
   [key: string]: unknown
 }
 
+export type ThreatModelFinding = {
+  id: string
+  severity: string
+}
+
 export type ThreatModelContract = {
   reviewedRevision: string
+  externalReviewer: string
+  openFindings: ThreatModelFinding[]
+  resolvedFindingIds: string[]
   citedPaths: string[]
   commands: string[]
+}
+
+export type ThreatModelCheckOptions = {
+  release?: boolean
 }
 
 function extractRepositoryCitations(markdown: string): string[] {
@@ -49,19 +61,76 @@ function extractGateCommands(markdown: string): string[] {
     .filter(Boolean)
 }
 
+function extractTableRows(markdown: string, heading: string, expectedHeaders: string[]): string[][] {
+  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const sectionMatches = [...markdown.matchAll(new RegExp(`(?:^|\\n)## ${escapedHeading}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, 'g'))]
+  if (sectionMatches.length !== 1) throw new Error(`Threat model must contain exactly one ${heading} section`)
+
+  const section = sectionMatches[0]?.[1] ?? ''
+  const tableBlocks = [...section.matchAll(/(?:^|\n)((?:\|[^\n]*\|[ \t]*(?:\n|$))+)/g)]
+  const matchingTables = tableBlocks
+    .map(match =>
+      (match[1] ?? '')
+        .trim()
+        .split('\n')
+        .map(line =>
+          line
+            .trim()
+            .slice(1, -1)
+            .split('|')
+            .map(cell => cell.trim())
+        )
+    )
+    .filter(rows => isDeepStrictEqual(rows[0], expectedHeaders))
+  if (matchingTables.length !== 1) {
+    throw new Error(`${heading} must contain exactly one ${expectedHeaders.join(' / ')} table`)
+  }
+
+  const [header, separator, ...rows] = matchingTables[0] ?? []
+  if (!header || !separator || separator.length !== header.length || separator.some(cell => !/^:?-{3,}:?$/.test(cell))) {
+    throw new Error(`${heading} table must contain a Markdown header separator`)
+  }
+  if (rows.some(row => row.length !== header.length || row.some(cell => cell.length === 0))) {
+    throw new Error(`${heading} table rows must contain every declared field`)
+  }
+  return rows
+}
+
+function findingId(label: string): string {
+  const match = label.match(/^([A-Z][A-Z0-9-]*-\d+)\s+—\s+\S/)
+  if (!match) throw new Error(`Finding must begin with a stable ID and description: ${label}`)
+  return match[1] ?? ''
+}
+
 export function parseThreatModel(markdown: string): ThreatModelContract {
-  const coveredRows = [...markdown.matchAll(/^\|\s*Covered source\s*\|\s*(.*?)\s*\|\s*$/gm)]
-  if (coveredRows.length !== 1) throw new Error('Threat model must contain exactly one Covered source row')
-  const coveredValue = coveredRows[0]?.[1] ?? ''
+  const statusRows = extractTableRows(markdown, 'Status and review contract', ['Field', 'Value'])
+  const status = new Map<string, string>()
+  for (const [field = '', value = ''] of statusRows) {
+    if (status.has(field)) throw new Error(`Status and review contract contains duplicate field: ${field}`)
+    status.set(field, value)
+  }
+
+  const coveredValue = status.get('Covered source')
+  if (!coveredValue) throw new Error('Threat model must contain exactly one Covered source row')
   const revisionMatch = coveredValue.match(/^`([^`]+)`$/)
   if (!revisionMatch) throw new Error('Covered source must be one backticked full Git revision')
   const reviewedRevision = revisionMatch[1] ?? ''
   if (!FULL_SHA_PATTERN.test(reviewedRevision)) {
     throw new Error('Covered source must be exactly one full 40-character lowercase Git revision, not a branch or range')
   }
+  const externalReviewer = status.get('External reviewer')
+  if (!externalReviewer) throw new Error('Threat model must declare an External reviewer')
   if (/\bpnpm\b|pnpm-lock\.yaml|package-lock\.json|yarn\.lock/.test(markdown)) {
     throw new Error('Threat model dependency evidence must use Bun and bun.lock exclusively')
   }
+
+  const openFindings = extractTableRows(markdown, 'Open findings and accepted limitations', ['Finding', 'Severity', 'Owner', 'Required disposition']).map(
+    ([label = '', severity = '']) => ({ id: findingId(label), severity })
+  )
+  const resolvedFindingIds = extractTableRows(markdown, 'Resolved findings', ['Finding', 'Resolution evidence']).map(([label = '']) => findingId(label))
+  const findingIds = [...openFindings.map(finding => finding.id), ...resolvedFindingIds]
+  const duplicateFinding = findingIds.find((id, index) => findingIds.indexOf(id) !== index)
+  if (duplicateFinding) throw new Error(`Finding must have exactly one open or resolved disposition: ${duplicateFinding}`)
 
   const commands = extractGateCommands(markdown)
   for (const requiredCommand of REQUIRED_COMMANDS) {
@@ -70,7 +139,7 @@ export function parseThreatModel(markdown: string): ThreatModelContract {
   const citedPaths = extractRepositoryCitations(markdown)
   if (!citedPaths.includes('bun.lock')) throw new Error('Threat model must cite bun.lock as frozen dependency evidence')
 
-  return { reviewedRevision, citedPaths, commands }
+  return { reviewedRevision, externalReviewer, openFindings, resolvedFindingIds, citedPaths, commands }
 }
 
 function packageScripts(manifest: PackageManifest): Record<string, unknown> | undefined {
@@ -137,10 +206,10 @@ async function validateCitations(rootPath: string, citedPaths: string[], failure
   }
 }
 
-export async function checkThreatModel(rootPath = process.cwd()): Promise<string[]> {
+export async function checkThreatModel(rootPath = process.cwd(), options: ThreatModelCheckOptions = {}): Promise<string[]> {
   const failures: string[] = []
-  let contract: ThreatModelContract
   let manifest: PackageManifest
+  let contract: ThreatModelContract
   try {
     contract = parseThreatModel(await readFile(path.join(rootPath, 'docs/security/threat-model.md'), 'utf8'))
   } catch (error) {
@@ -151,7 +220,11 @@ export async function checkThreatModel(rootPath = process.cwd()): Promise<string
   } catch (error) {
     return [`Cannot read package.json: ${error instanceof Error ? error.message : String(error)}`]
   }
-
+  if (options.release) {
+    if (/^unassigned\b/i.test(contract.externalReviewer)) failures.push('External reviewer is unassigned; release publication is blocked')
+    const releaseBlockers = contract.openFindings.filter(finding => finding.severity.toLowerCase() === 'release blocker')
+    if (releaseBlockers.length > 0) failures.push(`Unresolved release blockers: ${releaseBlockers.map(finding => finding.id).join(', ')}`)
+  }
   const manager = packageManagerName(manifest)
   if (manager !== 'bun') failures.push('packageManager must select a versioned Bun release')
   for (const command of contract.commands) {
@@ -204,9 +277,12 @@ export async function checkThreatModel(rootPath = process.cwd()): Promise<string
 }
 
 async function main() {
-  const failures = await checkThreatModel()
+  const args = process.argv.slice(2)
+  if (args.some(argument => argument !== '--release') || args.length > 1) throw new Error('Usage: bun server/scripts/check-threat-model.ts [--release]')
+  const release = args[0] === '--release'
+  const failures = await checkThreatModel(process.cwd(), { release })
   if (failures.length > 0) throw new Error(`Threat-model contract failed:\n- ${failures.join('\n- ')}`)
-  console.log('Threat-model revision, evidence, and successor paths are valid')
+  console.log(release ? 'Threat-model release state is valid' : 'Threat-model revision, evidence, and successor paths are valid')
 }
 
 if (import.meta.main) await main()

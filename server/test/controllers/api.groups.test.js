@@ -24,6 +24,39 @@ describe('controllers/api groups endpoints', () => {
     express.__router.patch.mockClear()
     express.__router.delete.mockClear()
 
+    const lockedGroup = {
+      id: 3,
+      name: 'Editors',
+      redirectOnLogin: '/en/home',
+      isSystem: 0,
+      permissions: ['read:pages', 'write:pages'],
+      pageRules: []
+    }
+    const findLockedGroup = vi.fn().mockResolvedValue(lockedGroup)
+    const forUpdate = vi.fn().mockReturnValue({ first: findLockedGroup })
+    const findUser = vi.fn().mockResolvedValue({ id: 10, name: 'Alice', email: 'alice@example.com' })
+    const findMembership = vi.fn().mockResolvedValue(null)
+    const insertMembership = vi.fn().mockResolvedValue(1)
+    const transactionDatabase = vi.fn(table => {
+      if (table === 'groups') return { where: vi.fn().mockReturnValue({ forUpdate }) }
+      if (table === 'users') return { where: vi.fn().mockReturnValue({ first: findUser }) }
+      if (table === 'userGroups') {
+        return {
+          where: vi.fn().mockReturnValue({ first: findMembership }),
+          insert: insertMembership
+        }
+      }
+      throw new Error(`Unexpected group transaction table: ${table}`)
+    })
+    const knex = vi.fn()
+    knex.transaction = vi.fn(callback => callback(transactionDatabase))
+    knex.transactionDatabase = transactionDatabase
+    knex.forUpdate = forUpdate
+    knex.findLockedGroup = findLockedGroup
+    knex.findUser = findUser
+    knex.findMembership = findMembership
+    knex.insertMembership = insertMembership
+
     global.WIKI = {
       auth: {
         checkAccess: vi.fn().mockReturnValue(true),
@@ -100,11 +133,7 @@ describe('controllers/api groups endpoints', () => {
             deleteById: vi.fn().mockResolvedValue(1)
           })
         },
-        knex: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            first: vi.fn().mockResolvedValue(null)
-          })
-        }),
+        knex,
         users: {
           query: vi.fn().mockReturnValue({
             findById: vi.fn().mockResolvedValue({
@@ -368,13 +397,13 @@ describe('controllers/api groups endpoints', () => {
     await assignUser(req, res, vi.fn())
 
     expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:users'] }, ['manage:users', 'write:groups', 'manage:groups', 'manage:system'])
-    const group = await global.WIKI.models.groups.query.mock.results[0].value.findById.mock.results[0].value
-    expect(global.WIKI.models.groups.query.mock.results[0].value.findById).toHaveBeenCalledWith(3)
-    expect(global.WIKI.models.users.query.mock.results[0].value.findById).toHaveBeenCalledWith(10)
-    expect(global.WIKI.models.knex).toHaveBeenCalledWith('userGroups')
-    expect(global.WIKI.models.knex.mock.results[0].value.where).toHaveBeenCalledWith({ userId: 10, groupId: 3 })
-    expect(group.$relatedQuery).toHaveBeenCalledWith('users')
-    expect(group.$relatedQuery.mock.results[0].value.relate).toHaveBeenCalledWith(10)
+    expect(global.WIKI.models.knex.transaction).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.models.knex.transactionDatabase).toHaveBeenNthCalledWith(1, 'groups')
+    expect(global.WIKI.models.knex.forUpdate).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.models.knex.findLockedGroup).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.models.knex.findUser).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.models.knex.findMembership).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.models.knex.insertMembership).toHaveBeenCalledWith({ userId: 10, groupId: 3 })
     expect(global.WIKI.auth.revokeUserTokens).toHaveBeenCalledWith({ id: 10, kind: 'u' })
     expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 10, kind: 'u' })
     expect(res.json).toHaveBeenCalledWith({
@@ -412,12 +441,9 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('protects elevated group user assignments for lower-tier group admins', async () => {
-    global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: vi.fn().mockResolvedValue({
-        id: 3,
-        permissions: ['manage:users'],
-        $relatedQuery: vi.fn()
-      })
+    global.WIKI.models.knex.findLockedGroup.mockResolvedValueOnce({
+      id: 3,
+      permissions: ['manage:users']
     })
     global.WIKI.auth.checkExclusiveAccess.mockReturnValueOnce(true)
     const { assignUser } = await loadHandler()
@@ -432,12 +458,9 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('protects system group user assignments for non-system group admins', async () => {
-    global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: vi.fn().mockResolvedValue({
-        id: 1,
-        permissions: ['manage:system'],
-        $relatedQuery: vi.fn()
-      })
+    global.WIKI.models.knex.findLockedGroup.mockResolvedValueOnce({
+      id: 1,
+      permissions: ['manage:system']
     })
     global.WIKI.auth.checkExclusiveAccess
       .mockReturnValueOnce(false)
@@ -457,14 +480,10 @@ describe('controllers/api groups endpoints', () => {
     const { assignUser } = await loadHandler()
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: vi.fn().mockResolvedValue(null)
-    })
+    global.WIKI.models.knex.findLockedGroup.mockResolvedValueOnce(null)
     await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '999', userId: '10' } }, res, vi.fn())
 
-    global.WIKI.models.users.query.mockReturnValueOnce({
-      findById: vi.fn().mockResolvedValue(null)
-    })
+    global.WIKI.models.knex.findUser.mockResolvedValueOnce(null)
     await assignUser({ user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '999' } }, res, vi.fn())
 
     expect(res.status).toHaveBeenNthCalledWith(1, 404)
@@ -474,11 +493,7 @@ describe('controllers/api groups endpoints', () => {
   })
 
   it('returns 400 when group user assign relation already exists', async () => {
-    global.WIKI.models.knex.mockReturnValueOnce({
-      where: vi.fn().mockReturnValue({
-        first: vi.fn().mockResolvedValue({ userId: 10, groupId: 3 })
-      })
-    })
+    global.WIKI.models.knex.findMembership.mockResolvedValueOnce({ userId: 10, groupId: 3 })
     const { assignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
@@ -491,9 +506,7 @@ describe('controllers/api groups endpoints', () => {
 
   it('forwards unexpected group user assign failures to next', async () => {
     const next = vi.fn()
-    global.WIKI.models.groups.query.mockReturnValueOnce({
-      findById: vi.fn().mockRejectedValue(new Error('assign db down'))
-    })
+    global.WIKI.models.knex.findLockedGroup.mockRejectedValueOnce(new Error('assign db down'))
     const { assignUser } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { groupId: '3', userId: '10' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
@@ -894,27 +907,23 @@ describe('controllers/api groups endpoints', () => {
 
   it('forwards unexpected group update failures to next', async () => {
     const next = vi.fn()
-    const findById = vi.fn().mockResolvedValue({
+    global.WIKI.models.knex.findLockedGroup.mockResolvedValueOnce({
       id: 3,
       name: 'Editors',
       isSystem: false,
       permissions: []
     })
-    global.WIKI.models.groups.query
-      .mockReturnValueOnce({
-        findById
+    global.WIKI.models.groups.query.mockReturnValueOnce({
+      patch: vi.fn().mockReturnValue({
+        where: vi.fn().mockRejectedValue(new Error('update db down'))
       })
-      .mockReturnValueOnce({
-        patch: vi.fn().mockReturnValue({
-          where: vi.fn().mockRejectedValue(new Error('update db down'))
-        })
-      })
+    })
     const { updateGroup } = await loadHandler()
     const req = { user: { permissions: ['manage:groups'] }, params: { id: '3' }, body: { name: 'Editors', permissions: [], pageRules: [] } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await updateGroup(req, res, next)
-    expect(findById).toHaveBeenCalledWith(3)
+    expect(global.WIKI.models.knex.findLockedGroup).toHaveBeenCalledTimes(1)
 
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('update db down')
