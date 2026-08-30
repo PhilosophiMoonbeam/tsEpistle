@@ -33,19 +33,28 @@ describe('admin-extensions root UI facade migration guard', () => {
   const script = scriptMatch && scriptMatch[1]
   const loadExtensions = script && extractMethod(script, 'loadExtensions')
 
-  test('admin-extensions.vue uses grouped root-ui-store facades with the typed wiki store in the active loadExtensions flow', () => {
+  test('admin-extensions.vue preserves refresh state while using grouped root-ui-store facades with the typed wiki store', () => {
     expect(script).not.toBeNull()
     expect(loadExtensions).not.toBeNull()
 
     expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchSystemExtensions\b)(?=[^}]*\btype SystemExtension\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bfetchSystemExtensions\b)(?=[^}]*\btype SystemExtension\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/
+    )
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+    )
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
 
-    expect(loadExtensions).toMatch(/async\s+loadExtensions\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-extensions-refresh['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?this\.extensions\s*=\s*await\s+fetchSystemExtensions\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]System extensions response is invalid['"]\s*\)[\s\S]*?return\s+true[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*this\.extensions\s*=\s*\[\s*\]\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*return\s+false[\s\S]*?\}\s*finally\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-extensions-refresh['"]\s*\)\s*\}/)
+    expect(loadExtensions).toMatch(
+      /async\s+loadExtensions\s*\(\s*\)\s*\{\s*this\.loadState\s*=\s*['"]loading['"]\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-extensions-refresh['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?this\.extensions\s*=\s*await\s+fetchSystemExtensions\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]System extensions response is invalid['"]\s*\)\s*this\.loadState\s*=\s*['"]success['"]\s*return\s+true[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*this\.loadState\s*=\s*['"]error['"]\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*return\s+false[\s\S]*?\}\s*finally\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-extensions-refresh['"]\s*\)\s*\}/
+    )
+    expect(loadExtensions).not.toMatch(/this\.extensions\s*=\s*\[\s*\]/)
     expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*this\.loadExtensions\s*\(\s*\)\s*\}/)
 
-    expect(loadExtensions).not.toMatch(/\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/)
+    expect(loadExtensions).not.toMatch(
+      /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
+    )
 
     const loadingStartCalls = loadExtensions.match(/\bloadingStart\s*\(/g) || []
     expect(loadingStartCalls).toHaveLength(1)

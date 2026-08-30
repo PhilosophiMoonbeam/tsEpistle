@@ -20,7 +20,18 @@ describe('frontend theme helpers', () => {
     colors.dark.info = '#73ADD3'
 
     expect(createWikiThemes(colors)).toMatchObject({
-      light: { dark: false, colors: { primary: '#F9A134', 'on-primary': '#000000', 'on-background': '#000000' } },
+      light: {
+        dark: false,
+        colors: {
+          primary: '#F9A134',
+          'on-primary': '#000000',
+          'surface-bright': '#FFFFFF',
+          'surface-light': '#F7F7F7',
+          'surface-variant': '#FFFFFF',
+          'on-surface-variant': '#000000',
+          focus: '#000000'
+        }
+      },
       dark: {
         dark: true,
         colors: {
@@ -30,7 +41,11 @@ describe('frontend theme helpers', () => {
           'on-primary': '#000000',
           'on-secondary': '#000000',
           'on-info': '#000000',
-          'on-background': '#FFFFFF'
+          'surface-bright': '#3C3C3C',
+          'surface-light': '#2E2E2E',
+          'surface-variant': '#1A1A1A',
+          'on-surface-variant': '#FFFFFF',
+          focus: '#FFFFFF'
         }
       }
     })
@@ -44,14 +59,18 @@ describe('frontend theme helpers', () => {
     })
   })
 
-  test('updates base and contrast colors without discarding Vuetify-only colors', () => {
+  test('updates configured and derived colors without discarding unrelated Vuetify-only colors', () => {
     const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
     colors.light.primary = '#F9A134'
     const theme = {
       themes: {
         value: {
-          light: { dark: false, colors: { ...DEFAULT_THEME_COLORS.light, 'on-primary': '#FFFFFF', 'surface-bright': '#EEEEEE' }, variables: {} },
-          dark: { dark: true, colors: { ...DEFAULT_THEME_COLORS.dark, 'on-primary': '#000000' }, variables: {} }
+          light: {
+            dark: false,
+            colors: { ...DEFAULT_THEME_COLORS.light, 'on-primary': '#FFFFFF', 'surface-bright': '#EEEEEE', outline: '#DDDDDD' },
+            variables: {}
+          },
+          dark: { dark: true, colors: { ...DEFAULT_THEME_COLORS.dark, 'on-primary': '#000000', outline: '#333333' }, variables: {} }
         }
       }
     } as unknown as ThemeInstance
@@ -61,7 +80,9 @@ describe('frontend theme helpers', () => {
     expect(theme.themes.value.light.colors.primary).toBe('#F9A134')
     expect(theme.themes.value.light.colors['on-primary']).toBe('#000000')
     expect(theme.themes.value.dark.colors.background).toBe(DEFAULT_THEME_COLORS.dark.background)
-    expect(theme.themes.value.light.colors['surface-bright']).toBe('#EEEEEE')
+    expect(theme.themes.value.light.colors['surface-bright']).toBe('#FFFFFF')
+    expect(theme.themes.value.light.colors.outline).toBe('#DDDDDD')
     expect(theme.themes.value.dark.colors['on-primary']).toBe('#000000')
+    expect(theme.themes.value.dark.colors.outline).toBe('#333333')
   })
 })

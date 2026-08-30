@@ -3,15 +3,21 @@
     v-row
       v-col(cols='12')
         .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-cloud-storage.svg', alt='Storage', style='width: 80px;')
+          img.animated.fadeInUp(src='/_assets/svg/icon-cloud-storage.svg', alt='', aria-hidden='true', style='width: 80px;')
           .admin-header-title
             .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:storage.title')}}
             .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{$t('admin:storage.subtitle')}}
           v-spacer
-          v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/storage', target='_blank')
-            v-icon mdi-help-circle
-          v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh')
-            v-icon mdi-refresh
+          v-tooltip(location='top')
+            template(v-slot:activator='{ props }')
+              v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/storage', target='_blank', v-bind='props', aria-label='Storage documentation — opens in a new tab')
+                v-icon mdi-help-circle
+            span Storage documentation — opens in a new tab
+          v-tooltip(location='top')
+            template(v-slot:activator='{ props }')
+              v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', v-bind='props', aria-label='Refresh storage targets')
+                v-icon mdi-refresh
+            span Refresh storage targets
           v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large")
             v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
@@ -22,14 +28,22 @@
             .text-body-large {{$t('admin:storage.targets')}}
           v-list(lines="two", density="compact").py-0
             template(v-for='(tgt, idx) in targets', :key='tgt.key')
-              v-list-item(@click='selectedTarget = tgt.key', :disabled='!tgt.isAvailable')
+              v-list-item(
+                :active='selectedTarget === tgt.key'
+                :aria-current='selectedTarget === tgt.key ? "page" : undefined'
+                @click='selectedTarget = tgt.key'
+                :disabled='!tgt.isAvailable'
+              )
                 template(v-slot:prepend)
-                  v-avatar(size='24')
-                    v-icon(color='grey', v-if='!tgt.isAvailable') mdi-minus-box-outline
-                    v-icon(color='primary', v-else-if='tgt.isEnabled', v-ripple, @click='tgt.key !== `local` && (tgt.isEnabled = false)') mdi-checkbox-marked-outline
-                    v-icon(color='grey', v-else, v-ripple, @click='tgt.isEnabled = true') mdi-checkbox-blank-outline
+                  v-checkbox-btn(
+                    :model-value='tgt.isEnabled'
+                    :disabled='!tgt.isAvailable || (tgt.key === `local` && tgt.isEnabled)'
+                    :aria-label='`${tgt.isEnabled ? "Disable" : "Enable"} ${tgt.title}`'
+                    @click.stop
+                    @update:model-value='setTargetEnabled(tgt, $event)'
+                  )
                 v-list-item-title.text-body-medium(:class='!tgt.isAvailable ? `text-grey` : (selectedTarget === tgt.key ? `text-primary` : ``)') {{ tgt.title }}
-                v-list-item-subtitle: .text-body-small(:class='!tgt.isAvailable ? `text-grey-lighten-1` : (selectedTarget === tgt.key ? `text-blue ` : ``)') {{ tgt.description }}
+                v-list-item-subtitle: .text-body-small(:class='!tgt.isAvailable ? `text-grey-lighten-1` : (selectedTarget === tgt.key ? `text-primary` : ``)') {{ tgt.description }}
                 template(v-slot:append)
                   v-avatar(v-if='selectedTarget === tgt.key', size='24')
                     v-icon.animated.fadeInLeft(color='primary', size="large") mdi-chevron-right
@@ -40,43 +54,57 @@
             .text-body-large {{$t('admin:storage.status')}}
             v-spacer
             looping-rhombuses-spinner(
+              v-if='statusRefreshing'
               :animation-duration='5000'
               :rhombus-size='10'
               color='#FFF'
+              aria-label='Refreshing status'
             )
-          v-list.py-0(lines="two", density="compact")
+            span.text-body-small(v-if='statusRefreshing') Refreshing status
+          v-list.py-0(lines="two", density="compact", aria-live='polite', :aria-busy='statusRefreshing')
             template(v-for='(tgt, n) in status', :key='tgt.key')
               v-list-item
                 template(v-slot:prepend)
-                  v-avatar(v-if='tgt.status === `pending`', color='purple')
+                  v-avatar(v-if='tgt.status === `pending`', color='info')
                     v-icon(color='white') mdi-clock-outline
-                  v-avatar(v-else-if='tgt.status === `operational`', color='green')
+                  v-avatar(v-else-if='tgt.status === `operational`', color='success')
                     v-icon(color='white') mdi-check-circle
-                  v-avatar(v-else-if='tgt.status === `warning`', color='orange')
+                  v-avatar(v-else-if='tgt.status === `warning`', color='warning')
                     v-icon(color='white') mdi-alert
-                  v-avatar(v-else, color='red')
+                  v-avatar(v-else, color='error')
                     v-icon(color='white') mdi-close-circle-outline
                 template(v-if='tgt.status === `pending`')
-                  v-list-item-title.text-body-medium {{tgt.title}}
-                  v-list-item-subtitle.text-purple.text-body-small {{tgt.status}}
+                  v-list-item-title.text-body-medium
+                    span {{tgt.title}}
+                    v-chip.ml-2(size='x-small', color='info', label) {{statusLabel(tgt.status)}}
+                  v-list-item-subtitle.text-body-small {{$t('admin:storage.lastSyncAttempt', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
                 template(v-else-if='tgt.status === `operational`')
-                  v-list-item-title.text-body-medium {{tgt.title}}
-                  v-list-item-subtitle.text-green.text-body-small {{$t('admin:storage.lastSync', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
+                  v-list-item-title.text-body-medium
+                    span {{tgt.title}}
+                    v-chip.ml-2(size='x-small', color='success', label) {{statusLabel(tgt.status)}}
+                  v-list-item-subtitle.text-body-small {{$t('admin:storage.lastSync', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
                 template(v-else-if='tgt.status === `warning`')
-                  v-list-item-title.text-body-medium {{tgt.title}}
-                  v-list-item-subtitle.text-orange.text-body-small {{$t('admin:storage.lastSyncAttempt', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
+                  v-list-item-title.text-body-medium
+                    span {{tgt.title}}
+                    v-chip.ml-2(size='x-small', color='warning', label) {{statusLabel(tgt.status)}}
+                  v-list-item-subtitle.text-body-small {{$t('admin:storage.lastSyncAttempt', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
                 template(v-else)
-                  v-list-item-title.text-body-medium {{tgt.title}}
-                  v-list-item-subtitle.text-red.text-body-small {{$t('admin:storage.lastSyncAttempt', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
+                  v-list-item-title.text-body-medium
+                    span {{tgt.title}}
+                    v-chip.ml-2(size='x-small', color='error', label) {{statusLabel(tgt.status)}}
+                  v-list-item-subtitle.text-body-small {{$t('admin:storage.lastSyncAttempt', { time: $helpers.formatMoment(tgt.lastAttempt, 'from') })}}
                 template(v-slot:append)
-                  v-progress-circular(v-if='tgt.status === `pending`', indeterminate, :size='20', :width='2', color='purple', :aria-label='`Synchronizing ${tgt.title}`')
+                  v-progress-circular(v-if='tgt.status === `pending`', indeterminate, :size='20', :width='2', color='info', :aria-label='`Synchronizing ${tgt.title}`')
                   v-menu(v-else-if='tgt.status !== `operational`')
                     template(v-slot:activator='{ props }')
-                      v-btn(icon, v-bind='props')
-                        v-icon(:color='tgt.status === `warning` ? `orange` : `red`') mdi-information
-                    v-card(width='450')
-                      v-toolbar(flat, :color='tgt.status === `warning` ? `orange` : `red`', density="compact") {{$t('admin:storage.errorMsg')}}
-                      v-card-text {{tgt.message}}
+                      v-tooltip(location='top')
+                        template(v-slot:activator='{ props: tooltipProps }')
+                          v-btn(icon, v-bind='{ ...props, ...tooltipProps }', :aria-label='`View ${tgt.title} ${statusLabel(tgt.status).toLowerCase()} details`')
+                            v-icon(:color='tgt.status === `warning` ? `warning` : `error`') mdi-information
+                        span View {{tgt.title}} {{statusLabel(tgt.status).toLowerCase()}} details
+                    v-card(width='450', max-width='calc(100vw - 32px)')
+                      v-toolbar(flat, :color='tgt.status === `warning` ? `warning` : `error`', density="compact") {{$t('admin:storage.errorMsg')}}
+                      v-card-text(style='overflow-wrap:anywhere; white-space:pre-wrap;') {{tgt.message}}
 
               v-divider(v-if='n < status.length - 1')
             v-list-item(v-if='status.length < 1')
@@ -97,16 +125,16 @@
           div.v-card-info(color='info')
             div
               div {{target.description}}
-              span.text-body-small: a(:href='target.website') {{target.website}}
+              span.text-body-small.provider-url: a(:href='target.website') {{target.website}}
             v-spacer
             .admin-providerlogo
               img(:src='target.logo', :alt='target.title')
           v-card-text
             v-form
               i18next.text-body-medium(path='admin:storage.targetState', tag='div', v-if='target.isEnabled')
-                v-chip(color='green', size="small", label, place='state') {{$t('admin:storage.targetStateActive')}}
+                v-chip(color='success', size="small", label, place='state') {{$t('admin:storage.targetStateActive')}}
               i18next.text-body-medium(path='admin:storage.targetState', tag='div', v-else)
-                v-chip(color='red', size="small", label, place='state') {{$t('admin:storage.targetStateInactive')}}
+                v-chip(color='error', size="small", label, place='state') {{$t('admin:storage.targetStateInactive')}}
               v-divider.mt-3
               .text-label-small.my-5 {{$t('admin:storage.targetConfig')}}
               .text-body-medium.ml-3(v-if='!target.config || target.config.length < 1'): em {{$t('admin:storage.noConfigOption')}}
@@ -199,7 +227,7 @@
               template(v-if='target.actions && target.actions.length > 0')
                 v-divider.mt-3
                 .text-label-small.my-5 {{$t('admin:storage.actions')}}
-                v-alert(variant="outlined", :value='!target.isEnabled', color='red', icon='mdi-alert')
+                v-alert(v-if='!target.isEnabled', variant="outlined", color='warning', icon='mdi-alert')
                   .text-body-medium {{$t('admin:storage.actionsInactiveWarn')}}
                 v-container.pt-0(fluid)
                   v-row(class='fill-height')
@@ -211,7 +239,7 @@
                           v-btn.mx-0.mt-5(
                             @click='executeAction(target.key, act.handler)'
                             variant="outlined"
-                            :color='$vuetify.theme.current.dark ? `blue` : `primary`'
+                            :color='$vuetify.theme.current.dark ? `primary` : `primary`'
                             :disabled='runningAction || !target.isEnabled'
                             :loading='runningActionHandler === act.handler'
                             ) {{$t('admin:storage.actionRun')}}
@@ -288,6 +316,7 @@ export default {
       target: makeDefaultStorageTarget(),
       targets: [] as NormalizedStorageTarget[],
       status: [] as StorageStatus[],
+      statusRefreshing: false,
       statusRefreshInterval: null as ReturnType<typeof setInterval> | null
     }
   },
@@ -318,6 +347,18 @@ export default {
     }
   },
   methods: {
+    setTargetEnabled(target: NormalizedStorageTarget, value: boolean) {
+      if (target.key === 'local' && target.isEnabled && !value) return
+      target.isEnabled = value
+    },
+    statusLabel(status: string) {
+      return {
+        pending: 'Synchronizing',
+        operational: 'Operational',
+        warning: 'Warning',
+        error: 'Error'
+      }[status] || 'Unknown'
+    },
     normalizeTargets(targets: StorageTarget[]): NormalizedStorageTarget[] {
       return _.cloneDeep(targets).map(target => ({
         ...target,
@@ -359,12 +400,14 @@ export default {
       }
     },
     async loadStatus() {
+      this.statusRefreshing = true
       setLoading(wikiStore, 'admin-storage-status-refresh', true)
       try {
         this.status = await fetchStorageStatus(window.fetch.bind(window))
       } catch (err) {
         pushGraphError(wikiStore, err)
       } finally {
+        this.statusRefreshing = false
         setLoading(wikiStore, 'admin-storage-status-refresh', false)
       }
     },

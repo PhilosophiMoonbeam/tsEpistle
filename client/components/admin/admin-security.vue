@@ -3,57 +3,61 @@
     v-row
       v-col(cols='12')
         .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-private.svg', alt='Security', style='width: 80px;')
+          img.animated.fadeInUp(src='/_assets/svg/icon-private.svg', alt='', aria-hidden='true', style='width: 80px;')
           .admin-header-title
             .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:security.title') }}
             .text-body-large.text-grey.animated.fadeInLeft {{ $t('admin:security.subtitle') }}
           v-spacer
-          v-btn.animated.fadeInDown(color='success', variant="flat", @click='save', size="large")
+          v-btn.animated.fadeInDown(color='success', variant="flat", @click='save', size="large", :disabled='!configLoaded')
             v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
-        v-form.pt-3
+        v-alert.mt-3(v-if='configLoading', variant='outlined', color='info', role='status')
+          v-progress-circular(indeterminate, size='20', width='2', color='primary', aria-label='Loading security configuration')
+          span.ml-3 Loading security configuration
+        v-alert.mt-3(v-else-if='configLoadError', variant='outlined', color='error', role='alert')
+          span Security configuration could not be loaded.
+          v-btn.ml-3(variant='outlined', color='primary', size='small', @click='loadConfig') Retry
+        v-form.pt-3(v-else-if='configLoaded')
           v-row
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp
-                v-toolbar(color="red-darken-2", density="compact", flat)
+                v-toolbar(color='error', density="compact", flat)
                   v-toolbar-title.text-body-large Security
-                div.v-card-info(color='error')
+                v-card-info(color='error')
                   span Make sure to understand the implications before turning on / off a security feature.
                 v-card-text
+                  .text-label-small.text-medium-emphasis.mb-3 Protection settings
                   v-switch(
                     inset
                     label='Block Open Redirect'
-                    color="red-darken-2"
+                    color='primary'
                     v-model='config.securityOpenRedirect'
                     persistent-hint
                     hint='Prevents user controlled URLs from directing to websites outside of your wiki. This provides Open Redirect protection.'
                     )
 
-                  v-divider.mt-3
                   v-switch.mt-3(
                     inset
                     label='Block IFrame Embedding'
-                    color="red-darken-2"
+                    color='primary'
                     v-model='config.securityIframe'
                     persistent-hint
                     hint='Prevents other websites from embedding your wiki in an iframe. This provides clickjacking protection.'
                     )
 
-                  v-divider.mt-3
                   v-switch(
                     inset
                     label='Same Origin Referrer Policy'
-                    color="red-darken-2"
+                    color='primary'
                     v-model='config.securityReferrerPolicy'
                     persistent-hint
                     hint='Limits the referrer header to same origin.'
                     )
 
-                  v-divider.mt-3
                   v-switch(
                     inset
                     label='Trust X-Forwarded-* Proxy Headers'
-                    color="red-darken-2"
+                    color='warning'
                     v-model='config.securityTrustProxy'
                     persistent-hint
                     hint='Enable when a reverse proxy such as nginx, Apache, or Cloudflare sits in front of tsFranki. Turn off otherwise.'
@@ -74,10 +78,10 @@
                   v-switch(
                     inset
                     label='Enforce HSTS'
-                    color="red-darken-2"
+                    color='primary'
                     v-model='config.securityHSTS'
                     persistent-hint
-                    hint='This ensures the connection cannot be established through an insecure HTTP connection.'
+                    :hint='`This ensures the connection cannot be established through an insecure HTTP connection.`'
                     )
                   v-select.mt-5(
                     variant="outlined"
@@ -87,11 +91,12 @@
                     v-model='config.securityHSTSDuration'
                     prepend-icon='mdi-subdirectory-arrow-right'
                     :disabled='!config.securityHSTS'
-                    hide-details
+                    hint='Defines the duration for which the server should only deliver content through HTTPS.'
+                    persistent-hint
+                    aria-describedby='hsts-warning'
                     style='max-width: 450px;'
-                    )
-                  .pl-11.mt-3
-                    .text-body-small Defines the duration for which the server should only deliver content through HTTPS.
+                  )
+                  .pl-11.mt-3#hsts-warning
                     .text-body-small It's a good idea to start with small values and make sure that nothing breaks on your wiki before moving to longer values.
 
                   //- v-divider.mt-3
@@ -176,9 +181,13 @@
                     :hint='$t(`admin:security.loginBgUrlHint`)'
                     persistent-hint
                     prepend-icon='mdi-image-area'
-                    append-icon='mdi-folder-image'
-                    @click:append='browseLoginBg'
                   )
+                    template(v-slot:append-inner)
+                      v-tooltip(location='top')
+                        template(v-slot:activator='{ props }')
+                          v-btn(icon, size='small', v-bind='props', aria-label='Browse login background media', @click='browseLoginBg')
+                            v-icon mdi-folder-image
+                        span Browse login background media
                   v-switch(
                     inset
                     :label='$t(`admin:security.bypassLogin`)'
@@ -299,6 +308,9 @@ export default {
         authJwtExpiration: '30m',
         authJwtRenewablePeriod: '14d'
       } as SecurityConfig,
+      configLoading: false,
+      configLoaded: false,
+      configLoadError: false,
       hstsDurations: [
         { value: 300, text: '5 minutes' },
         { value: 86400, text: '1 day' },
@@ -345,16 +357,23 @@ export default {
       }
     },
     async loadConfig () {
+      this.configLoading = true
+      this.configLoadError = false
       setLoading(wikiStore, 'admin-security-refresh', true)
       try {
         this.config = _.cloneDeep(await fetchSiteConfig(window.fetch.bind(window))) as SecurityConfig
+        this.configLoaded = true
       } catch (err) {
+        this.configLoaded = false
+        this.configLoadError = true
         pushGraphError(wikiStore, err)
       } finally {
+        this.configLoading = false
         setLoading(wikiStore, 'admin-security-refresh', false)
       }
     },
     async save () {
+      if (!this.configLoaded) return
       loadingStart(wikiStore, 'admin-site-update')
       try {
         await saveSiteConfig(window.fetch.bind(window), this.siteConfigPayload())

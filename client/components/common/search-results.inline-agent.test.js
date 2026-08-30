@@ -24,8 +24,10 @@ describe('inline Ask mode contract', () => {
     expect(template).toMatch(/InlineAgentChat\s*\(/)
     expect(template).toMatch(/v-if=['"]isAgentOpen['"]/)
     expect(template).toMatch(/search-results-agent-nav/)
-    expect(template).toMatch(/:aria-modal=['"]isAgentOpen \? `true` : undefined['"]/)
-    expect(search).toMatch(/&--ask\s*\{[\s\S]*z-index:\s*1009/)
+    expect(template).toMatch(/role=['"]dialog['"]/)
+    expect(template).toMatch(/aria-modal=['"]true['"]/)
+    expect(template).toMatch(/:aria-labelledby=['"]isAgentOpen \? `wiki-agent-title` : `wiki-search-title`['"]/)
+    expect(search).toMatch(/&--ask\s*\{[\s\S]*height:\s*100dvh[\s\S]*inset:\s*0[\s\S]*overflow:\s*hidden[\s\S]*z-index:\s*1009/)
     expect(search).toMatch(/&:not\(\.search-results--ask\)\s*\{[\s\S]*top:\s*calc\(var\(--v-layout-top,\s*72px\) \+ 48px\)/)
     expect(template).not.toMatch(/action=['"]\/_?api\/agents\/launch['"]/)
     expect(template).not.toMatch(/target=['"]_blank['"]/)
@@ -62,7 +64,6 @@ describe('inline Ask mode contract', () => {
     expect(history).toMatch(/agents\.moveSessionToFolder/)
     expect(history).toMatch(/agents\.removeSession/)
   })
-
 
   test('passes agent feature flags and exposes explicit skill and goal controls', () => {
     expect(search).toMatch(/:skills-enabled=['"]agentSkillsEnabled['"]/)

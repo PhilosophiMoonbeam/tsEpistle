@@ -1,32 +1,43 @@
 <template lang='pug'>
   v-container(fluid)
-    v-row
+    v-row(v-if='groupLoadState !== `ready`')
+      v-col(cols='12')
+        v-alert(v-if='groupLoadState === `loading`', type='info', variant='tonal', role='status') Loading group details...
+        v-alert(v-else, type='error', variant='tonal', role='alert')
+          span Unable to load this group.
+          v-btn.ml-2(variant="text", @click='loadGroup') Retry
+        v-skeleton-loader.mt-3(type='article')
+    v-row(v-if='groupReady')
       v-col(cols='12')
         .admin-header
           img(src='/_assets/svg/icon-social-group.svg', alt='Edit Group', style='width: 80px;')
           .admin-header-title
             .text-headline-medium.text-primary Edit Group
             .text-body-large.text-medium-emphasis {{group.name}}
+            .text-body-small.text-orange Settings, permissions, and page rules are staged until Update Group.
+            .text-body-small.text-orange(v-if='group.isSystem') System group — settings are protected
           v-spacer
           v-btn(color='grey', icon, variant="outlined", to='/groups', aria-label='Back to groups')
             v-icon mdi-arrow-left
           v-dialog(v-model='deleteGroupDialog', max-width='500', :fullscreen='$vuetify.display.smAndDown', v-if='!group.isSystem')
             template(v-slot:activator='{ props }')
-              v-btn.ml-3(color='red', icon, variant="outlined", v-bind='props', aria-label='Delete group')
+              v-btn.ml-3(color='red', icon, variant="outlined", v-bind='props', aria-label='Delete group', :disabled='!groupReady || groupAction !== ``')
                 v-icon(color='red') mdi-trash-can-outline
             v-card
               .dialog-header.is-red Delete Group?
               v-card-text.pa-4 Are you sure you want to delete group #[strong {{ group.name }}]? All users will be unassigned from this group.
               v-card-actions
                 v-spacer
-                v-btn(variant="text", @click='deleteGroupDialog = false') Cancel
-                v-btn(color='red', @click='deleteGroup') Delete
+                v-btn(variant="text", @click='deleteGroupDialog = false', :disabled='groupAction !== ``') Cancel
+                v-btn(color='red', @click='deleteGroup', :disabled='groupAction !== ``', :loading='groupAction === `delete`') Delete
           v-btn.ml-3(
             color='success'
             size="large"
             variant="flat"
             @click='updateGroup'
             :icon='$vuetify.display.smAndDown'
+            :disabled='!groupReady || groupAction !== ``'
+            :loading='groupAction === `update`'
             aria-label='Update group'
           )
             v-icon(:start='$vuetify.display.mdAndUp') mdi-check
@@ -126,15 +137,22 @@ export default {
     return {
       group: createEmptyGroupEditorState(),
       groupLoadRequestId: 0,
+      groupLoadState: 'loading' as 'loading' | 'ready' | 'error',
+      groupAction: '',
       deleteGroupDialog: false,
       tab: 'settings',
       selectPageModal: false,
       currentLang: siteConfig.lang
     }
   },
+  computed: {
+    groupReady(): boolean { return this.groupLoadState === 'ready' && this.group.id > 0 }
+  },
   watch: {
     '$route.params.id' () {
       this.group = createEmptyGroupEditorState()
+      this.groupLoadState = 'loading'
+      this.groupAction = ''
       this.loadGroup()
     }
   },
@@ -142,20 +160,19 @@ export default {
     async loadGroup () {
       const requestId = ++this.groupLoadRequestId
       const routeGroupId = _.toSafeInteger(this.$route.params.id)
+      this.groupLoadState = 'loading'
 
       wikiStore.startLoading('admin-groups-refresh')
       try {
         const group = await fetchGroupDetails(window.fetch.bind(window), routeGroupId, 'Group detail response is invalid')
-        if (requestId !== this.groupLoadRequestId || routeGroupId !== _.toSafeInteger(this.$route.params.id)) {
-          return false
-        }
+        if (requestId !== this.groupLoadRequestId || routeGroupId !== _.toSafeInteger(this.$route.params.id)) return false
         this.group = group
-        return true
+        this.groupLoadState = group.id > 0 ? 'ready' : 'error'
+        return this.groupReady
       } catch (err) {
-        if (requestId !== this.groupLoadRequestId || routeGroupId !== _.toSafeInteger(this.$route.params.id)) {
-          return false
-        }
+        if (requestId !== this.groupLoadRequestId || routeGroupId !== _.toSafeInteger(this.$route.params.id)) return false
         this.group = createEmptyGroupEditorState()
+        this.groupLoadState = 'error'
         wikiStore.showError(err)
         return false
       } finally {
@@ -166,9 +183,12 @@ export default {
       this.selectPageModal = true
     },
     selectPageHandle ({ path, locale }: PageSelection) {
+      if (!this.groupReady) return
       this.group.redirectOnLogin = `/${locale}/${path}`
     },
     async updateGroup() {
+      if (!this.groupReady || this.groupAction !== '') return
+      this.groupAction = 'update'
       wikiStore.startLoading('admin-groups-update')
       try {
         await updateGroup(window.fetch.bind(window), this.group.id, {
@@ -186,9 +206,12 @@ export default {
         wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-groups-update')
+        this.groupAction = ''
       }
     },
     async deleteGroup() {
+      if (!this.groupReady || this.groupAction !== '') return
+      this.groupAction = 'delete'
       this.deleteGroupDialog = false
       wikiStore.startLoading('admin-groups-delete')
       try {
@@ -203,6 +226,7 @@ export default {
         wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-groups-delete')
+        this.groupAction = ''
       }
     },
     async refresh() {

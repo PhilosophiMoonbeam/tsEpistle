@@ -11,13 +11,16 @@
         v-list-item.mt-3.animated.fadeInLeft.wait-p3s(value='endpoints', :active='tab === `endpoints`', @click='tab = `endpoints`')
           template(v-slot:prepend): v-icon mdi-code-braces
           v-list-item-title Endpoints
-        v-list-item.mt-3.animated.fadeInLeft.wait-p4s(value='models', :active='tab === `models`', @click='tab = `models`')
+        v-list-item.mt-3.animated.fadeInLeft.wait-p4s(value='models', disabled)
           template(v-slot:prepend): v-icon mdi-buffer
           v-list-item-title Models
-        v-list-item.mt-3.animated.fadeInLeft.wait-p5s(value='auth', :active='tab === `auth`', @click='tab = `auth`')
+          v-list-item-subtitle Unavailable
+        v-list-item.mt-3.animated.fadeInLeft.wait-p5s(value='auth', disabled)
           template(v-slot:prepend): v-icon mdi-lock
           v-list-item-title Authentication
+          v-list-item-subtitle Unavailable
       .editor-api-editor
+        v-alert.mx-3.mt-3(v-if='parseError', type='error', variant='tonal', density='compact', role='alert') {{parseError}}
         template(v-if='tab === `info`')
           v-container.px-2.pt-1(fluid)
             v-row(density="compact")
@@ -69,13 +72,14 @@
             v-row(density="compact")
               v-col(cols='12')
                 .pa-3
-                  .d-flex.align-center.justify-space-between
+                  .d-flex.flex-wrap.align-center.justify-space-between.ga-2
                     div
                       .text-label-large List of servers / load balancers where this API reside
-                      .text-body-small.text-grey-darken-1 Enter all environments, e.g. Integration, QA, Pre-production, Production, etc.
+                      .text-body-small.text-medium-emphasis Enter all environments, e.g. Integration, QA, Pre-production, Production, etc.
                     v-btn(color='primary', size="large", @click='addServer')
                       v-icon(start) mdi-plus
                       span Add Server
+                  v-alert.mt-3(v-if='servers.length === 0', type='info', variant='tonal', density='compact') No servers yet. Use Add Server to describe an environment.
               v-col(cols='12', lg='6', v-for='srv of servers', :key='srv.id')
                 v-card.pt-1
                   v-card-text
@@ -120,51 +124,53 @@
             v-row(density="compact")
               v-col(cols='12')
                 .pa-3
-                  .d-flex.align-center.justify-space-between
+                  .d-flex.flex-wrap.align-center.justify-space-between.ga-2
                     div
                       .text-label-large List of endpoints
-                      .text-body-small.text-grey-darken-1 Groups of REST endpoints (GET, POST, PUT, DELETE).
+                      .text-body-small.text-medium-emphasis Groups of REST endpoints (GET, POST, PUT, DELETE).
                     v-btn(color='primary', size="large", @click='addGroup')
                       v-icon(start) mdi-plus
                       span Add Group
+                  v-alert.mt-3(v-if='endpointGroups.length === 0', type='info', variant='tonal', density='compact') No endpoint groups yet. Use Add Group to start documenting endpoints.
               v-col(cols='12', v-for='grp of endpointGroups', :key='grp.id')
                 v-card(color="grey-darken-2")
                   v-card-text
-                    v-toolbar(color="grey-darken-2", flat, height='86')
-                      v-text-field.mr-1(
-                        flat
-                        label='Group Name'
-                        variant="solo"
-                        hint='Group Name'
-                        persistent-hint
-                        v-model='grp.name'
-                      )
-                      v-text-field.mx-1(
-                        flat
-                        label='Group Description'
-                        variant="solo"
-                        hint='Group Description'
-                        persistent-hint
-                        v-model='grp.description'
-                      )
-                      v-divider.mx-3(vertical)
-                      v-btn.mx-1.align-self-start(color="grey-lighten-2", @click='addEndpoint(grp)', variant="text", height='48')
-                        v-icon(start) mdi-trash-can
-                        span Delete
-                      v-divider.mx-3(vertical)
-                      v-btn.ml-1.align-self-start(color='pink', @click='addEndpoint(grp)', variant="flat", height='48')
-                        v-icon(start) mdi-plus
-                        span Add Endpoint
+                    v-toolbar.editor-api-group-toolbar(color="grey-darken-2", flat, height='auto')
+                      .editor-api-group-fields
+                        v-text-field.mr-1(
+                          flat
+                          label='Group Name'
+                          variant="solo"
+                          hint='Group Name'
+                          persistent-hint
+                          v-model='grp.name'
+                        )
+                        v-text-field.mx-1(
+                          flat
+                          label='Group Description'
+                          variant="solo"
+                          hint='Group Description'
+                          persistent-hint
+                          v-model='grp.description'
+                        )
+                      .editor-api-group-actions
+                        v-btn(color="grey-lighten-2", @click='removeGroup(grp.id)', variant="text", height='48')
+                          v-icon(start) mdi-trash-can
+                          span Delete
+                        v-btn(color='pink', @click='addEndpoint(grp)', variant="flat", height='48')
+                          v-icon(start) mdi-plus
+                          span Add Endpoint
                     v-container.pa-0.mt-2(fluid)
+                      v-alert(v-if='grp.endpoints.length === 0', type='info', variant='tonal', density='compact') No endpoints in this group yet. Use Add Endpoint to add one.
                       v-row(density="compact")
                         v-col(cols='12', v-for='ept of grp.endpoints', :key='ept.id')
                           v-card.pt-1
                             v-card-text
-                              .d-flex
-                                .d-flex.flex-column
+                              .d-flex.editor-api-endpoint
+                                .d-flex.flex-column.editor-api-endpoint-actions
                                   v-menu(min-width='140')
                                     template(v-slot:activator='{ props }')
-                                      v-btn.text-body-large(variant="flat", size="large", style='min-width: 140px;', height='48', v-bind='props', :color='methodColor(ept.method)')
+                                      v-btn.text-body-large(variant="flat", size="large", style='min-width: 140px;', v-bind='props', :aria-label='`HTTP method ${ept.method}`', :color='methodColor(ept.method)')
                                         strong {{ept.method}}
                                     v-list(nav, density="compact")
                                       v-list-item(:value='mtd.key', :active='ept.method === mtd.key', @click='ept.method = mtd.key', v-for='mtd of endpointMethods', :key='mtd.key')
@@ -181,8 +187,8 @@
                                       v-icon(start) mdi-close
                                       span Delete
                                 v-divider.ml-5(vertical)
-                                .pl-5(style='flex: 1 1 100%;')
-                                  .d-flex
+                                .pl-5.editor-api-endpoint-fields
+                                  .d-flex.editor-api-endpoint-inputs
                                     v-text-field.mr-2(
                                       label='Path'
                                       variant="outlined"
@@ -206,13 +212,14 @@
 
     v-system-bar.editor-status-bar.editor-api-sysbar(absolute, status, color="grey-darken-3")
       .text-body-small.editor-api-sysbar-locale {{locale.toUpperCase()}}
-      .text-body-small.px-3 /{{path}}
+      .editor-status-path(title='/' + path) /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
         .text-body-small API Docs
         v-spacer
-        .text-body-small OpenAPI 3.0</template>
+        .text-body-small OpenAPI 3.0
 
+</template>
 <script lang='ts'>
 import { defineComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
@@ -257,6 +264,8 @@ export default defineComponent({
       tab: `endpoints`,
       kind: 'rest',
       helpShown: false,
+      parseError: '',
+      isInitializing: true,
       kinds: [
         { text: 'REST', value: 'rest' },
         { text: 'GraphQL', value: 'graphql' }
@@ -371,6 +380,12 @@ export default defineComponent({
       }
     }
   },
+  watch: {
+    info: { deep: true, handler() { this.serializeDocument() } },
+    servers: { deep: true, handler() { this.serializeDocument() } },
+    endpointGroups: { deep: true, handler() { this.serializeDocument() } },
+    kind() { this.serializeDocument() }
+  },
   methods: {
     iconColor (val: string) {
       return this.serverTypes[val]?.color ?? 'white'
@@ -400,6 +415,9 @@ export default defineComponent({
         endpoints: []
       })
     },
+    removeGroup (id: string) {
+      this.endpointGroups = this.endpointGroups.filter(group => group.id !== id)
+    },
     addEndpoint (grp: ApiEndpointGroup) {
       grp.endpoints.push({
         id: crypto.randomUUID(),
@@ -413,6 +431,65 @@ export default defineComponent({
     removeEndpoint (grp: ApiEndpointGroup, eptId: string) {
       grp.endpoints = grp.endpoints.filter(endpoint => endpoint.id !== eptId)
     },
+    parseDocument (content: string) {
+      const document = JSON.parse(content) as Record<string, unknown>
+      if (document.openapi !== undefined && typeof document.openapi !== 'string') throw new Error('The API document has an invalid OpenAPI version.')
+      const info = document.info as Record<string, unknown> | undefined
+      if (info) {
+        this.info.title = typeof info.title === 'string' ? info.title : ''
+        this.info.version = typeof info.version === 'string' ? info.version : '1.0.0'
+        this.info.description = typeof info.description === 'string' ? info.description : ''
+      }
+      const editorData = document['x-wiki-editor'] as Record<string, unknown> | undefined
+      if (editorData && Array.isArray(editorData.servers) && Array.isArray(editorData.endpointGroups)) {
+        this.kind = editorData.kind === 'graphql' ? 'graphql' : 'rest'
+        this.servers = editorData.servers as ApiServer[]
+        this.endpointGroups = editorData.endpointGroups as ApiEndpointGroup[]
+        return
+      }
+      this.servers = Array.isArray(document.servers)
+        ? document.servers.map((server, index) => {
+          const item = server as Record<string, unknown>
+          return { id: crypto.randomUUID(), name: typeof item.description === 'string' ? item.description : `Server ${index + 1}`, url: typeof item.url === 'string' ? item.url : '', icon: 'server' }
+        })
+        : []
+      const groups = new Map<string, ApiEndpointGroup>()
+      const paths = document.paths as Record<string, unknown> | undefined
+      for (const [path, operations] of Object.entries(paths ?? {})) {
+        for (const [method, operation] of Object.entries((operations as Record<string, unknown>) ?? {})) {
+          if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(method)) continue
+          const details = operation as Record<string, unknown>
+          const groupName = Array.isArray(details.tags) && typeof details.tags[0] === 'string' ? details.tags[0] : 'Default'
+          const group = groups.get(groupName) ?? { id: crypto.randomUUID(), name: groupName, description: '', endpoints: [] }
+          group.endpoints.push({ id: crypto.randomUUID(), method: method.toUpperCase(), path, summary: typeof details.summary === 'string' ? details.summary : '', description: typeof details.description === 'string' ? details.description : '', expanded: false })
+          groups.set(groupName, group)
+        }
+      }
+      this.endpointGroups = [...groups.values()]
+    },
+    serializeDocument () {
+      if (this.isInitializing) return
+      const paths: Record<string, Record<string, unknown>> = {}
+      for (const group of this.endpointGroups) {
+        for (const endpoint of group.endpoints) {
+          if (!endpoint.path.trim()) continue
+          const method = endpoint.method.toLowerCase()
+          paths[endpoint.path] ??= {}
+          paths[endpoint.path][method] = {
+            summary: endpoint.summary,
+            description: endpoint.description,
+            ...(group.name ? { tags: [group.name] } : {})
+          }
+        }
+      }
+      wikiStore.editor.content = JSON.stringify({
+        openapi: '3.0.0',
+        info: { ...this.info },
+        servers: this.servers.map(server => ({ url: server.url, description: server.name })),
+        paths,
+        'x-wiki-editor': { kind: this.kind, servers: this.servers, endpointGroups: this.endpointGroups }
+      }, null, 2)
+    },
     toggleModal(key: string) {
       this.activeModal = (this.activeModal === key) ? '' : key
       this.helpShown = false
@@ -424,10 +501,18 @@ export default defineComponent({
   },
   mounted() {
     wikiStore.editor.editorKey = 'api'
-
+    this.isInitializing = true
     if (this.mode === 'create') {
-      wikiStore.editor.content = '<h1>Title</h1>\n\n<p>Some text here</p>'
+      this.isInitializing = false
+      this.serializeDocument()
+    } else {
+      try {
+        this.parseDocument(wikiStore.editor.content)
+      } catch (err) {
+        this.parseError = err instanceof Error ? `Unable to read API document: ${err.message}` : 'Unable to read API document.'
+      }
     }
+    this.isInitializing = false
   }
 })
 </script>
@@ -440,10 +525,11 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
   &-main {
     display: flex;
     width: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
     @include until($tablet) {
       flex-direction: column;
     }
-
   }
 
 
@@ -452,7 +538,10 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
     flex: 1 1 50%;
     display: block;
     height: $editor-height;
+    min-height: 0;
     position: relative;
+    overflow-y: auto;
+    padding-bottom: 24px;
 
     @at-root .v-theme--dark & {
       background-color: darken(mc('grey', '900'), 4.5%);
@@ -461,9 +550,86 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
     @include until($tablet) {
       width: 100%;
       height: calc(#{$editor-height-mobile} - 56px);
-      overflow-y: auto;
     }
   }
+  &-group-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  &-group-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex: 1 1 360px;
+    min-width: 0;
+  }
+
+  &-group-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 0 1 auto;
+  }
+
+  &-endpoint {
+    min-width: 0;
+    &-actions {
+      flex: 0 0 auto;
+    }
+    &-fields {
+      flex: 1 1 100%;
+      min-width: 0;
+    }
+    &-inputs {
+      min-width: 0;
+      > * {
+        flex: 1 1 50%;
+        min-width: 0;
+      }
+    }
+  }
+
+  @include until($tablet) {
+    &-group-fields {
+      grid-template-columns: 1fr;
+      flex-basis: 100%;
+    }
+    &-group-actions {
+      flex-basis: 100%;
+      justify-content: flex-start;
+    }
+    &-endpoint {
+      &-inputs {
+        flex-direction: column;
+        > * {
+          flex-basis: 100%;
+          margin-left: 0 !important;
+          margin-right: 0 !important;
+        }
+      }
+      .v-divider {
+        display: none;
+      }
+      &-fields {
+        padding-left: 0 !important;
+        margin-top: 12px;
+      }
+    }
+  }
+
+  .editor-status-path {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 12px;
+  }
+
 
   &-sidebar {
     width: 200px;

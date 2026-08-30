@@ -5,20 +5,22 @@
     persistent
     scrim='red-darken-4'
     style='--v-overlay-opacity: .7'
+    aria-labelledby='page-delete-dialog-title'
     )
     v-card
       .dialog-header.is-short.is-red
         v-icon.mr-2(color='white') mdi-file-document-box-remove-outline
-        span {{$t('common:page.delete')}}
+        span#page-delete-dialog-title {{$t('common:page.delete')}}
       v-card-text.pt-5
         i18next.text-body-large(path='common:page.deleteTitle', tag='div')
           span.text-red-darken-2(place='title') {{pageTitle}}
         .text-body-small {{$t('common:page.deleteSubtitle')}}
-        v-chip.mt-3.ml-0.mr-1(label, color="red-lighten-4", size="small")
-          .text-body-small.text-red-darken-2 {{pageLocale.toUpperCase()}}
-        v-chip.mt-3.mx-0(label, color="red-lighten-5", size="small")
-          span.text-red-darken-2 /{{pagePath}}
-      div.v-card-chin
+        .page-delete__metadata
+          v-chip.page-delete__locale(label, color="red-lighten-4", size="small")
+            .text-body-small.text-red-darken-2 {{pageLocale.toUpperCase()}}
+          v-chip.page-delete__path(label, color="red-lighten-5", size="small", :title='`/${pagePath}`', :aria-label='`/${pagePath}`')
+            span.text-red-darken-2 /{{pagePath}}
+      v-card-chin
         v-spacer
         v-btn(variant="text", @click='discard', :disabled='loading') {{$t('common:actions.cancel')}}
         v-btn.px-4(color="red-darken-2", @click='deletePage', :loading='loading').text-white {{$t('common:actions.delete')}}
@@ -103,13 +105,13 @@ export default defineComponent({
     height: 100dvh;
     overflow: hidden;
 
-    .application {
-      background-color: mc('grey', '900');
+    .v-application {
+      background-color: rgb(var(--v-theme-background));
     }
     .v-application__wrap {
       transform-style: preserve-3d;
       transform: translateZ(-5vw) rotateX(2deg);
-      border-radius: 7px;
+      border-radius: var(--wiki-panel-radius);
       overflow: hidden;
     }
   }
@@ -120,6 +122,55 @@ export default defineComponent({
       transform-style: preserve-3d;
       transform: translateZ(-1000vw) rotateX(60deg);
       opacity: 0;
+    }
+  }
+
+  .page-delete__metadata {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-2);
+    margin-block-start: var(--wiki-space-3);
+  }
+
+  .page-delete__locale,
+  .page-delete__path {
+    margin: 0;
+  }
+
+  .page-delete__path {
+    min-width: 0;
+    max-width: 100%;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 399.98px) {
+    .page-delete__path {
+      flex-basis: 100%;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    body.page-deleted-pending {
+      perspective: none;
+
+      .v-application__wrap {
+        transform: none;
+        transition: none;
+      }
+    }
+
+    body.page-deleted {
+      perspective: none;
+
+      .v-application__wrap {
+        transform: none;
+        transition: none;
+        opacity: 0;
+      }
     }
   }
 </style>

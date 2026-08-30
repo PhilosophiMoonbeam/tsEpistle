@@ -7,27 +7,30 @@ describe('admin utilities export REST facade migration guard', () => {
   const scriptMatch = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   const script = scriptMatch && scriptMatch[1]
 
-  test('admin-utilities-export.vue uses system REST helpers instead of inline Apollo export mutation', () => {
+  test('admin-utilities-export.vue uses system REST helpers instead of inline Apollo export mutation or root-store state', () => {
     expect(script).not.toBeNull()
     expect(source).toMatch(/<script\s+lang=["']ts["']>/)
     expect(script).toContain("import { defineComponent } from 'vue'")
     expect(script).toContain("import { fetchSystemExportStatus, startSystemExport } from '../../helpers/system-api'")
-    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
+    expect(script).not.toMatch(/\bwikiStore\b|root-ui-store/)
     expect(script).not.toMatch(/graphql-tag|gql`|this\.\$apollo\.mutate|system\s*\{\s*export/)
   })
 
-  test('startExport routes current REST initiation failures through root-ui-store pushGraphError and preserves generation-bound progress polling', () => {
+  test('confirmed exports validate before initiating REST work and preserve generation-bound progress polling', () => {
     expect(script).not.toBeNull()
+    expect(script).toMatch(
+      /requestExport\s*\(\s*\)\s*\{\s*if\s*\(\s*this\.isExportValid\s*&&\s*!this\.isLoading\s*\)\s*\{\s*this\.isConfirming\s*=\s*true\s*\}\s*\}/
+    )
+    expect(script).toMatch(
+      /async\s+confirmExport\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.isExportValid\s*\|\|\s*this\.isLoading\s*\)\s*\{\s*return\s*\}\s*this\.isConfirming\s*=\s*false\s*await\s+this\.startExport\s*\(\s*\)\s*\}/
+    )
     expect(script).toMatch(
       /async\s+startExport\s*\(\s*\)\s*\{[\s\S]*?const\s+generation\s*=\s*this\.requestGeneration[\s\S]*?await\s+startSystemExport\s*\(\s*window\.fetch\.bind\(window\)\s*,\s*this\.entities\s*,\s*this\.filePath\s*,\s*['"]Export failed['"]\s*\)[\s\S]*?void\s+this\.checkProgress\s*\(\s*generation\s*\)/
     )
     expect(script).toMatch(
-      /catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*this\.isDisposed\s*\|\|\s*generation\s*!==\s*this\.requestGeneration\s*\)\s*\{\s*return\s*\}\s*this\.errorMessage\s*=\s*getErrorMessage\s*\(\s*err\s*\)\s*this\.isFailed\s*=\s*true\s*wikiStore\.showError\s*\(\s*err\s*\)\s*this\.isLoading\s*=\s*false\s*\}/
+      /catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*this\.isDisposed\s*\|\|\s*generation\s*!==\s*this\.requestGeneration\s*\)\s*\{\s*return\s*\}\s*this\.errorMessage\s*=\s*getErrorMessage\s*\(\s*err\s*\)\s*this\.isFailed\s*=\s*true\s*this\.isLoading\s*=\s*false\s*\}/
     )
     expect(script).not.toMatch(/this\.\$store\.commit\(\s*['"]pushGraphError['"]\s*,/)
-
-    const showErrorCalls = script.match(/wikiStore\.showError\s*\(/g) || []
-    expect(showErrorCalls).toHaveLength(1)
   })
 
   test('checkProgress keeps local export failure UI handling for current mounted requests', () => {

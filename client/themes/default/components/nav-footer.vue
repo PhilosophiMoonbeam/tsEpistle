@@ -67,6 +67,7 @@ export default {
 
 <style lang="scss">
 .nav-footer {
+  height: auto;
   min-height: var(--wiki-footer-height);
   padding: 12px var(--wiki-page-gutter);
   border-top: 1px solid rgba(var(--v-border-color), .09);

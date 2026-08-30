@@ -8,6 +8,9 @@
           span Administration
         v-spacer
       template(v-slot:actions)
+        .admin-context.admin-context--mobile
+          v-icon(size='16') mdi-shield-crown-outline
+          span Admin
         v-btn.admin-nav-toggle(
           v-if='$vuetify.display.smAndDown'
           icon
@@ -116,7 +119,7 @@
               template(v-slot:append)
                 v-icon(size='16') mdi-arrow-top-right
 
-    v-main.admin-main
+    v-main.admin-main(ref='adminMain' tabindex='-1')
       transition(name='admin-router')
         router-view
 
@@ -160,13 +163,20 @@ export default defineComponent({
     const adminDrawerShown = ref(mdAndUp.value)
     const navSearch = ref('')
     const openedSections = ref<string[]>([])
+    const sectionsBeforeSearch = ref<string[] | null>(null)
 
     watch(mdAndUp, isDesktop => {
       adminDrawerShown.value = isDesktop
     })
     watch(navSearch, query => {
       if (query.trim()) {
+        if (sectionsBeforeSearch.value === null) {
+          sectionsBeforeSearch.value = [...openedSections.value]
+        }
         openedSections.value = ['content', 'people', 'experience', 'operations']
+      } else if (sectionsBeforeSearch.value !== null) {
+        openedSections.value = sectionsBeforeSearch.value
+        sectionsBeforeSearch.value = null
       }
     })
 
@@ -290,6 +300,11 @@ export default defineComponent({
   watch: {
     '$route.path' () {
       this.syncOpenedSection()
+      this.$nextTick(() => {
+        const main = ((this.$refs.adminMain as { $el?: HTMLElement })?.$el || this.$refs.adminMain) as HTMLElement | undefined
+        const heading = main?.querySelector('h1') as HTMLElement | null
+        heading?.focus?.()
+      })
       if (this.$vuetify.display.smAndDown) {
         this.adminDrawerShown = false
       }
@@ -305,11 +320,14 @@ export default defineComponent({
         : [...this.openedSections, key]
     },
     syncOpenedSection() {
+      if (this.navSearch.trim()) {
+        return
+      }
       const currentPath = this.$route.path
       const currentGroup = this.navGroups.find(group =>
         group.items.some(item => item.to && (currentPath === item.to || currentPath.startsWith(`${item.to}/`)))
       )
-      if (currentGroup && !this.openedSections.includes(currentGroup.key)) {
+      if (currentGroup) {
         this.openedSections = [currentGroup.key]
       }
     },
@@ -337,8 +355,10 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+.admin-context--mobile {
+  display: none;
+}
 .admin-context {
-  display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
@@ -353,7 +373,7 @@ export default defineComponent({
 }
 
 .admin-sidebar {
-  border-right: 1px solid rgba(var(--v-border-color), .12);
+  border-inline-end: 1px solid rgba(var(--v-border-color), .12);
   background:
     linear-gradient(180deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, rgb(var(--v-theme-surface))) 0, rgb(var(--v-theme-surface)) 190px);
 
@@ -654,6 +674,8 @@ export default defineComponent({
       transition: background-color .16s ease;
 
       &:hover {
+
+
         background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, transparent);
       }
     }
@@ -669,6 +691,39 @@ export default defineComponent({
   .wiki-form .v-input + .v-input {
     margin-top: 4px;
   }
+}
+
+.admin-filter-bar {
+  gap: 8px;
+  border-radius: var(--wiki-control-radius, 11px);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, rgb(var(--v-theme-surface)));
+
+  .v-input {
+    flex: 1 1 220px;
+    max-width: 400px;
+  }
+}
+
+.admin-record-link,
+.admin-mobile-record-title {
+  color: rgb(var(--v-theme-primary));
+  font-weight: 650;
+  text-decoration: none;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
+.admin-status {
+  color: rgb(var(--v-theme-success));
+  font-size: .78rem;
+  font-weight: 650;
+}
+
+.admin-status--inactive {
+  color: rgb(var(--v-theme-error));
 }
 
 .admin-router {
@@ -697,8 +752,7 @@ export default defineComponent({
   height: 48px;
   float: right;
   justify-content: flex-end;
-  align-items: center;
-  margin-left: 16px;
+  margin-inline-start: 16px;
 
   img {
     max-width: 100%;
@@ -713,7 +767,14 @@ export default defineComponent({
 }
 
 @media (max-width: 959px) {
-  .admin-context {
+  .admin-context--mobile {
+    display: inline-flex;
+    margin-inline-start: 4px;
+    padding: 5px 9px;
+    font-size: .65rem;
+  }
+
+  .admin-context:not(.admin-context--mobile) {
     display: none;
   }
 
@@ -763,7 +824,6 @@ export default defineComponent({
         margin-top: 2px;
       }
     }
-
     .v-card-text {
       padding: 16px;
     }
@@ -779,13 +839,12 @@ export default defineComponent({
 
     .v-input {
       flex: 1 1 100%;
-      max-width: none !important;
-      margin-left: 0 !important;
+      margin-inline-start: 0 !important;
     }
   }
 
   .admin-responsive-table .v-table__wrapper {
-    overflow-x: hidden;
+    overflow-x: auto;
   }
 
   .admin-mobile-table-row > td {

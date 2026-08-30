@@ -5,7 +5,7 @@
       v-toolbar.history-toolbar(color='surface', flat)
         .history-toolbar-copy
           .history-eyebrow Revision history
-          .history-toolbar-title Viewing history of #[strong /{{path}}]
+          h1.history-toolbar-title Viewing history of #[strong /{{path}}]
           .history-toolbar-meta(v-if='$vuetify.display.mdAndUp')
             span {{total}} revisions
             span Page {{pageId}}
@@ -51,70 +51,94 @@
                 v-card.radius-7(
                   flat
                   :class='trailBgColor(ph.actionType)'
-                  role='button'
-                  tabindex='0'
-                  :aria-label='`Compare revision from ${$helpers.formatMoment(ph.versionDate, `LLL`)}`'
-                  @click='selectVersion(idx)'
-                  @keydown.enter.prevent='selectVersion(idx)'
-                  @keydown.space.prevent='selectVersion(idx)'
                 )
-                  v-toolbar(flat, :color='trailBgColor(ph.actionType)', height='40')
-                    .text-body-small(:title='$helpers.formatMoment(ph.versionDate, `LLL`)') {{ $helpers.formatMoment(ph.versionDate, 'll') }}
-                    v-divider.mx-3(vertical)
-                    .text-body-small(v-if='ph.actionType === `edit`') Edited by #[strong {{ ph.authorName }}]
-                    .text-body-small(v-else-if='ph.actionType === `move`') Moved from #[strong {{ph.valueBefore}}] to #[strong {{ph.valueAfter}}] by #[strong {{ ph.authorName }}]
-                    .text-body-small(v-else-if='ph.actionType === `initial`') Created by #[strong {{ ph.authorName }}]
-                    .text-body-small(v-else-if='ph.actionType === `live`') Last Edited by #[strong {{ ph.authorName }}]
-                    .text-body-small(v-else) Unknown Action by #[strong {{ ph.authorName }}]
-                    v-spacer
+                  .history-revision-summary(
+                    role='button'
+                    tabindex='0'
+                    :aria-label='`Compare revision from ${$helpers.formatMoment(ph.versionDate, `LLL`)}`'
+                    @click='selectVersion(idx)'
+                    @keydown.enter.prevent='selectVersion(idx)'
+                    @keydown.space.prevent='selectVersion(idx)'
+                  )
+                    .history-revision-copy
+                      .text-body-small(:title='$helpers.formatMoment(ph.versionDate, `LLL`)') {{ $helpers.formatMoment(ph.versionDate, 'll') }}
+                      v-divider.mx-3(vertical)
+                      .text-body-small.history-revision-description(
+                        v-if='ph.actionType === `edit`'
+                        :title='`Edited by ${ph.authorName}`'
+                      ) Edited by #[strong {{ ph.authorName }}]
+                      .text-body-small.history-revision-description(
+                        v-else-if='ph.actionType === `move`'
+                        :title='`Moved from ${ph.valueBefore} to ${ph.valueAfter} by ${ph.authorName}`'
+                      ) Moved from #[strong {{ph.valueBefore}}] to #[strong {{ph.valueAfter}}] by #[strong {{ ph.authorName }}]
+                      .text-body-small.history-revision-description(
+                        v-else-if='ph.actionType === `initial`'
+                        :title='`Created by ${ph.authorName}`'
+                      ) Created by #[strong {{ ph.authorName }}]
+                      .text-body-small.history-revision-description(
+                        v-else-if='ph.actionType === `live`'
+                        :title='`Last Edited by ${ph.authorName}`'
+                      ) Last Edited by #[strong {{ ph.authorName }}]
+                      .text-body-small.history-revision-description(
+                        v-else
+                        :title='`Unknown Action by ${ph.authorName}`'
+                      ) Unknown Action by #[strong {{ ph.authorName }}]
+                  .history-revision-actions
                     v-menu(location="left")
                       template(v-slot:activator='{ props }')
-                        v-btn.mr-2.radius-4(icon, v-bind='props', size="small", rounded='0', :aria-label='`Actions for revision ${ph.versionId || `live`}`'): v-icon mdi-dots-horizontal
-                      v-list(density="compact", nav).history-promptmenu
-                        v-list-item(@click='setDiffSource(ph.versionId)', :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0')
+                        v-btn(
+                          v-bind='props'
+                          icon
+                          size="small"
+                          rounded='0'
+                          :aria-label='`Actions for revision ${ph.versionId || `live`}`'
+                          @click.stop
+                        ): v-icon mdi-dots-horizontal
+                      v-list(density="compact" nav).history-promptmenu
+                        v-list-item(@click.stop='setDiffSource(ph.versionId)', :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0')
                           template(v-slot:prepend)
                             v-avatar(size='24'): v-avatar A
                           v-list-item-title Set as Differencing Source
-                        v-list-item(@click='setDiffTarget(ph.versionId)', :disabled='ph.versionId <= diffSource && ph.versionId !== 0')
+                        v-list-item(@click.stop='setDiffTarget(ph.versionId)', :disabled='ph.versionId <= diffSource && ph.versionId !== 0')
                           template(v-slot:prepend)
                             v-avatar(size='24'): v-avatar B
                           v-list-item-title Set as Differencing Target
-                        v-list-item(@click='viewSource(ph.versionId)')
+                        v-list-item(@click.stop='viewSource(ph.versionId)')
                           template(v-slot:prepend)
                             v-avatar(size='24'): v-icon mdi-code-tags
                           v-list-item-title View Source
-                        v-list-item(@click='download(ph.versionId)')
+                        v-list-item(@click.stop='download(ph.versionId)')
                           template(v-slot:prepend)
                             v-avatar(size='24'): v-icon mdi-cloud-download-outline
                           v-list-item-title Download Version
-                        v-list-item(@click='restore(ph.versionId, ph.versionDate)', :disabled='ph.versionId === 0')
+                        v-list-item(@click.stop='restore(ph.versionId, ph.versionDate)', :disabled='ph.versionId === 0')
                           template(v-slot:prepend)
                             v-avatar(size='24'): v-icon(:disabled='ph.versionId === 0') mdi-history
                           v-list-item-title Restore
-                        v-list-item(@click='branchOff(ph.versionId)')
+                        v-list-item(@click.stop='branchOff(ph.versionId)')
                           template(v-slot:prepend)
                             v-avatar(size='24'): v-icon mdi-source-branch
                           v-list-item-title Branch off from here
-                    v-btn.mr-2.radius-4(
-                      @click='setDiffSource(ph.versionId)'
+                    v-btn(
+                      @click.stop='setDiffSource(ph.versionId)'
                       icon
                       size="small"
                       variant="flat"
                       rounded='0'
                       :aria-label='`Set revision ${ph.versionId} as differencing source`'
-                      :class='diffSource === ph.versionId ? `bg-pink text-white` : ($vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-2`)'
+                      :class='diffSource === ph.versionId ? `history-diff-active` : `history-diff-inactive`'
                       :disabled='(ph.versionId >= diffTarget && diffTarget !== 0) || ph.versionId === 0'
-                      ): strong A
-                    v-btn.mr-0.radius-4(
-                      @click='setDiffTarget(ph.versionId)'
+                    ): strong A
+                    v-btn(
+                      @click.stop='setDiffTarget(ph.versionId)'
                       icon
                       size="small"
                       variant="flat"
                       rounded='0'
                       :aria-label='`Set revision ${ph.versionId || `live`} as differencing target`'
-                      :class='diffTarget === ph.versionId ? `bg-pink text-white` : ($vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-2`)'
+                      :class='diffTarget === ph.versionId ? `history-diff-active` : `history-diff-inactive`'
                       :disabled='ph.versionId <= diffSource && ph.versionId !== 0'
-                      ): strong B
+                    ): strong B
 
             v-btn.ma-0.radius-7(
               v-if='total > trail.length'
@@ -135,13 +159,27 @@
               ) End of history trail
 
           v-col(cols='12', md='8')
-            v-card.radius-7(:class='$vuetify.display.mdAndUp ? `mt-8` : ``')
+            async-state(
+              v-if='trailLoading && !trailLoaded'
+              state='loading'
+              title='Loading page history'
+              message='Fetching revision metadata.'
+            )
+            async-state(
+              v-else-if='trailError && !trailLoaded'
+              state='error'
+              title='Page history could not be loaded'
+              :message='trailError'
+              retry-label='Try again'
+              @retry='loadHistory'
+            )
+            v-card.radius-7(v-else-if='trailLoaded' :class='$vuetify.display.mdAndUp ? `mt-8` : ``')
               v-card-text
                 v-card.radius-7(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-4`')
                   v-row.align-center(no-gutters)
                     v-col
                       v-card-text
-                        .text-body-large {{target.title}}
+                        h2.history-comparison-heading(ref='comparisonHeading' tabindex='-1') {{target.title}}
                         .text-body-small {{target.description}}
                         .history-revision-meta
                           span {{ target.versionId === 0 ? 'Live version' : `Revision ${target.versionId}` }}
@@ -149,9 +187,16 @@
                           span {{ target.visibility }}{{ target.isPublished === false ? ' / unpublished' : '' }}
                           span(v-if='target.tags.length > 0') Tags: {{ target.tags.join(', ') }}
                     v-col.text-right.py-3(cols='auto')
-                      v-btn.mr-3(:color='$vuetify.theme.current.dark ? `white` : `grey-darken-3`', size="small", variant="outlined", @click='toggleViewMode', aria-label='Toggle diff view mode')
+                      v-btn.mr-3(
+                        :color='$vuetify.theme.current.dark ? `white` : `grey-darken-3`'
+                        size="small"
+                        variant="outlined"
+                        @click='toggleViewMode'
+                        :aria-label='viewMode === `line-by-line` ? `Switch to side-by-side diff` : `Switch to line-by-line diff`'
+                        :aria-pressed='viewMode === `side-by-side`'
+                      )
                         v-icon(start) mdi-eye
-                        span(v-if='$vuetify.display.mdAndUp').text-label-small View Mode
+                        span.text-label-small View: {{viewMode === 'line-by-line' ? 'Line by line' : 'Side by side'}}
                 v-card.mt-3.history-diff(flat)
                   div(v-html='diffHTML')
 
@@ -295,7 +340,8 @@ export default {
       },
       isRestoreConfirmDialogShown: false,
       trailError: '',
-      trailLoading: false,
+      trailLoading: true,
+      trailLoaded: false,
       loadingMore: false,
       restoreLoading: false
     }
@@ -483,6 +529,13 @@ export default {
       if (!target) return
       this.diffTarget = target.versionId
       if (source && source.versionId > 0) this.diffSource = source.versionId
+      if (this.$vuetify.display.smAndDown) {
+        this.$nextTick(() => {
+          const heading = this.$refs.comparisonHeading as HTMLElement | undefined
+          heading?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          heading?.focus({ preventScroll: true })
+        })
+      }
     },
     setDiffSource (versionId: number) {
       this.diffSource = versionId
@@ -503,6 +556,7 @@ export default {
       this.offsetPage = 0
       this.total = result.total
       this.trail = result.trail
+      this.trailLoaded = true
     },
     async fetchHistoryPage (offsetPage: number): Promise<{ trail: PageHistoryTrailItem[], total: number } | null> {
       this.trailError = ''
@@ -530,11 +584,11 @@ export default {
         case 'edit':
           return 'primary'
         case 'move':
-          return 'purple'
+          return 'info'
         case 'initial':
-          return 'teal'
+          return 'success'
         case 'live':
-          return 'orange'
+          return 'warning'
         default:
           return 'grey'
       }
@@ -556,15 +610,15 @@ export default {
     trailBgColor (actionType: string) {
       switch (actionType) {
         case 'move':
-          return this.$vuetify.theme.current.dark ? 'purple' : 'purple-lighten-5'
+          return 'history-trail-move'
         case 'initial':
-          return this.$vuetify.theme.current.dark ? 'teal-darken-3' : 'teal-lighten-5'
+          return 'history-trail-initial'
         case 'live':
-          return this.$vuetify.theme.current.dark ? 'orange-darken-3' : 'orange-lighten-5'
+          return 'history-trail-live'
         default:
-          return this.$vuetify.theme.current.dark ? 'grey-darken-3' : 'grey-lighten-4'
+          return 'history-trail-default'
       }
-    }
+    },
   }
 
 }
@@ -579,6 +633,31 @@ export default {
 
 .history-promptmenu {
   border-top: 3px solid rgb(var(--v-theme-primary));
+}
+.history-trail-move {
+  background: color-mix(in srgb, rgb(var(--v-theme-info)) 16%, rgb(var(--v-theme-surface))) !important;
+}
+
+.history-trail-initial {
+  background: color-mix(in srgb, rgb(var(--v-theme-success)) 16%, rgb(var(--v-theme-surface))) !important;
+}
+
+.history-trail-live {
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 16%, rgb(var(--v-theme-surface))) !important;
+}
+
+.history-trail-default {
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, rgb(var(--v-theme-surface))) !important;
+}
+
+.history-diff-active {
+  background: rgb(var(--v-theme-primary)) !important;
+  color: rgb(var(--v-theme-on-primary)) !important;
+}
+
+.history-diff-inactive {
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, rgb(var(--v-theme-surface))) !important;
+  color: rgb(var(--v-theme-on-surface)) !important;
 }
 
 .history-toolbar {
@@ -603,9 +682,10 @@ export default {
 
 .history-toolbar-title {
   overflow: hidden;
-  margin-top: 3px;
+  margin: 3px 0 0;
   color: rgb(var(--v-theme-on-surface));
   font-size: 1rem;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -631,14 +711,14 @@ export default {
   .v-timeline-item .v-card,
   .history-shell > .v-row > .v-col:last-child > .v-card {
     border: 1px solid rgba(var(--v-border-color), .11);
-    border-radius: 14px;
+    border-radius: var(--wiki-panel-radius);
     box-shadow: 0 8px 26px rgba(15, 23, 42, .045);
   }
 
   &-diff {
     overflow-x: auto;
     border: 1px solid rgba(var(--v-border-color), .1);
-    border-radius: 12px;
+    border-radius: var(--wiki-control-radius);
   }
 
   .d2h-file-wrapper {
@@ -648,6 +728,53 @@ export default {
   .d2h-file-header {
     display: none;
   }
+}
+.history-revision-summary {
+  min-width: 0;
+  padding: 10px 12px 8px;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 2px solid rgb(var(--v-theme-primary));
+    outline-offset: -2px;
+  }
+}
+
+.history-revision-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.history-revision-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-revision-actions {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 4px 8px 6px;
+  border-top: 1px solid rgba(var(--v-border-color), .08);
+
+  .v-btn {
+    flex: 0 0 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+.history-comparison-heading {
+  margin: 0;
+  color: rgb(var(--v-theme-on-surface));
+  font-size: 1.15rem;
+  font-weight: 700;
 }
 
 @media (max-width: 959px) {
@@ -670,6 +797,17 @@ export default {
 
   .history .d2h-file-side-diff {
     min-width: 32rem;
+  }
+}
+@media (max-width: 599px) {
+  .history-revision-description {
+    flex: 1 1 10rem;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .history-revision-actions {
+    padding-inline: 6px;
   }
 }
 </style>

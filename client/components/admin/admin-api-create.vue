@@ -18,6 +18,8 @@
             )
           v-select.mt-3(
             :items='expirations'
+            item-title='title'
+            item-value='value'
             variant="outlined"
             prepend-icon='mdi-clock'
             v-model='expiration'
@@ -27,28 +29,23 @@
             )
           v-divider.mt-4
           v-list-subheader.pl-2: strong.text-indigo {{$t('admin:api.newKeyPermissionScopes')}}
-          v-list.pl-8(nav)
-            v-checkbox(
-              v-model='fullAccess'
-              color='indigo'
-              hide-details
-              :label='$t(`admin:api.newKeyFullAccess`)'
-            )
-            v-divider.mt-3
-            v-list-subheader.text-body-small.text-indigo {{$t('admin:api.newKeyGroupPermissions')}}
-            v-list-item
-              v-select(
-                :disabled='fullAccess'
-                :items='groups'
-                item-title='name'
-                item-value='id'
-                variant="outlined"
-                color='indigo'
-                v-model='group'
-                :label='$t(`admin:api.newKeyGroup`)'
-                :hint='$t(`admin:api.newKeyGroupHint`)'
-                persistent-hint
-                )
+          v-radio-group.pl-4(v-model='scope', :rules='[scopeRule]')
+            v-radio(value='full', color='indigo', label='System administrator permissions')
+            .text-body-small.text-medium-emphasis.ml-10.mb-3 Grants the key unrestricted system-administrator authority.
+            v-radio(value='group', color='indigo', label='Use a group’s permissions')
+            .text-body-small.text-medium-emphasis.ml-10 The key is limited to the selected group’s permissions and page rules.
+          v-select.ml-8.mt-2(
+            v-if='scope === `group`'
+            :items='groups'
+            item-title='name'
+            item-value='id'
+            variant="outlined"
+            color='indigo'
+            v-model='group'
+            :label='$t(`admin:api.newKeyGroup`)'
+            :hint='$t(`admin:api.newKeyGroupHint`)'
+            persistent-hint
+          )
         div.v-card-chin
           v-spacer
           v-btn(variant="text", @click='isShown = false', :disabled='loading') {{$t('common:actions.cancel')}}
@@ -60,27 +57,33 @@
       v-model='isCopyKeyDialogShown'
       max-width='750'
       persistent
-      scrim='blue-darken-5'
-      style='--v-overlay-opacity: .9'
       )
       v-card
-        v-toolbar(density="compact", flat, color='primary') {{$t('admin:api.newKeyTitle')}}
+        v-toolbar(density="compact", flat, color='primary')
+          v-toolbar-title 2. Copy key
         v-card-text.pt-5
           .text-body-medium.text-center
             i18next(tag='span', path='admin:api.newKeyCopyWarn')
               strong(place='bold') {{$t('admin:api.newKeyCopyWarnBold')}}
           v-textarea.mt-3(
             ref='keyContentsIpt'
-            variant="filled"
+            variant="outlined"
             no-resize
             readonly
             v-model='key'
-            :rows='10'
+            :rows='5'
             hide-details
+            class='api-key-value'
           )
+          .d-flex.align-center.flex-wrap.ga-2.mt-3
+            v-btn(variant="outlined", color='primary', @click='copyKey')
+              v-icon(start) mdi-content-copy
+              span {{ copied ? 'Copied' : 'Copy key' }}
+            span.text-body-small.text-medium-emphasis(v-if='copied') Key copied. Store it somewhere safe before continuing.
         div.v-card-chin
           v-spacer
-          v-btn.px-3(variant="flat", color='primary', @click='isCopyKeyDialogShown = false') {{$t('common:actions.close')}}</template>
+          v-btn.px-3(variant="flat", color='primary', @click='finishCopyKey') I’ve saved this key
+</template>
 
 <script lang='ts'>
 import _ from 'lodash'
@@ -107,11 +110,12 @@ export default {
       loading: false,
       name: '',
       expiration: '1y',
-      fullAccess: true,
+      scope: null as 'full' | 'group' | null,
       groups: [] as GroupOption[],
       group: null as number | null,
       isCopyKeyDialogShown: false,
-      key: ''
+      key: '',
+      copied: false
     }
   },
   computed: {
@@ -121,24 +125,45 @@ export default {
     },
     expirations() {
       return [
-        { value: '30d', text: this.$t('admin:api.expiration30d') },
-        { value: '90d', text: this.$t('admin:api.expiration90d') },
-        { value: '180d', text: this.$t('admin:api.expiration180d') },
-        { value: '1y', text: this.$t('admin:api.expiration1y') },
-        { value: '3y', text: this.$t('admin:api.expiration3y') }
+        { value: '30d', title: this.$t('admin:api.expiration30d') },
+        { value: '90d', title: this.$t('admin:api.expiration90d') },
+        { value: '180d', title: this.$t('admin:api.expiration180d') },
+        { value: '1y', title: this.$t('admin:api.expiration1y') },
+        { value: '3y', title: this.$t('admin:api.expiration3y') }
       ]
+    },
+    scopeRule (): (value: string | null) => true | string {
+      return (value: string | null) => Boolean(value) || 'Choose a permission scope.'
     }
   },
   watch: {
-    value (newValue, oldValue) {
+    modelValue (newValue: boolean) {
       if (newValue) {
-        setTimeout(() => {
-          ;(this.$refs.keyNameInput as { focus: () => void }).focus()
-        }, 400)
+        this.$nextTick(() => {
+          ;(this.$refs.keyNameInput as { focus: () => void })?.focus()
+        })
       }
+    },
+    isCopyKeyDialogShown (newValue: boolean) {
+      if (newValue) this.copied = false
     }
   },
   methods: {
+    async copyKey () {
+      try {
+        await navigator.clipboard.writeText(this.key)
+        this.copied = true
+      } catch {
+        const input = (this.$refs.keyContentsIpt as { $refs?: { input?: HTMLTextAreaElement } }).$refs?.input
+        input?.select()
+        wikiStore.showNotification({ style: 'red', message: 'Copy failed. Select the key and copy it manually.', icon: 'alert' })
+      }
+    },
+    finishCopyKey () {
+      this.isCopyKeyDialogShown = false
+      this.copied = false
+      this.key = ''
+    },
     async loadGroups() {
       wikiStore.startLoading('admin-api-groups-refresh')
       try {
@@ -156,9 +181,11 @@ export default {
       try {
         if (_.trim(this.name).length < 2 || this.name.length > 255) {
           throw new Error(this.$t('admin:api.newKeyNameError'))
-        } else if (!this.fullAccess && !this.group) {
+        } else if (!this.scope) {
+          throw new Error('Choose a permission scope.')
+        } else if (this.scope === 'group' && !this.group) {
           throw new Error(this.$t('admin:api.newKeyGroupError'))
-        } else if (!this.fullAccess && this.group === 2) {
+        } else if (this.scope === 'group' && this.group === 2) {
           throw new Error(this.$t('admin:api.newKeyGuestGroupError'))
         }
       } catch (err) {
@@ -176,14 +203,14 @@ export default {
         const resp = await createAdminApiKey(window.fetch.bind(window), {
           name: this.name,
           expiration: this.expiration,
-          fullAccess: (this.fullAccess === true),
-          group: this.group
+          fullAccess: this.scope === 'full',
+          group: this.scope === 'group' ? this.group : null
         })
         const refreshed = this.refreshApiKeys ? await (this.refreshApiKeys as (notify: boolean) => Promise<boolean>)(false) : true
 
         this.name = ''
         this.expiration = '1y'
-        this.fullAccess = true
+        this.scope = null
         this.group = null
         this.isShown = false
 
@@ -198,9 +225,6 @@ export default {
           })
         }
 
-        setTimeout(() => {
-          ;(this.$refs.keyContentsIpt as { $refs: { input: HTMLInputElement } }).$refs.input.select()
-        }, 400)
       } catch (err) {
         wikiStore.showError(err)
       } finally {

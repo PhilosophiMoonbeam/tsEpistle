@@ -8,7 +8,7 @@
           v-model='currentPageTitle'
           hide-details
           density="compact"
-          aria-label='Page title'
+          :aria-label='$t(`editor:props.title`)'
         )
       template(v-slot:mid)
         v-text-field.editor-title-input(
@@ -17,6 +17,7 @@
           v-model='currentPageTitle'
           hide-details
           density="compact"
+          :aria-label='$t(`editor:props.title`)'
         )
       template(v-slot:actions)
         v-btn.mr-3.animated.fadeIn(
@@ -38,9 +39,9 @@
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
           :aria-label='mode === `create` ? $t(`common:actions.create`) : (isDirty ? $t(`common:actions.save`) : $t(`editor:save.saved`))'
           )
-          v-icon(color='green', :start='$vuetify.display.lgAndUp') mdi-check
+          v-icon(:start='$vuetify.display.lgAndUp') mdi-check
           span.text-grey(v-if='$vuetify.display.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
-          span.text-white(v-else-if='$vuetify.display.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
+          span(v-else-if='$vuetify.display.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
         v-btn.animated.fadeInDown.wait-p1s(
           v-if='$vuetify.display.mdAndUp'
           variant="text"
@@ -49,8 +50,8 @@
           :class='{ "is-icon": $vuetify.display.mdAndDown, "mx-0": !welcomeMode, "ml-0": welcomeMode }'
           :aria-label='$t(`common:actions.page`)'
           )
-          v-icon(color='blue', :start='$vuetify.display.lgAndUp') mdi-tag-text-outline
-          span.text-white(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.page') }}
+          v-icon(:start='$vuetify.display.lgAndUp') mdi-tag-text-outline
+          span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.page') }}
         v-btn.animated.fadeInDown.wait-p2s(
           v-if='!welcomeMode && $vuetify.display.mdAndUp'
           variant="text"
@@ -59,8 +60,8 @@
           :aria-label='$t(`common:actions.close`)'
           @click='exit'
           )
-          v-icon(color='red', :start='$vuetify.display.lgAndUp') mdi-close
-          span.text-white(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.close') }}
+          v-icon(:start='$vuetify.display.lgAndUp') mdi-close
+          span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.close') }}
         v-menu(v-if='$vuetify.display.smAndDown', location="bottom left", min-width='240')
           template(v-slot:activator='{ props }')
             v-btn.editor-actions-menu(
@@ -541,20 +542,26 @@ export default defineComponent({
   .editor {
     min-height: 100vh;
     min-height: 100dvh;
-    background: #11151b !important;
+    background: rgb(var(--v-theme-background)) !important;
 
     .v-application__wrap {
       min-width: 0;
-      background: #11151b;
+      background: rgb(var(--v-theme-background));
+    }
+
+    .v-main {
+      display: flex;
+      flex: 1 1 auto;
+      min-height: 0;
     }
 
     &-title-input {
       max-width: 42rem;
 
       .v-field {
-        border: 1px solid rgba(255, 255, 255, .11);
+        border: 1px solid rgba(var(--v-theme-on-surface), .14);
         border-radius: 10px;
-        background: rgba(255, 255, 255, .045) !important;
+        background: rgba(var(--v-theme-on-surface), .045) !important;
         box-shadow: none;
       }
 
@@ -564,7 +571,7 @@ export default defineComponent({
       }
 
       input {
-        color: rgba(255, 255, 255, .9);
+        color: rgba(var(--v-theme-on-surface), .9);
         font-weight: 620;
         text-align: center;
       }
@@ -584,6 +591,14 @@ export default defineComponent({
       }
     }
   }
+
+@media (prefers-reduced-motion: reduce) {
+  .editor,
+  .editor * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
 
   .atom-spinner.is-inline {
     display: inline-block;

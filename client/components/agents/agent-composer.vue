@@ -3,7 +3,6 @@
     <v-card
       v-if="skillCommandOpen"
       class="agent-composer__command-menu"
-      role="dialog"
       aria-label="Invoke a skill"
       elevation="5"
     >
@@ -43,6 +42,7 @@
           </template>
         </v-list-item>
         <v-list-item v-if="skillCommandResults.length === 0" title="No matching skills" subtitle="Try another name or description." disabled />
+        <div class="agent-composer__command-status sr-only" role="status" aria-live="polite">{{ skillCommandResults.length ? `${skillCommandResults.length} matching skills` : 'No matching skills' }}</div>
       </v-list>
     </v-card>
     <v-textarea
@@ -52,7 +52,8 @@
       aria-label="Message Wiki Agent"
       role="combobox"
       aria-autocomplete="list"
-      :placeholder="goalMode ? 'Describe a bounded outcome for Wiki Agent' : 'Ask a follow-up · Type / for skills'"
+      aria-haspopup="listbox"
+      :placeholder="goalMode ? 'Describe a bounded outcome for Wiki Agent' : skillsEnabled ? 'Ask a follow-up · Type / for skills' : 'Ask a follow-up'"
       rows="1"
       variant="solo"
       flat
@@ -70,7 +71,7 @@
         :key="skill.versionId"
         size="small"
         color="primary"
-        closable
+        :disabled="disabled"
         @click:close="toggleSkill(skill.versionId)"
       >
         {{ skill.name }}
@@ -84,6 +85,7 @@
             class="agent-composer__skill-button"
             variant="text"
             prepend-icon="mdi-puzzle-outline"
+            :disabled="disabled"
             :text="selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : 'Skills'"
           />
         </template>
@@ -163,7 +165,7 @@ const props = defineProps<{
   preferredSkills: readonly AgentSessionSkillView[]
   invocationLimit: number
 }>()
-const emit = defineEmits<{ send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal']; stop: []; manageSkills: []; updateSkillPreferences: [skillIds: string[]] }>()
+const emit = defineEmits<{ send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const draft = ref('')
 const goalMode = ref(false)
 const skillMenuOpen = ref(false)
@@ -288,14 +290,22 @@ const manageSkills = (): void => {
   emit('manageSkills')
 }
 const submit = (): void => {
-  if (props.disabled || skillCommandOpen.value || !draft.value.trim()) return
+  if (props.disabled || props.sending || skillCommandOpen.value || !draft.value.trim()) return
   const content = draft.value
   const invokedSkillVersionIds = [...selectedSkillIds.value]
   const mode = goalMode.value ? 'goal' : 'message'
-  draft.value = ''
-  selectedSkillIds.value = []
-  goalMode.value = false
-  emit('send', content, invokedSkillVersionIds, mode)
+  emit('send', content, invokedSkillVersionIds, mode, (success: boolean) => {
+    if (success) {
+      if (draft.value === content) draft.value = ''
+      selectedSkillIds.value = []
+      goalMode.value = false
+    } else {
+      void nextTick(() => {
+        messageInput.value?.focus()
+        resizeInput()
+      })
+    }
+  })
 }
 defineExpose({ focusInput })
 onMounted(() => {
@@ -312,7 +322,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%);
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
   border-radius: 1rem;
-  font-family: 'WikiAgentSans', 'Roboto', system-ui, sans-serif;
+  font-family: inherit;
   min-width: 0;
   padding: .2rem .55rem .5rem;
   position: relative;
@@ -342,6 +352,15 @@ onBeforeUnmount(() => {
   position: absolute;
   width: min(38rem, 100%);
   z-index: 10;
+}
+.agent-composer__command-status {
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
 }
 .agent-composer__actions { flex-wrap: wrap; min-height: 2.75rem; min-width: 0; }
 .agent-composer__actions :deep(.v-btn) { min-height: 2.75rem; }

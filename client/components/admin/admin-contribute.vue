@@ -19,7 +19,8 @@
             v-tabs.mx-3.radius-7.admin-contribute-tabs.text-white(
               v-model='contributeTab'
               align-tabs="center"
-              fixed-tabs
+              :fixed-tabs='$vuetify.display.mdAndUp'
+              show-arrows
               bg-color='primary'
               color='white'
               slider-color='#FFF'
@@ -47,15 +48,15 @@
               v-tabs-window-item(value='github', :transition='false', :reverse-transition='false')
                 .text-body-medium.pa-3 {{ $t('admin:contribute.github') }}
                 a.ml-3(href='https://github.com/users/NGPixel/sponsorship', :title='$t(`admin:contribute.becomeASponsor`)')
-                  img(src='/_assets/img/donate_github.svg', :alt='$t(`admin:contribute.becomeASponsor`)' style='width:200px;')
+                  img.admin-contribute-media(src='/_assets/img/donate_github.svg', :alt='$t(`admin:contribute.becomeASponsor`)')
               v-tabs-window-item(value='patreon', :transition='false', :reverse-transition='false')
                 .text-body-medium.pa-3 {{ $t('admin:contribute.patreon') }}
                 a.ml-3(href='https://www.patreon.com/bePatron?u=16744039', :title='$t(`admin:contribute.becomeAPatron`)')
-                  img(src='/_assets/img/donate_patreon.png', :alt='$t(`admin:contribute.becomeAPatron`)' style='width:200px;')
+                  img.admin-contribute-media(src='/_assets/img/donate_patreon.png', :alt='$t(`admin:contribute.becomeAPatron`)')
               v-tabs-window-item(value='open-collective', :transition='false', :reverse-transition='false')
                 .text-body-medium.pa-3 {{ $t('admin:contribute.openCollective') }}
                 a.ml-3(href='https://opencollective.com/wikijs/donate', :title='$t(`admin:contribute.makeADonation`)')
-                  img(src='/_assets/img/donate_opencollective.png', :alt='$t(`admin:contribute.makeADonation`)' style='width:300px;')
+                  img.admin-contribute-media.admin-contribute-media-wide(src='/_assets/img/donate_opencollective.png', :alt='$t(`admin:contribute.makeADonation`)')
               v-tabs-window-item(value='paypal', :transition='false', :reverse-transition='false')
                 .text-body-medium.pa-3 {{ $t('admin:contribute.paypal') }}
                 .ml-3
@@ -69,8 +70,11 @@
                 .ml-3
                   .admin-contribute-ethaddress
                     strong Ethereum Address
-                    span 0xE1d55C19aE86f6Bcbfb17e7f06aCe96BdBb22Cb5
-                  div: img(src='/_assets/img/donate_eth_qr.png')
+                    code {{ ethereumAddress }}
+                    v-btn.mt-2(size='small', variant='outlined', color='primary', @click='copyAddress')
+                      v-icon(start, aria-hidden='true') mdi-content-copy
+                      span {{ addressCopied ? 'Copied' : 'Copy address' }}
+                  div: img.admin-contribute-media(src='/_assets/img/donate_eth_qr.png', alt='Ethereum donation address QR code')
               v-tabs-window-item(value='tshirts', :transition='false', :reverse-transition='false')
                 .text-body-medium.pa-3 {{ $t('admin:contribute.tshirts') }}
                 v-card-actions.ml-2
@@ -97,8 +101,27 @@
           v-toolbar(color='indigo', density="compact")
             .text-body-large Sponsors &amp; Backers
           v-container.pa-5(fluid, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-4`')
-            v-progress-circular(indeterminate, color='indigo', size='24', width='2', v-if='backers.length < 1', aria-label='Loading sponsors and backers')
-            v-row(density="compact")
+            async-state(
+              v-if='backersLoading'
+              state='loading'
+              title='Loading sponsors and backers'
+              message='Fetching the latest contributors.'
+            )
+            async-state(
+              v-else-if='backersError'
+              state='error'
+              title='Sponsors and backers could not be loaded'
+              :message='backersError'
+              retry-label='Try again'
+              @retry='loadBackers'
+            )
+            async-state(
+              v-else-if='backersLoaded && backers.length < 1'
+              state='empty'
+              title='No sponsors or backers to display'
+              message='There are no public contributors to show right now.'
+            )
+            v-row(v-else density="compact")
               v-col(cols='12', lg='6', xl='4', v-for='backer in backers', :key='backer.id')
                 v-card(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-2`')
                   v-list-item
@@ -110,10 +133,10 @@
                     v-list-item-title {{backer.name}}
                     v-list-item-subtitle: .text-body-small Since {{ $helpers.formatMoment(backer.joined, 'MMMM DD, YYYY') }} on {{backer.source}}
                     template(v-slot:append)
-                      v-btn(v-if='backer.twitter', icon, :href='backer.twitter', target='_blank')
-                        v-icon(color='grey') mdi-twitter
-                      v-btn(v-if='backer.website', icon, :href='backer.website', target='_blank')
-                        v-icon(color='grey') mdi-earth
+                      v-btn(v-if='backer.twitter', icon, :href='backer.twitter', target='_blank', :aria-label='`Open ${backer.name} Twitter profile`', :title='`Open ${backer.name} Twitter profile`')
+                        v-icon(color='grey', aria-hidden='true') mdi-twitter
+                      v-btn(v-if='backer.website', icon, :href='backer.website', target='_blank', :aria-label='`Open ${backer.name} website`', :title='`Open ${backer.name} website`')
+                        v-icon(color='grey', aria-hidden='true') mdi-earth
           v-toolbar(color='primary', density="compact")
             .text-body-large Special Thanks
           v-list(lines="two")
@@ -124,8 +147,8 @@
               v-list-item-title Algolia
               v-list-item-subtitle Algolia is a powerful search-as-a-service solution, made easy to use with API clients, UI libraries, and pre-built integrations.
               template(v-slot:append)
-                v-btn(icon, href='https://www.algolia.com/', target='_blank')
-                  v-icon(color='grey') mdi-earth
+                v-btn(icon, href='https://www.algolia.com/', target='_blank', aria-label='Open Algolia website', title='Open Algolia website')
+                  v-icon(color='grey', aria-hidden='true') mdi-earth
             v-divider
             v-list-item
               template(v-slot:prepend)
@@ -134,8 +157,8 @@
               v-list-item-title BrowserStack
               v-list-item-subtitle BrowserStack is a cloud web and mobile testing platform that enables developers to test their websites and mobile applications.
               template(v-slot:append)
-                v-btn(icon, href='https://www.browserstack.com/', target='_blank')
-                  v-icon(color='grey') mdi-earth
+                v-btn(icon, href='https://www.browserstack.com/', target='_blank', aria-label='Open BrowserStack website', title='Open BrowserStack website')
+                  v-icon(color='grey', aria-hidden='true') mdi-earth
             v-divider
             v-list-item
               template(v-slot:prepend)
@@ -144,8 +167,8 @@
               v-list-item-title Cloudflare
               v-list-item-subtitle Providing content delivery network services, DDoS mitigation, Internet security and distributed domain name server services.
               template(v-slot:append)
-                v-btn(icon, href='https://www.cloudflare.com/', target='_blank')
-                  v-icon(color='grey') mdi-earth
+                v-btn(icon, href='https://www.cloudflare.com/', target='_blank', aria-label='Open Cloudflare website', title='Open Cloudflare website')
+                  v-icon(color='grey', aria-hidden='true') mdi-earth
             v-divider
             v-list-item
               template(v-slot:prepend)
@@ -154,8 +177,8 @@
               v-list-item-title DigitalOcean
               v-list-item-subtitle Providing developers and businesses a reliable, easy-to-use cloud computing platform of virtual servers (Droplets), object storage (Spaces), and more.
               template(v-slot:append)
-                v-btn(icon, href='https://m.do.co/c/5f7445bfa4d0', target='_blank')
-                  v-icon(color='grey') mdi-earth
+                v-btn(icon, href='https://m.do.co/c/5f7445bfa4d0', target='_blank', aria-label='Open DigitalOcean website', title='Open DigitalOcean website')
+                  v-icon(color='grey', aria-hidden='true') mdi-earth
             v-divider
             v-list-item
               template(v-slot:prepend)
@@ -164,8 +187,8 @@
               v-list-item-title Icons8
               v-list-item-subtitle All the Icons You Need. Guaranteed.
               template(v-slot:append)
-                v-btn(icon, href='https://icons8.com', target='_blank')
-                  v-icon(color='grey') mdi-earth
+                v-btn(icon, href='https://icons8.com', target='_blank', aria-label='Open Icons8 website', title='Open Icons8 website')
+                  v-icon(color='grey', aria-hidden='true') mdi-earth
             v-divider
             v-list-item
               template(v-slot:prepend)
@@ -174,8 +197,8 @@
               v-list-item-title Lokalise
               v-list-item-subtitle Lokalise is a translation management system built for agile teams who want to automate their localization process.
               template(v-slot:append)
-                v-btn(icon, href='https://lokalise.co', target='_blank')
-                  v-icon(color='grey') mdi-earth
+                v-btn(icon, href='https://lokalise.co', target='_blank', aria-label='Open Lokalise website', title='Open Lokalise website')
+                  v-icon(color='grey', aria-hidden='true') mdi-earth
             v-divider
             v-list-item
               template(v-slot:prepend)
@@ -184,8 +207,8 @@
               v-list-item-title Netlify
               v-list-item-subtitle Deploy modern static websites with Netlify. Get CDN, Continuous deployment, 1-click HTTPS, and all the services you need.
               template(v-slot:append)
-                v-btn(icon, href='https://www.netlify.com', target='_blank')
-                  v-icon(color='grey') mdi-earth
+                v-btn(icon, href='https://www.netlify.com', target='_blank', aria-label='Open Netlify website', title='Open Netlify website')
+                  v-icon(color='grey', aria-hidden='true') mdi-earth
 </template>
 
 <script lang='ts'>
@@ -197,7 +220,12 @@ export default {
   data() {
     return {
       contributeTab: 'github',
-      backers: [] as ContributorRow[]
+      backers: [] as ContributorRow[],
+      backersLoading: true,
+      backersLoaded: false,
+      backersError: '',
+      addressCopied: false,
+      ethereumAddress: '0xE1d55C19aE86f6Bcbfb17e7f06aCe96BdBb22Cb5'
     }
   },
   created() {
@@ -205,22 +233,46 @@ export default {
   },
   methods: {
     async loadBackers({ notifyError = true }: { notifyError?: boolean } = {}) {
+      this.backersLoading = true
+      this.backersLoaded = false
+      this.backersError = ''
       loadingStart(wikiStore, 'admin-contribute-refresh')
       try {
         this.backers = await fetchContributors(window.fetch.bind(window), 'Contributors response is invalid')
+        this.backersLoaded = true
         return true
       } catch (err) {
         this.backers = []
+        this.backersLoaded = true
+        this.backersError = getErrorMessage(err)
         if (notifyError) {
           showNotification(wikiStore, {
-            message: getErrorMessage(err),
+            message: this.backersError,
             style: 'red',
             icon: 'alert'
           })
         }
         throw err
       } finally {
+        this.backersLoading = false
         loadingStop(wikiStore, 'admin-contribute-refresh')
+      }
+    },
+    async copyAddress() {
+      try {
+        await navigator.clipboard.writeText(this.ethereumAddress)
+        this.addressCopied = true
+        showNotification(wikiStore, {
+          message: 'Ethereum address copied.',
+          style: 'success',
+          icon: 'content-copy'
+        })
+      } catch (err) {
+        showNotification(wikiStore, {
+          message: `Unable to copy address: ${getErrorMessage(err)}`,
+          style: 'red',
+          icon: 'alert'
+        })
       }
     }
   }
@@ -237,16 +289,34 @@ export default {
     }
   }
 
+  &-media {
+    display: block;
+    width: auto;
+    max-width: min(100%, 300px);
+    height: auto;
+
+    &-wide {
+      width: auto;
+    }
+  }
+
   &-ethaddress {
-    display: inline-block;
+    display: inline-flex;
+    max-width: 100%;
+    flex-direction: column;
     margin-bottom: 12px;
-    border-radius: 7px;
-    background-color: mc('grey', '100');
-    color: mc('grey', '700');
+    border-radius: var(--wiki-control-radius);
+    background-color: rgb(var(--v-theme-surface-variant));
+    color: rgba(var(--v-theme-on-surface), .72);
     padding: 12px;
 
     strong {
       display: block;
+    }
+
+    code {
+      overflow-wrap: anywhere;
+      user-select: text;
     }
   }
 

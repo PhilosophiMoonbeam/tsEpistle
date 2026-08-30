@@ -7,26 +7,36 @@ describe('admin-contribute root UI facade migration guard', () => {
   const scriptMatch = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   const script = scriptMatch && scriptMatch[1]
 
-  test('admin-contribute.vue uses the typed wiki store for loadBackers UI state', () => {
+  test('admin-contribute.vue preserves root UI ownership and explicit backer states', () => {
     expect(script).not.toBeNull()
 
     expect(script).toMatch(/import\s+\{\s*wikiStore\s*\}\s+from\s+['"]@\/store\/index\.ts['"]/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bgetErrorMessage\b)(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bgetErrorMessage\b)(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+    )
+    expect(source).toMatch(/async-state\(\s*v-if='backersLoading'[\s\S]*?state='loading'/)
+    expect(source).toMatch(/async-state\(\s*v-else-if='backersError'[\s\S]*?state='error'[\s\S]*?:message='backersError'[\s\S]*?@retry='loadBackers'/)
+    expect(source).toMatch(/async-state\(\s*v-else-if='backersLoaded && backers\.length < 1'[\s\S]*?state='empty'/)
+    expect(source).toMatch(/v-row\(v-else[\s\S]*?v-for='backer in backers'/)
+    expect(script).toMatch(/backers:\s*\[\]\s+as\s+ContributorRow\[\],\s*backersLoading:\s*true,\s*backersLoaded:\s*false,\s*backersError:\s*(['"])\1/)
+    expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*this\.loadBackers\(\)\.catch\(\(\)\s*=>\s*\{\}\)\s*\}/)
 
-    expect(script).toMatch(/async\s+loadBackers\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*:\s*\{\s*notifyError\?:\s*boolean\s*\}\s*=\s*\{\s*\}\s*\)/)
-    expect(script).toMatch(/\bloadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-contribute-refresh['"]\s*\)/)
-    expect(script).toMatch(/if\s*\(\s*notifyError\s*\)\s*\{\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*getErrorMessage\s*\(\s*err\s*\)\s*,\s*style:\s*['"]red['"]\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)/)
-    expect(script).toMatch(/finally\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-contribute-refresh['"]\s*\)\s*\}/)
-
-    expect(script).not.toMatch(/\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"])\s*,/)
-
-    const loadingStartCalls = script.match(/\bloadingStart\s*\(/g) || []
-    expect(loadingStartCalls).toHaveLength(1)
-
-    const showNotificationCalls = script.match(/\bshowNotification\s*\(/g) || []
-    expect(showNotificationCalls).toHaveLength(1)
-
-    const loadingStopCalls = script.match(/\bloadingStop\s*\(/g) || []
-    expect(loadingStopCalls).toHaveLength(1)
+    const loadBackers = script.match(/async\s+loadBackers[\s\S]*?(?=\n\s+async\s+copyAddress)/)?.[0]
+    expect(loadBackers).toBeDefined()
+    expect(loadBackers).toMatch(
+      /async\s+loadBackers\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*:\s*\{\s*notifyError\?:\s*boolean\s*\}\s*=\s*\{\s*\}\s*\)\s*\{\s*this\.backersLoading\s*=\s*true\s*this\.backersLoaded\s*=\s*false\s*this\.backersError\s*=\s*(['"])\1\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-contribute-refresh['"]\s*\)\s*try\s*\{/
+    )
+    expect(loadBackers).toMatch(
+      /this\.backers\s*=\s*await\s+fetchContributors\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Contributors response is invalid['"]\s*\)\s*this\.backersLoaded\s*=\s*true\s*return\s+true/
+    )
+    expect(loadBackers).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{\s*this\.backers\s*=\s*\[\]\s*this\.backersLoaded\s*=\s*true\s*this\.backersError\s*=\s*getErrorMessage\s*\(\s*err\s*\)\s*if\s*\(\s*notifyError\s*\)\s*\{\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.backersError,\s*style:\s*['"]red['"],\s*icon:\s*['"]alert['"]\s*\}\s*\)\s*\}\s*throw\s+err\s*\}/
+    )
+    expect(loadBackers).toMatch(
+      /finally\s*\{\s*this\.backersLoading\s*=\s*false\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-contribute-refresh['"]\s*\)\s*\}/
+    )
+    expect(loadBackers.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
+    expect(loadBackers.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
+    expect(loadBackers).not.toContain('$store.commit')
   })
 })

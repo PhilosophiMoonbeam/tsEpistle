@@ -91,11 +91,16 @@ describe('admin-comments root UI facade migration guard', () => {
       /import\s+\{(?=[^}]*\bfetchCommentProviders\b)(?=[^}]*\bsaveCommentProviders\b)(?=[^}]*\btype\s+CommentProvider\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/comments-api['"]/
     )
     expect(script).not.toMatch(/graphql-tag|\bgql\b/)
+    expect(source).toMatch(/async-state\s*\(\s*v-if=['"]loading['"][^)]*state=['"]loading['"][^)]*title=['"]Loading comment providers['"][^)]*\)/)
+    expect(source).toMatch(/async-state\s*\(\s*v-else-if=['"]errorMessage['"][^)]*state=['"]error['"][^)]*@retry=['"]loadProviders['"][^)]*\)/)
+    expect(source).toMatch(
+      /async-state\s*\(\s*v-else-if=['"]providers\.length < 1['"][^)]*state=['"]empty['"][^)]*title=['"]No comment providers available['"][^)]*\)/
+    )
     expect(watchBlock).toMatch(
       /selectedProvider\s*\(\s*newValue\s*:\s*string\s*\)\s*\{\s*this\.provider\s*=\s*_\.find\s*\(\s*this\.providers\s*,\s*\[\s*['"]key['"]\s*,\s*newValue\s*\]\s*\)\s*\|\|\s*\{\s*\}\s*\}/
     )
     expect(watchBlock).toMatch(
-      /providers\s*\(\s*\)\s*\{\s*this\.selectedProvider\s*=\s*_\.get\s*\(\s*_\.find\s*\(\s*this\.providers\s*,\s*['"]isEnabled['"]\s*\)\s*,\s*['"]key['"]\s*,\s*['"]db['"]\s*\)\s*\}/
+      /providers\s*\(\s*\)\s*\{\s*const\s+selected\s*=\s*_\.find\s*\(\s*this\.providers\s*,\s*provider\s*=>\s*provider\.isEnabled\s*&&\s*provider\.isAvailable\s*\)\s*\|\|\s*_\.find\s*\(\s*this\.providers\s*,\s*['"]isAvailable['"]\s*\)\s*this\.selectedProvider\s*=\s*selected\?\.key\s*\|\|\s*['"]{2}\s*\}/
     )
   })
 
@@ -103,7 +108,10 @@ describe('admin-comments root UI facade migration guard', () => {
     expect(loadProviders).not.toBeNull()
 
     expect(loadProviders).toMatch(
-      /async\s+loadProviders\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*:\s*\{\s*notifyError\?\s*:\s*boolean\s*\}\s*=\s*\{\s*\}\s*\)\s*\{\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-comments-refresh['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?this\.providers\s*=\s*await\s+fetchCommentProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Comment providers response is invalid['"]\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*notifyError\s*\)\s*\{\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*getErrorMessage\s*\(\s*err\s*\)\s*\|\|\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)\s*,\s*style:\s*['"]red['"]\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)\s*\}\s*throw\s+err\s*\}\s*finally\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-comments-refresh['"]\s*\)\s*\}/
+      /async\s+loadProviders\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*:\s*\{\s*notifyError\?\s*:\s*boolean\s*\}\s*=\s*\{\s*\}\s*\)\s*\{\s*this\.loading\s*=\s*true\s*this\.errorMessage\s*=\s*['"]{2}\s*this\.refreshing\s*=\s*notifyError\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-comments-refresh['"]\s*\)/
+    )
+    expect(loadProviders).toMatch(
+      /try\s*\{\s*this\.providers\s*=\s*await\s+fetchCommentProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Comment providers response is invalid['"]\s*\)\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*this\.errorMessage\s*=\s*getErrorMessage\s*\(\s*err\s*\)\s*\|\|\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)\s*if\s*\(\s*notifyError\s*\)\s*\{\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.errorMessage\s*,\s*style:\s*['"]red['"]\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)\s*\}\s*throw\s+err\s*\}\s*finally\s*\{\s*this\.loading\s*=\s*false\s*this\.refreshing\s*=\s*false\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-comments-refresh['"]\s*\)\s*\}/
     )
     expect(loadProviders).not.toMatch(directRootUiCommit)
 
@@ -116,7 +124,7 @@ describe('admin-comments root UI facade migration guard', () => {
     expect(refresh).not.toBeNull()
 
     expect(refresh).toMatch(
-      /async\s+refresh\s*\(\s*\)\s*\{\s*try\s*\{\s*await\s+this\.loadProviders\s*\(\s*\)\s*\}\s*catch\s*\{\s*return\s*\}\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:comments\.listRefreshSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)\s*\}/
+      /async\s+refresh\s*\(\s*\)\s*\{\s*if\s*\(\s*this\.refreshing\s*\|\|\s*this\.saving\s*\)\s*return\s*try\s*\{\s*await\s+this\.loadProviders\s*\(\s*\)\s*\}\s*catch\s*\{\s*return\s*\}\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*['"]Comment providers refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)\s*\}/
     )
     expect(refresh).not.toMatch(directRootUiCommit)
 
@@ -164,7 +172,7 @@ describe('admin-comments root UI facade migration guard', () => {
     expect(save).not.toBeNull()
 
     expect(save).toMatch(
-      /async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-comments-saveproviders['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+saveCommentProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadProviders\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:comments\.configSaveSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-comments-saveproviders['"]\s*\)\s*\}/
+      /async\s+save\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.canSave\s*\)\s*return\s*this\.saving\s*=\s*true\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-comments-saveproviders['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+saveCommentProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadProviders\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:comments\.configSaveSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}\s*finally\s*\{\s*this\.saving\s*=\s*false\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-comments-saveproviders['"]\s*\)\s*\}\s*\}/
     )
     expect(save).toMatch(
       /this\.providers\.map\s*\(\s*tgt\s*=>\s*\(\s*\{\s*isEnabled:\s*tgt\.key\s*===\s*this\.selectedProvider\s*,\s*key:\s*tgt\.key\s*,\s*config:\s*tgt\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)/

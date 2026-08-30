@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const extractScript = (source) => {
+const extractScript = source => {
   const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
@@ -40,8 +40,12 @@ describe('admin-general site REST facade migration guard', () => {
     expect(script).not.toBeNull()
     expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchSiteConfig\b)(?=[^}]*\bsaveSiteConfig\b)(?=[^}]*\btype SiteConfig\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/site-api['"]/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)(?=[^}]*\bsetLoading\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bfetchSiteConfig\b)(?=[^}]*\bsaveSiteConfig\b)(?=[^}]*\btype SiteConfig\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/site-api['"]/
+    )
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)(?=[^}]*\bsetLoading\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+    )
     expect(script).not.toContain('graphql-tag')
     expect(script).not.toContain('this.$apollo')
     expect(script).not.toContain('apollo:')
@@ -49,20 +53,34 @@ describe('admin-general site REST facade migration guard', () => {
 
   test('loadConfig fetches site config by REST with refresh loading and error facade', () => {
     expect(loadConfig).not.toBeNull()
-    expect(loadConfig).toMatch(/setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-site-refresh['"]\s*,\s*true\s*\)/)
-    expect(loadConfig).toMatch(/fetchSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
-    expect(loadConfig).toMatch(/this\.config\s*=\s*_\.cloneDeep\s*\(/)
+    expect(loadConfig).toMatch(
+      /this\.initialLoading\s*=\s*true[\s\S]*this\.loaded\s*=\s*false[\s\S]*setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-site-refresh['"]\s*,\s*true\s*\)/
+    )
+    expect(loadConfig).toMatch(
+      /const\s+loaded\s*=\s*_\.cloneDeep\s*\(\s*await\s+fetchSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)\s*\)[\s\S]*this\.config\s*=\s*loaded[\s\S]*this\.persistedConfig\s*=\s*_\.cloneDeep\s*\(\s*loaded\s*\)[\s\S]*this\.loaded\s*=\s*true/
+    )
     expect(loadConfig).toMatch(/pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
-    expect(loadConfig).toMatch(/setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-site-refresh['"]\s*,\s*false\s*\)/)
+    expect(loadConfig).toMatch(
+      /finally\s*\{[\s\S]*this\.initialLoading\s*=\s*false[\s\S]*setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-site-refresh['"]\s*,\s*false\s*\)[\s\S]*\}/
+    )
   })
 
   test('save preserves title validation, REST save payload, success notification, and root field updates', () => {
     expect(save).not.toBeNull()
+    expect(save).toMatch(
+      /if\s*\(\s*!this\.loaded\s*\|\|\s*this\.initialLoading\s*\|\|\s*this\.saving\s*\|\|\s*!this\.dirty\s*\|\|\s*!this\.formValid\s*\)\s*return/
+    )
     expect(save).toMatch(/titleRegex\.test\s*\(\s*title\s*\)/)
-    expect(save).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{\s*style:\s*['"]error['"][\s\S]*admin:general\.siteTitleInvalidChars[\s\S]*icon:\s*['"]alert['"]\s*\}/)
+    expect(save).toMatch(
+      /showNotification\s*\(\s*wikiStore\s*,\s*\{\s*style:\s*['"]error['"][\s\S]*admin:general\.siteTitleInvalidChars[\s\S]*icon:\s*['"]alert['"]\s*\}/
+    )
     expect(save).toMatch(/loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)/)
-    expect(save).toMatch(/await\s+saveSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*this\.siteConfigPayload\s*\(\s*\)\s*\)/)
-    expect(save).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{\s*style:\s*['"]success['"][\s\S]*message:\s*this\.\$t\s*\(\s*['"]admin:general\.saveSuccess['"]\s*\)[\s\S]*icon:\s*['"]check['"]\s*\}/)
+    expect(save).toMatch(
+      /const\s+payload\s*=\s*this\.siteConfigPayload\s*\(\s*\)[\s\S]*await\s+saveSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*payload\s*\)[\s\S]*this\.persistedConfig\s*=\s*_\.cloneDeep\s*\(\s*payload\s*\)/
+    )
+    expect(save).toMatch(
+      /showNotification\s*\(\s*wikiStore\s*,\s*\{\s*style:\s*['"]success['"][\s\S]*message:\s*this\.\$t\s*\(\s*['"]admin:general\.saveSuccess['"]\s*\)[\s\S]*icon:\s*['"]check['"]\s*\}/
+    )
     expect(save).toMatch(/this\.siteTitle\s*=\s*this\.config\.title/)
     expect(save).toMatch(/this\.company\s*=\s*this\.config\.company/)
     expect(save).toMatch(/this\.contentLicense\s*=\s*this\.config\.contentLicense/)
@@ -70,12 +88,35 @@ describe('admin-general site REST facade migration guard', () => {
     expect(save).toMatch(/wikiStore\.site\.banner\s*=\s*_\.cloneDeep\s*\(\s*this\.config\.banner\s*\)/)
     expect(save).toMatch(/this\.logoUrl\s*=\s*this\.config\.logoUrl/)
     expect(save).toMatch(/pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
-    expect(save).toMatch(/loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)/)
+    expect(save).toMatch(/finally\s*\{[\s\S]*this\.saving\s*=\s*false[\s\S]*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)[\s\S]*\}/)
   })
 
   test('general payload preserves the former site update config fields', () => {
     expect(siteConfigPayload).not.toBeNull()
-    for (const field of ['host', 'title', 'description', 'robots', 'analyticsService', 'analyticsId', 'company', 'contentLicense', 'footerOverride', 'banner', 'logoUrl', 'pageExtensions', 'featurePageRatings', 'featurePageComments', 'featurePersonalWikis', 'editFab', 'editMenuBar', 'editMenuBtn', 'editMenuExternalBtn', 'editMenuExternalName', 'editMenuExternalIcon', 'editMenuExternalUrl']) {
+    for (const field of [
+      'host',
+      'title',
+      'description',
+      'robots',
+      'analyticsService',
+      'analyticsId',
+      'company',
+      'contentLicense',
+      'footerOverride',
+      'banner',
+      'logoUrl',
+      'pageExtensions',
+      'featurePageRatings',
+      'featurePageComments',
+      'featurePersonalWikis',
+      'editFab',
+      'editMenuBar',
+      'editMenuBtn',
+      'editMenuExternalBtn',
+      'editMenuExternalName',
+      'editMenuExternalIcon',
+      'editMenuExternalUrl'
+    ]) {
       expect(siteConfigPayload).toContain(field)
     }
   })

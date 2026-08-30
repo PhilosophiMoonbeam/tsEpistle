@@ -1,55 +1,83 @@
 <template lang='pug'>
-  v-toolbar.radius-7(flat, :color='$vuetify.theme.current.dark ? "grey-darken-4" : "grey-lighten-3"')
-    .text-body-medium.mr-3 {{$t('common:duration.every')}}
-    v-text-field(
-      variant="solo"
-      hide-details
-      flat
-      reverse
-      v-model='minutes'
-      style='flex: 1 1 70px;'
-    )
-    .text-body-medium.mx-3 {{$t('common:duration.minutes')}}
-    v-divider.mr-3
-    v-text-field(
-      variant="solo"
-      hide-details
-      flat
-      reverse
-      v-model='hours'
-      style='flex: 1 1 70px;'
-    )
-    .text-body-medium.mx-3 {{$t('common:duration.hours')}}
-    v-divider.mr-3
-    v-text-field(
-      variant="solo"
-      hide-details
-      flat
-      reverse
-      v-model='days'
-      style='flex: 1 1 70px;'
-    )
-    .text-body-medium.mx-3 {{$t('common:duration.days')}}
-    v-divider.mr-3
-    v-text-field(
-      variant="solo"
-      hide-details
-      flat
-      reverse
-      v-model='months'
-      style='flex: 1 1 70px;'
-    )
-    .text-body-medium.mx-3 {{$t('common:duration.months')}}
-    v-divider.mr-3
-    v-text-field(
-      variant="solo"
-      hide-details
-      flat
-      reverse
-      v-model='years'
-      style='flex: 1 1 70px;'
-    )
-    .text-body-medium.mx-3 {{$t('common:duration.years')}}
+  v-toolbar.duration-picker.radius-7(
+    flat
+    color='surface-variant'
+    role='group'
+    :aria-label='$t("common:duration.every")'
+  )
+    .duration-picker__every.text-body-medium {{$t('common:duration.every')}}
+    .duration-picker__fields
+      .duration-picker__field
+        v-text-field(
+          variant="solo"
+          hide-details
+          flat
+          reverse
+          type="number"
+          inputmode="numeric"
+          min="0"
+          step="1"
+          :label='$t("common:duration.minutes")'
+          v-model='minutes'
+          )
+        .duration-picker__unit(aria-hidden="true") {{$t('common:duration.minutes')}}
+      .duration-picker__field
+        v-text-field(
+          variant="solo"
+          hide-details
+          flat
+          reverse
+          type="number"
+          inputmode="numeric"
+          min="0"
+          step="1"
+          :label='$t("common:duration.hours")'
+          v-model='hours'
+          )
+        .duration-picker__unit(aria-hidden="true") {{$t('common:duration.hours')}}
+      .duration-picker__field
+        v-text-field(
+          variant="solo"
+          hide-details
+          flat
+          reverse
+          type="number"
+          inputmode="numeric"
+          min="0"
+          step="1"
+          :label='$t("common:duration.days")'
+          v-model='days'
+          )
+        .duration-picker__unit(aria-hidden="true") {{$t('common:duration.days')}}
+      .duration-picker__field
+        v-text-field(
+          variant="solo"
+          hide-details
+          flat
+          reverse
+          type="number"
+          inputmode="numeric"
+          min="0"
+          step="1"
+          :label='$t("common:duration.months")'
+          v-model='months'
+          )
+        .duration-picker__unit(aria-hidden="true") {{$t('common:duration.months')}}
+      .duration-picker__field
+        v-text-field(
+          variant="solo"
+          hide-details
+          flat
+          reverse
+          type="number"
+          inputmode="numeric"
+          min="0"
+          step="1"
+          :label='$t("common:duration.years")'
+          v-model='years'
+          )
+        .duration-picker__unit(aria-hidden="true") {{$t('common:duration.years')}}
+
 </template>
 
 <script lang='ts'>
@@ -75,23 +103,48 @@ export default defineComponent({
   computed: {
     years: {
       get() { return this.duration.years() || 0 },
-      set(val: string | number) { this.rebuild(_.toNumber(val), 'years') }
+      set(val: string | number) {
+        if (val === '' || val === null || val === undefined) return
+        const numericValue = _.toNumber(val)
+        if (!_.isFinite(numericValue) || numericValue < 0) return
+        this.rebuild(numericValue, 'years')
+      }
     },
     months: {
       get() { return this.duration.months() || 0 },
-      set(val: string | number) { this.rebuild(_.toNumber(val), 'months') }
+      set(val: string | number) {
+        if (val === '' || val === null || val === undefined) return
+        const numericValue = _.toNumber(val)
+        if (!_.isFinite(numericValue) || numericValue < 0) return
+        this.rebuild(numericValue, 'months')
+      }
     },
     days: {
       get() { return this.duration.days() || 0 },
-      set(val: string | number) { this.rebuild(_.toNumber(val), 'days') }
+      set(val: string | number) {
+        if (val === '' || val === null || val === undefined) return
+        const numericValue = _.toNumber(val)
+        if (!_.isFinite(numericValue) || numericValue < 0) return
+        this.rebuild(numericValue, 'days')
+      }
     },
     hours: {
       get() { return this.duration.hours() || 0 },
-      set(val: string | number) { this.rebuild(_.toNumber(val), 'hours') }
+      set(val: string | number) {
+        if (val === '' || val === null || val === undefined) return
+        const numericValue = _.toNumber(val)
+        if (!_.isFinite(numericValue) || numericValue < 0) return
+        this.rebuild(numericValue, 'hours')
+      }
     },
     minutes: {
       get() { return this.duration.minutes() || 0 },
-      set(val: string | number) { this.rebuild(_.toNumber(val), 'minutes') }
+      set(val: string | number) {
+        if (val === '' || val === null || val === undefined) return
+        const numericValue = _.toNumber(val)
+        if (!_.isFinite(numericValue) || numericValue < 0) return
+        this.rebuild(numericValue, 'minutes')
+      }
     }
   },
   watch: {
@@ -101,9 +154,7 @@ export default defineComponent({
   },
   methods: {
     rebuild(val: number, unit: DurationUnit) {
-      if (!_.isFinite(val) || val < 0) {
-        val = 0
-      }
+      if (!_.isFinite(val) || val < 0) return
       const newDuration = {
         minutes: this.duration.minutes(),
         hours: this.duration.hours(),
@@ -121,3 +172,71 @@ export default defineComponent({
   }
 })
 </script>
+
+<style lang='scss'>
+.duration-picker {
+  height: auto !important;
+  min-height: 64px;
+  padding: 12px 16px;
+  align-items: center;
+  background: rgb(var(--v-theme-surface-variant)) !important;
+}
+
+.duration-picker__every {
+  flex: 0 0 auto;
+  margin-inline-end: 12px;
+}
+
+.duration-picker__fields {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.duration-picker__field {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.duration-picker__field .v-input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.duration-picker__unit {
+  flex: 0 0 auto;
+  color: rgba(var(--v-theme-on-surface), .72);
+}
+
+@media (max-width: 600px) {
+  .duration-picker {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .duration-picker__every {
+    flex-basis: 100%;
+    margin-block-end: 8px;
+  }
+
+  .duration-picker__fields {
+    flex-basis: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+  }
+
+  .duration-picker__field {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .duration-picker__field .v-input {
+    width: 100%;
+  }
+}
+</style>

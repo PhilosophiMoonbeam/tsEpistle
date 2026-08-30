@@ -59,17 +59,21 @@ describe('admin-groups-edit delete REST migration guard', () => {
     expect(script).toMatch(/import\s+\{\s*wikiStore\s*\}\s+from\s+['"]@\/store\/index\.ts['"]/)
   })
 
-  test('deleteGroup() calls REST while preserving loading, notification, navigation, and error behavior', () => {
+  test('deleteGroup() guards readiness and action ownership while preserving the REST contract and cleanup', () => {
     expect(deleteGroupMethod).not.toBeNull()
+    expect(deleteGroupMethod).toMatch(/if\s*\(\s*!this\.groupReady\s*\|\|\s*this\.groupAction\s*!==\s*['"]['"]\s*\)\s*return/)
+    expect(deleteGroupMethod).toMatch(/this\.groupAction\s*=\s*['"]delete['"]/)
     expect(deleteGroupMethod).toMatch(/this\.deleteGroupDialog\s*=\s*false/)
     expect(deleteGroupMethod).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-groups-delete['"]\s*\)/)
     expect(deleteGroupMethod).toMatch(/await\s+deleteGroup\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*this\.group\.id\s*\)/)
     expect(deleteGroupMethod).not.toMatch(/this\.\$apollo\.mutate/)
     expect(deleteGroupMethod).not.toMatch(/delete\s*\(\s*id:\s*\$id\s*\)/)
-    expect(deleteGroupMethod).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*`Group \$\{this\.group\.name\} has been deleted\.`\s*,\s*icon:\s*['"]delete['"]\s*\}\s*\)/)
+    expect(deleteGroupMethod).toMatch(
+      /wikiStore\.showNotification\s*\(\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*`Group \$\{this\.group\.name\} has been deleted\.`\s*,\s*icon:\s*['"]delete['"]\s*\}\s*\)/
+    )
     expect(deleteGroupMethod).toMatch(/this\.\$router\.replace\s*\(\s*['"]\/groups['"]\s*\)/)
     expect(deleteGroupMethod).toMatch(/wikiStore\.showError\s*\(\s*err\s*\)/)
-    expect(deleteGroupMethod).toMatch(/finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-groups-delete['"]\s*\)\s*\}/)
+    expect(deleteGroupMethod).toMatch(/finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-groups-delete['"]\s*\)\s*this\.groupAction\s*=\s*['"]['"]\s*\}/)
     expect(deleteGroupMethod).not.toMatch(/\$store\.commit/)
   })
 })

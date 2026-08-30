@@ -3,27 +3,42 @@
     v-row
       v-col(cols='12')
         .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-process.svg', alt='Rendering', style='width: 80px;')
+          img.animated.fadeInUp(src='/_assets/svg/icon-process.svg', alt='', aria-hidden='true', style='width: 80px;')
           .admin-header-title
             .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:rendering.title') }}
             .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:rendering.subtitle') }}
           v-spacer
-          v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/rendering', target='_blank')
-            v-icon mdi-help-circle
-          v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh')
-            v-icon mdi-refresh
-          v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large")
+          v-tooltip(location='top')
+            template(v-slot:activator='{ props }')
+              v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/rendering', target='_blank', v-bind='props', aria-label='Rendering documentation — opens in a new tab')
+                v-icon mdi-help-circle
+            span Rendering documentation — opens in a new tab
+          v-tooltip(location='top')
+            template(v-slot:activator='{ props }')
+              v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', v-bind='props', aria-label='Refresh rendering modules')
+                v-icon mdi-refresh
+            span Refresh rendering modules
+          v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large", :disabled='!renderersLoaded')
             v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
 
       v-col.animated.fadeInUp(lg='3', cols='12')
         v-toolbar(
-          color="blue-darken-2"
+          color="primary"
           density="compact"
           flat
           )
-          .text-body-large Pipeline
+          .text-body-large Rendering Pipeline
+        v-list(v-if='renderersLoading', aria-live='polite')
+          v-list-item
+            v-progress-circular(indeterminate, size='20', width='2', color='primary', aria-label='Loading rendering modules')
+            span.ml-3 Loading rendering modules
+        v-alert(v-else-if='renderersLoadError', variant='outlined', color='error', aria-live='polite')
+          span Rendering modules could not be loaded.
+          v-btn.mt-2(variant='outlined', color='primary', size='small', @click='retryLoad') Retry
+        v-alert(v-else-if='renderersLoaded && renderers.length < 1', variant='outlined', color='info') No rendering modules are installed.
         v-expansion-panels.adm-rendering-pipeline(
+          v-if='renderersLoaded && !renderersLoading && !renderersLoadError && renderers.length > 0'
           v-model='selectedCore'
           variant="accordion"
           mandatory
@@ -37,7 +52,7 @@
               ripple
             )
               v-toolbar(
-                color='blue'
+                color='primary'
                 density="compact"
                 flat
                 )
@@ -51,6 +66,8 @@
                 template(v-for='(rdr, n) in core.children', :key='rdr.key')
                   v-list-item(
                     @click='selectRenderer(rdr.key)'
+                    :active='currentRenderer.key === rdr.key'
+                    :aria-current='currentRenderer.key === rdr.key ? "page" : undefined'
                     :class='currentRenderer.key === rdr.key ? ($vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-blue-lighten-5`) : ``'
                     )
                     template(v-slot:prepend)
@@ -59,15 +76,23 @@
                     v-list-item-title {{rdr.title}}
                     v-list-item-subtitle: .text-body-small {{rdr.description}}
                     template(v-slot:append)
-                      v-avatar(size='24')
-                        status-indicator(v-if='rdr.isEnabled', positive, pulse)
-                        status-indicator(v-else, negative, pulse)
+                      .d-flex.align-center
+                        status-indicator(v-if='rdr.isEnabled', positive, pulse, aria-label='Enabled')
+                        status-indicator(v-else, negative, aria-label='Disabled')
+                        span.ml-2.text-body-small(:class='rdr.isEnabled ? "text-success" : "text-medium-emphasis"') {{rdr.isEnabled ? 'Enabled' : 'Disabled'}}
                   v-divider.my-0(v-if='n < core.children.length - 1')
 
       v-col(lg='9', cols='12')
-        v-card.wiki-form.animated.fadeInUp
+        v-alert(v-if='renderersLoading', variant='outlined', color='info', aria-live='polite')
+          v-progress-circular(indeterminate, size='20', width='2', color='primary', aria-label='Loading renderer configuration')
+          span.ml-3 Loading renderer configuration
+        v-alert(v-else-if='renderersLoadError', variant='outlined', color='error', aria-live='polite')
+          span Renderer configuration could not be loaded.
+          v-btn.mt-2(variant='outlined', color='primary', size='small', @click='retryLoad') Retry
+        v-alert(v-else-if='renderersLoaded && !currentRenderer.key', variant='outlined', color='info') Select a rendering module to configure it.
+        v-card.wiki-form.animated.fadeInUp(v-if='currentRenderer.key')
           v-toolbar(
-            color='indigo'
+            color='primary'
             flat
             density="compact"
             )
@@ -75,12 +100,12 @@
             .text-body-large {{currentRenderer.title}}
             v-spacer
             v-switch(
-              color='white'
+              color='primary'
               label='Enabled'
               v-model='currentRenderer.isEnabled'
               hide-details
               inset
-              )
+            )
           div.v-card-info(color='info')
             div
               div {{currentRenderer.description}}
@@ -98,17 +123,17 @@
                 :hint='cfg.value.hint ? cfg.value.hint : ""'
                 persistent-hint
                 :class='cfg.value.hint ? "mb-2" : ""'
-                color='indigo'
+                color='primary'
               )
               v-switch(
                 v-else-if='cfg.value.type === "boolean"'
                 :label='cfg.value.title'
                 v-model='cfg.value.value'
-                color='indigo'
+                color='primary'
                 :hint='cfg.value.hint ? cfg.value.hint : ""'
                 persistent-hint
                 inset
-                )
+              )
               v-text-field(
                 v-else
                 variant="outlined"
@@ -117,9 +142,8 @@
                 :hint='cfg.value.hint ? cfg.value.hint : ""'
                 persistent-hint
                 :class='cfg.value.hint ? "mb-2" : ""'
-                color='indigo'
-                )
-              v-divider.my-5(v-if='idx < currentRenderer.config.length - 1')
+                color='primary'
+              )
           div.v-card-chin
             v-spacer
             .text-body-small.pr-3.text-grey Module: {{ currentRenderer.key }}</template>
@@ -158,7 +182,10 @@ export default {
     return {
       selectedCore: -1,
       renderers: [] as RendererTree[],
-      currentRenderer: createEmptyRenderer()
+      currentRenderer: createEmptyRenderer(),
+      renderersLoading: false,
+      renderersLoaded: false,
+      renderersLoadError: false
     }
   },
   watch: {
@@ -195,11 +222,18 @@ export default {
       return _.reverse(coreKeys).map(coreKey => _.find(rawCores, ['key', coreKey])!)
     },
     async loadRenderers ({ notifyError = true }: { notifyError?: boolean } = {}) {
+      this.renderersLoading = true
+      this.renderersLoadError = false
       loadingStart(wikiStore, 'admin-rendering-refresh')
       try {
         const flatRenderers = await fetchRenderingRenderers(window.fetch.bind(window), 'Rendering renderers response is invalid')
         this.renderers = this.buildRendererTree(flatRenderers)
+        this.renderersLoaded = true
       } catch (err) {
+        this.renderers = []
+        this.currentRenderer = createEmptyRenderer()
+        this.renderersLoaded = false
+        this.renderersLoadError = true
         if (notifyError) {
           showNotification(wikiStore, {
             message: getErrorMessage(err),
@@ -209,8 +243,12 @@ export default {
         }
         throw err
       } finally {
+        this.renderersLoading = false
         loadingStop(wikiStore, 'admin-rendering-refresh')
       }
+    },
+    async retryLoad () {
+      await this.loadRenderers().catch(() => {})
     },
     selectRenderer (key: string) {
       this.renderers.forEach(rdr => {

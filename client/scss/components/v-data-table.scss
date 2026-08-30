@@ -1,5 +1,28 @@
 .v-data-table {
   .is-clickable {
     cursor: pointer;
+
+    > :is(td, th) {
+      position: relative;
+
+      &::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+    }
+
+    &:is(:hover, :focus-visible, :focus-within):not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
+      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
+    }
+
+    &:active:not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
+      background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, transparent);
+    }
+
+    &:is([aria-disabled='true'], [disabled]) {
+      cursor: default;
+    }
   }
 }

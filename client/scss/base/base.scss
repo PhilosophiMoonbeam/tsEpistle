@@ -1,27 +1,49 @@
-@use "sass:color";
-@use "sass:math";
-@use "material";
 
 :root {
   --wiki-shell-max: 110rem;
   --wiki-content-max: 97.5rem;
   --wiki-page-gutter: clamp(.875rem, 2.2vw, 2rem);
+  --wiki-space-1: .25rem;
+  --wiki-space-2: .5rem;
+  --wiki-space-3: .75rem;
+  --wiki-space-4: 1rem;
+  --wiki-space-6: 1.5rem;
+  --wiki-space-8: 2rem;
   --wiki-panel-radius: 1.125rem;
   --wiki-control-radius: .75rem;
+  --wiki-hero-radius: 1.5rem;
   --wiki-footer-height: 3.625rem;
+  --wiki-shadow-sm: 0 1px 2px rgba(var(--v-theme-on-surface), .12);
+  --wiki-shadow-lg: 0 1.75rem 5rem rgba(var(--v-theme-on-surface), .2);
+  --wiki-motion-fast: 120ms;
+  --wiki-motion-normal: 180ms;
+  --wiki-motion-ease: cubic-bezier(.2, .8, .2, 1);
+  --wiki-font-body: 'WikiAgentSans', 'Roboto', sans-serif;
+  --wiki-font-heading: var(--wiki-font-body);
+  --v-font-body: var(--wiki-font-body);
+  --v-font-heading: var(--wiki-font-heading);
+  --wiki-label-size: .6875rem;
+  --wiki-label-weight: 500;
+}
+
+
+@supports (scrollbar-gutter: stable) {
+  html {
+    scrollbar-gutter: stable;
+  }
 }
 
 html {
   box-sizing: border-box;
   height: 100%;
-  overflow-y: auto !important;
+  overflow-y: auto;
 }
 
 body {
   min-width: 320px;
   margin: 0;
   background: rgb(var(--v-theme-background));
-  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+  font-family: var(--v-font-body);
   font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -33,8 +55,17 @@ body {
 }
 
 :where(a, button, [role='button'], input, textarea, select):focus-visible {
-  outline: 3px solid rgba(var(--v-theme-primary), .22);
+  outline: 3px solid rgb(var(--v-theme-focus));
   outline-offset: 3px;
+}
+
+.v-field {
+  border-radius: var(--wiki-control-radius);
+}
+
+.v-field:focus-within {
+  outline: 3px solid rgb(var(--v-theme-focus));
+  outline-offset: 2px;
 }
 
 .v-field__input:focus-visible {
@@ -45,14 +76,15 @@ body {
   text-wrap: balance;
 }
 
+.v-btn {
+  border-radius: var(--wiki-control-radius);
+}
+
 .v-btn:not(.v-btn--icon) {
   letter-spacing: .01em;
   text-transform: none;
 }
 
-.v-field {
-  border-radius: var(--wiki-control-radius);
-}
 *, *:before, *:after {
   box-sizing: inherit;
 }
@@ -75,8 +107,8 @@ body {
   min-width: 0;
   background-color: rgb(var(--v-theme-background));
   color: rgb(var(--v-theme-on-surface));
-  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
-  transition: background-color 180ms ease, color 180ms ease;
+  font-family: var(--v-font-body);
+  transition: background-color var(--wiki-motion-normal) var(--wiki-motion-ease), color var(--wiki-motion-normal) var(--wiki-motion-ease);
   transform-origin: 50% 50%;
 }
 
@@ -87,18 +119,31 @@ body {
 }
 
 
-#root .v-application {
-  .text-label-small {
-    line-height: 1rem;
-    font-size: .625rem!important;
-    font-weight: 400;
-    letter-spacing: .1666666667em!important;
-  }
-
-  @for $i from 0 through 25 {
-    .radius-#{$i} {
-      border-radius: #{$i}px;
-    }
-  }
-
+.v-application .text-label-small {
+  line-height: 1rem;
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .045em;
 }
+
+.radius-control {
+  border-radius: var(--wiki-control-radius);
+}
+
+.radius-panel {
+  border-radius: var(--wiki-panel-radius);
+}
+
+.radius-hero {
+  border-radius: var(--wiki-hero-radius);
+}
+
+// Preserve the two established utility sizes while callers migrate to semantic names.
+.radius-4 {
+  border-radius: var(--wiki-control-radius);
+}
+
+.radius-7 {
+  border-radius: var(--wiki-panel-radius);
+}
+

@@ -33,7 +33,7 @@
         <span>Review proposed changes</span>
       </summary>
       <div class="proposal-diff mt-3">
-        <pre :aria-label="`Proposed changes for ${proposal.target?.path || proposal.actionName}`"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+        <pre tabindex="0" :aria-label="`Proposed changes for ${proposal.target?.path || actionLabel}`"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
         <v-btn v-if="diffLines.length > collapsedLineCount" size="small" variant="text" @click="expanded = !expanded">
           {{ expanded ? 'Show less' : `Show full comparison (${diffLines.length} lines)` }}
         </v-btn>
@@ -49,22 +49,34 @@
       autocomplete="off"
       spellcheck="false"
     />
-    <div class="agent-approval__actions">
+    <div v-if="!expired" class="agent-approval__actions" :aria-describedby="decisionMessage ? `agent-approval-status-${proposal.id}` : undefined">
       <v-btn
-        color="primary"
-        :loading="busy"
-        :disabled="busy || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.target?.path)"
+        ref="denyButton"
+        variant="outlined"
+        :disabled="!canDecide"
+        :loading="decisionInFlight === 'denied'"
+        :class="{ 'agent-approval__deny-first': proposal.risk === 'destructive-write' }"
+        @click="decide('denied')"
+      >Deny</v-btn>
+      <v-btn
+        ref="approveButton"
+        :color="proposal.risk === 'destructive-write' ? 'error' : 'primary'"
+        :disabled="!canDecide || (proposal.risk === 'destructive-write' && confirmationPath !== proposal.target?.path)"
+        :loading="decisionInFlight === 'approved'"
         @click="decide('approved')"
-      >Approve changes</v-btn>
-      <v-btn variant="outlined" :disabled="busy" @click="decide('denied')">Deny</v-btn>
+      >{{ approveLabel }}</v-btn>
     </div>
+    <p v-if="expired" class="agent-approval__expired text-body-small" role="status">Approval expired. Refresh the proposal before deciding.</p>
+    <p v-if="decisionMessage" :id="`agent-approval-status-${proposal.id}`" class="sr-only" role="status" aria-live="polite">{{ decisionMessage }}</p>
   </article>
   <details
     v-else
     :id="`agent-approval-${proposal.id}`"
+    ref="receipt"
     class="agent-approval-receipt"
+    :aria-labelledby="`agent-approval-receipt-title-${proposal.id}`"
   >
-    <summary>
+    <summary ref="receiptSummary" :id="`agent-approval-receipt-title-${proposal.id}`">
       <v-icon :icon="receiptIcon" :color="receiptColor" size="19" />
       <span>
         <strong>{{ receiptLabel }}</strong>
@@ -74,12 +86,12 @@
     <div class="agent-approval-receipt__details">
       <p>{{ proposal.summary }}</p>
       <dl class="proposal-metadata">
-        <dt>Action</dt><dd>{{ proposal.actionName }}</dd>
+        <dt>Action</dt><dd>{{ actionLabel }}</dd>
         <template v-if="proposal.target"><dt>Page</dt><dd>{{ proposal.target.locale }}/{{ proposal.target.path }}</dd></template>
-        <dt>Decision</dt><dd>{{ proposal.approval?.status ?? proposal.status }}</dd>
+        <dt>Decision</dt><dd>{{ receiptLabel }}</dd>
       </dl>
       <div v-if="diffLines.length" class="proposal-diff mt-3">
-        <pre :aria-label="`Proposed changes for ${proposal.target?.path || proposal.actionName}`"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+        <pre tabindex="0" :aria-label="`Proposed changes for ${proposal.target?.path || actionLabel}`"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
         <v-btn v-if="diffLines.length > collapsedLineCount" size="small" variant="text" @click="expanded = !expanded">
           {{ expanded ? 'Show less' : `Show full comparison (${diffLines.length} lines)` }}
         </v-btn>
@@ -89,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AgentProposalView, AgentToolCallView } from '../../../shared/agents/contracts.ts'
 import { agentApprovalTitle, agentProposalReceiptLabel } from './agent-thread-presentation.ts'
 
@@ -98,8 +110,24 @@ const emit = defineEmits<{ decision: [proposalId: string, approvalId: string, de
 const collapsedLineCount = 80
 const expanded = ref(false)
 const confirmationPath = ref('')
+const expiryTick = ref(0)
+const decisionInFlight = ref<'approved' | 'denied' | null>(null)
+const decisionMessage = ref('')
+const receipt = ref<HTMLElement | null>(null)
+const receiptSummary = ref<HTMLElement | null>(null)
+const approveButton = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
+const denyButton = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
+let expiryTimer: number | null = null
 const approvalPending = computed(() => props.proposal.status === 'pending' && props.proposal.approval?.status === 'pending')
 const approvalTitle = computed(() => agentApprovalTitle(props.proposal.actionName))
+const actionLabel = computed(() => approvalTitle.value.replace(/^Wiki Agent wants to /, '').replace(/^Wiki Agent needs your approval$/, 'review this action'))
+const approveLabel = computed(() => {
+  if (props.proposal.risk === 'destructive-write') return 'Delete page'
+  if (props.proposal.actionName === 'pages.preparePatch') return 'Apply edit'
+  if (props.proposal.actionName === 'pages.prepareMove') return 'Move page'
+  if (props.proposal.actionName === 'pages.prepareCreate') return 'Create page'
+  return 'Approve action'
+})
 const receiptLabel = computed(() => agentProposalReceiptLabel(props.proposal.status))
 const receiptIcon = computed(() => {
   if (props.proposal.status === 'applied') return 'mdi-check-circle-outline'
@@ -112,22 +140,54 @@ const receiptColor = computed(() => {
   if (props.proposal.status === 'applying' || props.proposal.status === 'approved') return 'primary'
   return props.proposal.status === 'expired' ? 'warning' : 'error'
 })
+const expired = computed(() => {
+  void expiryTick.value
+  return new Date(props.proposal.expiresAt).valueOf() <= Date.now()
+})
 const expiryLabel = computed(() => {
-  const milliseconds = new Date(props.proposal.expiresAt).valueOf() - Date.now()
-  if (milliseconds <= 0) return 'Expired'
-  const minutes = Math.ceil(milliseconds / 60_000)
+  if (expired.value) return 'Approval expired'
+  const minutes = Math.ceil((new Date(props.proposal.expiresAt).valueOf() - Date.now()) / 60_000)
   return minutes === 1 ? 'Expires in 1 minute' : `Expires in ${minutes} minutes`
 })
+const canDecide = computed(() => approvalPending.value && !expired.value && !props.busy && !decisionInFlight.value)
 const diffLines = computed(() => props.proposal.diff ? props.proposal.diff.split('\n').map(text => ({ text, kind: text.startsWith('+') && !text.startsWith('+++') ? 'insert' as const : text.startsWith('-') && !text.startsWith('---') ? 'delete' as const : 'context' as const })) : [])
 const visibleDiff = computed(() => expanded.value ? diffLines.value : diffLines.value.slice(0, collapsedLineCount))
-watch(() => props.proposal.id, () => { confirmationPath.value = ''; expanded.value = false })
-const decide = (decision: 'approved' | 'denied') => {
+const elementForRef = (value: { $el?: HTMLElement } | HTMLElement | null): HTMLElement | null => value instanceof HTMLElement ? value : value?.$el ?? null
+const stopExpiryTimer = (): void => {
+  if (expiryTimer !== null) window.clearInterval(expiryTimer)
+  expiryTimer = null
+}
+const startExpiryTimer = (): void => {
+  stopExpiryTimer()
+  if (approvalPending.value) expiryTimer = window.setInterval(() => { expiryTick.value++ }, 30_000)
+}
+watch(() => props.proposal.id, () => { confirmationPath.value = ''; expanded.value = false; decisionInFlight.value = null; decisionMessage.value = '' })
+watch(approvalPending, (pending, wasPending) => {
+  if (pending) startExpiryTimer()
+  else {
+    stopExpiryTimer()
+    if (wasPending) void Promise.resolve().then(() => receiptSummary.value?.focus())
+  }
+}, { immediate: true })
+watch(() => props.busy, busy => {
+  if (busy) return
+  if (decisionInFlight.value && approvalPending.value) {
+    const target = decisionInFlight.value === 'approved' ? approveButton.value : denyButton.value
+    void Promise.resolve().then(() => elementForRef(target)?.focus())
+    decisionMessage.value = 'The decision could not be completed. Try again.'
+  }
+  decisionInFlight.value = null
+})
+onMounted(startExpiryTimer)
+onBeforeUnmount(stopExpiryTimer)
+const decide = (decision: 'approved' | 'denied'): void => {
   const approval = props.proposal.approval
-  if (!approval) return
+  if (!approval || !canDecide.value) return
+  decisionInFlight.value = decision
+  decisionMessage.value = decision === 'approved' ? 'Submitting approval.' : 'Submitting denial.'
   emit('decision', props.proposal.id, approval.id, decision, props.proposal.risk === 'destructive-write' ? confirmationPath.value : undefined)
 }
 </script>
-
 <style scoped>
 .agent-approval { background: rgb(var(--v-theme-surface)); border: 1px solid rgb(var(--v-theme-warning)); border-inline-start-width: 4px; border-radius: .75rem; margin-bottom: 1rem; max-width: 54rem; padding: 1rem; }
 .agent-approval:focus-visible { outline: 3px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
@@ -143,8 +203,20 @@ const decide = (decision: 'approved' | 'denied') => {
 .proposal-diff { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent); border-radius: .5rem; overflow: hidden; }
 .proposal-diff pre { margin: 0; max-height: 30rem; overflow: auto; padding: .75rem; white-space: pre-wrap; word-break: break-word; }
 .proposal-diff ins, .proposal-diff del, .proposal-diff span { display: inline; text-decoration: none; }
-.proposal-diff ins { background: rgba(46, 160, 67, .22); }
-.proposal-diff del { background: rgba(248, 81, 73, .22); }
+.proposal-diff pre:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
+.agent-approval__expired { color: rgb(var(--v-theme-warning)); }
+.agent-approval__deny-first { order: -1; }
+.sr-only {
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+}
+.proposal-diff ins { background: color-mix(in srgb, rgb(var(--v-theme-success)) 22%, rgb(var(--v-theme-surface))); }
+.proposal-diff del { background: color-mix(in srgb, rgb(var(--v-theme-error)) 22%, rgb(var(--v-theme-surface))); }
 .agent-approval-receipt { border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent); border-radius: .75rem; margin: 0 0 1rem; max-width: 54rem; padding: .75rem 1rem; }
 .agent-approval-receipt summary span { display: grid; }
 .agent-approval-receipt summary small { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent); font-weight: 400; overflow-wrap: anywhere; }

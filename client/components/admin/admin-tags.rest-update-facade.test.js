@@ -59,15 +59,27 @@ describe('admin tags REST delete facade', () => {
     expect(deleteTagBody).not.toContain('data.pages.deleteTag')
   })
 
-  it('preserves tag delete loading, notification, refresh, dialog, and graph error behavior', () => {
+  it('preserves confirmation, exclusive loading, success notification, post-delete refresh, and error behavior', () => {
+    expect(source).toMatch(
+      /v-dialog\(v-model=['"]deleteTagDialog['"][^)]*\)[\s\S]*?admin:tags\.deleteConfirmText[\s\S]*?@click=['"]deleteTag\(current\)['"][^)]*:loading=['"]deleting['"]/
+    )
+    expect(deleteTagBody).toMatch(/if\s*\(\s*this\.deleting\s*\)\s*return/)
     expect(deleteTagBody).toContain("wikiStore.startLoading('admin-tags-delete')")
     expect(deleteTagBody).toContain("wikiStore.stopLoading('admin-tags-delete')")
     expect(deleteTagBody).toContain("message: this.$t('admin:tags.deleteSuccess')")
     expect(deleteTagBody).toContain("style: 'success'")
     expect(deleteTagBody).toContain("icon: 'check'")
-    expect(deleteTagBody).toContain('this.refresh()')
     expect(deleteTagBody).toContain('this.deleteTagDialog = false')
     expect(deleteTagBody).toContain('wikiStore.showError(err)')
+    expect(deleteTagBody).toMatch(/if\s*\(\s*deleted\s*\)\s*await\s+this\.refresh\s*\(\s*false\s*\)/)
+
+    const deleteIndex = deleteTagBody.indexOf('await deletePageTag(')
+    const closeIndex = deleteTagBody.indexOf('this.deleteTagDialog = false')
+    const stopIndex = deleteTagBody.indexOf("wikiStore.stopLoading('admin-tags-delete')")
+    const refreshIndex = deleteTagBody.indexOf('await this.refresh(false)')
+    expect(closeIndex).toBeGreaterThan(deleteIndex)
+    expect(stopIndex).toBeGreaterThan(closeIndex)
+    expect(refreshIndex).toBeGreaterThan(stopIndex)
   })
 })
 

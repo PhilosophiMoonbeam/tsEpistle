@@ -27,8 +27,10 @@ const createComponentOptions = ({ fetchPage, wikiStore }) => {
     .replace('export default', 'return')
     .replace(/ as (?:PageDetails \| null|number \| null)/g, '')
 
-  return new Function('_', 'StatusIndicator', 'deletePageById', 'fetchPage', 'wikiStore', 'window', executableScript)(
+  return new Function('_', 'AsyncState', 'getErrorMessage', 'StatusIndicator', 'deletePageById', 'fetchPage', 'wikiStore', 'window', executableScript)(
     { toSafeInteger: Number },
+    {},
+    err => (err instanceof Error ? err.message : String(err)),
     {},
     async () => {},
     fetchPage,

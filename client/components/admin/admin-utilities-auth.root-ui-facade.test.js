@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const extractScript = (source) => {
+const extractScript = source => {
   const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
@@ -67,15 +67,21 @@ describe('admin utilities auth REST facade migration guard', () => {
   const script = extractScript(source)
   const regenCerts = script && extractMethod(script, 'regenCerts')
   const resetGuest = script && extractMethod(script, 'resetGuest')
-  const directRootUiCommit = /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
+  const directRootUiCommit =
+    /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
   test('admin-utilities-auth.vue imports REST helpers and removes auth GraphQL mutations', () => {
     expect(script).not.toBeNull()
     expect(source).toMatch(/<script\s+lang=["']ts["']>/)
 
-    expect(script).toMatch(/import\s+_\s+from\s+['"]lodash['"]/) // still used for delayed redirect
+    expect(source).toContain('@click=\'openConfirmation("certificates")\'')
+    expect(source).toContain('@click=\'openConfirmation("guest")\'')
+    expect(source).toContain("v-dialog(v-model='confirmationDialog'")
+    expect(source).toContain('confirmAction === "certificates" ? regenCerts() : resetGuest()')
     expect(script).toMatch(/import\s+Cookies\s+from\s+['"]js-cookie['"]/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bregenerateAuthCertificates\b)(?=[^}]*\bresetGuestUser\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/auth-api['"]/)
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bregenerateAuthCertificates\b)(?=[^}]*\bresetGuestUser\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/auth-api['"]/
+    )
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).not.toMatch(/utilities-mutation-auth-(?:regencerts|resetguest)\.gql/)
     expect(script).not.toMatch(/utilityAuth(?:Regencerts|Resetguest)Mutation/)
@@ -85,15 +91,19 @@ describe('admin utilities auth REST facade migration guard', () => {
   test('regenCerts uses REST helper while preserving logout and redirect behavior', () => {
     expect(regenCerts).not.toBeNull()
 
-    expect(regenCerts).toMatch(/this\.loading\s*=\s*true/)
-    expect(regenCerts).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-auth-regencerts['"]\s*\)/)
+    expect(regenCerts).toMatch(
+      /this\.loading\s*=\s*true[\s\S]*this\.activeOperation\s*=\s*['"]certificates['"][\s\S]*wikiStore\.startLoading\s*\(\s*['"]admin-utilities-auth-regencerts['"]\s*\)/
+    )
     expect(regenCerts).toMatch(/await\s+regenerateAuthCertificates\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
-    expect(regenCerts).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]New Certificates generated successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
     expect(regenCerts).toMatch(/Cookies\.remove\s*\(\s*['"]jwt['"]\s*\)/)
-    expect(regenCerts).toMatch(/_\.delay\s*\([\s\S]*window\.location\.assign\s*\(\s*['"]\/login['"]\s*\)[\s\S]*,\s*1000\s*\)/)
-    expect(regenCerts).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}/)
-    expect(regenCerts).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-auth-regencerts['"]\s*\)/)
-    expect(regenCerts).toMatch(/this\.loading\s*=\s*false/)
+    expect(regenCerts).toMatch(
+      /this\.confirmationDialog\s*=\s*false[\s\S]*this\.resultMessage\s*=\s*['"]Certificates regenerated\. Redirecting to sign-in\.['"][\s\S]*this\.resultDialog\s*=\s*true/
+    )
+    expect(regenCerts).toMatch(/window\.setTimeout\s*\(\s*\(\s*\)\s*=>\s*window\.location\.assign\s*\(\s*['"]\/login['"]\s*\)\s*,\s*1500\s*\)/)
+    expect(regenCerts).toMatch(/catch\s*\(\s*err\s*\)\s*\{[\s\S]*wikiStore\.showError\s*\(\s*err\s*\)[\s\S]*this\.confirmationDialog\s*=\s*false[\s\S]*\}/)
+    expect(regenCerts).toMatch(
+      /finally\s*\{[\s\S]*wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-auth-regencerts['"]\s*\)[\s\S]*this\.loading\s*=\s*false[\s\S]*this\.activeOperation\s*=\s*['"][']\s*\}/
+    )
     expect(regenCerts).not.toMatch(/this\.\$apollo\.mutate|utilityAuthRegencertsMutation/)
     expect(regenCerts).not.toMatch(directRootUiCommit)
   })
@@ -101,13 +111,17 @@ describe('admin utilities auth REST facade migration guard', () => {
   test('resetGuest uses REST helper while preserving notification and error behavior', () => {
     expect(resetGuest).not.toBeNull()
 
-    expect(resetGuest).toMatch(/this\.loading\s*=\s*true/)
-    expect(resetGuest).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-auth-resetguest['"]\s*\)/)
+    expect(resetGuest).toMatch(
+      /this\.loading\s*=\s*true[\s\S]*this\.activeOperation\s*=\s*['"]guest['"][\s\S]*wikiStore\.startLoading\s*\(\s*['"]admin-utilities-auth-resetguest['"]\s*\)/
+    )
     expect(resetGuest).toMatch(/await\s+resetGuestUser\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
-    expect(resetGuest).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Guest user was reset successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(resetGuest).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}/)
-    expect(resetGuest).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-auth-resetguest['"]\s*\)/)
-    expect(resetGuest).toMatch(/this\.loading\s*=\s*false/)
+    expect(resetGuest).toMatch(
+      /this\.confirmationDialog\s*=\s*false[\s\S]*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Guest user was reset successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
+    )
+    expect(resetGuest).toMatch(/catch\s*\(\s*err\s*\)\s*\{[\s\S]*wikiStore\.showError\s*\(\s*err\s*\)[\s\S]*this\.confirmationDialog\s*=\s*false[\s\S]*\}/)
+    expect(resetGuest).toMatch(
+      /finally\s*\{[\s\S]*wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-auth-resetguest['"]\s*\)[\s\S]*this\.loading\s*=\s*false[\s\S]*this\.activeOperation\s*=\s*['"][']\s*\}/
+    )
     expect(resetGuest).not.toMatch(/this\.\$apollo\.mutate|utilityAuthResetguestMutation/)
     expect(resetGuest).not.toMatch(directRootUiCommit)
   })

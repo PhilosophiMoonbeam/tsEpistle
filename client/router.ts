@@ -42,8 +42,7 @@ const adminRoutes: RouteRecordRaw[] = [
 const profileRoutes: RouteRecordRaw[] = [
   { path: '/', redirect: '/profile' },
   { path: '/profile', component: () => import('./components/profile/profile.vue') },
-  { path: '/pages', component: () => import('./components/profile/pages.vue') },
-  { path: '/comments', component: () => import('./components/profile/comments.vue') }
+  { path: '/pages', component: () => import('./components/profile/pages.vue') }
 ]
 
 const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')

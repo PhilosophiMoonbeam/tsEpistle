@@ -15,8 +15,27 @@
                 v-card-text
                   .pb-1
                     .text-label-large.text-primary When a user reaches this page
-                    .text-body-small.text-grey-darken-1 and matches one of these rules...
-                  v-timeline(density="compact")
+                    .text-body-small.text-medium-emphasis and matches one of these rules...
+                  async-state(
+                    v-if='groupsLoading'
+                    state='loading'
+                    title='Loading groups'
+                  )
+                  async-state(
+                    v-else-if='groupsError'
+                    state='error'
+                    title='Groups could not be loaded'
+                    :message='groupsError'
+                    retry-label='Retry'
+                    @retry='loadGroups'
+                  )
+                  async-state(
+                    v-else-if='groups.length === 0'
+                    state='empty'
+                    title='No groups available'
+                    message='Conditional redirects require at least one group.'
+                  )
+                  v-timeline(v-else density="compact")
                     v-slide-x-reverse-transition(group, hide-on-leave)
                       v-timeline-item(
                         key='cond-add-new'
@@ -24,28 +43,33 @@
                         )
                         v-btn(
                           color='primary'
-                          )
+                          @click='addConditionalRule'
+                        )
                           v-icon(start) mdi-plus
                           span Add Conditional Rule
                       v-timeline-item(
+                        v-if='conditionalRules.length === 0'
                         key='cond-none'
                         size="small"
                         dot-color='grey'
                         )
-                        v-card.bg-grey-lighten-5(flat)
+                        v-card.editor-redirect-empty(flat)
                           v-card-text
                             .text-body-medium: strong No conditional rule
                             em Add conditional rules to direct users to a different page based on their group.
                       v-timeline-item(
-                        key='cond-rule-1'
+                        v-for='(rule, index) in conditionalRules'
+                        :key='`cond-rule-${index}`'
                         size="small"
                         dot-color='primary'
                         )
-                        v-card.bg-blue-grey-lighten-5(flat)
+                        v-card.editor-redirect-rule(flat)
                           v-card-text
-                            .d-flex.align-center
-                              .text-body-medium: strong User is a member of any of these groups:
-                              v-select.ml-3(
+                            .editor-redirect-condition
+                              .text-body-medium.editor-redirect-label
+                                strong User is a member of any of these groups:
+                              v-select.editor-redirect-groups(
+                                v-model='rule.groups'
                                 color='primary'
                                 :items='groups'
                                 item-title='name'
@@ -57,57 +81,60 @@
                                 density="compact"
                                 chips
                                 closable-chips
-                                )
+                              )
                             v-divider.my-3
-                            .d-flex.align-center
-                              .text-body-medium.mr-3 then redirect to
-                              v-btn-toggle.mr-3(
-                                v-model='fallbackMode'
+                            .editor-redirect-destination
+                              .text-body-medium.editor-redirect-label then redirect to
+                              v-btn-toggle.editor-redirect-toggle(
+                                v-model='rule.mode'
                                 mandatory
                                 color='primary'
                                 density="compact"
-                                )
+                              )
                                 v-btn.text-none(value='page') Page
                                 v-btn.text-none(value='url') External URL
-                              v-btn.mr-3(
-                                v-if='fallbackMode === `page`'
+                              v-btn.editor-redirect-page-button(
+                                v-if='rule.mode === `page`'
+                                variant='tonal'
                                 color='primary'
-                                )
+                              )
                                 v-icon(start) mdi-magnify
                                 span Select Page...
-                              v-text-field(
-                                v-if='fallbackMode === `url`'
+                              v-text-field.editor-redirect-url(
+                                v-if='rule.mode === `url`'
                                 label='External URL'
                                 variant="outlined"
-                                hint='Required - Title of the API'
+                                hint='Required - destination URL'
                                 hide-details
-                                v-model='fallbackUrl'
+                                v-model='rule.url'
                                 density="compact"
                                 single-line
                               )
                   v-divider.mb-5
                   .text-label-large.text-primary Otherwise, redirect to...
-                  .text-body-small.text-grey-darken-1.pb-2 This fallback rule is mandatory and used if none of the conditional rules above applies.
-                  .d-flex.align-center
-                    v-btn-toggle.mr-3(
+                  .text-body-small.text-medium-emphasis.pb-2 This fallback rule is mandatory and used if none of the conditional rules above applies.
+                  .editor-redirect-destination
+                    .text-body-medium.editor-redirect-label then redirect to
+                    v-btn-toggle.editor-redirect-toggle(
                       v-model='fallbackMode'
                       mandatory
                       color='primary'
                       density="compact"
-                      )
+                    )
                       v-btn.text-none(value='page') Page
                       v-btn.text-none(value='url') External URL
-                    v-btn.mr-3(
+                    v-btn.editor-redirect-page-button(
                       v-if='fallbackMode === `page`'
+                      variant='tonal'
                       color='primary'
-                      )
+                    )
                       v-icon(start) mdi-magnify
                       span Select Page...
-                    v-text-field(
+                    v-text-field.editor-redirect-url(
                       v-if='fallbackMode === `url`'
                       label='External URL'
                       variant="outlined"
-                      hint='Required - Title of the API'
+                      hint='Required - destination URL'
                       hide-details
                       v-model='fallbackUrl'
                       density="compact"
@@ -121,18 +148,31 @@
         v-spacer
         .text-body-small Redirect
         v-spacer
-        .text-body-small 0 rules</template>
+        .text-body-small {{conditionalRules.length}} {{conditionalRules.length === 1 ? 'rule' : 'rules'}}</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'
 import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
-import { setLoading } from '../../helpers/root-ui-store'
+import { getErrorMessage, setLoading } from '../../helpers/root-ui-store'
+import AsyncState from '@/components/common/async-state.vue'
+
+type RedirectMode = 'page' | 'url'
+type ConditionalRedirectRule = {
+  groups: number[]
+  mode: RedirectMode
+  url: string
+}
 
 export default {
+  components: { AsyncState },
+
   data() {
     return {
       groups: [] as GroupOption[],
-      fallbackMode: 'page',
+      groupsLoading: false,
+      groupsError: '',
+      conditionalRules: [] as ConditionalRedirectRule[],
+      fallbackMode: 'page' as RedirectMode,
       fallbackUrl: 'https://'
     }
   },
@@ -159,6 +199,27 @@ export default {
     }
   },
   methods: {
+    addConditionalRule () {
+      this.conditionalRules.push({
+        groups: [],
+        mode: 'page',
+        url: 'https://'
+      })
+    },
+    async loadGroups () {
+      this.groupsLoading = true
+      this.groupsError = ''
+      setLoading(wikiStore, 'editor-redirect-groups', true)
+      try {
+        this.groups = await fetchGroupOptions(window.fetch.bind(window))
+      } catch (error) {
+        this.groups = []
+        this.groupsError = getErrorMessage(error)
+      } finally {
+        this.groupsLoading = false
+        setLoading(wikiStore, 'editor-redirect-groups', false)
+      }
+    }
   },
   async mounted() {
     wikiStore.editor.editorKey = 'redirect'
@@ -166,14 +227,8 @@ export default {
     if (this.mode === 'create') {
       wikiStore.editor.content = '<h1>Title</h1>\n\n<p>Some text here</p>'
     }
-    setLoading(wikiStore, 'editor-redirect-groups', true)
-    try {
-      this.groups = await fetchGroupOptions(window.fetch.bind(window))
-    } finally {
-      setLoading(wikiStore, 'editor-redirect-groups', false)
-    }
+    await this.loadGroups()
   }
-
 }
 </script>
 
@@ -193,10 +248,46 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
     display: block;
     height: $editor-height;
     position: relative;
+    overflow-y: auto;
+    box-sizing: border-box;
+    padding-bottom: 32px;
 
     @at-root .v-theme--dark & {
       background-color: darken(mc('grey', '900'), 4.5%);
     }
+  }
+
+  &-empty,
+  &-rule {
+    background-color: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, rgb(var(--v-theme-primary)));
+    color: rgb(var(--v-theme-on-surface));
+  }
+
+  &-condition,
+  &-destination {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  &-label {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  &-groups {
+    flex: 1 1 18rem;
+    min-width: 12rem;
+  }
+
+  &-toggle {
+    flex: 0 0 auto;
+  }
+
+  &-page-button,
+  &-url {
+    flex: 1 1 12rem;
+    min-width: 0;
   }
 
   &-sidebar {
@@ -217,5 +308,27 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
     }
   }
 
+}
+@media (max-width: $tablet - 0.02px) {
+  .editor-redirect-editor {
+    height: $editor-height-mobile;
+    padding-bottom: 40px;
+  }
+
+  .editor-redirect-condition,
+  .editor-redirect-destination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .editor-redirect-groups,
+  .editor-redirect-toggle,
+  .editor-redirect-page-button,
+  .editor-redirect-url {
+    width: 100%;
+    min-width: 0;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+  }
 }
 </style>

@@ -64,27 +64,41 @@ describe('admin-logging root UI facade migration guard', () => {
   const loadLoggers = script && extractMethod(script, 'loadLoggers')
   const refresh = script && extractMethod(script, 'refresh')
   const save = script && extractMethod(script, 'save')
-  const directRootUiCommit = /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
+  const directRootUiCommit =
+    /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-logging.vue imports the typed wiki store without changing logging dependencies or component wiring', () => {
+  test('admin-logging.vue keeps the REST dependencies and both rendered child components', () => {
     expect(script).not.toBeNull()
     expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
 
     expect(script).toContain("import { getErrorMessage } from '../../helpers/root-ui-store'")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toMatch(/import\s+LoggingConsole\s+from\s+['"]\.\/admin-logging-console\.vue['"]/)
-    expect(script).toMatch(/components:\s*\{\s*LoggingConsole\s*\}/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchLoggingLoggers\b)(?=[^}]*\bsaveLoggingLoggers\b)(?=[^}]*\bLogger\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/logging-api['"]/)
+    expect(script).toMatch(/import\s+AsyncState\s+from\s+['"]@\/components\/common\/async-state\.vue['"]/)
+    expect(script).toMatch(/components:\s*\{[\s\S]*?\bLoggingConsole\b[\s\S]*?\bAsyncState\b[\s\S]*?\}/)
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bfetchLoggingLoggers\b)(?=[^}]*\bsaveLoggingLoggers\b)(?=[^}]*\bLogger\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/logging-api['"]/
+    )
     expect(script).not.toMatch(/logging-mutation-save-loggers\.gql|loggersSaveMutation/)
     expect(script).toMatch(/activeLoggers\s*\(\s*\)\s*\{\s*return\s+_\.filter\s*\(\s*this\.loggers\s*,\s*['"]isEnabled['"]\s*\)\s*\}/)
     expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*this\.loadLoggers\s*\(\s*\)\.catch\s*\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)\s*\}/)
     expect(script).toMatch(/toggleConsole\s*\(\s*\)\s*\{\s*this\.showConsole\s*=\s*!this\.showConsole\s*\}/)
   })
 
-  test('loadLoggers uses wiki store loading and notifications without changing fetch, notifyError, return, rethrow, or cleanup behavior', () => {
+  test('loadLoggers exposes loading, success, and error boundaries while balancing root loading', () => {
     expect(loadLoggers).not.toBeNull()
 
-    expect(loadLoggers).toMatch(/async\s+loadLoggers\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*:\s*\{\s*notifyError\?\s*:\s*boolean\s*\}\s*=\s*\{\s*\}\s*\)\s*\{\s*wikiStore\.startLoading\s*\(\s*['"]admin-logging-refresh['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?this\.loggers\s*=\s*await\s+fetchLoggingLoggers\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Logging loggers response is invalid['"]\s*\)[\s\S]*?return\s+true[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*notifyError\s*\)\s*\{\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*getErrorMessage\s*\(\s*err\s*\)\s*,\s*style:\s*['"]red['"]\s*,\s*icon:\s*['"]warning['"]\s*\}\s*\)\s*\}\s*throw\s+err\s*\}\s*finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-logging-refresh['"]\s*\)\s*\}/)
+    expect(loadLoggers).toMatch(/async\s+loadLoggers\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*:\s*\{\s*notifyError\?\s*:\s*boolean\s*\}\s*=\s*\{\s*\}\s*\)/)
+    expect(loadLoggers).toMatch(
+      /this\.loading\s*=\s*true\s*this\.errorMessage\s*=\s*''\s*this\.loggersLoaded\s*=\s*false\s*this\.loggers\s*=\s*\[\]\s*wikiStore\.startLoading\(['"]admin-logging-refresh['"]\)/
+    )
+    expect(loadLoggers).toMatch(
+      /this\.loggers\s*=\s*await\s+fetchLoggingLoggers\(window\.fetch\.bind\(window\),\s*['"]Logging loggers response is invalid['"]\)\s*this\.loggersLoaded\s*=\s*true\s*return\s+true/
+    )
+    expect(loadLoggers).toMatch(
+      /catch\s*\(err\)\s*\{\s*this\.errorMessage\s*=\s*getErrorMessage\(err\)\s*if\s*\(notifyError\)\s*\{\s*wikiStore\.showNotification\(\{\s*message:\s*getErrorMessage\(err\),\s*style:\s*['"]red['"],\s*icon:\s*['"]warning['"]\s*\}\)\s*\}\s*throw\s+err\s*\}/
+    )
+    expect(loadLoggers).toMatch(/finally\s*\{\s*this\.loading\s*=\s*false\s*wikiStore\.stopLoading\(['"]admin-logging-refresh['"]\)\s*\}/)
     expect(loadLoggers).not.toMatch(directRootUiCommit)
 
     expect(loadLoggers.match(/\bwikiStore\.startLoading\s*\(/g) || []).toHaveLength(1)
@@ -95,18 +109,28 @@ describe('admin-logging root UI facade migration guard', () => {
   test('refresh waits for logger reload before showing the success notification through the wiki store', () => {
     expect(refresh).not.toBeNull()
 
-    expect(refresh).toMatch(/async\s+refresh\s*\(\s*\)\s*\{\s*await\s+this\.loadLoggers\s*\(\s*\)\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]List of loggers has been refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)\s*\}/)
+    expect(refresh).toMatch(
+      /async\s+refresh\s*\(\s*\)\s*\{\s*await\s+this\.loadLoggers\s*\(\s*\)\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]List of loggers has been refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)\s*\}/
+    )
     expect(refresh).not.toMatch(directRootUiCommit)
 
     expect(refresh.match(/\bwikiStore\.showNotification\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('save preserves mutation variables, silent reload, success/error facades, and trailing loading stop', () => {
+  test('save preserves the complete helper payload, silent reload, outcomes, and balanced cleanup', () => {
     expect(save).not.toBeNull()
 
-    expect(save).toMatch(/async\s+save\s*\(\s*\)\s*\{\s*wikiStore\.startLoading\s*\(\s*['"]admin-logging-saveloggers['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+saveLoggingLoggers\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadLoggers\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Logging configuration saved successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}\s*wikiStore\.stopLoading\s*\(\s*['"]admin-logging-saveloggers['"]\s*\)\s*\}/)
-    expect(save).toMatch(/this\.loggers\.map\s*\(\s*tgt\s*=>\s*_\.pick\s*\(\s*tgt\s*,\s*\[\s*['"]isEnabled['"]\s*,\s*['"]key['"]\s*,\s*['"]config['"]\s*,\s*['"]level['"]\s*\]\s*\)\s*\)\.map\s*\(\s*str\s*=>\s*\(\s*\{\s*\.\.\.str\s*,\s*config:\s*str\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)/)
+    expect(save).toMatch(/this\.saving\s*=\s*true\s*wikiStore\.startLoading\(['"]admin-logging-saveloggers['"]\)/)
+    expect(save).toMatch(
+      /await\s+saveLoggingLoggers\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadLoggers\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Logging configuration saved successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
+    )
+    expect(save).toMatch(
+      /this\.loggers\.map\s*\(\s*tgt\s*=>\s*_\.pick\s*\(\s*tgt\s*,\s*\[\s*['"]isEnabled['"]\s*,\s*['"]key['"]\s*,\s*['"]config['"]\s*,\s*['"]level['"]\s*\]\s*\)\s*\)\.map\s*\(\s*str\s*=>\s*\(\s*\{\s*\.\.\.str\s*,\s*config:\s*str\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)/
+    )
     expect(save).toMatch(/['"]Logging loggers update failed['"]/)
+    expect(save).toMatch(
+      /catch\s*\(err\)\s*\{\s*wikiStore\.showError\(err\)\s*\}\s*finally\s*\{\s*this\.saving\s*=\s*false\s*wikiStore\.stopLoading\(['"]admin-logging-saveloggers['"]\)\s*\}/
+    )
     expect(save).not.toMatch(/this\.\$apollo\.mutate|loggersSaveMutation|logging-mutation-save-loggers\.gql/)
     expect(save).not.toMatch(directRootUiCommit)
 

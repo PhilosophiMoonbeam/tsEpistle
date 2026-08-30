@@ -14,12 +14,13 @@ describe('page-convert REST migration guard', () => {
     expect(script).not.toMatch(/graphql-tag|\$apollo/)
   })
 
-  test('preserves loading, errors, dialog close, and redirect behavior through wikiStore', () => {
-    expect(script).toMatch(/async\s+convertPage\s*\(\s*\)\s*:\s*Promise<void>\s*\{\s*this\.loading\s*=\s*true\s*wikiStore\.startLoading\s*\(\s*['"]page-convert['"]\s*\)/)
+  test('preserves the conversion guard, loading ownership, errors, dialog close, and redirect behavior through wikiStore', () => {
+    expect(script).toMatch(
+      /async\s+convertPage\s*\(\s*\)\s*:\s*Promise<void>\s*\{\s*if\s*\(\s*!this\.canConvert\s*\)\s*return\s+this\.loading\s*=\s*true\s+wikiStore\.startLoading\s*\(\s*['"]page-convert['"]\s*\)\s*try\s*\{\s*await\s+this\.\$nextTick\s*\(\s*\)/
+    )
     expect(script).toContain('this.isShown = false')
     expect(script).toMatch(/window\.location\.assign\(`\/e\/\$\{this\.pageLocale\}\/\$\{this\.pagePath\}`\)/)
     expect(script).toContain('wikiStore.showError(err)')
-    expect(script).toContain("wikiStore.stopLoading('page-convert')")
-    expect(script).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]page-convert['"]\s*\)\s*this\.loading\s*=\s*false/)
+    expect(script).toMatch(/finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]page-convert['"]\s*\)\s*this\.loading\s*=\s*false\s*\}/)
   })
 })

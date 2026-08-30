@@ -2,8 +2,8 @@
   <div
     class="async-state"
     :class="`async-state--${state}`"
-    :role="state === 'error' ? 'alert' : 'status'"
-    :aria-live="state === 'error' ? 'assertive' : 'polite'"
+    :role="announce !== false ? (state === 'error' ? 'alert' : 'status') : undefined"
+    :aria-live="announce !== false ? (state === 'error' ? 'assertive' : 'polite') : undefined"
     :aria-busy="state === 'loading'"
   >
     <v-progress-circular
@@ -13,9 +13,9 @@
       indeterminate
       :size="32"
       :width="3"
-      aria-label="Loading"
+      aria-hidden="true"
     />
-    <v-icon v-else class="async-state__icon" :color="state === 'error' ? 'red' : 'grey'">
+    <v-icon v-else class="async-state__icon" :color="state === 'error' ? 'error' : 'on-surface-variant'" aria-hidden="true">
       {{ state === 'error' ? 'mdi-alert-circle-outline' : 'mdi-inbox-outline' }}
     </v-icon>
     <div class="async-state__copy">
@@ -43,6 +43,7 @@ defineProps<{
   title: string
   message?: string
   retryLabel?: string
+  announce?: boolean
 }>()
 
 defineEmits<{
@@ -58,8 +59,8 @@ defineEmits<{
   justify-content: center;
   gap: .85rem;
   padding: 1.25rem;
-  border: 1px dashed rgba(var(--v-border-color), .18);
-  border-radius: .875rem;
+  border: 1px dashed color-mix(in srgb, rgb(var(--v-border-color)) 18%, transparent);
+  border-radius: var(--wiki-control-radius, .875rem);
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 84%, transparent);
   text-align: start;
 }

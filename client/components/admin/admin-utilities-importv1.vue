@@ -2,16 +2,16 @@
   v-card
     v-toolbar(flat, color='primary', density="compact")
       .text-body-large {{ $t('admin:utilities.importv1Title') }}
-    v-card-text
+    v-form(ref='importForm', v-model='formValid')
       .text-center
-        img.animated.fadeInUp.wait-p1s(src='/_assets/svg/icon-software.svg')
+        img.animated.fadeInUp.wait-p1s(src='/_assets/svg/icon-software.svg', alt='')
         .text-body-medium Import from Wiki.js 1.x
       v-divider.my-4
       .text-body-medium Data from a Wiki.js 1.x installation can easily be imported using this tool. What do you want to import?
       v-checkbox(
         label='Content + Uploads'
         value='content'
-        color="deep-orange-darken-2"
+        color='warning'
         v-model='importFilters'
         hide-details
         )
@@ -29,62 +29,64 @@
                 .text-body-small: em #[strong.text-primary Recommended] | The Git storage module will also be configured for you.
         .pl-8.mt-5(v-if='needGit')
           v-row
-            v-col(cols='8')
+            v-col(cols='12', md='8')
               v-select(
                 label='Authentication Mode'
                 :items='gitAuthModes'
+                item-title='text'
+                item-value='value'
                 v-model='gitAuthMode'
                 variant="outlined"
                 hide-details
               )
-            v-col(cols='4')
+            v-col(cols='12', md='4')
               v-switch(
                 label='Verify SSL Certificate'
                 v-model='gitVerifySSL'
                 hide-details
                 color='primary'
               )
-            v-col(cols='8')
+            v-col(cols='12', md='8')
               v-text-field(
                 variant="outlined"
                 label='Repository URL'
                 :placeholder='(gitAuthMode === `ssh`) ? `e.g. git@github.com:orgname/repo.git` : `e.g. https://github.com/orgname/repo.git`'
-                hide-details
+                :rules='[requiredRule, repositoryRule]'
                 v-model='gitRepoUrl'
               )
-            v-col(cols='4')
+            v-col(cols='12', md='4')
               v-text-field(
                 label='Branch'
                 placeholder='e.g. master'
+                :rules='[requiredRule]'
                 v-model='gitRepoBranch'
                 variant="outlined"
-                hide-details
               )
             v-col(v-if='gitAuthMode === `ssh`', cols='12')
               v-textarea(
                 variant="outlined"
                 label='Private Key Contents'
                 placeholder='[REDACTED PRIVATE KEY]'
-                hide-details
+                :rules='[requiredRule]'
                 v-model='gitPrivKey'
               )
             template(v-else-if='gitAuthMode === `basic`')
-              v-col(cols='6')
+              v-col(cols='12', sm='6')
                 v-text-field(
                   label='Username'
+                  :rules='[requiredRule]'
                   v-model='gitUsername'
                   variant="outlined"
-                  hide-details
                 )
-              v-col(cols='6')
+              v-col(cols='12', sm='6')
                 v-text-field(
                   type='password'
                   label='Password / PAT'
+                  :rules='[requiredRule]'
                   v-model='gitPassword'
                   variant="outlined"
-                  hide-details
                 )
-            v-col(cols='6')
+            v-col(cols='12', sm='6')
               v-text-field(
                 label='Default Author Email'
                 placeholder='e.g. name@company.com'
@@ -92,7 +94,7 @@
                 variant="outlined"
                 hide-details
               )
-            v-col(cols='6')
+            v-col(cols='12', sm='6')
               v-text-field(
                 label='Default Author Name'
                 placeholder='e.g. John Smith'
@@ -109,7 +111,7 @@
                 hide-details
               )
               .text-body-small.mt-2 This folder should be empty or not exist yet. #[strong.text-deep-orange-darken-2 DO NOT] point to your existing Wiki.js 1.x repository folder. In most cases, it should be left to the default value.
-          v-alert(color='deep-orange', variant="outlined", icon='mdi-alert', prominent)
+          v-alert(color='warning', variant="outlined", icon='mdi-alert', prominent)
             .text-body-medium - Note that if you already configured the git storage module, its configuration will be replaced with the above.
             .text-body-medium - Although both v1 and v2 installations can use the same remote git repository, you shouldn't make edits to the same pages simultaneously.
         v-radio-group(v-model='contentMode', hide-details)
@@ -128,13 +130,14 @@
             label='Content Repo Path'
             hint='The absolute path to where the Wiki.js 1.x content is stored on disk.'
             persistent-hint
+            :rules='[requiredRule]'
             v-model='contentPath'
           )
 
       v-checkbox(
         label='Users'
         value='users'
-        color="deep-orange-darken-2"
+        color='warning'
         v-model='importFilters'
         hide-details
         )
@@ -146,6 +149,7 @@
           label='MongoDB Connection String'
           hint='The connection string to connect to the Wiki.js 1.x MongoDB database.'
           persistent-hint
+          :rules='[mongoRule]'
           v-model='dbConnStr'
         )
         v-radio-group(v-model='groupMode', hide-details, mandatory)
@@ -176,81 +180,76 @@
                 span Don't create any group
                 .text-body-small: em Users will not be able to access your wiki until they are assigned to a group.
 
-        v-alert.mt-5(color='deep-orange', variant="outlined", icon='mdi-alert', prominent)
+        v-alert.mt-5(color='warning', variant="outlined", icon='mdi-alert', prominent)
           .text-body-medium Note that any user that already exists in this installation will not be imported. A list of skipped users will be displayed upon completion.
           .text-body-small.text-grey You must first delete from this installation any user you want to migrate over from the old installation.
 
     div.v-card-chin
-      v-btn.px-3(variant="flat", color="deep-orange-darken-2", :disabled='!wantUsers && !wantContent', @click='startImport').ml-0
-        v-icon(start, color='white') mdi-database-import
-        span.text-white Start Import
-    v-dialog(
-      v-model='isLoading'
-      persistent
-      max-width='350'
-      )
-      v-card(color="deep-orange-darken-2")
-        v-card-text.pa-10.text-center
+      v-btn.px-3(variant="flat", color='warning', :disabled='!canStartImport || isLoading', @click='startImport').ml-0
+        v-icon(start, color='on-warning') mdi-database-import
+        span.text-on-warning Start Import
+    v-dialog(v-model='confirmImport', max-width='620', persistent, :fullscreen='$vuetify.display.smAndDown')
+      v-card
+        v-card-title Review Wiki.js 1.x import
+        v-card-text
+          .text-body-medium You are about to import:
+          ul.mt-2
+            li(v-if='wantUsers') Users from the configured MongoDB database ({{groupModeDescription}})
+            li(v-if='wantContent') Content and uploads from {{contentMode === 'git' ? 'the configured Git repository' : 'the configured local folder'}}
+          v-alert.mt-4(v-if='wantContent && contentMode === "git"', color='warning', variant='outlined', icon='mdi-alert')
+            .text-body-medium Git imports replace the existing Git storage-module configuration before importing content.
+            .text-body-small.mt-2 Existing users are skipped when their email already exists.
+        v-card-actions
+          v-btn(variant="text", @click='confirmImport = false') Cancel
+          v-spacer
+          v-btn(color='warning', @click='confirmImport = false; executeImport()') {{wantContent && contentMode === 'git' ? 'Replace configuration and start import' : 'Start import'}}
+    v-dialog(v-model='isLoading', persistent, max-width='420', aria-labelledby='import-progress-title')
+      v-card(color='warning')
+        v-card-text.pa-8.text-center(role='status', aria-live='polite', aria-busy='true')
           semipolar-spinner.animated.fadeIn(
             :animation-duration='1500'
             :size='65'
-            color='#FFF'
+            color='rgb(var(--v-theme-on-warning))'
             style='margin: 0 auto;'
           )
-          .mt-5.text-body-large.text-white Importing from Wiki.js 1.x...
-          .text-body-small Please wait
+          .mt-5.text-body-large#import-progress-title Importing from Wiki.js 1.x...
+          .text-body-small Please wait while the selected stages finish.
           v-progress-linear.mt-5(
-            color='white'
+            color='on-warning'
             :model-value='progress'
-            stream
             rounded
             :buffer-value='0'
           )
-    v-dialog(
-      v-model='isSuccess'
-      persistent
-      max-width='350'
-      )
-      v-card(color="green-darken-2")
-        v-card-text.pa-10.text-center
-          v-icon(size='60') mdi-check-circle-outline
-          .my-5.text-body-large.text-white Import completed
-          template(v-if='wantUsers')
-            .text-body-medium
-              span #[strong {{successUsers}}] users imported
-              v-btn.text-none.ml-3(
-                v-if='failedUsers.length > 0'
-                variant="text"
-                color='white'
-                @click='showFailedUsers = true'
-                )
-                v-icon(start) mdi-alert
-                span {{failedUsers.length}} failed
-            .text-body-medium #[strong {{successGroups}}] groups created
-        v-card-actions.bg-green-darken-1
-          v-spacer
-          v-btn.px-5(
-            color='white'
-            variant="outlined"
-            @click='isSuccess = false'
-          ) Close
-          v-spacer
-    v-dialog(
-      v-model='showFailedUsers'
-      persistent
-      max-width='800'
-      )
-      v-card(color="red-darken-2")
-        v-toolbar(color="red-darken-2", density="compact")
-          v-icon mdi-alert
-          .text-body-medium.pl-3 Failed User Imports
-          v-spacer
-          v-btn.px-5(
-            color='white'
+          .text-body-small.mt-2 {{progress}}% complete
+    v-dialog(v-model='isSuccess', persistent, max-width='520', aria-labelledby='import-result-title')
+      v-card(:color='hasImportFailures ? "warning" : "success"')
+        v-card-text.pa-8.text-center(role='status', aria-live='polite')
+          v-icon(size='60') {{hasImportFailures ? 'mdi-alert-circle-outline' : 'mdi-check-circle-outline'}}
+          .my-5.text-body-large#import-result-title {{hasImportFailures ? 'Import partially completed' : 'Import completed'}}
+          .text-body-medium(v-if='userStage === "succeeded"') #[strong {{successUsers}}] users imported; #[strong {{successGroups}}] groups created.
+          .text-body-medium(v-if='contentStage === "succeeded"') Content and uploads imported.
+          .text-body-medium(v-if='userStage === "failed"') Users failed: {{userStageError}}
+          .text-body-medium(v-if='contentStage === "failed"') Content failed: {{contentStageError}}
+          v-btn.text-none.mt-3(
+            v-if='failedUsers.length > 0'
             variant="text"
-            @click='showFailedUsers = false'
-            ) Close
-        v-table(density="compact", fixed-header, height='300px')
+            :color='hasImportFailures ? "on-warning" : "on-success"'
+            @click='showFailedUsers = true'
+          )
+            v-icon(start) mdi-alert
+            span {{failedUsers.length}} user records failed
+        v-card-actions
+          v-spacer
+          v-btn.px-5(variant="outlined", @click='isSuccess = false') Close
+          v-spacer
+    v-dialog(v-model='showFailedUsers', persistent, max-width='800', :fullscreen='$vuetify.display.smAndDown', aria-labelledby='failed-users-title')
+      v-card(color='error')
+        v-toolbar(color='error', density="compact")
+          v-icon mdi-alert
+          .text-body-medium.pl-3#failed-users-title Failed User Imports
+          v-spacer
+          v-btn.px-5(variant="text", @click='showFailedUsers = false') Close
+        v-table.failed-users-table(density="compact", fixed-header, height='300px')
           template(v-slot:default)
             thead
               tr
@@ -261,7 +260,8 @@
               tr(v-for='(fusr, idx) in failedUsers', :key='`fusr-` + idx')
                 td {{fusr.provider}}
                 td {{fusr.email}}
-                td {{fusr.error}}</template>
+                td {{fusr.error}}
+</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
@@ -277,6 +277,7 @@ type ImportFilter = 'content' | 'users'
 type ContentMode = 'git' | 'disk'
 type GitAuthMode = 'ssh' | 'basic'
 type GroupMode = 'MULTI' | 'SINGLE' | 'NONE'
+type ImportStage = 'pending' | 'running' | 'succeeded' | 'failed'
 
 type FailedUser = {
   provider: string
@@ -372,6 +373,13 @@ function normalizeStorageStatus (status: unknown): StorageStatus {
   }
 }
 
+function isValidRepository (value: string): boolean {
+  return /^(https?:\/\/.+|git@.+|ssh:\/\/.+)/.test(value.trim())
+}
+
+function isValidMongo (value: string): boolean {
+  return /^(mongodb(\+srv)?:\/\/).+/.test(value.trim())
+}
 export default defineComponent({
   components: {
     SemipolarSpinner
@@ -383,6 +391,8 @@ export default defineComponent({
       contentMode: 'git' as ContentMode,
       dbConnStr: 'mongodb://',
       contentPath: '/wiki-v1/repo',
+      formValid: true,
+      confirmImport: false,
       isLoading: false,
       isSuccess: false,
       gitAuthMode: 'ssh' as GitAuthMode,
@@ -403,6 +413,10 @@ export default defineComponent({
       successGroups: 0,
       successUsers: 0,
       successPages: 0,
+      userStage: 'pending' as ImportStage,
+      contentStage: 'pending' as ImportStage,
+      userStageError: '',
+      contentStageError: '',
       showFailedUsers: false,
       failedUsers: [] as FailedUser[]
     }
@@ -415,160 +429,172 @@ export default defineComponent({
       return this.importFilters.indexOf('users') >= 0
     },
     needDisk () {
-      return this.contentMode === `disk`
+      return this.contentMode === 'disk'
     },
     needGit () {
-      return this.contentMode === `git`
+      return this.contentMode === 'git'
+    },
+    canStartImport (): boolean {
+      if (!this.wantUsers && !this.wantContent) return false
+      if (this.wantUsers && !isValidMongo(this.dbConnStr)) return false
+      if (!this.wantContent) return true
+      if (this.contentMode === 'disk') return this.contentPath.trim().length > 0
+      if (!this.gitRepoUrl.trim() || !this.gitRepoBranch.trim() || !isValidRepository(this.gitRepoUrl)) return false
+      return this.gitAuthMode === 'ssh'
+        ? this.gitPrivKey.trim().length > 0
+        : this.gitUsername.trim().length > 0 && this.gitPassword.trim().length > 0
+    },
+    hasImportFailures (): boolean {
+      return this.userStage === 'failed' || this.contentStage === 'failed' || this.failedUsers.length > 0
+    },
+    groupModeDescription (): string {
+      return this.groupMode === 'MULTI'
+        ? 'groups per permission set'
+        : this.groupMode === 'SINGLE' ? 'one group' : 'no new group'
     }
   },
   methods: {
-    async startImport () {
+    requiredRule (value: unknown): true | string {
+      return typeof value === 'string' && value.trim().length > 0 ? true : 'This field is required.'
+    },
+    repositoryRule (value: unknown): true | string {
+      if (typeof value !== 'string' || value.trim().length === 0) return true
+      return isValidRepository(value) ? true : 'Enter an HTTPS or SSH repository URL.'
+    },
+    mongoRule (value: unknown): true | string {
+      return typeof value === 'string' && isValidMongo(value)
+        ? true
+        : 'Enter a valid MongoDB connection string.'
+    },
+    stageWeight (): number {
+      return 100 / (Number(this.wantUsers) + Number(this.wantContent))
+    },
+    advanceContent (step: number) {
+      this.progress = Math.min(100, this.progress + this.stageWeight() * step / 50)
+    },
+    startImport () {
+      if (!this.canStartImport) return
+      this.confirmImport = true
+    },
+    async executeImport () {
       this.isLoading = true
+      this.isSuccess = false
       this.progress = 0
       this.failedUsers = []
+      this.successUsers = 0
+      this.successGroups = 0
+      this.userStage = this.wantUsers ? 'pending' : 'succeeded'
+      this.contentStage = this.wantContent ? 'pending' : 'succeeded'
+      this.userStageError = ''
+      this.contentStageError = ''
 
-      _.delay(async () => {
-        // -> Import Users
-
-        if (this.wantUsers) {
-          try {
-            const result = await importV1Users(
-              window.fetch.bind(window),
-              this.dbConnStr,
-              this.groupMode
-            )
-            this.successUsers = result.usersCount
-            this.successGroups = result.groupsCount
-            this.failedUsers = normalizeFailedUsers(result.failed)
-            this.progress += 50
-          } catch (err) {
-            wikiStore.showError(err)
-            this.isLoading = false
-            return
-          }
+      if (this.wantUsers) {
+        this.userStage = 'running'
+        try {
+          const result = await importV1Users(window.fetch.bind(window), this.dbConnStr, this.groupMode)
+          this.successUsers = result.usersCount
+          this.successGroups = result.groupsCount
+          this.failedUsers = normalizeFailedUsers(result.failed)
+          this.userStage = 'succeeded'
+          this.progress += this.stageWeight()
+        } catch (err) {
+          this.userStage = 'failed'
+          this.userStageError = err instanceof Error ? err.message : String(err)
+          wikiStore.showError(err)
         }
+      }
 
-        // -> Import Content
-
-        if (this.wantContent) {
-          try {
-            const storageTargets = (await fetchStorageTargets(window.fetch.bind(window))).map(normalizeStorageTarget)
-            if (storageTargets.length > 0) {
-              this.progress += 10
-              const targets = storageTargets.map(str => {
-                const nStr: StorageTarget = {
-                  ...str,
-                  config: str.config.map(cfg => ({
-                    ...cfg,
-                    value: { ...cfg.value }
-                  }))
-                }
-
-                // -> Setup Git Module
-
-                if (this.contentMode === 'git' && nStr.key === 'git') {
-                  nStr.isEnabled = true
-                  nStr.mode = 'sync'
-                  nStr.syncInterval = 'PT5M'
-                  nStr.config = [
-                    { key: 'authType', value: { value: this.gitAuthMode } },
-                    { key: 'repoUrl', value: { value: this.gitRepoUrl } },
-                    { key: 'branch', value: { value: this.gitRepoBranch } },
-                    { key: 'sshPrivateKeyMode', value: { value: 'contents' } },
-                    { key: 'sshPrivateKeyPath', value: { value: '' } },
-                    { key: 'sshPrivateKeyContent', value: { value: this.gitPrivKey } },
-                    { key: 'verifySSL', value: { value: this.gitVerifySSL } },
-                    { key: 'basicUsername', value: { value: this.gitUsername } },
-                    { key: 'basicPassword', value: { value: this.gitPassword } },
-                    { key: 'defaultEmail', value: { value: this.gitUserEmail } },
-                    { key: 'defaultName', value: { value: this.gitUserName } },
-                    { key: 'localRepoPath', value: { value: this.gitRepoPath } },
-                    { key: 'gitBinaryPath', value: { value: '' } }
-                  ]
-                }
-
-                // -> Setup Disk Module
-                if (this.contentMode === 'disk' && nStr.key === 'disk') {
-                  nStr.isEnabled = true
-                  nStr.mode = 'push'
-                  nStr.syncInterval = 'P0D'
-                  nStr.config = [
-                    { key: 'path', value: { value: this.contentPath } },
-                    { key: 'createDailyBackups', value: { value: false } }
-                  ]
-                }
-                return nStr
-              })
-
-              // -> Save storage modules configuration
-
-              await saveStorageTargets(window.fetch.bind(window), targets.map(target => ({
-                isEnabled: target.isEnabled,
-                key: target.key,
-                config: target.config.map(config => ({
-                  ...config,
-                  value: JSON.stringify({ v: config.value.value })
-                })),
-                mode: target.mode,
-                syncInterval: target.syncInterval
-              })))
-
-              this.progress += 10
-
-              // -> Wait for success sync
-
-              let statusAttempts = 0
-              while (statusAttempts < 10) {
-                statusAttempts++
-                const storageStatus = (await fetchStorageStatus(window.fetch.bind(window))).map(normalizeStorageStatus)
-                if (storageStatus.length > 0) {
-                  const st = storageStatus.find(status => status.key === this.contentMode)
-                  if (!st) {
-                    throw new Error('Storage target could not be configured.')
-                  }
-                  switch (st.status) {
-                    case 'pending':
-                      if (statusAttempts >= 10) {
-                        throw new Error('Storage target is stuck in pending state. Try again.')
-                      } else {
-                        continue
-                      }
-                    case 'operational':
-                      statusAttempts = 10
-                      break
-                    case 'error':
-                      throw new Error(st.message)
-                  }
-                } else {
-                  throw new Error('Failed to fetch storage sync status.')
-                }
-              }
-
-              this.progress += 15
-
-              // -> Perform import all
-
-              await executeStorageAction(window.fetch.bind(window), this.contentMode, 'importAll')
-
-              this.progress += 15
-            } else {
-              throw new Error('Failed to fetch storage targets.')
+      if (this.wantContent) {
+        this.contentStage = 'running'
+        try {
+          const storageTargets = (await fetchStorageTargets(window.fetch.bind(window))).map(normalizeStorageTarget)
+          if (storageTargets.length === 0) throw new Error('Failed to fetch storage targets.')
+          this.advanceContent(10)
+          const targets = storageTargets.map(str => {
+            const nStr: StorageTarget = {
+              ...str,
+              config: str.config.map(cfg => ({ ...cfg, value: { ...cfg.value } }))
             }
-          } catch (err) {
-            wikiStore.showError(err)
-            this.isLoading = false
-            return
-          }
-        }
+            if (this.contentMode === 'git' && nStr.key === 'git') {
+              nStr.isEnabled = true
+              nStr.mode = 'sync'
+              nStr.syncInterval = 'PT5M'
+              nStr.config = [
+                { key: 'authType', value: { value: this.gitAuthMode } },
+                { key: 'repoUrl', value: { value: this.gitRepoUrl } },
+                { key: 'branch', value: { value: this.gitRepoBranch } },
+                { key: 'sshPrivateKeyMode', value: { value: 'contents' } },
+                { key: 'sshPrivateKeyPath', value: { value: '' } },
+                { key: 'sshPrivateKeyContent', value: { value: this.gitPrivKey } },
+                { key: 'verifySSL', value: { value: this.gitVerifySSL } },
+                { key: 'basicUsername', value: { value: this.gitUsername } },
+                { key: 'basicPassword', value: { value: this.gitPassword } },
+                { key: 'defaultEmail', value: { value: this.gitUserEmail } },
+                { key: 'defaultName', value: { value: this.gitUserName } },
+                { key: 'localRepoPath', value: { value: this.gitRepoPath } },
+                { key: 'gitBinaryPath', value: { value: '' } }
+              ]
+            }
+            if (this.contentMode === 'disk' && nStr.key === 'disk') {
+              nStr.isEnabled = true
+              nStr.mode = 'push'
+              nStr.syncInterval = 'P0D'
+              nStr.config = [
+                { key: 'path', value: { value: this.contentPath } },
+                { key: 'createDailyBackups', value: { value: false } }
+              ]
+            }
+            return nStr
+          })
+          await saveStorageTargets(window.fetch.bind(window), targets.map(target => ({
+            isEnabled: target.isEnabled,
+            key: target.key,
+            config: target.config.map(config => ({ ...config, value: JSON.stringify({ v: config.value.value }) })),
+            mode: target.mode,
+            syncInterval: target.syncInterval
+          })))
+          this.advanceContent(10)
 
-        this.isLoading = false
-        this.isSuccess = true
-      }, 1500)
+          let statusAttempts = 0
+          while (statusAttempts < 10) {
+            statusAttempts++
+            const storageStatus = (await fetchStorageStatus(window.fetch.bind(window))).map(normalizeStorageStatus)
+            const st = storageStatus.find(status => status.key === this.contentMode)
+            if (!st) throw new Error('Storage target could not be configured.')
+            if (st.status === 'operational') break
+            if (st.status === 'error') throw new Error(st.message)
+            if (statusAttempts >= 10) throw new Error('Storage target is stuck in pending state. Try again.')
+          }
+          this.advanceContent(15)
+          await executeStorageAction(window.fetch.bind(window), this.contentMode, 'importAll')
+          this.advanceContent(15)
+          this.successPages = 1
+          this.contentStage = 'succeeded'
+        } catch (err) {
+          this.contentStage = 'failed'
+          this.contentStageError = err instanceof Error ? err.message : String(err)
+          wikiStore.showError(err)
+        }
+      }
+
+      const allSucceeded = (!this.wantUsers || this.userStage === 'succeeded') && (!this.wantContent || this.contentStage === 'succeeded')
+      if (allSucceeded) this.progress = 100
+      this.isLoading = false
+      this.isSuccess = true
     }
   }
 })
 </script>
 
 <style lang='scss'>
+.failed-users-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
+@media (max-width: 599.98px) {
+  .pl-8 {
+    padding-left: 1rem !important;
+  }
+}
 </style>

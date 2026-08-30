@@ -17,6 +17,9 @@
             variant='tonal'
             icon='mdi-alert-circle-outline'
             closable
+            role='alert'
+            tabindex='-1'
+            ref='setupAlert'
           ) {{ errorMessage }}
           v-alert.setup-alert(
             v-if='!error'
@@ -46,6 +49,9 @@
                     hint='The email address of the administrator account.'
                     persistent-hint
                     required
+                    type='email'
+                    autocomplete='email'
+                    :error-messages='fieldErrors.adminEmail'
                     ref='adminEmailInput'
                     prepend-inner-icon='mdi-email-outline'
                   )
@@ -56,13 +62,16 @@
                     counter='255'
                     v-model='conf.adminPassword'
                     label='Password'
-                    :append-icon="pwdMode ? 'mdi-eye-off' : 'mdi-eye'"
-                    @click:append='pwdMode = !pwdMode'
                     :type="pwdMode ? 'password' : 'text'"
                     hint='At least 8 characters long.'
                     persistent-hint
+                    required
+                    :error-messages='fieldErrors.adminPassword'
                     prepend-inner-icon='mdi-lock-outline'
                   )
+                    template(v-slot:append-inner)
+                      v-btn(icon variant='text' size='small' :aria-label="pwdMode ? 'Show password' : 'Hide password'" @click='pwdMode = !pwdMode')
+                        v-icon(:icon="pwdMode ? 'mdi-eye-off' : 'mdi-eye'")
                 v-col(cols='12', sm='6')
                   v-text-field(
                     variant='outlined'
@@ -70,13 +79,16 @@
                     counter='255'
                     v-model='conf.adminPasswordConfirm'
                     label='Confirm Password'
-                    :append-icon="pwdConfirmMode ? 'mdi-eye-off' : 'mdi-eye'"
-                    @click:append='pwdConfirmMode = !pwdConfirmMode'
                     :type="pwdConfirmMode ? 'password' : 'text'"
                     hint='Enter the same password again.'
                     persistent-hint
+                    required
+                    :error-messages='fieldErrors.adminPasswordConfirm'
                     prepend-inner-icon='mdi-lock-check-outline'
                   )
+                    template(v-slot:append-inner)
+                      v-btn(icon variant='text' size='small' :aria-label="pwdConfirmMode ? 'Show password' : 'Hide password'" @click='pwdConfirmMode = !pwdConfirmMode')
+                        v-icon(:icon="pwdConfirmMode ? 'mdi-eye-off' : 'mdi-eye'")
 
             section.setup-section
               .setup-section-heading
@@ -90,8 +102,14 @@
                 ref='adminSiteUrl'
                 v-model='conf.siteUrl'
                 label='Site URL'
+                placeholder='https://wiki.example.com'
                 hint='Full public URL without a trailing slash, for example https://wiki.example.com.'
                 persistent-hint
+                required
+                type='url'
+                inputmode='url'
+                autocomplete='url'
+                :error-messages='fieldErrors.siteUrl'
                 prepend-inner-icon='mdi-link-variant'
               )
 
@@ -125,20 +143,21 @@
               v-icon(start) mdi-check
               span Install {{ product.name }}
 
-    v-dialog(v-model='loading', width='420', persistent)
+    v-dialog(v-model='loading', width='420', persistent, aria-labelledby='setup-progress-title')
       v-card.setup-progress(color='primary')
         v-card-text.text-center
-          .setup-progress-spinner
+          .setup-progress-spinner(v-if='!success')
             breeding-rhombus-spinner(
               :animation-duration='2000'
               :size='56'
               color='#FFF'
             )
+          v-icon.setup-progress-success(v-else icon='mdi-check-circle-outline' size='56' color='white' aria-hidden='true')
           template(v-if='!success')
-            .setup-progress-title Finalizing your installation...
+            .setup-progress-title#setup-progress-title(role='status' aria-live='polite') Finalizing your installation...
             .setup-progress-copy Just a moment
           template(v-else)
-            .setup-progress-title Installation complete!
+            .setup-progress-title#setup-progress-title(role='status' aria-live='polite') Installation complete!
             .setup-progress-copy Redirecting...
 </template>
 
@@ -193,12 +212,18 @@ export default {
       success: false,
       error: false,
       errorMessage: '',
+      fieldErrors: {
+        adminEmail: '',
+        adminPassword: '',
+        adminPasswordConfirm: '',
+        siteUrl: ''
+      },
       product: siteConfig.product as ProductMetadata,
       conf: {
         adminEmail: '',
         adminPassword: '',
         adminPasswordConfirm: '',
-        siteUrl: 'https://wiki.yourdomain.com',
+        siteUrl: '',
         telemetry: true
       } as SetupConfig,
       pwdMode: true,
@@ -212,6 +237,12 @@ export default {
   },
   methods: {
     async install () {
+      this.fieldErrors = {
+        adminEmail: '',
+        adminPassword: '',
+        adminPasswordConfirm: '',
+        siteUrl: ''
+      }
       this.error = false
 
       const validationResults = validateValues(this.conf, {
@@ -246,15 +277,19 @@ export default {
             pattern: '^(?!.*/$).*$',
             flags: 'i',
             message: 'must not have a trailing slash'
-          }
+        }
         }
       }, {
-        format: 'flat'
+        fullMessages: false
       })
       if (validationResults) {
+        const firstField = Object.keys(validationResults)[0] as 'adminEmail' | 'adminPassword' | 'adminPasswordConfirm' | 'siteUrl'
         this.error = true
-        this.errorMessage = validationResults[0]
-        this.$forceUpdate()
+        this.errorMessage = validationResults[firstField][0]
+        this.fieldErrors[firstField] = this.errorMessage
+        this.$nextTick(() => {
+          focusComponent(this.$refs[firstField === 'adminEmail' ? 'adminEmailInput' : firstField === 'adminPassword' ? 'adminPassword' : firstField === 'adminPasswordConfirm' ? 'adminPasswordConfirm' : 'adminSiteUrl'])
+        })
         return
       }
 
@@ -290,9 +325,14 @@ export default {
             this.error = true
             this.errorMessage = resp.error
             this.loading = false
+            this.$nextTick(() => focusComponent(this.$refs.setupAlert))
           }
         } catch (err) {
-          window.alert(getErrorMessage(err))
+          console.error(err)
+          this.error = true
+          this.errorMessage = getErrorMessage(err)
+          this.loading = false
+          this.$nextTick(() => focusComponent(this.$refs.setupAlert))
         }
       }, 1000)
     }
@@ -511,6 +551,10 @@ export default {
   height: 56px;
   margin-bottom: 12px;
 }
+.setup-progress-success {
+  display: block;
+  margin: 0 auto 12px;
+}
 
 .setup-progress-title {
   color: #fff;
@@ -527,11 +571,14 @@ export default {
 @media (max-width: 599px) {
   .setup-shell {
     align-items: start;
-    padding: 12px !important;
+    padding: 0 !important;
   }
 
   .setup-card {
-    border-radius: 20px !important;
+    min-height: 100dvh;
+    border: 0;
+    border-radius: 0 !important;
+    box-shadow: none !important;
   }
 
   .setup-intro {

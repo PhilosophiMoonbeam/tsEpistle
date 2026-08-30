@@ -3,39 +3,69 @@
     v-row
       v-col(cols='12')
         .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-venn-diagram.svg', alt='Visualize Pages', style='width: 80px;')
+          img.animated.fadeInUp(src='/_assets/svg/icon-venn-diagram.svg', alt='', style='width: 80px;', width='80', height='80')
           .admin-header-title
             .text-headline-medium.text-primary.animated.fadeInLeft Visualize Pages
             .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s Dendrogram representation of your pages
-          v-spacer
-          v-select.mx-5.animated.fadeInDown.wait-p1s(
+        .admin-pages-visualize-controls
+          v-select.animated.fadeInDown.wait-p1s(
             v-if='locales.length > 0'
             v-model='currentLocale'
             :items='locales'
-            style='flex: 0 1 120px;'
-            variant="solo"
+            label='Locale'
+            variant="outlined"
             density="compact"
             hide-details
             item-value='code'
             item-title='name'
           )
-          v-btn-toggle.animated.fadeInDown(v-model='graphMode', color='primary', density="compact", rounded)
-            v-btn.px-5(value='htree')
-              v-icon(start, :color='graphMode === `htree` ? `primary` : `grey-darken-3`') mdi-sitemap
+          v-btn-toggle.animated.fadeInDown(
+            v-model='graphMode'
+            color='primary'
+            density="compact"
+            rounded
+            mandatory
+            aria-label='Visualization mode'
+          )
+            v-btn.px-5(value='htree', aria-label='Hierarchical Tree')
+              v-icon(start) mdi-sitemap
               span.text-none Hierarchical Tree
-            v-btn.px-5(value='hradial')
-              v-icon(start, :color='graphMode === `hradial` ? `primary` : `grey-darken-3`') mdi-chart-donut-variant
+            v-btn.px-5(value='hradial', aria-label='Hierarchical Radial')
+              v-icon(start) mdi-chart-donut-variant
               span.text-none Hierarchical Radial
-            v-btn.px-5(value='rradial')
-              v-icon(start, :color='graphMode === `rradial` ? `primary` : `grey-darken-3`') mdi-blur-radial
+            v-btn.px-5(value='rradial', aria-label='Relational Radial')
+              v-icon(start) mdi-blur-radial
               span.text-none Relational Radial
-        .admin-pages-visualize-svg(ref='svgContainer', v-show='pages.length >= 1')
-        v-alert(v-if='pages.length < 1', variant="outlined", type='warning', style='max-width: 650px; margin: 0 auto;') Looks like there's no data yet to graph!</template>
+        .admin-pages-visualize-svg(ref='svgContainer', v-show='pages.length >= 1 && !loading && !errorMessage', role='img', aria-label='Interactive page visualization')
+        async-state(
+          v-if='loading'
+          state='loading'
+          title='Loading page visualization'
+          message='Fetching pages for the selected locale.'
+        )
+        async-state(
+          v-else-if='errorMessage'
+          state='error'
+          title='Page visualization could not be loaded'
+          :message='errorMessage'
+          retry-label='Try again'
+          @retry='loadPages'
+        )
+        async-state(
+          v-else-if='pages.length < 1'
+          state='empty'
+          :title='`No pages for ${currentLocale}`'
+          message='Create a page in this locale or return to Pages.'
+        )
+        v-btn(v-if='!loading && !errorMessage && pages.length < 1', to='/pages', color='primary', variant='text') Return to Pages
 
+</template>
 <script lang='ts'>
 import { defineComponent } from 'vue'
 import _ from 'lodash'
 import * as d3 from 'd3'
+import AsyncState from '@/components/common/async-state.vue'
+import { getErrorMessage } from '../../helpers/root-ui-store'
 import { fetchPageLinks, type PageLinkRow } from '../../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
 
@@ -89,11 +119,16 @@ type AdminPagesVisualizeState = {
   pageLoadRequestId: number
   locales: LocaleOption[]
   currentLocale: string
+  loading: boolean
+  errorMessage: string
 }
 
 /* global siteConfig, siteLangs */
 
 export default defineComponent({
+  components: {
+    AsyncState
+  },
   data (): AdminPagesVisualizeState {
     return {
       graphMode: 'htree',
@@ -102,7 +137,9 @@ export default defineComponent({
       pages: [],
       pageLoadRequestId: 0,
       locales: siteLangs,
-      currentLocale: siteConfig.lang
+      currentLocale: siteConfig.lang,
+      loading: false,
+      errorMessage: ''
     }
   },
   watch: {
@@ -121,6 +158,9 @@ export default defineComponent({
       const requestId = ++this.pageLoadRequestId
       const locale = this.currentLocale
 
+      this.loading = true
+      this.errorMessage = ''
+      this.pages = []
       wikiStore.startLoading('admin-pages-refresh')
       try {
         const pages = await fetchPageLinks(
@@ -136,12 +176,22 @@ export default defineComponent({
         if (requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
           return
         }
+        this.errorMessage = getErrorMessage(err) || 'Unable to load pages.'
         wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-pages-refresh')
+        if (requestId === this.pageLoadRequestId && locale === this.currentLocale) {
+          this.loading = false
+        }
       }
     },
-    goToPage (event: MouseEvent, node: d3.HierarchyNode<PageGraphNode>): void {
+    goToPage (event: MouseEvent | KeyboardEvent, node: d3.HierarchyNode<PageGraphNode>): void {
+      if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') {
+        return
+      }
+      if (event instanceof KeyboardEvent) {
+        event.preventDefault()
+      }
       const id = node.data.id
       if (id) {
         if (event.ctrlKey || event.metaKey) {
@@ -251,8 +301,8 @@ export default defineComponent({
         })
 
       g.append('g')
-        .attr('font-family', 'sans-serif')
-        .attr('font-size', 10)
+        .attr('font-family', 'inherit')
+        .attr('font-size', 'var(--wiki-font-size-label, 12px)')
         .selectAll<SVGGElement, RelationPointNode>('g')
         .data(root.descendants())
         .join('g')
@@ -264,20 +314,29 @@ export default defineComponent({
         .attr('transform', node => node.x >= Math.PI ? 'rotate(180)' : null)
         .attr('fill', 'rgb(var(--v-theme-on-background))')
         .attr('cursor', 'pointer')
+        .attr('tabindex', 0)
+        .attr('role', 'link')
+        .attr('aria-label', node => `Open ${node.data.title}, ${node.data.path}`)
         .text(node => node.data.title)
         .each(function (node: RelationPointNode) {
           node.text = this
         })
         .on('mouseover', overed)
+        .on('focus', overed)
         .on('mouseout', outed)
+        .on('blur', outed)
         .on('click', (event: MouseEvent, node: RelationPointNode) => this.goToPage(event, node))
+        .on('keydown', (event: KeyboardEvent, node: RelationPointNode) => this.goToPage(event, node))
         .call(text => text.append('title').text(node => `${node.data.path}
           ${node.outgoing.length} outgoing
           ${node.incoming.length} incoming`))
         .clone(true).lower()
+        .attr('aria-hidden', 'true')
+        .attr('tabindex', -1)
+        .attr('pointer-events', 'none')
         .attr('stroke', 'rgb(var(--v-theme-background))')
 
-      function overed (this: SVGTextElement, _event: MouseEvent, node: RelationPointNode): void {
+      function overed (this: SVGTextElement, _event: Event, node: RelationPointNode): void {
         link.style('mix-blend-mode', null)
         d3.select<SVGTextElement, RelationPointNode>(this).attr('font-weight', 'bold')
         d3.selectAll<SVGPathElement, RelationLink>(
@@ -294,7 +353,7 @@ export default defineComponent({
         ).attr('fill', 'rgb(var(--v-theme-accent))').attr('font-weight', 'bold')
       }
 
-      function outed (this: SVGTextElement, _event: MouseEvent, node: RelationPointNode): void {
+      function outed (this: SVGTextElement, _event: Event, node: RelationPointNode): void {
         d3.select<SVGTextElement, RelationPointNode>(this).attr('font-weight', null)
         d3.selectAll<SVGPathElement, RelationLink>(
           node.incoming.flatMap(relationship => relationship.path ? [relationship.path] : [])
@@ -337,12 +396,13 @@ export default defineComponent({
 
       const svg = d3.create('svg')
         .attr('viewBox', [0, 0, this.width, x1 - x0 + root.dx * 2])
+      svg.append('title').text('Interactive page hierarchy')
+      svg.append('desc').text('Focus a page label to highlight related links. Press Enter or Space to open the page.')
 
       // this extra level is necessary because the element that we
       // apply the zoom tranform to must be above the element where
       // we apply the translation (`g`), or else zoom is wonky
       const gZoom = svg.append('g')
-
       const zoom = d3.zoom<SVGSVGElement, undefined>()
         .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, undefined>) => {
           gZoom.attr('transform', event.transform.toString())
@@ -350,13 +410,13 @@ export default defineComponent({
       svg.call(zoom)
 
       const g = gZoom.append('g')
-        .attr('font-family', 'sans-serif')
-        .attr('font-size', 10)
+        .attr('font-family', 'inherit')
+        .attr('font-size', 'var(--wiki-font-size-label, 12px)')
         .attr('transform', `translate(${root.dy / 3},${root.dx - x0})`)
 
       g.append('g')
         .attr('fill', 'none')
-        .attr('stroke', this.$vuetify.theme.current.dark ? '#999' : '#555')
+        .attr('stroke', 'rgb(var(--v-theme-border))')
         .attr('stroke-opacity', 0.4)
         .attr('stroke-width', 1.5)
         .selectAll<SVGPathElement, d3.HierarchyPointLink<PageGraphNode>>('path')
@@ -376,22 +436,26 @@ export default defineComponent({
         .data(root.descendants())
         .join('g')
         .attr('transform', descendant => `translate(${descendant.y},${descendant.x})`)
-
-      node.append('circle')
-        .attr('fill', descendant => descendant.children ? '#555' : '#999')
-        .attr('r', 2.5)
-
       node.append('text')
         .attr('dy', '0.31em')
         .attr('x', descendant => descendant.children ? -6 : 6)
         .attr('text-anchor', descendant => descendant.children ? 'end' : 'start')
-        .attr('fill', this.$vuetify.theme.current.dark ? 'white' : '')
+        .attr('fill', 'rgb(var(--v-theme-on-background))')
         .attr('cursor', 'pointer')
+        .attr('tabindex', 0)
+        .attr('role', 'link')
+        .attr('aria-label', descendant => `Open ${descendant.data.title}, ${descendant.data.path}`)
         .text(descendant => descendant.data.title)
         .on('click', (event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
           this.goToPage(event, descendant))
+        .on('keydown', (event: KeyboardEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
+          this.goToPage(event, descendant))
+        .call(text => text.append('title').text(descendant => descendant.data.path))
         .clone(true).lower()
-        .attr('stroke', this.$vuetify.theme.current.dark ? '#222' : 'white')
+        .attr('aria-hidden', 'true')
+        .attr('tabindex', -1)
+        .attr('pointer-events', 'none')
+        .attr('stroke', 'rgb(var(--v-theme-background))')
 
       const svgNode = svg.node()
       if (svgNode) {
@@ -413,10 +477,12 @@ export default defineComponent({
         .sort((a, b) => d3.ascending(a.data.title, b.data.title)))
 
       const svg = d3.create('svg')
-        .style('font', '10px sans-serif')
+        .style('font-family', 'inherit')
+        .style('font-size', 'var(--wiki-font-size-label, 12px)')
+      svg.append('title').text('Interactive radial page hierarchy')
+      svg.append('desc').text('Focus a page label to highlight related links. Press Enter or Space to open the page.')
 
       const g = svg.append('g')
-
       const zoom = d3.zoom<SVGSVGElement, undefined>()
         .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, undefined>) => {
           g.attr('transform', event.transform.toString())
@@ -425,7 +491,7 @@ export default defineComponent({
 
       g.append('g')
         .attr('fill', 'none')
-        .attr('stroke', this.$vuetify.theme.current.dark ? 'white' : '#555')
+        .attr('stroke', 'rgb(var(--v-theme-border))')
         .attr('stroke-opacity', 0.4)
         .attr('stroke-width', 1.5)
         .selectAll<SVGPathElement, d3.HierarchyPointLink<PageGraphNode>>('path')
@@ -450,23 +516,30 @@ export default defineComponent({
         `)
 
       node.append('circle')
-        .attr('fill', descendant => descendant.children ? '#555' : '#999')
+        .attr('fill', descendant => descendant.children ? 'rgb(var(--v-theme-primary))' : 'rgb(var(--v-theme-accent))')
         .attr('r', 2.5)
 
       node.append('text')
         .attr('dy', '0.31em')
-
         .attr('x', descendant => descendant.x < Math.PI === !descendant.children ? 6 : -6)
         .attr('text-anchor', descendant => descendant.x < Math.PI === !descendant.children ? 'start' : 'end')
         .attr('transform', descendant => descendant.x >= Math.PI ? 'rotate(180)' : null)
-
-        .attr('fill', this.$vuetify.theme.current.dark ? 'white' : '')
+        .attr('fill', 'rgb(var(--v-theme-on-background))')
         .attr('cursor', 'pointer')
+        .attr('tabindex', 0)
+        .attr('role', 'link')
+        .attr('aria-label', descendant => `Open ${descendant.data.title}, ${descendant.data.path}`)
         .text(descendant => descendant.data.title)
         .on('click', (event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
           this.goToPage(event, descendant))
+        .on('keydown', (event: KeyboardEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
+          this.goToPage(event, descendant))
+        .call(text => text.append('title').text(descendant => descendant.data.path))
         .clone(true).lower()
-        .attr('stroke', this.$vuetify.theme.current.dark ? '#222' : 'white')
+        .attr('aria-hidden', 'true')
+        .attr('tabindex', -1)
+        .attr('pointer-events', 'none')
+        .attr('stroke', 'rgb(var(--v-theme-background))')
 
       const svgNode = svg.node()
       if (svgNode) {
@@ -508,14 +581,49 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+.admin-pages-visualize-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.admin-pages-visualize-controls .v-select {
+  flex: 0 1 14rem;
+  min-width: 10rem;
+}
+
 .admin-pages-visualize-svg {
+  display: flex;
+  min-height: min(65dvh, 48rem);
   text-align: center;
-  // Dynamic viewport - header - title section - footer - content padding
-  height: calc(100dvh - 64px - 92px - 32px - 16px);
+  overflow: hidden;
 
   > svg {
     height: 100%;
+    min-height: inherit;
     width: 100%;
+  }
+}
+
+@media (max-width: 599.98px) {
+  .admin-pages-visualize-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-pages-visualize-controls .v-select,
+  .admin-pages-visualize-controls .v-btn-toggle {
+    width: 100%;
+  }
+
+  .admin-pages-visualize-controls .v-btn-toggle {
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+
+  .admin-pages-visualize-controls .v-btn {
+    flex: 1 0 auto;
   }
 }
 </style>

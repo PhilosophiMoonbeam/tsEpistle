@@ -40,9 +40,13 @@
               :tasks="tasksForRun(message.runId)"
             />
             <AgentMarkdown
-              :content="message.content || (message.status === 'streaming' ? '…' : '')"
+              v-if="message.content || message.status === 'streaming'"
+              :content="message.content || '…'"
               :citations="message.citations"
             />
+            <p v-else class="agent-message__terminal-copy">
+              {{ message.status === 'cancelled' ? 'Response stopped. You can ask again from the composer.' : 'Wiki Agent could not complete this response. You can try again from the composer.' }}
+            </p>
             <aside v-if="message.citations.length" class="agent-sources mt-3" aria-label="Sources">
               <div class="agent-sources__heading">
                 <v-icon icon="mdi-book-open-page-variant-outline" size="18" />
@@ -147,7 +151,7 @@
       </figure>
     </section>
     <div v-if="thread.suggestions.length" class="d-flex flex-wrap ga-2 mt-4" aria-label="Follow-up suggestions">
-      <v-btn v-for="suggestion in thread.suggestions" :key="suggestion.id" variant="tonal" size="small" @click="$emit('suggest', suggestion.prompt)">{{ suggestion.label }}</v-btn>
+      <v-btn v-for="suggestion in thread.suggestions" :key="suggestion.id" variant="tonal" size="small" :disabled="canSubmit === false" @click="$emit('suggest', suggestion.prompt)">{{ suggestion.label }}</v-btn>
     </div>
   </section>
 </template>
@@ -166,8 +170,7 @@ import {
   type AgentProposalTool
 } from './agent-thread-presentation.ts'
 
-const props = defineProps<{ thread: AgentThreadState; connection: string; decidingApprovalId?: string | null }>()
-defineEmits<{ suggest: [prompt: string]; decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string] }>()
+const props = defineProps<{ thread: AgentThreadState; connection: string; decidingApprovalId?: string | null; canSubmit?: boolean }>()
 
 const groupedTools = computed(() => groupAgentToolsByRun(props.thread.tools, props.thread.proposals))
 const activityForRun = (runId: string | null): readonly AgentToolCallView[] => runId ? groupedTools.value.get(runId)?.activity ?? [] : []
@@ -177,10 +180,10 @@ const tasksForRun = (runId: string | null): readonly AgentTaskView[] => runId ? 
 const activityLabel = agentActivityLabel
 const citationGroups = groupAgentCitations
 const messageStatusLabels: Record<Exclude<AgentMessageStatus, 'complete'>, string> = {
-  pending: 'Preparing',
-  streaming: 'Responding',
-  failed: 'Failed',
-  cancelled: 'Cancelled'
+  pending: 'Preparing a response',
+  streaming: 'Preparing a response',
+  failed: 'Response failed',
+  cancelled: 'Response stopped'
 }
 const messageStatusLabel = (role: AgentMessageRole, status: AgentMessageStatus): string =>
   status === 'complete' ? '' : role === 'user' && status === 'pending' ? 'Sending' : messageStatusLabels[status]
@@ -193,13 +196,14 @@ const liveSummary = computed(() => {
   const run = props.thread.session.currentRun
   if (props.connection === 'reconnecting') return 'Connection interrupted. Reconnecting.'
   if (!run) return 'Agent is ready.'
-  if (run.status === 'running') {
-    const tasks = tasksForRun(run.id)
-    const finished = tasks.filter(task => task.status === 'blocked' || task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled').length
-    return tasks.length === 0 ? 'Agent response is in progress.' : `Agent response is in progress. ${finished} of ${tasks.length} research tasks finished.`
-  }
-  if (run.status === 'awaiting_approval') return 'An action is awaiting approval.'
-  return `Agent run ${run.status.replace('_', ' ')}.`
+  if (run.status === 'queued') return 'Preparing a response.'
+  if (run.status === 'running') return 'Preparing a response.'
+  if (run.status === 'awaiting_approval') return 'Review needed before the response can continue.'
+  if (run.status === 'succeeded') return 'Response complete.'
+  if (run.status === 'partial') return 'Response complete with some items needing attention.'
+  if (run.status === 'cancelled') return 'Response stopped.'
+  if (run.status === 'failed') return 'Response failed.'
+  return 'Response needs recovery.'
 })
 </script>
 
@@ -210,7 +214,7 @@ const liveSummary = computed(() => {
   --agent-thread-surface: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%);
   --agent-thread-user-surface: color-mix(in srgb, rgb(var(--v-theme-surface)) 84%, rgb(var(--v-theme-primary)) 16%);
   color: rgb(var(--v-theme-on-surface));
-  font-family: 'WikiAgentSans', 'Roboto', system-ui, sans-serif;
+  font-family: inherit;
   margin-inline: auto;
   max-width: 52rem;
   min-height: 12rem;
@@ -332,6 +336,28 @@ const liveSummary = computed(() => {
   line-height: 1.3;
   margin-block: 1.25rem .5rem;
 }
+.agent-message__terminal-copy { margin: 0; }
+.agent-message__surface :deep(table) {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  padding-block-end: .25rem;
+  white-space: normal;
+}
+.agent-message__surface :deep(th),
+.agent-message__surface :deep(td) {
+  border: 1px solid var(--agent-thread-border);
+  min-width: 7rem;
+  padding: .4rem .55rem;
+  text-align: start;
+  vertical-align: top;
+}
+.agent-message__surface :deep(th) { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent); }
+.agent-message__surface :deep(h1) { font-size: 1.35rem; }
+.agent-message__surface :deep(h2) { font-size: 1.2rem; }
+.agent-message__surface :deep(h3) { font-size: 1.08rem; }
+.agent-message__surface :deep(h4) { font-size: 1rem; }
 .agent-sources {
   border-block-start: 1px solid var(--agent-thread-divider);
   padding-block-start: .875rem;

@@ -8,6 +8,7 @@ type ExportStatus = { status: 'running'; progress: number } | { status: 'success
 type ExportState = {
   entities: string[]
   filePath: string
+  isConfirming: boolean
   isLoading: boolean
   isSuccess: boolean
   isFailed: boolean
@@ -21,6 +22,9 @@ type ExportState = {
 }
 
 type ExportVm = ExportState & {
+  readonly isExportValid: boolean
+  requestExport: () => void
+  confirmExport: () => Promise<void>
   clearScheduledWork: () => void
   checkProgress: (generation?: number) => Promise<void>
   startExport: () => Promise<void>
@@ -29,7 +33,12 @@ type ExportVm = ExportState & {
 type ExportComponentOptions = {
   data: () => ExportState
   beforeUnmount: (this: ExportVm) => void
+  computed: {
+    isExportValid: (this: ExportVm) => boolean
+  }
   methods: {
+    requestExport: (this: ExportVm) => void
+    confirmExport: (this: ExportVm) => Promise<void>
     clearScheduledWork: (this: ExportVm) => void
     checkProgress: (this: ExportVm, generation?: number) => Promise<void>
     startExport: (this: ExportVm) => Promise<void>
@@ -39,7 +48,6 @@ type ExportComponentOptions = {
 type ExportDependencies = {
   fetchStatus: () => Promise<ExportStatus>
   startExport: () => Promise<void>
-  showError: (error: unknown) => void
 }
 
 const componentPath = path.join(process.cwd(), 'client/components/admin/admin-utilities-export.vue')
@@ -57,17 +65,15 @@ const loadComponent = (dependencies: ExportDependencies): ExportComponentOptions
     'SelfBuildingSquareSpinner',
     'fetchSystemExportStatus',
     'startSystemExport',
-    'wikiStore',
     `${executableScript}\nreturn exportComponent`
   ) as (
     defineComponent: (options: ExportComponentOptions) => ExportComponentOptions,
     spinner: object,
     fetchStatus: ExportDependencies['fetchStatus'],
-    startExport: ExportDependencies['startExport'],
-    wikiStore: { showError: ExportDependencies['showError'] }
+    startExport: ExportDependencies['startExport']
   ) => ExportComponentOptions
 
-  return evaluate(options => options, {}, dependencies.fetchStatus, dependencies.startExport, { showError: dependencies.showError })
+  return evaluate(options => options, {}, dependencies.fetchStatus, dependencies.startExport)
 }
 
 const settlePromises = async (): Promise<void> => {
@@ -126,6 +132,12 @@ const createVm = (scheduler: Scheduler, dependencies: ExportDependencies): { vm:
   vi.stubGlobal('window', scheduler.window)
   const options = loadComponent(dependencies)
   const vm = options.data() as ExportVm
+  Object.defineProperty(vm, 'isExportValid', {
+    configurable: true,
+    get: options.computed.isExportValid.bind(vm)
+  })
+  vm.requestExport = options.methods.requestExport.bind(vm)
+  vm.confirmExport = options.methods.confirmExport.bind(vm)
   vm.clearScheduledWork = options.methods.clearScheduledWork.bind(vm)
   vm.checkProgress = options.methods.checkProgress.bind(vm)
   vm.startExport = options.methods.startExport.bind(vm)
@@ -133,6 +145,10 @@ const createVm = (scheduler: Scheduler, dependencies: ExportDependencies): { vm:
     vm,
     unmount: () => options.beforeUnmount.call(vm)
   }
+}
+const selectValidExport = (vm: ExportVm): void => {
+  vm.entities = ['pages']
+  vm.filePath = ' ./data/export '
 }
 
 const visibleState = (vm: ExportVm) => ({
@@ -157,18 +173,20 @@ afterEach(() => {
 
 describe('admin utilities export lifecycle ownership', () => {
   it('keeps the polling timer callback bound to the typed component instance', () => {
-    expect(script).toMatch(
-      /async\s+checkProgress\s*\(\s*this\s*:\s*ExportVm\s*,\s*generation\s*=\s*this\.requestGeneration\s*\)/
-    )
+    expect(script).toMatch(/async\s+checkProgress\s*\(\s*this\s*:\s*ExportVm\s*,\s*generation\s*=\s*this\.requestGeneration\s*\)/)
   })
 
-  it('prevents the delayed export request and subsequent state writes when unmounted before start', async () => {
+  it('prevents a confirmed delayed export request and subsequent state writes when unmounted before start', async () => {
     const scheduler = new Scheduler()
     const startExport = vi.fn(async () => undefined)
     const fetchStatus = vi.fn(async (): Promise<ExportStatus> => ({ status: 'success' }))
-    const { vm, unmount } = createVm(scheduler, { startExport, fetchStatus, showError: vi.fn() })
+    const { vm, unmount } = createVm(scheduler, { startExport, fetchStatus })
 
-    await vm.startExport()
+    selectValidExport(vm)
+    vm.requestExport()
+    expect(vm.isConfirming).toBe(true)
+    await vm.confirmExport()
+    expect(vm.isConfirming).toBe(false)
     const stateAtUnmount = visibleState(vm)
     expect(scheduler.timeouts.size).toBe(1)
 
@@ -190,10 +208,10 @@ describe('admin utilities export lifecycle ownership', () => {
     const fetchStatus = vi.fn(async (): Promise<ExportStatus> => ({ status: 'running', progress: 37 }))
     const { vm, unmount } = createVm(scheduler, {
       startExport: vi.fn(async () => undefined),
-      fetchStatus,
-      showError: vi.fn()
+      fetchStatus
     })
 
+    selectValidExport(vm)
     await vm.startExport()
     await scheduler.runNextTimeout()
     expect(fetchStatus).toHaveBeenCalledTimes(1)
@@ -215,10 +233,10 @@ describe('admin utilities export lifecycle ownership', () => {
     const fetchStatus = vi.fn(async (): Promise<ExportStatus> => ({ status: 'running', progress: 41 }))
     const { vm, unmount } = createVm(scheduler, {
       startExport: vi.fn(async () => undefined),
-      fetchStatus,
-      showError: vi.fn()
+      fetchStatus
     })
 
+    selectValidExport(vm)
     await vm.startExport()
     await scheduler.runNextTimeout()
     await scheduler.runNextAnimationFrame()
@@ -244,10 +262,10 @@ describe('admin utilities export lifecycle ownership', () => {
     })
     const { vm, unmount } = createVm(scheduler, {
       startExport: vi.fn(async () => undefined),
-      fetchStatus,
-      showError: vi.fn()
+      fetchStatus
     })
 
+    selectValidExport(vm)
     await vm.startExport()
     await scheduler.runNextTimeout()
     await scheduler.runNextAnimationFrame()
@@ -272,14 +290,14 @@ describe('admin utilities export lifecycle ownership', () => {
     const fetchStatus = vi.fn(() => pendingStatus.promise)
     const { vm, unmount } = createVm(scheduler, {
       startExport: vi.fn(async () => undefined),
-      fetchStatus,
-      showError: vi.fn()
+      fetchStatus
     })
 
     const staleRequest = vm.checkProgress()
     await settlePromises()
     expect(fetchStatus).toHaveBeenCalledTimes(1)
 
+    selectValidExport(vm)
     await vm.startExport()
     const currentState = visibleState(vm)
     pendingStatus.resolve({ status: 'running', progress: 88 })

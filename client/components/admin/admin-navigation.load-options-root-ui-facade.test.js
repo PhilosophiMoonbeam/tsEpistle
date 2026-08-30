@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const sourcePath = path.join(__dirname, 'admin-navigation.vue')
 const source = fs.readFileSync(sourcePath, 'utf8')
 
-const extractMethod = (name) => {
+const extractMethod = name => {
   const marker = new RegExp(`    async ${name}\\s*\\([^)]*\\)`)
   const found = source.match(marker)
   expect(found).not.toBeNull()
@@ -30,6 +30,7 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
   const loadGroups = extractMethod('loadGroups')
   const loadNavigation = extractMethod('loadNavigation')
   const refresh = extractMethod('refresh')
+  const save = extractMethod('save')
 
   test('imports the typed wiki store and error helper used by loaders and refresh', () => {
     expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
@@ -70,31 +71,45 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
     }
   })
 
-  test('loadNavigation routes REST loading, state update, notification, and errors through the wiki store', () => {
+  test('loadNavigation routes REST loading, state snapshots, notification, and errors through the wiki store', () => {
+    expect(loadNavigation).toContain('this.initialLoading = true')
     expect(loadNavigation).toContain("wikiStore.startLoading('admin-navigation-refresh')")
     expect(loadNavigation).toContain("const navigation = await fetchNavigation(window.fetch.bind(window), 'Navigation response is invalid')")
     expect(loadNavigation).toContain('this.config = _.cloneDeep(navigation.config)')
     expect(loadNavigation).toContain('this.trees = _.cloneDeep(navigation.tree)')
+    expect(loadNavigation).toContain('this.persistedConfig = _.cloneDeep(this.config)')
+    expect(loadNavigation).toContain('this.persistedTrees = _.cloneDeep(this.trees)')
     expect(loadNavigation).toContain('this.current = createEmptyNavigationItem()')
+    expect(loadNavigation).toContain('this.loaded = true')
     expect(loadNavigation).toContain('if (notify)')
     expect(loadNavigation).toContain('wikiStore.showNotification({')
     expect(loadNavigation).toContain("message: 'Navigation has been refreshed.'")
     expect(loadNavigation).toContain("style: 'success'")
     expect(loadNavigation).toContain("icon: 'cached'")
     expect(loadNavigation).toContain('wikiStore.showError(err)')
-    expect(loadNavigation).toContain("wikiStore.stopLoading('admin-navigation-refresh')")
+    expect(loadNavigation).toMatch(/finally\s*\{[\s\S]*this\.initialLoading\s*=\s*false[\s\S]*wikiStore\.stopLoading\('admin-navigation-refresh'\)/)
     expect(loadNavigation).not.toContain('$store.commit')
   })
 
-  test('refresh delegates to REST load with notification', () => {
+  test('refresh confirms before discarding dirty state and delegates to REST load with notification', () => {
+    expect(refresh).toMatch(/if\s*\(\s*this\.dirty\s*&&\s*!window\.confirm\(['"]Discard unsaved navigation changes and refresh\?['"]\)\s*\)\s*return/)
     expect(refresh).toContain('await this.loadNavigation(true)')
     expect(refresh).not.toContain('this.$apollo.queries.trees.refetch')
   })
 
-  test('keeps broader navigation save and template out of this slice', () => {
-    expect(source).toContain("wikiStore.startLoading('admin-navigation-save')")
-    expect(source).toContain('wikiStore.showError(err)')
-    expect(source).toContain("wikiStore.stopLoading('admin-navigation-save')")
-    expect(source).toContain('v-btn.animated.fadeInDown(color=\'success\', variant="flat", @click=\'save\', size="large")')
+  test('save and Apply controls honor loaded, loading, saving, and dirty state', () => {
+    expect(save).toMatch(/if\s*\(\s*!this\.loaded\s*\|\|\s*this\.initialLoading\s*\|\|\s*this\.saving\s*\|\|\s*!this\.dirty\s*\)\s*return/)
+    expect(save).toMatch(
+      /this\.saving\s*=\s*true[\s\S]*wikiStore\.startLoading\('admin-navigation-save'\)[\s\S]*await\s+saveNavigation\(window\.fetch\.bind\(window\),\s*this\.trees,\s*this\.config\.mode,\s*this\.config\.expandParent\)/
+    )
+    expect(save).toMatch(
+      /this\.persistedConfig\s*=\s*_\.cloneDeep\(this\.config\)[\s\S]*this\.persistedTrees\s*=\s*_\.cloneDeep\(this\.trees\)[\s\S]*wikiStore\.showNotification\(/
+    )
+    expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\(err\)\s*\}/)
+    expect(save).toMatch(/finally\s*\{\s*this\.saving\s*=\s*false\s*wikiStore\.stopLoading\('admin-navigation-save'\)\s*\}/)
+
+    expect(source).toContain("v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes")
+    expect(source.match(/:disabled='!loaded \|\| initialLoading \|\| saving \|\| !dirty'/g)).toHaveLength(2)
+    expect(source.match(/@click='save'/g)).toHaveLength(2)
   })
 })

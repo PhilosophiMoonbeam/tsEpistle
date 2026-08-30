@@ -1,6 +1,6 @@
 <template>
-  <section class="agent-tasks" :aria-label="progressLabel" aria-live="polite">
-    <header class="agent-tasks__header">
+  <details class="agent-tasks" :open="!allTerminal">
+    <summary class="agent-tasks__header">
       <span class="agent-tasks__mark" aria-hidden="true">
         <v-icon icon="mdi-source-branch" size="18" />
       </span>
@@ -9,7 +9,8 @@
         <small>{{ progressLabel }}</small>
       </span>
       <span class="agent-tasks__count" aria-hidden="true">{{ terminalCount }}/{{ tasks.length }}</span>
-    </header>
+    </summary>
+    <div class="agent-tasks__live sr-only" role="status" aria-live="polite" aria-atomic="true">{{ liveSummary }}</div>
     <div
       class="agent-tasks__progress"
       role="progressbar"
@@ -18,7 +19,7 @@
       :aria-valuemax="tasks.length"
       :aria-label="progressLabel"
     >
-      <span :style="{ width: `${progressPercent}%` }" />
+      <span :class="{ 'agent-tasks__progress-fill--attention': attentionCount > 0 }" :style="{ width: `${progressPercent}%` }" />
     </div>
     <ol class="agent-tasks__list">
       <li v-for="task in tasks" :key="task.id" class="agent-tasks__item">
@@ -40,7 +41,7 @@
             <span>{{ evidenceLabel(task) }}</span>
           </small>
           <span v-if="task.sourceScope.length" class="agent-tasks__scopes" aria-label="Research scope">
-            <span v-for="scope in task.sourceScope" :key="scope">{{ scope }}</span>
+            <span v-for="scope in task.sourceScope" :key="scope" :title="scope">{{ scope }}</span>
           </span>
           <small v-if="task.status === 'failed' || task.status === 'blocked' || task.status === 'cancelled'" class="agent-tasks__note">
             {{ terminalNote(task) }}
@@ -48,7 +49,7 @@
         </span>
       </li>
     </ol>
-  </section>
+  </details>
 </template>
 
 <script setup lang="ts">
@@ -56,16 +57,23 @@ import { computed } from 'vue'
 import type { AgentTaskKind, AgentTaskView } from '../../../shared/agents/contracts.ts'
 
 const props = defineProps<{ tasks: readonly AgentTaskView[] }>()
-
 type DisplayTaskStatus = AgentTaskView['status'] | 'partial'
+const statusFor = (task: AgentTaskView): DisplayTaskStatus => task.status === 'completed' && task.outcome === 'partial' ? 'partial' : task.status
 const terminalStatuses: ReadonlySet<AgentTaskView['status']> = new Set(['blocked', 'completed', 'failed', 'cancelled'])
 const terminalCount = computed(() => props.tasks.filter(task => terminalStatuses.has(task.status)).length)
+const attentionCount = computed(() => props.tasks.filter(task => ['blocked', 'failed', 'cancelled'].includes(task.status) || (task.status === 'completed' && task.outcome === 'partial')).length)
+const allTerminal = computed(() => props.tasks.length > 0 && terminalCount.value === props.tasks.length)
 const progressPercent = computed(() => props.tasks.length === 0 ? 0 : Math.round((terminalCount.value / props.tasks.length) * 100))
-const progressLabel = computed(() => terminalCount.value === props.tasks.length
-  ? `${props.tasks.length} research ${props.tasks.length === 1 ? 'task' : 'tasks'} finished`
-  : `${terminalCount.value} of ${props.tasks.length} research tasks finished`)
+const progressLabel = computed(() => {
+  const complete = props.tasks.filter(task => statusFor(task) === 'completed').length
+  return allTerminal.value
+    ? `${terminalCount.value} resolved · ${complete} complete${attentionCount.value ? ` · ${attentionCount.value} need attention` : ''}`
+    : `${terminalCount.value} of ${props.tasks.length} research tasks resolved`
+})
+const liveSummary = computed(() => attentionCount.value
+  ? `${progressLabel.value}. Some research needs attention.`
+  : progressLabel.value)
 
-const statusFor = (task: AgentTaskView): DisplayTaskStatus => task.status === 'completed' && task.outcome === 'partial' ? 'partial' : task.status
 const statusLabels: Readonly<Record<DisplayTaskStatus, string>> = {
   pending: 'Queued',
   running: 'Researching',
@@ -117,6 +125,11 @@ const terminalNote = (task: AgentTaskView): string => {
   gap: .65rem;
   padding: .75rem .85rem .65rem;
 }
+.agent-tasks__header { cursor: pointer; list-style: none; }
+.agent-tasks__header::-webkit-details-marker { display: none; }
+.agent-tasks__header::after { content: '›'; font-size: 1.25rem; margin-inline-start: .25rem; transform: rotate(90deg); transition: transform .15s ease; }
+.agent-tasks[open] .agent-tasks__header::after { transform: rotate(270deg); }
+.agent-tasks__header:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: -2px; }
 .agent-tasks__mark {
   align-items: center;
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 14%, transparent);
@@ -156,6 +169,7 @@ const terminalNote = (task: AgentTaskView): string => {
   height: 100%;
   transition: width 180ms ease-out;
 }
+.agent-tasks__progress-fill--attention { background: rgb(var(--v-theme-warning)) !important; }
 .agent-tasks__list { list-style: none; margin: 0; padding: 0; }
 .agent-tasks__item {
   align-items: flex-start;
@@ -187,7 +201,6 @@ const terminalNote = (task: AgentTaskView): string => {
 .agent-tasks__status--blocked { color: rgb(var(--v-theme-warning)); }
 .agent-tasks__status--failed { color: rgb(var(--v-theme-error)); }
 .agent-tasks__meta { display: flex; flex-wrap: wrap; font-size: .72rem; gap: .3rem; }
-.agent-tasks__scopes { display: flex; flex-wrap: wrap; gap: .3rem; }
 .agent-tasks__scopes > span {
   background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 7%, transparent);
   border-radius: .35rem;
@@ -195,12 +208,19 @@ const terminalNote = (task: AgentTaskView): string => {
   font-size: .67rem;
   line-height: 1.3;
   max-width: 100%;
-  overflow: hidden;
+  overflow-wrap: anywhere;
   padding: .16rem .38rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .agent-tasks__note { font-size: .72rem; line-height: 1.35; }
+.agent-tasks__live {
+  border: 0;
+  clip: rect(0, 0, 0, 0);
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  position: absolute;
+  width: 1px;
+}
 @media (prefers-reduced-motion: reduce) {
   .agent-tasks__progress > span { transition: none; }
 }

@@ -1,6 +1,8 @@
 @use "sass:map";
 
 
+// These thresholds mirror Vuetify's display defaults; keep Sass media ranges
+// and `$vuetify.display` queries on the same boundaries.
 $grid-breakpoints: (
   'xs': 0,
   'sm': 600px,

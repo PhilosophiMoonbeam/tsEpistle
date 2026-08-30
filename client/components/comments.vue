@@ -13,6 +13,7 @@
       bg-color='surface'
       v-if='permissions.write'
       :aria-label='$t(`common:comments.fieldContent`)'
+      :disabled='isPosting'
     )
     v-row.mt-2(density="compact", v-if='!isAuthenticated && permissions.write')
       v-col(cols='12', lg='6')
@@ -26,6 +27,7 @@
           autocomplete='name'
           v-model='guestName'
           :aria-label='$t(`common:comments.fieldName`)'
+          :disabled='isPosting'
         )
       v-col(cols='12', lg='6')
         v-text-field(
@@ -39,6 +41,7 @@
           autocomplete='email'
           v-model='guestEmail'
           :aria-label='$t(`common:comments.fieldEmail`)'
+          :disabled='isPosting'
         )
     .comments-actions.d-flex.align-center.pt-3(v-if='permissions.write')
       v-icon.mr-1(color='primary') mdi-language-markdown-outline
@@ -52,7 +55,9 @@
         @click='postComment'
         variant="flat"
         :aria-label='$t(`common:comments.postComment`)'
-        )
+        :loading='isPosting'
+        :disabled='isPosting'
+      )
         v-icon(start) mdi-comment
         span.text-none {{$t('common:comments.postComment')}}
     v-divider.mt-3(v-if='permissions.write')
@@ -65,10 +70,18 @@
         :aria-label='$t(`common:comments.loading`)'
       )
       .text-body-small.text-medium-emphasis.pl-3: em {{$t('common:comments.loading')}}
+    async-state(
+      v-else-if='fetchError'
+      state='error'
+      title='Comments could not be loaded'
+      :message='fetchError'
+      retry-label='Try again'
+      @retry='fetch(false)'
+    )
     v-timeline(
       density="compact"
       v-else-if='comments && comments.length > 0'
-      )
+    )
       v-timeline-item.comments-post(
         dot-color="primary"
         size="large"
@@ -83,8 +96,20 @@
         v-card.comments-post-card(variant='flat')
           v-card-text
             .comments-post-actions(v-if='permissions.manage && !isBusy && commentEditId === 0')
-              v-icon.mr-3(size="small", @click='editComment(cm)') mdi-pencil
-              v-icon(size="small", @click='deleteCommentConfirm(cm)') mdi-delete
+              v-btn(
+                icon
+                size='small'
+                variant='text'
+                :aria-label='`Edit comment by ${cm.authorName}`'
+                @click='editComment(cm)'
+              ): v-icon(size="small") mdi-pencil
+              v-btn(
+                icon
+                size='small'
+                variant='text'
+                :aria-label='`Delete comment by ${cm.authorName}`'
+                @click='deleteCommentConfirm(cm)'
+              ): v-icon(size="small") mdi-delete
             .comments-post-name.text-body-small: strong {{cm.authorName}}
             .comments-post-date.text-label-small.text-grey {{ $helpers.formatMoment(cm.createdAt, 'from') }} #[em(v-if='cm.createdAt !== cm.updatedAt') - {{$t('common:comments.modified', { reldate: $helpers.formatMoment(cm.updatedAt, 'from') })}}]
             .comments-post-content.mt-3(v-if='commentEditId !== cm.id', v-html='cm.render')
@@ -97,6 +122,7 @@
                 rows='3'
                 hide-details
                 v-model='commentEditContent'
+                :disabled='isBusy'
                 color="primary"
                 bg-color='surface'
               )
@@ -106,14 +132,17 @@
                   color="primary"
                   @click='editCommentCancel'
                   variant="outlined"
-                  )
+                  :disabled='isBusy'
+                )
                   v-icon(start) mdi-close
                   span.text-none {{$t('common:actions.cancel')}}
                 v-btn(
                   color="primary"
                   @click='updateComment'
                   variant="flat"
-                  )
+                  :loading='isBusy'
+                  :disabled='isBusy'
+                )
                   v-icon(start) mdi-comment
                   span.text-none {{$t('common:comments.updateComment')}}
     .comments-empty.pt-5.text-center.text-body-medium.text-medium-emphasis(v-else-if='permissions.write') {{$t('common:comments.beFirst')}}
@@ -139,7 +168,7 @@ import type { CommentRow } from '../helpers/comments-api'
 import { wikiStore } from '@/store/index.ts'
 import validateValues from '../../shared/validation'
 import { getErrorMessage, showNotification } from '../helpers/root-ui-store'
-
+import AsyncState from '@/components/common/async-state.vue'
 type CommentWithInitials = CommentRow & {
   initials: string
 }
@@ -173,6 +202,9 @@ type CommentScrollOptions = {
 }
 
 export default defineComponent({
+  components: {
+    AsyncState
+  },
   setup () {
     return {
       goTo: useGoTo()
@@ -183,6 +215,8 @@ export default defineComponent({
       newcomment: '',
       isLoading: true,
       hasLoadedOnce: false,
+      fetchError: '',
+      isPosting: false,
       comments: [] as CommentWithInitials[],
       guestName: '',
       guestEmail: '',
@@ -212,6 +246,7 @@ export default defineComponent({
     },
     async fetch (silent = false) {
       this.isLoading = true
+      this.fetchError = ''
       try {
         const comments = await fetchComments(
           window.fetch.bind(window),
@@ -228,21 +263,24 @@ export default defineComponent({
         })
       } catch (err) {
         console.warn(err)
+        this.fetchError = getErrorMessage(err)
         if (!silent) {
           showNotification(wikiStore, {
             style: 'red',
-            message: getErrorMessage(err),
+            message: this.fetchError,
             icon: 'alert'
           })
         }
+      } finally {
+        this.isLoading = false
+        this.hasLoadedOnce = true
       }
-      this.isLoading = false
-      this.hasLoadedOnce = true
     },
     /**
      * Post New Comment
      */
     async postComment () {
+      if (this.isPosting) return
       const rules: CommentValidationRules = {
         comment: {
           presence: {
@@ -285,6 +323,7 @@ export default defineComponent({
         return
       }
 
+      this.isPosting = true
       try {
         const response = await createComment(window.fetch.bind(window), {
           pageId: this.pageId,
@@ -309,6 +348,8 @@ export default defineComponent({
           message: getErrorMessage(err),
           icon: 'alert'
         })
+      } finally {
+        this.isPosting = false
       }
     },
     /**
@@ -320,6 +361,7 @@ export default defineComponent({
       try {
         const comment = await fetchComment(window.fetch.bind(window), cm.id)
         this.commentEditContent = comment.content
+        this.commentEditId = cm.id
       } catch (err) {
         console.warn(err)
         wikiStore.showNotification({
@@ -327,10 +369,10 @@ export default defineComponent({
           message: getErrorMessage(err),
           icon: 'alert'
         })
+      } finally {
+        this.isBusy = false
+        wikiStore.stopLoading('comments-edit')
       }
-      this.commentEditId = cm.id
-      this.isBusy = false
-      wikiStore.stopLoading('comments-edit')
     },
     /**
      * Cancel Comment Edit
@@ -439,26 +481,27 @@ export default defineComponent({
 
   &-card {
     border: 1px solid rgba(var(--v-border-color), .1);
-    border-radius: 14px !important;
+    border-radius: var(--wiki-panel-radius) !important;
     background: color-mix(in srgb, rgb(var(--v-theme-surface)) 98%, rgb(var(--v-theme-background)));
   }
 
   &-actions {
     position: absolute;
     top: 16px;
-    right: 16px;
+    inset-inline-end: 16px;
     display: flex;
     gap: 4px;
     padding: 5px;
     border: 1px solid rgba(var(--v-border-color), .1);
-    border-radius: 9px;
+    border-radius: var(--wiki-control-radius);
     background: rgb(var(--v-theme-surface));
     opacity: 0;
     transition: opacity .18s ease;
 
-    .v-icon {
+    .v-btn {
+      min-width: 44px;
+      min-height: 44px;
       color: rgb(var(--v-theme-primary));
-      cursor: pointer;
     }
   }
 
@@ -474,6 +517,7 @@ export default defineComponent({
   }
 
   &-content {
+    min-width: 0;
     color: rgb(var(--v-theme-on-surface));
     line-height: 1.65;
 
@@ -497,14 +541,21 @@ export default defineComponent({
       box-shadow: none;
     }
 
+    pre {
+      max-width: 100%;
+      overflow: auto;
+      margin-top: 1rem;
+    }
+
     pre > code {
       display: block;
-      width: 100%;
-      margin-top: 1rem;
+      width: max-content;
+      min-width: 100%;
+      margin-top: 0;
       padding: 14px;
-      border-radius: 10px;
-      background: #111827;
-      color: #fff;
+      border-radius: var(--wiki-control-radius);
+      background: rgb(var(--v-theme-background));
+      color: rgb(var(--v-theme-on-background));
       font-family: 'Roboto Mono', monospace;
       font-size: .85rem;
       font-weight: 400;
@@ -518,7 +569,7 @@ export default defineComponent({
 
 @media (max-width: 599.98px) {
   .comments-posting-as {
-    margin-left: auto;
+    margin-inline-start: auto;
   }
 
   .comments-submit {
@@ -528,7 +579,8 @@ export default defineComponent({
   .comments-post-actions {
     position: static;
     width: fit-content;
-    margin: 0 0 10px auto;
+    margin: 0 0 10px;
+    margin-inline-start: auto;
     opacity: 1;
   }
 }

@@ -2,53 +2,23 @@
   .editor-code
     .editor-code-main
       .editor-code-sidebar
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
-          template(v-slot:activator='{ props }')
-            v-btn.animated.fadeInLeft(icon, rounded='0', v-bind='props', disabled).mx-0
-              v-icon mdi-link-plus
-          span {{$t('editor:markup.insertLink')}}
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, rounded='0', v-bind='props', @click='toggleModal(`editorModalMedia`)').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, rounded='0', v-bind='props', aria-label='Insert assets', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
               v-icon(:color='activeModal === `editorModalMedia` ? `teal` : ``') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p2s(icon, rounded='0', v-bind='props', @click='toggleModal(`editorModalBlocks`)', disabled).mx-0
-              v-icon(:color='activeModal === `editorModalBlocks` ? `teal` : ``') mdi-view-dashboard-outline
-          span {{$t('editor:markup.insertBlock')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, rounded='0', v-bind='props', disabled).mx-0
-              v-icon mdi-code-braces
-          span {{$t('editor:markup.insertCodeBlock')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, rounded='0', v-bind='props', disabled).mx-0
-              v-icon mdi-library-video
-          span {{$t('editor:markup.insertVideoAudio')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, rounded='0', v-bind='props', disabled).mx-0
-              v-icon mdi-chart-multiline
-          span {{$t('editor:markup.insertDiagram')}}
-        v-tooltip(v-if='$vuetify.display.mdAndUp', location="right", color='teal')
-          template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p6s(icon, rounded='0', v-bind='props', disabled).mx-0
-              v-icon mdi-function-variant
-          span {{$t('editor:markup.insertMathExpression')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right", color='teal')
             template(v-slot:activator='{ props }')
-              v-btn.mt-3.animated.fadeInLeft.wait-p8s(icon, rounded='0', v-bind='props', @click='toggleFullscreen').mx-0
+              v-btn.mt-3.animated.fadeInLeft.wait-p8s(icon, rounded='0', v-bind='props', aria-label='Toggle distraction-free mode', @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-code-editor
         div(ref='cm')
     v-system-bar.editor-status-bar.editor-code-sysbar(absolute, status, color="grey-darken-3")
       .text-body-small.editor-code-sysbar-locale {{locale.toUpperCase()}}
-      .text-body-small.px-3 /{{path}}
+      .editor-status-path(title='/' + path) /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
         .text-body-small Code
@@ -227,6 +197,8 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
   &-main {
     display: flex;
     width: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
   }
 
   &-editor {
@@ -234,7 +206,13 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
     flex: 1 1 50%;
     display: block;
     height: $editor-height;
+    min-width: 0;
+    min-height: 0;
     position: relative;
+
+    > div {
+      height: 100%;
+    }
 
     &-title {
       background-color: mc('grey', '800');
@@ -256,6 +234,9 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
       @include until($tablet) {
         display: none;
       }
+    }
+    @include until($tablet) {
+      height: $editor-height-mobile;
     }
   }
 
@@ -286,6 +267,14 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
       justify-content: center;
       align-items: center;
     }
+  }
+  .editor-status-path {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding: 0 12px;
   }
 
 

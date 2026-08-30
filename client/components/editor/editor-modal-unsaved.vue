@@ -1,12 +1,12 @@
 <template lang="pug">
-  v-dialog(v-model='isShown', max-width='550')
+  v-dialog(v-model='isShown', max-width='550', aria-labelledby='unsaved-dialog-title', aria-describedby='unsaved-dialog-description')
     v-card
       .dialog-header.is-short.is-red
         v-icon.mr-2(color='white') mdi-alert
-        span {{$t('editor:unsaved.title')}}
-      v-card-text.pt-4
+        span#unsaved-dialog-title {{$t('editor:unsaved.title')}}
+      v-card-text.pt-4#unsaved-dialog-description
         .text-body-medium {{$t('editor:unsaved.body')}}
-      div.v-card-chin
+      v-card-chin
         v-spacer
         v-btn(variant="text", @click='isShown = false') {{$t('common:actions.cancel')}}
         v-btn.px-4(color='red', @click='discard') {{$t('common:actions.discardChanges')}}

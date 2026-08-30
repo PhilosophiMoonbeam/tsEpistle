@@ -7,117 +7,121 @@
           .admin-header-title
             .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:system.title') }}
             .text-body-large.text-grey.animated.fadeInLeft.wait-p2s {{ $t('admin:system.subtitle') }}
-        v-row.mt-3
+          v-spacer
+          .admin-header-actions
+            v-btn.animated.fadeInDown(
+              variant="outlined"
+              color='primary'
+              size="small"
+              @click='refresh'
+              :loading='loading'
+            )
+              v-icon(start) mdi-refresh
+              span Refresh
+        async-state(
+          v-if='loading'
+          state='loading'
+          title='Loading system information'
+          message='Fetching product, host, and runtime diagnostics.'
+        )
+        async-state(
+          v-else-if='errorMessage'
+          state='error'
+          title='System information could not be loaded'
+          :message='errorMessage'
+          retry-label='Try again'
+          @retry='loadInfo'
+        )
+        v-row.mt-3(v-else-if='infoLoaded')
           v-col(lg='6' cols='12')
             v-card.animated.fadeInUp
-              v-btn.animated.fadeInLeft.wait-p2s.btn-animate-rotate(icon, absolute, location='top end', size="small", @click='refresh'): v-icon(color='grey') mdi-refresh
-              v-list-subheader {{ info.product.name }}
+              v-card-title.text-title-medium {{ info.product.name }}
               v-list(lines="two", density="compact")
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-icon.bg-indigo.text-white mdi-source-fork
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-source-fork
                   v-list-item-title Product Version
-                  v-list-item-subtitle {{ info.product.version }}
+                  v-list-item-subtitle.system-value {{ info.product.version }}
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-icon.bg-blue-grey.text-white mdi-source-branch
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-source-branch
                   v-list-item-title Build Revision
-                  v-list-item-subtitle
+                  v-list-item-subtitle.system-value.system-mono
                     a(:href='info.product.sourceUrl', target='_blank', rel='noopener noreferrer') {{ info.product.revision }}
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-icon.bg-blue-grey.text-white mdi-call-merge
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-call-merge
                   v-list-item-title Upstream Base
-                  v-list-item-subtitle {{ info.product.upstreamBase }}
+                  v-list-item-subtitle.system-value.system-mono {{ info.product.upstreamBase }}
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-icon.bg-blue-grey.text-white mdi-update
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-update
                   v-list-item-title Preview Update Checks
-                  v-list-item-subtitle Unavailable — no fork-owned update provider is configured
-                v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-icon.bg-blue-grey.text-white mdi-code-tags
-                  v-list-item-title Source Code
                   v-list-item-subtitle
+                    v-chip(size='small', variant='tonal', color='info') Unavailable
+                    .text-body-small.text-medium-emphasis.mt-1 No fork-owned update provider is configured
+                v-list-item
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-code-tags
+                  v-list-item-title Source Code
+                  v-list-item-subtitle.system-value
                     a(:href='info.product.sourceUrl', target='_blank', rel='noopener noreferrer') Exact deployed revision
 
-            v-card.mt-4.animated.fadeInUp.wait-p2s
-              v-list-subheader {{ $t('admin:system.hostInfo') }}
+          v-col(lg='6' cols='12')
+            v-card.animated.fadeInUp.wait-p2s
+              v-card-title.text-title-medium {{ $t('admin:system.hostInfo') }}
               v-list(lines="two", density="compact")
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-avatar.bg-blue-grey(size='40')
-                        v-icon(color='white') {{platformLogo}}
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') {{platformLogo}}
                   v-list-item-title {{ $t('admin:system.os') }}
-                  v-list-item-subtitle {{ (info.platform === 'docker') ? 'Docker Container (Linux)' : info.operatingSystem }}
+                  v-list-item-subtitle.system-value {{ (info.platform === 'docker') ? 'Docker Container (Linux)' : info.operatingSystem }}
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-icon.bg-blue-grey.text-white mdi-desktop-classic
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-desktop-classic
                   v-list-item-title {{ $t('admin:system.hostname') }}
-                  v-list-item-subtitle {{ info.hostname }}
+                  v-list-item-subtitle.system-value.system-mono {{ info.hostname }}
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-icon.bg-blue-grey.text-white mdi-cpu-64-bit
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-cpu-64-bit
                   v-list-item-title {{ $t('admin:system.cpuCores') }}
-                  v-list-item-subtitle {{ info.cpuCores }}
+                  v-list-item-subtitle.system-value {{ info.cpuCores }}
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-icon.bg-blue-grey.text-white mdi-memory
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-memory
                   v-list-item-title {{ $t('admin:system.totalRAM') }}
-                  v-list-item-subtitle {{ info.ramTotal }}
+                  v-list-item-subtitle.system-value {{ info.ramTotal }}
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-icon.bg-blue-grey.text-white mdi-iframe-outline
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-iframe-outline
                   v-list-item-title {{ $t('admin:system.workingDirectory') }}
-                  v-list-item-subtitle {{ info.workingDirectory }}
+                  v-list-item-subtitle.system-value.system-mono {{ info.workingDirectory }}
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-icon.bg-blue-grey.text-white mdi-card-bulleted-settings-outline
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-card-bulleted-settings-outline
                   v-list-item-title {{ $t('admin:system.configFile') }}
-                  v-list-item-subtitle {{ info.configFile }}
+                  v-list-item-subtitle.system-value.system-mono {{ info.configFile }}
 
           v-col(lg='6' cols='12')
-            v-card.pb-3.animated.fadeInUp.wait-p4s
-              v-list-subheader Bun
-              v-list(density="compact")
+            v-card.animated.fadeInUp
+              v-card-title.text-title-medium Runtime
+              v-list(lines="two", density="compact")
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-avatar.bg-light-green(size='40')
-                        v-icon(color='white') mdi-lightning-bolt
-                  v-list-item-title {{ info.bunVersion }}
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-lightning-bolt
+                  v-list-item-title Version
+                  v-list-item-subtitle.system-value.system-mono {{ info.bunVersion }}
 
-              v-divider.mt-3
-              v-list-subheader {{ info.dbType }}
-              v-list(density="compact")
+          v-col(lg='6' cols='12')
+            v-card.animated.fadeInUp.wait-p2s
+              v-card-title.text-title-medium {{ info.dbType }}
+              v-list(lines="two", density="compact")
                 v-list-item
-                  template(v-slot:prepend)
-                    v-avatar
-                      v-avatar.bg-indigo-darken-1(size='40')
-                        v-icon(color='white') mdi-database
-                  v-list-item-title(style='white-space: pre-line') {{ info.dbVersion }}
-                  v-list-item-subtitle {{ info.dbHost }}
-
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-database
+                  v-list-item-title Version
+                  v-list-item-subtitle.system-value.system-mono {{ info.dbVersion }}
+                v-list-item
+                  template(v-slot:prepend): v-icon.text-medium-emphasis(size='20') mdi-server-outline
+                  v-list-item-title Host
+                  v-list-item-subtitle.system-value.system-mono {{ info.dbHost }}
 </template>
 
 <script lang='ts'>
 
+import AsyncState from '@/components/common/async-state.vue'
 import { wikiStore } from '@/store/index.ts'
 
 import { fetchSystemInfo } from '../../helpers/system-api'
 import type { SystemInfo } from '../../helpers/system-api'
-import { loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+import { getErrorMessage, loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
 const makeDefaultSystemInfo = (): SystemInfo => ({
   product: siteConfig.product,
@@ -142,11 +146,16 @@ const makeDefaultSystemInfo = (): SystemInfo => ({
   upgradeCapable: false,
   workingDirectory: ''
 })
-
 export default {
+  components: {
+    AsyncState
+  },
   data () {
     return {
-      info: makeDefaultSystemInfo()
+      info: makeDefaultSystemInfo(),
+      loading: false,
+      infoLoaded: false,
+      errorMessage: ''
     }
   },
   computed: {
@@ -157,7 +166,7 @@ export default {
         case 'darwin':
           return 'mdi-apple'
         case 'linux':
-          if (this.info.operatingSystem.indexOf('Ubuntu')) {
+          if (this.info.operatingSystem.indexOf('Ubuntu') >= 0) {
             return 'mdi-ubuntu'
           } else {
             return 'mdi-linux'
@@ -167,18 +176,24 @@ export default {
         default:
           return ''
       }
-    },
+    }
   },
   methods: {
     async loadInfo () {
+      this.loading = true
+      this.errorMessage = ''
+      this.infoLoaded = false
       loadingStart(wikiStore, 'admin-system-refresh')
       try {
         this.info = await fetchSystemInfo(window.fetch.bind(window), 'System info response is invalid')
+        this.infoLoaded = true
         return true
       } catch (err) {
+        this.errorMessage = getErrorMessage(err)
         pushGraphError(wikiStore, err)
         return false
       } finally {
+        this.loading = false
         loadingStop(wikiStore, 'admin-system-refresh')
       }
     },
@@ -202,9 +217,37 @@ export default {
 </script>
 
 <style lang='scss'>
+.admin-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem;
+}
+
 .admin-system {
-  .v-list-item-title, .v-list-item-subtitle {
+  .v-list-item-title,
+  .v-list-item-subtitle {
+    min-width: 0;
     user-select: text;
+  }
+
+  .system-value {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
+  .system-mono {
+    font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+}
+
+@media (max-width: 599.98px) {
+  .admin-header-actions {
+    flex: 1 1 100%;
+  }
+
+  .admin-header-actions .v-btn {
+    width: 100%;
   }
 }
 </style>

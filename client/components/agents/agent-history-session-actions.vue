@@ -5,7 +5,7 @@
         <v-btn
           v-bind="menuProps"
           icon="mdi-dots-horizontal"
-          size="x-small"
+          size="small"
           variant="text"
           :aria-label="`Actions for ${session.title || 'New conversation'}`"
         />
@@ -17,7 +17,7 @@
           title="Move to Recent"
           @click="emit('move', null)"
         />
-        <v-list-subheader v-if="folders.length">Move to folder</v-list-subheader>
+        <v-list-subheader v-if="availableFolders.length">Move to folder</v-list-subheader>
         <v-list-item
           v-for="folder in availableFolders"
           :key="folder.id"
@@ -52,3 +52,8 @@ const emit = defineEmits<{
 }>()
 const availableFolders = computed(() => props.folders.filter(folder => folder.id !== props.session.folderId))
 </script>
+<style scoped>
+@media (max-width: 600px) {
+  .agent-history-session-actions :deep(.v-btn) { min-height: 2.75rem; min-width: 2.75rem; }
+}
+</style>

@@ -50,6 +50,7 @@ const compileMethod = (name, dependencies) => {
 describe('admin-auth strategies REST facade', () => {
   const loadStrategies = extractMethod('loadStrategies')
   const loadActiveStrategies = extractMethod('loadActiveStrategies')
+  const loadInitial = extractMethod('loadInitial')
   const refresh = extractMethod('refresh')
   const save = extractMethod('save')
 
@@ -76,21 +77,52 @@ describe('admin-auth strategies REST facade', () => {
     expect(loadActiveStrategies).toContain('wikiStore.showNotification({')
   })
 
-  test('refresh reloads REST data and host before notifying success', () => {
-    expect(refresh).toContain('await this.loadStrategies()')
-    expect(refresh).toContain('await this.loadActiveStrategies()')
-    expect(refresh).toContain('await this.loadHost()')
+  test('refresh confirms dirty state and reloads the complete initial contract before notifying success', async () => {
+    expect(refresh).toContain("if (this.dirty && !window.confirm('Discard unsaved authentication changes and refresh?')) return")
+    expect(refresh).toContain('await this.loadInitial()')
+    expect(refresh).toContain('if (this.loaded) {')
     expect(refresh).toContain('wikiStore.showNotification({')
     expect(refresh).toContain("message: this.$t('admin:auth.refreshSuccess')")
+
+    const notifications = []
+    let loadCount = 0
+    let allowRefresh = false
+    const refreshMethod = compileMethod('refresh', {
+      window: { confirm: () => allowRefresh },
+      wikiStore: { showNotification: notification => notifications.push(notification) }
+    })
+    const context = {
+      dirty: true,
+      loaded: true,
+      loadInitial: async () => {
+        loadCount++
+      },
+      $t: key => key
+    }
+
+    await refreshMethod.call(context)
+    expect(loadCount).toBe(0)
+    expect(notifications).toEqual([])
+
+    allowRefresh = true
+    await refreshMethod.call(context)
+    expect(loadCount).toBe(1)
+    expect(notifications).toEqual([
+      {
+        message: 'admin:auth.refreshSuccess',
+        style: 'success',
+        icon: 'cached'
+      }
+    ])
   })
 
   test.each([
     ['strategies', 'admin-auth-strategies-refresh'],
     ['active strategies', 'admin-auth-activestrategies-refresh'],
     ['host', 'admin-auth-host-refresh']
-  ])('refresh settles after one owned %s error and balances loading', async (failingResource, failingLoadingKey) => {
-    const resourceOrder = ['strategies', 'active strategies', 'host']
-    const loadingKeys = ['admin-auth-strategies-refresh', 'admin-auth-activestrategies-refresh', 'admin-auth-host-refresh']
+  ])('refresh settles after one owned %s error and balances every loading owner', async (failingResource, failingLoadingKey) => {
+    const resourceOrder = ['groups', 'host', 'strategies', 'active strategies']
+    const loadingKeys = ['admin-auth-groups-refresh', 'admin-auth-host-refresh', 'admin-auth-strategies-refresh', 'admin-auth-activestrategies-refresh']
     const calls = []
     const loadingStarts = []
     const loadingStops = []
@@ -110,30 +142,42 @@ describe('admin-auth strategies REST facade', () => {
     }
     const dependencies = {
       wikiStore,
+      fetchGroupOptions: fetchResource('groups', []),
+      fetchSystemHost: fetchResource('host', { host: 'https://example.test' }),
       fetchAdminAuthStrategies: fetchResource('strategies', []),
       fetchAdminAuthActiveStrategies: fetchResource('active strategies', []),
-      fetchSystemHost: fetchResource('host', { host: 'https://example.test' }),
-      window: { fetch() {} },
+      window: { fetch() {}, confirm: () => true },
       getErrorMessage: err => err.message
     }
     const context = {
+      groups: [],
       strategies: [],
       activeStrategies: [],
+      persistedStrategies: [],
+      selectedStrategy: '',
       host: '',
+      initialLoading: false,
+      loaded: true,
+      dirty: false,
+      loadGroups: compileMethod('loadGroups', dependencies),
+      loadHost: compileMethod('loadHost', dependencies),
       loadStrategies: compileMethod('loadStrategies', dependencies),
       loadActiveStrategies: compileMethod('loadActiveStrategies', dependencies),
-      loadHost: compileMethod('loadHost', dependencies),
       $t: key => key
     }
+    context.loadInitial = compileMethod('loadInitial', {
+      _: { cloneDeep: value => structuredClone(value) }
+    })
     const refreshMethod = compileMethod('refresh', dependencies)
 
     await expect(refreshMethod.call(context)).resolves.toBeUndefined()
 
-    const failureIndex = resourceOrder.indexOf(failingResource)
-    expect(calls).toEqual(resourceOrder.slice(0, failureIndex + 1))
-    expect(loadingStarts).toEqual(loadingKeys.slice(0, failureIndex + 1))
-    expect(loadingStops).toEqual(loadingStarts)
+    expect(calls).toEqual(resourceOrder)
+    expect(loadingStarts).toEqual(loadingKeys)
+    expect(loadingStops).toEqual(loadingKeys)
     expect(loadingStarts).toContain(failingLoadingKey)
+    expect(context.loaded).toBe(false)
+    expect(context.initialLoading).toBe(false)
     expect(notifications).toEqual([
       {
         style: 'red',
@@ -143,9 +187,15 @@ describe('admin-auth strategies REST facade', () => {
     ])
   })
 
-  test('created hook starts REST strategy loads', () => {
-    expect(script).toContain('this.loadStrategies().catch(() => {})')
-    expect(script).toContain('this.loadActiveStrategies().catch(() => {})')
+  test('created hook starts the complete REST load and snapshots a successfully loaded strategy state', () => {
+    expect(loadInitial).toContain('this.loaded = false')
+    expect(loadInitial).toContain('this.loadGroups()')
+    expect(loadInitial).toContain('this.loadHost()')
+    expect(loadInitial).toContain('this.loadStrategies()')
+    expect(loadInitial).toContain('this.loadActiveStrategies()')
+    expect(loadInitial).toContain('this.persistedStrategies = _.cloneDeep(this.activeStrategies)')
+    expect(loadInitial).toContain('this.loaded = true')
+    expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*void this\.loadInitial\(\)\s*\}/)
   })
 
   test('save uses REST helper and preserves payload mapping and UI behavior', () => {

@@ -1,9 +1,16 @@
-.v-dialog > .v-overlay__content > .v-card {
-  overflow: hidden;
+.v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content > :is(.v-card, .v-sheet),
+.v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content > form > :is(.v-card, .v-sheet) {
   border: 1px solid rgba(var(--v-border-color), .13);
   border-radius: var(--wiki-panel-radius);
   background: rgb(var(--v-theme-surface));
-  box-shadow: 0 24px 72px rgba(8, 15, 30, .24);
+  box-shadow: 0 24px 72px rgba(var(--v-shadow-color), .24);
+}
+
+.v-dialog.v-dialog--fullscreen > .v-overlay__content > :is(.v-card, .v-sheet),
+.v-dialog.v-dialog--fullscreen > .v-overlay__content > form > :is(.v-card, .v-sheet) {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .dialog-header {
@@ -25,6 +32,11 @@
   font-size: 1.05rem;
   font-weight: 700;
   letter-spacing: -.015em;
+
+  &.is-short {
+    min-height: 48px;
+    padding-inline: 16px;
+  }
 
   .v-icon {
     color: rgb(var(--dialog-accent)) !important;
@@ -50,4 +62,5 @@
     --dialog-accent: var(--v-theme-secondary);
   }
 }
+
 

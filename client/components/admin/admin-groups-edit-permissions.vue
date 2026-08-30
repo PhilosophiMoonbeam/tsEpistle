@@ -10,22 +10,23 @@
             :model-value='true'
             icon='mdi-lock-outline'
             ) This is a system group. Some permissions cannot be modified.
-        v-col(cols='12', md='6', lg='4', v-for='pmGroup in permissions', :key='pmGroup.category')
-          v-card(flat, :class='$vuetify.theme.current.dark ? "bg-grey-darken-3" : "bg-grey-lighten-5"')
-            .text-label-small.px-5.pt-5.pb-3.text-grey-darken-2 {{pmGroup.category}}
+        v-col(cols='12', lg='6', xl='4', v-for='pmGroup in permissions', :key='pmGroup.category')
+          v-card(flat, role='group', :aria-labelledby='categoryId(pmGroup.category)', :class='$vuetify.theme.current.dark ? "bg-grey-darken-3" : "bg-grey-lighten-5"')
+            .text-label-small.px-5.pt-5.pb-3.text-medium-emphasis(:id='categoryId(pmGroup.category)') {{pmGroup.category}}
             v-card-text.pt-0
               template(v-for='(pm, idx) in pmGroup.items', :key='pm.permission')
                 v-checkbox.pt-0(
                   style='justify-content: space-between;'
                   :label='pm.permission'
-                  :hint='pm.hint'
+                  :hint='permissionHint(pm)'
                   persistent-hint
                   color='primary'
-                  v-model='group.permissions'
-                  :value='pm.permission'
-                  :append-icon='pm.warning ? "mdi-alert" : null',
+                  :model-value='isPermissionEnabled(pm.permission)'
+                  @update:model-value='togglePermission(pm.permission, $event)'
+                  :aria-describedby='pm.warning || pm.disabled ? riskId(pm.permission) : undefined'
                   :disabled='(group.isSystem && pm.restrictedForSystem) || group.id === 1 || pm.disabled'
                 )
+                .text-body-small.text-warning(v-if='pm.warning || pm.disabled', :id='riskId(pm.permission)') {{pm.disabled ? 'Reserved for root administrators.' : 'High-impact permission. Review before granting.'}}
                 v-divider.mt-3(v-if='idx < pmGroup.items.length - 1')</template>
 
 <script lang='ts'>
@@ -85,7 +86,7 @@ export default {
             {
               permission: 'write:scripts',
               hint: 'Can insert JavaScript in pages, as specified in the Page Rules',
-              warning: false,
+              warning: true,
               restrictedForSystem: true,
               disabled: false
             },
@@ -247,6 +248,33 @@ export default {
     group: {
       get(): GroupEditorState { return this.modelValue },
       set(val: GroupEditorState) { this.$emit('update:modelValue', val) }
+    }
+  },
+  methods: {
+    categoryId (category: string): string {
+      return `permission-category-${category.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+    },
+    riskId (permission: string): string {
+      return `permission-risk-${permission.replace(/[^a-z0-9]+/g, '-')}`
+    },
+    permissionHint (permission: { hint: string; warning: boolean; disabled: boolean }): string {
+      if (permission.disabled) return `${permission.hint}. Reserved for root administrators.`
+      if (permission.warning) return `${permission.hint}. High-impact permission; review before granting.`
+      return permission.hint
+    },
+    isPermissionEnabled (permission: string): boolean {
+      return this.group.permissions.includes(permission)
+    },
+    togglePermission (permission: string, enabled: boolean) {
+      const permissions = new Set(this.group.permissions)
+      if (enabled) {
+        permissions.add(permission)
+        if (permission === 'use:agent-browser') permissions.add('use:agents')
+      } else {
+        permissions.delete(permission)
+        if (permission === 'use:agents') permissions.delete('use:agent-browser')
+      }
+      this.group = { ...this.group, permissions: Array.from(permissions) }
     }
   }
 }

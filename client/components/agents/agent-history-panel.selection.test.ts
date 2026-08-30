@@ -38,6 +38,7 @@ const loadPanel = (agents: PanelAgents, compact = true): PanelHarness => {
     'computed',
     'onBeforeUnmount',
     'ref',
+    'watch',
     'storeToRefs',
     'defineEmits',
     'useAgentsStore',
@@ -52,6 +53,9 @@ const loadPanel = (agents: PanelAgents, compact = true): PanelHarness => {
     }),
     (callback: () => void) => unmountCallbacks.push(callback),
     ref,
+    (_source: unknown, callback: () => void, options?: { immediate?: boolean }) => {
+      if (options?.immediate) callback()
+    },
     () => ({ folders: ref([]), sessions: ref([]), thread }),
     () => emit,
     () => agents,

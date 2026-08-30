@@ -2,12 +2,12 @@
   .editor-tiptap(ref='root')
     v-toolbar.editor-tiptap-toolbar(flat)
       .editor-tiptap-toolbar-inner(role='toolbar', aria-label='Formatting toolbar')
-        .editor-tiptap-toolbar-group(aria-label='History')
+        .editor-tiptap-toolbar-group(role='group', aria-label='History')
           v-btn.editor-tiptap-tool(icon, size='small', title='Undo', aria-label='Undo', :disabled='!canUndo', @click='editor?.chain().focus().undo().run()')
             v-icon mdi-undo
           v-btn.editor-tiptap-tool(icon, size='small', title='Redo', aria-label='Redo', :disabled='!canRedo', @click='editor?.chain().focus().redo().run()')
             v-icon mdi-redo
-        .editor-tiptap-toolbar-group(aria-label='Text formatting')
+        .editor-tiptap-toolbar-group(role='group', aria-label='Text formatting')
           v-menu
             template(v-slot:activator='{ props }')
               v-btn.editor-tiptap-style-trigger(v-bind='props', size='small', title='Text style', aria-label='Text style')
@@ -23,44 +23,44 @@
                 template(v-slot:prepend)
                   v-icon mdi-format-header-{{level}}
                 v-list-item-title Heading {{level}}
-          v-btn.editor-tiptap-tool(icon, size='small', title='Bold', aria-label='Bold', :color='activeColor(`bold`)', @click='editor?.chain().focus().toggleBold().run()')
+          v-btn.editor-tiptap-tool(icon, size='small', title='Bold', aria-label='Bold', :aria-pressed='isActive(`bold`)', :color='activeColor(`bold`)', @click='editor?.chain().focus().toggleBold().run()')
             v-icon mdi-format-bold
-          v-btn.editor-tiptap-tool(icon, size='small', title='Italic', aria-label='Italic', :color='activeColor(`italic`)', @click='editor?.chain().focus().toggleItalic().run()')
+          v-btn.editor-tiptap-tool(icon, size='small', title='Italic', aria-label='Italic', :aria-pressed='isActive(`italic`)', :color='activeColor(`italic`)', @click='editor?.chain().focus().toggleItalic().run()')
             v-icon mdi-format-italic
-          v-btn.editor-tiptap-tool(v-if='format === `html`', icon, size='small', title='Underline', aria-label='Underline', :color='activeColor(`underline`)', @click='editor?.chain().focus().toggleUnderline().run()')
+          v-btn.editor-tiptap-tool(v-if='format === `html`', icon, size='small', title='Underline', aria-label='Underline', :aria-pressed='isActive(`underline`)', :color='activeColor(`underline`)', @click='editor?.chain().focus().toggleUnderline().run()')
             v-icon mdi-format-underline
-          v-btn.editor-tiptap-tool(icon, size='small', title='Strikethrough', aria-label='Strikethrough', :color='activeColor(`strike`)', @click='editor?.chain().focus().toggleStrike().run()')
+          v-btn.editor-tiptap-tool(icon, size='small', title='Strikethrough', aria-label='Strikethrough', :aria-pressed='isActive(`strike`)', :color='activeColor(`strike`)', @click='editor?.chain().focus().toggleStrike().run()')
             v-icon mdi-format-strikethrough
           template(v-if='format === `markdown`')
-            v-btn.editor-tiptap-tool(icon, size='small', title='Highlight', aria-label='Highlight', :color='activeColor(`highlight`)', @click='editor?.chain().focus().toggleHighlight().run()')
+            v-btn.editor-tiptap-tool(icon, size='small', title='Highlight', aria-label='Highlight', :aria-pressed='isActive(`highlight`)', :color='activeColor(`highlight`)', @click='editor?.chain().focus().toggleHighlight().run()')
               v-icon mdi-format-color-highlight
-            v-btn.editor-tiptap-tool(icon, size='small', title='Subscript', aria-label='Subscript', :color='activeColor(`subscript`)', @click='editor?.chain().focus().toggleSubscript().run()')
+            v-btn.editor-tiptap-tool(icon, size='small', title='Subscript', aria-label='Subscript', :aria-pressed='isActive(`subscript`)', :color='activeColor(`subscript`)', @click='editor?.chain().focus().toggleSubscript().run()')
               v-icon mdi-format-subscript
-            v-btn.editor-tiptap-tool(icon, size='small', title='Superscript', aria-label='Superscript', :color='activeColor(`superscript`)', @click='editor?.chain().focus().toggleSuperscript().run()')
+            v-btn.editor-tiptap-tool(icon, size='small', title='Superscript', aria-label='Superscript', :aria-pressed='isActive(`superscript`)', :color='activeColor(`superscript`)', @click='editor?.chain().focus().toggleSuperscript().run()')
               v-icon mdi-format-superscript
-            v-btn.editor-tiptap-tool(icon, size='small', title='Keyboard key', aria-label='Keyboard key', :color='activeColor(`keyboard`)', @click='editor?.chain().focus().toggleMark(`keyboard`).run()')
+            v-btn.editor-tiptap-tool(icon, size='small', title='Keyboard key', aria-label='Keyboard key', :aria-pressed='isActive(`keyboard`)', :color='activeColor(`keyboard`)', @click='editor?.chain().focus().toggleMark(`keyboard`).run()')
               v-icon mdi-keyboard-outline
-            v-btn.editor-tiptap-tool(icon, size='small', title='Inline code', aria-label='Inline code', :color='activeColor(`code`)', @click='editor?.chain().focus().toggleCode().run()')
+            v-btn.editor-tiptap-tool(icon, size='small', title='Inline code', aria-label='Inline code', :aria-pressed='isActive(`code`)', :color='activeColor(`code`)', @click='editor?.chain().focus().toggleCode().run()')
               v-icon mdi-code-tags
           v-btn.editor-tiptap-tool(icon, size='small', title='Link to page', aria-label='Link to page', :color='activeColor(`link`)', @click='insertLink')
             v-icon mdi-link-variant
-        .editor-tiptap-toolbar-group(aria-label='Lists and indentation')
-          v-btn.editor-tiptap-tool(icon, size='small', title='Bulleted list', aria-label='Bulleted list', :color='activeColor(`bulletList`)', @click='editor?.chain().focus().toggleBulletList().run()')
+        .editor-tiptap-toolbar-group(role='group', aria-label='Lists and indentation')
+          v-btn.editor-tiptap-tool(icon, size='small', title='Bulleted list', aria-label='Bulleted list', :aria-pressed='isActive(`bulletList`)', :color='activeColor(`bulletList`)', @click='editor?.chain().focus().toggleBulletList().run()')
             v-icon mdi-format-list-bulleted
-          v-btn.editor-tiptap-tool(icon, size='small', title='Numbered list', aria-label='Numbered list', :color='activeColor(`orderedList`)', @click='editor?.chain().focus().toggleOrderedList().run()')
+          v-btn.editor-tiptap-tool(icon, size='small', title='Numbered list', aria-label='Numbered list', :aria-pressed='isActive(`orderedList`)', :color='activeColor(`orderedList`)', @click='editor?.chain().focus().toggleOrderedList().run()')
             v-icon mdi-format-list-numbered
-          v-btn.editor-tiptap-tool(v-if='format === `markdown`', icon, size='small', title='Task list', aria-label='Task list', :color='activeColor(`taskList`)', @click='editor?.chain().focus().toggleTaskList().run()')
+          v-btn.editor-tiptap-tool(v-if='format === `markdown`', icon, size='small', title='Task list', aria-label='Task list', :aria-pressed='isActive(`taskList`)', :color='activeColor(`taskList`)', @click='editor?.chain().focus().toggleTaskList().run()')
             v-icon mdi-format-list-checks
           v-btn.editor-tiptap-tool(icon, size='small', title='Decrease indent', aria-label='Decrease indent', @click='liftListItem')
             v-icon mdi-format-indent-decrease
           v-btn.editor-tiptap-tool(icon, size='small', title='Increase indent', aria-label='Increase indent', @click='sinkListItem')
             v-icon mdi-format-indent-increase
-        .editor-tiptap-toolbar-group(aria-label='Blocks and structure')
-          v-btn.editor-tiptap-tool(icon, size='small', title='Block quote', aria-label='Block quote', :color='activeColor(`blockquote`)', @click='editor?.chain().focus().toggleBlockquote().run()')
+        .editor-tiptap-toolbar-group(role='group', aria-label='Blocks and structure')
+          v-btn.editor-tiptap-tool(icon, size='small', title='Block quote', aria-label='Block quote', :aria-pressed='isActive(`blockquote`)', :color='activeColor(`blockquote`)', @click='editor?.chain().focus().toggleBlockquote().run()')
             v-icon mdi-format-quote-open
           v-menu
             template(v-slot:activator='{ props }')
-              v-btn.editor-tiptap-tool(icon, size='small', v-bind='props', title='Code block', aria-label='Code block', :color='activeColor(`codeBlock`)')
+              v-btn.editor-tiptap-tool(icon, size='small', v-bind='props', title='Code block', aria-label='Code block', :aria-pressed='isActive(`codeBlock`)', :color='activeColor(`codeBlock`)')
                 v-icon mdi-code-braces
             v-list.editor-tiptap-menu-list(density='compact')
               v-list-item(v-for='language in codeBlockLanguages', :key='language.value', @click='setCodeBlock(language.value)')
@@ -71,7 +71,7 @@
             v-icon mdi-minus
           v-menu
             template(v-slot:activator='{ props }')
-              v-btn.editor-tiptap-tool(icon, size='small', v-bind='props', title='Table', aria-label='Table', :color='activeColor(`table`)')
+              v-btn.editor-tiptap-tool(icon, size='small', v-bind='props', title='Table', aria-label='Table', :aria-pressed='isActive(`table`)', :color='activeColor(`table`)')
                 v-icon mdi-table
             v-list.editor-tiptap-menu-list(density='compact')
               v-list-item(@click='insertTable')
@@ -165,9 +165,9 @@
             span {{filteredGlyphs.length}} of {{glyphs.length}}
             span Fuzzy search
     editor-content.contents(:editor='editor')
-    v-system-bar.editor-status-bar.editor-tiptap-sysbar(absolute, status)
+    v-system-bar.editor-status-bar.editor-tiptap-sysbar(status)
       .text-body-small.editor-tiptap-sysbar-locale {{locale.toUpperCase()}}
-      .text-body-small.px-3 /{{path}}
+      .text-body-small.editor-tiptap-sysbar-path.px-3(:title='`/${path}`') /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
         v-spacer
         .text-body-small {{definition.label}} · Tiptap
@@ -597,8 +597,6 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
-$editor-height: calc(100dvh - 64px - 24px);
-$editor-height-mobile: calc(100dvh - 56px - 16px);
 
 .editor-tiptap {
   --editor-surface: rgb(var(--v-theme-surface));
@@ -611,16 +609,11 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
     color-mix(in srgb, rgb(var(--v-theme-background)) 92%, var(--editor-primary) 8%);
   color: var(--editor-on-surface);
   display: flex;
-  flex: 1 1 50%;
+  flex: 1 1 auto;
   flex-flow: column nowrap;
-  height: $editor-height;
-  max-height: $editor-height;
+  height: 100%;
+  min-height: 0;
   position: relative;
-
-  @include until($tablet) {
-    height: $editor-height-mobile;
-    max-height: $editor-height-mobile;
-  }
 
   &-toolbar {
     background: color-mix(in srgb, var(--editor-surface) 94%, var(--editor-primary) 6%) !important;
@@ -734,8 +727,10 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
     background: color-mix(in srgb, var(--editor-surface) 90%, rgb(var(--v-theme-on-surface)) 10%) !important;
     border-top: 1px solid var(--editor-border);
     color: var(--editor-muted);
+    flex: 0 0 calc(24px + env(safe-area-inset-bottom));
+    min-height: calc(24px + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
     padding-left: 0;
-
     &-locale {
       align-items: center;
       background: rgba(var(--v-theme-primary), .14);
@@ -746,6 +741,13 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
       justify-content: center;
       padding: 0 12px;
       width: 63px;
+    }
+    &-path {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   }
 
@@ -1124,19 +1126,13 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
 .editor-tiptap-glyph-grid {
   display: grid;
   gap: 6px;
-  grid-template-columns: repeat(8, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(38px, 1fr));
   max-height: 270px;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: auto;
   padding: 2px 4px 6px 0;
   scrollbar-color: rgba(var(--v-theme-on-surface), .2) transparent;
   scrollbar-width: thin;
-}
-
-@media (max-width: 480px) {
-  .editor-tiptap-glyph-grid {
-    grid-template-columns: repeat(7, 1fr);
-  }
 }
 
 .editor-tiptap-glyph-button {
@@ -1182,4 +1178,12 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
   text-transform: uppercase;
 }
 
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-tiptap,
+  .editor-tiptap * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
 </style>

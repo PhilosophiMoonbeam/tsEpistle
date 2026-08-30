@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const extractScript = (source) => {
+const extractScript = source => {
   const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
@@ -68,10 +68,9 @@ describe('admin-ssl loadInfo root UI facade migration guard', () => {
   const loadInfo = script && extractMethod(script, 'loadInfo')
   const toggleRedir = script && extractMethod(script, 'toggleRedir')
   const renewCertificate = script && extractMethod(script, 'renewCertificate')
-  const rootUiImportMatch = script && script.match(
-    /import\s+\{([^}]+)\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
-  )
-  const directRootUiCommit = /\bthis\.\$store\.commit\s*\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
+  const rootUiImportMatch = script && script.match(/import\s+\{([^}]+)\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
+  const directRootUiCommit =
+    /\bthis\.\$store\.commit\s*\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
   test('admin-ssl.vue imports the root UI facades required by SSL methods', () => {
     expect(script).not.toBeNull()
@@ -87,10 +86,23 @@ describe('admin-ssl loadInfo root UI facade migration guard', () => {
     )
   })
 
-  test('loadInfo() uses loading and error facades while preserving SSL fetch/reset/rethrow/cleanup behavior', () => {
+  test('loadInfo() exposes explicit state while preserving SSL fetch/reset/rethrow/cleanup behavior', () => {
     expect(loadInfo).not.toBeNull()
 
-    expect(loadInfo).toMatch(/async\s+loadInfo\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*=\s*\{\s*\}\s*\)\s*\{\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-refresh['"]\s*\)\s*try\s*\{\s*this\.info\s*=\s*await\s+fetchSystemSsl\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]SSL status response is invalid['"]\s*\)\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*this\.info\s*=\s*makeDefaultSslInfo\s*\(\s*\)\s*if\s*\(\s*notifyError\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}\s*throw\s+err\s*\}\s*finally\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-refresh['"]\s*\)\s*\}\s*\}/)
+    expect(source).toMatch(/async-state\s*\([\s\S]*?v-if=['"]loading['"][\s\S]*?state=['"]loading['"]/)
+    expect(source).toMatch(/async-state\s*\([\s\S]*?v-else-if=['"]errorMessage['"][\s\S]*?state=['"]error['"][\s\S]*?@retry=['"]loadInfo['"]/)
+    expect(source).toMatch(/v-form\.pt-3\s*\(\s*v-else-if=['"]infoLoaded['"]\s*\)/)
+
+    expect(loadInfo).toMatch(
+      /this\.loading\s*=\s*true[\s\S]*?this\.errorMessage\s*=\s*['"][^'"]*['"][\s\S]*?this\.infoLoaded\s*=\s*false[\s\S]*?loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-refresh['"]\s*\)/
+    )
+    expect(loadInfo).toMatch(
+      /this\.info\s*=\s*await\s+fetchSystemSsl\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]SSL status response is invalid['"]\s*\)[\s\S]*?this\.infoLoaded\s*=\s*true[\s\S]*?return\s+true/
+    )
+    expect(loadInfo).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{[\s\S]*?this\.info\s*=\s*makeDefaultSslInfo\s*\(\s*\)[\s\S]*?this\.errorMessage\s*=\s*getErrorMessage\s*\(\s*err\s*\)[\s\S]*?if\s*\(\s*notifyError\s*\)\s*\{[\s\S]*?pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)[\s\S]*?\}[\s\S]*?throw\s+err/
+    )
+    expect(loadInfo).toMatch(/finally\s*\{[\s\S]*?this\.loading\s*=\s*false[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-refresh['"]\s*\)/)
     expect(loadInfo).not.toMatch(directRootUiCommit)
 
     expect(loadInfo.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
@@ -106,10 +118,14 @@ describe('admin-ssl loadInfo root UI facade migration guard', () => {
     expect(script).not.toMatch(/this\.\$apollo|gql`|setHTTPSRedirection|renewHTTPSCertificate/)
 
     expect(toggleRedir).toMatch(/loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-toggleRedirection['"]\s*\)/)
-    expect(toggleRedir).toMatch(/updateSystemSslRedirection\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*_.get\(\s*this\.info\s*,\s*['"]httpRedirection['"]\s*,\s*false\s*\)\s*\)/)
+    expect(toggleRedir).toMatch(
+      /updateSystemSslRedirection\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*_.get\(\s*this\.info\s*,\s*['"]httpRedirection['"]\s*,\s*false\s*\)\s*\)/
+    )
     expect(toggleRedir).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*?admin:ssl\.httpPortRedirectSaveSuccess[\s\S]*?\}\s*\)/)
     expect(toggleRedir).toMatch(/pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
-    expect(toggleRedir).toMatch(/this\.info\.httpRedirection\s*=\s*!this\.info\.httpRedirection[\s\S]*catch\s*\(\s*err\s*\)\s*\{\s*this\.info\.httpRedirection\s*=\s*!this\.info\.httpRedirection/)
+    expect(toggleRedir).toMatch(
+      /this\.info\.httpRedirection\s*=\s*!this\.info\.httpRedirection[\s\S]*catch\s*\(\s*err\s*\)\s*\{\s*this\.info\.httpRedirection\s*=\s*!this\.info\.httpRedirection/
+    )
     expect(toggleRedir).toMatch(/loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-ssl-toggleRedirection['"]\s*\)/)
     expect(toggleRedir).toMatch(/this\.loadingRedir\s*=\s*false/)
     expect(toggleRedir).not.toMatch(directRootUiCommit)

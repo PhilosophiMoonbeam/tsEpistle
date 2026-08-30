@@ -2,27 +2,22 @@
   v-container.fill-height(fluid)
     v-row
       v-col(cols='12')
-        .admin-header-icon: v-icon(size='80', color="grey-lighten-2") show_chart
+        .admin-header-icon: v-icon(size='80', color='primary') mdi-chart-box-outline
         .text-headline-medium.text-primary Statistics
-        .text-body-large.text-grey Useful information about your wiki
-        .pa-3
-          fingerprint-spinner(
-            :animation-duration='1500'
-            :size='128'
-            color='#e91e63'
-            )
-          .text-body-small.text-pink.mt-3 Compiling latest data...
+        .text-body-large.text-medium-emphasis Useful information about your wiki
+        async-state(
+          state='empty'
+          title='Statistics are not available'
+          message='This statistics view is not connected to a data source yet.'
+        )
 </template>
 
 <script lang='ts'>
-import { FingerprintSpinner } from 'epic-spinners'
+import AsyncState from '@/components/common/async-state.vue'
 
 export default {
   components: {
-    FingerprintSpinner
-  },
-  data() {
-    return {}
+    AsyncState
   }
 }
 </script>

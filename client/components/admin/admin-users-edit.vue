@@ -1,12 +1,20 @@
 <template lang='pug'>
   v-container(fluid)
-    v-row
+    v-row(v-if='userLoadState !== `ready`')
+      v-col(cols='12')
+        v-alert(v-if='userLoadState === `loading`', type='info', variant='tonal', role='status') Loading user details...
+        v-alert(v-else, type='error', variant='tonal', role='alert')
+          span Unable to load this user.
+          v-btn.ml-2(variant="text", @click='loadUser') Retry
+        v-skeleton-loader.mt-3(type='article')
+    v-row(v-if='recordReady')
       v-col(cols='12')
         .admin-header
           img.animated.fadeInUp(src='/_assets/svg/icon-male-user.svg', :alt='$t(`admin:users.edit`)', style='width: 80px;')
           .admin-header-title
             .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:users.edit')}}
             .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s {{user.name}}
+            .text-body-small.text-orange(v-if='hasUnsavedChanges') Unsaved changes — saved with Update User
           v-spacer
           i18next.pr-4.text-body-small.text-grey.animated.fadeInDown(path='admin:users.id', tag='div')
             strong(place='id') {{user.id}}
@@ -23,34 +31,34 @@
             status-indicator.mr-3.ml-4(intermediary, pulse)
             .text-body-small.text-deep-orange {{$t('admin:users.unverified')}}
           v-spacer
-          v-btn.ml-3.animated.fadeInDown.wait-p3s(color='grey', icon, variant="outlined", to='/users')
+          v-btn.ml-3.animated.fadeInDown.wait-p3s(color='grey', icon, variant="outlined", @click='navigateBack', aria-label='Back to users')
             v-icon mdi-arrow-left
           v-menu(origin='top right')
             template(v-slot:activator='{ props }')
-              v-btn.ml-3.animated.fadeInDown.wait-p2s(color='black', v-bind='props', variant="flat")
+              v-btn.ml-3.animated.fadeInDown.wait-p2s(color='black', v-bind='props', variant="flat", :disabled='!recordReady')
                 span Actions
                 v-icon(end) mdi-chevron-down
             v-list(density="compact", nav)
-              v-list-item(v-if='!user.isActive', @click='activateUser')
+              v-list-item(v-if='!user.isActive', @click='activateUser', :disabled='actionLoading !== ``')
                 template(v-slot:prepend)
                   v-icon(color='purple') mdi-account-key
                 v-list-item-title Activate
-              v-list-item(v-else, @click='deactivateUser', :disabled='user.id == currentUserId || user.isSystem')
+              v-list-item(v-else, @click='deactivateUser', :disabled='user.id == currentUserId || user.isSystem || actionLoading !== ``')
                 template(v-slot:prepend)
                   v-icon(color='purple') mdi-account-cancel
                 v-list-item-title Deactivate
-              v-list-item(@click='verifyUser', :disabled='user.isVerified')
+              v-list-item(@click='verifyUser', :disabled='user.isVerified || actionLoading !== ``')
                 template(v-slot:prepend)
                   v-icon(color='blue') mdi-account-check
                 v-list-item-title Set as Verified
-              v-list-item(@click='deleteUserConfirm', :disabled='user.id == currentUserId || user.isSystem')
+              v-list-item(@click='deleteUserConfirm', :disabled='user.id == currentUserId || user.isSystem || actionLoading !== ``')
                 template(v-slot:prepend)
                   v-icon(color='red') mdi-trash-can-outline
                 v-list-item-title Delete
-          v-btn.ml-3.animated.fadeInDown(color='primary', size="large", variant="flat", @click='updateUser')
+          v-btn.ml-3.animated.fadeInDown(color='primary', size="large", variant="flat", @click='updateUser', :disabled='!hasUnsavedChanges || actionLoading !== ``', :loading='actionLoading === `update`')
             v-icon(start) mdi-check
             span {{$t('admin:users.updateUser')}}
-      v-col(cols='6')
+      v-col(cols='12', lg='6')
         v-card.animated.fadeInUp
           v-toolbar(color='primary', density="compact", flat)
             v-icon.mr-2 mdi-information-variant
@@ -66,11 +74,11 @@
                 v-menu(
                   v-model='editPop.email'
                   :close-on-content-click='false'
-                  min-width='350'
-                  location="left"
+                  width='350'
+                  max-width='calc(100vw - 32px)'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptEmail`)')
+                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptEmail`)', aria-label='Edit email')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
@@ -96,11 +104,11 @@
                 v-menu(
                   v-model='editPop.name'
                   :close-on-content-click='false'
-                  min-width='350'
-                  location="left"
+                  width='350'
+                  max-width='calc(100vw - 32px)'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptDisplayName`)')
+                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptDisplayName`)', aria-label='Edit display name')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
@@ -138,13 +146,13 @@
                   v-menu(
                     v-model='editPop.newPassword'
                     :close-on-content-click='false'
-                    min-width='350'
-                    location="left"
+                    width='350'
+                    max-width='calc(100vw - 32px)'
                     )
                     template(v-slot:activator='{ props: menuProps }')
                       v-tooltip(location="top")
                         template(v-slot:activator='{ props: tooltipProps }')
-                          v-btn(icon, color='grey', size="x-small", v-bind='{ ...menuProps, ...tooltipProps }', @click='focusField(`iptNewPassword`)')
+                          v-btn(icon, color='grey', size="x-small", v-bind='{ ...menuProps, ...tooltipProps }', @click='focusField(`iptNewPassword`)', aria-label='Change password')
                             v-icon mdi-pencil
                         span {{$t('admin:users.changePassword')}}
                     v-card
@@ -185,7 +193,7 @@
                 template(v-slot:append)
                   v-tooltip(location="top")
                     template(v-slot:activator='{ props }')
-                      v-btn(icon, color='grey', size="x-small", v-bind='props', @click='toggle2FA')
+                      v-btn(icon, color='grey', size="x-small", v-bind='props', @click='toggle2FA', :disabled='actionLoading !== ``', :loading='actionLoading === `toggle2fa`', aria-label='Toggle two-factor authentication')
                         v-icon mdi-power
                     span {{$t('admin:users.toggle2FA')}}
             template(v-if='user.providerId')
@@ -208,7 +216,7 @@
                     v-icon mdi-account-group-outline
                 v-list-item-title {{group.name}}
                 template(v-slot:append, v-if='!user.isSystem')
-                  v-btn(icon, color='red', size="x-small", @click='unassignGroup(group.id)')
+                  v-btn(icon, color='red', size="x-small", @click='unassignGroup(group.id)', :disabled='actionLoading !== ``', :aria-label='`Remove from ${group.name}`')
                     v-icon mdi-close
               v-divider(v-if='idx < user.groups.length - 1')
           v-alert.mx-3(v-if='user.groups.length < 1', variant="outlined", color="grey-darken-1", icon='mdi-alert')
@@ -230,14 +238,15 @@
               style='max-width: 300px;'
               density="compact"
             )
-            v-btn.ml-2.px-4(variant="flat", color='primary', @click='assignGroup', :disabled='newGroup === 0')
+            v-btn.ml-2.px-4(variant="flat", color='primary', @click='assignGroup', :disabled='newGroup <= 0 || actionLoading !== ``')
               v-icon(start) mdi-clipboard-account-outline
               span {{$t('admin:users.groupAssign')}}
+          .text-body-small.text-orange.px-4.pb-2 Membership changes are staged until you select Update User.
           v-system-bar(window, :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-3`')
             v-spacer
             .text-body-small {{$t('admin:users.groupAssignNotice')}}
 
-      v-col(cols='6')
+      v-col(cols='12', lg='6')
         v-card.animated.fadeInUp.wait-p2s
           v-toolbar(color='primary', density="compact", flat)
             v-icon.mr-2 mdi-account-badge-outline
@@ -253,11 +262,11 @@
                 v-menu(
                   v-model='editPop.location'
                   :close-on-content-click='false'
-                  min-width='350'
-                  location="left"
+                  width='350'
+                  max-width='calc(100vw - 32px)'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptLocation`)')
+                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptLocation`)', aria-label='Edit location')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
@@ -282,11 +291,11 @@
                 v-menu(
                   v-model='editPop.jobTitle'
                   :close-on-content-click='false'
-                  min-width='350'
-                  location="left"
+                  width='350'
+                  max-width='calc(100vw - 32px)'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptJobTitle`)')
+                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptJobTitle`)', aria-label='Edit job title')
                       v-icon mdi-pencil
                   v-card
                     v-text-field(
@@ -311,11 +320,11 @@
                 v-menu(
                   v-model='editPop.timezone'
                   :close-on-content-click='false'
-                  min-width='350'
-                  location="left"
+                  width='350'
+                  max-width='calc(100vw - 32px)'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptTimezone`)')
+                    v-btn(icon, color='grey', size="x-small", v-bind='props', @click='focusField(`iptTimezone`)', aria-label='Edit timezone')
                       v-icon mdi-pencil
                   v-card
                     v-select(
@@ -364,7 +373,7 @@
         div.v-card-chin
           v-spacer
           v-btn(variant="text", @click='deleteUserDialog = false') {{$t('common:actions.cancel')}}
-          v-btn(color='red', @click='deleteUser') {{$t('common:actions.delete')}}
+          v-btn(color='red', @click='deleteUser', :disabled='actionLoading !== ``', :loading='actionLoading === `delete`') {{$t('common:actions.delete')}}
 
         user-search(v-model='deleteSearchUserDialog', @select='assignDeleteUser')
 </template>
@@ -435,6 +444,9 @@ export default {
   data () {
     return {
       userLoadRequestId: 0,
+      userLoadState: 'loading' as 'loading' | 'ready' | 'error',
+      actionLoading: '',
+      userSnapshot: '',
       deleteUserDialog: false,
       deleteSearchUserDialog: false,
       deleteReplaceUser: {
@@ -712,7 +724,19 @@ export default {
     }
   },
   computed: {
-    currentUserId(): number { return wikiStore.user.id }
+    currentUserId(): number { return wikiStore.user.id },
+    recordReady(): boolean { return this.userLoadState === 'ready' && this.user.id > 0 },
+    hasUnsavedChanges(): boolean {
+      return this.recordReady && this.userSnapshot !== JSON.stringify({
+        email: this.user.email,
+        name: this.user.name,
+        newPassword: this.newPassword,
+        groups: this.user.groups.map(group => group.id),
+        location: this.user.location,
+        jobTitle: this.user.jobTitle,
+        timezone: this.user.timezone
+      })
+    }
   },
   watch: {
     '$route.params.id' () {
@@ -722,7 +746,14 @@ export default {
     }
   },
   methods: {
+    navigateBack () {
+      if (this.hasUnsavedChanges && !window.confirm('Discard unsaved user changes?')) return
+      this.$router.push('/users')
+    },
     resetUserEditorState () {
+      this.userLoadState = 'loading'
+      this.userSnapshot = ''
+      this.actionLoading = ''
       this.newPassword = ''
       this.newGroup = 0
       this.deleteUserDialog = false
@@ -746,20 +777,29 @@ export default {
     async loadUser () {
       const requestId = ++this.userLoadRequestId
       const routeUserId = getRouteUserId(this.$route.params.id)
+      this.userLoadState = 'loading'
 
       wikiStore.startLoading('admin-users-refresh')
       try {
         const user = await fetchUserDetails(window.fetch.bind(window), routeUserId, 'User detail response is invalid')
-        if (requestId !== this.userLoadRequestId || routeUserId !== getRouteUserId(this.$route.params.id)) {
-          return false
-        }
+        if (requestId !== this.userLoadRequestId || routeUserId !== getRouteUserId(this.$route.params.id)) return false
         this.user = user
-        return true
+        this.newPassword = ''
+        this.userSnapshot = JSON.stringify({
+          email: user.email,
+          name: user.name,
+          newPassword: '',
+          groups: user.groups.map(group => group.id),
+          location: user.location,
+          jobTitle: user.jobTitle,
+          timezone: user.timezone
+        })
+        this.userLoadState = user.id > 0 ? 'ready' : 'error'
+        return this.userLoadState === 'ready'
       } catch (err) {
-        if (requestId !== this.userLoadRequestId || routeUserId !== getRouteUserId(this.$route.params.id)) {
-          return false
-        }
+        if (requestId !== this.userLoadRequestId || routeUserId !== getRouteUserId(this.$route.params.id)) return false
         this.user = createEmptyUser()
+        this.userLoadState = 'error'
         wikiStore.showError(err)
         return false
       } finally {
@@ -783,7 +823,8 @@ export default {
      * Activate a user (if previously deactivated)
      */
     async activateUser () {
-      wikiStore.startLoading('admin-users-activate')
+      if (!this.recordReady) return
+      this.actionLoading = 'activate'
       try {
         await setAdminUserActive(window.fetch.bind(window), this.user.id, true)
         wikiStore.showNotification({
@@ -800,12 +841,14 @@ export default {
         })
       }
       wikiStore.stopLoading('admin-users-activate')
+      this.actionLoading = ''
     },
     /**
      * Deactivate a currently active user
      */
     async deactivateUser () {
-      wikiStore.startLoading('admin-users-deactivate')
+      if (!this.recordReady) return
+      this.actionLoading = 'deactivate'
       try {
         await setAdminUserActive(window.fetch.bind(window), this.user.id, false)
         wikiStore.showNotification({
@@ -822,12 +865,13 @@ export default {
         })
       }
       wikiStore.stopLoading('admin-users-deactivate')
+      this.actionLoading = ''
     },
     /**
      * Delete a user
      */
     deleteUserConfirm () {
-      this.deleteUserDialog = true
+      if (!this.recordReady) return
       this.deleteReplaceUser = {
         id: this.currentUserId,
         name: wikiStore.user.name,
@@ -835,7 +879,8 @@ export default {
       }
     },
     async deleteUser () {
-      wikiStore.startLoading('admin-users-delete')
+      if (!this.recordReady) return
+      this.actionLoading = 'delete'
       try {
         await deleteAdminUser(window.fetch.bind(window), this.user.id, this.deleteReplaceUser.id)
         wikiStore.showNotification({
@@ -853,6 +898,7 @@ export default {
       } finally {
         this.deleteUserDialog = false
         wikiStore.stopLoading('admin-users-delete')
+        this.actionLoading = ''
       }
     },
     assignDeleteUser (selUsr: UserSearchRow) {
@@ -876,7 +922,8 @@ export default {
      * Update a user
      */
     async updateUser() {
-      wikiStore.startLoading('admin-users-update')
+      if (!this.recordReady || !this.hasUnsavedChanges) return
+      this.actionLoading = 'update'
       try {
         await updateAdminUser(window.fetch.bind(window), this.user.id, {
           email: this.user.email,
@@ -903,6 +950,7 @@ export default {
         })
       }
       wikiStore.stopLoading('admin-users-update')
+      this.actionLoading = ''
     },
     /**
      * Focus an input after delay
@@ -918,6 +966,7 @@ export default {
      * Assign group to user
      */
     assignGroup() {
+      if (!this.recordReady || this.newGroup <= 0) return
       if (_.some(this.user.groups, ['id', this.newGroup])) {
         wikiStore.showNotification({
           message: this.$t('admin:users.userAlreadyAssignedToGroup'),
@@ -936,13 +985,15 @@ export default {
      * Unassign group from user
      */
     unassignGroup(gid: number) {
+      if (!this.recordReady || gid <= 0) return
       this.user.groups = this.user.groups.filter(group => group.id !== gid)
     },
     /**
      * Manually set user as verified
      */
     async verifyUser () {
-      wikiStore.startLoading('admin-users-verify')
+      if (!this.recordReady) return
+      this.actionLoading = 'verify'
       try {
         await verifyAdminUser(window.fetch.bind(window), this.user.id)
         wikiStore.showNotification({
@@ -959,12 +1010,13 @@ export default {
         })
       }
       wikiStore.stopLoading('admin-users-verify')
+      this.actionLoading = ''
     },
     /**
      * Send or resend the account invitation without changing the user.
      */
     async sendWelcomeEmail () {
-      this.welcomeEmailLoading = true
+      if (!this.recordReady) return
       try {
         await sendAdminUserWelcomeEmail(window.fetch.bind(window), this.user.id)
         wikiStore.showNotification({
@@ -986,7 +1038,7 @@ export default {
      * Toggle 2FA State
      */
     async toggle2FA () {
-      wikiStore.startLoading('admin-users-toggle2fa')
+      if (!this.recordReady) return
       const enabled = !this.user.tfaIsActive
       try {
         await setAdminUserTfa(window.fetch.bind(window), this.user.id, enabled)
@@ -1004,6 +1056,7 @@ export default {
         })
       }
       wikiStore.stopLoading('admin-users-toggle2fa')
+      this.actionLoading = ''
     }
   },
   created() {

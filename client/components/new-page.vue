@@ -1,9 +1,9 @@
 <template lang='pug'>
   v-app
-    .newpage
+    main.newpage
       .newpage-content
         img.animated.fadeIn(src='/_assets/svg/icon-file.svg', alt='')
-        .text-headline-medium {{ $t('newpage.title') }}
+        h1.text-headline-medium {{ $t('newpage.title') }}
         .text-body-large.mt-3 {{ $t('newpage.subtitle') }}
         .newpage-actions
           v-btn(:href='`/e/` + locale + `/` + path', size='large', color='primary', variant='flat')
@@ -37,4 +37,24 @@ export default {
 
 <style lang='scss'>
 
+@media (max-height: 500px) and (min-width: 600px) {
+  .newpage {
+    padding-block: var(--wiki-space-3);
+
+    &-content {
+      min-height: 0;
+      height: calc(100dvh - var(--wiki-space-6));
+      padding: var(--wiki-space-4) var(--wiki-space-6);
+    }
+
+    img {
+      height: 96px;
+      margin-bottom: var(--wiki-space-2);
+    }
+
+    .text-body-large {
+      line-height: 1.3;
+    }
+  }
+}
 </style>

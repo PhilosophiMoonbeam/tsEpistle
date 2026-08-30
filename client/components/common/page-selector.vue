@@ -2,32 +2,37 @@
   v-dialog(
     v-model='isShown'
     max-width='850px'
-    scrim='blue-darken-4'
+    :fullscreen='$vuetify.display.smAndDown'
+    scrim='surface'
     style='--v-overlay-opacity: .7'
-    )
+    aria-labelledby='page-selector-title'
+  )
     v-card.page-selector
-      .dialog-header.is-blue
-        v-icon.mr-3(color='white') mdi-page-next-outline
-        .text-body-large(v-if='mode === `create`') {{$t('common:pageSelector.createTitle')}}
-        .text-body-large(v-else-if='mode === `move`') {{$t('common:pageSelector.moveTitle')}}
-        .text-body-large(v-else-if='mode === `select`') {{$t('common:pageSelector.selectTitle')}}
+      .dialog-header
+        v-icon.mr-3(color='primary' aria-hidden='true') mdi-page-next-outline
+        h2#page-selector-title.text-body-large(v-if='mode === `create`') {{$t('common:pageSelector.createTitle')}}
+        h2#page-selector-title.text-body-large(v-else-if='mode === `move`') {{$t('common:pageSelector.moveTitle')}}
+        h2#page-selector-title.text-body-large(v-else-if='mode === `select`') {{$t('common:pageSelector.selectTitle')}}
         v-spacer
         v-progress-circular(
+          v-if='searchLoading'
           indeterminate
-          color='white'
+          color='primary'
           :size='20'
           :width='2'
-          v-show='searchLoading'
-          aria-label='Loading pages'
-          )
-      .d-flex
-        v-col(cols='5', :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-3`')
-          v-toolbar(color="grey-darken-3", density="compact", flat)
-            .text-body-medium {{$t('common:pageSelector.virtualFolders')}}
+          aria-hidden='true'
+        )
+      .d-flex.page-selector__panes
+        v-col.page-selector__pane.page-selector__tree-pane(cols='12' md='5')
+          v-toolbar(color='surface-variant' density='compact' flat)
+            h3#page-selector-folders.text-body-medium {{$t('common:pageSelector.virtualFolders')}}
             v-spacer
-            v-btn(icon, rounded='0', href='https://docs.requarks.io/guide/pages#folders', target='_blank')
-              v-icon mdi-help-box
-          div(style='height:400px;')
+            v-tooltip(location='top')
+              template(v-slot:activator='{ props }')
+                v-btn(v-bind='props' icon rounded='0' href='https://docs.requarks.io/guide/pages#folders' target='_blank' aria-label='Open virtual folders help')
+                  v-icon mdi-help-box-outline
+              span {{$t('common:pageSelector.virtualFolders')}}
+          div.page-selector__scroller(aria-labelledby='page-selector-folders')
             vue-scroll(:ops='scrollStyle')
               v-treeview(
                 :key='`pageTree-` + treeViewCacheId'
@@ -35,67 +40,80 @@
                 v-model:opened='openNodes'
                 :items='tree'
                 :load-children='fetchFolders'
-                density="compact"
+                density='compact'
                 expand-icon='mdi-menu-down-outline'
                 item-value='id'
                 item-title='title'
                 activatable
                 hoverable
-                )
+              )
                 template(v-slot:prepend='{ isOpen }')
-                  v-icon mdi-{{ isOpen ? 'folder-open' : 'folder' }}
-        v-col(cols='7')
-          v-toolbar(color="blue-darken-2", density="compact", flat)
-            .text-body-medium {{$t('common:pageSelector.pages')}}
-            //- v-spacer
-            //- v-btn(icon, rounded='0', disabled): v-icon mdi-content-save-move-outline
-            //- v-btn(icon, rounded='0', disabled): v-icon mdi-trash-can-outline
-          div(v-if='currentPages.length > 0', style='height:400px;')
-            vue-scroll(:ops='scrollStyle')
-              v-list.py-0(density="compact")
-                template(v-for='(page, idx) of currentPages', :key='`page-` + page.id')
-                  v-list-item(
-                    :value='page'
-                    :active='currentPage?.id === page.id'
-                    @click='currentPage = page'
-                  )
-                    template(v-slot:prepend): v-icon mdi-text-box
-                    v-list-item-title {{page.title}}
-                  v-divider(v-if='idx < currentPages.length - 1')
-          v-alert.animated.fadeIn(
-            v-else
-            text
-            color='orange'
-            prominent
-            icon='mdi-alert'
+                  v-icon(aria-hidden='true') mdi-{{ isOpen ? 'folder-open' : 'folder' }}
+        v-col.page-selector__pane.page-selector__pages-pane(cols='12' md='7')
+          v-toolbar(color='surface-variant' density='compact' flat)
+            h3#page-selector-pages.text-body-medium {{$t('common:pageSelector.pages')}}
+          div.page-selector__scroller(aria-labelledby='page-selector-pages')
+            async-state(
+              v-if='searchLoading'
+              state='loading'
+              title='Loading pages'
+              message='Loading pages in the selected folder.'
             )
-            .text-body-medium {{$t('common:pageSelector.folderEmptyWarning')}}
-      v-card-actions.pa-2(:class='$vuetify.theme.current.dark ? `bg-grey-darken-2` : `bg-grey-lighten-1`', v-if='!mustExist || allowLocaleChange')
+            async-state(
+              v-else-if='loadError'
+              state='error'
+              title='Pages could not be loaded'
+              :message='loadError'
+              retry-label='Try again'
+              @retry='reloadTree(currentLocale)'
+            )
+            v-list.py-0(v-else-if='currentPages.length > 0' density='compact')
+              template(v-for='(page, idx) of currentPages' :key='`page-` + page.id')
+                v-list-item(
+                  :value='page'
+                  :active='currentPage?.id === page.id'
+                  @click='currentPage = page'
+                )
+                  template(v-slot:prepend): v-icon aria-hidden='true' mdi-text-box-outline
+                  v-list-item-title {{page.title}}
+                v-divider(v-if='idx < currentPages.length - 1')
+            async-state(
+              v-else
+              state='empty'
+              :title='$t(`common:pageSelector.folderEmptyWarning`)'
+              :message='$t(`common:pageSelector.pages`)'
+            )
+      v-card-actions.page-selector__options.pa-2(v-if='!mustExist || allowLocaleChange')
         v-select(
-          variant="solo"
+          v-model='currentLocale'
+          variant='solo'
           flat
-          bg-color='grey-darken-3'
+          bg-color='surface-variant'
           hide-details
           single-line
           :items='namespaces'
-          style='flex: 0 0 100px; border-radius: 4px 0 0 4px;'
-          v-model='currentLocale'
-          )
+          label='Locale'
+          aria-label='Page locale'
+          :disabled='isSubmitting'
+        )
         v-text-field(
           ref='pathIpt'
-          variant="solo"
+          v-model='currentPath'
+          variant='solo'
           hide-details
           prefix='/'
-          v-model='currentPath'
+          label='Page path'
+          aria-label='Page path'
           flat
           :readonly='mustExist'
           clearable
-          style='border-radius: 0 4px 4px 0;'
+          :disabled='isSubmitting'
         )
-      div.v-card-chin
+      div.v-card-chin.page-selector__chin
+        v-alert.page-selector__submission-error(v-if='submissionError' type='error' variant='tonal' density='compact' role='alert') {{ submissionError }}
         v-spacer
-        v-btn(variant="text", @click='close') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color='primary', @click='open', :disabled='!isValidPath')
+        v-btn(variant='text' :disabled='isSubmitting' @click='close') {{$t('common:actions.cancel')}}
+        v-btn.px-4(color='primary' :loading='isSubmitting' @click='open' :disabled='!isValidPath || isSubmitting')
           v-icon(start) mdi-check
           span {{$t('common:actions.select')}}</template>
 
@@ -103,6 +121,8 @@
 import { defineComponent, type PropType } from 'vue'
 import _ from 'lodash'
 import { fetchPageTree, type PageTreeRow } from '../../helpers/pages-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
+import AsyncState from './async-state.vue'
 
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
 
@@ -138,41 +158,24 @@ function isPageTreeItem (item: unknown): item is PageTreeItem {
 /* global siteLangs, siteConfig */
 
 export default defineComponent({
+  components: { AsyncState },
   emits: ['update:modelValue'],
   props: {
-    modelValue: {
-      type: Boolean,
-      default: false
-    },
-    path: {
-      type: String,
-      default: 'new-page'
-    },
-    locale: {
-      type: String,
-      default: 'en'
-    },
-    mode: {
-      type: String as PropType<PageSelectorMode>,
-      default: 'create'
-    },
-    openHandler: {
-      type: Function as PropType<OpenHandler>,
-      default: () => undefined
-    },
-    mustExist: {
-      type: Boolean,
-      default: false
-    },
-    allowLocaleChange: {
-      type: Boolean,
-      default: false
-    }
+    modelValue: { type: Boolean, default: false },
+    path: { type: String, default: 'new-page' },
+    locale: { type: String, default: 'en' },
+    mode: { type: String as PropType<PageSelectorMode>, default: 'create' },
+    openHandler: { type: Function as PropType<OpenHandler>, default: () => undefined },
+    mustExist: { type: Boolean, default: false },
+    allowLocaleChange: { type: Boolean, default: false }
   },
   data() {
     return {
       treeViewCacheId: 0,
-      searchLoading: false,
+      pendingRequests: 0,
+      loadError: '',
+      submissionError: '',
+      isSubmitting: false,
       currentLocale: siteConfig.lang,
       currentFolderPath: '',
       currentPath: 'new-page' as string | null,
@@ -185,21 +188,9 @@ export default defineComponent({
       namespaces: siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang],
       scrollStyle: {
         vuescroll: {},
-        scrollPanel: {
-          initialScrollX: 0.01, // fix scrollbar not disappearing on load
-          scrollingX: false,
-          speed: 50
-        },
-        rail: {
-          gutterOfEnds: '2px'
-        },
-        bar: {
-          onlyShowBarOnScroll: false,
-          background: '#999',
-          hoverStyle: {
-            background: '#64B5F6'
-          }
-        }
+        scrollPanel: { initialScrollX: 0.01, scrollingX: false, speed: 50 },
+        rail: { gutterOfEnds: '2px' },
+        bar: { onlyShowBarOnScroll: false, background: '#999', hoverStyle: { background: '#64B5F6' } }
       }
     }
   },
@@ -208,95 +199,71 @@ export default defineComponent({
       get(): boolean { return this.modelValue },
       set(val: boolean) { this.$emit('update:modelValue', val) }
     },
+    searchLoading(): boolean { return this.pendingRequests > 0 },
     currentPages (): PageEntry[] {
       return _.sortBy(_.filter(this.pages, ['parent', _.head(this.currentNode) ?? 0]), ['title', 'path'])
     },
     isValidPath (): boolean {
-      if (!this.currentPath) {
-        return false
-      }
-      if (this.mustExist && !this.currentPage) {
-        return false
-      }
+      if (!this.currentPath || (this.mustExist && !this.currentPage)) return false
       const firstSection = _.head(this.currentPath.split('/'))
-      if (!firstSection || firstSection.length <= 1) {
-        return false
-      } else if (localeSegmentRegex.test(firstSection)) {
-        return false
-      } else if (
-        _.some(['login', 'logout', 'register', 'verify', 'favicons', 'fonts', 'img', 'js', 'svg'], p => {
-          return p === firstSection
-        })) {
-        return false
-      } else {
-        return true
-      }
+      if (!firstSection || firstSection.length <= 1 || localeSegmentRegex.test(firstSection)) return false
+      return !_.some(['login', 'logout', 'register', 'verify', 'favicons', 'fonts', 'img', 'js', 'svg'], p => p === firstSection)
     }
   },
   watch: {
     isShown (newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
         this.currentPath = this.path
+        this.submissionError = ''
         const localeChanged = this.currentLocale !== this.locale
         this.currentLocale = this.locale
-        if (!localeChanged) {
-          this.reloadTree(this.locale).catch(err => console.warn(err))
-        }
-        _.delay(() => {
-          ;(this.$refs.pathIpt as { focus: () => void }).focus()
-        }, 0)
+        if (!localeChanged) void this.reloadTree(this.locale)
+        _.delay(() => (this.$refs.pathIpt as { focus: () => void }).focus(), 0)
       }
     },
     currentNode (newValue: number[], oldValue: number[]) {
-      if (newValue.length < 1) { // force a selection
-        this.$nextTick(() => {
-          this.currentNode = oldValue
-        })
+      if (newValue.length < 1) {
+        this.$nextTick(() => { this.currentNode = oldValue })
       } else {
         const current = _.find(this.all, ['id', newValue[0]])
-
-        if (this.openNodes.indexOf(newValue[0]) < 0) { // auto open and load children
-          if (current) {
-            if (this.openNodes.indexOf(current.parent) < 0) {
-              this.$nextTick(() => {
-                this.openNodes.push(current.parent)
-              })
-            }
-          }
-          this.$nextTick(() => {
-            this.openNodes.push(newValue[0])
-          })
+        if (this.openNodes.indexOf(newValue[0]) < 0) {
+          if (current && this.openNodes.indexOf(current.parent) < 0) this.$nextTick(() => { this.openNodes.push(current.parent) })
+          this.$nextTick(() => { this.openNodes.push(newValue[0]) })
         }
-
         this.currentPath = _.compact([current?.path ?? '', _.last(this.currentPath?.split('/') ?? [])]).join('/')
       }
     },
     currentPage (newValue: PageEntry | null) {
-      if (newValue) {
-        this.currentPath = newValue.path
-      }
+      if (newValue) this.currentPath = newValue.path
     },
     currentLocale (newValue: string) {
-      this.reloadTree(newValue).catch(err => console.warn(err))
+      void this.reloadTree(newValue)
     }
   },
   methods: {
     close(): void {
-      this.isShown = false
+      if (!this.isSubmitting) this.isShown = false
     },
-    open(): void {
-      if (!this.currentPath) return
-      const exit = this.openHandler?.({
-        locale: this.currentLocale,
-        path: this.currentPath,
-        id: (this.mustExist && this.currentPage) ? this.currentPage.pageId : 0
-      })
-      if (exit !== false) {
-        this.close()
+    async open(): Promise<void> {
+      if (!this.currentPath || !this.isValidPath || this.isSubmitting) return
+      this.submissionError = ''
+      this.isSubmitting = true
+      try {
+        const exit = await this.openHandler?.({
+          locale: this.currentLocale,
+          path: this.currentPath,
+          id: (this.mustExist && this.currentPage) ? this.currentPage.pageId : 0
+        })
+        if (exit !== false) this.close()
+      } catch (err) {
+        this.submissionError = getErrorMessage(err) || 'The page selection could not be completed.'
+      } finally {
+        this.isSubmitting = false
       }
     },
     async reloadTree (locale: string): Promise<void> {
       const root = createRootNode(locale)
+      this.loadError = ''
       this.tree = [root]
       this.currentNode = [0]
       this.openNodes = [0]
@@ -307,24 +274,22 @@ export default defineComponent({
       await this.fetchFolders(root)
     },
     async fetchFolders (item: unknown): Promise<void> {
-      if (!isPageTreeItem(item)) {
-        throw new TypeError('Invalid page tree item')
-      }
-      this.searchLoading = true
+      if (!isPageTreeItem(item)) throw new TypeError('Invalid page tree item')
+      const requestLocale = this.currentLocale
+      this.pendingRequests += 1
       try {
-        const items = await fetchPageTree(window.fetch.bind(window), {
-          parent: item.id,
-          mode: 'ALL',
-          locale: this.currentLocale
-        })
-        if (item.locale !== this.currentLocale) return
+        const items = await fetchPageTree(window.fetch.bind(window), { parent: item.id, mode: 'ALL', locale: requestLocale })
+        if (item.locale !== this.currentLocale || requestLocale !== this.currentLocale) return
         const itemFolders: PageTreeItem[] = items.filter(item => item.isFolder).map(folder => ({ ...folder, children: [] }))
         const itemPages = items.filter(isPageEntry)
         item.children = itemFolders.length > 0 ? itemFolders : undefined
         this.pages = _.unionBy(this.pages, itemPages, 'id')
         this.all = _.unionBy(this.all, items, 'id')
+        this.loadError = ''
+      } catch (err) {
+        if (requestLocale === this.currentLocale) this.loadError = getErrorMessage(err) || 'Pages could not be loaded.'
       } finally {
-        this.searchLoading = false
+        this.pendingRequests = Math.max(0, this.pendingRequests - 1)
       }
     }
   }
@@ -332,14 +297,76 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
-
 .page-selector {
   .v-treeview .v-list-item-title {
     font-size: 13px;
   }
+
   .v-treeview .v-list-item {
     cursor: pointer;
   }
+
+  &__panes {
+    min-width: 0;
+  }
+
+  &__pane {
+    min-width: 0;
+  }
+
+  &__scroller {
+    min-height: 12rem;
+    max-height: min(400px, 52dvh);
+    overflow: hidden;
+  }
+
+  &__options {
+    gap: .5rem;
+  }
+
+  &__options .v-select {
+    flex: 0 1 10rem;
+    min-width: 7rem;
+  }
+
+  &__options .v-text-field {
+    flex: 1 1 14rem;
+    min-width: 0;
+  }
+
+  &__chin {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    flex-wrap: wrap;
+  }
+
+  &__submission-error {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
 }
 
+@media (max-width: 599.98px) {
+  .page-selector__panes {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .page-selector__scroller {
+    max-height: 34dvh;
+  }
+
+  .page-selector__options {
+    flex-wrap: wrap;
+  }
+
+  .page-selector__options .v-select,
+  .page-selector__options .v-text-field {
+    flex: 1 1 100%;
+  }
+}
 </style>

@@ -1,11 +1,22 @@
 @use "sass:meta";
-@use "global";
 @use "fonts/default";
 
 @use "base/base";
 @use "base/page-gutters";
 @use "base/icons";
 @use "base/animation";
+
+@media (prefers-reduced-motion: reduce) {
+  .animated {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+  }
+
+  [class*='wait-p'] {
+    animation-delay: 0s !important;
+  }
+}
 
 @import 'katex/dist/katex.min.css';
 @import 'diff2html/bundles/css/diff2html.min.css';
@@ -17,17 +28,15 @@
 @include meta.load-css('components/v-form');
 @include meta.load-css('components/v-tabs');
 
-@include meta.load-css('pages/new');
-@include meta.load-css('pages/notfound');
-@include meta.load-css('pages/unauthorized');
-@include meta.load-css('pages/welcome');
 @include meta.load-css('pages/error');
 
-// Cohesive utility and empty-state surfaces
+// Shared public-state surfaces. State modifiers provide semantic accents without
+// introducing a second palette or changing the active light/dark theme.
 .onboarding,
 .notfound,
 .unauthorized,
 .newpage {
+  --wiki-state-accent: rgb(var(--v-theme-primary));
   position: relative;
   display: flex;
   min-height: 100vh;
@@ -35,29 +44,25 @@
   align-items: center;
   justify-content: center;
   overflow: hidden auto;
-  padding: 40px 22px;
+  padding: var(--wiki-space-8) var(--wiki-page-gutter);
   background:
-    radial-gradient(circle at 18% 15%, rgba(var(--v-theme-primary), .28), transparent 28rem),
-    radial-gradient(circle at 82% 85%, rgba(99, 102, 241, .2), transparent 32rem),
-    linear-gradient(145deg, #0b1220, #172033 58%, #101827);
-  color: #fff;
-  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+    radial-gradient(circle at 18% 15%, color-mix(in srgb, var(--wiki-state-accent) 16%, transparent), transparent 28rem),
+    linear-gradient(145deg, rgb(var(--v-theme-background)), color-mix(in srgb, rgb(var(--v-theme-surface)) 88%, var(--wiki-state-accent) 12%));
+  color: rgb(var(--v-theme-on-background));
+  font-family: var(--v-font-body);
 
   &::before {
     position: absolute;
     inset: 0;
-    width: auto;
-    height: auto;
     background-image:
-      linear-gradient(rgba(255, 255, 255, .026) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, .026) 1px, transparent 1px);
+      linear-gradient(color-mix(in srgb, rgb(var(--v-theme-on-background)) 7%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, rgb(var(--v-theme-on-background)) 7%, transparent) 1px, transparent 1px);
     background-position: 0 0;
     background-repeat: repeat;
     background-size: 44px 44px;
-    opacity: 1;
-    animation: none;
     content: '';
     mask-image: linear-gradient(to bottom, #000, transparent 85%);
+    opacity: .8;
   }
 
   &::after {
@@ -65,12 +70,11 @@
     inset: auto auto -13rem -10rem;
     width: 30rem;
     height: 30rem;
-    border: 1px solid rgba(255, 255, 255, .06);
+    border: 1px solid color-mix(in srgb, var(--wiki-state-accent) 18%, transparent);
     border-radius: 50%;
-    background: transparent;
     box-shadow:
-      0 0 0 68px rgba(255, 255, 255, .018),
-      0 0 0 136px rgba(255, 255, 255, .012);
+      0 0 0 68px color-mix(in srgb, var(--wiki-state-accent) 8%, transparent),
+      0 0 0 136px color-mix(in srgb, var(--wiki-state-accent) 5%, transparent);
     content: '';
   }
 
@@ -84,12 +88,10 @@
     align-items: center;
     justify-content: center;
     padding: clamp(34px, 6vw, 66px);
-    border: 1px solid rgba(255, 255, 255, .13);
-    border-radius: 28px;
-    background: rgba(15, 23, 42, .58);
-    box-shadow: 0 28px 80px rgba(0, 0, 0, .26);
-    backdrop-filter: blur(18px) saturate(135%);
-    -webkit-backdrop-filter: blur(18px) saturate(135%);
+    border: 1px solid color-mix(in srgb, rgb(var(--v-border-color)) 55%, transparent);
+    border-radius: var(--wiki-hero-radius);
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, transparent);
+    box-shadow: var(--wiki-shadow-lg);
     text-align: center;
   }
 
@@ -97,13 +99,12 @@
     width: auto;
     max-width: min(240px, 68vw);
     height: 140px;
-    margin: 0 0 28px;
-    filter: grayscale(20%) brightness(1.15);
+    margin: 0 0 var(--wiki-space-6);
     object-fit: contain;
   }
 
   .text-headline-medium {
-    color: #fff;
+    color: rgb(var(--v-theme-on-surface));
     font-size: clamp(2rem, 5vw, 3.3rem) !important;
     font-weight: 760;
     letter-spacing: -.055em !important;
@@ -113,29 +114,24 @@
 
   .text-body-large {
     max-width: 520px;
-    color: rgba(255, 255, 255, .68);
+    color: rgba(var(--v-theme-on-surface), .72);
     line-height: 1.6;
     text-wrap: balance;
   }
 
   .v-btn {
     min-height: 46px;
-    border-radius: 12px;
     font-weight: 670;
     text-transform: none;
   }
 }
 
-.newpage-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 12px;
-  margin-top: 26px;
+.notfound {
+  --wiki-state-accent: rgb(var(--v-theme-error));
+}
 
-  .v-btn {
-    min-width: 168px;
-  }
+.unauthorized {
+  --wiki-state-accent: rgb(var(--v-theme-warning));
 }
 
 .onboarding {
@@ -147,8 +143,19 @@
     width: min(290px, 70vw);
     max-width: none;
     height: auto;
-    margin-bottom: 34px;
     filter: grayscale(100%) brightness(2.2);
+  }
+}
+
+.newpage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--wiki-space-3);
+  margin-top: var(--wiki-space-6);
+
+  .v-btn {
+    min-width: 168px;
   }
 }
 
@@ -162,21 +169,20 @@
     &-content {
       width: 100%;
       min-height: 100dvh;
-      padding: 32px 22px;
+      padding: var(--wiki-space-6) var(--wiki-space-4);
       border: 0;
       border-radius: 0;
-      background: rgba(15, 23, 42, .72);
       box-shadow: none;
     }
 
     img {
       height: 112px;
-      margin-bottom: 24px;
+      margin-bottom: var(--wiki-space-4);
     }
 
     .v-btn.mt-5 {
       width: min(100%, 320px);
-      margin-top: 14px !important;
+      margin-top: var(--wiki-space-3) !important;
     }
   }
 
@@ -197,17 +203,17 @@
 
 @media (max-height: 500px) and (min-width: 600px) {
   .notfound {
-    padding: 12px 22px;
+    padding: var(--wiki-space-3) var(--wiki-page-gutter);
 
     &-content {
       min-height: 0;
-      height: calc(100dvh - 24px);
-      padding: 16px 24px;
+      height: calc(100dvh - var(--wiki-space-6));
+      padding: var(--wiki-space-4) var(--wiki-space-6);
     }
 
     img {
       height: 96px;
-      margin-bottom: 8px;
+      margin-bottom: var(--wiki-space-2);
     }
 
     .text-headline-medium {
@@ -219,20 +225,11 @@
     }
 
     .v-btn.mt-5 {
-      margin-top: 8px !important;
+      margin-top: var(--wiki-space-2) !important;
     }
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .onboarding *,
-  .notfound *,
-  .unauthorized *,
-  .newpage * {
-    animation-duration: .01ms !important;
-    transition-duration: .01ms !important;
-  }
-}
 
 
 .editor-status-bar {

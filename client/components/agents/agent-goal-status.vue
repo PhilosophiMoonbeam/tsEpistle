@@ -11,21 +11,27 @@
         </div>
         <v-chip :color="statusColor" size="small" variant="tonal">{{ statusLabel }}</v-chip>
       </header>
-      <div class="agent-goal__meter" aria-hidden="true">
+      <div
+        class="agent-goal__meter"
+        role="progressbar"
+        :aria-valuenow="Math.round(budgetPercent)"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        :aria-valuetext="budgetAriaLabel"
+      >
         <span :style="{ width: `${budgetPercent}%` }" />
       </div>
-      <p class="agent-goal__summary" aria-live="polite">
-        {{ progressLabel }}
-        <span v-if="goal.errorMessage"> · {{ goal.errorMessage }}</span>
-      </p>
+      <p class="agent-goal__summary" aria-live="polite">{{ progressLabel }}</p>
+      <p v-if="goal.errorMessage" class="agent-goal__error" role="alert">{{ goal.errorMessage }}</p>
       <div v-if="canPause || canResume || canCancel" class="agent-goal__actions">
         <v-btn
           v-if="canPause"
           size="small"
           variant="tonal"
           prepend-icon="mdi-pause"
-          :loading="busy"
-          @click="$emit('pause')"
+          :loading="pendingAction === 'pause' && busy"
+          :disabled="busy"
+          @click="runAction('pause')"
         >Pause</v-btn>
         <v-btn
           v-if="canResume"
@@ -33,8 +39,9 @@
           color="primary"
           variant="tonal"
           prepend-icon="mdi-play"
-          :loading="busy"
-          @click="$emit('resume')"
+          :loading="pendingAction === 'resume' && busy"
+          :disabled="busy"
+          @click="runAction('resume')"
         >Resume</v-btn>
         <v-btn
           v-if="canCancel"
@@ -42,19 +49,51 @@
           variant="text"
           prepend-icon="mdi-close"
           :disabled="busy"
-          @click="$emit('cancel')"
+          :loading="pendingAction === 'cancel' && busy"
+          @click="cancelDialogOpen = true"
         >Cancel goal</v-btn>
       </div>
+      <v-dialog v-model="cancelDialogOpen" max-width="30rem" persistent>
+        <v-card>
+          <v-card-title>Cancel durable goal?</v-card-title>
+          <v-card-text>
+            This will stop <strong>{{ goal.objective }}</strong> and prevent any future continuations. This action cannot be undone.
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn variant="text" :disabled="busy" @click="cancelDialogOpen = false">Keep goal</v-btn>
+            <v-btn color="error" variant="tonal" :loading="pendingAction === 'cancel' && busy" :disabled="busy" @click="confirmCancel">Cancel goal</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { AgentGoalView } from '../../../shared/agents/contracts.ts'
 
 const props = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean }>()
-defineEmits<{ pause: []; resume: []; cancel: [] }>()
+const emit = defineEmits<{ pause: []; resume: []; cancel: [] }>()
+const pendingAction = ref<'pause' | 'resume' | 'cancel' | null>(null)
+const cancelDialogOpen = ref(false)
+watch(() => props.busy, busy => { if (!busy) pendingAction.value = null })
+watch(() => props.goal.status, status => {
+  if (!['active', 'paused', 'blocked'].includes(status)) cancelDialogOpen.value = false
+})
+const runAction = (action: 'pause' | 'resume') => {
+  if (props.busy) return
+  pendingAction.value = action
+  if (action === 'pause') emit('pause')
+  else emit('resume')
+}
+const confirmCancel = () => {
+  if (props.busy) return
+  pendingAction.value = 'cancel'
+  cancelDialogOpen.value = false
+  emit('cancel')
+}
 
 const statusPresentation = {
   active: { label: 'In progress', icon: 'mdi-bullseye-arrow', color: 'primary' },
@@ -76,13 +115,22 @@ const canCancel = computed(() => props.goal.status === 'active' || props.goal.st
 const tokenPercent = computed(() => props.goal.maxTokens > 0 ? (props.goal.consumedTokens / props.goal.maxTokens) * 100 : 0)
 const toolPercent = computed(() => props.goal.maxToolCalls > 0 ? (props.goal.consumedToolCalls / props.goal.maxToolCalls) * 100 : 0)
 const continuationPercent = computed(() => props.goal.maxContinuations > 0 ? (props.goal.continuationCount / props.goal.maxContinuations) * 100 : 0)
-const budgetPercent = computed(() => Math.max(3, Math.min(100, Math.max(tokenPercent.value, toolPercent.value, continuationPercent.value))))
+const budgetPercent = computed(() => Math.min(100, Math.max(0, Math.max(tokenPercent.value, toolPercent.value, continuationPercent.value))))
+const budgetLabel = computed(() => {
+  const budgets = [
+    { label: 'token budget', percent: tokenPercent.value },
+    { label: 'tool-call budget', percent: toolPercent.value },
+    { label: 'continuation budget', percent: continuationPercent.value }
+  ]
+  return budgets.reduce((highest, budget) => budget.percent > highest.percent ? budget : highest).label
+})
+const budgetAriaLabel = computed(() => `${budgetLabel.value} is ${Math.round(budgetPercent.value)}% used`)
 const progressLabel = computed(() => {
   if (props.goal.status === 'completed') return `Completed in ${props.goal.continuationCount + 1} run${props.goal.continuationCount === 0 ? '' : 's'}.`
   if (props.goal.status === 'budget_limited') return 'Host-owned time, token, tool, or continuation limits stopped further work.'
   if (props.goal.status === 'cancelled') return 'No further work will run for this goal.'
   if (props.goal.status === 'failed') return 'The goal stopped after a non-recoverable failure.'
-  return `Run ${props.goal.continuationCount + 1} of ${props.goal.maxContinuations + 1} · ${props.goal.consumedTokens.toLocaleString()} tokens · ${props.goal.consumedToolCalls} tool calls`
+  return `Run ${props.goal.continuationCount + 1} of ${props.goal.maxContinuations + 1} · ${props.goal.consumedTokens.toLocaleString()} of ${props.goal.maxTokens.toLocaleString()} tokens · ${props.goal.consumedToolCalls} of ${props.goal.maxToolCalls} tool calls`
 })
 </script>
 
@@ -162,6 +210,15 @@ const progressLabel = computed(() => {
   font-size: .76rem;
   line-height: 1.45;
   margin: .5rem 0 0;
+}
+.agent-goal__error {
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, transparent);
+  border-inline-start: 3px solid rgb(var(--v-theme-error));
+  color: rgb(var(--v-theme-error));
+  font-size: .8rem;
+  line-height: 1.45;
+  margin: .5rem 0 0;
+  padding: .5rem .65rem;
 }
 .agent-goal__actions {
   display: flex;

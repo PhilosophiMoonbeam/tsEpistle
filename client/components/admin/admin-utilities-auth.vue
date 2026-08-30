@@ -5,58 +5,94 @@
     v-card-text
       .text-body-large.pb-3.text-primary Generate New Authentication Public / Private Key Certificates
       .text-body-medium This will invalidate all current session tokens and cause all users to be logged out.
-      .text-body-medium.text-red You will need to log back in after the operation.
-      v-btn(variant="outlined", color='primary', @click='regenCerts', :disabled='loading').ml-0.mt-3
-        v-icon(start) mdi-gesture-double-tap
-        span Proceed
+      .text-body-medium.text-error You will need to log back in after the operation.
+      v-btn(variant="outlined", color='error', @click='openConfirmation("certificates")', :loading='activeOperation === "certificates"', :disabled='loading && activeOperation !== "certificates"').ml-0.mt-3
+        v-icon(start) mdi-certificate-outline
+        span Regenerate certificates
       v-divider.my-5
       .text-body-large.pb-3.text-primary Reset Guest User
       .text-body-medium This will reset the guest user to its default parameters and permissions.
-      v-btn(variant="outlined", color='primary', @click='resetGuest', :disabled='loading').ml-0.mt-3
-        v-icon(start) mdi-gesture-double-tap
-        span Proceed</template>
+      v-btn(variant="outlined", color='warning', @click='openConfirmation("guest")', :loading='activeOperation === "guest"', :disabled='loading && activeOperation !== "guest"').ml-0.mt-3
+        v-icon(start) mdi-account-alert-outline
+        span Reset guest user
+    v-dialog(v-model='confirmationDialog', max-width='520', persistent)
+      v-card
+        v-card-title {{ confirmationTitle }}
+        v-card-text
+          .text-body-medium {{ confirmationText }}
+        v-card-actions
+          v-btn(variant="text", @click='confirmationDialog = false', :disabled='loading') Cancel
+          v-spacer
+          v-btn(:color='confirmAction === "certificates" ? "error" : "warning"', @click='confirmAction === "certificates" ? regenCerts() : resetGuest()', :loading='loading') {{ confirmAction === "certificates" ? "Regenerate certificates" : "Reset guest user" }}
+    v-dialog(v-model='resultDialog', max-width='520', persistent)
+      v-card
+        v-card-title.text-success Authentication certificates regenerated
+        v-card-text(aria-live='polite') {{ resultMessage }}
+
+</template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import Cookies from 'js-cookie'
 import { regenerateAuthCertificates, resetGuestUser } from '../../helpers/auth-api'
 import { wikiStore } from '@/store/index.ts'
 
+type AuthAction = '' | 'certificates' | 'guest'
+
 export default {
-  data: () => {
-    return {
-      loading: false
+  data: () => ({
+    loading: false,
+    activeOperation: '' as AuthAction,
+    confirmAction: '' as AuthAction,
+    confirmationDialog: false,
+    resultDialog: false,
+    resultMessage: ''
+  }),
+  computed: {
+    confirmationTitle (): string {
+      return this.confirmAction === 'certificates'
+        ? 'Regenerate authentication certificates?'
+        : 'Reset guest user?'
+    },
+    confirmationText (): string {
+      return this.confirmAction === 'certificates'
+        ? 'This will invalidate every current session, log out all users, and redirect this administrator to sign-in.'
+        : 'This will replace the guest user’s current parameters and permissions with the defaults.'
     }
   },
   methods: {
-    async regenCerts() {
+    openConfirmation (action: Exclude<AuthAction, ''>) {
+      this.confirmAction = action
+      this.confirmationDialog = true
+    },
+    async regenCerts () {
       this.loading = true
+      this.activeOperation = 'certificates'
       wikiStore.startLoading('admin-utilities-auth-regencerts')
 
       try {
         await regenerateAuthCertificates(window.fetch.bind(window))
-        wikiStore.showNotification({
-          message: 'New Certificates generated successfully.',
-          style: 'success',
-          icon: 'check'
-        })
         Cookies.remove('jwt')
-        _.delay(() => {
-          window.location.assign('/login')
-        }, 1000)
+        this.confirmationDialog = false
+        this.resultMessage = 'Certificates regenerated. Redirecting to sign-in.'
+        this.resultDialog = true
+        window.setTimeout(() => window.location.assign('/login'), 1500)
       } catch (err) {
         wikiStore.showError(err)
+        this.confirmationDialog = false
+      } finally {
+        wikiStore.stopLoading('admin-utilities-auth-regencerts')
+        this.loading = false
+        this.activeOperation = ''
       }
-
-      wikiStore.stopLoading('admin-utilities-auth-regencerts')
-      this.loading = false
     },
-    async resetGuest() {
+    async resetGuest () {
       this.loading = true
+      this.activeOperation = 'guest'
       wikiStore.startLoading('admin-utilities-auth-resetguest')
 
       try {
         await resetGuestUser(window.fetch.bind(window))
+        this.confirmationDialog = false
         wikiStore.showNotification({
           message: 'Guest user was reset successfully.',
           style: 'success',
@@ -64,10 +100,12 @@ export default {
         })
       } catch (err) {
         wikiStore.showError(err)
+        this.confirmationDialog = false
+      } finally {
+        wikiStore.stopLoading('admin-utilities-auth-resetguest')
+        this.loading = false
+        this.activeOperation = ''
       }
-
-      wikiStore.stopLoading('admin-utilities-auth-resetguest')
-      this.loading = false
     }
   }
 }

@@ -8,6 +8,7 @@
             .text-headline-medium.text-primary.animated.fadeInLeft Editors
             .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s Choose which editors authors can use when creating pages
           v-spacer
+          v-chip(v-if='hasChanges', color='warning', variant='tonal', size='small') Unsaved changes
           v-btn.animated.fadeInRight(
             color='success'
             variant='flat'
@@ -56,21 +57,15 @@
                 :key='editor.key'
                 :class='{ "editor-choice--available": isAvailable(editor.key) }'
                 variant='outlined'
-                role='checkbox'
-                :aria-checked='isAvailable(editor.key)'
-                :aria-disabled='isOnlyAvailable(editor.key)'
-                tabindex='0'
-                @click='toggleEditor(editor.key)'
-                @keydown.enter.prevent='toggleEditor(editor.key)'
-                @keydown.space.prevent='toggleEditor(editor.key)'
+                :aria-disabled='isOnlyAvailable(editor.key) ? "true" : undefined'
+                @click='!isOnlyAvailable(editor.key) && toggleEditor(editor.key)'
               )
                 v-card-text.editor-choice__body
                   .editor-choice__icon
-                    img(:src='editor.image', :alt='`${editor.title} editor`')
+                    img(:src='editor.image', alt='')
                   .editor-choice__content
                     .d-flex.align-center.ga-2
                       .text-title-medium {{ editor.title }}
-                      v-chip(size='x-small', variant='tonal', color='primary') {{ editor.format }}
                     .text-body-small.text-medium-emphasis.mt-1 {{ editor.description }}
                   v-switch.editor-choice__switch(
                     :model-value='isAvailable(editor.key)'
@@ -81,9 +76,9 @@
                     :aria-label='`${editor.title} availability`'
                     @click.stop
                     @update:model-value='setAvailability(editor.key, Boolean($event))'
+                    :aria-describedby='isOnlyAvailable(editor.key) ? "editor-required-hint" : undefined'
                   )
                 .editor-choice__status(:class='{ "editor-choice__status--available": isAvailable(editor.key) }')
-                  v-icon(size='16') {{ isAvailable(editor.key) ? 'mdi-check-circle' : 'mdi-eye-off-outline' }}
                   span {{ isAvailable(editor.key) ? 'Available' : 'Hidden' }}
 
       v-col(cols='12', lg='4')
@@ -114,14 +109,14 @@
                 v-list-item-title At least one required
                 v-list-item-subtitle The final available editor cannot be hidden.
 
-        v-alert.mt-3(
+        v-alert#editor-required-hint.mt-3(
           type='info'
           variant='tonal'
           icon='mdi-information-outline'
           density='comfortable'
         )
           .text-body-small
-            | Page templates still use the editor associated with their source page. Direct page creation requests are checked against this selection.
+            | At least one editor must remain available. Existing pages keep their current editor.
 </template>
 
 <script setup lang='ts'>

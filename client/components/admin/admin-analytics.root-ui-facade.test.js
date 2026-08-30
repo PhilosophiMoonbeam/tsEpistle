@@ -78,29 +78,42 @@ describe('admin-analytics root UI facade migration guard', () => {
   const directRootUiCommit =
     /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-analytics.vue imports the root UI facades and keeps provider selection watchers intact', () => {
+  test('admin-analytics.vue keeps its REST/error facades, AsyncState rendering, action busy state, and provider selection', () => {
     expect(script).not.toBeNull()
     expect(source).toContain("<script lang='ts'>")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(watchBlock).not.toBeNull()
 
     expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+      /import\s+\{(?=[^}]*\bgetErrorMessage\b)(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
     )
     expect(script).toMatch(
       /import\s+\{(?=[^}]*\bfetchAnalyticsProviders\b)(?=[^}]*\bsaveAnalyticsProviders\b)(?=[^}]*\btype\s+AnalyticsProvider\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/analytics-api['"]/
     )
+    expect(source).toMatch(/async-state\(v-if=['"]loading['"],?\s+state=['"]loading['"]/)
+    expect(source).toMatch(/async-state\(v-else-if=['"]errorMessage['"],?\s+state=['"]error['"]/)
+    expect(source).toMatch(/:loading=['"]refreshing['"][\s\S]*?:disabled=['"]refreshing \|\| saving['"]/)
+    expect(source).toMatch(/:loading=['"]saving['"][\s\S]*?:disabled=['"]!canSave['"]/)
+    expect(script).toMatch(/canSave\s*\(\s*\)\s*:\s*boolean\s*\{[\s\S]*?!this\.loading\s*&&\s*!this\.refreshing\s*&&\s*!this\.saving/)
     expect(watchBlock).toMatch(
-      /selectedProvider\s*\(\s*newValue\s*,\s*oldValue\s*\)\s*\{\s*this\.provider\s*=\s*_\.find\s*\(\s*this\.providers\s*,\s*\[\s*['"]key['"]\s*,\s*newValue\s*\]\s*\)\s*\|\|\s*\{\s*\}\s*\}/
+      /selectedProvider\s*\(\s*newValue\s*:\s*string\s*\)\s*\{\s*this\.provider\s*=\s*_\.find\s*\(\s*this\.providers\s*,\s*\[\s*['"]key['"]\s*,\s*newValue\s*\]\s*\)\s*\|\|\s*\{\s*\}\s*\}/
     )
-    expect(watchBlock).toMatch(/providers\s*\(\s*newValue\s*,\s*oldValue\s*\)\s*\{\s*this\.selectedProvider\s*=\s*['"]google['"]\s*\}/)
+    expect(watchBlock).toMatch(
+      /providers\s*\(\s*\)\s*\{[\s\S]*?_\.find\s*\(\s*this\.providers\s*,\s*provider\s*=>\s*provider\.isAvailable\s*&&\s*provider\.isEnabled\s*\)\s*\|\|[\s\S]*?_\.find\s*\(\s*this\.providers\s*,\s*['"]isAvailable['"]\s*\)[\s\S]*?this\.selectedProvider\s*=\s*selected\?\.key\s*\|\|\s*['"]['"]/
+    )
   })
 
-  test('loadProviders uses loading and notification facades without changing fetch, notifyError, rethrow, or cleanup behavior', () => {
+  test('loadProviders owns truthful load/refresh/error state while preserving fetch, notification, rethrow, and cleanup', () => {
     expect(loadProviders).not.toBeNull()
 
     expect(loadProviders).toMatch(
-      /async\s+loadProviders\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*:\s*\{\s*notifyError\?\s*:\s*boolean\s*\}\s*=\s*\{\s*\}\s*\)\s*\{\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-analytics-refresh['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?this\.providers\s*=\s*await\s+fetchAnalyticsProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Analytics providers response is invalid['"]\s*\)[\s\S]*?return\s+true[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*notifyError\s*\)\s*\{\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*getErrorMessage\s*\(\s*err\s*\)\s*,\s*style:\s*['"]red['"]\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)\s*\}\s*throw\s+err\s*\}\s*finally\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-analytics-refresh['"]\s*\)\s*\}/
+      /this\.loading\s*=\s*true[\s\S]*?this\.errorMessage\s*=\s*['"]['"][\s\S]*?this\.refreshing\s*=\s*notifyError[\s\S]*?loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-analytics-refresh['"]\s*\)[\s\S]*?this\.providers\s*=\s*await\s+fetchAnalyticsProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Analytics providers response is invalid['"]\s*\)[\s\S]*?return\s+true/
+    )
+    expect(loadProviders).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{[\s\S]*?this\.errorMessage\s*=\s*getErrorMessage\s*\(\s*err\s*\)\s*\|\|\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)[\s\S]*?if\s*\(\s*notifyError\s*\)\s*\{[\s\S]*?showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.errorMessage\s*,\s*style:\s*['"]red['"]\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)[\s\S]*?\}[\s\S]*?throw\s+err/
+    )
+    expect(loadProviders).toMatch(
+      /finally\s*\{[\s\S]*?this\.loading\s*=\s*false[\s\S]*?this\.refreshing\s*=\s*false[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-analytics-refresh['"]\s*\)\s*\}/
     )
     expect(loadProviders).not.toMatch(directRootUiCommit)
 
@@ -109,12 +122,15 @@ describe('admin-analytics root UI facade migration guard', () => {
     expect(loadProviders.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('refresh waits for provider reload, settles failures, and only shows success after a successful reload', () => {
+  test('refresh rejects overlapping actions, settles failures, and reports success only after reload', () => {
     expect(refresh).not.toBeNull()
 
+    expect(refresh).toMatch(/if\s*\(\s*this\.refreshing\s*\|\|\s*this\.saving\s*\)\s*return/)
+    expect(refresh).toMatch(/try\s*\{\s*await\s+this\.loadProviders\s*\(\s*\)\s*\}\s*catch\s*\{\s*return\s*\}/)
     expect(refresh).toMatch(
-      /async\s+refresh\s*\(\s*\)\s*\{\s*try\s*\{\s*await\s+this\.loadProviders\s*\(\s*\)\s*\}\s*catch\s*\{\s*return\s*\}\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:analytics\.refreshSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)\s*\}/
+      /showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:analytics\.refreshSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)/
     )
+    expect(refresh.indexOf('await this.loadProviders()')).toBeLessThan(refresh.indexOf('showNotification'))
     expect(refresh).not.toMatch(directRootUiCommit)
 
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
@@ -157,16 +173,23 @@ describe('admin-analytics root UI facade migration guard', () => {
     })
   })
 
-  test('save uses REST helper while preserving provider payload, silent reload, success/error facades, and save loading key', () => {
+  test('save preserves the action guard, REST payload, silent reload success gate, error facade, and balanced busy state', () => {
     expect(save).not.toBeNull()
 
     expect(save).toMatch(
-      /async\s+save\s*\(\s*\)\s*\{\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-analytics-saveproviders['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+saveAnalyticsProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadProviders\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:analytics\.saveSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-analytics-saveproviders['"]\s*\)\s*\}/
+      /if\s*\(\s*!this\.canSave\s*\)\s*return[\s\S]*?this\.saving\s*=\s*true[\s\S]*?loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-analytics-saveproviders['"]\s*\)/
+    )
+    expect(save).toMatch(
+      /await\s+saveAnalyticsProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadProviders\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)[\s\S]*?showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:analytics\.saveSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
     )
     expect(save).toMatch(
       /this\.providers\.map\s*\(\s*str\s*=>\s*_\.pick\s*\(\s*str\s*,\s*\[\s*['"]isEnabled['"]\s*,\s*['"]key['"]\s*,\s*['"]config['"]\s*\]\s*\)\s*\)\.map\s*\(\s*str\s*=>\s*\(\s*\{\s*\.\.\.str\s*,\s*config:\s*str\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)/
     )
     expect(save).toMatch(/['"]Analytics providers save response is invalid['"]/)
+    expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}/)
+    expect(save).toMatch(
+      /finally\s*\{[\s\S]*?this\.saving\s*=\s*false[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-analytics-saveproviders['"]\s*\)\s*\}/
+    )
     expect(save).not.toMatch(/this\.\$apollo\.mutate|providersSaveMutation|analytics-mutation-save-providers\.gql/)
     expect(save).not.toMatch(directRootUiCommit)
 

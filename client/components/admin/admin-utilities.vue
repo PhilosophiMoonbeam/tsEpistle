@@ -3,7 +3,7 @@
     v-row
       v-col(cols='12')
         .admin-header
-          img(src='/_assets/svg/icon-maintenance.svg', alt='Utilities', style='width: 80px;')
+          img(src='/_assets/svg/icon-maintenance.svg', alt='', aria-hidden='true', style='width: 80px;')
           .admin-header-title
             .text-headline-medium.text-primary {{$t('admin:utilities.title')}}
             .text-body-large.text-grey {{$t('admin:utilities.subtitle')}}
@@ -12,14 +12,30 @@
         v-card.animated.fadeInUp
           v-toolbar(flat, color='primary', density="compact")
             .text-body-large {{$t('admin:utilities.tools')}}
-          v-list(lines="two", density="compact").py-0
+          v-select.d-lg-none(
+            label='Select utility'
+            :items='tools'
+            item-value='key'
+            :item-title='toolTitle'
+            :item-disabled='toolDisabled'
+            v-model='selectedTool'
+            variant='outlined'
+            hide-details
+            density='compact'
+          )
+          v-list.d-none.d-lg-block(lines="two", density="compact").py-0
             template(v-for='(tool, idx) in tools', :key='tool.key')
-              v-list-item(@click='selectedTool = tool.key', :disabled='!tool.isAvailable')
+              v-list-item(
+                @click='selectedTool = tool.key'
+                :disabled='!tool.isAvailable'
+                :active='selectedTool === tool.key'
+                :aria-current='selectedTool === tool.key ? "page" : undefined'
+              )
                 template(v-slot:prepend)
                   v-avatar
-                    v-icon(:color='!tool.isAvailable ? `grey-lighten-1` : (selectedTool === tool.key ? `blue ` : `grey-darken-1`)') {{ tool.icon }}
+                    v-icon(:color='!tool.isAvailable ? `grey-lighten-1` : (selectedTool === tool.key ? `primary` : `grey-darken-1`)') {{ tool.icon }}
                 v-list-item-title.text-body-medium(:class='!tool.isAvailable ? `text-grey` : (selectedTool === tool.key ? `text-primary` : ``)') {{ $t('admin:utilities.' + tool.i18nKey + 'Title') }}
-                v-list-item-subtitle: .text-body-small(:class='!tool.isAvailable ? `text-grey-lighten-1` : (selectedTool === tool.key ? `text-blue ` : ``)') {{ $t('admin:utilities.' + tool.i18nKey + 'Subtitle') }}
+                v-list-item-subtitle: .text-body-small(:class='!tool.isAvailable ? `text-grey-lighten-1` : (selectedTool === tool.key ? `text-primary` : ``)') {{ $t('admin:utilities.' + tool.i18nKey + 'Subtitle') }}
                 template(v-slot:append)
                   v-avatar(v-if='selectedTool === tool.key')
                     v-icon.animated.fadeInLeft(color='primary', size="large") mdi-chevron-right
@@ -88,6 +104,14 @@ export default {
           isAvailable: true
         }
       ]
+    }
+  },
+  methods: {
+    toolTitle(tool: { i18nKey: string }) {
+      return this.$t(`admin:utilities.${tool.i18nKey}Title`)
+    },
+    toolDisabled(tool: { isAvailable: boolean }) {
+      return !tool.isAvailable
     }
   }
 }

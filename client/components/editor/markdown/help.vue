@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-markdown-help.animated.fadeInLeft(flat, rounded='0')
+  v-card.editor-markdown-help.animated.fadeInLeft(flat, rounded='0', role='region', aria-labelledby='markdown-help-title')
     v-container.pa-3(fluid)
       v-row
         v-col(cols='12', lg='6', xl='4')
@@ -8,8 +8,8 @@
               .d-flex
                 v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat, height='44')
                   v-icon.mr-3(color='teal') mdi-information-variant
-                  .text-body-medium.text-teal Markdown Reference
-              .text-body-medium.mt-3 Bold
+                  h2#markdown-help-title.text-body-medium.text-teal Markdown Reference
+              h3.text-body-medium.mt-3 Bold
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -20,7 +20,7 @@
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       .text-body-small: strong Lorem ipsum
-              .text-body-medium.mt-3 Italic
+              h3.text-body-medium.mt-3 Italic
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -31,7 +31,7 @@
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       .text-body-small: em Lorem ipsum
-              .text-body-medium.mt-3 Strikethrough
+              h3.text-body-medium.mt-3 Strikethrough
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -42,7 +42,7 @@
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       .text-body-small(style='text-decoration: line-through;') Lorem ipsum
-              .text-body-medium.mt-3 Headers
+              h3.text-body-medium.mt-3 Headers
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -63,7 +63,7 @@
                       div(style='font-weight: 700; font-size: 18px;') Header 4
                       div(style='font-weight: 700; font-size: 16px;') Header 5
                       div(style='font-weight: 700; font-size: 14px;') Header 6
-              .text-body-medium.mt-3 Unordered Lists
+              h3.text-body-medium.mt-3 Unordered Lists
               .text-body-small.text-grey-darken-1: em You can also use the asterisk symbol instead of the dash.
               v-row
                 v-col(cols='6')
@@ -80,7 +80,7 @@
                         li Unordered List Item 1
                         li Unordered List Item 2
                         li Unordered List Item 3
-              .text-body-medium.mt-3 Ordered Lists
+              h3.text-body-medium.mt-3 Ordered Lists
               .text-body-small.text-grey-darken-1: em Even though we prefix all lines with #[strong 1.], the output will be correctly numbered automatically.
               v-row
                 v-col(cols='6')
@@ -94,10 +94,10 @@
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       ol
-                        li Unordered List Item 1
-                        li Unordered List Item 2
-                        li Unordered List Item 3
-              .text-body-medium.mt-3 Images
+                        li Ordered List Item 1
+                        li Ordered List Item 2
+                        li Ordered List Item 3
+              h3.text-body-medium.mt-3 Images
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -114,8 +114,8 @@
               .d-flex
                 v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat, height='44')
                   v-icon.mr-3(color='teal') mdi-information-variant
-                  .text-body-medium.text-teal Markdown Reference (continued)
-              .text-body-medium.mt-3 Links
+                  h2.text-body-medium.text-teal Markdown Reference
+              h3.text-body-medium.mt-3 Links
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -126,7 +126,7 @@
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       .text-body-small: a(href='https://wiki.js.org', target='_blank') Link Text
-              .text-body-medium.mt-3 Superscript
+              h3.text-body-medium.mt-3 Superscript
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -137,7 +137,7 @@
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       .text-body-small Lorem #[sup ipsum]
-              .text-body-medium.mt-3 Subscript
+              h3.text-body-medium.mt-3 Subscript
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -147,8 +147,8 @@
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small: em Lorem #[sub ipsum]
-              .text-body-medium.mt-3 Horizontal Line
+                      .text-body-small Lorem #[sub ipsum]
+              h3.text-body-medium.mt-3 Horizontal Line
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -163,7 +163,7 @@
                       .text-body-small Lorem ipsum
                       v-divider.my-2
                       .text-body-small Dolor sit amet
-              .text-body-medium.mt-3 Inline Code
+              h3.text-body-medium.mt-3 Inline Code
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -174,7 +174,7 @@
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       .text-body-small Lorem #[code ipsum dolor sit] amet
-              .text-body-medium.mt-3 Abbreviations
+              h3.text-body-medium.mt-3 Abbreviations
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -186,7 +186,7 @@
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
                       .text-body-small: abbr(title='HyperText Markup Language') HTML
-              .text-body-medium.mt-3 Code Blocks
+              h3.text-body-medium.mt-3 Code Blocks
               .text-body-small.text-grey-darken-1: em In the example below, #[strong js] defines the syntax highlighting language to use. It can be omitted.
               .text-body-small.text-grey-darken-1.mt-1 Add #[code title="example.js"] for a caption, #[code linesStart="30"] to renumber, and #[code linesHighlight="31,33-35"] to mark lines.
               v-row
@@ -216,7 +216,7 @@
                             span
                             span
                             span
-              .text-body-medium.mt-3 Blockquotes
+              h3.text-body-medium.mt-3 Blockquotes
               v-row
                 v-col(cols='6')
                   v-card.editor-markdown-help-source(flat)
@@ -228,7 +228,7 @@
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      blockquote(style='border: 1px solid #263238; border-radius: .5rem; padding: 1rem 24px;') Lorem ipsum#[br]dolor sit amet#[br]consectetur adipiscing elit
+                      blockquote.editor-markdown-help-blockquote Lorem ipsum#[br]dolor sit amet#[br]consectetur adipiscing elit
 
         v-col(cols='12', xl='4')
           v-card.radius-7.animated.fadeInUp.wait-p2s
@@ -305,31 +305,39 @@ export default {
   z-index: 10;
   width: calc(100vw - 64px - 17px);
   height: calc(100dvh - 112px - 24px);
-  background-color: rgba(darken(mc('grey', '900'), 3%), .9) !important;
+  background-color: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, transparent) !important;
+  color: rgb(var(--v-theme-on-surface));
   overflow: auto;
 
-  &-source {
-    background-color: mc('blue-grey', '900') !important;
+  &-source,
+  &-result {
+    min-width: 0;
+    border: 1px solid rgba(var(--v-border-color), .18);
     border-radius: 7px;
-    font-family: 'Roboto Mono', monospace;
     font-size: 14px;
-    color: #FFF !important;
 
     .v-card-text {
-      color: #FFF !important;
+      min-width: 0;
+      color: inherit !important;
+      overflow-wrap: anywhere;
     }
   }
 
+  &-source {
+    background-color: rgb(var(--v-theme-surface-variant)) !important;
+    font-family: 'Roboto Mono', monospace;
+  }
+
   &-result {
-    background-color: mc('blue-grey', '50') !important;
-    border-radius: 7px;
-    font-size: 14px;
+    background-color: rgb(var(--v-theme-surface)) !important;
 
     code {
       display: inline-block;
-      background-color: mc('pink', '50');
+      background-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, rgb(var(--v-theme-surface)));
+      color: rgb(var(--v-theme-on-surface));
       box-shadow: none;
       font-size: inherit;
+      overflow-wrap: anywhere;
     }
 
     .contents {
@@ -338,17 +346,26 @@ export default {
 
     .prismjs {
       margin: 0;
+      max-width: 100%;
+      overflow-x: auto;
     }
   }
+
+  &-blockquote {
+    border: 1px solid rgba(var(--v-border-color), .5);
+    border-radius: .5rem;
+    padding: 1rem 24px;
+  }
+
   &-image-example {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 150px;
+    width: min(150px, 100%);
     height: 50px;
-    border: 1px solid mc('blue-grey', '200');
-    background: mc('blue-grey', '100');
-    color: mc('blue-grey', '700');
+    border: 1px solid rgba(var(--v-border-color), .35);
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, rgb(var(--v-theme-surface)));
+    color: rgb(var(--v-theme-on-surface));
     font-size: 12px;
   }
 
@@ -359,16 +376,50 @@ export default {
 
       kbd {
         display: inline-block;
-        border: 1px solid #ccc;
+        border: 1px solid rgba(var(--v-border-color), .45);
         border-radius: 4px;
         padding: 0.1em 0.5em;
         margin: 0 0.2em;
-        box-shadow: 0 1px 0px rgba(0, 0, 0, 0.2), 0 0 0 2px #fff inset;
-        background-color: #f7f7f7;
-        color: mc('grey', '700');
+        box-shadow: 0 1px 0 rgba(var(--v-theme-on-surface), .2), 0 0 0 2px rgb(var(--v-theme-surface)) inset;
+        background-color: rgb(var(--v-theme-surface-variant));
+        color: rgb(var(--v-theme-on-surface));
         font-size: 12px;
       }
     }
+  }
+}
+
+@media (max-width: $tablet - 0.02px) {
+  .editor-markdown-help {
+    left: 0;
+    width: 100%;
+  }
+}
+
+@media (max-width: 599.98px) {
+  .editor-markdown-help .v-card .v-card-text > .v-row {
+    flex-direction: column;
+    margin: 0;
+
+    > .v-col {
+      flex: 0 0 100%;
+      max-width: 100%;
+      padding: 4px 0;
+    }
+
+    > .v-icon {
+      align-self: center;
+      transform: rotate(90deg);
+      margin: 2px 0;
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-markdown-help,
+  .editor-markdown-help .animated {
+    animation: none !important;
+    transition: none !important;
   }
 }
 </style>

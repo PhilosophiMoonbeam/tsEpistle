@@ -1,7 +1,8 @@
 <template>
   <section
     class="inline-agent"
-    aria-label="Wiki Agent"
+    aria-labelledby="inline-agent-title"
+    :aria-busy="loading"
   >
     <button
       v-if="historyOpen || memoryOpen"
@@ -10,27 +11,32 @@
       aria-label="Close Agent side panel"
       @click="closePanels"
     />
-    <aside v-if="historyOpen" id="agent-history-panel" class="inline-agent__side inline-agent__side--history" aria-label="Chat history panel">
-      <AgentHistoryPanel @close="historyOpen = false" @reset="resetHistoryOpen = true" />
+    <aside v-if="historyOpen" id="agent-history-panel" ref="historyPanel" class="inline-agent__side inline-agent__side--history" aria-label="Chat history panel" aria-modal="true">
+      <AgentHistoryPanel @close="closeHistory" @reset="resetHistoryOpen = true" />
     </aside>
     <v-card class="inline-agent__card" elevation="0" rounded="xl">
       <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="div">
-        <v-avatar class="ms-4" color="primary" size="34" variant="tonal">
-          <v-icon icon="mdi-auto-fix" size="19" />
+        <v-avatar class="inline-agent__avatar ms-4" color="primary" size="34" variant="tonal">
+          <v-icon icon="mdi-auto-fix" size="19" aria-hidden="true" />
         </v-avatar>
         <div class="inline-agent__heading ms-3">
-          <div class="text-title-medium font-weight-medium">Wiki Agent</div>
-          <div class="text-body-small text-medium-emphasis text-truncate">{{ sessionTitle }}</div>
+          <h2 id="inline-agent-title" class="text-title-medium font-weight-medium">Wiki Agent</h2>
+          <div class="inline-agent__session-title text-body-small text-medium-emphasis text-truncate">{{ sessionTitle }}</div>
         </div>
         <v-spacer />
         <v-chip
           v-if="activeRun || connection === 'reconnecting'"
-          class="me-2"
+          class="inline-agent__connection me-2"
           :color="connectionColor"
           size="small"
           variant="tonal"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
         >{{ connectionLabel }}</v-chip>
         <v-btn
+          ref="historyTrigger"
+          class="inline-agent__desktop-panel-btn"
           icon="mdi-history"
           :color="historyOpen ? 'primary' : undefined"
           :variant="historyOpen ? 'tonal' : 'text'"
@@ -40,6 +46,8 @@
           @click="toggleHistory"
         />
         <v-btn
+          ref="memoryTrigger"
+          class="inline-agent__desktop-panel-btn"
           icon="mdi-brain"
           :color="memoryOpen ? 'primary' : undefined"
           :variant="memoryOpen ? 'tonal' : 'text'"
@@ -48,6 +56,15 @@
           aria-controls="agent-memory-panel"
           @click="toggleMemory"
         />
+        <v-menu class="inline-agent__mobile-actions" location="bottom end">
+          <template #activator="{ props: menuProps }">
+            <v-btn ref="mobileActionsTrigger" v-bind="menuProps" icon="mdi-dots-vertical" aria-label="More Agent actions" />
+          </template>
+          <v-list density="compact">
+            <v-list-item title="Conversation history" prepend-icon="mdi-history" @click="toggleHistory" />
+            <v-list-item title="Agent memory" prepend-icon="mdi-brain" @click="toggleMemory" />
+          </v-list>
+        </v-menu>
         <v-btn
           class="me-2"
           icon="mdi-plus"
@@ -58,7 +75,7 @@
         />
       </v-toolbar>
 
-      <v-progress-linear v-if="loading" indeterminate color="primary" aria-label="Loading Wiki Agent" />
+      <v-progress-linear v-if="loading" indeterminate color="primary" aria-label="Opening conversation" />
 
       <AgentMcpApproval v-if="approvalId" :csrf-token="csrfToken" :proposal-id="approvalId" />
       <template v-else>
@@ -104,8 +121,9 @@
           class="inline-agent__transcript"
           :class="{ 'inline-agent__transcript--approval-jump': approvalJumpVisible }"
           tabindex="-1"
-          @scroll.passive="updateApprovalJump"
+          @scroll.passive="handleTranscriptScroll"
         >
+          <p v-if="loading && !thread" class="inline-agent__loading text-body-medium text-medium-emphasis" role="status">Opening conversation</p>
           <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
             <div class="inline-agent__welcome-mark" aria-hidden="true">
               <v-icon icon="mdi-auto-fix" size="28" />
@@ -123,6 +141,8 @@
                 color="primary"
                 variant="tonal"
                 rounded="xl"
+                :disabled="!canSubmit"
+                :title="!canSubmit ? submitUnavailableReason : undefined"
                 @click="sendPrompt(starter.prompt)"
               >
                 <v-icon start :icon="starter.icon" />
@@ -135,6 +155,7 @@
             :thread="thread"
             :connection="connection"
             :deciding-approval-id="decidingApprovalId"
+            :can-submit="canSubmit"
             @suggest="sendPrompt"
             @decision="agents.decideProposal"
           />
@@ -155,7 +176,7 @@
           ref="composer"
           :sending="sending"
           :can-stop="Boolean(activeRun?.canCancel)"
-          :disabled="!providerAvailable || loading || !thread || Boolean(activeRun) || Boolean(openGoal)"
+          :disabled="!canSubmit"
           :skills-enabled="skillsEnabled"
           :goals-enabled="goalsEnabled"
           :skills="skills"
@@ -173,16 +194,16 @@
       </footer>
       </template>
     </v-card>
-    <aside v-if="memoryOpen" id="agent-memory-panel" class="inline-agent__side inline-agent__side--memory" aria-label="Agent memory panel">
+    <aside v-if="memoryOpen" id="agent-memory-panel" ref="memoryPanel" class="inline-agent__side inline-agent__side--memory" aria-label="Agent memory panel" aria-modal="true">
       <AgentMemoryManager v-model="memoryOpen" :csrf-token="csrfToken" />
     </aside>
   </section>
   <AgentPersonalSkills v-if="skillsEnabled" v-model="skillManagerOpen" :csrf-token="csrfToken" @changed="reloadSkillCatalog" />
-  <v-dialog v-model="resetHistoryOpen" max-width="30rem">
+  <v-dialog v-model="resetHistoryOpen" max-width="30rem" aria-labelledby="reset-history-title">
     <v-card rounded="xl">
       <v-card-title class="d-flex align-center ga-3 pt-5 px-5">
-        <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" /></v-avatar>
-        Reset conversation history?
+        <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" aria-hidden="true" /></v-avatar>
+        <h2 id="reset-history-title" class="text-title-medium">Reset conversation history?</h2>
       </v-card-title>
       <v-card-text class="px-5">
         Every Agent conversation will be permanently removed and a clean conversation will open. Your curated Agent memory stays intact.
@@ -201,6 +222,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { useAgentsStore } from '../../store/agents.ts'
+import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 import AgentComposer from './agent-composer.vue'
 import AgentHistoryPanel from './agent-history-panel.vue'
 import AgentMemoryManager from './agent-memory-manager.vue'
@@ -224,15 +246,24 @@ const props = defineProps<{
 }>()
 
 const agents = useAgentsStore()
-const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)
+const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, skills, thread } = storeToRefs(agents)
 const transcript = ref<HTMLElement | null>(null)
 const composer = ref<{ focusInput: () => Promise<void> } | null>(null)
+const historyPanel = ref<HTMLElement | null>(null)
+const memoryPanel = ref<HTMLElement | null>(null)
+const historyTrigger = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
+const memoryTrigger = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
+const mobileActionsTrigger = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
 const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
 const resetHistoryOpen = ref(false)
 const resetting = ref(false)
 const historyOpen = ref(false)
 const memoryOpen = ref(false)
+const transcriptFollowing = ref(true)
+let transcriptObserver: MutationObserver | null = null
+let panelFocusScope: ModalFocusScope | null = null
+let panelFocusKind: 'history' | 'memory' | null = null
 let initialization: Promise<void> | null = null
 let compactPanelMedia: MediaQueryList | null = null
 const compactPanelQuery = '(max-width: 1711.98px)'
@@ -241,16 +272,21 @@ const currentPage = computed<AgentCurrentPageHint | null>(() => {
   if (props.pageId < 1 || !props.pageLocale || !props.pagePath || !props.pageUpdatedAt) return null
   return { id: props.pageId, locale: props.pageLocale, path: props.pagePath, observedUpdatedAt: props.pageUpdatedAt }
 })
-const activeRun = computed(() => thread.value?.session.currentRun?.canCancel ? thread.value.session.currentRun : null)
+const activeRun = computed(() => {
+  const run = thread.value?.session.currentRun
+  return run && ['queued', 'running', 'awaiting_approval'].includes(run.status) ? run : null
+})
 const openGoal = computed(() => thread.value?.goal && ['active', 'paused', 'blocked'].includes(thread.value.goal.status) ? thread.value.goal : null)
 const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length || thread.value.goal)))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
-const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
-const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const providerUnavailableMessage = computed(() => props.providerEnabled
   ? 'No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.'
   : 'Agent inference is currently disabled. An administrator can configure it in Administration → Agents.')
+const canSubmit = computed(() => providerAvailable.value && !loading.value && Boolean(thread.value) && !activeRun.value && !openGoal.value)
+const submitUnavailableReason = computed(() => !providerAvailable.value ? providerUnavailableMessage.value : loading.value ? 'Opening conversation' : activeRun.value ? 'Wait for the current response to finish' : openGoal.value ? 'Finish or pause the current goal before sending a message' : '')
+const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
+const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const sessionTitle = computed(() => thread.value?.session.title || 'New conversation')
 const connectionLabel = computed(() => connection.value === 'reconnecting' ? 'Reconnecting' : activeRun.value?.status === 'awaiting_approval' ? 'Review needed' : 'Working')
 const connectionColor = computed(() => connection.value === 'reconnecting' ? 'warning' : activeRun.value?.status === 'awaiting_approval' ? 'warning' : 'primary')
@@ -262,15 +298,9 @@ const starters = computed(() => [
 
 const ensureInitialized = (): Promise<void> => {
   if (initialization) return initialization
-  const pending = agents.initialize(props.csrfToken, {
-    routeSync: false,
-    currentPage: currentPage.value,
-    reuseLatest: true
-  })
+  const pending = agents.initialize(props.csrfToken, { routeSync: false, currentPage: currentPage.value, reuseLatest: true })
   initialization = pending
-  void pending.then(() => {
-    if (!agents.thread) initialization = null
-  })
+  void pending.then(() => { if (!agents.thread) initialization = null })
   return pending
 }
 const focusComposer = async (): Promise<void> => {
@@ -278,36 +308,38 @@ const focusComposer = async (): Promise<void> => {
   await nextTick()
   await composer.value?.focusInput()
 }
-
-const sendPrompt = async (content: string, invokedSkillVersionIds: readonly string[] = [], mode: 'message' | 'goal' = 'message'): Promise<boolean> => {
+const sendPrompt = async (
+  content: string,
+  invokedSkillVersionIds: readonly string[] = [],
+  mode: 'message' | 'goal' = 'message',
+  completion?: (success: boolean) => void
+): Promise<boolean> => {
   const prompt = content.trim()
-  if (!prompt) return false
+  if (!prompt) { completion?.(false); return false }
   await ensureInitialized()
-  if (!providerAvailable.value || !thread.value || (mode === 'goal' && !props.goalsEnabled)) return false
-  return agents.send(prompt, invokedSkillVersionIds, mode)
+  if (!canSubmit.value || (mode === 'goal' && !props.goalsEnabled)) { completion?.(false); return false }
+  const success = await agents.send(prompt, invokedSkillVersionIds, mode)
+  completion?.(success)
+  return success
 }
 const focusConversation = async (): Promise<void> => {
   await nextTick()
   transcript.value?.focus({ preventScroll: true })
 }
-
 const reloadSkillCatalog = async (): Promise<void> => {
-  try {
-    await agents.reloadSkills()
-  } catch (value) {
+  try { await agents.reloadSkills() } catch (value) {
     agents.error = value instanceof Error ? value.message : 'The skill catalog could not be refreshed.'
   }
 }
-
 const newSession = async (): Promise<void> => {
-  try {
-    await ensureInitialized()
-    await agents.newSession('saved')
-  } catch (value) {
+  try { await ensureInitialized(); await agents.newSession('saved') } catch (value) {
     agents.error = value instanceof Error ? value.message : 'A new conversation could not be created.'
   }
 }
-
+const elementForRef = (value: { $el?: HTMLElement } | HTMLElement | null): HTMLElement | null =>
+  value instanceof HTMLElement ? value : value?.$el ?? null
+const closeHistory = (): void => { historyOpen.value = false }
+const closeMemory = (): void => { memoryOpen.value = false }
 const toggleHistory = (): void => {
   historyOpen.value = !historyOpen.value
   if (historyOpen.value && window.matchMedia(compactPanelQuery).matches) memoryOpen.value = false
@@ -318,78 +350,76 @@ const toggleMemory = (): void => {
 }
 const reconcileCompactPanels = (event: MediaQueryListEvent): void => {
   if (event.matches && historyOpen.value && memoryOpen.value) memoryOpen.value = false
+  if (!event.matches) panelFocusScope?.deactivate({ restoreFocus: false })
 }
-
-
-const closePanels = (): void => {
-  historyOpen.value = false
-  memoryOpen.value = false
-}
+const closePanels = (): void => { historyOpen.value = false; memoryOpen.value = false }
 const resetHistory = async (): Promise<void> => {
   resetting.value = true
-  try {
-    await agents.resetHistory()
-    resetHistoryOpen.value = false
-  } catch (value) {
+  try { await agents.resetHistory(); resetHistoryOpen.value = false } catch (value) {
     agents.error = value instanceof Error ? value.message : 'Conversation history could not be reset.'
-  } finally {
-    resetting.value = false
-  }
+  } finally { resetting.value = false }
 }
-
-
 const updateApprovalJump = (): void => {
   const container = transcript.value
   const proposalId = pendingApprovalId.value
-  if (!container || !proposalId) {
-    approvalJumpVisible.value = false
-    return
-  }
+  if (!container || !proposalId) { approvalJumpVisible.value = false; return }
   const approval = container.querySelector<HTMLElement>(`#agent-approval-${proposalId}`)
-  if (!approval) {
-    approvalJumpVisible.value = false
-    return
-  }
-  const containerRect = container.getBoundingClientRect()
-  const approvalRect = approval.getBoundingClientRect()
-  approvalJumpVisible.value = isAgentApprovalOutsideViewport(containerRect, approvalRect)
+  if (!approval) { approvalJumpVisible.value = false; return }
+  approvalJumpVisible.value = isAgentApprovalOutsideViewport(container.getBoundingClientRect(), approval.getBoundingClientRect())
 }
-
+const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 const jumpToApproval = async (): Promise<void> => {
   const proposalId = pendingApprovalId.value
-  if (!proposalId) return
-  const approval = transcript.value?.querySelector<HTMLElement>(`#agent-approval-${proposalId}`)
+  const approval = proposalId ? transcript.value?.querySelector<HTMLElement>(`#agent-approval-${proposalId}`) : null
   if (!approval) return
-  approval.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  approval.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' })
   await nextTick()
   approval.focus({ preventScroll: true })
   approvalJumpVisible.value = false
 }
+const handleTranscriptScroll = (): void => {
+  const element = transcript.value
+  if (!element) return
+  transcriptFollowing.value = element.scrollHeight - element.scrollTop - element.clientHeight < 160
+  updateApprovalJump()
+}
+const reconcileTranscriptGrowth = async (): Promise<void> => {
+  const shouldFollow = transcriptFollowing.value || !transcript.value || transcript.value.scrollHeight - transcript.value.scrollTop - transcript.value.clientHeight < 160
+  await nextTick()
+  if (shouldFollow && transcript.value) transcript.value.scrollTo({ top: transcript.value.scrollHeight, behavior: reducedMotion() ? 'auto' : 'smooth' })
+  transcriptFollowing.value = Boolean(transcript.value && transcript.value.scrollHeight - transcript.value.scrollTop - transcript.value.clientHeight < 160)
+  updateApprovalJump()
+}
 
 watch(currentPage, page => agents.setCurrentPage(page), { immediate: true })
-watch(
-  () => [thread.value?.messages.length, thread.value?.tools.length, thread.value?.artifacts.length, pendingApprovalId.value, connection.value],
-  async () => {
-    if (!hasConversation.value) {
-      await nextTick()
-      if (transcript.value) transcript.value.scrollTop = 0
-      approvalJumpVisible.value = false
-      return
-    }
-    const element = transcript.value
-    const nearBottom = !element || element.scrollHeight - element.scrollTop - element.clientHeight < 160
-    await nextTick()
-    if (nearBottom && transcript.value) transcript.value.scrollTo({ top: transcript.value.scrollHeight, behavior: 'smooth' })
-    updateApprovalJump()
+watch([historyOpen, memoryOpen], async ([history, memory]) => {
+  const kind = history ? 'history' : memory ? 'memory' : null
+  if (!kind || !compactPanelMedia?.matches) {
+    if (!kind) { panelFocusScope?.deactivate({ restoreFocus: true }); panelFocusScope = null; panelFocusKind = null }
+    return
   }
-)
-
+  panelFocusScope?.deactivate({ restoreFocus: false })
+  await nextTick()
+  const root = kind === 'history' ? historyPanel.value : memoryPanel.value
+  if (!root) return
+  const trigger = compactPanelMedia?.matches
+    ? elementForRef(mobileActionsTrigger.value)
+    : elementForRef(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
+  panelFocusScope = createModalFocusScope({ root, restoreTarget: trigger, onEscape: closePanels })
+})
+watch([thread, pendingApprovalId, connection], () => {
+  void nextTick(() => { if (!hasConversation.value && transcript.value) transcript.value.scrollTop = 0; updateApprovalJump() })
+}, { flush: 'post' })
 onMounted(() => {
   compactPanelMedia = window.matchMedia(compactPanelQuery)
   compactPanelMedia.addEventListener('change', reconcileCompactPanels)
+  transcriptObserver = new MutationObserver(() => { void reconcileTranscriptGrowth() })
+  if (transcript.value) transcriptObserver.observe(transcript.value, { childList: true, subtree: true, characterData: true })
   void ensureInitialized()
 })
 onBeforeUnmount(() => {
+  transcriptObserver?.disconnect()
+  panelFocusScope?.deactivate({ restoreFocus: false })
   compactPanelMedia?.removeEventListener('change', reconcileCompactPanels)
   agents.closeWorkspace()
 })
@@ -398,6 +428,9 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
 <style scoped>
 .inline-agent {
+  --agent-border: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
+  --agent-divider: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 11%, transparent);
+  --agent-focus: rgb(var(--v-theme-primary));
   color: rgb(var(--v-theme-on-surface));
   display: grid;
   font-family: 'WikiAgentSans', 'Tajawal', 'Roboto', system-ui, sans-serif;
@@ -435,7 +468,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 .inline-agent__card {
   grid-column: 2;
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 98%, rgb(var(--v-theme-background)));
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
+  border: 1px solid var(--agent-border);
   box-shadow: 0 1.25rem 4rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent);
   display: flex;
   flex-direction: column;
@@ -453,6 +486,8 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   padding-inline: .5rem;
 }
 .inline-agent__heading { min-width: 0; }
+.inline-agent__heading h2 { margin: 0; }
+.inline-agent__mobile-actions { display: none; }
 .inline-agent__alert { flex: 0 0 auto; }
 .inline-agent__settings { flex: 0 0 auto; max-height: 100%; overflow-y: auto; overscroll-behavior: contain; }
 .inline-agent__settings:has(.v-expansion-panel-title[aria-expanded="true"]) { flex: 1 1 auto; min-height: clamp(9rem, 45dvh, 18rem); }
@@ -474,6 +509,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   scroll-behavior: smooth;
   scroll-padding-block: 1rem;
 }
+.inline-agent__loading { margin: 1rem auto; }
 .inline-agent__transcript :deep(.agent-thread) {
   margin-inline: auto;
   max-width: 56rem;
@@ -516,9 +552,9 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 .inline-agent__starters { display: grid; gap: .65rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); width: 100%; }
 .inline-agent__composer {
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-primary)) 4%);
-  border-top: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 11%, transparent);
+  border-top: 1px solid var(--agent-divider);
   flex: 0 0 auto;
-  padding: 1rem clamp(1rem, 3vw, 2rem) 1.1rem;
+  padding: 1rem clamp(1rem, 3vw, 2rem) calc(1.1rem + env(safe-area-inset-bottom));
 }
 .inline-agent__notice { align-items: center; display: flex; gap: .35rem; justify-content: center; text-align: center; }
 @media (max-width: 1711.98px) {
@@ -551,13 +587,20 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   .inline-agent__side { width: min(22rem, calc(100% - 2.25rem)); }
   .inline-agent__card { border: 0; border-radius: 0 !important; box-shadow: none; height: 100dvh; max-height: none; min-height: 0; }
   .inline-agent__toolbar { padding-inline: .25rem; }
+  .inline-agent__avatar,
+  .inline-agent__session-title { display: none; }
+  .inline-agent__heading { margin-inline-start: .4rem !important; }
+  .inline-agent__connection { max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .inline-agent__desktop-panel-btn { display: none; }
+  .inline-agent__mobile-actions { display: block; }
+  .inline-agent__toolbar :deep(.v-btn) { min-height: 2.75rem; min-width: 2.75rem; }
   .inline-agent__body { padding-inline: .75rem; }
   .inline-agent__transcript { padding-inline: 0; }
   .inline-agent__welcome { border-radius: 1.25rem; padding: 1.4rem 1rem; }
   .inline-agent__starters { grid-template-columns: 1fr; }
-  .inline-agent__composer { padding: .75rem; }
+  .inline-agent__composer { padding-inline: .75rem; }
   .inline-agent__approval-jump { bottom: .75rem; left: 1.5rem; right: 1.5rem; }
-  .inline-agent__notice { display: none; }
+  .inline-agent__notice { display: flex; font-size: .72rem; line-height: 1.35; }
 }
 @media (max-height: 500px) {
   .inline-agent__card { height: 100dvh; max-height: none; min-height: 0; }

@@ -14,8 +14,12 @@ describe('user-search pushGraphError facade migration guard', () => {
     expect(script).toContain("import { searchUsers, type UserSearchRow } from '../../helpers/users-api'")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
 
-    expect(script).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*requestId\s*!==\s*this\.searchRequestId\s*\|\|\s*query\s*!==\s*this\.search\s*\)\s*\{\s*return\s+\[\]\s*\}\s*this\.items\s*=\s*\[\]\s*wikiStore\.showError\s*\(\s*err\s*\)\s*return\s+\[\]\s*\}/)
+    expect(script).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*requestId\s*!==\s*this\.searchRequestId\s*\|\|\s*query\s*!==\s*this\.search\s*\)\s*\{\s*return\s+\[\]\s*\}\s*this\.items\s*=\s*\[\]\s*this\.searchError\s*=\s*getErrorMessage\s*\(\s*err\s*\)\s*\|\|\s*this\.\$t\s*\(\s*['"]common:error\.generic['"]\s*\)\s*wikiStore\.showError\s*\(\s*err\s*\)\s*return\s+\[\]\s*\}/
+    )
     expect(script).toMatch(/finally\s*\{\s*if\s*\(\s*requestId\s*===\s*this\.searchRequestId\s*\)\s*\{\s*this\.searchLoading\s*=\s*false\s*\}\s*\}/)
+    expect(source).toContain("@retry='retrySearch'")
+    expect(script).toMatch(/retrySearch\s*\(\s*\)\s*:\s*void\s*\{\s*this\.queueSearch\s*\(\s*\)\s*\}/)
     expect(script).not.toMatch(/this\.\$store\.commit\(\s*['"]pushGraphError['"]\s*,/)
 
     const showErrorCalls = script.match(/\bshowError\s*\(/g) || []

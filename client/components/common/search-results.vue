@@ -2,12 +2,14 @@
   .search-results(
     v-if='isAgentOpen || searchIsFocused || normalizedSearch.length > 1'
     :class='{ "search-results--ask": isAgentOpen }'
-    :role='isAgentOpen ? `dialog` : `region`'
-    :aria-label='isAgentOpen ? `Wiki Agent workspace` : `Wiki search`'
-    :aria-modal='isAgentOpen ? `true` : undefined'
-    :tabindex='isAgentOpen ? -1 : undefined'
+    role='dialog'
+    aria-modal='true'
+    :aria-labelledby='isAgentOpen ? `wiki-agent-title` : `wiki-search-title`'
+    tabindex='-1'
   )
     .search-results-container(:class='{ "search-results-container--ask": isAgentOpen }')
+      h1#wiki-agent-title.sr-only(v-if='isAgentOpen') Wiki Agent workspace
+      h1#wiki-search-title.sr-only(v-else) Wiki search
       .search-results-agent-nav(v-if='isAgentOpen')
         v-btn.search-results-agent-back(
           prepend-icon='mdi-arrow-left'
@@ -54,6 +56,7 @@
           :aria-label='$t(`common:header.searchClose`)'
           @click='closeSearch'
         )
+        span.search-results-keyboard-hint(v-if='!isAgentOpen && normalizedSearch.length >= 2') ↑↓ Navigate · Enter Open · Esc Close
       InlineAgentChat(
         v-if='isAgentOpen'
         ref='inlineAgent'
@@ -68,6 +71,7 @@
         :page-updated-at='currentPageUpdatedAt'
       )
       .search-results-search(v-else)
+        .search-results-instructions#wiki-search-instructions Use Arrow Up and Down to move through results, Enter to open a result, and Escape to close search.
         .search-results-scope
           .search-results-scope-copy
             .search-results-eyebrow Search scope
@@ -105,7 +109,7 @@
               v-icon(icon='mdi-text-search' size='34')
             h2 Search your knowledge base
             p Type at least two characters to find pages by title, content, path, or tag.
-          .search-results-loader(v-else-if='searchIsLoading && results.length < 1')
+          .search-results-loader(v-else-if='searchIsLoading')
             async-state(
               state='loading'
               :title='$t(`common:header.searchLoading`)'
@@ -141,9 +145,18 @@
                 :message='canAsk ? `Ask Wiki for a grounded answer, or try a different term or scope.` : `Try a different term or broader scope.`'
               )
             template(v-if='results.length > 0')
-              v-list.search-results-items(lines='three')
+              v-list.search-results-items(
+                id='wiki-search-results'
+                role='listbox'
+                :aria-busy='searchIsLoading'
+                aria-label='Search results'
+                lines='three'
+              )
                 template(v-for='(item, idx) of results' :key='item.id')
                   v-list-item.search-results-item(
+                    :id='`wiki-search-result-${item.id}`'
+                    role='option'
+                    :aria-selected='idx === cursor'
                     :href='pageHref(item)'
                     :class='idx === cursor ? `highlighted` : ``'
                     @click='closeSearch'
@@ -176,11 +189,18 @@
                 density='comfortable'
                 rounded
               )
-            .search-results-suggestion-block(v-if='suggestions.length > 0')
-              .search-results-eyebrow {{$t('common:header.searchDidYouMean')}}
-              v-list.search-results-suggestions(density='compact')
+              v-list.search-results-suggestions(
+                id='wiki-search-suggestions'
+                role='listbox'
+                :aria-busy='searchIsLoading'
+                aria-label='Search suggestions'
+                density='compact'
+              )
                 template(v-for='(term, idx) of suggestions' :key='term')
                   v-list-item(
+                    :id='`wiki-search-suggestion-${idx}`'
+                    role='option'
+                    :aria-selected='idx + results.length === cursor'
                     :class='idx + results.length === cursor ? `highlighted` : ``'
                     prepend-icon='mdi-magnify'
                     @click='setSearchTerm(term)'
@@ -200,16 +220,17 @@ import { onSearchEnter, onSearchMove, offSearchEnter, offSearchMove } from '../.
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
 import { createModalFocusScope, type ModalFocusScope } from './modal-focus-scope'
 
+type InlineAgentChatRef = {
+  focusComposer: () => Promise<void>
+  sendPrompt: (prompt: string) => Promise<boolean>
+  focusConversation: () => Promise<void>
+}
+
 const emptySearchResponse = (): PageSearchResult => ({
   results: [],
   suggestions: [],
   totalHits: 0
 })
-interface InlineAgentChatRef {
-  sendPrompt(content: string): Promise<boolean>
-  focusComposer(): Promise<void>
-  focusConversation(): Promise<void>
-}
 
 
 export default defineComponent({
@@ -227,7 +248,9 @@ export default defineComponent({
       searchError: '',
       searchRequestId: 0,
       response: emptySearchResponse(),
-      modalFocusScope: null as ModalFocusScope | null
+      responseQuery: '',
+      modalFocusScope: null as ModalFocusScope | null,
+      searchFocusScopeCleanup: null as (() => void) | null
     }
   },
   computed: {
@@ -279,6 +302,17 @@ export default defineComponent({
     currentPageLocale(): string { return wikiStore.page.locale },
     currentPagePath(): string { return wikiStore.page.path },
     currentPageUpdatedAt(): string { return wikiStore.page.updatedAt },
+    hasFreshResponse(): boolean {
+      return this.responseQuery === this.normalizedSearch && this.normalizedSearch.length >= 2
+    },
+    activeDescendant(): string | undefined {
+      if (!this.hasFreshResponse || this.cursor < 0) return undefined
+      if (this.cursor < this.results.length) return `wiki-search-result-${this.results[this.cursor]?.id}`
+      return `wiki-search-suggestion-${this.cursor - this.results.length}`
+    },
+    searchListId(): string {
+      return this.results.length > 0 ? 'wiki-search-results' : 'wiki-search-suggestions'
+    },
     paginationLength(): number {
       return this.response.results.length > 0 ? Math.ceil(this.response.results.length / this.perPage) : 0
     }
@@ -294,6 +328,11 @@ export default defineComponent({
       if (open) void this.activateAgentModal()
       else this.deactivateAgentModal()
     },
+    searchIsFocused(open: boolean) {
+      if (this.isAgentOpen) return
+      if (open) void this.activateAgentModal()
+      else this.deactivateAgentModal()
+    },
     searchRestrictLocale() {
       this.queueSearch(this.search)
     },
@@ -302,6 +341,13 @@ export default defineComponent({
     },
     results() {
       this.cursor = 0
+      void this.$nextTick(this.syncSearchInputA11y)
+    },
+    cursor() {
+      void this.$nextTick(this.syncSearchInputA11y)
+    },
+    searchIsLoading() {
+      void this.$nextTick(this.syncSearchInputA11y)
     }
   },
   mounted() {
@@ -313,6 +359,8 @@ export default defineComponent({
     }
     onSearchMove(this.handleSearchMove)
     onSearchEnter(this.handleSearchEnter)
+    void this.$nextTick(this.syncSearchInputA11y)
+    if (this.searchIsFocused) void this.activateAgentModal()
   },
   beforeUnmount() {
     this.searchRequestId += 1
@@ -325,32 +373,87 @@ export default defineComponent({
     async activateAgentModal(): Promise<void> {
       const restoreTarget = this.findSearchControl()
       await this.$nextTick()
-      if (!this.isAgentOpen) return
+      if (this.isAgentOpen) {
+        const root = this.$el
+        if (!(root instanceof HTMLElement)) return
+        this.searchFocusScopeCleanup?.()
+        this.modalFocusScope?.deactivate({ restoreFocus: false })
+        const focusScope = createModalFocusScope({
+          root,
+          restoreTarget,
+          onEscape: this.closeSearch
+        })
+        this.modalFocusScope = focusScope
+        await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.focusComposer()
+        if (this.modalFocusScope === focusScope && !focusScope.containsFocus()) focusScope.focusFirst()
+      } else {
+        this.activateSearchModal(restoreTarget)
+      }
+    },
+    activateSearchModal(restoreTarget: HTMLElement | null): void {
       const root = this.$el
       if (!(root instanceof HTMLElement)) return
-      this.modalFocusScope?.deactivate({ restoreFocus: false })
-      const focusScope = createModalFocusScope({
-        root,
-        restoreTarget,
-        onEscape: this.closeSearch
-      })
-      this.modalFocusScope = focusScope
-      await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.focusComposer()
-      if (this.modalFocusScope === focusScope && !focusScope.containsFocus()) focusScope.focusFirst()
+      this.searchFocusScopeCleanup?.()
+      const isAllowed = (target: EventTarget | null): target is Node =>
+        target instanceof Node && (root.contains(target) || target === restoreTarget)
+      const focusables = (): HTMLElement[] => [
+        ...(restoreTarget && !restoreTarget.hasAttribute('disabled') ? [restoreTarget] : []),
+        ...Array.from(root.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'))
+      ]
+      const handleFocus = (event: FocusEvent): void => {
+        if (!isAllowed(event.target)) (restoreTarget ?? focusables()[0] ?? root).focus()
+      }
+      const handleKeydown = (event: KeyboardEvent): void => {
+        if (!isAllowed(event.target)) return
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          this.closeSearch()
+        } else if (event.key === 'Tab') {
+          const items = focusables()
+          if (!items.length) return
+          const index = items.indexOf(document.activeElement as HTMLElement)
+          const next = event.shiftKey ? (index <= 0 ? items.length - 1 : index - 1) : (index === items.length - 1 ? 0 : index + 1)
+          event.preventDefault()
+          items[next]?.focus()
+        }
+      }
+      document.addEventListener('focusin', handleFocus)
+      document.addEventListener('keydown', handleKeydown)
+      this.searchFocusScopeCleanup = () => {
+        document.removeEventListener('focusin', handleFocus)
+        document.removeEventListener('keydown', handleKeydown)
+      }
     },
     deactivateAgentModal(restoreFocus = true): void {
+      this.searchFocusScopeCleanup?.()
+      this.searchFocusScopeCleanup = null
       this.modalFocusScope?.deactivate({ restoreFocus })
       this.modalFocusScope = null
       if (restoreFocus) {
         void this.$nextTick(() => {
           const searchControl = this.findSearchControl()
           if (searchControl && document.activeElement !== searchControl) searchControl.focus()
+          this.syncSearchInputA11y()
         })
+      } else {
+        this.syncSearchInputA11y()
       }
     },
     findSearchControl(): HTMLElement | null {
       const controls = Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control input'))
       return controls.find(control => control.getClientRects().length > 0 && !control.hasAttribute('disabled')) ?? null
+    },
+    syncSearchInputA11y(): void {
+      const input = this.findSearchControl()
+      if (!input) return
+      const active = this.isAgentOpen ? undefined : this.activeDescendant
+      input.setAttribute('role', 'combobox')
+      input.setAttribute('aria-controls', this.searchListId)
+      input.setAttribute('aria-expanded', String(!this.isAgentOpen && this.searchIsFocused && this.normalizedSearch.length >= 2))
+      input.setAttribute('aria-autocomplete', 'list')
+      input.setAttribute('aria-describedby', 'wiki-search-instructions')
+      if (active) input.setAttribute('aria-activedescendant', active)
+      else input.removeAttribute('aria-activedescendant')
     },
     openAsk(): void {
       if (!this.canAsk) return
@@ -362,23 +465,25 @@ export default defineComponent({
       this.searchIsFocused = true
     },
     queueSearch(query: string): void {
-      this.cursor = 0
+      this.cursor = -1
       this.searchRequestId += 1
       const requestId = this.searchRequestId
       const normalizedQuery = query.trim()
       this.searchError = ''
+      this.responseQuery = ''
+      this.response = emptySearchResponse()
+      this.pagination = 1
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
       if (this.searchMode !== 'search' || normalizedQuery.length < 2) {
         this.searchIsLoading = false
-        this.response = emptySearchResponse()
         return
       }
       this.searchIsLoading = true
       this.searchTimer = window.setTimeout(() => this.runSearch(normalizedQuery, requestId), 300)
     },
     handleSearchMove(dir: string): void {
-      if (this.searchMode === 'ask') return
+      if (this.searchMode === 'ask' || this.searchIsLoading || !this.hasFreshResponse) return
       const lastIndex = this.results.length + this.suggestions.length - 1
       if (lastIndex < 0) {
         this.cursor = -1
@@ -395,6 +500,7 @@ export default defineComponent({
         await this.submitAskPrompt()
         return
       }
+      if (this.searchIsLoading || !this.hasFreshResponse) return
       if (this.cursor >= 0 && this.cursor < this.results.length) {
         const result = _.nth(this.results, this.cursor)
         if (result) this.navigateToPage(result)
@@ -451,6 +557,10 @@ export default defineComponent({
       if (query.length < 2) return
       this.searchRequestId += 1
       this.searchError = ''
+      this.responseQuery = ''
+      this.response = emptySearchResponse()
+      this.cursor = -1
+      this.pagination = 1
       this.searchIsLoading = true
       void this.runSearch(query, this.searchRequestId)
     },
@@ -462,6 +572,7 @@ export default defineComponent({
         })
         if (requestId !== this.searchRequestId) return
         this.response = response
+        this.responseQuery = query
         this.pagination = 1
       } catch (err) {
         if (requestId !== this.searchRequestId) return
@@ -476,6 +587,17 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .search-results {
   animation: searchResultsReveal .2s ease-out;
   background:
@@ -585,6 +707,12 @@ export default defineComponent({
   &-close {
     position: absolute !important;
     right: clamp(.25rem, 1.5vw, 1rem);
+  }
+  &-keyboard-hint {
+    color: color-mix(in srgb, currentColor 72%, transparent);
+    font-size: .7rem;
+    margin-inline: .75rem;
+    white-space: nowrap;
   }
 
   &-shortcut {

@@ -1,7 +1,7 @@
 <template lang='pug'>
-  v-app-bar.nav-header(color='surface', flat, height='72', :extended='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
-    template(v-slot:extension v-if='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
-      v-toolbar.nav-header-mobile-search(color='surface', flat)
+  v-app-bar.nav-header(:height='dense ? 56 : 72', color='surface', flat, :class='{ "nav-header--dense": dense }', :extended='searchIsShown && $vuetify.display.smAndDown')
+    template(v-slot:extension v-if='searchIsShown && $vuetify.display.smAndDown')
+      v-toolbar.nav-header-mobile-search(id='nav-header-mobile-search', color='surface', flat)
         v-text-field.nav-header-search-control(
           ref='searchFieldMobile'
           v-model='search'
@@ -70,21 +70,23 @@
           .navHeaderLoading.mr-3
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2' v-show='isLoading', aria-label='Page loading')
 
-          slot(name='actions')
-
           //- (mobile) SEARCH TOGGLE
 
           v-btn(
             v-if='!hideSearch && $vuetify.display.smAndDown'
             @click='searchToggle'
             icon
-            :aria-label='$t(`common:header.search`)'
-            )
-            v-icon(color='grey') mdi-magnify
-
+            :size='dense ? `small` : `default`'
+            :aria-expanded='searchIsShown ? `true` : `false`'
+            aria-controls='nav-header-mobile-search'
+            :aria-label='searchIsShown ? `Close search` : `Open search`'
+          )
+            v-icon(color='grey') {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
+          .nav-header-slot-actions(v-if='$vuetify.display.mdAndUp')
+            slot(name='actions')
           //- LANGUAGES
 
-          template(v-if='mode === `view` && locales.length > 0')
+          template(v-if='mode === `view` && locales.length > 0 && $vuetify.display.mdAndUp')
             v-menu(location="bottom left", transition='slide-y-transition', max-height='320px', min-width='210px')
               template(v-slot:activator='{ props: menuProps }')
                 v-tooltip(location="bottom")
@@ -108,7 +110,7 @@
 
           //- PAGE ACTIONS
 
-          template(v-if='hasAnyPagePermissions && path && mode !== `edit`')
+          template(v-if='hasAnyPagePermissions && path && mode !== `edit` && $vuetify.display.mdAndUp')
             v-menu(location="bottom left", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
               template(v-slot:activator='{ props: menuProps }')
                 v-tooltip(location="bottom")
@@ -161,7 +163,7 @@
 
           //- NEW PAGE
 
-          template(v-if='hasNewPagePermission && path && mode !== `edit`')
+          template(v-if='hasNewPagePermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
             v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
                 v-btn(icon, rounded='0', height='64', v-bind='props', @click='pageNew', :aria-label='$t(`common:header.newPage`)')
@@ -171,7 +173,7 @@
 
           //- ADMIN
 
-          template(v-if='isAuthenticated && isAdmin')
+          template(v-if='isAuthenticated && isAdmin && $vuetify.display.mdAndUp')
             v-tooltip(location="bottom", v-if='mode !== `admin`')
               template(v-slot:activator='{ props }')
                 v-btn(icon, rounded='0', height='64', v-bind='props', href='/a', :aria-label='$t(`common:header.admin`)')
@@ -179,8 +181,46 @@
               span {{$t('common:header.admin')}}
             v-btn(v-else, variant="text", rounded='0', height='64', href='/', :aria-label='$t(`common:actions.exit`)')
               v-icon(start, color='grey') mdi-exit-to-app
-              span {{$t('common:actions.exit')}}
-            v-divider(vertical)
+          v-menu(v-if='$vuetify.display.smAndDown', location='bottom end', min-width='240')
+            template(v-slot:activator='{ props }')
+              v-btn(
+                icon
+                v-bind='props'
+                :size='dense ? `small` : `default`'
+                aria-label='More page actions'
+              )
+                v-icon(color='grey') mdi-dots-vertical
+            v-list(nav)
+              v-list-subheader Page actions
+              v-list-item(v-if='mode !== `view`', @click='pageView')
+                v-list-item-title {{$t('common:header.view')}}
+              v-list-item(v-if='hasWritePagesPermission && mode !== `edit`', @click='pageEdit')
+                v-list-item-title {{$t('common:header.edit')}}
+              v-list-item(v-if='hasReadHistoryPermission && mode !== `history`', @click='pageHistory')
+                v-list-item-title {{$t('common:header.history')}}
+              v-list-item(v-if='hasReadSourcePermission && mode !== `source`', @click='pageSource')
+                v-list-item-title {{$t('common:header.viewSource')}}
+              v-list-item(v-if='hasWritePagesPermission', @click='pageConvert')
+                v-list-item-title {{$t('common:header.convert')}}
+              v-list-item(v-if='hasWritePagesPermission', @click='pageDuplicate')
+                v-list-item-title {{$t('common:header.duplicate')}}
+              v-list-item(v-if='hasManagePagesPermission', @click='pageMove')
+                v-list-item-title {{$t('common:header.move')}}
+              v-list-item(v-if='hasDeletePagesPermission', @click='pageDelete')
+                v-list-item-title {{$t('common:header.delete')}}
+              v-divider(v-if='hasNewPagePermission || (isAuthenticated && isAdmin)')
+              v-list-item(v-if='hasNewPagePermission && path && mode !== `edit`', @click='pageNew')
+                v-list-item-title {{$t('common:header.newPage')}}
+              v-list-item(v-if='isAuthenticated && isAdmin && mode !== `admin`', href='/a')
+                v-list-item-title {{$t('common:header.admin')}}
+              v-list-item(v-if='isAuthenticated && isAdmin && mode === `admin`', href='/')
+                v-list-item-title {{$t('common:actions.exit')}}
+              template(v-if='mode === `view` && locales.length > 0')
+                v-divider
+                v-list-subheader {{$t('common:header.language')}}
+                v-list-item(v-for='lc of locales', :key='`mobile-locale-${lc.code}`', @click='changeLocale(lc)')
+                  v-list-item-title {{lc.name}}
+          v-divider(vertical)
 
           //- ACCOUNT
 
@@ -330,7 +370,6 @@ export default defineComponent({
     logoUrl(): string { return wikiStore.site.logoUrl },
     path(): string { return wikiStore.page.path },
     locale(): string { return wikiStore.page.locale },
-    mode(): string { return wikiStore.page.mode },
     name(): string { return wikiStore.user.name },
     email(): string { return wikiStore.user.email },
     pictureUrl(): string { return wikiStore.user.pictureUrl },
@@ -341,22 +380,13 @@ export default defineComponent({
     picture (): UserPicture {
       const pictureUrl = typeof this.pictureUrl === 'string' ? this.pictureUrl : ''
       if (pictureUrl.length > 1) {
-        return {
-          kind: 'image',
-          url: (pictureUrl === 'internal') ? `/_userav/${wikiStore.user.id}` : pictureUrl
-        }
+        return { kind: 'image', url: (pictureUrl === 'internal') ? `/_userav/${wikiStore.user.id}` : pictureUrl }
       }
-
       const name = typeof this.name === 'string' ? this.name : ''
       const nameParts = name.toUpperCase().split(' ').filter(Boolean)
       let initials = nameParts[0]?.charAt(0) ?? ''
-      if (nameParts.length > 1) {
-        initials += nameParts[nameParts.length - 1]?.charAt(0) ?? ''
-      }
-      return {
-        kind: 'initials',
-        initials
-      }
+      if (nameParts.length > 1) initials += nameParts[nameParts.length - 1]?.charAt(0) ?? ''
+      return { kind: 'initials', initials }
     },
     isAdmin () {
       return _.intersection(this.permissions, ['manage:system', 'write:users', 'manage:users', 'write:groups', 'manage:groups', 'manage:navigation', 'manage:theme', 'manage:api']).length > 0
@@ -371,7 +401,7 @@ export default defineComponent({
     hasReadSourcePermission(): boolean { return wikiStore.page.effectivePermissions.source.read },
     hasReadHistoryPermission(): boolean { return wikiStore.page.effectivePermissions.history.read },
     hasAnyPagePermissions () {
-      return this.hasAdminPermission || this.hasWritePagesPermission || this.hasManagePagesPermission ||
+      return this.hasWritePagesPermission || this.hasManagePagesPermission ||
         this.hasDeletePagesPermission || this.hasReadSourcePermission || this.hasReadHistoryPermission
     }
   },
@@ -439,8 +469,8 @@ export default defineComponent({
         return
       }
       this.searchIsShown = true
-      this.searchIsFocused = true
       this.searchMode = 'ask'
+      void this.focusSearchField()
     },
     searchEnter (event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) {
@@ -550,7 +580,7 @@ export default defineComponent({
 
   .v-toolbar__content,
   .v-toolbar__extension {
-    overflow: visible;
+    overflow: hidden;
   }
 
   .v-toolbar__extension {
@@ -627,8 +657,9 @@ export default defineComponent({
 
       @include until($tablet) {
         .v-btn--icon {
-          width: 40px;
-          min-width: 40px;
+          width: 44px;
+          min-width: 44px;
+          height: 44px;
         }
       }
     }
@@ -721,6 +752,15 @@ export default defineComponent({
     transform: scale(.96);
   }
 }
+.nav-header--dense {
+  .nav-header-inner .v-toolbar__content {
+    min-height: 52px;
+  }
+
+  .nav-header-inner .v-btn {
+    height: 52px !important;
+  }
+}
 
 .navHeaderLoading {
   width: 22px;
@@ -737,11 +777,10 @@ export default defineComponent({
     }
   }
 }
-
 @media (max-width: 599px) {
   .nav-header-actions {
-    position: relative;
-    inset-inline-end: 6px;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 }
 

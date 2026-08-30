@@ -36,7 +36,29 @@
         )
           v-icon mdi-close
       vue-scroll(:ops='scrollStyle')
-        nav.tags-navigation(:aria-label='$t(`common:header.browseTags`)')
+        async-state(
+          v-if='tagsLoading && tags.length === 0'
+          state='loading'
+          title='Loading tags'
+        )
+        async-state(
+          v-else-if='tagsError'
+          state='error'
+          title='Tags could not be loaded'
+          :message='tagsError'
+          retry-label='Try again'
+          @retry='loadTags'
+        )
+        async-state(
+          v-else-if='tags.length === 0'
+          state='empty'
+          title='No tags available'
+          message='There are no tags to browse yet.'
+        )
+        nav.tags-navigation(
+          v-else
+          :aria-label='$t(`common:header.browseTags`)'
+        )
           v-list(density='compact' nav role='presentation')
             v-list-item.tags-home-link(href='/' color='primary')
               template(v-slot:prepend): v-icon mdi-home-outline
@@ -53,6 +75,7 @@
                 template(v-slot:prepend)
                   v-icon(size='18') {{ isSelected(tag.tag) ? 'mdi-check-circle' : 'mdi-tag-outline' }}
                 v-list-item-title {{tag.title}}
+                
     v-main.tags-main
       v-container.tags-shell(fluid)
         section.tags-hero
@@ -72,7 +95,7 @@
               size='small'
               variant='text'
               color='primary'
-              @click='selection = []'
+              @click='clearSelection'
             )
               v-icon(start size='17') mdi-close
               span {{$t('tags:clearSelection')}}
@@ -86,7 +109,7 @@
               @click:close='toggleTag(tag.tag)'
             ) {{tag.title}}
 
-        section.tags-controls(aria-label='Filter tagged pages')
+        section.tags-controls(v-if='selection.length > 0' aria-label='Filter tagged pages')
           v-text-field.tags-search(
             v-model='innerSearch'
             :label='$t(`tags:searchWithinResultsPlaceholder`)'
@@ -159,18 +182,34 @@
                 )
                 h2 {{$t('tags:retrievingResultsLoading')}}
             template(v-slot:no-data)
-              .tags-state
+              async-state(
+                v-if='pagesError'
+                state='error'
+                title='Tagged pages could not be loaded'
+                :message='pagesError'
+                retry-label='Try again'
+                @retry='loadPages'
+              )
+              .tags-state(v-else)
                 v-icon(size='48' color='primary') mdi-file-search-outline
                 h2 {{$t('tags:noResults')}}
+                p Adjust your selected tags to find pages.
+                v-btn(color='primary' variant='tonal' @click='clearSelection')
+                  v-icon(start) mdi-filter-remove-outline
+                  span {{$t('tags:clearSelection')}}
             template(v-slot:no-results)
               .tags-state
                 v-icon(size='48' color='primary') mdi-text-search
                 h2 {{$t('tags:noResultsWithFilter')}}
+                p Try a different search or clear the filter.
+                v-btn(color='primary' variant='tonal' @click='innerSearch = ""')
+                  v-icon(start) mdi-close
+                  span Clear search
             template(v-slot:default='props')
               .tags-result-grid
                 article(v-for='entry of props.items' :key='`page-` + entry.raw.id')
                   v-card.tags-result-card(
-                    @click='goTo(entry.raw)'
+                    :href='`/${entry.raw.locale}/${entry.raw.path}`'
                     variant='flat'
                   )
                     v-card-text
@@ -196,6 +235,7 @@ import _ from 'lodash'
 
 import { fetchPages, fetchPageTags, type PageListRow, type PageTagRow } from '../helpers/pages-api'
 import { setLoading } from '../helpers/root-ui-store'
+import AsyncState from '@/components/common/async-state.vue'
 import { pathFromTagSelection, tagSelectionFromPath } from '../helpers/tag-navigation'
 import { wikiStore } from '@/store/index.ts'
 
@@ -213,6 +253,9 @@ function normalizeQueryValue (value: unknown): string | undefined {
 
 
 export default {
+  components: {
+    AsyncState
+  },
   i18nOptions: { namespaces: 'tags' },
   data() {
     return {
@@ -232,6 +275,9 @@ export default {
         sortDesc: [false]
       },
       pages: [] as PageListRow[],
+      tagsLoading: true,
+      tagsError: '',
+      pagesError: '',
       pageTotal: 0,
       isLoading: true,
       scrollStyle: {
@@ -249,9 +295,9 @@ export default {
         },
         bar: {
           onlyShowBarOnScroll: false,
-          background: '#CCC',
+          background: 'color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent)',
           hoverStyle: {
-            background: '#999'
+            background: 'color-mix(in srgb, rgb(var(--v-theme-on-surface)) 42%, transparent)'
           }
         }
       }
@@ -334,6 +380,10 @@ export default {
       }
       this.rebuildURL()
     },
+    clearSelection () {
+      this.selection = []
+      this.rebuildURL()
+    },
     isSelected (tag: string) {
       return _.includes(this.selection, tag)
     },
@@ -353,18 +403,21 @@ export default {
         query
       })
     },
-    goTo (page: PageListRow) {
-      window.location.assign(`/${page.locale}/${page.path}`)
-    },
     async loadTags () {
+      this.tagsLoading = true
+      this.tagsError = ''
       setLoading(wikiStore, 'tags-refresh', true)
       try {
         this.tags = await fetchPageTags(window.fetch.bind(window))
+      } catch (err) {
+        this.tagsError = err instanceof Error ? err.message : 'Unable to load tags.'
       } finally {
+        this.tagsLoading = false
         setLoading(wikiStore, 'tags-refresh', false)
       }
     },
     async loadPages () {
+      this.pagesError = ''
       if (this.selection.length < 1) {
         this.pages = []
         this.isLoading = false
@@ -377,11 +430,14 @@ export default {
           locale: this.locale === 'any' ? undefined : this.locale,
           tags: this.selection
         })
+      } catch (err) {
+        this.pages = []
+        this.pagesError = err instanceof Error ? err.message : 'Unable to load tagged pages.'
       } finally {
         this.isLoading = false
         setLoading(wikiStore, 'pages-refresh', false)
       }
-    }
+    },
   }
 
 }
@@ -496,7 +552,7 @@ export default {
   justify-content: space-between;
   padding: clamp(28px, 4vw, 48px);
   border: 1px solid rgba(var(--v-border-color), .1);
-  border-radius: 22px;
+  border-radius: var(--wiki-panel-radius);
   background:
     radial-gradient(circle at 82% 35%, rgba(var(--v-theme-primary), .17), transparent 20rem),
     linear-gradient(145deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 9%, rgb(var(--v-theme-surface))), rgb(var(--v-theme-surface)) 65%);
@@ -544,7 +600,7 @@ export default {
 .tags-controls {
   margin-top: 20px;
   border: 1px solid rgba(var(--v-border-color), .1);
-  border-radius: 18px;
+  border-radius: var(--wiki-panel-radius);
   background: rgb(var(--v-theme-surface));
   box-shadow: 0 9px 30px rgba(15, 23, 42, .045);
 }
@@ -578,7 +634,7 @@ export default {
   padding: 18px;
 
   .v-field {
-    border-radius: 12px;
+    border-radius: var(--wiki-control-radius);
   }
 }
 
@@ -590,7 +646,7 @@ export default {
 
 .tags-sort-direction {
   height: 48px;
-  border-radius: 12px;
+  border-radius: var(--wiki-control-radius);
 }
 
 .tags-empty,
@@ -603,7 +659,7 @@ export default {
   margin-top: 22px;
   padding: 40px 24px;
   border: 1px dashed color-mix(in srgb, rgb(var(--v-theme-primary)) 22%, rgba(var(--v-border-color), .15));
-  border-radius: 20px;
+  border-radius: var(--wiki-panel-radius);
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 82%, transparent);
   color: rgb(var(--v-theme-on-surface));
   text-align: center;
@@ -644,7 +700,7 @@ export default {
 .tags-result-card {
   height: 100%;
   border: 1px solid rgba(var(--v-border-color), .1);
-  border-radius: 17px !important;
+  border-radius: var(--wiki-panel-radius) !important;
   background: rgb(var(--v-theme-surface));
   box-shadow: 0 8px 26px rgba(15, 23, 42, .045);
   cursor: pointer;

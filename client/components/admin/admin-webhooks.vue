@@ -7,116 +7,155 @@
           .admin-header-title
             .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:webhooks.title') }}
             .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:webhooks.subtitle') }}
-          v-spacer
-          v-btn(color='primary', variant="flat", @click='newHook')
-            v-icon(start) mdi-plus
-            span New webhook
+          .admin-header-actions.admin-webhook-actions.d-flex.align-center.flex-wrap.ga-2
+            v-btn(color='primary', variant="flat", @click='newHook', :disabled='Boolean(revealedSecret) || (!draft.id && editorVisible)')
+              v-icon(start) mdi-plus
+              span New webhook
 
       v-col(cols='12', lg='4')
         v-card(border)
-          v-card-title
+          v-card-title.d-flex.align-center.flex-wrap.ga-2
             v-icon.mr-2(color='primary') mdi-webhook
             span Endpoints
+            v-spacer
+            v-chip(v-if='loadState === `success`', label, size="small", :color='hooks.length ? `success` : `info`') {{ hooks.length ? `${hooks.length} configured` : 'Not configured' }}
           v-divider
-          v-list(v-if='hooks.length', lines='two')
+          v-skeleton-loader(v-if='loadState === `loading`', type='list-item-two-line@3')
+          v-alert.ma-3(v-else-if='loadState === `error`', type='error', variant="tonal", icon='mdi-alert')
+            span Unable to load webhooks.
+            v-btn.ml-2(variant="text", size="small", @click='loadHooks') Retry
+          v-list(v-else-if='hooks.length', lines='two')
             v-list-item(
               v-for='item in hooks'
               :key='item.id'
               :active='draft.id === item.id'
+              :disabled='Boolean(revealedSecret)'
               @click='selectHook(item)'
             )
               template(v-slot:prepend)
                 v-icon(:color='item.isEnabled ? `success` : `grey`') {{ item.isEnabled ? 'mdi-check-circle' : 'mdi-pause-circle' }}
               v-list-item-title {{ item.name }}
               v-list-item-subtitle {{ item.url }}
+              template(v-slot:append)
+                v-chip(label, size="x-small", :color='item.isEnabled ? `success` : `warning`') {{ item.isEnabled ? 'Enabled' : 'Disabled' }}
           v-card-text(v-else)
-            v-alert(type='info', variant='tonal') No webhook endpoints configured.
+            v-alert(type='info', variant='tonal') No webhook endpoints configured. Use New webhook to add one.
 
       v-col(cols='12', lg='8')
-        v-card(border)
-          v-card-title
+        v-card(v-if='editorVisible', border)
+          v-card-title.d-flex.align-center.flex-wrap.ga-2
             span {{ draft.id ? 'Edit webhook' : 'New webhook' }}
             v-spacer
-            v-progress-circular(v-if='loading', indeterminate, size='22', color='primary', aria-label='Saving webhook')
+            v-progress-circular(v-if='saving', indeterminate, size='22', color='primary', aria-label='Saving webhook')
           v-divider
           v-card-text
-            v-alert(v-if='revealedSecret', type='warning', variant='tonal', closable, @click:close='revealedSecret = ``')
-              strong Copy this signing secret now. It will not be shown again.
+            v-alert(v-if='revealedSecret', type='warning', variant='tonal')
+              strong One-time signing secret
+              span.ml-1 Copy it now; it will not be shown again.
               code.webhook-secret {{ revealedSecret }}
-            v-form(@submit.prevent='save')
-              v-text-field(v-model='draft.name', label='Name', maxlength='128', required)
-              v-text-field(v-model='draft.url', label='HTTPS endpoint URL', placeholder='https://hooks.example.com/wiki', required)
+              .d-flex.align-center.flex-wrap.ga-2.mt-3
+                v-btn(variant="outlined", color='warning', @click='copySecret')
+                  v-icon(start) mdi-content-copy
+                  span {{ secretCopied ? 'Copied' : 'Copy secret' }}
+                v-btn(color='warning', variant="flat", @click='finishSecret') I’ve saved this secret
+            v-form(ref='webhookForm', @submit.prevent='save')
+              v-text-field(ref='webhookNameInput', v-model='draft.name', label='Name', maxlength='128', variant="outlined", :rules='[requiredRule]')
+              v-text-field(ref='webhookUrlInput', v-model='draft.url', label='HTTPS endpoint URL', placeholder='https://hooks.example.com/wiki', type='url', variant="outlined", :rules='[httpsRule]')
               v-textarea(
+                ref='webhookEventsInput'
                 v-model='eventsText'
                 label='Subscribed events'
                 hint='One event per line. Use * for every event.'
                 persistent-hint
                 rows='4'
+                variant="outlined"
+                :rules='[eventsRule]'
               )
               v-switch(v-model='draft.isEnabled', color='success', label='Enabled')
               .d-flex.flex-wrap.ga-2.mt-3
-                v-btn(color='primary', variant="flat", type='submit', :loading='saving')
+                v-btn(color='primary', variant="flat", type='submit', :loading='saving', :disabled='!isWebhookValid')
                   v-icon(start) mdi-content-save
                   span Save
-                v-btn(v-if='draft.id', variant='outlined', @click='rotateSecret', :loading='rotating')
+                v-btn(v-if='draft.id', variant='outlined', @click='rotateDialog = true', :loading='rotating', :disabled='Boolean(revealedSecret)')
                   v-icon(start) mdi-key-change
                   span Rotate secret
-                v-btn(v-if='draft.id', color='error', variant='outlined', @click='deleteDialog = true')
+                v-btn(v-if='draft.id', color='error', variant='outlined', @click='deleteDialog = true', :disabled='Boolean(revealedSecret)')
                   v-icon(start) mdi-delete
                   span Delete
 
         v-card.mt-4(v-if='draft.id', border)
-          v-card-title
+          v-card-title.d-flex.align-center.flex-wrap.ga-2
             span Recent deliveries
             v-spacer
-            v-btn(icon='mdi-refresh', variant='text', aria-label='Refresh deliveries', @click='loadDeliveries')
+            v-btn(icon='mdi-refresh', variant='text', aria-label='Refresh deliveries', @click='loadDeliveries', :loading='deliveryLoading', :disabled='deliveryLoading || Boolean(deliveryBusy)')
           v-divider
-          v-table
-            thead
-              tr
-                th Event
-                th State
-                th Attempts
-                th HTTP
-                th Created
-                th Actions
-            tbody
-              tr(v-for='delivery in deliveries', :key='delivery.id')
-                td {{ delivery.eventType }} v{{ delivery.eventVersion }}
-                td
+          v-skeleton-loader(v-if='deliveryLoading && !deliveries.length', type='table-tbody')
+          v-alert.ma-3(v-if='deliveryError', type='error', variant="tonal", icon='mdi-alert')
+            span Unable to load deliveries.
+            v-btn.ml-2(variant="text", size="small", @click='loadDeliveries', :disabled='deliveryLoading || Boolean(deliveryBusy)') Retry
+          template(v-if='deliveries.length || (!deliveryLoading && !deliveryError)')
+            v-table.delivery-desktop(v-if='deliveries.length')
+              thead
+                tr
+                  th Event
+                  th State
+                  th Attempts
+                  th HTTP
+                  th Created
+                  th Actions
+              tbody
+                tr(v-for='delivery in deliveries', :key='delivery.id')
+                  td {{ delivery.eventType }} v{{ delivery.eventVersion }}
+                  td
+                    v-chip(size='small', :color='stateColor(delivery.state)') {{ delivery.state }}
+                  td {{ delivery.attempts }} / {{ delivery.maxAttempts }}
+                  td {{ delivery.statusCode || '—' }}
+                  td {{ $helpers.formatMoment(delivery.createdAt, 'calendar') }}
+                  td
+                    v-btn(v-if='delivery.state === `failed`', variant='outlined', size='small', @click='changeDelivery(delivery.id, `retry`)', :loading='deliveryBusy === delivery.id', :disabled='Boolean(deliveryBusy)') Retry
+                    v-btn.ml-2(v-if='delivery.state === `pending` || delivery.state === `running`', variant='outlined', color='error', size='small', @click='requestDeliveryCancel(delivery.id)', :disabled='Boolean(deliveryBusy)') Cancel
+            div.delivery-mobile(v-if='deliveries.length')
+              .admin-mobile-record(v-for='delivery in deliveries', :key='`mobile-delivery-` + delivery.id')
+                .d-flex.align-center
+                  .admin-mobile-record-title {{ delivery.eventType }} v{{ delivery.eventVersion }}
+                  v-spacer
                   v-chip(size='small', :color='stateColor(delivery.state)') {{ delivery.state }}
-                td {{ delivery.attempts }} / {{ delivery.maxAttempts }}
-                td {{ delivery.statusCode || '—' }}
-                td {{ $helpers.formatMoment(delivery.createdAt, 'calendar') }}
-                td
-                  v-btn(
-                    v-if='delivery.state === `failed`'
-                    icon='mdi-refresh'
-                    size='small'
-                    variant='text'
-                    aria-label='Retry delivery'
-                    @click='changeDelivery(delivery.id, `retry`)'
-                  )
-                  v-btn(
-                    v-if='delivery.state === `pending` || delivery.state === `running`'
-                    icon='mdi-cancel'
-                    size='small'
-                    variant='text'
-                    color='error'
-                    aria-label='Cancel delivery'
-                    @click='changeDelivery(delivery.id, `cancel`)'
-                  )
-              tr(v-if='!deliveries.length')
-                td.text-center.text-medium-emphasis(colspan='6') No deliveries yet.
+                .admin-mobile-record-meta {{ delivery.attempts }} / {{ delivery.maxAttempts }} attempts · HTTP {{ delivery.statusCode || '—' }}
+                .text-body-small.text-grey.mt-2 {{ $helpers.formatMoment(delivery.createdAt, 'calendar') }}
+                .d-flex.flex-wrap.ga-2.mt-2
+                  v-btn(v-if='delivery.state === `failed`', variant='outlined', size='small', @click='changeDelivery(delivery.id, `retry`)', :loading='deliveryBusy === delivery.id', :disabled='Boolean(deliveryBusy)') Retry
+                  v-btn(v-if='delivery.state === `pending` || delivery.state === `running`', variant='outlined', color='error', size='small', @click='requestDeliveryCancel(delivery.id)', :disabled='Boolean(deliveryBusy)') Cancel
+            v-card-text(v-if='!deliveries.length')
+              .text-center.text-medium-emphasis No deliveries yet.
 
-    v-dialog(v-model='deleteDialog', max-width='480')
+    v-dialog(v-model='deleteDialog', max-width='480', persistent)
       v-card
-        v-card-title Delete webhook?
-        v-card-text Existing delivery history for this endpoint will also be removed.
+        .dialog-header.is-red Delete webhook?
+        v-card-text Existing delivery history for {{ draft.name || 'this endpoint' }} ({{ draft.url || 'the selected URL' }}) will also be removed.
         v-card-actions
           v-spacer
-          v-btn(variant='text', @click='deleteDialog = false') Cancel
-          v-btn(color='error', @click='removeHook', :loading='deleting') Delete</template>
+          v-btn(variant='text', @click='deleteDialog = false', :disabled='deleting') Cancel
+          v-btn(color='error', @click='removeHook', :loading='deleting') Delete
+    v-dialog(v-model='rotateDialog', max-width='500', persistent)
+      v-card
+        .dialog-header.is-red Rotate webhook secret?
+        v-card-text The old signing secret for {{ draft.name || 'this webhook' }} will stop working immediately. Continue?
+        v-card-actions
+          v-spacer
+          v-btn(variant='text', @click='rotateDialog = false', :disabled='rotating') Cancel
+          v-btn(color='error', @click='rotateSecret', :loading='rotating') Rotate secret
+    v-dialog(v-model='cancelDeliveryDialog', max-width='500', persistent)
+      v-card
+        .dialog-header.is-red Cancel webhook delivery?
+        v-card-text
+          | The delivery of 
+          strong {{ cancelDelivery ? `${cancelDelivery.eventType} v${cancelDelivery.eventVersion}` : 'this event' }}
+          |  will be stopped and cannot resume. Continue?
+        v-card-actions
+          v-spacer
+          v-btn(variant='text', @click='cancelDeliveryDialog = false', :disabled='Boolean(deliveryBusy)') Keep delivery
+          v-btn(color='error', @click='confirmDeliveryCancel', :loading='Boolean(deliveryBusy)') Cancel delivery
+</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'
@@ -149,41 +188,103 @@ export default {
       draft: emptyDraft(),
       eventsText: 'page.created\npage.updated\npage.deleted',
       revealedSecret: '',
-      loading: false,
+      editorVisible: false,
+      secretCopied: false,
+      loadState: 'loading' as 'loading' | 'success' | 'error',
+      deliveryLoading: false,
+      deliveryError: false,
+      deliveryBusy: '' as string,
+      deliveryLoadToken: 0,
       saving: false,
       rotating: false,
       deleting: false,
-      deleteDialog: false
+      deleteDialog: false,
+      rotateDialog: false,
+      cancelDeliveryDialog: false,
+      cancelDeliveryId: ''
+    }
+  },
+  computed: {
+    isWebhookValid (): boolean {
+      return this.draft.name.trim().length > 0 && /^https:\/\//i.test(this.draft.url.trim()) && this.events().length > 0
+    },
+    requiredRule (): (value: string) => true | string {
+      return (value: string) => value.trim().length > 0 || 'Name is required.'
+    },
+    httpsRule (): (value: string) => true | string {
+      return (value: string) => /^https:\/\//i.test(value.trim()) || 'Use an HTTPS endpoint URL.'
+    },
+    eventsRule (): (value: string) => true | string {
+      return () => this.events().length > 0 || 'Subscribe to at least one event.'
+    },
+    cancelDelivery (): WebhookDelivery | null {
+      return this.deliveries.find(delivery => delivery.id === this.cancelDeliveryId) || null
     }
   },
   methods: {
+    events (): string[] {
+      return this.eventsText.split(/\r?\n/).map(event => event.trim()).filter(Boolean)
+    },
+    async copySecret () {
+      try {
+        await navigator.clipboard.writeText(this.revealedSecret)
+        this.secretCopied = true
+      } catch {
+        wikiStore.showNotification({ style: 'red', message: 'Copy failed. Select the secret and copy it manually.', icon: 'alert' })
+      }
+    },
+    finishSecret () {
+      this.revealedSecret = ''
+      this.secretCopied = false
+    },
     async loadHooks () {
-      this.loading = true
+      this.loadState = 'loading'
       try {
         this.hooks = await fetchWebhooks(window.fetch.bind(window))
+        this.loadState = 'success'
         if (!this.draft.id && this.hooks.length) this.selectHook(this.hooks[0])
+        if (!this.draft.id && !this.hooks.length) this.editorVisible = false
       } catch (error) {
+        this.loadState = 'error'
         wikiStore.showError(error)
-      } finally {
-        this.loading = false
       }
     },
     newHook () {
+      this.editorVisible = true
+      this.deliveryLoadToken++
       this.draft = emptyDraft()
       this.eventsText = 'page.created\npage.updated\npage.deleted'
       this.deliveries = []
+      this.deliveryLoading = false
+      this.deliveryError = false
       this.revealedSecret = ''
+      this.secretCopied = false
+      this.$nextTick(() => {
+        ;(this.$refs.webhookNameInput as { focus?: () => void })?.focus?.()
+      })
     },
     selectHook (hook: AdminWebhook) {
+      const selectionChanged = this.draft.id !== hook.id
+      this.editorVisible = true
       this.draft = { id: hook.id, name: hook.name, url: hook.url, isEnabled: hook.isEnabled }
       this.eventsText = hook.events.join('\n')
+      if (selectionChanged) this.deliveries = []
+      this.deliveryError = false
       this.revealedSecret = ''
+      this.secretCopied = false
       this.loadDeliveries()
     },
-    events (): string[] {
-      return [...new Set(this.eventsText.split(/[\n,]/).map(value => value.trim()).filter(Boolean))]
-    },
     async save () {
+      if (!this.isWebhookValid) {
+        const form = this.$refs.webhookForm as { validate?: () => Promise<unknown> }
+        await form.validate?.()
+        await this.$nextTick()
+        const target = !this.draft.name.trim()
+          ? this.$refs.webhookNameInput
+          : (!/^https:\/\//i.test(this.draft.url.trim()) ? this.$refs.webhookUrlInput : this.$refs.webhookEventsInput)
+        ;(target as { focus?: () => void })?.focus?.()
+        return
+      }
       this.saving = true
       try {
         const input = {
@@ -198,6 +299,7 @@ export default {
           const created = await createWebhook(window.fetch.bind(window), input)
           this.draft.id = created.id
           this.revealedSecret = created.secret
+          this.secretCopied = false
         }
         await this.loadHooks()
         wikiStore.showNotification({ style: 'success', message: 'Webhook saved.', icon: 'check' })
@@ -209,9 +311,11 @@ export default {
     },
     async rotateSecret () {
       if (!this.draft.id) return
+      this.rotateDialog = false
       this.rotating = true
       try {
         this.revealedSecret = await rotateWebhookSecret(window.fetch.bind(window), this.draft.id)
+        this.secretCopied = false
       } catch (error) {
         wikiStore.showError(error)
       } finally {
@@ -234,18 +338,43 @@ export default {
     },
     async loadDeliveries () {
       if (!this.draft.id) return
+      const selectedId = this.draft.id
+      const token = ++this.deliveryLoadToken
+      this.deliveryLoading = true
+      this.deliveryError = false
       try {
-        this.deliveries = await fetchWebhookDeliveries(window.fetch.bind(window), this.draft.id)
+        const rows = await fetchWebhookDeliveries(window.fetch.bind(window), selectedId)
+        if (this.draft.id === selectedId && token === this.deliveryLoadToken) this.deliveries = rows
       } catch (error) {
-        wikiStore.showError(error)
+        if (this.draft.id === selectedId && token === this.deliveryLoadToken) {
+          this.deliveryError = true
+          wikiStore.showError(error)
+        }
+      } finally {
+        if (token === this.deliveryLoadToken) this.deliveryLoading = false
       }
     },
+    requestDeliveryCancel (id: string) {
+      this.cancelDeliveryId = id
+      this.cancelDeliveryDialog = true
+    },
+    async confirmDeliveryCancel () {
+      const id = this.cancelDeliveryId
+      if (!id) return
+      this.cancelDeliveryDialog = false
+      await this.changeDelivery(id, 'cancel')
+      this.cancelDeliveryId = ''
+    },
     async changeDelivery (id: string, action: 'retry' | 'cancel') {
+      this.deliveryBusy = id
       try {
         await changeWebhookDelivery(window.fetch.bind(window), id, action)
         await this.loadDeliveries()
+        wikiStore.showNotification({ style: 'success', message: action === 'retry' ? 'Delivery queued for retry.' : 'Delivery cancelled.', icon: 'check' })
       } catch (error) {
         wikiStore.showError(error)
+      } finally {
+        this.deliveryBusy = ''
       }
     },
     stateColor (state: string): string {
@@ -268,5 +397,26 @@ export default {
   margin-top: 8px;
   overflow-wrap: anywhere;
   user-select: all;
+}
+.delivery-mobile {
+  display: none;
+}
+
+@media (max-width: 959px) {
+  .delivery-desktop {
+    display: none;
+  }
+
+  .delivery-mobile {
+    display: block;
+  }
+
+  .admin-webhook-actions {
+    flex-basis: 100%;
+  }
+
+  .admin-webhook-actions .v-btn {
+    flex: 1;
+  }
 }
 </style>

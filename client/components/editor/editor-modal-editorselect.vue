@@ -1,11 +1,11 @@
 <template lang='pug'>
-  v-dialog(v-model='isShown', persistent, max-width='760', no-click-animation)
-    v-card.editor-select.radius-7
+  v-dialog(v-model='isShown', max-width='760', scrollable, :fullscreen='$vuetify.display.smAndDown', aria-labelledby='editor-select-title', no-click-animation)
+    v-card.editor-select.radius-7.d-flex.flex-column
       v-toolbar(color='primary', density='comfortable')
         v-icon.ml-4 mdi-pencil-ruler
-        v-toolbar-title {{ $t('editor:select.title') }}
-        v-btn(icon='mdi-close', variant='text', aria-label='Go back', @click='goBack')
-      v-card-text.pa-5
+        v-toolbar-title#editor-select-title {{ $t('editor:select.title') }}
+        v-btn(icon='mdi-arrow-left', variant='text', aria-label='Go back', @click='goBack')
+      v-card-text.editor-select__content.pa-5
         .text-body-medium.text-medium-emphasis.mb-4
           | Choose how you want to author this page. Your administrator has made {{ availableEditors.length }} {{ availableEditors.length === 1 ? 'editor' : 'editors' }} available.
         .editor-select__grid
@@ -23,7 +23,7 @@
           )
             v-card-text.text-center.pa-5
               .editor-select__icon
-                img(:src='editor.image', :alt='`${editor.title} editor`')
+                img(:src='editor.image', alt='')
               .text-title-medium.text-primary.mt-3 {{ editor.title }}
               .text-body-small.text-medium-emphasis.mt-1 {{ editor.chooserDescription }}
               v-chip.mt-3(size='x-small', variant='tonal', color='primary') {{ editor.format }}
@@ -40,7 +40,7 @@
           )
             v-card-text.text-center.pa-5
               .editor-select__icon.editor-select__icon--template
-                img(src='/_assets/svg/icon-cube.svg', alt='Page template')
+                img(src='/_assets/svg/icon-cube.svg', alt='')
               .text-title-medium.text-teal.mt-3 From Template
               .text-body-small.text-medium-emphasis.mt-1 Start with an existing page
               v-chip.mt-3(size='x-small', variant='tonal', color='teal') Reuse
@@ -116,11 +116,16 @@ export default {
 <style lang='scss' scoped>
 .editor-select {
   overflow: hidden;
+  min-height: 0;
 
+  &__content {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
   &__grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 14px;
   }
 
   &__option {
@@ -178,15 +183,22 @@ export default {
   }
 }
 
-@media (max-width: 699px) {
+@media (max-width: $tablet - 0.02px) {
   .editor-select__grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 459px) {
+@media (max-width: 599.98px) {
   .editor-select__grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-select__option {
+    animation: none;
+    transition: none;
   }
 }
 </style>

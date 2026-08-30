@@ -3,7 +3,7 @@ import path from 'node:path'
 
 const sourcePath = path.join(process.cwd(), 'client/components/admin/admin-utilities-content.vue')
 
-const extractScript = (source) => {
+const extractScript = source => {
   const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
@@ -31,7 +31,9 @@ describe('admin utilities content REST facades', () => {
     expect(script).toContain("import { defineComponent } from 'vue'")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toMatch(/import\s+\{\s*fetchPageList\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/pages-api['"]/)
-    expect(script).toMatch(/import\s+\{\s*migratePagesToLocale,\s*purgePageHistory,\s*rebuildPageTree,\s*renderPage\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/)
+    expect(script).toMatch(
+      /import\s+\{\s*migratePagesToLocale,\s*purgePageHistory,\s*rebuildPageTree,\s*renderPage\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/
+    )
     expect(script).not.toMatch(/utilities-mutation-content-(?:rebuildtree|migratelocale)\.gql/)
     expect(script).not.toMatch(/utilityContent(?:RebuildTree|MigrateLocale)Mutation/)
   })
@@ -42,7 +44,9 @@ describe('admin utilities content REST facades', () => {
     expect(rebuildTree).toMatch(/this\.loading\s*=\s*true/)
     expect(rebuildTree).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-content-rebuildtree['"]\s*\)/)
     expect(rebuildTree).toMatch(/await\s+rebuildPageTree\s*\(\s*window\.fetch\.bind\(window\)\s*\)/)
-    expect(rebuildTree).toMatch(/wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Page Tree rebuilt successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
+    expect(rebuildTree).toMatch(
+      /wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Page Tree rebuilt successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
+    )
     expect(rebuildTree).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)/)
     expect(rebuildTree).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-rebuildtree['"]\s*\)/)
     expect(rebuildTree).toMatch(/this\.loading\s*=\s*false/)
@@ -66,17 +70,28 @@ describe('admin utilities content REST facades', () => {
     expect(rerenderPages).not.toMatch(/this\.\$apollo|graphql-tag|gql`|pages\s*\{\s*list|pages\s*\{\s*render|\$store\.commit/)
   })
 
-  test('purgeHistory uses REST helper while preserving loading, notification, and error facades', () => {
+  test('confirmed purgeHistory uses REST helper while preserving action-specific busy, notification, and error facades', () => {
     const purgeHistory = extractMethod(script, 'purgeHistory')
 
-    expect(purgeHistory).toMatch(/this\.loading\s*=\s*true/)
-    expect(purgeHistory).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-content-purgehistory['"]\s*\)/)
+    expect(source).toContain(":loading='loading && activeAction === `purge`'")
+    expect(script).toMatch(
+      /requestPurge\s*\(\s*\)\s*\{\s*if\s*\(\s*this\.purgeHistorySelection\s*\)\s*\{\s*this\.pendingConfirmation\s*=\s*['"]purge['"]\s*this\.isConfirmShown\s*=\s*true/
+    )
+    expect(script).toMatch(
+      /async\s+confirmDestructiveAction\s*\(\s*\)[\s\S]*?const\s+action\s*=\s*this\.pendingConfirmation[\s\S]*?else\s+if\s*\(\s*action\s*===\s*['"]purge['"]\s*\)\s*\{\s*await\s+this\.purgeHistory\s*\(\s*\)/
+    )
+    expect(purgeHistory).toMatch(/if\s*\(\s*!this\.purgeHistorySelection\s*\)\s*\{\s*return\s*\}/)
+    expect(purgeHistory).toMatch(
+      /this\.loading\s*=\s*true\s*this\.activeAction\s*=\s*['"]purge['"]\s*wikiStore\.startLoading\s*\(\s*['"]admin-utilities-content-purgehistory['"]\s*\)/
+    )
     expect(purgeHistory).toMatch(/await\s+purgePageHistory\s*\(\s*window\.fetch\.bind\(window\)\s*,\s*this\.purgeHistorySelection\s*\)/)
-    expect(purgeHistory).toMatch(/wikiStore\.showNotification\s*\(\s*\{/)
-    expect(purgeHistory).toMatch(/message:\s*`Purged history successfully\.`/)
+    expect(purgeHistory).toMatch(
+      /wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Purged history successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
+    )
     expect(purgeHistory).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)/)
-    expect(purgeHistory).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-purgehistory['"]\s*\)/)
-    expect(purgeHistory).toMatch(/this\.loading\s*=\s*false/)
+    expect(purgeHistory).toMatch(
+      /finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-purgehistory['"]\s*\)\s*this\.loading\s*=\s*false\s*this\.activeAction\s*=\s*['"]{2}\s*\}/
+    )
     expect(purgeHistory).not.toMatch(/this\.\$apollo\.mutate|pages\.purgeHistory|\$store\.commit/)
   })
 

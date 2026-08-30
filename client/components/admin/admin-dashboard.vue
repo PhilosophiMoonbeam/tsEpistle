@@ -1,52 +1,28 @@
 <template lang='pug'>
   v-container.admin-dashboard(fluid)
-    section.admin-dashboard__hero.animated.fadeInUp
-      .admin-dashboard__hero-copy
-        .admin-dashboard__eyebrow
-          span.admin-dashboard__pulse
-          span Workspace overview
-        h1 {{ $t('admin:dashboard.title') }}
-        p {{ $t('admin:dashboard.subtitle') }}
-        .admin-dashboard__hero-meta
-          v-chip(size='small' variant='tonal' color='primary' prepend-icon='mdi-source-fork') {{ info.product.name }} {{ info.product.version }}
-          v-chip(size='small' variant='outlined' prepend-icon='mdi-clock-outline') Updated just now
-      .admin-dashboard__hero-art(aria-hidden='true')
-        .admin-dashboard__hero-orbit
-        v-icon mdi-view-dashboard-variant-outline
+    .admin-header
+      img(src='/_assets/svg/icon-features-list.svg' alt='' style='width: 80px;')
+      .admin-header-title
+        h1.text-headline-medium.text-primary(tabindex='-1') {{ $t('admin:dashboard.title') }}
+        .text-body-large.text-medium-emphasis {{ $t('admin:dashboard.subtitle') }}
+      v-spacer
+      v-chip(size='small' variant='tonal' color='primary' prepend-icon='mdi-source-fork') {{ info.product.name }} {{ info.product.version }}
 
     v-row.admin-dashboard__stats
-      v-col(
-        v-for='stat in dashboardStats'
-        :key='stat.key'
-        cols='12'
-        sm='6'
-        xl='3'
-        class='d-flex'
-      )
-        v-card.admin-stat(
-          :class='`admin-stat--${stat.tone}`'
-          :to='stat.to'
-          :aria-label='stat.ariaLabel'
-          flat
-        )
+      v-col(v-for='stat in dashboardStats' :key='stat.key' cols='12' sm='6' xl='3' class='d-flex')
+        v-card.admin-stat(:class='`admin-stat--${stat.tone}`' :to='stat.to' :aria-label='stat.ariaLabel' flat)
           .admin-stat__icon
             v-icon(size='23') {{ stat.icon }}
           .admin-stat__body
             .admin-stat__label {{ stat.label }}
-            animated-number.admin-stat__value(
-              v-if='stat.value !== undefined'
-              :value='stat.value'
-              :duration='1200'
-              :formatValue='round'
-              easing='easeOutQuint'
-            )
+            animated-number.admin-stat__value(v-if='stat.value !== undefined' :value='stat.value' :duration='1200' :formatValue='round' easing='easeOutQuint')
             .admin-stat__value.admin-stat__value--text(v-else) {{ stat.textValue }}
             .admin-stat__hint {{ stat.hint }}
           v-icon.admin-stat__arrow(size='18') mdi-arrow-up-right
 
     v-row.admin-dashboard__workspace
       v-col(cols='12' lg='8')
-        v-card.dashboard-panel.fill-height.animated.fadeInUp.wait-p2s
+        v-card.dashboard-panel.fill-height
           .dashboard-panel__header
             .dashboard-panel__heading
               .dashboard-panel__icon
@@ -56,20 +32,15 @@
                 p Jump directly to the work you want to complete.
           v-card-text
             .dashboard-actions
-              v-card.dashboard-action(
-                v-for='action in quickActions'
-                :key='action.key'
-                :to='action.to'
-                flat
-              )
+              v-card.dashboard-action(v-for='action in quickActions' :key='action.key' :to='action.to' flat)
                 .dashboard-action__icon(:class='`dashboard-action__icon--${action.tone}`')
                   v-icon(size='22') {{ action.icon }}
                 .dashboard-action__copy
                   .dashboard-action__title {{ action.title }}
                   .dashboard-action__description {{ action.description }}
-                v-icon.dashboard-action__arrow(size='18') mdi-chevron-right
+                v-icon.dashboard-action__arrow(size='18') {{ $vuetify.locale.isRtl ? 'mdi-chevron-left' : 'mdi-chevron-right' }}
       v-col(cols='12' lg='4')
-        v-card.dashboard-panel.dashboard-overview.fill-height.animated.fadeInUp.wait-p3s
+        v-card.dashboard-panel.dashboard-overview.fill-height
           .dashboard-panel__header
             .dashboard-panel__heading
               .dashboard-panel__icon.dashboard-panel__icon--success
@@ -94,15 +65,7 @@
               .dashboard-overview__row
                 span Foundation
                 strong {{ info.product.upstreamBase }}
-            v-btn.dashboard-overview__button(
-              v-if='hasPermission(`manage:system`)'
-              to='/system'
-              variant='tonal'
-              color='primary'
-              block
-              prepend-icon='mdi-monitor-dashboard'
-              append-icon='mdi-arrow-right'
-            ) Open system details
+            v-btn.dashboard-overview__button(v-if='hasPermission(`manage:system`)' to='/system' variant='tonal' color='primary' block prepend-icon='mdi-monitor-dashboard' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') Open system details
 
     .dashboard-section-heading
       div
@@ -112,7 +75,7 @@
 
     v-row
       v-col(cols='12' xl='6' v-if='canViewRecentPages')
-        v-card.dashboard-panel.dashboard-activity.fill-height.animated.fadeInUp.wait-p2s
+        v-card.dashboard-panel.dashboard-activity.fill-height
           .dashboard-panel__header
             .dashboard-panel__heading
               .dashboard-panel__icon
@@ -120,42 +83,32 @@
               div
                 h2 {{ $t('admin:dashboard.recentPages') }}
                 p Recently updated content.
-            v-btn(to='/pages' variant='text' size='small' append-icon='mdi-arrow-right') View all
-          v-list.dashboard-mobile-list(v-if='$vuetify.display.smAndDown' lines='three')
-            v-list-item(
-              v-for='page in recentPages'
-              :key='page.id'
-              @click='$router.push(`/pages/` + page.id)'
-              rounded='lg'
-            )
+            v-btn(to='/pages' variant='text' size='small' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') View all
+          async-state(v-if='recentPagesLoading' state='loading' title='Loading recent pages' message='Fetching recently updated content.')
+          async-state(v-else-if='recentPagesError' state='error' title='Recent pages could not be loaded' :message='recentPagesError' retry-label='Try again' @retry='loadRecentPages')
+          async-state(v-else-if='recentPages.length === 0' state='empty' title='No recent pages' message='Updated pages will appear here.')
+          v-list.dashboard-mobile-list(v-else-if='$vuetify.display.smAndDown' lines='three')
+            v-list-item(v-for='page in recentPages' :key='page.id' rounded='lg')
               template(v-slot:prepend)
                 v-avatar(color='primary' variant='tonal' rounded='lg')
                   v-icon mdi-file-document-outline
-              v-list-item-title: strong {{ page.title }}
+              v-list-item-title
+                router-link.admin-record-link(:to='`/pages/${page.id}`') {{ page.title }}
               v-list-item-subtitle
-                v-chip.mr-2(size='x-small' color='secondary' variant='tonal') {{ page.locale }}
+                v-chip.me-2(size='x-small' color='primary' variant='tonal') {{ page.locale }}
                 span /{{ page.path }}
               .text-body-small.text-medium-emphasis {{ $helpers.formatMoment(page.updatedAt, 'calendar') }}
-            v-list-item(v-if='!recentPagesLoading && recentPages.length === 0')
-              v-list-item-title.text-medium-emphasis No recent pages
-          v-data-table.dashboard-data-table(
-            v-else
-            :items='recentPages'
-            :headers='recentPagesHeaders'
-            :loading='recentPagesLoading'
-            hide-default-footer
-            hide-default-header
-          )
+          v-data-table.dashboard-data-table(v-else :items='recentPages' :headers='recentPagesHeaders' hide-default-footer)
             template(v-slot:item='props')
-              tr.is-clickable(@click='$router.push(`/pages/` + props.item.id)')
+              tr
                 td
-                  .text-body-medium: strong {{ props.item.title }}
-                td.admin-pages-path
-                  v-chip(size='small' color='secondary' variant='tonal') {{ props.item.locale }}
-                  span.ml-2.text-medium-emphasis /{{ props.item.path }}
-                td.text-right.text-body-small(width='200') {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
+                  router-link.admin-record-link(:to='`/pages/${props.item.id}`') {{ props.item.title }}
+                td
+                  v-chip(size='small' color='primary' variant='tonal') {{ props.item.locale }}
+                  span.ms-2.text-medium-emphasis /{{ props.item.path }}
+                td.text-end.text-body-small(width='200') {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
       v-col(cols='12' xl='6' v-if='canViewLastLogins')
-        v-card.dashboard-panel.dashboard-activity.fill-height.animated.fadeInUp.wait-p3s
+        v-card.dashboard-panel.dashboard-activity.fill-height
           .dashboard-panel__header
             .dashboard-panel__heading
               .dashboard-panel__icon.dashboard-panel__icon--violet
@@ -163,65 +116,51 @@
               div
                 h2 {{ $t('admin:dashboard.lastLogins') }}
                 p Recent access to the workspace.
-            v-btn(to='/users' variant='text' size='small' append-icon='mdi-arrow-right') View all
-          v-list.dashboard-mobile-list(v-if='$vuetify.display.smAndDown' lines='two')
-            v-list-item(
-              v-for='user in lastLogins'
-              :key='user.id'
-              @click='$router.push(`/users/` + user.id)'
-              rounded='lg'
-            )
+            v-btn(to='/users' variant='text' size='small' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') View all
+          async-state(v-if='lastLoginsLoading' state='loading' title='Loading recent logins' message='Fetching recent workspace access.')
+          async-state(v-else-if='lastLoginsError' state='error' title='Recent logins could not be loaded' :message='lastLoginsError' retry-label='Try again' @retry='loadLastLogins')
+          async-state(v-else-if='lastLogins.length === 0' state='empty' title='No recent logins' message='Recent access will appear here.')
+          v-list.dashboard-mobile-list(v-else-if='$vuetify.display.smAndDown' lines='two')
+            v-list-item(v-for='user in lastLogins' :key='user.id' rounded='lg')
               template(v-slot:prepend)
                 v-avatar(color='secondary' variant='tonal')
                   v-icon mdi-account-outline
-              v-list-item-title: strong {{ user.name }}
+              v-list-item-title
+                router-link.admin-record-link(:to='`/users/${user.id}`') {{ user.name }}
               v-list-item-subtitle {{ $helpers.formatMoment(user.lastLoginAt, 'calendar') }}
-            v-list-item(v-if='!lastLoginsLoading && lastLogins.length === 0')
-              v-list-item-title.text-medium-emphasis No recent logins
-          v-data-table.dashboard-data-table(
-            v-else
-            :items='lastLogins'
-            :headers='lastLoginsHeaders'
-            :loading='lastLoginsLoading'
-            hide-default-footer
-            hide-default-header
-          )
+          v-data-table.dashboard-data-table(v-else :items='lastLogins' :headers='lastLoginsHeaders' hide-default-footer)
             template(v-slot:item='props')
-              tr.is-clickable(@click='$router.push(`/users/` + props.item.id)')
+              tr
                 td
-                  .d-flex.align-center.ga-3
-                    v-avatar(color='secondary' variant='tonal' size='34')
-                      v-icon(size='18') mdi-account-outline
-                    .text-body-medium: strong {{ props.item.name }}
-                td.text-right.text-body-small(width='200') {{ $helpers.formatMoment(props.item.lastLoginAt, 'calendar') }}
+                  router-link.admin-record-link(:to='`/users/${props.item.id}`') {{ props.item.name }}
+                td.text-end.text-body-small(width='200') {{ $helpers.formatMoment(props.item.lastLoginAt, 'calendar') }}
 
-    v-card.dashboard-contribute.animated.fadeInUp.wait-p4s(flat)
+    v-card.dashboard-contribute(flat)
       .dashboard-contribute__art
         img(src='/_assets/svg/icon-heart-health.svg' alt='')
       .dashboard-contribute__copy
         .dashboard-contribute__eyebrow Open source, made together
         h2 {{ $t('admin:dashboard.contributeSubtitle') }}
         p {{ $t('admin:dashboard.contributeHelp') }}
-      v-btn(color='primary' variant='tonal' to='/contribute' append-icon='mdi-arrow-right')
-        span {{ $t('admin:dashboard.contributeLearnMore') }}
+      v-btn(color='primary' variant='tonal' to='/contribute' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') {{ $t('admin:dashboard.contributeLearnMore') }}
 </template>
 
 <script lang='ts'>
 import _ from 'lodash'
 import AnimatedNumber from '@/components/common/animated-number.vue'
+import AsyncState from '@/components/common/async-state.vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchRecentPages, type RecentPageRow } from '../../helpers/pages-api'
 import { fetchLastLogins, type LastLoginRow } from '../../helpers/users-api'
 import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 
 export default {
-  components: {
-    AnimatedNumber
-  },
+  components: { AnimatedNumber, AsyncState },
   data() {
     return {
       recentPages: [] as RecentPageRow[],
       recentPagesLoading: false,
+      recentPagesError: '',
       recentPagesHeaders: [
         { title: 'Title', value: 'title' },
         { title: 'Path', value: 'path' },
@@ -229,6 +168,7 @@ export default {
       ],
       lastLogins: [] as LastLoginRow[],
       lastLoginsLoading: false,
+      lastLoginsError: '',
       lastLoginsHeaders: [
         { title: 'User', value: 'displayName' },
         { title: 'Last Login', value: 'lastLoginAt', width: 250 }
@@ -236,170 +176,58 @@ export default {
     }
   },
   computed: {
-    canViewRecentPages() {
-      return this.hasPermission(['manage:system', 'read:pages'])
-    },
-    canViewLastLogins() {
-      return this.hasPermission(['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users'])
-    },
-    info() {
-      return wikiStore.admin.info
-    },
-    permissions() {
-      return wikiStore.user.permissions
-    },
+    canViewRecentPages() { return this.hasPermission(['manage:system', 'read:pages']) },
+    canViewLastLogins() { return this.hasPermission(['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users']) },
+    info() { return wikiStore.admin.info },
+    permissions() { return wikiStore.user.permissions },
     dashboardStats() {
       return [
-        {
-          key: 'pages',
-          label: this.$t('admin:dashboard.pages'),
-          value: this.info.pagesTotal,
-          hint: 'Published content',
-          icon: 'mdi-file-document-multiple-outline',
-          tone: 'blue',
-          to: '/pages',
-          ariaLabel: `${this.info.pagesTotal} pages. Open page management.`
-        },
-        {
-          key: 'users',
-          label: this.$t('admin:dashboard.users'),
-          value: this.info.usersTotal,
-          hint: 'People with access',
-          icon: 'mdi-account-multiple-outline',
-          tone: 'violet',
-          to: '/users',
-          ariaLabel: `${this.info.usersTotal} users. Open user management.`
-        },
-        {
-          key: 'groups',
-          label: this.$t('admin:dashboard.groups'),
-          value: this.info.groupsTotal,
-          hint: 'Permission sets',
-          icon: 'mdi-account-key-outline',
-          tone: 'teal',
-          to: '/groups',
-          ariaLabel: `${this.info.groupsTotal} groups. Open group management.`
-        },
-        {
-          key: 'version',
-          label: 'Current build',
-          textValue: this.info.product.version,
-          hint: 'System information',
-          icon: 'mdi-source-fork',
-          tone: 'amber',
-          to: '/system',
-          ariaLabel: `Version ${this.info.product.version}. Open system information.`
-        }
-      ]
+        { key: 'pages', label: this.$t('admin:dashboard.pages'), value: this.info.pagesTotal, hint: 'Published content', icon: 'mdi-file-document-multiple-outline', tone: 'primary', to: '/pages', permission: ['manage:system', 'write:pages', 'manage:pages', 'delete:pages'], ariaLabel: `${this.info.pagesTotal} pages. Open page management.` },
+        { key: 'users', label: this.$t('admin:dashboard.users'), value: this.info.usersTotal, hint: 'People with access', icon: 'mdi-account-multiple-outline', tone: 'secondary', to: '/users', permission: ['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users'], ariaLabel: `${this.info.usersTotal} users. Open user management.` },
+        { key: 'groups', label: this.$t('admin:dashboard.groups'), value: this.info.groupsTotal, hint: 'Permission sets', icon: 'mdi-account-key-outline', tone: 'info', to: '/groups', permission: ['manage:system', 'manage:groups', 'write:groups'], ariaLabel: `${this.info.groupsTotal} groups. Open group management.` },
+        { key: 'version', label: 'Current build', textValue: this.info.product.version, hint: 'System information', icon: 'mdi-source-fork', tone: 'warning', to: '/system', permission: 'manage:system', ariaLabel: `Version ${this.info.product.version}. Open system information.` }
+      ].filter(stat => this.hasPermission(stat.permission))
     },
     quickActions() {
       return [
-        {
-          key: 'pages',
-          title: 'Organize content',
-          description: 'Review pages, ownership and publication.',
-          icon: 'mdi-file-tree-outline',
-          tone: 'blue',
-          to: '/pages',
-          permission: ['manage:system', 'write:pages', 'manage:pages', 'delete:pages']
-        },
-        {
-          key: 'general',
-          title: 'Shape the workspace',
-          description: 'Identity, metadata and editing behavior.',
-          icon: 'mdi-tune-variant',
-          tone: 'violet',
-          to: '/general',
-          permission: 'manage:system'
-        },
-        {
-          key: 'users',
-          title: 'Manage people',
-          description: 'Invite, suspend and support members.',
-          icon: 'mdi-account-supervisor-outline',
-          tone: 'teal',
-          to: '/users',
-          permission: ['manage:system', 'manage:users', 'write:users']
-        },
-        {
-          key: 'theme',
-          title: 'Refine appearance',
-          description: 'Typography, colors and presentation.',
-          icon: 'mdi-palette-outline',
-          tone: 'pink',
-          to: '/theme',
-          permission: ['manage:system', 'manage:theme']
-        },
-        {
-          key: 'search',
-          title: 'Tune discovery',
-          description: 'Configure how readers find knowledge.',
-          icon: 'mdi-text-search-variant',
-          tone: 'amber',
-          to: '/search',
-          permission: 'manage:system'
-        },
-        {
-          key: 'security',
-          title: 'Review security',
-          description: 'Protect sessions, access and content.',
-          icon: 'mdi-shield-check-outline',
-          tone: 'green',
-          to: '/security',
-          permission: 'manage:system'
-        }
+        { key: 'pages', title: 'Organize content', description: 'Review pages, ownership and publication.', icon: 'mdi-file-tree-outline', tone: 'primary', to: '/pages', permission: ['manage:system', 'write:pages', 'manage:pages', 'delete:pages'] },
+        { key: 'general', title: 'Shape the workspace', description: 'Identity, metadata and editing behavior.', icon: 'mdi-tune-variant', tone: 'secondary', to: '/general', permission: 'manage:system' },
+        { key: 'users', title: 'Manage people', description: 'Invite, suspend and support members.', icon: 'mdi-account-supervisor-outline', tone: 'info', to: '/users', permission: ['manage:system', 'manage:users', 'write:users'] },
+        { key: 'theme', title: 'Refine appearance', description: 'Typography, colors and presentation.', icon: 'mdi-palette-outline', tone: 'primary', to: '/theme', permission: ['manage:system', 'manage:theme'] },
+        { key: 'search', title: 'Tune discovery', description: 'Configure how readers find knowledge.', icon: 'mdi-text-search-variant', tone: 'warning', to: '/search', permission: 'manage:system' },
+        { key: 'security', title: 'Review security', description: 'Protect sessions, access and content.', icon: 'mdi-shield-check-outline', tone: 'success', to: '/security', permission: 'manage:system' }
       ].filter(action => this.hasPermission(action.permission))
-    },
+    }
   },
   watch: {
     canViewRecentPages(newValue: boolean, oldValue: boolean) {
-      if (newValue && !oldValue) {
-        this.loadRecentPages()
-      } else if (!newValue) {
-        this.recentPages = []
-      }
+      if (newValue && !oldValue) this.loadRecentPages()
+      else if (!newValue) this.recentPages = []
     },
     canViewLastLogins(newValue: boolean, oldValue: boolean) {
-      if (newValue && !oldValue) {
-        this.loadLastLogins()
-      } else if (!newValue) {
-        this.lastLogins = []
-      }
+      if (newValue && !oldValue) this.loadLastLogins()
+      else if (!newValue) this.lastLogins = []
     }
   },
   created() {
-    if (this.canViewRecentPages) {
-      this.loadRecentPages()
-    }
-    if (this.canViewLastLogins) {
-      this.loadLastLogins()
-    }
+    if (this.canViewRecentPages) this.loadRecentPages()
+    if (this.canViewLastLogins) this.loadLastLogins()
   },
   methods: {
     round(val: number) { return Math.round(val) },
     hasPermission(prm: string | string[]) {
-      if (_.isArray(prm)) {
-        return _.some(prm, p => {
-          return _.includes(this.permissions, p)
-        })
-      } else {
-        return _.includes(this.permissions, prm)
-      }
+      return _.isArray(prm) ? _.some(prm, p => _.includes(this.permissions, p)) : _.includes(this.permissions, prm)
     },
     async loadRecentPages() {
       this.recentPagesLoading = true
+      this.recentPagesError = ''
       loadingStart(wikiStore, 'admin-dashboard-recentpages')
-
       try {
         this.recentPages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')
         return true
       } catch (err) {
-        this.recentPages = []
-        showNotification(wikiStore, {
-          message: getErrorMessage(err),
-          style: 'error',
-          icon: 'alert'
-        })
+        this.recentPagesError = getErrorMessage(err)
+        showNotification(wikiStore, { message: this.recentPagesError, style: 'error', icon: 'alert' })
         return false
       } finally {
         this.recentPagesLoading = false
@@ -408,18 +236,14 @@ export default {
     },
     async loadLastLogins() {
       this.lastLoginsLoading = true
+      this.lastLoginsError = ''
       loadingStart(wikiStore, 'admin-dashboard-lastlogins')
-
       try {
         this.lastLogins = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')
         return true
       } catch (err) {
-        this.lastLogins = []
-        showNotification(wikiStore, {
-          message: getErrorMessage(err),
-          style: 'error',
-          icon: 'alert'
-        })
+        this.lastLoginsError = getErrorMessage(err)
+        showNotification(wikiStore, { message: this.lastLoginsError, style: 'error', icon: 'alert' })
         return false
       } finally {
         this.lastLoginsLoading = false
@@ -428,108 +252,9 @@ export default {
     }
   }
 }
-
 </script>
 <style lang='scss'>
 .admin-dashboard {
-  &__hero {
-    position: relative;
-    display: flex;
-    overflow: hidden;
-    align-items: center;
-    min-height: 220px;
-    margin-bottom: 22px;
-    padding: clamp(28px, 5vw, 54px);
-    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 18%, transparent);
-    border-radius: 24px;
-    background:
-      radial-gradient(circle at 88% 20%, rgba(var(--v-theme-primary), .2), transparent 18rem),
-      linear-gradient(135deg, color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, rgb(var(--v-theme-surface))), rgb(var(--v-theme-surface)) 58%);
-    box-shadow: 0 18px 55px rgba(20, 28, 50, .08);
-  }
-
-  &__hero-copy {
-    position: relative;
-    z-index: 2;
-    max-width: 760px;
-
-    h1 {
-      margin: 12px 0 8px;
-      color: rgb(var(--v-theme-on-surface));
-      font-size: clamp(2.1rem, 4vw, 3.65rem);
-      font-weight: 760;
-      letter-spacing: -.055em;
-      line-height: 1;
-    }
-
-    p {
-      max-width: 620px;
-      margin: 0;
-      color: rgb(var(--v-theme-on-surface));
-      opacity: .68;
-      font-size: 1.08rem;
-      line-height: 1.55;
-    }
-  }
-
-  &__eyebrow {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    color: rgb(var(--v-theme-primary));
-    font-size: .7rem;
-    font-weight: 780;
-    letter-spacing: .13em;
-    text-transform: uppercase;
-  }
-
-  &__pulse {
-    width: 8px;
-    height: 8px;
-    border: 2px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 30%, transparent);
-    border-radius: 50%;
-    background: rgb(var(--v-theme-primary));
-    box-shadow: 0 0 0 5px rgba(var(--v-theme-primary), .1);
-  }
-
-  &__hero-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 22px;
-  }
-
-  &__hero-art {
-    position: absolute;
-    right: clamp(24px, 7vw, 110px);
-    display: grid;
-    width: 150px;
-    height: 150px;
-    place-items: center;
-    border: 1px solid rgba(var(--v-theme-primary), .16);
-    border-radius: 38px;
-    background: rgba(var(--v-theme-surface), .54);
-    color: rgb(var(--v-theme-primary));
-    box-shadow:
-      0 30px 70px rgba(var(--v-theme-primary), .15),
-      inset 0 1px 0 rgba(255, 255, 255, .4);
-    transform: rotate(5deg);
-    backdrop-filter: blur(14px);
-
-    > .v-icon {
-      font-size: 68px;
-      transform: rotate(-5deg);
-    }
-  }
-
-  &__hero-orbit {
-    position: absolute;
-    width: 210px;
-    height: 210px;
-    border: 1px dashed rgba(var(--v-theme-primary), .18);
-    border-radius: 50%;
-  }
-
   &__stats {
     margin-bottom: 6px;
   }
@@ -548,7 +273,7 @@ export default {
   gap: 15px;
   padding: 20px;
   border: 1px solid rgba(var(--v-border-color), .12) !important;
-  border-radius: 17px !important;
+  border-radius: var(--wiki-panel-radius, 16px) !important;
   background: rgb(var(--v-theme-surface)) !important;
   color: rgb(var(--v-theme-on-surface)) !important;
   box-shadow: 0 8px 26px rgba(20, 28, 50, .045);
@@ -560,10 +285,10 @@ export default {
     transform: translateY(-2px);
   }
 
-  &--blue { --stat-color: #3b82f6; }
-  &--violet { --stat-color: #8b5cf6; }
-  &--teal { --stat-color: #0d9488; }
-  &--amber { --stat-color: #d97706; }
+  &--primary { --stat-color: rgb(var(--v-theme-primary)); }
+  &--secondary { --stat-color: rgb(var(--v-theme-secondary)); }
+  &--info { --stat-color: rgb(var(--v-theme-info)); }
+  &--warning { --stat-color: rgb(var(--v-theme-warning)); }
 
   &__icon {
     display: grid;
@@ -571,7 +296,7 @@ export default {
     width: 46px;
     height: 46px;
     place-items: center;
-    border-radius: 14px;
+    border-radius: var(--wiki-control-radius, 11px);
     background: color-mix(in srgb, var(--stat-color) 12%, transparent);
     color: var(--stat-color);
   }
@@ -616,8 +341,8 @@ export default {
 
   &__arrow {
     position: absolute !important;
-    top: 16px;
-    right: 16px;
+    inset-block-start: 16px;
+    inset-inline-end: 16px;
     color: rgb(var(--v-theme-on-surface));
     opacity: .6;
   }
@@ -663,7 +388,7 @@ export default {
     width: 42px;
     height: 42px;
     place-items: center;
-    border-radius: 13px;
+    border-radius: var(--wiki-control-radius, 11px);
     background: rgba(var(--v-theme-primary), .1);
     color: rgb(var(--v-theme-primary));
 
@@ -692,7 +417,7 @@ export default {
   gap: 13px;
   padding: 14px;
   border: 1px solid transparent !important;
-  border-radius: 14px !important;
+  border-radius: var(--wiki-control-radius, 11px) !important;
   background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, transparent) !important;
   color: rgb(var(--v-theme-on-surface)) !important;
   transition: border-color .16s ease, background-color .16s ease, transform .16s ease;
@@ -708,20 +433,25 @@ export default {
     }
   }
 
+  @at-root .v-locale--is-rtl & {
+    &:hover .dashboard-action__arrow {
+      transform: translateX(-2px);
+    }
+  }
+
   &__icon {
     display: grid;
     flex: 0 0 auto;
     width: 44px;
     height: 44px;
     place-items: center;
-    border-radius: 13px;
+    border-radius: var(--wiki-control-radius, 11px);
 
-    &--blue { background: rgba(59, 130, 246, .11); color: #3b82f6; }
-    &--violet { background: rgba(139, 92, 246, .11); color: #8b5cf6; }
-    &--teal { background: rgba(13, 148, 136, .11); color: #0d9488; }
-    &--pink { background: rgba(219, 39, 119, .1); color: #db2777; }
-    &--amber { background: rgba(217, 119, 6, .11); color: #d97706; }
-    &--green { background: rgba(22, 163, 74, .11); color: #16a34a; }
+    &--primary { background: color-mix(in srgb, rgb(var(--v-theme-primary)) 11%, transparent); color: rgb(var(--v-theme-primary)); }
+    &--secondary { background: color-mix(in srgb, rgb(var(--v-theme-secondary)) 11%, transparent); color: rgb(var(--v-theme-secondary)); }
+    &--info { background: color-mix(in srgb, rgb(var(--v-theme-info)) 11%, transparent); color: rgb(var(--v-theme-info)); }
+    &--warning { background: color-mix(in srgb, rgb(var(--v-theme-warning)) 11%, transparent); color: rgb(var(--v-theme-warning)); }
+    &--success { background: color-mix(in srgb, rgb(var(--v-theme-success)) 11%, transparent); color: rgb(var(--v-theme-success)); }
   }
 
   &__copy {
@@ -763,7 +493,7 @@ export default {
     width: 50px;
     height: 50px;
     place-items: center;
-    border-radius: 15px;
+    border-radius: var(--wiki-control-radius, 11px);
     background: linear-gradient(145deg, rgba(var(--v-theme-primary), .16), rgba(var(--v-theme-secondary), .08));
     color: rgb(var(--v-theme-primary));
   }
@@ -799,7 +529,7 @@ export default {
     strong {
       color: rgb(var(--v-theme-on-surface));
       font-weight: 650;
-      text-align: right;
+      text-align: end;
     }
   }
 
@@ -866,7 +596,7 @@ export default {
   margin-top: 26px;
   padding: 22px 24px;
   border: 1px solid rgba(var(--v-theme-primary), .14) !important;
-  border-radius: 18px !important;
+  border-radius: var(--wiki-panel-radius, 16px) !important;
   background:
     linear-gradient(110deg, rgba(var(--v-theme-primary), .09), rgba(var(--v-theme-secondary), .045), transparent) !important;
   color: rgb(var(--v-theme-on-surface)) !important;
@@ -877,7 +607,7 @@ export default {
     width: 64px;
     height: 64px;
     place-items: center;
-    border-radius: 17px;
+    border-radius: var(--wiki-control-radius, 11px);
     background: rgb(var(--v-theme-surface));
 
     img {
@@ -914,33 +644,6 @@ export default {
 }
 
 @include until($tablet) {
-  .admin-dashboard {
-    &__hero {
-      min-height: 240px;
-      padding: 28px 22px;
-    }
-
-    &__hero-copy {
-      padding-right: 0;
-
-      h1 {
-        font-size: 2.25rem;
-      }
-
-      p {
-        font-size: .95rem;
-      }
-    }
-
-    &__hero-art {
-      right: -44px;
-      bottom: -52px;
-      width: 140px;
-      height: 140px;
-      opacity: .38;
-    }
-  }
-
   .dashboard-actions {
     grid-template-columns: 1fr;
   }
@@ -970,68 +673,3 @@ export default {
 }
 </style>
 
-<style lang='scss'>
-
-.dashboard-card {
-  display: flex;
-  width: 100%;
-  border-radius: 12px;
-
-  .v-card-text {
-    overflow: hidden;
-    position: relative;
-  }
-}
-
-.dashboard-section-toolbar {
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, rgb(var(--v-theme-surface))) !important;
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-
-  .text-label-small {
-    color: rgb(var(--v-theme-on-surface)) !important;
-    opacity: 1;
-  }
-}
-
-.dashboard-data-table td,
-.dashboard-data-table td strong {
-  color: rgb(var(--v-theme-on-surface)) !important;
-  opacity: 1;
-}
-
-.dashboard-mobile-list .v-list-item-subtitle {
-  color: rgb(var(--v-theme-on-surface)) !important;
-  opacity: 1;
-}
-
-.dashboard-contribute {
-  background-color: rgb(var(--v-theme-surface));
-  background-image: linear-gradient(
-    145deg,
-    rgb(var(--v-theme-surface)) 0%,
-    color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, rgb(var(--v-theme-surface))) 100%
-  );
-  border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 12px;
-
-  .v-card-text {
-    display: flex;
-    align-items: center;
-    color: rgb(var(--v-theme-on-surface)) !important;
-  }
-}
-
-.v-icon.dashboard-icon {
-  position: absolute !important;
-  right: 0;
-  top: 12px;
-  font-size: 100px !important;
-  opacity: .25;
-
-  @at-root .v-locale--is-rtl & {
-    left: 0;
-    right: initial;
-  }
-}
-
-</style>

@@ -1,87 +1,56 @@
 <template>
-  <v-dialog v-model="open" max-width="68rem" scrollable :fullscreen="smAndDown">
+  <v-dialog v-model="open" max-width="68rem" scrollable :fullscreen="smAndDown" @update:model-value="value => { if (!value && isDirty) { open = true; requestClose() } }">
     <v-card class="agent-personal-skills">
       <v-card-title class="d-flex align-center ga-2">
         <v-icon icon="mdi-file-document-edit-outline" />
         <span>My agent skills</span>
         <v-spacer />
-        <v-btn icon="mdi-close" variant="text" aria-label="Close personal skills" @click="open = false" />
+        <v-btn icon="mdi-close" variant="text" aria-label="Close personal skills" @click="requestClose" />
       </v-card-title>
       <v-divider />
       <v-card-text class="pa-0">
         <v-row no-gutters class="agent-personal-skills__layout">
           <v-col cols="12" md="4" class="agent-personal-skills__list pa-3">
-            <v-btn block color="primary" prepend-icon="mdi-plus" class="mb-3" @click="beginNew">New skill</v-btn>
+            <v-btn block color="primary" prepend-icon="mdi-plus" class="mb-3" :disabled="loading || saving" @click="requestNew">New skill</v-btn>
             <v-progress-linear v-if="loading" indeterminate class="mb-2" />
-            <v-list v-if="skills.length > 0" density="compact" nav aria-label="Personal skills">
+            <v-alert v-if="error && !loaded" type="error" variant="tonal" density="compact" class="mb-3">{{ error }} <v-btn variant="text" size="small" @click="load">Retry</v-btn></v-alert>
+            <v-list v-if="loaded && skills.length > 0" density="compact" nav aria-label="Personal skills">
               <v-list-item
                 v-for="skill in skills"
                 :key="skill.id"
                 :active="editingId === skill.id"
                 :title="skill.name"
                 :subtitle="skill.description"
-                prepend-icon="mdi-file-document-outline"
-                @click="edit(skill)"
+                @click="requestEdit(skill)"
               >
                 <template #append>
-                  <v-icon
-                    :icon="skill.isAgentDiscoverable ? 'mdi-eye-outline' : 'mdi-eye-off-outline'"
-                    :color="skill.isAgentDiscoverable ? 'primary' : undefined"
-                    :aria-label="skill.isAgentDiscoverable ? 'Available to the agent automatically' : 'Only available by explicit invocation'"
-                  />
+                  <v-icon :icon="skill.isAgentDiscoverable ? 'mdi-eye-outline' : 'mdi-eye-off-outline'" :color="skill.isAgentDiscoverable ? 'primary' : undefined" :aria-label="skill.isAgentDiscoverable ? 'Available to the agent automatically' : 'Only available by explicit invocation'" />
+                  <span class="text-caption text-medium-emphasis ms-1">{{ skill.isAgentDiscoverable ? 'Auto' : 'On request' }}</span>
                 </template>
               </v-list-item>
             </v-list>
-            <v-alert v-else-if="!loading" type="info" variant="tonal" density="compact">Create a SKILL.md document to give the agent reusable instructions.</v-alert>
+            <v-alert v-else-if="loaded && !loading" type="info" variant="tonal" density="compact">Create a SKILL.md document to give the agent reusable instructions.</v-alert>
           </v-col>
-          <v-col cols="12" md="8" class="pa-4">
-            <v-alert v-if="error" type="error" variant="tonal" density="compact" closable class="mb-4" @click:close="error = ''">{{ error }}</v-alert>
+          <v-col v-if="loaded" cols="12" md="8" class="pa-4">
             <div class="d-flex align-center ga-2 mb-3">
               <h3 class="text-headline-small">{{ editingId ? `Edit ${name}` : 'Create a personal skill' }}</h3>
               <v-spacer />
               <v-btn v-if="editingId" color="error" variant="text" prepend-icon="mdi-delete-outline" @click="removing = selectedSkill">Remove</v-btn>
             </div>
-            <v-text-field
-              v-model.trim="name"
-              label="Skill name"
-              :disabled="Boolean(editingId) || saving"
-              hint="Lowercase letters, numbers, and single hyphens; the name cannot be changed later."
-              persistent-hint
-              maxlength="64"
-              autocomplete="off"
-              class="mb-3"
-            />
-            <v-switch
-              v-model="isAgentDiscoverable"
-              label="Available to the agent automatically"
-              hint="When off, you can still invoke this skill explicitly with / or the Skills menu."
-              persistent-hint
-              color="primary"
-              inset
-              class="mb-3"
-              :disabled="saving"
-            />
-            <v-textarea
-              v-model="skillMarkdown"
-              label="SKILL.md"
-              hint="YAML frontmatter must include this exact name and a description. Remote resources, active content, and likely secrets are rejected."
-              persistent-hint
-              rows="18"
-              max-rows="30"
-              counter="65536"
-              class="agent-personal-skills__editor"
-              :disabled="saving"
-              spellcheck="false"
-            />
+            <v-form id="personal-skill-form" @submit.prevent="save">
+              <v-text-field v-model.trim="name" :rules="[nameRule]" label="Skill name" :disabled="Boolean(editingId) || saving" hint="Lowercase letters, numbers, and single hyphens; the name cannot be changed later." persistent-hint maxlength="64" autocomplete="off" class="mb-3" />
+              <v-switch v-model="isAgentDiscoverable" label="Available to the agent automatically" hint="When off, you can still invoke this skill explicitly with / or the Skills menu." persistent-hint color="primary" inset class="mb-3" :disabled="saving" />
+              <v-textarea v-model="skillMarkdown" label="SKILL.md" hint="YAML frontmatter must include this exact name and a description. Remote resources, active content, and likely secrets are rejected." persistent-hint rows="18" max-rows="30" counter="65536" maxlength="65536" class="agent-personal-skills__editor" :disabled="saving" spellcheck="false" :rules="[markdownRule]" />
+            </v-form>
           </v-col>
         </v-row>
       </v-card-text>
       <v-divider />
-      <v-card-actions>
+      <v-card-actions class="agent-personal-skills__actions">
         <span class="text-body-small text-medium-emphasis px-2">Personal skills are untrusted reference material and cannot grant agent permissions.</span>
         <v-spacer />
-        <v-btn @click="open = false">Close</v-btn>
-        <v-btn color="primary" :loading="saving" :disabled="!name || !skillMarkdown" @click="save">{{ editingId ? 'Save revision' : 'Create skill' }}</v-btn>
+        <v-btn @click="requestClose">Close</v-btn>
+        <v-btn color="primary" type="submit" :loading="saving" :disabled="!formValid" form="personal-skill-form">{{ editingId ? 'Save revision' : 'Create skill' }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -92,8 +61,14 @@
       <v-card-actions>
         <v-spacer />
         <v-btn @click="removing = null">Cancel</v-btn>
-        <v-btn color="error" :loading="saving" @click="remove">Remove</v-btn>
+        <v-btn color="error" :loading="saving" :disabled="saving" @click="remove">Remove</v-btn>
       </v-card-actions>
+    </v-card>
+  </v-dialog>
+  <v-dialog v-model="discardOpen" max-width="28rem">
+    <v-card title="Discard unsaved changes?">
+      <v-card-text>Your current personal skill draft has unsaved changes.</v-card-text>
+      <v-card-actions><v-spacer /><v-btn @click="discardOpen = false">Continue editing</v-btn><v-btn color="error" @click="confirmDiscard">Discard changes</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 </template>
@@ -118,45 +93,54 @@ const name = ref('my-skill')
 const skillMarkdown = ref('')
 const isAgentDiscoverable = ref(true)
 const loading = ref(false)
+const loaded = ref(false)
 const saving = ref(false)
 const error = ref('')
 const removing = ref<PersonalAgentSkill | null>(null)
+const discardOpen = ref(false)
+const pendingNavigation = ref<(() => void) | null>(null)
+const baseline = ref({ name: '', skillMarkdown: '', isAgentDiscoverable: true })
 const selectedSkill = computed(() => skills.value.find(skill => skill.id === editingId.value) ?? null)
+const isDirty = computed(() => name.value !== baseline.value.name || skillMarkdown.value !== baseline.value.skillMarkdown || isAgentDiscoverable.value !== baseline.value.isAgentDiscoverable)
+const nameRule = (value: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.trim()) || 'Use lowercase letters, numbers, and single hyphens.'
+const markdownRule = (value: string) => value.length <= 65536 || 'SKILL.md must be 65,536 characters or fewer.'
+const formValid = computed(() => Boolean(name.value.trim() && skillMarkdown.value.trim()) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name.value.trim()) && skillMarkdown.value.length <= 65536)
 const fetcher = window.fetch.bind(window)
 
 const templateFor = (skillName: string): string => `---\nname: ${skillName}\ndescription: Explain when the agent should use this skill.\n---\n# Instructions\n\nDescribe the steps, constraints, and expected output.\n`
 
-const beginNew = (): void => {
-  editingId.value = null
-  name.value = 'my-skill'
-  skillMarkdown.value = templateFor(name.value)
-  isAgentDiscoverable.value = true
-  error.value = ''
+const setBaseline = (): void => { baseline.value = { name: name.value, skillMarkdown: skillMarkdown.value, isAgentDiscoverable: isAgentDiscoverable.value } }
+const applyNew = (): void => {
+  editingId.value = null; name.value = 'my-skill'; skillMarkdown.value = templateFor(name.value); isAgentDiscoverable.value = true; error.value = ''; setBaseline()
 }
-const edit = (skill: PersonalAgentSkill): void => {
-  editingId.value = skill.id
-  name.value = skill.name
-  skillMarkdown.value = skill.skillMarkdown
-  isAgentDiscoverable.value = skill.isAgentDiscoverable
-  error.value = ''
+const applyEdit = (skill: PersonalAgentSkill): void => {
+  editingId.value = skill.id; name.value = skill.name; skillMarkdown.value = skill.skillMarkdown; isAgentDiscoverable.value = skill.isAgentDiscoverable; error.value = ''; setBaseline()
+}
+const requestNavigation = (action: () => void): void => {
+  if (isDirty.value) { pendingNavigation.value = action; discardOpen.value = true } else action()
+}
+const requestNew = (): void => requestNavigation(applyNew)
+const requestEdit = (skill: PersonalAgentSkill): void => requestNavigation(() => applyEdit(skill))
+const requestClose = (): void => requestNavigation(() => { open.value = false })
+const confirmDiscard = (): void => {
+  discardOpen.value = false
+  const action = pendingNavigation.value
+  pendingNavigation.value = null
+  action?.()
 }
 const load = async (selectedId?: string): Promise<void> => {
-  loading.value = true
-  error.value = ''
+  if (loading.value) return
+  loading.value = true; error.value = ''
   try {
-    skills.value = await listPersonalAgentSkills(fetcher, props.csrfToken)
+    skills.value = await listPersonalAgentSkills(fetcher, props.csrfToken); loaded.value = true
     const selected = skills.value.find(skill => skill.id === selectedId) ?? skills.value.find(skill => skill.id === editingId.value)
-    if (selected) edit(selected)
-    else if (!editingId.value) beginNew()
-    else beginNew()
-  } catch (caught) {
-    error.value = caught instanceof Error ? caught.message : 'Personal skills could not be loaded.'
-  } finally {
-    loading.value = false
-  }
+    if (selected) applyEdit(selected)
+    else applyNew()
+  } catch (caught) { error.value = caught instanceof Error ? caught.message : 'Personal skills could not be loaded.' }
+  finally { loading.value = false }
 }
 const save = async (): Promise<void> => {
-  if (saving.value || !name.value || !skillMarkdown.value) return
+  if (saving.value || !formValid.value) return
   saving.value = true
   error.value = ''
   try {
@@ -191,7 +175,6 @@ const remove = async (): Promise<void> => {
     saving.value = false
   }
 }
-
 watch(name, (next, previous) => {
   if (editingId.value || next === previous) return
   skillMarkdown.value = skillMarkdown.value.replace(/^name:\s*.*$/m, `name: ${next}`)
@@ -200,6 +183,8 @@ watch(open, value => { if (value) void load() })
 </script>
 
 <style scoped>
+.agent-personal-skills__actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.agent-personal-skills__actions > span { flex: 1 1 100%; }
 .agent-personal-skills__layout { min-height: min(38rem, 75dvh); }
 .agent-personal-skills__list {
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%);
@@ -214,5 +199,8 @@ watch(open, value => { if (value) void load() })
     border-inline-end: 0;
     border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   }
+}
+@media (max-width: 480px) {
+  .agent-personal-skills__actions > .v-btn { flex: 1 1 100%; }
 }
 </style>

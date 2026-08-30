@@ -3,61 +3,28 @@
     v-row
       v-col(cols='12')
         .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-file.svg', alt='Page', style='width: 80px;')
+          img.animated.fadeInUp(src='/_assets/svg/icon-file.svg', alt='', style='width: 80px;')
           .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft Pages
+            h1.text-headline-medium.text-primary.animated.fadeInLeft(tabindex='-1') Pages
             .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s Manage pages
           v-spacer
-          v-btn.animated.fadeInDown.wait-p1s(icon, color='grey', variant="outlined", @click='refresh', aria-label='Refresh pages')
+          v-btn.animated.fadeInDown.wait-p1s(icon color='grey' variant="outlined" @click='refresh' :loading='loading' :disabled='loading' aria-label='Refresh pages')
             v-icon.text-grey mdi-refresh
-          //- v-btn.animated.fadeInDown.mx-3(color='primary', variant='outlined', @click='recyclebin', disabled)
-          //-   v-icon(start) mdi-delete-outline
-          //-   span Recycle Bin
-          v-btn.animated.fadeInDown(
-            color='primary'
-            variant="flat"
-            size="large"
-            to='pages/visualize'
-            :icon='$vuetify.display.smAndDown'
-            aria-label='Visualize pages'
-          )
+          v-btn.animated.fadeInDown(color='primary' variant="flat" size="large" to='pages/visualize' :icon='$vuetify.display.smAndDown' aria-label='Visualize pages')
             v-icon(:start='$vuetify.display.mdAndUp') mdi-graph
             span(v-if='$vuetify.display.mdAndUp') Visualize
         v-card.mt-3.animated.fadeInUp
-          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`')
-            v-text-field(
-              variant="solo"
-              flat
-              v-model='search'
-              prepend-inner-icon='mdi-file-search-outline'
-              label='Search Pages...'
-              hide-details
-              density="compact"
-              style='max-width: 400px;'
-              )
+          .admin-filter-bar.pa-2.d-flex.align-center
+            v-text-field(variant="solo" flat v-model='search' prepend-inner-icon='mdi-file-search-outline' label='Search pages' hide-details density="compact")
             v-spacer
-            v-select.ml-2(
-              variant="solo"
-              flat
-              hide-details
-              density="compact"
-              label='Locale'
-              :items='langs'
-              item-title='text'
-              v-model='selectedLang'
-              style='max-width: 250px;'
-            )
-            v-select.ml-2(
-              variant="solo"
-              flat
-              hide-details
-              density="compact"
-              label='Publish State'
-              :items='states'
-              item-title='text'
-              v-model='selectedState'
-              style='max-width: 250px;'
-            )
+            v-select(variant="solo" flat hide-details density="compact" label='Locale' :items='langs' item-title='text' v-model='selectedLang')
+            v-select(variant="solo" flat hide-details density="compact" label='Publish state' :items='states' item-title='text' v-model='selectedState')
+            v-btn(v-if='hasActiveFilters' variant='text' size='small' color='primary' @click='clearFilters') Clear filters
+          v-alert(v-if='errorMessage && pages.length' type='error' variant='tonal' class='ma-3')
+            .d-flex.align-center
+              span {{ errorMessage }}
+              v-spacer
+              v-btn(variant='text' color='primary' @click='loadPages') Try again
           v-divider
           v-data-table.admin-responsive-table(
             :items='filteredPages'
@@ -67,54 +34,43 @@
             v-model:page='pagination'
             :items-per-page='15'
             :loading='loading'
-            must-sort,
+            must-sort
             :sort-by="[{ key: 'updatedAt', order: 'desc' }]"
             hide-default-footer
             @page-count="pageTotal = $event"
           )
             template(v-slot:item='props')
-              tr.is-clickable(v-if='$vuetify.display.mdAndUp', :active='props.selected', @click='$router.push(`/pages/` + props.item.id)')
-                td.text-right {{ props.item.id }}
+              tr(v-if='$vuetify.display.mdAndUp')
+                td.text-end {{ props.item.id }}
                 td
-                  .text-body-medium: strong {{ props.item.title }}
+                  router-link.admin-record-link(:to='`/pages/${props.item.id}`') {{ props.item.title }}
                   .text-body-small {{ props.item.description }}
                 td.admin-pages-path
-                  v-chip(label, size="small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
-                  span.ml-2(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-2`') / {{ props.item.path }}
+                  v-chip(label size="small" color='primary' variant='tonal') {{ props.item.locale }}
+                  span.ms-2.text-medium-emphasis /{{ props.item.path }}
+                td
+                  v-chip(size='small' :color='props.item.isPublished ? `success` : `warning`' variant='tonal') {{ props.item.isPublished ? 'Published' : 'Draft' }}
                 td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
                 td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
-              tr.admin-mobile-table-row.is-clickable(v-else, @click='$router.push(`/pages/` + props.item.id)')
+              tr.admin-mobile-table-row(v-else)
                 td(:colspan='responsiveHeaders.length')
                   .admin-mobile-record
-                    .admin-mobile-record-title {{ props.item.title }}
-                    .text-body-small(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-2`') {{ props.item.description }}
+                    router-link.admin-mobile-record-title(:to='`/pages/${props.item.id}`') {{ props.item.title }}
+                    .text-body-small.text-medium-emphasis {{ props.item.description }}
                     .admin-mobile-record-meta
-                      v-chip.mr-2(label, size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
+                      v-chip.me-2(label size="x-small" color='primary' variant='tonal') {{ props.item.locale }}
                       span /{{ props.item.path }}
-                    .text-body-small.mt-2(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-2`') Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
+                    .d-flex.align-center.ga-2.mt-2
+                      v-chip(size='x-small' :color='props.item.isPublished ? `success` : `warning`' variant='tonal') {{ props.item.isPublished ? 'Published' : 'Draft' }}
+                      .text-body-small.text-medium-emphasis Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
-              async-state(
-                v-if='loading'
-                state='loading'
-                title='Loading pages'
-                message='Fetching the latest page list.'
-              )
-              async-state(
-                v-else-if='errorMessage'
-                state='error'
-                title='Pages could not be loaded'
-                :message='errorMessage'
-                retry-label='Try again'
-                @retry='loadPages'
-              )
-              async-state(
-                v-else
-                state='empty'
-                title='No pages to display'
-                message='Change the filters or create a page.'
-              )
-          .text-center.py-2.animated.fadeInDown(v-if='this.pageTotal > 1')
-            v-pagination(v-model='pagination', :length='pageTotal')</template>
+              async-state(v-if='loading' state='loading' title='Loading pages' message='Fetching the latest page list.')
+              async-state(v-else-if='errorMessage' state='error' title='Pages could not be loaded' :message='errorMessage' retry-label='Try again' @retry='loadPages')
+              async-state(v-else-if='hasActiveFilters' state='empty' title='No pages match these filters' message='Clear the filters to see all pages.')
+              async-state(v-else state='empty' title='No pages to display' message='There are no pages yet.')
+          .text-center.py-2.animated.fadeInDown(v-if='pageTotal > 1')
+            v-pagination(v-model='pagination' :length='pageTotal')
+</template>
 
 <script lang='ts'>
 import _ from 'lodash'
@@ -123,15 +79,10 @@ import { getErrorMessage } from '../../helpers/root-ui-store'
 import { fetchPageList, type PageListRow } from '../../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
 
-type PageFilterOption<T> = {
-  text: string
-  value: T
-}
+type PageFilterOption<T> = { text: string, value: T }
 
 export default {
-  components: {
-    AsyncState
-  },
+  components: { AsyncState },
   data() {
     return {
       pagination: 1,
@@ -141,6 +92,7 @@ export default {
         { title: 'ID', value: 'id', width: 80, sortable: true },
         { title: 'Title', value: 'title' },
         { title: 'Path', value: 'path' },
+        { title: 'Status', value: 'status', sortable: false, width: 120 },
         { title: 'Created', value: 'createdAt', width: 250 },
         { title: 'Last Updated', value: 'updatedAt', width: 250 }
       ],
@@ -157,34 +109,29 @@ export default {
     }
   },
   computed: {
-    responsiveHeaders () {
-      return this.$vuetify.display.smAndDown
-        ? this.headers.filter(header => header.value === 'title')
-        : this.headers
+    responsiveHeaders() {
+      return this.$vuetify.display.smAndDown ? this.headers.filter(header => header.value === 'title') : this.headers
     },
-    filteredPages (): PageListRow[] {
-      return this.pages.filter(pg => {
-        if (this.selectedLang !== null && this.selectedLang !== pg.locale) {
-          return false
-        }
-        if (this.selectedState !== null && this.selectedState !== pg.isPublished) {
-          return false
-        }
-        return true
-      })
+    filteredPages(): PageListRow[] {
+      return this.pages.filter(pg =>
+        (this.selectedLang === null || this.selectedLang === pg.locale) &&
+        (this.selectedState === null || this.selectedState === pg.isPublished)
+      )
     },
-    langs (): PageFilterOption<string | null>[] {
-      return [{
-        text: 'All Locales',
-        value: null
-      }, ..._.uniqBy(this.pages, 'locale').map(pg => ({
-        text: pg.locale,
-        value: pg.locale
-      }))]
+    hasActiveFilters() {
+      return Boolean(this.search.trim() || this.selectedLang !== null || this.selectedState !== null)
+    },
+    langs(): PageFilterOption<string | null>[] {
+      return [{ text: 'All Locales', value: null }, ..._.uniqBy(this.pages, 'locale').map(pg => ({ text: pg.locale, value: pg.locale }))]
     }
   },
   methods: {
-    async loadPages (): Promise<boolean> {
+    clearFilters() {
+      this.search = ''
+      this.selectedLang = null
+      this.selectedState = null
+    },
+    async loadPages(): Promise<boolean> {
       this.errorMessage = ''
       this.loading = true
       wikiStore.startLoading('admin-pages-refresh')
@@ -201,18 +148,10 @@ export default {
       }
     },
     async refresh() {
-      const isLoaded = await this.loadPages()
-      if (isLoaded) {
-        wikiStore.showNotification({
-          message: 'Page list has been refreshed.',
-          style: 'success',
-          icon: 'cached'
-        })
-      }
-    },
-    recyclebin () { }
+      if (await this.loadPages()) wikiStore.showNotification({ message: 'Page list has been refreshed.', style: 'success', icon: 'cached' })
+    }
   },
-  mounted () {
+  mounted() {
     this.loadPages()
   }
 }

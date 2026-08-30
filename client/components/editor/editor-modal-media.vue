@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='`is-editor-` + editorKey')
+  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='`is-editor-` + editorKey', ref='mediaDialog', role='dialog', aria-modal='true', aria-labelledby='editor-media-title', tabindex='-1', @keydown.esc='cancel', @keydown.tab='trapFocus')
     v-container.pa-3(fluid)
       v-row
         v-col(cols='12', lg='9')
@@ -7,13 +7,13 @@
             v-card-text
               .d-flex
                 v-toolbar.radius-7(:color='$vuetify.theme.current.dark ? `teal` : `teal-lighten-5`', density="compact", flat, height='44')
-                  .text-body-medium(:class='$vuetify.theme.current.dark ? `text-white` : `text-teal`') {{$t('editor:assets.title')}}
+                  .text-body-medium#editor-media-title {{ $t('editor:assets.title') }}
                   v-spacer
-                  v-btn(variant="text", icon, @click='refresh')
+                  v-btn(ref='refreshButton', variant="text", icon, aria-label='Refresh assets', @click='refresh')
                     v-icon(:color='$vuetify.theme.current.dark ? `white` : `teal`') mdi-refresh
                 v-dialog(v-model='newFolderDialog', max-width='550')
                   template(v-slot:activator='{ props }')
-                    v-btn.ml-3.my-0.mr-0.radius-7(variant="outlined", size="large", color='teal', :icon='$vuetify.display.xsOnly', v-bind='props')
+                    v-btn.ml-3.my-0.mr-0.radius-7(variant="outlined", size="large", color='teal', :icon='$vuetify.display.xsOnly', aria-label='Create folder', v-bind='props')
                       v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
                       span.hidden-sm-and-down(:class='$vuetify.theme.current.dark ? `text-teal-lighten-3` : ``') {{$t('editor:assets.newFolder')}}
                   v-card
@@ -44,14 +44,18 @@
                       span.mx-1 /
                 .text-body-medium(v-else) / #[em root]
               template(v-if='folders.length > 0 || currentFolderId > 0')
-                v-btn.is-icon.mx-1(:color='$vuetify.theme.current.dark ? `grey-lighten-1` : `grey-darken-2`', variant="outlined", @click='upFolder()', :disabled='currentFolderId === 0')
+                v-btn.is-icon.mx-1(:color='$vuetify.theme.current.dark ? `grey-lighten-1` : `grey-darken-2`', variant="outlined", aria-label='Open parent folder', @click='upFolder()', :disabled='currentFolderId === 0')
                   v-icon mdi-folder-upload
                 v-btn.btn-normalcase.mx-1(v-for='folder of folders', :key='folder.id', variant="flat",  color="grey-darken-2", @click='downFolder(folder)')
                   v-icon(start) mdi-folder
                   span.text-body-small(style='text-transform: none;') {{ folder.name }}
                 v-divider.mt-2
+              v-alert.mb-3(v-if='mediaLoadError', type='error', variant='tonal', role='alert')
+                .d-flex.align-center
+                  span {{mediaLoadError}}
+                  v-spacer
+                  v-btn(variant='text', size='small', @click='refresh') Retry
               v-data-table(
-                :items='assets'
                 :headers='headers'
                 v-model:page='pagination'
                 :items-per-page='15'
@@ -63,10 +67,14 @@
               )
                 template(v-slot:item='props')
                   tr.is-clickable(
-                    @click.left='currentFileId = props.item.id'
+                    tabindex='0'
+                    role='option'
+                    :aria-selected='currentFileId === props.item.id'
+                    :aria-label='`Select ${props.item.filename}`'
+                    @keydown.enter.space.prevent='selectAsset(props.item.id)'
+                    @click.left='selectAsset(props.item.id)'
                     @click.right.prevent=''
-                    :class='currentFileId === props.item.id ? ($vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-teal-lighten-5`) : ``'
-                    )
+                  )
                     td.text-body-small(v-if='$vuetify.display.smAndUp') {{ props.item.id }}
                     td
                       .text-body-medium: strong(:class='currentFileId === props.item.id ? `text-teal` : ``') {{ props.item.filename }}
@@ -78,8 +86,8 @@
                     td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ $helpers.formatMoment(props.item.createdAt, 'from') }}
                     td(v-if='$vuetify.display.smAndUp')
                       v-menu(min-width='200')
-                        template(v-slot:activator='{ props }')
-                          v-btn(icon, v-bind='props', rounded='0', size="small", @click.left='currentFileId = props.item.id')
+                        template(v-slot:activator='{ props: menuProps }')
+                          v-btn(icon, v-bind='menuProps', rounded='0', size="small", aria-label='Asset actions')
                             v-icon(color="grey-darken-2") mdi-dots-horizontal
                         v-list(nav, style='border-top: 5px solid #444;')
                           //- v-list-item(@click='', disabled)
@@ -119,7 +127,7 @@
                                 v-icon(color='red') mdi-file-hidden
                             v-list-item-title {{$t('common:actions.delete')}}
                 template(v-slot:no-data)
-                  v-alert.mt-3.radius-7(icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
+                  v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
               .text-center.py-2(v-if='this.pageTotal > 1')
                 v-pagination(v-model='pagination', :length='pageTotal', color='teal')
               .d-flex.mt-3
@@ -140,7 +148,7 @@
                 v-toolbar.radius-7(:color='$vuetify.theme.current.dark ? `teal` : `teal-lighten-5`', density="compact", flat, height='44')
                   v-icon.mr-3(:color='$vuetify.theme.current.dark ? `white` : `teal`') mdi-cloud-upload
                   .text-body-medium(:class='$vuetify.theme.current.dark ? `text-white` : `text-teal`') {{$t('editor:assets.uploadAssets')}}
-                v-btn.my-0.ml-3.mr-0.radius-7(variant="outlined", size="large", color='teal', @click='browse', v-if='$vuetify.display.mdAndUp')
+                v-btn.my-0.ml-3.mr-0.radius-7(variant="outlined", size="large", color='teal', aria-label='Browse files', @click='browse', v-if='$vuetify.display.mdAndUp')
                   v-icon(start) mdi-plus-box-multiple
                   span(:class='$vuetify.theme.current.dark ? `text-teal-lighten-3` : ``') {{$t('common:actions.browse')}}
               file-pond.mt-3(
@@ -162,7 +170,7 @@
               v-btn.px-4(color='teal', @click='upload') {{$t('common:actions.upload')}}
 
 
-          v-card.mt-3.radius-7.animated.fadeInRight.wait-p4s
+          v-card.mt-3.radius-7.animated.fadeInRight.wait-p4s(v-if='currentAsset && currentAsset.kind === `IMAGE`')
             v-card-text.pb-0
               v-toolbar.radius-7(:color='$vuetify.theme.current.dark ? `teal` : `teal-lighten-5`', density="compact", flat)
                 v-icon.mr-3(:color='$vuetify.theme.current.dark ? `white` : `teal`') mdi-format-align-top
@@ -181,7 +189,7 @@
     v-dialog(v-model='renameDialog', max-width='550', persistent)
       v-card
         .dialog-header.is-short.is-orange
-          v-icon.mr-2(color='white') mdi-keyboard
+          v-icon.mr-2(color='primary') mdi-keyboard
           span {{$t('editor:assets.renameAsset')}}
         v-card-text.pt-5
           .text-body-medium {{$t('editor:assets.renameAssetSubtitle')}}
@@ -190,13 +198,15 @@
             single-line
             :counter='255'
             v-model='renameAssetName'
+            :label='$t(`common:actions.rename`)'
+            :rules='[value => !!String(value || ``).trim() || `A filename is required.`, value => (!String(value || ``).includes(`/`) && !String(value || ``).includes(String.fromCharCode(92))) || `Filename cannot contain slashes.`]'
             @keyup.enter='renameAsset'
             :disabled='renameAssetLoading'
           )
         div.v-card-chin
           v-spacer
           v-btn(variant="text", @click='renameDialog = false', :disabled='renameAssetLoading') {{$t('common:actions.cancel')}}
-          v-btn.px-3(color="orange-darken-3", @click='renameAsset', :loading='renameAssetLoading').text-white {{$t('common:actions.rename')}}
+          v-btn.px-3(color="orange-darken-3", @click='renameAsset', :loading='renameAssetLoading', :disabled='!isRenameValid').text-white {{$t('common:actions.rename')}}
 
     //- DELETE DIALOG
 
@@ -272,10 +282,12 @@ export default defineComponent({
       newFolderLoading: false,
       previewDialog: false,
       renameDialog: false,
+      deleteDialog: false,
       renameAssetName: '',
       renameAssetLoading: false,
-      deleteDialog: false,
-      deleteAssetLoading: false
+      deleteAssetLoading: false,
+      mediaLoadError: '',
+      returnFocus: null as HTMLElement | null
     }
   },
   computed: {
@@ -336,6 +348,11 @@ export default defineComponent({
     currentAsset () {
       return _.find(this.assets, ['id', this.currentFileId])
     },
+    isRenameValid (): boolean {
+      const current = this.currentAsset
+      const name = this.renameAssetName.trim()
+      return Boolean(current && name && name !== current.filename && !/[\/\\]/.test(name))
+    },
     isPrivatePage(): boolean {
       return wikiStore.page.visibility === 'private'
     },
@@ -364,9 +381,37 @@ export default defineComponent({
     }
   },
   mounted() {
+    this.returnFocus = document.activeElement as HTMLElement | null
+    this.$nextTick(() => {
+      ;(this.$refs.refreshButton as { focus?: () => void })?.focus?.()
+    })
     this.loadMedia()
   },
+  beforeUnmount() {
+    this.returnFocus?.focus?.()
+  },
   methods: {
+    selectAsset(id: number) {
+      this.currentFileId = id
+    },
+    trapFocus(event: KeyboardEvent) {
+      if (event.key !== 'Tab') return
+      const root = this.$refs.mediaDialog as HTMLElement | undefined
+      if (!root) return
+      const focusable = Array.from(root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      ))
+      if (focusable.length === 0) return
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
+    },
     prettyBytes(num: number) {
       if (typeof num !== 'number' || isNaN(num)) {
         throw new TypeError('Expected a number')
@@ -388,12 +433,14 @@ export default defineComponent({
       return (neg ? '-' : '') + scaled + ' ' + unit
     },
     async refresh() {
-      await this.loadMedia()
-      wikiStore.showNotification({
-        message: this.$t('editor:assets.refreshSuccess'),
-        style: 'success',
-        icon: 'check'
-      })
+      const loaded = await this.loadMedia()
+      if (loaded) {
+        wikiStore.showNotification({
+          message: this.$t('editor:assets.refreshSuccess'),
+          style: 'success',
+          icon: 'check'
+        })
+      }
     },
     insert () {
       const asset = _.find(this.assets, ['id', this.currentFileId])
@@ -479,6 +526,7 @@ export default defineComponent({
       this.renameDialog = true
     },
     async renameAsset() {
+      if (!this.isRenameValid) return
       wikiStore.startLoading('editor-media-renameasset')
       this.renameAssetLoading = true
       try {
@@ -518,8 +566,9 @@ export default defineComponent({
       this.deleteAssetLoading = false
       wikiStore.stopLoading('editor-media-deleteasset')
     },
-    async loadMedia () {
+    async loadMedia (): Promise<boolean> {
       this.loading = true
+      this.mediaLoadError = ''
       wikiStore.startLoading('editor-media-list-refresh')
       wikiStore.startLoading('editor-media-folders-list-refresh')
       try {
@@ -529,6 +578,11 @@ export default defineComponent({
         ])
         this.folders = folders
         this.assets = assets
+        return true
+      } catch (err) {
+        this.mediaLoadError = 'Unable to load assets. Try again.'
+        wikiStore.showError(err)
+        return false
       } finally {
         this.loading = false
         wikiStore.stopLoading('editor-media-list-refresh')
@@ -537,6 +591,7 @@ export default defineComponent({
     },
     cancel () {
       this.activeModal = ''
+      this.$nextTick(() => this.returnFocus?.focus?.())
     }
   }
 
@@ -545,21 +600,34 @@ export default defineComponent({
 
 <style lang='scss'>
 .editor-modal-media {
+  background: rgb(var(--v-theme-background)) !important;
+  color: rgb(var(--v-theme-on-background));
+  padding-bottom: env(safe-area-inset-bottom);
+  height: calc(100dvh - 112px - 24px);
+  left: 64px;
+  overflow: auto;
   position: fixed !important;
   top: 112px;
-  left: 64px;
+  width: calc(100vw - 64px);
   z-index: 10;
-  width: calc(100vw - 64px - 17px);
-  height: calc(100dvh - 112px - 24px);
-  background-color: rgba(darken(mc('grey', '900'), 3%), .9) !important;
-  overflow: auto;
 
   @include until($tablet) {
-    left: 40px;
-    width: calc(100vw - 40px);
-    height: calc(100dvh - 112px - 24px);
+    height: calc(100dvh - 56px - 24px);
+    left: 0;
+    width: 100vw;
   }
 
+  &.is-editor-visual-markdown {
+    height: calc(100dvh - 64px - 24px);
+    left: 0;
+    top: 64px;
+    width: 100vw;
+
+    @include until($tablet) {
+      height: calc(100dvh - 56px - 24px);
+      top: 56px;
+    }
+  }
   &.is-editor-ckeditor {
     top: 64px;
     left: 0;
@@ -576,7 +644,7 @@ export default defineComponent({
 
   &.is-editor-code {
     top: 64px;
-    height: calc(100dvh - 64px - 26px);
+    height: calc(100dvh - 64px - 24px);
 
     @include until($tablet) {
       top: 56px;
@@ -588,13 +656,49 @@ export default defineComponent({
     top: 64px;
     left: 0;
     width: 100%;
-    height: calc(100dvh - 64px);
+    height: calc(100dvh - 64px - 24px);
 
     @include until($tablet) {
       top: 56px;
       left: 0;
       width: 100%;
-      height: calc(100dvh - 56px);
+      height: calc(100dvh - 56px - 24px);
+    }
+  }
+
+  .v-toolbar {
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%) !important;
+    border: 1px solid rgba(var(--v-theme-on-surface), .12);
+    color: rgb(var(--v-theme-on-surface));
+  }
+  .v-toolbar {
+    .text-white,
+    .text-teal,
+    .text-teal-lighten-3,
+    .v-icon {
+      color: rgb(var(--v-theme-on-surface)) !important;
+    }
+  }
+
+  .v-card {
+    background: rgb(var(--v-theme-surface));
+    color: rgb(var(--v-theme-on-surface));
+  }
+
+  tr.is-clickable {
+    cursor: pointer;
+
+    &:focus-visible {
+      outline: 2px solid rgba(var(--v-theme-primary), .7);
+      outline-offset: -2px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &,
+    * {
+      animation: none !important;
+      transition: none !important;
     }
   }
 

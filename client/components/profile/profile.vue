@@ -1,14 +1,35 @@
 <template lang='pug'>
   v-container(fluid)
-    v-row
+    async-state(
+      v-if='profileLoading'
+      state='loading'
+      :title='$t("profile:loading", { defaultValue: "Loading profile" })'
+      :message='$t("profile:loadingMessage", { defaultValue: "Fetching your account settings." })'
+    )
+    async-state(
+      v-else-if='profileError'
+      state='error'
+      :title='$t("profile:loadError", { defaultValue: "Profile could not be loaded" })'
+      :message='profileError'
+      :retry-label='$t("common:actions.retry", { defaultValue: "Try again" })'
+      @retry='loadProfile'
+    )
+    v-row(v-else)
       v-col(cols='12')
         .profile-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-profile.svg', alt='Users', style='width: 80px;')
+          img.animated.fadeInUp(src='/_assets/svg/icon-profile.svg', alt='', style='width: 80px;')
           .profile-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('profile:title')}}
+            h1.text-headline-medium.text-primary.animated.fadeInLeft {{$t('profile:title')}}
             .text-body-large.text-grey.animated.fadeInLeft {{$t('profile:subtitle')}}
           v-spacer
-          v-btn.animated.fadeInDown(color='success', variant="flat", @click='saveProfile', :loading='saveLoading', size="large")
+          v-btn.animated.fadeInDown(
+            color='primary'
+            variant="flat"
+            @click='saveProfile'
+            :loading='saveLoading'
+            :disabled='!profileReady'
+            size="large"
+          )
             v-icon(start) mdi-check
             span {{$t('common:actions.save')}}
           //- v-btn.animated.fadeInDown.mr-0(variant='outlined', color='primary', disabled)
@@ -17,7 +38,7 @@
       v-col(lg='6' cols='12')
         v-card.animated.fadeInUp
           v-toolbar(color='blue-grey', density="compact", flat)
-            v-toolbar-title.text-body-large {{$t('profile:myInfo')}}
+            h2.v-toolbar-title.text-body-large {{$t('profile:myInfo')}}
           v-list(lines="two", density="compact")
             v-list-item
               template(v-slot:prepend)
@@ -29,8 +50,8 @@
                 v-menu(
                   v-model='editPop.name'
                   :close-on-content-click='false'
-                  min-width='350'
-                  location="left"
+                  min-width='min(350px, calc(100vw - 24px))'
+                  :location='$vuetify.locale.isRtl ? "right" : "left"'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptDisplayName`)')
@@ -59,8 +80,8 @@
                 v-menu(
                   v-model='editPop.location'
                   :close-on-content-click='false'
-                  min-width='350'
-                  location="left"
+                  min-width='min(350px, calc(100vw - 24px))'
+                  :location='$vuetify.locale.isRtl ? "right" : "left"'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptLocation`)')
@@ -89,8 +110,8 @@
                 v-menu(
                   v-model='editPop.jobTitle'
                   :close-on-content-click='false'
-                  min-width='350'
-                  location="left"
+                  min-width='min(350px, calc(100vw - 24px))'
+                  :location='$vuetify.locale.isRtl ? "right" : "left"'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptJobTitle`)')
@@ -111,7 +132,7 @@
 
         v-card.mt-3.animated.fadeInUp.wait-p2s
           v-toolbar(color='blue-grey', density="compact", flat)
-            v-toolbar-title
+            h2.v-toolbar-title
               .text-body-large {{$t('profile:auth.title')}}
           v-card-text.pt-0
             v-list-subheader.pl-0: span.text-label-large {{$t('profile:auth.provider')}}
@@ -132,41 +153,79 @@
               form#change-password-form(@submit.prevent='changePassword')
                 v-divider.mt-3
                 v-list-subheader.pl-0: span.text-label-large {{$t('profile:auth.changePassword')}}
+                v-alert.mb-3(
+                  v-if='passwordErrorSummary'
+                  type='error'
+                  variant='tonal'
+                  role='alert'
+                ) {{ passwordErrorSummary }}
                 v-text-field(
                   ref='iptCurrentPass'
                   v-model='currentPass'
                   variant="outlined"
                   :label='$t(`profile:auth.currentPassword`)'
-                  type='password'
+                  :type='hideCurrentPass ? "password" : "text"'
+                  :error-messages='passwordErrors.current'
                   prepend-inner-icon='mdi-form-textbox-password'
                   autocomplete='current-password'
                   )
+                  template(v-slot:append-inner)
+                    v-btn(
+                      icon
+                      variant='text'
+                      size='small'
+                      type='button'
+                      :aria-label='hideCurrentPass ? "Show password" : "Hide password"'
+                      @click='hideCurrentPass = !hideCurrentPass'
+                    )
+                      v-icon {{ hideCurrentPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
                 v-text-field(
                   ref='iptNewPass'
                   v-model='newPass'
                   variant="outlined"
                   :label='$t(`profile:auth.newPassword`)'
-                  type='password'
+                  :type='hideNewPass ? "password" : "text"'
+                  :error-messages='passwordErrors.password'
                   prepend-inner-icon='mdi-form-textbox-password'
-                  autocomplete='off'
+                  autocomplete='new-password'
                   counter='255'
                   loading
                   )
                   template(v-slot:loader)
                     password-strength(v-model='newPass')
+                  template(v-slot:append-inner)
+                    v-btn(
+                      icon
+                      variant='text'
+                      size='small'
+                      type='button'
+                      :aria-label='hideNewPass ? "Show password" : "Hide password"'
+                      @click='hideNewPass = !hideNewPass'
+                    )
+                      v-icon {{ hideNewPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
                 v-text-field(
                   ref='iptVerifyPass'
                   v-model='verifyPass'
                   variant="outlined"
                   :label='$t(`profile:auth.verifyPassword`)'
-                  type='password'
+                  :type='hideVerifyPass ? "password" : "text"'
+                  :error-messages='passwordErrors.verifyPassword'
                   prepend-inner-icon='mdi-form-textbox-password'
-                  autocomplete='off'
-                  hide-details
+                  autocomplete='new-password'
                   )
+                  template(v-slot:append-inner)
+                    v-btn(
+                      icon
+                      variant='text'
+                      size='small'
+                      type='button'
+                      :aria-label='hideVerifyPass ? "Show password" : "Hide password"'
+                      @click='hideVerifyPass = !hideVerifyPass'
+                    )
+                      v-icon {{ hideVerifyPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
           div.v-card-chin(v-if='user.providerKey === `local`')
             v-spacer
-            v-btn.px-4(color="purple-darken-4", variant="flat", :loading='changePassLoading', type='submit', form='change-password-form')
+            v-btn.px-4(color="primary", variant="flat", :loading='changePassLoading', type='submit', form='change-password-form')
               v-icon(start) mdi-progress-check
               span {{$t('profile:auth.changePassword')}}
       v-col(lg='6' cols='12')
@@ -183,7 +242,7 @@
         //-     v-btn(variant='outlined', disabled) Remove Picture
         v-card.animated.fadeInUp.wait-p2s
           v-toolbar(color='blue-grey', density="compact", flat)
-            v-toolbar-title.text-body-large {{$t('profile:preferences')}}
+            h2.v-toolbar-title.text-body-large {{$t('profile:preferences')}}
           v-list(lines="two", density="compact")
             v-list-item
               template(v-slot:prepend)
@@ -195,9 +254,9 @@
                 v-menu(
                   v-model='editPop.timezone'
                   :close-on-content-click='false'
-                  min-width='350'
-                  max-width='350'
-                  location="left"
+                  min-width='min(350px, calc(100vw - 24px))'
+                  max-width='min(350px, calc(100vw - 24px))'
+                  :location='$vuetify.locale.isRtl ? "right" : "left"'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptTimezone`)')
@@ -240,9 +299,9 @@
                 v-menu(
                   v-model='editPop.dateFormat'
                   :close-on-content-click='false'
-                  min-width='350'
-                  max-width='350'
-                  location="left"
+                  min-width='min(350px, calc(100vw - 24px))'
+                  max-width='min(350px, calc(100vw - 24px))'
+                  :location='$vuetify.locale.isRtl ? "right" : "left"'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptDateFormat`)')
@@ -285,9 +344,9 @@
                 v-menu(
                   v-model='editPop.appearance'
                   :close-on-content-click='false'
-                  min-width='350'
-                  max-width='350'
-                  location="left"
+                  min-width='min(350px, calc(100vw - 24px))'
+                  max-width='min(350px, calc(100vw - 24px))'
+                  :location='$vuetify.locale.isRtl ? "right" : "left"'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptAppearance`)')
@@ -322,20 +381,23 @@
 
         v-card.mt-3.animated.fadeInUp.wait-p3s
           v-toolbar(color='primary', density="compact", flat)
-            v-toolbar-title
+            h2.v-toolbar-title
               .text-body-large {{$t('profile:groups.title')}}
           v-list(density="compact")
-            template(v-for='(grp, idx) of user.groups', :key='`grp-id-` + grp')
-              v-list-item
-                template(v-slot:prepend)
-                  v-avatar(size='32')
-                    v-icon mdi-account-group
-                v-list-item-title.text-body-medium {{grp}}
-              v-divider(v-if='idx < user.groups.length - 1')
+            template(v-if='user.groups.length')
+              template(v-for='(grp, idx) of user.groups', :key='`grp-id-` + grp')
+                v-list-item
+                  template(v-slot:prepend)
+                    v-avatar(size='32')
+                      v-icon mdi-account-group
+                  v-list-item-title.text-body-medium {{grp}}
+                v-divider(v-if='idx < user.groups.length - 1')
+            v-list-item(v-else)
+              v-list-item-title.text-body-medium.text-medium-emphasis {{ $t('profile:groups.empty', { defaultValue: 'No groups assigned' }) }}
 
         v-card.mt-3.animated.fadeInUp.wait-p4s
           v-toolbar(color='teal', density="compact", flat)
-            v-toolbar-title
+            h2.v-toolbar-title
               .text-body-large {{$t('profile:activity.title')}}
           v-card-text.text-grey-darken-2
             .text-body-small.text-grey {{$t('profile:activity.joinedOn')}}
@@ -344,15 +406,14 @@
             .text-body-medium: strong {{ $helpers.formatMoment(user.updatedAt, 'LLLL') }}
             .text-body-small.text-grey.mt-3 {{$t('profile:activity.lastLoginOn')}}
             .text-body-medium: strong {{ $helpers.formatMoment(user.lastLoginAt, 'LLLL') }}
-            v-divider.mt-3
             .text-body-small.text-grey.mt-3 {{$t('profile:activity.pagesCreated')}}
-            .text-body-medium: strong {{ user.pagesTotal }}
-            .text-body-small.text-grey.mt-3 {{$t('profile:activity.commentsPosted')}}
-            .text-body-medium: strong 0</template>
+            .text-body-medium: strong {{ user.pagesTotal }}</template>
 
 <script lang='ts'>
+import AsyncState from '@/components/common/async-state.vue'
 import { wikiStore } from '@/store/index.ts'
 import { changeProfilePassword, fetchProfile, updateProfile, type Profile } from '../../helpers/users-api'
+import { getErrorMessage } from '../../helpers/root-ui-store'
 import _ from 'lodash'
 import Cookies from 'js-cookie'
 import validateValues from '../../../shared/validation'
@@ -381,34 +442,27 @@ export default {
     namespaces: ['profile', 'auth']
   },
   components: {
+    AsyncState,
     PasswordStrength
   },
   data() {
     return {
       saveLoading: false,
       changePassLoading: false,
-      user: {
-        id: 0,
-        email: '',
-        name: 'unknown',
-        providerKey: '',
-        providerName: 'Unknown',
-        isSystem: false,
-        isVerified: false,
-        location: '',
-        jobTitle: '',
-        timezone: '',
-        dateFormat: '',
-        appearance: '',
-        createdAt: '1970-01-01',
-        updatedAt: '1970-01-01',
-        lastLoginAt: '1970-01-01',
-        groups: [],
-        pagesTotal: 0
-      } as Profile,
+      profileLoading: true,
+      profileError: '',
+      user: null as Profile | null,
       currentPass: '',
       newPass: '',
       verifyPass: '',
+      hideCurrentPass: true,
+      hideNewPass: true,
+      hideVerifyPass: true,
+      passwordErrors: {
+        current: [] as string[],
+        password: [] as string[],
+        verifyPassword: [] as string[]
+      },
       editPop: {
         name: false,
         location: false,
@@ -634,9 +688,6 @@ export default {
         { text: '(GMT+09:00) Moscow+06 - Yakutsk', value: 'Asia/Yakutsk' },
         { text: '(GMT+09:00) Palau', value: 'Pacific/Palau' },
         { text: '(GMT+09:00) Seoul', value: 'Asia/Seoul' },
-        { text: '(GMT+09:00) Tokyo', value: 'Asia/Tokyo' },
-        { text: '(GMT+09:30) Central Time - Darwin', value: 'Australia/Darwin' },
-        { text: '(GMT+10:00) Dumont D\'Urville', value: 'Antarctica/DumontDUrville' },
         { text: '(GMT+10:00) Eastern Time - Brisbane', value: 'Australia/Brisbane' },
         { text: '(GMT+10:00) Guam', value: 'Pacific/Guam' },
         { text: '(GMT+10:00) Moscow+07 - Vladivostok', value: 'Asia/Vladivostok' },
@@ -672,6 +723,12 @@ export default {
     }
   },
   computed: {
+    profileReady () {
+      return this.user !== null
+    },
+    passwordErrorSummary () {
+      return this.passwordErrors.current[0] || this.passwordErrors.password[0] || this.passwordErrors.verifyPassword[0] || ''
+    },
     dateFormats () {
       return [
         { text: this.$t('profile:localeDefault'), value: '' },
@@ -691,7 +748,7 @@ export default {
       ]
     },
     currentAppearance () {
-      return _.get(_.find(this.appearances, ['value', this.user.appearance]), 'text', false) || this.$t('profile:appearanceDefault')
+      return _.get(_.find(this.appearances, ['value', this.user?.appearance]), 'text', false) || this.$t('profile:appearanceDefault')
     },
     pictureUrl () {
       return wikiStore.user.pictureUrl
@@ -703,7 +760,7 @@ export default {
           url: this.pictureUrl
         }
       } else {
-        const nameParts = this.user.name.toUpperCase().split(' ')
+        const nameParts = (this.user?.name ?? '').toUpperCase().split(' ')
         let initials = nameParts[0]?.charAt(0) ?? ''
         if (nameParts.length > 1) {
           initials += nameParts[nameParts.length - 1]?.charAt(0) ?? ''
@@ -717,9 +774,11 @@ export default {
   },
   watch: {
     'user.appearance': function (newValue: string, _oldValue: string) {
+      if (!this.user) return
       void this.$vuetify.theme.change(resolveThemeName(newValue, siteConfig.darkMode))
     },
     'user.dateFormat': function (newValue: string, _oldValue: string) {
+      if (!this.user) return
       if (newValue === '') {
         this.$moment.updateLocale(this.$moment.locale(), null)
       } else {
@@ -732,6 +791,7 @@ export default {
       }
     },
     'user.timezone': function (newValue: string, _oldValue: string) {
+      if (!this.user) return
       if (newValue === '') {
         this.$moment.tz.setDefault()
       } else {
@@ -743,13 +803,20 @@ export default {
     this.loadProfile()
   },
   methods: {
-    async loadProfile () {
+    async loadProfile (): Promise<boolean> {
+      this.profileLoading = true
+      this.profileError = ''
       wikiStore.startLoading('profile-refresh')
       try {
         this.user = await fetchProfile(window.fetch.bind(window))
+        return true
       } catch (err) {
+        this.user = null
+        this.profileError = getErrorMessage(err)
         wikiStore.showError(err)
+        return false
       } finally {
+        this.profileLoading = false
         wikiStore.stopLoading('profile-refresh')
       }
     },
@@ -767,21 +834,23 @@ export default {
      * Save User Profile
      */
     async saveProfile () {
+      const profile = this.user
+      if (!profile || this.saveLoading) return
       this.saveLoading = true
       wikiStore.startLoading('profile-save')
 
       try {
         const token = await updateProfile(window.fetch.bind(window), {
-          name: this.user.name,
-          location: this.user.location,
-          jobTitle: this.user.jobTitle,
-          timezone: this.user.timezone,
-          dateFormat: this.user.dateFormat,
-          appearance: this.user.appearance
+          name: profile.name,
+          location: profile.location,
+          jobTitle: profile.jobTitle,
+          timezone: profile.timezone,
+          dateFormat: profile.dateFormat,
+          appearance: profile.appearance
         })
         Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
-        wikiStore.user.name = this.user.name
-        wikiStore.user.appearance = this.user.appearance
+        wikiStore.user.name = profile.name
+        wikiStore.user.appearance = profile.appearance
         wikiStore.showNotification({
           message: this.$t('profile:save.success'),
           style: 'success',
@@ -789,15 +858,20 @@ export default {
         })
       } catch (err) {
         wikiStore.showError(err)
+      } finally {
+        wikiStore.stopLoading('profile-save')
+        this.saveLoading = false
       }
-
-      wikiStore.stopLoading('profile-save')
-      this.saveLoading = false
     },
     /**
      * Change Password
      */
     async changePassword () {
+      this.passwordErrors = {
+        current: [],
+        password: [],
+        verifyPassword: []
+      }
       const validation = validateValues({
         current: this.currentPass,
         password: this.newPass,
@@ -832,6 +906,11 @@ export default {
       }, { fullMessages: false })
 
       if (validation) {
+        this.passwordErrors = {
+          current: validation.current ?? [],
+          password: validation.password ?? [],
+          verifyPassword: validation.verifyPassword ?? []
+        }
         if (validation.current) {
           wikiStore.showNotification({
             style: 'red',

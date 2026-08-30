@@ -19,7 +19,7 @@
       :width='$vuetify.display.smAndDown ? 320 : 256'
     )
       .profile-sidebar-mobile-header(v-if='$vuetify.display.smAndDown')
-        .text-label-large Profile
+        .text-label-large {{ $t('profile:workspace', { defaultValue: 'Profile' }) }}
         v-spacer
         v-btn(
           icon
@@ -29,6 +29,7 @@
           v-icon mdi-close
       nav.profile-navigation(aria-label='Profile sections')
         v-list(density="compact" nav)
+          v-list-subheader.profile-navigation-label {{ $t('profile:workspace', { defaultValue: 'Your workspace' }) }}
           v-list-item(to='/profile' color='primary')
             template(v-slot:prepend): v-icon mdi-face-profile-outline
             v-list-item-title {{$t('profile:title')}}
@@ -94,11 +95,10 @@ export default defineComponent({
   display: block;
   padding: 18px 12px;
 
-  &::before {
-    display: block;
+  .profile-navigation-label {
     margin: 0 10px 12px;
+    padding: 0;
     color: rgb(var(--v-theme-primary));
-    content: 'Your workspace';
     font-size: .66rem;
     font-weight: 760;
     letter-spacing: .12em;
@@ -269,8 +269,12 @@ export default defineComponent({
 
 @media (prefers-reduced-motion: reduce) {
   .profile-router-enter-active,
-  .profile-router-leave-active {
+  .profile-router-leave-active,
+  .profile .animated {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: .01ms !important;
+    transition-delay: 0s !important;
   }
 }
 </style>

@@ -8,18 +8,22 @@ v-container.admin-theme(fluid)
           .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:theme.title') }}
           .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s {{ $t('admin:theme.subtitle') }}
         v-spacer
+        v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
         v-btn.animated.fadeInRight(
           color='success'
           variant='flat'
           size='large'
-          :loading='loading'
-          :disabled='!configValid'
+          :loading='saving'
+          :disabled='!loaded || initialLoading || saving || !dirty || !configValid'
           @click='save'
         )
           v-icon(start) mdi-check
           span {{ $t('common:actions.apply') }}
 
-  v-form.pt-3(@submit.prevent='save')
+  v-form#theme-form.pt-3(
+    @submit.prevent='save'
+    :disabled='initialLoading || !loaded || saving'
+  )
     v-row
       v-col(cols='12', lg='4')
         v-card.animated.fadeInUp
@@ -97,15 +101,16 @@ v-container.admin-theme(fluid)
                 size='small'
                 variant='text'
                 prepend-icon='mdi-restore'
+                :disabled='!dirty || initialLoading'
+                @click='restoreSaved'
+              ) Restore saved
+              v-btn(
+                size='small'
+                variant='text'
+                prepend-icon='mdi-backup-restore'
+                :disabled='initialLoading || saving'
                 @click='resetActivePalette'
               ) Reset {{ previewMode }} colors
-            .theme-palette-grid
-              theme-color-field(
-                v-for='field in paletteFields'
-                :key='`${previewMode}-${field.key}`'
-                v-model='config.colors[previewMode][field.key]'
-                :label='field.label'
-              )
 
             v-divider.my-5
             .text-label-large.mb-2 Live preview
@@ -213,8 +218,8 @@ v-container.admin-theme(fluid)
                   auto-grow
                 )
                 i18next.text-body-small.pl-2.ml-1(path='admin:theme.cssOverrideWarning', tag='div')
-                  strong(place='caution' :class='$vuetify.theme.current.dark ? `text-red-lighten-3` : `text-red-darken-3`') {{ $t('admin:theme.cssOverrideWarningCaution') }}
-                  code(place='cssClass' :style='{ color: $vuetify.theme.current.dark ? `#ef9a9a` : `#c62828` }') .contents
+                  strong(place='caution' class='text-error') {{ $t('admin:theme.cssOverrideWarningCaution') }}
+                  code(place='cssClass' class='text-error') .contents
               v-col(cols='12', lg='6')
                 v-textarea.is-monospaced(
                   v-model='config.injectHead'
@@ -234,6 +239,18 @@ v-container.admin-theme(fluid)
                   :hint='$t(`admin:theme.bodyHtmlInjectionHint`)'
                   auto-grow
                 )
+  .d-flex.flex-wrap.justify-end.ga-2.mt-5.sticky-action-row
+    v-btn(
+      type='submit'
+      form='theme-form'
+      color='success'
+      variant='flat'
+      size='large'
+      :loading='saving'
+      :disabled='!loaded || initialLoading || saving || !dirty || !configValid'
+    )
+      v-icon(start) mdi-check
+      span {{ $t('common:actions.apply') }}
 </template>
 
 <script setup lang="ts">
@@ -254,7 +271,6 @@ import {
 import { cloneThemeColors, DEFAULT_THEME_COLORS, isThemeColors, normalizeThemeColors, type ThemeColorKey } from '../../../shared/theme-colors.ts'
 type PaletteMode = 'light' | 'dark'
 
-
 const createConfig = (): ThemeConfig => ({
   theme: 'default',
   iconset: 'mdi',
@@ -271,10 +287,12 @@ const createConfig = (): ThemeConfig => ({
 const theme = useTheme()
 const config = reactive<ThemeConfig>(createConfig())
 const persistedConfig = ref<ThemeConfig>(createConfig())
-const loading = ref(false)
 const previewMode = ref<PaletteMode>(config.darkMode ? 'dark' : 'light')
+const initialLoading = ref(true)
+const loaded = ref(false)
+const saving = ref(false)
+const dirty = computed(() => JSON.stringify(config) !== JSON.stringify(persistedConfig.value))
 const configValid = computed(() => isThemeColors(config.colors) && PageGutterCustomCssSchema.safeParse(config.gutterCustomCss).success)
-const themes = [{ text: 'Default', author: 'tsFranki', value: 'default' }]
 const iconsets = [
   { text: 'Material Design Icons (default)', value: 'mdi' },
   { text: 'Font Awesome 5', value: 'fa' },
@@ -329,25 +347,29 @@ watch(() => config.colors, colors => {
 }, { deep: true })
 
 const loadConfig = async (): Promise<void> => {
+  initialLoading.value = true
+  loaded.value = false
   loadingStart(wikiStore, 'admin-theme-refresh')
   try {
-    const loaded = await fetchThemeConfig(window.fetch.bind(window), 'Theme config response is invalid')
-    persistedConfig.value = copyConfig(loaded)
-    assignConfig(loaded)
+    const loadedConfig = await fetchThemeConfig(window.fetch.bind(window), 'Theme config response is invalid')
+    persistedConfig.value = copyConfig(loadedConfig)
+    assignConfig(loadedConfig)
+    loaded.value = true
   } catch (error) {
     pushGraphError(wikiStore, error)
   } finally {
+    initialLoading.value = false
     loadingStop(wikiStore, 'admin-theme-refresh')
   }
 }
 
-const resetActivePalette = (): void => {
-  Object.assign(config.colors[previewMode.value], DEFAULT_THEME_COLORS[previewMode.value])
+const restoreSaved = (): void => {
+  if (persistedConfig.value) assignConfig(persistedConfig.value)
 }
 
 const save = async (): Promise<void> => {
-  if (loading.value || !configValid.value) return
-  loading.value = true
+  if (!loaded.value || initialLoading.value || saving.value || !dirty.value || !configValid.value) return
+  saving.value = true
   loadingStart(wikiStore, 'admin-theme-save')
   try {
     const payload = copyConfig(config)
@@ -367,7 +389,7 @@ const save = async (): Promise<void> => {
     pushGraphError(wikiStore, error)
   } finally {
     loadingStop(wikiStore, 'admin-theme-save')
-    loading.value = false
+    saving.value = false
   }
 }
 

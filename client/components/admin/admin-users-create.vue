@@ -2,13 +2,18 @@
   v-dialog(v-model='isShown', max-width='650', persistent, :fullscreen='$vuetify.display.smAndDown')
     v-card
       .dialog-header.is-short
-        v-icon.mr-3(color='white') mdi-plus
+        v-icon.mr-3 mdi-plus
         span New User
         v-spacer
-        v-btn.mx-0(v-if='$vuetify.display.mdAndUp', color='white', variant="outlined", disabled)
+        v-btn.mx-0(v-if='$vuetify.display.mdAndUp', variant="outlined", disabled, aria-label='Bulk import unavailable')
           v-icon(start) mdi-database-import
-          span Bulk Import
+          span Bulk Import unavailable
       v-card-text.pt-5
+        v-alert.mb-4(v-if='providerLoadError', type='error', variant='tonal', density='compact')
+          span {{providerLoadError}}
+          template(v-slot:append)
+            v-btn(variant="text", size="small", @click='loadProviders', :loading='providerLoading') Retry
+        v-alert.mb-4(v-else-if='!providersLoaded', type='info', variant='tonal', density='compact') Loading authentication providers...
         v-select(
           :items='availableProviders'
           item-title='displayName'
@@ -16,37 +21,45 @@
           variant="outlined"
           prepend-icon='mdi-domain'
           v-model='provider'
-          label='Provider'
+          label='Provider *'
+          :disabled='!providersLoaded || submitting'
           )
         v-text-field(
           variant="outlined"
           prepend-icon='mdi-at'
           v-model='email'
-          label='Email Address'
+          label='Email Address *'
           key='newUserEmail'
           persistent-hint
           ref='emailInput'
+          :disabled='!providersLoaded || submitting'
           )
         v-text-field(
           v-if='provider === `local`'
           variant="outlined"
           prepend-icon='mdi-lock-outline'
-          append-icon='mdi-dice-5'
           v-model='password'
-          :label='mustChangePwd ? `Temporary Password` : `Password`'
+          :label='mustChangePwd ? `Temporary Password *` : `Password *`'
           counter='255'
-          @click:append='generatePwd'
           key='newUserPassword'
           persistent-hint
+          :disabled='!providersLoaded || submitting'
           )
+          template(v-slot:append-inner)
+            v-tooltip(location="top")
+              template(v-slot:activator='{ props }')
+                v-btn(icon, variant="text", size="small", v-bind='props', aria-label='Generate password', @click='generatePwd')
+                  v-icon mdi-dice-5
+              span Generate password
         v-text-field(
           variant="outlined"
           prepend-icon='mdi-account-outline'
           v-model='name'
-          label='Name'
+          label='Name *'
           :hint='provider === `local` ? `Can be changed by the user.` : `May be overwritten by the provider during login.`'
           key='newUserName'
           persistent-hint
+          :disabled='!providersLoaded || submitting'
           )
         v-select.mt-2(
           :items='groups'
@@ -61,6 +74,7 @@
           persistent-hint
           clearable
           multiple
+          :disabled='!providersLoaded || submitting'
           )
         v-divider
         v-checkbox(
@@ -69,22 +83,36 @@
           v-if='provider === `local`'
           v-model='mustChangePwd'
           hide-details
+          :disabled='submitting'
         )
         v-checkbox(
           color='primary'
           label='Send a welcome email'
           hide-details
           v-model='sendWelcomeEmail'
+          :disabled='submitting'
         )
       div.v-card-chin.admin-dialog-actions
         v-spacer
-        v-btn(variant="text", @click='isShown = false') Cancel
-        v-btn.px-3(variant="flat", color='primary', @click='newUser(false)', :disabled='!providersLoaded || availableProviders.length < 1')
-          v-icon(start) mdi-chevron-right
+        v-btn(variant="text", @click='isShown = false', :disabled='submitting') Cancel
+        v-btn.px-3(
+          variant="flat"
+          color='primary'
+          @click='newUser(true)'
+          :disabled='!providersLoaded || availableProviders.length < 1 || submitting'
+          :loading='submitting'
+          )
+          v-icon(start) mdi-check
           span Create
-        v-btn.px-3(v-if='$vuetify.display.mdAndUp', variant="flat", color='primary', @click='newUser(true)', :disabled='!providersLoaded || availableProviders.length < 1')
-          v-icon(start) mdi-chevron-double-right
-          span Create and Close
+        v-btn.px-3(
+          variant="outlined"
+          color='primary'
+          @click='newUser(false)'
+          :disabled='!providersLoaded || availableProviders.length < 1 || submitting'
+          :loading='submitting'
+          )
+          v-icon(start) mdi-plus
+          span Create another
 </template>
 
 <script lang='ts'>
@@ -139,7 +167,10 @@ export default {
       group: [] as number[],
       mustChangePwd: false,
       sendWelcomeEmail: false,
-      providersLoaded: false
+      providersLoaded: false,
+      providerLoading: false,
+      providerLoadError: '',
+      submitting: false
     }
   },
   computed: {
@@ -165,6 +196,8 @@ export default {
   },
   methods: {
     async loadProviders() {
+      this.providerLoading = true
+      this.providerLoadError = ''
       wikiStore.startLoading('admin-users-strategies-refresh')
       try {
         this.providers = (await fetchAdminAuthProviders(window.fetch.bind(window), 'Admin authentication providers response is invalid')).map(strategy => ({
@@ -179,13 +212,16 @@ export default {
         this.providersLoaded = true
       } catch (err) {
         this.providersLoaded = false
+        this.providerLoadError = getErrorMessage(err)
         wikiStore.showNotification({
           style: 'red',
-          message: getErrorMessage(err),
+          message: this.providerLoadError,
           icon: 'alert'
         })
+      } finally {
+        this.providerLoading = false
+        wikiStore.stopLoading('admin-users-strategies-refresh')
       }
-      wikiStore.stopLoading('admin-users-strategies-refresh')
     },
     async loadGroups() {
       wikiStore.startLoading('admin-auth-groups-refresh')
@@ -201,6 +237,7 @@ export default {
       wikiStore.stopLoading('admin-auth-groups-refresh')
     },
     async newUser(close = false) {
+      if (this.submitting) return
       if (!this.providersLoaded || this.availableProviders.length < 1) {
         wikiStore.showNotification({
           style: 'red',
@@ -253,8 +290,9 @@ export default {
         return
       }
 
+      this.submitting = true
+      wikiStore.startLoading('admin-users-create')
       try {
-        wikiStore.startLoading('admin-users-create')
         const resp = await createAdminUser(window.fetch.bind(window), {
           providerKey: this.provider,
           email: this.email,
@@ -265,40 +303,39 @@ export default {
           sendWelcomeEmail: this.sendWelcomeEmail
         }, 'User create response is invalid')
 
-        if (resp.succeeded) {
-          wikiStore.showNotification({
-            style: 'success',
-            message: 'New user created successfully.',
-            icon: 'check'
-          })
-          if (resp.welcomeEmailError) {
-            wikiStore.showNotification({
-              style: 'warning',
-              message: `The user was created, but the welcome email could not be sent: ${resp.welcomeEmailError}`,
-              icon: 'email-alert'
-            })
-          }
-
-
-          this.email = ''
-          this.password = ''
-          this.name = ''
-          this.group = []
-          this.mustChangePwd = false
-          this.sendWelcomeEmail = false
-
-          if (close) {
-            this.isShown = false
-            this.$emit('refresh')
-          } else {
-            ;(this.$refs.emailInput as FocusableRef).focus()
-          }
-        } else {
+        if (!resp.succeeded) {
           wikiStore.showNotification({
             style: 'red',
             message: resp.message || 'An unexpected error occurred.',
             icon: 'alert'
           })
+          return
+        }
+
+        wikiStore.showNotification({
+          style: 'success',
+          message: 'New user created successfully.',
+          icon: 'check'
+        })
+        if (resp.welcomeEmailError) {
+          wikiStore.showNotification({
+            style: 'warning',
+            message: `The user was created, but the welcome email could not be sent: ${resp.welcomeEmailError}`,
+            icon: 'email-alert'
+          })
+        }
+        this.$emit('refresh')
+        this.email = ''
+        this.password = ''
+        this.name = ''
+        this.group = []
+        this.mustChangePwd = false
+        this.sendWelcomeEmail = false
+
+        if (close) {
+          this.isShown = false
+        } else {
+          ;(this.$refs.emailInput as FocusableRef).focus()
         }
       } catch (err) {
         wikiStore.showNotification({
@@ -307,6 +344,7 @@ export default {
           icon: 'alert'
         })
       } finally {
+        this.submitting = false
         wikiStore.stopLoading('admin-users-create')
       }
     },

@@ -33,7 +33,7 @@
       <section class="agent-history__recent" aria-labelledby="agent-history-recent-title">
         <div class="agent-history__section-heading">
           <div>
-            <div id="agent-history-recent-title" class="agent-history__section-title">Recent</div>
+            <h3 id="agent-history-recent-title" class="agent-history__section-title">Recent</h3>
             <div class="agent-history__section-copy">Removed 90 days after last activity</div>
           </div>
           <v-chip size="x-small" variant="tonal">{{ recentSessions.length }}</v-chip>
@@ -71,7 +71,7 @@
       <section class="agent-history__folders" aria-labelledby="agent-history-folders-title">
         <div class="agent-history__section-heading agent-history__section-heading--folders">
           <div>
-            <div id="agent-history-folders-title" class="agent-history__section-title">Folders</div>
+            <h3 id="agent-history-folders-title" class="agent-history__section-title">Folders</h3>
             <div class="agent-history__section-copy">Conversations here never expire</div>
           </div>
           <v-chip color="primary" size="x-small" variant="tonal">Kept</v-chip>
@@ -79,28 +79,22 @@
 
         <v-expansion-panels v-if="folders.length" v-model="openFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
           <v-expansion-panel v-for="folder in folders" :key="folder.id" :value="folder.id" rounded="lg">
-            <v-expansion-panel-title class="agent-history__folder-title">
-              <v-icon class="me-2" color="primary" icon="mdi-folder-outline" size="19" />
-              <span class="agent-history__folder-name">{{ folder.name }}</span>
-              <span class="agent-history__folder-count">{{ sessionsForFolder(folder.id).length }}</span>
+            <div class="agent-history__folder-row">
+              <v-expansion-panel-title class="agent-history__folder-title">
+                <v-icon class="me-2" color="primary" icon="mdi-folder-outline" size="19" />
+                <span class="agent-history__folder-name">{{ folder.name }}</span>
+                <span class="agent-history__folder-count">{{ sessionsForFolder(folder.id).length }}</span>
+              </v-expansion-panel-title>
               <v-menu location="bottom end">
                 <template #activator="{ props: menuProps }">
-                  <v-btn
-                    v-bind="menuProps"
-                    class="me-1"
-                    icon="mdi-dots-horizontal"
-                    size="x-small"
-                    variant="text"
-                    :aria-label="`Actions for ${folder.name}`"
-                    @click.stop
-                  />
+                  <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${folder.name}`" />
                 </template>
                 <v-list density="compact">
                   <v-list-item prepend-icon="mdi-pencil-outline" title="Rename folder" @click="beginRenameFolder(folder)" />
-                  <v-list-item class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" @click="removingFolder = folder" />
+                  <v-list-item class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" @click="dialogError = ''; removingFolder = folder" />
                 </v-list>
               </v-menu>
-            </v-expansion-panel-title>
+            </div>
             <v-expansion-panel-text>
               <v-list v-if="sessionsForFolder(folder.id).length" class="agent-history__list agent-history__list--folder" density="compact" nav>
                 <v-list-item
@@ -145,22 +139,14 @@
         {{ editingFolder ? 'Rename folder' : 'New folder' }}
       </v-card-title>
       <v-card-text class="px-5 pt-4">
-        <v-text-field
-          ref="folderInput"
-          v-model="folderName"
-          autofocus
-          counter="64"
-          label="Folder name"
-          maxlength="64"
-          variant="outlined"
-          @keydown.enter.prevent="saveFolder"
-        />
+        <v-alert v-if="dialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
+        <v-text-field ref="folderInput" v-model="folderName" autofocus counter="64" label="Folder name" maxlength="64" variant="outlined" @keydown.enter.prevent="saveFolder" />
         <p class="text-body-small text-medium-emphasis mb-0">Chats in a folder are exempt from the 90-day history window.</p>
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" @click="folderEditorOpen = false">Cancel</v-btn>
-        <v-btn color="primary" :disabled="!folderName.trim()" :loading="savingFolder" @click="saveFolder">
+        <v-btn variant="text" :disabled="savingFolder" @click="folderEditorOpen = false">Cancel</v-btn>
+        <v-btn color="primary" :disabled="!folderName.trim() || savingFolder" :loading="savingFolder" @click="saveFolder">
           {{ editingFolder ? 'Save' : 'Create folder' }}
         </v-btn>
       </v-card-actions>
@@ -174,12 +160,13 @@
         Delete conversation?
       </v-card-title>
       <v-card-text class="px-5">
+        <v-alert v-if="dialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
         <strong>{{ deletingSession?.title || 'New conversation' }}</strong> and its messages will be permanently removed.
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" @click="deletingSession = null">Cancel</v-btn>
-        <v-btn color="error" :loading="deleting" @click="deleteSession">Delete</v-btn>
+        <v-btn variant="text" :disabled="deleting" @click="deletingSession = null">Cancel</v-btn>
+        <v-btn color="error" :loading="deleting" :disabled="deleting" @click="deleteSession">Delete</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -191,26 +178,26 @@
         Remove folder?
       </v-card-title>
       <v-card-text class="px-5">
+        <v-alert v-if="dialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
         <p class="mb-2"><strong>{{ removingFolder?.name }}</strong> will be removed.</p>
         <p class="mb-0">Its conversations return to Recent and each starts a fresh 90-day timer. No conversations are deleted.</p>
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" @click="removingFolder = null">Cancel</v-btn>
-        <v-btn color="warning" :loading="deleting" @click="deleteFolder">Remove folder</v-btn>
+        <v-btn variant="text" :disabled="deleting" @click="removingFolder = null">Cancel</v-btn>
+        <v-btn color="warning" :loading="deleting" :disabled="deleting" @click="deleteFolder">Remove folder</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import AgentHistorySessionActions from './agent-history-session-actions.vue'
-
 const emit = defineEmits<{ close: []; reset: [] }>()
 const agents = useAgentsStore()
 const { folders, sessions, thread } = storeToRefs(agents)
@@ -222,6 +209,7 @@ const editingFolder = ref<AgentConversationFolderView | null>(null)
 const savingFolder = ref(false)
 const deletingSession = ref<AgentSessionSummary | null>(null)
 const removingFolder = ref<AgentConversationFolderView | null>(null)
+const dialogError = ref('')
 const deleting = ref(false)
 
 const recentSessions = computed(() => sessions.value.filter(session => session.folderId === null))
@@ -269,60 +257,42 @@ const moveSession = async (session: AgentSessionSummary, folderId: string | null
   }
 }
 
-const beginCreateFolder = (): void => {
-  editingFolder.value = null
-  folderName.value = ''
-  folderEditorOpen.value = true
-}
-const beginRenameFolder = (folder: AgentConversationFolderView): void => {
-  editingFolder.value = folder
-  folderName.value = folder.name
-  folderEditorOpen.value = true
-}
+const beginCreateFolder = (): void => { dialogError.value = ''; editingFolder.value = null; folderName.value = ''; folderEditorOpen.value = true }
+const beginRenameFolder = (folder: AgentConversationFolderView): void => { dialogError.value = ''; editingFolder.value = folder; folderName.value = folder.name; folderEditorOpen.value = true }
 const saveFolder = async (): Promise<void> => {
   const name = folderName.value.trim()
-  if (!name) return
-  savingFolder.value = true
-  localError.value = ''
+  if (!name || savingFolder.value || deleting.value) return
+  savingFolder.value = true; dialogError.value = ''
   try {
     if (editingFolder.value) await agents.renameFolder(editingFolder.value.id, editingFolder.value.version, name)
     else await agents.createFolder(name)
     folderEditorOpen.value = false
-  } catch (value) {
-    localError.value = message(value, 'The folder could not be saved.')
-  } finally {
-    savingFolder.value = false
-  }
+  } catch (value) { dialogError.value = message(value, 'The folder could not be saved.') }
+  finally { savingFolder.value = false }
 }
 const deleteSession = async (): Promise<void> => {
   const session = deletingSession.value
-  if (!session) return
-  deleting.value = true
-  localError.value = ''
-  try {
-    await agents.removeSession(session.id)
-    deletingSession.value = null
-  } catch (value) {
-    localError.value = message(value, 'The conversation could not be deleted.')
-  } finally {
-    deleting.value = false
-  }
+  if (!session || deleting.value || savingFolder.value) return
+  deleting.value = true; dialogError.value = ''
+  try { await agents.removeSession(session.id); deletingSession.value = null }
+  catch (value) { dialogError.value = message(value, 'The conversation could not be deleted.') }
+  finally { deleting.value = false }
 }
 const deleteFolder = async (): Promise<void> => {
   const folder = removingFolder.value
-  if (!folder) return
-  deleting.value = true
-  localError.value = ''
-  try {
-    await agents.deleteFolder(folder.id)
-    openFolderIds.value = openFolderIds.value.filter(id => id !== folder.id)
-    removingFolder.value = null
-  } catch (value) {
-    localError.value = message(value, 'The folder could not be removed.')
-  } finally {
-    deleting.value = false
-  }
+  if (!folder || deleting.value || savingFolder.value) return
+  deleting.value = true; dialogError.value = ''
+  try { await agents.deleteFolder(folder.id); openFolderIds.value = openFolderIds.value.filter(id => id !== folder.id); removingFolder.value = null }
+  catch (value) { dialogError.value = message(value, 'The folder could not be removed.') }
+  finally { deleting.value = false }
 }
+const expandActiveFolder = (): void => {
+  const activeId = thread.value?.session.id
+  const activeSession = sessions.value.find(session => session.id === activeId)
+  if (activeSession?.folderId && !openFolderIds.value.includes(activeSession.folderId)) openFolderIds.value.push(activeSession.folderId)
+}
+watch(() => thread.value?.session.id, expandActiveFolder, { immediate: true })
+watch(folders, expandActiveFolder, { immediate: true })
 onBeforeUnmount(() => agents.cancelSessionTransition())
 
 
@@ -369,6 +339,9 @@ onBeforeUnmount(() => agents.cancelSessionTransition())
 .agent-history__folder-count { align-items: center; background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent); border-radius: 999px; display: inline-flex; font-size: .66rem; height: 1.3rem; justify-content: center; margin-inline: .35rem; min-width: 1.3rem; padding-inline: .32rem; }
 .agent-history__folder-panels :deep(.v-expansion-panel-text__wrapper) { padding: 0 .35rem .45rem; }
 .agent-history__list--folder { padding-inline: 0; }
+.agent-history__folder-row { display: flex; align-items: stretch; }
+.agent-history__folder-row .agent-history__folder-title { flex: 1; }
+.agent-history__folder-actions { align-self: center; flex: 0 0 auto; margin-inline-end: .35rem; }
 @media (max-width: 1199.98px) {
   .agent-history {
     border-radius: 0 !important;

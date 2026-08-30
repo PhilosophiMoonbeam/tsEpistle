@@ -8,21 +8,31 @@
             .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:navigation.title')}}
             .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{$t('admin:navigation.subtitle')}}
           v-spacer
-          v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/navigation', target='_blank')
-            v-icon mdi-help-circle
-          v-btn.mx-3.animated.fadeInDown.wait-p2s.mr-3(icon, variant="outlined", color='grey', @click='refresh')
-            v-icon mdi-refresh
-          v-btn.animated.fadeInDown(color='success', variant="flat", @click='save', size="large")
-            v-icon(start) mdi-check
-            span {{$t('common:actions.apply')}}
-        v-container.pa-0.mt-3(fluid)
+          v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
+          .d-flex.flex-wrap.align-center.ga-2
+            v-btn(icon, variant="outlined", color='grey', href='https://docs.requarks.io/navigation', target='_blank', :aria-label='$t(`admin:navigation.title`)', title='Open navigation documentation')
+              v-icon mdi-help-circle
+            v-btn(icon, variant="outlined", color='grey', @click='refresh', :aria-label='$t(`common:actions.refresh`)', title='Refresh navigation settings', :loading='initialLoading')
+              v-icon mdi-refresh
+            v-btn(
+              type='button'
+              color='success'
+              variant="flat"
+              :loading='saving'
+              :disabled='!loaded || initialLoading || saving || !dirty'
+              @click='save'
+            )
+              v-icon(start) mdi-check
+              span {{$t('common:actions.apply')}}
+        v-alert(v-if='initialLoading', type='info', variant='tonal', role='status') Loading navigation settings…
+        v-container.pa-0.mt-3(fluid, v-else-if='loaded')
           v-row(density="compact")
             v-col(cols='12', md='3')
               v-card.animated.fadeInUp
                 v-toolbar(color='teal', density="compact", flat, height='56')
                   v-toolbar-title.text-body-large {{$t('admin:navigation.mode')}}
-                v-list(nav, lines="two")
-                  v-list-item(value='TREE', :active='config.mode === `TREE`', @click='config.mode = `TREE`')
+                v-list(nav, lines="two", role='radiogroup', :aria-label='$t(`admin:navigation.mode`)')
+                  v-list-item(value='TREE', role='radio', :aria-checked='config.mode === `TREE`', :active='config.mode === `TREE`', @click='config.mode = `TREE`')
                     template(v-slot:prepend)
                       v-avatar
                         img(src='/_assets/svg/icon-tree-structure-dotted.svg', alt='Site Tree')
@@ -32,7 +42,7 @@
                       v-avatar
                         v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `TREE` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
                         v-icon(v-else, :color='config.mode === `TREE` ? `teal` : `grey-lighten-3`') mdi-check-circle
-                  v-list-item(value='STATIC', :active='config.mode === `STATIC`', @click='config.mode = `STATIC`')
+                  v-list-item(value='STATIC', role='radio', :aria-checked='config.mode === `STATIC`', :active='config.mode === `STATIC`', @click='config.mode = `STATIC`')
                     template(v-slot:prepend)
                       v-avatar
                         img(src='/_assets/svg/icon-features-list.svg', alt='Static Navigation')
@@ -42,7 +52,7 @@
                       v-avatar
                         v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `STATIC` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
                         v-icon(v-else, :color='config.mode === `STATIC` ? `teal` : `grey-lighten-3`') mdi-check-circle
-                  v-list-item(value='MIXED', :active='config.mode === `MIXED`', @click='config.mode = `MIXED`')
+                  v-list-item(value='MIXED', role='radio', :aria-checked='config.mode === `MIXED`', :active='config.mode === `MIXED`', @click='config.mode = `MIXED`')
                     template(v-slot:prepend)
                       v-avatar
                         img(src='/_assets/svg/icon-user-menu-male-dotted.svg', alt='Custom Navigation')
@@ -52,7 +62,7 @@
                       v-avatar
                         v-icon(v-if='$vuetify.theme.current.dark', :color='config.mode === `MIXED` ? `teal-lighten-3` : `grey-darken-2`') mdi-check-circle
                         v-icon(v-else, :color='config.mode === `MIXED` ? `teal` : `grey-lighten-3`') mdi-check-circle
-                  v-list-item(value='NONE', :active='config.mode === `NONE`', @click='config.mode = `NONE`')
+                  v-list-item(value='NONE', role='radio', :aria-checked='config.mode === `NONE`', :active='config.mode === `NONE`', @click='config.mode = `NONE`')
                     template(v-slot:prepend)
                       v-avatar
                         img(src='/_assets/svg/icon-cancel-dotted.svg', alt='None')
@@ -100,15 +110,22 @@
                           template(v-slot:prepend)
                             v-avatar(size='24'): v-icon(color="blue-lighten-3") mdi-alert
                           em.text-body-small.text-blue-lighten-4 {{$t('admin:navigation.emptyList')}}
-                        draggable(v-model='currentTree')
-                          template(v-for='navItem in currentTree')
+                        draggable(v-model='currentTree', handle='.nav-drag-handle')
+                          template(v-for='(navItem, idx) in currentTree')
                             v-list-item(
                               v-if='navItem.kind === "link"'
                               :key='navItem.id'
+                              role='option'
+                              :aria-selected='navItem === current'
+                              tabindex='0'
                               :class='(navItem === current) ? "bg-blue" : ""'
                               @click='selectItem(navItem)'
-                              )
+                              @keydown.arrow-up.prevent='moveItem(idx, -1)'
+                              @keydown.arrow-down.prevent='moveItem(idx, 1)'
+                            )
                               template(v-slot:prepend)
+                                v-btn.nav-drag-handle(icon, size='small', variant='text', :aria-label='`Reorder ${navItem.label}`', @click.stop='selectItem(navItem)')
+                                  v-icon(size='18') mdi-drag-horizontal
                                 v-avatar(size='24', rounded='0')
                                   v-icon(v-if='navItem.icon.match(/fa[a-z] fa-/)', size='19') {{ navItem.icon }}
                                   v-icon(v-else) {{ navItem.icon }}
@@ -116,17 +133,35 @@
                             .py-2.clickable(
                               v-else-if='navItem.kind === "divider"'
                               :key='navItem.id'
+                              role='option'
+                              :aria-selected='navItem === current'
+                              tabindex='0'
                               :class='(navItem === current) ? "bg-blue" : ""'
                               @click='selectItem(navItem)'
-                              )
+                              @keydown.enter.prevent='selectItem(navItem)'
+                              @keydown.space.prevent='selectItem(navItem)'
+                              @keydown.arrow-up.prevent='moveItem(idx, -1)'
+                              @keydown.arrow-down.prevent='moveItem(idx, 1)'
+                            )
+                              v-btn.nav-drag-handle(icon, size='small', variant='text', :aria-label='`Reorder divider`', @click.stop='selectItem(navItem)')
+                                v-icon(size='18') mdi-drag-horizontal
                               v-divider
                             v-list-subheader.pl-4.clickable(
                               v-else-if='navItem.kind === "header"'
                               :key='navItem.id'
+                              role='option'
+                              :aria-selected='navItem === current'
+                              tabindex='0'
                               :class='(navItem === current) ? "bg-blue" : ""'
                               @click='selectItem(navItem)'
-                              ) {{navItem.label}}
-                      div.v-card-chin
+                              @keydown.enter.prevent='selectItem(navItem)'
+                              @keydown.space.prevent='selectItem(navItem)'
+                              @keydown.arrow-up.prevent='moveItem(idx, -1)'
+                              @keydown.arrow-down.prevent='moveItem(idx, 1)'
+                            )
+                              v-btn.nav-drag-handle(icon, size='small', variant='text', :aria-label='`Reorder ${navItem.label}`', @click.stop='selectItem(navItem)')
+                                v-icon(size='18') mdi-drag-horizontal
+                              span {{navItem.label}}
                         v-menu(location="bottom", min-width='200px', style='flex: 1 1;')
                           template(v-slot:activator='{ props }')
                             v-btn(v-bind='props', color='primary', variant="flat", block)
@@ -151,9 +186,9 @@
                         v-toolbar(height='56', color="teal-lighten-1", flat)
                           .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.link') })}}
                           v-spacer
-                          v-btn.px-5(color='white', variant="outlined", @click='deleteItem(current)')
+                          v-btn.px-5(color='error', variant="text", :disabled='saving', @click='deleteItem(current)')
                             v-icon(start) mdi-delete
-                            span {{$t('admin:navigation.delete', { kind: $t('admin:navigation.link') })}}
+                            span Remove item
                         v-card-text
                           v-text-field(
                             variant="outlined"
@@ -216,9 +251,9 @@
                         v-toolbar(height='56', color="teal-lighten-1", flat)
                           .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.header') })}}
                           v-spacer
-                          v-btn.px-5(color='white', variant="outlined", @click='deleteItem(current)')
+                          v-btn.px-5(color='error', variant="text", :disabled='saving', @click='deleteItem(current)')
                             v-icon(start) mdi-delete
-                            span {{$t('admin:navigation.delete', { kind: $t('admin:navigation.header') })}}
+                            span Remove item
                         v-card-text
                           v-text-field(
                             variant="outlined"
@@ -232,33 +267,47 @@
                         v-toolbar(height='56', color="teal-lighten-1", flat)
                           .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.divider') })}}
                           v-spacer
-                          v-btn.px-5(color='white', variant="outlined", @click='deleteItem(current)')
+                          v-btn.px-5(color='error', variant="text", :disabled='saving', @click='deleteItem(current)')
                             v-icon(start) mdi-delete
-                            span {{$t('admin:navigation.delete', { kind: $t('admin:navigation.divider') })}}
+                            span Remove item
 
                       v-card-text(v-if='current.kind')
-                        v-radio-group.pl-8(v-model='current.visibilityMode', mandatory, hide-details)
+                        .text-label-large Visibility
+                        .text-body-small.text-medium-emphasis Choose who can see this item.
+                        v-divider.my-4
+                        v-radio-group(v-model='current.visibilityMode', mandatory, hide-details, aria-label='Visibility')
                           v-radio(:label='$t("admin:navigation.visibilityMode.all")', value='all', color='primary')
                           v-radio.mt-3(:label='$t("admin:navigation.visibilityMode.restricted")', value='restricted', color='primary')
-                        .pl-8
-                          v-select.pl-8.mt-3(
-                            item-title='name'
-                            item-value='id'
-                            variant="outlined"
-                            prepend-icon='mdi-account-group'
-                            label='Groups'
-                            :disabled='current.visibilityMode !== `restricted`'
-                            v-model='current.visibilityGroups'
-                            :items='groups'
-                            persistent-hint
-                            clearable
-                            multiple
-                          )
+                        v-select.mt-3(
+                          item-title='name'
+                          item-value='id'
+                          variant="outlined"
+                          prepend-icon='mdi-account-group'
+                          label='Groups'
+                          :disabled='current.visibilityMode !== `restricted`'
+                          :hint='current.visibilityMode !== `restricted` ? "Select Restricted to choose groups." : ""'
+                          persistent-hint
+                          v-model='current.visibilityGroups'
+                          :items='groups'
+                          clearable
+                          multiple
+                        )
                       template(v-else)
                         v-toolbar(height='56', color="teal-lighten-1", flat)
                         v-card-text.text-grey(v-if='currentTree.length > 0') {{$t('admin:navigation.noSelectionText')}}
                         v-card-text.text-grey(v-else) {{$t('admin:navigation.noItemsText')}}
 
+        .d-flex.flex-wrap.justify-end.ga-2.mt-5.sticky-action-row
+          v-btn(
+            color='success'
+            variant='flat'
+            size='large'
+            :loading='saving'
+            :disabled='!loaded || initialLoading || saving || !dirty'
+            @click='save'
+          )
+            v-icon(start) mdi-check
+            span {{$t('common:actions.apply')}}
     v-dialog(v-model='copyFromLocaleDialogIsShown', max-width='650', persistent)
       v-card
         .dialog-header.is-short.is-teal
@@ -267,7 +316,7 @@
         v-card-text.pt-5
           .text-body-medium {{$t('admin:navigation.copyFromLocaleInfoText')}}
           v-select.mt-3(
-            :items='locales'
+            :items='copyLocales'
             item-title='nativeName'
             item-value='code'
             variant="outlined"
@@ -280,9 +329,9 @@
         div.v-card-chin
           v-spacer
           v-btn(variant="text", @click='copyFromLocaleDialogIsShown = false') {{$t('common:actions.cancel')}}
-          v-btn.px-3(variant="flat", color='primary', @click='copyFromLocale')
+          v-btn.px-3(variant="flat", color='primary', :disabled='!copySourceCount', @click='copyFromLocale')
             v-icon(start) mdi-chevron-right
-            span {{$t('common:actions.copy')}}
+            span {{$t('common:actions.copy')}} ({{copySourceCount}})
 
     page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')</template>
 
@@ -322,10 +371,21 @@ export default {
         expandParent: true
       } as NavigationConfig,
       allLocales: [] as LocaleRow[],
-      copyFromLocaleCode: 'en'
+      copyFromLocaleCode: 'en',
+      initialLoading: true,
+      loaded: false,
+      saving: false,
+      persistedConfig: null as NavigationConfig | null,
+      persistedTrees: [] as NavigationTreeRow[]
     }
   },
   computed: {
+    dirty (): boolean {
+      return this.persistedConfig !== null && (
+        JSON.stringify(this.config) !== JSON.stringify(this.persistedConfig) ||
+        JSON.stringify(this.trees) !== JSON.stringify(this.persistedTrees)
+      )
+    },
     navTypes () {
       return [
         { text: this.$t('admin:navigation.navType.external'), value: 'external' },
@@ -338,6 +398,12 @@ export default {
     locales () {
       const allowedCodes = new Set([...siteLangs.map(locale => locale.code), 'en', siteConfig.lang])
       return this.allLocales.filter(locale => allowedCodes.has(locale.code))
+    },
+    copyLocales () {
+      return this.locales.filter(locale => locale.code !== this.currentLang)
+    },
+    copySourceCount () {
+      return (_.find(this.trees, ['locale', this.copyFromLocaleCode])?.items || []).length
     },
     currentTree: {
       get () {
@@ -419,11 +485,20 @@ export default {
       this.current = newItem
     },
     deleteItem(item: NavigationItem) {
+      if (!window.confirm(`Remove this ${item.kind}? This change will be pending until Apply.`)) return
       this.currentTree = _.pull(this.currentTree, item)
       this.current = createEmptyNavigationItem()
     },
     selectItem(item: NavigationItem) {
       this.current = item
+    },
+    moveItem(index: number, offset: number) {
+      const target = index + offset
+      if (target < 0 || target >= this.currentTree.length) return
+      const next = [...this.currentTree]
+      const [moved] = next.splice(index, 1)
+      next.splice(target, 0, moved)
+      this.currentTree = next
     },
     selectPage() {
       this.selectPageModal = true
@@ -432,13 +507,19 @@ export default {
       this.current.target = `/${locale}/${path}`
     },
     copyFromLocale () {
+      const source = _.get(_.find(this.trees, ['locale', this.copyFromLocaleCode]), 'items', null) || []
+      if (source.length < 1) return
       this.copyFromLocaleDialogIsShown = false
-      this.currentTree = [...this.currentTree, ..._.get(_.find(this.trees, ['locale', this.copyFromLocaleCode]), 'items', null) || []]
+      this.currentTree = [...this.currentTree, ..._.cloneDeep(source)]
     },
     async save() {
+      if (!this.loaded || this.initialLoading || this.saving || !this.dirty) return
+      this.saving = true
       wikiStore.startLoading('admin-navigation-save')
       try {
         await saveNavigation(window.fetch.bind(window), this.trees, this.config.mode, this.config.expandParent)
+        this.persistedConfig = _.cloneDeep(this.config)
+        this.persistedTrees = _.cloneDeep(this.trees)
         wikiStore.showNotification({
           message: this.$t('admin:navigation.saveSuccess'),
           style: 'success',
@@ -446,16 +527,23 @@ export default {
         })
       } catch (err) {
         wikiStore.showError(err)
+      } finally {
+        this.saving = false
+        wikiStore.stopLoading('admin-navigation-save')
       }
-      wikiStore.stopLoading('admin-navigation-save')
     },
     async loadNavigation(notify = false) {
+      this.initialLoading = true
+      this.loaded = false
       wikiStore.startLoading('admin-navigation-refresh')
       try {
         const navigation = await fetchNavigation(window.fetch.bind(window), 'Navigation response is invalid')
         this.config = _.cloneDeep(navigation.config)
         this.trees = _.cloneDeep(navigation.tree)
+        this.persistedConfig = _.cloneDeep(this.config)
+        this.persistedTrees = _.cloneDeep(this.trees)
         this.current = createEmptyNavigationItem()
+        this.loaded = true
         if (notify) {
           wikiStore.showNotification({
             message: 'Navigation has been refreshed.',
@@ -465,10 +553,13 @@ export default {
         }
       } catch (err) {
         wikiStore.showError(err)
+      } finally {
+        this.initialLoading = false
+        wikiStore.stopLoading('admin-navigation-refresh')
       }
-      wikiStore.stopLoading('admin-navigation-refresh')
     },
     async refresh() {
+      if (this.dirty && !window.confirm('Discard unsaved navigation changes and refresh?')) return
       await this.loadNavigation(true)
     }
   },

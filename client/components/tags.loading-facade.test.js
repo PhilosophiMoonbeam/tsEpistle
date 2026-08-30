@@ -6,10 +6,14 @@ describe('tags REST migration guard', () => {
 
   test('loads tags and filtered pages through REST helpers', () => {
     expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
-    expect(source).toMatch(/import\s+\{\s*fetchPages,\s*fetchPageTags,\s*type\s+PageListRow,\s*type\s+PageTagRow\s*\}\s+from\s+['"]\.\.\/helpers\/pages-api['"]/)
+    expect(source).toMatch(
+      /import\s+\{\s*fetchPages,\s*fetchPageTags,\s*type\s+PageListRow,\s*type\s+PageTagRow\s*\}\s+from\s+['"]\.\.\/helpers\/pages-api['"]/
+    )
     expect(source).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(source).toContain('this.tags = await fetchPageTags(window.fetch.bind(window))')
-    expect(source).toMatch(/fetchPages\(window\.fetch\.bind\(window\),\s*\{[\s\S]*locale: this\.locale === 'any' \? undefined : this\.locale,[\s\S]*tags: this\.selection/)
+    expect(source).toMatch(
+      /fetchPages\(window\.fetch\.bind\(window\),\s*\{[\s\S]*locale: this\.locale === 'any' \? undefined : this\.locale,[\s\S]*tags: this\.selection/
+    )
     expect(source).not.toMatch(/graphql-tag|\$apollo/)
   })
 
@@ -26,9 +30,10 @@ describe('tags REST migration guard', () => {
     expect(source).not.toMatch(/verticalNativeBarPos:\s*this\.\$vuetify/)
   })
 
-  test('renders Vuetify data iterator rows from their raw page values', () => {
+  test('renders native page links from Vuetify iterator raw values', () => {
     expect(source).toContain("v-for='entry of props.items'")
-    expect(source).toContain("{{entry.raw.title}}")
-    expect(source).toContain("@click='goTo(entry.raw)'")
+    expect(source).toContain('{{entry.raw.title}}')
+    expect(source).toMatch(/:href\s*=\s*['"]`\/\$\{entry\.raw\.locale\}\/\$\{entry\.raw\.path\}`['"]/)
+    expect(source).not.toMatch(/@click\s*=\s*['"]goTo\(entry\.raw\)['"]/)
   })
 })

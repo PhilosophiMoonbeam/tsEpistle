@@ -1,12 +1,12 @@
 <template lang='pug'>
-v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog', aria-modal='true', aria-labelledby='content-extension-title')
+v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, @update:model-value='close'): v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog', aria-modal='true', aria-labelledby='content-extension-title')
   v-toolbar(color="grey-darken-4", flat)
     v-icon.mr-3(color="teal-lighten-2") {{activeStatus?.icon || 'mdi-shape-outline'}}
     v-toolbar-title#content-extension-title Insert content extension
     v-spacer
     v-btn(icon, aria-label='Close content extension dialog', @click='close')
       v-icon mdi-close
-  v-container.py-6(fluid)
+  v-container.editor-modal-blocks-body.py-6(fluid)
     v-row.justify-center
       v-col(cols='12', md='9', lg='7', xl='6')
         v-skeleton-loader(v-if='isLoading', type='heading, paragraph, paragraph, actions')
@@ -189,7 +189,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog',
                         persistent-hint
                         clearable
                       )
-                      v-textarea.mt-4(v-model='panel.content', label='Panel content', rows='4', auto-grow, counter='20000', required)
+                      v-textarea.mt-4.source-textarea(v-model='panel.content', label='Panel content', rows='4', auto-grow, counter='20000', required)
                   v-btn.mb-5(variant='outlined', :disabled='tabs.panels.length >= 12', @click='addTabPanel')
                     v-icon(start) mdi-plus
                     | Add panel
@@ -203,7 +203,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog',
                     | Hidden content remains readable without JavaScript and in print. The browser disclosure control is added only after hydration.
                   v-text-field(v-model='spoiler.label', label='Cover label', counter='200')
                   v-text-field.mt-4(v-model='spoiler.hint', label='Cover hint', counter='200')
-                  v-textarea.mt-4(v-model='spoiler.content', label='Hidden content', rows='6', auto-grow, counter='20000', required)
+                  v-textarea.mt-4.source-textarea(v-model='spoiler.content', label='Hidden content', rows='6', auto-grow, counter='20000', required)
                 template(v-else-if='selectedKey === `infobox`')
                   v-text-field(v-model='infobox.title', label='Title', counter='200', required)
                   v-text-field.mt-4(
@@ -276,7 +276,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog',
                 template(v-else-if='selectedKey === `diagram`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
                     | Mermaid renders locally with strict security and no remote network request. Unsupported or unsafe SVG falls back to visible source.
-                  v-textarea(v-model='diagram.source', label='Mermaid source', rows='8', auto-grow, counter='50000', required)
+                  v-textarea.source-textarea(v-model='diagram.source', label='Mermaid source', rows='8', counter='50000', required)
                   v-text-field.mt-4(v-model='diagram.caption', label='Caption (optional)', counter='300')
                   v-row.mt-2
                     v-col(cols='12', sm='6')
@@ -287,7 +287,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog',
                   v-alert.mb-5(type='warning', variant='tonal', density='compact')
                     | Diagram source is sent to kroki.io only after the reader explicitly chooses to render it.
                   v-select(v-model='kroki.type', :items='krokiTypes', label='Diagram language')
-                  v-textarea.mt-4(v-model='kroki.source', label='Diagram source', rows='8', auto-grow, counter='50000', required)
+                  v-textarea.mt-4.source-textarea(v-model='kroki.source', label='Diagram source', rows='8', counter='50000', required)
                   v-text-field.mt-4(v-model='kroki.caption', label='Caption (optional)', counter='300')
                   v-row.mt-2
                     v-col(cols='12', sm='6')
@@ -297,7 +297,7 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog',
                 template(v-else-if='selectedKey === `plantuml`')
                   v-alert.mb-5(type='warning', variant='tonal', density='compact')
                     | Diagram source is sent to plantuml.com only after the reader explicitly chooses to render it.
-                  v-textarea(v-model='plantuml.source', label='PlantUML source', rows='8', auto-grow, counter='50000', required)
+                  v-textarea.source-textarea(v-model='plantuml.source', label='PlantUML source', rows='8', counter='50000', required)
                   v-text-field.mt-4(v-model='plantuml.caption', label='Caption (optional)', counter='300')
                   v-row.mt-2
                     v-col(cols='12', sm='6')
@@ -319,11 +319,13 @@ v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog',
                       v-text-field(v-model.number='map.height', type='number', min='240', max='800', label='Map height')
                   v-text-field(v-model='map.label', label='Location label (optional)', counter='200')
                 v-alert.mt-4(v-if='submitError', type='error', variant='tonal', density='compact') {{submitError}}
-                .d-flex.flex-wrap.justify-end.mt-6
+                .editor-modal-blocks-actions
                   v-btn.mr-3(variant="text", @click='close') Cancel
                   v-btn(color='teal', type='submit', :disabled='!canSubmit || !canInsertActive')
                     v-icon(start) mdi-plus
-                    | Insert {{activeStatus.title}}</template>
+                    | Insert {{activeStatus.title}}
+
+</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
@@ -585,9 +587,6 @@ export default defineComponent({
     close () {
       wikiStore.editor.activeModal = ''
     },
-    handleEscape (event: KeyboardEvent) {
-      if (event.key === 'Escape') this.close()
-    },
     addGalleryImage () {
       if (this.gallery.images.length < 50) this.gallery.images.push({ src: '', alt: '', caption: '' })
     },
@@ -805,25 +804,51 @@ export default defineComponent({
     }
   },
   mounted () {
-    document.addEventListener('keydown', this.handleEscape)
     void this.loadExtensions()
   },
   beforeUnmount () {
-    document.removeEventListener('keydown', this.handleEscape)
+    // Extension loading is request-scoped and does not require a global listener.
   }
 })
 </script>
 
 <style lang='scss'>
 .editor-modal-blocks {
-  position: fixed !important;
-  top: 112px;
-  left: 64px;
-  z-index: 10;
-  width: calc(100vw - 64px - 17px);
-  height: calc(100dvh - 112px - 24px);
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
   background-color: rgba(darken(mc('grey', '900'), 3%), .96) !important;
+
+  > .v-toolbar {
+    flex: 0 0 auto;
+  }
+
+  &-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  &-actions {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 12px 0;
+    margin-top: 24px;
+    background: rgba(darken(mc('grey', '900'), 3%), .96);
+  }
+
+  .source-textarea textarea {
+    font-family: 'Roboto Mono', monospace;
+    line-height: 1.45;
+    min-height: 180px;
+    max-height: min(45dvh, 520px);
+    overflow-y: auto;
+  }
 
   @media (max-width: 1599.98px) {
     .v-container {
@@ -833,11 +858,6 @@ export default defineComponent({
   }
 
   @include until($tablet) {
-    top: 64px;
-    left: 0;
-    width: 100vw;
-    height: calc(100dvh - 64px);
-
     .v-container {
       padding-right: 12px !important;
       padding-left: 12px !important;

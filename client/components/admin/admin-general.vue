@@ -8,13 +8,25 @@
             .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:general.title') }}
             .text-body-large.text-grey.animated.fadeInLeft {{ $t('admin:general.subtitle') }}
           v-spacer
-          v-btn.animated.fadeInDown(color='success', variant="flat", @click='save', size="large")
+          v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
+          v-btn.animated.fadeInDown(
+            type='submit'
+            form='general-form'
+            color='success'
+            variant="flat"
+            size="large"
+            :loading='saving'
+            :disabled='!loaded || initialLoading || saving || !dirty || !formValid'
+          )
             v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
-        v-form.pt-3
+        v-form#general-form.pt-3(
+          @submit.prevent='save'
+          v-model='formValid'
+          :disabled='initialLoading || !loaded || saving'
+        )
           v-row
             v-col(lg='6' cols='12')
-              v-form
                 v-card.animated.fadeInUp
                   v-toolbar(color='primary', density="compact", flat)
                     v-toolbar-title.text-body-large {{ $t('admin:general.siteInfo') }}
@@ -23,45 +35,46 @@
                     v-text-field(
                       variant="outlined"
                       :label='$t(`admin:general.siteUrl`)'
+                      :rules='hostRules'
                       required
                       :counter='255'
                       v-model='config.host'
                       prepend-icon='mdi-label-variant-outline'
                       :hint='$t(`admin:general.siteUrlHint`)'
                       persistent-hint
-                      )
+                    )
                     v-text-field.mt-3(
                       variant="outlined"
                       :label='$t(`admin:general.siteTitle`)'
+                      :rules='titleRules'
                       required
                       :counter='50'
                       v-model='config.title'
                       prepend-icon='mdi-earth'
                       :hint='$t(`admin:general.siteTitleHint`)'
                       persistent-hint
-                      )
-                  v-divider
+                    )
                   .text-label-small.text-grey.pa-4 {{$t('admin:general.logo')}}
-                  .pt-2.pb-7.pl-10.pr-3
-                    .d-flex.align-center
-                      v-avatar(size='100', rounded='0')
-                        v-img(
-                          :src='config.logoUrl'
-                          lazy-src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNcWQ8AAdcBKrJda2oAAAAASUVORK5CYII='
-                          aspect-ratio='1'
-                          )
-                      .ml-4(style='flex: 1 1 auto;')
-                        v-text-field(
-                          variant="outlined"
-                          :label='$t(`admin:general.logoUrl`)'
-                          v-model='config.logoUrl'
-                          :hint='$t(`admin:general.logoUrlHint`)'
-                          persistent-hint
-                          append-icon='mdi-folder-image'
-                          @click:append='browseLogo'
-                          @keyup.enter='refreshLogo'
-                        )
-                  v-divider
+                  .logo-preview
+                    .text-label-large.mb-2 {{ $t('admin:general.logo') }}
+                    v-avatar(size='100', rounded='0')
+                      v-img(
+                        :src='config.logoUrl'
+                        alt='Current site logo preview'
+                        lazy-src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNcWQ8AAdcBKrJda2oAAAAASUVORK5CYII='
+                        aspect-ratio='1'
+                      )
+                  .logo-field
+                    v-text-field(
+                      variant="outlined"
+                      :label='$t(`admin:general.logoUrl`)'
+                      v-model='config.logoUrl'
+                      :hint='$t(`admin:general.logoUrlHint`)'
+                      persistent-hint
+                      append-icon='mdi-folder-image'
+                      @click:append='browseLogo'
+                      @keyup.enter='refreshLogo'
+                    )
                   .text-label-small.text-grey.pa-4 {{$t('admin:general.footerCopyright')}}
                   .px-3.pb-3
                     v-text-field(
@@ -118,41 +131,41 @@
                       persistent-hint
                       )
 
-              v-card.mt-5.animated.fadeInUp.wait-p4s
-                v-toolbar(color='warning', density='compact', flat)
-                  v-toolbar-title.text-body-large {{ $t('admin:general.siteBanner') }}
-                v-card-text
-                  v-switch.mt-0(
-                    inset
-                    color='warning'
-                    v-model='config.banner.isEnabled'
-                    :label='$t(`admin:general.siteBannerEnabled`)'
-                    :hint='$t(`admin:general.siteBannerEnabledHint`)'
-                    persistent-hint
-                  )
-                  v-text-field.mt-3(
-                    variant='outlined'
-                    v-model='config.banner.title'
-                    :label='$t(`admin:general.siteBannerTitle`)'
-                    :hint='$t(`admin:general.siteBannerTitleHint`)'
-                    :counter='160'
-                    prepend-icon='mdi-format-title'
-                    persistent-hint
-                  )
-                  v-textarea.mt-3(
-                    variant='outlined'
-                    v-model='config.banner.content'
-                    :label='$t(`admin:general.siteBannerContent`)'
-                    :hint='$t(`admin:general.siteBannerContentHint`)'
-                    :counter='8000'
-                    prepend-icon='mdi-language-markdown'
-                    auto-grow
-                    rows='4'
-                    persistent-hint
-                  )
-                  template(v-if='config.banner.isEnabled && (config.banner.title || config.banner.content)')
-                    .text-label-small.text-grey.mb-2 {{ $t('admin:general.siteBannerPreview') }}
-                    site-banner(:banner='config.banner')
+                v-card.mt-5.animated.fadeInUp.wait-p4s
+                  v-toolbar(color='warning', density='compact', flat)
+                    v-toolbar-title.text-body-large {{ $t('admin:general.siteBanner') }}
+                  v-card-text
+                    v-switch.mt-0(
+                      inset
+                      color='warning'
+                      v-model='config.banner.isEnabled'
+                      :label='$t(`admin:general.siteBannerEnabled`)'
+                      :hint='$t(`admin:general.siteBannerEnabledHint`)'
+                      persistent-hint
+                    )
+                    v-text-field.mt-3(
+                      variant='outlined'
+                      v-model='config.banner.title'
+                      :label='$t(`admin:general.siteBannerTitle`)'
+                      :hint='$t(`admin:general.siteBannerTitleHint`)'
+                      :counter='160'
+                      prepend-icon='mdi-format-title'
+                      persistent-hint
+                    )
+                    v-textarea.mt-3(
+                      variant='outlined'
+                      v-model='config.banner.content'
+                      :label='$t(`admin:general.siteBannerContent`)'
+                      :hint='$t(`admin:general.siteBannerContentHint`)'
+                      :counter='8000'
+                      prepend-icon='mdi-language-markdown'
+                      auto-grow
+                      rows='4'
+                      persistent-hint
+                    )
+                    template(v-if='config.banner.isEnabled && (config.banner.title || config.banner.content)')
+                      .text-label-small.text-grey.mb-2 {{ $t('admin:general.siteBannerPreview') }}
+                      site-banner(:banner='config.banner')
 
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp.wait-p4s
@@ -294,6 +307,17 @@
                       persistent-hint
                       )
 
+        .d-flex.flex-wrap.justify-end.ga-2.mt-5.sticky-action-row
+          v-btn(
+            type='submit'
+            color='success'
+            variant='flat'
+            size='large'
+            :loading='saving'
+            :disabled='!loaded || initialLoading || saving || !dirty || !formValid'
+          )
+            v-icon(start) mdi-check
+            span {{$t('common:actions.apply')}}
     component(:is='activeModal')
 </template>
 
@@ -305,9 +329,7 @@ import { fetchSiteConfig, saveSiteConfig, type SiteConfig } from '../../helpers/
 import { loadingStart, loadingStop, pushGraphError, setLoading, showNotification } from '../../helpers/root-ui-store'
 import SiteBanner from '../common/site-banner.vue'
 
-
 const titleRegex = /[<>"]/i
-
 
 export default {
   i18nOptions: { namespaces: 'editor' },
@@ -315,7 +337,15 @@ export default {
     SiteBanner,
     editorModalMedia: () => import('../editor/editor-modal-media.vue')
   },
-  data(): { config: SiteConfig, metaRobots: Array<{ text: string, value: string }> } {
+  data(): {
+    config: SiteConfig,
+    persistedConfig: SiteConfig | null,
+    metaRobots: Array<{ text: string, value: string }>,
+    initialLoading: boolean,
+    loaded: boolean,
+    saving: boolean,
+    formValid: boolean
+  } {
     return {
       config: {
         host: '',
@@ -347,6 +377,11 @@ export default {
         editMenuExternalIcon: '',
         editMenuExternalUrl: ''
       },
+      persistedConfig: null,
+      initialLoading: true,
+      loaded: false,
+      saving: false,
+      formValid: false,
       metaRobots: [
         { text: 'Index', value: 'index' },
         { text: 'Follow', value: 'follow' },
@@ -380,6 +415,21 @@ export default {
       get() { return wikiStore.editor.activeModal },
       set(value: string) { wikiStore.editor.activeModal = value }
     },
+    dirty () {
+      return this.persistedConfig !== null && !_.isEqual(this.siteConfigPayload(), this.persistedConfig)
+    },
+    hostRules () {
+      return [
+        (value: string) => Boolean(value?.trim()) || 'Required',
+        (value: string) => /^https?:\/\/.+/i.test(value) || 'Enter a valid URL (https://...)'
+      ]
+    },
+    titleRules () {
+      return [
+        (value: string) => Boolean(value?.trim()) || 'Required',
+        (value: string) => !titleRegex.test(value) || this.$t('admin:general.siteTitleInvalidChars')
+      ]
+    },
     contentLicenses () {
       return [
         { value: '', text: this.$t('common:license.none') },
@@ -406,11 +456,7 @@ export default {
         company: _.get(this.config, 'company', ''),
         contentLicense: _.get(this.config, 'contentLicense', ''),
         footerOverride: _.get(this.config, 'footerOverride', ''),
-        banner: _.get(this.config, 'banner', {
-          isEnabled: false,
-          title: '',
-          content: ''
-        }),
+        banner: _.get(this.config, 'banner', { isEnabled: false, title: '', content: '' }),
         logoUrl: _.get(this.config, 'logoUrl', ''),
         pageExtensions: _.get(this.config, 'pageExtensions', ''),
         featurePageRatings: _.get(this.config, 'featurePageRatings', false),
@@ -426,16 +472,23 @@ export default {
       }
     },
     async loadConfig () {
+      this.initialLoading = true
+      this.loaded = false
       setLoading(wikiStore, 'admin-site-refresh', true)
       try {
-        this.config = _.cloneDeep(await fetchSiteConfig(window.fetch.bind(window)))
+        const loaded = _.cloneDeep(await fetchSiteConfig(window.fetch.bind(window)))
+        this.config = loaded
+        this.persistedConfig = _.cloneDeep(loaded)
+        this.loaded = true
       } catch (err) {
         pushGraphError(wikiStore, err)
       } finally {
+        this.initialLoading = false
         setLoading(wikiStore, 'admin-site-refresh', false)
       }
     },
     async save () {
+      if (!this.loaded || this.initialLoading || this.saving || !this.dirty || !this.formValid) return
       const title = _.get(this.config, 'title', '')
       if (titleRegex.test(title)) {
         showNotification(wikiStore, {
@@ -445,9 +498,12 @@ export default {
         })
         return
       }
+      this.saving = true
       loadingStart(wikiStore, 'admin-site-update')
       try {
-        await saveSiteConfig(window.fetch.bind(window), this.siteConfigPayload())
+        const payload = this.siteConfigPayload()
+        await saveSiteConfig(window.fetch.bind(window), payload)
+        this.persistedConfig = _.cloneDeep(payload)
         showNotification(wikiStore, {
           style: 'success',
           message: this.$t('admin:general.saveSuccess'),
@@ -462,6 +518,7 @@ export default {
       } catch (err) {
         pushGraphError(wikiStore, err)
       } finally {
+        this.saving = false
         loadingStop(wikiStore, 'admin-site-update')
       }
     },
@@ -490,4 +547,27 @@ export default {
 
 <style lang='scss'>
 
+  .logo-preview {
+    display: inline-flex;
+    flex-direction: column;
+    gap: .5rem;
+    margin: .5rem 1rem 1.5rem;
+    vertical-align: top;
+  }
+
+  .logo-field {
+    display: inline-block;
+    width: calc(100% - 150px);
+    margin: .5rem 1rem 1.5rem 0;
+    vertical-align: top;
+  }
+
+  @media (max-width: 600px) {
+    .logo-preview,
+    .logo-field {
+      display: block;
+      width: auto;
+      margin: .5rem 1rem 1rem;
+    }
+  }
 </style>

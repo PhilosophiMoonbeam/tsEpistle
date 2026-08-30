@@ -8,15 +8,14 @@
         icon='mdi-lock-outline'
         ) This group has access to everything.
     template(v-else)
-      v-card-title(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : ``')
+      .rules-toolbar
         v-alert.radius-7.text-body-small(
           :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-4`'
           color='grey'
           variant="outlined"
           icon='mdi-information'
-          ) You must enable global content permissions (under Permissions tab) for page rules to have any effect.
-        v-spacer
-        v-btn.mx-2(variant="flat", color='primary', @click='addRule')
+          ) Enable the relevant global content permissions (under Permissions) before saving page rules.
+        v-btn.mx-2(variant="flat", color='primary', @click='addRule', :disabled='group.id <= 0')
           v-icon(start) mdi-plus
           | Add Rule
       v-card-text(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-white`')
@@ -28,59 +27,62 @@
               solo
               :color='rule.deny ? "red" : "green"'
               @click='rule.deny = !rule.deny'
+              :disabled='group.id <= 0'
               height='48'
+              :aria-label='rule.deny ? "Set rule to Allow" : "Set rule to Deny"'
+              :aria-pressed='String(!rule.deny)'
               )
               v-icon(v-if='rule.deny') mdi-cancel
               v-icon(v-else) mdi-check-circle
-            //- Roles
-            v-select.ml-1(
+              span.ml-1 {{rule.deny ? 'DENY' : 'ALLOW'}}
+            v-select.rule-roles(
               variant="solo"
               :items='roles'
               item-title='text'
               item-value='value'
               v-model='rule.roles'
-              placeholder='Select Role(s)...'
+              label='Roles'
               hide-details
               multiple
               chips
               closable-chips
-              style='flex: 0 1 440px;'
               :menu-props='{ "maxHeight": 500 }'
               clearable
               density="compact"
+              :disabled='group.id <= 0'
               )
               template(v-slot:chip='{ item, index }')
-                v-chip.text-white.ml-0(v-if='index <= 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.raw.value }}
+                v-chip.text-white.ml-0(v-if='index <= 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.raw.text }}
                 v-chip.text-white.ml-0(v-if='index === 2', size="small", label, :color='rule.deny ? `red-lighten-2` : `green-lighten-2`').text-body-small + {{ rule.roles.length - 2 }} more
 
             //- Match
-            v-select.ml-1.mr-1(
+            v-select.rule-match(
               variant="solo"
               :items='matches'
               v-model='rule.match'
               item-title='text'
               item-value='value'
-              placeholder='Match...'
+              label='Match'
+              :disabled='group.id <= 0'
               hide-details
-              style='flex: 0 1 250px;'
               density="compact"
               )
               template(v-slot:selection='{ item }')
                 .text-body-medium {{item.raw.text}}
             //- Locales
-            v-select.mr-1(
+            v-select.rule-locales(
               :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `blue-grey-lighten-5`'
               variant="solo"
               :items='locales'
               v-model='rule.locales'
-              placeholder='Any Locale'
+              label='Locale'
               item-value='code'
               item-title='name'
               multiple
               hide-details
               density="compact"
               :menu-props='{ "minWidth": 250 }'
-              style='flex: 0 1 150px;'
+              :disabled='group.id <= 0'
               )
               template(v-slot:selection='{ item, index }')
                 v-chip.text-white.ml-0(v-if='rule.locales.length === 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.raw.code.toUpperCase() }}
@@ -100,9 +102,10 @@
                 v-divider
 
             //- Path
-            v-text-field(
+            v-text-field.rule-path(
               variant="solo"
               v-model='rule.path'
+              :disabled='group.id <= 0'
               label='Path'
               :prefix='(rule.match !== `END` && rule.match !== `TAG`) ? `/` : null'
               :placeholder='rule.match === `REGEX` ? `Regular Expression` : rule.match === `TAG` ? `Tag` : `Path`'
@@ -110,14 +113,12 @@
               hide-details
               :color='$vuetify.theme.current.dark ? `grey` : `blue-grey`'
               )
-
-            v-btn.ml-2(icon, @click='removeRule(rule.id)', size="small")
+            v-btn.rule-remove(icon, @click='removeRule(rule.id)', size="small", :aria-label='`Remove rule ${rule.id}`', :disabled='group.id <= 0')
               v-icon(:color='$vuetify.theme.current.dark ? `grey` : `blue-grey`') mdi-close
 
         v-divider.mt-3
-        .text-label-small.py-3 Rules Order
+        .text-label-small.py-3 Rule precedence
         .text-body-medium.pl-3 Rules are applied in order of path specificity. A more precise path will always override a less defined path.
-        .text-body-medium.pl-5 For example, #[span.text-teal /geography/countries] will override #[span.text-teal /geography].
         .text-body-medium.pl-3.pt-2 When 2 rules have the same specificity, the priority is given from lowest to highest as follows:
         .text-body-medium.pl-3.pt-1
           ul
@@ -196,6 +197,7 @@ export default {
   },
   methods: {
     addRule() {
+      if (this.group.id <= 0) return
       this.group.pageRules.push({
         id: nanoid(),
         path: '',
@@ -206,71 +208,84 @@ export default {
       })
     },
     removeRule(ruleId: string) {
-      this.group.pageRules.splice(_.findIndex(this.group.pageRules, ['id', ruleId]), 1)
+      if (this.group.id <= 0) return
+      const index = _.findIndex(this.group.pageRules, ['id', ruleId])
+      if (index >= 0) this.group.pageRules.splice(index, 1)
     }
   }
 }
 </script>
-
-<style lang="scss">
-.rules {
-  background-color: mc('blue-grey', '50');
-  border-radius: 4px;
+<style lang="scss" scoped>
+.rules-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .75rem;
   padding: 1rem;
-  position: relative;
 
-  @at-root .v-application.v-theme--dark & {
-    background-color: mc('grey', '800');
+  .v-alert {
+    flex: 1 1 320px;
+    min-width: 0;
   }
 }
 
+.rules {
+  background-color: rgb(var(--v-theme-surface));
+  border-radius: var(--wiki-panel-radius);
+  padding: 1rem;
+  position: relative;
+}
+
 .rule {
-  display: flex;
-  background-color: mc('blue-grey', '100');
-  border-radius: 4px;
+  display: grid;
+  grid-template-columns: auto minmax(180px, 2fr) minmax(150px, 1.25fr) minmax(120px, .75fr) minmax(150px, 1fr) auto;
+  gap: .5rem;
+  background-color: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, rgb(var(--v-theme-primary)));
+  border-radius: var(--wiki-panel-radius);
   padding: .5rem;
   align-items: center;
 
   &-enter-active, &-leave-active {
-    transition: all .5s ease;
+    transition: opacity .5s ease;
   }
   &-enter-from, &-leave-to {
     opacity: 0;
   }
 
-  @at-root .v-application.v-theme--dark & {
-    background-color: mc('grey', '700');
-  }
-
   & + .rule {
     margin-top: .5rem;
     position: relative;
+  }
+}
 
-    &::before {
-      content: '+';
-      position: absolute;
-      width: 2rem;
-      height: 2rem;
-      border-radius: 50%;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      font-weight: 600;
-      color: mc('blue-grey', '700');
-      font-size: 1.25rem;
-      background-color: mc('blue-grey', '50');
-      left: -2rem;
-      top: -1.3rem;
+@media (max-width: 900px) {
+  .rule {
+    grid-template-columns: auto 1fr auto;
 
-      @at-root .v-application.v-theme--dark & {
-        background-color: mc('grey', '800');
-        color: mc('grey', '600');
-      }
+    .rule-roles,
+    .rule-match,
+    .rule-locales,
+    .rule-path {
+      grid-column: 1 / -1;
+      width: 100%;
+      min-width: 0;
+    }
+  }
+}
+
+@media (max-width: 600px) {
+  .rules-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+
+    .v-btn {
+      width: 100%;
+      margin: 0 !important;
     }
   }
 
-  .input-group + * {
-    margin-left: .5rem;
+  .rules {
+    padding: .5rem;
   }
 }
 </style>

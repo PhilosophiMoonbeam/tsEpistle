@@ -28,33 +28,38 @@
       </div>
     </section>
 
-    <v-alert v-if="error" class="mb-5" type="error" variant="tonal" closable @click:close="error = ''">{{ error }}</v-alert>
+    <v-alert v-if="error" class="mb-5" type="error" variant="tonal" closable @click:close="error = ''">
+      {{ error }}
+      <template #append><v-btn variant="text" size="small" @click="load">Retry</v-btn></template>
+    </v-alert>
 
-    <section class="agent-snapshot" aria-label="Agent platform status">
+    <section v-if="dataLoaded" class="agent-snapshot" aria-label="Agent platform status">
       <article class="agent-snapshot__item">
-        <span class="agent-snapshot__icon agent-snapshot__icon--blue"><v-icon size="21">mdi-server-network-outline</v-icon></span>
+        <span class="agent-snapshot__icon"><v-icon size="21">mdi-server-network-outline</v-icon></span>
         <span><small>Runtime policy</small><strong>{{ enabledCapabilityCount }} of {{ capabilityRows.length }} capabilities</strong></span>
       </article>
       <article class="agent-snapshot__item">
-        <span class="agent-snapshot__icon agent-snapshot__icon--violet"><v-icon size="21">mdi-brain</v-icon></span>
+        <span class="agent-snapshot__icon"><v-icon size="21">mdi-brain</v-icon></span>
         <span><small>Provider profiles</small><strong>{{ enabledProviderCount }} enabled · {{ profiles.length }} total</strong></span>
       </article>
       <article class="agent-snapshot__item">
-        <span class="agent-snapshot__icon agent-snapshot__icon--teal"><v-icon size="21">mdi-web-check</v-icon></span>
+        <span class="agent-snapshot__icon"><v-icon size="21">mdi-web-check</v-icon></span>
         <span><small>Browser boundary</small><strong>{{ enabledBrowserCount }} approved target{{ enabledBrowserCount === 1 ? '' : 's' }}</strong></span>
       </article>
     </section>
 
     <div class="agent-workspace">
-      <nav class="agent-sections" aria-label="Agent administration sections">
+      <nav class="agent-sections" aria-label="Agent administration sections" role="tablist">
         <div class="agent-sections__label">Configure</div>
         <button
           v-for="section in sectionItems"
           :key="section.value"
           type="button"
+          role="tab"
           class="agent-section"
           :class="{ 'agent-section--active': tab === section.value }"
-          :aria-current="tab === section.value ? 'page' : undefined"
+          :aria-selected="tab === section.value"
+          :aria-controls="`agent-panel-${section.value}`"
           @click="tab = section.value"
         >
           <span class="agent-section__icon"><v-icon size="21">{{ section.icon }}</v-icon></span>
@@ -123,7 +128,7 @@
           </section>
         </v-window-item>
 
-        <v-window-item value="profiles">
+        <v-window-item value="profiles" id="agent-panel-profiles" role="tabpanel">
           <section class="agent-panel">
             <div class="agent-panel__header">
               <div class="agent-panel__heading">
@@ -137,6 +142,7 @@
               <v-btn color="primary" prepend-icon="mdi-plus" :disabled="runtime?.providerEnabled !== true" @click="openProfile()">Add provider</v-btn>
             </div>
             <div class="agent-panel__body">
+              <v-progress-linear v-if="loading" indeterminate class="mb-4" aria-label="Loading provider profiles" />
               <v-alert v-if="runtime?.providerEnabled === false" type="info" variant="tonal" class="mb-4">Provider administration is unavailable while provider inference is disabled in deployment configuration. Enable <code>agents.provider.enabled</code>, configure the provider runtime keys, and restart Wiki before adding profiles.</v-alert>
               <v-alert v-if="profiles.some(profile => !profile.secretConfigured)" type="warning" variant="tonal" class="mb-4">A provider credential is unavailable. Edit the profile and enter its API key to verify and enable it.</v-alert>
               <v-alert v-if="profiles.some(profile => profile.status === 'enabled' && profile.conformed && profile.exposureMode === 'all_agent_users') && !profiles.some(profile => profile.isGlobalDefault)" type="warning" variant="tonal" class="mb-4">No global default provider is set. Open an enabled provider's actions menu and choose <strong>Set global default</strong> before starting a conversation.</v-alert>
@@ -149,16 +155,16 @@
                       <p>{{ agentProviderProtocolOption(profile.transportKind).title }}</p>
                     </div>
                     <v-menu>
-                      <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-horizontal" variant="text" density="comfortable" :aria-label="`Actions for ${profile.displayName}`" /></template>
+                      <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-horizontal" variant="text" density="comfortable" :aria-label="`Actions for ${profile.displayName}`" :disabled="Boolean(actionBusyKey)" /></template>
                       <v-list density="comfortable">
-                        <v-list-item prepend-icon="mdi-pencil-outline" title="Edit settings" subtitle="Updates this profile" @click="openProfile(profile)" />
-                        <v-list-item prepend-icon="mdi-connection" :title="profile.status === 'disabled' ? 'Test and enable' : 'Test connection'" :disabled="!profile.secretConfigured" @click="testConnection(profile)" />
-                        <v-list-item prepend-icon="mdi-account-multiple-outline" title="Edit access grants" @click="openGrants(profile)" />
-                        <v-list-item v-if="profile.status === 'disabled'" prepend-icon="mdi-play-circle-outline" title="Enable" :disabled="!profile.conformed || !profile.secretConfigured" @click="setProfileEnabled(profile, true)" />
-                        <v-list-item v-else prepend-icon="mdi-pause-circle-outline" title="Disable" @click="setProfileEnabled(profile, false)" />
-                        <v-list-item prepend-icon="mdi-star-outline" title="Set global default" :disabled="!profile.conformed || profile.status !== 'enabled' || profile.exposureMode !== 'all_agent_users'" @click="setDefault(profile)" />
+                        <v-list-item prepend-icon="mdi-pencil-outline" title="Edit settings" subtitle="Updates this profile" :disabled="Boolean(actionBusyKey)" @click="openProfile(profile)" />
+                        <v-list-item prepend-icon="mdi-connection" :title="profile.status === 'disabled' ? 'Test and enable' : 'Test connection'" :disabled="!profile.secretConfigured || Boolean(actionBusyKey)" :loading="actionBusyKey === `test:${profile.id}`" @click="testConnection(profile)" />
+                        <v-list-item prepend-icon="mdi-account-multiple-outline" title="Edit access grants" :disabled="Boolean(actionBusyKey)" @click="openGrants(profile)" />
+                        <v-list-item v-if="profile.status === 'disabled'" prepend-icon="mdi-play-circle-outline" title="Enable" :disabled="!profile.conformed || !profile.secretConfigured || Boolean(actionBusyKey)" @click="setProfileEnabled(profile, true)" />
+                        <v-list-item v-else prepend-icon="mdi-pause-circle-outline" title="Disable" :disabled="Boolean(actionBusyKey)" @click="setProfileEnabled(profile, false)" />
+                        <v-list-item prepend-icon="mdi-star-outline" title="Set global default" :disabled="!profile.conformed || profile.status !== 'enabled' || profile.exposureMode !== 'all_agent_users' || Boolean(actionBusyKey)" @click="setDefault(profile)" />
                         <v-divider class="my-1" />
-                        <v-list-item prepend-icon="mdi-delete-outline" title="Remove provider" base-color="error" @click="confirmRemove(profile)" />
+                        <v-list-item prepend-icon="mdi-delete-outline" title="Remove provider" base-color="error" :disabled="Boolean(actionBusyKey)" @click="confirmRemove(profile)" />
                       </v-list>
                     </v-menu>
                   </div>
@@ -170,8 +176,8 @@
                     <span :class="['connection-state', profile.status === 'enabled' ? 'connection-state--success' : 'connection-state--neutral']"><span class="connection-state__dot" />{{ profile.status === 'enabled' ? 'Enabled' : 'Disabled' }}</span>
                   </div>
                   <div class="provider-card__models">
-                    <div><span>Agent model</span><code>{{ profile.model }}</code></div>
-                    <div><span>Utility model</span><code>{{ profile.utilityModel || profile.model }}</code><small v-if="!profile.utilityModel">Shared</small></div>
+                    <div><span>Agent model</span><code :title="profile.model">{{ profile.model }}</code></div>
+                    <div><span>Utility model</span><code :title="profile.utilityModel || profile.model">{{ profile.utilityModel || profile.model }}</code><small v-if="!profile.utilityModel">Shared</small></div>
                   </div>
                   <p v-if="!profile.conformed && profile.connectionCheck?.message" class="provider-card__error">{{ profile.connectionCheck.message }}</p>
                   <div class="provider-card__meta">
@@ -181,7 +187,7 @@
                   <button type="button" class="provider-card__edit" @click="openProfile(profile)">Open configuration <v-icon size="17">mdi-arrow-right</v-icon></button>
                 </article>
               </div>
-              <div v-else class="agent-empty">
+              <div v-else-if="dataLoaded" class="agent-empty">
                 <span class="agent-empty__icon"><v-icon size="34">mdi-brain</v-icon></span>
                 <h3>Connect the first provider</h3>
                 <p>Start with the model your team trusts. Wiki verifies the connection and capabilities before making it available.</p>
@@ -195,7 +201,7 @@
           <SkillAdmin :csrf-token="csrfToken" embedded />
         </v-window-item>
 
-        <v-window-item value="browser">
+        <v-window-item value="browser" id="agent-panel-browser" role="tabpanel">
           <section class="agent-panel">
             <div class="agent-panel__header">
               <div class="agent-panel__heading">
@@ -206,22 +212,21 @@
                   <p>Approve exact HTTPS destinations the isolated browser may reach.</p>
                 </div>
               </div>
-              <v-btn color="primary" prepend-icon="mdi-plus" @click="browserDialog = true">Add target</v-btn>
+              <v-btn color="primary" prepend-icon="mdi-plus" @click="browserError = ''; browserDialog = true">Add target</v-btn>
             </div>
             <div class="agent-panel__body">
-              <v-alert type="info" variant="tonal" density="compact" class="mb-5">Redirects and every outgoing request are revalidated against these canonical targets by the browser worker.</v-alert>
+              <v-progress-linear v-if="loading" indeterminate class="mb-4" aria-label="Loading browser targets" />
               <div v-if="browserTargets.length" class="target-list">
                 <article v-for="target in browserTargets" :key="target.id" class="target-row">
                   <span class="target-row__icon"><v-icon size="20">mdi-lock-outline</v-icon></span>
-                  <div class="target-row__copy"><strong>{{ target.canonicalUrl }}</strong><small>Policy {{ target.policySha256.slice(0, 16) }}…</small></div>
-                  <div class="target-row__state"><span>{{ target.enabled ? 'Allowed' : 'Paused' }}</span><v-switch :model-value="target.enabled" color="primary" hide-details inset :aria-label="`Enable ${target.canonicalUrl}`" @update:model-value="value => setBrowserEnabled(target, Boolean(value))" /></div>
+                  <div class="target-row__copy"><strong :title="target.canonicalUrl">{{ target.canonicalUrl }}</strong><small :title="`Policy ${target.policySha256}`">Policy {{ target.policySha256.slice(0, 16) }}…</small></div>
+                  <div class="target-row__state"><span>{{ target.enabled ? 'Allowed' : 'Paused' }}</span><v-switch :model-value="target.enabled" color="primary" hide-details inset :loading="actionBusyKey === `browser:${target.id}`" :disabled="Boolean(actionBusyKey)" :aria-label="`Enable ${target.canonicalUrl}`" @update:model-value="value => setBrowserEnabled(target, Boolean(value))" /></div>
                 </article>
               </div>
-              <div v-else class="agent-empty">
+              <div v-else-if="dataLoaded" class="agent-empty">
                 <span class="agent-empty__icon agent-empty__icon--teal"><v-icon size="34">mdi-web-off</v-icon></span>
                 <h3>No browser destinations approved</h3>
-                <p>The Agent cannot browse external pages until an exact HTTPS target is added here.</p>
-                <v-btn color="primary" prepend-icon="mdi-plus" @click="browserDialog = true">Add target</v-btn>
+                <v-btn color="primary" prepend-icon="mdi-plus" @click="browserError = ''; browserDialog = true">Add target</v-btn>
               </div>
             </div>
           </section>
@@ -244,7 +249,7 @@
         <v-progress-linear class="profile-editor__progress" color="primary" :model-value="profileProgress" aria-label="Provider setup progress" />
         <div class="profile-editor__workspace">
           <nav class="profile-steps" aria-label="Provider setup sections">
-            <button v-for="(step, index) in profileSteps" :key="step.value" type="button" :class="{ 'profile-step--active': profileStep === step.value }" :aria-current="profileStep === step.value ? 'step' : undefined" @click="profileStep = step.value">
+            <button v-for="(step, index) in profileSteps" :key="step.value" type="button" :class="{ 'profile-step--active': profileStep === step.value }" :aria-current="profileStep === step.value ? 'step' : undefined" :disabled="!canNavigateProfileStep(index)" @click="profileStep = step.value">
               <span class="profile-step__index">{{ index + 1 }}</span>
               <span><strong>{{ step.title }}</strong><small>{{ step.description }}</small></span>
               <v-icon size="17">mdi-chevron-right</v-icon>
@@ -322,19 +327,19 @@
               <v-alert type="info" variant="tonal" density="compact" class="mb-5">These safe defaults suit most deployments. Cost values are reservation ceilings; provider billing is not calculated in this release, so profiles use <code>unpriced-v1</code>.</v-alert>
               <div class="limit-group">
                 <h4>Model boundaries</h4>
-                <div class="form-grid"><v-text-field v-model.number="profileDraft.maxContextTokens" type="number" label="Maximum context tokens" /><v-text-field v-model.number="profileDraft.maxOutputTokens" type="number" label="Maximum output tokens" /></div>
+                <div class="form-grid"><v-text-field v-model.number="profileDraft.maxContextTokens" type="number" min="1" label="Maximum context tokens" /><v-text-field v-model.number="profileDraft.maxOutputTokens" type="number" min="1" label="Maximum output tokens" /></div>
               </div>
               <div class="limit-group">
                 <h4>Daily ceilings</h4>
-                <div class="form-grid"><v-text-field v-model.number="profileDraft.dailyTokens" type="number" label="Daily token limit" /><v-text-field v-model.number="profileDraft.dailyCostMicros" type="number" label="Daily cost reservation (micros)" /></div>
+                <div class="form-grid"><v-text-field v-model.number="profileDraft.dailyTokens" type="number" min="1" label="Daily token limit" /><v-text-field v-model.number="profileDraft.dailyCostMicros" type="number" min="0" label="Daily cost reservation (micros)" /></div>
               </div>
               <div class="limit-group">
                 <h4>Per-run reservations</h4>
-                <div class="form-grid"><v-text-field v-model.number="profileDraft.reservationTokens" type="number" label="Token reservation" /><v-text-field v-model.number="profileDraft.reservationCostMicros" type="number" label="Cost reservation (micros)" /></div>
+                <div class="form-grid"><v-text-field v-model.number="profileDraft.reservationTokens" type="number" min="1" label="Token reservation" /><v-text-field v-model.number="profileDraft.reservationCostMicros" type="number" min="0" label="Cost reservation (micros)" /></div>
               </div>
               <div class="limit-group">
                 <h4>Reliability</h4>
-                <div class="form-grid"><v-text-field v-model.number="profileDraft.timeoutMs" type="number" label="Request timeout (ms)" /><v-text-field v-model.number="profileDraft.maxAttempts" type="number" label="Maximum attempts" /></div>
+                <div class="form-grid"><v-text-field v-model.number="profileDraft.timeoutMs" type="number" min="1000" label="Request timeout (ms)" /><v-text-field v-model.number="profileDraft.maxAttempts" type="number" min="1" label="Maximum attempts" /></div>
               </div>
             </section>
           </v-form>
@@ -344,8 +349,8 @@
           <v-spacer />
           <v-btn variant="text" @click="profileDialog = false">Cancel</v-btn>
           <v-btn v-if="profileStepIndex > 0" variant="outlined" prepend-icon="mdi-arrow-left" @click="previousProfileStep">Back</v-btn>
-          <v-btn v-if="profileStepIndex < profileSteps.length - 1" variant="tonal" color="primary" append-icon="mdi-arrow-right" @click="nextProfileStep">Continue</v-btn>
-          <v-btn color="primary" prepend-icon="mdi-check-decagram-outline" :loading="saving" form="provider-profile-form" type="submit">Save and verify</v-btn>
+          <v-btn v-if="profileStepIndex < profileSteps.length - 1" variant="tonal" color="primary" append-icon="mdi-arrow-right" :disabled="!profileStepValid" @click="nextProfileStep">Continue</v-btn>
+          <v-btn v-else color="primary" prepend-icon="mdi-check-decagram-outline" :loading="saving" form="provider-profile-form" type="submit">Save and verify</v-btn>
         </div>
       </v-card>
     </v-dialog>
@@ -353,28 +358,26 @@
     <v-dialog :model-value="removingProfile !== null" max-width="34rem" @update:model-value="value => { if (!value) removingProfile = null }">
       <v-card class="compact-dialog">
         <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon size="23">mdi-delete-outline</v-icon></span><div><h2>Remove provider profile?</h2><p>This cannot be undone.</p></div></div>
-        <v-card-text><p><strong>{{ removingProfile?.displayName }}</strong> will no longer be available to sessions or new runs.</p><p class="mb-0">The configuration is removed from use and its server-managed API keys are permanently deleted. Audit records are retained.</p></v-card-text>
-        <v-card-actions><v-spacer /><v-btn @click="removingProfile = null">Cancel</v-btn><v-btn color="error" :loading="saving" @click="removeProfile">Remove provider</v-btn></v-card-actions>
+        <v-card-text><v-alert v-if="removeError" class="mb-3" type="error" variant="tonal" density="compact">{{ removeError }}</v-alert><p><strong>{{ removingProfile?.displayName }}</strong> will no longer be available to sessions or new runs.</p><p class="mb-0">The configuration is removed from use and its server-managed API keys are permanently deleted. Audit records are retained.</p></v-card-text>
+        <v-card-actions><v-spacer /><v-btn @click="removingProfile = null">Cancel</v-btn><v-btn color="error" :loading="actionBusyKey === 'remove'" :disabled="Boolean(actionBusyKey)" @click="removeProfile">Remove provider</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
     <v-dialog v-model="grantsDialog" max-width="40rem" scrollable>
       <v-card class="compact-dialog">
         <div class="compact-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><h2>{{ grantProfile ? `Access for ${grantProfile.displayName}` : 'Provider access' }}</h2><p>Control who can discover and use this profile.</p></div></div>
-        <v-card-text>
-          <v-select v-model="grantDraft.exposureMode" :items="exposureModes" label="Available to" />
-          <v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this provider through any selected group." persistent-hint />
-          <v-alert class="mt-4" type="info" variant="tonal" density="compact">The global default is available to everyone. Group-assigned profiles augment that default and appear as a session choice only when a user has more than one available profile.</v-alert>
-        </v-card-text>
-        <v-card-actions><v-spacer /><v-btn @click="grantsDialog = false">Cancel</v-btn><v-btn color="primary" :loading="saving" :disabled="grantDraft.exposureMode === 'groups' && grantDraft.groupIds.length === 0" @click="saveGrants">Save access</v-btn></v-card-actions>
+        <v-card-text><v-alert v-if="grantsError" class="mb-3" type="error" variant="tonal" density="compact">{{ grantsError }}</v-alert><v-select v-model="grantDraft.exposureMode" :items="exposureModes" label="Available to" /><v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this provider through any selected group." persistent-hint /><v-alert class="mt-4" type="info" variant="tonal" density="compact">The global default is available to everyone. Group-assigned profiles augment that default and appear as a session choice only when a user has more than one available profile.</v-alert></v-card-text>
+        <v-card-actions><v-spacer /><v-btn @click="grantsDialog = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || (grantDraft.exposureMode === 'groups' && grantDraft.groupIds.length === 0)" @click="saveGrants">Save access</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
     <v-dialog v-model="browserDialog" max-width="40rem">
       <v-card class="compact-dialog">
         <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon size="23">mdi-web-plus</v-icon></span><div><h2>Add browser target</h2><p>Approve one exact canonical HTTPS destination.</p></div></div>
-        <v-card-text><v-text-field v-model="browserUrl" label="Exact HTTPS URL" placeholder="https://example.com/path" autofocus prepend-inner-icon="mdi-lock-outline" /><v-checkbox v-model="browserEnabled" label="Enable immediately" /></v-card-text>
-        <v-card-actions><v-spacer /><v-btn @click="browserDialog = false">Cancel</v-btn><v-btn color="primary" :loading="saving" @click="createBrowserTarget">Add target</v-btn></v-card-actions>
+        <v-form id="browser-target-form" @submit.prevent="createBrowserTarget">
+          <v-card-text><v-alert v-if="browserError" class="mb-3" type="error" variant="tonal" density="compact">{{ browserError }}</v-alert><v-text-field v-model="browserUrl" :rules="[browserUrlRule]" label="Exact HTTPS URL" placeholder="https://example.com/path" autofocus prepend-inner-icon="mdi-lock-outline" required /><v-checkbox v-model="browserEnabled" label="Enable immediately" /></v-card-text>
+        </v-form>
+        <v-card-actions><v-spacer /><v-btn @click="browserDialog = false">Cancel</v-btn><v-btn color="primary" type="submit" form="browser-target-form" :loading="actionBusyKey === 'browser-create'" :disabled="Boolean(actionBusyKey) || !isBrowserUrlValid">Add target</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
   </section>
@@ -451,9 +454,14 @@ const tab = ref('runtime')
 type ProfileStep = 'identity' | 'models' | 'connection' | 'access' | 'limits'
 const profileStep = ref<ProfileStep>('identity')
 const loading = ref(false)
+const dataLoaded = ref(false)
 const saving = ref(false)
+const actionBusyKey = ref('')
 const error = ref('')
 const profileError = ref('')
+const grantsError = ref('')
+const browserError = ref('')
+const removeError = ref('')
 const runtime = ref<RuntimePolicy | null>(null)
 const profiles = ref<Profile[]>([])
 const groups = ref<GroupOption[]>([])
@@ -577,13 +585,23 @@ const profileSteps = computed<Array<{ value: ProfileStep; title: string; descrip
 const profileStepIndex = computed(() => Math.max(0, profileSteps.value.findIndex(step => step.value === profileStep.value)))
 const currentProfileStep = computed(() => profileSteps.value[profileStepIndex.value] ?? profileSteps.value[0])
 const profileProgress = computed(() => ((profileStepIndex.value + 1) / profileSteps.value.length) * 100)
+const profileStepValid = computed(() => {
+  if (profileStep.value === 'identity') return Boolean(profileDraft.displayName.trim() && profileDraft.transportKind)
+  if (profileStep.value === 'models') return Boolean(profileDraft.model.trim())
+  if (profileStep.value === 'connection') return Boolean(profileDraft.baseUrl.trim() && (editingProfile.value?.secretConfigured || profileDraft.secretValue.trim()))
+  if (profileStep.value === 'access') return profileDraft.exposureMode !== 'groups' || profileDraft.groupIds.length > 0
+  return [profileDraft.maxContextTokens, profileDraft.maxOutputTokens, profileDraft.dailyTokens, profileDraft.reservationTokens, profileDraft.timeoutMs, profileDraft.maxAttempts].every(value => Number.isFinite(value) && value > 0)
+})
+const maxProfileStepIndex = ref(0)
+const canNavigateProfileStep = (index: number): boolean => index <= maxProfileStepIndex.value
 const previousProfileStep = () => {
   const previous = profileSteps.value[profileStepIndex.value - 1]
   if (previous) profileStep.value = previous.value
 }
 const nextProfileStep = () => {
+  if (!profileStepValid.value) { profileError.value = 'Complete the required fields in this step before continuing.'; return }
   const next = profileSteps.value[profileStepIndex.value + 1]
-  if (next) profileStep.value = next.value
+  if (next) { maxProfileStepIndex.value = Math.max(maxProfileStepIndex.value, profileStepIndex.value + 1); profileStep.value = next.value }
 }
 
 const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
@@ -591,10 +609,25 @@ const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
   if (!response.ok) { const body = await response.json().catch(() => ({})) as { message?: string; error?: string }; throw new Error(body.message ?? body.error ?? `Request failed (${response.status})`) }
   return response.status === 204 ? undefined as T : await response.json() as T
 }
-const run = async (operation: () => Promise<void>) => { saving.value = true; error.value = ''; try { await operation() } catch (value) { error.value = value instanceof Error ? value.message : 'Agent administration request failed.' } finally { saving.value = false } }
-const load = async () => { loading.value = true; error.value = ''; try { const [runtimeResult, profileResult, browserResult, groupResult] = await Promise.all([request<{ runtime: RuntimePolicy }>('/_api/agents/admin/runtime'), request<{ profiles: Profile[] }>('/_api/agents/admin/profiles'), request<{ targets: BrowserTarget[] }>('/_api/agents/admin/browser-targets'), request<GroupOption[]>('/_api/groups')]); runtime.value = runtimeResult.runtime; profiles.value = profileResult.profiles; browserTargets.value = browserResult.targets; groups.value = groupResult } catch (value) { error.value = value instanceof Error ? value.message : 'Agent administration could not be loaded.' } finally { loading.value = false } }
+const run = async (operation: () => Promise<void>, busyKey = 'global', onError: (message: string) => void = message => { error.value = message }) => {
+  if (actionBusyKey.value) return
+  saving.value = true
+  actionBusyKey.value = busyKey
+  error.value = ''
+  try { await operation() } catch (value) { onError(value instanceof Error ? value.message : 'Agent administration request failed.') } finally { saving.value = false; actionBusyKey.value = '' }
+}
+const load = async () => {
+  if (loading.value) return
+  loading.value = true
+  error.value = ''
+  try {
+    const [runtimeResult, profileResult, browserResult, groupResult] = await Promise.all([request<{ runtime: RuntimePolicy }>('/_api/agents/admin/runtime'), request<{ profiles: Profile[] }>('/_api/agents/admin/profiles'), request<{ targets: BrowserTarget[] }>('/_api/agents/admin/browser-targets'), request<GroupOption[]>('/_api/groups')])
+    runtime.value = runtimeResult.runtime; profiles.value = profileResult.profiles; browserTargets.value = browserResult.targets; groups.value = groupResult; dataLoaded.value = true
+  } catch (value) { error.value = value instanceof Error ? value.message : 'Agent administration could not be loaded.' } finally { loading.value = false }
+}
 const openProfile = (profile?: Profile) => {
   profileError.value = ''
+  maxProfileStepIndex.value = 0
   editingProfile.value = profile ?? null
   profileStep.value = 'identity'
   Object.assign(profileDraft, defaults(), profile ? {
@@ -630,6 +663,8 @@ const openProfile = (profile?: Profile) => {
 }
 const profilePayload = () => ({ transportKind: profileDraft.transportKind, model: profileDraft.model, utilityModel: profileDraft.utilityModel.trim() || null, baseUrl: profileDraft.baseUrl, authMode: profileDraft.authMode, secretReference: null, ...(profileDraft.secretValue ? { secretValue: profileDraft.secretValue } : {}), adapterConfig: { timeoutMs: profileDraft.timeoutMs, maxRetries: profileDraft.maxRetries, additionalHeaders: profileDraft.additionalHeaders, ...(profileDraft.agentReasoningEffort === null ? {} : { agentReasoningEffort: profileDraft.agentReasoningEffort }), ...(profileDraft.utilityReasoningEffort === null ? {} : { utilityReasoningEffort: profileDraft.utilityReasoningEffort }) }, capabilities: { streaming: profileDraft.streaming, toolCalling: profileDraft.toolCalling, parallelToolCalls: profileDraft.parallelToolCalls, structuredOutput: profileDraft.structuredOutput, usage: profileDraft.usage, cancellation: profileDraft.cancellation, maxContextTokens: profileDraft.maxContextTokens, maxOutputTokens: profileDraft.maxOutputTokens }, capabilityRevision: agentProviderCapabilityRevision(profileDraft.transportKind), policies: { allowedModes: ['agent'], dailyTokens: profileDraft.dailyTokens, dailyCostMicros: profileDraft.dailyCostMicros, reservationTokens: profileDraft.reservationTokens, reservationCostMicros: profileDraft.reservationCostMicros, reservationMilliseconds: profileDraft.reservationMilliseconds, promptVersion: profileDraft.promptVersion, maxAttempts: profileDraft.maxAttempts }, pricingRevision: AGENT_PROVIDER_PRICING_REVISION })
 const saveProfile = async (): Promise<void> => {
+  if (saving.value) return
+  if (!profileStepValid.value) { profileError.value = 'Complete the required fields before saving this provider.'; return }
   saving.value = true
   profileError.value = ''
   try {
@@ -646,29 +681,32 @@ const saveProfile = async (): Promise<void> => {
     saving.value = false
   }
 }
-const confirmRemove = (profile: Profile) => { removingProfile.value = profile }
-const removeProfile = () => run(async () => { if (!removingProfile.value) return; await request(`/_api/agents/admin/profiles/${encodeURIComponent(removingProfile.value.id)}`, { method: 'DELETE' }); removingProfile.value = null; await load() })
-const setProfileEnabled = (profile: Profile, enabled: boolean) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }); await load() })
-const setDefault = (profile: Profile) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/default`, { method: 'POST', body: '{}' }); await load() })
+const confirmRemove = (profile: Profile) => { removeError.value = ''; removingProfile.value = profile }
+const removeProfile = () => run(async () => { if (!removingProfile.value) return; await request(`/_api/agents/admin/profiles/${encodeURIComponent(removingProfile.value.id)}`, { method: 'DELETE' }); removingProfile.value = null; await load() }, 'remove', message => { removeError.value = message })
+const setProfileEnabled = (profile: Profile, enabled: boolean) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) }); await load() }, `enabled:${profile.id}`)
+const setDefault = (profile: Profile) => run(async () => { await request(`/_api/agents/admin/profiles/${profile.id}/default`, { method: 'POST', body: '{}' }); await load() }, `default:${profile.id}`)
 const testConnection = (profile: Profile) => run(async () => {
   const result = await request<{ profile: Profile; connectionCheck: ConnectionCheck }>(`/_api/agents/admin/profiles/${profile.id}/connection-check`, { method: 'POST', body: JSON.stringify({ enableOnSuccess: profile.status === 'disabled' }) })
   await load()
   if (result.connectionCheck.status === 'failed') throw new Error(result.connectionCheck.message ?? result.connectionCheck.errorCode ?? 'Provider connection check failed.')
-})
+}, `test:${profile.id}`)
 const groupNames = (groupIds: readonly number[]): string => groupIds.map(id => groups.value.find(group => group.id === id)?.name ?? `Group ${id}`).join(', ')
-const openGrants = (profile: Profile) => { grantProfile.value = profile; grantDraft.exposureMode = profile.exposureMode; grantDraft.groupIds = [...profile.groupIds]; grantsDialog.value = true }
-const saveGrants = () => run(async () => { if (!grantProfile.value) return; await request(`/_api/agents/admin/profiles/${grantProfile.value.id}/grants`, { method: 'PUT', body: JSON.stringify({ exposureMode: grantDraft.exposureMode, groupIds: grantDraft.exposureMode === 'groups' ? grantDraft.groupIds : [] }) }); grantsDialog.value = false; await load() })
-const createBrowserTarget = () => run(async () => { await request('/_api/agents/admin/browser-targets', { method: 'POST', body: JSON.stringify({ canonicalUrl: browserUrl.value, enabled: browserEnabled.value }) }); browserDialog.value = false; browserUrl.value = ''; browserEnabled.value = false; await load() })
-const setBrowserEnabled = (target: BrowserTarget, enabled: boolean) => run(async () => { await request(`/_api/agents/admin/browser-targets/${target.id}`, { method: 'PUT', body: JSON.stringify({ enabled }) }); await load() })
+const openGrants = (profile: Profile) => { grantsError.value = ''; grantProfile.value = profile; grantDraft.exposureMode = profile.exposureMode; grantDraft.groupIds = [...profile.groupIds]; grantsDialog.value = true }
+const saveGrants = () => run(async () => { if (!grantProfile.value) return; await request(`/_api/agents/admin/profiles/${grantProfile.value.id}/grants`, { method: 'PUT', body: JSON.stringify({ exposureMode: grantDraft.exposureMode, groupIds: grantDraft.exposureMode === 'groups' ? grantDraft.groupIds : [] }) }); grantsDialog.value = false; await load() }, 'grants', message => { grantsError.value = message })
+const isBrowserUrlValid = computed(() => { try { const url = new URL(browserUrl.value.trim()); return url.protocol === 'https:' && Boolean(url.hostname) } catch { return false } })
+const browserUrlRule = (value: string) => isBrowserUrlValid.value || 'Enter a valid HTTPS URL.'
+const createBrowserTarget = () => run(async () => { if (!isBrowserUrlValid.value) { browserError.value = 'Enter a valid HTTPS URL.'; return } await request('/_api/agents/admin/browser-targets', { method: 'POST', body: JSON.stringify({ canonicalUrl: browserUrl.value.trim(), enabled: browserEnabled.value }) }); browserDialog.value = false; browserUrl.value = ''; browserEnabled.value = false; await load() }, 'browser-create', message => { browserError.value = message })
+const setBrowserEnabled = (target: BrowserTarget, enabled: boolean) => {
+  if (actionBusyKey.value) return
+  const previous = target.enabled
+  target.enabled = enabled
+  void run(async () => { await request(`/_api/agents/admin/browser-targets/${target.id}`, { method: 'PUT', body: JSON.stringify({ enabled }) }); await load() }, `browser:${target.id}`, message => { target.enabled = previous; error.value = message })
+}
 onMounted(() => void load())
 </script>
 
 <style scoped>
 .agent-control {
-  --agent-blue: #3b82f6;
-  --agent-violet: #8b5cf6;
-  --agent-teal: #0d9488;
-  --agent-amber: #d97706;
   color: rgb(var(--v-theme-on-surface));
 }
 
@@ -834,9 +872,7 @@ onMounted(() => void load())
   height: 2.6rem;
 }
 
-.agent-snapshot__icon--blue { background: rgba(59, 130, 246, .11); color: var(--agent-blue); }
-.agent-snapshot__icon--violet { background: rgba(139, 92, 246, .11); color: var(--agent-violet); }
-.agent-snapshot__icon--teal { background: rgba(13, 148, 136, .11); color: var(--agent-teal); }
+.agent-snapshot__icon--blue, .agent-snapshot__icon--violet, .agent-snapshot__icon--teal { background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
 
 .agent-snapshot__item > span:last-child {
   display: grid;
@@ -996,8 +1032,7 @@ onMounted(() => void load())
   height: 2.85rem;
 }
 
-.agent-panel__icon--violet { background: rgba(139, 92, 246, .11); color: var(--agent-violet); }
-.agent-panel__icon--teal { background: rgba(13, 148, 136, .11); color: var(--agent-teal); }
+.agent-panel__icon--violet, .agent-panel__icon--teal { background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
 
 .agent-panel__header h2 {
   margin: .12rem 0 .15rem;
@@ -1210,9 +1245,8 @@ onMounted(() => void load())
   width: 2.65rem;
   height: 2.65rem;
   border-radius: .8rem;
-  background: linear-gradient(145deg, rgba(var(--v-theme-primary), .17), rgba(139, 92, 246, .11));
+  background: linear-gradient(145deg, rgba(var(--v-theme-primary), .17), rgba(var(--v-theme-primary), .11));
 }
-
 .provider-card__identity { min-width: 0; flex: 1 1 auto; }
 
 .provider-card__name {
@@ -1347,13 +1381,9 @@ onMounted(() => void load())
   height: 4.5rem;
   margin-bottom: 1rem;
   border-radius: 1.35rem;
-  background: linear-gradient(145deg, rgba(var(--v-theme-primary), .15), rgba(139, 92, 246, .1));
+  background: linear-gradient(145deg, rgba(var(--v-theme-primary), .15), rgba(var(--v-theme-primary), .1));
 }
-
-.agent-empty__icon--teal { background: rgba(13, 148, 136, .1); color: var(--agent-teal); }
-.agent-empty h3 { margin: 0 0 .35rem; font-size: 1.05rem; font-weight: 720; }
-.agent-empty p { max-width: 30rem; margin: 0 0 1.15rem; color: rgba(var(--v-theme-on-surface), .6); font-size: .78rem; line-height: 1.55; }
-
+.agent-empty__icon--teal { background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
 .target-list { display: grid; gap: .65rem; }
 
 .target-row {
@@ -1367,9 +1397,8 @@ onMounted(() => void load())
   background: rgba(var(--v-theme-on-surface), .018);
 }
 
-.target-row__icon { width: 2.5rem; height: 2.5rem; background: rgba(13, 148, 136, .1); color: var(--agent-teal); }
+.target-row__icon { width: 2.5rem; height: 2.5rem; background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
 .target-row__copy { display: grid; min-width: 0; flex: 1 1 auto; }
-.target-row__copy strong { overflow: hidden; font-size: .79rem; text-overflow: ellipsis; white-space: nowrap; }
 .target-row__copy small { color: rgba(var(--v-theme-on-surface), .55); font-family: monospace; font-size: .66rem; }
 .target-row__state { display: flex; align-items: center; gap: .55rem; color: rgba(var(--v-theme-on-surface), .62); font-size: .7rem; font-weight: 650; }
 
@@ -1391,10 +1420,7 @@ onMounted(() => void load())
     rgb(var(--v-theme-surface));
 }
 
-.profile-editor__mark { width: 3rem; height: 3rem; background: linear-gradient(145deg, rgba(var(--v-theme-primary), .16), rgba(139, 92, 246, .1)); }
-.profile-editor__header h2 { margin: .12rem 0 .15rem; font-size: 1.2rem; font-weight: 730; letter-spacing: -.025em; }
-.profile-editor__progress { flex: 0 0 auto; }
-
+.profile-editor__mark { width: 3rem; height: 3rem; background: linear-gradient(145deg, rgba(var(--v-theme-primary), .16), rgba(var(--v-theme-primary), .1)); }
 .profile-editor__workspace {
   display: grid;
   min-height: min(38rem, calc(100vh - 14rem));
@@ -1578,11 +1604,8 @@ onMounted(() => void load())
 .compact-dialog__header > span { width: 2.7rem; height: 2.7rem; }
 .compact-dialog__header--danger { background: rgba(var(--v-theme-error), .035); }
 .compact-dialog__header--danger > span { background: rgba(var(--v-theme-error), .1); color: rgb(var(--v-theme-error)); }
-.compact-dialog__header--teal { background: rgba(13, 148, 136, .035); }
-.compact-dialog__header--teal > span { background: rgba(13, 148, 136, .1); color: var(--agent-teal); }
-.compact-dialog__header h2 { margin: 0; font-size: 1.05rem; font-weight: 720; letter-spacing: -.02em; }
-.compact-dialog__header p { margin: .08rem 0 0; color: rgba(var(--v-theme-on-surface), .58); font-size: .7rem; }
-
+.compact-dialog__header--teal { background: rgba(var(--v-theme-primary), .035); }
+.compact-dialog__header--teal > span { background: rgba(var(--v-theme-primary), .1); color: rgb(var(--v-theme-primary)); }
 code { overflow-wrap: anywhere; }
 
 :global(.profile-editor .v-messages),

@@ -6,17 +6,18 @@
     :fullscreen='$vuetify.display.smAndDown'
     )
     .dialog-header
-      v-icon(color='white') mdi-tag-text-outline
-      .text-body-large.text-white.ml-3 {{$t('editor:props.pageProperties')}}
+      v-icon(color='primary') mdi-tag-text-outline
+      .text-body-large.ml-3 {{$t('editor:props.pageProperties')}}
       v-spacer
       v-btn.mx-0(
         variant="outlined"
+        :disabled='!isPathValid'
         @click='close'
         )
         v-icon(start) mdi-check
         span {{ $t('common:actions.ok') }}
-    v-card(rounded='0')
-      v-tabs.text-white(bg-color='blue-darken-1', color='white', align-tabs="center", show-arrows, v-model='currentTab')
+    v-card.editor-properties-card(rounded='0')
+      v-tabs(v-model='currentTab', color='primary', align-tabs="center", show-arrows)
         v-tab(:value='0') {{$t('editor:props.info')}}
         v-tab(:value='1') {{$t('editor:props.scheduling')}}
         v-tab(:value='2', :disabled='!hasScriptPermission') {{$t('editor:props.scripts')}}
@@ -51,7 +52,7 @@
               inset
             )
           v-divider
-          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`')
+          v-card-text.editor-properties-subsection.pt-5
             .text-label-small.pb-5 {{$t('editor:props.path')}}
             v-container.pa-0(fluid)
               v-row
@@ -65,18 +66,20 @@
                     hide-details
                   )
                 v-col(cols='12', md='10')
-                  v-text-field(
-                    variant="outlined"
-                    :label='$t(`editor:props.path`)'
-                    append-icon='mdi-folder-search'
-                    v-model='path'
-                    :hint='$t(`editor:props.pathHint`)'
-                    persistent-hint
-                    @click:append='showPathSelector'
-                    :rules='[rules.required, rules.path]'
+                  v-form(ref='propsForm', v-model='propertiesValid', @submit.prevent='close')
+                    v-text-field(
+                      ref='iptPath'
+                      variant="outlined"
+                      :label='$t(`editor:props.path`)'
+                      append-icon='mdi-folder-search'
+                      v-model='path'
+                      :hint='$t(`editor:props.pathHint`)'
+                      persistent-hint
+                      @click:append='showPathSelector'
+                      :rules='[rules.required, rules.path]'
                     )
           v-divider
-          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-4`')
+          v-card-text.editor-properties-subsection.pt-5
             .text-label-small.pb-5 {{$t('editor:props.categorization')}}
             v-combobox(
               :label='$t(`editor:props.tags`)'
@@ -105,7 +108,7 @@
               inset
               )
           v-divider
-          v-card-text.pt-5(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`')
+          v-card-text.editor-properties-subsection.pt-5
             v-container.pa-0(fluid)
               v-row
                 v-col(cols='12', md='6')
@@ -252,7 +255,7 @@
                 v-icon(start) mdi-translate
                 span {{$t('editor:props.linkTranslation')}}
             v-progress-linear(v-if='translationsLoading', indeterminate, color='primary')
-            v-list(v-else-if='relatedTranslations.length > 0', lines='two')
+            v-list(v-else-if='!translationError && relatedTranslations.length > 0', lines='two')
               template(v-for='translation of relatedTranslations', :key='translation.id')
                 v-list-item
                   template(v-slot:prepend)
@@ -268,8 +271,20 @@
                       @click='unlinkTranslation(translation)'
                       )
                 v-divider
-            v-alert(v-else, type='info', variant='tonal') {{$t('editor:props.noTranslations')}}
+            v-alert(v-else-if='translationError', type='error', variant='tonal')
+              .d-flex.align-center
+                span {{translationError}}
+                v-spacer
+                v-btn(variant='text', size='small', @click='loadTranslations') Retry
 
+    v-dialog(v-model='privatePageConfirm', max-width='480')
+      v-card
+        v-card-title Publish private page?
+        v-card-text Publish this private page? It will become available through normal page permissions.
+        v-card-actions
+          v-spacer
+          v-btn(variant='text', @click='privatePageConfirm = false') {{$t('common:actions.cancel')}}
+          v-btn(color='primary', @click='confirmPublish') {{$t('common:actions.ok')}}
     page-selector(:mode='pageSelectorMode', v-model='pageSelectorShown', :path='path', :locale='locale', :open-handler='setPath')
     page-selector(
       mode='select'
@@ -314,7 +329,6 @@ function formatDatePickerValue (value: DatePickerValue): string {
   const parsed = value instanceof Date ? value : parseDatePickerValue(value)
   return parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : ''
 }
-
 export default defineComponent({
   emits: ['update:modelValue'],
   props: {
@@ -333,12 +347,15 @@ export default defineComponent({
       translationSelectorShown: false,
       translations: [] as PageLocaleRelation[],
       translationsLoading: false,
+      translationError: '',
       namespaces: siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang],
       newTagSuggestions: [] as string[],
       newTagSearch: '',
       tagSearchTimer: null as number | null,
       tagSearchLoading: false,
       currentTab: 0,
+      propertiesValid: false,
+      privatePageConfirm: false,
       cm: null as TextEditorHandle | null,
       rules: {
         required: (value: string) => !!value || 'This field is required.',
@@ -355,6 +372,9 @@ export default defineComponent({
     },
     mode() {
       return wikiStore.editor.mode
+    },
+    isPathValid (): boolean {
+      return Boolean(this.path) && filenamePattern.test(this.path)
     },
     title: {
       get() {
@@ -412,9 +432,9 @@ export default defineComponent({
         if (
           !value &&
           this.mode !== 'create' &&
-          wikiStore.page.visibility === 'private' &&
-          !window.confirm('Publish this private page? It will become available through normal page permissions.')
+          wikiStore.page.visibility === 'private'
         ) {
+          this.privatePageConfirm = true
           return
         }
         wikiStore.page.visibility = value ? 'private' : 'public'
@@ -468,10 +488,11 @@ export default defineComponent({
   watch: {
     modelValue (newValue: boolean) {
       if (newValue) {
+        this.currentTab = 0
         if (this.mode !== 'create') void this.loadTranslations()
-        _.delay(() => {
-          ;(this.$refs.iptTitle as { focus: () => void }).focus()
-        }, 500)
+        this.$nextTick(() => {
+          ;(this.$refs.iptTitle as { focus?: () => void })?.focus?.()
+        })
       }
     },
     isPublishStartShown (newValue: boolean) {
@@ -518,9 +539,11 @@ export default defineComponent({
   methods: {
     async loadTranslations () {
       this.translationsLoading = true
+      this.translationError = ''
       try {
         this.translations = await fetchPageLocaleRelations(window.fetch.bind(window), wikiStore.page.id)
       } catch (err) {
+        this.translationError = 'Unable to load translations. Try again.'
         wikiStore.showError(err)
       } finally {
         this.translationsLoading = false
@@ -555,8 +578,20 @@ export default defineComponent({
       this.publishEndDate = formatDatePickerValue(this.publishEndDraft)
       this.isPublishEndShown = false
     },
-    close() {
+    async close() {
+      const form = this.$refs.propsForm as { validate?: () => Promise<{ valid: boolean }> } | undefined
+      const result = await form?.validate?.()
+      if (result && !result.valid) {
+        this.currentTab = 0
+        await this.$nextTick()
+        ;(this.$refs.iptPath as { focus?: () => void })?.focus?.()
+        return
+      }
       this.isShown = false
+    },
+    confirmPublish() {
+      wikiStore.page.visibility = 'public'
+      this.privatePageConfirm = false
     },
     showPathSelector() {
       this.pageSelectorShown = true
@@ -590,7 +625,6 @@ export default defineComponent({
         }
       })
       this.cm = cm
-      ref.style.height = '500px'
       this.$nextTick(() => {
         cm.requestMeasure()
         cm.focus()
@@ -603,25 +637,58 @@ export default defineComponent({
 
 <style lang='scss'>
 
+.editor-properties-card {
+  background: rgb(var(--v-theme-surface));
+  color: rgb(var(--v-theme-on-surface));
+  display: flex;
+  .editor-properties-subsection {
+    background: rgba(var(--v-theme-on-surface), .035);
+  }
+  flex-direction: column;
+  max-height: calc(100dvh - 32px);
+  min-height: 0;
+
+  .v-tabs-window {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+  }
+}
+
+
+.editor-properties-card .v-window-item:has(.editor-props-codeeditor) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 .editor-props-codeeditor {
-  background-color: mc('grey', '900');
-  min-height: 500px;
+  background: rgb(var(--v-theme-surface-variant));
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow: hidden;
+
+  > div {
+    height: 100%;
+    min-height: 0;
+  }
 
   > textarea {
     visibility: hidden;
   }
 
   &-title {
-    background-color: mc('grey', '900');
-    border-bottom: 1px solid lighten(mc('grey', '900'), 10%);
-    color: #FFF;
+    background: rgba(var(--v-theme-on-surface), .06);
+    border-bottom: 1px solid rgba(var(--v-theme-on-surface), .12);
+    color: rgb(var(--v-theme-on-surface));
+    flex: 0 0 auto;
     padding: 10px;
   }
 
   &-hint {
-    background-color: mc('grey', '900');
-    border-top: 1px solid lighten(mc('grey', '900'), 5%);
-    color: mc('grey', '500');
+    background: rgba(var(--v-theme-on-surface), .04);
+    border-top: 1px solid rgba(var(--v-theme-on-surface), .12);
+    color: rgba(var(--v-theme-on-surface), .62);
+    flex: 0 0 auto;
     padding: 5px 10px;
   }
 }

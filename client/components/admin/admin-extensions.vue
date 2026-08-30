@@ -10,15 +10,22 @@
         v-form.pt-3
           v-row
             v-col(xl='6' lg='8' cols='12')
-              v-alert.mb-4(variant="outlined", color='error', icon='mdi-alert')
+              v-alert.mb-4(type='info', variant="tonal", icon='mdi-information')
                 span New extensions cannot be installed at the moment. This feature is coming in a future release.
-              v-expansion-panels.admin-extensions-exp(variant="popout")
+              v-alert.mb-4(v-if='loadState === `error`', type='error', variant="tonal", icon='mdi-alert')
+                span Unable to load extensions.
+                v-btn.ml-2(variant="text", size="small", @click='loadExtensions') Retry
+              div(v-if='loadState === `loading`')
+                v-skeleton-loader.mb-3(v-for='index in 3', :key='`extension-skeleton-` + index', type='list-item-two-line')
+              v-alert.mb-0(v-else-if='loadState === `success` && !extensions.length', type='info', variant="outlined", icon='mdi-puzzle-outline')
+                span No extensions are available.
+              v-expansion-panels.admin-extensions-exp(v-else-if='extensions.length', variant="popout")
                 v-expansion-panel(v-for='ext of extensions', :key='`ext-` + ext.key')
                   v-expansion-panel-title(disable-icon-rotate)
                     span {{ext.title}}
                     template(v-slot:actions)
-                      v-chip(label, color='success', size="small", v-if='ext.isInstalled') Installed
-                      v-chip(label, color='warning', size="small", v-else) Not Installed
+                      v-chip(label, color='success', size="small", v-if='ext.isInstalled', prepend-icon='mdi-check-circle') Installed
+                      v-chip(label, color='warning', size="small", v-else, prepend-icon='mdi-download-circle-outline') Not Installed
                   v-expansion-panel-text.pa-0
                     v-card(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`', rounded='0')
                       v-card-text
@@ -33,7 +40,8 @@
                         v-spacer
                         v-btn(disabled)
                           v-icon(start) mdi-plus
-                          span Install</template>
+                          span Install
+</template>
 
 <script lang='ts'>
 import { fetchSystemExtensions, type SystemExtension } from '../../helpers/system-api'
@@ -43,17 +51,20 @@ import { wikiStore } from '@/store/index.ts'
 export default {
   data() {
     return {
-      extensions: [] as SystemExtension[]
+      extensions: [] as SystemExtension[],
+      loadState: 'loading' as 'loading' | 'success' | 'error'
     }
   },
   methods: {
     async loadExtensions () {
+      this.loadState = 'loading'
       loadingStart(wikiStore, 'admin-extensions-refresh')
       try {
         this.extensions = await fetchSystemExtensions(window.fetch.bind(window), 'System extensions response is invalid')
+        this.loadState = 'success'
         return true
       } catch (err) {
-        this.extensions = []
+        this.loadState = 'error'
         pushGraphError(wikiStore, err)
         return false
       } finally {

@@ -41,11 +41,17 @@ const registrations = [
   asyncComponent('Page', () => import('./themes/default/components/page.vue'))
 ]
 
-
 wikiStore.refreshAuth()
 
 const vuetify = createVuetify({
   locale: { rtl: { [siteConfig.lang]: siteConfig.rtl }, locale: siteConfig.lang },
+  defaults: {
+    VCard: { elevation: 1 },
+    VTextField: { variant: 'outlined' },
+    VTextarea: { variant: 'outlined' },
+    VSelect: { variant: 'outlined' },
+    VAutocomplete: { variant: 'outlined' }
+  },
   theme: {
     defaultTheme: resolveThemeName(wikiStore.user.appearance, siteConfig.darkMode),
     variations: WIKI_THEME_VARIATIONS,
@@ -64,7 +70,6 @@ app.use(router)
 app.use(vuetify)
 app.use(i18n)
 app.use(helpersPlugin)
-
 
 app.config.globalProperties.$lodash = _
 app.config.globalProperties.$moment = moment

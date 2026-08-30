@@ -5,10 +5,10 @@
       v-toolbar.source-toolbar(color='surface', flat)
         .source-toolbar-copy
           .source-eyebrow Source view
-          i18next.source-toolbar-title(v-if='versionId > 0', path='common:page.viewingSourceVersion', tag='div')
+          i18next#source-title.source-toolbar-title(v-if='versionId > 0', path='common:page.viewingSourceVersion', tag='h1')
             strong(place='date', :title='$helpers.formatMoment(versionDate, `LLL`)') {{ $helpers.formatMoment(versionDate, 'lll') }}
             strong(place='path') /{{path}}
-          i18next.source-toolbar-title(v-else, path='common:page.viewingSource', tag='div')
+          i18next#source-title.source-toolbar-title(v-else, path='common:page.viewingSource', tag='h1')
             strong(place='path') /{{path}}
           .source-toolbar-meta(v-if='$vuetify.display.mdAndUp')
             span {{$t('common:page.id', { id: pageId })}}
@@ -33,7 +33,7 @@
             span(v-else) {{$t('common:page.returnNormalView')}}
       v-container.source-shell(fluid)
         article.source-code-card
-          pre
+          pre(tabindex='0' aria-labelledby='source-title')
             slot
     nav-footer
     notify
@@ -135,9 +135,10 @@ export default {
 
 .source-toolbar-title {
   overflow: hidden;
-  margin-top: 3px;
+  margin: 3px 0 0;
   color: rgb(var(--v-theme-on-surface));
   font-size: 1rem;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -210,8 +211,9 @@ export default {
     gap: 4px;
 
     .v-btn {
-      min-width: 38px;
-      padding-inline: 8px;
+      min-width: 44px;
+      min-height: 44px;
+      padding-inline: 6px;
     }
   }
 
@@ -220,7 +222,7 @@ export default {
   }
 
   .source-code-card {
-    border-radius: 14px;
+    border-radius: var(--wiki-panel-radius);
 
     pre {
       max-height: calc(100dvh - 190px);

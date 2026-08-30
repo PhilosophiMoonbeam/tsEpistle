@@ -1,6 +1,6 @@
 <template lang='pug'>
   .editor-markdown(ref='root')
-    v-toolbar.editor-markdown-toolbar(density="compact", color='primary', flat, style='overflow-x: hidden;')
+    v-toolbar.editor-markdown-toolbar(density="compact", color='primary', flat)
       template(v-if='isModalShown')
         v-spacer
         v-btn.animated.fadeInRight(variant="text", @click='closeAllModal')
@@ -9,27 +9,27 @@
       template(v-else)
         v-tooltip(location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `**` })').mx-0
+            v-btn.animated.fadeIn(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.bold`)', @click='toggleMarkup({ start: `**` })').mx-0
               v-icon mdi-format-bold
           span {{$t('editor:markup.bold')}}
         v-tooltip(location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p1s(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `*` })').mx-0
+            v-btn.animated.fadeIn.wait-p1s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.italic`)', @click='toggleMarkup({ start: `*` })').mx-0
               v-icon mdi-format-italic
           span {{$t('editor:markup.italic')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p2s(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `~~` })').mx-0
+            v-btn.animated.fadeIn.wait-p2s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.strikethrough`)', @click='toggleMarkup({ start: `~~` })').mx-0
               v-icon mdi-format-strikethrough
           span {{$t('editor:markup.strikethrough')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p3s(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `==` })').mx-0
+            v-btn.animated.fadeIn.wait-p3s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.highlight`)', @click='toggleMarkup({ start: `==` })').mx-0
               v-icon mdi-format-color-highlight
           span {{$t('editor:markup.highlight')}}
         v-menu(:open-on-hover='$vuetify.display.mdAndUp')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p3s(icon, rounded='0', v-bind='props').mx-0
+            v-btn.animated.fadeIn.wait-p3s(icon, rounded='0', v-bind='props', aria-label='Heading level').mx-0
               v-icon mdi-format-header-pound
           v-list.py-0
             template(v-for='(n, idx) in 6', :key='idx')
@@ -40,17 +40,17 @@
               v-divider(v-if='idx < 5')
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p4s(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `~` })').mx-0
+            v-btn.animated.fadeIn.wait-p4s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.subscript`)', @click='toggleMarkup({ start: `~` })').mx-0
               v-icon mdi-format-subscript
           span {{$t('editor:markup.subscript')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p5s(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `^` })').mx-0
+            v-btn.animated.fadeIn.wait-p5s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.superscript`)', @click='toggleMarkup({ start: `^` })').mx-0
               v-icon mdi-format-superscript
           span {{$t('editor:markup.superscript')}}
         v-menu(v-if='$vuetify.display.mdAndUp', open-on-hover)
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p6s(icon, rounded='0', v-bind='props').mx-0
+            v-btn.animated.fadeIn.wait-p6s(icon, rounded='0', v-bind='props', aria-label='Admonition type').mx-0
               v-icon mdi-alpha-t-box-outline
           v-list.py-0
             v-list-item(@click='insertBeforeEachLine({ content: `> `})')
@@ -78,41 +78,41 @@
                 v-icon(color='error') mdi-alpha-e-box-outline
               v-list-item-title {{$t('editor:markup.blockquoteError')}}
             v-divider
-        v-tooltip(location="bottom", color='primary')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p7s(icon, rounded='0', v-bind='props', @click='insertBeforeEachLine({ content: `- `})').mx-0
+            v-btn.animated.fadeIn.wait-p7s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.unorderedList`)', @click='insertBeforeEachLine({ content: `- `})').mx-0
               v-icon mdi-format-list-bulleted
           span {{$t('editor:markup.unorderedList')}}
-        v-tooltip(location="bottom", color='primary')
+        v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p8s(icon, rounded='0', v-bind='props', @click='insertBeforeEachLine({ content: `1. `})').mx-0
+            v-btn.animated.fadeIn.wait-p8s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.orderedList`)', @click='insertBeforeEachLine({ content: `1. `})').mx-0
               v-icon mdi-format-list-numbered
           span {{$t('editor:markup.orderedList')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p9s(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: "`" })').mx-0
+            v-btn.animated.fadeIn.wait-p9s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.inlineCode`)', @click='toggleMarkup({ start: "`" })').mx-0
               v-icon mdi-code-tags
           span {{$t('editor:markup.inlineCode')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p10s(icon, rounded='0', v-bind='props', @click='toggleMarkup({ start: `<kbd>`, end: `</kbd>` })').mx-0
+            v-btn.animated.fadeIn.wait-p10s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.keyboardKey`)', @click='toggleMarkup({ start: `<kbd>`, end: `</kbd>` })').mx-0
               v-icon mdi-keyboard-variant
           span {{$t('editor:markup.keyboardKey')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p11s(icon, rounded='0', v-bind='props', @click='insertAfter({ content: `---`, newLine: true })').mx-0
+            v-btn.animated.fadeIn.wait-p11s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.horizontalBar`)', @click='insertAfter({ content: `---`, newLine: true })').mx-0
               v-icon mdi-minus
           span {{$t('editor:markup.horizontalBar')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="bottom", color='primary', v-if='previewShown')
             template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn.wait-p1s(icon, rounded='0', v-bind='props', @click='spellModeActive = !spellModeActive').mx-0
+              v-btn.animated.fadeIn.wait-p1s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.toggleSpellcheck`)', :aria-pressed='spellModeActive', @click='spellModeActive = !spellModeActive').mx-0
                 v-icon(:color='spellModeActive ? `amber` : `white`') mdi-spellcheck
             span {{$t('editor:markup.toggleSpellcheck')}}
           v-tooltip(location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn.wait-p2s(icon, rounded='0', v-bind='props', @click='previewShown = !previewShown').mx-0
+              v-btn.animated.fadeIn.wait-p2s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='previewShown = !previewShown').mx-0
                 v-icon mdi-book-open-outline
             span {{$t('editor:markup.togglePreviewPane')}}
         template(v-else)
@@ -123,6 +123,7 @@
                 icon
                 rounded='0'
                 v-bind='props'
+                :aria-pressed='previewShown'
                 @click='previewShown = !previewShown'
                 :aria-label='previewShown ? `Show editor` : `Show preview`'
               )
@@ -188,27 +189,27 @@
       .editor-markdown-sidebar
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeInLeft(icon, rounded='0', v-bind='props', @click='insertLink').mx-0
+            v-btn.animated.fadeInLeft(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertLink`)', @click='insertLink').mx-0
               v-icon mdi-link-plus
           span {{$t('editor:markup.insertLink')}}
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, rounded='0', v-bind='props', @click='toggleModal(`editorModalMedia`)').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
               v-icon(:color='activeModal === `editorModalMedia` ? `teal` : ``') mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p2s(icon, rounded='0', v-bind='props', @click='toggleModal(`editorModalDrawio`)').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p2s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertDiagram`)', @click='toggleModal(`editorModalDrawio`)').mx-0
               v-icon mdi-chart-multiline
           span {{$t('editor:markup.insertDiagram')}}
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, rounded='0', v-bind='props', aria-label='Insert content extension', @click='toggleModal(`editorModalBlocks`)').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, rounded='0', v-bind='props', aria-label='Insert content extension', :aria-pressed='activeModal === `editorModalBlocks`', @click='toggleModal(`editorModalBlocks`)').mx-0
               v-icon(:color='activeModal === `editorModalBlocks` ? `teal` : ``') mdi-qrcode
           span Insert content extension
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, rounded='0', v-bind='props', @click='insertDefinitionList').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertDefinitionList`)', @click='insertDefinitionList').mx-0
               v-icon mdi-format-list-group-plus
           span {{$t('editor:markup.insertDefinitionList')}}
         v-tooltip(location="right", color='teal')
@@ -220,12 +221,12 @@
           v-spacer
           v-tooltip(location="right", color='teal')
             template(v-slot:activator='{ props }')
-              v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, rounded='0', v-bind='props', @click='toggleFullscreen').mx-0
+              v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
           v-tooltip(location="right", color='teal')
             template(v-slot:activator='{ props }')
-              v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, rounded='0', v-bind='props', @click='toggleHelp').mx-0
+              v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.markdownFormattingHelp`)', :aria-pressed='helpShown', @click='toggleHelp').mx-0
                 v-icon(:color='helpShown ? `teal` : ``') mdi-help-circle
             span {{$t('editor:markup.markdownFormattingHelp')}}
       .editor-markdown-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
@@ -236,17 +237,15 @@
             div(
               ref='editorPreview'
               v-html='previewHTML'
-              :spellcheck='spellModeActive'
-              :contenteditable='spellModeActive'
-              @blur='spellModeActive = false'
+              :spellcheck='false'
               )
 
-    v-system-bar.editor-status-bar.editor-markdown-sysbar(absolute, status, color="grey-darken-3")
+    v-system-bar.editor-status-bar.editor-markdown-sysbar(status, color="grey-darken-3")
       .text-body-small.editor-markdown-sysbar-locale {{locale.toUpperCase()}}
-      .text-body-small.px-3 /{{path}}
+      .text-body-small.editor-markdown-sysbar-path.px-3(:title='`/${path}`') /{{path}}
       template(v-if='collaborationStatus')
         v-spacer
-        .text-body-small.d-flex.align-center(
+        .text-body-small.d-flex.align-center.editor-markdown-sysbar-collaboration(
           role='status'
           aria-live='polite'
           :title='collaborationLabel'
@@ -470,9 +469,13 @@ export default defineComponent({
       }
     },
     spellModeActive (newValue: boolean) {
+      const source = (this.$refs.cm as HTMLElement | undefined)?.querySelector<HTMLElement>('.cm-content')
+      if (source) {
+        source.setAttribute('spellcheck', String(newValue))
+      }
       if (newValue) {
         this.$nextTick(() => {
-          ;(this.$refs.editorPreview as HTMLElement).focus()
+          requireEditor(this.cm).focus()
         })
       }
     }
@@ -665,17 +668,18 @@ export default defineComponent({
       const currentLine = cm.cursor().line
       const preview = this.$refs.editorPreview as HTMLElement
       const previewContainer = this.$refs.editorPreviewContainer as HTMLElement
+      const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180
       if (currentLine < 3) {
         Velocity(preview, 'stop', true)
         if (preview.firstElementChild) {
-          Velocity(preview.firstElementChild, 'scroll', { offset: '-50', duration: 1000, container: previewContainer })
+          Velocity(preview.firstElementChild, 'scroll', { offset: '-50', duration, container: previewContainer })
         }
       } else {
         const closestLine = _.findLast(linesMap, line => line <= currentLine)
         const destination = preview.querySelector<HTMLElement>(`[data-source-line='${closestLine}']`)
         if (destination) {
           Velocity(preview, 'stop', true)
-          Velocity(destination, 'scroll', { offset: '-100', duration: 1000, container: previewContainer })
+          Velocity(destination, 'scroll', { offset: '-100', duration, container: previewContainer })
         }
       }
     },
@@ -752,7 +756,7 @@ export default defineComponent({
 
 
     this.debouncedProcessContent = _.debounce((newContent: string) => this.processContent(newContent), 600)
-    this.debouncedScrollSync = _.debounce((editor: TextEditorHandle) => this.performScrollSync(editor), 500)
+    this.debouncedScrollSync = _.debounce((editor: TextEditorHandle) => this.performScrollSync(editor), 150)
     const completePageLink = async (context: CompletionContext) => {
       const prefix = context.matchBefore(/\[[^\]]+\]\($/)
       if (!prefix) return null
@@ -856,9 +860,10 @@ export default defineComponent({
       configurable: true,
       value: cm
     })
-    ;(this.$refs.cm as HTMLElement).style.height = this.$vuetify.display.mdAndUp
-      ? 'calc(100dvh - 112px - 24px)'
-      : 'calc(100dvh - 112px - 16px)'
+    this.$nextTick(() => {
+      const source = (this.$refs.cm as HTMLElement).querySelector<HTMLElement>('.cm-content')
+      source?.setAttribute('spellcheck', 'false')
+    })
 
     // Render initial preview
 
@@ -889,49 +894,51 @@ export default defineComponent({
 
 <style lang='scss'>
 
-$editor-height: calc(100dvh - 112px - 24px);
-$editor-height-mobile: calc(100dvh - 112px - 16px);
 
 .editor-markdown {
+  background: rgb(var(--v-theme-background));
+  color: rgb(var(--v-theme-on-surface));
+  display: flex;
+  flex: 1 1 auto;
+  flex-flow: column nowrap;
+  height: 100%;
+  min-height: 0;
+
   &-main {
     display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
     width: 100%;
   }
 
   &-editor {
-    background-color: darken(mc('grey', '900'), 4.5%);
-    flex: 1 1 50%;
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%);
     display: block;
-    height: $editor-height;
+    flex: 1 1 50%;
+    min-height: 0;
+    overflow: auto;
     position: relative;
 
-    @include until($tablet) {
-      height: $editor-height-mobile;
+    &.is-mobile-hidden {
+      display: none;
     }
-
-      &.is-mobile-hidden {
-        display: none;
-      }
   }
 
   &-preview {
+    background: rgb(var(--v-theme-surface));
     flex: 1 1 50%;
-    background-color: mc('grey', '100');
-    position: relative;
-    height: $editor-height;
+    min-height: 0;
     overflow: hidden;
     padding: 1rem;
-
-    @at-root .v-theme--dark & {
-      background-color: mc('grey', '900');
-    }
+    position: relative;
 
     @include until($tablet) {
       display: block;
       flex: 1 1 100%;
-      width: 100%;
       max-width: 100vw !important;
       padding: 12px;
+      width: 100%;
     }
 
     &-enter-active, &-leave-active {
@@ -948,19 +955,13 @@ $editor-height-mobile: calc(100dvh - 112px - 16px);
     }
 
     &-content {
-      height: $editor-height;
-      overflow-y: scroll;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
       padding: 0;
-      width: calc(100% + 17px);
-      // -ms-overflow-style: none;
-
-      // &::-webkit-scrollbar {
-      //   width: 0px;
-      //   background: transparent;
-      // }
+      width: 100%;
 
       @include until($tablet) {
-        height: $editor-height-mobile;
         width: 100%;
       }
 
@@ -973,8 +974,8 @@ $editor-height-mobile: calc(100dvh - 112px - 16px);
       }
 
       .tabset {
-        background-color: mc('teal', '700');
-        color: mc('teal', '100') !important;
+        background: rgba(var(--v-theme-primary), .12);
+        color: rgb(var(--v-theme-on-surface)) !important;
         padding: 5px 12px;
         font-size: 14px;
         font-weight: 500;
@@ -986,12 +987,10 @@ $editor-height-mobile: calc(100dvh - 112px - 16px);
         }
 
         &-header {
-          background-color: mc('teal', '500');
-          color: #FFF !important;
           padding: 5px 12px;
           font-size: 14px;
-          font-weight: 500;
-          margin-top: 0 !important;
+          background: rgba(var(--v-theme-primary), .22);
+          color: rgb(var(--v-theme-on-primary)) !important;
 
           &::after {
             display: none;
@@ -999,25 +998,24 @@ $editor-height-mobile: calc(100dvh - 112px - 16px);
         }
 
         &-content {
-          border-left: 5px solid mc('teal', '500');
-          background-color: mc('teal', '50');
           padding: 0 15px 15px;
-          overflow: hidden;
-
-          @at-root .v-theme--dark & {
-            background-color: rgba(mc('teal', '500'), .1);
-          }
+          border-left: 5px solid rgba(var(--v-theme-primary), .7);
+          background: rgba(var(--v-theme-primary), .06);
         }
       }
     }
   }
 
   &-toolbar {
-    background-color: mc('blue', '700');
-    background-image: linear-gradient(to bottom, mc('blue', '700') 0%, mc('blue','800') 100%);
-    color: #FFF;
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%) !important;
+    border-bottom: 1px solid rgba(var(--v-theme-on-surface), .12);
+    color: rgb(var(--v-theme-on-surface));
+    flex: 0 0 auto;
+    overflow-x: auto !important;
+    scrollbar-width: thin;
 
     .v-toolbar__content {
+      min-width: max-content;
       padding-left: 64px;
 
       @include until($tablet) {
@@ -1028,13 +1026,14 @@ $editor-height-mobile: calc(100dvh - 112px - 16px);
 
 
   &-sidebar {
-    background-color: mc('grey', '900');
-    width: 64px;
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 92%, rgb(var(--v-theme-primary)) 8%);
+    border-inline-end: 1px solid rgba(var(--v-theme-on-surface), .12);
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
     align-items: center;
     padding: 24px 0;
+    width: 64px;
 
     @include until($tablet) {
       display: none;
@@ -1042,18 +1041,58 @@ $editor-height-mobile: calc(100dvh - 112px - 16px);
   }
 
   &-sysbar {
+    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 90%, rgb(var(--v-theme-on-surface)) 10%) !important;
+    border-top: 1px solid rgba(var(--v-theme-on-surface), .12);
+    color: rgba(var(--v-theme-on-surface), .62);
+    flex: 0 0 calc(24px + env(safe-area-inset-bottom));
+    min-height: calc(24px + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
     padding-left: 0;
 
     &-locale {
-      background-color: rgba(255,255,255,.25);
-      display:inline-flex;
-      padding: 0 12px;
-      height: 24px;
-      width: 63px;
-      justify-content: center;
       align-items: center;
+      background: rgba(var(--v-theme-primary), .14);
+      color: rgb(var(--v-theme-primary));
+      display: inline-flex;
+      font-weight: 700;
+      height: 24px;
+      justify-content: center;
+      padding: 0 12px;
+      width: 63px;
+    }
+
+    &-path {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    &-collaboration {
+      flex: 0 1 auto;
+      min-width: 0;
+      white-space: nowrap;
     }
   }
+
+@media (max-width: 380px) {
+  .editor-markdown-sysbar-collaboration span {
+    display: none;
+  }
+
+  .editor-markdown-sysbar-collaboration .v-icon {
+    margin-inline-end: 0 !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .editor-markdown,
+  .editor-markdown * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
 
   // ==========================================
   // Fix FAB revealing under codemirror

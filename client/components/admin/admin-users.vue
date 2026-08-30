@@ -3,35 +3,35 @@
     v-row
       v-col(cols='12')
         .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-customer.svg', alt='Users', style='width: 80px;')
+          img.animated.fadeInUp(src='/_assets/svg/icon-customer.svg', alt='', style='width: 80px;')
           .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft Users
+            h1.text-headline-medium.text-primary.animated.fadeInLeft(tabindex='-1') Users
             .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s Manage users
           v-spacer
-          v-btn.animated.fadeInDown.wait-p2s.mr-3(variant="outlined", color='grey', icon, @click='refresh')
-            v-icon mdi-refresh
-          v-btn.animated.fadeInDown(
-            color='primary'
-            size="large"
-            variant="flat"
-            @click='createUser'
-            :icon='$vuetify.display.smAndDown'
-            aria-label='New user'
+          v-btn.animated.fadeInDown.wait-p2s.me-3(
+            variant="outlined"
+            color='grey'
+            icon
+            :loading='loading'
+            :disabled='loading'
+            @click='refresh'
+            aria-label='Refresh users'
           )
+            v-icon mdi-refresh
+          v-btn.animated.fadeInDown(color='primary' size="large" variant="flat" @click='createUser' :icon='$vuetify.display.smAndDown' aria-label='New user')
             v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
             span(v-if='$vuetify.display.mdAndUp') New User
         v-card.mt-3.animated.fadeInUp
-          .admin-filter-bar.pa-2.d-flex.align-center(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`')
+          .admin-filter-bar.pa-2.d-flex.align-center
             v-text-field(
               variant="solo"
               flat
               v-model='search'
               prepend-inner-icon='mdi-account-search-outline'
-              label='Search Users...'
+              label='Search users'
               hide-details
-              style='max-width: 400px;'
               density="compact"
-              )
+            )
             v-spacer
             v-select(
               variant="solo"
@@ -42,12 +42,16 @@
               v-model='filterStrategy'
               item-title='displayName'
               item-value='key'
-              style='max-width: 300px;'
               density="compact"
             )
+            v-btn(v-if='hasActiveFilters' variant='text' size='small' color='primary' @click='clearFilters') Clear filters
+          v-alert(v-if='errorMessage && users.length' type='error' variant='tonal' class='ma-3')
+            .d-flex.align-center
+              span {{ errorMessage }}
+              v-spacer
+              v-btn(variant='text' color='primary' @click='loadUsers') Try again
           v-divider
           v-data-table.admin-responsive-table(
-            v-model='selected'
             :items='users'
             :headers='responsiveHeaders'
             :hide-default-header='$vuetify.display.smAndDown'
@@ -56,80 +60,66 @@
             :items-per-page='15'
             :loading='loading'
             hide-default-footer
-            )
+          )
             template(v-slot:item='props')
-              tr.is-clickable(v-if='$vuetify.display.mdAndUp', :active='props.selected', @click='$router.push("/users/" + props.item.id)')
+              tr(v-if='$vuetify.display.mdAndUp')
                 td {{ props.item.id }}
-                td: strong {{ props.item.name }}
+                td
+                  router-link.admin-record-link(:to='`/users/${props.item.id}`') {{ props.item.name }}
                 td {{ props.item.email }}
                 td {{ getStrategyName(props.item.providerKey) }}
                 td {{ $helpers.formatMoment(props.item.createdAt, 'from') }}
                 td
                   span(v-if='props.item.lastLoginAt') {{ $helpers.formatMoment(props.item.lastLoginAt, 'from') }}
-                  em.text-grey(v-else) Never
-                td.text-right
-                  v-icon.mr-3(v-if='props.item.isSystem') mdi-lock-outline
-                  status-indicator(positive, pulse, v-if='props.item.isActive')
-                  status-indicator(negative, pulse, v-else)
-              tr.admin-mobile-table-row.is-clickable(v-else, @click='$router.push("/users/" + props.item.id)')
+                  em.text-medium-emphasis(v-else) Never
+                td
+                  v-icon.me-2(v-if='props.item.isSystem' size='18' aria-label='System user') mdi-lock-outline
+                  span.admin-status(v-if='props.item.isActive') Active
+                  span.admin-status.admin-status--inactive(v-else) Inactive
+              tr.admin-mobile-table-row(v-else)
                 td(:colspan='responsiveHeaders.length')
                   .admin-mobile-record
                     .d-flex.align-center
-                      .admin-mobile-record-title {{ props.item.name }}
+                      router-link.admin-mobile-record-title(:to='`/users/${props.item.id}`') {{ props.item.name }}
                       v-spacer
-                      v-icon.mr-2(v-if='props.item.isSystem', size="small") mdi-lock-outline
-                      status-indicator(positive, pulse, v-if='props.item.isActive')
-                      status-indicator(negative, pulse, v-else)
+                      v-icon.me-2(v-if='props.item.isSystem' size="small" aria-label='System user') mdi-lock-outline
+                      span.admin-status(v-if='props.item.isActive') Active
+                      span.admin-status.admin-status--inactive(v-else) Inactive
                     .text-body-medium {{ props.item.email }}
                     .admin-mobile-record-meta {{ getStrategyName(props.item.providerKey) }}
-                    .text-body-small.text-grey.mt-2
+                    .text-body-small.text-medium-emphasis.mt-2
                       span(v-if='props.item.lastLoginAt') Last login {{ $helpers.formatMoment(props.item.lastLoginAt, 'from') }}
                       em(v-else) Never logged in
             template(v-slot:no-data)
-              .pa-3
-                v-alert.text-left(icon='mdi-alert', variant="outlined", color='grey')
-                  em.text-body-medium No users to display!
+              async-state(v-if='loading' state='loading' title='Loading users' message='Fetching the latest user list.')
+              async-state(v-else-if='errorMessage' state='error' title='Users could not be loaded' :message='errorMessage' retry-label='Try again' @retry='loadUsers')
+              async-state(v-else-if='hasActiveFilters' state='empty' title='No users match these filters' message='Clear the filters to see all users.')
+              async-state(v-else state='empty' title='No users yet' message='Create a user to grant access.')
           div.v-card-chin(v-if='pageCount > 1')
             v-spacer
-            v-pagination(v-model='pagination', :length='pageCount')
+            v-pagination(v-model='pagination' :length='pageCount')
             v-spacer
-
-    user-create(v-model='isCreateDialogShown', @refresh='refresh(false)')</template>
+    user-create(v-model='isCreateDialogShown' @refresh='refresh(false)')
+</template>
 
 <script lang='ts'>
-
 import { fetchAdminAuthProviders, type AdminAuthProviderSummary } from '../../helpers/auth-api'
+import AsyncState from '@/components/common/async-state.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { fetchAdminUsersList, type AdminUserListRow } from '../../helpers/users-api'
-
-import StatusIndicator from '@/components/common/status-indicator.vue'
 import UserCreate from './admin-users-create.vue'
 import { wikiStore } from '@/store/index.ts'
 
 type AuthStrategySummary = Pick<AdminAuthProviderSummary, 'key' | 'displayName'> & {
   isEnabled?: boolean
 }
-
-type UserTableHeader = {
-  title: string
-  value: string
-  sortable: boolean
-  width?: number
-}
-
-type UserTableSort = {
-  key: string
-  order: 'asc' | 'desc'
-}
+type UserTableHeader = { title: string, value: string, sortable: boolean, width?: number }
+type UserTableSort = { key: string, order: 'asc' | 'desc' }
 
 export default {
-  components: {
-    StatusIndicator,
-    UserCreate
-  },
+  components: { AsyncState, UserCreate },
   data() {
     return {
-      selected: [] as AdminUserListRow[],
       pagination: 1,
       pageCount: 0,
       sortBy: [{ key: 'name', order: 'asc' }] as UserTableSort[],
@@ -141,97 +131,72 @@ export default {
         { title: 'Provider', value: 'providerKey', sortable: true },
         { title: 'Created', value: 'createdAt', sortable: true },
         { title: 'Last Login', value: 'lastLoginAt', sortable: true },
-        { title: '', value: 'actions', sortable: false, width: 80 }
+        { title: 'Status', value: 'actions', sortable: false, width: 110 }
       ] as UserTableHeader[],
       strategies: [] as AuthStrategySummary[],
       filterStrategy: 'all',
       search: '',
       loading: false,
+      errorMessage: '',
       loadRequestId: 0,
       searchDebounce: null as ReturnType<typeof setTimeout> | null,
       isCreateDialogShown: false
     }
   },
   computed: {
-    responsiveHeaders () {
-      return this.$vuetify.display.smAndDown
-        ? this.headers.filter(header => header.value === 'name')
-        : this.headers
+    responsiveHeaders() {
+      return this.$vuetify.display.smAndDown ? this.headers.filter(header => header.value === 'name') : this.headers
     },
     strategyOptions() {
       return this.strategies.map(strategy => ({
         ...strategy,
         displayName: strategy.key !== 'all' && strategy.isEnabled === false ? `${strategy.displayName} (disabled)` : strategy.displayName
       }))
+    },
+    hasActiveFilters() {
+      return Boolean(this.search.trim() || this.filterStrategy !== 'all')
     }
   },
   watch: {
-    search () {
-      if (this.searchDebounce !== null) {
-        clearTimeout(this.searchDebounce)
-      }
+    search() {
+      if (this.searchDebounce !== null) clearTimeout(this.searchDebounce)
       this.searchDebounce = setTimeout(() => {
-        if (this.pagination !== 1) {
-          this.pagination = 1
-        } else {
-          this.loadUsers()
-        }
+        if (this.pagination !== 1) this.pagination = 1
+        else this.loadUsers()
       }, 300)
     },
-    filterStrategy () {
-      if (this.pagination !== 1) {
-        this.pagination = 1
-      } else {
-        this.loadUsers()
-      }
+    filterStrategy() {
+      if (this.pagination !== 1) this.pagination = 1
+      else this.loadUsers()
     },
-    sortBy: {
-      handler() {
-        this.loadUsers()
-      },
-      deep: true
-    },
-    pagination () {
-      this.loadUsers()
-    }
+    sortBy: { handler() { this.loadUsers() }, deep: true },
+    pagination() { this.loadUsers() }
   },
   methods: {
-    createUser() {
-      this.isCreateDialogShown = true
+    createUser() { this.isCreateDialogShown = true },
+    clearFilters() {
+      this.search = ''
+      this.filterStrategy = 'all'
     },
     async loadStrategies() {
       wikiStore.startLoading('admin-users-strategies-refresh')
       try {
         const providers = await fetchAdminAuthProviders(window.fetch.bind(window), 'Admin authentication providers response is invalid')
-        this.strategies = [{
-          key: 'all',
-          displayName: 'All Providers'
-        }, ...providers.map(provider => ({
-          key: provider.key,
-          displayName: provider.displayName,
-          isEnabled: provider.isEnabled
-        }))]
-
-        if (!this.strategies.some(strategy => strategy.key === this.filterStrategy)) {
-          this.filterStrategy = 'all'
-        }
+        this.strategies = [{ key: 'all', displayName: 'All Providers' }, ...providers.map(provider => ({ key: provider.key, displayName: provider.displayName, isEnabled: provider.isEnabled }))]
+        if (!this.strategies.some(strategy => strategy.key === this.filterStrategy)) this.filterStrategy = 'all'
         return true
       } catch (err) {
-        wikiStore.showNotification({
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        wikiStore.showNotification({ style: 'red', message: getErrorMessage(err), icon: 'alert' })
         return false
       } finally {
         wikiStore.stopLoading('admin-users-strategies-refresh')
       }
     },
-    async loadUsers () {
+    async loadUsers() {
       const requestId = ++this.loadRequestId
       this.loading = true
+      this.errorMessage = ''
       wikiStore.startLoading('admin-users-refresh')
-
       try {
         const result = await fetchAdminUsersList(window.fetch.bind(window), {
           page: this.pagination,
@@ -241,57 +206,36 @@ export default {
           orderBy: this.sortBy[0]?.key ?? 'name',
           orderByDirection: this.sortBy[0]?.order ?? 'asc'
         }, 'Users list response is invalid')
-
-        if (requestId !== this.loadRequestId) {
-          return
-        }
-
+        if (requestId !== this.loadRequestId) return
         this.users = result.users
         this.pageCount = Math.max(1, Math.ceil(result.total / 15))
       } catch (err) {
         if (requestId === this.loadRequestId) {
-          this.users = []
+          this.errorMessage = getErrorMessage(err)
           this.pageCount = 0
-          wikiStore.showNotification({
-            message: 'Failed to load users list.',
-            style: 'error',
-            icon: 'alert'
-          })
+          wikiStore.showNotification({ message: this.errorMessage, style: 'error', icon: 'alert' })
         }
       } finally {
         wikiStore.stopLoading('admin-users-refresh')
-        if (requestId === this.loadRequestId) {
-          this.loading = false
-        }
+        if (requestId === this.loadRequestId) this.loading = false
       }
     },
     async refresh(notify = true) {
       const strategiesLoaded = await this.loadStrategies()
       await this.loadUsers()
-      if (notify && strategiesLoaded) {
-        wikiStore.showNotification({
-          message: 'Users list has been refreshed.',
-          style: 'success',
-          icon: 'cached'
-        })
-      }
+      if (notify && strategiesLoaded) wikiStore.showNotification({ message: 'Users list has been refreshed.', style: 'success', icon: 'cached' })
     },
     getStrategyName(key: string) {
       return this.strategies.find(strategy => strategy.key === key)?.displayName || key
     }
   },
-  mounted () {
+  mounted() {
     this.loadStrategies()
     this.loadUsers()
   },
-  beforeUnmount () {
-    if (this.searchDebounce !== null) {
-      clearTimeout(this.searchDebounce)
-    }
+  beforeUnmount() {
+    if (this.searchDebounce !== null) clearTimeout(this.searchDebounce)
   }
 }
 </script>
 
-<style lang='scss'>
-
-</style>
