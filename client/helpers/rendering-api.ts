@@ -1,3 +1,5 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -40,7 +42,7 @@ type RendererSaveResponse = {
   message: string
 }
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
@@ -50,10 +52,22 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && (payload as { error: string }).error.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { error?: unknown }).error === 'string' &&
+      (payload as { error: string }).error.length > 0
+    ) {
       throw new Error((payload as { error: string }).error)
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && (payload as { message: string }).message.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { message?: unknown }).message === 'string' &&
+      (payload as { message: string }).message.length > 0
+    ) {
       throw new Error((payload as { message: string }).message)
     }
     throw new Error(fallbackMessage)
@@ -66,8 +80,14 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-function normalizeRendererConfig (row: unknown, fallbackMessage: string): RendererConfig {
-  if (!row || typeof row !== 'object' || Array.isArray(row) || typeof (row as { key?: unknown }).key !== 'string' || typeof (row as { value?: unknown }).value !== 'string') {
+function normalizeRendererConfig(row: unknown, fallbackMessage: string): RendererConfig {
+  if (
+    !row ||
+    typeof row !== 'object' ||
+    Array.isArray(row) ||
+    typeof (row as { key?: unknown }).key !== 'string' ||
+    typeof (row as { value?: unknown }).value !== 'string'
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -88,11 +108,11 @@ function normalizeRendererConfig (row: unknown, fallbackMessage: string): Render
   }
 }
 
-function isNullableString (value: unknown): value is string | null {
+function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === 'string'
 }
 
-function normalizeRenderer (row: unknown, fallbackMessage: string): Renderer {
+function normalizeRenderer(row: unknown, fallbackMessage: string): Renderer {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -119,15 +139,17 @@ function normalizeRenderer (row: unknown, fallbackMessage: string): Renderer {
     dependsOn: renderer.dependsOn as string | null,
     input: renderer.input as string | null,
     output: renderer.output as string | null,
-    config: renderer.config.map(cfg => normalizeRendererConfig(cfg, fallbackMessage)).sort((a, b) => {
-      const aOrder = Number.isFinite(a.value.order) ? a.value.order! : Number.MAX_SAFE_INTEGER
-      const bOrder = Number.isFinite(b.value.order) ? b.value.order! : Number.MAX_SAFE_INTEGER
-      return aOrder - bOrder
-    })
+    config: renderer.config
+      .map(cfg => normalizeRendererConfig(cfg, fallbackMessage))
+      .sort((a, b) => {
+        const aOrder = Number.isFinite(a.value.order) ? a.value.order! : Number.MAX_SAFE_INTEGER
+        const bOrder = Number.isFinite(b.value.order) ? b.value.order! : Number.MAX_SAFE_INTEGER
+        return aOrder - bOrder
+      })
   }
 }
 
-function normalizeRenderersPayload (payload: unknown, fallbackMessage: string): Renderer[] {
+function normalizeRenderersPayload(payload: unknown, fallbackMessage: string): Renderer[] {
   if (!Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -135,8 +157,8 @@ function normalizeRenderersPayload (payload: unknown, fallbackMessage: string): 
   return payload.map(row => normalizeRenderer(row, fallbackMessage))
 }
 
-export async function fetchRenderingRenderers (fetchImpl: FetchImpl, fallbackMessage = 'Rendering renderers response is invalid'): Promise<Renderer[]> {
-  const response = await fetchImpl('/_api/rendering/renderers', {
+export async function fetchRenderingRenderers(fetchImpl: FetchImpl, fallbackMessage = 'Rendering renderers response is invalid'): Promise<Renderer[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/rendering/renderers', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -146,8 +168,14 @@ export async function fetchRenderingRenderers (fetchImpl: FetchImpl, fallbackMes
   return normalizeRenderersPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-function normalizeRendererSavePayload (payload: unknown, fallbackMessage: string): RendererSaveResponse {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length === 0) {
+function normalizeRendererSavePayload(payload: unknown, fallbackMessage: string): RendererSaveResponse {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    typeof (payload as { message?: unknown }).message !== 'string' ||
+    (payload as { message: string }).message.length === 0
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -156,8 +184,12 @@ function normalizeRendererSavePayload (payload: unknown, fallbackMessage: string
   }
 }
 
-export async function saveRenderingRenderers (fetchImpl: FetchImpl, renderers: unknown[], fallbackMessage = 'Rendering renderers update failed'): Promise<RendererSaveResponse> {
-  const response = await fetchImpl('/_api/rendering/renderers', {
+export async function saveRenderingRenderers(
+  fetchImpl: FetchImpl,
+  renderers: unknown[],
+  fallbackMessage = 'Rendering renderers update failed'
+): Promise<RendererSaveResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/rendering/renderers', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {

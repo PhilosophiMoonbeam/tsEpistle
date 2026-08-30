@@ -89,6 +89,10 @@ export type AgentExecutionMode = 'agent' | 'generation-only'
 export type AgentSessionRetention = 'temporary' | 'saved'
 export type AgentSessionStatus = 'active' | 'deletion_pending'
 export type AgentRunStatus = 'queued' | 'running' | 'awaiting_approval' | 'succeeded' | 'partial' | 'failed' | 'cancelled' | 'recovery_required'
+export const AGENT_TERMINAL_RUN_STATUSES = ['succeeded', 'partial', 'failed', 'cancelled', 'recovery_required'] as const satisfies readonly AgentRunStatus[]
+export type AgentTerminalRunStatus = (typeof AGENT_TERMINAL_RUN_STATUSES)[number]
+export const isTerminalAgentRunStatus = (status: AgentRunStatus): status is AgentTerminalRunStatus =>
+  AGENT_TERMINAL_RUN_STATUSES.includes(status as AgentTerminalRunStatus)
 export type AgentMessageRole = 'user' | 'assistant'
 export type AgentMessageStatus = 'pending' | 'streaming' | 'complete' | 'failed' | 'cancelled'
 export const AGENT_PROPOSAL_STATUSES = ['pending', 'approved', 'denied', 'expired', 'applying', 'applied', 'failed', 'cancelled', 'recovery_required'] as const
@@ -544,8 +548,9 @@ export interface CancelAgentGoalRequest {
 }
 
 export interface DecideAgentApprovalRequest {
-  readonly decision: 'approve' | 'deny'
-  readonly note?: string
+  readonly decision: 'approved' | 'denied'
+  readonly decisionNote?: string
+  readonly confirmationPath?: string
 }
 
 export interface WikiLineAnchorV1 {

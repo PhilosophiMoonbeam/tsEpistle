@@ -1,3 +1,4 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
 import { type SiteBannerConfig, validateSiteBanner } from '../../shared/site-banner.ts'
 import { validateAvailableEditors, type PageEditorKey } from '../../shared/page-editors.ts'
 
@@ -11,15 +12,18 @@ type JsonResponse = {
   json?: () => Promise<unknown>
 }
 
-type FetchImpl = (url: string, init: {
-  method?: 'PUT'
-  credentials: 'same-origin'
-  headers: {
-    Accept: 'application/json'
-    'Content-Type'?: 'application/json'
+type FetchImpl = (
+  url: string,
+  init: {
+    method?: 'PUT'
+    credentials: 'same-origin'
+    headers: {
+      Accept: 'application/json'
+      'Content-Type'?: 'application/json'
+    }
+    body?: string
   }
-  body?: string
-}) => Promise<JsonResponse>
+) => Promise<JsonResponse>
 
 export type SiteConfig = Record<string, unknown> & {
   host?: string
@@ -73,7 +77,7 @@ type MessageResponse = {
   message: string
 }
 
-async function parseJsonResponse (response: JsonResponse | null | undefined, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse | null | undefined, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
   let payload: unknown = null
@@ -92,13 +96,13 @@ async function parseJsonResponse (response: JsonResponse | null | undefined, fal
   return payload
 }
 
-function assertPlainObject (payload: unknown, fallbackMessage: string): asserts payload is Record<string, unknown> {
+function assertPlainObject(payload: unknown, fallbackMessage: string): asserts payload is Record<string, unknown> {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
 }
 
-function assertSiteConfig (payload: Record<string, unknown>, fallbackMessage: string): asserts payload is SiteConfig {
+function assertSiteConfig(payload: Record<string, unknown>, fallbackMessage: string): asserts payload is SiteConfig {
   const stringFields = [
     'host',
     'title',
@@ -142,26 +146,24 @@ function assertSiteConfig (payload: Record<string, unknown>, fallbackMessage: st
     'authEnforce2FA',
     'authHideLocal'
   ]
-  const numberFields = [
-    'uploadMaxFileSize',
-    'uploadMaxFiles',
-    'securityHSTSDuration'
-  ]
+  const numberFields = ['uploadMaxFileSize', 'uploadMaxFiles', 'securityHSTSDuration']
 
   const bannerValidation = validateSiteBanner(payload.banner)
 
-  if (stringFields.some(field => field in payload && typeof payload[field] !== 'string') ||
+  if (
+    stringFields.some(field => field in payload && typeof payload[field] !== 'string') ||
     booleanFields.some(field => field in payload && typeof payload[field] !== 'boolean') ||
     numberFields.some(field => field in payload && typeof payload[field] !== 'number') ||
     ('robots' in payload && (!Array.isArray(payload.robots) || payload.robots.some(robot => typeof robot !== 'string'))) ||
     ('availableEditors' in payload && !validateAvailableEditors(payload.availableEditors).ok) ||
-    !bannerValidation.ok) {
+    !bannerValidation.ok
+  ) {
     throw new Error(fallbackMessage)
   }
 }
 
-export async function fetchSiteConfig (fetchImpl: FetchImpl, fallbackMessage = 'Site configuration fetch failed'): Promise<SiteConfig> {
-  const response = await fetchImpl('/_api/site/config', {
+export async function fetchSiteConfig(fetchImpl: FetchImpl, fallbackMessage = 'Site configuration fetch failed'): Promise<SiteConfig> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/site/config', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -173,8 +175,12 @@ export async function fetchSiteConfig (fetchImpl: FetchImpl, fallbackMessage = '
   return payload
 }
 
-export async function saveSiteConfig (fetchImpl: FetchImpl, config: Record<string, unknown>, fallbackMessage = 'Site configuration update failed'): Promise<MessageResponse & Record<string, unknown>> {
-  const response = await fetchImpl('/_api/site/config', {
+export async function saveSiteConfig(
+  fetchImpl: FetchImpl,
+  config: Record<string, unknown>,
+  fallbackMessage = 'Site configuration update failed'
+): Promise<MessageResponse & Record<string, unknown>> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/site/config', {
     method: 'PUT',
     credentials: 'same-origin',
     headers: {

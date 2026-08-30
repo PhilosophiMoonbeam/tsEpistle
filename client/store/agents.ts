@@ -1,7 +1,39 @@
 import { defineStore } from 'pinia'
 import { markRaw } from 'vue'
-import type { AgentConversationFolderView, AgentCurrentPageHint, AgentEventType, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
-import { cancelAgentGoal, cancelAgentRun, createAgentConversationFolder, createAgentGoal, createAgentThread, decideAgentProposal, deleteAgentConversationFolder, deleteAgentSession, getAgentThread, listAgentConversationFolders, listAgentProfiles, listAgentSessions, listAgentSkills, moveAgentSessionToFolder, pauseAgentGoal, renameAgentConversationFolder, resetAgentHistory, resumeAgentGoal, submitAgentMessage, subscribeAgentRun, updateAgentProfile, updateAgentSkillPreferences, type AgentSessionSummary, type CreatedAgentThread, type VisibleAgentSkill } from '../helpers/agents-api.ts'
+import type {
+  AgentConversationFolderView,
+  AgentCurrentPageHint,
+  AgentEventType,
+  AgentProviderProfileView,
+  AgentThreadState
+} from '../../shared/agents/contracts.ts'
+import {
+  cancelAgentGoal,
+  cancelAgentRun,
+  createAgentConversationFolder,
+  createAgentGoal,
+  createAgentThread,
+  decideAgentProposal,
+  deleteAgentConversationFolder,
+  deleteAgentSession,
+  getAgentThread,
+  listAgentConversationFolders,
+  listAgentProfiles,
+  listAgentSessions,
+  listAgentSkills,
+  moveAgentSessionToFolder,
+  pauseAgentGoal,
+  renameAgentConversationFolder,
+  resetAgentHistory,
+  resumeAgentGoal,
+  submitAgentMessage,
+  subscribeAgentRun,
+  updateAgentProfile,
+  updateAgentSkillPreferences,
+  type AgentSessionSummary,
+  type CreatedAgentThread,
+  type VisibleAgentSkill
+} from '../helpers/agents-api.ts'
 
 const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.partial', 'run.failed', 'run.cancelled', 'run.recovery_required'])
 export interface AgentStoreInitializeOptions {
@@ -9,7 +41,6 @@ export interface AgentStoreInitializeOptions {
   readonly currentPage?: AgentCurrentPageHint | null
   readonly reuseLatest?: boolean
 }
-
 
 export const useAgentsStore = defineStore('agents', {
   state: () => ({
@@ -30,10 +61,16 @@ export const useAgentsStore = defineStore('agents', {
     source: null as EventSource | null,
     refreshTimer: null as number | null,
     decidingApprovalId: null as string | null,
-    goalBusy: false
+    goalBusy: false,
+    sessionTransitionVersion: 0,
+    sessionTransitionController: null as AbortController | null,
+    workspaceVersion: 0
   }),
   actions: {
     async initialize(csrfToken: string, options: AgentStoreInitializeOptions = {}) {
+      this.cancelSessionTransition()
+      const workspaceVersion = this.workspaceVersion + 1
+      this.workspaceVersion = workspaceVersion
       this.csrfToken = csrfToken
       this.routeSync = options.routeSync ?? true
       this.contextPage = options.currentPage ?? null
@@ -47,6 +84,7 @@ export const useAgentsStore = defineStore('agents', {
           listAgentProfiles(window.fetch.bind(window), csrfToken),
           listAgentSkills(window.fetch.bind(window), csrfToken).catch(() => [])
         ])
+        if (this.workspaceVersion !== workspaceVersion) return
         this.profiles = profiles
         this.skills = skills
         this.sessions = sessions
@@ -61,39 +99,82 @@ export const useAgentsStore = defineStore('agents', {
           await this.newSession('saved')
         }
       } catch (error) {
-        this.error = error instanceof Error ? error.message : 'Agent session failed to load.'
+        if (this.workspaceVersion === workspaceVersion) this.error = error instanceof Error ? error.message : 'Agent session failed to load.'
       } finally {
-        this.loading = false
+        if (this.workspaceVersion === workspaceVersion) this.loading = false
       }
     },
     setCurrentPage(page: AgentCurrentPageHint | null) {
       this.contextPage = page
     },
-    async newSession(retention: 'temporary' | 'saved') {
-      const disposableSessionId = this.thread && this.thread.messages.length === 0 && !this.thread.session.currentRun
-        ? this.thread.session.id
-        : null
+    beginSessionTransition() {
+      const version = this.sessionTransitionVersion + 1
+      this.sessionTransitionVersion = version
+      this.sessionTransitionController?.abort()
+      const controller = markRaw(new AbortController())
+      this.sessionTransitionController = controller
+      return { version, controller }
+    },
+    isSessionTransitionCurrent(version: number, controller: AbortController) {
+      return !controller.signal.aborted && this.sessionTransitionVersion === version
+    },
+    cancelSessionTransition() {
+      this.sessionTransitionVersion += 1
+      this.sessionTransitionController?.abort()
+      this.sessionTransitionController = null
+    },
+    closeWorkspace() {
+      this.workspaceVersion += 1
+      this.loading = false
+      this.cancelSessionTransition()
       this.closeStream()
-      if (disposableSessionId) await deleteAgentSession(window.fetch.bind(window), this.csrfToken, disposableSessionId)
-      const created = await createAgentThread(window.fetch.bind(window), this.csrfToken, { retention, providerProfileId: null })
-      this.applyCreatedThread(created)
-      if (this.routeSync) window.history.replaceState(null, '', `/sessions/${created.session.id}`)
-      await this.reloadSessions()
+    },
+    async newSession(retention: 'temporary' | 'saved') {
+      const { version, controller } = this.beginSessionTransition()
+      const fetcher = ((input: RequestInfo | URL, init?: RequestInit) => window.fetch(input, { ...init, signal: controller.signal })) as typeof fetch
+      const disposableSessionId = this.thread && this.thread.messages.length === 0 && !this.thread.session.currentRun ? this.thread.session.id : null
+      try {
+        if (disposableSessionId) await deleteAgentSession(fetcher, this.csrfToken, disposableSessionId)
+        const created = await createAgentThread(fetcher, this.csrfToken, { retention, providerProfileId: null })
+        if (!this.isSessionTransitionCurrent(version, controller)) return
+        this.sessionTransitionController = null
+        this.closeStream()
+        this.applyCreatedThread(created)
+        if (this.routeSync) window.history.replaceState(null, '', `/sessions/${created.session.id}`)
+        await this.reloadSessions()
+      } catch (error) {
+        if (!this.isSessionTransitionCurrent(version, controller)) return
+        this.sessionTransitionController = null
+        throw error
+      }
     },
     applyCreatedThread(created: CreatedAgentThread) {
       this.thread = created
       const launch = created.launchPage
-      this.launchPage = launch?.pageId && launch.locale && launch.path && launch.observedUpdatedAt
-        ? { id: launch.pageId, locale: launch.locale, path: launch.path, observedUpdatedAt: launch.observedUpdatedAt }
-        : null
+      this.launchPage =
+        launch?.pageId && launch.locale && launch.path && launch.observedUpdatedAt
+          ? { id: launch.pageId, locale: launch.locale, path: launch.path, observedUpdatedAt: launch.observedUpdatedAt }
+          : null
       this.connectCurrentRun()
     },
-    async openSession(sessionId: string) {
-      this.closeStream()
-      this.thread = await getAgentThread(window.fetch.bind(window), this.csrfToken, sessionId)
-      this.launchPage = null
-      if (this.routeSync) window.history.replaceState(null, '', `/sessions/${sessionId}`)
-      this.connectCurrentRun()
+    async openSession(sessionId: string): Promise<boolean> {
+      const { version, controller } = this.beginSessionTransition()
+      const fetcher = ((input: RequestInfo | URL, init?: RequestInit) => window.fetch(input, { ...init, signal: controller.signal })) as typeof fetch
+      try {
+        const candidate = await getAgentThread(fetcher, this.csrfToken, sessionId)
+        if (!this.isSessionTransitionCurrent(version, controller)) return false
+        this.sessionTransitionController = null
+        this.closeStream()
+        this.thread = candidate
+        this.launchPage = null
+        if (this.routeSync) window.history.replaceState(null, '', `/sessions/${sessionId}`)
+        this.connectCurrentRun()
+        return true
+      } catch (error) {
+        if (!this.isSessionTransitionCurrent(version, controller)) return false
+        this.sessionTransitionController = null
+        throw error
+      }
     },
     async refreshThread() {
       const sessionId = this.thread?.session.id
@@ -135,7 +216,14 @@ export const useAgentsStore = defineStore('agents', {
       const thread = this.thread
       const trimmed = content.trim()
       const currentPage = this.contextPage ?? this.launchPage
-      if (!thread || !trimmed || this.sending || thread.session.currentRun?.canCancel || (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))) return false
+      if (
+        !thread ||
+        !trimmed ||
+        this.sending ||
+        thread.session.currentRun?.canCancel ||
+        (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))
+      )
+        return false
       this.sending = true
       this.error = ''
       try {
@@ -146,16 +234,19 @@ export const useAgentsStore = defineStore('agents', {
           ...(invokedSkillVersionIds.length > 0 ? { invokedSkillVersionIds } : {}),
           ...(currentPage ? { currentPage } : {})
         }
-        const run = mode === 'goal'
-          ? (await createAgentGoal(window.fetch.bind(window), this.csrfToken, thread.session.id, {
-              ...request,
-              goalId: crypto.randomUUID(),
-              objective: trimmed
-            })).run
-          : await submitAgentMessage(window.fetch.bind(window), this.csrfToken, thread.session.id, {
-              ...request,
-              content: trimmed
-            })
+        const run =
+          mode === 'goal'
+            ? (
+                await createAgentGoal(window.fetch.bind(window), this.csrfToken, thread.session.id, {
+                  ...request,
+                  goalId: crypto.randomUUID(),
+                  objective: trimmed
+                })
+              ).run
+            : await submitAgentMessage(window.fetch.bind(window), this.csrfToken, thread.session.id, {
+                ...request,
+                content: trimmed
+              })
         await this.refreshThread()
         this.eventSequence = run.eventSequence
         this.connect(run.id, run.eventSequence)
@@ -279,6 +370,7 @@ export const useAgentsStore = defineStore('agents', {
       this.skills = await listAgentSkills(window.fetch.bind(window), this.csrfToken)
     },
     async removeSession(sessionId: string) {
+      this.cancelSessionTransition()
       await deleteAgentSession(window.fetch.bind(window), this.csrfToken, sessionId)
       if (this.thread?.session.id === sessionId) {
         this.closeStream()
@@ -290,6 +382,7 @@ export const useAgentsStore = defineStore('agents', {
     },
     async resetHistory() {
       this.closeStream()
+      this.cancelSessionTransition()
       await resetAgentHistory(window.fetch.bind(window), this.csrfToken)
       this.thread = null
       this.sessions = []
@@ -305,45 +398,50 @@ export const useAgentsStore = defineStore('agents', {
       this.closeStream()
       this.eventSequence = after
       this.connection = 'connecting'
-      this.source = markRaw(subscribeAgentRun(runId, after, {
-        event: (type, sequence) => {
-          this.connection = 'connected'
-          this.eventSequence = Math.max(this.eventSequence, sequence)
-          this.scheduleRefresh(terminalEvents.has(type), 50, runId)
-        },
-        error: () => {
-          if (this.connection !== 'closed') {
-            this.connection = 'reconnecting'
-            this.scheduleRefresh(false, 250, runId)
+      this.source = markRaw(
+        subscribeAgentRun(runId, after, {
+          event: (type, sequence) => {
+            this.connection = 'connected'
+            this.eventSequence = Math.max(this.eventSequence, sequence)
+            this.scheduleRefresh(terminalEvents.has(type), 50, runId)
+          },
+          error: () => {
+            if (this.connection !== 'closed') {
+              this.connection = 'reconnecting'
+              this.scheduleRefresh(false, 250, runId)
+            }
           }
-        }
-      }))
+        })
+      )
       this.scheduleRefresh(false, 1_000, runId)
     },
     scheduleRefresh(terminal: boolean, delay = 50, observedRunId?: string) {
       if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer)
       this.refreshTimer = window.setTimeout(() => {
         this.refreshTimer = null
-        void this.refreshThread().then(() => {
-          const currentRun = this.thread?.session.currentRun
-          if (observedRunId !== undefined && currentRun?.canCancel && currentRun.id !== observedRunId) this.connect(currentRun.id, currentRun.eventSequence)
-          if (terminal || !currentRun?.canCancel) return this.reloadSessions()
-          return undefined
-        }).catch(() => {
-          if (this.connection !== 'closed') this.connection = 'reconnecting'
-        }).finally(() => {
-          const currentRun = this.thread?.session.currentRun
-          const goalAdvancing = terminal && !currentRun?.canCancel && this.thread?.goal?.status === 'active'
-          if (goalAdvancing) {
-            this.scheduleRefresh(false, 250, observedRunId)
-          } else if (observedRunId !== undefined && currentRun?.canCancel && currentRun.id !== observedRunId) {
-            // connect() already transferred the stream and scheduled its refresh.
-          } else if (terminal || !currentRun?.canCancel) {
-            this.closeStream()
-          } else if (this.connection !== 'closed') {
-            this.scheduleRefresh(false, 1_000, observedRunId)
-          }
-        })
+        void this.refreshThread()
+          .then(() => {
+            const currentRun = this.thread?.session.currentRun
+            if (observedRunId !== undefined && currentRun?.canCancel && currentRun.id !== observedRunId) this.connect(currentRun.id, currentRun.eventSequence)
+            if (terminal || !currentRun?.canCancel) return this.reloadSessions()
+            return undefined
+          })
+          .catch(() => {
+            if (this.connection !== 'closed') this.connection = 'reconnecting'
+          })
+          .finally(() => {
+            const currentRun = this.thread?.session.currentRun
+            const goalAdvancing = terminal && !currentRun?.canCancel && this.thread?.goal?.status === 'active'
+            if (goalAdvancing) {
+              this.scheduleRefresh(false, 250, observedRunId)
+            } else if (observedRunId !== undefined && currentRun?.canCancel && currentRun.id !== observedRunId) {
+              // connect() already transferred the stream and scheduled its refresh.
+            } else if (terminal || !currentRun?.canCancel) {
+              this.closeStream()
+            } else if (this.connection !== 'closed') {
+              this.scheduleRefresh(false, 1_000, observedRunId)
+            }
+          })
       }, delay)
     },
     closeStream() {

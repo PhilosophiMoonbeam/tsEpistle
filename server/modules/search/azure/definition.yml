@@ -4,7 +4,7 @@ description: AI-Powered cloud search service for web and mobile app development.
 author: requarks.io
 logo: https://static.requarks.io/logo/azure.svg
 website: https://azure.microsoft.com/services/search/
-isAvailable: true
+isAvailable: false
 props:
   serviceName:
     type: String

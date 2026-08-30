@@ -138,9 +138,7 @@ export default defineComponent({
         }
         wikiStore.showError(err)
       } finally {
-        if (requestId === this.pageLoadRequestId && locale === this.currentLocale) {
-          wikiStore.stopLoading('admin-pages-refresh')
-        }
+        wikiStore.stopLoading('admin-pages-refresh')
       }
     },
     goToPage (event: MouseEvent, node: d3.HierarchyNode<PageGraphNode>): void {

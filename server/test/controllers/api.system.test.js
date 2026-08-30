@@ -14,7 +14,7 @@ vi.mockModule('express', import.meta.url, () => {
   return { default: expressMock, ...expressMock }
 })
 
-import { createProductMetadata } from '../../../shared/product.ts'
+import { createProductMetadata } from '../../core/product.ts'
 
 vi.mockModule('../../operations/import-v1.ts', import.meta.url, () => ({
   default: {

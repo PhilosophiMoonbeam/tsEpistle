@@ -1,6 +1,6 @@
 # Search architecture
 
-Wiki search is a PostgreSQL-native hybrid lexical system. It deliberately uses no embeddings and requires no external search service. Page mutations update one compact derived index synchronously; an index rebuild reconstructs the same state directly from canonical Wiki tables.
+Wiki search exposes one provider contract. PostgreSQL hybrid search is the default advanced provider, while the basic database, Algolia, and Elasticsearch implementations remain selectable only because they enforce the same scope, window, and rebuild invariants. Providers that cannot meet those invariants with their installed backend SDK are not selectable.
 
 ## Design decisions
 
@@ -10,6 +10,26 @@ Wiki search is a PostgreSQL-native hybrid lexical system. It deliberately uses n
 - **Bounded graph support.** A recursive CTE traverses links only between the top lexical candidates, to depth two. It can distinguish a coherent linked cluster without turning every query into a whole-wiki graph walk or returning unrelated neighbors.
 - **Fuzzy retrieval is a fallback.** Exact lexical and substring candidates run first. Trigram word similarity runs only when fewer than five exact candidates exist. This preserves typo tolerance without making common tag or keyword queries scan a broad fuzzy set.
 - **Stable, inspectable evidence.** Every result carries its final `score`, normalized `tags`, and `matchedFields` (`title`, `tag`, `path`, `description`, `content`, or `graph`). Scores have deterministic title and page-ID tie breakers.
+
+## Provider support and invariants
+
+Every selectable provider applies an exact locale filter and an exact path-or-descendant filter before ranking and before the configured `search.maxHits` window. A path scope includes only the selected path or values beginning with `path/`; `%`, `_`, and provider wildcard syntax are literal scope characters. Providers return no more than the configured limit.
+
+Rebuild success always means the live canonical index is an authoritative replacement, including removal of documents absent from the rebuilt corpus. A failed stage or document write rejects the rebuild while the prior live index remains selected and unchanged.
+
+| Provider key | Availability | Scope and bounded-window implementation | Authoritative rebuild implementation |
+| --- | --- | --- | --- |
+| `db` | available | Bound exact locale plus escaped SQL `LIKE` equality-or-`path/` descendant predicates before `LIMIT` | No derived index; canonical PostgreSQL pages are queried directly |
+| `postgres` | available | Bind exact locale and escaped equality-or-`path/` descendant predicates in exact and fuzzy candidate CTEs before the configured candidate limit | Keyset-cursor canonical page batches are prepared and indexed inside one transaction; rollback preserves the prior tables |
+| `algolia` | available | Filter-only `locale` and precomputed `pathScopes` facets are applied before `hitsPerPage` | The SDK `replaceAllObjects` helper writes and verifies a temporary index before its final move over the configured index |
+| `elasticsearch` | available | Keyword `term` locale plus keyword exact-or-literal-prefix path filters wrap the ranked query before `size` | A fresh physical index receives checked bulk writes, then one alias update atomically selects it; failed stages are deleted without changing the alias |
+| `aws` | unavailable | AWS CloudSearch can filter literals, but its configured single domain is not an atomic replacement boundary | The installed domain SDK can only mutate the live domain and cannot stage then atomically swap a complete corpus |
+| `azure` | unavailable | Azure AI Search supports filters, but the established configuration names a concrete index rather than a safely migrated alias | The installed SDK exposes aliases, but cannot atomically migrate an existing configured concrete index and preserve the live index on every failure |
+| `manticore` | unavailable | Provider implementation is incomplete | No authoritative rebuild |
+| `solr` | unavailable | Provider implementation is incomplete | No authoritative rebuild |
+| `sphinx` | unavailable | Provider implementation is incomplete | No authoritative rebuild |
+
+The provider availability definitions and this matrix are checked together by the search-engine contract tests. An unavailable provider cannot be advertised as selectable merely because its client can submit incremental writes.
 
 ## Derived schema
 
@@ -90,7 +110,7 @@ Internal Wiki links are durable graph edges. Rendering a created or patched page
 - Rename events upsert the complete destination identity and current metadata; no stale title or path remains.
 - Delete events remove the vector and suggestion terms in one transaction.
 - Activation detects the legacy search schema, replaces the derived tables, creates the required indexes, and performs one rebuild.
-- Rebuild selects only published public page identities, loads and prepares each canonical rendered document, then truncates and repopulates both derived tables in one transaction.
+- Rebuild truncates the derived tables inside the atomic transaction, then walks published public page identities in bounded keyset-cursor batches. Each canonical rendered document is prepared and indexed before the next identity batch is loaded; rollback restores the prior live index on any failure.
 
 Protected pages never contribute content tokens during either incremental indexing or rebuild. Their visible title, path, description, and tags remain searchable. Private pages stay outside the shared index and are searched only inside the requester's owner scope. Private retrieval applies the requested locale and path scope and matches title, description, content, path, and tags before merging results into the same deterministic ordering.
 

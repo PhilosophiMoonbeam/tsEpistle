@@ -28,6 +28,38 @@ describe('release manifest generation', () => {
     for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { force: true, recursive: true })
   })
 
+  it('keeps package-backed product identity out of the browser system API graph', async () => {
+    const rootPath = process.cwd()
+    const packagePath = path.join(rootPath, 'package.json')
+    const packageManifest = JSON.parse(fs.readFileSync(packagePath, 'utf8')) as {
+      description: string
+      product: Record<string, unknown>
+    }
+    const build = await Bun.build({
+      entrypoints: [path.join(rootPath, 'client', 'helpers', 'system-api.ts')],
+      target: 'browser',
+      write: false,
+      metafile: true
+    })
+
+    expect(build.success).toBe(true)
+    const inputs = Object.keys(build.metafile?.inputs ?? {})
+    expect(inputs.some(input => input === 'package.json' || input.endsWith('/package.json'))).toBe(false)
+
+    const bundleSource = (await Promise.all(build.outputs.map(output => output.text()))).join('\n')
+    for (const key of ['releaseDate', 'packageManager']) {
+      expect(bundleSource).not.toContain(key)
+    }
+    const uniqueManifestValues = [
+      packageManifest.description,
+      ...['sourceRepository', 'containerRepository', 'modifiedAt'].map(key => packageManifest.product[key])
+    ]
+    for (const value of uniqueManifestValues) {
+      if (typeof value !== 'string') throw new Error('Product manifest values must be strings')
+      expect(bundleSource).not.toContain(value)
+    }
+  })
+
   it('binds sorted release artifacts and both image digests to deterministic checksums', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wiki-release-manifest-'))
     temporaryDirectories.push(directory)
@@ -39,13 +71,7 @@ describe('release manifest generation', () => {
     fs.writeFileSync(alphaPath, 'alpha\n')
 
     const env = releaseEnvironment()
-    const args = [
-      'server/scripts/generate-release-manifest.ts',
-      manifestPath,
-      checksumsPath,
-      zetaPath,
-      alphaPath
-    ]
+    const args = ['server/scripts/generate-release-manifest.ts', manifestPath, checksumsPath, zetaPath, alphaPath]
 
     execFileSync(process.execPath, args, { cwd: process.cwd(), env })
     const firstManifest = fs.readFileSync(manifestPath, 'utf8')
@@ -109,27 +135,33 @@ describe('release manifest generation', () => {
 
     const missingRepositoryEnv = releaseEnvironment()
     delete missingRepositoryEnv.AGENT_BROWSER_IMAGE_REPOSITORY
-    expect(() => execFileSync(process.execPath, args, {
-      cwd: process.cwd(),
-      env: missingRepositoryEnv,
-      stdio: 'pipe'
-    })).toThrow()
+    expect(() =>
+      execFileSync(process.execPath, args, {
+        cwd: process.cwd(),
+        env: missingRepositoryEnv,
+        stdio: 'pipe'
+      })
+    ).toThrow()
 
     const missingDigestEnv = releaseEnvironment()
     delete missingDigestEnv.AGENT_BROWSER_IMAGE_DIGEST
-    expect(() => execFileSync(process.execPath, args, {
-      cwd: process.cwd(),
-      env: missingDigestEnv,
-      stdio: 'pipe'
-    })).toThrow()
+    expect(() =>
+      execFileSync(process.execPath, args, {
+        cwd: process.cwd(),
+        env: missingDigestEnv,
+        stdio: 'pipe'
+      })
+    ).toThrow()
 
-    expect(() => execFileSync(process.execPath, args, {
-      cwd: process.cwd(),
-      env: {
-        ...releaseEnvironment(),
-        AGENT_BROWSER_IMAGE_DIGEST: `sha256:${'z'.repeat(64)}`
-      },
-      stdio: 'pipe'
-    })).toThrow()
+    expect(() =>
+      execFileSync(process.execPath, args, {
+        cwd: process.cwd(),
+        env: {
+          ...releaseEnvironment(),
+          AGENT_BROWSER_IMAGE_DIGEST: `sha256:${'z'.repeat(64)}`
+        },
+        stdio: 'pipe'
+      })
+    ).toThrow()
   })
 })

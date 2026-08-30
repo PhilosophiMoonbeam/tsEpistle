@@ -12,6 +12,8 @@ import { canonicalJson } from '../../helpers/canonical-json.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
 import { WIKI_AGENT_SOUL } from '../../agents/soul.ts'
 
+const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
+
 const request = (signal: AbortSignal): AgentEngineRequest => ({
   run: {
     id: '00000000-0000-4000-8000-000000000001',
@@ -117,7 +119,8 @@ describe('Ax agent engine', () => {
         transportKind: 'openai-responses',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1'
+        pricingRevision: 'price-1',
+        pricing
       })
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => ({
@@ -220,7 +223,8 @@ describe('Ax agent engine', () => {
         transportKind: 'openai-responses',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1'
+        pricingRevision: 'price-1',
+        pricing
       })
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => ({
@@ -284,7 +288,8 @@ describe('Ax agent engine', () => {
         transportKind: 'openai-responses',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1'
+        pricingRevision: 'price-1',
+        pricing
       })
     } as unknown as AgentProviderFactory
     const page = {
@@ -371,7 +376,8 @@ describe('Ax agent engine', () => {
         transportKind: 'openai-responses',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1'
+        pricingRevision: 'price-1',
+        pricing
       })
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async (name: string) =>
@@ -485,7 +491,8 @@ describe('Ax agent engine', () => {
         transportKind: 'openai-responses',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1'
+        pricingRevision: 'price-1',
+        pricing
       })
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => ({
@@ -554,7 +561,8 @@ describe('Ax agent engine', () => {
         transportKind: 'openai-responses',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1'
+        pricingRevision: 'price-1',
+        pricing
       })
     } as unknown as AgentProviderFactory
     const text = vi.fn(async () => {})
@@ -595,7 +603,8 @@ describe('Ax agent engine', () => {
         transportKind: 'openai-responses',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1'
+        pricingRevision: 'price-1',
+        pricing
       })
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async (name: string) =>
@@ -663,7 +672,8 @@ describe('Ax agent engine', () => {
         transportKind: 'legacy-completions',
         model: 'text-test',
         capabilityRevision: 'cap-2',
-        pricingRevision: 'price-1'
+        pricingRevision: 'price-1',
+        pricing
       })
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => ({ id: 42, title: 'Guide' }))
@@ -702,7 +712,9 @@ describe('Ax agent engine', () => {
   })
 
   it('resumes one reclaimed pre-fence approval action identity without provider reinference', async () => {
-    const create = vi.fn(async () => { throw new Error('provider inference must not run during action continuation') })
+    const create = vi.fn(async () => {
+      throw new Error('provider inference must not run during action continuation')
+    })
     const factory = { create } as unknown as AgentProviderFactory
     const proposalIds = new Set<string>()
     const apply = vi.fn(async () => {})
@@ -728,13 +740,15 @@ describe('Ax agent engine', () => {
     let actionAuthoritySha256 = 'c'.repeat(64)
     const open = vi.fn(async () => ({
       authoritySha256: actionAuthoritySha256,
-      functions: [{
-        name: 'pages.prepareCreate',
-        title: 'Prepare page',
-        description: 'Prepares a page proposal',
-        parameters: { type: 'object', properties: {} },
-        risk: 'proposal' as const
-      }],
+      functions: [
+        {
+          name: 'pages.prepareCreate',
+          title: 'Prepare page',
+          description: 'Prepares a page proposal',
+          parameters: { type: 'object', properties: {} },
+          risk: 'proposal' as const
+        }
+      ],
       invoke,
       snapshot: async () => ({}),
       close
@@ -747,7 +761,16 @@ describe('Ax agent engine', () => {
       purpose: 'root' as const,
       run: { ...initial.run, status: 'running' as const, leaseOwner: 'worker-2', leaseToken: '00000000-0000-4000-8000-000000000012' }
     }
-    const actionInput = { path: 'reclaimed', locale: 'en', title: 'Reclaimed', description: '', content: '# Reclaimed', contentType: 'markdown', isPublished: true, tags: [] }
+    const actionInput = {
+      path: 'reclaimed',
+      locale: 'en',
+      title: 'Reclaimed',
+      description: '',
+      content: '# Reclaimed',
+      contentType: 'markdown',
+      isPublished: true,
+      tags: []
+    }
     const checkpointBody: Omit<AgentApprovalContinuationCheckpoint, 'checkpointSha256'> = {
       version: 1,
       runId: resumed.run.id,
@@ -771,10 +794,16 @@ describe('Ax agent engine', () => {
     const sink = { text: async () => {}, event }
     const engine = new AxAgentEngine(factory, actions)
 
-    await expect(engine.resumeAction({
-      ...resumed,
-      run: { ...resumed.run, ownerId: resumed.run.ownerId + 1 }
-    }, checkpoint, sink)).rejects.toMatchObject({ code: 'AGENT_ACTION_CONTINUATION_MISMATCH', status: 409 })
+    await expect(
+      engine.resumeAction(
+        {
+          ...resumed,
+          run: { ...resumed.run, ownerId: resumed.run.ownerId + 1 }
+        },
+        checkpoint,
+        sink
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_ACTION_CONTINUATION_MISMATCH', status: 409 })
     expect(open).not.toHaveBeenCalled()
     expect(close).not.toHaveBeenCalled()
 
@@ -807,19 +836,24 @@ describe('Ax agent engine', () => {
     expect(invoke).toHaveBeenCalledWith('pages.prepareCreate', checkpoint.actionInput, signal, 'proposal-call-1')
     expect(proposalIds).toEqual(new Set([checkpoint.proposalId]))
     expect(apply).toHaveBeenCalledOnce()
-    expect(invokedLeases).toEqual([{
-      id: resumed.run.id,
-      ownerId: resumed.run.ownerId,
-      attempts: resumed.run.attempts,
-      leaseOwner: resumed.run.leaseOwner,
-      leaseToken: resumed.run.leaseToken
-    }])
+    expect(invokedLeases).toEqual([
+      {
+        id: resumed.run.id,
+        ownerId: resumed.run.ownerId,
+        attempts: resumed.run.attempts,
+        leaseOwner: resumed.run.leaseOwner,
+        leaseToken: resumed.run.leaseToken
+      }
+    ])
     expect(invokingAgentRunLease(signal)).toBeNull()
     expect(event).toHaveBeenCalledOnce()
-    expect(event).toHaveBeenCalledWith('tool.completed', expect.objectContaining({
-      actionCallId: 'proposal-call-1',
-      actionName: 'pages.prepareCreate'
-    }))
+    expect(event).toHaveBeenCalledWith(
+      'tool.completed',
+      expect.objectContaining({
+        actionCallId: 'proposal-call-1',
+        actionName: 'pages.prepareCreate'
+      })
+    )
     const completed = event.mock.calls[0]?.[1] as { result: string } | undefined
     expect(completed).toBeDefined()
     expect(JSON.parse(completed!.result)).toMatchObject({ proposalId: checkpoint.proposalId, status: 'applied' })
@@ -846,7 +880,8 @@ describe('Ax agent engine', () => {
         transportKind: 'openai-chat',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
-        pricingRevision: 'price-1'
+        pricingRevision: 'price-1',
+        pricing
       })
     } as unknown as AgentProviderFactory
     const input = request(new AbortController().signal)
@@ -854,6 +889,46 @@ describe('Ax agent engine', () => {
     await expect(Promise.resolve(new AxAgentEngine(factory).execute(generationOnly, { text: async () => {}, event: async () => {} }))).rejects.toMatchObject({
       code: 'UNEXPECTED_PROVIDER_TOOL_CALL'
     })
+  })
+
+  it('aborts a blocked provider when the host deadline signal fires', async () => {
+    const deadline = new AbortController()
+    let providerStarted: () => void = () => undefined
+    const started = new Promise<void>(resolve => {
+      providerStarted = resolve
+    })
+    const chat = vi.fn(async (_input: unknown, options?: { abortSignal?: AbortSignal }) => {
+      providerStarted()
+      return new Promise<never>((_resolve, reject) => {
+        options?.abortSignal?.addEventListener('abort', () => reject(options.abortSignal!.reason), { once: true })
+      })
+    })
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'tool-result',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 10_000,
+          maxOutputTokens: 1_000
+        },
+        transportKind: 'openai-chat',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const execution = new AxAgentEngine(factory).execute(request(deadline.signal), { text: async () => {}, event: async () => {} })
+    await started
+    deadline.abort(new Error('goal deadline reached'))
+
+    await expect(execution).rejects.toMatchObject({ code: 'PROVIDER_REQUEST_FAILED' })
+    expect(chat).toHaveBeenCalledOnce()
   })
 })
 

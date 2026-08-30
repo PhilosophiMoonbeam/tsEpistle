@@ -159,9 +159,7 @@ export default {
         wikiStore.showError(err)
         return false
       } finally {
-        if (requestId === this.groupLoadRequestId) {
-          wikiStore.stopLoading('admin-groups-refresh')
-        }
+        wikiStore.stopLoading('admin-groups-refresh')
       }
     },
     selectPage () {

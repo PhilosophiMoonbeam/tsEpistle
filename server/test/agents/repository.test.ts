@@ -18,6 +18,7 @@ import {
   claimAgentRun,
   heartbeatAgentRun,
   markAgentRunSideEffectsStarted,
+  ensureAgentRunQuota,
   reconcileAgentRunQuota,
   requestAgentRunCancellation,
   reserveAgentRunQuota,
@@ -697,6 +698,52 @@ describe('durable agent repositories', () => {
     })
   })
 
+  it('keeps daily quota rows unchanged when measured use exceeds the held reservation', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    const expiresAt = new Date('2026-08-17T00:05:00.000Z')
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 100, costMicros: 200 }, { dailyTokens: 1_000, dailyCostMicros: 1_000 }, expiresAt, now)
+    const dailyBefore = await knex('agentQuotaDaily').where({ ownerId: 7 }).first()
+    const reservationBefore = await knex('agentQuotaReservations').where({ runId }).first()
+
+    await expect(
+      Promise.resolve(
+        reconcileAgentRunQuota(knex, {
+          runId,
+          ownerId: 7,
+          consumedTokens: 101,
+          consumedCostMicros: 200,
+          status: 'consumed',
+          now
+        })
+      )
+    ).rejects.toMatchObject({ code: 'QUOTA_RESERVATION_EXCEEDED' })
+
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toEqual(dailyBefore)
+    expect(await knex('agentQuotaReservations').where({ runId }).first()).toEqual(reservationBefore)
+  })
+
+  it('atomically tops up dispatch exposure and denies a second priced run after daily cost is consumed', async () => {
+    const now = new Date('2026-08-17T00:00:00.000Z')
+    const expiresAt = new Date('2026-08-17T00:05:00.000Z')
+    const limits = { dailyTokens: 1_000, dailyCostMicros: 200 }
+    await reserveAgentRunQuota(knex, runId, 7, { tokens: 10, costMicros: 10 }, limits, expiresAt, now)
+    await Promise.all([
+      ensureAgentRunQuota(knex, runId, 7, { tokens: 80, costMicros: 200 }, limits, expiresAt, now),
+      ensureAgentRunQuota(knex, runId, 7, { tokens: 80, costMicros: 200 }, limits, expiresAt, now)
+    ])
+    await reconcileAgentRunQuota(knex, { runId, ownerId: 7, consumedTokens: 80, consumedCostMicros: 200, status: 'consumed', now })
+
+    await expect(
+      Promise.resolve(reserveAgentRunQuota(knex, '00000000-0000-4000-8000-000000000030', 7, { tokens: 1, costMicros: 1 }, limits, expiresAt, now))
+    ).rejects.toMatchObject({ code: 'AGENT_QUOTA_EXHAUSTED' })
+    expect(await knex('agentQuotaDaily').where({ ownerId: 7 }).first()).toMatchObject({
+      reservedTokens: 0,
+      consumedTokens: 80,
+      reservedCostMicros: 0,
+      consumedCostMicros: 200
+    })
+  })
+
   it('retains quota and durable approval state during worker shutdown', async () => {
     const now = new Date('2026-08-17T00:00:00.000Z')
     await knex('agentRuns').where({ id: runId }).update({
@@ -880,6 +927,90 @@ describe('durable agent repositories', () => {
     await runtime.shutdown()
   })
 
+  it('passes remaining hard goal limits to execution and transitions budget_limited on the host fence', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-17T00:00:00.000Z'))
+    const goalSessionId = '00000000-0000-4000-8000-000000000088'
+    const goalId = '00000000-0000-4000-8000-000000000089'
+    try {
+      await knex('agentRuns').where({ id: runId }).delete()
+      await createAgentSession(knex, { id: goalSessionId, ownerId: 7, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
+      const session = await getOwnedAgentSession(knex, 7, goalSessionId)
+      let markExecutionStarted: () => void = () => undefined
+      const executionStarted = new Promise<void>(resolve => {
+        markExecutionStarted = resolve
+      })
+      const execute = vi.fn(async (request: Parameters<AgentEngine['execute']>[0]) => {
+        expect(request.limits).toEqual({
+          maxTokens: 10,
+          maxTurns: 12,
+          maxToolCalls: 1,
+          maxOutputTokens: 10
+        })
+        markExecutionStarted()
+        return new Promise<never>((_resolve, reject) => {
+          request.signal.addEventListener('abort', () => reject(request.signal.reason), { once: true })
+        })
+      })
+      const runtime = new AgentProductRuntime(
+        knex,
+        {
+          async resolve() {
+            return {
+              profileResolutionSha256: 'f'.repeat(64),
+              providerProfileVersionId: '00000000-0000-4000-8000-000000000098',
+              transportKind: 'test',
+              model: 'test',
+              executionMode: 'agent',
+              profilePolicyVersion: 1,
+              defaultGeneration: 1,
+              capabilityRevision: 'v1',
+              pricingRevision: 'v1',
+              promptVersion: 1,
+              quota: { tokens: 100, costMicros: 100 },
+              quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+              reservationMilliseconds: 60_000
+            }
+          }
+        },
+        { execute } as AgentEngine,
+        {
+          workerId: 'goal-budget-test',
+          globalConcurrency: 1,
+          perUserConcurrency: 1,
+          goals: { enabled: true, maxContinuations: 2, maxTokens: 10, maxToolCalls: 1, maxDurationMilliseconds: 1_000 }
+        }
+      )
+      const admitted = await runtime.createGoal({
+        ownerId: 7,
+        sessionId: goalSessionId,
+        profileResolutionToken: 'token',
+        clientRequestId: '00000000-0000-4000-8000-000000000099',
+        expectedSessionVersion: session.version,
+        objective: 'Finish one bounded action.',
+        goalId
+      })
+      const reservation = (await knex('agentQuotaReservations').where({ runId: admitted.run.id }).first('reservedTokens', 'expiresAt')) as {
+        reservedTokens: number
+        expiresAt: Date | string
+      }
+      expect(reservation.reservedTokens).toBe(10)
+      expect(new Date(reservation.expiresAt).toISOString()).toBe('2026-08-17T00:00:01.000Z')
+
+      const running = runtime.runOnce()
+      await executionStarted
+      await vi.advanceTimersByTimeAsync(1_001)
+      expect(await running).toBe(true)
+      expect(await knex('agentGoals').where({ id: goalId }).first('status', 'errorCode')).toEqual({
+        status: 'budget_limited',
+        errorCode: 'GOAL_BUDGET_LIMITED'
+      })
+      await runtime.shutdown()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('titles the first successful exchange with utility usage included in the run', async () => {
     const titledSessionId = '00000000-0000-4000-8000-000000000090'
     const profileVersionId = '00000000-0000-4000-8000-000000000091'
@@ -887,8 +1018,8 @@ describe('durable agent repositories', () => {
     await createAgentSession(knex, { id: titledSessionId, ownerId: 9, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
     const generateConversationTitle = vi
       .fn()
-      .mockResolvedValueOnce({ title: 'Deployment Pipeline Failures', source: 'utility', inputTokens: 2, outputTokens: 3 })
-      .mockResolvedValueOnce({ title: 'Runner Rollover Configuration Failures', source: 'utility', inputTokens: 4, outputTokens: 2 })
+      .mockResolvedValueOnce({ title: 'Deployment Pipeline Failures', source: 'utility', inputTokens: 2, outputTokens: 3, costMicros: 0 })
+      .mockResolvedValueOnce({ title: 'Runner Rollover Configuration Failures', source: 'utility', inputTokens: 4, outputTokens: 2, costMicros: 0 })
     const runtime = new AgentProductRuntime(
       knex,
       {
@@ -1130,18 +1261,16 @@ describe('durable agent repositories', () => {
     })
     await expect(Promise.resolve(transitionAgentRun(knex, { claim, from: 'running', to: 'succeeded', now }))).rejects.toMatchObject({ code: 'RUN_LEASE_LOST' })
 
-    await knex('agentRuns')
-      .where({ id: runId })
-      .update({
-        status: 'queued',
-        attempts: 0,
-        sideEffectsStarted: false,
-        leaseOwner: null,
-        leaseToken: null,
-        leaseExpiresAt: null,
-        cancelRequestedAt: null,
-        completedAt: null
-      })
+    await knex('agentRuns').where({ id: runId }).update({
+      status: 'queued',
+      attempts: 0,
+      sideEffectsStarted: false,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      cancelRequestedAt: null,
+      completedAt: null
+    })
     const cancelled = await requestAgentRunCancellation(knex, 7, runId, now)
     expect(cancelled.status).toBe('cancelled')
     await expect(Promise.resolve(requestAgentRunCancellation(knex, 8, runId, now))).rejects.toMatchObject({ code: 'AGENT_RESOURCE_NOT_FOUND' })

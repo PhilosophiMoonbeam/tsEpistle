@@ -123,6 +123,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { z } from 'zod'
+import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
 const props = withDefaults(defineProps<{ csrfToken: string; embedded?: boolean }>(), { embedded: false })
 const { smAndDown } = useDisplay()
 
@@ -181,10 +182,11 @@ const exposureModes = [
 ]
 
 const request = async (url: string, init: RequestInit = {}): Promise<unknown> => {
-  const response = await fetch(url, {
+  const response = await sameOriginJsonFetch(window.fetch.bind(window), url, {
     ...init,
     credentials: 'same-origin',
     headers: {
+      accept: 'application/json',
       ...(init.body ? { 'content-type': 'application/json' } : {}),
       ...(init.method && init.method !== 'GET' ? { 'x-wiki-csrf': props.csrfToken } : {}),
       ...init.headers

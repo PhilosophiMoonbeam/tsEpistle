@@ -401,6 +401,7 @@ import {
   type AgentProviderToolCalling,
   type AgentProviderUsageMode
 } from '../../helpers/agent-provider-protocols.ts'
+import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
 import SkillAdmin from './skill-admin.vue'
 
 interface RuntimePolicy {
@@ -586,7 +587,7 @@ const nextProfileStep = () => {
 }
 
 const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
-  const response = await fetch(path, { credentials: 'same-origin', ...init, headers: { accept: 'application/json', ...(init.body ? { 'content-type': 'application/json' } : {}), ...(init.method && init.method !== 'GET' ? { 'x-wiki-csrf': props.csrfToken } : {}), ...init.headers } })
+  const response = await sameOriginJsonFetch(window.fetch.bind(window), path, { credentials: 'same-origin', ...init, headers: { accept: 'application/json', ...(init.body ? { 'content-type': 'application/json' } : {}), ...(init.method && init.method !== 'GET' ? { 'x-wiki-csrf': props.csrfToken } : {}), ...init.headers } })
   if (!response.ok) { const body = await response.json().catch(() => ({})) as { message?: string; error?: string }; throw new Error(body.message ?? body.error ?? `Request failed (${response.status})`) }
   return response.status === 204 ? undefined as T : await response.json() as T
 }

@@ -1,3 +1,5 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -8,15 +10,18 @@ type JsonResponse = {
   json: () => Promise<unknown>
 }
 
-type FetchImpl = (url: string, init: {
-  method?: 'POST'
-  credentials: 'same-origin'
-  headers: {
-    Accept: 'application/json'
-    'Content-Type'?: 'application/json'
+type FetchImpl = (
+  url: string,
+  init: {
+    method?: 'POST'
+    credentials: 'same-origin'
+    headers: {
+      Accept: 'application/json'
+      'Content-Type'?: 'application/json'
+    }
+    body?: string
   }
-  body?: string
-}) => Promise<JsonResponse>
+) => Promise<JsonResponse>
 
 type MailActionResponse = {
   message: string
@@ -38,7 +43,7 @@ type MailConfig = {
   dkimPrivateKey: string
 }
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
@@ -48,10 +53,22 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && (payload as { error: string }).error.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { error?: unknown }).error === 'string' &&
+      (payload as { error: string }).error.length > 0
+    ) {
       throw new Error((payload as { error: string }).error)
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && (payload as { message: string }).message.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { message?: unknown }).message === 'string' &&
+      (payload as { message: string }).message.length > 0
+    ) {
       throw new Error((payload as { message: string }).message)
     }
     throw new Error(fallbackMessage)
@@ -64,8 +81,14 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-function normalizeMailActionPayload (payload: unknown, fallbackMessage: string): MailActionResponse {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length < 1) {
+function normalizeMailActionPayload(payload: unknown, fallbackMessage: string): MailActionResponse {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    typeof (payload as { message?: unknown }).message !== 'string' ||
+    (payload as { message: string }).message.length < 1
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -74,17 +97,30 @@ function normalizeMailActionPayload (payload: unknown, fallbackMessage: string):
   }
 }
 
-function normalizeMailConfigPayload (payload: unknown, fallbackMessage: string): MailConfig {
+function normalizeMailConfigPayload(payload: unknown, fallbackMessage: string): MailConfig {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
 
   const mailPayload = payload as Partial<MailConfig>
-  const requiredStringFields: Array<keyof Omit<MailConfig, 'port' | 'secure' | 'verifySSL' | 'useDKIM'>> = ['senderName', 'senderEmail', 'host', 'name', 'user', 'pass', 'dkimDomainName', 'dkimKeySelector', 'dkimPrivateKey']
+  const requiredStringFields: Array<keyof Omit<MailConfig, 'port' | 'secure' | 'verifySSL' | 'useDKIM'>> = [
+    'senderName',
+    'senderEmail',
+    'host',
+    'name',
+    'user',
+    'pass',
+    'dkimDomainName',
+    'dkimKeySelector',
+    'dkimPrivateKey'
+  ]
   if (requiredStringFields.some(field => typeof mailPayload[field] !== 'string')) {
     throw new Error(fallbackMessage)
   }
-  if (!Number.isInteger(mailPayload.port) || ['secure', 'verifySSL', 'useDKIM'].some(field => typeof (mailPayload as Record<string, unknown>)[field] !== 'boolean')) {
+  if (
+    !Number.isInteger(mailPayload.port) ||
+    ['secure', 'verifySSL', 'useDKIM'].some(field => typeof (mailPayload as Record<string, unknown>)[field] !== 'boolean')
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -105,8 +141,8 @@ function normalizeMailConfigPayload (payload: unknown, fallbackMessage: string):
   }
 }
 
-export async function fetchMailConfig (fetchImpl: FetchImpl, fallbackMessage = 'Mail configuration response is invalid'): Promise<MailConfig> {
-  const response = await fetchImpl('/_api/mail/config', {
+export async function fetchMailConfig(fetchImpl: FetchImpl, fallbackMessage = 'Mail configuration response is invalid'): Promise<MailConfig> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/mail/config', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -116,8 +152,12 @@ export async function fetchMailConfig (fetchImpl: FetchImpl, fallbackMessage = '
   return normalizeMailConfigPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function saveMailConfig (fetchImpl: FetchImpl, config: MailConfig, fallbackMessage = 'Mail configuration update failed'): Promise<MailActionResponse> {
-  const response = await fetchImpl('/_api/mail/config', {
+export async function saveMailConfig(
+  fetchImpl: FetchImpl,
+  config: MailConfig,
+  fallbackMessage = 'Mail configuration update failed'
+): Promise<MailActionResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/mail/config', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -130,8 +170,8 @@ export async function saveMailConfig (fetchImpl: FetchImpl, config: MailConfig, 
   return normalizeMailActionPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function sendMailTest (fetchImpl: FetchImpl, recipientEmail: string, fallbackMessage = 'Test email failed'): Promise<MailActionResponse> {
-  const response = await fetchImpl('/_api/mail/test', {
+export async function sendMailTest(fetchImpl: FetchImpl, recipientEmail: string, fallbackMessage = 'Test email failed'): Promise<MailActionResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/mail/test', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {

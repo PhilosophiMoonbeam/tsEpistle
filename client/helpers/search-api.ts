@@ -1,3 +1,5 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -40,7 +42,7 @@ type SearchSaveResponse = {
   message: string
 }
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
@@ -50,10 +52,22 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && (payload as { error: string }).error.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { error?: unknown }).error === 'string' &&
+      (payload as { error: string }).error.length > 0
+    ) {
       throw new Error((payload as { error: string }).error)
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && (payload as { message: string }).message.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { message?: unknown }).message === 'string' &&
+      (payload as { message: string }).message.length > 0
+    ) {
       throw new Error((payload as { message: string }).message)
     }
     throw new Error(fallbackMessage)
@@ -66,8 +80,14 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-function normalizeSearchEngineConfig (row: unknown, fallbackMessage: string): SearchEngineConfig {
-  if (!row || typeof row !== 'object' || Array.isArray(row) || typeof (row as { key?: unknown }).key !== 'string' || typeof (row as { value?: unknown }).value !== 'string') {
+function normalizeSearchEngineConfig(row: unknown, fallbackMessage: string): SearchEngineConfig {
+  if (
+    !row ||
+    typeof row !== 'object' ||
+    Array.isArray(row) ||
+    typeof (row as { key?: unknown }).key !== 'string' ||
+    typeof (row as { value?: unknown }).value !== 'string'
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -88,7 +108,7 @@ function normalizeSearchEngineConfig (row: unknown, fallbackMessage: string): Se
   }
 }
 
-function normalizeSearchEngine (row: unknown, fallbackMessage: string): SearchEngine {
+function normalizeSearchEngine(row: unknown, fallbackMessage: string): SearchEngine {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -110,15 +130,17 @@ function normalizeSearchEngine (row: unknown, fallbackMessage: string): SearchEn
     logo: engine.logo as string,
     website: engine.website as string,
     isAvailable: engine.isAvailable,
-    config: engine.config.map(cfg => normalizeSearchEngineConfig(cfg, fallbackMessage)).sort((a, b) => {
-      const aOrder = Number.isFinite(a.value.order) ? a.value.order! : Number.MAX_SAFE_INTEGER
-      const bOrder = Number.isFinite(b.value.order) ? b.value.order! : Number.MAX_SAFE_INTEGER
-      return aOrder - bOrder
-    })
+    config: engine.config
+      .map(cfg => normalizeSearchEngineConfig(cfg, fallbackMessage))
+      .sort((a, b) => {
+        const aOrder = Number.isFinite(a.value.order) ? a.value.order! : Number.MAX_SAFE_INTEGER
+        const bOrder = Number.isFinite(b.value.order) ? b.value.order! : Number.MAX_SAFE_INTEGER
+        return aOrder - bOrder
+      })
   }
 }
 
-function normalizeSearchEnginesPayload (payload: unknown, fallbackMessage: string): SearchEngine[] {
+function normalizeSearchEnginesPayload(payload: unknown, fallbackMessage: string): SearchEngine[] {
   if (!Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -126,8 +148,8 @@ function normalizeSearchEnginesPayload (payload: unknown, fallbackMessage: strin
   return payload.map(row => normalizeSearchEngine(row, fallbackMessage))
 }
 
-export async function fetchSearchEngines (fetchImpl: FetchImpl, fallbackMessage = 'Search engines response is invalid'): Promise<SearchEngine[]> {
-  const response = await fetchImpl('/_api/search/engines', {
+export async function fetchSearchEngines(fetchImpl: FetchImpl, fallbackMessage = 'Search engines response is invalid'): Promise<SearchEngine[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/search/engines', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -137,8 +159,14 @@ export async function fetchSearchEngines (fetchImpl: FetchImpl, fallbackMessage 
   return normalizeSearchEnginesPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-function normalizeSearchSavePayload (payload: unknown, fallbackMessage: string): SearchSaveResponse {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length < 1) {
+function normalizeSearchSavePayload(payload: unknown, fallbackMessage: string): SearchSaveResponse {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    typeof (payload as { message?: unknown }).message !== 'string' ||
+    (payload as { message: string }).message.length < 1
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -147,8 +175,12 @@ function normalizeSearchSavePayload (payload: unknown, fallbackMessage: string):
   }
 }
 
-export async function saveSearchEngines (fetchImpl: FetchImpl, engines: unknown[], fallbackMessage = 'Search engines save response is invalid'): Promise<SearchSaveResponse> {
-  const response = await fetchImpl('/_api/search/engines', {
+export async function saveSearchEngines(
+  fetchImpl: FetchImpl,
+  engines: unknown[],
+  fallbackMessage = 'Search engines save response is invalid'
+): Promise<SearchSaveResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/search/engines', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -161,8 +193,8 @@ export async function saveSearchEngines (fetchImpl: FetchImpl, engines: unknown[
   return normalizeSearchSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function rebuildSearchIndex (fetchImpl: FetchImpl, fallbackMessage = 'Search index rebuild failed'): Promise<unknown> {
-  const response = await fetchImpl('/_api/search/rebuild-index', {
+export async function rebuildSearchIndex(fetchImpl: FetchImpl, fallbackMessage = 'Search index rebuild failed'): Promise<unknown> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/search/rebuild-index', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {

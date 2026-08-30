@@ -1,7 +1,7 @@
-import { createProductMetadata, type ProductMetadata } from '../../shared/product.ts'
+import { sameOriginJsonFetch } from './json-transport.ts'
+import { ProductMetadataSchema, type ProductMetadata } from '../../shared/product.ts'
 
 type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
-
 
 export type UpdateStatus = 'unavailable' | 'current' | 'available'
 
@@ -52,11 +52,11 @@ export type SystemExtension = {
   isCompatible: boolean
 }
 
-function isRecord (value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
-async function parseJsonResponse (response: Response, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: Response, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers.get('content-type') || '' : ''
 
@@ -82,7 +82,7 @@ async function parseJsonResponse (response: Response, fallbackMessage: string): 
   return payload
 }
 
-function normalizeFlagsPayload (payload: unknown, fallbackMessage: string): SystemFlags {
+function normalizeFlagsPayload(payload: unknown, fallbackMessage: string): SystemFlags {
   if (!Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -96,24 +96,13 @@ function normalizeFlagsPayload (payload: unknown, fallbackMessage: string): Syst
   }, {})
 }
 
-function normalizeProductMetadata (payload: Record<string, unknown>, fallbackMessage: string): ProductMetadata {
-  const value = payload.product
-  if (!isRecord(value) || typeof value.revision !== 'string' || typeof value.date !== 'string') {
-    throw new Error(fallbackMessage)
-  }
-  let expected: ProductMetadata
-  try {
-    expected = createProductMetadata({ revision: value.revision, date: value.date })
-  } catch {
-    throw new Error(fallbackMessage)
-  }
-  if (Object.entries(expected).some(([key, expectedValue]) => value[key] !== expectedValue)) {
-    throw new Error(fallbackMessage)
-  }
-  return expected
+function normalizeProductMetadata(payload: Record<string, unknown>, fallbackMessage: string): ProductMetadata {
+  const result = ProductMetadataSchema.safeParse(payload.product)
+  if (!result.success) throw new Error(fallbackMessage)
+  return result.data
 }
 
-function normalizeSystemSummaryPayload (payload: unknown, fallbackMessage: string): SystemSummary {
+function normalizeSystemSummaryPayload(payload: unknown, fallbackMessage: string): SystemSummary {
   if (!isRecord(payload)) throw new Error(fallbackMessage)
   const product = normalizeProductMetadata(payload, fallbackMessage)
   if (payload.currentVersion !== product.version) throw new Error(fallbackMessage)
@@ -129,7 +118,8 @@ function normalizeSystemSummaryPayload (payload: unknown, fallbackMessage: strin
     !Number.isFinite(payload.pagesTotal) ||
     !Number.isFinite(payload.usersTotal) ||
     !Number.isFinite(payload.tagsTotal)
-  ) throw new Error(fallbackMessage)
+  )
+    throw new Error(fallbackMessage)
   return {
     product,
     currentVersion: product.version,
@@ -143,7 +133,7 @@ function normalizeSystemSummaryPayload (payload: unknown, fallbackMessage: strin
   }
 }
 
-function normalizeSystemInfoPayload (payload: unknown, fallbackMessage: string): SystemInfo {
+function normalizeSystemInfoPayload(payload: unknown, fallbackMessage: string): SystemInfo {
   if (!isRecord(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -180,7 +170,7 @@ function normalizeSystemInfoPayload (payload: unknown, fallbackMessage: string):
   return payload as SystemInfo
 }
 
-function normalizeSystemTelemetryPayload (payload: unknown, fallbackMessage: string) {
+function normalizeSystemTelemetryPayload(payload: unknown, fallbackMessage: string) {
   if (!isRecord(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -197,7 +187,7 @@ function normalizeSystemTelemetryPayload (payload: unknown, fallbackMessage: str
   }
 }
 
-function normalizeSystemExportStatusPayload (payload: unknown, fallbackMessage: string) {
+function normalizeSystemExportStatusPayload(payload: unknown, fallbackMessage: string) {
   if (!isRecord(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -222,7 +212,7 @@ function normalizeSystemExportStatusPayload (payload: unknown, fallbackMessage: 
   }
 }
 
-function normalizeSystemHostPayload (payload: unknown, fallbackMessage: string) {
+function normalizeSystemHostPayload(payload: unknown, fallbackMessage: string) {
   if (!isRecord(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -235,7 +225,7 @@ function normalizeSystemHostPayload (payload: unknown, fallbackMessage: string) 
   }
 }
 
-function normalizeSystemSslPayload (payload: unknown, fallbackMessage: string): SystemSslInfo {
+function normalizeSystemSslPayload(payload: unknown, fallbackMessage: string): SystemSslInfo {
   if (!isRecord(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -265,7 +255,7 @@ function normalizeSystemSslPayload (payload: unknown, fallbackMessage: string): 
   } as SystemSslInfo
 }
 
-function normalizeSystemExtension (row: unknown, fallbackMessage: string): SystemExtension {
+function normalizeSystemExtension(row: unknown, fallbackMessage: string): SystemExtension {
   if (!isRecord(row)) {
     throw new Error(fallbackMessage)
   }
@@ -286,7 +276,7 @@ function normalizeSystemExtension (row: unknown, fallbackMessage: string): Syste
   }
 }
 
-function normalizeSystemExtensionsPayload (payload: unknown, fallbackMessage: string): SystemExtension[] {
+function normalizeSystemExtensionsPayload(payload: unknown, fallbackMessage: string): SystemExtension[] {
   if (!Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -294,8 +284,8 @@ function normalizeSystemExtensionsPayload (payload: unknown, fallbackMessage: st
   return payload.map(row => normalizeSystemExtension(row, fallbackMessage))
 }
 
-async function fetchSystemSummary (fetchImpl: FetchImpl, fallbackMessage = 'System summary response is invalid') {
-  const response = await fetchImpl('/_api/system/summary', {
+async function fetchSystemSummary(fetchImpl: FetchImpl, fallbackMessage = 'System summary response is invalid') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/summary', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -305,8 +295,8 @@ async function fetchSystemSummary (fetchImpl: FetchImpl, fallbackMessage = 'Syst
   return normalizeSystemSummaryPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function fetchSystemInfo (fetchImpl: FetchImpl, fallbackMessage = 'System info response is invalid') {
-  const response = await fetchImpl('/_api/system/info', {
+async function fetchSystemInfo(fetchImpl: FetchImpl, fallbackMessage = 'System info response is invalid') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/info', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -316,8 +306,8 @@ async function fetchSystemInfo (fetchImpl: FetchImpl, fallbackMessage = 'System 
   return normalizeSystemInfoPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function fetchSystemTelemetry (fetchImpl: FetchImpl, fallbackMessage = 'System telemetry response is invalid') {
-  const response = await fetchImpl('/_api/system/telemetry', {
+async function fetchSystemTelemetry(fetchImpl: FetchImpl, fallbackMessage = 'System telemetry response is invalid') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/telemetry', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -327,8 +317,8 @@ async function fetchSystemTelemetry (fetchImpl: FetchImpl, fallbackMessage = 'Sy
   return normalizeSystemTelemetryPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function fetchSystemExportStatus (fetchImpl: FetchImpl, fallbackMessage = 'Export status response is invalid') {
-  const response = await fetchImpl('/_api/system/export-status', {
+async function fetchSystemExportStatus(fetchImpl: FetchImpl, fallbackMessage = 'Export status response is invalid') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/export-status', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -338,8 +328,8 @@ async function fetchSystemExportStatus (fetchImpl: FetchImpl, fallbackMessage = 
   return normalizeSystemExportStatusPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function startSystemExport (fetchImpl: FetchImpl, entities: string[], path: string, fallbackMessage = 'Export failed') {
-  const response = await fetchImpl('/_api/system/export', {
+async function startSystemExport(fetchImpl: FetchImpl, entities: string[], path: string, fallbackMessage = 'Export failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/export', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -357,8 +347,8 @@ async function startSystemExport (fetchImpl: FetchImpl, entities: string[], path
   return payload
 }
 
-async function fetchSystemHost (fetchImpl: FetchImpl, fallbackMessage = 'Site host response is invalid') {
-  const response = await fetchImpl('/_api/system/host', {
+async function fetchSystemHost(fetchImpl: FetchImpl, fallbackMessage = 'Site host response is invalid') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/host', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -368,8 +358,8 @@ async function fetchSystemHost (fetchImpl: FetchImpl, fallbackMessage = 'Site ho
   return normalizeSystemHostPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function fetchSystemSsl (fetchImpl: FetchImpl, fallbackMessage = 'SSL status response is invalid') {
-  const response = await fetchImpl('/_api/system/ssl', {
+async function fetchSystemSsl(fetchImpl: FetchImpl, fallbackMessage = 'SSL status response is invalid') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/ssl', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -379,8 +369,8 @@ async function fetchSystemSsl (fetchImpl: FetchImpl, fallbackMessage = 'SSL stat
   return normalizeSystemSslPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function updateSystemSslRedirection (fetchImpl: FetchImpl, enabled: boolean, fallbackMessage = 'HTTP Redirection update failed') {
-  const response = await fetchImpl('/_api/system/ssl/redirection', {
+async function updateSystemSslRedirection(fetchImpl: FetchImpl, enabled: boolean, fallbackMessage = 'HTTP Redirection update failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/ssl/redirection', {
     method: 'PATCH',
     credentials: 'same-origin',
     headers: {
@@ -398,8 +388,8 @@ async function updateSystemSslRedirection (fetchImpl: FetchImpl, enabled: boolea
   return payload
 }
 
-async function renewSystemSslCertificate (fetchImpl: FetchImpl, fallbackMessage = 'SSL Certificate renewal failed') {
-  const response = await fetchImpl('/_api/system/ssl/renew', {
+async function renewSystemSslCertificate(fetchImpl: FetchImpl, fallbackMessage = 'SSL Certificate renewal failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/ssl/renew', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -415,8 +405,8 @@ async function renewSystemSslCertificate (fetchImpl: FetchImpl, fallbackMessage 
   return payload
 }
 
-async function fetchSystemFlags (fetchImpl: FetchImpl, fallbackMessage = 'System flags response is invalid'): Promise<SystemFlags> {
-  const response = await fetchImpl('/_api/system/flags', {
+async function fetchSystemFlags(fetchImpl: FetchImpl, fallbackMessage = 'System flags response is invalid'): Promise<SystemFlags> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/flags', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -426,8 +416,8 @@ async function fetchSystemFlags (fetchImpl: FetchImpl, fallbackMessage = 'System
   return normalizeFlagsPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function fetchSystemExtensions (fetchImpl: FetchImpl, fallbackMessage = 'System extensions response is invalid'): Promise<SystemExtension[]> {
-  const response = await fetchImpl('/_api/system/extensions', {
+async function fetchSystemExtensions(fetchImpl: FetchImpl, fallbackMessage = 'System extensions response is invalid'): Promise<SystemExtension[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/extensions', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -437,8 +427,8 @@ async function fetchSystemExtensions (fetchImpl: FetchImpl, fallbackMessage = 'S
   return normalizeSystemExtensionsPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-async function updateSystemFlags (fetchImpl: FetchImpl, flags: Record<string, boolean>, fallbackMessage = 'System flags update failed') {
-  const response = await fetchImpl('/_api/system/flags', {
+async function updateSystemFlags(fetchImpl: FetchImpl, flags: Record<string, boolean>, fallbackMessage = 'System flags update failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/flags', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -458,8 +448,8 @@ async function updateSystemFlags (fetchImpl: FetchImpl, flags: Record<string, bo
   return payload
 }
 
-async function updateSystemTelemetry (fetchImpl: FetchImpl, enabled: boolean, fallbackMessage = 'Telemetry update failed') {
-  const response = await fetchImpl('/_api/system/telemetry', {
+async function updateSystemTelemetry(fetchImpl: FetchImpl, enabled: boolean, fallbackMessage = 'Telemetry update failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/telemetry', {
     method: 'PATCH',
     credentials: 'same-origin',
     headers: {
@@ -477,8 +467,8 @@ async function updateSystemTelemetry (fetchImpl: FetchImpl, enabled: boolean, fa
   return payload
 }
 
-async function resetSystemTelemetryClientId (fetchImpl: FetchImpl, fallbackMessage = 'Telemetry Client ID reset failed') {
-  const response = await fetchImpl('/_api/system/telemetry/reset-client-id', {
+async function resetSystemTelemetryClientId(fetchImpl: FetchImpl, fallbackMessage = 'Telemetry Client ID reset failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/telemetry/reset-client-id', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -494,8 +484,8 @@ async function resetSystemTelemetryClientId (fetchImpl: FetchImpl, fallbackMessa
   return payload
 }
 
-async function flushSystemCache (fetchImpl: FetchImpl, fallbackMessage = 'Cache flush failed') {
-  const response = await fetchImpl('/_api/system/cache/flush', {
+async function flushSystemCache(fetchImpl: FetchImpl, fallbackMessage = 'Cache flush failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/cache/flush', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -511,8 +501,8 @@ async function flushSystemCache (fetchImpl: FetchImpl, fallbackMessage = 'Cache 
   return payload
 }
 
-async function flushSystemTemporaryUploads (fetchImpl: FetchImpl, fallbackMessage = 'Temporary Uploads flush failed') {
-  const response = await fetchImpl('/_api/system/cache/temp-uploads/flush', {
+async function flushSystemTemporaryUploads(fetchImpl: FetchImpl, fallbackMessage = 'Temporary Uploads flush failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/cache/temp-uploads/flush', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -528,8 +518,8 @@ async function flushSystemTemporaryUploads (fetchImpl: FetchImpl, fallbackMessag
   return payload
 }
 
-async function rebuildPageTree (fetchImpl: FetchImpl, fallbackMessage = 'Page tree rebuild failed') {
-  const response = await fetchImpl('/_api/system/content/rebuild-tree', {
+async function rebuildPageTree(fetchImpl: FetchImpl, fallbackMessage = 'Page tree rebuild failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/content/rebuild-tree', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -545,8 +535,8 @@ async function rebuildPageTree (fetchImpl: FetchImpl, fallbackMessage = 'Page tr
   return payload
 }
 
-async function migratePagesToLocale (fetchImpl: FetchImpl, sourceLocale: string, targetLocale: string, fallbackMessage = 'Locale migration failed') {
-  const response = await fetchImpl('/_api/system/content/migrate-locale', {
+async function migratePagesToLocale(fetchImpl: FetchImpl, sourceLocale: string, targetLocale: string, fallbackMessage = 'Locale migration failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/content/migrate-locale', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -560,7 +550,13 @@ async function migratePagesToLocale (fetchImpl: FetchImpl, sourceLocale: string,
   })
 
   const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || typeof payload.message !== 'string' || payload.message.length < 1 || typeof payload.count !== 'number' || !Number.isFinite(payload.count)) {
+  if (
+    !isRecord(payload) ||
+    typeof payload.message !== 'string' ||
+    payload.message.length < 1 ||
+    typeof payload.count !== 'number' ||
+    !Number.isFinite(payload.count)
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -570,8 +566,8 @@ async function migratePagesToLocale (fetchImpl: FetchImpl, sourceLocale: string,
   }
 }
 
-async function renderPage (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Page render failed') {
-  const response = await fetchImpl('/_api/system/content/render-page', {
+async function renderPage(fetchImpl: FetchImpl, id: number, fallbackMessage = 'Page render failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/content/render-page', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -589,8 +585,8 @@ async function renderPage (fetchImpl: FetchImpl, id: number, fallbackMessage = '
   return payload
 }
 
-async function purgePageHistory (fetchImpl: FetchImpl, olderThan: string, fallbackMessage = 'Page history purge failed') {
-  const response = await fetchImpl('/_api/system/content/purge-history', {
+async function purgePageHistory(fetchImpl: FetchImpl, olderThan: string, fallbackMessage = 'Page history purge failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/content/purge-history', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -608,8 +604,8 @@ async function purgePageHistory (fetchImpl: FetchImpl, olderThan: string, fallba
   return payload
 }
 
-async function performSystemUpgrade (fetchImpl: FetchImpl, fallbackMessage = 'Upgrade failed') {
-  const response = await fetchImpl('/_api/system/upgrade', {
+async function performSystemUpgrade(fetchImpl: FetchImpl, fallbackMessage = 'Upgrade failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/upgrade', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -625,8 +621,8 @@ async function performSystemUpgrade (fetchImpl: FetchImpl, fallbackMessage = 'Up
   return payload
 }
 
-async function importV1Users (fetchImpl: FetchImpl, mongoDbConnString: string, groupMode: string, fallbackMessage = 'Wiki.js 1.x user import failed') {
-  const response = await fetchImpl('/_api/system/import-v1/users', {
+async function importV1Users(fetchImpl: FetchImpl, mongoDbConnString: string, groupMode: string, fallbackMessage = 'Wiki.js 1.x user import failed') {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/import-v1/users', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -636,7 +632,14 @@ async function importV1Users (fetchImpl: FetchImpl, mongoDbConnString: string, g
     body: JSON.stringify({ mongoDbConnString, groupMode })
   })
   const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || typeof payload.usersCount !== 'number' || !Number.isSafeInteger(payload.usersCount) || typeof payload.groupsCount !== 'number' || !Number.isSafeInteger(payload.groupsCount) || !Array.isArray(payload.failed)) {
+  if (
+    !isRecord(payload) ||
+    typeof payload.usersCount !== 'number' ||
+    !Number.isSafeInteger(payload.usersCount) ||
+    typeof payload.groupsCount !== 'number' ||
+    !Number.isSafeInteger(payload.groupsCount) ||
+    !Array.isArray(payload.failed)
+  ) {
     throw new Error(fallbackMessage)
   }
   return {

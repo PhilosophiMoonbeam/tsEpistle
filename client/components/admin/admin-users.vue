@@ -229,10 +229,8 @@ export default {
     },
     async loadUsers () {
       const requestId = ++this.loadRequestId
-      if (!this.loading) {
-        this.loading = true
-        wikiStore.startLoading('admin-users-refresh')
-      }
+      this.loading = true
+      wikiStore.startLoading('admin-users-refresh')
 
       try {
         const result = await fetchAdminUsersList(window.fetch.bind(window), {
@@ -261,9 +259,9 @@ export default {
           })
         }
       } finally {
+        wikiStore.stopLoading('admin-users-refresh')
         if (requestId === this.loadRequestId) {
           this.loading = false
-          wikiStore.stopLoading('admin-users-refresh')
         }
       }
     },

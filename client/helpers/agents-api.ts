@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { sameOriginJsonFetch } from './json-transport.ts'
 import {
   AGENT_ACTION_NAMES,
   AGENT_EVENT_TYPES,
@@ -11,6 +12,7 @@ import {
   type AgentProviderProfileView,
   type AgentThreadState,
   type CancelAgentGoalRequest,
+  type DecideAgentApprovalRequest,
   type CreateAgentGoalRequest,
   type CreateAgentSessionRequest,
   type PauseAgentGoalRequest,
@@ -324,7 +326,7 @@ const errorMessage = async (response: Response): Promise<string> => {
 }
 
 const requestJson = async <T>(fetcher: typeof fetch, csrfToken: string, path: string, schema: z.ZodType<T>, init: RequestInit = {}): Promise<T> => {
-  const response = await fetcher(path, {
+  const response = await sameOriginJsonFetch(fetcher, path, {
     credentials: 'same-origin',
     ...init,
     headers: {
@@ -393,7 +395,7 @@ export const moveAgentSessionToFolder = (
   }) as Promise<AgentThreadState>
 
 export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: string, sessionId: string): Promise<void> => {
-  const response = await fetcher(`/_api/agents/sessions/${encodeURIComponent(sessionId)}`, {
+  const response = await sameOriginJsonFetch(fetcher, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, {
     method: 'DELETE',
     credentials: 'same-origin',
     headers: { 'x-wiki-csrf': csrfToken }
@@ -401,7 +403,11 @@ export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: strin
   if (!response.ok) throw new Error(await errorMessage(response))
 }
 export const resetAgentHistory = async (fetcher: typeof fetch, csrfToken: string): Promise<void> => {
-  const response = await fetcher('/_api/agents/sessions', { method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': csrfToken } })
+  const response = await sameOriginJsonFetch(fetcher, '/_api/agents/sessions', {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: { 'x-wiki-csrf': csrfToken }
+  })
   if (!response.ok) throw new Error(await errorMessage(response))
 }
 
@@ -484,7 +490,7 @@ export const decideAgentProposal = async (
   csrfToken: string,
   proposalId: string,
   approvalId: string,
-  input: { readonly decision: 'approved' | 'denied'; readonly decisionNote?: string; readonly confirmationPath?: string }
+  input: DecideAgentApprovalRequest
 ) =>
   requestJson(
     fetcher,

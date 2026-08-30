@@ -5,9 +5,9 @@ import type SFTP from 'ssh2-promise/lib/sftp.js'
 import type SSHConfig from 'ssh2-promise/lib/sshConfig.js'
 import _ from 'lodash'
 import path from 'node:path'
-import { Transform, type TransformCallback } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import pageHelper from '../../../helpers/page.ts'
+import { asyncObjectTransform } from '../async-transform.ts'
 
 interface SftpStorageConfig extends StorageConfig {
   authMode: string
@@ -73,7 +73,8 @@ interface ExportAssetPayload {
 }
 
 function isExportPagePayload(value: unknown): value is ExportPagePayload {
-  return typeof value === 'object' &&
+  return (
+    typeof value === 'object' &&
     value !== null &&
     'path' in value &&
     typeof value.path === 'string' &&
@@ -86,8 +87,7 @@ function isExportPagePayload(value: unknown): value is ExportPagePayload {
     'contentType' in value &&
     typeof value.contentType === 'string' &&
     'content' in value &&
-    (typeof value.content === 'string' ||
-      (typeof value.content === 'object' && value.content !== null && !Array.isArray(value.content))) &&
+    (typeof value.content === 'string' || (typeof value.content === 'object' && value.content !== null && !Array.isArray(value.content))) &&
     'isPublished' in value &&
     typeof value.isPublished === 'boolean' &&
     'updatedAt' in value &&
@@ -96,10 +96,12 @@ function isExportPagePayload(value: unknown): value is ExportPagePayload {
     (value.createdAt instanceof Date || typeof value.createdAt === 'string') &&
     'editorKey' in value &&
     typeof value.editorKey === 'string'
+  )
 }
 
 function isExportAssetPayload(value: unknown): value is ExportAssetPayload {
-  return typeof value === 'object' &&
+  return (
+    typeof value === 'object' &&
     value !== null &&
     'filename' in value &&
     typeof value.filename === 'string' &&
@@ -107,32 +109,24 @@ function isExportAssetPayload(value: unknown): value is ExportAssetPayload {
     (typeof value.folderId === 'number' || value.folderId === null) &&
     'data' in value &&
     Buffer.isBuffer(value.data)
+  )
 }
-
 
 const getErrorMessage = (error: unknown): string => {
   return error instanceof Error ? error.message : String(error)
 }
 
-
-const getFilePath = <K extends string>(
-  page: { contentType: string, localeCode: string } & Record<K, string>,
-  pathKey: K
-): string => {
+const getFilePath = <K extends string>(page: { contentType: string } & Record<K, string>, pathKey: K, localeCode: string): string => {
   const fileName = `${page[pathKey]}.${pageHelper.getFileExtension(page.contentType)}`
-  const withLocaleCode = wiki.config.lang.namespacing && wiki.config.lang.code !== page.localeCode
-  return withLocaleCode ? `${page.localeCode}/${fileName}` : fileName
+  const withLocaleCode = wiki.config.lang.namespacing && wiki.config.lang.code !== localeCode
+  return withLocaleCode ? `${localeCode}/${fileName}` : fileName
 }
 
 const plugin: SftpStoragePlugin = {
   client: null,
   sftp: null,
-  async activated() {
-
-  },
-  async deactivated() {
-
-  },
+  async activated() {},
+  async deactivated() {},
   async init() {
     wiki.logger.info(`(STORAGE/SFTP) Initializing...`)
     const connectionConfig: SshConnectionConfig = {
@@ -161,33 +155,25 @@ const plugin: SftpStoragePlugin = {
   },
   async created(page) {
     wiki.logger.info(`(STORAGE/SFTP) Creating file ${page.path}...`)
-    const filePath = getFilePath(page, 'path')
+    const filePath = getFilePath(page, 'path', page.localeCode)
     await this.ensureDirectory(filePath)
     await this.sftp.writeFile(path.posix.join(this.config.basePath, filePath), page.injectMetadata(), { encoding: 'utf8' })
   },
   async updated(page) {
     wiki.logger.info(`(STORAGE/SFTP) Updating file ${page.path}...`)
-    const filePath = getFilePath(page, 'path')
+    const filePath = getFilePath(page, 'path', page.localeCode)
     await this.ensureDirectory(filePath)
     await this.sftp.writeFile(path.posix.join(this.config.basePath, filePath), page.injectMetadata(), { encoding: 'utf8' })
   },
   async deleted(page) {
     wiki.logger.info(`(STORAGE/SFTP) Deleting file ${page.path}...`)
-    const filePath = getFilePath(page, 'path')
+    const filePath = getFilePath(page, 'path', page.localeCode)
     await this.sftp.unlink(path.posix.join(this.config.basePath, filePath))
   },
   async renamed(page) {
     wiki.logger.info(`(STORAGE/SFTP) Renaming file ${page.path} to ${page.destinationPath}...`)
-    let sourceFilePath = getFilePath(page, 'path')
-    let destinationFilePath = getFilePath(page, 'destinationPath')
-    if (wiki.config.lang.namespacing) {
-      if (wiki.config.lang.code !== page.localeCode) {
-        sourceFilePath = `${page.localeCode}/${sourceFilePath}`
-      }
-      if (wiki.config.lang.code !== page.destinationLocaleCode) {
-        destinationFilePath = `${page.destinationLocaleCode}/${destinationFilePath}`
-      }
-    }
+    const sourceFilePath = getFilePath(page, 'path', page.localeCode)
+    const destinationFilePath = getFilePath(page, 'destinationPath', page.destinationLocaleCode)
     await this.ensureDirectory(destinationFilePath)
     await this.sftp.rename(path.posix.join(this.config.basePath, sourceFilePath), path.posix.join(this.config.basePath, destinationFilePath))
   },
@@ -196,7 +182,7 @@ const plugin: SftpStoragePlugin = {
    *
    * @param {Object} asset Asset to upload
    */
-  async assetUploaded (asset) {
+  async assetUploaded(asset) {
     wiki.logger.info(`(STORAGE/SFTP) Creating new file ${asset.path}...`)
     await this.ensureDirectory(asset.path)
     await this.sftp.writeFile(path.posix.join(this.config.basePath, asset.path), asset.data.toString('binary'), { encoding: 'binary' })
@@ -206,7 +192,7 @@ const plugin: SftpStoragePlugin = {
    *
    * @param {Object} asset Asset to delete
    */
-  async assetDeleted (asset) {
+  async assetDeleted(asset) {
     wiki.logger.info(`(STORAGE/SFTP) Deleting file ${asset.path}...`)
     await this.sftp.unlink(path.posix.join(this.config.basePath, asset.path))
   },
@@ -215,14 +201,12 @@ const plugin: SftpStoragePlugin = {
    *
    * @param {Object} asset Asset to rename
    */
-  async assetRenamed (asset) {
+  async assetRenamed(asset) {
     wiki.logger.info(`(STORAGE/SFTP) Renaming file from ${asset.path} to ${asset.destinationPath}...`)
     await this.ensureDirectory(asset.destinationPath)
     await this.sftp.rename(path.posix.join(this.config.basePath, asset.path), path.posix.join(this.config.basePath, asset.destinationPath))
   },
-  async getLocalLocation () {
-
-  },
+  async getLocalLocation() {},
   /**
    * HANDLERS
    */
@@ -231,28 +215,26 @@ const plugin: SftpStoragePlugin = {
 
     // -> Pages
     await pipeline(
-      wiki.models.knex.column('path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey').select().from('pages').where({
-        visibility: 'public'
-      }).stream(),
-      new Transform({
-        objectMode: true,
-        transform: async (value: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
-          if (!isExportPagePayload(value)) {
-            callback(new TypeError('Invalid page export row'))
-            return
-          }
-          const page = value
-          const filePath = getFilePath(page, 'path')
-          wiki.logger.info(`(STORAGE/SFTP) Adding page ${filePath}...`)
-          await this.ensureDirectory(filePath)
-          const metadata = pageHelper.injectPageMetadata(page)
-          await this.sftp.writeFile(
-            path.posix.join(this.config.basePath, filePath),
-            typeof metadata === 'string' ? metadata : JSON.stringify(metadata),
-            { encoding: 'utf8' }
-          )
-          callback()
+      wiki.models.knex
+        .column('path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey')
+        .select()
+        .from('pages')
+        .where({
+          visibility: 'public'
+        })
+        .stream(),
+      asyncObjectTransform(async value => {
+        if (!isExportPagePayload(value)) {
+          throw new TypeError('Invalid page export row')
         }
+        const page = value
+        const filePath = getFilePath(page, 'path', page.localeCode)
+        wiki.logger.info(`(STORAGE/SFTP) Adding page ${filePath}...`)
+        await this.ensureDirectory(filePath)
+        const metadata = pageHelper.injectPageMetadata(page)
+        await this.sftp.writeFile(path.posix.join(this.config.basePath, filePath), typeof metadata === 'string' ? metadata : JSON.stringify(metadata), {
+          encoding: 'utf8'
+        })
       })
     )
 
@@ -261,20 +243,15 @@ const plugin: SftpStoragePlugin = {
 
     await pipeline(
       wiki.models.knex.column('filename', 'folderId', 'data').select().from('assets').join('assetData', 'assets.id', '=', 'assetData.id').stream(),
-      new Transform({
-        objectMode: true,
-        transform: async (value: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
-          if (!isExportAssetPayload(value)) {
-            callback(new TypeError('Invalid asset export row'))
-            return
-          }
-          const asset = value
-          const filename = (asset.folderId && asset.folderId > 0) ? `${_.get(assetFolders, asset.folderId)}/${asset.filename}` : asset.filename
-          wiki.logger.info(`(STORAGE/SFTP) Adding asset ${filename}...`)
-          await this.ensureDirectory(filename)
-          await this.sftp.writeFile(path.posix.join(this.config.basePath, filename), asset.data.toString('binary'), { encoding: 'binary' })
-          callback()
+      asyncObjectTransform(async value => {
+        if (!isExportAssetPayload(value)) {
+          throw new TypeError('Invalid asset export row')
         }
+        const asset = value
+        const filename = asset.folderId && asset.folderId > 0 ? `${_.get(assetFolders, asset.folderId)}/${asset.filename}` : asset.filename
+        wiki.logger.info(`(STORAGE/SFTP) Adding asset ${filename}...`)
+        await this.ensureDirectory(filename)
+        await this.sftp.writeFile(path.posix.join(this.config.basePath, filename), asset.data.toString('binary'), { encoding: 'binary' })
       })
     )
 

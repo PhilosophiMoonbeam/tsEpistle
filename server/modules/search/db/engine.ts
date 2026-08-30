@@ -1,9 +1,4 @@
-import {
-  wiki,
-  type QueryBuilder as WikiQueryBuilder,
-  type SearchPlugin,
-  type WikiPage
-} from '../../types.ts'
+import { wiki, type QueryBuilder as WikiQueryBuilder, type SearchPlugin, type WikiPage } from '../../types.ts'
 
 type WikiPageQuery = WikiQueryBuilder<WikiPage>
 
@@ -22,12 +17,12 @@ interface ObjectionPageQuery extends WikiPageQuery {
   withGraphJoined(relation: string): ObjectionPageQuery
 }
 
-const isObjectionPageQuery = (query: WikiPageQuery): query is ObjectionPageQuery => (
-  'withGraphJoined' in query &&
-  typeof query.withGraphJoined === 'function' &&
-  'modifyGraph' in query &&
-  typeof query.modifyGraph === 'function'
-)
+const isObjectionPageQuery = (query: WikiPageQuery): query is ObjectionPageQuery =>
+  'withGraphJoined' in query && typeof query.withGraphJoined === 'function' && 'modifyGraph' in query && typeof query.modifyGraph === 'function'
+
+const escapedLikeTerm = (value: string): string => `%${value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`
+
+const escapedPathPrefix = (value: string): string => `${value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}/%`
 
 const plugin: SearchPlugin = {
   async activate() {
@@ -64,18 +59,24 @@ const plugin: SearchPlugin = {
       if (opts.locale) {
         builder.andWhere('localeCode', opts.locale)
       }
-      if (opts.path) {
-        builder.andWhere('path', 'like', `${opts.path}%`)
+      const path = opts.path
+      if (path) {
+        builder.andWhere((pathBuilder: PageWhereQuery) => {
+          pathBuilder.where('path', path)
+          pathBuilder.orWhere('path', 'like', escapedPathPrefix(path))
+        })
       }
       builder.andWhere((builderSub: PageWhereQuery) => {
+        const term = escapedLikeTerm(q)
+        const pathTerm = escapedLikeTerm(q.toLowerCase())
         if (wiki.config.db.type === 'postgres') {
-          builderSub.where('title', 'ILIKE', `%${q}%`)
-          builderSub.orWhere('description', 'ILIKE', `%${q}%`)
-          builderSub.orWhere('path', 'ILIKE', `%${q.toLowerCase()}%`)
+          builderSub.where('title', 'ILIKE', term)
+          builderSub.orWhere('description', 'ILIKE', term)
+          builderSub.orWhere('path', 'ILIKE', pathTerm)
         } else {
-          builderSub.where('title', 'LIKE', `%${q}%`)
-          builderSub.orWhere('description', 'LIKE', `%${q}%`)
-          builderSub.orWhere('path', 'LIKE', `%${q.toLowerCase()}%`)
+          builderSub.where('title', 'LIKE', term)
+          builderSub.orWhere('description', 'LIKE', term)
+          builderSub.orWhere('path', 'LIKE', pathTerm)
         }
       })
     })

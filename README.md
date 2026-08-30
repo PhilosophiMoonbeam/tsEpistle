@@ -100,6 +100,14 @@ bun install --frozen-lockfile
 bun run ci
 ```
 
+Start the development server and Vite client together:
+
+```console
+bun run dev
+```
+
+Vite startup provisions the same-origin static and lazy Prism assets used by the server, so development works from a clean checkout without a prebuilt `assets` directory.
+
 `bun run ci` is the local quality contract: dependency and license policy, Biome lint, all three TypeScript boundaries, OpenAPI and release-input checks, Bun's native test runner, and the production Vite build. `bun run format` applies the repository's Biome formatter. Biome owns JavaScript and TypeScript linting; Vue and Pug correctness remains covered by `vue-tsc`, Vite compilation, and browser tests.
 
 GitHub is the orchestration and reporting plane, not the compute plane. Every workflow targets one Linux x64 self-hosted runner carrying the custom `tsfranki-ci` label. The runner must provide the pinned Bun version, Git, Docker with Buildx/QEMU, and enough local capacity for the PostgreSQL, Playwright, upgrade, and Kubernetes jobs. GitHub receives the normal per-job checks, logs, artifacts, attestations, and release gates from that local runner.

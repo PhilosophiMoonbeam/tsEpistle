@@ -1,30 +1,31 @@
-import { cp, mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { defineConfig, type Plugin } from 'vite'
+import { copyPrismAssets, provisionDevelopmentAssets } from './server/helpers/vite-assets.ts'
 import vue from '@vitejs/plugin-vue'
 import vuetify from 'vite-plugin-vuetify'
 
 const root = import.meta.dirname
 
-function copyRuntimeAssets (): Plugin {
-  return {
-    name: 'wiki-runtime-assets',
-    async closeBundle () {
-      const output = resolve(root, 'assets/js/prism')
-      await mkdir(output, { recursive: true })
-      await cp(resolve(root, 'node_modules/prismjs/components'), output, { recursive: true })
-    }
-  }
+export function runtimeAssetsPlugin(command: 'build' | 'serve', projectRoot = root): Plugin {
+  return command === 'serve'
+    ? {
+        name: 'wiki-runtime-assets',
+        async configureServer() {
+          await provisionDevelopmentAssets(projectRoot)
+        }
+      }
+    : {
+        name: 'wiki-runtime-assets',
+        async closeBundle() {
+          await copyPrismAssets(projectRoot)
+        }
+      }
 }
 
 export default defineConfig(({ command }) => ({
   base: command === 'serve' ? '/' : '/_assets/',
   publicDir: resolve(root, 'client/static'),
-  plugins: [
-    vue({ template: { transformAssetUrls: false } }),
-    vuetify({ autoImport: true }),
-    copyRuntimeAssets()
-  ],
+  plugins: [vue({ template: { transformAssetUrls: false } }), vuetify({ autoImport: true }), runtimeAssetsPlugin(command)],
   resolve: {
     alias: {
       '@': resolve(root, 'client'),
@@ -36,11 +37,8 @@ export default defineConfig(({ command }) => ({
   css: {
     preprocessorOptions: {
       scss: {
-        additionalData: (source: string, filename: string) => (
-          filename.endsWith('/client/scss/global.scss') || filename.endsWith('/client/scss/app.scss')
-        )
-          ? source
-          : `@use "@/scss/global.scss" as *;\n${source}`
+        additionalData: (source: string, filename: string) =>
+          filename.endsWith('/client/scss/global.scss') || filename.endsWith('/client/scss/app.scss') ? source : `@use "@/scss/global.scss" as *;\n${source}`
       }
     }
   },

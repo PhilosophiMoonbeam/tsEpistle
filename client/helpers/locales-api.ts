@@ -1,3 +1,5 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -32,7 +34,7 @@ type LocaleMessageResponse = {
   message: string
 }
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
@@ -42,10 +44,22 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && (payload as { error: string }).error.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { error?: unknown }).error === 'string' &&
+      (payload as { error: string }).error.length > 0
+    ) {
       throw new Error((payload as { error: string }).error)
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && (payload as { message: string }).message.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { message?: unknown }).message === 'string' &&
+      (payload as { message: string }).message.length > 0
+    ) {
       throw new Error((payload as { message: string }).message)
     }
     throw new Error(fallbackMessage)
@@ -58,7 +72,7 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-function normalizeLocaleRow (row: unknown, fallbackMessage: string): LocaleRow {
+function normalizeLocaleRow(row: unknown, fallbackMessage: string): LocaleRow {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -76,7 +90,7 @@ function normalizeLocaleRow (row: unknown, fallbackMessage: string): LocaleRow {
   return row as LocaleRow
 }
 
-function normalizeLocaleConfig (payload: unknown, fallbackMessage: string): LocaleConfig {
+function normalizeLocaleConfig(payload: unknown, fallbackMessage: string): LocaleConfig {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -95,8 +109,8 @@ function normalizeLocaleConfig (payload: unknown, fallbackMessage: string): Loca
   return payload as LocaleConfig
 }
 
-export async function fetchLocales (fetchImpl: FetchImpl, fallbackMessage = 'Locales response is invalid'): Promise<LocaleRow[]> {
-  const response = await fetchImpl('/_api/locales', {
+export async function fetchLocales(fetchImpl: FetchImpl, fallbackMessage = 'Locales response is invalid'): Promise<LocaleRow[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/locales', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -111,8 +125,8 @@ export async function fetchLocales (fetchImpl: FetchImpl, fallbackMessage = 'Loc
   return payload.map(row => normalizeLocaleRow(row, fallbackMessage))
 }
 
-export async function fetchLocaleConfig (fetchImpl: FetchImpl, fallbackMessage = 'Locale config response is invalid'): Promise<LocaleConfig> {
-  const response = await fetchImpl('/_api/locales/config', {
+export async function fetchLocaleConfig(fetchImpl: FetchImpl, fallbackMessage = 'Locale config response is invalid'): Promise<LocaleConfig> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/locales/config', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -122,8 +136,14 @@ export async function fetchLocaleConfig (fetchImpl: FetchImpl, fallbackMessage =
   return normalizeLocaleConfig(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-function normalizeLocaleSavePayload (payload: unknown, fallbackMessage: string): LocaleMessageResponse {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length < 1) {
+function normalizeLocaleSavePayload(payload: unknown, fallbackMessage: string): LocaleMessageResponse {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    typeof (payload as { message?: unknown }).message !== 'string' ||
+    (payload as { message: string }).message.length < 1
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -132,8 +152,12 @@ function normalizeLocaleSavePayload (payload: unknown, fallbackMessage: string):
   }
 }
 
-export async function saveLocaleConfig (fetchImpl: FetchImpl, config: unknown, fallbackMessage = 'Locale settings update failed'): Promise<LocaleMessageResponse> {
-  const response = await fetchImpl('/_api/locales/config', {
+export async function saveLocaleConfig(
+  fetchImpl: FetchImpl,
+  config: unknown,
+  fallbackMessage = 'Locale settings update failed'
+): Promise<LocaleMessageResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/locales/config', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -146,8 +170,8 @@ export async function saveLocaleConfig (fetchImpl: FetchImpl, config: unknown, f
   return normalizeLocaleSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function downloadLocale (fetchImpl: FetchImpl, code: string, fallbackMessage = 'Locale download failed'): Promise<LocaleMessageResponse> {
-  const response = await fetchImpl(`/_api/locales/${encodeURIComponent(code)}/download`, {
+export async function downloadLocale(fetchImpl: FetchImpl, code: string, fallbackMessage = 'Locale download failed'): Promise<LocaleMessageResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/locales/${encodeURIComponent(code)}/download`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: {

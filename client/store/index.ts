@@ -1,5 +1,7 @@
 import { createPinia, defineStore } from 'pinia'
 import Cookies from 'js-cookie'
+import { decodeJwtPayload } from '../helpers/jwt.ts'
+import { registerJsonPrincipalRefresh } from '../helpers/json-transport.ts'
 import type { SystemSummary } from '../helpers/system-api.ts'
 
 export type Notification = {
@@ -9,7 +11,21 @@ export type Notification = {
   isActive: boolean
 }
 
-type UnknownRecord = Record<string, unknown>
+const defaultUser = () => ({
+  id: 0,
+  email: '',
+  name: '',
+  pictureUrl: '',
+  localeCode: '',
+  defaultEditor: '',
+  timezone: '',
+  dateFormat: '',
+  appearance: '',
+  permissions: [] as string[],
+  iat: 0,
+  exp: 0,
+  authenticated: false
+})
 
 const defaultPermissions = () => ({
   comments: { read: false, write: false, manage: false },
@@ -19,21 +35,11 @@ const defaultPermissions = () => ({
   system: { manage: false }
 })
 
-const decodeJwtPayload = (token: string): UnknownRecord => {
-  const payload = token.split('.')[1]
-  if (!payload) throw new Error('JWT payload is missing.')
-  const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
-  const decoded: unknown = JSON.parse(window.atob(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')))
-  if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) throw new Error('JWT payload is invalid.')
-  return decoded as UnknownRecord
-}
-
-
 export const pinia = createPinia()
 
 export const useWikiStore = defineStore('wiki', {
   state: () => ({
-    loadingStack: [] as string[],
+    loadingCounts: {} as Record<string, number>,
     notification: {
       message: '',
       style: 'primary',
@@ -120,33 +126,22 @@ export const useWikiStore = defineStore('wiki', {
       searchRestrictPath: false,
       printView: false
     },
-    user: {
-      id: 0,
-      email: '',
-      name: '',
-      pictureUrl: '',
-      localeCode: '',
-      defaultEditor: '',
-      timezone: '',
-      dateFormat: '',
-      appearance: '',
-      permissions: [] as string[],
-      iat: 0,
-      exp: 0,
-      authenticated: false
-    }
+    user: defaultUser()
   }),
   getters: {
-    isLoading: state => state.loadingStack.length > 0
+    isLoading: state => Object.keys(state.loadingCounts).length > 0
   },
   actions: {
-    startLoading (name: string) {
-      if (!this.loadingStack.includes(name)) this.loadingStack.push(name)
+    startLoading(name: string) {
+      this.loadingCounts[name] = (this.loadingCounts[name] ?? 0) + 1
     },
-    stopLoading (name: string) {
-      this.loadingStack = this.loadingStack.filter(item => item !== name)
+    stopLoading(name: string) {
+      const count = this.loadingCounts[name]
+      if (count === undefined) return
+      if (count === 1) delete this.loadingCounts[name]
+      else this.loadingCounts[name] = count - 1
     },
-    showNotification (options: Partial<Notification>) {
+    showNotification(options: Partial<Notification>) {
       this.notification = {
         message: '',
         style: 'primary',
@@ -155,10 +150,10 @@ export const useWikiStore = defineStore('wiki', {
         ...options
       }
     },
-    setNotificationActive (isActive: boolean) {
+    setNotificationActive(isActive: boolean) {
       this.notification.isActive = isActive
     },
-    showError (error: unknown) {
+    showError(error: unknown) {
       let message = String(error)
       if (error instanceof Error) {
         message = error.message
@@ -172,11 +167,16 @@ export const useWikiStore = defineStore('wiki', {
       }
       this.showNotification({ style: 'red', message, icon: 'alert' })
     },
-    refreshAuth () {
+    refreshAuth() {
+      this.user = defaultUser()
       const token = Cookies.get('jwt')
       if (!token) return
       try {
         const payload = decodeJwtPayload(token)
+        if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp) || payload.exp <= Date.now() / 1000) {
+          Cookies.remove('jwt')
+          return
+        }
         this.user.id = typeof payload.id === 'number' ? payload.id : 0
         this.user.email = typeof payload.email === 'string' ? payload.email : ''
         this.user.name = typeof payload.name === 'string' ? payload.name : ''
@@ -185,24 +185,27 @@ export const useWikiStore = defineStore('wiki', {
         this.user.timezone = typeof payload.tz === 'string' ? payload.tz : Intl.DateTimeFormat().resolvedOptions().timeZone || ''
         this.user.dateFormat = typeof payload.df === 'string' ? payload.df : ''
         this.user.appearance = typeof payload.ap === 'string' ? payload.ap : ''
-        this.user.permissions = Array.isArray(payload.permissions) ? payload.permissions.filter((permission): permission is string => typeof permission === 'string') : []
+        this.user.permissions = Array.isArray(payload.permissions)
+          ? payload.permissions.filter((permission): permission is string => typeof permission === 'string')
+          : []
         this.user.iat = typeof payload.iat === 'number' ? payload.iat : 0
-        this.user.exp = typeof payload.exp === 'number' ? payload.exp : 0
+        this.user.exp = payload.exp
         this.user.authenticated = true
       } catch {
+        Cookies.remove('jwt')
         console.debug('Invalid JWT. Silent authentication skipped.')
       }
     },
-    pushMediaFolder (folder: unknown) {
+    pushMediaFolder(folder: unknown) {
       this.editor.media.folderTree.push(folder)
     },
-    popMediaFolder () {
+    popMediaFolder() {
       this.editor.media.folderTree.pop()
-    },
+    }
   }
 })
 
 export const wikiStore = useWikiStore(pinia)
+registerJsonPrincipalRefresh(() => wikiStore.refreshAuth())
 
 export type WikiStore = typeof wikiStore
-

@@ -7,14 +7,33 @@ import { createOpenResponsesFetch } from '../../agents/providers/openresponses.t
 import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
-const capabilities = { streaming: false, toolCalling: 'prompt', parallelToolCalls: false, structuredOutput: 'prompt-only', usage: 'terminal', cancellation: true, maxContextTokens: 100_000, maxOutputTokens: 4_000 }
+const capabilities = {
+  streaming: false,
+  toolCalling: 'prompt',
+  parallelToolCalls: false,
+  structuredOutput: 'prompt-only',
+  usage: 'terminal',
+  cancellation: true,
+  maxContextTokens: 100_000,
+  maxOutputTokens: 4_000
+}
 
 describe('additional provider transports', () => {
   let db: Knex
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await db.schema.createTable('agentProviderProfileVersions', table => {
-      table.uuid('id').primary(); table.string('transportKind'); table.string('model'); table.string('baseUrl'); table.string('authMode'); table.string('secretReference'); table.text('adapterConfig'); table.text('capabilities'); table.string('capabilityRevision'); table.string('pricingRevision'); table.boolean('conformed')
+      table.uuid('id').primary()
+      table.string('transportKind')
+      table.string('model')
+      table.string('baseUrl')
+      table.string('authMode')
+      table.string('secretReference')
+      table.text('adapterConfig')
+      table.text('capabilities')
+      table.string('capabilityRevision')
+      table.string('pricingRevision')
+      table.boolean('conformed')
     })
   })
   afterEach(async () => db.destroy())
@@ -27,7 +46,7 @@ describe('additional provider transports', () => {
       adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {} }),
       capabilities: JSON.stringify(capabilities),
       capabilityRevision: 'cap-1',
-      pricingRevision: 'price-1',
+      pricingRevision: 'price-1|1000000|2000000',
       conformed: true
     })
   }
@@ -35,53 +54,113 @@ describe('additional provider transports', () => {
   it('runs OpenResponses through the storage-off Responses protocol', async () => {
     const id = '00000000-0000-4000-8000-000000000011'
     await insert({ id, transportKind: 'openresponses', baseUrl: 'https://openresponses.example.test/v1', authMode: 'bearer' })
-    await db('agentProviderProfileVersions').where({ id }).update({
-      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'xhigh' }),
-      capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true })
-    })
+    await db('agentProviderProfileVersions')
+      .where({ id })
+      .update({
+        adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'xhigh' }),
+        capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true })
+      })
     let payload: Record<string, unknown> = {}
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       payload = JSON.parse(String(init?.body)) as Record<string, unknown>
-      return Response.json({ id: 'resp_1', object: 'response', created_at: 1, status: 'completed', error: null, incomplete_details: null, instructions: null, max_output_tokens: null, model: 'model-test', parallel_tool_calls: false, previous_response_id: null, output: [{ type: 'message', id: 'msg_1', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'open', annotations: [] }] }], usage: { input_tokens: 2, input_tokens_details: { cached_tokens: 0 }, output_tokens: 1, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 3 } })
+      return Response.json({
+        id: 'resp_1',
+        object: 'response',
+        created_at: 1,
+        status: 'completed',
+        error: null,
+        incomplete_details: null,
+        instructions: null,
+        max_output_tokens: null,
+        model: 'model-test',
+        parallel_tool_calls: false,
+        previous_response_id: null,
+        output: [{ type: 'message', id: 'msg_1', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'open', annotations: [] }] }],
+        usage: {
+          input_tokens: 2,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens: 1,
+          output_tokens_details: { reasoning_tokens: 0 },
+          total_tokens: 3
+        }
+      })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
-    const response = await provider.service.chat({
-      chatPrompt: [{ role: 'user', content: 'hello' }],
-      functions: [{ name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }]
-    }, { stream: false })
+    const response = await provider.service.chat(
+      {
+        chatPrompt: [{ role: 'user', content: 'hello' }],
+        functions: [
+          { name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object', properties: { id: { type: 'number', description: 'Page ID' } } } }
+        ]
+      },
+      { stream: false }
+    )
     expect(response).not.toBeInstanceOf(ReadableStream)
-    expect(payload).toMatchObject({ store: false, previous_response_id: null, parallel_tool_calls: true, reasoning: { effort: 'xhigh' }, tools: [{ type: 'function', name: 'wiki_get_page', strict: false }] })
+    expect(payload).toMatchObject({
+      store: false,
+      previous_response_id: null,
+      parallel_tool_calls: true,
+      reasoning: { effort: 'xhigh' },
+      tools: [{ type: 'function', name: 'wiki_get_page', strict: false }]
+    })
     expect(payload.include).toContain('reasoning.encrypted_content')
   })
 
   it('maps Anthropic native tools, tool use, and tool results', async () => {
     const id = '00000000-0000-4000-8000-000000000012'
     await insert({ id, transportKind: 'anthropic-messages', baseUrl: 'https://api.anthropic.com/v1', authMode: 'anthropic-api-key' })
-    await db('agentProviderProfileVersions').where({ id }).update({
-      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'high' }),
-      capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true })
-    })
+    await db('agentProviderProfileVersions')
+      .where({ id })
+      .update({
+        adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'high' }),
+        capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true })
+      })
     const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = []
     const fetchImplementation = async (input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       requests.push({ url: String(input), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) as Record<string, unknown> })
       return requests.length === 1
-        ? Response.json({ id: 'msg_1', type: 'message', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'wiki_get_page', input: { id: 42 } }], model: 'model-test', stop_reason: 'tool_use', stop_sequence: null, usage: { input_tokens: 2, output_tokens: 1 } })
-        : Response.json({ id: 'msg_2', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'anthropic' }], model: 'model-test', stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 4, output_tokens: 1 } })
+        ? Response.json({
+            id: 'msg_1',
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'tool_use', id: 'toolu_1', name: 'wiki_get_page', input: { id: 42 } }],
+            model: 'model-test',
+            stop_reason: 'tool_use',
+            stop_sequence: null,
+            usage: { input_tokens: 2, output_tokens: 1 }
+          })
+        : Response.json({
+            id: 'msg_2',
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'text', text: 'anthropic' }],
+            model: 'model-test',
+            stop_reason: 'end_turn',
+            stop_sequence: null,
+            usage: { input_tokens: 4, output_tokens: 1 }
+          })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'anthropic-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
-    const definition = { name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } } }
+    const definition = {
+      name: 'wiki_get_page',
+      description: 'Read a page',
+      parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } }
+    }
     const first = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [definition] }, { stream: false })
     if (first instanceof ReadableStream) throw new Error('Expected a buffered Anthropic response')
     const [call] = first.results[0]?.functionCalls ?? []
     expect(call).toMatchObject({ id: 'toolu_1', function: { name: 'wiki_get_page' } })
-    await provider.service.chat({
-      chatPrompt: [
-        { role: 'user', content: 'hello' },
-        { role: 'assistant', functionCalls: call ? [call] : [] },
-        { role: 'function', functionId: 'toolu_1', result: '{"id":42}' }
-      ],
-      functions: [definition]
-    }, { stream: false })
+    await provider.service.chat(
+      {
+        chatPrompt: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', functionCalls: call ? [call] : [] },
+          { role: 'function', functionId: 'toolu_1', result: '{"id":42}' }
+        ],
+        functions: [definition]
+      },
+      { stream: false }
+    )
     expect(requests[0]?.url).toBe('https://api.anthropic.com/v1/messages')
     expect(requests[0]?.headers.get('x-api-key')).toBe('anthropic-key')
     expect(requests[0]?.headers.get('anthropic-version')).toBeTruthy()
@@ -93,11 +172,20 @@ describe('additional provider transports', () => {
   it('streams Gemini Interactions tools with stateless exact-step continuation', async () => {
     const id = '00000000-0000-4000-8000-000000000015'
     await insert({ id, transportKind: 'gemini-api', baseUrl: 'https://generativelanguage.googleapis.com/v1beta', authMode: 'google-api-key' })
-    await db('agentProviderProfileVersions').where({ id }).update({
-      model: 'gemini-3.7-flash',
-      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'medium' }),
-      capabilities: JSON.stringify({ ...capabilities, streaming: true, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'native-json-schema', usage: 'stream' })
-    })
+    await db('agentProviderProfileVersions')
+      .where({ id })
+      .update({
+        model: 'gemini-3.7-flash',
+        adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'medium' }),
+        capabilities: JSON.stringify({
+          ...capabilities,
+          streaming: true,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'stream'
+        })
+      })
     const requests: Array<{ url: string; headers: Headers; body: Record<string, unknown> }> = []
     const firstSteps = [
       { type: 'thought', signature: 'opaque-signature' },
@@ -153,12 +241,20 @@ describe('additional provider transports', () => {
       for await (const item of value) items.push(item)
       return items
     }
-    const first = await consume(await provider.service.chat({
-      chatPrompt: [{ role: 'system', content: 'Use Wiki actions.' }, { role: 'user', content: 'hello' }],
-      functions: definitions,
-      functionCall: 'auto',
-      responseFormat: { type: 'json_schema', schema: { type: 'object' } }
-    }, { stream: true }))
+    const first = await consume(
+      await provider.service.chat(
+        {
+          chatPrompt: [
+            { role: 'system', content: 'Use Wiki actions.' },
+            { role: 'user', content: 'hello' }
+          ],
+          functions: definitions,
+          functionCall: 'auto',
+          responseFormat: { type: 'json_schema', schema: { type: 'object' } }
+        },
+        { stream: true }
+      )
+    )
     const calls = first.flatMap(item => item.results.flatMap(result => result.functionCalls ?? []))
     const rawState = first.flatMap(item => item.results.flatMap(result => result.thoughtBlocks ?? [])).at(-1)
     expect(calls).toMatchObject([
@@ -170,16 +266,26 @@ describe('additional provider transports', () => {
     if (!rawState) throw new Error('Gemini Interactions did not return its continuation state')
     const continuation = provider.preserveThoughtBlock('', rawState)
     if (!continuation) throw new Error('Gemini Interactions continuation state was not preserved')
-    const final = await consume(await provider.service.chat({
-      chatPrompt: [
-        { role: 'user', content: 'hello' },
-        { role: 'assistant', functionCalls: calls, thoughtBlocks: [continuation] },
-        { role: 'function', functionId: 'call_1', result: '{"id":42}' },
-        { role: 'function', functionId: 'call_2', result: '[]' }
-      ],
-      functions: definitions
-    }, { stream: true }))
-    expect(final.flatMap(item => item.results).map(result => result.content ?? '').join('')).toBe('gemini')
+    const final = await consume(
+      await provider.service.chat(
+        {
+          chatPrompt: [
+            { role: 'user', content: 'hello' },
+            { role: 'assistant', functionCalls: calls, thoughtBlocks: [continuation] },
+            { role: 'function', functionId: 'call_1', result: '{"id":42}' },
+            { role: 'function', functionId: 'call_2', result: '[]' }
+          ],
+          functions: definitions
+        },
+        { stream: true }
+      )
+    )
+    expect(
+      final
+        .flatMap(item => item.results)
+        .map(result => result.content ?? '')
+        .join('')
+    ).toBe('gemini')
     expect(final.at(-1)?.modelUsage?.tokens).toMatchObject({ promptTokens: 6, completionTokens: 1, totalTokens: 7 })
     expect(requests.map(request => request.url)).toEqual([
       'https://generativelanguage.googleapis.com/v1beta/interactions',
@@ -193,7 +299,10 @@ describe('additional provider transports', () => {
       stream: true,
       system_instruction: 'Use Wiki actions.',
       input: [{ type: 'user_input', content: [{ type: 'text', text: 'hello' }] }],
-      tools: [{ type: 'function', name: 'wiki_get_page' }, { type: 'function', name: 'wiki_list_tags' }],
+      tools: [
+        { type: 'function', name: 'wiki_get_page' },
+        { type: 'function', name: 'wiki_list_tags' }
+      ],
       tool_choice: 'auto',
       response_format: { type: 'text', mime_type: 'application/json', schema: { type: 'object' } },
       generation_config: { thinking_level: 'medium', thinking_summaries: 'none' }
@@ -220,40 +329,78 @@ describe('additional provider transports', () => {
       called = true
       return Response.json({})
     }
-    await expect(Promise.resolve(new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
+    await expect(
+      Promise.resolve(new AgentProviderFactory(db, { get: () => 'gemini-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id))
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_MODEL' })
     expect(called).toBe(false)
   })
-
 
   it('maps Chat Completions native tools, calls, and results', async () => {
     const id = '00000000-0000-4000-8000-000000000014'
     await insert({ id, transportKind: 'openai-chat', baseUrl: 'https://chat.example.test/v1', authMode: 'bearer' })
-    await db('agentProviderProfileVersions').where({ id }).update({
-      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'max' }),
-      capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'tool-result' })
-    })
+    await db('agentProviderProfileVersions')
+      .where({ id })
+      .update({
+        adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'max' }),
+        capabilities: JSON.stringify({ ...capabilities, toolCalling: 'native', parallelToolCalls: true, structuredOutput: 'tool-result' })
+      })
     const payloads: Record<string, unknown>[] = []
     const fetchImplementation = async (_input: URL | RequestInfo, init?: RequestInit): Promise<Response> => {
       payloads.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
       return payloads.length === 1
-        ? Response.json({ id: 'chatcmpl_1', object: 'chat.completion', created: 1, model: 'model-test', choices: [{ index: 0, message: { role: 'assistant', content: null, tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'wiki_get_page', arguments: '{"id":42}' } }] }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 } })
-        : Response.json({ id: 'chatcmpl_2', object: 'chat.completion', created: 2, model: 'model-test', choices: [{ index: 0, message: { role: 'assistant', content: 'chat' }, finish_reason: 'stop' }], usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5 } })
+        ? Response.json({
+            id: 'chatcmpl_1',
+            object: 'chat.completion',
+            created: 1,
+            model: 'model-test',
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: 'assistant',
+                  content: null,
+                  tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'wiki_get_page', arguments: '{"id":42}' } }]
+                },
+                finish_reason: 'tool_calls'
+              }
+            ],
+            usage: { prompt_tokens: 2, completion_tokens: 1, total_tokens: 3 }
+          })
+        : Response.json({
+            id: 'chatcmpl_2',
+            object: 'chat.completion',
+            created: 2,
+            model: 'model-test',
+            choices: [{ index: 0, message: { role: 'assistant', content: 'chat' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 4, completion_tokens: 1, total_tokens: 5 }
+          })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'chat-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
-    const definition = { name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } } }
+    const definition = {
+      name: 'wiki_get_page',
+      description: 'Read a page',
+      parameters: { type: 'object' as const, properties: { id: { type: 'number' as const, description: 'Page ID' } } }
+    }
     const first = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [definition] }, { stream: false })
     if (first instanceof ReadableStream) throw new Error('Expected a buffered Chat Completions response')
     const [call] = first.results[0]?.functionCalls ?? []
     expect(call).toMatchObject({ id: 'call_1', function: { name: 'wiki_get_page', params: '{"id":42}' } })
-    await provider.service.chat({
-      chatPrompt: [
-        { role: 'user', content: 'hello' },
-        { role: 'assistant', functionCalls: call ? [call] : [] },
-        { role: 'function', functionId: 'call_1', result: '{"id":42}' }
-      ],
-      functions: [definition]
-    }, { stream: false })
-    expect(payloads[0]).toMatchObject({ parallel_tool_calls: true, reasoning_effort: 'max', tools: [{ type: 'function', function: { name: 'wiki_get_page' } }] })
+    await provider.service.chat(
+      {
+        chatPrompt: [
+          { role: 'user', content: 'hello' },
+          { role: 'assistant', functionCalls: call ? [call] : [] },
+          { role: 'function', functionId: 'call_1', result: '{"id":42}' }
+        ],
+        functions: [definition]
+      },
+      { stream: false }
+    )
+    expect(payloads[0]).toMatchObject({
+      parallel_tool_calls: true,
+      reasoning_effort: 'max',
+      tools: [{ type: 'function', function: { name: 'wiki_get_page' } }]
+    })
     expect(payloads[1]).toMatchObject({ messages: expect.arrayContaining([{ role: 'tool', tool_call_id: 'call_1', content: '{"id":42}' }]) })
   })
 
@@ -268,12 +415,23 @@ describe('additional provider transports', () => {
       return Response.json({ choices: [{ text: 'legacy' }], usage: { prompt_tokens: 4, completion_tokens: 2 } })
     }
     const provider = await new AgentProviderFactory(db, { get: () => 'legacy-key' }, fetchImplementation as typeof fetch, publicResolver as never).create(id)
-    const response = await provider.service.chat({ chatPrompt: [{ role: 'system', content: 'system' }, { role: 'user', content: 'hello' }] }, { stream: true })
+    const response = await provider.service.chat(
+      {
+        chatPrompt: [
+          { role: 'system', content: 'system' },
+          { role: 'user', content: 'hello' }
+        ]
+      },
+      { stream: true }
+    )
     expect(response).not.toBeInstanceOf(ReadableStream)
     expect(payload).toMatchObject({ model: 'model-test', prompt: 'system: system\n\nuser: hello', stream: false })
     expect(headers.get('x-api-key')).toBe('legacy-key')
-    if (!(response instanceof ReadableStream)) expect(response).toMatchObject({ results: [{ content: 'legacy' }], modelUsage: { tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } } })
-    await expect(Promise.resolve(provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [{ name: 'pages.get', description: 'read' }] }))).rejects.toMatchObject({ code: 'INVALID_LEGACY_PROMPT' })
+    if (!(response instanceof ReadableStream))
+      expect(response).toMatchObject({ results: [{ content: 'legacy' }], modelUsage: { tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } } })
+    await expect(
+      Promise.resolve(provider.service.chat({ chatPrompt: [{ role: 'user', content: 'hello' }], functions: [{ name: 'pages.get', description: 'read' }] }))
+    ).rejects.toMatchObject({ code: 'INVALID_LEGACY_PROMPT' })
   })
 })
 
@@ -289,20 +447,26 @@ describe('OpenResponses protocol validation', () => {
       calls += 1
       return Response.json({})
     })
-    await expect(Promise.resolve(transport('https://openresponses.example.test/v1/responses', request({ unsupported: true })))).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+    await expect(Promise.resolve(transport('https://openresponses.example.test/v1/responses', request({ unsupported: true })))).rejects.toMatchObject({
+      code: 'INVALID_OPENRESPONSES_PROTOCOL'
+    })
     expect(calls).toBe(0)
   })
 
   it('rejects malformed buffered responses before Ax parsing', async () => {
-    const transport = createOpenResponsesFetch(async () => Response.json({
-      id: 'resp_1',
-      object: 'response',
-      created_at: 1,
-      status: 'completed',
-      model: 'model-test',
-      output: [{ id: 'unknown_1', type: 'provider_private_item', status: 'completed' }]
-    }))
-    await expect(Promise.resolve(transport('https://openresponses.example.test/v1/responses', request()))).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+    const transport = createOpenResponsesFetch(async () =>
+      Response.json({
+        id: 'resp_1',
+        object: 'response',
+        created_at: 1,
+        status: 'completed',
+        model: 'model-test',
+        output: [{ id: 'unknown_1', type: 'provider_private_item', status: 'completed' }]
+      })
+    )
+    await expect(Promise.resolve(transport('https://openresponses.example.test/v1/responses', request()))).rejects.toMatchObject({
+      code: 'INVALID_OPENRESPONSES_PROTOCOL'
+    })
   })
 
   it('validates streaming event names, sequences, terminal response, and marker', async () => {
@@ -329,18 +493,21 @@ describe('OpenResponses protocol validation', () => {
 
     const invalidBody = 'event: response.output_text.delta\ndata: {"type":"response.output_text.done","sequence_number":0}\n\n'
     const invalidTransport = createOpenResponsesFetch(async () => new Response(invalidBody, { headers: { 'content-type': 'text/event-stream' } }))
-    await expect(Promise.resolve((await invalidTransport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text())).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
+    await expect(
+      Promise.resolve((await invalidTransport('https://openresponses.example.test/v1/responses', request({ stream: true }))).text())
+    ).rejects.toMatchObject({ code: 'INVALID_OPENRESPONSES_PROTOCOL' })
   })
 })
 
 describe('Gemini Interactions protocol validation', () => {
-  const service = (implementation: typeof fetch) => createGeminiInteractionsService({
-    apiKey: 'gemini-key',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    model: 'gemini-3.7-flash',
-    fetch: implementation,
-    timeoutMs: 10_000
-  })
+  const service = (implementation: typeof fetch) =>
+    createGeminiInteractionsService({
+      apiKey: 'gemini-key',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      model: 'gemini-3.7-flash',
+      fetch: implementation,
+      timeoutMs: 10_000
+    })
 
   it('maps buffered text, usage, and encrypted continuation state', async () => {
     let body: Record<string, unknown> = {}
@@ -375,9 +542,13 @@ describe('Gemini Interactions protocol validation', () => {
     const gemini = service((async () => new Response(body, { headers: { 'content-type': 'text/event-stream' } })) as typeof fetch)
     const response = await gemini.chat({ chatPrompt: [{ role: 'user', content: 'hello' }] }, { stream: true })
     if (!(response instanceof ReadableStream)) throw new Error('Expected a streaming Gemini Interactions response')
-    await expect(Promise.resolve((async () => {
-      for await (const item of response) void item
-    })())).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    await expect(
+      Promise.resolve(
+        (async () => {
+          for await (const item of response) void item
+        })()
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
   })
 
   it('rejects corrupted stored Interactions steps before egress', async () => {
@@ -386,13 +557,20 @@ describe('Gemini Interactions protocol validation', () => {
       called = true
       return Response.json({})
     }) as typeof fetch)
-    await expect(Promise.resolve(gemini.chat({
-      chatPrompt: [
-        { role: 'user', content: 'hello' },
-        { role: 'assistant', content: 'answer', thoughtBlocks: [{ data: 'wiki.gemini.interactions.v1:not-json', encrypted: true }] },
-        { role: 'user', content: 'continue' }
-      ]
-    }, { stream: false }))).rejects.toMatchObject({ code: 'AGENT_PROVIDER_STATE_CORRUPT' })
+    await expect(
+      Promise.resolve(
+        gemini.chat(
+          {
+            chatPrompt: [
+              { role: 'user', content: 'hello' },
+              { role: 'assistant', content: 'answer', thoughtBlocks: [{ data: 'wiki.gemini.interactions.v1:not-json', encrypted: true }] },
+              { role: 'user', content: 'continue' }
+            ]
+          },
+          { stream: false }
+        )
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_PROVIDER_STATE_CORRUPT' })
     expect(called).toBe(false)
   })
 })

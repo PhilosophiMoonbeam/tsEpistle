@@ -1,12 +1,7 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import type { Locator, Page, TestInfo } from '@playwright/test'
-import {
-  authenticateAsAdmin,
-  expectResponsiveLayout,
-  openAuthenticatedPage,
-  openSearch
-} from './helpers.ts'
+import { authenticateAsAdmin, expectResponsiveLayout, openAuthenticatedPage, openSearch } from './helpers.ts'
 
 async function expectNoBlockingAccessibilityViolations(page: Page, surface: string) {
   await page.locator('.animated').evaluateAll(elements => {
@@ -14,13 +9,8 @@ async function expectNoBlockingAccessibilityViolations(page: Page, surface: stri
       for (const animation of element.getAnimations()) animation.finish()
     }
   })
-  const result = await new AxeBuilder({ page })
-    .exclude('.v-tooltip:not(.v-overlay--active)')
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
-    .analyze()
-  const blockingViolations = result.violations.filter(violation =>
-    violation.impact === 'critical' || violation.impact === 'serious'
-  )
+  const result = await new AxeBuilder({ page }).exclude('.v-tooltip:not(.v-overlay--active)').withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze()
+  const blockingViolations = result.violations.filter(violation => violation.impact === 'critical' || violation.impact === 'serious')
   expect(blockingViolations, `${surface} has serious or critical accessibility violations`).toEqual([])
 }
 
@@ -79,7 +69,7 @@ test.describe('release accessibility profiles', () => {
     await openAuthenticatedPage(page, '/a/theme', '.v-switch')
     const darkMode = page.getByRole('checkbox', { name: 'Dark Mode' })
     await expect(darkMode).toBeVisible()
-    if (!await darkMode.isChecked()) await darkMode.click()
+    if (!(await darkMode.isChecked())) await darkMode.click()
     await expect(page.locator('.v-theme--dark').first()).toBeVisible()
     await expectNoBlockingAccessibilityViolations(page, '/a/theme (dark)')
   })
@@ -154,6 +144,87 @@ test.describe('release accessibility profiles', () => {
       const history = page.getByRole('button', { name: 'Open agent conversation history' })
       expect(await tabToControl(page, history), 'Agent history must be reachable in the tab order').toBe(true)
     }
+  })
+
+  test('contains Ask keyboard focus and restores the invoking search control', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    await authenticateAsAdmin(page)
+    await page.goto('/', { waitUntil: 'networkidle' })
+    const search = await openSearch(page)
+    const ask = page.getByRole('button', { name: /^ask$/i })
+    expect(await tabToControl(page, ask), 'Ask must be reachable from the search control').toBe(true)
+    await page.keyboard.press('Enter')
+
+    const dialog = page.getByRole('dialog', { name: 'Wiki Agent workspace' })
+    await expect(dialog).toBeVisible()
+    await expect.poll(() => dialog.evaluate(root => root.contains(document.activeElement))).toBe(true)
+    const backgroundState = await page
+      .locator('.v-main')
+      .first()
+      .evaluate(element => {
+        const isolatedAncestor = element.closest<HTMLElement>('[inert][aria-hidden="true"]')
+        return {
+          ariaHidden: isolatedAncestor?.getAttribute('aria-hidden'),
+          inert: isolatedAncestor?.inert === true
+        }
+      })
+    expect(backgroundState).toEqual({ ariaHidden: 'true', inert: true })
+    await expect
+      .poll(() =>
+        search.evaluate(element => {
+          const isolatedAncestor = element.closest<HTMLElement>('[inert][aria-hidden="true"]')
+          return isolatedAncestor?.inert === true
+        })
+      )
+      .toBe(true)
+
+    const tabbableCount = await dialog.evaluate(
+      root =>
+        Array.from(
+          root.querySelectorAll<HTMLElement>(
+            [
+              'a[href]',
+              'button:not([disabled])',
+              'input:not([disabled]):not([type="hidden"])',
+              'select:not([disabled])',
+              'textarea:not([disabled])',
+              '[contenteditable="true"]',
+              '[tabindex]:not([tabindex="-1"])'
+            ].join(',')
+          )
+        ).filter(element => {
+          const style = window.getComputedStyle(element)
+          return style.display !== 'none' && style.visibility !== 'hidden' && element.getClientRects().length > 0
+        }).length
+    )
+    expect(tabbableCount).toBeGreaterThan(1)
+    for (let press = 0; press <= tabbableCount; press += 1) {
+      await page.keyboard.press('Tab')
+      expect(await dialog.evaluate(root => root.contains(document.activeElement)), `Tab ${press + 1} left the Ask dialog`).toBe(true)
+    }
+    for (let press = 0; press <= tabbableCount; press += 1) {
+      await page.keyboard.press('Shift+Tab')
+      expect(await dialog.evaluate(root => root.contains(document.activeElement)), `Shift+Tab ${press + 1} left the Ask dialog`).toBe(true)
+    }
+
+    const composer = dialog.getByRole('combobox', { name: 'Message Wiki Agent' })
+    const escapeSource = (await composer.isEnabled()) ? composer : dialog.locator('.inline-agent__transcript')
+    await escapeSource.focus()
+    await expect(escapeSource).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(dialog).not.toBeVisible()
+    await expect(search).toBeFocused()
+    await expect
+      .poll(() =>
+        page
+          .locator('.v-main')
+          .first()
+          .evaluate(element => ({
+            ariaHidden: element.getAttribute('aria-hidden'),
+            inert: element.inert
+          }))
+      )
+      .toEqual({ ariaHidden: null, inert: false })
   })
 
   test('keeps page navigation and return-to-top controls reachable below desktop width', async ({ page }, testInfo) => {

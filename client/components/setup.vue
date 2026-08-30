@@ -148,6 +148,7 @@ import validateValues from '../../shared/validation'
 import { BreedingRhombusSpinner } from 'epic-spinners'
 import confetti from 'canvas-confetti'
 import { getErrorMessage } from '../helpers/root-ui-store'
+import { sameOriginJsonFetch } from '../helpers/json-transport.ts'
 import { isRecord } from '../helpers/type-guards'
 import type { ProductMetadata } from '../../shared/product.ts'
 /* global siteConfig */
@@ -263,10 +264,11 @@ export default {
 
       _.delay(async () => {
         try {
-          const resp = await fetch('/finalize', {
+          const resp = await sameOriginJsonFetch(window.fetch.bind(window), '/finalize', {
             method: 'POST',
             cache: 'no-cache',
             headers: {
+              Accept: 'application/json',
               'Content-Type': 'application/json'
             },
             body: JSON.stringify(this.conf)

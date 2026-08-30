@@ -63,34 +63,43 @@ interface PageQueryFilter {
   where(reference: PageReference): PageQueryFilter
 }
 
-
-function isPageReference (value: unknown): value is PageReference {
-  return typeof value === 'object' && value !== null &&
-    'localeCode' in value && typeof value.localeCode === 'string' &&
-    'path' in value && typeof value.path === 'string'
+function isPageReference(value: unknown): value is PageReference {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'localeCode' in value &&
+    typeof value.localeCode === 'string' &&
+    'path' in value &&
+    typeof value.path === 'string'
+  )
 }
 
-function isStoredPageLink (value: unknown): value is StoredPageLink {
+function isStoredPageLink(value: unknown): value is StoredPageLink {
   return isPageReference(value) && 'id' in value && typeof value.id === 'number'
 }
 
-function requirePageReferences (value: unknown): PageReference[] {
+function requirePageReferences(value: unknown): PageReference[] {
   if (!Array.isArray(value) || !value.every(isPageReference)) {
     throw new TypeError('Page reference query returned invalid data')
   }
   return value
 }
 
-function requireStoredPageLinks (value: unknown): StoredPageLink[] {
+function requireStoredPageLinks(value: unknown): StoredPageLink[] {
   if (!Array.isArray(value) || !value.every(isStoredPageLink)) {
     throw new TypeError('Related page links query returned invalid data')
   }
   return value
 }
 
-async function invokeRenderer (moduleValue: unknown, input: CheerioAPI | string, config: unknown): Promise<unknown> {
-  if (typeof moduleValue !== 'object' || moduleValue === null || !('default' in moduleValue) ||
-    typeof moduleValue.default !== 'object' || moduleValue.default === null) {
+async function invokeRenderer(moduleValue: unknown, input: CheerioAPI | string, config: unknown): Promise<unknown> {
+  if (
+    typeof moduleValue !== 'object' ||
+    moduleValue === null ||
+    !('default' in moduleValue) ||
+    typeof moduleValue.default !== 'object' ||
+    moduleValue.default === null
+  ) {
     throw new TypeError('Invalid renderer module')
   }
   const renderer = moduleValue.default
@@ -101,15 +110,23 @@ async function invokeRenderer (moduleValue: unknown, input: CheerioAPI | string,
   return await Reflect.apply(init, renderer, [input, config])
 }
 
-async function insertPageLinks (rows: PageLinkInsert[]): Promise<void> {
+async function insertPageLinks(rows: PageLinkInsert[]): Promise<void> {
   const query: unknown = wiki.models.pageLinks.query()
   if (typeof query !== 'object' || query === null || !('insert' in query) || typeof query.insert !== 'function') {
     throw new TypeError('Page links query does not support inserts')
   }
-  await Reflect.apply(query.insert, query, [rows])
+  const insertQuery: unknown = Reflect.apply(query.insert, query, [rows])
+  if (typeof insertQuery !== 'object' || insertQuery === null || !('onConflict' in insertQuery) || typeof insertQuery.onConflict !== 'function') {
+    throw new TypeError('Page links query does not support conflict handling')
+  }
+  const conflictQuery: unknown = Reflect.apply(insertQuery.onConflict, insertQuery, [['pageId', 'localeCode', 'path']])
+  if (typeof conflictQuery !== 'object' || conflictQuery === null || !('ignore' in conflictQuery) || typeof conflictQuery.ignore !== 'function') {
+    throw new TypeError('Page links query does not support conflict ignoring')
+  }
+  await Reflect.apply(conflictQuery.ignore, conflictQuery, [])
 }
 
-function requireBodyHtml ($: CheerioAPI): string {
+function requireBodyHtml($: CheerioAPI): string {
   const html = $.html('body')
   if (html === null) {
     throw new TypeError('Rendered document does not contain a body')
@@ -117,9 +134,8 @@ function requireBodyHtml ($: CheerioAPI): string {
   return html
 }
 
-
 const plugin = {
-  async render (this: RendererContext): Promise<string> {
+  async render(this: RendererContext): Promise<string> {
     let $ = load(this.input)
 
     if ($.root().children().length < 1) {
@@ -140,6 +156,7 @@ const plugin = {
     // --------------------------------
 
     const internalRefs: PageReference[] = []
+    const internalRefPaths = new Map<string, Set<string>>()
     const reservedPrefixes = /^\/[a-z]\//i
     const exactReservedPaths = /^\/[a-z]$/i
 
@@ -152,8 +169,7 @@ const plugin = {
       let href = $(elm).attr('href')
 
       // -> Ignore empty / anchor links, e-mail addresses, and telephone numbers
-      if (!href || href.length < 1 || href.indexOf('#') === 0 ||
-        href.indexOf('mailto:') === 0 || href.indexOf('tel:') === 0) {
+      if (!href || href.length < 1 || href.indexOf('#') === 0 || href.indexOf('mailto:') === 0 || href.indexOf('tel:') === 0) {
         return
       }
 
@@ -184,7 +200,7 @@ const plugin = {
               if (this.config.absoluteLinks) {
                 href = `/${this.page.localeCode}/${href}`
               } else {
-                href = (this.page.path === 'home') ? `/${this.page.localeCode}/${href}` : `/${this.page.localeCode}/${this.page.path}/${href}`
+                href = this.page.path === 'home' ? `/${this.page.localeCode}/${href}` : `/${this.page.localeCode}/${this.page.path}/${href}`
               }
             } else if (href.charAt(3) !== '/') {
               href = `/${this.page.localeCode}${href}`
@@ -202,7 +218,7 @@ const plugin = {
               if (this.config.absoluteLinks) {
                 href = `/${href}`
               } else {
-                href = (this.page.path === 'home') ? `/${href}` : `/${this.page.path}/${href}`
+                href = this.page.path === 'home' ? `/${href}` : `/${this.page.path}/${href}`
               }
             }
 
@@ -213,11 +229,19 @@ const plugin = {
               return
             }
           }
-          // -> Save internal references
-          internalRefs.push({
-            localeCode: pagePath.locale,
-            path: pagePath.path
-          })
+          // -> Save each internal reference once by its persisted identity
+          let localePaths = internalRefPaths.get(pagePath.locale)
+          if (!localePaths) {
+            localePaths = new Set<string>()
+            internalRefPaths.set(pagePath.locale, localePaths)
+          }
+          if (!localePaths.has(pagePath.path)) {
+            localePaths.add(pagePath.path)
+            internalRefs.push({
+              localeCode: pagePath.locale,
+              path: pagePath.path
+            })
+          }
 
           $(elm).addClass(`is-internal-link`)
         }
@@ -241,15 +265,18 @@ const plugin = {
 
     if (internalRefs.length > 0) {
       // -> Find matching pages
-      const pageQuery = wiki.models.pages.query().column('id', 'path', 'localeCode').where((builder: PageQueryFilter) => {
-        internalRefs.forEach((ref, idx) => {
-          if (idx < 1) {
-            builder.where(ref)
-          } else {
-            builder.orWhere(ref)
-          }
+      const pageQuery = wiki.models.pages
+        .query()
+        .column('id', 'path', 'localeCode')
+        .where((builder: PageQueryFilter) => {
+          internalRefs.forEach((ref, idx) => {
+            if (idx < 1) {
+              builder.where(ref)
+            } else {
+              builder.orWhere(ref)
+            }
+          })
         })
-      })
       scopePageQueryForOwner(pageQuery, this.page.visibility === 'private' ? this.page.ownerId : null)
       const queryResult: unknown = await pageQuery
       const results = requirePageReferences(queryResult)
@@ -264,9 +291,11 @@ const plugin = {
         } catch {
           return
         }
-        if (_.some(results, r => {
-          return r.localeCode === hrefObj.locale && r.path === hrefObj.path
-        })) {
+        if (
+          _.some(results, r => {
+            return r.localeCode === hrefObj.locale && r.path === hrefObj.path
+          })
+        ) {
           $(elm).addClass(`is-valid-page`)
         } else {
           $(elm).addClass(`is-invalid-page`)
@@ -279,11 +308,13 @@ const plugin = {
       })
       if (missingLinks.length > 0) {
         if (wiki.config.db.type === 'postgres') {
-          await insertPageLinks(missingLinks.map(lnk => ({
-            pageId: this.page.id,
-            path: lnk.path,
-            localeCode: lnk.localeCode
-          })))
+          await insertPageLinks(
+            missingLinks.map(lnk => ({
+              pageId: this.page.id,
+              path: lnk.path,
+              localeCode: lnk.localeCode
+            }))
+          )
         } else {
           for (const lnk of missingLinks) {
             await wiki.models.pageLinks.query().insert({
@@ -349,21 +380,27 @@ const plugin = {
     // Wrap non-empty root text nodes
     // --------------------------------
 
-    $('body').contents().toArray().forEach(item => {
-      if (isText(item) && item.parent && isTag(item.parent) && item.parent.name === 'body' && item.data !== `\n` && item.data !== `\r`) {
-        $(item).wrap('<div></div>')
-      }
-    })
+    $('body')
+      .contents()
+      .toArray()
+      .forEach(item => {
+        if (isText(item) && item.parent && isTag(item.parent) && item.parent.name === 'body' && item.data !== `\n` && item.data !== `\r`) {
+          $(item).wrap('<div></div>')
+        }
+      })
 
     // --------------------------------
     // Wrap root table nodes
     // --------------------------------
 
-    $('body').contents().toArray().forEach(item => {
-      if (isTag(item) && item.parent && isTag(item.parent) && item.name === 'table' && item.parent.name === 'body') {
-        $(item).wrap('<div class="table-container"></div>')
-      }
-    })
+    $('body')
+      .contents()
+      .toArray()
+      .forEach(item => {
+        if (isTag(item) && item.parent && isTag(item.parent) && item.name === 'table' && item.parent.name === 'body') {
+          $(item).wrap('<div class="table-container"></div>')
+        }
+      })
 
     // --------------------------------
     // STEP: POST
@@ -386,10 +423,12 @@ const plugin = {
 
     $ = load(output)
 
-    function iterateMustacheNodes (nodes: Cheerio<AnyNode>): void {
+    function iterateMustacheNodes(nodes: Cheerio<AnyNode>): void {
       nodes.contents().each((idx, item) => {
         if (isText(item)) {
-          const rawText = $(item).text().replace(/\r?\n|\r/g, '')
+          const rawText = $(item)
+            .text()
+            .replace(/\r?\n|\r/g, '')
           if (mustacheRegExp.test(rawText)) {
             if (!item.parent || (isTag(item.parent) && item.parent.name === 'body')) {
               $(item).wrap($('<p>').attr('v-pre', 'true'))
@@ -412,8 +451,8 @@ const plugin = {
   }
 }
 
-function decodeEscape (value: string): string {
-  return value.replace(/&#x([0-9a-f]{1,6});/ig, (entity: string, code: string) => {
+function decodeEscape(value: string): string {
+  return value.replace(/&#x([0-9a-f]{1,6});/gi, (entity: string, code: string) => {
     const codePoint = Number.parseInt(code, 16)
 
     // Don't unescape ASCII characters, assuming they're encoded for a good reason

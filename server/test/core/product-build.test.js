@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { productDefinition } from '../../../shared/product.ts'
+import { productDefinition } from '../../core/product.ts'
 
 const rootPath = process.cwd()
 const read = relativePath => fs.readFileSync(path.join(rootPath, relativePath), 'utf8')

@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from '../../server/test/bun-test.mts'
+import type { DecideAgentApprovalRequest } from '../../shared/agents/contracts.ts'
 import {
   createAgentGoal,
   createAgentMemory,
   createAgentThread,
   createPersonalAgentSkill,
+  decideAgentProposal,
   deleteAgentSession,
   getAgentMemories,
   getAgentThread,
@@ -349,6 +351,47 @@ describe('agents client boundary', () => {
 
     expect(await getAgentThread(fetcher, 'csrf', sessionId)).toMatchObject({ tasks: [task], proposals: [proposal] })
   })
+  it('sends approved destructive and denied decisions with the exact shared request fields', async () => {
+    const proposalId = '00000000-0000-4000-8000-000000000041'
+    const approvalId = '00000000-0000-4000-8000-000000000042'
+    const fetcher = vi.fn(async (_path: RequestInfo | URL, init?: RequestInit) =>
+      Response.json({
+        proposalId,
+        approvalId,
+        status: JSON.parse(String(init?.body)).decision,
+        decidedAt: '2026-08-30T00:00:00.000Z'
+      })
+    ) as unknown as typeof fetch
+    const approved: DecideAgentApprovalRequest = {
+      decision: 'approved',
+      confirmationPath: '/docs/obsolete'
+    }
+    const denied: DecideAgentApprovalRequest = {
+      decision: 'denied',
+      decisionNote: 'Keep this page.'
+    }
+
+    await decideAgentProposal(fetcher, 'csrf-token', proposalId, approvalId, approved)
+    await decideAgentProposal(fetcher, 'csrf-token', proposalId, approvalId, denied)
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      `/_api/agents/proposals/${proposalId}/approvals/${approvalId}/decision`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ decision: 'approved', confirmationPath: '/docs/obsolete' })
+      })
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      `/_api/agents/proposals/${proposalId}/approvals/${approvalId}/decision`,
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ decision: 'denied', decisionNote: 'Keep this page.' })
+      })
+    )
+  })
+
   it('renders Markdown with raw HTML and active URL schemes disabled', () => {
     const rendered = renderSafeMarkdown('[safe](https://wiki.example.test/page) <img src=x onerror=alert(1)> [bad](javascript:alert(1))')
     expect(rendered).toContain('https://wiki.example.test/page')

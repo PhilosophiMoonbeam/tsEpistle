@@ -30,51 +30,65 @@ describe('agent utility model', () => {
         modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 19, completionTokens: 4, totalTokens: 23 } }
       }
     })
-    const create = vi.fn(async () => ({ service: { chat }, model: 'model-mini' }))
+    const create = vi.fn(async () => ({
+      service: { chat },
+      model: 'model-mini',
+      capabilities: { maxContextTokens: 10_000 },
+      pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
+    }))
     const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
 
     expect(await utility.generateConversationTitle(request)).toEqual({
       title: 'Deployment Pipeline Failures',
       source: 'utility',
       inputTokens: 19,
-      outputTokens: 4
+      outputTokens: 4,
+      costMicros: 27
     })
     expect(create).toHaveBeenCalledWith(request.profileVersionId, { purpose: 'utility' })
-    expect(chat).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'model-mini',
-      modelConfig: { maxTokens: 128 },
-      chatPrompt: expect.arrayContaining([expect.objectContaining({ role: 'system' }), expect.objectContaining({ role: 'user' })])
-    }), expect.objectContaining({ stream: false, abortSignal: expect.any(AbortSignal) }))
+    expect(chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'model-mini',
+        modelConfig: { maxTokens: 128 },
+        chatPrompt: expect.arrayContaining([expect.objectContaining({ role: 'system' }), expect.objectContaining({ role: 'user' })])
+      }),
+      expect.objectContaining({ stream: false, abortSignal: expect.any(AbortSignal) })
+    )
     expect(chat.mock.calls[0]?.[0]).not.toHaveProperty('functions')
-    const prompt = chat.mock.calls[0]?.[0] as { chatPrompt: Array<{ role: string, content: string }> }
+    const prompt = chat.mock.calls[0]?.[0] as { chatPrompt: Array<{ role: string; content: string }> }
     expect(JSON.parse(prompt.chatPrompt.at(-1)?.content ?? '')).toEqual({ transcript: request.messages })
   })
 
   it('falls back to the first user message when utility inference fails', async () => {
-    const create = vi.fn(async () => { throw new Error('provider unavailable') })
+    const create = vi.fn(async () => {
+      throw new Error('provider unavailable')
+    })
     const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
 
     expect(await utility.generateConversationTitle(request)).toEqual({
       title: 'Investigate intermittent failures in the deployment pipeline',
       source: 'fallback',
       inputTokens: 0,
-      outputTokens: 0
+      outputTokens: 0,
+      costMicros: 0
     })
   })
 
   it('returns strict bounded knowledge enrichment without exposing tools', async () => {
     const chat = vi.fn(async () => ({
-      results: [{
-        index: 0,
-        content: JSON.stringify({
-          type: 'Procedure',
-          summary: 'Deploy through the release pipeline.',
-          tags: ['deployment'],
-          entities: [{ name: 'Release pipeline', type: 'System' }],
-          relationships: [{ subject: 'Deployment', predicate: 'uses', object: 'Release pipeline' }],
-          openQuestions: []
-        })
-      }],
+      results: [
+        {
+          index: 0,
+          content: JSON.stringify({
+            type: 'Procedure',
+            summary: 'Deploy through the release pipeline.',
+            tags: ['deployment'],
+            entities: [{ name: 'Release pipeline', type: 'System' }],
+            relationships: [{ subject: 'Deployment', predicate: 'uses', object: 'Release pipeline' }],
+            openQuestions: []
+          })
+        }
+      ],
       modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 25, completionTokens: 12, totalTokens: 37 } }
     }))
     const create = vi.fn(async () => ({ service: { chat }, model: 'model-mini' }))
@@ -105,11 +119,15 @@ describe('agent utility model', () => {
       create: vi.fn(async () => ({ service: { chat }, model: 'model-mini' }))
     } as unknown as AgentProviderFactory)
 
-    await expect(Promise.resolve(utility.enrichKnowledge({
-      profileVersionId: request.profileVersionId,
-      page: { title: 'Deploy', description: '', locale: 'en', path: 'ops/deploy', contentType: 'markdown', content: '# Deploy\n' },
-      missingFields: ['concept.type'],
-      signal: request.signal
-    }))).rejects.toThrow()
+    await expect(
+      Promise.resolve(
+        utility.enrichKnowledge({
+          profileVersionId: request.profileVersionId,
+          page: { title: 'Deploy', description: '', locale: 'en', path: 'ops/deploy', contentType: 'markdown', content: '# Deploy\n' },
+          missingFields: ['concept.type'],
+          signal: request.signal
+        })
+      )
+    ).rejects.toThrow()
   })
 })

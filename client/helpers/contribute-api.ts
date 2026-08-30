@@ -1,3 +1,5 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
+
 type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
 export interface ContributorRow {
@@ -10,7 +12,7 @@ export interface ContributorRow {
   avatar: string | null
 }
 
-async function parseJsonResponse (response: Response, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: Response, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
@@ -20,10 +22,22 @@ async function parseJsonResponse (response: Response, fallbackMessage: string): 
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && (payload as { error: string }).error.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { error?: unknown }).error === 'string' &&
+      (payload as { error: string }).error.length > 0
+    ) {
       throw new Error((payload as { error: string }).error)
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && (payload as { message: string }).message.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { message?: unknown }).message === 'string' &&
+      (payload as { message: string }).message.length > 0
+    ) {
       throw new Error((payload as { message: string }).message)
     }
     throw new Error(fallbackMessage)
@@ -36,7 +50,7 @@ async function parseJsonResponse (response: Response, fallbackMessage: string): 
   return payload
 }
 
-function normalizeContributor (row: unknown, fallbackMessage: string): ContributorRow {
+function normalizeContributor(row: unknown, fallbackMessage: string): ContributorRow {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -63,7 +77,7 @@ function normalizeContributor (row: unknown, fallbackMessage: string): Contribut
   }
 }
 
-function normalizeContributorsPayload (payload: unknown, fallbackMessage: string): ContributorRow[] {
+function normalizeContributorsPayload(payload: unknown, fallbackMessage: string): ContributorRow[] {
   if (!Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -71,8 +85,8 @@ function normalizeContributorsPayload (payload: unknown, fallbackMessage: string
   return payload.map(row => normalizeContributor(row, fallbackMessage))
 }
 
-export async function fetchContributors (fetchImpl: FetchImpl, fallbackMessage = 'Contributors response is invalid'): Promise<ContributorRow[]> {
-  const response = await fetchImpl('/_api/contribute/contributors', {
+export async function fetchContributors(fetchImpl: FetchImpl, fallbackMessage = 'Contributors response is invalid'): Promise<ContributorRow[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/contribute/contributors', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'

@@ -4,11 +4,9 @@ import { describe, expect, it, vi } from '../bun-test.mts'
 import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
 import type { AgentProviderFactory, AgentProviderService } from '../../agents/providers/factory.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
-import {
-  AgentChildBudgetReservations,
-  MAX_AGENT_CHILD_OUTPUT_CHARACTERS,
-  type AgentOrchestrationLimits
-} from '../../agents/orchestration.ts'
+import { AgentChildBudgetReservations, MAX_AGENT_CHILD_OUTPUT_CHARACTERS, type AgentOrchestrationLimits } from '../../agents/orchestration.ts'
+
+const pricing = { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 } as const
 
 const run = {
   id: '00000000-0000-4000-8000-000000000001',
@@ -54,49 +52,62 @@ const baseRequest = (signal: AbortSignal): AgentEngineRequest => ({
   signal
 })
 
-const factoryFor = (chat: AgentProviderService['service']['chat']): AgentProviderFactory => ({
-  create: async () => ({
-    service: { chat },
-    capabilities: {
-      streaming: false,
-      toolCalling: 'native',
-      parallelToolCalls: true,
-      structuredOutput: 'native-json-schema',
-      usage: 'terminal',
-      cancellation: true,
-      maxContextTokens: 100_000,
-      maxOutputTokens: 4_000
-    },
-    transportKind: 'openai-responses',
-    model: 'gpt-test',
-    capabilityRevision: 'cap-1',
-    pricingRevision: 'price-1'
-  })
-}) as unknown as AgentProviderFactory
+const factoryFor = (chat: AgentProviderService['service']['chat']): AgentProviderFactory =>
+  ({
+    create: async () => ({
+      service: { chat },
+      capabilities: {
+        streaming: false,
+        toolCalling: 'native',
+        parallelToolCalls: true,
+        structuredOutput: 'native-json-schema',
+        usage: 'terminal',
+        cancellation: true,
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_000
+      },
+      transportKind: 'openai-responses',
+      model: 'gpt-test',
+      capabilityRevision: 'cap-1',
+      pricingRevision: 'price-1',
+      pricing
+    })
+  }) as unknown as AgentProviderFactory
 
 describe('Ax orchestration stages', () => {
   it('runs the planner without actions, retries, or unbounded output', async () => {
-    const chat = vi.fn(async () => ({
-      results: [{ index: 0, content: '{"tasks":[]}' }],
-      modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } }
-    } satisfies AxChatResponse))
+    const chat = vi.fn(
+      async () =>
+        ({
+          results: [{ index: 0, content: '{"tasks":[]}' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 4, completionTokens: 2, totalTokens: 6 } }
+        }) satisfies AxChatResponse
+    )
     const open = vi.fn()
     const text = vi.fn(async () => {})
     const engine = new AxAgentEngine(factoryFor(chat), { open } as unknown as AgentActionSessionProvider)
 
-    expect(await engine.execute({
-      ...baseRequest(new AbortController().signal),
-      purpose: 'planner',
-      actionAllowlist: [],
-      limits: { maxTurns: 2, maxToolCalls: 0, maxOutputTokens: 1_024 }
-    }, { text, event: async () => {} })).toMatchObject({ inputTokens: 4, outputTokens: 2 })
+    expect(
+      await engine.execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          purpose: 'planner',
+          actionAllowlist: [],
+          limits: { maxTurns: 2, maxToolCalls: 0, maxOutputTokens: 1_024 }
+        },
+        { text, event: async () => {} }
+      )
+    ).toMatchObject({ inputTokens: 4, outputTokens: 2, costMicros: 8 })
 
     expect(open).not.toHaveBeenCalled()
     expect(text).toHaveBeenCalledWith('{"tasks":[]}')
-    expect(chat).toHaveBeenCalledWith(expect.objectContaining({
-      modelConfig: { maxTokens: 1_024 },
-      chatPrompt: [expect.objectContaining({ role: 'system', content: expect.stringContaining('task-planning stage') }), expect.any(Object)]
-    }), expect.objectContaining({ retry: { maxRetries: 0 } }))
+    expect(chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelConfig: { maxTokens: 1_024 },
+        chatPrompt: [expect.objectContaining({ role: 'system', content: expect.stringContaining('task-planning stage') }), expect.any(Object)]
+      }),
+      expect.objectContaining({ retry: { maxRetries: 0 } })
+    )
     expect(chat.mock.calls[0]?.[0]).not.toHaveProperty('functions')
   })
 
@@ -105,14 +116,21 @@ describe('Ax orchestration stages', () => {
     const subagentRunId = '00000000-0000-4000-8000-000000000012'
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'provider-call', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }] },
-      { results: [{ index: 0, content: JSON.stringify({
-        taskId,
-        outcome: 'completed',
-        claims: [{ text: 'Alpha requires review. [[cite:page:1]]', evidenceIds: ['page:1'], sourceRevisionIds: ['rev-1'], confidence: 'high' }],
-        conflicts: [],
-        unanswered: [],
-        recommendedFollowups: []
-      }) }] }
+      {
+        results: [
+          {
+            index: 0,
+            content: JSON.stringify({
+              taskId,
+              outcome: 'completed',
+              claims: [{ text: 'Alpha requires review. [[cite:page:1]]', evidenceIds: ['page:1'], sourceRevisionIds: ['rev-1'], confidence: 'high' }],
+              conflicts: [],
+              unanswered: [],
+              recommendedFollowups: []
+            })
+          }
+        ]
+      }
     ]
     const chat = vi.fn(async () => responses.shift()!)
     const invoke = vi.fn(async () => ({
@@ -146,11 +164,109 @@ describe('Ax orchestration stages', () => {
 
     const result = await new AxAgentEngine(factoryFor(chat), actions).execute(request, { text, event: async () => {} })
 
-    expect(invoke).toHaveBeenCalledWith('pages.get', { id: 1 }, expect.any(AbortSignal), expect.stringMatching(new RegExp(`^sa_${subagentRunId}_[a-f0-9]{24}$`, 'u')))
+    expect(invoke).toHaveBeenCalledWith(
+      'pages.get',
+      { id: 1 },
+      expect.any(AbortSignal),
+      expect.stringMatching(new RegExp(`^sa_${subagentRunId}_[a-f0-9]{24}$`, 'u'))
+    )
     expect(result.authoritySha256).toBe(authoritySha256)
     expect(text).toHaveBeenCalledWith(expect.stringContaining('"taskId"'))
     const systemPrompt = (chat.mock.calls[0]?.[0] as AxChatRequest<unknown> | undefined)?.chatPrompt?.[0]
     expect(systemPrompt).toEqual(expect.objectContaining({ content: expect.not.stringContaining('private preference') }))
+  })
+
+  it('stops a two-turn child before an uncovered third dispatch at the aggregate token ceiling', async () => {
+    const responses: AxChatResponse[] = [
+      {
+        results: [{ index: 0, functionCalls: [{ id: 'first', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
+      },
+      {
+        results: [{ index: 0, functionCalls: [{ id: 'second', type: 'function', function: { name: 'wiki_get_page', params: '{"id":2}' } }] }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 0, totalTokens: 1 } }
+      }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const invoke = vi.fn(async () => ({ id: 1, sourceRevision: 'rev-1', title: 'Alpha', content: 'Alpha' }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const taskId = '00000000-0000-4000-8000-000000000031'
+
+    await expect(
+      Promise.resolve(
+        new AxAgentEngine(factoryFor(chat), actions).execute(
+          {
+            ...baseRequest(new AbortController().signal),
+            purpose: 'subagent',
+            task: {
+              id: taskId,
+              kind: 'source_scout',
+              title: 'Review alpha',
+              question: 'What does alpha require?',
+              sourceScope: ['alpha'],
+              requiredEvidenceCount: 1
+            },
+            subagentRunId: '00000000-0000-4000-8000-000000000032',
+            actionAllowlist: ['pages.get'],
+            limits: { maxTokens: 4, maxTurns: 3, maxToolCalls: 3, maxOutputTokens: 4 }
+          },
+          { text: async () => {}, event: async () => {} }
+        )
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_CHILD_BUDGET_EXCEEDED' })
+
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(chat.mock.calls[1]?.[0]).toEqual(expect.objectContaining({ modelConfig: { maxTokens: 1 } }))
+  })
+
+  it('dispatches only the covered action when the root tool budget is one', async () => {
+    const chat = vi.fn(
+      async () =>
+        ({
+          results: [
+            {
+              index: 0,
+              functionCalls: [
+                { id: 'first', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
+                { id: 'second', type: 'function', function: { name: 'wiki_get_page', params: '{"id":2}' } }
+              ]
+            }
+          ],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+        }) satisfies AxChatResponse
+    )
+    const invoke = vi.fn(async () => ({ id: 1, title: 'Alpha', content: 'Alpha' }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read one page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+
+    await expect(
+      Promise.resolve(
+        new AxAgentEngine(factoryFor(chat), actions).execute(
+          {
+            ...baseRequest(new AbortController().signal),
+            limits: { maxTokens: 100, maxTurns: 2, maxToolCalls: 1, maxOutputTokens: 10 }
+          },
+          { text: async () => {}, event: async () => {} }
+        )
+      )
+    ).rejects.toMatchObject({ code: 'AGENT_BUDGET_LIMITED' })
+    expect(invoke).toHaveBeenCalledTimes(1)
   })
 
   it('rejects root synthesis until every completed task has cited coverage', async () => {
@@ -159,28 +275,80 @@ describe('Ax orchestration stages', () => {
       { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1]] Beta requires audit. [[cite:page:2]]' }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)
-    const event = vi.fn(async (...args: [string, unknown]) => { void args })
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
     const request: AgentEngineRequest = {
       ...baseRequest(new AbortController().signal),
       research: {
         packets: [
           {
-            task: { id: '00000000-0000-4000-8000-000000000021', kind: 'source_scout', title: 'Review alpha', question: 'Alpha?', sourceScope: ['alpha'], requiredEvidenceCount: 1 },
-            packet: { taskId: '00000000-0000-4000-8000-000000000021', outcome: 'completed', claims: [], conflicts: [], unanswered: [], recommendedFollowups: [] },
+            task: {
+              id: '00000000-0000-4000-8000-000000000021',
+              kind: 'source_scout',
+              title: 'Review alpha',
+              question: 'Alpha?',
+              sourceScope: ['alpha'],
+              requiredEvidenceCount: 1
+            },
+            packet: {
+              taskId: '00000000-0000-4000-8000-000000000021',
+              outcome: 'completed',
+              claims: [],
+              conflicts: [],
+              unanswered: [],
+              recommendedFollowups: []
+            },
             evidenceIds: ['page:1'],
             conflictEvidenceGroups: []
           },
           {
-            task: { id: '00000000-0000-4000-8000-000000000022', kind: 'source_scout', title: 'Review beta', question: 'Beta?', sourceScope: ['beta'], requiredEvidenceCount: 1 },
-            packet: { taskId: '00000000-0000-4000-8000-000000000022', outcome: 'completed', claims: [], conflicts: [], unanswered: [], recommendedFollowups: [] },
+            task: {
+              id: '00000000-0000-4000-8000-000000000022',
+              kind: 'source_scout',
+              title: 'Review beta',
+              question: 'Beta?',
+              sourceScope: ['beta'],
+              requiredEvidenceCount: 1
+            },
+            packet: {
+              taskId: '00000000-0000-4000-8000-000000000022',
+              outcome: 'completed',
+              claims: [],
+              conflicts: [],
+              unanswered: [],
+              recommendedFollowups: []
+            },
             evidenceIds: ['page:2'],
             conflictEvidenceGroups: []
           }
         ],
         incompleteTasks: [],
         evidenceSeeds: [
-          { taskId: '00000000-0000-4000-8000-000000000021', subagentRunId: '00000000-0000-4000-8000-000000000031', actionCallId: 'alpha-read', actionName: 'pages.get', output: { sourceRevision: 'rev-1', content: 'Alpha requires review.', citation: { evidenceId: 'page:1', label: 'Alpha', href: '/en/alpha' }, citationSections: [] } },
-          { taskId: '00000000-0000-4000-8000-000000000022', subagentRunId: '00000000-0000-4000-8000-000000000032', actionCallId: 'beta-read', actionName: 'pages.get', output: { sourceRevision: 'rev-2', content: 'Beta requires audit.', citation: { evidenceId: 'page:2', label: 'Beta', href: '/en/beta' }, citationSections: [] } }
+          {
+            taskId: '00000000-0000-4000-8000-000000000021',
+            subagentRunId: '00000000-0000-4000-8000-000000000031',
+            actionCallId: 'alpha-read',
+            actionName: 'pages.get',
+            output: {
+              sourceRevision: 'rev-1',
+              content: 'Alpha requires review.',
+              citation: { evidenceId: 'page:1', label: 'Alpha', href: '/en/alpha' },
+              citationSections: []
+            }
+          },
+          {
+            taskId: '00000000-0000-4000-8000-000000000022',
+            subagentRunId: '00000000-0000-4000-8000-000000000032',
+            actionCallId: 'beta-read',
+            actionName: 'pages.get',
+            output: {
+              sourceRevision: 'rev-2',
+              content: 'Beta requires audit.',
+              citation: { evidenceId: 'page:2', label: 'Beta', href: '/en/beta' },
+              citationSections: []
+            }
+          }
         ]
       }
     }
@@ -203,23 +371,27 @@ describe('Ax orchestration stages', () => {
       taskId,
       outcome: 'completed',
       claims: [],
-      conflicts: [{
-        claim: 'The alpha and beta runbooks prescribe different review requirements.',
-        evidenceIds: ['page:1', 'page:2'],
-        explanation: 'Alpha requires review while beta requires audit.'
-      }],
+      conflicts: [
+        {
+          claim: 'The alpha and beta runbooks prescribe different review requirements.',
+          evidenceIds: ['page:1', 'page:2'],
+          explanation: 'Alpha requires review while beta requires audit.'
+        }
+      ],
       unanswered: [],
       recommendedFollowups: []
     })
     const responses: AxChatResponse[] = [
       {
-        results: [{
-          index: 0,
-          functionCalls: [
-            { id: 'alpha-call', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
-            { id: 'beta-call', type: 'function', function: { name: 'wiki_get_page', params: '{"id":2}' } }
-          ]
-        }]
+        results: [
+          {
+            index: 0,
+            functionCalls: [
+              { id: 'alpha-call', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
+              { id: 'beta-call', type: 'function', function: { name: 'wiki_get_page', params: '{"id":2}' } }
+            ]
+          }
+        ]
       },
       { results: [{ index: 0, content: packet }] }
     ]
@@ -248,14 +420,24 @@ describe('Ax orchestration stages', () => {
     }
     const text = vi.fn(async () => {})
 
-    await new AxAgentEngine(factoryFor(chat), actions).execute({
-      ...baseRequest(new AbortController().signal),
-      purpose: 'subagent',
-      task: { id: taskId, kind: 'conflict_check', title: 'Compare runbooks', question: 'Where do the runbooks disagree?', sourceScope: ['alpha', 'beta'], requiredEvidenceCount: 2 },
-      subagentRunId,
-      actionAllowlist: ['pages.get'],
-      limits: { maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
-    }, { text, event: async () => {} })
+    await new AxAgentEngine(factoryFor(chat), actions).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        purpose: 'subagent',
+        task: {
+          id: taskId,
+          kind: 'conflict_check',
+          title: 'Compare runbooks',
+          question: 'Where do the runbooks disagree?',
+          sourceScope: ['alpha', 'beta'],
+          requiredEvidenceCount: 2
+        },
+        subagentRunId,
+        actionAllowlist: ['pages.get'],
+        limits: { maxTurns: 4, maxToolCalls: 8, maxOutputTokens: 2_048 }
+      },
+      { text, event: async () => {} }
+    )
 
     expect(invoke).toHaveBeenCalledTimes(2)
     expect(text).toHaveBeenCalledWith(packet)
@@ -267,32 +449,67 @@ describe('Ax orchestration stages', () => {
       { results: [{ index: 0, content: 'Alpha requires review. [[cite:page:1]] However, beta requires audit. [[cite:page:2]]' }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)
-    const event = vi.fn(async (...args: [string, unknown]) => { void args })
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
     const taskId = '00000000-0000-4000-8000-000000000051'
     const request: AgentEngineRequest = {
       ...baseRequest(new AbortController().signal),
       research: {
-        packets: [{
-          task: { id: taskId, kind: 'conflict_check', title: 'Compare runbooks', question: 'Where do the runbooks disagree?', sourceScope: ['alpha', 'beta'], requiredEvidenceCount: 2 },
-          packet: {
-            taskId,
-            outcome: 'completed',
-            claims: [],
-            conflicts: [{
-              claim: 'The runbooks prescribe different review requirements.',
-              evidenceIds: ['page:1', 'page:2'],
-              explanation: 'Alpha requires review while beta requires audit.'
-            }],
-            unanswered: [],
-            recommendedFollowups: []
-          },
-          evidenceIds: ['page:1', 'page:2'],
-          conflictEvidenceGroups: [['page:1', 'page:2']]
-        }],
+        packets: [
+          {
+            task: {
+              id: taskId,
+              kind: 'conflict_check',
+              title: 'Compare runbooks',
+              question: 'Where do the runbooks disagree?',
+              sourceScope: ['alpha', 'beta'],
+              requiredEvidenceCount: 2
+            },
+            packet: {
+              taskId,
+              outcome: 'completed',
+              claims: [],
+              conflicts: [
+                {
+                  claim: 'The runbooks prescribe different review requirements.',
+                  evidenceIds: ['page:1', 'page:2'],
+                  explanation: 'Alpha requires review while beta requires audit.'
+                }
+              ],
+              unanswered: [],
+              recommendedFollowups: []
+            },
+            evidenceIds: ['page:1', 'page:2'],
+            conflictEvidenceGroups: [['page:1', 'page:2']]
+          }
+        ],
         incompleteTasks: [],
         evidenceSeeds: [
-          { taskId, subagentRunId: '00000000-0000-4000-8000-000000000052', actionCallId: 'alpha-read', actionName: 'pages.get', output: { sourceRevision: 'rev-1', content: 'Alpha requires review.', citation: { evidenceId: 'page:1', label: 'Alpha', href: '/en/alpha' }, citationSections: [] } },
-          { taskId, subagentRunId: '00000000-0000-4000-8000-000000000053', actionCallId: 'beta-read', actionName: 'pages.get', output: { sourceRevision: 'rev-2', content: 'Beta requires audit.', citation: { evidenceId: 'page:2', label: 'Beta', href: '/en/beta' }, citationSections: [] } }
+          {
+            taskId,
+            subagentRunId: '00000000-0000-4000-8000-000000000052',
+            actionCallId: 'alpha-read',
+            actionName: 'pages.get',
+            output: {
+              sourceRevision: 'rev-1',
+              content: 'Alpha requires review.',
+              citation: { evidenceId: 'page:1', label: 'Alpha', href: '/en/alpha' },
+              citationSections: []
+            }
+          },
+          {
+            taskId,
+            subagentRunId: '00000000-0000-4000-8000-000000000053',
+            actionCallId: 'beta-read',
+            actionName: 'pages.get',
+            output: {
+              sourceRevision: 'rev-2',
+              content: 'Beta requires audit.',
+              citation: { evidenceId: 'page:2', label: 'Beta', href: '/en/beta' },
+              citationSections: []
+            }
+          }
         ]
       }
     }
@@ -331,26 +548,56 @@ describe('child aggregate budget reservations', () => {
     const second = reservations.reserve()
     const third = reservations.reserve()
 
-    expect(first).toEqual(expect.objectContaining({
-      outputTokens: 4,
-      outputCharacters: MAX_AGENT_CHILD_OUTPUT_CHARACTERS
-    }))
-    expect(second).toEqual(expect.objectContaining({
-      outputTokens: 4,
-      outputCharacters: 80_000 - MAX_AGENT_CHILD_OUTPUT_CHARACTERS
-    }))
+    expect(first).toEqual(
+      expect.objectContaining({
+        outputTokens: 4,
+        outputCharacters: MAX_AGENT_CHILD_OUTPUT_CHARACTERS
+      })
+    )
+    expect(second).toEqual(
+      expect.objectContaining({
+        outputTokens: 4,
+        outputCharacters: 80_000 - MAX_AGENT_CHILD_OUTPUT_CHARACTERS
+      })
+    )
     expect(third).toBeNull()
 
     reservations.release(first!, { tokens: 3, outputCharacters: 20_000 })
-    reservations.release(second!, { tokens: 3, outputCharacters: 20_000 })
-    expect(reservations.consumed).toEqual({ tokens: 6, outputCharacters: 40_000 })
+    reservations.release(second!, { tokens: 3, outputCharacters: 10_000 })
+    expect(reservations.consumed).toEqual({ tokens: 6, outputCharacters: 30_000 })
 
     const recovered = new AgentChildBudgetReservations(limits, reservations.consumed)
     const retry = recovered.reserve()
-    expect(retry).toEqual(expect.objectContaining({ outputTokens: 4, outputCharacters: 40_000 }))
-    recovered.release(retry!, { tokens: 4, outputCharacters: 40_000 })
+    expect(retry).toEqual(expect.objectContaining({ outputTokens: 4, outputCharacters: 50_000 }))
+    recovered.release(retry!, { tokens: 4, outputCharacters: 50_000 })
 
     expect(recovered.consumed).toEqual({ tokens: 10, outputCharacters: 80_000 })
     expect(recovered.reserve()).toBeNull()
+  })
+
+  it('rejects measured child usage above the held reservation without changing aggregate counters', () => {
+    const limits = {
+      enabled: true,
+      maxConcurrentChildren: 1,
+      maxChildren: 1,
+      plannerTurns: 1,
+      childTurns: 2,
+      childToolCalls: 2,
+      plannerTimeoutMilliseconds: 1_000,
+      childTimeoutMilliseconds: 1_000,
+      plannerMaxOutputTokens: 2,
+      childMaxOutputTokens: 4,
+      maxAggregateChildTokens: 4,
+      maxAggregateChildOutputCharacters: 1_000
+    } as const satisfies AgentOrchestrationLimits
+    const reservations = new AgentChildBudgetReservations(limits, { tokens: 0, outputCharacters: 0 })
+    const reservation = reservations.reserve()!
+
+    expect(() => reservations.release(reservation, { tokens: 5, outputCharacters: 10 })).toThrow(
+      expect.objectContaining({ code: 'AGENT_CHILD_BUDGET_EXCEEDED' })
+    )
+    expect(reservations.consumed).toEqual({ tokens: 0, outputCharacters: 0 })
+    reservations.release(reservation, { tokens: 4, outputCharacters: 10 })
+    expect(reservations.consumed).toEqual({ tokens: 4, outputCharacters: 10 })
   })
 })

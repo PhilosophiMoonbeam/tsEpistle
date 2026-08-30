@@ -1,3 +1,4 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
 
 type JsonHeaders = {
@@ -47,7 +48,7 @@ type LoggingSaveResponse = {
   message: string
 }
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
@@ -57,10 +58,22 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && (payload as { error: string }).error.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { error?: unknown }).error === 'string' &&
+      (payload as { error: string }).error.length > 0
+    ) {
       throw new Error((payload as { error: string }).error)
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && (payload as { message: string }).message.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { message?: unknown }).message === 'string' &&
+      (payload as { message: string }).message.length > 0
+    ) {
       throw new Error((payload as { message: string }).message)
     }
     throw new Error(fallbackMessage)
@@ -73,7 +86,7 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-function normalizeLoggerConfig (row: unknown, fallbackMessage: string): LoggerConfig {
+function normalizeLoggerConfig(row: unknown, fallbackMessage: string): LoggerConfig {
   if (!isRecord(row) || typeof row.key !== 'string' || typeof row.value !== 'string') {
     throw new Error(fallbackMessage)
   }
@@ -89,7 +102,6 @@ function normalizeLoggerConfig (row: unknown, fallbackMessage: string): LoggerCo
     throw new Error(fallbackMessage)
   }
 
-
   const normalizedValue = value as LoggerConfigValue
   return {
     key: row.key,
@@ -97,7 +109,7 @@ function normalizeLoggerConfig (row: unknown, fallbackMessage: string): LoggerCo
   }
 }
 
-function normalizeLogger (row: unknown, fallbackMessage: string): Logger {
+function normalizeLogger(row: unknown, fallbackMessage: string): Logger {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -119,15 +131,17 @@ function normalizeLogger (row: unknown, fallbackMessage: string): Logger {
     logo: logger.logo as string,
     website: logger.website as string,
     level: logger.level as string,
-    config: logger.config.map(cfg => normalizeLoggerConfig(cfg, fallbackMessage)).sort((a, b) => {
-      const aOrder = typeof a.value.order === 'number' ? a.value.order : Number.MAX_SAFE_INTEGER
-      const bOrder = typeof b.value.order === 'number' ? b.value.order : Number.MAX_SAFE_INTEGER
-      return aOrder - bOrder
-    })
+    config: logger.config
+      .map(cfg => normalizeLoggerConfig(cfg, fallbackMessage))
+      .sort((a, b) => {
+        const aOrder = typeof a.value.order === 'number' ? a.value.order : Number.MAX_SAFE_INTEGER
+        const bOrder = typeof b.value.order === 'number' ? b.value.order : Number.MAX_SAFE_INTEGER
+        return aOrder - bOrder
+      })
   }
 }
 
-function normalizeLoggersPayload (payload: unknown, fallbackMessage: string): Logger[] {
+function normalizeLoggersPayload(payload: unknown, fallbackMessage: string): Logger[] {
   if (!Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -135,8 +149,8 @@ function normalizeLoggersPayload (payload: unknown, fallbackMessage: string): Lo
   return payload.map(row => normalizeLogger(row, fallbackMessage))
 }
 
-export async function fetchLoggingLoggers (fetchImpl: FetchImpl, fallbackMessage = 'Logging loggers response is invalid'): Promise<Logger[]> {
-  const response = await fetchImpl('/_api/logging/loggers', {
+export async function fetchLoggingLoggers(fetchImpl: FetchImpl, fallbackMessage = 'Logging loggers response is invalid'): Promise<Logger[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/logging/loggers', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -146,8 +160,14 @@ export async function fetchLoggingLoggers (fetchImpl: FetchImpl, fallbackMessage
   return normalizeLoggersPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-function normalizeLoggingSavePayload (payload: unknown, fallbackMessage: string): LoggingSaveResponse {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length < 1) {
+function normalizeLoggingSavePayload(payload: unknown, fallbackMessage: string): LoggingSaveResponse {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    typeof (payload as { message?: unknown }).message !== 'string' ||
+    (payload as { message: string }).message.length < 1
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -156,8 +176,12 @@ function normalizeLoggingSavePayload (payload: unknown, fallbackMessage: string)
   }
 }
 
-export async function saveLoggingLoggers (fetchImpl: FetchImpl, loggers: LoggerUpdate[], fallbackMessage = 'Logging loggers update failed'): Promise<LoggingSaveResponse> {
-  const response = await fetchImpl('/_api/logging/loggers', {
+export async function saveLoggingLoggers(
+  fetchImpl: FetchImpl,
+  loggers: LoggerUpdate[],
+  fallbackMessage = 'Logging loggers update failed'
+): Promise<LoggingSaveResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/logging/loggers', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {

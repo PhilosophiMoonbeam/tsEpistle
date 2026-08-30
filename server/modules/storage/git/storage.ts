@@ -1,10 +1,4 @@
-import type {
-  StorageConfig,
-  StorageContext,
-  StoragePlugin,
-  WikiAsset,
-  WikiUser
-} from '../../types.ts'
+import type { StorageConfig, StorageContext, StoragePlugin, WikiAsset, WikiUser } from '../../types.ts'
 import { wiki } from '../../types.ts'
 import path from 'node:path'
 import { simpleGit, type SimpleGit, type DiffResultBinaryFile, type DiffResultTextFile } from 'simple-git'
@@ -18,15 +12,10 @@ import os from 'node:os'
 import pageHelper from '../../../helpers/page.ts'
 import assetHelper from '../../../helpers/asset.ts'
 import commonDisk from '../disk/common.ts'
-import {
-  pullRemoteAuthoritative,
-  reattachUnrelatedHistory,
-  recoverInterruptedGitOperation,
-  sharesHistoryWith
-} from './repository.ts'
+import { pullRemoteAuthoritative, reattachUnrelatedHistory, recoverInterruptedGitOperation, sharesHistoryWith } from './repository.ts'
 
 interface GitStorageFile {
-  file: { path: string, stats: { size: number } }
+  file: { path: string; stats: { size: number } }
   oldPath: string
   relPath: string
   binary: boolean
@@ -79,7 +68,8 @@ interface AssetExportRow {
 }
 
 function isKlawItem(value: unknown): value is KlawItem {
-  return typeof value === 'object' &&
+  return (
+    typeof value === 'object' &&
     value !== null &&
     'path' in value &&
     typeof value.path === 'string' &&
@@ -88,10 +78,12 @@ function isKlawItem(value: unknown): value is KlawItem {
     value.stats !== null &&
     'size' in value.stats &&
     typeof value.stats.size === 'number'
+  )
 }
 
 function isPageExportRow(value: unknown): value is PageExportRow {
-  return typeof value === 'object' &&
+  return (
+    typeof value === 'object' &&
     value !== null &&
     'id' in value &&
     typeof value.id === 'number' &&
@@ -115,10 +107,12 @@ function isPageExportRow(value: unknown): value is PageExportRow {
     (value.createdAt instanceof Date || typeof value.createdAt === 'string') &&
     'editorKey' in value &&
     typeof value.editorKey === 'string'
+  )
 }
 
 function isAssetExportRow(value: unknown): value is AssetExportRow {
-  return typeof value === 'object' &&
+  return (
+    typeof value === 'object' &&
     value !== null &&
     'filename' in value &&
     typeof value.filename === 'string' &&
@@ -126,6 +120,7 @@ function isAssetExportRow(value: unknown): value is AssetExportRow {
     (typeof value.folderId === 'number' || value.folderId === null) &&
     'data' in value &&
     Buffer.isBuffer(value.data)
+  )
 }
 
 function hasAssetCache(asset: WikiAsset): asset is CacheableWikiAsset {
@@ -255,16 +250,10 @@ const plugin: GitStoragePlugin = {
     let reattached = false
     let conflicted: string[] = []
 
-    if (
-      hasRemoteBranch &&
-      currentCommitLog &&
-      !(await sharesHistoryWith(this.git, remoteBranch))
-    ) {
+    if (hasRemoteBranch && currentCommitLog && !(await sharesHistoryWith(this.git, remoteBranch))) {
       await reattachUnrelatedHistory(this.git, this.config.branch, wiki.logger)
       reattached = true
-      wiki.logger.warn(
-        `(STORAGE/GIT) Reattached local history to ${remoteBranch}; existing wiki content remains authoritative.`
-      )
+      wiki.logger.warn(`(STORAGE/GIT) Reattached local history to ${remoteBranch}; existing wiki content remains authoritative.`)
     } else if (hasRemoteBranch && _.includes(['sync', 'pull'], this.mode)) {
       wiki.logger.info(`(STORAGE/GIT) Performing pull rebase from origin on branch ${this.config.branch}...`)
       conflicted = await pullRemoteAuthoritative(this.git, this.config.branch, wiki.logger)
@@ -281,9 +270,7 @@ const plugin: GitStoragePlugin = {
       wiki.logger.warn(`(STORAGE/GIT) Recovered an unfinished ${recovered} before synchronization.`)
     }
     if (conflicted.length > 0) {
-      wiki.logger.warn(
-        `(STORAGE/GIT) ${conflicted.length} conflicting path(s) used the remote version; prior page revisions remain in page history.`
-      )
+      wiki.logger.warn(`(STORAGE/GIT) ${conflicted.length} conflicting path(s) used the remote version; prior page revisions remain in page history.`)
     }
 
     // Reattachment repairs only the disposable working copy. Import Everything remains the explicit
@@ -364,7 +351,7 @@ const plugin: GitStoragePlugin = {
             path: contentPath.path,
             destinationPath: contentDestinationPath.path,
             locale: contentPath.locale,
-            destinationLocale: contentPath.locale,
+            destinationLocale: contentDestinationPath.locale,
             skipStorage: true
           })
         } else if (!fileExists && !item.importAll && item.deletions > 0 && item.insertions === 0) {
@@ -396,17 +383,23 @@ const plugin: GitStoragePlugin = {
       } else {
         // -> Asset
 
-        if (fileExists && !item.importAll && ((item.before === item.after) || (item.deletions === 0 && item.insertions === 0))) {
+        if (fileExists && !item.importAll && (item.before === item.after || (item.deletions === 0 && item.insertions === 0))) {
           // Asset was renamed by git, so rename in DB
           wiki.logger.info(`(STORAGE/GIT) Asset marked as renamed: from ${item.oldPath} to ${item.relPath}`)
 
-          const fileHash = assetHelper.generateHash(item.relPath)
-          const assetToRename = await wiki.models.assets.query().findOne({ hash: fileHash })
+          const sourceHash = assetHelper.generateHash(item.oldPath)
+          const destinationHash = assetHelper.generateHash(item.relPath)
+          const assetToRename = await wiki.models.assets.query().findOne({ hash: sourceHash })
           if (assetToRename) {
-            await wiki.models.assets.query().patch({
-              filename: item.relPath,
-              hash: fileHash
-            }).findById(assetToRename.id)
+            const folderId = await commonDisk.resolveAssetFolder(item.relPath)
+            await wiki.models.assets
+              .query()
+              .patch({
+                filename: path.posix.basename(item.relPath.replace(/\\/g, '/')),
+                folderId,
+                hash: destinationHash
+              })
+              .findById(assetToRename.id)
             await requireAssetCache(assetToRename).deleteAssetCache()
           } else {
             wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to rename: ${item.relPath}`)
@@ -540,7 +533,7 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} asset Asset to upload
    */
-  async assetUploaded (asset) {
+  async assetUploaded(asset) {
     wiki.logger.info(`(STORAGE/GIT) Committing new file ${asset.path}...`)
     const filePath = path.join(this.repoPath, asset.path)
     await fs.outputFile(filePath, asset.data, 'utf8')
@@ -555,7 +548,7 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} asset Asset to upload
    */
-  async assetDeleted (asset) {
+  async assetDeleted(asset) {
     wiki.logger.info(`(STORAGE/GIT) Committing removed file ${asset.path}...`)
 
     await this.git.rm(`./${asset.path}`)
@@ -568,7 +561,7 @@ const plugin: GitStoragePlugin = {
    *
    * @param {Object} asset Asset to upload
    */
-  async assetRenamed (asset) {
+  async assetRenamed(asset) {
     wiki.logger.info(`(STORAGE/GIT) Committing file move from ${asset.path} to ${asset.destinationPath}...`)
 
     await this.git.mv(`./${asset.path}`, `./${asset.destinationPath}`)
@@ -576,7 +569,7 @@ const plugin: GitStoragePlugin = {
       '--author': `"${asset.moveAuthorName} <${asset.moveAuthorEmail}>"`
     })
   },
-  async getLocalLocation (asset) {
+  async getLocalLocation(asset) {
     return path.join(this.repoPath, asset.path)
   },
   /**
@@ -589,7 +582,7 @@ const plugin: GitStoragePlugin = {
 
     await pipeline(
       klaw(this.repoPath, {
-        filter: (f) => {
+        filter: f => {
           return !_.includes(f, '.git')
         }
       }),
@@ -608,17 +601,22 @@ const plugin: GitStoragePlugin = {
             }
             if (relPath.length > 3) {
               wiki.logger.info(`(STORAGE/GIT) Processing ${relPath}...`)
-              await this.processFiles([{
-                relPath,
-                oldPath: relPath,
-                file,
-                binary: false,
-                deletions: 0,
-                insertions: 0,
-                before: 0,
-                after: 0,
-                importAll: true
-              }], rootUser)
+              await this.processFiles(
+                [
+                  {
+                    relPath,
+                    oldPath: relPath,
+                    file,
+                    binary: false,
+                    deletions: 0,
+                    insertions: 0,
+                    before: 0,
+                    after: 0,
+                    importAll: true
+                  }
+                ],
+                rootUser
+              )
             }
             callback()
           } catch (error: unknown) {
@@ -637,9 +635,14 @@ const plugin: GitStoragePlugin = {
 
     // -> Pages
     await pipeline(
-      wiki.models.knex.column('id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey').select().from('pages').where({
-        visibility: 'public'
-      }).stream(),
+      wiki.models.knex
+        .column('id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey')
+        .select()
+        .from('pages')
+        .where({
+          visibility: 'public'
+        })
+        .stream(),
       new Transform({
         objectMode: true,
         transform: async (page: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
@@ -652,7 +655,7 @@ const plugin: GitStoragePlugin = {
               throw new Error(`Page ${page.id} was not found during Git export`)
             }
             const relatedTags = await pageObject.$relatedQuery('tags')
-            page.tags = relatedTags.flatMap(tag => typeof tag.tag === 'string' ? [{ tag: tag.tag }] : [])
+            page.tags = relatedTags.flatMap(tag => (typeof tag.tag === 'string' ? [{ tag: tag.tag }] : []))
 
             let fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
             if (this.config.alwaysNamespace || (wiki.config.lang.namespacing && wiki.config.lang.code !== page.localeCode)) {

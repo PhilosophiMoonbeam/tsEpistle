@@ -5,6 +5,7 @@
     :role='isAgentOpen ? `dialog` : `region`'
     :aria-label='isAgentOpen ? `Wiki Agent workspace` : `Wiki search`'
     :aria-modal='isAgentOpen ? `true` : undefined'
+    :tabindex='isAgentOpen ? -1 : undefined'
   )
     .search-results-container(:class='{ "search-results-container--ask": isAgentOpen }')
       .search-results-agent-nav(v-if='isAgentOpen')
@@ -197,6 +198,7 @@ import { getErrorMessage } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
 import { onSearchEnter, onSearchMove, offSearchEnter, offSearchMove } from '../../helpers/search-navigation-events'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
+import { createModalFocusScope, type ModalFocusScope } from './modal-focus-scope'
 
 const emptySearchResponse = (): PageSearchResult => ({
   results: [],
@@ -224,7 +226,8 @@ export default defineComponent({
       searchTimer: null as number | null,
       searchError: '',
       searchRequestId: 0,
-      response: emptySearchResponse()
+      response: emptySearchResponse(),
+      modalFocusScope: null as ModalFocusScope | null
     }
   },
   computed: {
@@ -284,12 +287,12 @@ export default defineComponent({
     search(newValue: string | null) {
       this.queueSearch(newValue ?? '')
     },
-    async searchMode(newMode: 'search' | 'ask') {
+    searchMode() {
       this.queueSearch(this.search)
-      if (newMode !== 'ask' || !this.canAsk) return
-      this.searchIsFocused = true
-      await this.$nextTick()
-      await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.focusComposer()
+    },
+    isAgentOpen(open: boolean) {
+      if (open) void this.activateAgentModal()
+      else this.deactivateAgentModal()
     },
     searchRestrictLocale() {
       this.queueSearch(this.search)
@@ -316,8 +319,39 @@ export default defineComponent({
     if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
+    this.deactivateAgentModal(false)
   },
   methods: {
+    async activateAgentModal(): Promise<void> {
+      const restoreTarget = this.findSearchControl()
+      await this.$nextTick()
+      if (!this.isAgentOpen) return
+      const root = this.$el
+      if (!(root instanceof HTMLElement)) return
+      this.modalFocusScope?.deactivate({ restoreFocus: false })
+      const focusScope = createModalFocusScope({
+        root,
+        restoreTarget,
+        onEscape: this.closeSearch
+      })
+      this.modalFocusScope = focusScope
+      await (this.$refs.inlineAgent as InlineAgentChatRef | undefined)?.focusComposer()
+      if (this.modalFocusScope === focusScope && !focusScope.containsFocus()) focusScope.focusFirst()
+    },
+    deactivateAgentModal(restoreFocus = true): void {
+      this.modalFocusScope?.deactivate({ restoreFocus })
+      this.modalFocusScope = null
+      if (restoreFocus) {
+        void this.$nextTick(() => {
+          const searchControl = this.findSearchControl()
+          if (searchControl && document.activeElement !== searchControl) searchControl.focus()
+        })
+      }
+    },
+    findSearchControl(): HTMLElement | null {
+      const controls = Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control input'))
+      return controls.find(control => control.getClientRects().length > 0 && !control.hasAttribute('disabled')) ?? null
+    },
     openAsk(): void {
       if (!this.canAsk) return
       this.searchIsFocused = true

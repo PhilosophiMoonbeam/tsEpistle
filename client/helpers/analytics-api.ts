@@ -1,3 +1,5 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -34,7 +36,7 @@ type AnalyticsSaveResponse = {
   message: string
 }
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
@@ -44,10 +46,22 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && (payload as { error: string }).error.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { error?: unknown }).error === 'string' &&
+      (payload as { error: string }).error.length > 0
+    ) {
       throw new Error((payload as { error: string }).error)
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && (payload as { message: string }).message.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { message?: unknown }).message === 'string' &&
+      (payload as { message: string }).message.length > 0
+    ) {
       throw new Error((payload as { message: string }).message)
     }
     throw new Error(fallbackMessage)
@@ -60,8 +74,14 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-function normalizeProviderConfig (row: unknown, fallbackMessage: string): AnalyticsProviderConfig {
-  if (!row || typeof row !== 'object' || Array.isArray(row) || typeof (row as { key?: unknown }).key !== 'string' || typeof (row as { value?: unknown }).value !== 'string') {
+function normalizeProviderConfig(row: unknown, fallbackMessage: string): AnalyticsProviderConfig {
+  if (
+    !row ||
+    typeof row !== 'object' ||
+    Array.isArray(row) ||
+    typeof (row as { key?: unknown }).key !== 'string' ||
+    typeof (row as { value?: unknown }).value !== 'string'
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -82,7 +102,7 @@ function normalizeProviderConfig (row: unknown, fallbackMessage: string): Analyt
   }
 }
 
-function normalizeProvider (row: unknown, fallbackMessage: string): AnalyticsProvider {
+function normalizeProvider(row: unknown, fallbackMessage: string): AnalyticsProvider {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -104,15 +124,17 @@ function normalizeProvider (row: unknown, fallbackMessage: string): AnalyticsPro
     isAvailable: provider.isAvailable,
     logo: provider.logo as string,
     website: provider.website as string,
-    config: provider.config.map(cfg => normalizeProviderConfig(cfg, fallbackMessage)).sort((a, b) => {
-      const aOrder = Number.isFinite(a.value.order) ? a.value.order! : Number.MAX_SAFE_INTEGER
-      const bOrder = Number.isFinite(b.value.order) ? b.value.order! : Number.MAX_SAFE_INTEGER
-      return aOrder - bOrder
-    })
+    config: provider.config
+      .map(cfg => normalizeProviderConfig(cfg, fallbackMessage))
+      .sort((a, b) => {
+        const aOrder = Number.isFinite(a.value.order) ? a.value.order! : Number.MAX_SAFE_INTEGER
+        const bOrder = Number.isFinite(b.value.order) ? b.value.order! : Number.MAX_SAFE_INTEGER
+        return aOrder - bOrder
+      })
   }
 }
 
-function normalizeProvidersPayload (payload: unknown, fallbackMessage: string): AnalyticsProvider[] {
+function normalizeProvidersPayload(payload: unknown, fallbackMessage: string): AnalyticsProvider[] {
   if (!Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -120,8 +142,8 @@ function normalizeProvidersPayload (payload: unknown, fallbackMessage: string): 
   return payload.map(row => normalizeProvider(row, fallbackMessage))
 }
 
-export async function fetchAnalyticsProviders (fetchImpl: FetchImpl, fallbackMessage = 'Analytics providers response is invalid'): Promise<AnalyticsProvider[]> {
-  const response = await fetchImpl('/_api/analytics/providers', {
+export async function fetchAnalyticsProviders(fetchImpl: FetchImpl, fallbackMessage = 'Analytics providers response is invalid'): Promise<AnalyticsProvider[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/analytics/providers', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -131,8 +153,14 @@ export async function fetchAnalyticsProviders (fetchImpl: FetchImpl, fallbackMes
   return normalizeProvidersPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-function normalizeAnalyticsSavePayload (payload: unknown, fallbackMessage: string): AnalyticsSaveResponse {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length < 1) {
+function normalizeAnalyticsSavePayload(payload: unknown, fallbackMessage: string): AnalyticsSaveResponse {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    typeof (payload as { message?: unknown }).message !== 'string' ||
+    (payload as { message: string }).message.length < 1
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -141,8 +169,12 @@ function normalizeAnalyticsSavePayload (payload: unknown, fallbackMessage: strin
   }
 }
 
-export async function saveAnalyticsProviders (fetchImpl: FetchImpl, providers: unknown[], fallbackMessage = 'Analytics providers save response is invalid'): Promise<AnalyticsSaveResponse> {
-  const response = await fetchImpl('/_api/analytics/providers', {
+export async function saveAnalyticsProviders(
+  fetchImpl: FetchImpl,
+  providers: unknown[],
+  fallbackMessage = 'Analytics providers save response is invalid'
+): Promise<AnalyticsSaveResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/analytics/providers', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {

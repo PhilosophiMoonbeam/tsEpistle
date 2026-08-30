@@ -763,9 +763,7 @@ export default {
         wikiStore.showError(err)
         return false
       } finally {
-        if (requestId === this.userLoadRequestId) {
-          wikiStore.stopLoading('admin-users-refresh')
-        }
+        wikiStore.stopLoading('admin-users-refresh')
       }
     },
     async loadGroups() {

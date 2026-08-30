@@ -1,3 +1,5 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
+
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -42,7 +44,7 @@ export type NavigationPayload = {
 
 const VALID_NAVIGATION_MODES = ['NONE', 'TREE', 'MIXED', 'STATIC']
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
@@ -52,10 +54,22 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && (payload as { error: string }).error.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { error?: unknown }).error === 'string' &&
+      (payload as { error: string }).error.length > 0
+    ) {
       throw new Error((payload as { error: string }).error)
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && (payload as { message: string }).message.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { message?: unknown }).message === 'string' &&
+      (payload as { message: string }).message.length > 0
+    ) {
       throw new Error((payload as { message: string }).message)
     }
     throw new Error(fallbackMessage)
@@ -68,7 +82,7 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-function normalizeNavigationItem (item: unknown, fallbackMessage: string): NavigationItem {
+function normalizeNavigationItem(item: unknown, fallbackMessage: string): NavigationItem {
   if (!item || typeof item !== 'object' || Array.isArray(item)) {
     throw new Error(fallbackMessage)
   }
@@ -84,7 +98,11 @@ function normalizeNavigationItem (item: unknown, fallbackMessage: string): Navig
     }
   }
 
-  if (navItem.visibilityGroups !== null && navItem.visibilityGroups !== undefined && (!Array.isArray(navItem.visibilityGroups) || navItem.visibilityGroups.some(groupId => !Number.isInteger(groupId)))) {
+  if (
+    navItem.visibilityGroups !== null &&
+    navItem.visibilityGroups !== undefined &&
+    (!Array.isArray(navItem.visibilityGroups) || navItem.visibilityGroups.some(groupId => !Number.isInteger(groupId)))
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -100,13 +118,19 @@ function normalizeNavigationItem (item: unknown, fallbackMessage: string): Navig
   }
 }
 
-function normalizeNavigationPayload (payload: unknown, fallbackMessage: string): NavigationPayload {
+function normalizeNavigationPayload(payload: unknown, fallbackMessage: string): NavigationPayload {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
   const navPayload = payload as Partial<NavigationPayload>
   const rawConfig = navPayload.config as Partial<NavigationConfig> | undefined
-  if (!rawConfig || typeof rawConfig !== 'object' || Array.isArray(rawConfig) || !VALID_NAVIGATION_MODES.includes(rawConfig.mode ?? '') || (rawConfig.expandParent !== undefined && typeof rawConfig.expandParent !== 'boolean')) {
+  if (
+    !rawConfig ||
+    typeof rawConfig !== 'object' ||
+    Array.isArray(rawConfig) ||
+    !VALID_NAVIGATION_MODES.includes(rawConfig.mode ?? '') ||
+    (rawConfig.expandParent !== undefined && typeof rawConfig.expandParent !== 'boolean')
+  ) {
     throw new Error(fallbackMessage)
   }
   if (!Array.isArray(navPayload.tree)) {
@@ -134,8 +158,14 @@ function normalizeNavigationPayload (payload: unknown, fallbackMessage: string):
   }
 }
 
-function normalizeNavigationSavePayload (payload: unknown, fallbackMessage: string): NavigationSaveResponse {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length < 1) {
+function normalizeNavigationSavePayload(payload: unknown, fallbackMessage: string): NavigationSaveResponse {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    typeof (payload as { message?: unknown }).message !== 'string' ||
+    (payload as { message: string }).message.length < 1
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -144,8 +174,8 @@ function normalizeNavigationSavePayload (payload: unknown, fallbackMessage: stri
   }
 }
 
-export async function fetchNavigation (fetchImpl: FetchImpl, fallbackMessage = 'Navigation response is invalid'): Promise<NavigationPayload> {
-  const response = await fetchImpl('/_api/navigation', {
+export async function fetchNavigation(fetchImpl: FetchImpl, fallbackMessage = 'Navigation response is invalid'): Promise<NavigationPayload> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/navigation', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -155,8 +185,14 @@ export async function fetchNavigation (fetchImpl: FetchImpl, fallbackMessage = '
   return normalizeNavigationPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function saveNavigation (fetchImpl: FetchImpl, tree: unknown[], mode: string, expandParent: boolean, fallbackMessage = 'Navigation save failed'): Promise<NavigationSaveResponse> {
-  const response = await fetchImpl('/_api/navigation', {
+export async function saveNavigation(
+  fetchImpl: FetchImpl,
+  tree: unknown[],
+  mode: string,
+  expandParent: boolean,
+  fallbackMessage = 'Navigation save failed'
+): Promise<NavigationSaveResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/navigation', {
     method: 'PUT',
     credentials: 'same-origin',
     headers: {

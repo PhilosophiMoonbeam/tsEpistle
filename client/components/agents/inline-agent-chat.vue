@@ -389,7 +389,10 @@ onMounted(() => {
   compactPanelMedia.addEventListener('change', reconcileCompactPanels)
   void ensureInitialized()
 })
-onBeforeUnmount(() => compactPanelMedia?.removeEventListener('change', reconcileCompactPanels))
+onBeforeUnmount(() => {
+  compactPanelMedia?.removeEventListener('change', reconcileCompactPanels)
+  agents.closeWorkspace()
+})
 defineExpose({ sendPrompt, focusComposer, focusConversation })
 </script>
 

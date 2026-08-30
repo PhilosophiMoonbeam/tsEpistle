@@ -1,3 +1,4 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
 import { ThemeColorsSchema, type ThemeColors } from '../../shared/theme-colors.ts'
 import { PageGutterCustomCssSchema, PageGutterStyleSchema, type PageGutterStyle } from '../../shared/page-gutters.ts'
 
@@ -11,15 +12,18 @@ type JsonResponse = {
   json: () => Promise<unknown>
 }
 
-type FetchImpl = (url: string, init: {
-  method?: 'POST'
-  credentials: 'same-origin'
-  headers: {
-    Accept: 'application/json'
-    'Content-Type'?: 'application/json'
+type FetchImpl = (
+  url: string,
+  init: {
+    method?: 'POST'
+    credentials: 'same-origin'
+    headers: {
+      Accept: 'application/json'
+      'Content-Type'?: 'application/json'
+    }
+    body?: string
   }
-  body?: string
-}) => Promise<JsonResponse>
+) => Promise<JsonResponse>
 
 export type ThemeConfig = {
   theme: string
@@ -38,7 +42,7 @@ type ThemeSaveResponse = {
   message: string
 }
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
@@ -48,10 +52,22 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && (payload as { error: string }).error.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { error?: unknown }).error === 'string' &&
+      (payload as { error: string }).error.length > 0
+    ) {
       throw new Error((payload as { error: string }).error)
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && (payload as { message: string }).message.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { message?: unknown }).message === 'string' &&
+      (payload as { message: string }).message.length > 0
+    ) {
       throw new Error((payload as { message: string }).message)
     }
     throw new Error(fallbackMessage)
@@ -64,13 +80,20 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-function normalizeThemeConfigPayload (payload: unknown, fallbackMessage: string): ThemeConfig {
+function normalizeThemeConfigPayload(payload: unknown, fallbackMessage: string): ThemeConfig {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
 
   const themePayload = payload as Partial<ThemeConfig>
-  const requiredStringFields: Array<keyof Omit<ThemeConfig, 'colors' | 'darkMode'>> = ['theme', 'iconset', 'tocPosition', 'injectCSS', 'injectHead', 'injectBody']
+  const requiredStringFields: Array<keyof Omit<ThemeConfig, 'colors' | 'darkMode'>> = [
+    'theme',
+    'iconset',
+    'tocPosition',
+    'injectCSS',
+    'injectHead',
+    'injectBody'
+  ]
   if (requiredStringFields.some(field => typeof themePayload[field] !== 'string')) {
     throw new Error(fallbackMessage)
   }
@@ -101,7 +124,7 @@ function normalizeThemeConfigPayload (payload: unknown, fallbackMessage: string)
   }
 }
 
-function normalizeThemeSavePayload (payload: unknown, fallbackMessage: string): ThemeSaveResponse {
+function normalizeThemeSavePayload(payload: unknown, fallbackMessage: string): ThemeSaveResponse {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -113,8 +136,8 @@ function normalizeThemeSavePayload (payload: unknown, fallbackMessage: string): 
   }
 }
 
-export async function fetchThemeConfig (fetchImpl: FetchImpl, fallbackMessage = 'Theme config response is invalid'): Promise<ThemeConfig> {
-  const response = await fetchImpl('/_api/theming/config', {
+export async function fetchThemeConfig(fetchImpl: FetchImpl, fallbackMessage = 'Theme config response is invalid'): Promise<ThemeConfig> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/theming/config', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -124,8 +147,8 @@ export async function fetchThemeConfig (fetchImpl: FetchImpl, fallbackMessage = 
   return normalizeThemeConfigPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function saveThemeConfig (fetchImpl: FetchImpl, payload: ThemeConfig, fallbackMessage = 'Theme config update failed'): Promise<ThemeSaveResponse> {
-  const response = await fetchImpl('/_api/theming/config', {
+export async function saveThemeConfig(fetchImpl: FetchImpl, payload: ThemeConfig, fallbackMessage = 'Theme config update failed'): Promise<ThemeSaveResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/theming/config', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {

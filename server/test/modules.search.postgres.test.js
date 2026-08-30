@@ -4,17 +4,50 @@ const knexHarness = (options = {}) => {
   const truncate = vi.fn().mockResolvedValue(undefined)
   const deleteRows = vi.fn().mockResolvedValue(1)
   const where = vi.fn().mockReturnValue({ delete: deleteRows })
-  const pageForShare = vi.fn().mockResolvedValue((options.rebuildPages ?? []).map(page => ({ id: page.id })))
-  const pageAndWhere = vi.fn().mockReturnValue({ forShare: pageForShare })
-  const pageWhere = vi.fn().mockReturnValue({ andWhere: pageAndWhere })
-  const pageSelect = vi.fn().mockReturnValue({ where: pageWhere })
+  const rebuildPages = options.rebuildPages ?? []
+  let pageIdCursor = 0
+  let cursorSize = 0
+  const pageQuery = {}
+  const pageForShare = vi.fn(async () =>
+    rebuildPages
+      .filter(page => page.id > pageIdCursor)
+      .slice(0, cursorSize)
+      .map(page => ({ id: page.id }))
+  )
+  const pageLimit = vi.fn(limit => {
+    cursorSize = limit
+    return pageQuery
+  })
+  const pageOrderBy = vi.fn(() => pageQuery)
+  const pageAndWhere = vi.fn((column, operator, value) => {
+    if (column === 'id') pageIdCursor = value
+    return pageQuery
+  })
+  const pageWhere = vi.fn(() => pageQuery)
+  const pageSelect = vi.fn(() => pageQuery)
+  Object.assign(pageQuery, {
+    select: pageSelect,
+    where: pageWhere,
+    andWhere: pageAndWhere,
+    orderBy: pageOrderBy,
+    limit: pageLimit,
+    forShare: pageForShare
+  })
   const table = vi.fn().mockImplementation(tableName =>
-    tableName === 'pages' ? { select: pageSelect } : { truncate, where }
+    tableName === 'pages' ? pageQuery : { truncate, where }
   )
   const transactionRaw = vi.fn().mockResolvedValue({ rows: [] })
   const transaction = Object.assign(table, { raw: transactionRaw })
-  const raw = vi.fn().mockImplementation(async sql => {
-    if (sql.includes('WITH RECURSIVE query_input')) return { rows: options.queryRows ?? [] }
+  const raw = vi.fn().mockImplementation(async (sql, bindings = []) => {
+    if (sql.includes('WITH RECURSIVE query_input')) {
+      const rows = options.scope
+        ? (options.queryRows ?? []).filter(row =>
+            row.locale === options.scope.locale &&
+            (row.path === options.scope.path || row.path.startsWith(`${options.scope.path}/`))
+          )
+        : (options.queryRows ?? [])
+      return { rows: rows.slice(0, bindings.at(-1)) }
+    }
     return { rows: [] }
   })
   const dropTableIfExists = vi.fn().mockResolvedValue(undefined)
@@ -28,7 +61,17 @@ const knexHarness = (options = {}) => {
     schema,
     transaction: vi.fn(async callback => callback(transaction))
   })
-  return { knex, raw, transactionRaw, truncate, dropTableIfExists, pageWhere, pageAndWhere }
+  return {
+    knex,
+    raw,
+    transactionRaw,
+    truncate,
+    dropTableIfExists,
+    pageWhere,
+    pageAndWhere,
+    pageForShare,
+    pageLimit
+  }
 }
 
 const installWiki = (knex, pages = {}) => {
@@ -88,6 +131,50 @@ describe('PostgreSQL hybrid search', () => {
     expect(sql).not.toContain('Amber Falcon')
     expect(bindings).toContain('Amber Falcon')
     expect(bindings.at(-1)).toBe(100)
+  })
+
+  it('scopes locale and literal path before the configured result window', async () => {
+    const outOfScope = Array.from({ length: 50 }, (_, index) => ({
+      id: index + 1,
+      path: `ops%_other/${index}`,
+      locale: index % 2 === 0 ? 'fr' : 'en',
+      title: `Higher ranked ${index}`,
+      description: '',
+      tags: [],
+      score: 100 - index,
+      matchedFields: ['title']
+    }))
+    const inScope = {
+      id: 999,
+      path: 'ops%_/inside',
+      locale: 'en',
+      title: 'Literal scope result',
+      description: '',
+      tags: [],
+      score: 1,
+      matchedFields: ['content']
+    }
+    const harness = knexHarness({
+      queryRows: [...outOfScope, inScope],
+      scope: { locale: 'en', path: 'ops%_' }
+    })
+    installWiki(harness.knex)
+    global.WIKI.config.search.maxHits = 7
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
+    Object.assign(plugin, { config: { dictLanguage: 'english' } })
+
+    const response = await plugin.query('100%_ literal', { locale: 'en', path: 'ops%_' })
+    const [sql, bindings] = harness.raw.mock.calls.find(([statement]) => String(statement).includes('WITH RECURSIVE query_input'))
+    const firstLimit = sql.indexOf('LIMIT ?')
+
+    expect(response.results).toEqual([inScope])
+    expect(sql.indexOf('vector.locale = input.locale_filter')).toBeLessThan(firstLimit)
+    expect(sql.indexOf('vector.path = input.path_filter')).toBeLessThan(firstLimit)
+    expect(sql.indexOf('vector.path LIKE input.path_prefix')).toBeLessThan(firstLimit)
+    expect(bindings).toContain('%100\\%\\_ literal%')
+    expect(bindings).toContain('ops%_')
+    expect(bindings).toContain('ops\\%\\_/%')
+    expect(bindings.slice(-2)).toEqual([7, 7])
   })
 
   it('atomically refreshes weighted tag and content terms for page mutations', async () => {
@@ -151,5 +238,45 @@ describe('PostgreSQL hybrid search', () => {
       'rendered-only unique-extension-term'
     ])
     expect(documents).not.toContain('raw source must not be indexed')
+  })
+
+  it('walks rebuild bodies through a bounded keyset cursor without retaining the corpus', async () => {
+    const rebuildPages = Array.from({ length: 205 }, (_, index) => ({
+      id: index + 1,
+      path: `pages/${index + 1}`,
+      localeCode: 'en',
+      title: `Page ${index + 1}`,
+      description: '',
+      safeContent: `body ${index + 1}`,
+      tags: [],
+      visibility: 'public',
+      isPublished: true
+    }))
+    const pagesById = new Map(rebuildPages.map(page => [page.id, page]))
+    const harness = knexHarness({ rebuildPages })
+    const pages = {
+      getPageFromDb: vi.fn(async id => pagesById.get(id)),
+      prepareSearchDocument: vi.fn(async page => page)
+    }
+    installWiki(harness.knex, pages)
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
+    Object.assign(plugin, { config: { dictLanguage: 'english' } })
+
+    await plugin.rebuild()
+
+    expect(harness.pageLimit).toHaveBeenCalledTimes(3)
+    expect(harness.pageLimit).toHaveBeenNthCalledWith(1, 100)
+    expect(harness.pageLimit).toHaveBeenNthCalledWith(2, 100)
+    expect(harness.pageLimit).toHaveBeenNthCalledWith(3, 100)
+    expect(harness.pageForShare).toHaveBeenCalledTimes(3)
+    expect(pages.getPageFromDb).toHaveBeenCalledTimes(205)
+    expect(pages.prepareSearchDocument).toHaveBeenCalledTimes(205)
+    const firstVectorWrite = harness.transactionRaw.mock.calls.findIndex(([sql]) =>
+      String(sql).includes('ON CONFLICT ("pageId")')
+    )
+    expect(harness.transactionRaw.mock.invocationCallOrder[firstVectorWrite])
+      .toBeLessThan(pages.getPageFromDb.mock.invocationCallOrder[1])
+    const secondCursorRead = harness.pageForShare.mock.invocationCallOrder[1]
+    expect(harness.transactionRaw.mock.invocationCallOrder.filter(order => order < secondCursorRead)).toHaveLength(200)
   })
 })

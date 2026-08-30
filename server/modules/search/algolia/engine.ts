@@ -10,8 +10,6 @@ import {
 } from '../../types.ts'
 import _ from 'lodash'
 import { algoliasearch, type SearchClient } from 'algoliasearch'
-import { pipeline } from 'node:stream/promises'
-import { Transform, type TransformCallback } from 'node:stream'
 
 type AlgoliaSearchContext = SearchContext<SearchConfig, SearchClient>
 
@@ -32,7 +30,17 @@ interface AlgoliaIndexRow extends UnknownRecord {
   title: string
 }
 
-const isAlgoliaIndexRow = (value: unknown): value is AlgoliaIndexRow => (
+interface AlgoliaObject extends UnknownRecord {
+  content: string
+  description: string
+  locale: string
+  objectID: string
+  path: string
+  pathScopes: string[]
+  title: string
+}
+
+const isAlgoliaIndexRow = (value: unknown): value is AlgoliaIndexRow =>
   typeof value === 'object' &&
   value !== null &&
   'description' in value &&
@@ -47,8 +55,25 @@ const isAlgoliaIndexRow = (value: unknown): value is AlgoliaIndexRow => (
   typeof value.render === 'string' &&
   'title' in value &&
   typeof value.title === 'string'
-)
 
+const pathScopes = (path: string): string[] => path.split('/').map((_segment, index, segments) => segments.slice(0, index + 1).join('/'))
+
+const algoliaFilters = (options: SearchOptions): string | undefined => {
+  const filters = []
+  if (options.locale) filters.push(`locale:${JSON.stringify(options.locale)}`)
+  if (options.path) filters.push(`pathScopes:${JSON.stringify(options.path)}`)
+  return filters.length > 0 ? filters.join(' AND ') : undefined
+}
+
+const toAlgoliaObject = (row: AlgoliaIndexRow): AlgoliaObject => ({
+  objectID: row.id,
+  locale: row.locale,
+  path: row.path,
+  pathScopes: pathScopes(row.path),
+  title: row.title,
+  description: row.description,
+  content: wiki.models.pages.cleanHTML(row.render)
+})
 
 const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
   async activate() {
@@ -69,17 +94,9 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
     await this.client.setSettings({
       indexName: this.config.indexName,
       indexSettings: {
-        searchableAttributes: [
-          'title',
-          'description',
-          'content'
-        ],
-        attributesToRetrieve: [
-          'locale',
-          'path',
-          'title',
-          'description'
-        ],
+        searchableAttributes: ['title', 'description', 'content'],
+        attributesToRetrieve: ['locale', 'path', 'title', 'description'],
+        attributesForFaceting: ['filterOnly(locale)', 'filterOnly(pathScopes)'],
         advancedSyntax: true
       }
     })
@@ -91,14 +108,14 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
    * @param {String} q Query
    * @param {Object} opts Additional options
    */
-  async query(q: string, _opts: SearchOptions): Promise<SearchResult> {
-    void _opts
+  async query(q: string, opts: SearchOptions): Promise<SearchResult> {
     try {
       const results = await this.client.searchSingleIndex<AlgoliaHit>({
         indexName: this.config.indexName,
         searchParams: {
           query: q,
-          hitsPerPage: 50
+          filters: algoliaFilters(opts),
+          hitsPerPage: wiki.config.search.maxHits
         }
       })
       return {
@@ -131,6 +148,7 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
         locale: page.localeCode,
         path: page.path,
         title: page.title,
+        pathScopes: pathScopes(page.path),
         description: page.description,
         content: page.safeContent
       }
@@ -174,6 +192,7 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
         objectID: page.destinationHash,
         locale: page.destinationLocaleCode,
         path: page.destinationPath,
+        pathScopes: pathScopes(page.destinationPath),
         title: page.title,
         description: page.description,
         content: page.safeContent
@@ -185,89 +204,32 @@ const plugin: SearchPlugin<SearchConfig, AlgoliaSearchContext> = {
    */
   async rebuild() {
     wiki.logger.info(`(SEARCH/ALGOLIA) Rebuilding Index...`)
-    await this.client.clearObjects({ indexName: this.config.indexName })
-
-    const MAX_DOCUMENT_BYTES = 10 * 2 ** 10 // 10 KB
-    const MAX_INDEXING_BYTES = 10 * 2 ** 20 - Buffer.from('[').byteLength - Buffer.from(']').byteLength // 10 MB
-    const MAX_INDEXING_COUNT = 1000
-    const COMMA_BYTES = Buffer.from(',').byteLength
-
-    const chunks: AlgoliaIndexRow[] = []
-    let bytes = 0
-
-    const processDocument = async (cb: TransformCallback, doc?: unknown): Promise<void> => {
-      try {
-        if (doc) {
-          if (!isAlgoliaIndexRow(doc)) {
-            throw new Error('Algolia Search index row is invalid')
-          }
-          const docBytes = Buffer.from(JSON.stringify(doc)).byteLength
-          // -> Document too large
-          if (docBytes >= MAX_DOCUMENT_BYTES) {
-            throw new Error('Document exceeds maximum size allowed by Algolia.')
-          }
-
-          // -> Current batch exceeds size hard limit, flush
-          if (docBytes + COMMA_BYTES + bytes >= MAX_INDEXING_BYTES) {
-            await flushBuffer()
-          }
-
-          if (chunks.length > 0) {
-            bytes += COMMA_BYTES
-          }
-          bytes += docBytes
-          chunks.push(doc)
-
-          // -> Current batch exceeds count soft limit, flush
-          if (chunks.length >= MAX_INDEXING_COUNT) {
-            await flushBuffer()
-          }
-        } else {
-          // -> End of stream, flush
-          await flushBuffer()
-        }
-        cb()
-      } catch (err: unknown) {
-        cb(err instanceof Error ? err : new Error(String(err)))
-      }
-    }
-
-    const flushBuffer = async (): Promise<void> => {
-      wiki.logger.info(`(SEARCH/ALGOLIA) Sending batch of ${chunks.length}...`)
-      try {
-        await this.client.saveObjects({
-          indexName: this.config.indexName,
-          objects: _.map(chunks, doc => ({
-            objectID: doc.id,
-            locale: doc.locale,
-            path: doc.path,
-            title: doc.title,
-            description: doc.description,
-            content: wiki.models.pages.cleanHTML(doc.render)
-          }))
-        })
-      } catch (err: unknown) {
-        wiki.logger.warn('(SEARCH/ALGOLIA) Failed to send batch to Algolia: ', err)
-      }
-      chunks.length = 0
-      bytes = 0
-    }
-
-    await pipeline(
-      wiki.models.knex.column({ id: 'hash' }, 'path', { locale: 'localeCode' }, 'title', 'description', 'render').select().from('pages').where({
+    const MAX_DOCUMENT_BYTES = 10 * 2 ** 10
+    const objects: AlgoliaObject[] = []
+    const rows = wiki.models.knex
+      .column({ id: 'hash' }, 'path', { locale: 'localeCode' }, 'title', 'description', 'render')
+      .select()
+      .from('pages')
+      .where({
         isPublished: true,
         visibility: 'public'
-      }).stream(),
-      new Transform({
-        objectMode: true,
-        transform: (chunk: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
-          void processDocument(callback, chunk)
-        },
-        flush: (callback: TransformCallback) => {
-          void processDocument(callback)
-        }
       })
-    )
+      .stream()
+
+    for await (const row of rows) {
+      if (!isAlgoliaIndexRow(row)) throw new Error('Algolia Search index row is invalid')
+      const object = toAlgoliaObject(row)
+      if (Buffer.byteLength(JSON.stringify(object)) >= MAX_DOCUMENT_BYTES) {
+        throw new Error('Document exceeds maximum size allowed by Algolia.')
+      }
+      objects.push(object)
+    }
+
+    await this.client.replaceAllObjects({
+      indexName: this.config.indexName,
+      objects,
+      batchSize: 1000
+    })
     wiki.logger.info(`(SEARCH/ALGOLIA) Index rebuilt successfully.`)
   }
 }

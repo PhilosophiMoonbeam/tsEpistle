@@ -6,6 +6,7 @@ const WORDS_TABLE = 'pagesWords'
 const VECTOR_COLUMNS = ['pageId', 'path', 'locale', 'title', 'description', 'tags', 'facets', 'tokens'] as const
 const WORD_COLUMNS = ['pageId', 'word'] as const
 const GRAPH_DEPTH = 2
+const REBUILD_CURSOR_SIZE = 100
 
 interface PostgresSearchConfig extends SearchConfig {
   dictLanguage: string
@@ -109,21 +110,29 @@ const createSearchSchema = async (knex: Knex): Promise<boolean> => {
 const rebuildSearchIndex = async (knex: Knex, dictionary: string): Promise<void> => {
   const pageModel = wiki.models.pages as typeof wiki.models.pages & CanonicalPageModel
   await knex.transaction(async transaction => {
-    const pageIds = await transaction<PageIdRow>('pages')
-      .select('id')
-      .where('isPublished', true)
-      .andWhere('visibility', 'public')
-      .forShare()
-    const documents: WikiPage[] = []
-    for (const { id } of pageIds) {
-      const page = await pageModel.getPageFromDb(id)
-      if (!page || !isPublishedPublicPage(page)) continue
-      documents.push(await pageModel.prepareSearchDocument(page))
-    }
-
     await transaction(WORDS_TABLE).truncate()
     await transaction(VECTOR_TABLE).truncate()
-    for (const page of documents) await indexPage(transaction, dictionary, page)
+
+    let pageIdCursor = 0
+    while (true) {
+      const pageIds = await transaction<PageIdRow>('pages')
+        .select('id')
+        .where('isPublished', true)
+        .andWhere('visibility', 'public')
+        .andWhere('id', '>', pageIdCursor)
+        .orderBy('id')
+        .limit(REBUILD_CURSOR_SIZE)
+        .forShare()
+      if (pageIds.length === 0) break
+
+      for (const { id } of pageIds) {
+        const page = await pageModel.getPageFromDb(id)
+        if (!page || !isPublishedPublicPage(page)) continue
+        await indexPage(transaction, dictionary, await pageModel.prepareSearchDocument(page))
+      }
+      pageIdCursor = pageIds.at(-1)?.id ?? pageIdCursor
+      if (pageIds.length < REBUILD_CURSOR_SIZE) break
+    }
   })
 }
 

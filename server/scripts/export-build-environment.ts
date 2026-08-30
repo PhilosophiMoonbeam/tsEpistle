@@ -1,12 +1,13 @@
 import { execFileSync } from 'node:child_process'
 
-import { productDefinition } from '../../shared/product.ts'
+import { productDefinition } from '../core/product.ts'
 
 const rootPath = process.cwd()
-const runGit = (args: string[]): string => execFileSync('git', args, {
-  cwd: rootPath,
-  encoding: 'utf8'
-}).trim()
+const runGit = (args: string[]): string =>
+  execFileSync('git', args, {
+    cwd: rootPath,
+    encoding: 'utf8'
+  }).trim()
 const candidateRevision = process.env.GITHUB_SHA || runGit(['rev-parse', 'HEAD'])
 const revision = candidateRevision.toLowerCase()
 if (!/^[0-9a-f]{40}$/.test(revision)) throw new Error('GITHUB_SHA must be a full Git commit SHA')

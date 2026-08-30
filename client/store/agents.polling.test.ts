@@ -43,6 +43,26 @@ const activeThread = (): AgentThreadState => ({
   suggestions: []
 })
 
+const threadForSession = (sessionId: string, runId: string): AgentThreadState => {
+  const thread = activeThread()
+  return {
+    ...thread,
+    session: {
+      ...thread.session,
+      id: sessionId,
+      currentRun: thread.session.currentRun ? { ...thread.session.currentRun, id: runId, sessionId } : null
+    }
+  }
+}
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(complete => {
+    resolve = complete
+  })
+  return { promise, resolve }
+}
+
 describe('Agent chat refresh fallback', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -110,11 +130,12 @@ describe('Agent chat refresh fallback', () => {
       eventSequence: 2
     }
     store.refreshThread = vi.fn(async () => {
-      if (store.thread) store.thread = {
-        ...store.thread,
-        session: { ...store.thread.session, currentRun: nextRun },
-        goal: store.thread.goal ? { ...store.thread.goal, currentRunId: nextRun.id, continuationCount: 1, version: 2 } : null
-      }
+      if (store.thread)
+        store.thread = {
+          ...store.thread,
+          session: { ...store.thread.session, currentRun: nextRun },
+          goal: store.thread.goal ? { ...store.thread.goal, currentRunId: nextRun.id, continuationCount: 1, version: 2 } : null
+        }
     })
     const connect = vi.fn(() => {})
     const reloadSessions = vi.fn(async () => undefined)
@@ -126,6 +147,125 @@ describe('Agent chat refresh fallback', () => {
 
     expect(connect).toHaveBeenCalledWith(nextRun.id, nextRun.eventSequence)
     expect(reloadSessions).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Agent session selection', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('applies only the latest session when deferred responses resolve out of order', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    store.routeSync = false
+    store.thread = activeThread()
+    store.connection = 'connected'
+    const previousSource = { close: vi.fn() } as unknown as EventSource
+    store.source = previousSource
+    const first = deferred<Response>()
+    const second = deferred<Response>()
+    const signals: AbortSignal[] = []
+    vi.spyOn(window, 'fetch').mockImplementation((_input, init) => {
+      signals.push(init?.signal as AbortSignal)
+      return signals.length === 1 ? first.promise : second.promise
+    })
+    const connectCurrentRun = vi.fn()
+    store.connectCurrentRun = connectCurrentRun
+    const firstThread = threadForSession('00000000-0000-4000-8000-000000000010', '00000000-0000-4000-8000-000000000020')
+    const secondThread = threadForSession('00000000-0000-4000-8000-000000000011', '00000000-0000-4000-8000-000000000021')
+
+    const firstOpen = store.openSession(firstThread.session.id)
+    const secondOpen = store.openSession(secondThread.session.id)
+    expect(signals[0]?.aborted).toBe(true)
+    expect(previousSource.close).not.toHaveBeenCalled()
+
+    second.resolve(
+      new Response(JSON.stringify(secondThread), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+    expect(await secondOpen).toBe(true)
+    expect(store.thread?.session.id).toBe(secondThread.session.id)
+    expect(previousSource.close).toHaveBeenCalledTimes(1)
+    expect(connectCurrentRun).toHaveBeenCalledTimes(1)
+
+    first.resolve(
+      new Response(JSON.stringify(firstThread), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+    expect(await firstOpen).toBe(false)
+    expect(store.thread?.session.id).toBe(secondThread.session.id)
+    expect(connectCurrentRun).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves the displayed active run and its stream when a switch fails', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    store.routeSync = false
+    const previousThread = activeThread()
+    const previousSource = { close: vi.fn() } as unknown as EventSource
+    store.thread = previousThread
+    store.source = previousSource
+    const displayedThread = store.thread
+    const activeSource = store.source
+    store.connection = 'connected'
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ message: 'Unavailable' }), {
+        status: 503,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+
+    await expect(store.openSession('00000000-0000-4000-8000-000000000099')).rejects.toThrow('Unavailable')
+
+    expect(store.thread).toBe(displayedThread)
+    expect(store.source).toBe(activeSource)
+    expect(store.connection).toBe('connected')
+    expect(previousSource.close).not.toHaveBeenCalled()
+  })
+
+  it('aborts pending selection on workspace close and rejects its stale response', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    store.routeSync = false
+    const previousThread = activeThread()
+    const previousSource = { close: vi.fn() } as unknown as EventSource
+    store.thread = previousThread
+    store.source = previousSource
+    const displayedThread = store.thread
+    store.connection = 'connected'
+    const pending = deferred<Response>()
+    const signals: AbortSignal[] = []
+    vi.spyOn(window, 'fetch').mockImplementation((_input, init) => {
+      signals.push(init?.signal as AbortSignal)
+      return pending.promise
+    })
+    const connectCurrentRun = vi.fn()
+    store.connectCurrentRun = connectCurrentRun
+    const candidate = threadForSession('00000000-0000-4000-8000-000000000030', '00000000-0000-4000-8000-000000000031')
+
+    const opening = store.openSession(candidate.session.id)
+    store.closeWorkspace()
+    expect(signals[0]?.aborted).toBe(true)
+    expect(previousSource.close).toHaveBeenCalledTimes(1)
+
+    pending.resolve(
+      new Response(JSON.stringify(candidate), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+    expect(await opening).toBe(false)
+    expect(store.thread).toBe(displayedThread)
+    expect(store.source).toBeNull()
+    expect(connectCurrentRun).not.toHaveBeenCalled()
   })
 })
 
@@ -151,7 +291,8 @@ describe('Agent empty conversation lifecycle', () => {
       launchPage: null
     }
     const json = { headers: { 'content-type': 'application/json' } }
-    const fetcher = vi.spyOn(window, 'fetch')
+    const fetcher = vi
+      .spyOn(window, 'fetch')
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
       .mockResolvedValueOnce(new Response(JSON.stringify(replacement), { status: 201, ...json }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ sessions: [] }), { status: 200, ...json }))
@@ -178,20 +319,22 @@ describe('Agent history reset', () => {
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
     store.thread = activeThread()
-    store.sessions = [{
-      id: '00000000-0000-4000-8000-000000000001',
-      title: 'Reset verification',
-      retention: 'saved',
-      folderId: null,
-      executionMode: 'agent',
-      version: 1,
-      providerProfileId: null,
-      createdAt: '2026-08-23T00:00:00.000Z',
-      updatedAt: '2026-08-23T00:00:00.000Z',
-      lastActivityAt: '2026-08-23T00:00:00.000Z',
-      expiresAt: null,
-      deletedAt: null
-    }]
+    store.sessions = [
+      {
+        id: '00000000-0000-4000-8000-000000000001',
+        title: 'Reset verification',
+        retention: 'saved',
+        folderId: null,
+        executionMode: 'agent',
+        version: 1,
+        providerProfileId: null,
+        createdAt: '2026-08-23T00:00:00.000Z',
+        updatedAt: '2026-08-23T00:00:00.000Z',
+        lastActivityAt: '2026-08-23T00:00:00.000Z',
+        expiresAt: null,
+        deletedAt: null
+      }
+    ]
     store.error = 'No default provider profile is configured for your groups.'
     const fetcher = vi.spyOn(window, 'fetch').mockResolvedValue(new Response(null, { status: 204 }))
 

@@ -1,8 +1,28 @@
-import { fetchSystemSummary, fetchSystemInfo, fetchSystemTelemetry, fetchSystemExportStatus, fetchSystemHost, fetchSystemSsl, updateSystemSslRedirection, renewSystemSslCertificate, fetchSystemFlags, fetchSystemExtensions, updateSystemFlags, updateSystemTelemetry, resetSystemTelemetryClientId, flushSystemCache, flushSystemTemporaryUploads, rebuildPageTree, migratePagesToLocale, renderPage, purgePageHistory, performSystemUpgrade, startSystemExport } from './system-api.ts'
-import { createProductMetadata } from '../../shared/product.ts'
+import {
+  fetchSystemSummary,
+  fetchSystemInfo,
+  fetchSystemTelemetry,
+  fetchSystemExportStatus,
+  fetchSystemHost,
+  fetchSystemSsl,
+  updateSystemSslRedirection,
+  renewSystemSslCertificate,
+  fetchSystemFlags,
+  fetchSystemExtensions,
+  updateSystemFlags,
+  updateSystemTelemetry,
+  resetSystemTelemetryClientId,
+  flushSystemCache,
+  flushSystemTemporaryUploads,
+  rebuildPageTree,
+  migratePagesToLocale,
+  renderPage,
+  purgePageHistory,
+  performSystemUpgrade,
+  startSystemExport
+} from './system-api.ts'
 
-
-function createJsonResponse (payload, ok = true) {
+function createJsonResponse(payload, ok = true) {
   return {
     ok,
     headers: {
@@ -11,10 +31,21 @@ function createJsonResponse (payload, ok = true) {
     json: async () => payload
   }
 }
-const product = createProductMetadata({
+const product = {
+  name: 'Atlas Docs',
+  version: '7.4.2',
+  description: 'Documentation for the Atlas platform',
+  sourceRepository: 'https://code.example.test/atlas/docs',
+  containerRepository: 'registry.example.test/atlas/docs',
+  upstreamName: 'Atlas Core',
+  upstreamVersion: '6.9.0',
+  independentFork: true,
+  modifiedAt: '2026-08-13',
   revision: '0123456789abcdef0123456789abcdef01234567',
-  date: '2026-08-13T00:00:00.000Z'
-})
+  date: '2026-08-13T00:00:00.000Z',
+  upstreamBase: 'Atlas Core 6.9.0',
+  sourceUrl: 'https://code.example.test/atlas/docs/tree/0123456789abcdef0123456789abcdef01234567'
+}
 const summaryPayload = {
   product,
   currentVersion: product.version,
@@ -42,7 +73,6 @@ const infoPayload = {
   workingDirectory: '/srv/wiki'
 }
 
-
 describe('system api helper', () => {
   test('fetches and validates system summary metadata', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(summaryPayload))
@@ -55,6 +85,20 @@ describe('system api helper', () => {
         Accept: 'application/json'
       }
     })
+  })
+
+  test('uses structurally valid server identity and strips uncontracted metadata', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        ...summaryPayload,
+        product: {
+          ...product,
+          deploymentChannel: 'private'
+        }
+      })
+    )
+
+    expect((await fetchSystemSummary(fetchImpl)).product).toEqual(product)
   })
 
   test('fetches and validates rich system info payloads', async () => {
@@ -71,32 +115,58 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed system info payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      ...infoPayload,
-      cpuCores: '8'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        ...infoPayload,
+        cpuCores: '8'
+      })
+    )
 
     await expect(Promise.resolve(fetchSystemInfo(fetchImpl, 'Bad system info'))).rejects.toThrow('Bad system info')
   })
 
   test('rejects a source URL that does not identify the reported revision', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      ...summaryPayload,
-      product: {
-        ...product,
-        sourceUrl: product.sourceRepository
-      }
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        ...summaryPayload,
+        product: {
+          ...product,
+          sourceUrl: product.sourceRepository
+        }
+      })
+    )
+
+    await expect(Promise.resolve(fetchSystemSummary(fetchImpl, 'Bad product metadata'))).rejects.toThrow('Bad product metadata')
+  })
+
+  test.each([
+    ['missing description', { description: undefined }],
+    ['abbreviated revision', { revision: product.revision.slice(0, 12) }],
+    ['non-canonical date', { date: 'August 13, 2026' }],
+    ['non-independent identity', { independentFork: false }],
+    ['mismatched upstream base', { upstreamBase: 'Another Product 1.0.0' }]
+  ])('rejects malformed product metadata: %s', async (label, override) => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        ...summaryPayload,
+        product: {
+          ...product,
+          ...override
+        }
+      })
+    )
 
     await expect(Promise.resolve(fetchSystemSummary(fetchImpl, 'Bad product metadata'))).rejects.toThrow('Bad product metadata')
   })
 
   test('fetches and validates system telemetry', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      telemetry: true,
-      telemetryClientId: 'client-123',
-      privateValue: 'must not be returned by helper'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        telemetry: true,
+        telemetryClientId: 'client-123',
+        privateValue: 'must not be returned by helper'
+      })
+    )
 
     expect(await fetchSystemTelemetry(fetchImpl)).toEqual({
       telemetry: true,
@@ -111,10 +181,12 @@ describe('system api helper', () => {
   })
 
   test('accepts null system telemetry client IDs', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      telemetry: false,
-      telemetryClientId: null
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        telemetry: false,
+        telemetryClientId: null
+      })
+    )
 
     expect(await fetchSystemTelemetry(fetchImpl)).toEqual({
       telemetry: false,
@@ -123,10 +195,12 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed system telemetry payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      telemetry: 'yes',
-      telemetryClientId: 'client-123'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        telemetry: 'yes',
+        telemetryClientId: 'client-123'
+      })
+    )
 
     await expect(Promise.resolve(fetchSystemTelemetry(fetchImpl, 'Bad telemetry payload'))).rejects.toThrow('Bad telemetry payload')
   })
@@ -144,12 +218,14 @@ describe('system api helper', () => {
   })
 
   test('fetches and validates export status payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      status: 'running',
-      progress: 42,
-      message: 'Export is running',
-      startedAt: '2026-04-25T12:00:00.000Z'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        status: 'running',
+        progress: 42,
+        message: 'Export is running',
+        startedAt: '2026-04-25T12:00:00.000Z'
+      })
+    )
 
     expect(await fetchSystemExportStatus(fetchImpl)).toEqual({
       status: 'running',
@@ -166,15 +242,17 @@ describe('system api helper', () => {
   })
 
   test('strips extra fields from export status payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      status: 'success',
-      progress: 100,
-      message: null,
-      startedAt: null,
-      archivePath: '/private/export.tar.gz',
-      entities: ['pages'],
-      privateNote: 'must not be returned by helper'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        status: 'success',
+        progress: 100,
+        message: null,
+        startedAt: null,
+        archivePath: '/private/export.tar.gz',
+        entities: ['pages'],
+        privateNote: 'must not be returned by helper'
+      })
+    )
 
     expect(await fetchSystemExportStatus(fetchImpl)).toEqual({
       status: 'success',
@@ -236,10 +314,12 @@ describe('system api helper', () => {
   })
 
   test('fetches and validates system host', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      host: 'https://docs.example.test',
-      title: 'must not be returned by helper'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        host: 'https://docs.example.test',
+        title: 'must not be returned by helper'
+      })
+    )
 
     expect(await fetchSystemHost(fetchImpl)).toEqual({
       host: 'https://docs.example.test'
@@ -287,17 +367,19 @@ describe('system api helper', () => {
   })
 
   test('fetches and validates SSL status payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      httpPort: 3000,
-      httpRedirection: true,
-      httpsPort: 3443,
-      sslDomain: 'docs.example.test',
-      sslExpirationDate: '2026-06-01T00:00:00.000Z',
-      sslProvider: 'letsencrypt',
-      sslStatus: 'OK',
-      sslSubscriberEmail: 'ops@example.test',
-      privateValue: 'must not be returned by helper'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        httpPort: 3000,
+        httpRedirection: true,
+        httpsPort: 3443,
+        sslDomain: 'docs.example.test',
+        sslExpirationDate: '2026-06-01T00:00:00.000Z',
+        sslProvider: 'letsencrypt',
+        sslStatus: 'OK',
+        sslSubscriberEmail: 'ops@example.test',
+        privateValue: 'must not be returned by helper'
+      })
+    )
 
     expect(await fetchSystemSsl(fetchImpl)).toEqual({
       httpPort: 3000,
@@ -318,16 +400,18 @@ describe('system api helper', () => {
   })
 
   test('accepts nullable SSL status fields', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      httpPort: 0,
-      httpRedirection: false,
-      httpsPort: 0,
-      sslDomain: null,
-      sslExpirationDate: null,
-      sslProvider: null,
-      sslStatus: 'OK',
-      sslSubscriberEmail: null
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        httpPort: 0,
+        httpRedirection: false,
+        httpsPort: 0,
+        sslDomain: null,
+        sslExpirationDate: null,
+        sslProvider: null,
+        sslStatus: 'OK',
+        sslSubscriberEmail: null
+      })
+    )
 
     expect(await fetchSystemSsl(fetchImpl)).toEqual({
       httpPort: 0,
@@ -397,10 +481,12 @@ describe('system api helper', () => {
   })
 
   test('fetches and normalizes system flags', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      { key: 'ldapdebug', value: true },
-      { key: 'sqllog', value: false }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        { key: 'ldapdebug', value: true },
+        { key: 'sqllog', value: false }
+      ])
+    )
 
     expect(await fetchSystemFlags(fetchImpl)).toEqual({
       ldapdebug: true,
@@ -422,16 +508,18 @@ describe('system api helper', () => {
   })
 
   test('fetches and validates system extensions', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      {
-        key: 'alpha',
-        title: 'Alpha Extension',
-        description: 'Alpha extension description.',
-        isInstalled: true,
-        isCompatible: false,
-        privateValue: 'must not be returned by helper'
-      }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          key: 'alpha',
+          title: 'Alpha Extension',
+          description: 'Alpha extension description.',
+          isInstalled: true,
+          isCompatible: false,
+          privateValue: 'must not be returned by helper'
+        }
+      ])
+    )
 
     expect(await fetchSystemExtensions(fetchImpl)).toEqual([
       {
@@ -451,15 +539,17 @@ describe('system api helper', () => {
   })
 
   test('rejects malformed system extensions payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      {
-        key: 'alpha',
-        title: 'Alpha Extension',
-        description: 'Alpha extension description.',
-        isInstalled: true,
-        isCompatible: 'yes'
-      }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          key: 'alpha',
+          title: 'Alpha Extension',
+          description: 'Alpha extension description.',
+          isInstalled: true,
+          isCompatible: 'yes'
+        }
+      ])
+    )
 
     await expect(Promise.resolve(fetchSystemExtensions(fetchImpl, 'Bad extensions payload'))).rejects.toThrow('Bad extensions payload')
   })
@@ -563,10 +653,12 @@ describe('system api helper', () => {
   })
 
   test('migrates pages to a locale through REST', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      message: 'Migrated content to target locale successfully.',
-      count: 3
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        message: 'Migrated content to target locale successfully.',
+        count: 3
+      })
+    )
 
     expect(await migratePagesToLocale(fetchImpl, 'en', 'fr')).toEqual({
       message: 'Migrated content to target locale successfully.',
@@ -660,10 +752,12 @@ describe('system api helper', () => {
   test('submits system flags update as xhr JSON and returns parsed message', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'System flags applied successfully.' }))
 
-    expect(await updateSystemFlags(fetchImpl, {
-      ldapdebug: true,
-      sqllog: false
-    })).toEqual({ message: 'System flags applied successfully.' })
+    expect(
+      await updateSystemFlags(fetchImpl, {
+        ldapdebug: true,
+        sqllog: false
+      })
+    ).toEqual({ message: 'System flags applied successfully.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/system/flags', {
       method: 'POST',
@@ -844,6 +938,8 @@ describe('system api helper', () => {
   test('propagates system export REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Target directory must be empty!' }, false))
 
-    await expect(Promise.resolve(startSystemExport(fetchImpl, ['pages'], './data/export', 'Bad export start'))).rejects.toThrow('Target directory must be empty!')
+    await expect(Promise.resolve(startSystemExport(fetchImpl, ['pages'], './data/export', 'Bad export start'))).rejects.toThrow(
+      'Target directory must be empty!'
+    )
   })
 })

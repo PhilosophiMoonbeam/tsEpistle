@@ -1,3 +1,5 @@
+import { sameOriginJsonFetch } from '../json-transport.ts'
+
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
 type PageIndexItem = {
@@ -37,11 +39,7 @@ const readPageIndexItems = (payload: unknown): PageIndexItem[] => {
   })
 }
 
-export const hydratePageIndex = async (
-  element: HTMLElement,
-  fetchImpl: FetchLike,
-  signal: AbortSignal
-): Promise<void> => {
+export const hydratePageIndex = async (element: HTMLElement, fetchImpl: FetchLike, signal: AbortSignal): Promise<void> => {
   try {
     const query = new URLSearchParams({
       path: element.dataset.indexPath ?? '',
@@ -50,7 +48,7 @@ export const hydratePageIndex = async (
       order: element.dataset.indexOrder ?? 'path',
       limit: element.dataset.indexLimit ?? '50'
     })
-    const response = await fetchImpl(`/_api/content-extensions/index?${query}`, {
+    const response = await sameOriginJsonFetch(fetchImpl, `/_api/content-extensions/index?${query}`, {
       credentials: 'same-origin',
       headers: { Accept: 'application/json' },
       signal

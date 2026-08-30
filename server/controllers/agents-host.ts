@@ -3,6 +3,8 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import type { Knex } from 'knex'
 import { z, ZodError } from 'zod'
 
+import type { DecideAgentApprovalRequest } from '../../shared/agents/contracts.ts'
+
 import { SkillValidationError } from '../agents/skills/parser.ts'
 import { agentCsrfMatches } from '../agents/csrf.ts'
 import { PersonalSkillMarkdownSchema, PersonalSkillNameSchema, PersonalSkillRegistry } from '../agents/skills/personal.ts'
@@ -195,11 +197,19 @@ const UpdatePersonalSkillSchema = z.strictObject({
 })
 const RemovePersonalSkillSchema = z.strictObject({ expectedVersionId: z.uuid() })
 const UUIDSchema = z.uuid()
-const DecisionSchema = z.strictObject({
-  decision: z.enum(['approved', 'denied']),
-  decisionNote: z.string().max(4_000).optional(),
-  confirmationPath: z.string().max(1_024).optional()
-})
+const DecisionSchema = z
+  .strictObject({
+    decision: z.enum(['approved', 'denied']),
+    decisionNote: z.string().max(4_000).optional(),
+    confirmationPath: z.string().max(1_024).optional()
+  })
+  .transform(
+    (input): DecideAgentApprovalRequest => ({
+      decision: input.decision,
+      ...(input.decisionNote === undefined ? {} : { decisionNote: input.decisionNote }),
+      ...(input.confirmationPath === undefined ? {} : { confirmationPath: input.confirmationPath })
+    })
+  )
 const CreateMemorySchema = z.strictObject({ target: z.enum(['agent', 'user']), content: z.string().min(1).max(2_200) })
 const UpdateMemorySchema = z.strictObject({
   expectedVersion: z.number().int().positive(),
@@ -954,7 +964,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const { groupIds, ...profileInput } = CreateAgentProviderProfileSchema.parse(req.body)
       const created = await wiki.providerRegistry.create({ ...profileInput, ...(groupIds === undefined ? {} : { groupIds }), actorId })
       const connectionCheck = await wiki.providerConformance.run(created.id, actorId)
-      if (connectionCheck.status === 'passed') await wiki.providerRegistry.setEnabled(created.id, true, actorId)
+      if (connectionCheck.status === 'passed') await wiki.providerRegistry.setEnabled(created.id, true, actorId, connectionCheck.profileVersionId)
       return res.status(201).json({ profile: await wiki.providerRegistry.getAdmin(created.id), connectionCheck })
     })
   )
@@ -968,7 +978,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const profile = await wiki.providerRegistry.update(profileId, { ...UpdateAgentProviderProfileSchema.parse(req.body), actorId })
       const connectionCheck = await wiki.providerConformance.run(profile.id, actorId)
       if (connectionCheck.status === 'passed' && (current.status === 'enabled' || !current.conformed))
-        await wiki.providerRegistry.setEnabled(profile.id, true, actorId)
+        await wiki.providerRegistry.setEnabled(profile.id, true, actorId, connectionCheck.profileVersionId)
       return res.json({ profile: await wiki.providerRegistry.getAdmin(profile.id), connectionCheck })
     })
   )
@@ -988,7 +998,8 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const actorId = requestSkillPrincipal(req).userId
       const input = z.strictObject({ enableOnSuccess: z.boolean().default(false) }).parse(req.body)
       const connectionCheck = await wiki.providerConformance.run(profileId, actorId)
-      if (connectionCheck.status === 'passed' && input.enableOnSuccess) await wiki.providerRegistry.setEnabled(profileId, true, actorId)
+      if (connectionCheck.status === 'passed' && input.enableOnSuccess)
+        await wiki.providerRegistry.setEnabled(profileId, true, actorId, connectionCheck.profileVersionId)
       return res.json({ profile: await wiki.providerRegistry.getAdmin(profileId), connectionCheck })
     })
   )
@@ -1002,9 +1013,11 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.post(
     '/_api/agents/admin/profiles/:profileId/enabled',
     asyncRoute(async (req, res) => {
-      if (!wiki.providerRegistry) throw providerAdminUnavailable()
+      if (!wiki.providerRegistry || !wiki.providerConformance) throw providerAdminUnavailable()
+      const profileId = UUIDSchema.parse(routeParameter(req, 'profileId'))
       const enabled = z.strictObject({ enabled: z.boolean() }).parse(req.body).enabled
-      await wiki.providerRegistry.setEnabled(UUIDSchema.parse(routeParameter(req, 'profileId')), enabled, requestSkillPrincipal(req).userId)
+      const expectedVersionId = enabled ? (await wiki.providerConformance.latest(profileId))?.profileVersionId : undefined
+      await wiki.providerRegistry.setEnabled(profileId, enabled, requestSkillPrincipal(req).userId, expectedVersionId)
       return res.sendStatus(204)
     })
   )

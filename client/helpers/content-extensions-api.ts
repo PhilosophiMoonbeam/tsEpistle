@@ -1,3 +1,4 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
 import { isContentExtensionKey, type ContentExtensionDefinition, type ContentExtensionKey } from '../../shared/content-extensions.ts'
 
 type JsonHeaders = {
@@ -23,8 +24,7 @@ export type ContentExtensionsStatus = {
   extensions: ContentExtensionStatus[]
 }
 
-
-function normalizeExtension (input: unknown, fallbackMessage: string): ContentExtensionStatus {
+function normalizeExtension(input: unknown, fallbackMessage: string): ContentExtensionStatus {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error(fallbackMessage)
   const key = Reflect.get(input, 'key')
   const version = Reflect.get(input, 'version')
@@ -59,11 +59,11 @@ function normalizeExtension (input: unknown, fallbackMessage: string): ContentEx
   }
 }
 
-export async function fetchContentExtensions (
+export async function fetchContentExtensions(
   fetchImpl: FetchImpl,
   fallbackMessage = 'Content extensions could not be loaded.'
 ): Promise<ContentExtensionsStatus> {
-  const response = await fetchImpl('/_api/content-extensions', {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/content-extensions', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'

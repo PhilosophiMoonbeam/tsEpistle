@@ -1,3 +1,4 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
 
 type JsonHeaders = {
@@ -64,15 +65,19 @@ type CommentCreateInput = {
   guestEmail: string
 }
 
-
-function normalizePositiveInteger (value: unknown, fallbackMessage: string): number {
+function normalizePositiveInteger(value: unknown, fallbackMessage: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new Error(fallbackMessage)
   return value
 }
 
-function normalizeCommentRow (payload: unknown, fallbackMessage: string): CommentRow {
+function normalizeCommentRow(payload: unknown, fallbackMessage: string): CommentRow {
   if (!isRecord(payload)) throw new Error(fallbackMessage)
-  if (typeof payload.render !== 'string' || typeof payload.authorName !== 'string' || typeof payload.createdAt !== 'string' || typeof payload.updatedAt !== 'string') {
+  if (
+    typeof payload.render !== 'string' ||
+    typeof payload.authorName !== 'string' ||
+    typeof payload.createdAt !== 'string' ||
+    typeof payload.updatedAt !== 'string'
+  ) {
     throw new Error(fallbackMessage)
   }
   return {
@@ -84,13 +89,13 @@ function normalizeCommentRow (payload: unknown, fallbackMessage: string): Commen
   }
 }
 
-function normalizeMessage (payload: unknown, fallbackMessage: string): CommentSaveResponse {
+function normalizeMessage(payload: unknown, fallbackMessage: string): CommentSaveResponse {
   if (!isRecord(payload) || typeof payload.message !== 'string') throw new Error(fallbackMessage)
   return { message: payload.message }
 }
 
-async function sendJson (fetchImpl: FetchImpl, path: string, method: string, body: unknown, fallbackMessage: string): Promise<unknown> {
-  const response = await fetchImpl(path, {
+async function sendJson(fetchImpl: FetchImpl, path: string, method: string, body: unknown, fallbackMessage: string): Promise<unknown> {
+  const response = await sameOriginJsonFetch(fetchImpl, path, {
     method,
     credentials: 'same-origin',
     headers: {
@@ -102,7 +107,7 @@ async function sendJson (fetchImpl: FetchImpl, path: string, method: string, bod
   return parseJsonResponse(response, fallbackMessage)
 }
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const hasHeaderReader = response && response.headers && typeof response.headers.get === 'function'
   const contentType = hasHeaderReader ? response.headers!.get('content-type') || '' : ''
 
@@ -112,10 +117,22 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   }
 
   if (!response.ok) {
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { error?: unknown }).error === 'string' && (payload as { error: string }).error.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { error?: unknown }).error === 'string' &&
+      (payload as { error: string }).error.length > 0
+    ) {
       throw new Error((payload as { error: string }).error)
     }
-    if (payload && typeof payload === 'object' && !Array.isArray(payload) && typeof (payload as { message?: unknown }).message === 'string' && (payload as { message: string }).message.length > 0) {
+    if (
+      payload &&
+      typeof payload === 'object' &&
+      !Array.isArray(payload) &&
+      typeof (payload as { message?: unknown }).message === 'string' &&
+      (payload as { message: string }).message.length > 0
+    ) {
       throw new Error((payload as { message: string }).message)
     }
     throw new Error(fallbackMessage)
@@ -128,8 +145,14 @@ async function parseJsonResponse (response: JsonResponse, fallbackMessage: strin
   return payload
 }
 
-function normalizeCommentProviderConfig (row: unknown, fallbackMessage: string): CommentProviderConfig {
-  if (!row || typeof row !== 'object' || Array.isArray(row) || typeof (row as { key?: unknown }).key !== 'string' || typeof (row as { value?: unknown }).value !== 'string') {
+function normalizeCommentProviderConfig(row: unknown, fallbackMessage: string): CommentProviderConfig {
+  if (
+    !row ||
+    typeof row !== 'object' ||
+    Array.isArray(row) ||
+    typeof (row as { key?: unknown }).key !== 'string' ||
+    typeof (row as { value?: unknown }).value !== 'string'
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -150,7 +173,7 @@ function normalizeCommentProviderConfig (row: unknown, fallbackMessage: string):
   }
 }
 
-function normalizeCommentProvider (row: unknown, fallbackMessage: string): CommentProvider {
+function normalizeCommentProvider(row: unknown, fallbackMessage: string): CommentProvider {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
     throw new Error(fallbackMessage)
   }
@@ -172,15 +195,17 @@ function normalizeCommentProvider (row: unknown, fallbackMessage: string): Comme
     logo: provider.logo as string,
     website: provider.website as string,
     isAvailable: provider.isAvailable,
-    config: provider.config.map(cfg => normalizeCommentProviderConfig(cfg, fallbackMessage)).sort((a, b) => {
-      const aOrder = Number.isFinite(a.value.order) ? a.value.order! : Number.MAX_SAFE_INTEGER
-      const bOrder = Number.isFinite(b.value.order) ? b.value.order! : Number.MAX_SAFE_INTEGER
-      return aOrder - bOrder
-    })
+    config: provider.config
+      .map(cfg => normalizeCommentProviderConfig(cfg, fallbackMessage))
+      .sort((a, b) => {
+        const aOrder = Number.isFinite(a.value.order) ? a.value.order! : Number.MAX_SAFE_INTEGER
+        const bOrder = Number.isFinite(b.value.order) ? b.value.order! : Number.MAX_SAFE_INTEGER
+        return aOrder - bOrder
+      })
   }
 }
 
-function normalizeCommentProvidersPayload (payload: unknown, fallbackMessage: string): CommentProvider[] {
+function normalizeCommentProvidersPayload(payload: unknown, fallbackMessage: string): CommentProvider[] {
   if (!Array.isArray(payload)) {
     throw new Error(fallbackMessage)
   }
@@ -188,8 +213,8 @@ function normalizeCommentProvidersPayload (payload: unknown, fallbackMessage: st
   return payload.map(row => normalizeCommentProvider(row, fallbackMessage))
 }
 
-export async function fetchCommentProviders (fetchImpl: FetchImpl, fallbackMessage = 'Comment providers response is invalid'): Promise<CommentProvider[]> {
-  const response = await fetchImpl('/_api/comments/providers', {
+export async function fetchCommentProviders(fetchImpl: FetchImpl, fallbackMessage = 'Comment providers response is invalid'): Promise<CommentProvider[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/comments/providers', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -199,8 +224,14 @@ export async function fetchCommentProviders (fetchImpl: FetchImpl, fallbackMessa
   return normalizeCommentProvidersPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-function normalizeCommentSavePayload (payload: unknown, fallbackMessage: string): CommentSaveResponse {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || typeof (payload as { message?: unknown }).message !== 'string' || (payload as { message: string }).message.length < 1) {
+function normalizeCommentSavePayload(payload: unknown, fallbackMessage: string): CommentSaveResponse {
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    Array.isArray(payload) ||
+    typeof (payload as { message?: unknown }).message !== 'string' ||
+    (payload as { message: string }).message.length < 1
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -209,8 +240,12 @@ function normalizeCommentSavePayload (payload: unknown, fallbackMessage: string)
   }
 }
 
-export async function saveCommentProviders (fetchImpl: FetchImpl, providers: unknown[], fallbackMessage = 'Comment providers save response is invalid'): Promise<CommentSaveResponse> {
-  const response = await fetchImpl('/_api/comments/providers', {
+export async function saveCommentProviders(
+  fetchImpl: FetchImpl,
+  providers: unknown[],
+  fallbackMessage = 'Comment providers save response is invalid'
+): Promise<CommentSaveResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/comments/providers', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -223,8 +258,8 @@ export async function saveCommentProviders (fetchImpl: FetchImpl, providers: unk
   return normalizeCommentSavePayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function fetchComments (fetchImpl: FetchImpl, pageId: number, fallbackMessage = 'Comments response is invalid'): Promise<CommentRow[]> {
-  const response = await fetchImpl(`/_api/comments?pageId=${encodeURIComponent(pageId)}`, {
+export async function fetchComments(fetchImpl: FetchImpl, pageId: number, fallbackMessage = 'Comments response is invalid'): Promise<CommentRow[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/comments?pageId=${encodeURIComponent(pageId)}`, {
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
@@ -233,14 +268,14 @@ export async function fetchComments (fetchImpl: FetchImpl, pageId: number, fallb
   return payload.map(row => normalizeCommentRow(row, fallbackMessage))
 }
 
-export async function createComment (fetchImpl: FetchImpl, input: CommentCreateInput, fallbackMessage = 'Comment creation failed'): Promise<{ id: number }> {
+export async function createComment(fetchImpl: FetchImpl, input: CommentCreateInput, fallbackMessage = 'Comment creation failed'): Promise<{ id: number }> {
   const payload = await sendJson(fetchImpl, '/_api/comments', 'POST', input, fallbackMessage)
   if (!isRecord(payload)) throw new Error(fallbackMessage)
   return { id: normalizePositiveInteger(payload.id, fallbackMessage) }
 }
 
-export async function fetchComment (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Comment response is invalid'): Promise<CommentDetails> {
-  const response = await fetchImpl(`/_api/comments/${encodeURIComponent(id)}`, {
+export async function fetchComment(fetchImpl: FetchImpl, id: number, fallbackMessage = 'Comment response is invalid'): Promise<CommentDetails> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/comments/${encodeURIComponent(id)}`, {
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }
   })
@@ -249,14 +284,14 @@ export async function fetchComment (fetchImpl: FetchImpl, id: number, fallbackMe
   return { id: normalizePositiveInteger(payload.id, fallbackMessage), content: payload.content }
 }
 
-export async function updateComment (fetchImpl: FetchImpl, id: number, content: string, fallbackMessage = 'Comment update failed'): Promise<{ render: string }> {
+export async function updateComment(fetchImpl: FetchImpl, id: number, content: string, fallbackMessage = 'Comment update failed'): Promise<{ render: string }> {
   const payload = await sendJson(fetchImpl, `/_api/comments/${encodeURIComponent(id)}`, 'PATCH', { content }, fallbackMessage)
   if (!isRecord(payload) || typeof payload.render !== 'string') throw new Error(fallbackMessage)
   return { render: payload.render }
 }
 
-export async function deleteComment (fetchImpl: FetchImpl, id: number, fallbackMessage = 'Comment deletion failed'): Promise<CommentSaveResponse> {
-  const response = await fetchImpl(`/_api/comments/${encodeURIComponent(id)}`, {
+export async function deleteComment(fetchImpl: FetchImpl, id: number, fallbackMessage = 'Comment deletion failed'): Promise<CommentSaveResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/comments/${encodeURIComponent(id)}`, {
     method: 'DELETE',
     credentials: 'same-origin',
     headers: { Accept: 'application/json' }

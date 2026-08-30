@@ -1,13 +1,18 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import type { AgentActionName, AgentEventData, AgentExecutionMode, AgentRunStatus } from '../../shared/agents/contracts.ts'
+import {
+  isTerminalAgentRunStatus,
+  type AgentActionName,
+  type AgentEventData,
+  type AgentExecutionMode,
+  type AgentRunStatus
+} from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError } from './repository.ts'
 
 const ACTIVE_STATUSES: readonly AgentRunStatus[] = ['queued', 'running', 'awaiting_approval']
-const TERMINAL_STATUSES: readonly AgentRunStatus[] = ['succeeded', 'partial', 'failed', 'cancelled', 'recovery_required']
 const sha256 = (value: string): string => createHash('sha256').update(value).digest('hex')
-const dateValue = (value: Date | string | null): number | null => value === null ? null : new Date(value).valueOf()
+const dateValue = (value: Date | string | null): number | null => (value === null ? null : new Date(value).valueOf())
 const isPostgres = (knex: Knex | Knex.Transaction): boolean => knex.client.config.client === 'pg' || knex.client.config.client === 'postgresql'
 
 const ACTION_CONTINUATION_KEY = '__wikiApprovalContinuation'
@@ -72,7 +77,21 @@ const decodeActionContinuation = (state: RuntimeState): AgentApprovalContinuatio
     authoritySha256,
     checkpointSha256
   } = checkpoint
-  const body: CheckpointBody = { version, runId, ownerId, attempt, actionCallId, actionName, actionInput, actionInputSha256, proposalId, approvalId, proposalInputHash, authorityVersion, authoritySha256 }
+  const body: CheckpointBody = {
+    version,
+    runId,
+    ownerId,
+    attempt,
+    actionCallId,
+    actionName,
+    actionInput,
+    actionInputSha256,
+    proposalId,
+    approvalId,
+    proposalInputHash,
+    authorityVersion,
+    authoritySha256
+  }
   let hashesValid = false
   let encodedBytes = Number.POSITIVE_INFINITY
   try {
@@ -102,13 +121,15 @@ const decodeActionContinuation = (state: RuntimeState): AgentApprovalContinuatio
     !SHA256.test(authoritySha256) ||
     !SHA256.test(checkpointSha256) ||
     !hashesValid
-  ) throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_CORRUPT', 'Stored action continuation failed validation', 500)
+  )
+    throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_CORRUPT', 'Stored action continuation failed validation', 500)
   return checkpoint
 }
 
 const encodedRuntimeState = (state: RuntimeState): Buffer => {
   const encoded = canonicalJson(state)
-  if (Buffer.byteLength(encoded, 'utf8') > MAX_RUNTIME_STATE_BYTES) throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_TOO_LARGE', 'Runtime state with action continuation exceeds its size limit', 500)
+  if (Buffer.byteLength(encoded, 'utf8') > MAX_RUNTIME_STATE_BYTES)
+    throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_TOO_LARGE', 'Runtime state with action continuation exceeds its size limit', 500)
   return Buffer.from(encoded)
 }
 
@@ -162,7 +183,7 @@ interface RunRow extends Omit<AgentRunRecord, 'status' | 'leaseExpiresAt' | 'can
 }
 
 const runStatus = (value: string): AgentRunStatus => {
-  if (ACTIVE_STATUSES.includes(value as AgentRunStatus) || TERMINAL_STATUSES.includes(value as AgentRunStatus)) return value as AgentRunStatus
+  if (ACTIVE_STATUSES.includes(value as AgentRunStatus) || isTerminalAgentRunStatus(value as AgentRunStatus)) return value as AgentRunStatus
   throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Agent run status is invalid', 500)
 }
 
@@ -199,23 +220,43 @@ const nonNegativeInteger = (value: number, name: string): number => {
 
 const dayKey = (date: Date): string => date.toISOString().slice(0, 10)
 
-const reserveQuotaInTransaction = async (transaction: Knex.Transaction, runId: string, ownerId: number, request: AgentQuotaRequest, limits: AgentQuotaLimits, now: Date, expiresAt: Date): Promise<void> => {
+const reserveQuotaInTransaction = async (
+  transaction: Knex.Transaction,
+  runId: string,
+  ownerId: number,
+  request: AgentQuotaRequest,
+  limits: AgentQuotaLimits,
+  now: Date,
+  expiresAt: Date
+): Promise<void> => {
   const tokens = nonNegativeInteger(request.tokens, 'Reserved tokens')
   const costMicros = nonNegativeInteger(request.costMicros, 'Reserved cost')
   const tokenLimit = nonNegativeInteger(limits.dailyTokens, 'Daily token limit')
   const costLimit = nonNegativeInteger(limits.dailyCostMicros, 'Daily cost limit')
   await advisoryLock(transaction, ownerId)
 
-  const existingReservation = await transaction('agentQuotaReservations').where({ runId }).first() as { ownerId: number, reservedTokens: number | string, reservedCostMicros: number | string } | undefined
+  const existingReservation = (await transaction('agentQuotaReservations').where({ runId }).first()) as
+    | { ownerId: number; reservedTokens: number | string; reservedCostMicros: number | string }
+    | undefined
   if (existingReservation) {
-    if (existingReservation.ownerId !== ownerId || Number(existingReservation.reservedTokens) !== tokens || Number(existingReservation.reservedCostMicros) !== costMicros) throw new AgentRepositoryError('QUOTA_RESERVATION_MISMATCH', 'Run quota reservation does not match its retry', 409)
+    if (
+      existingReservation.ownerId !== ownerId ||
+      Number(existingReservation.reservedTokens) !== tokens ||
+      Number(existingReservation.reservedCostMicros) !== costMicros
+    )
+      throw new AgentRepositoryError('QUOTA_RESERVATION_MISMATCH', 'Run quota reservation does not match its retry', 409)
     return
   }
 
   const day = dayKey(now)
-  let daily = await transaction('agentQuotaDaily').where({ ownerId, day }).forUpdate().first() as { reservedTokens: number | string, consumedTokens: number | string, reservedCostMicros: number | string, consumedCostMicros: number | string } | undefined
+  let daily = (await transaction('agentQuotaDaily').where({ ownerId, day }).forUpdate().first()) as
+    | { reservedTokens: number | string; consumedTokens: number | string; reservedCostMicros: number | string; consumedCostMicros: number | string }
+    | undefined
   if (!daily) {
-    await transaction('agentQuotaDaily').insert({ ownerId, day, reservedTokens: 0, consumedTokens: 0, reservedCostMicros: 0, consumedCostMicros: 0, updatedAt: now }).onConflict(['ownerId', 'day']).ignore()
+    await transaction('agentQuotaDaily')
+      .insert({ ownerId, day, reservedTokens: 0, consumedTokens: 0, reservedCostMicros: 0, consumedCostMicros: 0, updatedAt: now })
+      .onConflict(['ownerId', 'day'])
+      .ignore()
     daily = await transaction('agentQuotaDaily').where({ ownerId, day }).forUpdate().first()
   }
   if (!daily) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota row is missing', 500)
@@ -223,13 +264,90 @@ const reserveQuotaInTransaction = async (transaction: Knex.Transaction, runId: s
   const consumedTokens = Number(daily.consumedTokens)
   const reservedCost = Number(daily.reservedCostMicros)
   const consumedCost = Number(daily.consumedCostMicros)
-  if (reservedTokens + consumedTokens + tokens > tokenLimit || reservedCost + consumedCost + costMicros > costLimit) throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Agent daily quota is exhausted', 429)
+  if (reservedTokens + consumedTokens + tokens > tokenLimit || reservedCost + consumedCost + costMicros > costLimit)
+    throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Agent daily quota is exhausted', 429)
 
-  await transaction('agentQuotaDaily').where({ ownerId, day }).update({ reservedTokens: reservedTokens + tokens, reservedCostMicros: reservedCost + costMicros, updatedAt: now })
-  await transaction('agentQuotaReservations').insert({ runId, ownerId, day, reservedTokens: tokens, reservedCostMicros: costMicros, consumedTokens: 0, consumedCostMicros: 0, status: 'reserved', expiresAt, heartbeatAt: now, reconciledAt: null })
+  await transaction('agentQuotaDaily')
+    .where({ ownerId, day })
+    .update({ reservedTokens: reservedTokens + tokens, reservedCostMicros: reservedCost + costMicros, updatedAt: now })
+  await transaction('agentQuotaReservations').insert({
+    runId,
+    ownerId,
+    day,
+    reservedTokens: tokens,
+    reservedCostMicros: costMicros,
+    consumedTokens: 0,
+    consumedCostMicros: 0,
+    status: 'reserved',
+    expiresAt,
+    heartbeatAt: now,
+    reconciledAt: null
+  })
 }
 
-export const reserveAgentRunQuota = async (knex: Knex, runId: string, ownerId: number, request: AgentQuotaRequest, limits: AgentQuotaLimits, expiresAt: Date, now = new Date()): Promise<void> => knex.transaction(transaction => reserveQuotaInTransaction(transaction, runId, ownerId, request, limits, now, expiresAt))
+export const reserveAgentRunQuota = async (
+  knex: Knex,
+  runId: string,
+  ownerId: number,
+  request: AgentQuotaRequest,
+  limits: AgentQuotaLimits,
+  expiresAt: Date,
+  now = new Date()
+): Promise<void> => knex.transaction(transaction => reserveQuotaInTransaction(transaction, runId, ownerId, request, limits, now, expiresAt))
+
+export const ensureAgentRunQuota = async (
+  knex: Knex,
+  runId: string,
+  ownerId: number,
+  target: AgentQuotaRequest,
+  limits: AgentQuotaLimits,
+  expiresAt: Date,
+  now = new Date()
+): Promise<void> => {
+  const targetTokens = nonNegativeInteger(target.tokens, 'Reserved token target')
+  const targetCost = nonNegativeInteger(target.costMicros, 'Reserved cost target')
+  const tokenLimit = nonNegativeInteger(limits.dailyTokens, 'Daily token limit')
+  const costLimit = nonNegativeInteger(limits.dailyCostMicros, 'Daily cost limit')
+  await knex.transaction(async transaction => {
+    await advisoryLock(transaction, ownerId)
+    const reservation = (await transaction('agentQuotaReservations').where({ runId, ownerId }).forUpdate().first()) as
+      | { day: string; reservedTokens: number | string; reservedCostMicros: number | string; status: string; expiresAt: Date | string }
+      | undefined
+    if (!reservation) throw new AgentRepositoryError('QUOTA_RESERVATION_NOT_FOUND', 'Agent quota reservation was not found', 404)
+    if (reservation.status !== 'reserved') throw new AgentRepositoryError('QUOTA_RESERVATION_RECONCILED', 'Agent quota reservation is no longer active', 409)
+    const reservedTokens = Number(reservation.reservedTokens)
+    const reservedCost = Number(reservation.reservedCostMicros)
+    const additionalTokens = Math.max(0, targetTokens - reservedTokens)
+    const additionalCost = Math.max(0, targetCost - reservedCost)
+    if (additionalTokens === 0 && additionalCost === 0) return
+    const daily = (await transaction('agentQuotaDaily').where({ ownerId, day: reservation.day }).forUpdate().first()) as
+      | { reservedTokens: number | string; consumedTokens: number | string; reservedCostMicros: number | string; consumedCostMicros: number | string }
+      | undefined
+    if (!daily) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota row is missing', 500)
+    const dailyReservedTokens = Number(daily.reservedTokens)
+    const dailyConsumedTokens = Number(daily.consumedTokens)
+    const dailyReservedCost = Number(daily.reservedCostMicros)
+    const dailyConsumedCost = Number(daily.consumedCostMicros)
+    if (dailyReservedTokens + dailyConsumedTokens + additionalTokens > tokenLimit || dailyReservedCost + dailyConsumedCost + additionalCost > costLimit) {
+      throw new AgentRepositoryError('AGENT_QUOTA_EXHAUSTED', 'Agent daily quota is exhausted', 429)
+    }
+    await transaction('agentQuotaDaily')
+      .where({ ownerId, day: reservation.day })
+      .update({
+        reservedTokens: dailyReservedTokens + additionalTokens,
+        reservedCostMicros: dailyReservedCost + additionalCost,
+        updatedAt: now
+      })
+    await transaction('agentQuotaReservations')
+      .where({ runId, ownerId, status: 'reserved' })
+      .update({
+        reservedTokens: reservedTokens + additionalTokens,
+        reservedCostMicros: reservedCost + additionalCost,
+        expiresAt: new Date(Math.max(new Date(reservation.expiresAt).valueOf(), expiresAt.valueOf())),
+        heartbeatAt: now
+      })
+  })
+}
 
 export interface ReconcileAgentQuotaInput {
   readonly runId: string
@@ -246,26 +364,51 @@ export const reconcileAgentRunQuota = async (knex: Knex, input: ReconcileAgentQu
   const now = input.now ?? new Date()
   await knex.transaction(async transaction => {
     await advisoryLock(transaction, input.ownerId)
-    const reservation = await transaction('agentQuotaReservations').where({ runId: input.runId, ownerId: input.ownerId }).forUpdate().first() as { day: string, reservedTokens: number | string, reservedCostMicros: number | string, consumedTokens: number | string, consumedCostMicros: number | string, status: string } | undefined
+    const reservation = (await transaction('agentQuotaReservations').where({ runId: input.runId, ownerId: input.ownerId }).forUpdate().first()) as
+      | {
+          day: string
+          reservedTokens: number | string
+          reservedCostMicros: number | string
+          consumedTokens: number | string
+          consumedCostMicros: number | string
+          status: string
+        }
+      | undefined
     if (!reservation) throw new AgentRepositoryError('QUOTA_RESERVATION_NOT_FOUND', 'Agent quota reservation was not found', 404)
     if (reservation.status !== 'reserved') {
-      if (reservation.status === input.status && Number(reservation.consumedTokens) === consumedTokens && Number(reservation.consumedCostMicros) === consumedCost) return
+      if (
+        reservation.status === input.status &&
+        Number(reservation.consumedTokens) === consumedTokens &&
+        Number(reservation.consumedCostMicros) === consumedCost
+      )
+        return
       throw new AgentRepositoryError('QUOTA_RESERVATION_RECONCILED', 'Agent quota reservation was already reconciled differently', 409)
     }
-    if (input.status === 'released' && (consumedTokens !== 0 || consumedCost !== 0)) throw new AgentRepositoryError('INVALID_AGENT_QUOTA', 'Released quota cannot record consumption', 400)
-    const daily = await transaction('agentQuotaDaily').where({ ownerId: input.ownerId, day: reservation.day }).forUpdate().first() as { reservedTokens: number | string, consumedTokens: number | string, reservedCostMicros: number | string, consumedCostMicros: number | string } | undefined
+    if (input.status === 'released' && (consumedTokens !== 0 || consumedCost !== 0))
+      throw new AgentRepositoryError('INVALID_AGENT_QUOTA', 'Released quota cannot record consumption', 400)
+    const daily = (await transaction('agentQuotaDaily').where({ ownerId: input.ownerId, day: reservation.day }).forUpdate().first()) as
+      | { reservedTokens: number | string; consumedTokens: number | string; reservedCostMicros: number | string; consumedCostMicros: number | string }
+      | undefined
     if (!daily) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota row is missing', 500)
     const reservedTokens = Number(reservation.reservedTokens)
     const reservedCost = Number(reservation.reservedCostMicros)
-    if (Number(daily.reservedTokens) < reservedTokens || Number(daily.reservedCostMicros) < reservedCost) throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota counters are inconsistent', 500)
-    await transaction('agentQuotaDaily').where({ ownerId: input.ownerId, day: reservation.day }).update({
-      reservedTokens: Number(daily.reservedTokens) - reservedTokens,
-      consumedTokens: Number(daily.consumedTokens) + consumedTokens,
-      reservedCostMicros: Number(daily.reservedCostMicros) - reservedCost,
-      consumedCostMicros: Number(daily.consumedCostMicros) + consumedCost,
-      updatedAt: now
-    })
-    await transaction('agentQuotaReservations').where({ runId: input.runId, status: 'reserved' }).update({ status: input.status, consumedTokens, consumedCostMicros: consumedCost, reconciledAt: now, heartbeatAt: now })
+    if (consumedTokens > reservedTokens || consumedCost > reservedCost) {
+      throw new AgentRepositoryError('QUOTA_RESERVATION_EXCEEDED', 'Agent usage exceeds its held quota reservation', 409)
+    }
+    if (Number(daily.reservedTokens) < reservedTokens || Number(daily.reservedCostMicros) < reservedCost)
+      throw new AgentRepositoryError('AGENT_QUOTA_CORRUPT', 'Agent daily quota counters are inconsistent', 500)
+    await transaction('agentQuotaDaily')
+      .where({ ownerId: input.ownerId, day: reservation.day })
+      .update({
+        reservedTokens: Number(daily.reservedTokens) - reservedTokens,
+        consumedTokens: Number(daily.consumedTokens) + consumedTokens,
+        reservedCostMicros: Number(daily.reservedCostMicros) - reservedCost,
+        consumedCostMicros: Number(daily.consumedCostMicros) + consumedCost,
+        updatedAt: now
+      })
+    await transaction('agentQuotaReservations')
+      .where({ runId: input.runId, status: 'reserved' })
+      .update({ status: input.status, consumedTokens, consumedCostMicros: consumedCost, reconciledAt: now, heartbeatAt: now })
   })
 }
 
@@ -301,55 +444,69 @@ export interface AdmitAgentRunInput {
   readonly now?: Date
 }
 
-const admissionEnvelope = (input: AdmitAgentRunInput): string => canonicalJson({
-  sessionId: input.sessionId,
-  clientRequestId: input.clientRequestId,
-  expectedSessionVersion: input.expectedSessionVersion,
-  profileResolutionSha256: input.profileResolutionSha256,
-  goalId: input.goalId ?? null,
-  goalContinuation: input.goalContinuation ?? null,
-  userMessageVisible: input.userMessageVisible ?? true,
-  content: input.content,
-  currentPage: input.currentPage ?? null,
-  providerProfileVersionId: input.providerProfileVersionId,
-  transportKind: input.transportKind,
-  model: input.model,
-  executionMode: input.executionMode,
-  profilePolicyVersion: input.profilePolicyVersion,
-  defaultGeneration: input.defaultGeneration,
-  capabilityRevision: input.capabilityRevision,
-  pricingRevision: input.pricingRevision,
-  promptVersion: input.promptVersion,
-  skillVersionIds: input.skillVersionIds,
-  quota: input.quota
-})
+const admissionEnvelope = (input: AdmitAgentRunInput): string =>
+  canonicalJson({
+    sessionId: input.sessionId,
+    clientRequestId: input.clientRequestId,
+    expectedSessionVersion: input.expectedSessionVersion,
+    profileResolutionSha256: input.profileResolutionSha256,
+    goalId: input.goalId ?? null,
+    goalContinuation: input.goalContinuation ?? null,
+    userMessageVisible: input.userMessageVisible ?? true,
+    content: input.content,
+    currentPage: input.currentPage ?? null,
+    providerProfileVersionId: input.providerProfileVersionId,
+    transportKind: input.transportKind,
+    model: input.model,
+    executionMode: input.executionMode,
+    profilePolicyVersion: input.profilePolicyVersion,
+    defaultGeneration: input.defaultGeneration,
+    capabilityRevision: input.capabilityRevision,
+    pricingRevision: input.pricingRevision,
+    promptVersion: input.promptVersion,
+    skillVersionIds: input.skillVersionIds,
+    quota: input.quota
+  })
 
 const nextMessageOrdinal = async (transaction: Knex.Transaction, sessionId: string): Promise<number> => {
-  const latest = await transaction('agentMessages').where({ sessionId }).max('ordinal as ordinal').first() as { ordinal: number | string | null } | undefined
+  const latest = (await transaction('agentMessages').where({ sessionId }).max('ordinal as ordinal').first()) as { ordinal: number | string | null } | undefined
   return Number(latest?.ordinal ?? 0) + 1
 }
 
-const queuedEventData = (runId: string, currentPage?: Readonly<Record<string, unknown>>): { data: string, dataSha256: string } => {
+const queuedEventData = (runId: string, currentPage?: Readonly<Record<string, unknown>>): { data: string; dataSha256: string } => {
   const value: AgentEventData = { runId, status: 'queued', ...(currentPage === undefined ? {} : { currentPage }) }
   const data = canonicalJson(value)
   return { data, dataSha256: sha256(data) }
 }
 
-export const admitAgentRunInTransaction = async (transaction: Knex.Transaction, input: AdmitAgentRunInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> => {
-  if (!/^[a-f0-9]{64}$/.test(input.profileResolutionSha256)) throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Profile resolution hash is invalid', 400)
-  if (input.content.length < 1 || input.content.length > 32_000) throw new AgentRepositoryError('INVALID_AGENT_MESSAGE', 'Agent message content is invalid', 400)
-  if ((input.goalId === undefined) !== (input.goalContinuation === undefined) || (input.goalContinuation !== undefined && (!Number.isSafeInteger(input.goalContinuation) || input.goalContinuation < 0))) {
+export const admitAgentRunInTransaction = async (
+  transaction: Knex.Transaction,
+  input: AdmitAgentRunInput
+): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> => {
+  if (!/^[a-f0-9]{64}$/.test(input.profileResolutionSha256))
+    throw new AgentRepositoryError('INVALID_PROFILE_RESOLUTION', 'Profile resolution hash is invalid', 400)
+  if (input.content.length < 1 || input.content.length > 32_000)
+    throw new AgentRepositoryError('INVALID_AGENT_MESSAGE', 'Agent message content is invalid', 400)
+  if (
+    (input.goalId === undefined) !== (input.goalContinuation === undefined) ||
+    (input.goalContinuation !== undefined && (!Number.isSafeInteger(input.goalContinuation) || input.goalContinuation < 0))
+  ) {
     throw new AgentRepositoryError('INVALID_AGENT_GOAL', 'Agent goal association is invalid', 400)
   }
   const inputHash = sha256(admissionEnvelope(input))
   const now = input.now ?? new Date()
   await advisoryLock(transaction, input.ownerId)
-  const retry = await transaction<RunRow>('agentRuns').where({ sessionId: input.sessionId, clientRequestId: input.clientRequestId, ownerId: input.ownerId }).first()
+  const retry = await transaction<RunRow>('agentRuns')
+    .where({ sessionId: input.sessionId, clientRequestId: input.clientRequestId, ownerId: input.ownerId })
+    .first()
   if (retry) {
-    if (retry.clientRequestSha256 !== inputHash) throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Client request ID was reused with different input', 409)
+    if (retry.clientRequestSha256 !== inputHash)
+      throw new AgentRepositoryError('RUN_IDEMPOTENCY_MISMATCH', 'Client request ID was reused with different input', 409)
     return { run: runRecord(retry), replayed: true }
   }
-  const session = await transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt').forUpdate().first() as { version: number } | undefined
+  const session = (await transaction('agentSessions').where({ id: input.sessionId, ownerId: input.ownerId }).whereNull('deletedAt').forUpdate().first()) as
+    | { version: number }
+    | undefined
   if (!session) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
   if (session.version !== input.expectedSessionVersion) throw new AgentRepositoryError('SESSION_VERSION_CHANGED', 'Agent session changed concurrently', 409)
   const active = await transaction('agentRuns').where({ sessionId: input.sessionId }).whereIn('status', ACTIVE_STATUSES).first('id')
@@ -360,8 +517,32 @@ export const admitAgentRunInTransaction = async (transaction: Knex.Transaction, 
   const assistantMessageId = input.assistantMessageId ?? randomUUID()
   const ordinal = await nextMessageOrdinal(transaction, input.sessionId)
   await transaction('agentMessages').insert([
-    { id: userMessageId, sessionId: input.sessionId, runId: null, ordinal, role: 'user', status: 'complete', content: input.content, citations: null, isVisible: input.userMessageVisible ?? true, createdAt: now, updatedAt: now },
-    { id: assistantMessageId, sessionId: input.sessionId, runId: null, ordinal: ordinal + 1, role: 'assistant', status: 'pending', content: '', citations: null, isVisible: true, createdAt: now, updatedAt: now }
+    {
+      id: userMessageId,
+      sessionId: input.sessionId,
+      runId: null,
+      ordinal,
+      role: 'user',
+      status: 'complete',
+      content: input.content,
+      citations: null,
+      isVisible: input.userMessageVisible ?? true,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: assistantMessageId,
+      sessionId: input.sessionId,
+      runId: null,
+      ordinal: ordinal + 1,
+      role: 'assistant',
+      status: 'pending',
+      content: '',
+      citations: null,
+      isVisible: true,
+      createdAt: now,
+      updatedAt: now
+    }
   ])
   const row = {
     id: runId,
@@ -408,10 +589,21 @@ export const admitAgentRunInTransaction = async (transaction: Knex.Transaction, 
   }
   await transaction('agentRuns').insert(row)
   await transaction('agentMessages').whereIn('id', [userMessageId, assistantMessageId]).update({ runId })
-  if (input.skillVersionIds.length > 0) await transaction('agentRunSkills').insert(input.skillVersionIds.map((skillVersionId, ordinal) => ({ runId, skillVersionId, ordinal })))
+  if (input.skillVersionIds.length > 0)
+    await transaction('agentRunSkills').insert(input.skillVersionIds.map((skillVersionId, ordinal) => ({ runId, skillVersionId, ordinal })))
   await reserveQuotaInTransaction(transaction, runId, input.ownerId, input.quota, input.quotaLimits, now, input.reservationExpiresAt)
   const event = queuedEventData(runId, input.currentPage)
-  await transaction('agentEvents').insert({ id: input.queuedEventId ?? randomUUID(), runId, sequence: 1, type: 'run.queued', attempt: 0, schemaVersion: 1, dataSha256: event.dataSha256, data: event.data, createdAt: now })
+  await transaction('agentEvents').insert({
+    id: input.queuedEventId ?? randomUUID(),
+    runId,
+    sequence: 1,
+    type: 'run.queued',
+    attempt: 0,
+    schemaVersion: 1,
+    dataSha256: event.dataSha256,
+    data: event.data,
+    createdAt: now
+  })
   if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql') {
     await transaction.raw("SELECT pg_notify('wiki_agent_events', ?)", [runId])
   }
@@ -419,7 +611,7 @@ export const admitAgentRunInTransaction = async (transaction: Knex.Transaction, 
   return { run: runRecord(row), replayed: false }
 }
 
-export const admitAgentRun = async (knex: Knex, input: AdmitAgentRunInput): Promise<{ readonly run: AgentRunRecord, readonly replayed: boolean }> =>
+export const admitAgentRun = async (knex: Knex, input: AdmitAgentRunInput): Promise<{ readonly run: AgentRunRecord; readonly replayed: boolean }> =>
   knex.transaction(transaction => admitAgentRunInTransaction(transaction, input))
 
 export interface AgentRunClaim extends AgentRunRecord {
@@ -445,25 +637,46 @@ interface PersistAgentApprovalContinuationInput {
 
 const assertContinuationLedger = async (knex: Knex | Knex.Transaction, checkpoint: AgentApprovalContinuationCheckpoint): Promise<void> => {
   const [proposal, approval] = await Promise.all([
-    knex('agentProposals').where({ id: checkpoint.proposalId }).first('sourceKind', 'runId', 'requesterRequestId', 'requesterUserId', 'actionCallId', 'actionName', 'input', 'inputHash', 'authorityVersion', 'authoritySha256') as Promise<{
-      sourceKind: string
-      runId: string | null
-      requesterRequestId: string
-      requesterUserId: number | null
-      actionCallId: string
-      actionName: string
-      input: string | null
-      inputHash: string
-      authorityVersion: number
-      authoritySha256: string
-    } | undefined>,
-    knex('agentApprovals').where({ id: checkpoint.approvalId, proposalId: checkpoint.proposalId }).first('runId', 'requesterUserId', 'inputHash', 'authorityVersion', 'authoritySha256') as Promise<{
-      runId: string | null
-      requesterUserId: number | null
-      inputHash: string
-      authorityVersion: number
-      authoritySha256: string
-    } | undefined>
+    knex('agentProposals')
+      .where({ id: checkpoint.proposalId })
+      .first(
+        'sourceKind',
+        'runId',
+        'requesterRequestId',
+        'requesterUserId',
+        'actionCallId',
+        'actionName',
+        'input',
+        'inputHash',
+        'authorityVersion',
+        'authoritySha256'
+      ) as Promise<
+      | {
+          sourceKind: string
+          runId: string | null
+          requesterRequestId: string
+          requesterUserId: number | null
+          actionCallId: string
+          actionName: string
+          input: string | null
+          inputHash: string
+          authorityVersion: number
+          authoritySha256: string
+        }
+      | undefined
+    >,
+    knex('agentApprovals')
+      .where({ id: checkpoint.approvalId, proposalId: checkpoint.proposalId })
+      .first('runId', 'requesterUserId', 'inputHash', 'authorityVersion', 'authoritySha256') as Promise<
+      | {
+          runId: string | null
+          requesterUserId: number | null
+          inputHash: string
+          authorityVersion: number
+          authoritySha256: string
+        }
+      | undefined
+    >
   ])
   if (
     !proposal ||
@@ -483,7 +696,8 @@ const assertContinuationLedger = async (knex: Knex | Knex.Transaction, checkpoin
     Number(approval.authorityVersion) !== checkpoint.authorityVersion ||
     proposal.authoritySha256 !== checkpoint.authoritySha256 ||
     approval.authoritySha256 !== checkpoint.authoritySha256
-  ) throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISMATCH', 'Action continuation does not match its proposal authority ledger', 409)
+  )
+    throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_MISMATCH', 'Action continuation does not match its proposal authority ledger', 409)
 }
 
 export const persistAgentApprovalContinuation = async (knex: Knex, input: PersistAgentApprovalContinuationInput): Promise<void> => {
@@ -508,11 +722,11 @@ export const persistAgentApprovalContinuation = async (knex: Knex, input: Persis
     throw new AgentRepositoryError('AGENT_ACTION_CONTINUATION_TOO_LARGE', 'Action continuation exceeds its size limit', 500)
   }
   await knex.transaction(async transaction => {
-    const run = await transaction('agentRuns')
+    const run = (await transaction('agentRuns')
       .where({ id: input.runId, ownerId: input.ownerId, attempts: input.attempt, leaseToken: input.leaseToken, status: 'running' })
       .whereNull('cancelRequestedAt')
       .forUpdate()
-      .first('runtimeStateCiphertext') as { runtimeStateCiphertext: Uint8Array | null } | undefined
+      .first('runtimeStateCiphertext')) as { runtimeStateCiphertext: Uint8Array | null } | undefined
     if (!run) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before approval suspension', 409)
     await assertContinuationLedger(transaction, checkpoint)
     const state = runtimeState(run.runtimeStateCiphertext)
@@ -539,7 +753,8 @@ export interface AgentRunLeaseIdentity {
 const invokingAgentRunLeases = new WeakMap<AbortSignal, AgentRunLeaseIdentity>()
 
 export const withInvokingAgentRunLease = async <T>(signal: AbortSignal, claim: AgentRunLeaseIdentity, invoke: () => Promise<T>): Promise<T> => {
-  if (invokingAgentRunLeases.has(signal)) throw new AgentRepositoryError('AGENT_ACTION_SESSION_INVALID', 'Agent action signal is already bound to a run lease', 500)
+  if (invokingAgentRunLeases.has(signal))
+    throw new AgentRepositoryError('AGENT_ACTION_SESSION_INVALID', 'Agent action signal is already bound to a run lease', 500)
   const identity: AgentRunLeaseIdentity = Object.freeze({
     id: claim.id,
     ownerId: claim.ownerId,
@@ -558,11 +773,11 @@ export const withInvokingAgentRunLease = async <T>(signal: AbortSignal, claim: A
 export const invokingAgentRunLease = (signal: AbortSignal): AgentRunLeaseIdentity | null => invokingAgentRunLeases.get(signal) ?? null
 
 export const readAgentApprovalContinuation = async (knex: Knex, claim: AgentRunLeaseIdentity): Promise<AgentApprovalContinuationCheckpoint | null> => {
-  const row = await knex('agentRuns')
+  const row = (await knex('agentRuns')
     .where({ id: claim.id, ownerId: claim.ownerId, attempts: claim.attempts, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
     .whereIn('status', ['running', 'awaiting_approval'])
     .whereNull('cancelRequestedAt')
-    .first('runtimeStateCiphertext') as { runtimeStateCiphertext: Uint8Array | null } | undefined
+    .first('runtimeStateCiphertext')) as { runtimeStateCiphertext: Uint8Array | null } | undefined
   if (!row) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost while loading its action continuation', 409)
   const checkpoint = decodeActionContinuation(runtimeState(row.runtimeStateCiphertext))
   if (checkpoint === null) return null
@@ -583,11 +798,11 @@ export interface ClearAgentApprovalContinuationInput {
 
 export const clearAgentApprovalContinuation = async (knex: Knex, input: ClearAgentApprovalContinuationInput): Promise<void> => {
   await knex.transaction(async transaction => {
-    const run = await transaction('agentRuns')
+    const run = (await transaction('agentRuns')
       .where({ id: input.runId, ownerId: input.ownerId, attempts: input.attempt, leaseOwner: input.leaseOwner, leaseToken: input.leaseToken })
       .whereIn('status', ['running', 'awaiting_approval'])
       .forUpdate()
-      .first('runtimeStateCiphertext') as { runtimeStateCiphertext: Uint8Array | null } | undefined
+      .first('runtimeStateCiphertext')) as { runtimeStateCiphertext: Uint8Array | null } | undefined
     if (!run) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost while clearing its action continuation', 409)
     const state = runtimeState(run.runtimeStateCiphertext)
     if (decodeActionContinuation(state) === null) return
@@ -616,11 +831,22 @@ const activeLeaseCount = async (transaction: Knex.Transaction, now: Date, ownerI
 }
 
 const recoveryLostSideEffect = async (transaction: Knex.Transaction, row: RunRow, now: Date): Promise<void> => {
-  await transaction('agentRuns').where({ id: row.id, status: row.status, leaseToken: row.leaseToken }).update({ status: 'recovery_required', runtimeStateCiphertext: null, leaseOwner: null, leaseToken: null, leaseExpiresAt: null, completedAt: now, updatedAt: now, errorCode: 'LEASE_LOST_AFTER_SIDE_EFFECT', errorMessage: 'Run lease expired after a side effect may have started' })
+  await transaction('agentRuns').where({ id: row.id, status: row.status, leaseToken: row.leaseToken }).update({
+    status: 'recovery_required',
+    runtimeStateCiphertext: null,
+    leaseOwner: null,
+    leaseToken: null,
+    leaseExpiresAt: null,
+    completedAt: now,
+    updatedAt: now,
+    errorCode: 'LEASE_LOST_AFTER_SIDE_EFFECT',
+    errorMessage: 'Run lease expired after a side effect may have started'
+  })
 }
 const hasReclaimableActionContinuation = async (transaction: Knex.Transaction, candidate: RunRow): Promise<boolean> => {
   if (candidate.status !== 'running' || candidate.sideEffectsStarted) return false
-  if (candidate.runtimeStateCiphertext === undefined) throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Agent run omitted its runtime continuation state', 500)
+  if (candidate.runtimeStateCiphertext === undefined)
+    throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Agent run omitted its runtime continuation state', 500)
   const checkpoint = decodeActionContinuation(runtimeState(candidate.runtimeStateCiphertext))
   if (checkpoint === null) return false
   if (checkpoint.runId !== candidate.id || checkpoint.ownerId !== candidate.ownerId || checkpoint.attempt !== candidate.attempts) {
@@ -637,9 +863,13 @@ export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): 
   const now = options.now ?? new Date()
   return knex.transaction(async transaction => {
     await advisoryLock(transaction)
-    if (await activeLeaseCount(transaction, now) >= globalConcurrency) return null
+    if ((await activeLeaseCount(transaction, now)) >= globalConcurrency) return null
     const candidates = await transaction<RunRow>('agentRuns')
-      .where(query => query.where(subquery => subquery.where({ status: 'queued' }).andWhere('availableAt', '<=', now)).orWhere(subquery => subquery.whereIn('status', ['running', 'awaiting_approval']).andWhere('leaseExpiresAt', '<=', now)))
+      .where(query =>
+        query
+          .where(subquery => subquery.where({ status: 'queued' }).andWhere('availableAt', '<=', now))
+          .orWhere(subquery => subquery.whereIn('status', ['running', 'awaiting_approval']).andWhere('leaseExpiresAt', '<=', now))
+      )
       .whereNull('cancelRequestedAt')
       .orderBy('availableAt')
       .orderBy('queuedAt')
@@ -650,18 +880,36 @@ export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): 
         continue
       }
       const reclaimingContinuation = await hasReclaimableActionContinuation(transaction, candidate)
-      if (candidate.status !== 'awaiting_approval' && await activeLeaseCount(transaction, now, candidate.ownerId) >= perUserConcurrency) continue
+      if (candidate.status !== 'awaiting_approval' && (await activeLeaseCount(transaction, now, candidate.ownerId)) >= perUserConcurrency) continue
       if (candidate.attempts >= candidate.maxAttempts && candidate.status !== 'awaiting_approval' && !reclaimingContinuation) {
-        await transaction('agentRuns').where({ id: candidate.id, status: candidate.status }).update({ status: 'failed', runtimeStateCiphertext: null, completedAt: now, updatedAt: now, errorCode: 'MAX_ATTEMPTS_EXCEEDED', errorMessage: 'Agent run exhausted its durable attempts' })
+        await transaction('agentRuns').where({ id: candidate.id, status: candidate.status }).update({
+          status: 'failed',
+          runtimeStateCiphertext: null,
+          completedAt: now,
+          updatedAt: now,
+          errorCode: 'MAX_ATTEMPTS_EXCEEDED',
+          errorMessage: 'Agent run exhausted its durable attempts'
+        })
         continue
       }
       const leaseToken = randomUUID()
       const leaseExpiresAt = new Date(now.valueOf() + leaseMilliseconds)
       const nextStatus = candidate.status === 'awaiting_approval' ? 'awaiting_approval' : 'running'
       const attempts = candidate.status === 'awaiting_approval' || reclaimingContinuation ? candidate.attempts : candidate.attempts + 1
-      const changed = await transaction('agentRuns').where({ id: candidate.id, status: candidate.status, eventSequence: candidate.eventSequence }).modify(query => {
-        if (candidate.status !== 'queued') query.andWhere('leaseToken', candidate.leaseToken)
-      }).update({ status: nextStatus, attempts, leaseOwner: options.workerId, leaseToken, leaseExpiresAt, startedAt: candidate.status === 'queued' ? now : candidate.startedAt, updatedAt: now })
+      const changed = await transaction('agentRuns')
+        .where({ id: candidate.id, status: candidate.status, eventSequence: candidate.eventSequence })
+        .modify(query => {
+          if (candidate.status !== 'queued') query.andWhere('leaseToken', candidate.leaseToken)
+        })
+        .update({
+          status: nextStatus,
+          attempts,
+          leaseOwner: options.workerId,
+          leaseToken,
+          leaseExpiresAt,
+          startedAt: candidate.status === 'queued' ? now : candidate.startedAt,
+          updatedAt: now
+        })
       if (changed !== 1) continue
       return runRecord({ ...candidate, status: nextStatus, attempts, leaseOwner: options.workerId, leaseToken, leaseExpiresAt }) as AgentRunClaim
     }
@@ -671,7 +919,11 @@ export const claimAgentRun = async (knex: Knex, options: ClaimAgentRunOptions): 
 
 export const heartbeatAgentRun = async (knex: Knex, claim: AgentRunClaim, leaseMilliseconds = 60_000, now = new Date()): Promise<boolean> => {
   const leaseExpiresAt = new Date(now.valueOf() + leaseMilliseconds)
-  const changed = await knex('agentRuns').where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken }).whereIn('status', ['running', 'awaiting_approval']).whereNull('cancelRequestedAt').update({ leaseExpiresAt, updatedAt: now })
+  const changed = await knex('agentRuns')
+    .where({ id: claim.id, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
+    .whereIn('status', ['running', 'awaiting_approval'])
+    .whereNull('cancelRequestedAt')
+    .update({ leaseExpiresAt, updatedAt: now })
   if (changed === 1) await knex('agentQuotaReservations').where({ runId: claim.id, status: 'reserved' }).update({ heartbeatAt: now, expiresAt: leaseExpiresAt })
   return changed === 1
 }
@@ -716,53 +968,63 @@ const recordRunCancelled = async (
   return sequence
 }
 
-export const transitionAgentRun = async (knex: Knex, input: TransitionAgentRunInput): Promise<AgentRunRecord> => knex.transaction(async transaction => {
-  const allowed = input.from === 'running'
-    ? ['awaiting_approval', 'succeeded', 'partial', 'failed', 'cancelled', 'queued', 'recovery_required']
-    : ['running', 'cancelled', 'recovery_required']
-  if (!allowed.includes(input.to)) throw new AgentRepositoryError('INVALID_RUN_TRANSITION', 'Agent run transition is invalid', 400)
-  const now = input.now ?? new Date()
-  const terminal = TERMINAL_STATUSES.includes(input.to)
-  const patch: Record<string, unknown> = {
-    status: input.to,
-    updatedAt: now,
-    errorCode: input.errorCode ?? null,
-    errorMessage: input.errorMessage ?? null,
-    completedAt: terminal ? now : null
-  }
-  if (terminal) patch.runtimeStateCiphertext = null
-  if (input.to === 'queued') patch.availableAt = input.availableAt ?? now
-  if (input.to !== 'running' && input.to !== 'awaiting_approval') {
-    patch.leaseOwner = null
-    patch.leaseToken = null
-    patch.leaseExpiresAt = null
-  }
-  const changed = await transaction('agentRuns').where({ id: input.claim.id, status: input.from, leaseOwner: input.claim.leaseOwner, leaseToken: input.claim.leaseToken }).update(patch)
-  if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost', 409)
-  const row = await transaction<RunRow>('agentRuns').where({ id: input.claim.id }).first()
-  if (!row) throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Agent run disappeared after transition', 500)
-  if (input.to !== 'cancelled') return runRecord(row)
-  const eventSequence = await recordRunCancelled(transaction, row, now)
-  return runRecord({ ...row, eventSequence })
-})
+export const transitionAgentRun = async (knex: Knex, input: TransitionAgentRunInput): Promise<AgentRunRecord> =>
+  knex.transaction(async transaction => {
+    const allowed =
+      input.from === 'running'
+        ? ['awaiting_approval', 'succeeded', 'partial', 'failed', 'cancelled', 'queued', 'recovery_required']
+        : ['running', 'cancelled', 'recovery_required']
+    if (!allowed.includes(input.to)) throw new AgentRepositoryError('INVALID_RUN_TRANSITION', 'Agent run transition is invalid', 400)
+    const now = input.now ?? new Date()
+    const terminal = isTerminalAgentRunStatus(input.to)
+    const patch: Record<string, unknown> = {
+      status: input.to,
+      updatedAt: now,
+      errorCode: input.errorCode ?? null,
+      errorMessage: input.errorMessage ?? null,
+      completedAt: terminal ? now : null
+    }
+    if (terminal) patch.runtimeStateCiphertext = null
+    if (input.to === 'queued') patch.availableAt = input.availableAt ?? now
+    if (input.to !== 'running' && input.to !== 'awaiting_approval') {
+      patch.leaseOwner = null
+      patch.leaseToken = null
+      patch.leaseExpiresAt = null
+    }
+    const changed = await transaction('agentRuns')
+      .where({ id: input.claim.id, status: input.from, leaseOwner: input.claim.leaseOwner, leaseToken: input.claim.leaseToken })
+      .update(patch)
+    if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost', 409)
+    const row = await transaction<RunRow>('agentRuns').where({ id: input.claim.id }).first()
+    if (!row) throw new AgentRepositoryError('AGENT_RUN_CORRUPT', 'Agent run disappeared after transition', 500)
+    if (input.to !== 'cancelled') return runRecord(row)
+    const eventSequence = await recordRunCancelled(transaction, row, now)
+    return runRecord({ ...row, eventSequence })
+  })
 
 export const markAgentRunSideEffectsStarted = async (knex: Knex, claim: AgentRunClaim, now = new Date()): Promise<void> => {
-  const changed = await knex('agentRuns').where({ id: claim.id, status: 'running', leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken }).whereNull('cancelRequestedAt').update({ sideEffectsStarted: true, updatedAt: now })
+  const changed = await knex('agentRuns')
+    .where({ id: claim.id, status: 'running', leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
+    .whereNull('cancelRequestedAt')
+    .update({ sideEffectsStarted: true, updatedAt: now })
   if (changed !== 1) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost before the side effect fence', 409)
 }
 
-export const requestAgentRunCancellation = async (knex: Knex, ownerId: number, runId: string, now = new Date()): Promise<AgentRunRecord> => knex.transaction(async transaction => {
-  const row = await transaction<RunRow>('agentRuns').where({ id: runId, ownerId }).forUpdate().first()
-  if (!row) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
-  if (TERMINAL_STATUSES.includes(runStatus(row.status))) return runRecord(row)
-  if (row.status === 'queued') {
-    await transaction('agentRuns').where({ id: runId, status: 'queued' }).update({ status: 'cancelled', cancelRequestedAt: now, completedAt: now, updatedAt: now })
-    const eventSequence = await recordRunCancelled(transaction, row, now)
-    return runRecord({ ...row, status: 'cancelled', cancelRequestedAt: now, completedAt: now, eventSequence })
-  }
-  await transaction('agentRuns').where({ id: runId }).whereIn('status', ['running', 'awaiting_approval']).update({ cancelRequestedAt: now, updatedAt: now })
-  return runRecord({ ...row, cancelRequestedAt: now })
-})
+export const requestAgentRunCancellation = async (knex: Knex, ownerId: number, runId: string, now = new Date()): Promise<AgentRunRecord> =>
+  knex.transaction(async transaction => {
+    const row = await transaction<RunRow>('agentRuns').where({ id: runId, ownerId }).forUpdate().first()
+    if (!row) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
+    if (isTerminalAgentRunStatus(runStatus(row.status))) return runRecord(row)
+    if (row.status === 'queued') {
+      await transaction('agentRuns')
+        .where({ id: runId, status: 'queued' })
+        .update({ status: 'cancelled', cancelRequestedAt: now, completedAt: now, updatedAt: now })
+      const eventSequence = await recordRunCancelled(transaction, row, now)
+      return runRecord({ ...row, status: 'cancelled', cancelRequestedAt: now, completedAt: now, eventSequence })
+    }
+    await transaction('agentRuns').where({ id: runId }).whereIn('status', ['running', 'awaiting_approval']).update({ cancelRequestedAt: now, updatedAt: now })
+    return runRecord({ ...row, cancelRequestedAt: now })
+  })
 
 export interface AgentRunHandlerResult {
   readonly status: 'succeeded' | 'partial' | 'failed' | 'awaiting_approval' | 'recovery_required'
@@ -776,13 +1038,13 @@ interface CurrentClaimState {
   readonly cancelRequestedAt: Date | string | null
 }
 const currentClaimState = async (knex: Knex, claim: AgentRunClaim): Promise<CurrentClaimState> => {
-  const row = await knex('agentRuns')
+  const row = (await knex('agentRuns')
     .where({ id: claim.id, ownerId: claim.ownerId, leaseOwner: claim.leaseOwner, leaseToken: claim.leaseToken })
-    .first('status', 'cancelRequestedAt') as { status: string, cancelRequestedAt: Date | string | null } | undefined
-  if (!row || (row.status !== 'running' && row.status !== 'awaiting_approval')) throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost', 409)
+    .first('status', 'cancelRequestedAt')) as { status: string; cancelRequestedAt: Date | string | null } | undefined
+  if (!row || (row.status !== 'running' && row.status !== 'awaiting_approval'))
+    throw new AgentRepositoryError('RUN_LEASE_LOST', 'Agent run lease was lost', 409)
   return { status: row.status, cancelRequestedAt: row.cancelRequestedAt }
 }
-
 
 export interface AgentRunCoordinatorOptions extends ClaimAgentRunOptions {
   readonly heartbeatMilliseconds?: number
@@ -795,21 +1057,25 @@ export class AgentRunCoordinator {
   readonly #options: AgentRunCoordinatorOptions
   #stopped = false
 
-  constructor (knex: Knex, options: AgentRunCoordinatorOptions) {
+  constructor(knex: Knex, options: AgentRunCoordinatorOptions) {
     this.#knex = knex
     this.#options = options
   }
 
-  get stopped (): boolean { return this.#stopped }
+  get stopped(): boolean {
+    return this.#stopped
+  }
 
-  async runOnce (handler: AgentRunHandler): Promise<boolean> {
+  async runOnce(handler: AgentRunHandler): Promise<boolean> {
     if (this.#stopped) return false
     const claim = await claimAgentRun(this.#knex, this.#options)
     if (claim === null) return false
     const controller = new AbortController()
     this.#controllers.set(claim.id, controller)
     let markDrained: () => void = () => undefined
-    const drained = new Promise<void>(resolve => { markDrained = resolve })
+    const drained = new Promise<void>(resolve => {
+      markDrained = resolve
+    })
     this.#drains.set(claim.id, drained)
     const heartbeatEvery = this.#options.heartbeatMilliseconds ?? 10_000
     const heartbeat = async (): Promise<void> => {
@@ -821,7 +1087,9 @@ export class AgentRunCoordinator {
         controller.abort(error)
       }
     }
-    const heartbeatTimer = setInterval(() => { void heartbeat() }, heartbeatEvery)
+    const heartbeatTimer = setInterval(() => {
+      void heartbeat()
+    }, heartbeatEvery)
     heartbeatTimer.unref()
     try {
       const result = await handler(claim, controller.signal)
@@ -829,10 +1097,14 @@ export class AgentRunCoordinator {
       if (current.cancelRequestedAt !== null) {
         await transitionAgentRun(this.#knex, { claim, from: current.status, to: 'cancelled' })
       } else if (!controller.signal.aborted && current.status !== result.status) {
-        const to = current.status === 'awaiting_approval' && result.status !== 'recovery_required'
-          ? 'recovery_required'
-          : result.status
-        await transitionAgentRun(this.#knex, { claim, from: current.status, to, errorCode: result.errorCode ?? null, errorMessage: result.errorMessage ?? null })
+        const to = current.status === 'awaiting_approval' && result.status !== 'recovery_required' ? 'recovery_required' : result.status
+        await transitionAgentRun(this.#knex, {
+          claim,
+          from: current.status,
+          to,
+          errorCode: result.errorCode ?? null,
+          errorMessage: result.errorMessage ?? null
+        })
       }
     } catch (error) {
       try {
@@ -861,15 +1133,15 @@ export class AgentRunCoordinator {
     return true
   }
 
-  async cancel (ownerId: number, runId: string): Promise<AgentRunRecord> {
+  async cancel(ownerId: number, runId: string): Promise<AgentRunRecord> {
     const run = await requestAgentRunCancellation(this.#knex, ownerId, runId)
-    if (run.cancelRequestedAt !== null && !TERMINAL_STATUSES.includes(run.status)) {
+    if (run.cancelRequestedAt !== null && !isTerminalAgentRunStatus(run.status)) {
       this.#controllers.get(runId)?.abort(new AgentRepositoryError('RUN_CANCELLED', 'Agent run was cancelled', 409))
     }
     return run
   }
 
-  async shutdown (): Promise<void> {
+  async shutdown(): Promise<void> {
     this.#stopped = true
     const drains = [...this.#drains.values()]
     for (const controller of this.#controllers.values()) controller.abort(new Error('Agent run coordinator is shutting down'))

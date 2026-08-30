@@ -174,7 +174,6 @@ export default {
   data() {
     return {
       deletePageDialog: false,
-      deleteLoadGeneration: null as number | null,
       page: null as PageDetails | null,
       resolvedPageRouteId: null as number | null,
       loadGeneration: 0,
@@ -184,13 +183,6 @@ export default {
   methods: {
     async loadPage () {
       const requestGeneration = ++this.loadGeneration
-      if (
-        this.deleteLoadGeneration !== null &&
-        this.deleteLoadGeneration !== requestGeneration
-      ) {
-        wikiStore.stopLoading('page-delete')
-        this.deleteLoadGeneration = null
-      }
       const routePageId = _.toSafeInteger(this.$route.params.id)
       this.deletePageDialog = false
       this.page = null
@@ -214,8 +206,8 @@ export default {
         }
         wikiStore.showError(err)
       } finally {
+        wikiStore.stopLoading('admin-pages-refresh')
         if (requestGeneration === this.loadGeneration) {
-          wikiStore.stopLoading('admin-pages-refresh')
           this.loading = false
         }
       }
@@ -227,7 +219,6 @@ export default {
       if (!page || this.resolvedPageRouteId !== routePageId) {
         return
       }
-      this.deleteLoadGeneration = requestGeneration
 
       this.loading = true
       wikiStore.startLoading('page-delete')
@@ -260,13 +251,12 @@ export default {
         }
         wikiStore.showError(err)
       } finally {
+        wikiStore.stopLoading('page-delete')
         if (
           requestGeneration === this.loadGeneration &&
           routePageId === _.toSafeInteger(this.$route.params.id)
         ) {
-          wikiStore.stopLoading('page-delete')
           this.loading = false
-          this.deleteLoadGeneration = null
         }
       }
     }

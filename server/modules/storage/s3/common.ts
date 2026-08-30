@@ -1,17 +1,10 @@
 import { wiki, type StorageConfig, type WikiAsset, type WikiPage } from '../../types.ts'
-import {
-  CopyObjectCommand,
-  DeleteObjectCommand,
-  HeadBucketCommand,
-  PutObjectCommand,
-  S3Client,
-  type S3ClientConfig
-} from '@aws-sdk/client-s3'
+import { CopyObjectCommand, DeleteObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client, type S3ClientConfig } from '@aws-sdk/client-s3'
 import { pipeline } from 'node:stream/promises'
-import { Transform, type TransformCallback } from 'node:stream'
 import _ from 'lodash'
 import pageHelper from '../../../helpers/page.ts'
 import { encodeS3CopySource, storageObjectKey } from '../object-key.ts'
+import { asyncObjectTransform } from '../async-transform.ts'
 
 interface PageExportRow {
   path: string
@@ -37,7 +30,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isPageExportRow(value: unknown): value is PageExportRow {
-  return isRecord(value) &&
+  return (
+    isRecord(value) &&
     typeof value.path === 'string' &&
     typeof value.localeCode === 'string' &&
     typeof value.title === 'string' &&
@@ -48,19 +42,16 @@ function isPageExportRow(value: unknown): value is PageExportRow {
     (value.updatedAt instanceof Date || typeof value.updatedAt === 'string') &&
     (value.createdAt instanceof Date || typeof value.createdAt === 'string') &&
     typeof value.editorKey === 'string'
+  )
 }
 
 function isAssetExportRow(value: unknown): value is AssetExportRow {
-  return isRecord(value) &&
-    typeof value.filename === 'string' &&
-    (typeof value.folderId === 'number' || value.folderId === null) &&
-    Buffer.isBuffer(value.data)
+  return isRecord(value) && typeof value.filename === 'string' && (typeof value.folderId === 'number' || value.folderId === null) && Buffer.isBuffer(value.data)
 }
 
 function serializeContent(content: string | Record<string, unknown>): string {
   return typeof content === 'string' ? content : JSON.stringify(content)
 }
-
 
 /**
  * Deduce the file path given the `page` object and the object's key to the page's path.
@@ -150,17 +141,14 @@ export default class S3CompatibleStorage {
   async renamed(page: WikiPage) {
     wiki.logger.info(`(STORAGE/${this.storageName}) Renaming file ${page.path} to ${page.destinationPath}...`)
     const sourceFilePath = getFilePath(page, 'path', this.config.pathPrefix, page.localeCode)
-    const destinationFilePath = getFilePath(
-      page,
-      'destinationPath',
-      this.config.pathPrefix,
-      page.destinationLocaleCode
+    const destinationFilePath = getFilePath(page, 'destinationPath', this.config.pathPrefix, page.destinationLocaleCode)
+    await this.s3.send(
+      new CopyObjectCommand({
+        Bucket: this.bucketName,
+        CopySource: encodeS3CopySource(this.bucketName, sourceFilePath),
+        Key: destinationFilePath
+      })
     )
-    await this.s3.send(new CopyObjectCommand({
-      Bucket: this.bucketName,
-      CopySource: encodeS3CopySource(this.bucketName, sourceFilePath),
-      Key: destinationFilePath
-    }))
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucketName, Key: sourceFilePath }))
   }
   /**
@@ -168,7 +156,7 @@ export default class S3CompatibleStorage {
    *
    * @param {Object} asset Asset to upload
    */
-  async assetUploaded (asset: WikiAsset) {
+  async assetUploaded(asset: WikiAsset) {
     wiki.logger.info(`(STORAGE/${this.storageName}) Creating new file ${asset.path}...`)
     await this.s3.send(new PutObjectCommand({ Bucket: this.bucketName, Key: storageObjectKey(this.config.pathPrefix, asset.path), Body: asset.data }))
   }
@@ -177,7 +165,7 @@ export default class S3CompatibleStorage {
    *
    * @param {Object} asset Asset to delete
    */
-  async assetDeleted (asset: WikiAsset) {
+  async assetDeleted(asset: WikiAsset) {
     wiki.logger.info(`(STORAGE/${this.storageName}) Deleting file ${asset.path}...`)
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucketName, Key: storageObjectKey(this.config.pathPrefix, asset.path) }))
   }
@@ -186,20 +174,20 @@ export default class S3CompatibleStorage {
    *
    * @param {Object} asset Asset to rename
    */
-  async assetRenamed (asset: WikiAsset) {
+  async assetRenamed(asset: WikiAsset) {
     wiki.logger.info(`(STORAGE/${this.storageName}) Renaming file from ${asset.path} to ${asset.destinationPath}...`)
     const sourcePath = storageObjectKey(this.config.pathPrefix, asset.path)
     const destinationPath = storageObjectKey(this.config.pathPrefix, asset.destinationPath)
-    await this.s3.send(new CopyObjectCommand({
-      Bucket: this.bucketName,
-      CopySource: encodeS3CopySource(this.bucketName, sourcePath),
-      Key: destinationPath
-    }))
+    await this.s3.send(
+      new CopyObjectCommand({
+        Bucket: this.bucketName,
+        CopySource: encodeS3CopySource(this.bucketName, sourcePath),
+        Key: destinationPath
+      })
+    )
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucketName, Key: sourcePath }))
   }
-  async getLocalLocation () {
-
-  }
+  async getLocalLocation() {}
   /**
    * HANDLERS
    */
@@ -208,25 +196,27 @@ export default class S3CompatibleStorage {
 
     // -> Pages
     await pipeline(
-      wiki.models.knex.column('path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt').select().from('pages').where({
-        visibility: 'public'
-      }).stream(),
-      new Transform({
-        objectMode: true,
-        transform: async (value: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
-          if (!isPageExportRow(value)) {
-            callback(new TypeError('Invalid page export row'))
-            return
-          }
-          const filePath = getFilePath(value, 'path', this.config.pathPrefix, value.localeCode)
-          wiki.logger.info(`(STORAGE/${this.storageName}) Adding page ${filePath}...`)
-          await this.s3.send(new PutObjectCommand({
+      wiki.models.knex
+        .column('path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey')
+        .select()
+        .from('pages')
+        .where({
+          visibility: 'public'
+        })
+        .stream(),
+      asyncObjectTransform(async value => {
+        if (!isPageExportRow(value)) {
+          throw new TypeError('Invalid page export row')
+        }
+        const filePath = getFilePath(value, 'path', this.config.pathPrefix, value.localeCode)
+        wiki.logger.info(`(STORAGE/${this.storageName}) Adding page ${filePath}...`)
+        await this.s3.send(
+          new PutObjectCommand({
             Bucket: this.bucketName,
             Key: filePath,
             Body: serializeContent(pageHelper.injectPageMetadata(value))
-          }))
-          callback()
-        }
+          })
+        )
       })
     )
 
@@ -235,22 +225,16 @@ export default class S3CompatibleStorage {
 
     await pipeline(
       wiki.models.knex.column('filename', 'folderId', 'data').select().from('assets').join('assetData', 'assets.id', '=', 'assetData.id').stream(),
-      new Transform({
-        objectMode: true,
-        transform: async (value: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
-          if (!isAssetExportRow(value)) {
-            callback(new TypeError('Invalid asset export row'))
-            return
-          }
-          const filename = (value.folderId && value.folderId > 0) ? `${_.get(assetFolders, value.folderId)}/${value.filename}` : value.filename
-          wiki.logger.info(`(STORAGE/${this.storageName}) Adding asset ${filename}...`)
-          await this.s3.send(new PutObjectCommand({ Bucket: this.bucketName, Key: storageObjectKey(this.config.pathPrefix, filename), Body: value.data }))
-          callback()
+      asyncObjectTransform(async value => {
+        if (!isAssetExportRow(value)) {
+          throw new TypeError('Invalid asset export row')
         }
+        const filename = value.folderId && value.folderId > 0 ? `${_.get(assetFolders, value.folderId)}/${value.filename}` : value.filename
+        wiki.logger.info(`(STORAGE/${this.storageName}) Adding asset ${filename}...`)
+        await this.s3.send(new PutObjectCommand({ Bucket: this.bucketName, Key: storageObjectKey(this.config.pathPrefix, filename), Body: value.data }))
       })
     )
 
     wiki.logger.info(`(STORAGE/${this.storageName}) All content has been pushed to the cloud provider.`)
   }
 }
-

@@ -1,12 +1,13 @@
 import { execFileSync, spawnSync } from 'node:child_process'
 
-import { productDefinition } from '../../shared/product.ts'
+import { productDefinition } from '../core/product.ts'
 
 const rootPath = process.cwd()
-const runGit = (args: string[]): string => execFileSync('git', args, {
-  cwd: rootPath,
-  encoding: 'utf8'
-}).trim()
+const runGit = (args: string[]): string =>
+  execFileSync('git', args, {
+    cwd: rootPath,
+    encoding: 'utf8'
+  }).trim()
 
 if (runGit(['status', '--porcelain']).length > 0) {
   throw new Error('Refusing to build a release image from a dirty working tree. Commit the build inputs first.')

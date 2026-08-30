@@ -33,7 +33,6 @@ interface ImportAssetSource {
   user: WikiUser
 }
 
-
 interface PageMetadata {
   content: string | Record<string, unknown>
   description?: string
@@ -42,8 +41,9 @@ interface PageMetadata {
   title?: string
 }
 
-function isImportFile (value: unknown): value is ImportFile {
-  return typeof value === 'object' &&
+function isImportFile(value: unknown): value is ImportFile {
+  return (
+    typeof value === 'object' &&
     value !== null &&
     'path' in value &&
     typeof value.path === 'string' &&
@@ -52,40 +52,41 @@ function isImportFile (value: unknown): value is ImportFile {
     value.stats !== null &&
     'size' in value.stats &&
     typeof value.stats.size === 'number'
+  )
 }
 
-function isPageMetadata (value: unknown): value is PageMetadata {
-  return typeof value === 'object' &&
+function isPageMetadata(value: unknown): value is PageMetadata {
+  return (
+    typeof value === 'object' &&
     value !== null &&
     'content' in value &&
-    (typeof value.content === 'string' ||
-      (typeof value.content === 'object' && value.content !== null && !Array.isArray(value.content))) &&
+    (typeof value.content === 'string' || (typeof value.content === 'object' && value.content !== null && !Array.isArray(value.content))) &&
     (!('description' in value) || typeof value.description === 'string') &&
     (!('isPublished' in value) || typeof value.isPublished === 'boolean') &&
     (!('tags' in value) || typeof value.tags === 'string') &&
     (!('title' in value) || typeof value.title === 'string')
+  )
 }
 
-function getPageMetadata (value: unknown): PageMetadata {
+function getPageMetadata(value: unknown): PageMetadata {
   if (!isPageMetadata(value)) {
     throw new TypeError('Invalid page metadata')
   }
   return value
 }
 
-function toError (value: unknown): Error {
+function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
 }
 
-
 const plugin = {
   assetFolders: null as Record<number, string> | null,
-  async importFromDisk ({ fullPath, moduleName }: ImportSource) {
+  async importFromDisk({ fullPath, moduleName }: ImportSource) {
     const rootUser = await wiki.models.users.getRootUser()
 
     await pipeline(
       klaw(fullPath, {
-        filter: (f) => {
+        filter: f => {
           return !_.includes(f, '.git')
         }
       }),
@@ -144,7 +145,7 @@ const plugin = {
     this.clearFolderCache()
   },
 
-  async processPage ({ user, fullPath, relPath, contentType, moduleName }: ImportPageSource) {
+  async processPage({ user, fullPath, relPath, contentType, moduleName }: ImportPageSource) {
     const normalizedRelPath = relPath.replace(/\\/g, '/')
     const contentPath = pageHelper.getPagePath(normalizedRelPath)
     const itemContents = await fs.readFile(path.join(fullPath, relPath), 'utf8')
@@ -154,11 +155,7 @@ const plugin = {
       locale: contentPath.locale
     })
     const newTags = pageData.tags?.split(', ')
-    const currentPublishedState = currentPage &&
-      'isPublished' in currentPage &&
-      typeof currentPage.isPublished === 'boolean'
-      ? currentPage.isPublished
-      : true
+    const currentPublishedState = currentPage && 'isPublished' in currentPage && typeof currentPage.isPublished === 'boolean' ? currentPage.isPublished : true
     if (currentPage) {
       // Already in the DB, can mark as modified
       wiki.logger.info(`(STORAGE/${moduleName}) Page marked as modified: ${normalizedRelPath}`)
@@ -166,7 +163,7 @@ const plugin = {
         id: currentPage.id,
         title: pageData.title ?? currentPage.title,
         description: pageData.description ?? currentPage.description ?? '',
-        tags: newTags ?? currentPage.tags.flatMap(tag => typeof tag.tag === 'string' ? [tag.tag] : []),
+        tags: newTags ?? currentPage.tags.flatMap(tag => (typeof tag.tag === 'string' ? [tag.tag] : [])),
         isPublished: pageData.isPublished ?? currentPublishedState,
         visibility: 'public',
         content: pageData.content,
@@ -195,21 +192,14 @@ const plugin = {
     }
   },
 
-  async processAsset ({ user, relPath, file, moduleName }: ImportAssetSource) {
-    wiki.logger.info(`(STORAGE/${moduleName}) Asset marked for import: ${relPath}`)
-
-    // -> Get all folder paths
+  async resolveAssetFolder(relPath: string): Promise<number | null> {
     if (!this.assetFolders) {
       this.assetFolders = await wiki.models.assetFolders.getAllPaths()
     }
     const assetFolders = this.assetFolders
+    const folderPath = path.posix.dirname(relPath.replace(/\\/g, '/'))
+    let folderId: number | null = _.toInteger(_.findKey(assetFolders, folder => folder === folderPath)) || null
 
-    // -> Find existing folder
-    const filePathInfo = path.parse(file.path)
-    const folderPath = path.dirname(relPath).replace(/\\/g, '/')
-    let folderId: number | null = _.toInteger(_.findKey(assetFolders, fld => fld === folderPath)) || null
-
-    // -> Create missing folder structure
     if (!folderId && folderPath !== '.') {
       const folderParts = folderPath.split('/')
       const currentFolderPath: string[] = []
@@ -217,14 +207,14 @@ const plugin = {
       for (const folderPart of folderParts) {
         currentFolderPath.push(folderPart)
         const currentPath = currentFolderPath.join('/')
-        const existingFolderId = _.findKey(assetFolders, fld => fld === currentPath)
+        const existingFolderId = _.findKey(assetFolders, folder => folder === currentPath)
         if (!existingFolderId) {
-          const newFolderObj = await wiki.models.assetFolders.query().insert({
+          const newFolder = await wiki.models.assetFolders.query().insert({
             slug: folderPart,
             name: folderPart,
             parentId: currentFolderParentId
           })
-          const newFolderId = _.toInteger(newFolderObj.id)
+          const newFolderId = _.toInteger(newFolder.id)
           if (newFolderId < 1) {
             throw new TypeError('Invalid asset folder id')
           }
@@ -237,22 +227,30 @@ const plugin = {
       folderId = currentFolderParentId
     }
 
-    // -> Import asset
+    return folderId
+  },
+
+  async processAsset({ user, relPath, file, moduleName }: ImportAssetSource) {
+    wiki.logger.info(`(STORAGE/${moduleName}) Asset marked for import: ${relPath}`)
+
+    const filePathInfo = path.parse(file.path)
+    const folderId = await this.resolveAssetFolder(relPath)
+
     await wiki.models.assets.upload({
       mode: 'import',
       originalname: filePathInfo.base,
       ext: filePathInfo.ext,
       mimetype: mime(filePathInfo.base) || 'application/octet-stream',
       size: file.stats.size,
-      folderId: folderId,
+      folderId,
       path: file.path,
       assetPath: relPath,
-      user: user,
+      user,
       skipStorage: true
     })
   },
 
-  clearFolderCache () {
+  clearFolderCache() {
     this.assetFolders = null
   }
 }

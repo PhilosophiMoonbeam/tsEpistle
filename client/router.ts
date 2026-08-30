@@ -48,6 +48,7 @@ const profileRoutes: RouteRecordRaw[] = [
 
 const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')
 const isProfile = window.location.pathname === '/p' || window.location.pathname.startsWith('/p/')
+const profileLoadingKey = 'profile'
 
 export const router = createRouter({
   history: createWebHistory(isAdmin ? '/a' : isProfile ? '/p' : '/'),
@@ -56,9 +57,9 @@ export const router = createRouter({
 
 if (isProfile) {
   router.beforeEach(() => {
-    loadingStart(wikiStore, 'profile')
+    loadingStart(wikiStore, profileLoadingKey)
   })
   router.afterEach(() => {
-    loadingStop(wikiStore, 'profile')
+    loadingStop(wikiStore, profileLoadingKey)
   })
 }

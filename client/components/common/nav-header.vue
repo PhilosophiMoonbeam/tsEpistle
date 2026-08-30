@@ -2,7 +2,7 @@
   v-app-bar.nav-header(color='surface', flat, height='72', :extended='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
     template(v-slot:extension v-if='searchIsShown && searchMode !== `ask` && $vuetify.display.smAndDown')
       v-toolbar.nav-header-mobile-search(color='surface', flat)
-        v-text-field(
+        v-text-field.nav-header-search-control(
           ref='searchFieldMobile'
           v-model='search'
           clearable
@@ -39,7 +39,7 @@
         v-toolbar.nav-header-inner(color='surface', flat)
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
-              v-text-field(
+              v-text-field.nav-header-search-control(
                 ref='searchField',
                 v-if='searchIsShown && $vuetify.display.mdAndUp',
                 v-model='search',

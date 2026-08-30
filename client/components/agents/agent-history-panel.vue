@@ -8,7 +8,7 @@
         <h2>Chat history</h2>
         <p>Find, file, and revisit your work.</p>
       </div>
-      <v-btn icon="mdi-close" size="small" variant="text" aria-label="Close chat history" @click="emit('close')" />
+      <v-btn icon="mdi-close" size="small" variant="text" aria-label="Close chat history" @click="closeHistory" />
     </header>
 
     <div class="agent-history__actions">
@@ -204,7 +204,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
@@ -238,13 +238,21 @@ const formatSessionDate = (value: string): string => {
   if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric' }).format(date)
 }
+const closeHistory = (): void => {
+  agents.cancelSessionTransition()
+  emit('close')
+}
+
 
 const openSession = async (sessionId: string): Promise<void> => {
-  if (sessionId === thread.value?.session.id) return
+  if (sessionId === thread.value?.session.id) {
+    agents.cancelSessionTransition()
+    return
+  }
   localError.value = ''
   try {
-    await agents.openSession(sessionId)
-    if (window.matchMedia('(max-width: 1199.98px)').matches) emit('close')
+    const opened = await agents.openSession(sessionId)
+    if (opened && window.matchMedia('(max-width: 1199.98px)').matches) emit('close')
   } catch (value) {
     localError.value = message(value, 'The conversation could not be opened.')
   }
@@ -315,6 +323,8 @@ const deleteFolder = async (): Promise<void> => {
     deleting.value = false
   }
 }
+onBeforeUnmount(() => agents.cancelSessionTransition())
+
 
 </script>
 

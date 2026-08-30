@@ -1,3 +1,4 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
 
 type FetchImpl = typeof window.fetch
@@ -29,7 +30,7 @@ export interface WebhookDelivery {
 }
 
 const jsonRequest = async (fetchImpl: FetchImpl, path: string, init: RequestInit = {}): Promise<unknown> => {
-  const response = await fetchImpl(path, {
+  const response = await sameOriginJsonFetch(fetchImpl, path, {
     credentials: 'same-origin',
     ...init,
     headers: {
@@ -47,9 +48,15 @@ const jsonRequest = async (fetchImpl: FetchImpl, path: string, init: RequestInit
 }
 
 const webhook = (value: unknown): AdminWebhook => {
-  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.name !== 'string' ||
-    typeof value.url !== 'string' || !Array.isArray(value.events) ||
-    !value.events.every(event => typeof event === 'string') || typeof value.isEnabled !== 'boolean') {
+  if (
+    !isRecord(value) ||
+    typeof value.id !== 'string' ||
+    typeof value.name !== 'string' ||
+    typeof value.url !== 'string' ||
+    !Array.isArray(value.events) ||
+    !value.events.every(event => typeof event === 'string') ||
+    typeof value.isEnabled !== 'boolean'
+  ) {
     throw new Error('Webhook response is invalid')
   }
   return value as unknown as AdminWebhook
@@ -61,7 +68,10 @@ export const fetchWebhooks = async (fetchImpl: FetchImpl): Promise<AdminWebhook[
   return payload.map(webhook)
 }
 
-export const createWebhook = async (fetchImpl: FetchImpl, input: Omit<AdminWebhook, 'id' | 'createdAt' | 'updatedAt'>): Promise<{ id: string, secret: string }> => {
+export const createWebhook = async (
+  fetchImpl: FetchImpl,
+  input: Omit<AdminWebhook, 'id' | 'createdAt' | 'updatedAt'>
+): Promise<{ id: string; secret: string }> => {
   const payload = await jsonRequest(fetchImpl, '/_api/webhooks', { method: 'POST', body: JSON.stringify(input) })
   if (!isRecord(payload) || typeof payload.id !== 'string' || typeof payload.secret !== 'string') throw new Error('Webhook creation response is invalid')
   return { id: payload.id, secret: payload.secret }

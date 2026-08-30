@@ -2,8 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { createProductMetadata, productDefinition } from '../../../shared/product.ts'
-import { loadProductMetadata } from '../../core/product.ts'
+import { createProductMetadata, loadProductMetadata, productDefinition } from '../../core/product.ts'
 import { normalizeLegacyProductDefaults } from '../../core/config.ts'
 
 const revision = '0123456789abcdef0123456789abcdef01234567'

@@ -8,7 +8,7 @@ import fs from 'fs-extra'
 import getos from 'getos'
 
 import errors from './errors.ts'
-import type { ProductMetadata } from '../../shared/product.ts'
+import { ProductMetadataSchema, type ProductMetadata } from '../../shared/product.ts'
 
 const { ApplicationError } = errors
 
@@ -136,6 +136,7 @@ const wiki = WIKI as WikiServices
 const getosAsync = promisify(getos)
 
 const getSummary = async () => {
+  const product = ProductMetadataSchema.parse(wiki.product)
   const [groups, pages, users, tags] = await Promise.all([
     wiki.models.groups.query().count('* as total').first(),
     wiki.models.pages.query().count('* as total').first(),
@@ -143,8 +144,8 @@ const getSummary = async () => {
     wiki.models.tags.query().count('* as total').first()
   ])
   return {
-    product: wiki.product,
-    currentVersion: wiki.product.version,
+    product,
+    currentVersion: product.version,
     latestVersion: null,
     latestVersionReleaseDate: null,
     updateStatus: 'unavailable',

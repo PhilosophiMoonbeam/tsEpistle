@@ -1,3 +1,4 @@
+import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
 
 type JsonResponse = {
@@ -17,19 +18,19 @@ const GROUP_PAGE_RULE_MATCHES: Record<GroupPageRuleMatch, true> = {
   TAG: true
 }
 
-function isInteger (value: unknown): value is number {
+function isInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value)
 }
 
-function isStringArray (value: unknown): value is string[] {
+function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === 'string')
 }
 
-function isGroupPageRuleMatch (value: unknown): value is GroupPageRuleMatch {
+function isGroupPageRuleMatch(value: unknown): value is GroupPageRuleMatch {
   return typeof value === 'string' && Object.hasOwn(GROUP_PAGE_RULE_MATCHES, value)
 }
 
-async function parseJsonResponse (response: JsonResponse, fallbackMessage: string): Promise<unknown> {
+async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
   const contentType = response.headers?.get('content-type') || ''
   let payload: unknown = null
 
@@ -65,7 +66,6 @@ export type GroupListRow = GroupOption & {
   createdAt: string
   updatedAt: string
 }
-
 
 export type GroupPageRule = {
   id: string
@@ -104,7 +104,7 @@ export type GroupCreateResponse = GroupMutationResponse & {
   group: GroupOption
 }
 
-export function createEmptyGroupEditorState (): GroupEditorState {
+export function createEmptyGroupEditorState(): GroupEditorState {
   return {
     id: 0,
     name: '',
@@ -116,7 +116,7 @@ export function createEmptyGroupEditorState (): GroupEditorState {
   }
 }
 
-function normalizeGroupOption (row: unknown, fallbackMessage: string): GroupOption {
+function normalizeGroupOption(row: unknown, fallbackMessage: string): GroupOption {
   if (!isRecord(row) || !isInteger(row.id) || typeof row.name !== 'string' || row.name.length < 1 || typeof row.isSystem !== 'boolean') {
     throw new Error(fallbackMessage)
   }
@@ -128,9 +128,16 @@ function normalizeGroupOption (row: unknown, fallbackMessage: string): GroupOpti
   }
 }
 
-function normalizeGroupListRow (row: unknown, fallbackMessage: string): GroupListRow {
+function normalizeGroupListRow(row: unknown, fallbackMessage: string): GroupListRow {
   const group = normalizeGroupOption(row, fallbackMessage)
-  if (!isRecord(row) || !isInteger(row.userCount) || typeof row.createdAt !== 'string' || row.createdAt.length < 1 || typeof row.updatedAt !== 'string' || row.updatedAt.length < 1) {
+  if (
+    !isRecord(row) ||
+    !isInteger(row.userCount) ||
+    typeof row.createdAt !== 'string' ||
+    row.createdAt.length < 1 ||
+    typeof row.updatedAt !== 'string' ||
+    row.updatedAt.length < 1
+  ) {
     throw new Error(fallbackMessage)
   }
 
@@ -142,7 +149,7 @@ function normalizeGroupListRow (row: unknown, fallbackMessage: string): GroupLis
   }
 }
 
-function normalizeGroupDetailPageRule (row: unknown, fallbackMessage: string): GroupPageRule {
+function normalizeGroupDetailPageRule(row: unknown, fallbackMessage: string): GroupPageRule {
   if (
     !isRecord(row) ||
     typeof row.id !== 'string' ||
@@ -166,7 +173,7 @@ function normalizeGroupDetailPageRule (row: unknown, fallbackMessage: string): G
   }
 }
 
-function normalizeGroupDetailUser (row: unknown, fallbackMessage: string): GroupUserRow {
+function normalizeGroupDetailUser(row: unknown, fallbackMessage: string): GroupUserRow {
   if (!isRecord(row) || !isInteger(row.id) || typeof row.name !== 'string' || row.name.length < 1 || typeof row.email !== 'string' || row.email.length < 1) {
     throw new Error(fallbackMessage)
   }
@@ -178,7 +185,7 @@ function normalizeGroupDetailUser (row: unknown, fallbackMessage: string): Group
   }
 }
 
-function normalizeGroupDetail (payload: unknown, fallbackMessage: string): GroupDetails {
+function normalizeGroupDetail(payload: unknown, fallbackMessage: string): GroupDetails {
   if (
     !isRecord(payload) ||
     !isInteger(payload.id) ||
@@ -210,8 +217,8 @@ function normalizeGroupDetail (payload: unknown, fallbackMessage: string): Group
   }
 }
 
-export async function fetchGroupOptions (fetchImpl: FetchImpl, fallbackMessage = 'Groups response is invalid'): Promise<GroupOption[]> {
-  const response = await fetchImpl('/_api/groups', {
+export async function fetchGroupOptions(fetchImpl: FetchImpl, fallbackMessage = 'Groups response is invalid'): Promise<GroupOption[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/groups', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -226,8 +233,8 @@ export async function fetchGroupOptions (fetchImpl: FetchImpl, fallbackMessage =
   return payload.map(row => normalizeGroupOption(row, fallbackMessage))
 }
 
-export async function fetchGroupsList (fetchImpl: FetchImpl, fallbackMessage = 'Groups list response is invalid'): Promise<GroupListRow[]> {
-  const response = await fetchImpl('/_api/groups/list', {
+export async function fetchGroupsList(fetchImpl: FetchImpl, fallbackMessage = 'Groups list response is invalid'): Promise<GroupListRow[]> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/groups/list', {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -242,8 +249,12 @@ export async function fetchGroupsList (fetchImpl: FetchImpl, fallbackMessage = '
   return payload.map(row => normalizeGroupListRow(row, fallbackMessage))
 }
 
-export async function fetchGroupDetails (fetchImpl: FetchImpl, id: number | string, fallbackMessage = 'Group detail response is invalid'): Promise<GroupDetails> {
-  const response = await fetchImpl(`/_api/groups/${id}`, {
+export async function fetchGroupDetails(
+  fetchImpl: FetchImpl,
+  id: number | string,
+  fallbackMessage = 'Group detail response is invalid'
+): Promise<GroupDetails> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/groups/${id}`, {
     credentials: 'same-origin',
     headers: {
       Accept: 'application/json'
@@ -253,7 +264,7 @@ export async function fetchGroupDetails (fetchImpl: FetchImpl, id: number | stri
   return normalizeGroupDetail(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-function normalizeGroupMutationResponse (payload: unknown, fallbackMessage: string): GroupMutationResponse {
+function normalizeGroupMutationResponse(payload: unknown, fallbackMessage: string): GroupMutationResponse {
   if (!isRecord(payload) || payload.succeeded !== true || typeof payload.message !== 'string' || payload.message.length < 1) {
     throw new Error(fallbackMessage)
   }
@@ -264,8 +275,8 @@ function normalizeGroupMutationResponse (payload: unknown, fallbackMessage: stri
   }
 }
 
-export async function createGroup (fetchImpl: FetchImpl, name: string, fallbackMessage = 'Group create response is invalid'): Promise<GroupCreateResponse> {
-  const response = await fetchImpl('/_api/groups', {
+export async function createGroup(fetchImpl: FetchImpl, name: string, fallbackMessage = 'Group create response is invalid'): Promise<GroupCreateResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, '/_api/groups', {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -286,8 +297,13 @@ export async function createGroup (fetchImpl: FetchImpl, name: string, fallbackM
   }
 }
 
-export async function assignGroupUser (fetchImpl: FetchImpl, groupId: number | string, userId: number | string, fallbackMessage = 'Group user assign response is invalid'): Promise<GroupMutationResponse> {
-  const response = await fetchImpl(`/_api/groups/${groupId}/users/${userId}`, {
+export async function assignGroupUser(
+  fetchImpl: FetchImpl,
+  groupId: number | string,
+  userId: number | string,
+  fallbackMessage = 'Group user assign response is invalid'
+): Promise<GroupMutationResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/groups/${groupId}/users/${userId}`, {
     method: 'POST',
     credentials: 'same-origin',
     headers: {
@@ -298,8 +314,13 @@ export async function assignGroupUser (fetchImpl: FetchImpl, groupId: number | s
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function unassignGroupUser (fetchImpl: FetchImpl, groupId: number | string, userId: number | string, fallbackMessage = 'Group user unassign response is invalid'): Promise<GroupMutationResponse> {
-  const response = await fetchImpl(`/_api/groups/${groupId}/users/${userId}`, {
+export async function unassignGroupUser(
+  fetchImpl: FetchImpl,
+  groupId: number | string,
+  userId: number | string,
+  fallbackMessage = 'Group user unassign response is invalid'
+): Promise<GroupMutationResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/groups/${groupId}/users/${userId}`, {
     method: 'DELETE',
     credentials: 'same-origin',
     headers: {
@@ -310,8 +331,12 @@ export async function unassignGroupUser (fetchImpl: FetchImpl, groupId: number |
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function deleteGroup (fetchImpl: FetchImpl, id: number | string, fallbackMessage = 'Group delete response is invalid'): Promise<GroupMutationResponse> {
-  const response = await fetchImpl(`/_api/groups/${id}`, {
+export async function deleteGroup(
+  fetchImpl: FetchImpl,
+  id: number | string,
+  fallbackMessage = 'Group delete response is invalid'
+): Promise<GroupMutationResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/groups/${id}`, {
     method: 'DELETE',
     credentials: 'same-origin',
     headers: {
@@ -322,8 +347,13 @@ export async function deleteGroup (fetchImpl: FetchImpl, id: number | string, fa
   return normalizeGroupMutationResponse(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
 }
 
-export async function updateGroup (fetchImpl: FetchImpl, id: number | string, payload: GroupUpdateInput, fallbackMessage = 'Group update response is invalid'): Promise<GroupMutationResponse> {
-  const response = await fetchImpl(`/_api/groups/${id}`, {
+export async function updateGroup(
+  fetchImpl: FetchImpl,
+  id: number | string,
+  payload: GroupUpdateInput,
+  fallbackMessage = 'Group update response is invalid'
+): Promise<GroupMutationResponse> {
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/groups/${id}`, {
     method: 'PATCH',
     credentials: 'same-origin',
     headers: {

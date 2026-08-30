@@ -1,10 +1,8 @@
 import type { Request, Response } from 'express'
 import type { Knex } from 'knex'
-import type { AgentRunStatus } from '../../shared/agents/contracts.ts'
+import { isTerminalAgentRunStatus, type AgentRunStatus } from '../../shared/agents/contracts.ts'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { AgentRepositoryError, listOwnedAgentEvents } from './repository.ts'
-
-const TERMINAL = new Set<AgentRunStatus>(['succeeded', 'failed', 'cancelled', 'recovery_required'])
 
 interface Notification {
   readonly channel?: string
@@ -19,7 +17,11 @@ interface NotificationConnection {
 
 const isNotificationConnection = (value: unknown): value is NotificationConnection => {
   if (value === null || typeof value !== 'object') return false
-  return typeof Reflect.get(value, 'query') === 'function' && typeof Reflect.get(value, 'on') === 'function' && typeof Reflect.get(value, 'removeListener') === 'function'
+  return (
+    typeof Reflect.get(value, 'query') === 'function' &&
+    typeof Reflect.get(value, 'on') === 'function' &&
+    typeof Reflect.get(value, 'removeListener') === 'function'
+  )
 }
 
 const parseCursor = (req: Request): number => {
@@ -90,7 +92,9 @@ export const streamOwnedAgentEvents = async (
   connections: Map<number, number>,
   limits: AgentSseLimits
 ): Promise<void> => {
-  const run = await knex('agentRuns').where({ id: runId, ownerId }).first('id', 'status', 'eventSequence') as { id: string, status: string, eventSequence: number } | undefined
+  const run = (await knex('agentRuns').where({ id: runId, ownerId }).first('id', 'status', 'eventSequence')) as
+    | { id: string; status: string; eventSequence: number }
+    | undefined
   if (!run) throw new AgentRepositoryError('AGENT_RESOURCE_NOT_FOUND', 'Agent resource was not found', 404)
   const currentConnections = connections.get(ownerId) ?? 0
   if (currentConnections >= limits.maximumConnectionsPerUser) throw new AgentRepositoryError('SSE_CONNECTION_LIMIT', 'Too many agent event streams', 429)
@@ -100,7 +104,9 @@ export const streamOwnedAgentEvents = async (
   connections.set(ownerId, currentConnections + 1)
   let closed = false
   let wakeCurrent: (() => void) | null = null
-  const wake = (): void => { wakeCurrent?.() }
+  const wake = (): void => {
+    wakeCurrent?.()
+  }
   const onClose = (): void => {
     closed = true
     wake()
@@ -134,11 +140,13 @@ export const streamOwnedAgentEvents = async (
         lastWriteAt = Date.now()
       }
       if (closed) break
-      const current = await knex('agentRuns').where({ id: runId, ownerId }).first('status', 'eventSequence') as { status: AgentRunStatus, eventSequence: number } | undefined
+      const current = (await knex('agentRuns').where({ id: runId, ownerId }).first('status', 'eventSequence')) as
+        | { status: AgentRunStatus; eventSequence: number }
+        | undefined
       if (!current) break
-      if (TERMINAL.has(current.status) && cursor >= current.eventSequence) break
+      if (isTerminalAgentRunStatus(current.status) && cursor >= current.eventSequence) break
       if (Date.now() - lastWriteAt >= keepaliveMilliseconds) {
-        if (!await writeWithBackpressure(res, ': keepalive\n\n')) break
+        if (!(await writeWithBackpressure(res, ': keepalive\n\n'))) break
         lastWriteAt = Date.now()
       }
       const { promise, resolve } = Promise.withResolvers<void>()
