@@ -6,6 +6,12 @@
       "sourceType": "github",
       "skillPath": "skills/vue/SKILL.md",
       "computedHash": "9c241141e07e836e4f0537c63e8f929fba3767c2997250be38e699f19b75e3f2"
+    },
+    "vuetify-skilld": {
+      "source": "skilld-dev/vue-ecosystem-skills",
+      "sourceType": "github",
+      "skillPath": "skills/vuetify-skilld/SKILL.md",
+      "computedHash": "f1caf5d3c3080febb92f1a8c7cc609111167d3910cc7eff3df94a8ae1269f542"
     }
   }
 }
