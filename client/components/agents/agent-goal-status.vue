@@ -19,7 +19,7 @@
           <p class="agent-goal__eyebrow">Durable goal</p>
           <h2 :id="goalTitleId" class="agent-goal__title">{{ goal.objective }}</h2>
         </div>
-        <v-chip :color="statusColor" :prepend-icon="statusIcon" size="small" variant="tonal">{{ statusLabel }}</v-chip>
+        <v-chip class="agent-goal__status" :color="statusColor" :prepend-icon="statusIcon" size="small" variant="tonal">{{ statusLabel }}</v-chip>
       </header>
 
       <div class="agent-goal__continuity" aria-label="Goal continuity">
@@ -323,6 +323,7 @@ const progressLabel = computed(() => {
   justify-content: space-between;
 }
 .agent-goal__heading { min-width: 0; }
+.agent-goal__status { flex: 0 0 auto; }
 .agent-goal__eyebrow {
   color: var(--goal-accent);
   font-size: var(--wiki-label-size);
