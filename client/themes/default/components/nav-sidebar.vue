@@ -37,6 +37,8 @@
           :href='item.t'
           :target='item.y === `externalblank` ? `_blank` : `_self`'
           :rel='item.y === `externalblank` ? `noopener` : ``'
+          :active='isCurrentCustomLink(item)'
+          :aria-current='isCurrentCustomLink(item) ? `page` : undefined'
         )
           template(v-slot:prepend)
             v-avatar(size='24', rounded='0', variant='text')
@@ -256,6 +258,16 @@ export default defineComponent({
         void this.loadFromCurrentPath()
       } else {
         void this.fetchBrowseItems(this.currentParent)
+      }
+    },
+    isCurrentCustomLink (item: Extract<SidebarItem, { k: 'link' }>) {
+      if (!item.t || (item.y !== 'home' && item.y !== 'page')) return false
+      try {
+        const targetPath = new URL(item.t, window.location.href).pathname.replace(/\/+$/, '') || '/'
+        const currentPath = window.location.pathname.replace(/\/+$/, '') || '/'
+        return targetPath === currentPath
+      } catch {
+        return false
       }
     },
     pagePath (item: NavigationTreeItem) {

@@ -180,7 +180,7 @@
               span {{$t('common:header.admin')}}
             v-btn(v-else, variant="text", rounded='0', height='64', href='/', :aria-label='$t(`common:actions.exit`)')
               v-icon(start) mdi-exit-to-app
-          v-menu(v-if='$vuetify.display.smAndDown', location='bottom end', min-width='240')
+          v-menu(v-if='hasMobilePageActions && $vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
               v-btn(
                 icon
@@ -191,21 +191,21 @@
                 v-icon mdi-dots-vertical
             v-list.nav-header-menu(nav)
               v-list-subheader Page actions
-              v-list-item(v-if='mode !== `view`', prepend-icon='mdi-file-document-outline', @click='pageView')
+              v-list-item(v-if='path && mode !== `view`', prepend-icon='mdi-file-document-outline', @click='pageView')
                 v-list-item-title {{$t('common:header.view')}}
-              v-list-item(v-if='hasWritePagesPermission && mode !== `edit`', prepend-icon='mdi-file-document-edit-outline', @click='pageEdit')
+              v-list-item(v-if='path && hasWritePagesPermission && mode !== `edit`', prepend-icon='mdi-file-document-edit-outline', @click='pageEdit')
                 v-list-item-title {{$t('common:header.edit')}}
-              v-list-item(v-if='hasReadHistoryPermission && mode !== `history`', prepend-icon='mdi-history', @click='pageHistory')
+              v-list-item(v-if='path && hasReadHistoryPermission && mode !== `history`', prepend-icon='mdi-history', @click='pageHistory')
                 v-list-item-title {{$t('common:header.history')}}
-              v-list-item(v-if='hasReadSourcePermission && mode !== `source`', prepend-icon='mdi-code-tags', @click='pageSource')
+              v-list-item(v-if='path && hasReadSourcePermission && mode !== `source`', prepend-icon='mdi-code-tags', @click='pageSource')
                 v-list-item-title {{$t('common:header.viewSource')}}
-              v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
+              v-list-item(v-if='path && hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
                 v-list-item-title {{$t('common:header.convert')}}
-              v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
+              v-list-item(v-if='path && hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
                 v-list-item-title {{$t('common:header.duplicate')}}
-              v-list-item(v-if='hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
+              v-list-item(v-if='path && hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
                 v-list-item-title {{$t('common:header.move')}}
-              v-list-item.nav-header-menu-danger(v-if='hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
+              v-list-item.nav-header-menu-danger(v-if='path && hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
                 v-list-item-title {{$t('common:header.delete')}}
               v-divider(v-if='hasNewPagePermission || (isAuthenticated && isAdmin)')
               v-list-item(v-if='hasNewPagePermission && path && mode !== `edit`', prepend-icon='mdi-text-box-plus-outline', @click='pageNew')
@@ -368,6 +368,7 @@ export default defineComponent({
     title(): string { return wikiStore.site.title },
     logoUrl(): string { return wikiStore.site.logoUrl },
     path(): string { return wikiStore.page.path },
+    mode(): string { return wikiStore.page.mode },
     locale(): string { return wikiStore.page.locale },
     name(): string { return wikiStore.user.name },
     email(): string { return wikiStore.user.email },
@@ -402,6 +403,17 @@ export default defineComponent({
     hasAnyPagePermissions () {
       return this.hasWritePagesPermission || this.hasManagePagesPermission ||
         this.hasDeletePagesPermission || this.hasReadSourcePermission || this.hasReadHistoryPermission
+    },
+    hasMobilePageActions (): boolean {
+      return Boolean(
+        (this.path && (
+          this.mode !== 'view' ||
+          this.hasAnyPagePermissions ||
+          this.hasNewPagePermission
+        )) ||
+        (this.isAuthenticated && this.isAdmin) ||
+        (this.mode === 'view' && this.locales.length > 0)
+      )
     }
   },
   created () {

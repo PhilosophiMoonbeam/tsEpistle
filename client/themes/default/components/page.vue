@@ -24,10 +24,9 @@
     v-fab-transition(v-if='navMode !== `NONE`')
       v-btn.page-nav-toggle(
         ref='navToggle'
+        :class='{ "page-nav-toggle--open": navShown }'
         icon
         color='primary'
-        fixed
-        location='bottom start'
         size="small"
         @click='toggleNavigation'
         :aria-expanded='navShown ? `true` : `false`'
@@ -1619,7 +1618,15 @@ export default defineComponent({
   inset-inline-end: var(--wiki-space-6);
 }
 
-.page-nav-toggle,
+.page-nav-toggle {
+  inset-block-end: calc(var(--wiki-footer-height) + env(safe-area-inset-bottom) + var(--wiki-space-4)) !important;
+  inset-inline-start: var(--wiki-space-5) !important;
+}
+
+.page-nav-toggle--open {
+  z-index: 1007;
+}
+
 .page-return-top {
   inset-block-end: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-4)) !important;
   inset-inline-start: var(--wiki-space-5);
@@ -2863,7 +2870,11 @@ export default defineComponent({
     inset-inline-end: var(--wiki-space-4);
   }
 
-  .page-nav-toggle,
+  .page-nav-toggle {
+    inset-block-end: calc(var(--wiki-footer-height) + env(safe-area-inset-bottom) + var(--wiki-space-3)) !important;
+    inset-inline-start: var(--wiki-space-4) !important;
+  }
+
   .page-return-top {
     inset-block-end: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-3)) !important;
     inset-inline-start: var(--wiki-space-4);

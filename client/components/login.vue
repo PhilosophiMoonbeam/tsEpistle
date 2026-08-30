@@ -810,6 +810,14 @@ export default {
     border-radius: var(--wiki-panel-radius);
     background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
     box-shadow: var(--wiki-shadow-sm);
+
+    > .v-avatar > img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      object-position: center;
+    }
   }
 
   &-title {
