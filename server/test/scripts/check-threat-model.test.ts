@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from '../bun-test.mts'
 import { checkThreatModel, parseThreatModel } from '../../scripts/check-threat-model.ts'
 
 const temporaryDirectories: string[] = []
-const fullRevision = '4b47f5f3798f1168f6b82f17cad8513fcd655214'
+const fullRevision = '614e8b5a1dd3bc2088fc3c9547f85e6620b7c21d'
 const requiredCommands = ['bun run dependencies:check', 'bun run licenses:check', 'bun run test:security', 'bun audit --production', 'bun run typecheck:server']
 
 type FixtureManifest = {
