@@ -56,6 +56,13 @@ describe('inline Ask mode contract', () => {
     expect(memory).not.toMatch(/<v-dialog v-model="open"/)
   })
 
+  test('keeps direct panel controls on desktop and groups them only on mobile', () => {
+    expect(inline).toMatch(/aria-label="Open agent conversation history"/)
+    expect(inline).toMatch(/aria-label="Manage agent memory"/)
+    expect(inline).toMatch(/\.inline-agent__mobile-panel-menu\s*\{\s*display:\s*none !important/)
+    expect(inline).toMatch(/@media \(max-width: 639\.98px\)\s*\{[\s\S]*\.inline-agent__desktop-panel-btn\s*\{\s*display:\s*none;[\s\S]*\.inline-agent__mobile-panel-menu\s*\{\s*display:\s*inline-flex !important;/)
+  })
+
   test('offers durable folders, explicit unfiling, and individual deletion in history', () => {
     expect(history).toMatch(/New folder/)
     expect(history).toMatch(/Filed conversations do not expire/)

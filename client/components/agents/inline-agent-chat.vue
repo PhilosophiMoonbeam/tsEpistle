@@ -77,7 +77,7 @@
             aria-controls="agent-memory-panel"
             @click="toggleMemory"
           />
-          <v-menu class="inline-agent__mobile-actions" location="bottom end">
+          <v-menu location="bottom end">
             <template #activator="{ props: menuProps }">
               <v-btn ref="mobileActionsTrigger" v-bind="menuProps" class="inline-agent__mobile-panel-menu" prepend-icon="mdi-view-dashboard-outline" variant="text" size="small" aria-label="Open Agent panels: conversation history and memory">Panels</v-btn>
             </template>
@@ -659,8 +659,8 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   gap: var(--wiki-space-1);
 }
 
-.inline-agent__mobile-actions {
-  display: none;
+.inline-agent__mobile-panel-menu {
+  display: none !important;
 }
 
 .inline-agent__new-session {
@@ -1083,11 +1083,8 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     display: none;
   }
 
-  .inline-agent__mobile-actions {
-    display: block;
-  }
-
   .inline-agent__mobile-panel-menu {
+    display: inline-flex !important;
     min-width: auto !important;
     padding-inline: var(--wiki-space-2) !important;
     letter-spacing: 0;
