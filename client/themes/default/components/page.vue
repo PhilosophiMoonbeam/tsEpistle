@@ -85,7 +85,7 @@
               .page-title-row.d-flex.align-center
                 h1.page-title {{title}}
                 v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') Private
-              p.page-description {{description}}
+              p.page-description(v-if='description') {{description}}
             .page-edit-shortcuts(
               v-if='editShortcutsObj.editMenuBar'
               :class='tocPosition === `right` ? `is-right` : ``'
@@ -1624,8 +1624,11 @@ export default defineComponent({
       rgb(var(--v-theme-background)) calc(var(--wiki-grid-size) * 8)
     );
 }
-.page-main--route-enter > * {
-  animation: wiki-page-route-enter var(--wiki-motion-normal) var(--wiki-motion-ease-out) both;
+.page-main--route-enter {
+  .page-header-headings,
+  .page-body > .v-row {
+    animation: wiki-page-route-enter var(--wiki-motion-normal) var(--wiki-motion-ease-out) both;
+  }
 }
 
 @keyframes wiki-page-route-enter {
@@ -1768,7 +1771,7 @@ export default defineComponent({
 .page-hero {
   position: relative;
   overflow: hidden;
-  min-height: calc(var(--wiki-grid-size) * 2);
+  min-height: 0;
   padding: 0 !important;
   border-bottom: 1px solid var(--wiki-surface-border);
   background:
@@ -1817,18 +1820,19 @@ export default defineComponent({
 .page-header-section {
   position: relative;
   width: min(100%, var(--wiki-shell-max));
-  min-height: calc(var(--wiki-grid-size) * 2);
+  min-height: 0;
   margin-inline: auto;
 
   > .is-page-header {
     position: relative;
-    display: flex;
+    display: grid;
     min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--wiki-space-4);
     align-items: center;
     padding:
-      var(--wiki-space-6)
-      var(--wiki-page-gutter)
-      calc(var(--wiki-space-8) + var(--wiki-control-height)) !important;
+      var(--wiki-space-4)
+      var(--wiki-page-gutter) !important;
   }
 
   .page-header-headings {
@@ -1847,7 +1851,7 @@ export default defineComponent({
     margin: 0;
     color: rgb(var(--v-theme-on-surface));
     font-family: var(--wiki-font-heading);
-    font-size: clamp(2rem, 1.55rem + 1.55vw, 3.25rem);
+    font-size: clamp(1.9375rem, 1.5rem + 1.5vw, 3.125rem);
     font-weight: 760;
     letter-spacing: -.052em;
     line-height: 1.02;
@@ -1864,18 +1868,16 @@ export default defineComponent({
 
   .page-description {
     max-width: 68ch;
-    margin: var(--wiki-space-2) 0 0;
+    margin: var(--wiki-space-1) 0 0;
     color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
-    font-size: clamp(.9375rem, .9rem + .18vw, 1.0625rem);
-    line-height: 1.55;
+    font-size: clamp(.9375rem, .9rem + .14vw, 1rem);
+    line-height: 1.45;
     overflow-wrap: anywhere;
     text-wrap: pretty;
   }
 
   .page-edit-shortcuts {
-    position: absolute;
-    inset-inline-end: var(--wiki-page-gutter);
-    inset-block-end: var(--wiki-space-4);
+    position: static;
     z-index: 2;
     display: flex;
     gap: var(--wiki-space-2);
@@ -2841,25 +2843,26 @@ export default defineComponent({
 
   .page-hero,
   .page-header-section {
-    min-height: calc(var(--wiki-grid-size) * 2);
+    min-height: 0;
   }
 
   .page-header-section {
     > .is-page-header {
+      grid-template-columns: minmax(0, 1fr);
       padding:
-        var(--wiki-space-5)
+        var(--wiki-space-3)
         var(--wiki-page-gutter)
-        var(--wiki-space-6) !important;
+        var(--wiki-space-4) !important;
     }
 
     .page-title {
-      font-size: clamp(1.75rem, 1.4rem + 2.4vw, 2.125rem);
+      font-size: clamp(1.6875rem, 1.35rem + 2.2vw, 2rem);
       line-height: 1.06;
     }
 
     .page-description {
-      margin-top: var(--wiki-space-2);
-      font-size: .9375rem;
+      margin-top: var(--wiki-space-1);
+      font-size: .875rem;
     }
 
     .page-edit-shortcuts {
