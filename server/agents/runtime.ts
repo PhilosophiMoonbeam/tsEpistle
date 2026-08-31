@@ -200,9 +200,13 @@ class AgentRunDispatchBudget implements AgentDispatchBudget {
       const inputTokens = nonNegativeUsage(actual.inputTokens, 'Dispatch input token usage')
       const outputTokens = nonNegativeUsage(actual.outputTokens, 'Dispatch output token usage')
       const costMicros = nonNegativeUsage(actual.costMicros, 'Dispatch cost usage')
-      if (inputTokens + outputTokens > held.tokens || costMicros > held.costMicros) {
+      if (inputTokens + outputTokens > held.tokens) {
+        if (this.#maximumTokens !== undefined && this.#consumedInputTokens + this.#consumedOutputTokens + inputTokens + outputTokens > this.#maximumTokens)
+          throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
         throw new AgentRepositoryError('DISPATCH_RESERVATION_EXCEEDED', 'Provider usage exceeded its dispatch reservation', 502)
       }
+      if (costMicros > held.costMicros)
+        throw new AgentRepositoryError('DISPATCH_RESERVATION_EXCEEDED', 'Provider usage exceeded its dispatch reservation', 502)
       this.#active.delete(reservation.id)
       this.#consumedInputTokens += inputTokens
       this.#consumedOutputTokens += outputTokens

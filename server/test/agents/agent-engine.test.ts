@@ -297,7 +297,7 @@ describe('Ax agent engine', () => {
                 id: 42,
                 title: 'Budget Guide',
                 contentType: 'markdown',
-                content: `# Budget Guide\n\n## Evidence\n${'Budget evidence remains available. '.repeat(300)}`,
+                content: `# Budget Guide\n\n## Evidence\n${'Budget evidence remains available. '.repeat(1_200)}`,
                 knowledge: {
                   state: 'complete',
                   summary: 'Budget evidence page.',
@@ -340,6 +340,7 @@ describe('Ax agent engine', () => {
     )
     expect(chat).toHaveBeenCalledTimes(3)
     expect(reservedMaximums).toHaveLength(3)
+    expect(reservedMaximums[2]).toBe(41_973)
     expect(JSON.stringify(calls[1]?.chatPrompt)).toContain('A concise provider-facing search summary.')
     expect(JSON.stringify(calls[2]?.chatPrompt)).toContain('Budget evidence remains available.')
     expect(JSON.stringify(calls[2]?.chatPrompt)).not.toContain('review metadata')
