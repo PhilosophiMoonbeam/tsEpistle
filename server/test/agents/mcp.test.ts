@@ -12,6 +12,15 @@ import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { knowledgeSearchText, projectPageKnowledge } from '../../knowledge/projection.ts'
 
 const key = Buffer.alloc(32, 7)
+const validOkfMetadata = {
+  type: 'Reference',
+  status: 'stable' as const,
+  generated: { by: 'mcp:fixture', at: '2026-08-24T00:00:00.000Z' },
+  verified: { by: 'human:7', at: '2026-08-25T00:00:00.000Z' },
+  'x-fixture': { retained: true },
+  'x-wiki': { namespace: 'docs' }
+}
+const validOkfExtra = { okf: validOkfMetadata }
 
 const apiPrincipal = (): Express.User => ({
   id: 90,
@@ -128,6 +137,7 @@ describe('Wiki MCP transport', () => {
   let movePage: ReturnType<typeof vi.fn>
   let authorizeMutation: ReturnType<typeof vi.fn>
   let listRelated: ReturnType<typeof vi.fn>
+  let resolvedPrincipal: Express.User
 
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
@@ -171,6 +181,7 @@ describe('Wiki MCP transport', () => {
       projection: canonicalJson(projection)
     })
     movePage = vi.fn(async () => ({}))
+    resolvedPrincipal = apiPrincipal()
     authorizeMutation = vi.fn(async () => {})
     listRelated = vi.fn(async input => Number(input.offset) === 0
       ? {
@@ -200,11 +211,11 @@ describe('Wiki MCP transport', () => {
         searchTags: vi.fn(),
         listTags: vi.fn(),
         discover: vi.fn(),
-        get: vi.fn(async () => ({ id: 42, authorId: 7, path: 'docs/start', locale: 'en', title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '8', updatedAt: '2026-08-25T00:00:00.000Z', extra: {} })),
-        getByPath: vi.fn(async input => ({ id: 42, authorId: 7, path: String(input.path), locale: String(input.locale), title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '8', updatedAt: '2026-08-25T00:00:00.000Z', extra: {} })),
-        listRecent: vi.fn(),
+        get: vi.fn(async () => ({ id: 42, authorId: 7, path: 'docs/start', locale: 'en', title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '8', updatedAt: '2026-08-25T00:00:00.000Z', visibility: 'public', tags: [], extra: validOkfExtra })),
+        getByPath: vi.fn(async () => ({ id: 42, authorId: 7, path: 'docs/start', locale: 'en', title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '8', updatedAt: '2026-08-25T00:00:00.000Z', visibility: 'public', tags: [], extra: validOkfExtra })),
         getHistory: vi.fn(),
-        getVersion: vi.fn(),
+        getVersion: vi.fn(async input => ({ id: 42, versionId: Number(input.versionId), authorId: 7, path: 'docs/start', locale: 'en', title: 'Start historical', description: '', content: '# Start historical\n', contentType: 'markdown', sourceRevision: String(Number(input.versionId) + 7), updatedAt: '2026-08-25T00:00:00.000Z', visibility: 'public', tags: [], extra: validOkfExtra })),
+        listRecent: vi.fn(),
         listLinks: vi.fn(),
         listRelated,
         create: vi.fn(),
@@ -227,7 +238,7 @@ describe('Wiki MCP transport', () => {
         })
         next()
       },
-      resolvePrincipal: async () => apiPrincipal(),
+      resolvePrincipal: async () => resolvedPrincipal,
       resolveUser: async () => humanPrincipal(),
       config: {
         enabled: true,
@@ -282,7 +293,7 @@ describe('Wiki MCP transport', () => {
     expect(names).toContain('wiki_list_tags')
     expect(names).toContain('wiki_discover_pages')
     expect(names).toContain('wiki_get_related_pages')
-    expect(names).not.toContain('wiki_get_page_okf')
+    expect(names).toContain('wiki_get_page_okf')
     expect(names).not.toContain('wiki_prepare_okf_import')
     expect(names).toContain('wiki_read_skill')
     expect(names).toContain('wiki_prepare_page_patch')
@@ -317,7 +328,7 @@ describe('Wiki MCP transport', () => {
 
     expect(await client.listResourceTemplates()).toMatchObject({
       resourceTemplates: expect.arrayContaining([expect.objectContaining({
-        uriTemplate: 'wiki://pages/{locale}/{+path}',
+        uriTemplate: 'wiki://pages/{pageId}/versions/{version}/revisions/{sourceRevision}/okf',
         mimeType: 'text/markdown'
       })])
     })
@@ -325,33 +336,68 @@ describe('Wiki MCP transport', () => {
     expect(pageResult.structuredContent).toMatchObject({
       id: 42,
       sourceRevision: '8',
-      knowledge: { state: 'complete', conceptType: 'Reference', summary: 'Projected knowledge summary' }
+      knowledge: { state: 'complete', conceptType: 'Reference', summary: 'Projected knowledge summary' },
+      authority: {
+        state: 'valid',
+        metadata: validOkfMetadata,
+        trust: {
+          trustTier: 'human-reviewed',
+          verification: 'current',
+          status: 'stable',
+          stale: false,
+          generatedAt: '2026-08-24T00:00:00.000Z',
+          verifiedAt: '2026-08-25T00:00:00.000Z'
+        }
+      },
+      okfResourceUri: 'wiki://pages/42/versions/current/revisions/8/okf'
     })
     expect(pageResult.structuredContent).toMatchObject({
-      citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' },
+      citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' },
       citationSections: []
     })
-    const resource = await client.readResource({ uri: 'wiki://pages/en/docs/start' })
+    const okfResult = await client.callTool({ name: 'wiki_get_page_okf', arguments: { id: 42 } })
+    const okf = okfResult.structuredContent as {
+      readonly document: string
+      readonly resourceUri: string
+      readonly sourceRevision: string
+      readonly authority: unknown
+      readonly knowledge: unknown
+      readonly sha256: string
+    }
+    expect(okf).toMatchObject({
+      pageId: 42,
+      versionId: null,
+      sourceRevision: '8',
+      resourceUri: 'wiki://pages/42/versions/current/revisions/8/okf',
+      conceptId: 'en/docs/start',
+      filePath: 'en/docs/start.md',
+      mediaType: 'text/markdown',
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      authority: { state: 'valid', metadata: validOkfMetadata },
+      knowledge: { state: 'complete', conceptType: 'Reference', summary: 'Projected knowledge summary' }
+    })
+    expect(okf.document).toContain('x-wiki:')
+    expect(okf.document).toContain('state: complete')
+    expect(okf.document).toContain('summary: Projected knowledge summary')
+    const resource = await client.readResource({ uri: okf.resourceUri })
     expect(resource.contents).toHaveLength(1)
     const resourceContent = resource.contents[0]!
-    const resourceText = String(Reflect.get(resourceContent, 'text'))
     expect(resourceContent).toMatchObject({
-      uri: 'wiki://pages/en/docs/start',
+      uri: okf.resourceUri,
       mimeType: 'text/markdown',
+      text: okf.document,
       _meta: {
-        okfVersion: '0.2',
-        conceptId: 'en/docs/start',
+        authority: okf.authority,
+        knowledge: okf.knowledge,
+        sha256: okf.sha256,
+        pageId: 42,
+        versionId: null,
         sourceRevision: '8',
-        contentHash: expect.stringMatching(/^[a-f0-9]{64}$/u),
-        trustTier: 'unverified',
-        verification: 'unverified',
-        stale: false,
-        projectionState: 'complete'
+        cacheScope: 'private',
+        private: true,
+        noCache: true
       }
     })
-    expect(resourceText).toContain('x-wiki:')
-    expect(resourceText).toContain('state: complete')
-    expect(resourceText).toContain('summary: Projected knowledge summary')
   })
 
   it('continues related-page traversal across independent MCP requests', async () => {

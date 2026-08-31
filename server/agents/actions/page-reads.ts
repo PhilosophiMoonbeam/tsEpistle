@@ -6,6 +6,7 @@ import { type ActionAuthority, ActionKernel, ActionKernelError } from './kernel.
 import { issueWikiLineSnapshot } from '../patch/wiki-line-patch.ts'
 import type { KnowledgeProjectionView } from '../../knowledge/projection.ts'
 import type { KnowledgeDiscoveryFilter, KnowledgeSearchCandidate } from '../../knowledge/lifecycle.ts'
+import { okfResourceUri, pageAuthority, serializeCanonicalOkfPage, type PageAuthority } from '../okf.ts'
 const SEARCH_CANDIDATE_WINDOW_LIMIT = 100
 const SearchMatchFieldSchema = z.enum(['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'])
 const PageRowSchema = z.looseObject({
@@ -34,7 +35,7 @@ const SearchResponseSchema = z.looseObject({
       visibility: z.enum(['public', 'private']).optional(),
       tags: z.array(z.string()).max(50).default([]),
       score: z.number().finite().nonnegative().default(0),
-      matchedFields: z.array(SearchMatchFieldSchema).max(6).default([])
+      matchedFields: z.array(SearchMatchFieldSchema).max(7).default([])
     })
   ),
   suggestions: z.array(z.string()).max(20),
@@ -159,6 +160,7 @@ interface PatchReadInput {
   readonly ranges?: readonly { readonly startLine: number; readonly endLine: number }[]
   readonly previousSnapshotToken?: string
 }
+type OkfInput = PageGetInput | { readonly pageId: number; readonly versionId: number }
 interface RecentInput {
   readonly locale?: string
   readonly limit: number
@@ -225,25 +227,28 @@ const versionedCitationHref = (href: string, versionId: number): string => {
 const pageCitation = (row: z.infer<typeof PageRowSchema>, id: number, locale: string) => {
   const href = `${row.visibility === 'private' ? '/_private' : ''}/${locale}/${row.path}`
   const citationTitle = row.title.trim() || row.path
+  const revision = String(row.sourceRevision)
+  const evidenceId = `page:${id}:revision:${revision}`
   return {
-    citation: { evidenceId: `page:${id}`, label: citationTitle, href },
+    citation: { evidenceId, label: citationTitle, href },
     citationSections: tocSections(row.toc).flatMap((section, index) => {
       const sectionHref = `${href}${section.anchor}`
       const titlePath = section.titlePath[0] === citationTitle ? section.titlePath.slice(1) : section.titlePath
       return sectionHref.length <= 2_048
-        ? [{ evidenceId: `page:${id}:section:${index + 1}`, label: boundedCitationLabel([citationTitle, ...titlePath].join(' › ')), href: sectionHref }]
+        ? [{ evidenceId: `${evidenceId}:section:${index + 1}`, label: boundedCitationLabel([citationTitle, ...titlePath].join(' › ')), href: sectionHref }]
         : []
     })
   }
 }
 
-const parsePage = (value: unknown, includeContent: boolean) => {
+const parsePage = (value: unknown, includeContent: boolean, versionId: number | null = null) => {
   const parsed = PageRowSchema.safeParse(value)
   if (!parsed.success || (includeContent && parsed.data.content === undefined)) throw operationFailure('Page operation returned an invalid bounded result')
   const row = parsed.data
   const id = row.id ?? row.pageId
   const locale = row.locale ?? row.localeCode
   if (!id || !locale) throw operationFailure('Page operation omitted page identity')
+  const sourceRevision = String(row.sourceRevision)
   const citation = pageCitation(row, id, locale)
   return {
     id,
@@ -252,7 +257,9 @@ const parsePage = (value: unknown, includeContent: boolean) => {
     title: row.title,
     description: row.description ?? '',
     contentType: row.contentType,
-    sourceRevision: String(row.sourceRevision),
+    sourceRevision,
+    authority: pageAuthority(row.extra),
+    okfResourceUri: okfResourceUri(id, versionId, sourceRevision),
     citation: citation.citation,
     ...(includeContent
       ? {
@@ -263,6 +270,7 @@ const parsePage = (value: unknown, includeContent: boolean) => {
       : {})
   }
 }
+
 
 const pageNotFound = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false
@@ -520,6 +528,40 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const page = parsePage(await getPageBySelector(operations, requester, rawInput as PageGetInput), true)
     return { ...page, knowledge: (await dependencies.knowledge?.getCurrent(page.id)) ?? null }
   })
+  kernel.register('pages.getOkf', async (rawInput, context) => {
+    const input = rawInput as OkfInput
+    const requester = await requesterFor(dependencies.resolveRequester, context.authority)
+    const historical = 'pageId' in input
+    const rawPage = historical
+      ? await operations.getVersion({ pageId: input.pageId, versionId: input.versionId, requester })
+      : await getPageBySelector(operations, requester, input)
+    if (!rawPage) throw new ActionKernelError('PAGE_NOT_FOUND', 'Page version is unavailable', 404)
+    const parsed = parsePage(rawPage, true, historical ? input.versionId : null)
+    if (parsed.contentType !== 'markdown') throw new ActionKernelError('UNSUPPORTED_CONTENT_TYPE', 'Only Markdown pages can be serialized as OKF concepts', 409)
+    if (typeof parsed.content !== 'string') throw operationFailure('Page operation omitted Markdown source')
+    if (parsed.authority.state !== 'valid') throw new ActionKernelError('INVALID_OKF_AUTHORITY', `Cannot serialize page with ${parsed.authority.state} OKF authority`, 409)
+    const projection = historical
+      ? await dependencies.knowledge?.getRevision(parsed.id, parsed.sourceRevision)
+      : await dependencies.knowledge?.getCurrent(parsed.id)
+    const knowledge = projection?.sourceRevision === parsed.sourceRevision ? projection : null
+    const raw = rawPage as Record<string, unknown>
+    const visibility = raw.visibility === 'private' ? 'private' : 'public'
+    const tags = normalizedPageTags(raw.tags)
+    return serializeCanonicalOkfPage({
+      pageId: parsed.id,
+      versionId: historical ? input.versionId : null,
+      sourceRevision: parsed.sourceRevision,
+      locale: parsed.locale,
+      path: parsed.path,
+      title: parsed.title,
+      description: parsed.description,
+      tags,
+      visibility,
+      content: parsed.content,
+      authority: parsed.authority,
+      knowledge
+    })
+  })
   kernel.register('pages.readForPatch', async (rawInput, context) => {
     const input = rawInput as PatchReadInput
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
@@ -570,6 +612,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
       versions: history.data.trail.slice(0, input.limit).map(version => ({
         id: version.versionId,
         sourceRevision: String(version.sourceRevision),
+        resourceUri: okfResourceUri(input.pageId, version.versionId, version.sourceRevision),
         action: version.actionType,
         versionDate: version.versionDate instanceof Date ? version.versionDate.toISOString() : version.versionDate,
         authorName: version.authorName
@@ -582,7 +625,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
     const value = await operations.getVersion({ pageId: input.pageId, versionId: input.versionId, requester })
     if (!value) throw new ActionKernelError('PAGE_NOT_FOUND', 'Page version is unavailable', 404)
-    const parsed = parsePage(value, true)
+    const parsed = parsePage(value, true, input.versionId)
     const versionDate = z.looseObject({ versionDate: z.union([z.string(), z.date()]) }).safeParse(value)
     if (!versionDate.success) throw operationFailure('Page version operation omitted its date')
     const citationSections = 'citationSections' in parsed ? (parsed.citationSections ?? []) : []

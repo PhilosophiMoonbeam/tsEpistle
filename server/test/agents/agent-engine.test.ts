@@ -97,7 +97,7 @@ describe('Ax agent engine', () => {
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 5, completionTokens: 2, totalTokens: 7 } }
       },
       {
-        results: [{ index: 0, content: 'The install steps are documented.[[cite:page:42:section:1]]' }],
+        results: [{ index: 0, content: 'The install steps are documented.[[cite:page:42:revision:1:section:1]]' }],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 8, completionTokens: 4, totalTokens: 12 } }
       }
     ]
@@ -130,8 +130,8 @@ describe('Ax agent engine', () => {
       title: 'Guide',
       contentType: 'markdown',
       content: '# Guide\n\n## Install\nThe install steps are documented.',
-      citation: { evidenceId: 'page:42', label: 'Guide', href: '/en/guide' },
-      citationSections: [{ evidenceId: 'page:42:section:1', label: 'Guide › Install', href: '/en/guide#install' }]
+      citation: { evidenceId: 'page:42:revision:1', label: 'Guide', href: '/en/guide' },
+      citationSections: [{ evidenceId: 'page:42:revision:1:section:1', label: 'Guide › Install', href: '/en/guide#install' }]
     }))
     const close = vi.fn()
     const actions: AgentActionSessionProvider = {
@@ -179,24 +179,29 @@ describe('Ax agent engine', () => {
       expect.objectContaining({ role: 'function', functionId: 'call-1', result: expect.stringContaining('"citationSections"') })
     )
     expect(calls[1]?.chatPrompt).toContainEqual(expect.objectContaining({ role: 'assistant', content: 'Let me check.' }))
-    expect(text).toHaveBeenCalledWith('The install steps are documented.[[cite:page:42:section:1]]')
+    expect(text).toHaveBeenCalledWith('The install steps are documented.[[cite:page:42:revision:1:section:1]]')
     expect(text).not.toHaveBeenCalledWith('Let me check.')
     expect(event.mock.calls.map(([type]) => type)).toEqual(['model.turn', 'tool.started', 'tool.completed', 'model.turn', 'evidence.provenance'])
     expect(event).toHaveBeenLastCalledWith(
       'evidence.provenance',
       expect.objectContaining({
         accepted: true,
-        retrievals: [{ actionCallId: 'call-1', actionName: 'pages.get', evidenceIds: ['page:42', 'page:42:section:1'] }],
+        retrievals: [{ actionCallId: 'call-1', actionName: 'pages.get', evidenceIds: ['page:42:revision:1', 'page:42:revision:1:section:1'] }],
         claims: [
-          expect.objectContaining({ claim: 'The install steps are documented.', evidenceId: 'page:42:section:1', pageEvidenceId: 'page:42', supported: true })
+          expect.objectContaining({
+            claim: 'The install steps are documented.',
+            evidenceId: 'page:42:revision:1:section:1',
+            pageEvidenceId: 'page:42:revision:1',
+            supported: true
+          })
         ],
-        finalCitationIds: ['page:42:section:1']
+        finalCitationIds: ['page:42:revision:1:section:1']
       })
     )
     expect(result).toMatchObject({
       inputTokens: 13,
       outputTokens: 6,
-      citations: [{ evidenceId: 'page:42:section:1', kind: 'page', label: 'Guide › Install', href: '/en/guide#install' }],
+      citations: [{ evidenceId: 'page:42:revision:1:section:1', kind: 'page', label: 'Guide › Install', href: '/en/guide#install' }],
       providerState: { thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }] }
     })
     expect(JSON.stringify(result)).not.toContain('hidden thought')
@@ -206,7 +211,7 @@ describe('Ax agent engine', () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       { results: [{ index: 0, content: 'Amber Falcon.' }] },
-      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident. [[cite:page:6:section:1]]' }] }
+      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident. [[cite:page:6:revision:1:section:1]]' }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)
     const factory = {
@@ -235,8 +240,8 @@ describe('Ax agent engine', () => {
       title: 'Incident Runbook',
       contentType: 'markdown',
       content: '# Incident Runbook\n\nAmber Falcon is a synthetic incident.',
-      citation: { evidenceId: 'page:6', label: 'Incident Runbook', href: '/en/runbook' },
-      citationSections: [{ evidenceId: 'page:6:section:1', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' }]
+      citation: { evidenceId: 'page:6:revision:1', label: 'Incident Runbook', href: '/en/runbook' },
+      citationSections: [{ evidenceId: 'page:6:revision:1:section:1', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' }]
     }))
     const actions: AgentActionSessionProvider = {
       open: async () => ({
@@ -253,7 +258,7 @@ describe('Ax agent engine', () => {
     await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
 
     expect(chat).toHaveBeenCalledTimes(3)
-    expect(text).toHaveBeenCalledWith('Amber Falcon is a synthetic incident. [[cite:page:6:section:1]]')
+    expect(text).toHaveBeenCalledWith('Amber Falcon is a synthetic incident. [[cite:page:6:revision:1:section:1]]')
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
       expect.objectContaining({
         accepted: false,
@@ -271,7 +276,7 @@ describe('Ax agent engine', () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       { results: [{ index: 0, functionCalls: [{ id: 'get-2', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
-      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident.[[cite:page:6:section:1]]' }] }
+      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident.[[cite:page:6:revision:1:section:1]]' }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)
     const factory = {
@@ -300,8 +305,8 @@ describe('Ax agent engine', () => {
       title: 'Incident Runbook',
       contentType: 'markdown',
       content: '# Incident Runbook\n\nAmber Falcon is a synthetic incident.',
-      citation: { evidenceId: 'page:6', label: 'Incident Runbook', href: '/en/runbook' },
-      citationSections: [{ evidenceId: 'page:6:section:1', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' }]
+      citation: { evidenceId: 'page:6:revision:1', label: 'Incident Runbook', href: '/en/runbook' },
+      citationSections: [{ evidenceId: 'page:6:revision:1:section:1', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' }]
     }
     const invoke = vi.fn(async () => page)
     const actions: AgentActionSessionProvider = {
@@ -346,14 +351,14 @@ describe('Ax agent engine', () => {
           }
         ]
       },
-      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident drill.[[cite:page:6]]' }] },
+      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident drill.[[cite:page:6:revision:1]]' }] },
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },
       {
         results: [
           {
             index: 0,
             content:
-              'The Incident Runbook describes Amber Falcon as a synthetic incident drill[[cite:page:6:section:1]] and gives the response sequence: confirm the alert and freeze deployments.[[cite:page:6:section:2]]'
+              'The Incident Runbook describes Amber Falcon as a synthetic incident drill[[cite:page:6:revision:1:section:1]] and gives the response sequence: confirm the alert and freeze deployments.[[cite:page:6:revision:1:section:2]]'
           }
         ]
       }
@@ -389,7 +394,7 @@ describe('Ax agent engine', () => {
               {
                 id: 6,
                 title: 'Incident Runbook',
-                citation: { evidenceId: 'page:6', label: 'Incident Runbook', href: '/en/agent-shakedown/incident-runbook' }
+                citation: { evidenceId: 'page:6:revision:1', label: 'Incident Runbook', href: '/en/agent-shakedown/incident-runbook' }
               }
             ]
           }
@@ -398,10 +403,18 @@ describe('Ax agent engine', () => {
             title: 'Incident Runbook',
             contentType: 'markdown',
             content: '# Incident Runbook\n\nAmber Falcon is a synthetic incident drill.\n\n## Response sequence\nConfirm the alert and freeze deployments.',
-            citation: { evidenceId: 'page:6', label: 'Incident Runbook', href: '/en/agent-shakedown/incident-runbook' },
+            citation: { evidenceId: 'page:6:revision:1', label: 'Incident Runbook', href: '/en/agent-shakedown/incident-runbook' },
             citationSections: [
-              { evidenceId: 'page:6:section:1', label: 'Incident Runbook', href: '/en/agent-shakedown/incident-runbook#incident-runbook' },
-              { evidenceId: 'page:6:section:2', label: 'Incident Runbook › Response sequence', href: '/en/agent-shakedown/incident-runbook#response-sequence' }
+              {
+                evidenceId: 'page:6:revision:1:section:1',
+                label: 'Incident Runbook',
+                href: '/en/agent-shakedown/incident-runbook#incident-runbook'
+              },
+              {
+                evidenceId: 'page:6:revision:1:section:2',
+                label: 'Incident Runbook › Response sequence',
+                href: '/en/agent-shakedown/incident-runbook#response-sequence'
+              }
             ]
           }
     )
@@ -424,7 +437,7 @@ describe('Ax agent engine', () => {
 
     expect(chat).toHaveBeenCalledTimes(4)
     expect(text).toHaveBeenCalledOnce()
-    expect(text).not.toHaveBeenCalledWith(expect.stringContaining('Amber Falcon is a synthetic incident drill.[[cite:page:6]]'))
+    expect(text).not.toHaveBeenCalledWith(expect.stringContaining('Amber Falcon is a synthetic incident drill.[[cite:page:6:revision:1]]'))
     expect(invoke.mock.calls.map(([name]) => name)).toEqual(['pages.search', 'pages.get'])
     expect(providerCalls[2]?.chatPrompt).toContainEqual(
       expect.objectContaining({
@@ -436,29 +449,243 @@ describe('Ax agent engine', () => {
     expect(provenance).toHaveLength(2)
     expect(provenance[0]).toMatchObject({
       accepted: false,
-      retrievals: [{ actionCallId: 'search-1', actionName: 'pages.search', evidenceIds: ['page:6'] }],
-      claims: [{ evidenceId: 'page:6', pageEvidenceId: null, supported: false }]
+      retrievals: [{ actionCallId: 'search-1', actionName: 'pages.search', evidenceIds: ['page:6:revision:1'] }],
+      claims: [{ evidenceId: 'page:6:revision:1', pageEvidenceId: null, supported: false }]
     })
     expect(provenance[1]).toMatchObject({
       accepted: true,
       retrievals: [
-        { actionCallId: 'search-1', actionName: 'pages.search', evidenceIds: ['page:6'] },
-        { actionCallId: 'get-1', actionName: 'pages.get', evidenceIds: ['page:6', 'page:6:section:1', 'page:6:section:2'] }
+        { actionCallId: 'search-1', actionName: 'pages.search', evidenceIds: ['page:6:revision:1'] },
+        {
+          actionCallId: 'get-1',
+          actionName: 'pages.get',
+          evidenceIds: ['page:6:revision:1', 'page:6:revision:1:section:1', 'page:6:revision:1:section:2']
+        }
       ],
       claims: [
-        expect.objectContaining({ evidenceId: 'page:6:section:1', pageEvidenceId: 'page:6', supported: true }),
-        expect.objectContaining({ evidenceId: 'page:6:section:2', pageEvidenceId: 'page:6', supported: true })
+        expect.objectContaining({
+          evidenceId: 'page:6:revision:1:section:1',
+          pageEvidenceId: 'page:6:revision:1',
+          supported: true
+        }),
+        expect.objectContaining({
+          evidenceId: 'page:6:revision:1:section:2',
+          pageEvidenceId: 'page:6:revision:1',
+          supported: true
+        })
       ],
-      finalCitationIds: ['page:6:section:1', 'page:6:section:2']
+      finalCitationIds: ['page:6:revision:1:section:1', 'page:6:revision:1:section:2']
     })
     expect(result.citations).toEqual([
-      { evidenceId: 'page:6:section:1', kind: 'page', label: 'Incident Runbook', href: '/en/agent-shakedown/incident-runbook#incident-runbook' },
       {
-        evidenceId: 'page:6:section:2',
+        evidenceId: 'page:6:revision:1:section:1',
+        kind: 'page',
+        label: 'Incident Runbook',
+        href: '/en/agent-shakedown/incident-runbook#incident-runbook'
+      },
+      {
+        evidenceId: 'page:6:revision:1:section:2',
         kind: 'page',
         label: 'Incident Runbook › Response sequence',
         href: '/en/agent-shakedown/incident-runbook#response-sequence'
       }
+    ])
+  })
+
+  it('retains revision-scoped evidence for current, historical, and canonical OKF reads', async () => {
+    const responses: AxChatResponse[] = [
+      {
+        results: [
+          {
+            index: 0,
+            functionCalls: [
+              { id: 'get-current', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } },
+              {
+                id: 'get-history',
+                type: 'function',
+                function: { name: 'wiki_get_page_version', params: '{"id":42,"versionId":"version-amber"}' }
+              },
+              {
+                id: 'get-okf',
+                type: 'function',
+                function: { name: 'wiki_get_page_okf', params: '{"id":42,"versionId":"version-quartz"}' }
+              }
+            ]
+          }
+        ]
+      },
+      { results: [{ index: 0, content: 'Quartz migration was approved.[[cite:page:42:revision:30]]' }] },
+      {
+        results: [
+          {
+            index: 0,
+            content:
+              'Current Cobalt rollout is active.[[cite:page:42:revision:30:section:1]] Historical Amber rollback is archived.[[cite:page:42:revision:10:section:1]] Quartz migration was approved.[[cite:page:42:revision:20]]'
+          }
+        ]
+      }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async (name: string) => {
+      if (name === 'pages.get') {
+        return {
+          id: 42,
+          sourceRevision: '30',
+          title: 'Guide',
+          contentType: 'markdown',
+          content: '# Guide\n\n## Current\nCobalt rollout is active.',
+          citation: { evidenceId: 'page:42:revision:30', label: 'Guide', href: '/en/guide' },
+          citationSections: [{ evidenceId: 'page:42:revision:30:section:1', label: 'Guide › Current', href: '/en/guide#current' }]
+        }
+      }
+      if (name === 'pages.getVersion') {
+        return {
+          id: 42,
+          versionId: 'version-amber',
+          sourceRevision: '10',
+          title: 'Guide',
+          contentType: 'markdown',
+          content: '# Guide\n\n## Historical\nAmber rollback is archived.',
+          citation: { evidenceId: 'page:42:revision:10', label: 'Guide', href: '/en/guide?version=version-amber' },
+          citationSections: [
+            {
+              evidenceId: 'page:42:revision:10:section:1',
+              label: 'Guide › Historical',
+              href: '/en/guide?version=version-amber#historical'
+            }
+          ]
+        }
+      }
+      return {
+        pageId: 42,
+        versionId: 'version-quartz',
+        sourceRevision: '20',
+        resourceUri: 'wiki://pages/42/versions/version-quartz/revisions/20/okf',
+        conceptId: 'wiki-page-42',
+        filePath: 'guide.md',
+        sha256: 'b'.repeat(64),
+        mediaType: 'text/markdown',
+        document: '---\ntitle: Guide\n---\n# Guide\n\nQuartz migration was approved.',
+        authority: { state: 'valid', metadata: { title: 'Guide' }, trust: { verified: true } },
+        knowledge: null,
+        citation: { evidenceId: 'page:42:revision:20', label: 'Guide', href: '/en/guide?version=version-quartz' }
+      }
+    })
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          { name: 'pages.get', title: 'Read page', description: 'Reads current page', parameters: { type: 'object', properties: {} }, risk: 'read' },
+          {
+            name: 'pages.getVersion',
+            title: 'Read page version',
+            description: 'Reads historical page',
+            parameters: { type: 'object', properties: {} },
+            risk: 'read'
+          },
+          {
+            name: 'pages.getOkf',
+            title: 'Read canonical OKF',
+            description: 'Reads canonical exact-revision document',
+            parameters: { type: 'object', properties: {} },
+            risk: 'read'
+          }
+        ],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn()
+      })
+    }
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    const result = await new AxAgentEngine(factory, actions).execute(request(new AbortController().signal), { text, event })
+
+    expect(chat).toHaveBeenCalledTimes(3)
+    expect(invoke.mock.calls.map(([name]) => name)).toEqual(['pages.get', 'pages.getVersion', 'pages.getOkf'])
+    expect(text).toHaveBeenCalledWith(
+      'Current Cobalt rollout is active.[[cite:page:42:revision:30:section:1]] Historical Amber rollback is archived.[[cite:page:42:revision:10:section:1]] Quartz migration was approved.[[cite:page:42:revision:20]]'
+    )
+    const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    expect(provenance).toHaveLength(2)
+    expect(provenance[0]).toMatchObject({
+      accepted: false,
+      issues: ['Citation page:42:revision:30 does not lexically support its immediately preceding claim.'],
+      claims: [
+        expect.objectContaining({
+          evidenceId: 'page:42:revision:30',
+          pageEvidenceId: 'page:42:revision:30',
+          sourceActionName: 'pages.get',
+          supported: false
+        })
+      ]
+    })
+    expect(provenance[1]).toMatchObject({
+      accepted: true,
+      retrievals: [
+        {
+          actionCallId: 'get-current',
+          actionName: 'pages.get',
+          evidenceIds: ['page:42:revision:30', 'page:42:revision:30:section:1']
+        },
+        {
+          actionCallId: 'get-history',
+          actionName: 'pages.getVersion',
+          evidenceIds: ['page:42:revision:10', 'page:42:revision:10:section:1']
+        },
+        { actionCallId: 'get-okf', actionName: 'pages.getOkf', evidenceIds: ['page:42:revision:20'] }
+      ],
+      claims: [
+        expect.objectContaining({
+          evidenceId: 'page:42:revision:30:section:1',
+          pageEvidenceId: 'page:42:revision:30',
+          sourceActionName: 'pages.get',
+          supported: true
+        }),
+        expect.objectContaining({
+          evidenceId: 'page:42:revision:10:section:1',
+          pageEvidenceId: 'page:42:revision:10',
+          sourceActionName: 'pages.getVersion',
+          supported: true
+        }),
+        expect.objectContaining({
+          evidenceId: 'page:42:revision:20',
+          pageEvidenceId: 'page:42:revision:20',
+          sourceActionName: 'pages.getOkf',
+          supported: true
+        })
+      ],
+      finalCitationIds: ['page:42:revision:30:section:1', 'page:42:revision:10:section:1', 'page:42:revision:20']
+    })
+    expect(result.citations).toEqual([
+      { evidenceId: 'page:42:revision:30:section:1', kind: 'page', label: 'Guide › Current', href: '/en/guide#current' },
+      {
+        evidenceId: 'page:42:revision:10:section:1',
+        kind: 'page',
+        label: 'Guide › Historical',
+        href: '/en/guide?version=version-amber#historical'
+      },
+      { evidenceId: 'page:42:revision:20', kind: 'page', label: 'Guide', href: '/en/guide?version=version-quartz' }
     ])
   })
 
@@ -470,11 +697,11 @@ describe('Ax agent engine', () => {
           {
             index: 0,
             content:
-              'Amber Falcon is a synthetic incident and its response sequence confirms alerts, freezes deployments, and drains the queue.[[cite:page:6:section:2]]'
+              'Amber Falcon is a synthetic incident and its response sequence confirms alerts, freezes deployments, and drains the queue.[[cite:page:6:revision:1:section:2]]'
           }
         ]
       },
-      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident drill.[[cite:page:6:section:1]]' }] }
+      { results: [{ index: 0, content: 'Amber Falcon is a synthetic incident drill.[[cite:page:6:revision:1:section:1]]' }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)
     const factory = {
@@ -503,10 +730,10 @@ describe('Ax agent engine', () => {
       contentType: 'markdown',
       content:
         '# Incident Runbook\n\nAmber Falcon is a synthetic incident drill.\n\n## Response sequence\nConfirm alerts, freeze deployments, and drain the queue.',
-      citation: { evidenceId: 'page:6', label: 'Incident Runbook', href: '/en/runbook' },
+      citation: { evidenceId: 'page:6:revision:1', label: 'Incident Runbook', href: '/en/runbook' },
       citationSections: [
-        { evidenceId: 'page:6:section:1', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' },
-        { evidenceId: 'page:6:section:2', label: 'Incident Runbook › Response sequence', href: '/en/runbook#response-sequence' }
+        { evidenceId: 'page:6:revision:1:section:1', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' },
+        { evidenceId: 'page:6:revision:1:section:2', label: 'Incident Runbook › Response sequence', href: '/en/runbook#response-sequence' }
       ]
     }))
     const actions: AgentActionSessionProvider = {
@@ -525,20 +752,22 @@ describe('Ax agent engine', () => {
 
     expect(chat).toHaveBeenCalledTimes(3)
     expect(text).toHaveBeenCalledOnce()
-    expect(text).toHaveBeenCalledWith('Amber Falcon is a synthetic incident drill.[[cite:page:6:section:1]]')
+    expect(text).toHaveBeenCalledWith('Amber Falcon is a synthetic incident drill.[[cite:page:6:revision:1:section:1]]')
     expect(event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)).toEqual([
       expect.objectContaining({
         accepted: false,
-        issues: ['Citation page:6:section:2 does not lexically support its immediately preceding claim.'],
-        claims: [expect.objectContaining({ evidenceId: 'page:6:section:2', supported: false })]
+        issues: ['Citation page:6:revision:1:section:2 does not lexically support its immediately preceding claim.'],
+        claims: [expect.objectContaining({ evidenceId: 'page:6:revision:1:section:2', supported: false })]
       }),
       expect.objectContaining({
         accepted: true,
-        claims: [expect.objectContaining({ evidenceId: 'page:6:section:1', supported: true })],
-        finalCitationIds: ['page:6:section:1']
+        claims: [expect.objectContaining({ evidenceId: 'page:6:revision:1:section:1', supported: true })],
+        finalCitationIds: ['page:6:revision:1:section:1']
       })
     ])
-    expect(result.citations).toEqual([{ evidenceId: 'page:6:section:1', kind: 'page', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' }])
+    expect(result.citations).toEqual([
+      { evidenceId: 'page:6:revision:1:section:1', kind: 'page', label: 'Incident Runbook', href: '/en/runbook#incident-runbook' }
+    ])
   })
 
   it('withholds unsupported verification language until the draft removes it', async () => {
@@ -646,6 +875,12 @@ describe('Ax agent engine', () => {
     expect(system?.content).toContain('[[cite:EVIDENCE_ID]]')
     expect(system?.content).toContain('candidate metadata, not read evidence')
     expect(system?.content).toContain('group them into one readable sentence or paragraph')
+    expect(system?.content).toContain('authoritative Open Knowledge Format metadata is revision-bound source authority')
+    expect(system?.content).toContain('missing or invalid authority remains explicit')
+    expect(system?.content).toContain('visibly separate from the derived KnowledgeProjectionView utility projection')
+    expect(system?.content).toContain('wiki_get_page_okf')
+    expect(system?.content).toContain('lossless interoperability or a memory read')
+    expect(system?.content).toContain('canonical document for an exact source revision')
   })
 
   it('emulates one strict tool call for providers without native tools', async () => {
@@ -668,7 +903,7 @@ describe('Ax agent engine', () => {
           structuredOutput: 'prompt-only',
           usage: 'estimated',
           cancellation: true,
-          maxContextTokens: 10_000,
+          maxContextTokens: 12_000,
           maxOutputTokens: 1_000
         },
         transportKind: 'legacy-completions',

@@ -26,7 +26,6 @@ import { canonicalMcpResource } from './origins.ts'
 import { SkillRuntime } from './skills/runtime.ts'
 import { validateSkillVirtualPath } from './skills/virtual-path.ts'
 import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
-import { createOkfPageDocument } from '../okf/format.ts'
 
 const UUIDSchema = z.uuid()
 const IdentitySchema = z.strictObject({ apiKeyId: z.number().int().positive(), groupId: z.number().int().positive() })
@@ -149,6 +148,41 @@ const decodeTemplateValue = (value: unknown): string => {
   } catch {
     throw new ActionKernelError('INVALID_SKILL_PATH', 'Skill resource URI contains invalid escaping', 400)
   }
+}
+
+const decodeOkfTemplateValue = (value: unknown): string => {
+  if (typeof value !== 'string') throw new ActionKernelError('INVALID_OKF_RESOURCE_URI', 'Resource URI variable is invalid', 400)
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    throw new ActionKernelError('INVALID_OKF_RESOURCE_URI', 'Resource URI contains invalid escaping', 400)
+  }
+}
+
+const canonicalPositiveInteger = (value: unknown, label: string): number => {
+  const decoded = decodeOkfTemplateValue(value)
+  if (!/^[1-9]\d*$/u.test(decoded)) {
+    throw new ActionKernelError('INVALID_OKF_RESOURCE_URI', `${label} must be a canonical positive integer`, 400)
+  }
+  const parsed = Number(decoded)
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new ActionKernelError('INVALID_OKF_RESOURCE_URI', `${label} is out of range`, 400)
+  }
+  return parsed
+}
+
+const canonicalPositiveRevision = (value: unknown): string => {
+  const decoded = decodeOkfTemplateValue(value)
+  if (!/^[1-9]\d*$/u.test(decoded)) {
+    throw new ActionKernelError('INVALID_OKF_RESOURCE_URI', 'sourceRevision must be a canonical positive integer', 400)
+  }
+  return decoded
+}
+
+const canonicalVersion = (value: unknown): 'current' | number => {
+  const decoded = decodeOkfTemplateValue(value)
+  if (decoded === 'current') return 'current'
+  return canonicalPositiveInteger(decoded, 'version')
 }
 
 export const createWikiMcpController = (dependencies: WikiMcpDependencies): express.Router => {
@@ -285,93 +319,57 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
         }
       })
     }
-    if (offeredNames.has('pages.get')) {
-      server.registerResource('okf-pages', new ResourceTemplate('wiki://pages/{locale}/{+path}', {
+    if (offeredNames.has('pages.getOkf')) {
+      server.registerResource('okf-pages', new ResourceTemplate('wiki://pages/{pageId}/versions/{version}/revisions/{sourceRevision}/okf', {
         list: undefined
       }), {
         title: 'Wiki pages as OKF concepts',
-        description: 'Visible Markdown pages serialized at the interoperability boundary as Open Knowledge Format v0.2 documents',
+        description: 'Immutable canonical Markdown page documents in Open Knowledge Format v0.2',
         mimeType: 'text/markdown'
       }, async (uri, variables, context) => {
-        const locale = decodeTemplateValue(variables.locale)
-        const path = decodeTemplateValue(variables.path)
+        const pageId = canonicalPositiveInteger(variables.pageId, 'pageId')
+        const version = canonicalVersion(variables.version)
+        const sourceRevision = canonicalPositiveRevision(variables.sourceRevision)
+        const input = version === 'current' ? { id: pageId } : { pageId, versionId: version }
         const current = await admissionFor(context.http?.authInfo)
-        if (!kernel.offer(current.auth, current.snapshot, randomUUID()).some(action => action.definition.descriptor.name === 'pages.get')) {
-          throw new ActionKernelError('ACTION_NOT_OFFERED', 'Page resources are not currently permitted', 403)
+        const authority = kernel.offer(current.auth, current.snapshot, randomUUID())
+          .find(action => action.definition.descriptor.name === 'pages.getOkf')?.authority
+        if (!authority) throw new ActionKernelError('ACTION_NOT_OFFERED', 'OKF page resources are not currently permitted', 403)
+        const output = await kernel.execute({
+          authority,
+          actionCallId: String(context.mcpReq.id).slice(0, 128) || randomUUID(),
+          input,
+          signal: context.mcpReq.signal,
+          refreshAdmission: async () => (await admissionFor(context.http?.authInfo)).snapshot
+        }) as {
+          readonly pageId: number
+          readonly versionId: number | null
+          readonly sourceRevision: string
+          readonly resourceUri: string
+          readonly mediaType: string
+          readonly document: string
+          readonly authority: unknown
+          readonly knowledge: unknown
+          readonly sha256: string
         }
-        const principal = current.auth.principal
-        const rawPage = await dependencies.operations.getByPath({ locale, path, visibility: 'public', requester: principal })
-        const parsed = z.looseObject({
-          id: z.coerce.number().int().positive(),
-          title: z.string(),
-          description: z.string().nullish(),
-          content: z.string(),
-          contentType: z.string(),
-          sourceRevision: z.union([z.string(), z.number()]),
-          updatedAt: z.union([z.string(), z.date()]),
-          authorId: z.coerce.number().int().positive(),
-          tags: z.array(z.union([z.string(), z.looseObject({ tag: z.string() })])).optional(),
-          extra: z.record(z.string(), z.unknown()).optional()
-        }).safeParse(rawPage)
-        if (!parsed.success) throw new ActionKernelError('INVALID_PAGE_RESULT', 'Page operation returned an invalid interoperability source', 500)
-        if (parsed.data.contentType !== 'markdown') throw new ActionKernelError('UNSUPPORTED_CONTENT_TYPE', 'Only Markdown pages can be serialized as OKF concepts', 409)
-        const projection = await knowledge.getCurrent(parsed.data.id)
-        const projectionManifest = projection === null ? null : {
-          schema_version: projection.schemaVersion,
-          state: projection.state,
-          concept_type: projection.conceptType,
-          summary: projection.summary,
-          lifecycle: {
-            status: projection.lifecycle.status,
-            trust_tier: projection.lifecycle.trustTier,
-            verification: projection.lifecycle.verification,
-            stale: projection.lifecycle.stale,
-            generated_at: projection.lifecycle.generatedAt,
-            verified_at: projection.lifecycle.verifiedAt,
-            stale_after: projection.lifecycle.staleAfter
-          },
-          missing_fields: projection.missingFields,
-          provenance: {
-            deterministic_version: projection.provenance.deterministicVersion,
-            utility: projection.provenance.utility
-          }
+        if (output.resourceUri !== uri.href || output.sourceRevision !== sourceRevision) {
+          throw new ActionKernelError('OKF_RESOURCE_IDENTITY_MISMATCH', 'OKF resource identity no longer matches the requested URI', 409)
         }
-        const storedMetadata = parsed.data.extra && typeof parsed.data.extra.okf === 'object' && parsed.data.extra.okf !== null
-          ? parsed.data.extra.okf as Record<string, unknown>
-          : {}
-        const okf = createOkfPageDocument({
-          locale,
-          path,
-          title: parsed.data.title,
-          description: parsed.data.description ?? '',
-          tags: (parsed.data.tags ?? []).map(tag => typeof tag === 'string' ? tag : tag.tag),
-          content: parsed.data.content,
-          updatedAt: parsed.data.updatedAt instanceof Date ? parsed.data.updatedAt.toISOString() : parsed.data.updatedAt,
-          authorId: parsed.data.authorId,
-          metadata: {
-            type: projection?.conceptType ?? 'Reference',
-            status: projection?.lifecycle.status ?? 'stable',
-            ...storedMetadata,
-            'x-wiki': {
-              source_revision: String(parsed.data.sourceRevision),
-              knowledge: projectionManifest
-            }
-          }
-        })
         return {
           contents: [{
             uri: uri.href,
-            mimeType: 'text/markdown',
-            text: okf.markdown,
+            mimeType: output.mediaType,
+            text: output.document,
             _meta: {
-              okfVersion: okf.version,
-              conceptId: okf.conceptId,
-              sourceRevision: String(parsed.data.sourceRevision),
-              contentHash: okf.sha256,
-              trustTier: okf.trust.trustTier,
-              verification: okf.trust.verification,
-              stale: okf.trust.stale,
-              projectionState: projection?.state ?? 'pending'
+              authority: output.authority,
+              knowledge: output.knowledge,
+              sha256: output.sha256,
+              pageId: output.pageId,
+              versionId: output.versionId,
+              sourceRevision: output.sourceRevision,
+              cacheScope: 'private',
+              private: true,
+              noCache: true
             }
           }]
         }

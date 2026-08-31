@@ -4,6 +4,7 @@ import { AGENT_FEATURE_FLAG_KEYS, type AgentActionName, type AgentFeatureFlags }
 import { ActionKernel, createActionAuthority, type ActionAdmissionSnapshot } from '../../agents/actions/kernel.ts'
 import { registerPageReadActions } from '../../agents/actions/page-reads.ts'
 import type { KnowledgeProjectionView } from '../../knowledge/projection.ts'
+import { parseOkfDocument } from '../../okf/format.ts'
 
 const requestId = '00000000-0000-4000-8000-000000000001'
 const actionCallId = '00000000-0000-4000-8000-000000000002'
@@ -36,6 +37,24 @@ const page = (overrides: Record<string, unknown> = {}) => ({
   extra: { js: 'must-not-leak' },
   ...overrides
 })
+const validOkfMetadata = {
+  type: 'Procedure',
+  title: 'Stored title',
+  description: 'Stored description',
+  tags: ['stored-tag'],
+  status: 'stable' as const,
+  generated: { by: 'agent:test', at: '2026-08-15T00:00:00.000Z' },
+  verified: { by: 'human:7', at: '2026-08-16T00:00:00.000Z' },
+  'x-extension': { retained: true },
+  'x-wiki': {
+    namespace: 'operations',
+    owner: 'platform',
+    page_id: 999,
+    source_revision: '1',
+    visibility: 'private',
+    knowledge: { state: 'stored' }
+  }
+}
 
 const knowledgeProjection = (overrides: Partial<KnowledgeProjectionView> = {}): KnowledgeProjectionView => ({
   schemaVersion: 1,
@@ -117,7 +136,7 @@ describe('permission-safe page read actions', () => {
       search: vi.fn(async () => ({
         results: [
           { path: 'docs/start', locale: 'en', visibility: 'public', tags: ['runbook'], score: 12.5, matchedFields: ['tag', 'graph'] },
-          { path: 'private/notes', locale: 'en', visibility: 'private' },
+          { path: 'private/notes', locale: 'en', visibility: 'private', matchedFields: ['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'] },
           { path: 'deleted', locale: 'en', visibility: 'public' }
         ],
         suggestions: ['notes'],
@@ -140,7 +159,9 @@ describe('permission-safe page read actions', () => {
           description: '',
           contentType: 'markdown',
           sourceRevision: '8',
-          citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' },
+          authority: { state: 'missing', metadata: null, trust: null },
+          okfResourceUri: 'wiki://pages/42/versions/current/revisions/8/okf',
+          citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' },
           tags: ['runbook'],
           score: 12.5,
           matchedFields: ['tag', 'graph'],
@@ -154,10 +175,12 @@ describe('permission-safe page read actions', () => {
           description: '',
           contentType: 'markdown',
           sourceRevision: '2',
-          citation: { evidenceId: 'page:43', label: 'Start', href: '/_private/en/private/notes' },
+          authority: { state: 'missing', metadata: null, trust: null },
+          okfResourceUri: 'wiki://pages/43/versions/current/revisions/2/okf',
+          citation: { evidenceId: 'page:43:revision:2', label: 'Start', href: '/_private/en/private/notes' },
           tags: [],
           score: 0,
-          matchedFields: [],
+          matchedFields: ['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'],
           knowledge: null
         }
       ],
@@ -371,7 +394,9 @@ describe('permission-safe page read actions', () => {
           description: '',
           contentType: 'markdown',
           sourceRevision: '8',
-          citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' },
+          authority: { state: 'missing', metadata: null, trust: null },
+          okfResourceUri: 'wiki://pages/42/versions/current/revisions/8/okf',
+          citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' },
           tags: ['runbook'],
           updatedAt: '2026-08-17T00:00:00.000Z',
           knowledge: null
@@ -395,11 +420,140 @@ describe('permission-safe page read actions', () => {
     const { execute } = setup({ get: async () => page({ toc }) })
 
     expect(await execute('pages.get', { id: 42 })).toMatchObject({
-      citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' },
+      authority: { state: 'missing', metadata: null, trust: null },
+      okfResourceUri: 'wiki://pages/42/versions/current/revisions/8/okf',
+      citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' },
       citationSections: [
-        { evidenceId: 'page:42:section:1', label: 'Start', href: '/en/docs/start#start' },
-        { evidenceId: 'page:42:section:2', label: 'Start › Installation', href: '/en/docs/start#installation' }
+        { evidenceId: 'page:42:revision:8:section:1', label: 'Start', href: '/en/docs/start#start' },
+        { evidenceId: 'page:42:revision:8:section:2', label: 'Start › Installation', href: '/en/docs/start#installation' }
       ]
+    })
+  })
+
+  it('serializes valid current and historical OKF authority as distinct revision resources', async () => {
+    const currentProjection = knowledgeProjection()
+    const historicalProjection = knowledgeProjection({
+      sourceRevision: '6',
+      summary: 'Archived deployment runbook.'
+    })
+    const knowledge: KnowledgeDependency = {
+      getCurrent: vi.fn(async () => currentProjection),
+      getRevision: vi.fn(async () => historicalProjection),
+      getCurrentMany: vi.fn(async () => new Map()),
+      searchVisible: vi.fn(async () => [])
+    }
+    const { execute, operations } = setup(
+      {
+        get: async () =>
+          page({
+            description: 'Current deployment instructions',
+            tags: ['Runbook'],
+            content: '# Start\n\nCurrent instructions.\n',
+            extra: { okf: validOkfMetadata }
+          }),
+        getVersion: vi.fn(async () =>
+          page({
+            id: undefined,
+            pageId: 42,
+            title: 'Archived Start',
+            description: 'Archived deployment instructions',
+            sourceRevision: '6',
+            tags: [{ tag: 'Archive' }],
+            content: '# Archived Start\n\nArchived instructions.\n',
+            extra: { okf: validOkfMetadata }
+          })
+        )
+      },
+      knowledge
+    )
+    type OkfResult = {
+      pageId: number
+      versionId: number | null
+      sourceRevision: string
+      resourceUri: string
+      document: string
+      authority: unknown
+      knowledge: KnowledgeProjectionView | null
+      citation: { evidenceId: string }
+    }
+
+    const current = (await execute('pages.getOkf', { id: 42 })) as OkfResult
+    expect(current).toMatchObject({
+      pageId: 42,
+      versionId: null,
+      sourceRevision: '8',
+      resourceUri: 'wiki://pages/42/versions/current/revisions/8/okf',
+      authority: {
+        state: 'valid',
+        metadata: validOkfMetadata,
+        trust: {
+          trustTier: 'human-reviewed',
+          verification: 'current',
+          status: 'stable',
+          stale: false,
+          generatedAt: '2026-08-15T00:00:00.000Z',
+          verifiedAt: '2026-08-16T00:00:00.000Z'
+        }
+      },
+      knowledge: currentProjection,
+      citation: { evidenceId: 'page:42:revision:8' }
+    })
+    const parsedCurrent = parseOkfDocument(current.document)
+    expect(parsedCurrent.metadata).toMatchObject({
+      type: 'Procedure',
+      title: 'Start',
+      description: 'Current deployment instructions',
+      tags: ['runbook'],
+      status: 'stable',
+      'x-extension': { retained: true }
+    })
+    expect(parsedCurrent.metadata['x-wiki']).toEqual({
+      namespace: 'operations',
+      owner: 'platform',
+      page_id: 42,
+      source_revision: '8',
+      visibility: 'public',
+      knowledge: currentProjection
+    })
+    expect(parsedCurrent.body).toContain('Current instructions.')
+
+    const historical = (await execute('pages.getOkf', { pageId: 42, versionId: 9 })) as OkfResult
+    expect(historical).toMatchObject({
+      pageId: 42,
+      versionId: 9,
+      sourceRevision: '6',
+      resourceUri: 'wiki://pages/42/versions/9/revisions/6/okf',
+      authority: { state: 'valid', metadata: validOkfMetadata },
+      knowledge: historicalProjection,
+      citation: { evidenceId: 'page:42:revision:6' }
+    })
+    const parsedHistorical = parseOkfDocument(historical.document)
+    expect(parsedHistorical.metadata['x-wiki']).toEqual({
+      namespace: 'operations',
+      owner: 'platform',
+      page_id: 42,
+      source_revision: '6',
+      visibility: 'public',
+      knowledge: historicalProjection
+    })
+    expect(parsedHistorical.body).toContain('Archived instructions.')
+    expect(historical.resourceUri).not.toBe(current.resourceUri)
+    expect(historical.document).not.toBe(current.document)
+    expect(historical.citation.evidenceId).not.toBe(current.citation.evidenceId)
+    expect(operations.getVersion).toHaveBeenCalledWith({ pageId: 42, versionId: 9, requester: principal })
+  })
+
+  it('rejects pages whose stored OKF authority is missing or invalid', async () => {
+    const missing = setup({ get: async () => page({ extra: {} }) })
+    const invalid = setup({ get: async () => page({ extra: { okf: { type: '' } } }) })
+
+    await expect(Promise.resolve(missing.execute('pages.getOkf', { id: 42 }))).rejects.toMatchObject({
+      code: 'INVALID_OKF_AUTHORITY',
+      message: 'Cannot serialize page with missing OKF authority'
+    })
+    await expect(Promise.resolve(invalid.execute('pages.getOkf', { id: 42 }))).rejects.toMatchObject({
+      code: 'INVALID_OKF_AUTHORITY',
+      message: 'Cannot serialize page with invalid OKF authority'
     })
   })
 
@@ -518,7 +672,9 @@ describe('permission-safe page read actions', () => {
           description: '',
           contentType: 'markdown',
           sourceRevision: '8',
-          citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' },
+          authority: { state: 'missing', metadata: null, trust: null },
+          okfResourceUri: 'wiki://pages/42/versions/current/revisions/8/okf',
+          citation: { evidenceId: 'page:42:revision:8', label: 'Start', href: '/en/docs/start' },
           knowledge: null
         }
       ]
@@ -535,14 +691,16 @@ describe('permission-safe page read actions', () => {
       getVersion: async () => page({ id: undefined, pageId: 42, sourceRevision: 6, versionDate: '2026-08-16T00:00:00.000Z' })
     })
     expect(await execute('pages.listHistory', { pageId: 42, limit: 10 })).toEqual({
-      versions: [{ id: 9, sourceRevision: '6', action: 'edit', versionDate: '2026-08-16T00:00:00.000Z', authorName: 'Editor' }]
+      versions: [{ id: 9, sourceRevision: '6', resourceUri: 'wiki://pages/42/versions/9/revisions/6/okf', action: 'edit', versionDate: '2026-08-16T00:00:00.000Z', authorName: 'Editor' }]
     })
     expect(await execute('pages.getVersion', { pageId: 42, versionId: 9 })).toMatchObject({
       id: 42,
       versionId: 9,
       sourceRevision: '6',
       content: '# Start',
-      citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start?v=9' }
+      authority: { state: 'missing', metadata: null, trust: null },
+      okfResourceUri: 'wiki://pages/42/versions/9/revisions/6/okf',
+      citation: { evidenceId: 'page:42:revision:6', label: 'Start', href: '/en/docs/start?v=9' }
     })
   })
 
@@ -592,7 +750,9 @@ describe('permission-safe page read actions', () => {
           description: '',
           contentType: 'markdown',
           sourceRevision: '8',
-          citation: { evidenceId: 'page:43', label: 'Next', href: '/en/docs/next' },
+          authority: { state: 'missing', metadata: null, trust: null },
+          okfResourceUri: 'wiki://pages/43/versions/current/revisions/8/okf',
+          citation: { evidenceId: 'page:43:revision:8', label: 'Next', href: '/en/docs/next' },
           tags: ['runbook'],
           distance: 2,
           direction: 'incoming',

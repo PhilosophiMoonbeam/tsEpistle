@@ -43,12 +43,48 @@ const PageSelector = z.union([
   strict({ id: PositiveId }),
   strict({ path: Path, locale: Locale })
 ])
+const AuthorityTrust = strict({
+  trustTier: z.enum(['unverified', 'machine-confirmed', 'human-reviewed']),
+  verification: z.enum(['unverified', 'current', 'outdated']),
+  status: z.enum(['draft', 'stable', 'deprecated']),
+  stale: z.boolean(),
+  generatedAt: z.string().max(32).nullable(),
+  verifiedAt: z.string().max(32).nullable()
+})
+const PageAuthority = z.discriminatedUnion('state', [
+  strict({ state: z.literal('valid'), metadata: z.record(z.string(), z.unknown()), trust: AuthorityTrust }),
+  strict({ state: z.literal('missing'), metadata: z.null(), trust: z.null() }),
+  strict({ state: z.literal('invalid'), metadata: z.null(), trust: z.null() })
+])
+const OkfResourceUri = z.string().regex(/^wiki:\/\/pages\/[1-9][0-9]*\/versions\/(?:current|[1-9][0-9]*)\/revisions\/[1-9][0-9]*\/okf$/u)
+const OkfPageSelector = z.union([
+  PageSelector,
+  strict({ pageId: PositiveId, versionId: PositiveId })
+])
+const OkfCitation = strict({
+  evidenceId: z.string().min(1).max(128),
+  kind: z.literal('page'),
+  label: z.string().min(1).max(512),
+  href: z.string().min(1).max(2_048)
+})
 const PageCitation = strict({
   evidenceId: z.string().min(1).max(128),
   label: z.string().min(1).max(512),
   href: z.string().min(1).max(2_048)
 })
 const BasePageSummary = strict({
+  id: PositiveId,
+  locale: Locale,
+  path: Path,
+  title: BoundedTitle,
+  description: BoundedDescription,
+  contentType: z.string().max(128),
+  sourceRevision: z.string().max(64),
+  authority: PageAuthority,
+  okfResourceUri: OkfResourceUri,
+  knowledge: KnowledgeProjectionViewSchema.nullable()
+})
+const AppliedPageSummary = strict({
   id: PositiveId,
   locale: Locale,
   path: Path,
@@ -79,6 +115,20 @@ const PageResult = PageSummary.extend({
   content: BoundedPageContent,
   updatedAt: z.string().max(32),
   citationSections: z.array(PageCitation).max(99)
+})
+const OkfPageResult = strict({
+  pageId: PositiveId,
+  versionId: PositiveId.nullable(),
+  sourceRevision: z.string().regex(/^[1-9][0-9]*$/u),
+  resourceUri: OkfResourceUri,
+  conceptId: z.string().min(1).max(1_100),
+  filePath: z.string().min(1).max(4_096),
+  sha256: ContentHash,
+  mediaType: z.literal('text/markdown'),
+  document: BoundedPageContent,
+  authority: strict({ state: z.literal('valid'), metadata: z.record(z.string(), z.unknown()), trust: AuthorityTrust }),
+  knowledge: KnowledgeProjectionViewSchema.nullable(),
+  citation: OkfCitation
 })
 const ProposalResult = strict({
   proposalId: Uuid,
@@ -173,6 +223,12 @@ export const ACTION_CATALOG = {
     output: PageResult,
     requiredFlags: baseFlags
   },
+  'pages.getOkf': {
+    descriptor: descriptor('pages.getOkf', 'Get canonical OKF page', `Read a lossless, revision-bound canonical Open Knowledge Format document for one authorized Markdown page. Use ${AGENT_TOOL_NAMES['pages.getOkf']} when an immutable interoperability resource or authority metadata is needed.`, 'read', ['read:pages'], both, readAnnotations),
+    input: OkfPageSelector,
+    output: OkfPageResult,
+    requiredFlags: baseFlags
+  },
   'pages.readForPatch': {
     descriptor: descriptor('pages.readForPatch', 'Read page for patch', 'Read a bounded hashline snapshot for an exact page source revision. On the initial read, set previousSnapshotToken to null; only reuse a non-null token returned by an earlier result for the same page.', 'read', ['read:pages'], both, readAnnotations),
     input: strict({
@@ -192,7 +248,7 @@ export const ACTION_CATALOG = {
   'pages.listHistory': {
     descriptor: descriptor('pages.listHistory', 'List page history', 'List bounded version metadata for one visible page.', 'read', ['read:pages'], both, readAnnotations),
     input: strict({ pageId: PositiveId, limit: z.number().int().min(1).max(20).default(10) }),
-    output: strict({ versions: z.array(strict({ id: PositiveId, sourceRevision: z.string().max(64), action: z.string().max(64), versionDate: z.string().max(32), authorName: BoundedTitle })).max(20) }),
+    output: strict({ versions: z.array(strict({ id: PositiveId, sourceRevision: z.string().max(64), resourceUri: OkfResourceUri, action: z.string().max(64), versionDate: z.string().max(32), authorName: BoundedTitle })).max(20) }),
     requiredFlags: baseFlags
   },
   'pages.getVersion': {
@@ -284,7 +340,7 @@ export const ACTION_CATALOG = {
   'pages.applyProposal': {
     descriptor: descriptor('pages.applyProposal', 'Apply approved proposal', 'Apply an approved proposal explicitly after live reauthorization. Agent chat preparation actions perform this step automatically; explicit invocation remains available for MCP and idempotent recovery.', 'reversible-write', [], both, applyAnnotations),
     input: strict({ proposalId: Uuid, approvalId: Uuid }),
-    output: strict({ proposalId: Uuid, status: z.literal('applied'), resultHash: ContentHash, page: BasePageSummary.nullable() }),
+    output: strict({ proposalId: Uuid, status: z.literal('applied'), resultHash: ContentHash, page: AppliedPageSummary.nullable() }),
     requiredFlags: proposalFlags
   }
 } as const satisfies Record<AgentActionName, ActionDefinition>
