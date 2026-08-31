@@ -649,6 +649,7 @@ export default defineComponent({
     background: transparent !important;
 
     > .v-toolbar__content {
+      height: 100% !important;
       gap: var(--wiki-space-1);
       padding: 0;
     }
