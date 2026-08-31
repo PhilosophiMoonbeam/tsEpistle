@@ -695,6 +695,23 @@ const toolCompletionSummary = (actionName: string, output: unknown, cacheHit: bo
   }
   return cacheHit ? 'Reused earlier result' : null
 }
+const providerActionOutput = (actionName: string, output: unknown): unknown => {
+  if (actionName !== 'pages.search' || typeof output !== 'object' || output === null || Array.isArray(output)) return output
+  const results = Reflect.get(output, 'results')
+  if (!Array.isArray(results)) return output
+  return {
+    ...(output as Record<string, unknown>),
+    results: results.map(result => {
+      if (typeof result !== 'object' || result === null || Array.isArray(result)) return result
+      const knowledge = Reflect.get(result, 'knowledge')
+      if (typeof knowledge !== 'object' || knowledge === null || Array.isArray(knowledge)) return result
+      const providerKnowledge = { ...(knowledge as Record<string, unknown>) }
+      delete providerKnowledge.provenance
+      return { ...(result as Record<string, unknown>), knowledge: providerKnowledge }
+    })
+  }
+}
+
 
 export class AxAgentEngine implements AgentEngine {
   readonly #factory: AgentProviderFactory
@@ -1103,11 +1120,12 @@ export class AxAgentEngine implements AgentEngine {
             if (pageReadKey !== null && cached === undefined) pageReadCache.set(pageReadKey, { actionCallId, output })
             collectPageEvidence(call.name, actionCallId, output, citationRegistry, retrievals)
             const encoded = JSON.stringify(output)
+            const providerOutput = providerActionOutput(call.name, output)
             const summary = toolCompletionSummary(call.name, output, cached !== undefined)
             activePrompt.push(
               tools?.mode === 'native'
-                ? { role: 'function', functionId: call.id, result: encoded }
-                : { role: 'user', content: promptToolResultMessage(call.id, call.providerName, output) }
+                ? { role: 'function', functionId: call.id, result: JSON.stringify(providerOutput) }
+                : { role: 'user', content: promptToolResultMessage(call.id, call.providerName, providerOutput) }
             )
             await sink.event('tool.completed', {
               actionCallId,

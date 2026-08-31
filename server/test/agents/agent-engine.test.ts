@@ -207,20 +207,22 @@ describe('Ax agent engine', () => {
     expect(JSON.stringify(result)).not.toContain('hidden thought')
     expect(close).toHaveBeenCalledOnce()
   })
-  it('reduces output exposure so tool results can continue within a goal token budget', async () => {
+  it('compacts search provenance so tool results can continue within a goal token budget', async () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
       {
         results: [
           {
             index: 0,
-            functionCalls: [{ id: 'budget-page', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }]
+            functionCalls: [
+              { id: 'budget-search', type: 'function', function: { name: 'wiki_search_pages', params: '{"query":"recipes","limit":20}' } }
+            ]
           }
         ],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
       },
       {
-        results: [{ index: 0, content: 'Budget evidence is available.[[cite:page:42:revision:1:section:1]]' }],
+        results: [{ index: 0, content: 'Search candidates were found, but each page still needs to be read before answering.' }],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 6_000, completionTokens: 20, totalTokens: 6_020 } }
       }
     ]
@@ -252,20 +254,30 @@ describe('Ax agent engine', () => {
       open: async () => ({
         functions: [
           {
-            name: 'pages.get',
-            title: 'Read page',
-            description: 'Reads a page',
-            parameters: { type: 'object', properties: { id: { type: 'number' } } },
+            name: 'pages.search',
+            title: 'Search pages',
+            description: 'Searches visible pages',
+            parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } } },
             risk: 'read'
           }
         ],
         invoke: async () => ({
-          id: 42,
-          title: 'Budget Guide',
-          contentType: 'markdown',
-          content: `# Budget Guide\n\n## Evidence\n${'Budget evidence remains available. '.repeat(600)}`,
-          citation: { evidenceId: 'page:42:revision:1', label: 'Budget Guide', href: '/en/budget-guide' },
-          citationSections: [{ evidenceId: 'page:42:revision:1:section:1', label: 'Budget Guide › Evidence', href: '/en/budget-guide#evidence' }]
+          results: [
+            {
+              id: 42,
+              title: 'Search candidate',
+              knowledge: {
+                state: 'complete',
+                summary: 'A concise provider-facing search summary.',
+                provenance: { fields: 'review metadata '.repeat(3_000) }
+              }
+            }
+          ],
+          suggestions: [],
+          totalInWindow: 1,
+          windowLimit: 100,
+          windowTruncated: false,
+          nextOffset: null
         }),
         snapshot: async () => ({}),
         close: () => undefined
@@ -300,7 +312,8 @@ describe('Ax agent engine', () => {
     )
     expect(chat).toHaveBeenCalledTimes(2)
     expect(reservedMaximums).toHaveLength(2)
-    expect(calls[1]?.modelConfig?.maxTokens).toBeLessThan(32_768)
+    expect(JSON.stringify(calls[1]?.chatPrompt)).toContain('A concise provider-facing search summary.')
+    expect(JSON.stringify(calls[1]?.chatPrompt)).not.toContain('review metadata')
     expect(result).toMatchObject({ inputTokens: 6_003, outputTokens: 24 })
   })
   it('accepts a citation placed after sentence punctuation and rejects an uncited page answer', async () => {
