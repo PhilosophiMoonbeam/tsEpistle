@@ -1,5 +1,5 @@
 # Agent deployment and operations
-This guidance describes the reviewed application commit `f5177bfc9b819b35a7271b1c5cd0be1b6c9f8502`; keep deployment and threat-model conclusions bound to that exact source revision.
+This guidance describes release candidate `1d1e25a7c131880fc963084fa993b73a19d579bc`; keep deployment and threat-model conclusions bound to that exact source revision.
 
 
 Wiki agents use the ordinary Wiki origin plus one isolated browser-service boundary:
