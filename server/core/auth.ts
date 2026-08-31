@@ -300,7 +300,7 @@ const extractBearerToken = (req: Request): string | null => {
   return match?.[1] ?? null
 }
 const isDedicatedMcpRequest = (req: Request): boolean =>
-  req.path === apiAccessContract.mcpPath && isRecord(req.route) && req.route.path === apiAccessContract.mcpPath
+  req.originalUrl === apiAccessContract.mcpPath && isRecord(req.route) && req.route.path === apiAccessContract.mcpPath
 const isRevokeRequest = (value: unknown): value is RevokeRequest =>
   isRecord(value) && typeof value.id === 'number' && (value.kind === undefined || typeof value.kind === 'string')
 const createAuthenticationError = (message: string, status: number, code: string): AuthenticationError => Object.assign(new Error(message), { code, status })

@@ -18,9 +18,10 @@ vi.mockModule('passport', import.meta.url, () => ({
 
 const { default: auth } = await import('../../core/auth.ts')
 
-const createRequest = (requestPath: string, mountedRoutePath?: string) =>
+const createRequest = (requestPath: string, mountedRoutePath?: string, originalUrl = requestPath) =>
   ({
     path: requestPath,
+    originalUrl,
     get: vi.fn(),
     logIn: vi.fn((_user, _options, callback) => callback()),
     ...(mountedRoutePath === undefined ? {} : { route: { path: mountedRoutePath } })
@@ -114,7 +115,7 @@ describe('API-key authentication boundary', () => {
   })
 
   test('preserves API-key authentication on the exact separately mounted MCP route', async () => {
-    const req = createRequest('/mcp', '/mcp')
+    const req = createRequest('/', '/mcp', '/mcp')
 
     const next = await authenticate(req)
 
