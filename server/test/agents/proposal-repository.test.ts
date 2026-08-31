@@ -7,6 +7,7 @@ import { registerPageProposalActions } from '../../agents/actions/page-proposals
 import { applyApprovedProposal, decideProposal } from '../../agents/proposals/execution.ts'
 import { persistProposal, proposalResult } from '../../agents/proposals/repository.ts'
 import { withInvokingAgentRunLease } from '../../agents/coordinator.ts'
+import { OKF_PRODUCER_CONTEXT } from '../../okf/mutation-context.ts'
 
 const flags = Object.fromEntries(AGENT_FEATURE_FLAG_KEYS.map(flag => [flag, true])) as AgentFeatureFlags
 
@@ -570,6 +571,9 @@ describe('agent proposal repository', () => {
     expect(await preparedPromise).toMatchObject({ proposalId: approval.proposalId, approvalId: approval.id, status: 'applied' })
     expect(await knex('agentRuns').where({ id: runId }).first('status')).toEqual({ status: 'running' })
     expect(operations.move).toHaveBeenCalledOnce()
+    expect(operations.move).toHaveBeenCalledWith(expect.objectContaining({
+      [OKF_PRODUCER_CONTEXT]: `agent:${runId}`
+    }))
     expect(await knex('agentProposals').where({ id: approval.proposalId }).first('status')).toEqual({ status: 'applied' })
     expect(await knex('agentActionExecutions').where({ proposalId: approval.proposalId }).first('status')).toEqual({ status: 'committed' })
     expect(await knex('agentEvents').orderBy('sequence').pluck('type')).toEqual(['proposal.created', 'approval.requested', 'approval.resolved'])

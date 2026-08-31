@@ -113,7 +113,7 @@
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent, type PropType } from 'vue'
 import _ from 'lodash'
-import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, fetchPage, updatePage } from '../helpers/pages-api'
+import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, fetchPage, updatePage, validateOkfMetadataPayload, type OkfMetadataPayloadValidation } from '../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
 import { AtomSpinner } from 'epic-spinners'
 import { Base64 } from 'js-base64'
@@ -244,7 +244,7 @@ export default defineComponent({
         title: '',
         css: '',
         js: '',
-        okfMetadata: undefined as Record<string, unknown> | undefined
+        okfMetadata: { valid: true, payload: undefined } as OkfMetadataPayloadValidation
       }
     }
   },
@@ -282,7 +282,7 @@ export default defineComponent({
         this.savedState.publishEndDate !== wikiStore.page.publishEndDate,
         this.savedState.css !== wikiStore.page.scriptCss,
         this.savedState.js !== wikiStore.page.scriptJs,
-        !_.isEqual(this.savedState.okfMetadata, buildOkfMetadataPayload(wikiStore.page.okf.authority.metadata))
+        !_.isEqual(this.savedState.okfMetadata, validateOkfMetadataPayload(wikiStore.page.okf.authority.metadata))
       ], Boolean)
     }
   },
@@ -425,12 +425,13 @@ export default defineComponent({
       }, 30000)
 
       try {
+        const pageInput = this.getPageInput()
         if (wikiStore.editor.mode === 'create') {
           // --------------------------------------------
           // -> CREATE PAGE
           // --------------------------------------------
 
-          const page = await createPage(window.fetch.bind(window), this.getPageInput())
+          const page = await createPage(window.fetch.bind(window), pageInput)
           this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
           this.isConflict = false
           wikiStore.showNotification({
@@ -457,7 +458,7 @@ export default defineComponent({
           const page = await updatePage(
             window.fetch.bind(window),
             wikiStore.page.id,
-            this.getPageInput(),
+            pageInput,
             wikiStore.page.sourceRevision
           )
           wikiStore.page.sourceRevision = page.sourceRevision
@@ -572,7 +573,7 @@ export default defineComponent({
         title: wikiStore.page.title,
         css: wikiStore.page.scriptCss,
         js: wikiStore.page.scriptJs,
-        okfMetadata: _.cloneDeep(buildOkfMetadataPayload(wikiStore.page.okf.authority.metadata))
+        okfMetadata: _.cloneDeep(validateOkfMetadataPayload(wikiStore.page.okf.authority.metadata))
       }
     },
     injectCustomCss: _.debounce((css: string) => {

@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto'
 import pageHelper from '../../../helpers/page.ts'
 import commonDisk from './common.ts'
 import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
+import { okfFilePath } from '../../../okf/format.ts'
 interface DiskStorageContext extends StorageContext<StorageConfig> {
   sync(options?: { manual: boolean }): Promise<void>
 }
@@ -81,6 +82,17 @@ function serializePage (page: StoragePageEncodingInput): string {
   }
   return serializeContent(encoded as string | Record<string, unknown>)
 }
+function pageFileName (
+  page: { localeCode: string; path: string; contentType: string },
+  namespaceNonDefaultLocale: boolean
+): string {
+  if (page.contentType === 'markdown') return okfFilePath(page.localeCode, page.path)
+  const legacyFileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
+  return namespaceNonDefaultLocale && wiki.config.lang.code !== page.localeCode
+    ? `${page.localeCode}/${legacyFileName}`
+    : legacyFileName
+}
+
 
 function toError (value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
@@ -154,45 +166,35 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
   },
   async created(page) {
     wiki.logger.info(`(STORAGE/DISK) Creating file [${page.localeCode}] ${page.path}...`)
-    let fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-    if (wiki.config.lang.code !== page.localeCode) {
-      fileName = `${page.localeCode}/${fileName}`
-    }
+    const fileName = pageFileName(page, true)
     const filePath = storagePath(this.config, fileName)
     await writeFileAtomic(filePath, serializePage(page), 'utf8')
   },
   async updated(page) {
     wiki.logger.info(`(STORAGE/DISK) Updating file [${page.localeCode}] ${page.path}...`)
-    let fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-    if (wiki.config.lang.code !== page.localeCode) {
-      fileName = `${page.localeCode}/${fileName}`
-    }
+    const fileName = pageFileName(page, true)
     const filePath = storagePath(this.config, fileName)
     await writeFileAtomic(filePath, serializePage(page), 'utf8')
   },
   async deleted(page) {
     wiki.logger.info(`(STORAGE/DISK) Deleting file [${page.localeCode}] ${page.path}...`)
-    let fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-    if (wiki.config.lang.code !== page.localeCode) {
-      fileName = `${page.localeCode}/${fileName}`
-    }
+    const fileName = pageFileName(page, true)
     const filePath = storagePath(this.config, fileName)
     await fs.remove(filePath)
   },
   async renamed(page) {
     wiki.logger.info(`(STORAGE/DISK) Renaming file [${page.localeCode}] ${page.path} to [${page.destinationLocaleCode}] ${page.destinationPath}...`)
 
-    let sourceFilePath = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-    let destinationFilePath = `${page.destinationPath}.${pageHelper.getFileExtension(page.contentType)}`
-
-    if (wiki.config.lang.namespacing) {
-      if (wiki.config.lang.code !== page.localeCode) {
-        sourceFilePath = `${page.localeCode}/${sourceFilePath}`
-      }
-      if (wiki.config.lang.code !== page.destinationLocaleCode) {
-        destinationFilePath = `${page.destinationLocaleCode}/${destinationFilePath}`
-      }
-    }
+    const sourceFilePath = pageFileName({
+      path: page.path,
+      localeCode: page.localeCode,
+      contentType: page.contentType
+    }, wiki.config.lang.namespacing)
+    const destinationFilePath = pageFileName({
+      path: page.destinationPath,
+      localeCode: page.destinationLocaleCode,
+      contentType: page.contentType
+    }, wiki.config.lang.namespacing)
 
     await fs.move(storagePath(this.config, sourceFilePath), storagePath(this.config, destinationFilePath), { overwrite: true })
   },
@@ -256,10 +258,7 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
               throw new TypeError(`Invalid tags for page ${value.id}`)
             }
             const page = { ...value, tags }
-            let fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-            if (wiki.config.lang.code !== page.localeCode) {
-              fileName = `${page.localeCode}/${fileName}`
-            }
+            const fileName = pageFileName(page, true)
             wiki.logger.info(`(STORAGE/DISK) Dumping page ${fileName}...`)
             const filePath = storagePath(this.config, fileName)
             await writeFileAtomic(filePath, serializePage(page), 'utf8')

@@ -72,6 +72,25 @@ function storageActionSummary (overrides = {}) {
   }
 }
 
+function storageActionFailureSummary (overrides = {}) {
+  return storageActionSummary({
+    outcome: 'failed',
+    total: 0,
+    succeeded: 0,
+    failed: 0,
+    formats: {
+      okf: 0,
+      legacyV1: 0,
+      legacyWiki: 0,
+      plain: 0,
+      invalid: 0
+    },
+    items: [],
+    message: 'Storage action failed before processing any items.',
+    ...overrides
+  })
+}
+
 describe('storage api helper', () => {
   it('fetches storage targets with same-origin JSON headers', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([storageTarget()]))
@@ -129,15 +148,15 @@ describe('storage api helper', () => {
     expect(result).toEqual([storageStatus()])
   })
 
-  it('exposes the last structured operation from status polling', async () => {
-    const lastOperation = storageActionSummary()
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      storageStatus({ lastOperation })
-    ]))
+  it('exposes a zero-item action failure and its message from status polling', async () => {
+    const lastOperation = storageActionFailureSummary()
+    const status = storageStatus({
+      lastOperation,
+      message: 'Storage action failed before processing any items.'
+    })
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([status]))
 
-    expect(await fetchStorageStatus(fetchImpl)).toEqual([
-      storageStatus({ lastOperation })
-    ])
+    expect(await fetchStorageStatus(fetchImpl)).toEqual([status])
   })
 
   it('rejects malformed successful status responses', async () => {
@@ -217,6 +236,13 @@ describe('storage api helper', () => {
     expect(result).not.toHaveProperty('ignored')
   })
 
+  it('exposes a zero-item action failure from an action call', async () => {
+    const summary = storageActionFailureSummary()
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(summary))
+
+    expect(await executeStorageAction(fetchImpl, 'git', 'sync', 'Generic parse failure')).toEqual(summary)
+  })
+
   it('preserves partial outcomes and separate legacy format counts', async () => {
     const summary = storageActionSummary({
       outcome: 'partial',
@@ -248,6 +274,7 @@ describe('storage api helper', () => {
     ['missing summary fields', {}],
     ['unknown outcome', storageActionSummary({ outcome: 'complete' })],
     ['inconsistent totals', storageActionSummary({ total: 3 })],
+    ['zero-item failure with a contradictory failure count', storageActionFailureSummary({ failed: 1 })],
     ['partial without both result classes', storageActionSummary({ outcome: 'partial' })],
     ['invalid format count', storageActionSummary({ formats: { okf: 2, legacyV1: 0, legacyWiki: 0, plain: 0, invalid: -1 } })],
     ['invalid timestamp', storageActionSummary({ completedAt: 'not-a-date' })],

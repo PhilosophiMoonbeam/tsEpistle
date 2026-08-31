@@ -205,10 +205,11 @@ export const normalizeStorageActionSummary = (value: unknown, fallbackMessage = 
   ) {
     throw new Error(fallbackMessage)
   }
+  const isZeroItemActionFailure = outcome === 'failed' && total === 0 && succeeded === 0 && failed === 0
   if (
     (outcome === 'succeeded' && failed !== 0) ||
     (outcome === 'partial' && (succeeded === 0 || failed === 0)) ||
-    (outcome === 'failed' && (succeeded !== 0 || failed === 0))
+    (outcome === 'failed' && !isZeroItemActionFailure && (succeeded !== 0 || failed === 0))
   ) {
     throw new Error(fallbackMessage)
   }

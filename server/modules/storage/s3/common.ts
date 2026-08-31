@@ -4,25 +4,36 @@ import { pipeline } from 'node:stream/promises'
 import _ from 'lodash'
 import pageHelper from '../../../helpers/page.ts'
 import { encodeS3CopySource, storageObjectKey } from '../object-key.ts'
+import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
 import { asyncObjectTransform } from '../async-transform.ts'
+import { okfFilePath } from '../../../okf/format.ts'
 
 interface PageExportRow {
+  id: number
   path: string
   localeCode: string
   title: string
   description: string
   contentType: string
   content: string | Record<string, unknown>
-  isPublished: boolean
+  sourceRevision: string | number | bigint
+  authorId: number
+  extra: Record<string, unknown>
+  isPublished: boolean | number
   updatedAt: Date | string
   createdAt: Date | string
   editorKey: string
+  tags?: { tag: string }[]
 }
 
 interface AssetExportRow {
   filename: string
   folderId: number | null
   data: Buffer
+}
+
+interface PageTag extends Record<string, unknown> {
+  tag: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -32,13 +43,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isPageExportRow(value: unknown): value is PageExportRow {
   return (
     isRecord(value) &&
+    typeof value.id === 'number' &&
     typeof value.path === 'string' &&
     typeof value.localeCode === 'string' &&
     typeof value.title === 'string' &&
     typeof value.description === 'string' &&
     typeof value.contentType === 'string' &&
-    (typeof value.content === 'string' || isRecord(value.content)) &&
-    typeof value.isPublished === 'boolean' &&
+    (typeof value.content === 'string' || (isRecord(value.content) && !Array.isArray(value.content))) &&
+    (typeof value.sourceRevision === 'string' || typeof value.sourceRevision === 'number' || typeof value.sourceRevision === 'bigint') &&
+    typeof value.authorId === 'number' &&
+    (isRecord(value.extra) && !Array.isArray(value.extra)) &&
+    (typeof value.isPublished === 'boolean' || value.isPublished === 0 || value.isPublished === 1) &&
     (value.updatedAt instanceof Date || typeof value.updatedAt === 'string') &&
     (value.createdAt instanceof Date || typeof value.createdAt === 'string') &&
     typeof value.editorKey === 'string'
@@ -53,6 +68,18 @@ function serializeContent(content: string | Record<string, unknown>): string {
   return typeof content === 'string' ? content : JSON.stringify(content)
 }
 
+function serializePage(page: StoragePageEncodingInput): string | Buffer {
+  const encoded = encodeStoragePageDocument(page)
+  if (page.contentType === 'markdown') {
+    if (typeof encoded === 'object' && encoded !== null && 'markdown' in encoded && typeof encoded.markdown === 'string') {
+      return Buffer.from(encoded.markdown, 'utf8')
+    }
+    throw new TypeError('Markdown page encoder did not return a document')
+  }
+  return serializeContent(encoded as string | Record<string, unknown>)
+}
+
+
 /**
  * Deduce the file path given the `page` object and the object's key to the page's path.
  */
@@ -62,6 +89,9 @@ const getFilePath = <K extends 'destinationPath' | 'path'>(
   pathPrefix: unknown,
   localeCode: string
 ): string => {
+  if (page.contentType === 'markdown') {
+    return storageObjectKey(pathPrefix, okfFilePath(localeCode, page[pathKey]))
+  }
   const fileName = `${page[pathKey]}.${pageHelper.getFileExtension(page.contentType)}`
   const withLocaleCode = wiki.config.lang.namespacing && wiki.config.lang.code !== localeCode
   return storageObjectKey(pathPrefix, withLocaleCode ? `${localeCode}/${fileName}` : fileName)
@@ -126,12 +156,12 @@ export default class S3CompatibleStorage {
   async created(page: WikiPage) {
     wiki.logger.info(`(STORAGE/${this.storageName}) Creating file ${page.path}...`)
     const filePath = getFilePath(page, 'path', this.config.pathPrefix, page.localeCode)
-    await this.s3.send(new PutObjectCommand({ Bucket: this.bucketName, Key: filePath, Body: page.injectMetadata() }))
+    await this.s3.send(new PutObjectCommand({ Bucket: this.bucketName, Key: filePath, Body: serializePage(page) }))
   }
   async updated(page: WikiPage) {
     wiki.logger.info(`(STORAGE/${this.storageName}) Updating file ${page.path}...`)
     const filePath = getFilePath(page, 'path', this.config.pathPrefix, page.localeCode)
-    await this.s3.send(new PutObjectCommand({ Bucket: this.bucketName, Key: filePath, Body: page.injectMetadata() }))
+    await this.s3.send(new PutObjectCommand({ Bucket: this.bucketName, Key: filePath, Body: serializePage(page) }))
   }
   async deleted(page: WikiPage) {
     wiki.logger.info(`(STORAGE/${this.storageName}) Deleting file ${page.path}...`)
@@ -197,7 +227,10 @@ export default class S3CompatibleStorage {
     // -> Pages
     await pipeline(
       wiki.models.knex
-        .column('path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey')
+        .column(
+          'id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content',
+          'sourceRevision', 'authorId', 'extra', 'isPublished', 'updatedAt', 'createdAt', 'editorKey'
+        )
         .select()
         .from('pages')
         .where({
@@ -208,13 +241,22 @@ export default class S3CompatibleStorage {
         if (!isPageExportRow(value)) {
           throw new TypeError('Invalid page export row')
         }
-        const filePath = getFilePath(value, 'path', this.config.pathPrefix, value.localeCode)
+        const pageObject = await wiki.models.pages.query().findOne({ id: value.id })
+        if (!pageObject) {
+          throw new Error(`Page ${value.id} was not found during S3 export`)
+        }
+        const relatedTags = await pageObject.$relatedQuery('tags')
+        if (!relatedTags.every((tag): tag is PageTag => isRecord(tag) && typeof tag.tag === 'string')) {
+          throw new TypeError(`Invalid tags for page ${value.id}`)
+        }
+        const page = { ...value, tags: relatedTags }
+        const filePath = getFilePath(page, 'path', this.config.pathPrefix, value.localeCode)
         wiki.logger.info(`(STORAGE/${this.storageName}) Adding page ${filePath}...`)
         await this.s3.send(
           new PutObjectCommand({
             Bucket: this.bucketName,
             Key: filePath,
-            Body: serializeContent(pageHelper.injectPageMetadata(value))
+            Body: serializePage(page)
           })
         )
       })

@@ -25,7 +25,7 @@ import type Comment from './comments.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
 import { enqueuePageMutationEffects, type PageProjectionPayload } from '../core/page-mutation-outbox.ts'
 import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operations/page-protection.ts'
-import { mutateOkfMetadata, type OkfMetadata } from '../okf/format.ts'
+import { mutateOkfMetadata, OkfDocumentError, type OkfMetadata } from '../okf/format.ts'
 
 type UnknownRecord = Record<string, unknown>
 type PageErrorConstructor = new () => Error
@@ -185,6 +185,7 @@ type MovePageOptions = (
   user: PageUser
   skipStorage?: boolean
   expectedSourceRevision?: string
+  okfProducer?: string
 }
 
 type DeletePageOptions = (
@@ -346,6 +347,11 @@ const pageUpdateConflict = (): Error & { status: number } =>
     name: 'PageUpdateConflict',
     status: 409
   })
+const invalidateOkfVerification = (metadata: OkfMetadata): OkfMetadata => {
+  const unverified = { ...metadata }
+  delete unverified.verified
+  return unverified
+}
 
 const writePageOutboxEvent = async (
   knex: Knex | Knex.Transaction,
@@ -706,17 +712,6 @@ export default class Page extends Model {
     })
   }
 
-  /**
-   * Inject page metadata into contents
-   *
-   * @returns {string} Page Contents with Injected Metadata
-   */
-  injectMetadata(): string | Record<string, unknown> {
-    return pageHelper.injectPageMetadata({
-      ...this,
-      isPublished: this.isPublished === true || this.isPublished === 1
-    })
-  }
 
   /**
    * Get the page's file extension based on content type
@@ -1010,18 +1005,88 @@ export default class Page extends Model {
     if (destinationPath.startsWith('/')) {
       destinationPath = destinationPath.slice(1)
     }
-    const knowledgeChanged = opts.content !== undefined || opts.title !== undefined || opts.description !== undefined || opts.tags !== undefined
     const restoringOkf = opts.okfRestoreRevision !== undefined
-    const okfMetadata = mutateOkfMetadata({
-      existing: restoringOkf ? opts.okfMetadata : ogPage.extra.okf,
-      proposed: restoringOkf ? undefined : opts.okfMetadata,
-      producer: opts.okfProducer ?? `human:${opts.user.id}`,
-      knowledgeChanged,
-      at: new Date(),
-      ...(!restoringOkf && opts.replaceOkfMetadata === true ? { mode: 'replace' as const } : {}),
+    const replacingOkf = !restoringOkf && opts.replaceOkfMetadata === true
+    const okfProducer = opts.okfProducer ?? `human:${opts.user.id}`
+    const okfMutationAt = new Date()
+    const existingOkfMetadata = restoringOkf ? opts.okfMetadata : ogPage.extra.okf
+    const replacementOkfMetadata = replacingOkf
+      ? mutateOkfMetadata({
+          proposed: opts.okfMetadata ?? null,
+          producer: okfProducer,
+          knowledgeChanged: false,
+          at: okfMutationAt,
+          mode: 'replace'
+        })
+      : undefined
+    let normalizedExistingOkfMetadata: OkfMetadata | undefined
+    let existingOkfIsValid = true
+    try {
+      normalizedExistingOkfMetadata = mutateOkfMetadata({
+        existing: existingOkfMetadata,
+        producer: okfProducer,
+        knowledgeChanged: false,
+        at: okfMutationAt
+      })
+    } catch (error) {
+      if (!replacingOkf || !(error instanceof OkfDocumentError)) throw error
+      existingOkfIsValid = false
+    }
+    const existingOkfForMutation = existingOkfIsValid ? existingOkfMetadata : undefined
+    const proposedOkfMetadata = mutateOkfMetadata({
+      existing: existingOkfForMutation,
+      proposed: restoringOkf ? undefined : (replacementOkfMetadata ?? opts.okfMetadata),
+      producer: okfProducer,
+      knowledgeChanged: false,
+      at: okfMutationAt,
+      ...(replacingOkf ? { mode: 'replace' as const } : {}),
       ...(restoringOkf ? { restore: { revision: opts.okfRestoreRevision! } } : {})
     })
+    const okfAuthorityChanged =
+      !restoringOkf &&
+      opts.okfMetadata !== undefined &&
+      (!existingOkfIsValid || existingOkfMetadata === undefined || !_.isEqual(proposedOkfMetadata, normalizedExistingOkfMetadata))
     const willMove = destinationLocale !== ogPage.localeCode || destinationPath !== ogPage.path
+    const knowledgeChanged =
+      opts.content !== undefined ||
+      opts.title !== undefined ||
+      opts.description !== undefined ||
+      opts.tags !== undefined ||
+      okfAuthorityChanged ||
+      willMove
+    let okfMetadata = mutateOkfMetadata({
+      existing: existingOkfForMutation,
+      proposed: restoringOkf ? undefined : (replacementOkfMetadata ?? opts.okfMetadata),
+      producer: okfProducer,
+      knowledgeChanged,
+      at: okfMutationAt,
+      ...(replacingOkf ? { mode: 'replace' as const } : {}),
+      ...(restoringOkf ? { restore: { revision: opts.okfRestoreRevision! } } : {})
+    })
+    if (okfAuthorityChanged || willMove) okfMetadata = invalidateOkfVerification(okfMetadata)
+    const metadataOnlyNoOp =
+      opts.okfMetadata !== undefined &&
+      !okfAuthorityChanged &&
+      opts.content === undefined &&
+      opts.description === undefined &&
+      opts.isPublished === undefined &&
+      opts.title === undefined &&
+      opts.tags === undefined &&
+      opts.editor === undefined &&
+      opts.contentType === undefined &&
+      opts.action === undefined &&
+      opts.locale === undefined &&
+      opts.path === undefined &&
+      opts.publishEndDate === undefined &&
+      opts.publishStartDate === undefined &&
+      opts.scriptCss === undefined &&
+      opts.scriptJs === undefined &&
+      opts.okfRestoreRevision === undefined
+    if (metadataOnlyNoOp) {
+      const unchangedPage = await wiki.models.pages.getPageFromDb(ogPage.id)
+      if (!unchangedPage) throw new wiki.Error.PageNotFound()
+      return unchangedPage
+    }
     if (
       willMove &&
       ogPage.visibility === 'public' &&
@@ -1599,7 +1664,15 @@ export default class Page extends Model {
       ownerId: page.ownerId
     })
     const destinationTitle = page.title === _.last(page.path.split('/')) ? (_.last(opts.destinationPath.split('/')) ?? page.title) : page.title
-
+    const pageExtra: PageExtra = _.isPlainObject(page.extra) ? page.extra : {}
+    const okfMetadata = invalidateOkfVerification(
+      mutateOkfMetadata({
+        existing: pageExtra.okf,
+        producer: opts.okfProducer ?? `human:${opts.user.id}`,
+        knowledgeChanged: true,
+        at: new Date()
+      })
+    )
     await wiki.models.knex.transaction(async transaction => {
       await wiki.models.pageHistory.addVersion({
         ...page,
@@ -1615,7 +1688,11 @@ export default class Page extends Model {
           localeCode: opts.destinationLocale,
           title: destinationTitle,
           hash: destinationHash,
-          ...localeRelationPatch
+          ...localeRelationPatch,
+          extra: {
+            ...pageExtra,
+            okf: okfMetadata
+          }
         })
         .where({ id: page.id, sourceRevision: page.sourceRevision })
       if (changedRows !== 1) throw pageUpdateConflict()
@@ -1632,6 +1709,8 @@ export default class Page extends Model {
       )
       await enqueueCurrentPageProjections(transaction, page.id, 'move', projectionLocation(page))
     })
+    const movedPage = await wiki.models.pages.getPageFromDb(page.id)
+    if (!movedPage) throw new wiki.Error.PageNotFound()
     await wiki.models.pages.deletePageFromCache(page.hash)
     wiki.events.outbound.emit('deletePageFromCache', page.hash)
     await wiki.models.pages.rebuildTree()
@@ -1641,8 +1720,10 @@ export default class Page extends Model {
         await wiki.models.storage.pageEvent({
           event: 'renamed',
           page: {
-            ...page,
-            title: destinationTitle,
+            ...movedPage,
+            hash: page.hash,
+            path: page.path,
+            localeCode: page.localeCode,
             destinationPath: opts.destinationPath,
             destinationLocaleCode: opts.destinationLocale,
             destinationHash,

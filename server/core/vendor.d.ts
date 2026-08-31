@@ -31,6 +31,8 @@ declare module 'js-yaml' {
     readonly json?: boolean
     readonly schema?: Schema
     readonly maxDepth?: number
+    readonly maxAliases?: number
+    readonly maxTotalMergeKeys?: number
     readonly maxMergeSeqLength?: number
   }
   export interface DumpOptions {

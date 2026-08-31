@@ -30,7 +30,7 @@ describe('private page mutation existence isolation', () => {
               forUpdate: vi.fn().mockReturnValue({
                 first: vi.fn().mockResolvedValue({
                   id: 17,
-                  sourceRevision: '2',
+                  sourceRevision: '3',
                   content: 'changed content',
                   localeCode: 'en',
                   path: 'secret',
@@ -204,6 +204,336 @@ describe('private page mutation existence isolation', () => {
       })
     }))
     expect(associateTags).not.toHaveBeenCalled()
+  })
+
+  it('does not churn history or trust for a no-op authoritative OKF write', async () => {
+    const owner = { id: 7, permissions: [] }
+    const originalPage = {
+      ...privatePage,
+      authorId: 3,
+      content: '# Runbook',
+      contentType: 'markdown',
+      description: '',
+      extra: {
+        css: '',
+        js: '',
+        okf: {
+          type: 'Reference',
+          status: 'stable',
+          generated: { by: 'human:3', at: '2026-08-01T00:00:00.000Z' },
+          verified: { by: 'human:9', at: '2026-08-02T00:00:00.000Z' }
+        }
+      },
+      hash: 'private:7:en:secret',
+      isPublished: true,
+      publishEndDate: '',
+      publishStartDate: '',
+      sourceRevision: '2',
+      title: 'Runbook',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }
+    const getPageFromDb = vi.fn().mockResolvedValue(originalPage)
+    const query = vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(originalPage) })
+    global.WIKI.models.pages = { query, getPageFromDb }
+
+    const result = await Page.updatePage({
+      id: 17,
+      user: owner,
+      okfMetadata: {
+        type: 'Reference',
+        status: 'stable',
+        generated: { by: 'human:999', at: '2026-08-30T00:00:00.000Z' },
+        verified: { by: 'human:999', at: '2026-08-30T00:00:00.000Z' }
+      },
+      replaceOkfMetadata: true,
+      expectedSourceRevision: '2'
+    })
+
+    expect(result).toBe(originalPage)
+    expect(query).toHaveBeenCalledOnce()
+    expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
+  })
+
+  it('stamps producer provenance and clears verification for an authoritative OKF-only change', async () => {
+    const owner = { id: 7, permissions: [] }
+    const originalExtra = {
+      css: '',
+      js: '',
+      okf: {
+        type: 'Reference',
+        status: 'stable',
+        generated: { by: 'human:3', at: '2026-08-01T00:00:00.000Z' },
+        verified: { by: 'human:9', at: '2026-08-02T00:00:00.000Z' }
+      }
+    }
+    const originalPage = {
+      ...privatePage,
+      authorId: 3,
+      content: '# Runbook',
+      contentType: 'markdown',
+      description: '',
+      extra: originalExtra,
+      hash: 'private:7:en:secret',
+      isPublished: true,
+      publishEndDate: '',
+      publishStartDate: '',
+      sourceRevision: '2',
+      title: 'Runbook',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }
+    const patchQuery = {
+      where: vi.fn(),
+      then: vi.fn(resolve => resolve(1))
+    }
+    patchQuery.where.mockReturnValue(patchQuery)
+    const patch = vi.fn().mockReturnValue(patchQuery)
+    const query = vi.fn()
+      .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(originalPage) })
+      .mockReturnValueOnce({ patch })
+      .mockReturnValueOnce({
+        findById: vi.fn().mockReturnValue({
+          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z' })
+        })
+      })
+    const updatedPage = { ...originalPage, sourceRevision: '3' }
+    global.WIKI.models.pages = {
+      query,
+      getPageFromDb: vi.fn().mockResolvedValue(updatedPage),
+      renderPage: vi.fn()
+    }
+    global.WIKI.models.knex.table = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ update: vi.fn().mockResolvedValue(1) })
+    })
+
+    const result = await Page.updatePage({
+      id: 17,
+      user: owner,
+      okfMetadata: { type: 'Procedure', status: 'stable' },
+      replaceOkfMetadata: true,
+      okfProducer: 'agent:authority-request',
+      expectedSourceRevision: '2'
+    })
+
+    const patchedOkf = patch.mock.calls[0][0].extra.okf
+    expect(patchedOkf).toMatchObject({
+      type: 'Procedure',
+      generated: { by: 'agent:authority-request', at: expect.any(String) }
+    })
+    expect(patchedOkf).not.toHaveProperty('verified')
+    expect(result).toBe(updatedPage)
+    expect(result.sourceRevision).toBe('3')
+    expect(patchQuery.where).toHaveBeenCalledTimes(2)
+    expect(patchQuery.where).toHaveBeenNthCalledWith(1, 'id', 17)
+    expect(patchQuery.where).toHaveBeenNthCalledWith(2, 'sourceRevision', '2')
+    expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRevision: '2',
+      extra: originalExtra
+    }))
+  })
+
+  it('atomically replaces invalid stored OKF authority with server-owned valid metadata', async () => {
+    const owner = { id: 7, permissions: [] }
+    const originalExtra = {
+      css: '',
+      js: '',
+      okf: {
+        type: '',
+        unsafeSecret: 'must-not-survive',
+        verified: { by: 'human:9', at: '2026-08-02T00:00:00.000Z' }
+      }
+    }
+    const originalPage = {
+      ...privatePage,
+      authorId: 3,
+      content: '# Runbook',
+      contentType: 'markdown',
+      description: '',
+      extra: originalExtra,
+      hash: 'private:7:en:secret',
+      isPublished: true,
+      publishEndDate: '',
+      publishStartDate: '',
+      sourceRevision: '2',
+      title: 'Runbook',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }
+    const patchQuery = {
+      where: vi.fn(),
+      then: vi.fn(resolve => resolve(1))
+    }
+    patchQuery.where.mockReturnValue(patchQuery)
+    const patch = vi.fn().mockReturnValue(patchQuery)
+    const query = vi.fn()
+      .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(originalPage) })
+      .mockReturnValueOnce({ patch })
+      .mockReturnValueOnce({
+        findById: vi.fn().mockReturnValue({
+          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z' })
+        })
+      })
+    const updatedPage = {
+      ...originalPage,
+      sourceRevision: '3',
+      extra: {
+        css: '',
+        js: '',
+        okf: {
+          type: 'Procedure',
+          status: 'stable',
+          generated: { by: 'human:7', at: '2026-08-14T00:01:00.000Z' }
+        }
+      }
+    }
+    global.WIKI.models.pages = {
+      query,
+      getPageFromDb: vi.fn().mockResolvedValue(updatedPage),
+      renderPage: vi.fn()
+    }
+    global.WIKI.models.knex.table = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ update: vi.fn().mockResolvedValue(1) })
+    })
+
+    const result = await Page.updatePage({
+      id: 17,
+      user: owner,
+      okfMetadata: {
+        type: 'Procedure',
+        status: 'stable',
+        generated: { by: 'human:999', at: '2026-08-30T00:00:00.000Z' },
+        verified: { by: 'human:999', at: '2026-08-30T00:00:00.000Z' }
+      },
+      replaceOkfMetadata: true,
+      expectedSourceRevision: '2'
+    })
+
+    const patchedOkf = patch.mock.calls[0][0].extra.okf
+    expect(patchedOkf).toMatchObject({
+      type: 'Procedure',
+      status: 'stable',
+      generated: { by: 'human:7', at: expect.any(String) }
+    })
+    expect(patchedOkf).not.toHaveProperty('verified')
+    expect(patchedOkf).not.toHaveProperty('unsafeSecret')
+    expect(result).toBe(updatedPage)
+    expect(global.WIKI.models.knex.transaction).toHaveBeenCalledOnce()
+    expect(query).toHaveBeenNthCalledWith(2, global.WIKI.models.knex)
+    expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRevision: '2',
+      extra: originalExtra,
+      transaction: global.WIKI.models.knex
+    }))
+  })
+
+  it.each([
+    ['a missing replacement', { replaceOkfMetadata: true }, 'INVALID_OKF_ROOT'],
+    ['an invalid replacement', { replaceOkfMetadata: true, okfMetadata: [] }, 'INVALID_OKF_ROOT'],
+    ['a metadata merge', { okfMetadata: { type: 'Procedure' } }, 'INVALID_TYPE'],
+    ['an ordinary content mutation', { content: '# Changed' }, 'INVALID_TYPE']
+  ])('rejects invalid stored OKF authority during %s', async (_description, mutation, code) => {
+    const originalPage = {
+      ...privatePage,
+      authorId: 3,
+      content: '# Runbook',
+      contentType: 'markdown',
+      description: '',
+      extra: { css: '', js: '', okf: { type: '' } },
+      hash: 'private:7:en:secret',
+      isPublished: true,
+      publishEndDate: '',
+      publishStartDate: '',
+      sourceRevision: '2',
+      title: 'Runbook',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }
+    const query = vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(originalPage) })
+    global.WIKI.models.pages = { query }
+
+    await expect(Promise.resolve(Page.updatePage({
+      id: 17,
+      user: { id: 7, permissions: [] },
+      expectedSourceRevision: '2',
+      ...mutation
+    }))).rejects.toMatchObject({ name: 'OkfDocumentError', code })
+
+    expect(query).toHaveBeenCalledOnce()
+    expect(global.WIKI.models.knex.transaction).not.toHaveBeenCalled()
+    expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
+  })
+
+  it('stamps move provenance, clears verification, and reloads the immutable moved revision', async () => {
+    const owner = { id: 7, name: 'Owner', email: 'owner@example.test', permissions: [] }
+    const originalExtra = {
+      css: '',
+      js: '',
+      okf: {
+        type: 'Reference',
+        status: 'stable',
+        generated: { by: 'human:3', at: '2026-08-01T00:00:00.000Z' },
+        verified: { by: 'human:9', at: '2026-08-02T00:00:00.000Z' }
+      }
+    }
+    const originalPage = {
+      ...privatePage,
+      authorId: 3,
+      content: '# Secret',
+      contentType: 'markdown',
+      description: '',
+      extra: originalExtra,
+      hash: 'private:7:en:secret',
+      isPublished: true,
+      publishEndDate: '',
+      publishStartDate: '',
+      sourceRevision: '2',
+      title: 'secret',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }
+    const patch = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(1) })
+    const query = vi.fn()
+      .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(originalPage) })
+      .mockReturnValueOnce({ findOne: vi.fn().mockResolvedValue(undefined) })
+      .mockReturnValueOnce({ patch })
+    const getPageFromDb = vi.fn().mockResolvedValue({
+      ...originalPage,
+      path: 'renamed',
+      title: 'renamed',
+      hash: 'private:7:en:renamed',
+      sourceRevision: '3'
+    })
+    global.WIKI.models.pages = {
+      query,
+      getPageFromDb,
+      deletePageFromCache: vi.fn(),
+      rebuildTree: vi.fn()
+    }
+
+    await Page.movePage({
+      id: 17,
+      user: owner,
+      destinationLocale: 'en',
+      destinationPath: 'renamed',
+      expectedSourceRevision: '2',
+      okfProducer: 'agent:move-request',
+      skipStorage: true
+    })
+
+    const patchValue = patch.mock.calls[0][0]
+    expect(patchValue).toMatchObject({
+      path: 'renamed',
+      title: 'renamed',
+      extra: {
+        okf: {
+          type: 'Reference',
+          generated: { by: 'agent:move-request', at: expect.any(String) }
+        }
+      }
+    })
+    expect(patchValue.extra.okf).not.toHaveProperty('verified')
+    expect(getPageFromDb).toHaveBeenCalledWith(17)
+    expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'moved',
+      sourceRevision: '2',
+      extra: originalExtra
+    }))
   })
 
   it('advances OKF generation provenance when editor conversion rewrites the authoritative format', async () => {

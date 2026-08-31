@@ -250,7 +250,20 @@ const assertJsonTree = (root: unknown): void => {
   visit(root, 0)
 }
 
-const validateMetadata = (value: unknown): OkfMetadata => {
+const orderedMetadata = (metadata: OkfMetadata): Record<string, unknown> => {
+  const ordered: Record<string, unknown> = {}
+  for (const field of FIELD_ORDER) if (metadata[field] !== undefined) ordered[field] = metadata[field]
+  for (const field of Object.keys(metadata)
+    .filter(field => !FIELD_ORDER.includes(field as (typeof FIELD_ORDER)[number]))
+    .sort())
+    ordered[field] = metadata[field]
+  return ordered
+}
+
+const serializeMetadata = (metadata: OkfMetadata): string =>
+  yaml.dump(orderedMetadata(metadata), { schema: yaml.JSON_SCHEMA, noRefs: true, lineWidth: -1, sortKeys: false }).trimEnd()
+
+const validateMetadataAndSerialize = (value: unknown): { readonly metadata: OkfMetadata; readonly serialized: string } => {
   if (!isRecord(value)) return fail('INVALID_OKF_ROOT', 'OKF frontmatter must be a YAML mapping')
   assertJsonTree(value)
   const metadata: OkfMetadata = { ...value, type: nonEmptyString(value.type, 'type', 128) }
@@ -291,8 +304,13 @@ const validateMetadata = (value: unknown): OkfMetadata => {
       }
     })
   }
-  return metadata
+  const serialized = serializeMetadata(metadata)
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_FRONTMATTER_BYTES)
+    return fail('OKF_FRONTMATTER_TOO_LARGE', `OKF frontmatter exceeds ${MAX_FRONTMATTER_BYTES} bytes`)
+  return { metadata, serialized }
 }
+
+const validateMetadata = (value: unknown): OkfMetadata => validateMetadataAndSerialize(value).metadata
 
 const verificationEvents = (metadata: OkfMetadata): readonly OkfActorEvent[] =>
   metadata.verified === undefined ? [] : Array.isArray(metadata.verified) ? metadata.verified : [metadata.verified]
@@ -342,8 +360,12 @@ export const parseOkfDocument = (document: string, now = new Date()): ParsedOkfD
     return fail('OKF_FRONTMATTER_TOO_LARGE', `OKF frontmatter exceeds ${MAX_FRONTMATTER_BYTES} bytes`)
   let raw: unknown
   try {
-    const options = { schema: yaml.JSON_SCHEMA, maxDepth: MAX_TREE_DEPTH, maxMergeSeqLength: 0 } as unknown as NonNullable<Parameters<typeof yaml.load>[1]>
-    raw = yaml.load(match[1], options)
+    raw = yaml.load(match[1], {
+      schema: yaml.JSON_SCHEMA,
+      maxDepth: MAX_TREE_DEPTH + 1,
+      maxAliases: 0,
+      maxTotalMergeKeys: 0
+    })
   } catch (error: unknown) {
     return fail('INVALID_OKF_YAML', error instanceof Error ? `Invalid OKF YAML: ${error.message}` : 'Invalid OKF YAML')
   }
@@ -355,21 +377,9 @@ export const parseOkfDocument = (document: string, now = new Date()): ParsedOkfD
   return { version: OKF_VERSION, metadata, body, trust: summarizeValidatedOkfTrust(metadata, now) }
 }
 
-const orderedMetadata = (metadata: OkfMetadata): Record<string, unknown> => {
-  const ordered: Record<string, unknown> = {}
-  for (const field of FIELD_ORDER) if (metadata[field] !== undefined) ordered[field] = metadata[field]
-  for (const field of Object.keys(metadata)
-    .filter(field => !FIELD_ORDER.includes(field as (typeof FIELD_ORDER)[number]))
-    .sort())
-    ordered[field] = metadata[field]
-  return ordered
-}
 
 export const renderOkfDocument = (metadataInput: OkfMetadata, body: string): string => {
-  const metadata = validateMetadata(metadataInput)
-  const serialized = yaml.dump(orderedMetadata(metadata), { schema: yaml.JSON_SCHEMA, noRefs: true, lineWidth: -1, sortKeys: false }).trimEnd()
-  if (Buffer.byteLength(serialized, 'utf8') > MAX_FRONTMATTER_BYTES)
-    return fail('OKF_FRONTMATTER_TOO_LARGE', `OKF frontmatter exceeds ${MAX_FRONTMATTER_BYTES} bytes`)
+  const { serialized } = validateMetadataAndSerialize(metadataInput)
   const normalizedBody = body.replaceAll('\r\n', '\n').replace(/^\n+/u, '')
   const document = `---\n${serialized}\n---\n${normalizedBody.length > 0 ? `\n${normalizedBody}` : ''}`
   if (Buffer.byteLength(document, 'utf8') > OKF_MAX_DOCUMENT_BYTES)
@@ -417,6 +427,12 @@ const importedConceptIdentity = (filePath: string): { locale: string; pagePath: 
   else if (RESERVED_BASENAMES.has(basename.toLowerCase())) return null
   segments.push(basename)
   return { locale, pagePath: segments.join('/') }
+}
+
+export const parseOkfFilePath = (filePath: string): { locale: string; pagePath: string } | null => {
+  const identity = importedConceptIdentity(filePath)
+  if (identity === null || identity.locale.length === 0 || identity.pagePath.length === 0) return null
+  return okfFilePath(identity.locale, identity.pagePath) === filePath ? identity : null
 }
 
 const importLink = (destination: string, currentFilePath: string): string => {

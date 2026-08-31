@@ -10,12 +10,13 @@ import _ from 'lodash'
 
 import pageHelper from '../../../helpers/page.ts'
 import { classifyStoragePageDocument } from '../page-document.ts'
+import { OKF_MAX_DOCUMENT_BYTES, parseOkfFilePath } from '../../../okf/format.ts'
 import type { StorageImportResult, StoragePageProcessResult } from '../types.ts'
 const mime = mimeTypesModule.lookup
 
 interface ImportSource {
   fullPath: string
-  moduleName: string
+  moduleName: 'DISK' | 'GIT'
 }
 
 interface ImportPageSource extends ImportSource {
@@ -26,7 +27,7 @@ interface ImportPageSource extends ImportSource {
 
 interface ImportFile {
   path: string
-  stats: { size: number }
+  stats: { size: number; isSymbolicLink?: () => boolean }
 }
 interface ImportAssetSource {
   file: ImportFile
@@ -62,6 +63,7 @@ const plugin = {
 
     await pipeline(
       klaw(fullPath, {
+        preserveSymlinks: true,
         filter: f => {
           return !_.includes(f, '.git')
         }
@@ -71,6 +73,10 @@ const plugin = {
         transform: async (value: unknown, _encoding: BufferEncoding, callback: TransformCallback) => {
           if (!isImportFile(value)) {
             callback(new TypeError('Invalid file received from disk'))
+            return
+          }
+          if (typeof value.stats.isSymbolicLink === 'function' && value.stats.isSymbolicLink()) {
+            callback()
             return
           }
           const relPath = value.path.slice(fullPath.length + 1)
@@ -128,13 +134,24 @@ const plugin = {
   async processPage({ user, fullPath, relPath, contentType, moduleName }: ImportPageSource): Promise<StoragePageProcessResult> {
     const normalizedRelPath = relPath.replace(/\\/g, '/')
     const contentPath = pageHelper.getPagePath(normalizedRelPath)
-    const itemContents = await fs.readFile(path.join(fullPath, relPath))
+    const itemPath = path.join(fullPath, relPath)
+    // Git imports are checked-out files and simple-git exposes no bounded blob read here, so
+    // enforce the freshest available size before allocation and recheck after the read for races.
+    const itemStats = await fs.stat(itemPath)
+    if (itemStats.size > OKF_MAX_DOCUMENT_BYTES) {
+      throw new RangeError(`Page document exceeds ${OKF_MAX_DOCUMENT_BYTES} bytes`)
+    }
+    const itemContents = await fs.readFile(itemPath)
+    if (itemContents.byteLength > OKF_MAX_DOCUMENT_BYTES) {
+      throw new RangeError(`Page document exceeds ${OKF_MAX_DOCUMENT_BYTES} bytes`)
+    }
+    const okfProducer = moduleName === 'DISK' ? 'import:disk' : 'import:git'
     const document = classifyStoragePageDocument({
       rawDocument: itemContents,
       contentType,
       locale: contentPath.locale,
       pagePath: contentPath.path,
-      importer: `import:${moduleName.toLowerCase()}`
+      importer: okfProducer
     })
     if (document.format === 'okf_invalid') {
       return {
@@ -146,9 +163,27 @@ const plugin = {
         error: document.diagnostics.join('; ') || 'Invalid OKF document'
       }
     }
+    let pageIdentity = contentPath
+    if (document.format === 'okf_valid') {
+      const canonicalIdentity = parseOkfFilePath(normalizedRelPath)
+      if (canonicalIdentity === null) {
+        return {
+          relPath: normalizedRelPath,
+          format: document.format,
+          sha256: document.sha256,
+          ok: false,
+          document,
+          error: `OKF page path is not canonical: ${normalizedRelPath}`
+        }
+      }
+      pageIdentity = {
+        locale: canonicalIdentity.locale,
+        path: canonicalIdentity.pagePath
+      }
+    }
     const currentPage = await wiki.models.pages.getPageFromDb({
-      path: contentPath.path,
-      locale: contentPath.locale
+      path: pageIdentity.path,
+      locale: pageIdentity.locale
     })
     const currentPublishedState = currentPage && 'isPublished' in currentPage && typeof currentPage.isPublished === 'boolean' ? currentPage.isPublished : true
     if (currentPage) {
@@ -169,6 +204,7 @@ const plugin = {
         content: document.body,
         user,
         okfMetadata: document.okfMetadata ?? undefined,
+        okfProducer,
         skipStorage: true
       })
       return { relPath: normalizedRelPath, format: document.format, sha256: document.sha256, ok: true, document, page }
@@ -179,9 +215,9 @@ const plugin = {
     const getDefaultEditor: (contentType: string) => Promise<string> = editors.getDefaultEditor
     const pageEditor = await getDefaultEditor.call(editors, contentType)
     const page = await wiki.models.pages.createPage({
-      path: contentPath.path,
-      locale: contentPath.locale,
-      title: document.title ?? contentPath.path.split('/').at(-1) ?? contentPath.path,
+      path: pageIdentity.path,
+      locale: pageIdentity.locale,
+      title: document.title ?? pageIdentity.path.split('/').at(-1) ?? pageIdentity.path,
       description: document.description ?? '',
       tags: document.tags,
       isPublished: document.isPublished ?? true,
@@ -190,6 +226,7 @@ const plugin = {
       user,
       editor: pageEditor,
       okfMetadata: document.okfMetadata ?? undefined,
+      okfProducer,
       skipStorage: true
     })
     return { relPath: normalizedRelPath, format: document.format, sha256: document.sha256, ok: true, document, page }

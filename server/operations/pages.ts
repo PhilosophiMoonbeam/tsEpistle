@@ -1114,13 +1114,7 @@ const convert = async (input: OperationInput): Promise<unknown> => {
   return wiki.models.pages.convertPage(withRequester(payload, input.requester))
 }
 const move = async (input: OperationInput): Promise<unknown> => {
-  const payload = _.omit(recordValue(input.input, 'input'), [
-    'visibility',
-    'ownerId',
-    'isPrivate',
-    'privateNS',
-    'replaceOkfMetadata'
-  ])
+  const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
   return wiki.models.pages.movePage(withRequester(payload, input.requester))
 }

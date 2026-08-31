@@ -8,6 +8,7 @@ type JsonObject = Record<string, unknown>
 type PageRow = {
   id: number
   extra: unknown
+  sourceRevision: unknown
   updatedAt?: unknown
   createdAt?: unknown
 }
@@ -26,25 +27,26 @@ const parseExtra = (value: unknown): { readonly extra: JsonObject; readonly wasS
   return isJsonObject(value) ? { extra: value, wasString: false } : null
 }
 
-const normalizeTimestamp = (value: unknown): string | null => {
-  const date = value instanceof Date
-    ? value
-    : typeof value === 'string' || typeof value === 'number'
-      ? new Date(value)
-      : null
-  return date !== null && Number.isFinite(date.valueOf()) ? date.toISOString() : null
+type TimestampSnapshot = {
+  readonly dbValue: string | number | Date
+  readonly iso: string
 }
 
-const authorityFor = (row: PageRow, tableName: 'pages' | 'pageHistory'): string | JsonObject | null => {
+const normalizeTimestamp = (value: unknown): TimestampSnapshot | null => {
+  if (!(value instanceof Date || typeof value === 'string' || typeof value === 'number')) return null
+  const date = value instanceof Date ? value : new Date(value)
+  return Number.isFinite(date.valueOf())
+    ? { dbValue: value, iso: date.toISOString() }
+    : null
+}
+
+const authorityFor = (row: PageRow, timestamp: string): string | JsonObject | null => {
   const parsed = parseExtra(row.extra)
   if (parsed === null) return null
 
   // Existing OKF claims, including malformed or future extensions, belong to
   // the page author and must not be rewritten by this legacy repair.
   if (Object.hasOwn(parsed.extra, 'okf')) return null
-
-  const timestamp = normalizeTimestamp(tableName === 'pages' ? row.updatedAt : row.createdAt)
-  if (timestamp === null) return null
 
   const nextExtra: JsonObject = {
     ...parsed.extra,
@@ -61,7 +63,7 @@ const backfillTable = async (knex: Knex, tableName: 'pages' | 'pageHistory', tim
   let cursor = 0
   while (true) {
     const rows = await knex<PageRow>(tableName)
-      .select('id', 'extra', timestampColumn)
+      .select('id', 'extra', 'sourceRevision', timestampColumn)
       .where('id', '>', cursor)
       .orderBy('id', 'asc')
       .limit(BATCH_SIZE)
@@ -70,9 +72,14 @@ const backfillTable = async (knex: Knex, tableName: 'pages' | 'pageHistory', tim
 
     for (const row of rows) {
       cursor = row.id
-      const authority = authorityFor(row, tableName)
+      const timestamp = normalizeTimestamp(row[timestampColumn])
+      if (timestamp === null) continue
+      const authority = authorityFor(row, timestamp.iso)
       if (authority === null) continue
-      await knex(tableName).where({ id: row.id }).update({ extra: authority })
+      await knex(tableName)
+        .where({ id: row.id, sourceRevision: row.sourceRevision })
+        .where(timestampColumn, timestamp.dbValue)
+        .update({ extra: authority })
     }
   }
 }

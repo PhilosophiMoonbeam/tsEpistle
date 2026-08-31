@@ -34,7 +34,6 @@ export interface WikiPage {
   isPublished: boolean | number
   editorKey: string
   tags: UnknownRecord[]
-  injectMetadata(): string
   $relatedQuery(relation: string): Promise<UnknownRecord[]>
 }
 

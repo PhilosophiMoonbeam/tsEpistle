@@ -112,6 +112,7 @@ export type PageOkfView = {
   }
 }
 
+const ISO_WITH_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u
 const MAX_OKF_TREE_DEPTH = 20
 const MAX_OKF_TREE_NODES = 5_000
 const DANGEROUS_OKF_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
@@ -119,8 +120,36 @@ const hasOnlyKeys = (value: Record<string, unknown>, keys: readonly string[]): b
   const allowed: Record<string, true> = Object.fromEntries(keys.map(key => [key, true]))
   return Object.keys(value).every(key => allowed[key] === true)
 }
-const isIsoDate = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0 && /T[^\s]+(?:Z|[+-]\d{2}:\d{2})$/u.test(value) && Number.isFinite(Date.parse(value))
+const daysInMonth = (year: number, month: number): number => {
+  if (month === 2) return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28
+  return [4, 6, 9, 11].includes(month) ? 30 : 31
+}
+const isIsoDate = (value: unknown): value is string => {
+  if (typeof value !== 'string') return false
+  const match = ISO_WITH_OFFSET.exec(value)
+  if (!match) return false
+  const [, yearValue, monthValue, dayValue, hourValue, minuteValue, secondValue, offsetHourValue, offsetMinuteValue] = match
+  const year = Number(yearValue)
+  const month = Number(monthValue)
+  const day = Number(dayValue)
+  const hour = Number(hourValue)
+  const minute = Number(minuteValue)
+  const second = Number(secondValue)
+  const offsetHour = offsetHourValue === undefined ? 0 : Number(offsetHourValue)
+  const offsetMinute = offsetMinuteValue === undefined ? 0 : Number(offsetMinuteValue)
+  const validOffset = offsetHour <= 14 && offsetMinute <= 59 && (offsetHour < 14 || offsetMinute === 0)
+  return (
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= daysInMonth(year, month) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    validOffset &&
+    Number.isFinite(Date.parse(value))
+  )
+}
 const boundedJsonTree = (root: unknown): boolean => {
   let nodes = 0
   const visit = (value: unknown, depth: number): boolean => {
@@ -141,35 +170,39 @@ const normalizeActor = (value: unknown): OkfActorEvent | null => {
   if (value.at !== undefined && (!nonEmptyBoundedString(value.at, 64) || !isIsoDate(value.at))) return null
   return { ...value } as OkfActorEvent
 }
-const normalizeOkfMetadata = (value: unknown): OkfMetadata | null => {
-  if (!isRecord(value) || !boundedJsonTree(value) || !nonEmptyBoundedString(value.type, 128)) return null
-  if (value.title !== undefined && !nonEmptyBoundedString(value.title, 255)) return null
-  if (value.description !== undefined && !nonEmptyBoundedString(value.description, 2_000)) return null
-  if (value.resource !== undefined && !nonEmptyBoundedString(value.resource, 4_096)) return null
+const okfMetadataValidationMessage = (value: unknown): string | null => {
+  if (!isRecord(value)) return 'Metadata must be an object.'
+  if (!boundedJsonTree(value)) return 'Extension values must be finite JSON within the supported size limits.'
+  if (!nonEmptyBoundedString(value.type, 128)) return 'Type is required and must be at most 128 characters.'
+  if (value.title !== undefined && !nonEmptyBoundedString(value.title, 255)) return 'Title must be between 1 and 255 characters.'
+  if (value.description !== undefined && !nonEmptyBoundedString(value.description, 2_000)) return 'Description must be between 1 and 2,000 characters.'
+  if (value.resource !== undefined && !nonEmptyBoundedString(value.resource, 4_096)) return 'Resource must be between 1 and 4,096 characters.'
   if (
     value.tags !== undefined &&
     (!Array.isArray(value.tags) || value.tags.length > 100 || value.tags.some(tag => !nonEmptyBoundedString(tag, 255)))
-  ) return null
-  if (value.status !== undefined && value.status !== 'draft' && value.status !== 'stable' && value.status !== 'deprecated') return null
-  if (value.generated !== undefined && normalizeActor(value.generated) === null) return null
+  ) return 'Tags must contain at most 100 non-empty values of at most 255 characters each.'
+  if (value.status !== undefined && value.status !== 'draft' && value.status !== 'stable' && value.status !== 'deprecated') return 'Status must be draft, stable, or deprecated.'
+  if (value.generated !== undefined && normalizeActor(value.generated) === null) return 'Generated must identify an actor and may include a valid ISO-8601 timestamp.'
   if (value.verified !== undefined) {
     const events = Array.isArray(value.verified) ? value.verified : [value.verified]
-    if (events.length < 1 || events.length > 100 || events.some(event => normalizeActor(event) === null)) return null
+    if (events.length < 1 || events.length > 100 || events.some(event => normalizeActor(event) === null)) return 'Verified must contain between 1 and 100 valid actor events.'
   }
-  if (value.stale_after !== undefined && (!nonEmptyBoundedString(value.stale_after, 64) || !isIsoDate(value.stale_after))) return null
+  if (value.stale_after !== undefined && (!nonEmptyBoundedString(value.stale_after, 64) || !isIsoDate(value.stale_after))) return 'Stale after must be a valid ISO-8601 timestamp.'
   if (value.sources !== undefined) {
-    if (!Array.isArray(value.sources) || value.sources.length > 100) return null
-    for (const source of value.sources) {
-      if (!isRecord(source)) return null
+    if (!Array.isArray(value.sources) || value.sources.length > 100) return 'Sources must contain at most 100 entries.'
+    for (const [index, source] of value.sources.entries()) {
+      if (!isRecord(source)) return `Source ${index + 1} must be an object.`
       const { resource, id, title } = source
-      if (
-        !nonEmptyBoundedString(resource, 4_096) ||
-        (id !== undefined && !nonEmptyBoundedString(id, 255)) ||
-        (title !== undefined && !nonEmptyBoundedString(title, 512))
-      ) return null
+      if (!nonEmptyBoundedString(resource, 4_096)) return `Source ${index + 1} resource is required and must be at most 4,096 characters.`
+      if (id !== undefined && !nonEmptyBoundedString(id, 255)) return `Source ${index + 1} ID must be between 1 and 255 characters.`
+      if (title !== undefined && !nonEmptyBoundedString(title, 512)) return `Source ${index + 1} title must be between 1 and 512 characters.`
     }
   }
-  return { ...value } as OkfMetadata
+  return null
+}
+const normalizeOkfMetadata = (value: unknown): OkfMetadata | null => {
+  if (okfMetadataValidationMessage(value) !== null) return null
+  return { ...(value as Record<string, unknown>) } as OkfMetadata
 }
 const normalizeTrust = (value: unknown): OkfTrustSummary | null => {
   if (!isRecord(value) || !hasOnlyKeys(value, ['trustTier', 'verification', 'status', 'stale', 'generatedAt', 'verifiedAt'])) return null
@@ -461,15 +494,30 @@ const EDITABLE_OKF_EXCLUDED_KEYS: Record<string, true> = {
   restored_from: true,
   'x-wiki': true
 }
-export function buildOkfMetadataPayload(value: unknown): Record<string, unknown> | undefined {
-  const metadata = normalizeOkfMetadata(value)
-  if (metadata === null) return undefined
+export class OkfMetadataValidationError extends Error {
+  constructor (detail: string) {
+    super(`Fix the Knowledge / OKF metadata before saving: ${detail}`)
+    this.name = 'OkfMetadataValidationError'
+  }
+}
+export type OkfMetadataPayloadValidation =
+  | { valid: true; payload: Record<string, unknown> | undefined }
+  | { valid: false; error: OkfMetadataValidationError }
+export function validateOkfMetadataPayload(value: unknown): OkfMetadataPayloadValidation {
+  if (value === null || value === undefined) return { valid: true, payload: undefined }
+  const detail = okfMetadataValidationMessage(value)
+  if (detail !== null) return { valid: false, error: new OkfMetadataValidationError(detail) }
   const editable: Record<string, unknown> = {}
-  for (const [key, entry] of Object.entries(metadata)) {
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
     if (EDITABLE_OKF_EXCLUDED_KEYS[key] === true) continue
     editable[key] = entry
   }
-  return editable
+  return { valid: true, payload: editable }
+}
+export function buildOkfMetadataPayload(value: unknown): Record<string, unknown> | undefined {
+  const result = validateOkfMetadataPayload(value)
+  if (!result.valid) throw result.error
+  return result.payload
 }
 
 

@@ -8,6 +8,8 @@ import path from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import pageHelper from '../../../helpers/page.ts'
 import { asyncObjectTransform } from '../async-transform.ts'
+import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
+import { okfFilePath } from '../../../okf/format.ts'
 
 interface SftpStorageConfig extends StorageConfig {
   authMode: string
@@ -54,16 +56,25 @@ interface SftpStoragePlugin {
 }
 
 interface ExportPagePayload {
+  id: number
   path: string
   localeCode: string
   title: string
   description: string
   contentType: string
   content: string | Record<string, unknown>
+  sourceRevision: string | number
+  authorId: number
+  extra: Record<string, unknown>
   isPublished: boolean
   updatedAt: Date | string
   createdAt: Date | string
   editorKey: string
+  tags?: PageTag[]
+}
+
+interface PageTag extends Record<string, unknown> {
+  tag: string
 }
 
 interface ExportAssetPayload {
@@ -76,6 +87,8 @@ function isExportPagePayload(value: unknown): value is ExportPagePayload {
   return (
     typeof value === 'object' &&
     value !== null &&
+    'id' in value &&
+    typeof value.id === 'number' &&
     'path' in value &&
     typeof value.path === 'string' &&
     'localeCode' in value &&
@@ -88,6 +101,14 @@ function isExportPagePayload(value: unknown): value is ExportPagePayload {
     typeof value.contentType === 'string' &&
     'content' in value &&
     (typeof value.content === 'string' || (typeof value.content === 'object' && value.content !== null && !Array.isArray(value.content))) &&
+    'sourceRevision' in value &&
+    (typeof value.sourceRevision === 'string' || typeof value.sourceRevision === 'number') &&
+    'authorId' in value &&
+    typeof value.authorId === 'number' &&
+    'extra' in value &&
+    typeof value.extra === 'object' &&
+    value.extra !== null &&
+    !Array.isArray(value.extra) &&
     'isPublished' in value &&
     typeof value.isPublished === 'boolean' &&
     'updatedAt' in value &&
@@ -117,9 +138,19 @@ const getErrorMessage = (error: unknown): string => {
 }
 
 const getFilePath = <K extends string>(page: { contentType: string } & Record<K, string>, pathKey: K, localeCode: string): string => {
+  if (page.contentType === 'markdown') return okfFilePath(localeCode, page[pathKey])
   const fileName = `${page[pathKey]}.${pageHelper.getFileExtension(page.contentType)}`
   const withLocaleCode = wiki.config.lang.namespacing && wiki.config.lang.code !== localeCode
   return withLocaleCode ? `${localeCode}/${fileName}` : fileName
+}
+
+function serializePage(page: StoragePageEncodingInput): string {
+  const encoded = encodeStoragePageDocument(page)
+  if (page.contentType === 'markdown') {
+    if (typeof encoded === 'object' && encoded !== null && 'markdown' in encoded && typeof encoded.markdown === 'string') return encoded.markdown
+    throw new TypeError('Markdown page encoder did not return a document')
+  }
+  return typeof encoded === 'string' ? encoded : JSON.stringify(encoded)
 }
 
 const plugin: SftpStoragePlugin = {
@@ -157,13 +188,13 @@ const plugin: SftpStoragePlugin = {
     wiki.logger.info(`(STORAGE/SFTP) Creating file ${page.path}...`)
     const filePath = getFilePath(page, 'path', page.localeCode)
     await this.ensureDirectory(filePath)
-    await this.sftp.writeFile(path.posix.join(this.config.basePath, filePath), page.injectMetadata(), { encoding: 'utf8' })
+    await this.sftp.writeFile(path.posix.join(this.config.basePath, filePath), serializePage(page), { encoding: 'utf8' })
   },
   async updated(page) {
     wiki.logger.info(`(STORAGE/SFTP) Updating file ${page.path}...`)
     const filePath = getFilePath(page, 'path', page.localeCode)
     await this.ensureDirectory(filePath)
-    await this.sftp.writeFile(path.posix.join(this.config.basePath, filePath), page.injectMetadata(), { encoding: 'utf8' })
+    await this.sftp.writeFile(path.posix.join(this.config.basePath, filePath), serializePage(page), { encoding: 'utf8' })
   },
   async deleted(page) {
     wiki.logger.info(`(STORAGE/SFTP) Deleting file ${page.path}...`)
@@ -216,8 +247,10 @@ const plugin: SftpStoragePlugin = {
     // -> Pages
     await pipeline(
       wiki.models.knex
-        .column('path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey')
-        .select()
+        .column(
+          'id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content',
+          'sourceRevision', 'authorId', 'extra', 'isPublished', 'updatedAt', 'createdAt', 'editorKey'
+        )
         .from('pages')
         .where({
           visibility: 'public'
@@ -227,12 +260,19 @@ const plugin: SftpStoragePlugin = {
         if (!isExportPagePayload(value)) {
           throw new TypeError('Invalid page export row')
         }
-        const page = value
+        const pageObject = await wiki.models.pages.query().findOne({ id: value.id })
+        if (!pageObject) {
+          throw new Error(`Page ${value.id} was not found`)
+        }
+        const tags = await pageObject.$relatedQuery('tags')
+        if (!tags.every((tag): tag is PageTag => typeof tag.tag === 'string')) {
+          throw new TypeError(`Invalid tags for page ${value.id}`)
+        }
+        const page = { ...value, tags }
         const filePath = getFilePath(page, 'path', page.localeCode)
         wiki.logger.info(`(STORAGE/SFTP) Adding page ${filePath}...`)
         await this.ensureDirectory(filePath)
-        const metadata = pageHelper.injectPageMetadata(page)
-        await this.sftp.writeFile(path.posix.join(this.config.basePath, filePath), typeof metadata === 'string' ? metadata : JSON.stringify(metadata), {
+        await this.sftp.writeFile(path.posix.join(this.config.basePath, filePath), serializePage(page), {
           encoding: 'utf8'
         })
       })

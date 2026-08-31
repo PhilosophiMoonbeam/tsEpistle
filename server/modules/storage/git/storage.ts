@@ -15,6 +15,8 @@ import commonDisk from '../disk/common.ts'
 import type { StorageImportResult } from '../types.ts'
 import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
 import { pullRemoteAuthoritative, reattachUnrelatedHistory, recoverInterruptedGitOperation, sharesHistoryWith } from './repository.ts'
+import { okfFilePath, parseOkfFilePath } from '../../../okf/format.ts'
+
 interface GitStorageFile {
   file: { path: string; stats: { size: number } }
   oldPath: string
@@ -66,6 +68,21 @@ interface PageExportRow {
   createdAt: Date | string
   editorKey: string
   tags?: { tag: string }[]
+}
+
+function gitPagePath(page: Pick<PageExportRow, 'path' | 'localeCode' | 'contentType'>, alwaysNamespace: boolean): string {
+  if (page.contentType === 'markdown') return okfFilePath(page.localeCode, page.path)
+  const fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
+  return alwaysNamespace || (wiki.config.lang.namespacing && wiki.config.lang.code !== page.localeCode)
+    ? `${page.localeCode}/${fileName}`
+    : fileName
+}
+
+function changedPagePath(filePath: string): { locale: string; path: string } {
+  const canonicalIdentity = parseOkfFilePath(filePath)
+  return canonicalIdentity === null
+    ? pageHelper.getPagePath(filePath)
+    : { locale: canonicalIdentity.locale, path: canonicalIdentity.pagePath }
 }
 
 interface AssetExportRow {
@@ -372,14 +389,15 @@ const plugin: GitStoragePlugin = {
             // Page was renamed by git, so rename in DB
             wiki.logger.info(`(STORAGE/GIT) Page marked as renamed: from ${item.oldPath} to ${item.relPath}`)
 
-            const contentPath = pageHelper.getPagePath(item.oldPath)
-            const contentDestinationPath = pageHelper.getPagePath(item.relPath)
+            const contentPath = changedPagePath(item.oldPath)
+            const contentDestinationPath = changedPagePath(item.relPath)
             await wiki.models.pages.movePage({
               user: user,
               path: contentPath.path,
               destinationPath: contentDestinationPath.path,
               locale: contentPath.locale,
               destinationLocale: contentDestinationPath.locale,
+              okfProducer: 'import:git',
               skipStorage: true
             })
             results.push({ kind: 'page', relPath: item.relPath, ok: true })
@@ -388,7 +406,7 @@ const plugin: GitStoragePlugin = {
             // Page was deleted by git, can safely mark as deleted in DB
             wiki.logger.info(`(STORAGE/GIT) Page marked as deleted: ${item.relPath}`)
 
-            const contentPath = pageHelper.getPagePath(item.relPath)
+            const contentPath = changedPagePath(item.relPath)
             await wiki.models.pages.deletePage({
               user: user,
               path: contentPath.path,
@@ -484,18 +502,16 @@ const plugin: GitStoragePlugin = {
    * @param {Object} page Page to create
    */
   async created(page) {
-    wiki.logger.info(`(STORAGE/GIT) Committing new file [${page.localeCode}] ${page.path}...`)
-    let fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-    if (this.config.alwaysNamespace || (wiki.config.lang.namespacing && wiki.config.lang.code !== page.localeCode)) {
-      fileName = `${page.localeCode}/${fileName}`
-    }
+    const fileName = gitPagePath(page, this.config.alwaysNamespace)
+    const logIdentity = page.contentType === 'markdown' ? fileName : `[${page.localeCode}] ${page.path}`
+    wiki.logger.info(`(STORAGE/GIT) Committing new file ${logIdentity}...`)
     const filePath = path.join(this.repoPath, fileName)
     await fs.outputFile(filePath, serializePage(page), 'utf8')
 
     const gitFilePath = `./${fileName}`
     if ((await this.git.checkIgnore(gitFilePath)).length === 0) {
       await this.git.add(gitFilePath)
-      await this.git.commit(`docs: create ${page.path}`, fileName, {
+      await this.git.commit(`docs: create ${page.contentType === 'markdown' ? fileName : page.path}`, fileName, {
         '--author': `"${page.authorName} <${page.authorEmail}>"`
       })
     }
@@ -506,18 +522,16 @@ const plugin: GitStoragePlugin = {
    * @param {Object} page Page to update
    */
   async updated(page) {
-    wiki.logger.info(`(STORAGE/GIT) Committing updated file [${page.localeCode}] ${page.path}...`)
-    let fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-    if (this.config.alwaysNamespace || (wiki.config.lang.namespacing && wiki.config.lang.code !== page.localeCode)) {
-      fileName = `${page.localeCode}/${fileName}`
-    }
+    const fileName = gitPagePath(page, this.config.alwaysNamespace)
+    const logIdentity = page.contentType === 'markdown' ? fileName : `[${page.localeCode}] ${page.path}`
+    wiki.logger.info(`(STORAGE/GIT) Committing updated file ${logIdentity}...`)
     const filePath = path.join(this.repoPath, fileName)
     await fs.outputFile(filePath, serializePage(page), 'utf8')
 
     const gitFilePath = `./${fileName}`
     if ((await this.git.checkIgnore(gitFilePath)).length === 0) {
       await this.git.add(gitFilePath)
-      await this.git.commit(`docs: update ${page.path}`, fileName, {
+      await this.git.commit(`docs: update ${page.contentType === 'markdown' ? fileName : page.path}`, fileName, {
         '--author': `"${page.authorName} <${page.authorEmail}>"`
       })
     }
@@ -528,16 +542,14 @@ const plugin: GitStoragePlugin = {
    * @param {Object} page Page to delete
    */
   async deleted(page) {
-    wiki.logger.info(`(STORAGE/GIT) Committing removed file [${page.localeCode}] ${page.path}...`)
-    let fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-    if (this.config.alwaysNamespace || (wiki.config.lang.namespacing && wiki.config.lang.code !== page.localeCode)) {
-      fileName = `${page.localeCode}/${fileName}`
-    }
+    const fileName = gitPagePath(page, this.config.alwaysNamespace)
+    const logIdentity = page.contentType === 'markdown' ? fileName : `[${page.localeCode}] ${page.path}`
+    wiki.logger.info(`(STORAGE/GIT) Committing removed file ${logIdentity}...`)
 
     const gitFilePath = `./${fileName}`
     if ((await this.git.checkIgnore(gitFilePath)).length === 0) {
       await this.git.rm(gitFilePath)
-      await this.git.commit(`docs: delete ${page.path}`, fileName, {
+      await this.git.commit(`docs: delete ${page.contentType === 'markdown' ? fileName : page.path}`, fileName, {
         '--author': `"${page.authorName} <${page.authorEmail}>"`
       })
     }
@@ -548,18 +560,15 @@ const plugin: GitStoragePlugin = {
    * @param {Object} page Page to rename
    */
   async renamed(page) {
-    wiki.logger.info(`(STORAGE/GIT) Committing file move from [${page.localeCode}] ${page.path} to [${page.destinationLocaleCode}] ${page.destinationPath}...`)
-    let sourceFileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-    let destinationFileName = `${page.destinationPath}.${pageHelper.getFileExtension(page.contentType)}`
-
-    if (this.config.alwaysNamespace || wiki.config.lang.namespacing) {
-      if (this.config.alwaysNamespace || wiki.config.lang.code !== page.localeCode) {
-        sourceFileName = `${page.localeCode}/${sourceFileName}`
-      }
-      if (this.config.alwaysNamespace || wiki.config.lang.code !== page.destinationLocaleCode) {
-        destinationFileName = `${page.destinationLocaleCode}/${destinationFileName}`
-      }
-    }
+    const sourceFileName = gitPagePath(page, this.config.alwaysNamespace)
+    const destinationFileName = gitPagePath({
+      path: page.destinationPath,
+      localeCode: page.destinationLocaleCode,
+      contentType: page.contentType
+    }, this.config.alwaysNamespace)
+    const sourceLogIdentity = page.contentType === 'markdown' ? sourceFileName : `[${page.localeCode}] ${page.path}`
+    const destinationLogIdentity = page.contentType === 'markdown' ? destinationFileName : `[${page.destinationLocaleCode}] ${page.destinationPath}`
+    wiki.logger.info(`(STORAGE/GIT) Committing file move from ${sourceLogIdentity} to ${destinationLogIdentity}...`)
 
     const sourceFilePath = path.join(this.repoPath, sourceFileName)
     const destinationFilePath = path.join(this.repoPath, destinationFileName)
@@ -567,7 +576,12 @@ const plugin: GitStoragePlugin = {
 
     await this.git.rm(`./${sourceFileName}`)
     await this.git.add(`./${destinationFileName}`)
-    await this.git.commit(`docs: rename ${page.path} to ${page.destinationPath}`, [sourceFilePath, destinationFilePath], {
+    const commitPaths = page.contentType === 'markdown'
+      ? [sourceFileName, destinationFileName]
+      : [sourceFilePath, destinationFilePath]
+    const commitSource = page.contentType === 'markdown' ? sourceFileName : page.path
+    const commitDestination = page.contentType === 'markdown' ? destinationFileName : page.destinationPath
+    await this.git.commit(`docs: rename ${commitSource} to ${commitDestination}`, commitPaths, {
       '--author': `"${page.moveAuthorName} <${page.moveAuthorEmail}>"`
     })
   },
@@ -628,7 +642,8 @@ const plugin: GitStoragePlugin = {
       klaw(this.repoPath, {
         filter: f => {
           return !_.includes(f, '.git')
-        }
+        },
+        preserveSymlinks: true
       }),
       new Transform({
         objectMode: true,
@@ -636,6 +651,10 @@ const plugin: GitStoragePlugin = {
           try {
             if (!isKlawItem(file)) {
               throw new TypeError('Git import stream yielded an invalid file')
+            }
+            if (file.stats.isSymbolicLink()) {
+              callback()
+              return
             }
             const relPath = file.path.slice(this.repoPath.length + 1)
             if (file.stats.size < 1) {
@@ -703,10 +722,7 @@ const plugin: GitStoragePlugin = {
             const relatedTags = await pageObject.$relatedQuery('tags')
             page.tags = relatedTags.flatMap(tag => (typeof tag.tag === 'string' ? [{ tag: tag.tag }] : []))
 
-            let fileName = `${page.path}.${pageHelper.getFileExtension(page.contentType)}`
-            if (this.config.alwaysNamespace || (wiki.config.lang.namespacing && wiki.config.lang.code !== page.localeCode)) {
-              fileName = `${page.localeCode}/${fileName}`
-            }
+            const fileName = gitPagePath(page, this.config.alwaysNamespace)
             wiki.logger.info(`(STORAGE/GIT) Adding page ${fileName}...`)
             const filePath = path.join(this.repoPath, fileName)
             await fs.outputFile(filePath, serializePage(page), 'utf8')

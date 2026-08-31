@@ -108,8 +108,10 @@ export const encodeStoragePageDocument = (
 }
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u
+const FRONTMATTER_OPENER = /^---\r?\n/u
 const LEGACY_V1 = /^\s*<!--\s*(?:TITLE|SUBTITLE):/iu
 const TYPE_KEY = /^(?:[ \t]*)type[ \t]*:/mu
+const MAX_TREE_DEPTH = 20
 
 
 const sourceText = (source: string | Uint8Array): string => typeof source === 'string' ? source : Buffer.from(source).toString('utf8')
@@ -124,12 +126,27 @@ const diagnostic = (error: unknown): string => {
   return String(error)
 }
 
-const parseYaml = (value: string): Record<string, unknown> | null => {
+interface ParsedYaml {
+  readonly metadata: Record<string, unknown> | null
+  readonly error: unknown | null
+}
+
+const parseYaml = (value: string): ParsedYaml => {
   try {
-    const parsed = yaml.load(value, { schema: yaml.JSON_SCHEMA })
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null
-  } catch {
-    return null
+    const parsed = yaml.load(value, {
+      schema: yaml.JSON_SCHEMA,
+      maxDepth: MAX_TREE_DEPTH + 1,
+      maxAliases: 0,
+      maxTotalMergeKeys: 0
+    })
+    return {
+      metadata: typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null,
+      error: null
+    }
+  } catch (error: unknown) {
+    return { metadata: null, error }
   }
 }
 
@@ -137,6 +154,16 @@ const tagsFrom = (value: unknown): string[] => {
   if (Array.isArray(value)) return value.filter((tag): tag is string => typeof tag === 'string').map(tag => tag.trim()).filter(Boolean)
   if (typeof value === 'string') return value.split(',').map(tag => tag.trim()).filter(Boolean)
   return []
+}
+
+const okfPublishedFrom = (metadata: OkfMetadata): boolean | undefined => {
+  const extension = metadata['x-wiki']
+  if (typeof extension !== 'object' || extension === null || Array.isArray(extension) || !Object.hasOwn(extension, 'published'))
+    return undefined
+  const published = (extension as Record<string, unknown>).published
+  if (typeof published !== 'boolean')
+    throw new TypeError('OKF extension x-wiki.published must be a boolean')
+  return published
 }
 
 const fieldsFrom = (metadata: Record<string, unknown> | null): StoragePageFields => ({
@@ -194,20 +221,40 @@ export const classifyStoragePageDocument = (input: StoragePageDocumentInput): St
     )
   }
 
-  // A claimed OKF document is never allowed to silently degrade into a legacy page.
-  // Check the bounded prefix before parsing so an oversized source is quarantined.
-  const frontmatter = text.length <= OKF_MAX_DOCUMENT_BYTES ? FRONTMATTER.exec(text) : null
-  const claimsOkf = frontmatter !== null
-    ? (parseYaml(frontmatter[1] ?? '')?.type !== undefined || TYPE_KEY.test(frontmatter[1] ?? ''))
-    : /^---\r?\n[\s\S]{0,65536}?\r?\n---/u.test(text.slice(0, 65_548)) && TYPE_KEY.test(text.slice(0, 65_548))
+  // A claimed or malformed OKF document is never allowed to silently degrade
+  // into a legacy page.
+  const beginsWithFrontmatter = FRONTMATTER_OPENER.test(text)
+  const frontmatter = FRONTMATTER.exec(text)
+  if (beginsWithFrontmatter && frontmatter === null) {
+    return result(
+      'okf_invalid',
+      source,
+      text,
+      { tags: [] },
+      null,
+      ['INVALID_FRONTMATTER: YAML frontmatter is missing a bounded closing delimiter']
+    )
+  }
+  const parsedFrontmatter = frontmatter === null ? null : parseYaml(frontmatter[1] ?? '')
+
+  if (parsedFrontmatter !== null && parsedFrontmatter.error !== null)
+    return result('okf_invalid', source, text, { tags: [] }, null, [diagnostic(parsedFrontmatter.error)])
+
+  const frontmatterMetadata = parsedFrontmatter?.metadata ?? null
+  const claimsOkf = frontmatter !== null && (
+    (frontmatterMetadata !== null && Object.hasOwn(frontmatterMetadata, 'type'))
+    || TYPE_KEY.test(frontmatter[1] ?? '')
+  )
 
   if (claimsOkf) {
     try {
       const parsed = parseOkfDocument(text, now)
       const body = importOkfLinks(parsed.body, input.locale, input.pagePath)
+      const published = okfPublishedFrom(parsed.metadata)
       const fields: StoragePageFields = {
         ...(parsed.metadata.title === undefined ? {} : { title: parsed.metadata.title }),
         ...(parsed.metadata.description === undefined ? {} : { description: parsed.metadata.description }),
+        ...(published === undefined ? {} : { isPublished: published }),
         tags: parsed.metadata.tags === undefined ? [] : [...parsed.metadata.tags]
       }
       return result('okf_valid', source, body, fields, parsed.metadata, [])
@@ -216,14 +263,10 @@ export const classifyStoragePageDocument = (input: StoragePageDocumentInput): St
     }
   }
 
-  const legacyFrontmatter = FRONTMATTER.exec(text)
-  if (legacyFrontmatter !== null) {
-    const metadata = parseYaml(legacyFrontmatter[1] ?? '')
-    if (metadata !== null) {
-      const fields = fieldsFrom(metadata)
-      const body = text.slice(legacyFrontmatter[0].length).replace(/^\r?\n/u, '').replaceAll('\r\n', '\n')
-      return result('legacy_wiki', source, body, fields, defaultMetadata(fields, importer, now), [])
-    }
+  if (frontmatter !== null && frontmatterMetadata !== null) {
+    const fields = fieldsFrom(frontmatterMetadata)
+    const body = text.slice(frontmatter[0].length).replace(/^\r?\n/u, '').replaceAll('\r\n', '\n')
+    return result('legacy_wiki', source, body, fields, defaultMetadata(fields, importer, now), [])
   }
 
   if (LEGACY_V1.test(text)) {

@@ -1173,6 +1173,59 @@ describe('controllers/api pages endpoints', () => {
     }))
   })
 
+  it.each([
+    ['invalid JSON', '{not-json'],
+    ['schema-invalid data', { version: 1 }]
+  ])('degrades %s in a stored projection to pending while preserving readable authority', async (_description, projection) => {
+    const metadata = { type: 'Reference', status: 'stable' }
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce({
+      ...await global.WIKI.models.pages.getPageFromDb(),
+      extra: { okf: metadata }
+    })
+    global.WIKI.models.knex = knexWithProjection(projection)
+    const { getPage } = await loadHandler()
+    const next = vi.fn()
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
+
+    await getPage(
+      { user: { id: 4, permissions: ['read:pages'] }, sessionID: 'session-read', params: { id: '7' } },
+      res,
+      next
+    )
+
+    expect(next).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      okf: {
+        authority: expect.objectContaining({ state: 'valid', metadata }),
+        projection: { state: 'pending', value: null }
+      }
+    }))
+  })
+
+  it('propagates projection database failures from page detail reads', async () => {
+    const databaseError = new Error('projection db down')
+    global.WIKI.models.knex = vi.fn().mockImplementation(table => ({
+      first:
+        table === 'pageKnowledgeProjections as projections'
+          ? vi.fn().mockRejectedValue(databaseError)
+          : vi.fn().mockResolvedValue(undefined),
+      join: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis()
+    }))
+    const { getPage } = await loadHandler()
+    const next = vi.fn()
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
+
+    await getPage(
+      { user: { id: 4, permissions: ['read:pages'] }, sessionID: 'session-read', params: { id: '7' } },
+      res,
+      next
+    )
+
+    expect(next).toHaveBeenCalledWith(databaseError)
+    expect(res.json).not.toHaveBeenCalled()
+  })
+
   it('marks invalid stored authority explicitly without returning unsafe raw values', async () => {
     global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce({
       ...await global.WIKI.models.pages.getPageFromDb(),

@@ -10,6 +10,7 @@ import qs from 'node:querystring'
 import { isPageProtected, pageRequiresUnlock, protectedAssetRequiresUnlock, unlockPage } from '../operations/page-protection.ts'
 import pageOperations from '../operations/pages.ts'
 import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../helpers/auth-rate-limiter.ts'
+import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../modules/storage/page-document.ts'
 
 const tmplCreateRegex = /^[0-9]+(,[0-9]+)?$/
 interface PageTag {
@@ -25,28 +26,43 @@ interface ParsedPageArgs {
   tags?: unknown
 }
 
-interface PageRecord {
-  id: number
+interface PageExtraRecord extends Record<string, unknown> {
+  css?: string
+  js?: string
+}
+
+interface PageDocumentRecord {
   path: string
+  title: string
+  description: string
+  contentType: string
+  content: string | Record<string, unknown>
+  sourceRevision: string | number | bigint
+  authorId: number
+  isPublished: boolean | number
+  updatedAt: string | Date
+  createdAt: string | Date
+  tags: PageTag[] | string[]
+  extra: PageExtraRecord | null
+}
+
+interface PageRecord extends PageDocumentRecord {
+  id: number
   locale: string
   localeCode: string
   visibility: PageVisibility
   ownerId: number | null
-  title: string
-  description: string
-  contentType: string
-  content: string
-  isPublished: boolean
-  updatedAt: string | Date
-  createdAt: string | Date
   editorKey: string
   editor: string
-  tags: PageTag[]
-  extra?: { css: string; js: string }
   publishStartDate?: string | Date
   publishEndDate?: string | Date
   toc?: unknown
   $relatedQuery(name: string): Promise<unknown>
+}
+
+interface PageVersionRecord extends PageDocumentRecord {
+  locale: string
+  editor: string
 }
 
 interface EditorPage {
@@ -57,7 +73,7 @@ interface EditorPage {
   title: string | null
   description: string | null
   contentType?: string
-  content: string | null
+  content: string | Record<string, unknown> | null
   visibility?: PageVisibility
   ownerId?: number | null
   isPublished?: boolean | number | string
@@ -66,7 +82,7 @@ interface EditorPage {
   editorKey: string | null
   editor?: string
   tags?: PageTag[] | string[]
-  extra: { css: string; js: string }
+  extra: PageExtraRecord | null
   mode?: string
   publishStartDate?: string | Date
   publishEndDate?: string | Date
@@ -114,7 +130,7 @@ export interface CommonWiki {
       }
     }
     pageHistory: {
-      getVersion(input: { pageId: number; versionId: number; requester: Express.User | undefined }): Promise<PageRecord | null>
+      getVersion(input: { pageId: number; versionId: number; requester: Express.User | undefined }): Promise<PageVersionRecord | null>
     }
     users: { getUserAvatarData(userId: string): Promise<unknown> }
     navigation: {
@@ -481,13 +497,25 @@ export default function createCommonController(wiki: CommonWiki): express.Router
 
     const fileName = _.last(page.path.split('/')) + '.' + pageHelper.getFileExtension(page.contentType)
     res.attachment(fileName)
+    let downloadPage: StoragePageEncodingInput = page
     if (versionId > 0) {
       const pageVersion = await wiki.models.pageHistory.getVersion({ pageId: page.id, versionId, requester: req.user })
       if (!pageVersion) return res.status(404).end()
-      res.send(pageHelper.injectPageMetadata(pageVersion))
-    } else {
-      res.send(pageHelper.injectPageMetadata(page))
+      downloadPage = {
+        ...pageVersion,
+        localeCode: pageVersion.locale,
+        editorKey: pageVersion.editor
+      }
     }
+
+    const encoded = encodeStoragePageDocument(downloadPage)
+    if (downloadPage.contentType === 'markdown') {
+      if (typeof encoded !== 'object' || encoded === null || !('markdown' in encoded) || typeof encoded.markdown !== 'string') {
+        throw new TypeError('Markdown page encoder did not return a document')
+      }
+      return res.send(encoded.markdown)
+    }
+    return res.send(encoded)
   })
 
   /**
@@ -519,14 +547,14 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       visibility: pageArgs.visibility,
       ownerId: pageArgs.ownerId
     })
-    let page: EditorPage | null = storedPage == null ? null : (storedPage as EditorPage)
+    let page: EditorPage | null = storedPage
     if (page) page.extra ??= { css: '', js: '' }
 
     pageArgs.tags = _.get(page, 'tags', [])
 
     // -> Effective Permissions
     const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
-    if (page && !applyPrivatePermissions(req, page as PageRecord, effectivePermissions)) {
+    if (storedPage && !applyPrivatePermissions(req, storedPage, effectivePermissions)) {
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'edit' })
     }
@@ -540,13 +568,13 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       body: wiki.config.theming.injectBody
     }
 
-    if (page) {
+    if (page && storedPage) {
       // -> EDIT MODE
       if (!(effectivePermissions.pages.write || effectivePermissions.pages.manage)) {
         _.set(res.locals, 'pageMeta.title', 'Unauthorized')
         return res.status(403).render('unauthorized', { action: 'edit' })
       }
-      if (!(await enforcePageUnlock(req, res, page as PageRecord))) return
+      if (!(await enforcePageUnlock(req, res, storedPage))) return
 
       // -> Get page tags
       if (!page.$relatedQuery) throw new Error('Page relation loader is unavailable')
@@ -557,8 +585,9 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       page.extra = page.extra || { css: '', js: '' }
 
       // -> Beautify Script CSS
-      if (!_.isEmpty(page.extra.css)) {
-        page.extra.css = new CleanCSS({ format: 'beautify' }).minify(page.extra.css).styles
+      const css = page.extra.css
+      if (typeof css === 'string' && !_.isEmpty(css)) {
+        page.extra.css = new CleanCSS({ format: 'beautify' }).minify(css).styles
       }
 
       _.set(res.locals, 'pageMeta.title', `Edit ${page.title}`)

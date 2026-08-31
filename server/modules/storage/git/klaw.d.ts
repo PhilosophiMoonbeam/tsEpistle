@@ -9,6 +9,7 @@ declare module 'klaw' {
 
   export interface Options {
     filter?: (filePath: string) => boolean
+    preserveSymlinks?: boolean
   }
 
   export default function klaw(root: string, options?: Options): Readable

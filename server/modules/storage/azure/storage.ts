@@ -6,7 +6,8 @@ import pageHelper from '../../../helpers/page.ts'
 import _ from 'lodash'
 import { storageObjectKey } from '../object-key.ts'
 import { asyncObjectTransform } from '../async-transform.ts'
-
+import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
+import { okfFilePath } from '../../../okf/format.ts'
 interface AzureStorageConfig extends StorageConfig {
   accountKey: string
   accountName: string
@@ -21,12 +22,16 @@ interface AzureStorageContext extends StorageContext<AzureStorageConfig> {
 }
 
 interface PageExportRow {
+  id: number
   path: string
   localeCode: string
   title: string
   description: string
   contentType: string
   content: string | Record<string, unknown>
+  sourceRevision: string | number | bigint
+  authorId: number
+  extra: Record<string, unknown>
   isPublished: boolean
   updatedAt: Date | string
   createdAt: Date | string
@@ -43,6 +48,8 @@ function isPageExportRow(value: unknown): value is PageExportRow {
   return (
     typeof value === 'object' &&
     value !== null &&
+    'id' in value &&
+    typeof value.id === 'number' &&
     'path' in value &&
     typeof value.path === 'string' &&
     'localeCode' in value &&
@@ -55,6 +62,14 @@ function isPageExportRow(value: unknown): value is PageExportRow {
     typeof value.contentType === 'string' &&
     'content' in value &&
     (typeof value.content === 'string' || (typeof value.content === 'object' && value.content !== null && !Array.isArray(value.content))) &&
+    'sourceRevision' in value &&
+    (typeof value.sourceRevision === 'string' || typeof value.sourceRevision === 'number' || typeof value.sourceRevision === 'bigint') &&
+    'authorId' in value &&
+    typeof value.authorId === 'number' &&
+    'extra' in value &&
+    typeof value.extra === 'object' &&
+    value.extra !== null &&
+    !Array.isArray(value.extra) &&
     'isPublished' in value &&
     typeof value.isPublished === 'boolean' &&
     'updatedAt' in value &&
@@ -85,9 +100,21 @@ const getFilePath = <K extends 'destinationPath' | 'path'>(
   pathPrefix: unknown,
   localeCode: string
 ): string => {
+  if (page.contentType === 'markdown') {
+    return storageObjectKey(pathPrefix, okfFilePath(localeCode, page[pathKey]))
+  }
   const fileName = `${page[pathKey]}.${pageHelper.getFileExtension(page.contentType)}`
   const withLocaleCode = wiki.config.lang.namespacing && wiki.config.lang.code !== localeCode
   return storageObjectKey(pathPrefix, withLocaleCode ? `${localeCode}/${fileName}` : fileName)
+}
+
+function serializePage(page: StoragePageEncodingInput): string {
+  const encoded = encodeStoragePageDocument(page)
+  if (page.contentType === 'markdown') {
+    if (typeof encoded === 'object' && encoded !== null && 'markdown' in encoded && typeof encoded.markdown === 'string') return encoded.markdown
+    throw new TypeError('Markdown page encoder did not return a document')
+  }
+  return typeof encoded === 'string' ? encoded : JSON.stringify(encoded)
 }
 
 const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
@@ -111,14 +138,14 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
   async created(page) {
     wiki.logger.info(`(STORAGE/AZURE) Creating file ${page.path}...`)
     const filePath = getFilePath(page, 'path', this.config.pathPrefix, page.localeCode)
-    const pageContent = page.injectMetadata()
+    const pageContent = serializePage(page)
     const blockBlobClient = this.container.getBlockBlobClient(filePath)
     await blockBlobClient.upload(pageContent, pageContent.length, { tier: this.config.storageTier })
   },
   async updated(page) {
     wiki.logger.info(`(STORAGE/AZURE) Updating file ${page.path}...`)
     const filePath = getFilePath(page, 'path', this.config.pathPrefix, page.localeCode)
-    const pageContent = page.injectMetadata()
+    const pageContent = serializePage(page)
     const blockBlobClient = this.container.getBlockBlobClient(filePath)
     await blockBlobClient.upload(pageContent, pageContent.length, { tier: this.config.storageTier })
   },
@@ -187,7 +214,10 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
     // -> Pages
     await pipeline(
       wiki.models.knex
-        .column('path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey')
+        .column(
+          'id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content',
+          'sourceRevision', 'authorId', 'extra', 'isPublished', 'updatedAt', 'createdAt', 'editorKey'
+        )
         .select()
         .from('pages')
         .where({
@@ -198,10 +228,18 @@ const plugin: StoragePlugin<AzureStorageConfig, AzureStorageContext> = {
         if (!isPageExportRow(value)) {
           throw new TypeError('Invalid page export row')
         }
-        const filePath = getFilePath(value, 'path', this.config.pathPrefix, value.localeCode)
+        const pageObject = await wiki.models.pages.query().findOne({ id: value.id })
+        if (!pageObject) {
+          throw new Error(`Page ${value.id} was not found`)
+        }
+        const relatedTags = await pageObject.$relatedQuery('tags')
+        if (!relatedTags.every(tag => typeof tag === 'object' && tag !== null && typeof tag.tag === 'string')) {
+          throw new TypeError(`Invalid tags for page ${value.id}`)
+        }
+        const page = { ...value, tags: relatedTags.map(tag => ({ tag: tag.tag as string })) }
+        const filePath = getFilePath(page, 'path', this.config.pathPrefix, page.localeCode)
         wiki.logger.info(`(STORAGE/AZURE) Adding page ${filePath}...`)
-        const metadata = pageHelper.injectPageMetadata(value)
-        const pageContent = typeof metadata === 'string' ? metadata : JSON.stringify(metadata)
+        const pageContent = serializePage(page)
         const blockBlobClient = this.container.getBlockBlobClient(filePath)
         await blockBlobClient.upload(pageContent, pageContent.length, { tier: this.config.storageTier })
       })

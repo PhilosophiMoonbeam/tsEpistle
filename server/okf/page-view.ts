@@ -1,4 +1,5 @@
 import type { Knex } from 'knex'
+import { ZodError } from 'zod'
 import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 import { validateStoredOkfMetadata, type OkfMetadata, type OkfTrustSummary } from './format.ts'
 import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
@@ -32,7 +33,13 @@ const authorityView = (extra: unknown): PageOkfView['authority'] => {
 
 export const buildPageOkfView = async (input: PageOkfViewInput): Promise<PageOkfView> => {
   const sourceRevision = String(input.sourceRevision)
-  const projection = await new PageKnowledgeRepository(input.knex).getCurrent(input.pageId)
+  let projection: KnowledgeProjectionView | null
+  try {
+    projection = await new PageKnowledgeRepository(input.knex).getCurrent(input.pageId)
+  } catch (error: unknown) {
+    if (!(error instanceof SyntaxError) && !(error instanceof ZodError)) throw error
+    projection = null
+  }
   return {
     authority: authorityView(input.extra),
     projection:

@@ -8,6 +8,7 @@ import {
   OKF_MAX_DOCUMENT_BYTES,
   okfFilePath,
   OkfDocumentError,
+  parseOkfFilePath,
   parseOkfDocument,
   renderOkfDocument,
   summarizeOkfTrust,
@@ -73,10 +74,45 @@ describe('OKF v0.2 documents', () => {
     expect(first.indexOf('type: Playbook')).toBeLessThan(first.indexOf('extension_family:'))
   })
 
-  it('rejects rendered frontmatter and documents beyond parser byte ceilings', () => {
-    expect(() => renderOkfDocument({ type: 'Reference', extension: 'é'.repeat(65_536) }, '')).toThrow(
+  it('bounds aggregate canonical frontmatter across validation, mutation, import, and rendering', () => {
+    const atCap = {
+      type: 'Reference',
+      extension_a: 'x'.repeat(32_747),
+      extension_b: 'x'.repeat(32_746)
+    }
+    const rendered = renderOkfDocument(atCap, '')
+    const serialized = /^---\n([\s\S]*?)\n---/u.exec(rendered)?.[1]
+    expect(Buffer.byteLength(serialized!, 'utf8')).toBe(65_536)
+    expect(parseOkfDocument(rendered).metadata).toEqual(atCap)
+    expect(validateStoredOkfMetadata(atCap)?.metadata).toEqual(atCap)
+
+    const aboveCap = { ...atCap, extension_b: `${atCap.extension_b}x` }
+    const oversizedKeys = Object.fromEntries(
+      Array.from({ length: 1_000 }, (_, index) => [`extension_${String(index).padStart(4, '0')}_${'k'.repeat(50)}`, true])
+    )
+    expect(validateStoredOkfMetadata(aboveCap)).toBeNull()
+    for (const operation of [
+      () => renderOkfDocument(aboveCap, ''),
+      () =>
+        mutateOkfMetadata({
+          existing: atCap,
+          producer: 'import:disk',
+          knowledgeChanged: true,
+          at: '2026-08-22T00:00:00Z'
+        }),
+      () => renderOkfDocument({ type: 'Reference', ...oversizedKeys }, '')
+    ])
+      expect(operation).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'OKF_FRONTMATTER_TOO_LARGE' }))
+
+    const values = Array.from({ length: 4_000 }, () => 'x').join(', ')
+    const compactImport = `---\ntype: Reference\nextension: [${values}]\nfiller: ${'x'.repeat(50_000)}\n---\n`
+    expect(Buffer.byteLength(/^---\n([\s\S]*?)\n---/u.exec(compactImport)![1]!, 'utf8')).toBeLessThanOrEqual(65_536)
+    expect(() => parseOkfDocument(compactImport)).toThrow(
       expect.objectContaining<Partial<OkfDocumentError>>({ code: 'OKF_FRONTMATTER_TOO_LARGE' })
     )
+  })
+
+  it('rejects documents beyond the document byte ceiling', () => {
     expect(() => renderOkfDocument({ type: 'Reference' }, 'x'.repeat(OKF_MAX_DOCUMENT_BYTES))).toThrow(
       expect.objectContaining<Partial<OkfDocumentError>>({ code: 'OKF_DOCUMENT_TOO_LARGE' })
     )
@@ -90,6 +126,27 @@ describe('OKF v0.2 documents', () => {
     ['invalid UTC offset', '---\ntype: Reference\nstale_after: 2026-08-22T00:00:00+14:01\n---\n\nBody', 'INVALID_STALE_AFTER']
   ])('rejects %s', (_label, value, code) => {
     expect(() => parseOkfDocument(value)).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code }))
+  })
+
+  it('rejects aliases, merge expansion, and parser nesting beyond the JSON tree limit', () => {
+    const recursiveAlias = '---\ntype: Reference\nextension: &extension [*extension]\n---\n'
+    const mergedMapping = '---\ntype: Reference\ndefaults: &defaults { owner: platform }\nextension:\n  <<: *defaults\n---\n'
+    const excessiveNesting = [
+      '---',
+      'type: Reference',
+      'extension:',
+      ...Array.from({ length: 20 }, (_, index) => `${'  '.repeat(index + 1)}level_${index}:`).map(
+        (line, index, lines) => index === lines.length - 1 ? `${line} value` : line
+      ),
+      '---',
+      ''
+    ].join('\n')
+
+    expect(Buffer.byteLength(recursiveAlias, 'utf8')).toBeLessThanOrEqual(65_536)
+    for (const hostile of [recursiveAlias, mergedMapping, excessiveNesting])
+      expect(() => parseOkfDocument(hostile)).toThrow(
+        expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_OKF_YAML' })
+      )
   })
 
   it('strictly validates stored metadata before producing trust', () => {
@@ -143,6 +200,24 @@ describe('OKF page interchange', () => {
   it('escapes reserved OKF filenames and imports relative concept links', () => {
     expect(okfFilePath('en', 'guides/index')).toBe('en/guides/index.concept.md')
     expect(importOkfLinks('See [Index](../index.concept.md).', 'en', 'guides/start')).toBe('See [Index](/en/index).')
+  })
+
+  it('safely inverts canonical OKF file paths only', () => {
+    expect(parseOkfFilePath(okfFilePath('en', 'guides/start'))).toEqual({ locale: 'en', pagePath: 'guides/start' })
+    expect(parseOkfFilePath(okfFilePath('en', 'index'))).toEqual({ locale: 'en', pagePath: 'index' })
+    expect(parseOkfFilePath(okfFilePath('en', 'guides/Index'))).toEqual({ locale: 'en', pagePath: 'guides/Index' })
+    expect(parseOkfFilePath('en/topic.concept.md')).toEqual({ locale: 'en', pagePath: 'topic.concept' })
+
+    for (const invalid of [
+      'home.md',
+      '/en/home.md',
+      'en/index.md',
+      'en/guides/../home.md',
+      'en//home.md',
+      'en/.md',
+      'en/home.markdown'
+    ])
+      expect(parseOkfFilePath(invalid)).toBeNull()
   })
 
   it('exports legacy pages as conformant concepts with explicit authorship', () => {

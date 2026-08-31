@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { up } from '../../db/migrations/tsfranki-000007-okf-authority-backfill.ts'
 
 type StoredExtra = string | Record<string, unknown>
-type PageRow = { id: number; extra: StoredExtra; updatedAt: string }
-type HistoryRow = { id: number; extra: StoredExtra; createdAt: string }
+type PageRow = { id: number; extra: StoredExtra; sourceRevision?: number; updatedAt: string }
+type HistoryRow = { id: number; extra: StoredExtra; sourceRevision?: number; createdAt: string }
 
 const parseExtra = (value: StoredExtra): Record<string, unknown> => typeof value === 'string' ? JSON.parse(value) as Record<string, unknown> : value
 
@@ -13,12 +13,14 @@ const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('pages', table => {
     table.increments('id').primary()
     table.json('extra').notNullable()
+    table.bigInteger('sourceRevision').notNullable().defaultTo(1)
     table.text('content').notNullable().defaultTo('legacy content')
     table.string('updatedAt').notNullable()
   })
   await db.schema.createTable('pageHistory', table => {
     table.increments('id').primary()
     table.json('extra').notNullable()
+    table.bigInteger('sourceRevision').notNullable().defaultTo(1)
     table.text('content').notNullable().defaultTo('legacy history')
     table.string('createdAt').notNullable()
   })
@@ -88,6 +90,85 @@ describe('OKF authority backfill migration', () => {
     expect((await db<HistoryRow>('pageHistory').where({ id: 11 }).first())!.extra).toBeTypeOf('string')
     expect((await db<HistoryRow>('pageHistory').where({ id: 12 }).first())!.extra).toEqual(beforeHistoryValid!.extra)
     expect((await db<HistoryRow>('pageHistory').where({ id: 13 }).first())!.extra).toBe(beforeHistoryMalformed!.extra)
+  })
+
+  it('does not overwrite rows whose selected revision or timestamp changes before update', async () => {
+    const selectedPageExtra = JSON.stringify({ source: 'selected-page' })
+    const selectedHistoryExtra = JSON.stringify({ source: 'selected-history' })
+    const concurrentPageExtra = JSON.stringify({ source: 'concurrent-page', okf: { type: 'Guide' } })
+    const concurrentHistoryExtra = JSON.stringify({ source: 'concurrent-history', okf: { type: 'Guide' } })
+    await db<PageRow>('pages').insert({
+      id: 20,
+      extra: selectedPageExtra,
+      sourceRevision: 1,
+      updatedAt: '2026-08-31T00:00:00Z'
+    })
+    await db<PageRow>('pages').insert({
+      id: 21,
+      extra: JSON.stringify({ source: 'unchanged-page' }),
+      sourceRevision: 3,
+      updatedAt: '2026-08-29T00:00:00Z'
+    })
+    await db<HistoryRow>('pageHistory').insert({
+      id: 20,
+      extra: selectedHistoryExtra,
+      sourceRevision: 1,
+      createdAt: '2026-08-30T00:00:00Z'
+    })
+    await db<HistoryRow>('pageHistory').insert({
+      id: 21,
+      extra: JSON.stringify({ source: 'unchanged-history' }),
+      sourceRevision: 3,
+      createdAt: '2026-08-28T00:00:00Z'
+    })
+
+    type SqliteConnection = {
+      prepare: (sql: string) => { run: (...parameters: unknown[]) => unknown }
+    }
+    const connection = await db.client.acquireConnection() as SqliteConnection
+    await db.client.releaseConnection(connection)
+    let pageChanged = false
+    let historyChanged = false
+    const changeSelectedRows = (query: { sql: string }): void => {
+      if (!pageChanged && query.sql.startsWith('update `pages` ')) {
+        pageChanged = true
+        connection.prepare('UPDATE pages SET extra = ?, sourceRevision = ? WHERE id = ?')
+          .run(concurrentPageExtra, 2, 20)
+      } else if (!historyChanged && query.sql.startsWith('update `pageHistory` ')) {
+        historyChanged = true
+        connection.prepare('UPDATE pageHistory SET extra = ?, createdAt = ? WHERE id = ?')
+          .run(concurrentHistoryExtra, '2026-08-30T01:00:00Z', 20)
+      }
+    }
+    db.on('query', changeSelectedRows)
+    try {
+      await up(db)
+    } finally {
+      db.off('query', changeSelectedRows)
+    }
+
+    expect(pageChanged).toBe(true)
+    expect(historyChanged).toBe(true)
+    expect(await db<PageRow>('pages').where({ id: 20 }).first()).toMatchObject({
+      extra: concurrentPageExtra,
+      sourceRevision: 2,
+      updatedAt: '2026-08-31T00:00:00Z'
+    })
+    expect(await db<HistoryRow>('pageHistory').where({ id: 20 }).first()).toMatchObject({
+      extra: concurrentHistoryExtra,
+      sourceRevision: 1,
+      createdAt: '2026-08-30T01:00:00Z'
+    })
+    expect(parseExtra((await db<PageRow>('pages').where({ id: 21 }).first())!.extra).okf).toEqual({
+      type: 'Reference',
+      status: 'stable',
+      generated: { by: 'import:legacy-database', at: '2026-08-29T00:00:00.000Z' }
+    })
+    expect(parseExtra((await db<HistoryRow>('pageHistory').where({ id: 21 }).first())!.extra).okf).toEqual({
+      type: 'Reference',
+      status: 'stable',
+      generated: { by: 'import:legacy-database', at: '2026-08-28T00:00:00.000Z' }
+    })
   })
 
   it('is a no-op on a second run', async () => {

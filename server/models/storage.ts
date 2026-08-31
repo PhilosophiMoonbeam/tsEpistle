@@ -67,7 +67,6 @@ interface StoragePagePath {
 interface WrittenStoragePage extends StoragePagePath {
   authorName: string
   authorEmail: string
-  injectMetadata(): string
 }
 
 interface DeletedStoragePage extends StoragePagePath {

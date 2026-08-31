@@ -1,4 +1,4 @@
-import { buildOkfMetadataPayload, deletePage, deletePageTag, fetchPage, fetchPageHistory, fetchPageLinks, fetchPageList, fetchPageLocaleRelations, fetchPageTags, fetchPageTree, fetchPageVersion, fetchRecentPages, linkPageLocaleRelation, restorePageVersion, unlinkPageLocaleRelation, updatePage, updatePageTag } from './pages-api.ts'
+import { buildOkfMetadataPayload, deletePage, deletePageTag, fetchPage, fetchPageHistory, fetchPageLinks, fetchPageList, fetchPageLocaleRelations, fetchPageTags, fetchPageTree, fetchPageVersion, fetchRecentPages, linkPageLocaleRelation, restorePageVersion, unlinkPageLocaleRelation, updatePage, updatePageTag, validateOkfMetadataPayload } from './pages-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -223,6 +223,78 @@ describe('pages api helper', () => {
       extension: { retained: true }
     })
     expect(buildOkfMetadataPayload({ type: 'Reference', status: 'stable' })).not.toHaveProperty('sources')
+  })
+
+  test('distinguishes absent OKF authority from invalid editable metadata', () => {
+    expect(validateOkfMetadataPayload(null)).toEqual({ valid: true, payload: undefined })
+    expect(buildOkfMetadataPayload(undefined)).toBeUndefined()
+
+    const emptySource = validateOkfMetadataPayload({
+      type: 'Reference',
+      status: 'stable',
+      sources: [{ resource: '' }]
+    })
+    expect(emptySource.valid).toBe(false)
+    expect(emptySource.error.message).toContain('Source 1 resource is required')
+    expect(() => buildOkfMetadataPayload({
+      type: 'Reference',
+      status: 'stable',
+      sources: [{ resource: '' }]
+    })).toThrow('Fix the Knowledge / OKF metadata before saving: Source 1 resource is required')
+
+    expect(() => buildOkfMetadataPayload({
+      type: 'Reference',
+      status: 'stable',
+      stale_after: 'tomorrow'
+    })).toThrow('Stale after must be a valid ISO-8601 timestamp')
+    expect(() => buildOkfMetadataPayload({
+      type: '',
+      status: 'stable'
+    })).toThrow('Type is required')
+  })
+
+  test.each([
+    '2026-08-31T12:00:00Z',
+    '2026-08-31T12:00:00.000Z',
+    '2026-08-31T12:00:00.123456Z',
+    '2024-02-29T23:59:59+13:59',
+    '2026-08-31T12:00:00+14:00',
+    '2026-08-31T12:00:00-14:00'
+  ])('accepts server-valid OKF timestamps: %s', timestamp => {
+    const timestampFields = [
+      { stale_after: timestamp },
+      { generated: { by: 'machine:1', at: timestamp } },
+      { verified: { by: 'human:1', at: timestamp } }
+    ]
+
+    for (const fields of timestampFields) {
+      expect(validateOkfMetadataPayload({ type: 'Reference', ...fields }).valid).toBe(true)
+    }
+  })
+
+  test.each([
+    '2026-08-31T12:00Z',
+    '2026-02-29T12:00:00Z',
+    '2026-04-31T12:00:00Z',
+    '2026-08-31T24:00:00Z',
+    '2026-08-31T12:60:00Z',
+    '2026-08-31T12:00:60Z',
+    '2026-08-31T12:00:00+13:60',
+    '2026-08-31T12:00:00+14:01',
+    '2026-08-31T12:00:00-14:01',
+    '2026-08-31T12:00:00+15:00'
+  ])('blocks server-invalid OKF timestamps before save: %s', timestamp => {
+    const timestampFields = [
+      { stale_after: timestamp },
+      { generated: { by: 'machine:1', at: timestamp } },
+      { verified: { by: 'human:1', at: timestamp } }
+    ]
+
+    for (const fields of timestampFields) {
+      const metadata = { type: 'Reference', ...fields }
+      expect(validateOkfMetadataPayload(metadata).valid).toBe(false)
+      expect(() => buildOkfMetadataPayload(metadata)).toThrow('Fix the Knowledge / OKF metadata before saving')
+    }
   })
   test('includes editable OKF metadata with canonical CAS on page update', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ page: { id: 7, updatedAt: '2026-01-03T00:00:00.000Z', sourceRevision: 9 } }))

@@ -188,4 +188,43 @@ Broken body`
       user: requester
     })
   })
+
+  it('forwards proposal producer provenance through move operations', async () => {
+    const requester = { id: 7, permissions: ['manage:system'] }
+    const movePage = vi.fn(input => input)
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.models.pages = {
+      getPageFromDb: vi.fn().mockResolvedValue({
+        id: 17,
+        localeCode: 'en',
+        ownerId: null,
+        path: 'concept',
+        visibility: 'public'
+      }),
+      movePage
+    }
+    const operations = (await vi.importFresh('../../operations/pages.ts', import.meta.url)).default
+    const { OKF_PRODUCER_CONTEXT } = await import('../../okf/mutation-context.ts')
+
+    await operations.move({
+      requester,
+      sessionId: 'proposal-session',
+      input: {
+        id: 17,
+        destinationLocale: 'en',
+        destinationPath: 'renamed',
+        expectedSourceRevision: '41'
+      },
+      [OKF_PRODUCER_CONTEXT]: 'agent:proposal-request'
+    })
+
+    expect(movePage).toHaveBeenCalledWith({
+      id: 17,
+      destinationLocale: 'en',
+      destinationPath: 'renamed',
+      expectedSourceRevision: '41',
+      okfProducer: 'agent:proposal-request',
+      user: requester
+    })
+  })
 })
