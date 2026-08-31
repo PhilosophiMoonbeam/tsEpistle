@@ -318,6 +318,17 @@ describe('Wiki MCP transport', () => {
     expect(legacyNames).not.toContain('wiki_apply_page_proposal')
   })
 
+  it('does not authenticate a rejected guest MCP request twice', async () => {
+    authenticate.mockImplementation((req, _res, next) => {
+      Reflect.set(req, 'authContext', { kind: 'guest', userId: 2, ownershipUserId: null, principal: null })
+      next()
+    })
+    const port = (server.address() as AddressInfo).port
+
+    expect(await postInitialize(port, { host: '127.0.0.1' })).toBe(401)
+    expect(authenticate).toHaveBeenCalledOnce()
+  })
+
   it('publishes visible pages through the OKF resource template', async () => {
     const port = (server.address() as AddressInfo).port
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
@@ -500,9 +511,10 @@ describe('Wiki MCP transport', () => {
     expect(authorizeMutation.mock.calls.map(call => call[0].requester.id)).toEqual([90, 7, 90, 7])
   })
 
-  it('rejects wrong Host and Origin values before authentication', async () => {
+  it('rejects wrong Host and Origin values after route-boundary authentication', async () => {
     const port = (server.address() as AddressInfo).port
     expect(await postInitialize(port, { host: 'wiki.example.test' })).toBe(403)
     expect(await postInitialize(port, { host: '127.0.0.1', origin: 'https://wiki.example.test' })).toBe(403)
+    expect(authenticate).toHaveBeenCalledTimes(2)
   })
 })
