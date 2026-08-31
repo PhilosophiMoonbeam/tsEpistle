@@ -6,7 +6,7 @@
     :aria-busy="loading"
   >
     <button
-      v-if="historyOpen || memoryOpen"
+      v-if="panelMode === 'modal' && (historyOpen || memoryOpen)"
       class="inline-agent__scrim"
       ref="panelScrim"
       type="button"
@@ -20,10 +20,10 @@
       id="agent-history-panel"
       ref="historyPanel"
       class="inline-agent__side inline-agent__side--history"
-      :role="compactPanels ? 'dialog' : undefined"
+      :role="panelMode === 'modal' ? 'dialog' : undefined"
       aria-label="Chat history panel"
-      :aria-modal="compactPanels ? 'true' : undefined"
-      :tabindex="compactPanels ? -1 : undefined"
+      :aria-modal="panelMode === 'modal' ? 'true' : undefined"
+      :tabindex="panelMode === 'modal' ? -1 : undefined"
     >
       <v-card v-if="historyLoadError" class="inline-agent__panel-load-error" elevation="0" rounded="xl" role="alert">
         <header class="inline-agent__panel-load-error-header">
@@ -46,6 +46,10 @@
 
     <v-card class="inline-agent__card" elevation="0">
       <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="header">
+        <div class="inline-agent__mobile-navigation">
+          <v-btn class="inline-agent__mobile-return" icon="mdi-arrow-left" variant="text" aria-label="Return to Wiki Search" @click="emit('return-search')" />
+          <v-btn class="inline-agent__mobile-close" icon="mdi-close" variant="text" aria-label="Close Wiki Agent" @click="emit('close')" />
+        </div>
         <div class="inline-agent__identity">
           <v-avatar class="inline-agent__avatar" color="primary" size="38" variant="tonal">
             <v-icon icon="mdi-auto-fix" size="20" aria-hidden="true" />
@@ -70,7 +74,7 @@
           aria-atomic="true"
         >
           <span class="inline-agent__connection-dot" aria-hidden="true" />
-          {{ connectionLabel }}
+          <span class="inline-agent__connection-label">{{ connectionLabel }}</span>
         </v-chip>
 
         <div class="inline-agent__panel-actions" role="group" aria-label="Agent workspace panels">
@@ -96,7 +100,7 @@
           />
           <v-menu location="bottom end">
             <template #activator="{ props: menuProps }">
-              <v-btn v-bind="menuProps" class="inline-agent__mobile-panel-menu" prepend-icon="mdi-view-dashboard-outline" variant="text" size="small" aria-label="Open Agent panels: conversation history and memory">Panels</v-btn>
+              <v-btn v-bind="menuProps" class="inline-agent__mobile-panel-menu" icon="mdi-view-dashboard-outline" variant="text" size="small" aria-label="Open Agent panels: conversation history and memory" />
             </template>
             <v-list density="compact">
               <v-list-item title="Conversation history" prepend-icon="mdi-history" @click="toggleHistory" />
@@ -110,7 +114,7 @@
             aria-label="Start a new agent conversation"
             :disabled="loading || sending"
             @click="newSession"
-          >New</v-btn>
+          ><span class="inline-agent__new-session-label">New</span></v-btn>
         </div>
       </v-toolbar>
 
@@ -265,10 +269,10 @@
       id="agent-memory-panel"
       ref="memoryPanel"
       class="inline-agent__side inline-agent__side--memory"
-      :role="compactPanels ? 'dialog' : undefined"
+      :role="panelMode === 'modal' ? 'dialog' : undefined"
       aria-label="Agent memory panel"
-      :aria-modal="compactPanels ? 'true' : undefined"
-      :tabindex="compactPanels ? -1 : undefined"
+      :aria-modal="panelMode === 'modal' ? 'true' : undefined"
+      :tabindex="panelMode === 'modal' ? -1 : undefined"
     >
       <AgentMemoryManager :model-value="memoryOpen" :csrf-token="csrfToken" @update:model-value="updateMemoryOpen" />
     </aside>
@@ -330,6 +334,10 @@ const props = defineProps<{
   pagePath: string
   pageUpdatedAt: string
 }>()
+const emit = defineEmits<{
+  (event: 'return-search'): void
+  (event: 'close'): void
+}>()
 
 const agents = useAgentsStore()
 const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)
@@ -350,7 +358,6 @@ const historyLoadError = ref('')
 const historyLoading = ref(false)
 const memoryOpen = ref(false)
 const transcriptFollowing = ref(true)
-const compactPanels = ref(false)
 let transcriptObserver: MutationObserver | null = null
 let transcriptFrame: number | null = null
 let transcriptFrameShouldFollow = false
@@ -358,8 +365,8 @@ let panelFocusScope: ModalFocusScope | null = null
 let panelFocusKind: 'history' | 'memory' | null = null
 let pendingPanelFocusKind: 'history' | 'memory' | null = null
 let initialization: Promise<void> | null = null
-let compactPanelMedia: MediaQueryList | null = null
-const compactPanelQuery = '(max-width: 1711.98px)'
+const panelMode = ref<'wide' | 'docked' | 'modal'>('wide')
+let panelModeMedia: MediaQueryList[] = []
 const mobilePanelQuery = '(max-width: 639.98px)'
 
 const currentPage = computed<AgentCurrentPageHint | null>(() => {
@@ -495,12 +502,12 @@ const preparePanelTriggerRestore = (kind: 'history' | 'memory'): void => {
   pendingPanelFocusKind = kind
 }
 const closeHistory = (): void => {
-  const closingKind = compactPanels.value && historyOpen.value ? 'history' : null
+  const closingKind = panelMode.value === 'modal' && historyOpen.value ? 'history' : null
   if (closingKind) preparePanelTriggerRestore(closingKind)
   historyOpen.value = false
 }
 const closeMemory = (): void => {
-  const closingKind = compactPanels.value && memoryOpen.value ? 'memory' : null
+  const closingKind = panelMode.value === 'modal' && memoryOpen.value ? 'memory' : null
   if (closingKind) preparePanelTriggerRestore(closingKind)
   memoryOpen.value = false
 }
@@ -528,7 +535,7 @@ const toggleHistory = (): void => {
     return
   }
   historyOpen.value = true
-  if (compactPanels.value) memoryOpen.value = false
+  if (panelMode.value !== 'wide') memoryOpen.value = false
   void reloadHistory()
 }
 const toggleMemory = (): void => {
@@ -537,14 +544,28 @@ const toggleMemory = (): void => {
     return
   }
   memoryOpen.value = true
-  if (compactPanels.value) historyOpen.value = false
+  if (panelMode.value !== 'wide') historyOpen.value = false
 }
-const reconcileCompactPanels = (event: MediaQueryListEvent): void => {
-  compactPanels.value = event.matches
-  if (event.matches && historyOpen.value && memoryOpen.value) memoryOpen.value = false
+const reconcilePanelMode = (): void => {
+  const nextMode = window.matchMedia('(min-width: 1440px)').matches
+    ? 'wide'
+    : window.matchMedia('(min-width: 1024px)').matches
+      ? 'docked'
+      : 'modal'
+  if (panelMode.value === 'wide' && nextMode !== 'wide' && historyOpen.value && memoryOpen.value) {
+    const activeElement = document.activeElement
+    const focusedPanel = memoryPanel.value?.contains(activeElement)
+      ? 'memory'
+      : historyPanel.value?.contains(activeElement)
+        ? 'history'
+        : null
+    if (focusedPanel === 'memory') historyOpen.value = false
+    else memoryOpen.value = false
+  }
+  panelMode.value = nextMode
 }
 const closePanels = (): void => {
-  const closingKind = compactPanels.value
+  const closingKind = panelMode.value === 'modal'
     ? historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
     : null
   if (closingKind) preparePanelTriggerRestore(closingKind)
@@ -655,9 +676,9 @@ watch(currentPage, page => agents.setCurrentPage(page), { immediate: true })
 watch(skillManagerOpen, (open, wasOpen) => {
   if (!open && wasOpen) void nextTick(() => composer.value?.focusSkillsTrigger())
 })
-watch([historyOpen, memoryOpen, compactPanels], async ([history, memory, compact]) => {
+watch([historyOpen, memoryOpen, panelMode], async ([history, memory, mode]) => {
   const kind = history ? 'history' : memory ? 'memory' : null
-  if (!kind || !compact) {
+  if (!kind || mode !== 'modal') {
     panelFocusScope?.deactivate({ restoreFocus: false })
     panelFocusScope = null
     panelFocusKind = null
@@ -669,7 +690,7 @@ watch([historyOpen, memoryOpen, compactPanels], async ([history, memory, compact
   panelFocusKind = null
   await nextTick()
   const currentKind = historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
-  if (!compactPanels.value || currentKind !== kind) return
+  if (panelMode.value !== 'modal' || currentKind !== kind) return
   const root = kind === 'history' ? historyPanel.value : memoryPanel.value
   if (!root) return
   panelFocusKind = kind
@@ -697,7 +718,7 @@ watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
     panelFocusScope?.deactivate({ restoreFocus: false })
     panelFocusScope = null
     panelFocusKind = null
-    if (compactPanels.value) historyOpen.value = false
+    if (panelMode.value !== 'wide') historyOpen.value = false
   }
   transcriptFollowing.value = true
   void nextTick(async () => {
@@ -716,9 +737,12 @@ watch([thread, pendingApprovalId, connection], () => {
   void nextTick(() => { if (!hasConversation.value && transcript.value) transcript.value.scrollTop = 0; updateApprovalJump() })
 }, { flush: 'post' })
 onMounted(() => {
-  compactPanelMedia = window.matchMedia(compactPanelQuery)
-  compactPanels.value = compactPanelMedia.matches
-  compactPanelMedia.addEventListener('change', reconcileCompactPanels)
+  panelModeMedia = [
+    window.matchMedia('(min-width: 1440px)'),
+    window.matchMedia('(min-width: 1024px) and (max-width: 1439.98px)')
+  ]
+  reconcilePanelMode()
+  panelModeMedia.forEach(media => media.addEventListener('change', reconcilePanelMode))
   transcriptObserver = new MutationObserver(scheduleTranscriptReconcile)
   if (transcript.value) transcriptObserver.observe(transcript.value, { childList: true, subtree: true, characterData: true })
   window.addEventListener('resize', scheduleTranscriptReconcile)
@@ -729,7 +753,7 @@ onBeforeUnmount(() => {
   transcriptObserver?.disconnect()
   if (transcriptFrame !== null) window.cancelAnimationFrame(transcriptFrame)
   panelFocusScope?.deactivate({ restoreFocus: false })
-  compactPanelMedia?.removeEventListener('change', reconcileCompactPanels)
+  panelModeMedia.forEach(media => media.removeEventListener('change', reconcilePanelMode))
   window.removeEventListener('resize', scheduleTranscriptReconcile)
   window.visualViewport?.removeEventListener('resize', scheduleTranscriptReconcile)
   agents.closeWorkspace()
@@ -742,6 +766,8 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   position: relative;
   display: grid;
   width: 100%;
+  height: 100%;
+  min-height: 0;
   max-width: var(--wiki-shell-max);
   margin: 0 auto;
   grid-template-columns: minmax(0, 1fr) minmax(36rem, 68rem) minmax(0, 1fr);
@@ -771,9 +797,9 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
 .inline-agent__card,
 .inline-agent__side {
-  height: min(82dvh, 54rem);
-  max-height: calc(100dvh - var(--wiki-space-4));
-  min-height: min(34rem, calc(100dvh - var(--wiki-space-4)));
+  height: 100%;
+  max-height: none;
+  min-height: 0;
 }
 
 .inline-agent__card {
@@ -793,6 +819,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 .inline-agent__toolbar {
   min-height: calc(var(--wiki-control-height) + var(--wiki-space-6));
   flex: 0 0 auto;
+  padding-block-start: 0;
   padding-inline: var(--wiki-space-4);
   border-bottom: 1px solid var(--wiki-surface-border);
   background:
@@ -892,6 +919,10 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   flex: 0 0 auto;
   align-items: center;
   gap: var(--wiki-space-1);
+}
+
+.inline-agent__mobile-navigation {
+  display: none;
 }
 
 .inline-agent__mobile-panel-menu {
@@ -1266,16 +1297,63 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   }
 }
 
-@media (max-width: 1711.98px) {
+@media (min-width: 1440px) {
+  .inline-agent {
+    grid-template-columns: minmax(0, 1fr) minmax(36rem, 68rem) minmax(0, 1fr);
+  }
+
+  .inline-agent__side {
+    position: relative;
+    z-index: auto;
+    filter: none;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1439.98px) {
+  .inline-agent {
+    grid-template-columns: minmax(16rem, 22rem) minmax(0, 68rem);
+  }
+
+  .inline-agent__side {
+    position: relative;
+    z-index: auto;
+    width: auto;
+    max-width: none;
+    grid-column: 1;
+    grid-row: 1;
+    box-sizing: border-box;
+    filter: none;
+  }
+
+  .inline-agent__side--history,
+  .inline-agent__side--memory {
+    grid-column: 1;
+    justify-self: stretch;
+  }
+
+  .inline-agent__card {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
+@media (max-width: 1023.98px) {
+  .inline-agent {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .inline-agent__card {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
   .inline-agent__side {
     position: absolute;
     z-index: 5;
     inset-block: 0;
     width: 22rem;
     max-width: calc(100% - var(--wiki-space-10));
-    height: auto;
-    max-height: none;
-    min-height: 0;
     grid-column: 1 / -1;
     grid-row: 1;
     box-sizing: border-box;
@@ -1284,10 +1362,14 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
   .inline-agent__side--history {
     inset-inline-start: 0;
+    inset-inline-end: auto;
+    justify-self: start;
   }
 
   .inline-agent__side--memory {
+    inset-inline-start: auto;
     inset-inline-end: 0;
+    justify-self: end;
   }
 
   .inline-agent__scrim {
@@ -1313,15 +1395,11 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
 @media (max-width: 639.98px) {
   .inline-agent {
-    height: 100dvh;
-    min-height: 100svh;
     grid-template-columns: minmax(0, 1fr);
     gap: 0;
   }
 
   .inline-agent__card {
-    height: 100dvh;
-    min-height: 100svh;
     max-height: none;
     grid-column: 1;
     border: 0;
@@ -1330,16 +1408,32 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   }
 
   .inline-agent__side {
-    position: fixed;
+    position: absolute;
     width: min(22rem, calc(100% - var(--wiki-space-8)));
   }
   .inline-agent__scrim {
-    position: fixed;
+    position: absolute;
+  }
+
+  .inline-agent__mobile-navigation {
+    display: flex;
+    align-items: center;
+    gap: 0;
+  }
+
+  .inline-agent__mobile-return,
+  .inline-agent__mobile-close {
+    min-width: var(--wiki-control-height) !important;
+    min-height: var(--wiki-control-height) !important;
+  }
+
+  .inline-agent__mobile-return {
+    padding-inline: var(--wiki-space-2) !important;
   }
 
   .inline-agent__toolbar {
     min-height: calc(var(--wiki-control-height) + var(--wiki-space-4));
-    padding-block-start: env(safe-area-inset-top);
+    padding-block-start: max(0px, env(safe-area-inset-top));
     padding-inline: var(--wiki-space-2);
   }
   .inline-agent__progress {
@@ -1351,9 +1445,15 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   .inline-agent__session-title {
     display: none;
   }
+  .inline-agent__identity {
+    overflow: hidden;
+  }
 
   .inline-agent__heading h2 {
+    overflow: hidden;
     margin: 0;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .inline-agent__connection {
@@ -1385,8 +1485,8 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     padding-inline: var(--wiki-space-2);
   }
 
-  .inline-agent__new-session :deep(.v-btn__content) {
-    font-size: 0;
+  .inline-agent__new-session-label {
+    display: none;
   }
 
   .inline-agent__new-session :deep(.v-btn__prepend) {
@@ -1458,10 +1558,23 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 }
 
 @media (max-width: 380px) {
+  .inline-agent__identity {
+    display: none;
+  }
+
   .inline-agent__connection {
+    width: var(--wiki-space-10);
     max-width: var(--wiki-space-10);
     padding-inline: var(--wiki-space-2) !important;
-    font-size: 0;
+  }
+
+  .inline-agent__connection-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
   }
 
   .inline-agent__connection-dot {
@@ -1483,7 +1596,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
 @media (max-height: 500px) {
   .inline-agent__card {
-    height: 100dvh;
     min-height: 0;
     max-height: none;
   }
@@ -1507,7 +1619,8 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   }
 
   .inline-agent__composer {
-    padding-block: var(--wiki-space-1);
+    padding-block-start: var(--wiki-space-1);
+    padding-block-end: max(var(--wiki-space-1), env(safe-area-inset-bottom));
   }
 
   .inline-agent__page-context {
@@ -1524,6 +1637,12 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
   .inline-agent__welcome {
     padding-block: var(--wiki-space-4);
+  }
+}
+
+@media (max-width: 639.98px) and (max-height: 500px) {
+  .inline-agent__progress {
+    inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-2) + env(safe-area-inset-top) - var(--wiki-space-1));
   }
 }
 

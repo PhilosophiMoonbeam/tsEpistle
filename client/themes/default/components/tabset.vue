@@ -30,14 +30,39 @@ export default defineComponent({
     panelElements () {
       return Array.from((this.$refs.content as HTMLElement).children) as HTMLElement[]
     },
+    revealActiveTab () {
+      const tabs = this.$refs.tabs as HTMLUListElement
+      const activeTab = this.tabElements()[this.currentTab]
+      if (!activeTab) {
+        return
+      }
+
+      const tabsRect = tabs.getBoundingClientRect()
+      const tabRect = activeTab.getBoundingClientRect()
+      const isRtl = getComputedStyle(tabs).direction === 'rtl'
+      const startOverflow = isRtl
+        ? tabRect.right - tabsRect.right
+        : tabsRect.left - tabRect.left
+      const endOverflow = isRtl
+        ? tabsRect.left - tabRect.left
+        : tabRect.right - tabsRect.right
+
+      if (startOverflow > 0) {
+        tabs.scrollBy({ left: isRtl ? startOverflow : -startOverflow })
+      } else if (endOverflow > 0) {
+        tabs.scrollBy({ left: isRtl ? -endOverflow : endOverflow })
+      }
+    },
     setActiveTab () {
       this.tabElements().forEach((node, idx) => {
         if (idx === this.currentTab) {
           node.className = 'is-active'
           node.setAttribute('aria-selected', 'true')
+          node.setAttribute('tabindex', '0')
         } else {
           node.className = ''
           node.setAttribute('aria-selected', 'false')
+          node.setAttribute('tabindex', '-1')
         }
       })
       this.panelElements().forEach((node, idx) => {
@@ -49,6 +74,7 @@ export default defineComponent({
           node.setAttribute('hidden', '')
         }
       })
+      this.$nextTick(() => this.revealActiveTab())
     }
   },
   mounted () {
@@ -72,28 +98,32 @@ export default defineComponent({
       node.setAttribute('id', `${tabRefId}-${idx}`)
       node.setAttribute('role', 'tab')
       node.setAttribute('aria-controls', `${tabRefId}-${idx}-tab`)
-      node.setAttribute('tabindex', '0')
+      node.setAttribute('tabindex', idx === this.currentTab ? '0' : '-1')
       node.addEventListener('click', () => {
         this.currentTab = idx
       })
       node.addEventListener('keydown', (ev: KeyboardEvent) => {
-        if (ev.key === 'ArrowLeft' && idx > 0) {
-          this.currentTab = idx - 1
-          tabs[idx - 1].focus()
-        } else if (ev.key === 'ArrowRight' && idx < tabs.length - 1) {
-          this.currentTab = idx + 1
-          tabs[idx + 1].focus()
-        } else if (ev.key === 'Enter' || ev.key === ' ') {
+        const isNavigationKey = ev.key === 'ArrowLeft' || ev.key === 'ArrowRight' || ev.key === 'Home' || ev.key === 'End'
+        const isActivationKey = ev.key === 'Enter' || ev.key === ' '
+        if (isNavigationKey || isActivationKey) {
+          ev.preventDefault()
+        }
+
+        if (ev.key === 'ArrowLeft') {
+          this.currentTab = Math.max(0, idx - 1)
+          this.tabElements()[this.currentTab]?.focus()
+        } else if (ev.key === 'ArrowRight') {
+          this.currentTab = Math.min(tabs.length - 1, idx + 1)
+          this.tabElements()[this.currentTab]?.focus()
+        } else if (isActivationKey) {
           this.currentTab = idx
           node.focus()
         } else if (ev.key === 'Home') {
           this.currentTab = 0
-          ev.preventDefault()
-          tabs[0].focus()
+          this.tabElements()[0]?.focus()
         } else if (ev.key === 'End') {
           this.currentTab = tabs.length - 1
-          ev.preventDefault()
-          tabs[tabs.length - 1].focus()
+          this.tabElements()[tabs.length - 1]?.focus()
         }
       })
     })

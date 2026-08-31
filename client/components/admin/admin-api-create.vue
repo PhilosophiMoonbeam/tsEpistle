@@ -1,11 +1,11 @@
 <template lang="pug">
   div
     v-dialog(v-model='isShown', max-width='650', persistent)
-      v-card
+      v-card.admin-dialog--scrollable
         .dialog-header.is-short
           v-icon.mr-3(color='white') mdi-plus
           span {{$t('admin:api.newKeyTitle')}}
-        v-card-text.pt-5
+        v-card-text.pt-5.admin-dialog--scrollable__body
           v-text-field(
             variant="outlined"
             prepend-icon='mdi-format-title'
@@ -46,7 +46,7 @@
             :hint='$t(`admin:api.newKeyGroupHint`)'
             persistent-hint
           )
-        div.v-card-chin
+        div.v-card-chin.admin-dialog-actions
           v-spacer
           v-btn(variant="text", @click='isShown = false', :disabled='loading') {{$t('common:actions.cancel')}}
           v-btn.px-3(variant="flat", color='primary', @click='generate', :loading='loading')

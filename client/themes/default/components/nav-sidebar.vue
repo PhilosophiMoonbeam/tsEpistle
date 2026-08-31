@@ -48,11 +48,33 @@
         v-divider.nav-sidebar-section-divider.my-2(v-else-if='item.k === `divider`')
         v-list-subheader.nav-sidebar-subheader(v-else-if='item.k === `header`') {{ item.l }}
     //-> Browse
-    v-list.nav-sidebar-list.py-2(v-else-if='currentMode === `browse`', density="compact", :class='color', nav, role='presentation')
-      async-state(
+    v-list.nav-sidebar-list.py-2(
+      v-else-if='currentMode === `browse`'
+      density="compact"
+      :class='color'
+      nav
+      role='presentation'
+      :aria-busy='navLoading'
+    )
+      .nav-sidebar-loading-status(
         v-if='navLoading'
-        state='loading'
-        title='Loading navigation'
+        role='status'
+        aria-live='polite'
+        aria-atomic='true'
+      ) Loading navigation
+      template(v-if='navLoading && currentItems.length === 0')
+        v-skeleton-loader.nav-sidebar-loading-row(
+          v-for='index in 4'
+          :key='`browse-skeleton-` + index'
+          type='list-item-avatar'
+          aria-hidden='true'
+        )
+      v-progress-linear.nav-sidebar-progress(
+        v-else-if='navLoading'
+        indeterminate
+        color='primary'
+        height='2'
+        aria-label='Loading navigation'
       )
       async-state(
         v-else-if='navError'
@@ -323,6 +345,39 @@ export default defineComponent({
     border-color: var(--wiki-surface-border);
     background: color-mix(in srgb, var(--wiki-surface-sunken) 76%, transparent);
   }
+  .nav-sidebar-loading-status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .nav-sidebar-loading-row {
+    height: var(--wiki-control-height);
+    min-height: var(--wiki-control-height);
+    margin-block: var(--wiki-space-1);
+    overflow: hidden;
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-control-radius);
+    background: var(--wiki-surface-sunken);
+
+    .v-skeleton-loader__avatar {
+      width: 24px;
+      height: 24px;
+    }
+
+    .v-skeleton-loader__text {
+      height: .7rem;
+    }
+  }
+
+  .nav-sidebar-progress {
+    margin-block: 0 var(--wiki-space-2);
+    border-radius: var(--wiki-radius-pill);
+  }
+
 
   .v-list-item {
     position: relative;

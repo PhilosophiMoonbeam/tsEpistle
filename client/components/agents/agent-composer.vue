@@ -118,12 +118,13 @@
               variant="text"
               prepend-icon="mdi-puzzle-outline"
               :disabled="disabled || sendInProgress"
-              :text="selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : 'Skills'"
               aria-label="Choose skills for the next message"
               aria-haspopup="dialog"
               aria-controls="agent-composer-skills-menu"
               :aria-expanded="skillMenuOpen"
-            />
+            >
+              <span class="d-none d-sm-inline">{{ selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : 'Skills' }}</span>
+            </v-btn>
           </template>
           <v-card id="agent-composer-skills-menu" class="agent-composer__skill-menu" min-width="300" max-width="420" role="dialog" aria-labelledby="agent-composer-skills-title">
             <v-card-title id="agent-composer-skills-title" class="text-body-large">Skills</v-card-title>
@@ -177,10 +178,13 @@
           :color="goalMode ? 'primary' : undefined"
           :variant="goalMode ? 'tonal' : 'text'"
           prepend-icon="mdi-target"
+          aria-label="Toggle goal mode"
           :aria-pressed="goalMode"
           :disabled="disabled || sendInProgress"
           @click="goalMode = !goalMode"
-        >Goal</v-btn>
+        >
+          <span class="d-none d-sm-inline">Goal</span>
+        </v-btn>
       </div>
 
       <div
@@ -569,6 +573,7 @@ onBeforeUnmount(() => {
   min-height: calc(var(--wiki-control-height) + var(--wiki-space-3));
   max-height: min(calc(var(--wiki-space-12) * 4), 42dvh);
   overflow-y: hidden;
+  overscroll-behavior: contain;
   color: rgb(var(--v-theme-on-surface));
   font-size: 1rem;
   line-height: 1.55;
@@ -833,10 +838,6 @@ onBeforeUnmount(() => {
     padding-inline: var(--wiki-space-2);
   }
 
-  .agent-composer__skill-button :deep(.v-btn__content),
-  .agent-composer__goal-button :deep(.v-btn__content) {
-    font-size: 0;
-  }
 
   .agent-composer__skill-button :deep(.v-btn__prepend),
   .agent-composer__goal-button :deep(.v-btn__prepend) {

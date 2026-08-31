@@ -9,12 +9,8 @@
           v-icon.admin-context__separator(size='14') mdi-chevron-right
           strong.admin-context__current {{ currentRouteLabel }}
         v-spacer
-      template(v-slot:actions)
-        .admin-context.admin-context--mobile
-          v-icon(size='16') {{ currentRouteIcon }}
-          strong.admin-context__current {{ currentRouteLabel }}
+      template(v-slot:mobileBrand)
         v-btn.admin-nav-toggle(
-          v-if='$vuetify.display.smAndDown'
           icon
           @click='adminDrawerShown = !adminDrawerShown'
           :aria-expanded='adminDrawerShown'
@@ -22,6 +18,9 @@
           :aria-label='adminDrawerShown ? `Close administration navigation` : `Open administration navigation`'
         )
           v-icon {{ adminDrawerShown ? 'mdi-close' : 'mdi-menu' }}
+        .admin-context.admin-context--mobile
+          v-icon(size='16') {{ currentRouteIcon }}
+          strong.admin-context__current {{ currentRouteLabel }}
     v-navigation-drawer#admin-navigation.pb-0.admin-sidebar(
       v-model='adminDrawerShown'
       :location="$vuetify.locale.isRtl ? 'right' : undefined"
@@ -394,6 +393,11 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+.admin-nav-toggle {
+  min-width: 44px !important;
+  min-height: 44px !important;
+}
+
 .admin-context--mobile {
   display: none;
 }
@@ -1014,6 +1018,25 @@ export default defineComponent({
       color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+  }
+  .admin-dialog--scrollable {
+    display: flex;
+    max-height: calc(100dvh - var(--wiki-space-6));
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+
+    > .dialog-header,
+    > .v-card-chin.admin-dialog-actions {
+      flex: 0 0 auto;
+    }
+
+    > .admin-dialog--scrollable__body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
   }
 

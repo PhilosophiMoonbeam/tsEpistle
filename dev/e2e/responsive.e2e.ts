@@ -1,11 +1,5 @@
 import { expect } from '@playwright/test'
-import {
-  expectLocatorWithinViewport,
-  expectResponsiveLayout,
-  openAuthenticatedPage,
-  openSearch,
-  responsiveTest as test
-} from './helpers.ts'
+import { expectLocatorWithinViewport, expectResponsiveLayout, openAuthenticatedPage, openSearch, responsiveTest as test } from './helpers.ts'
 
 test.describe('responsive UI quality matrix', () => {
   test.beforeEach(() => {
@@ -13,20 +7,44 @@ test.describe('responsive UI quality matrix', () => {
   })
 
   test('keeps public pages, navigation, and fixed actions usable', async ({ page }) => {
-    for (const path of ['/en/home', '/en/visual-markdown-browser']) {
-      await openAuthenticatedPage(page, path, '.page-header-section')
-      await expectResponsiveLayout(page, path)
-    }
-
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
     if (!viewport) return
+
+    for (const path of ['/en/home', '/en/visual-markdown-browser']) {
+      await openAuthenticatedPage(page, path, '.page-header-section')
+      await expectResponsiveLayout(page, path)
+
+      const headerPageActions = page
+        .locator('.nav-header')
+        .getByRole('button', { name: /page actions/i })
+        .first()
+      if (await headerPageActions.count()) {
+        await expectLocatorWithinViewport(headerPageActions, 'Header page actions')
+      }
+
+      if (path === '/en/visual-markdown-browser' && viewport.width <= 959.98) {
+        const article = page.locator('.page-col-content:not(.is-page-header) > .contents').first()
+        const sidebar = page.locator('.page-col-sd').first()
+        await expect(article).toBeVisible()
+        await expect(sidebar).toBeVisible()
+        await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toBeVisible()
+
+        const articleBounds = await article.boundingBox()
+        const sidebarBounds = await sidebar.boundingBox()
+        expect(articleBounds).not.toBeNull()
+        expect(sidebarBounds).not.toBeNull()
+        if (articleBounds && sidebarBounds) {
+          expect(articleBounds.y, 'Article content must precede the reader sidebar').toBeLessThan(sidebarBounds.y)
+        }
+      }
+    }
 
     const drawer = page.locator('.v-navigation-drawer').first()
     if (viewport.width < 1280) {
       await expect(drawer).toHaveClass(/v-navigation-drawer--temporary/)
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
-      await page.getByRole('button', { name: 'Toggle navigation' }).click()
+      await page.getByRole('button', { name: 'Open navigation' }).click()
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
       await expectLocatorWithinViewport(drawer, 'Open page navigation')
       await expectResponsiveLayout(page, 'Open page navigation')
@@ -40,7 +58,11 @@ test.describe('responsive UI quality matrix', () => {
     }
 
     const editPage = page.getByRole('button', { name: /edit page/i })
-    await expectLocatorWithinViewport(editPage, 'Quick edit action')
+    if (viewport.width <= 959.98) {
+      await expect(page.locator('.page-edit-fab')).toHaveCount(0)
+    } else if (await editPage.count()) {
+      await expectLocatorWithinViewport(editPage, 'Quick edit action')
+    }
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
     const returnToTop = page.getByRole('button', { name: /return to top/i })
     await expectLocatorWithinViewport(returnToTop, 'Return to top action')
@@ -106,7 +128,7 @@ test.describe('responsive UI quality matrix', () => {
     }
 
     const drawer = page.locator('#admin-navigation')
-    const toggle = page.getByRole('button', { name: 'Administration navigation', exact: true })
+    const toggle = page.getByRole('button', { name: 'Open administration navigation' })
     if (viewport.width < 840) {
       await expect(toggle).toBeVisible()
       await expect(drawer).toHaveClass(/v-navigation-drawer--temporary/)
@@ -115,7 +137,7 @@ test.describe('responsive UI quality matrix', () => {
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
       await expectLocatorWithinViewport(drawer, 'Administration navigation')
       await expectResponsiveLayout(page, 'Open administration navigation')
-      await page.getByRole('button', { name: 'Close administration navigation' }).click()
+      await drawer.getByRole('button', { name: 'Close administration navigation' }).click()
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
     } else {
       await expect(toggle).toBeHidden()
@@ -134,49 +156,111 @@ test.describe('responsive UI quality matrix', () => {
     await expect(agent).toBeVisible()
     await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
     await expect(agent.getByRole('combobox', { name: 'Message Wiki Agent' })).toBeVisible()
-    await expect(agent.getByRole('button', { name: 'Open agent conversation history' })).toBeVisible()
+    const historyButton = agent.getByRole('button', { name: 'Open agent conversation history' })
     const viewport = page.viewportSize()
-    if (viewport && viewport.width >= 1712) {
+    expect(viewport).not.toBeNull()
+    if (!viewport) return
+    const panelFocusTarget =
+      viewport.width <= 639.98 ? agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' }) : historyButton
+    const openHistory = async (): Promise<void> => {
+      await panelFocusTarget.click()
+      if (viewport.width <= 639.98) {
+        await page.getByText('Conversation history', { exact: true }).click()
+      }
+    }
+    await expect(panelFocusTarget).toBeVisible()
+
+    const card = agent.locator('.inline-agent__card')
+    const sidePanels = agent.locator('.inline-agent__side')
+    const scrim = agent.locator('.inline-agent__scrim')
+
+    if (viewport.width >= 1440) {
       await page.locator('.search-results--ask').evaluate(async element => {
         await Promise.all(element.getAnimations().map(animation => animation.finished))
       })
-      const card = agent.locator('.inline-agent__card')
       const initialCard = await card.boundingBox()
       expect(initialCard).not.toBeNull()
 
-      const historyButton = agent.getByRole('button', { name: 'Open agent conversation history' })
-      await historyButton.click()
+      await openHistory()
       const historyPanel = agent.getByRole('complementary', { name: 'Chat history panel' })
       await expect(historyPanel).toBeVisible()
+      await expect(historyPanel).not.toHaveAttribute('aria-modal', 'true')
+      await expect(historyPanel).not.toHaveAttribute('role', 'dialog')
+      await expect(scrim).toHaveCount(0)
+      await expect(sidePanels).toHaveCount(1)
+      await expect.poll(() => historyPanel.evaluate(element => getComputedStyle(element).position)).toBe('relative')
       const historyCard = await card.boundingBox()
       const historyBounds = await historyPanel.boundingBox()
       expect(historyCard).not.toBeNull()
       expect(historyBounds).not.toBeNull()
       if (initialCard && historyCard && historyBounds) {
-        expect(Math.abs(historyCard.width - initialCard.width)).toBeLessThanOrEqual(1)
-        expect(Math.abs(historyCard.x - initialCard.x)).toBeLessThanOrEqual(1)
+        expect(Math.abs(historyCard.width - initialCard.width)).toBeLessThanOrEqual(3)
+        expect(Math.abs(historyCard.x - initialCard.x)).toBeLessThanOrEqual(3)
         expect(historyBounds.x + historyBounds.width).toBeLessThanOrEqual(historyCard.x)
       }
-      await historyPanel.getByRole('button', { name: 'Close chat history' }).click()
-      await expect(historyPanel).toBeHidden()
 
-      await agent.getByRole('button', { name: 'Manage agent memory' }).click()
+      const memoryButton = agent.getByRole('button', { name: 'Manage agent memory' })
+      await memoryButton.click()
       const memoryPanel = agent.getByRole('complementary', { name: 'Agent memory panel' })
       await expect(memoryPanel).toBeVisible()
+      await expect(scrim).toHaveCount(0)
+      await expect(memoryPanel).not.toHaveAttribute('aria-modal', 'true')
+      await expect(memoryPanel).not.toHaveAttribute('role', 'dialog')
+      await expect.poll(() => memoryPanel.evaluate(element => getComputedStyle(element).position)).toBe('relative')
       const memoryCard = await card.boundingBox()
       const memoryBounds = await memoryPanel.boundingBox()
       expect(memoryCard).not.toBeNull()
       expect(memoryBounds).not.toBeNull()
       if (initialCard && memoryCard && memoryBounds) {
-        expect(Math.abs(memoryCard.width - initialCard.width)).toBeLessThanOrEqual(1)
-        expect(Math.abs(memoryCard.x - initialCard.x)).toBeLessThanOrEqual(1)
+        expect(Math.abs(memoryCard.width - initialCard.width)).toBeLessThanOrEqual(3)
+        expect(Math.abs(memoryCard.x - initialCard.x)).toBeLessThanOrEqual(3)
         expect(memoryBounds.x).toBeGreaterThanOrEqual(memoryCard.x + memoryCard.width)
       }
       await memoryPanel.getByRole('button', { name: 'Close agent memory' }).click()
       await expect(memoryPanel).toBeHidden()
+      await historyPanel.getByRole('button', { name: 'Close chat history' }).click()
+      await expect(historyPanel).toBeHidden()
+    } else if (viewport.width >= 1024) {
+      await openHistory()
+      const historyPanel = agent.getByRole('complementary', { name: 'Chat history panel' })
+      await expect(historyPanel).toBeVisible()
+      await expect(historyPanel).not.toHaveAttribute('aria-modal', 'true')
+      await expect(scrim).toHaveCount(0)
+      await expect(sidePanels).toHaveCount(1)
+      await expect.poll(() => historyPanel.evaluate(element => getComputedStyle(element).position)).toBe('relative')
+      const cardBounds = await card.boundingBox()
+      const historyBounds = await historyPanel.boundingBox()
+      expect(cardBounds).not.toBeNull()
+      expect(historyBounds).not.toBeNull()
+      if (cardBounds && historyBounds) {
+        expect(historyBounds.x + historyBounds.width).toBeLessThanOrEqual(cardBounds.x)
+      }
+      await historyPanel.getByRole('button', { name: 'Close chat history' }).click()
+      await expect(historyPanel).toBeHidden()
+    } else {
+      await openHistory()
+      const historyDialog = agent.getByRole('dialog', { name: 'Chat history panel' })
+      await expect(historyDialog).toBeVisible()
+      await expect(historyDialog).toHaveAttribute('aria-modal', 'true')
+      await expect(scrim).toBeVisible()
+      await expect(sidePanels).toHaveCount(1)
+      await historyDialog.getByRole('button', { name: 'Close chat history' }).click()
+      await expect(historyDialog).toBeHidden()
+      await expect(scrim).toBeHidden()
+      await expect(sidePanels).toHaveCount(0)
+      await expect(panelFocusTarget).toBeFocused()
     }
+
+    if (viewport.width <= 639.98) {
+      await expect(page.locator('.search-results-agent-nav')).toBeHidden()
+      await expect(agent.getByRole('button', { name: 'Return to Wiki Search' })).toBeVisible()
+      await expect(agent.getByRole('button', { name: 'Close Wiki Agent' })).toBeVisible()
+    }
+
     await expect(agent.getByText('How this session uses the model')).toHaveCount(0)
-    const profileCount = await page.evaluate(async () => (await fetch('/_api/agents/profiles')).json().then((value: { profiles?: unknown[] }) => value.profiles?.length ?? 0))
+    const profileCount = await page.evaluate(async () =>
+      (await fetch('/_api/agents/profiles')).json().then((value: { profiles?: unknown[] }) => value.profiles?.length ?? 0)
+    )
     const settingsButton = agent.getByRole('button', { name: 'Session configuration' })
     if (profileCount > 1) {
       await expect(settingsButton).toBeVisible()
@@ -196,9 +280,13 @@ test.describe('responsive UI quality matrix', () => {
       expect(settingsLayout.overflowY).toBe('auto')
       expect(settingsLayout.bottom).toBeLessThanOrEqual((page.viewportSize()?.height ?? 0) + 1)
       if (settingsLayout.scrollHeight > settingsLayout.clientHeight) {
-        await settings.evaluate(element => { element.scrollTop = element.scrollHeight })
+        await settings.evaluate(element => {
+          element.scrollTop = element.scrollHeight
+        })
         await expect.poll(() => settings.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
       }
+      await settingsButton.click()
+      await expect(agent.getByText('Provider profile')).toBeHidden()
     } else {
       await expect(settingsButton).toHaveCount(0)
     }

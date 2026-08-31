@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-container(fluid)
+  v-container.admin-users(fluid)
     v-row
       v-col(cols='12')
         .admin-header
@@ -23,7 +23,7 @@
             span(v-if='$vuetify.display.mdAndUp') New User
         v-card.mt-3.animated.fadeInUp
           .admin-filter-bar.pa-2.d-flex.align-center
-            v-text-field(
+            v-text-field.admin-users-filter-search(
               variant="solo"
               flat
               v-model='search'
@@ -33,7 +33,7 @@
               density="compact"
             )
             v-spacer
-            v-select(
+            v-select.admin-users-filter-provider(
               variant="solo"
               flat
               hide-details
@@ -44,7 +44,7 @@
               item-value='key'
               density="compact"
             )
-            v-btn(v-if='hasActiveFilters' variant='text' size='small' color='primary' @click='clearFilters') Clear filters
+            v-btn.admin-users-filter-clear(v-if='hasActiveFilters' variant='text' size='small' color='primary' @click='clearFilters') Clear filters
           v-alert(v-if='errorMessage && users.length' type='error' variant='tonal' class='ma-3')
             .d-flex.align-center
               span {{ errorMessage }}
@@ -85,7 +85,7 @@
                       v-icon.me-2(v-if='props.item.isSystem' size="small" aria-label='System user') mdi-lock-outline
                       span.admin-status(v-if='props.item.isActive') Active
                       span.admin-status.admin-status--inactive(v-else) Inactive
-                    .text-body-medium {{ props.item.email }}
+                    .admin-users-email.text-body-medium {{ props.item.email }}
                     .admin-mobile-record-meta {{ getStrategyName(props.item.providerKey) }}
                     .text-body-small.text-medium-emphasis.mt-2
                       span(v-if='props.item.lastLoginAt') Last login {{ $helpers.formatMoment(props.item.lastLoginAt, 'from') }}
@@ -238,4 +238,52 @@ export default {
   }
 }
 </script>
+
+<style lang='scss'>
+.v-application.admin .admin-main > .v-container.admin-users .admin-filter-bar {
+  display: grid !important;
+  grid-template-columns: minmax(14rem, 1fr) minmax(12rem, 16rem) auto;
+  align-items: center;
+
+  > .v-spacer {
+    display: none;
+  }
+
+  > .v-input {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    margin-inline-start: 0 !important;
+  }
+}
+
+.v-application.admin .admin-main > .v-container.admin-users .admin-users-email {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+@media (min-width: 840px) and (max-width: 959px) {
+  .v-application.admin .admin-main > .v-container.admin-users .admin-filter-bar {
+    grid-template-columns: minmax(13rem, 2fr) minmax(11rem, 14rem) auto;
+  }
+}
+
+@media (min-width: 600px) and (max-width: 839px) {
+  .v-application.admin .admin-main > .v-container.admin-users .admin-filter-bar {
+    grid-template-columns: minmax(0, 1fr) minmax(10rem, 14rem);
+
+    > .admin-users-filter-clear {
+      grid-column: 1 / -1;
+      justify-self: start;
+    }
+  }
+}
+
+@media (max-width: 599px) {
+  .v-application.admin .admin-main > .v-container.admin-users .admin-filter-bar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>
 

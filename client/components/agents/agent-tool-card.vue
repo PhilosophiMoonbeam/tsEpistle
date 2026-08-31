@@ -90,7 +90,7 @@
       </summary>
       <div class="proposal-diff">
         <pre tabindex="0" :aria-label="`Proposed output record for ${proposal.target?.path || actionLabel}`"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
-        <v-btn v-if="diffLines.length > collapsedLineCount" size="small" variant="text" @click="expanded = !expanded">
+        <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" @click="expanded = !expanded">
           {{ expanded ? 'Show less' : `Show all ${diffLines.length} lines` }}
         </v-btn>
       </div>
@@ -218,7 +218,7 @@
         </summary>
         <div class="proposal-diff">
           <pre tabindex="0" :aria-label="`Proposed output for ${proposal.target?.path || actionLabel}`"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
-          <v-btn v-if="diffLines.length > collapsedLineCount" size="small" variant="text" @click="expanded = !expanded">
+          <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" @click="expanded = !expanded">
             {{ expanded ? 'Show less' : `Show all ${diffLines.length} lines` }}
           </v-btn>
         </div>
@@ -807,6 +807,13 @@ const decide = (decision: 'approved' | 'denied'): void => {
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   border: 0;
+}
+
+@media (pointer: coarse) {
+  .agent-operation__diff-toggle {
+    min-width: var(--wiki-control-height);
+    min-height: var(--wiki-control-height);
+  }
 }
 
 @media (max-width: 599.98px) {

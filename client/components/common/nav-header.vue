@@ -1076,6 +1076,9 @@ export default defineComponent({
       min-width: var(--wiki-control-height);
       padding-inline: var(--wiki-space-2);
     }
+    .nav-header-mobile-search .nav-header-search-control .v-field__input {
+      font-size: 1rem;
+    }
   }
 }
 

@@ -26,16 +26,39 @@ describe('inline Ask mode contract', () => {
     expect(template).toMatch(/InlineAgentChat\s*\(/)
     expect(template).toMatch(/v-if=['"]isAgentOpen['"]/)
     expect(template).toMatch(/search-results-agent-nav/)
+    expect(template).toMatch(/@return-search=['"]returnToSearch['"]/)
+    expect(template).toMatch(/@close=['"]closeSearch['"]/)
     expect(template).toMatch(/role=['"]dialog['"]/)
     expect(template).toMatch(/aria-modal=['"]true['"]/)
     expect(template).toMatch(/:aria-labelledby=['"]isAgentOpen \? `wiki-agent-title` : `wiki-search-title`['"]/)
-    expect(search).toMatch(/&--ask\s*\{[\s\S]*height:\s*100dvh[\s\S]*inset:\s*0[\s\S]*overflow:\s*hidden[\s\S]*z-index:\s*1009/)
+    expect(search).toMatch(/\.search-results\s*\{[\s\S]*height:\s*100dvh[\s\S]*inset:\s*0/)
+    expect(search).toMatch(/&--ask\s*\{[\s\S]*overflow:\s*hidden[\s\S]*z-index:\s*1009/)
     expect(search).toMatch(
       /&--ask\s*\{[\s\S]*color-mix\(in srgb, var\(--wiki-ambient-accent\) 5%, rgb\(var\(--v-theme-background\)\)\)[\s\S]*rgb\(var\(--v-theme-background\)\)[\s\S]*isolation:\s*isolate/
     )
     expect(search).toMatch(/&--ask\s*\{\s*animation:\s*none/)
     expect(search).toMatch(/&--ask\s*\{[\s\S]*animation:\s*agentWorkspaceReveal var\(--wiki-motion-slow\)/)
-    expect(search).toMatch(/&:not\(\.search-results--ask\)\s*\{[\s\S]*top:\s*calc\(var\(--v-layout-top,\s*72px\) \+ 48px\)/)
+    expect(search).not.toMatch(/height:\s*calc\(100dvh/)
+    expect(header).toMatch(/:extended=['"]searchIsShown && \$vuetify\.display\.smAndDown['"]/)
+    expect(search).toMatch(
+      /@media #\{map-get\(\$display-breakpoints, ['"]sm-and-down['"]\)\}\s*\{[\s\S]*&:not\(\.search-results--ask\)\s*\{[\s\S]*--search-mobile-app-bar-extension-height:\s*48px;[\s\S]*padding-top:\s*calc\(var\(--v-layout-top,\s*72px\) \+ var\(--search-mobile-app-bar-extension-height\)\);/
+    )
+    expect(search).toMatch(/&-container--ask\s*\{[\s\S]*padding:\s*0\s+var\(--wiki-space-2\)/)
+    expect(inline).toMatch(/inline-agent__mobile-return" icon="mdi-arrow-left"[\s\S]*aria-label="Return to Wiki Search"[\s\S]*@click="emit\('return-search'\)"/)
+    expect(inline).toMatch(/inline-agent__mobile-close" icon="mdi-close"[\s\S]*aria-label="Close Wiki Agent"[\s\S]*@click="emit\('close'\)"/)
+    expect(inline).toMatch(
+      /inline-agent__mobile-panel-menu" icon="mdi-view-dashboard-outline"[\s\S]*aria-label="Open Agent panels: conversation history and memory"/
+    )
+    expect(inline).toMatch(/inline-agent__new-session"[\s\S]*aria-label="Start a new agent conversation"[\s\S]*inline-agent__new-session-label/)
+    expect(inline).not.toMatch(/font-size:\s*0/)
+    expect(search).toMatch(/&-agent-nav\s*\{[\s\S]*padding-block-start:\s*max\(0px,\s*env\(safe-area-inset-top\)\)/)
+    expect(inline).toMatch(/\.inline-agent__toolbar\s*\{[\s\S]*padding-block-start:\s*0/)
+    expect(inline).toMatch(/\.inline-agent__progress\s*\{[\s\S]*var\(--wiki-space-6\) - var\(--wiki-space-1\)/)
+    expect(inline).toMatch(
+      /@media \(max-width: 639\.98px\)\s*\{[\s\S]*\.inline-agent__toolbar\s*\{[\s\S]*padding-block-start:\s*max\(0px,\s*env\(safe-area-inset-top\)\)[\s\S]*\.inline-agent__progress\s*\{[\s\S]*env\(safe-area-inset-top\)/
+    )
+    expect(inline).toMatch(/padding-block-end:\s*max\(var\(--wiki-space-1\),\s*env\(safe-area-inset-bottom\)\)/)
+    expect(search).toMatch(/@media \(max-width: 639\.98px\)\s*\{[\s\S]*&--ask \.search-results-agent-nav\s*\{\s*display:\s*none;/)
     expect(template).not.toMatch(/action=['"]\/_?api\/agents\/launch['"]/)
     expect(template).not.toMatch(/target=['"]_blank['"]/)
     expect(search).toMatch(/if\s*\(!inlineAgent\)\s*return/)
@@ -50,14 +73,23 @@ describe('inline Ask mode contract', () => {
     expect(inline).toMatch(/currentPage:\s*currentPage\.value/)
     expect(inline).not.toMatch(/window\.(?:open|location)/)
   })
-  test('uses the Agent workspace side space for persistent history and memory panels', () => {
+  test('uses explicit wide, docked, and modal panel modes', () => {
     expect(inline).toMatch(/inline-agent__side--history/)
     expect(inline).toMatch(/<AgentHistoryPanel/)
     expect(inline).toMatch(/inline-agent__side--memory/)
     expect(inline).toMatch(/<AgentMemoryManager :model-value="memoryOpen"[\s\S]*@update:model-value="updateMemoryOpen"/)
     expect(search).toMatch(/&--ask \.inline-agent\s*\{[\s\S]*max-width:\s*112rem/)
-    expect(inline).toMatch(/max-width:\s*var\(--wiki-shell-max\)/)
-    expect(inline).toMatch(/@media \(max-width:\s*1711\.98px\)/)
+    expect(inline).toMatch(/panelMode = ref<'wide' \| 'docked' \| 'modal'>/)
+    expect(inline).toMatch(/window\.matchMedia\(['"]\(min-width: 1440px\)['"]\)/)
+    expect(inline).toMatch(/window\.matchMedia\(['"]\(min-width: 1024px\)['"]\)/)
+    expect(inline).toMatch(/@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)/)
+    expect(inline).toMatch(/@media \(max-width: 1023\.98px\)/)
+    expect(inline).toMatch(/@media \(max-width: 1023\.98px\)\s*\{[\s\S]*\.inline-agent__card\s*\{[\s\S]*grid-column:\s*1;[\s\S]*grid-row:\s*1;/)
+    expect(inline).toMatch(/\.inline-agent__side--history\s*\{[\s\S]*inset-inline-start:\s*0;[\s\S]*inset-inline-end:\s*auto;[\s\S]*justify-self:\s*start;/)
+    expect(inline).toMatch(/\.inline-agent__side--memory\s*\{[\s\S]*inset-inline-start:\s*auto;[\s\S]*inset-inline-end:\s*0;[\s\S]*justify-self:\s*end;/)
+    expect(inline).not.toMatch(/1711\.98px/)
+    expect(inline).not.toMatch(/compactPanels/)
+    expect(inline).not.toMatch(/100dvh|100svh/)
     expect(inline).not.toMatch(/<v-menu location="bottom end">[\s\S]*?aria-label="Open agent conversation history"[\s\S]*?<\/v-menu>/)
     expect(inline).toMatch(/Open Agent panels: conversation history and memory/)
     expect(memory).not.toMatch(/<v-dialog v-model="open"/)
@@ -155,7 +187,7 @@ describe('inline Ask mode contract', () => {
     expect(search).toMatch(/async submitAskPrompt\(\): Promise<void>/)
   })
 
-  test('uses one LIFO focus stack across Search, Ask, and compact panels', () => {
+  test('uses one LIFO focus stack across Search, Ask, and modal panels', () => {
     expect(focusScope).toMatch(/scopeStacks\s*=\s*new WeakMap<Document,\s*ModalFocusScopeState\[\]>/)
     expect(focusScope).toMatch(/isTopScope\(\)/)
     expect(focusScope).toMatch(/while \(stack\.length > 0 && !stack\[stack\.length - 1\]!\.active\)/)
@@ -167,26 +199,28 @@ describe('inline Ask mode contract', () => {
     expect(focusScope).toMatch(/event\.stopImmediatePropagation\(\)/)
     expect(search).toMatch(/onEscape:\s*this\.returnToSearch/)
     expect(search).toMatch(/additionalRoots:\s*\(\) => this\.syncSearchInputA11y\(\)/)
-    expect(inline).toMatch(/:role="compactPanels \? 'dialog' : undefined"/)
+    expect(inline).toMatch(/:role="panelMode === 'modal' \? 'dialog' : undefined"/)
+    expect(inline).toMatch(/:aria-modal="panelMode === 'modal' \? 'true' : undefined"/)
     expect(inline).toMatch(/triggerForPanel/)
     expect(inline).toMatch(
       /const triggerForPanel = \(kind:[\s\S]*const root = inlineAgentRoot\.value[\s\S]*root\.querySelector<HTMLElement>[\s\S]*window\.matchMedia\(mobilePanelQuery\)\.matches/
     )
     expect(inline).toMatch(
-      /const closeHistory = \(\): void => \{[\s\S]*const closingKind = compactPanels\.value && historyOpen\.value \? 'history' : null[\s\S]*preparePanelTriggerRestore\(closingKind\)[\s\S]*historyOpen\.value = false/
+      /const closeHistory = \(\): void => \{[\s\S]*panelMode\.value === 'modal' && historyOpen\.value[\s\S]*preparePanelTriggerRestore\(closingKind\)[\s\S]*historyOpen\.value = false/
     )
     expect(inline).toMatch(
-      /const closeMemory = \(\): void => \{[\s\S]*const closingKind = compactPanels\.value && memoryOpen\.value \? 'memory' : null[\s\S]*preparePanelTriggerRestore\(closingKind\)[\s\S]*memoryOpen\.value = false/
+      /const closeMemory = \(\): void => \{[\s\S]*panelMode\.value === 'modal' && memoryOpen\.value[\s\S]*preparePanelTriggerRestore\(closingKind\)[\s\S]*memoryOpen\.value = false/
     )
     expect(inline).toMatch(/const updateMemoryOpen = \(open: boolean\): void => \{[\s\S]*else closeMemory\(\)/)
     expect(inline).toMatch(
-      /const closePanels = \(\): void => \{[\s\S]*const closingKind = compactPanels\.value[\s\S]*preparePanelTriggerRestore\(closingKind\)[\s\S]*historyOpen\.value = false[\s\S]*memoryOpen\.value = false/
+      /const closePanels = \(\): void => \{[\s\S]*panelMode\.value === 'modal'[\s\S]*preparePanelTriggerRestore\(closingKind\)[\s\S]*historyOpen\.value = false[\s\S]*memoryOpen\.value = false/
     )
-    expect(inline).toMatch(/const toggleHistory = \(\): void => \{\s*if \(historyOpen\.value\) \{\s*closeHistory\(\)/)
-    expect(inline).toMatch(/const toggleMemory = \(\): void => \{\s*if \(memoryOpen\.value\) \{\s*closeMemory\(\)/)
+    expect(inline).toMatch(/if \(panelMode\.value !== 'wide'\) memoryOpen\.value = false/)
+    expect(inline).toMatch(/if \(panelMode\.value !== 'wide'\) historyOpen\.value = false/)
     expect(inline).toMatch(
-      /watch\(\[historyOpen, memoryOpen, compactPanels\], async \(\[history, memory, compact\]\) => \{[\s\S]*if \(!kind \|\| !compact\) \{\s*panelFocusScope\?\.deactivate\(\{ restoreFocus: false \}\)[\s\S]*return/
+      /const reconcilePanelMode = \(\): void => \{[\s\S]*panelMode\.value === 'wide' && nextMode !== 'wide'[\s\S]*document\.activeElement[\s\S]*memoryPanel\.value\?\.contains\(activeElement\)[\s\S]*historyPanel\.value\?\.contains\(activeElement\)[\s\S]*if \(focusedPanel === 'memory'\) historyOpen\.value = false[\s\S]*else memoryOpen\.value = false/
     )
+    expect(inline).toMatch(/watch\(\[historyOpen, memoryOpen, panelMode\], async \(\[history, memory, mode\]\) => \{[\s\S]*if \(!kind \|\| mode !== 'modal'\)/)
     expect(inline).toMatch(
       /watch\(\[historyOpen, memoryOpen\],[\s\S]*const restoreKind = pendingPanelFocusKind[\s\S]*triggerForPanel\(restoreKind\)\?\.focus\(\{ preventScroll: true \}\)[\s\S]*\{ flush: 'post' \}/
     )

@@ -70,7 +70,7 @@
               required
             )
               template(v-slot:append-inner)
-                v-btn(
+                v-btn.auth-password-toggle(
                   icon
                   type='button'
                   variant='text'
@@ -166,7 +166,7 @@
               required
               )
               template(v-slot:append-inner)
-                v-btn(icon type='button' variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
+                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
                   v-icon(:icon='hideNewPassword ? `mdi-eye-off` : `mdi-eye`')
               template(v-slot:loader)
                 password-strength(v-model='newPassword')
@@ -185,7 +185,7 @@
               required
               )
               template(v-slot:append-inner)
-                v-btn(icon type='button' variant='text' size='small' :aria-label='hideNewPasswordVerify ? `Show password` : `Hide password`' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
+                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideNewPasswordVerify ? `Show password` : `Hide password`' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
                   v-icon(:icon='hideNewPasswordVerify ? `mdi-eye-off` : `mdi-eye`')
             v-btn.mt-2.text-none(
               width='100%'
@@ -213,7 +213,7 @@
               required
               )
               template(v-slot:append-inner)
-                v-btn(icon type='button' variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
+                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
                   v-icon(:icon='hideNewPassword ? `mdi-eye-off` : `mdi-eye`')
               template(v-slot:loader)
                 password-strength(v-model='newPassword')
@@ -232,7 +232,7 @@
               required
               )
               template(v-slot:append-inner)
-                v-btn(icon type='button' variant='text' size='small' :aria-label='hideNewPasswordVerify ? `Show password` : `Hide password`' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
+                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideNewPasswordVerify ? `Show password` : `Hide password`' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
                   v-icon(:icon='hideNewPasswordVerify ? `mdi-eye-off` : `mdi-eye`')
             v-btn.mt-2.text-none(
               width='100%'
@@ -725,6 +725,13 @@ export default {
 </script>
 
 <style lang="scss">
+.auth-password-toggle {
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  min-height: 44px !important;
+  padding: 0;
+}
 .login {
   position: relative;
   display: flex;
@@ -1051,6 +1058,10 @@ export default {
       .v-field__input {
         min-height: var(--wiki-control-height);
         padding-block: var(--wiki-space-2);
+      }
+
+      .v-input:not(.v-input--error) .v-input__details {
+        display: none;
       }
 
       > .text-center {

@@ -1,6 +1,6 @@
 <template lang="pug">
   v-dialog(v-model='isShown', max-width='650', persistent, :fullscreen='$vuetify.display.smAndDown')
-    v-card
+    v-card.admin-dialog--scrollable
       .dialog-header.is-short
         v-icon.mr-3 mdi-plus
         span New User
@@ -8,7 +8,7 @@
         v-btn.mx-0(v-if='$vuetify.display.mdAndUp', variant="outlined", disabled, aria-label='Bulk import unavailable')
           v-icon(start) mdi-database-import
           span Bulk Import unavailable
-      v-card-text.pt-5
+      v-card-text.pt-5.admin-dialog--scrollable__body
         v-alert.mb-4(v-if='providerLoadError', type='error', variant='tonal', density='compact')
           span {{providerLoadError}}
           template(v-slot:append)

@@ -61,7 +61,7 @@
   font-weight: 700;
 }
 
-.v-application a:not(.v-btn):not(.v-list-item):not(.v-tab):not(.v-chip) {
+.v-application a:not(:where(.v-btn, .v-list-item, .v-tab, .v-chip)) {
   color: rgb(var(--v-theme-primary));
   text-decoration-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 42%, transparent);
   text-decoration-thickness: .08em;

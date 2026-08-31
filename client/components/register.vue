@@ -64,7 +64,7 @@
                       required
                     )
                       template(v-slot:append-inner)
-                        v-btn(icon type='button' variant='text' size='small' :aria-label='hidePassword ? `Show password` : `Hide password`' @click='hidePassword = !hidePassword')
+                        v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hidePassword ? `Show password` : `Hide password`' @click='hidePassword = !hidePassword')
                           v-icon(:icon='hidePassword ? `mdi-eye-off` : `mdi-eye`')
                       template(v-slot:loader)
                         password-strength(v-model='password')
@@ -83,7 +83,7 @@
                       required
                     )
                       template(v-slot:append-inner)
-                        v-btn(icon type='button' variant='text' size='small' :aria-label='hideVerifyPassword ? `Show password` : `Hide password`' @click='hideVerifyPassword = !hideVerifyPassword')
+                        v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideVerifyPassword ? `Show password` : `Hide password`' @click='hideVerifyPassword = !hideVerifyPassword')
                           v-icon(:icon='hideVerifyPassword ? `mdi-eye-off` : `mdi-eye`')
                     v-text-field.mt-2(
                       variant="outlined"
@@ -275,6 +275,13 @@ export default {
 </script>
 
 <style lang="scss">
+.auth-password-toggle {
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  min-height: 44px !important;
+  padding: 0;
+}
 .register {
   position: relative;
   min-height: 100vh;

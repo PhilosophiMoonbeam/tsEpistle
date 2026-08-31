@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-container(fluid)
+  v-container.admin-pages(fluid)
     v-row
       v-col(cols='12')
         .admin-header
@@ -15,11 +15,11 @@
             span(v-if='$vuetify.display.mdAndUp') Visualize
         v-card.mt-3.animated.fadeInUp
           .admin-filter-bar.pa-2.d-flex.align-center
-            v-text-field(variant="solo" flat v-model='search' prepend-inner-icon='mdi-file-search-outline' label='Search pages' hide-details density="compact")
+            v-text-field.admin-pages-filter-search(variant="solo" flat v-model='search' prepend-inner-icon='mdi-file-search-outline' label='Search pages' hide-details density="compact")
             v-spacer
-            v-select(variant="solo" flat hide-details density="compact" label='Locale' :items='langs' item-title='text' v-model='selectedLang')
-            v-select(variant="solo" flat hide-details density="compact" label='Publish state' :items='states' item-title='text' v-model='selectedState')
-            v-btn(v-if='hasActiveFilters' variant='text' size='small' color='primary' @click='clearFilters') Clear filters
+            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Locale' :items='langs' item-title='text' v-model='selectedLang')
+            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Publish state' :items='states' item-title='text' v-model='selectedState')
+            v-btn.admin-pages-filter-clear(v-if='hasActiveFilters' variant='text' size='small' color='primary' @click='clearFilters') Clear filters
           v-alert(v-if='errorMessage && pages.length' type='error' variant='tonal' class='ma-3')
             .d-flex.align-center
               span {{ errorMessage }}
@@ -44,7 +44,7 @@
                 td.text-end {{ props.item.id }}
                 td
                   router-link.admin-record-link(:to='`/pages/${props.item.id}`') {{ props.item.title }}
-                  .text-body-small {{ props.item.description }}
+                  .admin-pages-description {{ props.item.description }}
                 td.admin-pages-path
                   v-chip(label size="small" color='primary' variant='tonal') {{ props.item.locale }}
                   span.ms-2.text-medium-emphasis /{{ props.item.path }}
@@ -56,7 +56,7 @@
                 td(:colspan='responsiveHeaders.length')
                   .admin-mobile-record
                     router-link.admin-mobile-record-title(:to='`/pages/${props.item.id}`') {{ props.item.title }}
-                    .text-body-small.text-medium-emphasis {{ props.item.description }}
+                    .admin-pages-description.text-body-small.text-medium-emphasis {{ props.item.description }}
                     .admin-mobile-record-meta
                       v-chip.me-2(label size="x-small" color='primary' variant='tonal') {{ props.item.locale }}
                       span /{{ props.item.path }}
@@ -167,5 +167,50 @@ export default {
   justify-content: flex-start;
   align-items: center;
   font-family: 'Roboto Mono', monospace;
+}
+
+.v-application.admin .admin-main > .v-container.admin-pages .admin-filter-bar {
+  display: grid !important;
+  grid-template-columns: minmax(14rem, 2fr) minmax(10rem, 1fr) minmax(10rem, 1fr) auto;
+  align-items: center;
+
+  > .v-spacer {
+    display: none;
+  }
+
+  > .v-input {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    margin-inline-start: 0 !important;
+  }
+}
+
+@media (min-width: 600px) and (max-width: 1199px) {
+  .v-application.admin .admin-main > .v-container.admin-pages .admin-filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+
+    > .admin-pages-filter-search,
+    > .admin-pages-filter-clear {
+      grid-column: 1 / -1;
+    }
+
+    > .admin-pages-filter-clear {
+      justify-self: start;
+    }
+  }
+}
+
+@media (max-width: 599px) {
+  .v-application.admin .admin-main > .v-container.admin-pages .admin-filter-bar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .v-application.admin .admin-main > .v-container.admin-pages .admin-pages-description {
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
 }
 </style>

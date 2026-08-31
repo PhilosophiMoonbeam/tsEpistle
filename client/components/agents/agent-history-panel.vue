@@ -787,6 +787,13 @@ onBeforeUnmount(() => {
 .agent-history__folder-row { align-items: stretch; display: flex; }
 .agent-history__folder-row .agent-history__folder-title { flex: 1; min-width: 0; }
 .agent-history__folder-actions { align-self: center; flex: 0 0 auto; margin-inline-end: var(--wiki-space-1); }
+
+@media (pointer: coarse) {
+  .agent-history__folder-actions {
+    min-width: var(--wiki-control-height) !important;
+    min-height: var(--wiki-control-height) !important;
+  }
+}
 @media (max-width: 1199.98px) {
   .agent-history {
     border-radius: 0 !important;

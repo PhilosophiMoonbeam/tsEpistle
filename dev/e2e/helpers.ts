@@ -13,15 +13,17 @@ export async function authenticateAsAdmin(page: Page) {
     }
   })
   expect(response.ok()).toBe(true)
-  const payload = await response.json() as { jwt?: string }
+  const payload = (await response.json()) as { jwt?: string }
   if (!payload.jwt) throw new Error('Administrator login did not return a JWT')
   const baseUrl = base.info().project.use.baseURL
   if (typeof baseUrl !== 'string') throw new Error('Playwright base URL is unavailable.')
-  await page.context().addCookies([{
-    name: 'jwt',
-    value: payload.jwt,
-    url: new URL(response.url(), baseUrl).origin
-  }])
+  await page.context().addCookies([
+    {
+      name: 'jwt',
+      value: payload.jwt,
+      url: new URL(response.url(), baseUrl).origin
+    }
+  ])
 }
 
 export async function openAuthenticatedPage(page: Page, path: string, readySelector: string) {
@@ -38,9 +40,12 @@ export async function openAuthenticatedPage(page: Page, path: string, readySelec
 }
 
 export async function openSearch(page: Page) {
-  const search = page.getByRole('textbox', { name: /search/i }).first()
-  if (!await search.isVisible()) {
-    await page.getByRole('button', { name: /^search/i }).click()
+  const search = page.getByRole('combobox', { name: /search/i }).first()
+  if (!(await search.isVisible())) {
+    await page
+      .getByRole('button', { name: /search/i })
+      .first()
+      .click()
   }
   await expect(search).toBeVisible()
   await search.focus()
@@ -49,13 +54,16 @@ export async function openSearch(page: Page) {
 
 export async function expectLocatorWithinViewport(locator: Locator, surface: string) {
   await expect(locator, `${surface} must be visible`).toBeVisible()
-  await expect.poll(async () => locator.evaluate(element => {
-    const rect = element.getBoundingClientRect()
-    return rect.left >= -1
-      && rect.top >= -1
-      && rect.right <= window.innerWidth + 1
-      && rect.bottom <= window.innerHeight + 1
-  }), `${surface} must fit inside the viewport`).toBe(true)
+  await expect
+    .poll(
+      async () =>
+        locator.evaluate(element => {
+          const rect = element.getBoundingClientRect()
+          return rect.left >= -1 && rect.top >= -1 && rect.right <= window.innerWidth + 1 && rect.bottom <= window.innerHeight + 1
+        }),
+      `${surface} must fit inside the viewport`
+    )
+    .toBe(true)
 }
 
 export async function expectResponsiveLayout(page: Page, surface: string) {
@@ -74,33 +82,32 @@ export async function expectResponsiveLayout(page: Page, surface: string) {
   const report = await page.evaluate(() => {
     const viewportWidth = window.innerWidth
     const documentWidth = document.documentElement.scrollWidth
-    const candidates = Array.from(document.querySelectorAll<HTMLElement>([
-      'a[href]',
-      'button',
-      'input',
-      'select',
-      'textarea',
-      '[role="button"]',
-      '[role="dialog"]',
-      '[role="region"]',
-      '[tabindex]:not([tabindex="-1"])',
-      'header',
-      'main',
-      'footer'
-    ].join(',')))
+    const candidates = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        [
+          'a[href]',
+          'button',
+          'input',
+          'select',
+          'textarea',
+          '[role="button"]',
+          '[role="dialog"]',
+          '[role="region"]',
+          '[tabindex]:not([tabindex="-1"])',
+          'header',
+          'main',
+          'footer'
+        ].join(',')
+      )
+    )
 
     const isVisible = (element: HTMLElement) => {
       const style = window.getComputedStyle(element)
       const rect = element.getBoundingClientRect()
-      return style.display !== 'none'
-        && style.visibility !== 'hidden'
-        && Number(style.opacity) !== 0
-        && rect.width > 0
-        && rect.height > 0
+      return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0
     }
-    const isInInactiveLayer = (element: HTMLElement) => Boolean(element.closest(
-      '.v-navigation-drawer:not(.v-navigation-drawer--active), .v-overlay:not(.v-overlay--active), [aria-hidden="true"]'
-    ))
+    const isInInactiveLayer = (element: HTMLElement) =>
+      Boolean(element.closest('.v-navigation-drawer:not(.v-navigation-drawer--active), .v-overlay:not(.v-overlay--active), [aria-hidden="true"]'))
     const isInHorizontalScroller = (element: HTMLElement) => {
       for (let parent = element.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
         const style = window.getComputedStyle(parent)
@@ -125,10 +132,9 @@ export async function expectResponsiveLayout(page: Page, surface: string) {
     return { documentWidth, offscreen, viewportWidth }
   })
 
-  expect(
-    report.documentWidth,
-    `${surface} document width ${report.documentWidth}px exceeds its ${report.viewportWidth}px viewport`
-  ).toBeLessThanOrEqual(report.viewportWidth + 1)
+  expect(report.documentWidth, `${surface} document width ${report.documentWidth}px exceeds its ${report.viewportWidth}px viewport`).toBeLessThanOrEqual(
+    report.viewportWidth + 1
+  )
   expect(report.offscreen, `${surface} has horizontally clipped visible controls or landmarks`).toEqual([])
 }
 
@@ -137,14 +143,17 @@ type ResponsiveFixtures = {
 }
 
 export const responsiveTest = base.extend<ResponsiveFixtures>({
-  pageErrors: [async ({ page }, use) => {
-    const errors: string[] = []
-    page.on('pageerror', error => {
-      if (error.message !== 'ResizeObserver loop completed with undelivered notifications.') {
-        errors.push(error.message)
-      }
-    })
-    await use(errors)
-    expect(errors, 'The responsive surface raised uncaught browser errors').toEqual([])
-  }, { auto: true }]
+  pageErrors: [
+    async ({ page }, use) => {
+      const errors: string[] = []
+      page.on('pageerror', error => {
+        if (error.message !== 'ResizeObserver loop completed with undelivered notifications.') {
+          errors.push(error.message)
+        }
+      })
+      await use(errors)
+      expect(errors, 'The responsive surface raised uncaught browser errors').toEqual([])
+    },
+    { auto: true }
+  ]
 })

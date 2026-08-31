@@ -157,6 +157,7 @@
 </template>
 <script lang='ts'>
 import _ from 'lodash'
+import AsyncState from '@/components/common/async-state.vue'
 
 import { fetchLocales, fetchLocaleConfig, saveLocaleConfig, downloadLocale, type LocaleRow } from '../../helpers/locales-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
@@ -167,6 +168,7 @@ type LocaleTableRow = LocaleRow & {
 }
 
 export default {
+  components: { AsyncState },
   data() {
     return {
       loading: false,

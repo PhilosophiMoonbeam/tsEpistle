@@ -72,6 +72,8 @@
         :page-locale='currentPageLocale'
         :page-path='currentPagePath'
         :page-updated-at='currentPageUpdatedAt'
+        @return-search='returnToSearch'
+        @close='closeSearch'
       )
       .search-results-search(v-else)
         .search-results-instructions.sr-only#wiki-search-instructions Use Arrow Up and Down to move through results, Enter to open a result, and Escape to close search.
@@ -680,8 +682,11 @@ export default defineComponent({
     radial-gradient(ellipse 52rem 28rem at 50% -10rem, color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent), transparent),
     color-mix(in srgb, rgb(var(--v-theme-background)) 92%, transparent);
   box-sizing: border-box;
-  height: calc(100dvh - var(--v-layout-top, 72px));
-  inset: var(--v-layout-top, 72px) 0 0;
+  height: 100dvh;
+  inset: 0;
+  &:not(.search-results--ask) {
+    padding-top: var(--v-layout-top, 72px);
+  }
   overflow-x: hidden;
   overflow-y: auto;
   position: fixed;
@@ -699,8 +704,6 @@ export default defineComponent({
         color-mix(in srgb, var(--wiki-ambient-accent) 5%, rgb(var(--v-theme-background))),
         rgb(var(--v-theme-background))
       );
-    height: 100dvh;
-    inset: 0;
     overflow: hidden;
     isolation: isolate;
     z-index: 1009;
@@ -720,17 +723,19 @@ export default defineComponent({
       flex-direction: column;
       height: 100%;
       max-width: none;
-      padding: max(0px, env(safe-area-inset-top)) clamp(var(--wiki-space-3), 2vw, var(--wiki-space-6)) max(var(--wiki-space-3), env(safe-area-inset-bottom));
+      padding: 0 clamp(var(--wiki-space-3), 2vw, var(--wiki-space-6));
     }
   }
 
   &-agent-nav {
     align-items: center;
+    box-sizing: border-box;
     color: var(--search-overlay-ink);
     display: grid;
     flex: 0 0 auto;
     grid-template-columns: 1fr auto 1fr;
-    min-height: calc(var(--wiki-control-height) + var(--wiki-space-8));
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-8) + max(0px, env(safe-area-inset-top)));
+    padding-block-start: max(0px, env(safe-area-inset-top));
     width: min(72rem, 100%);
   }
 
@@ -1063,15 +1068,18 @@ export default defineComponent({
 
   @media #{map-get($display-breakpoints, 'sm-and-down')} {
     &:not(.search-results--ask) {
-      height: auto;
-      top: calc(var(--v-layout-top, 72px) + 48px);
+      --search-mobile-app-bar-extension-height: 48px;
+      padding-top: calc(var(--v-layout-top, 72px) + var(--search-mobile-app-bar-extension-height));
     }
     &-container { padding-inline: var(--wiki-space-2); }
-    &-container--ask { padding: max(0px, env(safe-area-inset-top)) 0 max(0px, env(safe-area-inset-bottom)); }
-    &-agent-nav { min-height: calc(var(--wiki-control-height) + var(--wiki-space-6)); padding-inline: var(--wiki-space-2); }
+    &-container--ask { padding: 0 var(--wiki-space-2); }
+    &-agent-nav { min-height: calc(var(--wiki-control-height) + var(--wiki-space-6) + max(0px, env(safe-area-inset-top))); padding-inline: var(--wiki-space-2); }
     &-scope { align-items: flex-start; flex-direction: column; gap: var(--wiki-space-3); }
     &-scope-actions { justify-content: flex-start; }
     &-content { padding: var(--wiki-space-3); }
+  }
+  @media (max-width: 639.98px) {
+    &--ask .search-results-agent-nav { display: none; }
   }
 
   @media (max-width: 599.98px) {

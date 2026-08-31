@@ -72,7 +72,13 @@ const renderMarkdown = (): string => renderSafeMarkdown(
   .replace(/<\/table>/g, '</table></div>')
   .replace(
     /<a(?=[^>]*\btarget=["']_blank["'])([^>]*)>/g,
-    '<a$1><span class="agent-markdown__new-window"> (opens in a new tab)</span>'
+    (_match, attributes: string) => {
+      const citationTitle = attributes.match(/\btitle=(["'])(Citation [^"']+)\1/)
+      const ariaLabel = citationTitle && !/\baria-label=/i.test(attributes)
+        ? ` aria-label=${citationTitle[1]}${citationTitle[2]} (opens in a new tab)${citationTitle[1]}`
+        : ''
+      return `<a${attributes}${ariaLabel}><span class="agent-markdown__new-window"> (opens in a new tab)</span>`
+    }
   )
 
 const focusableElements = (root: HTMLElement): readonly HTMLElement[] => [
@@ -550,6 +556,12 @@ onBeforeUnmount(() => {
   .agent-markdown :deep(.agent-markdown__code-toolbar),
   .agent-markdown :deep(.agent-markdown__copy) {
     min-height: var(--wiki-control-height);
+  }
+
+  .agent-markdown :deep(a[title^='Citation ']) {
+    min-width: 28px;
+    min-height: 28px;
+    margin-inline: var(--wiki-space-2);
   }
 }
 

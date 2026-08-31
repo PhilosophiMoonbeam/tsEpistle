@@ -38,7 +38,7 @@
 
     v-main.page-main(ref='content')
       template(v-if='path !== `home`')
-        v-toolbar.page-breadcrumb-bar(color='surface', flat, density="compact", v-if='$vuetify.display.smAndUp')
+        v-toolbar.page-breadcrumb-bar(color='surface', flat, density="compact")
           //- v-btn.pl-0(v-if='$vuetify.display.xsOnly', variant='flat', @click='toggleNavigation')
           //-   v-icon(color='grey-darken-2', start) menu
           v-breadcrumbs.breadcrumbs-nav.pl-0(
@@ -111,7 +111,7 @@
             cols='12'
             :lg='tocPosition !== `off` ? 3 : 12'
             :xl='tocPosition !== `off` ? 2 : 12'
-            :class='tocPosition === `right` ? `order-lg-2` : `order-lg-1`'
+            :class='tocPosition === `right` ? `order-2 order-lg-2` : `order-2 order-lg-1`'
             )
             v-card.page-toc-card.mb-5(v-if='tocFlattened.length')
               .text-label-small.pa-5.pb-2.text-primary {{$t('common:page.toc')}}
@@ -410,9 +410,9 @@
             cols='12'
             :lg='tocPosition !== `off` ? 9 : 12'
             :xl='tocPosition !== `off` ? 10 : 12'
-            :class='tocPosition === `right` ? `order-lg-1` : `order-lg-2`'
+            :class='tocPosition === `right` ? `order-1 order-lg-1` : `order-1 order-lg-2`'
             )
-            v-tooltip(location='start', v-if='hasAnyPagePermissions && editShortcutsObj.editFab')
+            v-tooltip(location='start', v-if='hasAnyPagePermissions && editShortcutsObj.editFab && !$vuetify.display.smAndDown')
               template(v-slot:activator='{ props: tooltipProps }')
                 v-speed-dial(
                   v-model='pageEditFab'
@@ -2735,7 +2735,38 @@ export default defineComponent({
 
 @media (max-width: 599px) {
   .page-breadcrumb-bar {
+    min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  }
+
+  .page-breadcrumb-bar .v-toolbar__content {
+    gap: var(--wiki-space-2);
+    overflow: hidden;
+    padding-inline: var(--wiki-space-2);
+  }
+
+  .page-breadcrumb-bar .breadcrumbs-nav {
+    flex: 1 1 auto;
+    overflow-x: auto;
+    overflow-inline: auto;
+    white-space: nowrap;
+  }
+
+  .page-breadcrumb-bar .breadcrumbs-nav .v-breadcrumbs__list {
+    flex-wrap: nowrap;
+  }
+
+  .page-breadcrumb-bar .v-spacer,
+  .page-breadcrumb-bar .text-warning,
+  .page-breadcrumb-bar .status-indicator {
+    flex: 0 0 auto;
+  }
+
+  .page-breadcrumb-bar .v-spacer {
     display: none;
+  }
+
+  .breadcrumbs-nav {
+    font-size: .75rem;
   }
 
   .page-hero,
