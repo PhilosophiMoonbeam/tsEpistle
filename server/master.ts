@@ -137,6 +137,13 @@ interface MasterWiki extends Record<string, unknown> {
   config: MasterConfig
   lang: { attachMiddleware(app: Express): void }
   mail: unknown
+  data: {
+    searchEngine?: {
+      key: string
+      reconcilePage(pageId: number): Promise<void>
+      removePage(pageId: number): Promise<void>
+    }
+  }
   events: {
     outbound: {
       emit(event: string, ...args: unknown[]): boolean
@@ -351,6 +358,16 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       })
       await wiki.models.pages.deletePageFromCache(hash)
       wiki.events.outbound.emit('deletePageFromCache', hash)
+    },
+    async reconcileSearchPage(pageId): Promise<void> {
+      const searchEngine = wiki.data.searchEngine
+      if (!searchEngine || searchEngine.key !== 'postgres') throw new Error('The active PostgreSQL search engine is unavailable')
+      await searchEngine.reconcilePage(pageId)
+    },
+    async removeSearchPage(pageId): Promise<void> {
+      const searchEngine = wiki.data.searchEngine
+      if (!searchEngine || searchEngine.key !== 'postgres') throw new Error('The active PostgreSQL search engine is unavailable')
+      await searchEngine.removePage(pageId)
     }
   })
   let agentTimer: NodeJS.Timeout | undefined

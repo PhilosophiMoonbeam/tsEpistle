@@ -3,6 +3,54 @@ describe('page search visibility', () => {
     vi.resetModules()
   })
 
+  const installPrivateSearchWiki = ({ rankRows, pages, isManager = false, publicResponse } = {}) => {
+    const pathScope = {
+      where: vi.fn().mockReturnThis(),
+      orWhere: vi.fn().mockReturnThis()
+    }
+    const whereBuilder = {
+      whereIn: vi.fn().mockReturnThis(),
+      andWhere: vi.fn(value => {
+        if (typeof value === 'function') value(pathScope)
+        return whereBuilder
+      })
+    }
+    const tagBuilder = {
+      select: vi.fn().mockReturnThis()
+    }
+    const pageQuery = {
+      column: vi.fn().mockReturnThis(),
+      withGraphJoined: vi.fn().mockReturnThis(),
+      modifyGraph: vi.fn((_relation, callback) => {
+        callback(tagBuilder)
+        return pageQuery
+      }),
+      modify: vi.fn(callback => {
+        callback(whereBuilder)
+        return Promise.resolve(pages ?? [])
+      })
+    }
+    const knex = vi.fn().mockResolvedValue([])
+    knex.raw = vi.fn().mockResolvedValue({ rows: rankRows ?? [] })
+    const searchEngine = {
+      query: vi.fn().mockResolvedValue(publicResponse ?? { results: [], suggestions: [], totalHits: 0 })
+    }
+    global.WIKI = {
+      auth: {
+        checkAccess: vi.fn((_requester, permissions) =>
+          permissions.includes('manage:system') ? isManager : true
+        )
+      },
+      config: { db: { type: 'postgres' }, lang: { code: 'en' }, search: { maxHits: 100 } },
+      data: { searchEngine },
+      models: {
+        knex,
+        pages: { query: vi.fn().mockReturnValue(pageQuery) }
+      }
+    }
+    return { knex, pageQuery, pathScope, searchEngine, tagBuilder, whereBuilder }
+  }
+
   it('propagates the original provider query failure', async () => {
     const failure = new Error('provider query failed')
     const query = vi.fn().mockRejectedValue(failure)
@@ -177,106 +225,133 @@ describe('page search visibility', () => {
     })
   })
 
-  it('matches caller-owned private pages by locale-scoped path and tag', async () => {
-    const nested = {
-      where: vi.fn().mockReturnThis(),
-      orWhere: vi.fn().mockReturnThis()
-    }
-    const whereBuilder = {
-      where: vi.fn().mockReturnThis(),
-      andWhere: vi.fn(value => {
-        if (typeof value === 'function') value(nested)
-        return whereBuilder
-      })
-    }
-    const privateQuery = {
-      column: vi.fn().mockReturnThis(),
-      withGraphJoined: vi.fn().mockReturnThis(),
-      modifyGraph: vi.fn().mockReturnThis(),
-      modify: vi.fn(callback => {
-        callback(whereBuilder)
-        return privateQuery
-      }),
-      limit: vi.fn(async () => [{
+  it('treats private query and path wildcards literally before hydrating complete tags', async () => {
+    const pages = [
+      {
         id: 21,
         locale: 'en',
         localeCode: 'en',
-        path: 'private/runbook',
-        title: 'Personal Notes',
+        path: 'teams/%_\\root/entry',
+        title: '50%_\\Draft',
         description: '',
         visibility: 'private',
         ownerId: 7,
-        tags: [{ tag: 'runbook' }]
-      }])
-    }
-    const searchEngine = {
-      query: vi.fn().mockResolvedValue({ results: [], suggestions: [], totalHits: 0 })
-    }
-    global.WIKI = {
-      auth: { checkAccess: vi.fn((_requester, permissions) => !permissions.includes('manage:system')) },
-      config: { db: { type: 'postgres' }, lang: { code: 'en' }, search: { maxHits: 100 } },
-      data: { searchEngine },
-      models: {
-        knex: vi.fn().mockResolvedValue([]),
-        pages: { query: vi.fn().mockReturnValue(privateQuery) }
+        tags: [{ tag: 'release' }, { tag: '50%_\\draft' }]
       }
-    }
+    ]
+    const { knex, pageQuery, pathScope, searchEngine, tagBuilder, whereBuilder } = installPrivateSearchWiki({
+      rankRows: [{ id: 21, score: 17 }],
+      pages
+    })
 
     const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     const response = await operations.search({
       requester: { id: 7 },
-      query: 'runbook',
+      query: '50%_\\draft',
       locale: 'en',
-      path: 'private'
+      path: 'teams/%_\\root'
     })
 
     expect(response).toMatchObject({
-      results: [{ id: 21, visibility: 'private', tags: ['runbook'], matchedFields: ['tag', 'path'] }],
+      results: [{
+        id: 21,
+        visibility: 'private',
+        tags: ['50%_\\draft', 'release'],
+        score: 17,
+        matchedFields: ['title', 'tag']
+      }],
       totalHits: 1,
       windowLimit: 150,
       windowTruncated: false
     })
-    expect(whereBuilder.andWhere).toHaveBeenCalledWith('localeCode', 'en')
-    expect(nested.orWhere).toHaveBeenCalledWith('tags.tag', 'ILIKE', '%runbook%')
-    expect(whereBuilder.andWhere).toHaveBeenCalledWith('ownerId', 7)
-    expect(searchEngine.query).toHaveBeenCalledWith('runbook', expect.objectContaining({ locale: 'en', path: 'private' }))
+    const [sql, bindings] = knex.raw.mock.calls[0]
+    expect(sql).toContain("page.title ILIKE input.contains_query ESCAPE '\\'")
+    expect(sql).toContain("tag.tag ILIKE input.contains_query ESCAPE '\\'")
+    expect(sql).toContain("(page.path = ? OR page.path LIKE ? ESCAPE '\\')")
+    expect(sql).toContain('page."ownerId" = ?')
+    expect(sql).toContain('page."localeCode" = ?')
+    expect(bindings).toEqual([
+      '50\\%\\_\\\\draft',
+      '50\\%\\_\\\\draft%',
+      '%50\\%\\_\\\\draft%',
+      7,
+      'en',
+      'teams/%_\\root',
+      'teams/\\%\\_\\\\root/%',
+      50
+    ])
+    expect(whereBuilder.whereIn).toHaveBeenCalledWith('pages.id', [21])
+    expect(whereBuilder.andWhere).toHaveBeenCalledWith('pages.visibility', 'private')
+    expect(whereBuilder.andWhere).toHaveBeenCalledWith('pages.ownerId', 7)
+    expect(whereBuilder.andWhere).toHaveBeenCalledWith('pages.localeCode', 'en')
+    expect(pathScope.where).toHaveBeenCalledWith('pages.path', 'teams/%_\\root')
+    expect(pathScope.orWhere).toHaveBeenCalledWith('pages.path', 'LIKE', 'teams/\\%\\_\\\\root/%')
+    expect(pageQuery.withGraphJoined).toHaveBeenCalledWith('tags')
+    expect(tagBuilder.select).toHaveBeenCalledWith('tag')
+    expect(searchEngine.query).toHaveBeenCalledWith(
+      '50%_\\draft',
+      expect.objectContaining({ locale: 'en', path: 'teams/%_\\root' })
+    )
   })
 
-  it('keeps unpublished private pages searchable for system managers', async () => {
-    const whereBuilder = {
-      where: vi.fn().mockReturnThis(),
-      andWhere: vi.fn().mockReturnThis()
-    }
-    const privateQuery = {
-      column: vi.fn().mockReturnThis(),
-      withGraphJoined: vi.fn().mockReturnThis(),
-      modifyGraph: vi.fn().mockReturnThis(),
-      modify: vi.fn(callback => {
-        callback(whereBuilder)
-        return privateQuery
-      }),
-      limit: vi.fn(async () => [{
-        id: 22,
+  it('selects a deterministic 50-page relevance window before hydrating unique pages', async () => {
+    const rankRows = Array.from({ length: 50 }, (_, index) => ({
+      id: index + 1,
+      score: index < 3 ? [10, 6, 1][index] : 0
+    }))
+    const pages = rankRows
+      .map(({ id }) => ({
+        id,
         locale: 'en',
         localeCode: 'en',
-        path: 'managed-private',
-        title: 'Managed Private Draft',
+        path: `private/page-${String(id).padStart(2, '0')}`,
+        title: id === 1 ? 'Runbook' : id === 2 ? 'Runbook Prefix' : id === 3 ? 'Content Fallback' : `Page ${id}`,
         description: '',
-        isPublished: false,
         visibility: 'private',
         ownerId: 7,
-        tags: []
-      }])
+        tags: id === 1 ? [{ tag: 'complete-a' }, { tag: 'complete-b' }] : []
+      }))
+      .reverse()
+    const { knex, pageQuery, whereBuilder } = installPrivateSearchWiki({ rankRows, pages })
+
+    const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
+    const response = await operations.search({ requester: { id: 7 }, query: 'runbook' })
+
+    expect(response.results).toHaveLength(50)
+    expect(response.results.slice(0, 3).map(result => result.id)).toEqual([1, 2, 3])
+    expect(response.results[0].tags).toEqual(['complete-a', 'complete-b'])
+    expect(new Set(response.results.map(result => result.id)).size).toBe(50)
+    expect(response.windowTruncated).toBe(true)
+    const [sql, bindings] = knex.raw.mock.calls[0]
+    expect(sql).toContain('LEFT JOIN LATERAL')
+    expect(sql).toContain('WHEN matched.title_exact THEN 10.0 WHEN matched.title_prefix THEN 6.0')
+    expect(sql).toContain('WHEN matched.tag_exact THEN 7.0 WHEN matched.tag_prefix THEN 3.0')
+    expect(sql).toContain('matched.content_contains AND NOT')
+    expect(sql).toContain('ORDER BY score DESC, title_order, path_order, id')
+    expect(sql).toContain('LIMIT ?')
+    expect(bindings.at(-1)).toBe(50)
+    expect(whereBuilder.whereIn).toHaveBeenCalledWith('pages.id', rankRows.map(row => row.id))
+    expect(pageQuery).not.toHaveProperty('limit')
+  })
+
+  it('lets system managers search every private owner without requiring publication', async () => {
+    const page = {
+      id: 22,
+      locale: 'en',
+      localeCode: 'en',
+      path: 'managed-private',
+      title: 'Managed Private Draft',
+      description: '',
+      isPublished: false,
+      visibility: 'private',
+      ownerId: 7,
+      tags: []
     }
-    global.WIKI = {
-      auth: { checkAccess: vi.fn((_requester, permissions) => permissions.includes('manage:system')) },
-      config: { db: { type: 'postgres' }, lang: { code: 'en' }, search: { maxHits: 100 } },
-      data: { searchEngine: { query: vi.fn().mockResolvedValue({ results: [], suggestions: [], totalHits: 0 }) } },
-      models: {
-        knex: vi.fn().mockResolvedValue([]),
-        pages: { query: vi.fn().mockReturnValue(privateQuery) }
-      }
-    }
+    const { knex, whereBuilder } = installPrivateSearchWiki({
+      rankRows: [{ id: 22, score: 6 }],
+      pages: [page],
+      isManager: true
+    })
 
     const { default: operations } = await vi.importFresh('../operations/pages.ts', import.meta.url)
     const response = await operations.search({ requester: { id: 2 }, query: 'draft' })
@@ -284,9 +359,12 @@ describe('page search visibility', () => {
     expect(response.results).toEqual([
       expect.objectContaining({ id: 22, visibility: 'private', title: 'Managed Private Draft' })
     ])
-    expect(whereBuilder.where).toHaveBeenCalledWith({ visibility: 'private' })
-    expect(whereBuilder.andWhere).not.toHaveBeenCalledWith('ownerId', expect.anything())
-    expect(whereBuilder.andWhere).not.toHaveBeenCalledWith('isPublished', expect.anything())
+    const [sql, bindings] = knex.raw.mock.calls[0]
+    expect(sql).toContain("page.visibility = 'private'")
+    expect(sql).not.toContain('page."ownerId" = ?')
+    expect(sql).not.toContain('page."isPublished"')
+    expect(bindings).toEqual(['draft', 'draft%', '%draft%', 50])
+    expect(whereBuilder.andWhere).not.toHaveBeenCalledWith('pages.ownerId', expect.anything())
   })
 
   it('upserts a public page only while it is published', async () => {
@@ -312,6 +390,7 @@ describe('page search visibility', () => {
     engine.config = { dictLanguage: 'english' }
     const page = {
       id: 41,
+      sourceRevision: '1',
       visibility: 'public',
       isPublished: false,
       path: 'unpublished-unique-path',
@@ -332,12 +411,14 @@ describe('page search visibility', () => {
     const upsert = transactionClient.raw.mock.calls.find(([statement]) => statement.includes('INSERT INTO "pagesVector"'))
     expect(upsert?.[1]).toEqual(expect.arrayContaining([
       41,
+      '1',
       'unpublished-unique-path',
       'Unpublished Unique Title',
       'unpublished-unique-description',
       ['unpublished-unique-tag'],
       'unpublished-unique-body'
     ]))
+    expect(upsert?.[1][1]).toBe('1')
 
     deletedTables.length = 0
     transactionClient.raw.mockClear()

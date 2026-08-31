@@ -128,6 +128,10 @@ interface SearchResult extends Record<string, unknown> {
 interface SearchResponse extends ProviderSearchResult {
   results: SearchResult[]
 }
+interface PrivateSearchRankRow {
+  id: number
+  score: number
+}
 interface WikiPageOperations {
   Error: {
     PageNotFound: new () => Error
@@ -766,6 +770,137 @@ const rankedSearchResult = (
     matchedFields
   }
 }
+const escapeLikePattern = (value: string): string => value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
+
+const searchPrivatePages = async ({
+  query,
+  locale,
+  path,
+  ownerId
+}: {
+  query: string
+  locale?: string
+  path?: string
+  ownerId?: number
+}): Promise<PageRecord[]> => {
+  const escapedQuery = escapeLikePattern(query)
+  const bindings: Knex.RawBinding[] = [escapedQuery, `${escapedQuery}%`, `%${escapedQuery}%`]
+  const filters = ["page.visibility = 'private'"]
+  if (ownerId !== undefined) {
+    filters.push('page."ownerId" = ?')
+    bindings.push(ownerId)
+  }
+  if (locale !== undefined) {
+    filters.push('page."localeCode" = ?')
+    bindings.push(locale)
+  }
+  if (path !== undefined) {
+    filters.push(`(page.path = ? OR page.path LIKE ? ESCAPE '\\')`)
+    bindings.push(path, `${escapeLikePattern(path)}/%`)
+  }
+  bindings.push(PRIVATE_SEARCH_WINDOW_LIMIT)
+  const ranked = await wiki.models.knex.raw<{ rows: PrivateSearchRankRow[] }>(
+    `
+      WITH query_input AS (
+        SELECT
+          ?::text AS exact_query,
+          ?::text AS prefix_query,
+          ?::text AS contains_query
+      ), matched AS MATERIALIZED (
+        SELECT
+          page.id,
+          lower(page.title) AS title_order,
+          lower(page.path) AS path_order,
+          page.title ILIKE input.exact_query ESCAPE '\\' AS title_exact,
+          page.title ILIKE input.prefix_query ESCAPE '\\' AS title_prefix,
+          page.title ILIKE input.contains_query ESCAPE '\\' AS title_contains,
+          page.path ILIKE input.exact_query ESCAPE '\\' AS path_exact,
+          page.path ILIKE input.prefix_query ESCAPE '\\' AS path_prefix,
+          page.path ILIKE input.contains_query ESCAPE '\\' AS path_contains,
+          page.description ILIKE input.exact_query ESCAPE '\\' AS description_exact,
+          page.description ILIKE input.prefix_query ESCAPE '\\' AS description_prefix,
+          page.description ILIKE input.contains_query ESCAPE '\\' AS description_contains,
+          page.content ILIKE input.contains_query ESCAPE '\\' AS content_contains,
+          coalesce(tag_matches.exact_match, false) AS tag_exact,
+          coalesce(tag_matches.prefix_match, false) AS tag_prefix,
+          coalesce(tag_matches.contains_match, false) AS tag_contains
+        FROM pages page
+        CROSS JOIN query_input input
+        LEFT JOIN LATERAL (
+          SELECT
+            bool_or(tag.tag ILIKE input.exact_query ESCAPE '\\') AS exact_match,
+            bool_or(tag.tag ILIKE input.prefix_query ESCAPE '\\') AS prefix_match,
+            bool_or(tag.tag ILIKE input.contains_query ESCAPE '\\') AS contains_match
+          FROM "pageTags" page_tag
+          JOIN tags tag ON tag.id = page_tag."tagId"
+          WHERE page_tag."pageId" = page.id
+        ) tag_matches ON true
+        WHERE ${filters.join('\n          AND ')}
+      ), ranked AS (
+        SELECT
+          matched.id,
+          matched.title_order,
+          matched.path_order,
+          (
+            CASE WHEN matched.title_exact THEN 10.0 WHEN matched.title_prefix THEN 6.0 WHEN matched.title_contains THEN 4.0 ELSE 0.0 END +
+            CASE WHEN matched.tag_exact THEN 7.0 WHEN matched.tag_prefix THEN 3.0 WHEN matched.tag_contains THEN 2.0 ELSE 0.0 END +
+            CASE WHEN matched.path_exact THEN 6.0 WHEN matched.path_prefix THEN 4.0 WHEN matched.path_contains THEN 3.0 ELSE 0.0 END +
+            CASE
+              WHEN matched.description_exact THEN 3.0
+              WHEN matched.description_prefix THEN 2.0
+              WHEN matched.description_contains THEN 1.5
+              ELSE 0.0
+            END +
+            CASE
+              WHEN matched.content_contains AND NOT (
+                matched.title_contains OR matched.tag_contains OR matched.path_contains OR matched.description_contains
+              ) THEN 1.0
+              ELSE 0.0
+            END
+          )::double precision AS score
+        FROM matched
+        WHERE
+          matched.title_contains OR
+          matched.tag_contains OR
+          matched.path_contains OR
+          matched.description_contains OR
+          matched.content_contains
+      )
+      SELECT id, score
+      FROM ranked
+      ORDER BY score DESC, title_order, path_order, id
+      LIMIT ?
+    `,
+    bindings
+  )
+  const rankById = new Map(ranked.rows.map(row => [row.id, row.score]))
+  const pageIds = [...rankById.keys()]
+  if (pageIds.length === 0) return []
+  const hydratedPages = await wiki.models.pages
+    .query()
+    .column(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'description', 'visibility', 'ownerId'])
+    .withGraphJoined('tags')
+    .modifyGraph('tags', builder => {
+      builder.select('tag')
+    })
+    .modify(builder => {
+      builder.whereIn('pages.id', pageIds)
+      builder.andWhere('pages.visibility', 'private')
+      if (ownerId !== undefined) builder.andWhere('pages.ownerId', ownerId)
+      if (locale !== undefined) builder.andWhere('pages.localeCode', locale)
+      if (path !== undefined) {
+        builder.andWhere(pathScope => {
+          pathScope.where('pages.path', path).orWhere('pages.path', 'LIKE', `${escapeLikePattern(path)}/%`)
+        })
+      }
+    })
+  const pagesById = new Map(hydratedPages.map(page => [page.id, page]))
+  return pageIds.flatMap(id => {
+    const page = pagesById.get(id)
+    const score = rankById.get(id)
+    return page === undefined || score === undefined ? [] : [{ ...page, score }]
+  })
+}
 
 const search = async (input: OperationInput) => {
   const requester = input.requester
@@ -782,34 +917,12 @@ const search = async (input: OperationInput) => {
   const canSearchPrivatePages = canSearchAllPrivatePages || privateOwnerId !== null
   const privatePages = !canSearchPrivatePages
     ? []
-    : await wiki.models.pages
-        .query()
-        .column(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'description', 'visibility', 'ownerId'])
-        .withGraphJoined('tags')
-        .modifyGraph('tags', builder => {
-          builder.select('tag')
-        })
-        .modify(builder => {
-          const operator = wiki.config.db.type === 'postgres' ? 'ILIKE' : 'LIKE'
-          const value = `%${query}%`
-          builder.where({ visibility: 'private' })
-          if (!canSearchAllPrivatePages) builder.andWhere('ownerId', privateOwnerId)
-          if (locale !== undefined) builder.andWhere('localeCode', locale)
-          if (path !== undefined) {
-            builder.andWhere(pathScope => {
-              pathScope.where('path', path).orWhere('path', 'LIKE', `${path}/%`)
-            })
-          }
-          builder.andWhere(match => {
-            match
-              .where('title', operator, value)
-              .orWhere('description', operator, value)
-              .orWhere('content', operator, value)
-              .orWhere('path', operator, value)
-              .orWhere('tags.tag', operator, value)
-          })
-        })
-        .limit(PRIVATE_SEARCH_WINDOW_LIMIT)
+    : await searchPrivatePages({
+        query,
+        ...(locale === undefined ? {} : { locale }),
+        ...(path === undefined ? {} : { path }),
+        ...(canSearchAllPrivatePages || privateOwnerId === null ? {} : { ownerId: privateOwnerId })
+      })
   let publicResponse: SearchResponse
   if (wiki.data.searchEngine) {
     publicResponse = await wiki.data.searchEngine.query(query, { query, ...args })

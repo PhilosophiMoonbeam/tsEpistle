@@ -46,6 +46,7 @@ interface PageTag {
 interface CanonicalSearchPageRow {
   description: string | null
   id: number
+  isProtected: boolean
   isPublished: boolean
   localeCode: string
   path: string
@@ -294,29 +295,38 @@ const sourceRevisionsAreCurrent = async (transaction: Knex.Transaction): Promise
   return result.rows[0]?.value === true
 }
 
+const canonicalPageSelection = `
+  SELECT
+    page.id,
+    page."sourceRevision",
+    page.path,
+    page."localeCode",
+    page.title,
+    page.description,
+    page.render,
+    page.visibility,
+    page."isPublished",
+    EXISTS (
+      SELECT 1
+      FROM "pageAccessPasswords" protection
+      WHERE protection."pageId" = page.id
+    ) AS "isProtected",
+    COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object('tag', tag.tag, 'title', tag.title)
+        ORDER BY tag.tag, tag.title
+      )
+      FROM "pageTags" page_tag
+      JOIN tags tag ON tag.id = page_tag."tagId"
+      WHERE page_tag."pageId" = page.id
+    ), '[]'::jsonb) AS tags
+  FROM pages page
+`
+
 const canonicalPageBatch = async (transaction: Knex.Transaction, pageIdCursor: number): Promise<CanonicalSearchPageRow[]> => {
   const result = await transaction.raw<PostgresRawResult<CanonicalSearchPageRow>>(
     `
-      SELECT
-        page.id,
-        page."sourceRevision",
-        page.path,
-        page."localeCode",
-        page.title,
-        page.description,
-        page.render,
-        page.visibility,
-        page."isPublished",
-        COALESCE((
-          SELECT jsonb_agg(
-            jsonb_build_object('tag', tag.tag, 'title', tag.title)
-            ORDER BY tag.tag, tag.title
-          )
-          FROM "pageTags" page_tag
-          JOIN tags tag ON tag.id = page_tag."tagId"
-          WHERE page_tag."pageId" = page.id
-        ), '[]'::jsonb) AS tags
-      FROM pages page
+      ${canonicalPageSelection}
       WHERE page.visibility = 'public'
         AND page."isPublished" = true
         AND page.id > ?
@@ -343,7 +353,7 @@ const rebuildSearchIndex = async (transaction: Knex.Transaction, dictionary: str
       const tags = Array.isArray(page.tags) ? page.tags : []
       await indexPage(transaction, dictionary, {
         ...page,
-        safeContent: pageModel.cleanHTML(page.render ?? ''),
+        safeContent: page.isProtected ? '' : pageModel.cleanHTML(page.render ?? ''),
         tags
       } as unknown as WikiPage)
     }
@@ -371,6 +381,31 @@ const removePage = async (knex: Knex, pageId: number): Promise<void> => {
   await knex.transaction(async transaction => {
     await transaction(WORDS_TABLE).where({ pageId }).delete()
     await transaction(VECTOR_TABLE).where({ pageId }).delete()
+  })
+}
+
+const reconcilePage = async (knex: Knex, dictionary: string, pageId: number): Promise<void> => {
+  const pageModel = wiki.models.pages as typeof wiki.models.pages & CanonicalPageModel
+  await knex.transaction(async transaction => {
+    const result = await transaction.raw<PostgresRawResult<CanonicalSearchPageRow>>(
+      `
+        ${canonicalPageSelection}
+        WHERE page.id = ?
+        FOR SHARE OF page
+      `,
+      [pageId]
+    )
+    const page = result.rows[0]
+    if (!page || page.visibility !== 'public' || page.isPublished !== true) {
+      await transaction(WORDS_TABLE).where({ pageId }).delete()
+      await transaction(VECTOR_TABLE).where({ pageId }).delete()
+      return
+    }
+    await indexPage(transaction, dictionary, {
+      ...page,
+      safeContent: page.isProtected ? '' : pageModel.cleanHTML(page.render ?? ''),
+      tags: Array.isArray(page.tags) ? page.tags : []
+    } as unknown as WikiPage)
   })
 }
 
@@ -678,7 +713,12 @@ const suggestionsFor = async (knex: Knex, query: string, pageIds: number[]): Pro
     .filter(suggestion => suggestion.toLocaleLowerCase() !== query.toLocaleLowerCase())
 }
 
-const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> = {
+interface PostgresProjectionSearchEngine {
+  reconcilePage(this: PostgresSearchContext, pageId: number): Promise<void>
+  removePage(this: PostgresSearchContext, pageId: number): Promise<void>
+}
+
+const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & PostgresProjectionSearchEngine = {
   async activate() {
     if (wiki.config.db.type !== 'postgres') {
       throw new wiki.Error.SearchActivationFailed('Must use PostgreSQL database to activate this engine!')
@@ -741,6 +781,14 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> = {
       path: page.destinationPath,
       localeCode: page.destinationLocaleCode
     })
+  },
+
+  async reconcilePage(pageId) {
+    await reconcilePage(getKnexClient(), this.config.dictLanguage, pageId)
+  },
+
+  async removePage(pageId) {
+    await removePage(getKnexClient(), pageId)
   },
 
   async rebuild() {

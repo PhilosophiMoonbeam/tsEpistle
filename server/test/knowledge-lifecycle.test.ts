@@ -258,11 +258,14 @@ describe('page knowledge lifecycle', () => {
     const lifecycle = new PageKnowledgeLifecycle(db, 'no-enricher-worker')
 
     await lifecycle.runOnce()
-    expect(await db('pageKnowledgeProjections').first('enrichmentState')).toEqual({ enrichmentState: 'unavailable' })
+    expect(await db('pageKnowledgeProjections').first('state', 'enrichmentState')).toEqual({
+      state: 'complete',
+      enrichmentState: 'unavailable'
+    })
     expect(await lifecycle.runOnce()).toMatchObject({ requeued: 0, processed: 0 })
   })
 
-  it('retries successful incomplete enrichment once when the active utility profile changes', async () => {
+  it('retries successful optional enrichment once when the active utility profile changes', async () => {
     const originalProfileVersionId = '00000000-0000-4000-8000-000000000001'
     const nextProfileVersionId = '00000000-0000-4000-8000-000000000003'
     await enableUtilityEnrichment()
@@ -275,7 +278,7 @@ describe('page knowledge lifecycle', () => {
     await lifecycle.runOnce()
     expect(enrichKnowledge).toHaveBeenCalledOnce()
     expect(await db('pageKnowledgeProjections').first('state', 'enrichmentState', 'utilityProfileVersionId')).toMatchObject({
-      state: 'partial',
+      state: 'complete',
       enrichmentState: 'succeeded',
       utilityProfileVersionId: originalProfileVersionId
     })
@@ -320,7 +323,7 @@ describe('page knowledge lifecycle', () => {
 
     expect(enrichKnowledge).toHaveBeenCalledOnce()
     expect(await db('pageKnowledgeProjections').first('state', 'enrichmentState', 'utilityModel')).toMatchObject({
-      state: 'partial',
+      state: 'complete',
       enrichmentState: 'superseded',
       utilityModel: null
     })
@@ -501,7 +504,7 @@ describe('page knowledge lifecycle', () => {
     }
   })
 
-  it('retains a partial deterministic projection when utility enrichment fails', async () => {
+  it('retains a complete deterministic projection when optional utility enrichment fails', async () => {
     const profileVersionId = '00000000-0000-4000-8000-000000000001'
     await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
     await db('agentProviderProfiles').insert({
@@ -523,7 +526,7 @@ describe('page knowledge lifecycle', () => {
     }).runOnce()
 
     expect(await db('pageKnowledgeProjections').first('state', 'enrichmentState', 'lastError')).toMatchObject({
-      state: 'partial',
+      state: 'complete',
       enrichmentState: 'failed',
       lastError: 'invalid utility output'
     })
@@ -546,7 +549,7 @@ describe('page knowledge lifecycle', () => {
     await new PageKnowledgeLifecycle(db, 'private-worker', { enrichKnowledge }).runOnce()
 
     expect(enrichKnowledge).not.toHaveBeenCalled()
-    expect(await db('pageKnowledgeProjections').first('state', 'enrichmentState')).toMatchObject({ state: 'partial', enrichmentState: 'withheld-private' })
+    expect(await db('pageKnowledgeProjections').first('state', 'enrichmentState')).toMatchObject({ state: 'complete', enrichmentState: 'withheld-private' })
   })
 
   it('treats SQL wildcard characters as literal knowledge search input', async () => {

@@ -229,7 +229,7 @@ class KnowledgeProjectionSink implements PageProjectionSink {
     }
 
     let projection = projectPageKnowledge(source)
-    let enrichmentState = projection.completeness.state === 'complete' ? 'not-needed' : 'unavailable'
+    let enrichmentState = projection.completeness.missingFields.length === 0 ? 'not-needed' : 'unavailable'
     let error: string | null = null
     const currentBeforeEnrichment = (await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision')) as
       | { sourceRevision: string | number }

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { canonicalJson } from '../helpers/canonical-json.ts'
+import { validateStoredOkfMetadata, type OkfMetadata, type OkfTrustSummary } from '../okf/format.ts'
 
 export const KNOWLEDGE_SCHEMA_VERSION = 1 as const
 export const KNOWLEDGE_DETERMINISTIC_VERSION = 'wiki-knowledge-v1' as const
@@ -8,14 +9,7 @@ export const KNOWLEDGE_DETERMINISTIC_VERSION = 'wiki-knowledge-v1' as const
 const LifecycleStatusSchema = z.enum(['draft', 'stable', 'deprecated'])
 const TrustTierSchema = z.enum(['unverified', 'machine-confirmed', 'human-reviewed'])
 const VerificationSchema = z.enum(['unverified', 'current', 'outdated'])
-const GapSchema = z.enum([
-  'concept.type',
-  'concept.summary',
-  'concept.tags',
-  'concept.entities',
-  'concept.relationships',
-  'concept.openQuestions'
-])
+const GapSchema = z.enum(['concept.type', 'concept.summary', 'concept.tags', 'concept.entities', 'concept.relationships', 'concept.openQuestions'])
 
 const EntitySchema = z.strictObject({
   name: z.string().min(1).max(255),
@@ -62,20 +56,28 @@ export const KnowledgeProjectionSchema = z.strictObject({
     description: z.string().max(2_000),
     summary: z.string().max(2_000),
     tags: z.array(z.string().min(1).max(255)).max(100),
-    sections: z.array(z.strictObject({
-      id: z.string().min(1).max(255),
-      title: z.string().min(1).max(512),
-      level: z.number().int().min(1).max(6),
-      startLine: z.number().int().positive(),
-      endLine: z.number().int().positive(),
-      sha256: z.string().regex(/^[a-f0-9]{64}$/)
-    })).max(100),
-    links: z.array(z.strictObject({
-      label: z.string().max(512),
-      target: z.string().min(1).max(4_096),
-      kind: z.enum(['page', 'external']),
-      line: z.number().int().positive()
-    })).max(100),
+    sections: z
+      .array(
+        z.strictObject({
+          id: z.string().min(1).max(255),
+          title: z.string().min(1).max(512),
+          level: z.number().int().min(1).max(6),
+          startLine: z.number().int().positive(),
+          endLine: z.number().int().positive(),
+          sha256: z.string().regex(/^[a-f0-9]{64}$/)
+        })
+      )
+      .max(100),
+    links: z
+      .array(
+        z.strictObject({
+          label: z.string().max(512),
+          target: z.string().min(1).max(4_096),
+          kind: z.enum(['page', 'external']),
+          line: z.number().int().positive()
+        })
+      )
+      .max(100),
     sources: z.array(z.strictObject({ resource: z.string().min(1).max(4_096), title: z.string().max(512).nullable() })).max(100),
     entities: z.array(EntitySchema).max(20),
     relationships: z.array(RelationshipSchema).max(20),
@@ -96,13 +98,15 @@ export const KnowledgeProjectionSchema = z.strictObject({
   provenance: z.strictObject({
     deterministicVersion: z.literal(KNOWLEDGE_DETERMINISTIC_VERSION),
     fields: z.array(FieldProvenanceSchema).max(100),
-    utility: z.strictObject({
-      profileVersionId: z.uuid(),
-      model: z.string().min(1).max(255),
-      inputSha256: z.string().regex(/^[a-f0-9]{64}$/),
-      outputSha256: z.string().regex(/^[a-f0-9]{64}$/),
-      generatedAt: z.string().datetime()
-    }).nullable()
+    utility: z
+      .strictObject({
+        profileVersionId: z.uuid(),
+        model: z.string().min(1).max(255),
+        inputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+        outputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+        generatedAt: z.string().datetime()
+      })
+      .nullable()
   })
 })
 export type KnowledgeProjection = z.infer<typeof KnowledgeProjectionSchema>
@@ -130,13 +134,16 @@ export const KnowledgeProjectionViewSchema = z.strictObject({
   missingFields: z.array(GapSchema).max(6),
   provenance: z.strictObject({
     deterministicVersion: z.literal(KNOWLEDGE_DETERMINISTIC_VERSION),
-    utility: z.strictObject({
-      profileVersionId: z.uuid(),
-      model: z.string().min(1).max(255),
-      inputSha256: z.string().regex(/^[a-f0-9]{64}$/),
-      outputSha256: z.string().regex(/^[a-f0-9]{64}$/),
-      generatedAt: z.string().datetime()
-    }).nullable()
+    fields: z.array(FieldProvenanceSchema).max(100).optional(),
+    utility: z
+      .strictObject({
+        profileVersionId: z.uuid(),
+        model: z.string().min(1).max(255),
+        inputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+        outputSha256: z.string().regex(/^[a-f0-9]{64}$/),
+        generatedAt: z.string().datetime()
+      })
+      .nullable()
   })
 })
 export type KnowledgeProjectionView = z.infer<typeof KnowledgeProjectionViewSchema>
@@ -159,43 +166,38 @@ export interface KnowledgePageSource {
 
 const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
 const clean = (value: string, maximum: number): string => [...value.replace(/\s+/gu, ' ').trim()].slice(0, maximum).join('')
-const unique = (values: readonly string[], maximum: number): string[] => [...new Map(values.map(value => [value.toLocaleLowerCase(), value] as const)).values()].slice(0, maximum)
-const record = (value: unknown): Record<string, unknown> | null => typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null
-const validDate = (value: unknown): string | null => {
-  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return null
-  return new Date(value).toISOString()
-}
-const actorEvents = (value: unknown): readonly Record<string, unknown>[] => {
-  const values: readonly unknown[] = Array.isArray(value) ? value : value === undefined ? [] : [value]
-  return values.flatMap(item => {
-    const parsed = record(item)
-    return parsed === null ? [] : [parsed]
-  })
-}
+const unique = (values: readonly string[], maximum: number): string[] =>
+  [...new Map(values.map(value => [value.toLocaleLowerCase(), value] as const)).values()].slice(0, maximum)
 const tagValues = (values: readonly string[]): string[] => unique(values.map(value => clean(value, 255)).filter(Boolean), 100)
-const sourceSha256 = (input: KnowledgePageSource, sourceRevision: string): string => sha256(canonicalJson({
-  pageId: input.pageId,
-  sourceRevision,
-  locale: input.locale,
-  path: input.path,
-  visibility: input.visibility,
-  contentType: input.contentType,
-  content: input.content,
-  title: input.title,
-  description: input.description,
-  tags: tagValues(input.tags),
-  updatedAt: new Date(input.updatedAt).toISOString(),
-  authorId: input.authorId,
-  metadata: input.metadata ?? null
-}))
+const sourceSha256 = (input: KnowledgePageSource, sourceRevision: string): string =>
+  sha256(
+    canonicalJson({
+      pageId: input.pageId,
+      sourceRevision,
+      locale: input.locale,
+      path: input.path,
+      visibility: input.visibility,
+      contentType: input.contentType,
+      content: input.content,
+      title: input.title,
+      description: input.description,
+      tags: tagValues(input.tags),
+      updatedAt: new Date(input.updatedAt).toISOString(),
+      authorId: input.authorId,
+      metadata: input.metadata ?? null
+    })
+  )
 
 const plainText = (content: string, contentType: string): string => {
   const withoutCode = content.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~/gu, ' ')
   if (contentType === 'markdown') {
-    return clean(withoutCode
-      .replace(/^ {0,3}#{1,6}\s+.*$/gmu, ' ')
-      .replace(/!?(?:\[([^\]]*)\])\([^)]*\)/gu, '$1')
-      .replace(/[*_`~>|-]/gu, ' '), 20_000)
+    return clean(
+      withoutCode
+        .replace(/^ {0,3}#{1,6}\s+.*$/gmu, ' ')
+        .replace(/!?(?:\[([^\]]*)\])\([^)]*\)/gu, '$1')
+        .replace(/[*_`~>|-]/gu, ' '),
+      20_000
+    )
   }
   return clean(withoutCode.replace(/<[^>]+>/gu, ' '), 20_000)
 }
@@ -213,7 +215,11 @@ const deterministicSummary = (input: KnowledgePageSource): string => {
 }
 
 const slug = (value: string, fallback: string): string => {
-  const normalized = value.normalize('NFKD').toLocaleLowerCase().replace(/[^\p{Letter}\p{Number}]+/gu, '-').replace(/^-+|-+$/gu, '')
+  const normalized = value
+    .normalize('NFKD')
+    .toLocaleLowerCase()
+    .replace(/[^\p{Letter}\p{Number}]+/gu, '-')
+    .replace(/^-+|-+$/gu, '')
   return (normalized || fallback).slice(0, 255)
 }
 
@@ -221,29 +227,33 @@ const sections = (content: string, contentType: string): KnowledgeProjection['co
   if (contentType !== 'markdown') return []
   const lines = content.replaceAll('\r\n', '\n').split('\n')
   const headings: Array<{ index: number; level: number; title: string }> = []
-  let fence: string | null = null
+  let fence: { marker: string; length: number } | null = null
   for (let index = 0; index < lines.length && headings.length < 100; index += 1) {
     const line = lines[index]!
     const fenceMatch = /^ {0,3}(`{3,}|~{3,})/u.exec(line)
     if (fenceMatch) {
-      const marker = fenceMatch[1]![0]!
-      if (fence === null) fence = marker
-      else if (marker === fence) fence = null
+      const delimiter = fenceMatch[1]!
+      if (fence === null) fence = { marker: delimiter[0]!, length: delimiter.length }
+      else if (delimiter[0] === fence.marker && delimiter.length >= fence.length) fence = null
       continue
     }
     if (fence !== null) continue
     const match = /^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line)
     if (match) headings.push({ index, level: match[1]!.length, title: clean(match[2]!, 512) })
   }
-  const occurrences = new Map<string, number>()
+  const usedIds = new Set<string>()
   return headings.map((heading, offset) => {
     const base = slug(heading.title, `section-${offset + 1}`)
-    const occurrence = (occurrences.get(base) ?? 0) + 1
-    occurrences.set(base, occurrence)
+    let id = base
+    for (let occurrence = 2; usedIds.has(id); occurrence += 1) {
+      const suffix = `-${occurrence}`
+      id = `${base.slice(0, 255 - suffix.length)}${suffix}`
+    }
+    usedIds.add(id)
     let endIndex = (headings[offset + 1]?.index ?? lines.length) - 1
     while (endIndex > heading.index && lines[endIndex]?.trim() === '') endIndex -= 1
     return {
-      id: occurrence === 1 ? base : `${base}-${occurrence}`.slice(0, 255),
+      id,
       title: heading.title,
       level: heading.level,
       startLine: heading.index + 1,
@@ -270,37 +280,69 @@ const links = (content: string, contentType: string): KnowledgeProjection['conce
   }
   return results
 }
+const mergedSources = (metadata: OkfMetadata | null, pageLinks: KnowledgeProjection['concept']['links']): KnowledgeProjection['concept']['sources'] => {
+  const results: KnowledgeProjection['concept']['sources'] = []
+  const indexes = new Map<string, number>()
+  const add = (resource: string, title: string | null): void => {
+    const existingIndex = indexes.get(resource)
+    if (existingIndex !== undefined) {
+      const existing = results[existingIndex]!
+      if (existing.title === null && title !== null) results[existingIndex] = { resource: existing.resource, title }
+      return
+    }
+    if (results.length >= 100) return
+    indexes.set(resource, results.length)
+    results.push({ resource, title })
+  }
+  if (metadata?.resource !== undefined) add(metadata.resource, null)
+  for (const source of metadata?.sources ?? []) add(source.resource, source.title ?? null)
+  for (const link of pageLinks) if (link.kind === 'external') add(link.target, link.label || null)
+  return results
+}
 
-const metadataLifecycle = (metadataValue: unknown, input: KnowledgePageSource): KnowledgeProjection['lifecycle'] => {
-  const metadata = record(metadataValue)
-  const generated = record(metadata?.generated)
-  const generatedAt = validDate(generated?.at) ?? new Date(input.updatedAt).toISOString()
-  const verified = actorEvents(metadata?.verified)
-  const verifiedDates = verified.flatMap(event => validDate(event.at) ?? []).sort()
-  const verifiedAt = verifiedDates.at(-1) ?? null
-  const trustTier = verified.length === 0 ? 'unverified' : verified.some(event => typeof event.by === 'string' && event.by.startsWith('human:')) ? 'human-reviewed' : 'machine-confirmed'
+const metadataLifecycle = (metadata: OkfMetadata | null, trust: OkfTrustSummary | null, input: KnowledgePageSource): KnowledgeProjection['lifecycle'] => {
+  if (metadata === null || trust === null) {
+    return {
+      status: 'stable',
+      trustTier: 'unverified',
+      verification: 'unverified',
+      generatedAt: new Date(input.updatedAt).toISOString(),
+      verifiedAt: null,
+      staleAfter: null
+    }
+  }
   return {
-    status: LifecycleStatusSchema.safeParse(metadata?.status).data ?? 'stable',
-    trustTier,
-    verification: verified.length === 0 ? 'unverified' : verifiedAt === null || Date.parse(verifiedAt) < Date.parse(generatedAt) ? 'outdated' : 'current',
-    generatedAt,
-    verifiedAt,
-    staleAfter: validDate(metadata?.stale_after)
+    status: trust.status,
+    trustTier: trust.trustTier,
+    verification: trust.verification,
+    generatedAt: trust.generatedAt === null ? new Date(input.updatedAt).toISOString() : new Date(trust.generatedAt).toISOString(),
+    verifiedAt: trust.verifiedAt === null ? null : new Date(trust.verifiedAt).toISOString(),
+    staleAfter: metadata.stale_after === undefined ? null : new Date(metadata.stale_after).toISOString()
   }
 }
+
+const completenessState = (missingFields: readonly KnowledgeGap[]): KnowledgeProjection['completeness']['state'] =>
+  missingFields.some(field => field === 'concept.type' || field === 'concept.summary') ? 'partial' : 'complete'
 
 export const projectPageKnowledge = (input: KnowledgePageSource): KnowledgeProjection => {
   const sourceRevision = String(input.sourceRevision)
   if (!/^[1-9][0-9]*$/.test(sourceRevision)) throw new Error('Page knowledge source revision is invalid')
-  const metadata = record(input.metadata)
-  const type = typeof metadata?.type === 'string' ? clean(metadata.type, 128) || null : null
+  const validatedMetadata = validateStoredOkfMetadata(input.metadata, new Date(input.updatedAt))
+  const metadata = validatedMetadata?.metadata ?? null
+  const type = metadata === null ? null : clean(metadata.type, 128)
   const summary = deterministicSummary(input)
   const tags = tagValues(input.tags)
   const pageLinks = links(input.content, input.contentType)
-  const sources = pageLinks.filter(link => link.kind === 'external').map(link => ({ resource: link.target, title: link.label || null }))
-  const entities = unique(pageLinks.filter(link => link.kind === 'page').map(link => link.label || link.target), 20).map(name => ({ name, type: 'WikiPage' }))
-  const relationships = pageLinks.filter(link => link.kind === 'page').slice(0, 20).map(link => ({ subject: input.title, predicate: 'linksTo', object: link.target }))
-  const lifecycle = metadataLifecycle(metadata, input)
+  const sources = mergedSources(metadata, pageLinks)
+  const entities = unique(
+    pageLinks.filter(link => link.kind === 'page').map(link => link.label || link.target),
+    20
+  ).map(name => ({ name, type: 'WikiPage' }))
+  const relationships = pageLinks
+    .filter(link => link.kind === 'page')
+    .slice(0, 20)
+    .map(link => ({ subject: input.title, predicate: 'linksTo', object: link.target }))
+  const lifecycle = metadataLifecycle(metadata, validatedMetadata?.trust ?? null, input)
   const missingFields: KnowledgeGap[] = [
     ...(type === null ? ['concept.type' as const] : []),
     ...(summary === '' ? ['concept.summary' as const] : []),
@@ -337,18 +379,63 @@ export const projectPageKnowledge = (input: KnowledgePageSource): KnowledgeProje
       openQuestions: []
     },
     lifecycle,
-    completeness: { state: missingFields.length === 0 ? 'complete' : 'partial', missingFields },
+    completeness: { state: completenessState(missingFields), missingFields },
     provenance: {
       deterministicVersion: KNOWLEDGE_DETERMINISTIC_VERSION,
       fields: [
         { field: 'concept.title', source: 'page', evidence: 'pages.title' },
         { field: 'concept.description', source: 'page', evidence: 'pages.description' },
-        { field: 'concept.summary', source: input.description?.trim() ? 'page' : 'deterministic', evidence: input.description?.trim() ? 'pages.description' : 'first source paragraph' },
+        {
+          field: 'concept.summary',
+          source: input.description?.trim() ? 'page' : 'deterministic',
+          evidence: input.description?.trim() ? 'pages.description' : 'first source paragraph'
+        },
         { field: 'concept.tags', source: 'page', evidence: 'pageTags' },
-        { field: 'concept.type', source: type === null ? 'deterministic' : 'metadata', evidence: type === null ? 'missing' : 'pages.extra.okf.type' },
+        {
+          field: 'concept.type',
+          source: type === null ? 'deterministic' : 'metadata',
+          evidence: type === null ? 'missing or invalid pages.extra.okf.type' : 'pages.extra.okf.type'
+        },
         { field: 'concept.sections', source: 'deterministic', evidence: 'Markdown heading spans and hashes' },
         { field: 'concept.links', source: 'deterministic', evidence: 'Markdown link destinations' },
-        { field: 'lifecycle', source: metadata === null ? 'deterministic' : 'metadata', evidence: metadata === null ? 'page revision timestamps' : 'pages.extra.okf lifecycle fields' }
+        ...(metadata?.resource === undefined ? [] : [{ field: 'concept.sources', source: 'metadata' as const, evidence: 'pages.extra.okf.resource' }]),
+        ...(metadata?.sources?.length ? [{ field: 'concept.sources', source: 'metadata' as const, evidence: 'pages.extra.okf.sources' }] : []),
+        ...(pageLinks.some(link => link.kind === 'external')
+          ? [{ field: 'concept.sources', source: 'deterministic' as const, evidence: 'Markdown external link destinations' }]
+          : []),
+        { field: 'concept.entities', source: 'deterministic', evidence: 'Markdown page-link labels' },
+        { field: 'concept.relationships', source: 'deterministic', evidence: 'Markdown page-link destinations' },
+        { field: 'concept.openQuestions', source: 'deterministic', evidence: 'No authoritative page field' },
+        {
+          field: 'lifecycle.status',
+          source: metadata?.status === undefined ? 'deterministic' : 'metadata',
+          evidence: metadata?.status === undefined ? 'validated OKF default stable' : 'pages.extra.okf.status'
+        },
+        {
+          field: 'lifecycle.generatedAt',
+          source: metadata?.generated?.at === undefined ? 'page' : 'metadata',
+          evidence: metadata?.generated?.at === undefined ? 'pages.updatedAt' : 'pages.extra.okf.generated.at'
+        },
+        {
+          field: 'lifecycle.trustTier',
+          source: metadata?.verified === undefined ? 'deterministic' : 'metadata',
+          evidence: metadata?.verified === undefined ? 'validated OKF unverified default' : 'pages.extra.okf.verified'
+        },
+        {
+          field: 'lifecycle.verification',
+          source: metadata?.verified === undefined ? 'deterministic' : 'metadata',
+          evidence: metadata?.verified === undefined ? 'validated OKF unverified default' : 'pages.extra.okf.verified and generated'
+        },
+        {
+          field: 'lifecycle.verifiedAt',
+          source: metadata?.verified === undefined ? 'deterministic' : 'metadata',
+          evidence: metadata?.verified === undefined ? 'validated OKF unverified default' : 'pages.extra.okf.verified.at'
+        },
+        {
+          field: 'lifecycle.staleAfter',
+          source: metadata?.stale_after === undefined ? 'deterministic' : 'metadata',
+          evidence: metadata?.stale_after === undefined ? 'validated OKF no-staleness default' : 'pages.extra.okf.stale_after'
+        }
       ],
       utility: null
     }
@@ -356,7 +443,8 @@ export const projectPageKnowledge = (input: KnowledgePageSource): KnowledgeProje
   return KnowledgeProjectionSchema.parse(projection)
 }
 
-const withoutGap = (gaps: readonly KnowledgeGap[], field: KnowledgeGap, filled: boolean): KnowledgeGap[] => filled ? gaps.filter(gap => gap !== field) : [...gaps]
+const withoutGap = (gaps: readonly KnowledgeGap[], field: KnowledgeGap, filled: boolean): KnowledgeGap[] =>
+  filled ? gaps.filter(gap => gap !== field) : [...gaps]
 
 export const mergeKnowledgeUtilityResult = (
   projection: KnowledgeProjection,
@@ -400,39 +488,47 @@ export const mergeKnowledgeUtilityResult = (
   return KnowledgeProjectionSchema.parse({
     ...projection,
     concept,
-    completeness: { state: remaining.length === 0 ? 'complete' : 'partial', missingFields: remaining },
+    completeness: { state: completenessState(remaining), missingFields: remaining },
     provenance: { ...projection.provenance, fields, utility: provenance }
   })
 }
 
-export const knowledgeSearchText = (projection: KnowledgeProjection): string => clean([
-  projection.concept.type ?? '',
-  projection.concept.title,
-  projection.concept.description,
-  projection.concept.summary,
-  ...projection.concept.tags,
-  ...projection.concept.entities.flatMap(entity => [entity.name, entity.type]),
-  ...projection.concept.relationships.flatMap(relationship => [relationship.subject, relationship.predicate, relationship.object]),
-  ...projection.concept.openQuestions
-].join(' ').toLocaleLowerCase(), 50_000)
+export const knowledgeSearchText = (projection: KnowledgeProjection): string =>
+  clean(
+    [
+      projection.concept.type ?? '',
+      projection.concept.title,
+      projection.concept.description,
+      projection.concept.summary,
+      ...projection.concept.tags,
+      ...projection.concept.entities.flatMap(entity => [entity.name, entity.type]),
+      ...projection.concept.relationships.flatMap(relationship => [relationship.subject, relationship.predicate, relationship.object]),
+      ...projection.concept.openQuestions
+    ]
+      .join(' ')
+      .toLocaleLowerCase(),
+    50_000
+  )
 
-export const knowledgeProjectionView = (projection: KnowledgeProjection, now = new Date()): KnowledgeProjectionView => KnowledgeProjectionViewSchema.parse({
-  schemaVersion: projection.version,
-  sourceRevision: projection.source.sourceRevision,
-  state: projection.completeness.state,
-  conceptType: projection.concept.type,
-  summary: projection.concept.summary,
-  tags: projection.concept.tags,
-  entities: projection.concept.entities,
-  relationships: projection.concept.relationships,
-  openQuestions: projection.concept.openQuestions,
-  lifecycle: {
-    ...projection.lifecycle,
-    stale: projection.lifecycle.staleAfter !== null && now.valueOf() >= Date.parse(projection.lifecycle.staleAfter)
-  },
-  missingFields: projection.completeness.missingFields,
-  provenance: {
-    deterministicVersion: projection.provenance.deterministicVersion,
-    utility: projection.provenance.utility
-  }
-})
+export const knowledgeProjectionView = (projection: KnowledgeProjection, now = new Date()): KnowledgeProjectionView =>
+  KnowledgeProjectionViewSchema.parse({
+    schemaVersion: projection.version,
+    sourceRevision: projection.source.sourceRevision,
+    state: projection.completeness.state,
+    conceptType: projection.concept.type,
+    summary: projection.concept.summary,
+    tags: projection.concept.tags,
+    entities: projection.concept.entities,
+    relationships: projection.concept.relationships,
+    openQuestions: projection.concept.openQuestions,
+    lifecycle: {
+      ...projection.lifecycle,
+      stale: projection.lifecycle.staleAfter !== null && now.valueOf() >= Date.parse(projection.lifecycle.staleAfter)
+    },
+    missingFields: projection.completeness.missingFields,
+    provenance: {
+      deterministicVersion: projection.provenance.deterministicVersion,
+      fields: projection.provenance.fields,
+      utility: projection.provenance.utility
+    }
+  })

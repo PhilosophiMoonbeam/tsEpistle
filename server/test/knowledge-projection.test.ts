@@ -3,7 +3,14 @@ import { afterEach, beforeEach, describe, expect, it } from './bun-test.mts'
 import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import { up as createProjectionStore } from '../db/migrations/2.5.152.ts'
 import { PageKnowledgeLifecycle } from '../knowledge/lifecycle.ts'
-import { KnowledgeProjectionSchema, knowledgeProjectionView, mergeKnowledgeUtilityResult, projectPageKnowledge } from '../knowledge/projection.ts'
+import {
+  KnowledgeProjectionSchema,
+  KnowledgeProjectionViewSchema,
+  knowledgeProjectionView,
+  mergeKnowledgeUtilityResult,
+  projectPageKnowledge
+} from '../knowledge/projection.ts'
+import { parseOkfDocument } from '../okf/format.ts'
 
 const source = {
   pageId: 42,
@@ -40,6 +47,7 @@ describe('page knowledge projection', () => {
     expect(first.concept.sections).toEqual([expect.objectContaining({ id: 'deploy', title: 'Deploy', startLine: 1, endLine: 3 })])
     expect(first.lifecycle).toMatchObject({ status: 'draft', trustTier: 'human-reviewed', verification: 'outdated' })
     expect(first.completeness.missingFields).toEqual(['concept.tags', 'concept.entities', 'concept.relationships', 'concept.openQuestions'])
+    expect(first.completeness.state).toBe('complete')
   })
 
   it('accepts utility values only for declared gaps and records exact provenance', () => {
@@ -68,6 +76,10 @@ describe('page knowledge projection', () => {
     expect(enriched.concept.tags).toEqual(['release', 'operations'])
     expect(enriched.completeness).toEqual({ state: 'complete', missingFields: [] })
     expect(enriched.provenance.utility).toMatchObject({ model: 'utility-small', outputSha256: 'b'.repeat(64) })
+    const fieldProvenance = knowledgeProjectionView(enriched).provenance.fields
+    expect(fieldProvenance).toContainEqual({ field: 'concept.type', source: 'metadata', evidence: 'pages.extra.okf.type' })
+    expect(fieldProvenance).toContainEqual({ field: 'concept.tags', source: 'utility', evidence: 'b'.repeat(64) })
+    expect(fieldProvenance).not.toContainEqual(expect.objectContaining({ field: 'concept.type', source: 'utility' }))
   })
 
   it('keeps declined utility gaps partial', () => {
@@ -98,6 +110,161 @@ describe('page knowledge projection', () => {
     const projection = projectPageKnowledge(source)
     expect(knowledgeProjectionView(projection, new Date('2026-08-19T00:00:00.000Z')).lifecycle.stale).toBe(false)
     expect(knowledgeProjectionView(projection, new Date('2026-08-21T00:00:00.000Z')).lifecycle.stale).toBe(true)
+  })
+  it('degrades invalid or unvalidated lifecycle metadata to unverified defaults', () => {
+    const malformedMetadata = [
+      {
+        type: 'Procedure',
+        verified: { by: 6, at: '2026-08-19T12:00:00.000Z' }
+      },
+      {
+        type: 'Procedure',
+        status: 'approved',
+        verified: { by: 'human:6', at: '2026-08-19T12:00:00.000Z' }
+      },
+      {
+        type: 'Procedure',
+        verified: { by: 'human:6', at: '2026-08-19 12:00:00' }
+      },
+      {
+        status: 'deprecated',
+        verified: { by: 'human:spoofed', at: '2026-08-19T12:00:00.000Z' }
+      }
+    ]
+
+    for (const metadata of malformedMetadata) {
+      const projection = projectPageKnowledge({ ...source, metadata })
+      expect(projection.concept.type).toBeNull()
+      expect(projection.lifecycle).toEqual({
+        status: 'stable',
+        trustTier: 'unverified',
+        verification: 'unverified',
+        generatedAt: source.updatedAt,
+        verifiedAt: null,
+        staleAfter: null
+      })
+      expect(projection.provenance.fields).toContainEqual({
+        field: 'lifecycle.trustTier',
+        source: 'deterministic',
+        evidence: 'validated OKF unverified default'
+      })
+    }
+  })
+
+  it('uses the same validated trust interpretation as the OKF parser', () => {
+    const parsed = parseOkfDocument(
+      `---
+type: Procedure
+status: deprecated
+generated:
+  by: machine:generator
+  at: 2026-08-18T12:00:00.000Z
+verified:
+  - by: machine:checker
+    at: 2026-08-18T12:30:00.000Z
+  - by: human:6
+    at: 2026-08-18T13:00:00.000Z
+stale_after: 2026-08-20T00:00:00.000Z
+---
+
+# Deploy
+`,
+      new Date('2026-08-19T00:00:00.000Z')
+    )
+    const projection = projectPageKnowledge({ ...source, metadata: parsed.metadata })
+
+    expect(projection.lifecycle).toEqual({
+      status: parsed.trust.status,
+      trustTier: parsed.trust.trustTier,
+      verification: parsed.trust.verification,
+      generatedAt: parsed.trust.generatedAt,
+      verifiedAt: parsed.trust.verifiedAt,
+      staleAfter: parsed.metadata.stale_after
+    })
+  })
+
+  it('preserves metadata source order and stably deduplicates derived external links', () => {
+    const projection = projectPageKnowledge({
+      ...source,
+      content: [
+        '# Deploy',
+        '[Canonical link](https://example.com/canonical)',
+        '[First derived label](https://example.com/first)',
+        '[Derived only](https://example.com/derived)'
+      ].join('\n'),
+      metadata: {
+        type: 'Procedure',
+        resource: 'https://example.com/canonical',
+        sources: [
+          { resource: 'https://example.com/first', title: 'First metadata title' },
+          { resource: 'https://example.com/canonical', title: 'Canonical metadata title' },
+          { resource: 'https://example.com/first', title: 'Duplicate title' }
+        ]
+      }
+    })
+
+    expect(projection.concept.sources).toEqual([
+      { resource: 'https://example.com/canonical', title: 'Canonical metadata title' },
+      { resource: 'https://example.com/first', title: 'First metadata title' },
+      { resource: 'https://example.com/derived', title: 'Derived only' }
+    ])
+    expect(projection.provenance.fields.filter(field => field.field === 'concept.sources')).toEqual([
+      { field: 'concept.sources', source: 'metadata', evidence: 'pages.extra.okf.resource' },
+      { field: 'concept.sources', source: 'metadata', evidence: 'pages.extra.okf.sources' },
+      { field: 'concept.sources', source: 'deterministic', evidence: 'Markdown external link destinations' }
+    ])
+  })
+
+  it('exposes bounded field provenance in projection views', () => {
+    const view = knowledgeProjectionView(projectPageKnowledge(source))
+    expect(view.provenance.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'concept.type', source: 'metadata' }),
+        expect.objectContaining({ field: 'concept.summary', source: 'deterministic' })
+      ])
+    )
+    const oversized = {
+      ...view,
+      provenance: {
+        ...view.provenance,
+        fields: Array.from({ length: 101 }, () => view.provenance.fields![0]!)
+      }
+    }
+    expect(KnowledgeProjectionViewSchema.safeParse(oversized).success).toBe(false)
+    expect(KnowledgeProjectionSchema.parse(projectPageKnowledge(source)).provenance.fields.length).toBeLessThanOrEqual(100)
+  })
+
+  it('keeps section IDs unique across duplicate, truncated, and naturally suffixed headings', () => {
+    const longHeading = 'a'.repeat(300)
+    const projection = projectPageKnowledge({
+      ...source,
+      content: [`# ${longHeading}`, `# ${longHeading}`, `# ${longHeading} 2`].join('\n')
+    })
+    const ids = projection.concept.sections.map(section => section.id)
+
+    expect(ids).toEqual(['a'.repeat(255), `${'a'.repeat(253)}-2`, `${'a'.repeat(253)}-3`])
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('does not close Markdown fences with shorter or different delimiters', () => {
+    const projection = projectPageKnowledge({
+      ...source,
+      content: ['# Visible before', '````ts', '# Hidden one', '```', '# Hidden two', '~~~~', '# Hidden three', '`````', '# Visible after'].join('\n')
+    })
+
+    expect(projection.concept.sections.map(section => section.title)).toEqual(['Visible before', 'Visible after'])
+  })
+
+  it('marks self-contained typed pages complete while retaining optional enrichment gaps', () => {
+    const projection = projectPageKnowledge({
+      ...source,
+      metadata: { type: 'Procedure', status: 'stable' }
+    })
+
+    expect(projection.completeness).toEqual({
+      state: 'complete',
+      missingFields: ['concept.tags', 'concept.entities', 'concept.relationships']
+    })
   })
 })
 
