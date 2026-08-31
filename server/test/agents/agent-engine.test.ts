@@ -207,6 +207,102 @@ describe('Ax agent engine', () => {
     expect(JSON.stringify(result)).not.toContain('hidden thought')
     expect(close).toHaveBeenCalledOnce()
   })
+  it('reduces output exposure so tool results can continue within a goal token budget', async () => {
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const responses: AxChatResponse[] = [
+      {
+        results: [
+          {
+            index: 0,
+            functionCalls: [{ id: 'budget-page', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }]
+          }
+        ],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
+      },
+      {
+        results: [{ index: 0, content: 'Budget evidence is available.[[cite:page:42:revision:1:section:1]]' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 6_000, completionTokens: 20, totalTokens: 6_020 } }
+      }
+    ]
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 32_768
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          {
+            name: 'pages.get',
+            title: 'Read page',
+            description: 'Reads a page',
+            parameters: { type: 'object', properties: { id: { type: 'number' } } },
+            risk: 'read'
+          }
+        ],
+        invoke: async () => ({
+          id: 42,
+          title: 'Budget Guide',
+          contentType: 'markdown',
+          content: `# Budget Guide\n\n## Evidence\n${'Budget evidence remains available. '.repeat(600)}`,
+          citation: { evidenceId: 'page:42:revision:1', label: 'Budget Guide', href: '/en/budget-guide' },
+          citationSections: [{ evidenceId: 'page:42:revision:1:section:1', label: 'Budget Guide › Evidence', href: '/en/budget-guide#evidence' }]
+        }),
+        snapshot: async () => ({}),
+        close: () => undefined
+      })
+    }
+    let consumedTokens = 0
+    let reservationId = 0
+    const reservedMaximums: number[] = []
+    const dispatchBudget = {
+      reserve: async (maximum: { readonly tokens: number; readonly costMicros: number }) => {
+        if (consumedTokens + maximum.tokens > 48_000) throw new Error('goal reservation exceeds remaining tokens')
+        reservedMaximums.push(maximum.tokens)
+        return { id: ++reservationId, ...maximum }
+      },
+      reconcile: async (
+        _reservation: { readonly id: number; readonly tokens: number; readonly costMicros: number },
+        actual: { readonly inputTokens: number; readonly outputTokens: number; readonly costMicros: number }
+      ) => {
+        consumedTokens += actual.inputTokens + actual.outputTokens
+      },
+      release: async (_reservation: { readonly id: number; readonly tokens: number; readonly costMicros: number }) => undefined,
+      consumeTool: async () => undefined
+    } satisfies NonNullable<AgentEngineRequest['dispatchBudget']>
+    const engine = new AxAgentEngine(factory, actions)
+    const result = await engine.execute(
+      {
+        ...request(new AbortController().signal),
+        dispatchBudget,
+        limits: { maxTokens: 48_000, maxTurns: 12, maxToolCalls: 32, maxOutputTokens: 32_768 }
+      },
+      { text: async () => undefined, event: async () => undefined }
+    )
+    expect(chat).toHaveBeenCalledTimes(2)
+    expect(reservedMaximums).toHaveLength(2)
+    expect(calls[1]?.modelConfig?.maxTokens).toBeLessThan(32_768)
+    expect(result).toMatchObject({ inputTokens: 6_003, outputTokens: 24 })
+  })
   it('accepts a citation placed after sentence punctuation and rejects an uncited page answer', async () => {
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'get-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":6}' } }] }] },

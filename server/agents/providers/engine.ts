@@ -611,8 +611,10 @@ const boundedChatPrompt = (
   conversation: readonly ChatPromptMessage[],
   latestUserIndex: number,
   active: readonly ChatPromptMessage[],
-  maxOutputTokens: number
-): AxChatRequest['chatPrompt'] => {
+  requestedMaxOutputTokens: number,
+  maximumTotalTokens: number | undefined,
+  budgetErrorCode: 'AGENT_CHILD_BUDGET_EXCEEDED' | 'AGENT_BUDGET_LIMITED'
+): { readonly chatPrompt: AxChatRequest['chatPrompt']; readonly maxOutputTokens: number } => {
   const groups: number[][] = []
   for (let index = 0; index < conversation.length; index++) {
     if (conversation[index]?.role === 'user' || groups.length === 0) groups.push([])
@@ -626,9 +628,22 @@ const boundedChatPrompt = (
     ...conversation.flatMap((message, index) => (included.has(index) ? [message] : [])),
     ...active
   ]
-  const maximumInputTokens = provider.capabilities.maxContextTokens - maxOutputTokens
-  const mandatory = selected()
-  const mandatoryBytes = Buffer.byteLength(JSON.stringify(providerRequestFor(provider, tools, mandatory, maxOutputTokens)), 'utf8')
+  let maxOutputTokens = requestedMaxOutputTokens
+  let mandatory = selected()
+  let mandatoryBytes = Buffer.byteLength(JSON.stringify(providerRequestFor(provider, tools, mandatory, maxOutputTokens)), 'utf8')
+  if (maximumTotalTokens !== undefined) {
+    while (mandatoryBytes + maxOutputTokens > maximumTotalTokens) {
+      const affordableOutputTokens = maximumTotalTokens - mandatoryBytes
+      if (affordableOutputTokens < 1) throw new AgentRepositoryError(budgetErrorCode, 'Agent token budget was exhausted', 409)
+      maxOutputTokens = affordableOutputTokens
+      mandatory = selected()
+      mandatoryBytes = Buffer.byteLength(JSON.stringify(providerRequestFor(provider, tools, mandatory, maxOutputTokens)), 'utf8')
+    }
+  }
+  const maximumInputTokens = Math.min(
+    provider.capabilities.maxContextTokens - maxOutputTokens,
+    maximumTotalTokens === undefined ? Number.MAX_SAFE_INTEGER : maximumTotalTokens - maxOutputTokens
+  )
   if (maximumInputTokens < 0 || mandatoryBytes > maximumInputTokens) {
     throw new AgentRepositoryError('AGENT_CONTEXT_TOO_LARGE', 'Agent conversation exceeds the selected provider context limit', 413)
   }
@@ -641,7 +656,7 @@ const boundedChatPrompt = (
     for (const index of group) included.add(index)
     remainingBytes -= groupBytes
   }
-  return selected()
+  return { chatPrompt: selected(), maxOutputTokens }
 }
 
 const presentAcceptedContent = async (content: string, sink: AgentEngineSink): Promise<void> => {
@@ -969,13 +984,23 @@ export class AxAgentEngine implements AgentEngine {
             'Agent token budget was exhausted',
             409
           )
-        const maximumOutputTokens = Math.min(
+        const requestedMaxOutputTokens = Math.min(
           request.limits?.maxOutputTokens ?? provider.capabilities.maxOutputTokens,
           provider.capabilities.maxOutputTokens,
           remainingTokens
         )
-        const chatPrompt = boundedChatPrompt(provider, tools, systemMessage, conversation, latestUserIndex, activePrompt, maximumOutputTokens)
-        const result = await this.#turn(provider, chatPrompt, tools, request, maximumOutputTokens)
+        const bounded = boundedChatPrompt(
+          provider,
+          tools,
+          systemMessage,
+          conversation,
+          latestUserIndex,
+          activePrompt,
+          requestedMaxOutputTokens,
+          maxTokens === undefined || request.dispatchBudget === undefined ? undefined : remainingTokens,
+          request.purpose === 'subagent' ? 'AGENT_CHILD_BUDGET_EXCEEDED' : 'AGENT_BUDGET_LIMITED'
+        )
+        const result = await this.#turn(provider, bounded.chatPrompt, tools, request, bounded.maxOutputTokens)
         inputTokens += result.inputTokens
         outputTokens += result.outputTokens
         costMicros += result.costMicros
