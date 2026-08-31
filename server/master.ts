@@ -450,7 +450,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     ...(agentRuntime === undefined ? {} : { agentRuntime }),
     ...(providerConformance === undefined ? {} : { providerConformance })
   })
-  if (mcpController) app.all('/mcp', mcpController)
+  if (mcpController) app.all('/mcp', wiki.auth.authenticate.bind(wiki.auth), mcpController)
   app.use(wiki.auth.authenticate.bind(wiki.auth))
   app.use(agentsController)
 

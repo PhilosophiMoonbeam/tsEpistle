@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'node:net'
 import { request as httpRequest } from 'node:http'
-import express from 'express'
+import express, { type RequestHandler } from 'express'
 import createKnex, { type Knex } from 'knex'
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
@@ -138,6 +138,7 @@ describe('Wiki MCP transport', () => {
   let authorizeMutation: ReturnType<typeof vi.fn>
   let listRelated: ReturnType<typeof vi.fn>
   let resolvedPrincipal: Express.User
+  let authenticate: RequestHandler
 
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
@@ -204,6 +205,19 @@ describe('Wiki MCP transport', () => {
         }
       : { pages: [], truncated: false, nextOffset: null })
     const app = express()
+    authenticate = vi.fn((req, _res, next) => {
+      const user = apiPrincipal()
+      Reflect.set(req, 'user', user)
+      Reflect.set(req, 'authContext', { kind: 'apiKey', apiKeyId: 9, groupId: 3, ownershipUserId: null, principal: user })
+      Reflect.set(req, 'apiKeyAuth', {
+        apiKeyId: 9,
+        groupId: 3,
+        mcpResource: 'http://127.0.0.1/mcp',
+        mcpResourceVersion: 1,
+        bearerToken: 'test-api-token'
+      })
+      next()
+    })
     const mcpController = createWikiMcpController({
       knex: db,
       operations: {
@@ -225,19 +239,7 @@ describe('Wiki MCP transport', () => {
         remove: vi.fn(),
         authorizeMutation
       },
-      authenticate: (req, _res, next) => {
-        const user = apiPrincipal()
-        Reflect.set(req, 'user', user)
-        Reflect.set(req, 'authContext', { kind: 'apiKey', apiKeyId: 9, groupId: 3, ownershipUserId: null, principal: user })
-        Reflect.set(req, 'apiKeyAuth', {
-          apiKeyId: 9,
-          groupId: 3,
-          mcpResource: 'http://127.0.0.1/mcp',
-          mcpResourceVersion: 1,
-          bearerToken: 'test-api-token'
-        })
-        next()
-      },
+      authenticate,
       resolvePrincipal: async () => resolvedPrincipal,
       resolveUser: async () => humanPrincipal(),
       config: {
@@ -256,7 +258,7 @@ describe('Wiki MCP transport', () => {
         snapshotSigningSecret: Buffer.alloc(32, 8)
       }
     })
-    app.all('/mcp', mcpController)
+    app.all('/mcp', authenticate, mcpController)
     app.get('/health', (_req, res) => res.sendStatus(204))
     server = app.listen(0, '127.0.0.1')
     const listening = Promise.withResolvers<void>()
@@ -286,6 +288,7 @@ describe('Wiki MCP transport', () => {
       versionNegotiation: { mode: 'auto' }
     })
     await client.connect(transport)
+    expect(authenticate).toHaveBeenCalledTimes(1)
     const listed = await client.listTools()
     const names = listed.tools.map(tool => tool.name)
     expect(names).toContain('wiki_search_pages')

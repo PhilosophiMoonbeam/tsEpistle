@@ -430,7 +430,10 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
   const router = express.Router()
   router.use('/mcp', hostHeaderValidation(hostnames) as unknown as RequestHandler, originValidation(hostnames) as unknown as RequestHandler)
   router.use('/mcp', express.json({ limit: '128kb', strict: true, type: 'application/json' }))
-  router.use('/mcp', dependencies.authenticate)
+  router.use('/mcp', (req, res, next) => {
+    if (req.authContext?.kind === 'apiKey' && req.apiKeyAuth) return next()
+    return dependencies.authenticate(req, res, next)
+  })
   router.all('/mcp', async (req: Request, res: Response, next: NextFunction) => {
     if (!dependencies.config.enabled) return res.sendStatus(404)
     if (!req.authContext || req.authContext.kind !== 'apiKey' || !req.apiKeyAuth) return res.sendStatus(401)
