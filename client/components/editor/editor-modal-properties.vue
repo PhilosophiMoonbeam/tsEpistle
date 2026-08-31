@@ -298,6 +298,9 @@
       :path='path'
       :locale='locale'
       :open-handler='linkTranslation'
+      )
+
+</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
