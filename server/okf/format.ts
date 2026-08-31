@@ -90,6 +90,7 @@ export interface OkfMetadataMutation {
   readonly proposed?: unknown
   readonly producer: string
   readonly knowledgeChanged: boolean
+  readonly mode?: 'merge' | 'replace'
   readonly at?: string | Date
   readonly restore?: {
     readonly revision: string | number
@@ -99,10 +100,12 @@ export interface OkfMetadataMutation {
 /**
  * Normalize metadata at a mutation boundary.
  *
- * Metadata supplied by callers is never trusted for generated/verified
- * provenance. Existing valid trust events are retained for no-ops (and as
- * historical evidence after an edit), while every knowledge edit receives a
- * server-stamped generated event. Unknown JSON extensions survive the merge.
+ * Metadata supplied by callers is never trusted for generated, verified, or
+ * restore provenance. Existing valid trust events are retained for no-ops
+ * (and as historical evidence after an edit), while every knowledge edit
+ * receives a server-stamped generated event. Merge mode preserves unknown JSON
+ * extensions; replace mode takes ordinary and extension authority exclusively
+ * from the proposed metadata.
  */
 export const mutateOkfMetadata = (input: OkfMetadataMutation): OkfMetadata => {
   const producer = nonEmptyString(input.producer, 'producer', 255, 'INVALID_OKF_PRODUCER')
@@ -120,14 +123,18 @@ export const mutateOkfMetadata = (input: OkfMetadataMutation): OkfMetadata => {
 
   const existing = input.existing === undefined ? undefined : validateMetadata(input.existing)
   const proposed = input.proposed === undefined ? undefined : validateMetadata(input.proposed)
-  const metadata = validateMetadata({
-    ...(existing ?? { type: 'Reference', status: 'stable' }),
-    ...(proposed ?? {})
-  })
+  const metadata = validateMetadata(
+    input.mode === 'replace'
+      ? (proposed ?? { type: 'Reference', status: 'stable' })
+      : {
+          ...(existing ?? { type: 'Reference', status: 'stable' }),
+          ...(proposed ?? {})
+        }
+  )
 
-  // Trust fields are server-owned. Never let a request add or replace them;
-  // an edit deliberately advances generated while retaining older verification
-  // so the trust summary marks it as outdated.
+  // Trust fields are server-owned. Never let proposed authority add, replace,
+  // or remove them; an edit deliberately advances generated while retaining
+  // older verification so the trust summary marks it as outdated.
   if (input.knowledgeChanged || existing === undefined) metadata.generated = { by: producer, at }
   else if (existing.generated === undefined) delete metadata.generated
   else metadata.generated = existing.generated
@@ -137,7 +144,10 @@ export const mutateOkfMetadata = (input: OkfMetadataMutation): OkfMetadata => {
   } else if (existing?.verified === undefined) delete metadata.verified
   else metadata.verified = existing.verified
 
-  if (input.restore !== undefined) {
+  if (input.restore === undefined) {
+    if (existing?.restored_from === undefined) delete metadata.restored_from
+    else metadata.restored_from = existing.restored_from
+  } else {
     const revision = nonEmptyString(String(input.restore.revision), 'restore.revision', 255, 'INVALID_RESTORE')
     metadata.restored_from = { revision, by: producer, at }
   }

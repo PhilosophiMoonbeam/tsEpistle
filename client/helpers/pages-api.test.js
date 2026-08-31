@@ -1,4 +1,4 @@
-import { deletePage, deletePageTag, fetchPage, fetchPageHistory, fetchPageLinks, fetchPageList, fetchPageLocaleRelations, fetchPageTags, fetchPageTree, fetchPageVersion, fetchRecentPages, linkPageLocaleRelation, restorePageVersion, unlinkPageLocaleRelation, updatePageTag } from './pages-api.ts'
+import { buildOkfMetadataPayload, deletePage, deletePageTag, fetchPage, fetchPageHistory, fetchPageLinks, fetchPageList, fetchPageLocaleRelations, fetchPageTags, fetchPageTree, fetchPageVersion, fetchRecentPages, linkPageLocaleRelation, restorePageVersion, unlinkPageLocaleRelation, updatePage, updatePageTag } from './pages-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -9,6 +9,58 @@ function createJsonResponse (payload, ok = true) {
     json: async () => payload
   }
 }
+
+const missingOkf = {
+  authority: { state: 'missing', metadata: null, trust: null },
+  projection: { state: 'pending', value: null }
+}
+const validProjection = {
+  schemaVersion: 1,
+  sourceRevision: '8',
+  state: 'partial',
+  conceptType: null,
+  summary: '',
+  tags: [],
+  entities: [],
+  relationships: [],
+  openQuestions: [],
+  lifecycle: {
+    status: 'stable',
+    trustTier: 'human-reviewed',
+    verification: 'current',
+    stale: false,
+    generatedAt: '2026-01-01T00:00:00.000Z',
+    verifiedAt: '2026-01-02T00:00:00.000Z',
+    staleAfter: null
+  },
+  missingFields: ['concept.type'],
+  provenance: { deterministicVersion: 'wiki-knowledge-v1', utility: null }
+}
+const pagePayload = (okf = missingOkf) => ({
+  id: 7,
+  locale: 'en',
+  path: 'docs/alpha',
+  hash: 'abc123',
+  title: 'Alpha',
+  description: null,
+  visibility: 'public',
+  ownerId: null,
+  isPublished: true,
+  publishStartDate: null,
+  publishEndDate: null,
+  contentType: 'markdown',
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-02T00:00:00.000Z',
+  sourceRevision: 8,
+  editor: 'markdown',
+  authorId: 2,
+  authorName: 'Author',
+  authorEmail: 'author@example.com',
+  creatorId: 1,
+  creatorName: 'Creator',
+  creatorEmail: 'creator@example.com',
+  okf
+})
 
 describe('pages api helper', () => {
   test('fetches and validates page links payloads', async () => {
@@ -78,6 +130,7 @@ describe('pages api helper', () => {
       creatorId: 1,
       creatorName: 'Creator',
       creatorEmail: 'creator@example.com',
+      okf: missingOkf,
       extra: 'ignored'
     }))
 
@@ -103,8 +156,10 @@ describe('pages api helper', () => {
       authorEmail: 'author@example.com',
       creatorId: 1,
       creatorName: 'Creator',
-      creatorEmail: 'creator@example.com'
+      creatorEmail: 'creator@example.com',
+      okf: missingOkf
     })
+
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/7', {
       credentials: 'same-origin',
@@ -112,6 +167,86 @@ describe('pages api helper', () => {
         Accept: 'application/json'
       }
     })
+  })
+  test('treats a successful page response with missing OKF as invalid', async () => {
+    const payload = pagePayload()
+    delete payload.okf
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
+    await expect(fetchPage(fetchImpl, 7)).resolves.toMatchObject({
+      okf: { authority: { state: 'invalid', metadata: null, trust: null }, projection: { state: 'pending', value: null } }
+    })
+  })
+
+  test('normalizes current and pending OKF projection states with provenance', async () => {
+    const current = {
+      authority: {
+        state: 'valid',
+        metadata: { type: 'Reference', status: 'stable', generated: { by: 'human:2', at: '2026-01-01T00:00:00.000Z' } },
+        trust: {
+          trustTier: 'human-reviewed',
+          verification: 'current',
+          status: 'stable',
+          stale: false,
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          verifiedAt: '2026-01-02T00:00:00.000Z'
+        }
+      },
+      projection: { state: 'current', value: validProjection }
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(pagePayload(current)))
+    await expect(fetchPage(fetchImpl, 7)).resolves.toMatchObject({ sourceRevision: '8', okf: current })
+    const malformed = structuredClone(current)
+    malformed.projection.value.provenance.extra = true
+    const malformedFetch = vi.fn().mockResolvedValue(createJsonResponse(pagePayload(malformed)))
+    await expect(fetchPage(malformedFetch, 7, 'Bad OKF payload')).rejects.toThrow('Bad OKF payload')
+  })
+
+  test('strips page duplicates, actors, derived facts, and deleted sources from editable metadata', () => {
+    expect(buildOkfMetadataPayload({
+      type: 'Reference',
+      status: 'stable',
+      resource: 'https://example.test',
+      sources: [{ resource: 'https://source.test' }],
+      title: 'page title',
+      description: 'page description',
+      tags: ['page'],
+      generated: { by: 'human:2' },
+      verified: { by: 'human:2' },
+      restored_from: { revision: '1' },
+      'x-wiki': { projection: 'derived' },
+      extension: { retained: true }
+    })).toEqual({
+      type: 'Reference',
+      status: 'stable',
+      resource: 'https://example.test',
+      sources: [{ resource: 'https://source.test' }],
+      extension: { retained: true }
+    })
+    expect(buildOkfMetadataPayload({ type: 'Reference', status: 'stable' })).not.toHaveProperty('sources')
+  })
+  test('includes editable OKF metadata with canonical CAS on page update', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ page: { id: 7, updatedAt: '2026-01-03T00:00:00.000Z', sourceRevision: 9 } }))
+    await updatePage(fetchImpl, 7, {
+      content: 'body',
+      description: '',
+      editor: 'markdown',
+      visibility: 'public',
+      isPublished: true,
+      locale: 'en',
+      path: 'docs/alpha',
+      publishEndDate: '',
+      publishStartDate: '',
+      scriptCss: '',
+      scriptJs: '',
+      tags: [],
+      title: 'Alpha',
+      okfMetadata: { type: 'Reference', status: 'stable' }
+    }, '8')
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
+      expectedSourceRevision: '8',
+      okfMetadata: { type: 'Reference', status: 'stable' }
+    })
+    await expect(updatePage(fetchImpl, 7, {}, '0')).rejects.toThrow('Page update failed')
   })
 
   test('rejects malformed page detail payloads', async () => {

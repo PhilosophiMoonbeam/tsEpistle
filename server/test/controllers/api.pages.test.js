@@ -17,6 +17,55 @@ vi.mockModule('express', import.meta.url, () => {
 })
 
 const express = await import('express')
+const storedKnowledgeProjection = (sourceRevision = '8') => ({
+  version: 1,
+  source: {
+    pageId: 7,
+    sourceRevision,
+    sha256: 'a'.repeat(64),
+    locale: 'en',
+    path: 'docs/alpha',
+    visibility: 'public',
+    contentType: 'markdown',
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    authorId: 2
+  },
+  concept: {
+    id: 'en/docs/alpha',
+    type: 'Reference',
+    title: 'Alpha',
+    description: 'Alpha description',
+    summary: 'Projected Alpha',
+    tags: ['alpha'],
+    sections: [],
+    links: [],
+    sources: [],
+    entities: [],
+    relationships: [],
+    openQuestions: []
+  },
+  lifecycle: {
+    status: 'stable',
+    trustTier: 'human-reviewed',
+    verification: 'current',
+    generatedAt: '2026-01-02T00:00:00.000Z',
+    verifiedAt: '2026-01-02T00:00:00.000Z',
+    staleAfter: null
+  },
+  completeness: { state: 'complete', missingFields: [] },
+  provenance: { deterministicVersion: 'wiki-knowledge-v1', fields: [], utility: null }
+})
+
+const knexWithProjection = (projection = null) =>
+  vi.fn().mockImplementation(table => {
+    const chain = {
+      first: vi.fn().mockResolvedValue(table === 'pageKnowledgeProjections as projections' && projection !== null ? { projection } : undefined),
+      join: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis()
+    }
+    return chain
+  })
+
 
 describe('controllers/api pages endpoints', () => {
   beforeEach(() => {
@@ -40,11 +89,7 @@ describe('controllers/api pages endpoints', () => {
         issueSession: vi.fn()
       },
       models: {
-        knex: vi.fn().mockImplementation(() => ({
-          where: vi.fn().mockReturnValue({
-            first: vi.fn().mockResolvedValue(undefined)
-          })
-        })),
+        knex: knexWithProjection(),
         tags: {
           query: vi.fn().mockReturnValue({
             deleteById: vi.fn().mockResolvedValue(1),
@@ -247,7 +292,7 @@ describe('controllers/api pages endpoints', () => {
     await restore(req, res)
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a non-empty string' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a canonical positive decimal string' })
   })
 
   it('requires an observed source revision before submitting a page approval', async () => {
@@ -262,7 +307,7 @@ describe('controllers/api pages endpoints', () => {
     await submitApproval(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a non-empty string' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a canonical positive decimal string' })
   })
 
   it('rejects locked GraphQL updates and permits REST and GraphQL updates with a current-session grant', async () => {
@@ -316,6 +361,141 @@ describe('controllers/api pages endpoints', () => {
     expect(grantedResponse.json).toHaveBeenCalledWith({ page: { id: 7 } })
     expect(grantedGraphResult.responseResult).toEqual(expect.objectContaining({ succeeded: true }))
     expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    undefined,
+    8,
+    '0',
+    '01',
+    '+8',
+    ' 8',
+    '8 ',
+    '8.0',
+    '1'.repeat(65)
+  ])('rejects noncanonical page update source revisions: %s', async expectedSourceRevision => {
+    const { updatePage } = await loadHandler()
+    const req = {
+      body: { expectedSourceRevision, title: 'Updated' },
+      params: { id: '7' },
+      sessionID: 'session-write',
+      user: { id: 5, permissions: ['write:pages'] }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await updatePage(req, res, vi.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a canonical positive decimal string' })
+    expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
+  })
+
+  it('forwards editable OKF metadata without echoing spoofed trust actors', async () => {
+    const requester = { id: 5, permissions: ['write:pages'] }
+    const okfMetadata = {
+      type: 'Reference',
+      title: 'Updated authority',
+      generated: { by: 'human:999', at: '2026-01-01T00:00:00.000Z' },
+      verified: { by: 'human:999', at: '2026-01-01T00:00:00.000Z' }
+    }
+    global.WIKI.models.pages.updatePage.mockResolvedValueOnce({
+      id: 7,
+      extra: {
+        okf: {
+          type: 'Reference',
+          title: 'Updated authority',
+          generated: { by: 'human:5', at: '2026-08-31T00:00:00.000Z' }
+        }
+      }
+    })
+    const { updatePage } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await updatePage(
+      {
+        body: { expectedSourceRevision: '8', title: 'Updated', okfMetadata },
+        params: { id: '7' },
+        sessionID: 'session-write',
+        user: requester
+      },
+      res,
+      vi.fn()
+    )
+
+    expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledWith({
+      expectedSourceRevision: '8',
+      title: 'Updated',
+      okfMetadata,
+      id: 7,
+      replaceOkfMetadata: true,
+      user: requester
+    })
+    expect(res.json).toHaveBeenCalledWith({
+      page: {
+        id: 7,
+        extra: {
+          okf: {
+            type: 'Reference',
+            title: 'Updated authority',
+            generated: { by: 'human:5', at: '2026-08-31T00:00:00.000Z' }
+          }
+        }
+      }
+    })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('human:999')
+  })
+
+  it('maps malformed OKF metadata to a bounded 400 response without exposing a stack', async () => {
+    const validationError = Object.assign(new Error(`Invalid OKF metadata: ${'x'.repeat(600)}`), {
+      name: 'OkfDocumentError',
+      code: 'INVALID_OKF_ROOT'
+    })
+    global.WIKI.models.pages.updatePage.mockRejectedValueOnce(validationError)
+    const { updatePage } = await loadHandler()
+    const next = vi.fn()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await updatePage(
+      {
+        body: { expectedSourceRevision: '8', okfMetadata: [] },
+        params: { id: '7' },
+        sessionID: 'session-write',
+        user: { id: 5, permissions: ['write:pages'] }
+      },
+      res,
+      next
+    )
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    const response = res.json.mock.calls[0][0]
+    expect(response.error).toHaveLength(500)
+    expect(response).not.toHaveProperty('stack')
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [Object.assign(new Error('The page is stale.'), { name: 'PageUpdateConflict', status: 409 })],
+    [Object.assign(new Error('The page changed during the update.'), { name: 'PageUpdateConflict' })]
+  ])('maps stale and concurrent page source conflicts to 409', async conflict => {
+    global.WIKI.models.pages.updatePage.mockRejectedValueOnce(conflict)
+    const { updatePage } = await loadHandler()
+    const next = vi.fn()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await updatePage(
+      {
+        body: { expectedSourceRevision: '8', title: 'Updated' },
+        params: { id: '7' },
+        sessionID: 'session-write',
+        user: { id: 5, permissions: ['write:pages'] }
+      },
+      res,
+      next
+    )
+
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith({ error: conflict.message })
+    expect(next).not.toHaveBeenCalled()
   })
   it('requires and forwards the observed timestamp for collaboration sessions', async () => {
     const expectedUpdatedAt = '2026-08-15T00:00:00.000Z'
@@ -887,6 +1067,10 @@ describe('controllers/api pages endpoints', () => {
       sourceRevision: '8',
       editor: 'markdown',
       locale: 'en',
+      okf: {
+        authority: { state: 'missing', metadata: null, trust: null },
+        projection: { state: 'pending', value: null }
+      },
       authorId: 2,
       authorName: 'Author',
       authorEmail: 'author@example.com',
@@ -915,8 +1099,122 @@ describe('controllers/api pages endpoints', () => {
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
       sourceRevision: '8',
-      locale: 'en'
+      locale: 'en',
+      okf: {
+        authority: { state: 'missing', metadata: null, trust: null },
+        projection: { state: 'pending', value: null }
+      }
     })
+  })
+
+  it('returns complete valid authority and a revision-matched current projection to field-restricted readers', async () => {
+    const metadata = {
+      type: 'Reference',
+      title: 'Authoritative Alpha',
+      status: 'stable',
+      generated: { by: 'human:2', at: '2026-01-01T00:00:00.000Z' },
+      verified: { by: 'human:3', at: '2026-01-02T00:00:00.000Z' },
+      extension: { safe: true }
+    }
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce({
+      ...await global.WIKI.models.pages.getPageFromDb(),
+      extra: { okf: metadata }
+    })
+    global.WIKI.models.knex = knexWithProjection(storedKnowledgeProjection('8'))
+    const { getPage } = await loadHandler()
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
+
+    await getPage(
+      { user: { id: 4, permissions: ['read:pages'] }, sessionID: 'session-read', params: { id: '7' } },
+      res,
+      vi.fn()
+    )
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      okf: {
+        authority: {
+          state: 'valid',
+          metadata,
+          trust: {
+            trustTier: 'human-reviewed',
+            verification: 'current',
+            status: 'stable',
+            stale: false,
+            generatedAt: '2026-01-01T00:00:00.000Z',
+            verifiedAt: '2026-01-02T00:00:00.000Z'
+          }
+        },
+        projection: {
+          state: 'current',
+          value: {
+            schemaVersion: 1,
+            sourceRevision: '8',
+            state: 'complete',
+            conceptType: 'Reference',
+            summary: 'Projected Alpha',
+            tags: ['alpha'],
+            entities: [],
+            relationships: [],
+            openQuestions: [],
+            lifecycle: {
+              status: 'stable',
+              trustTier: 'human-reviewed',
+              verification: 'current',
+              generatedAt: '2026-01-02T00:00:00.000Z',
+              verifiedAt: '2026-01-02T00:00:00.000Z',
+              staleAfter: null,
+              stale: false
+            },
+            missingFields: [],
+            provenance: { deterministicVersion: 'wiki-knowledge-v1', fields: [], utility: null }
+          }
+        }
+      }
+    }))
+  })
+
+  it('marks invalid stored authority explicitly without returning unsafe raw values', async () => {
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce({
+      ...await global.WIKI.models.pages.getPageFromDb(),
+      extra: { okf: { type: '', unsafeSecret: 'must-not-leak' } }
+    })
+    const { getPage } = await loadHandler()
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
+
+    await getPage(
+      { user: { id: 4, permissions: ['read:pages'] }, sessionID: 'session-read', params: { id: '7' } },
+      res,
+      vi.fn()
+    )
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      okf: {
+        authority: { state: 'invalid', metadata: null, trust: null },
+        projection: { state: 'pending', value: null }
+      }
+    }))
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('must-not-leak')
+  })
+
+  it('marks a mismatched repository projection pending and does not expose its value', async () => {
+    global.WIKI.models.knex = knexWithProjection(storedKnowledgeProjection('9'))
+    const { getPage } = await loadHandler()
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
+
+    await getPage(
+      { user: { id: 4, permissions: ['read:pages'] }, sessionID: 'session-read', params: { id: '7' } },
+      res,
+      vi.fn()
+    )
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRevision: '8',
+      okf: {
+        authority: { state: 'missing', metadata: null, trust: null },
+        projection: { state: 'pending', value: null }
+      }
+    }))
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('Projected Alpha')
   })
 
   it.each([
@@ -973,6 +1271,32 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.json).toHaveBeenCalledWith({ error: 'This page does not exist.' })
+    expect(global.WIKI.models.knex.mock.calls.some(([table]) => table === 'pageKnowledgeProjections as projections')).toBe(false)
+  })
+
+  it('masks private authority and projection data from non-owners before querying knowledge storage', async () => {
+    global.WIKI.auth.checkAccess
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValueOnce({
+      ...await global.WIKI.models.pages.getPageFromDb(),
+      visibility: 'private',
+      ownerId: 7,
+      extra: { okf: { type: 'Reference', privateSecret: 'must-not-leak' } }
+    })
+    const { getPage } = await loadHandler()
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await getPage(
+      { user: { id: 8, permissions: ['read:pages'] }, sessionID: 'other-session', params: { id: '7' } },
+      res,
+      vi.fn()
+    )
+
+    expect(res.status).toHaveBeenCalledWith(404)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Page not found' })
+    expect(JSON.stringify(res.json.mock.calls)).not.toContain('must-not-leak')
+    expect(global.WIKI.models.knex.mock.calls.some(([table]) => table === 'pageKnowledgeProjections as projections')).toBe(false)
   })
 
   it('returns private page details to the authenticated owner without requiring global page permissions', async () => {
@@ -983,12 +1307,14 @@ describe('controllers/api pages endpoints', () => {
     })
     const { getPage } = await loadHandler()
     const req = { user: { id: 7, permissions: [] }, params: { id: '7' } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
 
     await getPage(req, res)
 
     expect(res.status).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ id: 7, visibility: 'private', ownerId: 7 }))
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
   })
 
   it('forwards unexpected page detail failures to next', async () => {

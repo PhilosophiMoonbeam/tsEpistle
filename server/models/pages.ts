@@ -139,6 +139,7 @@ interface UpdatePageOptions {
   scriptCss?: string
   scriptJs?: string
   okfMetadata?: OkfMetadata
+  replaceOkfMetadata?: boolean
   okfProducer?: string
   okfRestoreRevision?: string | number
   skipStorage?: boolean
@@ -1017,6 +1018,7 @@ export default class Page extends Model {
       producer: opts.okfProducer ?? `human:${opts.user.id}`,
       knowledgeChanged,
       at: new Date(),
+      ...(!restoringOkf && opts.replaceOkfMetadata === true ? { mode: 'replace' as const } : {}),
       ...(restoringOkf ? { restore: { revision: opts.okfRestoreRevision! } } : {})
     })
     const willMove = destinationLocale !== ogPage.localeCode || destinationPath !== ogPage.path

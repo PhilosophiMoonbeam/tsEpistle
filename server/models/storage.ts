@@ -6,6 +6,19 @@ import _ from 'lodash'
 import * as yaml from 'js-yaml'
 import commonHelper from '../helpers/common.ts'
 import {
+  boundedStorageActionPath,
+  boundedStorageActionText,
+  emptyStorageActionFormats,
+  storageActionFormat,
+  STORAGE_ACTION_DIAGNOSTIC_LIMIT,
+  STORAGE_ACTION_ITEM_LIMIT,
+  type StorageActionItem,
+  type StorageActionSummary,
+  type StorageActionOutcome,
+  type StorageActionItemOutcome,
+  type StorageLastOperation
+} from '../modules/types.ts'
+import {
   errorMessage,
   hasMethod,
   isRecord,
@@ -14,7 +27,6 @@ import {
   type LoadedModuleDefinition,
   type ModuleConfig
 } from './moduleTypes.ts'
-
 interface StorageDefinition extends LoadedModuleDefinition {
   isAvailable: boolean
   defaultMode?: string
@@ -27,8 +39,8 @@ interface StorageState {
   status: string
   message: string
   lastAttempt: string | null
+  lastOperation?: StorageLastOperation | null
 }
-
 interface StatefulStorageTarget {
   state?: StorageState
   $query(): {
@@ -238,12 +250,96 @@ function isStorageAction(value: unknown): value is () => unknown {
   return typeof value === 'function'
 }
 
-async function recordTargetState(target: StatefulStorageTarget, status: string, message = ''): Promise<void> {
-  if (target.state?.status === status && target.state.message === message && isRecentStorageAttempt(target.state.lastAttempt)) return
-  const state = {
+const sanitizeDiagnostics = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((entry): entry is string => typeof entry === 'string')
+    .map(entry => boundedStorageActionText(entry, null))
+    .filter((entry): entry is string => entry !== null)
+    .slice(0, STORAGE_ACTION_DIAGNOSTIC_LIMIT)
+}
+
+const storageActionItem = (value: unknown): StorageActionItem => {
+  const row = isRecord(value) ? value : {}
+  const kind = row.kind === 'asset' ? 'asset' : 'page'
+  const format = storageActionFormat(row.format)
+  const rawOutcome = row.outcome
+  const outcome: StorageActionItemOutcome =
+    rawOutcome === 'conflict' ? 'conflict' : row.ok === true || rawOutcome === 'succeeded' ? 'succeeded' : 'failed'
+  const rawDocument = isRecord(row.document) ? row.document : {}
+  const diagnostics = sanitizeDiagnostics(rawDocument.diagnostics ?? row.diagnostics)
+  const message = outcome === 'succeeded'
+    ? null
+    : boundedStorageActionText(
+      format === 'invalid' ? 'Page document was rejected' : row.error ?? row.message,
+      'Storage item failed'
+    )
+  return {
+    kind,
+    path: boundedStorageActionPath(row.path ?? row.relPath),
+    outcome,
+    format,
+    message,
+    diagnostics
+  }
+}
+
+const actionSummary = (
+  targetKey: string,
+  handler: string,
+  startedAt: string,
+  completedAt: string,
+  result: unknown,
+  failureMessage?: string
+): StorageActionSummary => {
+  const values = Array.isArray(result) ? result : []
+  const formats = emptyStorageActionFormats()
+  let succeeded = 0
+  let failed = 0
+  const items: StorageActionItem[] = []
+  for (const value of values) {
+    const item = storageActionItem(value)
+    if (item.outcome === 'succeeded') succeeded += 1
+    else failed += 1
+    if (item.format !== null) formats[item.format] += 1
+    if (items.length < STORAGE_ACTION_ITEM_LIMIT) items.push(item)
+  }
+  const outcome: StorageActionOutcome = failureMessage !== undefined
+    ? 'failed'
+    : failed === 0 ? 'succeeded' : succeeded === 0 ? 'failed' : 'partial'
+  const message = boundedStorageActionText(
+    failureMessage,
+    outcome === 'succeeded' ? 'Action completed.' : outcome === 'partial' ? 'Action completed with failures.' : 'Action failed.'
+  ) ?? 'Action failed.'
+  return {
+    targetKey,
+    handler,
+    outcome,
+    total: values.length,
+    succeeded,
+    failed,
+    formats,
+    items,
+    startedAt,
+    completedAt,
+    message
+  }
+}
+
+async function recordTargetState(
+  target: StatefulStorageTarget,
+  status: string,
+  message = '',
+  lastOperation?: StorageLastOperation | null
+): Promise<void> {
+  if (lastOperation === undefined && target.state?.status === status && target.state.message === message && isRecentStorageAttempt(target.state.lastAttempt)) return
+  const state: StorageState = {
     status,
     message,
-    lastAttempt: new Date().toISOString()
+    lastAttempt: new Date().toISOString(),
+    ...(lastOperation === undefined
+      ? target.state?.lastOperation === undefined ? {} : { lastOperation: target.state.lastOperation }
+      : { lastOperation })
   }
   target.state = state
   await target.$query().patch({ state })
@@ -515,7 +611,7 @@ export default class Storage extends Model {
     return locations
   }
 
-  static async executeAction(targetKey: string, handler: string): Promise<void> {
+  static async executeAction(targetKey: string, handler: string): Promise<StorageActionSummary> {
     const wiki = getWiki()
     const target = this.targets.find(candidate => candidate.key === targetKey)
     if (!target) {
@@ -530,17 +626,24 @@ export default class Storage extends Model {
       throw new Error('Invalid Handler for Storage Target')
     }
 
+    const startedAt = new Date().toISOString()
     try {
-      await action.call(target.fn)
-      await recordTargetState(target, 'operational')
+      const result = await action.call(target.fn)
+      const completedAt = new Date().toISOString()
+      const summary = actionSummary(targetKey, handler, startedAt, completedAt, result)
+      const stateStatus = summary.outcome === 'partial' ? 'warning' : summary.outcome === 'failed' ? 'error' : 'operational'
+      await recordTargetState(target, stateStatus, stateStatus === 'operational' ? '' : summary.message, summary)
+      return summary
     } catch (err) {
       wiki.logger.warn(err)
+      const completedAt = new Date().toISOString()
+      const summary = actionSummary(targetKey, handler, startedAt, completedAt, undefined, errorMessage(err))
       try {
-        await recordTargetState(target, 'error', errorMessage(err))
+        await recordTargetState(target, 'error', summary.message, summary)
       } catch (statusError) {
         wiki.logger.warn(statusError)
       }
-      throw err
+      return summary
     }
   }
 }

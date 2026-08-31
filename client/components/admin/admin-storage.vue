@@ -111,6 +111,68 @@
               em {{$t('admin:storage.noTarget')}}
 
       v-col(cols='12', lg='9')
+        v-card.mb-3.animated.fadeInUp.wait-p1s.operations-ledger(aria-live='polite')
+          v-toolbar(flat, color='grey-darken-3', density='compact')
+            v-icon.me-2(aria-hidden='true') mdi-clipboard-text-clock-outline
+            .text-body-large Latest storage operation
+          v-card-text(v-if='lastOperation')
+            .d-flex.flex-wrap.align-center.ga-2.mb-4
+              v-chip(
+                :color='operationOutcomeColor(lastOperation.outcome)'
+                :prepend-icon='operationOutcomeIcon(lastOperation.outcome)'
+                label
+              ) {{ operationOutcomeLabel(lastOperation.outcome) }}
+              v-chip(variant='outlined', label) Terminal · {{ actionLabel(lastOperation.handler) }}
+              span.text-body-small.text-medium-emphasis {{ lastOperation.targetKey }}
+            v-alert(
+              :type='operationOutcomeAlertType(lastOperation.outcome)'
+              variant='tonal'
+              :title='lastOperation.message'
+            )
+              .text-body-small(v-if='lastOperation.outcome === `partial`') Some items completed, but failed or conflicted items still require attention.
+              .text-body-small(v-else-if='lastOperation.outcome === `failed`') The operation did not complete successfully. Review the paths and diagnostics below.
+            v-row.mt-3
+              v-col(cols='6', sm='4')
+                .text-label-small.text-medium-emphasis Total
+                .text-title-large {{ lastOperation.total }}
+              v-col(cols='6', sm='4')
+                .text-label-small.text-medium-emphasis Succeeded
+                .text-title-large.text-success {{ lastOperation.succeeded }}
+              v-col(cols='6', sm='4')
+                .text-label-small.text-medium-emphasis Failed
+                .text-title-large(:class='lastOperation.failed ? `text-error` : `text-medium-emphasis`') {{ lastOperation.failed }}
+            v-divider.my-4
+            .text-label-small.text-medium-emphasis.mb-2 Document formats
+            .d-flex.flex-wrap.ga-2
+              v-chip(v-for='format in operationFormatRows', :key='format.key', size='small', variant='outlined', label)
+                span {{ format.label }}
+                strong.ms-2 {{ format.count }}
+            v-divider.my-4
+            v-row
+              v-col(cols='12', sm='6')
+                .text-label-small.text-medium-emphasis Started
+                time.text-body-medium(:datetime='lastOperation.startedAt') {{ formatOperationTime(lastOperation.startedAt) }}
+              v-col(cols='12', sm='6')
+                .text-label-small.text-medium-emphasis Completed
+                time.text-body-medium(:datetime='lastOperation.completedAt') {{ formatOperationTime(lastOperation.completedAt) }}
+            template(v-if='operationIssues.length')
+              v-divider.my-4
+              .text-title-small.mb-2 Failures, conflicts, and diagnostics
+              v-list.operations-ledger-issues(lines='three', density='compact')
+                v-list-item(v-for='item in operationIssues', :key='`${item.kind}:${item.path}:${item.outcome}`')
+                  v-list-item-title.operations-ledger-path {{ item.path }}
+                  v-list-item-subtitle
+                    .d-flex.flex-wrap.ga-2.my-1
+                      v-chip(size='x-small', :color='item.outcome === `conflict` ? `warning` : `error`', label) {{ actionLabel(item.outcome) }}
+                      v-chip(v-if='item.format', size='x-small', variant='outlined', label) {{ formatLabel(item.format) }}
+                      v-chip(size='x-small', variant='outlined', label) {{ item.kind }}
+                    .text-body-small(v-if='item.message') {{ item.message }}
+                    ul.operations-ledger-diagnostics(v-if='item.diagnostics.length')
+                      li(v-for='diagnostic in item.diagnostics', :key='diagnostic') {{ diagnostic }}
+          v-card-text.text-medium-emphasis(v-else)
+            .text-title-small No storage operation has been reported
+            .text-body-medium.mt-1 Run a storage action or wait for status polling to report the latest terminal operation.
+
         v-card.wiki-form.animated.fadeInUp.wait-p2s
           v-toolbar(color='primary', density="compact", flat)
             .text-body-large {{target.title}}
@@ -227,6 +289,9 @@
               template(v-if='target.actions && target.actions.length > 0')
                 v-divider.mt-3
                 .text-label-small.my-5 {{$t('admin:storage.actions')}}
+                v-alert.mb-4(type='info', variant='tonal', icon='mdi-file-document-refresh-outline')
+                  .text-title-small Storage document policy
+                  .text-body-small.mt-1 Ingress normalizes records in the database while leaving source bytes unchanged. Explicit egress writes canonical OKF documents to the configured target. Utility projection is optional and separate; storage actions never invoke it.
                 v-alert(v-if='!target.isEnabled', variant="outlined", color='warning', icon='mdi-alert')
                   .text-body-medium {{$t('admin:storage.actionsInactiveWarn')}}
                 v-container.pt-0(fluid)
@@ -237,12 +302,33 @@
                           .text-body-large {{act.label}}
                           .text-body-medium.mt-4 {{act.hint}}
                           v-btn.mx-0.mt-5(
-                            @click='executeAction(target.key, act.handler)'
-                            variant="outlined"
-                            :color='$vuetify.theme.current.dark ? `primary` : `primary`'
+                            @click='requestAction(target.key, act)'
+                            variant='outlined'
+                            color='primary'
                             :disabled='runningAction || !target.isEnabled'
                             :loading='runningActionHandler === act.handler'
                             ) {{$t('admin:storage.actionRun')}}
+        v-dialog(v-model='isActionConfirmationShown', persistent, max-width='520')
+          v-card(role='dialog', aria-labelledby='storage-action-confirm-title')
+            v-card-title#storage-action-confirm-title Confirm storage operation
+            v-card-text
+              .text-title-small {{ pendingAction ? pendingAction.label : '' }}
+              .text-body-medium.mt-2 {{ pendingAction ? pendingAction.hint : '' }}
+              v-alert.mt-4(
+                :type='actionConfirmationAlertType'
+                variant='tonal'
+                :title='actionConfirmationTitle'
+              ) {{ actionConfirmationCopy }}
+              .text-body-small.text-medium-emphasis.mt-4 Utility projection remains an optional, separate operation. Confirming here will not invoke any utility.
+            v-card-actions
+              v-spacer
+              v-btn(variant='text', @click='cancelActionConfirmation', :disabled='runningAction') Cancel
+              v-btn(
+                :color='actionConfirmationColor'
+                variant='flat'
+                @click='confirmAction'
+                :loading='runningAction'
+              ) {{ actionConfirmationButton }}
 </template>
 
 <script lang='ts'>
@@ -256,6 +342,11 @@ import { wikiStore } from '@/store/index.ts'
 import { loadingStart, loadingStop, pushGraphError, showNotification, setLoading } from '../../helpers/root-ui-store'
 import { executeStorageAction, fetchStorageStatus, fetchStorageTargets, saveStorageTargets } from '../../helpers/storage-api'
 import type {
+  StorageAction,
+  StorageActionFormat,
+  StorageActionItem,
+  StorageActionOutcome,
+  StorageActionSummary,
   StorageConfigEntry,
   StorageInterval,
   StorageStatus,
@@ -286,6 +377,10 @@ type NormalizedStorageTarget = Omit<StorageTarget, 'config'> & {
   config: NormalizedStorageConfig[]
 }
 
+type PendingStorageAction = Pick<StorageAction, 'handler' | 'hint' | 'label'> & {
+  targetKey: string
+}
+
 const makeDefaultStorageTarget = (): NormalizedStorageTarget => ({
   actions: [],
   config: [],
@@ -310,6 +405,9 @@ export default {
   },
   data() {
     return {
+      isActionConfirmationShown: false,
+      lastOperation: null as StorageActionSummary | null,
+      pendingAction: null as PendingStorageAction | null,
       runningAction: false,
       runningActionHandler: '',
       selectedTarget: '',
@@ -323,6 +421,46 @@ export default {
   computed: {
     activeTargets() {
       return _.filter(this.targets, 'isEnabled')
+    },
+    operationFormatRows(): Array<{ key: StorageActionFormat, label: string, count: number }> {
+      if (!this.lastOperation) return []
+      return (['okf', 'legacyV1', 'legacyWiki', 'plain', 'invalid'] as StorageActionFormat[]).map(key => ({
+        key,
+        label: this.formatLabel(key),
+        count: this.lastOperation!.formats[key]
+      }))
+    },
+    operationIssues(): StorageActionItem[] {
+      if (!this.lastOperation) return []
+      return this.lastOperation.items.filter(item =>
+        item.outcome !== 'succeeded' || Boolean(item.message) || item.diagnostics.length > 0
+      )
+    },
+    actionConfirmationTitle(): string {
+      if (!this.pendingAction) return ''
+      if (this.isIngressAction(this.pendingAction.handler)) return 'Import into the database'
+      if (this.isPurgeAction(this.pendingAction.handler)) return 'Destructive removal'
+      return 'Write to the configured storage target'
+    },
+    actionConfirmationCopy(): string {
+      if (!this.pendingAction) return ''
+      if (this.isIngressAction(this.pendingAction.handler)) {
+        return 'Ingress normalizes imported records in the database. The source document bytes remain unchanged.'
+      }
+      if (this.isPurgeAction(this.pendingAction.handler)) {
+        return 'This operation can permanently remove stored content. Review the configured target and backup policy before continuing.'
+      }
+      return 'This is explicit egress. It writes canonical OKF documents to the configured target and may replace existing target files.'
+    },
+    actionConfirmationAlertType(): 'warning' | 'error' {
+      return this.pendingAction && this.isPurgeAction(this.pendingAction.handler) ? 'error' : 'warning'
+    },
+    actionConfirmationColor(): 'warning' | 'error' {
+      return this.actionConfirmationAlertType
+    },
+    actionConfirmationButton(): string {
+      if (!this.pendingAction) return 'Run operation'
+      return this.isPurgeAction(this.pendingAction.handler) ? 'Confirm removal' : 'Run operation'
     }
   },
   watch: {
@@ -403,7 +541,15 @@ export default {
       this.statusRefreshing = true
       setLoading(wikiStore, 'admin-storage-status-refresh', true)
       try {
-        this.status = await fetchStorageStatus(window.fetch.bind(window))
+        const status = await fetchStorageStatus(window.fetch.bind(window))
+        this.status = status
+        const latestOperation = status.reduce<StorageActionSummary | null>((latest, entry) => {
+          if (!entry.lastOperation) return latest
+          return !latest || entry.lastOperation.completedAt > latest.completedAt ? entry.lastOperation : latest
+        }, null)
+        if (latestOperation && (!this.lastOperation || latestOperation.completedAt >= this.lastOperation.completedAt)) {
+          this.lastOperation = latestOperation
+        }
       } catch (err) {
         pushGraphError(wikiStore, err)
       } finally {
@@ -438,21 +584,99 @@ export default {
       if (!val) { return 'N/A' }
       return moment.duration(val).format('y [years], M [months], d [days], h [hours], m [minutes]')
     },
+    actionLabel(value: string): string {
+      const words = value
+        .replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
+        .replace(/[_-]+/gu, ' ')
+        .trim()
+      return words ? words.replace(/\b\w/gu, letter => letter.toUpperCase()) : 'Unknown'
+    },
+    formatLabel(format: StorageActionFormat): string {
+      return {
+        okf: 'OKF',
+        legacyV1: 'Legacy v1',
+        legacyWiki: 'Legacy Wiki',
+        plain: 'Plain Markdown',
+        invalid: 'Invalid'
+      }[format]
+    },
+    formatOperationTime(value: string): string {
+      return moment.utc(value).format('YYYY-MM-DD HH:mm:ss [UTC]')
+    },
+    operationOutcomeLabel(outcome: StorageActionOutcome): string {
+      return {
+        succeeded: 'Succeeded',
+        partial: 'Partial',
+        failed: 'Failed'
+      }[outcome]
+    },
+    operationOutcomeColor(outcome: StorageActionOutcome): 'success' | 'warning' | 'error' {
+      return {
+        succeeded: 'success' as const,
+        partial: 'warning' as const,
+        failed: 'error' as const
+      }[outcome]
+    },
+    operationOutcomeAlertType(outcome: StorageActionOutcome): 'success' | 'warning' | 'error' {
+      return this.operationOutcomeColor(outcome)
+    },
+    operationOutcomeIcon(outcome: StorageActionOutcome): string {
+      return {
+        succeeded: 'mdi-check-circle-outline',
+        partial: 'mdi-alert-outline',
+        failed: 'mdi-close-circle-outline'
+      }[outcome]
+    },
+    isIngressAction(handler: string): boolean {
+      return /import|restore|ingress/iu.test(handler)
+    },
+    isPurgeAction(handler: string): boolean {
+      return /purge|delete|remove/iu.test(handler)
+    },
+    requiresActionConfirmation(handler: string): boolean {
+      return /import|restore|export|dump|backup|syncUntracked|purge|delete|remove|migrate/iu.test(handler)
+    },
+    async requestAction(targetKey: string, action: StorageAction) {
+      if (this.requiresActionConfirmation(action.handler)) {
+        this.pendingAction = { targetKey, handler: action.handler, label: action.label, hint: action.hint }
+        this.isActionConfirmationShown = true
+        return
+      }
+      await this.executeAction(targetKey, action.handler)
+    },
+    cancelActionConfirmation() {
+      if (this.runningAction) return
+      this.isActionConfirmationShown = false
+      this.pendingAction = null
+    },
+    async confirmAction() {
+      if (!this.pendingAction || this.runningAction) return
+      const { targetKey, handler } = this.pendingAction
+      await this.executeAction(targetKey, handler)
+      this.isActionConfirmationShown = false
+      this.pendingAction = null
+    },
     async executeAction(targetKey: string, handler: string) {
       loadingStart(wikiStore, 'admin-storage-executeaction')
       this.runningAction = true
       this.runningActionHandler = handler
       try {
         const result = await executeStorageAction(window.fetch.bind(window), targetKey, handler)
+        this.lastOperation = result
+        const presentation = {
+          succeeded: { style: 'success', icon: 'check' },
+          partial: { style: 'warning', icon: 'alert' },
+          failed: { style: 'error', icon: 'alert' }
+        }[result.outcome]
         showNotification(wikiStore, {
-          message: result.message || 'Action completed.',
-          style: 'success',
-          icon: 'check'
+          message: result.message,
+          style: presentation.style,
+          icon: presentation.icon
         })
-        await this.loadStatus()
       } catch (err) {
         pushGraphError(wikiStore, err)
       } finally {
+        await this.loadStatus()
         this.runningAction = false
         this.runningActionHandler = ''
         loadingStop(wikiStore, 'admin-storage-executeaction')
@@ -463,6 +687,12 @@ export default {
 </script>
 
 <style lang='scss' scoped>
+
+.operations-ledger-path,
+.operations-ledger-diagnostics {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
 
 .targetlogo {
   width: 250px;

@@ -2,6 +2,7 @@ import { createPinia, defineStore } from 'pinia'
 import Cookies from 'js-cookie'
 import { decodeJwtPayload } from '../helpers/jwt.ts'
 import { registerJsonPrincipalRefresh } from '../helpers/json-transport.ts'
+import type { PageOkfView } from '../helpers/pages-api.ts'
 import type { SystemSummary } from '../helpers/system-api.ts'
 
 export type Notification = {
@@ -34,6 +35,11 @@ const defaultPermissions = () => ({
   pages: { write: false, manage: false, delete: false, script: false, style: false },
   system: { manage: false }
 })
+const defaultPageOkf = (): PageOkfView => ({
+  authority: { state: 'invalid', metadata: null, trust: null },
+  projection: { state: 'pending', value: null }
+})
+
 
 export const pinia = createPinia()
 
@@ -105,7 +111,10 @@ export const useWikiStore = defineStore('wiki', {
         editMenuExternalName: '',
         editMenuExternalIcon: '',
         editMenuExternalUrl: ''
-      }
+      },
+      okf: defaultPageOkf(),
+      okfLoading: false,
+      okfError: null as string | null
     },
     site: {
       company: window.siteConfig.company,

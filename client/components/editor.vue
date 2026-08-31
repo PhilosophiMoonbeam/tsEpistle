@@ -113,7 +113,7 @@
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent, type PropType } from 'vue'
 import _ from 'lodash'
-import { changePageVisibility, checkPageConflict, createPage, updatePage } from '../helpers/pages-api'
+import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, fetchPage, updatePage } from '../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
 import { AtomSpinner } from 'epic-spinners'
 import { Base64 } from 'js-base64'
@@ -243,7 +243,8 @@ export default defineComponent({
         tags: [] as string[],
         title: '',
         css: '',
-        js: ''
+        js: '',
+        okfMetadata: undefined as Record<string, unknown> | undefined
       }
     }
   },
@@ -274,13 +275,14 @@ export default defineComponent({
         this.path !== wikiStore.page.path,
         this.savedState.title !== wikiStore.page.title,
         this.savedState.description !== wikiStore.page.description,
-        this.savedState.tags !== wikiStore.page.tags,
+        !_.isEqual(this.savedState.tags, wikiStore.page.tags),
         this.savedState.isPublished !== wikiStore.page.isPublished,
         this.savedState.visibility !== wikiStore.page.visibility,
         this.savedState.publishStartDate !== wikiStore.page.publishStartDate,
         this.savedState.publishEndDate !== wikiStore.page.publishEndDate,
         this.savedState.css !== wikiStore.page.scriptCss,
-        this.savedState.js !== wikiStore.page.scriptJs
+        this.savedState.js !== wikiStore.page.scriptJs,
+        !_.isEqual(this.savedState.okfMetadata, buildOkfMetadataPayload(wikiStore.page.okf.authority.metadata))
       ], Boolean)
     }
   },
@@ -347,6 +349,9 @@ export default defineComponent({
         return undefined
       }
     }
+    if (this.mode !== 'create' && this.pageId > 0) {
+      void this.hydratePage()
+    }
 
     onEditorConflictReset(this.handleEditorConflictReset)
     this.conflictTimer = window.setInterval(this.refreshConflict, 5000)
@@ -368,6 +373,36 @@ export default defineComponent({
     },
     handleEditorConflictReset() {
       this.isConflict = false
+    },
+    async hydratePage() {
+      if (this.mode === 'create' || this.pageId <= 0 || wikiStore.page.okfLoading) return
+      wikiStore.page.okfLoading = true
+      wikiStore.page.okfError = null
+      try {
+        const page = await fetchPage(window.fetch.bind(window), this.pageId, this.$t('common:error.unexpected'))
+        if (this.isDirty) return
+        wikiStore.page.okf = page.okf
+        wikiStore.page.sourceRevision = page.sourceRevision
+        this.setCurrentSavedState()
+      } catch (err) {
+        wikiStore.page.okfError = getErrorMessage(err)
+      } finally {
+        wikiStore.page.okfLoading = false
+      }
+    },
+    async refreshOkfAfterSave() {
+      wikiStore.page.okfLoading = true
+      wikiStore.page.okfError = null
+      try {
+        const page = await fetchPage(window.fetch.bind(window), this.pageId, this.$t('common:error.unexpected'))
+        wikiStore.page.okf = page.okf
+        wikiStore.page.sourceRevision = page.sourceRevision
+      } catch (err) {
+        wikiStore.page.okfError = getErrorMessage(err)
+        throw err
+      } finally {
+        wikiStore.page.okfLoading = false
+      }
     },
     async refreshConflict() {
       if (this.mode === 'create' || this.isSaving || !this.isDirty) return
@@ -436,6 +471,7 @@ export default defineComponent({
             )
             wikiStore.page.sourceRevision = visibilityPage.sourceRevision
           }
+          await this.refreshOkfAfterSave()
           this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
           this.isConflict = false
           wikiStore.showNotification({
@@ -507,6 +543,7 @@ export default defineComponent({
       }, 500)
     },
     getPageInput () {
+      const okfMetadata = buildOkfMetadataPayload(wikiStore.page.okf.authority.metadata)
       return {
         content: wikiStore.editor.content,
         description: wikiStore.page.description,
@@ -520,7 +557,8 @@ export default defineComponent({
         scriptCss: wikiStore.page.scriptCss,
         scriptJs: wikiStore.page.scriptJs,
         tags: wikiStore.page.tags,
-        title: wikiStore.page.title
+        title: wikiStore.page.title,
+        ...(okfMetadata === undefined ? {} : { okfMetadata })
       }
     },
     setCurrentSavedState () {
@@ -530,10 +568,11 @@ export default defineComponent({
         visibility: wikiStore.page.visibility,
         publishEndDate: wikiStore.page.publishEndDate || '',
         publishStartDate: wikiStore.page.publishStartDate || '',
-        tags: wikiStore.page.tags,
+        tags: [...wikiStore.page.tags],
         title: wikiStore.page.title,
         css: wikiStore.page.scriptCss,
-        js: wikiStore.page.scriptJs
+        js: wikiStore.page.scriptJs,
+        okfMetadata: _.cloneDeep(buildOkfMetadataPayload(wikiStore.page.okf.authority.metadata))
       }
     },
     injectCustomCss: _.debounce((css: string) => {

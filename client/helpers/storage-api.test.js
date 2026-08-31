@@ -34,9 +34,40 @@ function storageStatus (overrides = {}) {
   return {
     key: 'git',
     lastAttempt: '2026-08-21T00:00:00.000Z',
+    lastOperation: null,
     message: 'Ready',
     status: 'operational',
     title: 'Git',
+    ...overrides
+  }
+}
+
+function storageActionSummary (overrides = {}) {
+  return {
+    targetKey: 'git',
+    handler: 'sync',
+    outcome: 'succeeded',
+    total: 2,
+    succeeded: 2,
+    failed: 0,
+    formats: {
+      okf: 1,
+      legacyV1: 0,
+      legacyWiki: 1,
+      plain: 0,
+      invalid: 0
+    },
+    items: [{
+      kind: 'page',
+      path: 'guides/start.md',
+      outcome: 'succeeded',
+      format: 'legacyWiki',
+      message: null,
+      diagnostics: []
+    }],
+    startedAt: '2026-08-21T00:00:00.000Z',
+    completedAt: '2026-08-21T00:00:01.000Z',
+    message: 'Exported 2 pages.',
     ...overrides
   }
 }
@@ -98,6 +129,17 @@ describe('storage api helper', () => {
     expect(result).toEqual([storageStatus()])
   })
 
+  it('exposes the last structured operation from status polling', async () => {
+    const lastOperation = storageActionSummary()
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
+      storageStatus({ lastOperation })
+    ]))
+
+    expect(await fetchStorageStatus(fetchImpl)).toEqual([
+      storageStatus({ lastOperation })
+    ])
+  })
+
   it('rejects malformed successful status responses', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ status: [] }))
 
@@ -152,8 +194,13 @@ describe('storage api helper', () => {
     await expect(Promise.resolve(saveStorageTargets(fetchImpl, []))).rejects.toThrow('403')
   })
 
-  it('executes a storage action with same-origin JSON POST', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Action completed.', job: 'sync' }))
+  it('executes a storage action and strictly normalizes its structured summary', async () => {
+    const payload = storageActionSummary({
+      startedAt: '2026-08-21T02:00:00.000+02:00',
+      completedAt: '2026-08-21T02:00:01.000+02:00',
+      ignored: 'server-only'
+    })
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
     const result = await executeStorageAction(fetchImpl, 'git', 'sync')
 
@@ -166,22 +213,60 @@ describe('storage api helper', () => {
       },
       body: JSON.stringify({ targetKey: 'git', handler: 'sync' })
     })
-    expect(result).toEqual({ message: 'Action completed.', job: 'sync' })
+    expect(result).toEqual(storageActionSummary())
+    expect(result).not.toHaveProperty('ignored')
   })
 
-  it('accepts empty string action messages to preserve legacy message validation', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
+  it('preserves partial outcomes and separate legacy format counts', async () => {
+    const summary = storageActionSummary({
+      outcome: 'partial',
+      succeeded: 1,
+      failed: 1,
+      formats: {
+        okf: 0,
+        legacyV1: 1,
+        legacyWiki: 0,
+        plain: 0,
+        invalid: 1
+      },
+      items: [{
+        kind: 'page',
+        path: 'broken.md',
+        outcome: 'failed',
+        format: 'invalid',
+        message: 'Metadata could not be verified.',
+        diagnostics: ['authority.signature is invalid']
+      }],
+      message: 'Imported 1 page; 1 page failed.'
+    })
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(summary))
 
-    expect(await executeStorageAction(fetchImpl, 'git', 'sync')).toEqual({ message: '' })
+    expect(await executeStorageAction(fetchImpl, 'disk', 'importAll')).toEqual(summary)
   })
 
-  it('rejects malformed successful action responses', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
+  it.each([
+    ['missing summary fields', {}],
+    ['unknown outcome', storageActionSummary({ outcome: 'complete' })],
+    ['inconsistent totals', storageActionSummary({ total: 3 })],
+    ['partial without both result classes', storageActionSummary({ outcome: 'partial' })],
+    ['invalid format count', storageActionSummary({ formats: { okf: 2, legacyV1: 0, legacyWiki: 0, plain: 0, invalid: -1 } })],
+    ['invalid timestamp', storageActionSummary({ completedAt: 'not-a-date' })],
+    ['completion before start', storageActionSummary({ completedAt: '2026-08-20T23:59:59.000Z' })],
+    ['unbounded items', storageActionSummary({ items: Array.from({ length: 51 }, (_, index) => ({
+      kind: 'page',
+      path: `page-${index}.md`,
+      outcome: 'failed',
+      format: 'invalid',
+      message: 'Invalid',
+      diagnostics: []
+    })) })]
+  ])('rejects malformed successful action responses: %s', async (_name, payload) => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
     await expect(Promise.resolve(executeStorageAction(fetchImpl, 'git', 'sync', 'Unexpected action response'))).rejects.toThrow('Unexpected action response')
   })
 
-  it('surfaces JSON REST action errors', async () => {
+  it('surfaces JSON REST action errors instead of treating them as summaries', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid Handler for Storage Target' }, false))
 
     await expect(Promise.resolve(executeStorageAction(fetchImpl, 'git', 'missing'))).rejects.toThrow('Invalid Handler for Storage Target')

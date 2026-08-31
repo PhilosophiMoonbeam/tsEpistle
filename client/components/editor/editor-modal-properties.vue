@@ -24,6 +24,7 @@
         //- v-tab(:value='3', disabled) {{$t('editor:props.social')}}
         v-tab(:value='3', :disabled='!hasStylePermission') {{$t('editor:props.styles')}}
         v-tab(:value='4', :disabled='mode === `create`') {{$t('editor:props.translations')}}
+        v-tab(:value='5') Knowledge / OKF
       v-tabs-window(v-model='currentTab')
         v-tabs-window-item(:value='0', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text.pt-5
@@ -276,6 +277,9 @@
                 span {{translationError}}
                 v-spacer
                 v-btn(variant='text', size='small', @click='loadTranslations') Retry
+        v-tabs-window-item(:value='5', transition='fade-transition', reverse-transition='fade-transition')
+          editor-okf-panel
+
 
     v-dialog(v-model='privatePageConfirm', max-width='480')
       v-card
@@ -294,7 +298,6 @@
       :path='path'
       :locale='locale'
       :open-handler='linkTranslation'
-      )</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
@@ -311,6 +314,7 @@ import {
 import { css } from '@codemirror/lang-css'
 import { javascript } from '@codemirror/lang-javascript'
 import { TextEditor, type TextEditorHandle } from './common/text-editor'
+import EditorOkfPanel from './editor-okf-panel.vue'
 
 /* global siteLangs, siteConfig */
 
@@ -330,6 +334,9 @@ function formatDatePickerValue (value: DatePickerValue): string {
   return parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : ''
 }
 export default defineComponent({
+  components: {
+    EditorOkfPanel
+  },
   emits: ['update:modelValue'],
   props: {
     modelValue: {

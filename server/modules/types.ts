@@ -308,6 +308,99 @@ export interface StorageConfig extends UnknownRecord {
   verifySSL: boolean
 }
 
+export type StorageActionOutcome = 'succeeded' | 'partial' | 'failed'
+
+export type StorageActionItemOutcome = 'succeeded' | 'failed' | 'conflict'
+
+export type StorageActionFormat = 'okf' | 'legacyV1' | 'legacyWiki' | 'plain' | 'invalid'
+
+export interface StorageActionFormatCounts {
+  okf: number
+  legacyV1: number
+  legacyWiki: number
+  plain: number
+  invalid: number
+}
+
+export interface StorageActionItem {
+  kind: 'page' | 'asset'
+  path: string
+  outcome: StorageActionItemOutcome
+  format: StorageActionFormat | null
+  message: string | null
+  diagnostics: string[]
+}
+
+export interface StorageActionSummary {
+  targetKey: string
+  handler: string
+  outcome: StorageActionOutcome
+  total: number
+  succeeded: number
+  failed: number
+  formats: StorageActionFormatCounts
+  items: StorageActionItem[]
+  startedAt: string
+  completedAt: string
+  message: string
+}
+
+export type StorageLastOperation = StorageActionSummary
+
+export const STORAGE_ACTION_ITEM_LIMIT = 50
+export const STORAGE_ACTION_PATH_LIMIT = 512
+export const STORAGE_ACTION_MESSAGE_LIMIT = 512
+export const STORAGE_ACTION_DIAGNOSTIC_LIMIT = 8
+
+const storageActionFormats: StorageActionFormat[] = ['okf', 'legacyV1', 'legacyWiki', 'plain', 'invalid']
+
+export const emptyStorageActionFormats = (): StorageActionFormatCounts => ({
+  okf: 0,
+  legacyV1: 0,
+  legacyWiki: 0,
+  plain: 0,
+  invalid: 0
+})
+
+export type StoragePluginActionResult = readonly unknown[] | StorageActionSummary | void
+
+export function storageActionFormat(value: unknown): StorageActionFormat | null {
+  if (value === 'okf_valid') return 'okf'
+  if (value === 'legacy_v1') return 'legacyV1'
+  if (value === 'legacy_wiki') return 'legacyWiki'
+  if (value === 'plain_markdown') return 'plain'
+  if (value === 'okf_invalid') return 'invalid'
+  return storageActionFormats.includes(value as StorageActionFormat) ? value as StorageActionFormat : null
+}
+
+export function boundedStorageActionText(value: unknown, fallback: string | null = null): string | null {
+  if (typeof value !== 'string') return fallback
+  const normalized = value.replaceAll(/[\r\n\t]+/gu, ' ').trim()
+  return normalized.length > 0 ? normalized.slice(0, STORAGE_ACTION_MESSAGE_LIMIT) : fallback
+}
+
+export function boundedStorageActionPath(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.replaceAll('\\', '/').slice(0, STORAGE_ACTION_PATH_LIMIT)
+}
+
+export function isStorageActionSummary(value: unknown): value is StorageActionSummary {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const summary = value as Partial<StorageActionSummary>
+  return typeof summary.targetKey === 'string' &&
+    typeof summary.handler === 'string' &&
+    (summary.outcome === 'succeeded' || summary.outcome === 'partial' || summary.outcome === 'failed') &&
+    Number.isInteger(summary.total) &&
+    Number.isInteger(summary.succeeded) &&
+    Number.isInteger(summary.failed) &&
+    !!summary.formats &&
+    typeof summary.formats === 'object' &&
+    Array.isArray(summary.items) &&
+    typeof summary.startedAt === 'string' &&
+    typeof summary.completedAt === 'string' &&
+    typeof summary.message === 'string'
+}
+
 export interface StorageContext<C extends StorageConfig = StorageConfig> {
   config: C
   mode?: string
@@ -317,7 +410,6 @@ export interface StoragePlugin<C extends StorageConfig = StorageConfig, Context 
   activated(this: Context): Promise<void>
   deactivated(this: Context): Promise<void>
   init(this: Context): Promise<void>
-  sync?(this: Context, options?: { manual: boolean }): Promise<void>
   created?(this: Context, page: WikiPage): Promise<void>
   updated?(this: Context, page: WikiPage): Promise<void>
   deleted?(this: Context, page: WikiPage): Promise<void>
@@ -326,10 +418,11 @@ export interface StoragePlugin<C extends StorageConfig = StorageConfig, Context 
   assetDeleted?(this: Context, asset: WikiAsset): Promise<void>
   assetRenamed?(this: Context, asset: WikiAsset): Promise<void>
   getLocalLocation?(this: Context, asset: WikiAsset): Promise<string | void>
-  dump?(this: Context): Promise<void>
-  backup?(this: Context): Promise<void>
-  importAll?(this: Context): Promise<void>
-  exportAll?(this: Context): Promise<void>
+  sync?(this: Context, options?: { manual: boolean }): Promise<StoragePluginActionResult>
+  dump?(this: Context): Promise<StoragePluginActionResult>
+  backup?(this: Context): Promise<StoragePluginActionResult>
+  importAll?(this: Context): Promise<StoragePluginActionResult>
+  exportAll?(this: Context): Promise<StoragePluginActionResult>
 }
 
 export interface SearchConfig extends UnknownRecord {

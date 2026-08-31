@@ -3,7 +3,7 @@ import { type Request, type Response, getTransportRuntime, getWikiAuth } from '.
 import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
 import { linkPageLocaleRelation, listPageLocaleRelations, unlinkPageLocaleRelation } from '../../operations/page-locale-relations.ts'
-import { principalId, type PageVisibility } from '../../helpers/page-access.ts'
+import { canReadPage, principalId, type PageVisibility } from '../../helpers/page-access.ts'
 import { getPageWatchState, listPageWatchNotifications, markPageWatchNotificationRead, unwatchPage, watchPage } from '../../operations/page-watching.ts'
 import { getPageApproval, listApprovalInbox, submitPageApproval, transitionApproval } from '../../operations/approvals.ts'
 import {
@@ -16,6 +16,8 @@ import {
 } from '../../operations/page-protection.ts'
 import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../../helpers/auth-rate-limiter.ts'
 import type { Knex } from 'knex'
+import { OkfDocumentError } from '../../okf/format.ts'
+import { buildPageOkfView } from '../../okf/page-view.ts'
 
 const router = express.Router()
 
@@ -91,11 +93,16 @@ const errorMessage = (err: unknown, fallback: string): string => {
   return message || fallback
 }
 
+const isOkfDocumentError = (value: unknown): value is OkfDocumentError =>
+  value instanceof OkfDocumentError ||
+  (value instanceof Error && value.name === 'OkfDocumentError' && 'code' in value && typeof value.code === 'string')
+
 const errorStatus = (err: unknown, fallback: number): number => {
+  if (isOkfDocumentError(err)) return 400
   if (typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number') {
     return err.status
   }
-  if (err instanceof Error && err.name === 'PagePathCollision') return 409
+  if (err instanceof Error && (err.name === 'PagePathCollision' || err.name === 'PageUpdateConflict')) return 409
   return fallback
 }
 
@@ -107,8 +114,8 @@ const requestBody = (req: Request): Record<string, unknown> => {
 const optionalStringQuery = (value: unknown): string | undefined => (typeof value === 'string' && value.length > 0 ? value : undefined)
 const requiredSourceRevision = (req: Request, res: Response): string | null => {
   const value = requestBody(req).expectedSourceRevision
-  if (typeof value !== 'string' || value.length < 1 || value.length > 64) {
-    res.status(400).json({ error: 'expectedSourceRevision must be a non-empty string' })
+  if (typeof value !== 'string' || value.length > 64 || !/^[1-9][0-9]*$/u.test(value)) {
+    res.status(400).json({ error: 'expectedSourceRevision must be a canonical positive decimal string' })
     return null
   }
   return value
@@ -241,7 +248,9 @@ const parsePositiveIntegerParam = (req: Request, res: Response, name = 'id'): nu
 const sendOperationError = (res: Response, next: express.NextFunction, value: unknown, fallback: string): void => {
   const status = errorStatus(value, 0)
   if (status >= 400 && status < 500) {
-    res.status(status).json({ error: errorMessage(value, fallback) })
+    const rawMessage = errorMessage(value, fallback)
+    const message = isOkfDocumentError(value) && rawMessage.length > 500 ? `${rawMessage.slice(0, 497)}...` : rawMessage
+    res.status(status).json({ error: message })
     return
   }
   next(value)
@@ -816,7 +825,20 @@ router.get('/:id', async (req, res, next) => {
       res.vary('Cookie')
     }
     const page = await pageOperations.get({ ...pageOperationContext(req), id })
+    if (!canReadPage(req.user, page)) {
+      return res.status(404).json({ error: 'This page does not exist.' })
+    }
     const pageResult: Record<string, unknown> = page
+    if (pageResult.visibility === 'private') {
+      res.set('Cache-Control', 'private, no-store')
+      res.vary('Cookie')
+    }
+    const okf = await buildPageOkfView({
+      knex: getTransportRuntime<PagesApiRuntime>().models.knex,
+      pageId: id,
+      sourceRevision: String(pageResult.sourceRevision),
+      extra: pageResult.extra
+    })
     const canReadRestrictedFields = hasRestrictedPageFieldAccess(req)
     return res.json({
       id: pageResult.id,
@@ -831,6 +853,7 @@ router.get('/:id', async (req, res, next) => {
       updatedAt: pageResult.updatedAt,
       sourceRevision: String(pageResult.sourceRevision),
       locale: pageResult.locale,
+      okf,
       ...(canReadRestrictedFields
         ? {
             isPublished: Boolean(pageResult.isPublished),

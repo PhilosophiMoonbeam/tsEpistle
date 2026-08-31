@@ -124,4 +124,68 @@ Broken body`
     })
     expect(global.WIKI.logger.warn).toHaveBeenCalledWith('Failed to parse page metadata. Invalid syntax.')
   })
+
+  it('marks only an own human metadata update as replacement and preserves CAS inputs', async () => {
+    const requester = { id: 7, permissions: ['manage:system'] }
+    const updatePage = vi.fn(input => input)
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.models.pages = {
+      getPageFromDb: vi.fn().mockResolvedValue({
+        id: 17,
+        localeCode: 'en',
+        ownerId: null,
+        path: 'concept',
+        visibility: 'public'
+      }),
+      updatePage
+    }
+    const operations = (await vi.importFresh('../../operations/pages.ts', import.meta.url)).default
+    const expectedUpdatedAt = '2026-08-31T12:00:00.000Z'
+    const expectedSourceRevision = '41'
+
+    await operations.update({
+      requester,
+      input: {
+        id: 17,
+        okfMetadata: { type: 'Reference', title: 'Replacement' },
+        replaceOkfMetadata: false,
+        expectedUpdatedAt,
+        expectedSourceRevision
+      }
+    })
+    expect(updatePage).toHaveBeenLastCalledWith({
+      id: 17,
+      okfMetadata: { type: 'Reference', title: 'Replacement' },
+      replaceOkfMetadata: true,
+      expectedUpdatedAt,
+      expectedSourceRevision,
+      user: requester
+    })
+
+    await operations.update({
+      requester,
+      input: {
+        id: 17,
+        title: 'Ordinary update',
+        replaceOkfMetadata: true,
+        expectedUpdatedAt,
+        expectedSourceRevision
+      }
+    })
+    expect(updatePage).toHaveBeenLastCalledWith({
+      id: 17,
+      title: 'Ordinary update',
+      expectedUpdatedAt,
+      expectedSourceRevision,
+      user: requester
+    })
+
+    const inheritedMetadata = Object.assign(Object.create({ okfMetadata: { type: 'Metric' } }), { id: 17, title: 'Inherited metadata ignored' })
+    await operations.update({ requester, input: inheritedMetadata })
+    expect(updatePage).toHaveBeenLastCalledWith({
+      id: 17,
+      title: 'Inherited metadata ignored',
+      user: requester
+    })
+  })
 })

@@ -218,7 +218,7 @@ const recordValue = (value: unknown, label: string): Record<string, unknown> => 
   return value as Record<string, unknown>
 }
 const mutationPayload = (input: OperationInput, omitted: readonly string[] = []): Record<string, unknown> => {
-  const payload = _.omit(recordValue(input.input, 'input'), [...omitted, 'okfProducer', 'okfRestoreRevision'])
+  const payload = _.omit(recordValue(input.input, 'input'), [...omitted, 'okfProducer', 'okfRestoreRevision', 'replaceOkfMetadata'])
   const producer = input[OKF_PRODUCER_CONTEXT]
   return typeof producer === 'string' ? { ...payload, okfProducer: producer } : payload
 }
@@ -1100,9 +1100,13 @@ const create = (input: OperationInput): unknown => {
   )
 }
 const update = async (input: OperationInput): Promise<unknown> => {
-  const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
+  const operationInput = recordValue(input.input, 'input')
+  const replaceOkfMetadata = Object.hasOwn(operationInput, 'okfMetadata')
+  const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS', ...(replaceOkfMetadata ? [] : ['okfMetadata'])])
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
-  return wiki.models.pages.updatePage(withRequester(payload, input.requester))
+  return wiki.models.pages.updatePage(
+    withRequester(replaceOkfMetadata ? { ...payload, replaceOkfMetadata: true } : payload, input.requester)
+  )
 }
 const convert = async (input: OperationInput): Promise<unknown> => {
   const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
@@ -1110,7 +1114,13 @@ const convert = async (input: OperationInput): Promise<unknown> => {
   return wiki.models.pages.convertPage(withRequester(payload, input.requester))
 }
 const move = async (input: OperationInput): Promise<unknown> => {
-  const payload = _.omit(recordValue(input.input, 'input'), ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
+  const payload = _.omit(recordValue(input.input, 'input'), [
+    'visibility',
+    'ownerId',
+    'isPrivate',
+    'privateNS',
+    'replaceOkfMetadata'
+  ])
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
   return wiki.models.pages.movePage(withRequester(payload, input.requester))
 }

@@ -29,6 +29,231 @@ type FetchImpl = (
 type MessageResponse = {
   message: string
 }
+export type OkfAuthorityState = 'valid' | 'missing' | 'invalid'
+
+export type OkfActorEvent = {
+  by: string
+  at?: string
+  [key: string]: unknown
+}
+
+export type OkfSource = {
+  resource: string
+  id?: string
+  title?: string
+  [key: string]: unknown
+}
+
+export type OkfMetadata = {
+  type: string
+  title?: string
+  description?: string
+  resource?: string
+  tags?: string[]
+  status?: 'draft' | 'stable' | 'deprecated'
+  generated?: OkfActorEvent
+  verified?: OkfActorEvent | OkfActorEvent[]
+  stale_after?: string
+  sources?: OkfSource[]
+  [key: string]: unknown
+}
+
+export type OkfTrustSummary = {
+  trustTier: 'unverified' | 'machine-confirmed' | 'human-reviewed'
+  verification: 'unverified' | 'current' | 'outdated'
+  status: 'draft' | 'stable' | 'deprecated'
+  stale: boolean
+  generatedAt: string | null
+  verifiedAt: string | null
+}
+
+export type KnowledgeProjectionView = {
+  schemaVersion: 1
+  sourceRevision: string
+  state: 'complete' | 'partial'
+  conceptType: string | null
+  summary: string
+  tags: string[]
+  entities: Array<{ name: string; type: string }>
+  relationships: Array<{ subject: string; predicate: string; object: string }>
+  openQuestions: string[]
+  lifecycle: {
+    status: 'draft' | 'stable' | 'deprecated'
+    trustTier: 'unverified' | 'machine-confirmed' | 'human-reviewed'
+    verification: 'unverified' | 'current' | 'outdated'
+    stale: boolean
+    generatedAt: string
+    verifiedAt: string | null
+    staleAfter: string | null
+  }
+  missingFields: Array<'concept.type' | 'concept.summary' | 'concept.tags' | 'concept.entities' | 'concept.relationships' | 'concept.openQuestions'>
+  provenance: {
+    deterministicVersion: 'wiki-knowledge-v1'
+    fields?: Array<{ field: string; source: 'page' | 'metadata' | 'deterministic' | 'utility'; evidence: string }>
+    utility: {
+      profileVersionId: string
+      model: string
+      inputSha256: string
+      outputSha256: string
+      generatedAt: string
+    } | null
+  }
+}
+
+export type PageOkfView = {
+  authority: {
+    state: OkfAuthorityState
+    metadata: OkfMetadata | null
+    trust: OkfTrustSummary | null
+  }
+  projection: {
+    state: 'current' | 'pending'
+    value: KnowledgeProjectionView | null
+  }
+}
+
+const MAX_OKF_TREE_DEPTH = 20
+const MAX_OKF_TREE_NODES = 5_000
+const DANGEROUS_OKF_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+const hasOnlyKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean => {
+  const allowed: Record<string, true> = Object.fromEntries(keys.map(key => [key, true]))
+  return Object.keys(value).every(key => allowed[key] === true)
+}
+const isIsoDate = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0 && /T[^\s]+(?:Z|[+-]\d{2}:\d{2})$/u.test(value) && Number.isFinite(Date.parse(value))
+const boundedJsonTree = (root: unknown): boolean => {
+  let nodes = 0
+  const visit = (value: unknown, depth: number): boolean => {
+    nodes += 1
+    if (nodes > MAX_OKF_TREE_NODES || depth > MAX_OKF_TREE_DEPTH) return false
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
+    if (typeof value === 'number') return Number.isFinite(value)
+    if (Array.isArray(value)) return value.every(entry => visit(entry, depth + 1))
+    if (!isRecord(value)) return false
+    return Object.entries(value).every(([key, entry]) => !DANGEROUS_OKF_KEYS.has(key) && visit(entry, depth + 1))
+  }
+  return visit(root, 0)
+}
+const nonEmptyBoundedString = (value: unknown, maximum: number): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= maximum
+const normalizeActor = (value: unknown): OkfActorEvent | null => {
+  if (!isRecord(value) || !nonEmptyBoundedString(value.by, 255)) return null
+  if (value.at !== undefined && (!nonEmptyBoundedString(value.at, 64) || !isIsoDate(value.at))) return null
+  return { ...value } as OkfActorEvent
+}
+const normalizeOkfMetadata = (value: unknown): OkfMetadata | null => {
+  if (!isRecord(value) || !boundedJsonTree(value) || !nonEmptyBoundedString(value.type, 128)) return null
+  if (value.title !== undefined && !nonEmptyBoundedString(value.title, 255)) return null
+  if (value.description !== undefined && !nonEmptyBoundedString(value.description, 2_000)) return null
+  if (value.resource !== undefined && !nonEmptyBoundedString(value.resource, 4_096)) return null
+  if (
+    value.tags !== undefined &&
+    (!Array.isArray(value.tags) || value.tags.length > 100 || value.tags.some(tag => !nonEmptyBoundedString(tag, 255)))
+  ) return null
+  if (value.status !== undefined && value.status !== 'draft' && value.status !== 'stable' && value.status !== 'deprecated') return null
+  if (value.generated !== undefined && normalizeActor(value.generated) === null) return null
+  if (value.verified !== undefined) {
+    const events = Array.isArray(value.verified) ? value.verified : [value.verified]
+    if (events.length < 1 || events.length > 100 || events.some(event => normalizeActor(event) === null)) return null
+  }
+  if (value.stale_after !== undefined && (!nonEmptyBoundedString(value.stale_after, 64) || !isIsoDate(value.stale_after))) return null
+  if (value.sources !== undefined) {
+    if (!Array.isArray(value.sources) || value.sources.length > 100) return null
+    for (const source of value.sources) {
+      if (!isRecord(source)) return null
+      const { resource, id, title } = source
+      if (
+        !nonEmptyBoundedString(resource, 4_096) ||
+        (id !== undefined && !nonEmptyBoundedString(id, 255)) ||
+        (title !== undefined && !nonEmptyBoundedString(title, 512))
+      ) return null
+    }
+  }
+  return { ...value } as OkfMetadata
+}
+const normalizeTrust = (value: unknown): OkfTrustSummary | null => {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['trustTier', 'verification', 'status', 'stale', 'generatedAt', 'verifiedAt'])) return null
+  if (
+    (value.trustTier !== 'unverified' && value.trustTier !== 'machine-confirmed' && value.trustTier !== 'human-reviewed') ||
+    (value.verification !== 'unverified' && value.verification !== 'current' && value.verification !== 'outdated') ||
+    (value.status !== 'draft' && value.status !== 'stable' && value.status !== 'deprecated') ||
+    typeof value.stale !== 'boolean' ||
+    (value.generatedAt !== null && !isIsoDate(value.generatedAt)) ||
+    (value.verifiedAt !== null && !isIsoDate(value.verifiedAt))
+  ) return null
+  return value as OkfTrustSummary
+}
+const normalizeProjection = (value: unknown): KnowledgeProjectionView | null => {
+  if (
+    !isRecord(value) ||
+    !boundedJsonTree(value) ||
+    !hasOnlyKeys(value, ['schemaVersion', 'sourceRevision', 'state', 'conceptType', 'summary', 'tags', 'entities', 'relationships', 'openQuestions', 'lifecycle', 'missingFields', 'provenance']) ||
+    value.schemaVersion !== 1 ||
+    !nonEmptyBoundedString(value.sourceRevision, 64) ||
+    !/^[1-9][0-9]*$/u.test(value.sourceRevision) ||
+    (value.state !== 'complete' && value.state !== 'partial') ||
+    (value.conceptType !== null && !nonEmptyBoundedString(value.conceptType, 128)) ||
+    typeof value.summary !== 'string' ||
+    value.summary.length > 2_000 ||
+    !Array.isArray(value.tags) ||
+    value.tags.length > 100 ||
+    value.tags.some(tag => !nonEmptyBoundedString(tag, 255)) ||
+    !Array.isArray(value.entities) ||
+    value.entities.length > 20 ||
+    value.entities.some(entity => !isRecord(entity) || !hasOnlyKeys(entity, ['name', 'type']) || !nonEmptyBoundedString(entity.name, 255) || !nonEmptyBoundedString(entity.type, 128)) ||
+    !Array.isArray(value.relationships) ||
+    value.relationships.length > 20 ||
+    value.relationships.some(relationship => !isRecord(relationship) || !hasOnlyKeys(relationship, ['subject', 'predicate', 'object']) || !nonEmptyBoundedString(relationship.subject, 255) || !nonEmptyBoundedString(relationship.predicate, 128) || !nonEmptyBoundedString(relationship.object, 1_024)) ||
+    !Array.isArray(value.openQuestions) ||
+    value.openQuestions.length > 20 ||
+    value.openQuestions.some(question => !nonEmptyBoundedString(question, 1_000)) ||
+    !isRecord(value.lifecycle) ||
+    !hasOnlyKeys(value.lifecycle, ['status', 'trustTier', 'verification', 'stale', 'generatedAt', 'verifiedAt', 'staleAfter']) ||
+    (value.lifecycle.status !== 'draft' && value.lifecycle.status !== 'stable' && value.lifecycle.status !== 'deprecated') ||
+    (value.lifecycle.trustTier !== 'unverified' && value.lifecycle.trustTier !== 'machine-confirmed' && value.lifecycle.trustTier !== 'human-reviewed') ||
+    (value.lifecycle.verification !== 'unverified' && value.lifecycle.verification !== 'current' && value.lifecycle.verification !== 'outdated') ||
+    typeof value.lifecycle.stale !== 'boolean' ||
+    !isIsoDate(value.lifecycle.generatedAt) ||
+    (value.lifecycle.verifiedAt !== null && !isIsoDate(value.lifecycle.verifiedAt)) ||
+    (value.lifecycle.staleAfter !== null && !isIsoDate(value.lifecycle.staleAfter)) ||
+    !Array.isArray(value.missingFields) ||
+    value.missingFields.length > 6 ||
+    value.missingFields.some(field => !['concept.type', 'concept.summary', 'concept.tags', 'concept.entities', 'concept.relationships', 'concept.openQuestions'].includes(field)) ||
+    !isRecord(value.provenance) ||
+    !hasOnlyKeys(value.provenance, ['deterministicVersion', 'fields', 'utility']) ||
+    value.provenance.deterministicVersion !== 'wiki-knowledge-v1'
+  ) return null
+  const fields = value.provenance.fields
+  if (
+    fields !== undefined &&
+    (!Array.isArray(fields) || fields.length > 100 || fields.some(field => !isRecord(field) || !hasOnlyKeys(field, ['field', 'source', 'evidence']) || !nonEmptyBoundedString(field.field, 128) || typeof field.source !== 'string' || !['page', 'metadata', 'deterministic', 'utility'].includes(field.source) || !nonEmptyBoundedString(field.evidence, 1_024)))
+  ) return null
+  const utility = value.provenance.utility
+  if (utility !== null && (!isRecord(utility) || !hasOnlyKeys(utility, ['profileVersionId', 'model', 'inputSha256', 'outputSha256', 'generatedAt']) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(utility.profileVersionId)) || !nonEmptyBoundedString(utility.model, 255) || !/^[a-f0-9]{64}$/u.test(String(utility.inputSha256)) || !/^[a-f0-9]{64}$/u.test(String(utility.outputSha256)) || !isIsoDate(utility.generatedAt))) return null
+  return value as KnowledgeProjectionView
+}
+const normalizePageOkf = (value: unknown, sourceRevision: string, fallbackMessage: string): PageOkfView => {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['authority', 'projection']) || !isRecord(value.authority) || !hasOnlyKeys(value.authority, ['state', 'metadata', 'trust'])) throw new Error(fallbackMessage)
+  const state = value.authority.state
+  if (state !== 'valid' && state !== 'missing' && state !== 'invalid') throw new Error(fallbackMessage)
+  const metadata = value.authority.metadata === null ? null : normalizeOkfMetadata(value.authority.metadata)
+  const trust = value.authority.trust === null ? null : normalizeTrust(value.authority.trust)
+  if (value.authority.metadata !== null && metadata === null || value.authority.trust !== null && trust === null) throw new Error(fallbackMessage)
+  if (state !== 'valid' && (metadata !== null || trust !== null)) throw new Error(fallbackMessage)
+  if (state === 'valid' && (metadata === null || trust === null)) throw new Error(fallbackMessage)
+  if (!isRecord(value.projection) || !hasOnlyKeys(value.projection, ['state', 'value']) || (value.projection.state !== 'current' && value.projection.state !== 'pending')) throw new Error(fallbackMessage)
+  const projection = value.projection.value === null ? null : normalizeProjection(value.projection.value)
+  if (value.projection.value !== null && projection === null) throw new Error(fallbackMessage)
+  if (value.projection.state === 'pending' && projection !== null) throw new Error(fallbackMessage)
+  if (value.projection.state === 'current' && (projection === null || projection.sourceRevision !== sourceRevision)) throw new Error(fallbackMessage)
+  return { authority: { state, metadata, trust }, projection: { state: value.projection.state, value: projection } }
+}
+const defaultPageOkf = (): PageOkfView => ({
+  authority: { state: 'invalid', metadata: null, trust: null },
+  projection: { state: 'pending', value: null }
+})
+
+
 
 export type PageDetails = {
   id: number
@@ -53,6 +278,7 @@ export type PageDetails = {
   creatorId: number
   creatorName: string
   creatorEmail: string
+  okf: PageOkfView
 }
 
 export type PageLinkRow = {
@@ -164,6 +390,7 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
   const page = row as Partial<PageDetails>
   const ownerId = page.ownerId
   const sourceRevision: unknown = page.sourceRevision
+  const normalizedSourceRevision = String(sourceRevision)
   const validOwner = ownerId === null || (typeof ownerId === 'number' && Number.isSafeInteger(ownerId))
   if (
     !Number.isInteger(page.id) ||
@@ -183,7 +410,8 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     page.createdAt.length < 1 ||
     typeof page.updatedAt !== 'string' ||
     page.updatedAt.length < 1 ||
-    ((typeof sourceRevision !== 'string' || sourceRevision.length < 1) && typeof sourceRevision !== 'number') ||
+    (typeof sourceRevision !== 'string' && typeof sourceRevision !== 'number') ||
+    !/^[1-9][0-9]*$/u.test(normalizedSourceRevision) ||
     typeof page.editor !== 'string' ||
     !Number.isInteger(page.authorId) ||
     typeof page.authorName !== 'string' ||
@@ -194,6 +422,9 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
   ) {
     throw new Error(fallbackMessage)
   }
+  const okf = (row as Record<string, unknown>).okf === undefined || (row as Record<string, unknown>).okf === null
+    ? defaultPageOkf()
+    : normalizePageOkf((row as Record<string, unknown>).okf, normalizedSourceRevision, fallbackMessage)
 
   return {
     id: page.id!,
@@ -210,16 +441,37 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     contentType: page.contentType,
     createdAt: page.createdAt,
     updatedAt: page.updatedAt,
-    sourceRevision: String(sourceRevision),
+    sourceRevision: normalizedSourceRevision,
     editor: page.editor,
     authorId: page.authorId!,
     authorName: page.authorName,
     authorEmail: page.authorEmail,
     creatorId: page.creatorId!,
     creatorName: page.creatorName,
-    creatorEmail: page.creatorEmail
+    creatorEmail: page.creatorEmail,
+    okf
   }
 }
+const EDITABLE_OKF_EXCLUDED_KEYS: Record<string, true> = {
+  title: true,
+  description: true,
+  tags: true,
+  generated: true,
+  verified: true,
+  restored_from: true,
+  'x-wiki': true
+}
+export function buildOkfMetadataPayload(value: unknown): Record<string, unknown> | undefined {
+  const metadata = normalizeOkfMetadata(value)
+  if (metadata === null) return undefined
+  const editable: Record<string, unknown> = {}
+  for (const [key, entry] of Object.entries(metadata)) {
+    if (EDITABLE_OKF_EXCLUDED_KEYS[key] === true) continue
+    editable[key] = entry
+  }
+  return editable
+}
+
 
 function normalizePageLinkRow(row: unknown, fallbackMessage: string): PageLinkRow {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
@@ -539,6 +791,7 @@ type PageWriteInput = {
   scriptJs: string
   tags: string[]
   title: string
+  okfMetadata?: Record<string, unknown>
 }
 
 export type PageConflictLatest = {
@@ -626,6 +879,7 @@ export async function updatePage(
   expectedSourceRevision: string,
   fallbackMessage = 'Page update failed'
 ): Promise<WrittenPage> {
+  if (!/^[1-9][0-9]*$/u.test(expectedSourceRevision)) throw new Error(fallbackMessage)
   return normalizeWrittenPage(
     await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}`, 'PUT', { ...input, expectedSourceRevision }, fallbackMessage),
     fallbackMessage,

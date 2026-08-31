@@ -50,8 +50,7 @@ router.put('/targets', async (req, res) => {
 router.post('/actions/execute', async (req, res) => {
   if (!requireSystemAccess(req, res)) return
   try {
-    await storageOperations.executeAction(req.body || {})
-    res.json({ message: 'Action completed.' })
+    res.json(await storageOperations.executeAction(req.body || {}))
   } catch (err) {
     sendError(res, err, 'Storage action failed')
   }

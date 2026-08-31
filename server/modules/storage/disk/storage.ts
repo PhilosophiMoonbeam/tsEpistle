@@ -308,11 +308,12 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
   },
   async importAll() {
     wiki.logger.info(`(STORAGE/DISK) Importing all content from local disk folder to the DB...`)
-    await commonDisk.importFromDisk({
+    const results = await commonDisk.importFromDisk({
       fullPath: storageRoot(this.config),
       moduleName: 'DISK'
     })
     wiki.logger.info('(STORAGE/DISK) Import completed.')
+    return results
   }
 }
 

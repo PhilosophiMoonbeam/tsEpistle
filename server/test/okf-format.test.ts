@@ -219,6 +219,56 @@ describe('OKF page interchange', () => {
     })).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_TAGS' }))
   })
 
+  it('replaces editable authority without replacing server-owned trust', () => {
+    const existing = {
+      type: 'Metric',
+      resource: 'https://example.com/metric',
+      sources: [{ resource: 'https://example.com/source' }],
+      vendor: { retained: true },
+      generated: { by: 'human:7', at: '2026-08-01T00:00:00Z' },
+      verified: { by: 'human:9', at: '2026-08-02T00:00:00Z' },
+      restored_from: { revision: '11', by: 'agent:restore-11', at: '2026-08-03T00:00:00Z' }
+    }
+    const replaced = mutateOkfMetadata({
+      existing,
+      proposed: {
+        type: 'Metric',
+        title: 'Current metric',
+        generated: { by: 'human:999', at: '2026-08-20T00:00:00Z' },
+        verified: { by: 'human:999', at: '2026-08-20T00:00:00Z' },
+        restored_from: { revision: '999', by: 'human:999', at: '2026-08-20T00:00:00Z' }
+      },
+      producer: 'human:7',
+      knowledgeChanged: true,
+      mode: 'replace',
+      at: '2026-08-22T00:00:00Z'
+    })
+
+    expect(replaced).toEqual({
+      type: 'Metric',
+      title: 'Current metric',
+      generated: { by: 'human:7', at: '2026-08-22T00:00:00Z' },
+      verified: existing.verified,
+      restored_from: existing.restored_from
+    })
+
+    const merged = mutateOkfMetadata({
+      existing,
+      proposed: { type: 'Metric', title: 'Partial internal edit' },
+      producer: 'agent:partial-edit',
+      knowledgeChanged: false,
+      at: '2026-08-22T00:00:00Z'
+    })
+    expect(merged).toMatchObject({
+      resource: existing.resource,
+      sources: existing.sources,
+      vendor: existing.vendor,
+      generated: existing.generated,
+      verified: existing.verified,
+      restored_from: existing.restored_from
+    })
+  })
+
   it('does not promote imported human claims to local verification', () => {
     const imported = mutateOkfMetadata({
       proposed: {

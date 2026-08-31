@@ -1,4 +1,4 @@
-import type { StorageConfig, StorageContext, StoragePlugin, WikiAsset, WikiUser } from '../../types.ts'
+import type { StorageConfig, StorageContext, StoragePlugin, StoragePluginActionResult, WikiAsset, WikiUser } from '../../types.ts'
 import { wiki } from '../../types.ts'
 import path from 'node:path'
 import { simpleGit, type SimpleGit, type DiffResultBinaryFile, type DiffResultTextFile } from 'simple-git'
@@ -12,6 +12,7 @@ import os from 'node:os'
 import pageHelper from '../../../helpers/page.ts'
 import assetHelper from '../../../helpers/asset.ts'
 import commonDisk from '../disk/common.ts'
+import type { StorageImportResult } from '../types.ts'
 import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
 import { pullRemoteAuthoritative, reattachUnrelatedHistory, recoverInterruptedGitOperation, sharesHistoryWith } from './repository.ts'
 interface GitStorageFile {
@@ -25,19 +26,22 @@ interface GitStorageFile {
   after: number
   importAll: boolean
 }
+interface GitStorageImportResult extends StorageImportResult {
+  outcome?: 'conflict'
+}
 
 interface GitStorageContext extends StorageContext<StorageConfig> {
   git: SimpleGit
   repoPath: string
   init(): Promise<void>
-  sync(options?: { manual: boolean }): Promise<void>
-  processFiles(files: GitStorageFile[], user: WikiUser): Promise<void>
+  sync(options?: { manual: boolean }): Promise<StoragePluginActionResult>
+  processFiles(files: GitStorageFile[], user: WikiUser): Promise<GitStorageImportResult[]>
 }
 
 interface GitStoragePlugin extends StoragePlugin<StorageConfig, GitStorageContext> {
   git: SimpleGit | null
   repoPath: string
-  processFiles(this: GitStorageContext, files: GitStorageFile[], user: WikiUser): Promise<void>
+  processFiles(this: GitStorageContext, files: GitStorageFile[], user: WikiUser): Promise<GitStorageImportResult[]>
   syncUntracked(this: GitStorageContext): Promise<void>
   purge(this: GitStorageContext): Promise<void>
 }
@@ -260,6 +264,7 @@ const plugin: GitStoragePlugin = {
    */
   async sync() {
     const recovered = await recoverInterruptedGitOperation(this.git, wiki.logger)
+    const results: GitStorageImportResult[] = []
     await this.git.raw(['remote', 'update', 'origin'])
     await this.git.checkout(this.config.branch)
 
@@ -344,116 +349,134 @@ const plugin: GitStoragePlugin = {
             importAll: false
           })
         }
-        await this.processFiles(filesToProcess, rootUser)
+        results.push(...await this.processFiles(filesToProcess, rootUser))
       }
     }
+    return results
   },
   /**
    * Process Files
    *
    * @param {Array<String>} files Array of files to process
    */
-  async processFiles(files, user) {
+  async processFiles(files: GitStorageFile[], user: WikiUser) {
+    const results: GitStorageImportResult[] = []
     for (const item of files) {
-      const contentType = pageHelper.getContentType(item.relPath)
-      const fileExists = await fs.pathExists(item.file.path)
-      if (!item.binary && contentType) {
-        // -> Page
+      try {
+        const contentType = pageHelper.getContentType(item.relPath)
+        const fileExists = await fs.pathExists(item.file.path)
+        if (!item.binary && contentType) {
+          // -> Page
 
-        if (fileExists && !item.importAll && item.relPath !== item.oldPath) {
-          // Page was renamed by git, so rename in DB
-          wiki.logger.info(`(STORAGE/GIT) Page marked as renamed: from ${item.oldPath} to ${item.relPath}`)
+          if (fileExists && !item.importAll && item.relPath !== item.oldPath) {
+            // Page was renamed by git, so rename in DB
+            wiki.logger.info(`(STORAGE/GIT) Page marked as renamed: from ${item.oldPath} to ${item.relPath}`)
 
-          const contentPath = pageHelper.getPagePath(item.oldPath)
-          const contentDestinationPath = pageHelper.getPagePath(item.relPath)
-          await wiki.models.pages.movePage({
-            user: user,
-            path: contentPath.path,
-            destinationPath: contentDestinationPath.path,
-            locale: contentPath.locale,
-            destinationLocale: contentDestinationPath.locale,
-            skipStorage: true
-          })
-        } else if (!fileExists && !item.importAll && item.deletions > 0 && item.insertions === 0) {
-          // Page was deleted by git, can safely mark as deleted in DB
-          wiki.logger.info(`(STORAGE/GIT) Page marked as deleted: ${item.relPath}`)
+            const contentPath = pageHelper.getPagePath(item.oldPath)
+            const contentDestinationPath = pageHelper.getPagePath(item.relPath)
+            await wiki.models.pages.movePage({
+              user: user,
+              path: contentPath.path,
+              destinationPath: contentDestinationPath.path,
+              locale: contentPath.locale,
+              destinationLocale: contentDestinationPath.locale,
+              skipStorage: true
+            })
+            results.push({ kind: 'page', relPath: item.relPath, ok: true })
+            continue
+          } else if (!fileExists && !item.importAll && item.deletions > 0 && item.insertions === 0) {
+            // Page was deleted by git, can safely mark as deleted in DB
+            wiki.logger.info(`(STORAGE/GIT) Page marked as deleted: ${item.relPath}`)
 
-          const contentPath = pageHelper.getPagePath(item.relPath)
-          await wiki.models.pages.deletePage({
-            user: user,
-            path: contentPath.path,
-            locale: contentPath.locale,
-            skipStorage: true
-          })
-          continue
-        }
+            const contentPath = pageHelper.getPagePath(item.relPath)
+            await wiki.models.pages.deletePage({
+              user: user,
+              path: contentPath.path,
+              locale: contentPath.locale,
+              skipStorage: true
+            })
+            results.push({ kind: 'page', relPath: item.relPath, ok: true })
+            continue
+          }
 
-        try {
-          await commonDisk.processPage({
+          const pageResult = await commonDisk.processPage({
             user,
             relPath: item.relPath,
             fullPath: this.repoPath,
             contentType: contentType,
             moduleName: 'GIT'
           })
-        } catch (err: unknown) {
-          wiki.logger.warn(`(STORAGE/GIT) Failed to process ${item.relPath}`)
-          wiki.logger.warn(err instanceof Error ? err.message : String(err))
-        }
-      } else {
-        // -> Asset
-
-        if (fileExists && !item.importAll && (item.before === item.after || (item.deletions === 0 && item.insertions === 0))) {
-          // Asset was renamed by git, so rename in DB
-          wiki.logger.info(`(STORAGE/GIT) Asset marked as renamed: from ${item.oldPath} to ${item.relPath}`)
-
-          const sourceHash = assetHelper.generateHash(item.oldPath)
-          const destinationHash = assetHelper.generateHash(item.relPath)
-          const assetToRename = await wiki.models.assets.query().findOne({ hash: sourceHash })
-          if (assetToRename) {
-            const folderId = await commonDisk.resolveAssetFolder(item.relPath)
-            await wiki.models.assets
-              .query()
-              .patch({
-                filename: path.posix.basename(item.relPath.replace(/\\/g, '/')),
-                folderId,
-                hash: destinationHash
-              })
-              .findById(assetToRename.id)
-            await requireAssetCache(assetToRename).deleteAssetCache()
-          } else {
-            wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to rename: ${item.relPath}`)
+          results.push({ kind: 'page', ...pageResult })
+          if (!pageResult.ok) {
+            wiki.logger.warn(`(STORAGE/GIT) Failed to process ${item.relPath}`)
+            wiki.logger.warn(pageResult.error ?? 'Page document was rejected')
           }
-          continue
-        } else if (!fileExists && !item.importAll && ((item.before > 0 && item.after === 0) || (item.deletions > 0 && item.insertions === 0))) {
-          // Asset was deleted by git, can safely mark as deleted in DB
-          wiki.logger.info(`(STORAGE/GIT) Asset marked as deleted: ${item.relPath}`)
+        } else {
+          // -> Asset
 
-          const fileHash = assetHelper.generateHash(item.relPath)
-          const assetToDelete = await wiki.models.assets.query().findOne({ hash: fileHash })
-          if (assetToDelete) {
-            await wiki.models.knex('assetData').where('id', assetToDelete.id).delete()
-            await wiki.models.assets.query().delete().where('id', assetToDelete.id)
-            await requireAssetCache(assetToDelete).deleteAssetCache()
-          } else {
-            wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to delete: ${item.relPath}`)
+          if (fileExists && !item.importAll && (item.before === item.after || (item.deletions === 0 && item.insertions === 0))) {
+            // Asset was renamed by git, so rename in DB
+            wiki.logger.info(`(STORAGE/GIT) Asset marked as renamed: from ${item.oldPath} to ${item.relPath}`)
+
+            const sourceHash = assetHelper.generateHash(item.oldPath)
+            const destinationHash = assetHelper.generateHash(item.relPath)
+            const assetToRename = await wiki.models.assets.query().findOne({ hash: sourceHash })
+            if (assetToRename) {
+              const folderId = await commonDisk.resolveAssetFolder(item.relPath)
+              await wiki.models.assets
+                .query()
+                .patch({
+                  filename: path.posix.basename(item.relPath.replace(/\\/g, '/')),
+                  folderId,
+                  hash: destinationHash
+                })
+                .findById(assetToRename.id)
+              await requireAssetCache(assetToRename).deleteAssetCache()
+              results.push({ kind: 'asset', relPath: item.relPath, ok: true })
+            } else {
+              wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to rename: ${item.relPath}`)
+              results.push({ kind: 'asset', relPath: item.relPath, ok: false, outcome: 'conflict', error: 'Asset was not found in the database' })
+            }
+            continue
+          } else if (!fileExists && !item.importAll && ((item.before > 0 && item.after === 0) || (item.deletions > 0 && item.insertions === 0))) {
+            // Asset was deleted by git, can safely mark as deleted in DB
+            wiki.logger.info(`(STORAGE/GIT) Asset marked as deleted: ${item.relPath}`)
+
+            const fileHash = assetHelper.generateHash(item.relPath)
+            const assetToDelete = await wiki.models.assets.query().findOne({ hash: fileHash })
+            if (assetToDelete) {
+              await wiki.models.knex('assetData').where('id', assetToDelete.id).delete()
+              await wiki.models.assets.query().delete().where('id', assetToDelete.id)
+              await requireAssetCache(assetToDelete).deleteAssetCache()
+              results.push({ kind: 'asset', relPath: item.relPath, ok: true })
+            } else {
+              wiki.logger.info(`(STORAGE/GIT) Asset was not found in the DB, nothing to delete: ${item.relPath}`)
+              results.push({ kind: 'asset', relPath: item.relPath, ok: false, outcome: 'conflict', error: 'Asset was not found in the database' })
+            }
+            continue
           }
-          continue
-        }
 
-        try {
           await commonDisk.processAsset({
             user,
             relPath: item.relPath,
             file: item.file,
             moduleName: 'GIT'
           })
-        } catch (err: unknown) {
-          wiki.logger.warn(`(STORAGE/GIT) Failed to process asset ${item.relPath}`)
-          wiki.logger.warn(err instanceof Error ? err.message : String(err))
+          results.push({ kind: 'asset', relPath: item.relPath, ok: true })
         }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err)
+        wiki.logger.warn(`(STORAGE/GIT) Failed to process ${item.relPath}`)
+        wiki.logger.warn(message)
+        results.push({
+          kind: !item.binary && pageHelper.getContentType(item.relPath) ? 'page' : 'asset',
+          relPath: item.relPath,
+          ok: false,
+          error: message
+        })
       }
     }
+    return results
   },
   /**
    * CREATE
@@ -589,7 +612,7 @@ const plugin: GitStoragePlugin = {
       '--author': `"${asset.moveAuthorName} <${asset.moveAuthorEmail}>"`
     })
   },
-  async getLocalLocation(asset) {
+  async getLocalLocation(asset: WikiAsset) {
     return path.join(this.repoPath, asset.path)
   },
   /**
@@ -599,6 +622,7 @@ const plugin: GitStoragePlugin = {
     wiki.logger.info(`(STORAGE/GIT) Importing all content from local Git repo to the DB...`)
 
     const rootUser = await wiki.models.users.getRootUser()
+    const results: StorageImportResult[] = []
 
     await pipeline(
       klaw(this.repoPath, {
@@ -621,22 +645,20 @@ const plugin: GitStoragePlugin = {
             }
             if (relPath.length > 3) {
               wiki.logger.info(`(STORAGE/GIT) Processing ${relPath}...`)
-              await this.processFiles(
-                [
-                  {
-                    relPath,
-                    oldPath: relPath,
-                    file,
-                    binary: false,
-                    deletions: 0,
-                    insertions: 0,
-                    before: 0,
-                    after: 0,
-                    importAll: true
-                  }
-                ],
+              results.push(...await this.processFiles(
+                [{
+                  relPath,
+                  oldPath: relPath,
+                  file,
+                  binary: false,
+                  deletions: 0,
+                  insertions: 0,
+                  before: 0,
+                  after: 0,
+                  importAll: true
+                }],
                 rootUser
-              )
+              ))
             }
             callback()
           } catch (error: unknown) {
@@ -649,6 +671,7 @@ const plugin: GitStoragePlugin = {
     commonDisk.clearFolderCache()
 
     wiki.logger.info('(STORAGE/GIT) Import completed.')
+    return results
   },
   async syncUntracked() {
     wiki.logger.info(`(STORAGE/GIT) Adding all untracked content...`)
