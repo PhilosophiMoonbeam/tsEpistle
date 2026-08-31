@@ -56,6 +56,10 @@ interface InitEngineOptions {
   activate?: boolean
 }
 
+interface RefreshSearchEnginesOptions {
+  strict?: boolean
+}
+
 const pluginMethods = ['activate', 'deactivate', 'init', 'query', 'created', 'updated', 'deleted', 'renamed', 'rebuild'] as const
 
 function isSearchEnginePlugin(value: unknown): value is SearchEnginePlugin {
@@ -146,7 +150,7 @@ export default class SearchEngine extends Model {
     return getWiki().models.searchEngines.query()
   }
 
-  static async refreshSearchEnginesFromDisk(): Promise<void> {
+  static async refreshSearchEnginesFromDisk({ strict = false }: RefreshSearchEnginesOptions = {}): Promise<void> {
     const wiki = getWiki()
     let trx: Knex.Transaction | undefined
     try {
@@ -208,15 +212,29 @@ export default class SearchEngine extends Model {
       wiki.logger.error('Failed to scan or load new search engines: [ FAILED ]')
       wiki.logger.error(err)
       if (trx) {
-        trx.rollback()
+        try {
+          await trx.rollback()
+        } catch (rollbackError) {
+          wiki.logger.error(rollbackError)
+        }
       }
+      if (strict) throw err
     }
   }
 
   static async initEngine({ activate = false }: InitEngineOptions = {}): Promise<void> {
     const wiki = getWiki()
-    const searchEngine = await wiki.models.searchEngines.query().findOne('isEnabled', true)
-    if (!searchEngine) return
+    const enabledSearchEngines = await wiki.models.searchEngines.query().where('isEnabled', true)
+    if (enabledSearchEngines.length !== 1) {
+      throw new Error(`Expected exactly one enabled search provider, found ${enabledSearchEngines.length}`)
+    }
+    const searchEngine = enabledSearchEngines[0]
+    if (!searchEngine) {
+      throw new Error(`Expected exactly one enabled search provider, found ${enabledSearchEngines.length}`)
+    }
+    if (searchEngine.key !== 'postgres') {
+      throw new Error(`Expected postgres to be the enabled search provider, found ${searchEngine.key}`)
+    }
 
     // Provider is selected from the runtime registry, so a static import cannot identify the module.
     const source = `../modules/search/${searchEngine.key}/engine.ts`

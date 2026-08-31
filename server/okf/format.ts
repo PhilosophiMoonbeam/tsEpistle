@@ -12,8 +12,22 @@ const RESERVED_BASENAMES = new Set(['index', 'log'])
 const STATUS_VALUES = new Set(['draft', 'stable', 'deprecated'])
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 const FIELD_ORDER = [
-  'type', 'title', 'description', 'resource', 'tags', 'status', 'generated', 'verified',
-  'stale_after', 'sources', 'usage_window', 'runtime', 'parameters', 'computation', 'executor', 'attester'
+  'type',
+  'title',
+  'description',
+  'resource',
+  'tags',
+  'status',
+  'generated',
+  'verified',
+  'stale_after',
+  'sources',
+  'usage_window',
+  'runtime',
+  'parameters',
+  'computation',
+  'executor',
+  'attester'
 ] as const
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u
 const ISO_WITH_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u
@@ -85,14 +99,16 @@ export interface OkfPageDocument {
 export class OkfDocumentError extends Error {
   readonly code: string
 
-  constructor (code: string, message: string) {
+  constructor(code: string, message: string) {
     super(message)
     this.name = 'OkfDocumentError'
     this.code = code
   }
 }
 
-const fail = (code: string, message: string): never => { throw new OkfDocumentError(code, message) }
+const fail = (code: string, message: string): never => {
+  throw new OkfDocumentError(code, message)
+}
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const nonEmptyString = (value: unknown, field: string, maximum: number): string => {
   if (typeof value !== 'string' || value.trim().length === 0) return fail(`INVALID_${field.toUpperCase()}`, `OKF field ${field} must be a non-empty string`)
@@ -110,18 +126,34 @@ export const isOkfTimestamp = (value: string): boolean => {
   const match = ISO_WITH_OFFSET.exec(value)
   if (!match) return false
   const [, yearValue, monthValue, dayValue, hourValue, minuteValue, secondValue, offsetHourValue, offsetMinuteValue] = match
-  const year = Number(yearValue); const month = Number(monthValue); const day = Number(dayValue)
-  const hour = Number(hourValue); const minute = Number(minuteValue); const second = Number(secondValue)
+  const year = Number(yearValue)
+  const month = Number(monthValue)
+  const day = Number(dayValue)
+  const hour = Number(hourValue)
+  const minute = Number(minuteValue)
+  const second = Number(secondValue)
   const offsetHour = offsetHourValue === undefined ? 0 : Number(offsetHourValue)
   const offsetMinute = offsetMinuteValue === undefined ? 0 : Number(offsetMinuteValue)
-  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month) && hour <= 23 && minute <= 59 && second <= 59 && offsetHour <= 23 && offsetMinute <= 59
+  const validOffset = offsetHour < 14 || (offsetHour === 14 && offsetMinute === 0)
+  return (
+    month >= 1 &&
+    month <= 12 &&
+    day >= 1 &&
+    day <= daysInMonth(year, month) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    validOffset &&
+    Number.isFinite(Date.parse(value))
+  )
 }
 
 const actorEvent = (value: unknown, field: string): OkfActorEvent => {
   if (!isRecord(value)) return fail(`INVALID_${field.toUpperCase()}`, `OKF field ${field} must be an actor event`)
   const by = nonEmptyString(value.by, `${field}.by`, 255)
   const at = value.at === undefined ? undefined : nonEmptyString(value.at, `${field}.at`, 64)
-  if (at !== undefined && !isOkfTimestamp(at)) return fail(`INVALID_${field.toUpperCase()}`, `OKF field ${field}.at must be an ISO 8601 datetime with an explicit UTC offset`)
+  if (at !== undefined && !isOkfTimestamp(at))
+    return fail(`INVALID_${field.toUpperCase()}`, `OKF field ${field}.at must be an ISO 8601 datetime with an explicit UTC offset`)
   return { ...value, by, ...(at === undefined ? {} : { at }) }
 }
 
@@ -161,7 +193,8 @@ const validateMetadata = (value: unknown): OkfMetadata => {
     metadata.tags = value.tags.map((tag, index) => nonEmptyString(tag, `tags[${index}]`, 255))
   }
   if (value.status !== undefined) {
-    if (typeof value.status !== 'string' || !STATUS_VALUES.has(value.status)) return fail('INVALID_STATUS', 'OKF field status must be draft, stable, or deprecated')
+    if (typeof value.status !== 'string' || !STATUS_VALUES.has(value.status))
+      return fail('INVALID_STATUS', 'OKF field status must be draft, stable, or deprecated')
     metadata.status = value.status as 'draft' | 'stable' | 'deprecated'
   }
   if (value.generated !== undefined) metadata.generated = actorEvent(value.generated, 'generated')
@@ -177,7 +210,8 @@ const validateMetadata = (value: unknown): OkfMetadata => {
     metadata.stale_after = staleAfter
   }
   if (value.sources !== undefined) {
-    if (!Array.isArray(value.sources) || value.sources.length > 100) return fail('INVALID_SOURCES', 'OKF field sources must be a list of at most 100 source mappings')
+    if (!Array.isArray(value.sources) || value.sources.length > 100)
+      return fail('INVALID_SOURCES', 'OKF field sources must be a list of at most 100 source mappings')
     metadata.sources = value.sources.map((source, index) => {
       if (!isRecord(source)) return fail('INVALID_SOURCES', `OKF source ${index + 1} must be a mapping`)
       return {
@@ -191,19 +225,24 @@ const validateMetadata = (value: unknown): OkfMetadata => {
   return metadata
 }
 
-const verificationEvents = (metadata: OkfMetadata): readonly OkfActorEvent[] => metadata.verified === undefined
-  ? []
-  : Array.isArray(metadata.verified) ? metadata.verified : [metadata.verified]
+const verificationEvents = (metadata: OkfMetadata): readonly OkfActorEvent[] =>
+  metadata.verified === undefined ? [] : Array.isArray(metadata.verified) ? metadata.verified : [metadata.verified]
 
-export const summarizeOkfTrust = (metadata: OkfMetadata, now = new Date()): OkfTrustSummary => {
+const summarizeValidatedOkfTrust = (metadata: OkfMetadata, now: Date): OkfTrustSummary => {
   const events = verificationEvents(metadata)
   const generatedAt = metadata.generated?.at ?? null
-  const datedVerification = events.map(event => event.at).filter((value): value is string => value !== undefined).sort()
+  const datedVerification = events
+    .map(event => event.at)
+    .filter((value): value is string => value !== undefined)
+    .sort()
   const verifiedAt = datedVerification.at(-1) ?? null
   const trustTier = events.length === 0 ? 'unverified' : events.some(event => event.by.startsWith('human:')) ? 'human-reviewed' : 'machine-confirmed'
-  const verification = events.length === 0
-    ? 'unverified'
-    : generatedAt !== null && (verifiedAt === null || Date.parse(verifiedAt) < Date.parse(generatedAt)) ? 'outdated' : 'current'
+  const verification =
+    events.length === 0
+      ? 'unverified'
+      : generatedAt !== null && (verifiedAt === null || Date.parse(verifiedAt) < Date.parse(generatedAt))
+        ? 'outdated'
+        : 'current'
   return {
     trustTier,
     verification,
@@ -214,11 +253,24 @@ export const summarizeOkfTrust = (metadata: OkfMetadata, now = new Date()): OkfT
   }
 }
 
+export const summarizeOkfTrust = (metadata: OkfMetadata, now = new Date()): OkfTrustSummary => summarizeValidatedOkfTrust(validateMetadata(metadata), now)
+
+export const validateStoredOkfMetadata = (value: unknown, now = new Date()): { readonly metadata: OkfMetadata; readonly trust: OkfTrustSummary } | null => {
+  try {
+    const metadata = validateMetadata(value)
+    return { metadata, trust: summarizeValidatedOkfTrust(metadata, now) }
+  } catch {
+    return null
+  }
+}
+
 export const parseOkfDocument = (document: string, now = new Date()): ParsedOkfDocument => {
-  if (Buffer.byteLength(document, 'utf8') > OKF_MAX_DOCUMENT_BYTES) return fail('OKF_DOCUMENT_TOO_LARGE', `OKF document exceeds ${OKF_MAX_DOCUMENT_BYTES} bytes`)
+  if (Buffer.byteLength(document, 'utf8') > OKF_MAX_DOCUMENT_BYTES)
+    return fail('OKF_DOCUMENT_TOO_LARGE', `OKF document exceeds ${OKF_MAX_DOCUMENT_BYTES} bytes`)
   const match = FRONTMATTER.exec(document)
   if (!match?.[1]) return fail('MISSING_OKF_FRONTMATTER', 'OKF document must begin with a YAML frontmatter block')
-  if (Buffer.byteLength(match[1], 'utf8') > MAX_FRONTMATTER_BYTES) return fail('OKF_FRONTMATTER_TOO_LARGE', `OKF frontmatter exceeds ${MAX_FRONTMATTER_BYTES} bytes`)
+  if (Buffer.byteLength(match[1], 'utf8') > MAX_FRONTMATTER_BYTES)
+    return fail('OKF_FRONTMATTER_TOO_LARGE', `OKF frontmatter exceeds ${MAX_FRONTMATTER_BYTES} bytes`)
   let raw: unknown
   try {
     const options = { schema: yaml.JSON_SCHEMA, maxDepth: MAX_TREE_DEPTH, maxMergeSeqLength: 0 } as unknown as NonNullable<Parameters<typeof yaml.load>[1]>
@@ -227,26 +279,41 @@ export const parseOkfDocument = (document: string, now = new Date()): ParsedOkfD
     return fail('INVALID_OKF_YAML', error instanceof Error ? `Invalid OKF YAML: ${error.message}` : 'Invalid OKF YAML')
   }
   const metadata = validateMetadata(raw)
-  const body = document.slice(match[0].length).replace(/^\r?\n/u, '').replaceAll('\r\n', '\n')
-  return { version: OKF_VERSION, metadata, body, trust: summarizeOkfTrust(metadata, now) }
+  const body = document
+    .slice(match[0].length)
+    .replace(/^\r?\n/u, '')
+    .replaceAll('\r\n', '\n')
+  return { version: OKF_VERSION, metadata, body, trust: summarizeValidatedOkfTrust(metadata, now) }
 }
 
 const orderedMetadata = (metadata: OkfMetadata): Record<string, unknown> => {
   const ordered: Record<string, unknown> = {}
   for (const field of FIELD_ORDER) if (metadata[field] !== undefined) ordered[field] = metadata[field]
-  for (const field of Object.keys(metadata).filter(field => !FIELD_ORDER.includes(field as typeof FIELD_ORDER[number])).sort()) ordered[field] = metadata[field]
+  for (const field of Object.keys(metadata)
+    .filter(field => !FIELD_ORDER.includes(field as (typeof FIELD_ORDER)[number]))
+    .sort())
+    ordered[field] = metadata[field]
   return ordered
 }
 
 export const renderOkfDocument = (metadataInput: OkfMetadata, body: string): string => {
   const metadata = validateMetadata(metadataInput)
   const serialized = yaml.dump(orderedMetadata(metadata), { schema: yaml.JSON_SCHEMA, noRefs: true, lineWidth: -1, sortKeys: false }).trimEnd()
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_FRONTMATTER_BYTES)
+    return fail('OKF_FRONTMATTER_TOO_LARGE', `OKF frontmatter exceeds ${MAX_FRONTMATTER_BYTES} bytes`)
   const normalizedBody = body.replaceAll('\r\n', '\n').replace(/^\n+/u, '')
-  return `---\n${serialized}\n---\n${normalizedBody.length > 0 ? `\n${normalizedBody}` : ''}`
+  const document = `---\n${serialized}\n---\n${normalizedBody.length > 0 ? `\n${normalizedBody}` : ''}`
+  if (Buffer.byteLength(document, 'utf8') > OKF_MAX_DOCUMENT_BYTES)
+    return fail('OKF_DOCUMENT_TOO_LARGE', `OKF document exceeds ${OKF_MAX_DOCUMENT_BYTES} bytes`)
+  return document
 }
 
 const safeStoredMetadata = (value: unknown): OkfMetadata | undefined => {
-  try { return validateMetadata(value) } catch { return undefined }
+  try {
+    return validateMetadata(value)
+  } catch {
+    return undefined
+  }
 }
 
 export const okfMetadataForHumanMutation = (value: unknown, userId: number, at = new Date().toISOString()): OkfMetadata => {
@@ -275,7 +342,8 @@ const exportLink = (destination: string): string => {
   if (!raw.startsWith('/') || raw.startsWith('//') || raw.startsWith('/_private/')) return destination
   const parts = splitDestination(raw)
   const segments = parts.path.slice(1).split('/')
-  if (segments.length < 2 || !/^[A-Za-z][A-Za-z0-9-]{1,34}$/u.test(segments[0] ?? '') || segments.slice(1).some(segment => segment.includes('.'))) return destination
+  if (segments.length < 2 || !/^[A-Za-z][A-Za-z0-9-]{1,34}$/u.test(segments[0] ?? '') || segments.slice(1).some(segment => segment.includes('.')))
+    return destination
   const converted = `/${okfFilePath(segments[0]!, segments.slice(1).join('/'))}${parts.suffix}`
   return wrapped ? `<${converted}>` : converted
 }
@@ -287,7 +355,8 @@ const importedConceptIdentity = (filePath: string): { locale: string; pagePath: 
   if (segments.length < 2 || !segments.at(-1)?.endsWith('.md')) return null
   const locale = segments.shift()!
   let basename = segments.pop()!.replace(/\.md$/u, '')
-  if (basename.endsWith('.concept') && RESERVED_BASENAMES.has(basename.slice(0, -'.concept'.length).toLowerCase())) basename = basename.slice(0, -'.concept'.length)
+  if (basename.endsWith('.concept') && RESERVED_BASENAMES.has(basename.slice(0, -'.concept'.length).toLowerCase()))
+    basename = basename.slice(0, -'.concept'.length)
   else if (RESERVED_BASENAMES.has(basename.toLowerCase())) return null
   segments.push(basename)
   return { locale, pagePath: segments.join('/') }
@@ -299,42 +368,101 @@ const importLink = (destination: string, currentFilePath: string): string => {
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(raw) || raw.startsWith('//') || raw.startsWith('#')) return destination
   const parts = splitDestination(raw)
   if (!parts.path.toLowerCase().endsWith('.md')) return destination
-  const target = parts.path.startsWith('/')
-    ? parts.path
-    : path.posix.join('/', path.posix.dirname(currentFilePath), parts.path)
+  const target = parts.path.startsWith('/') ? parts.path : path.posix.join('/', path.posix.dirname(currentFilePath), parts.path)
   const identity = importedConceptIdentity(target)
   if (!identity) return destination
   const converted = `/${identity.locale}/${identity.pagePath}${parts.suffix}`
   return wrapped ? `<${converted}>` : converted
 }
 
-const insideInlineCode = (line: string, offset: number): boolean => {
-  let ticks = 0
-  for (let index = 0; index < offset; index++) if (line[index] === '`' && line[index - 1] !== '\\') ticks += 1
-  return ticks % 2 === 1
+interface MarkdownFence {
+  readonly marker: string
+  readonly length: number
+}
+
+interface CodeSpan {
+  readonly start: number
+  readonly end: number
+}
+
+const codeSpans = (markdown: string): readonly CodeSpan[] => {
+  const runs: Array<{ start: number; end: number; length: number; escaped: boolean; next: number | undefined }> = []
+  const nextByLength = new Map<number, number>()
+  for (let index = 0; index < markdown.length; ) {
+    if (markdown[index] !== '`') {
+      index += 1
+      continue
+    }
+    const start = index
+    while (markdown[index] === '`') index += 1
+    let slashes = 0
+    for (let before = start - 1; before >= 0 && markdown[before] === '\\'; before--) slashes += 1
+    runs.push({ start, end: index, length: index - start, escaped: slashes % 2 === 1, next: undefined })
+  }
+  for (let index = runs.length - 1; index >= 0; index--) {
+    const run = runs[index]!
+    run.next = nextByLength.get(run.length)
+    nextByLength.set(run.length, index)
+  }
+  const spans: CodeSpan[] = []
+  for (let index = 0; index < runs.length; ) {
+    const opener = runs[index]!
+    if (opener.escaped || opener.next === undefined) {
+      index += 1
+      continue
+    }
+    const closer = runs[opener.next]!
+    spans.push({ start: opener.start, end: closer.end })
+    index = opener.next + 1
+  }
+  return spans
+}
+
+const rewriteInlineMarkdownLinks = (markdown: string, rewrite: (destination: string) => string): string => {
+  const spans = codeSpans(markdown)
+  let spanIndex = 0
+  return markdown.replace(MARKDOWN_LINK, (match, prefix: string, destination: string, offset: number) => {
+    while (spans[spanIndex] !== undefined && spans[spanIndex]!.end <= offset) spanIndex += 1
+    const span = spans[spanIndex]
+    if (markdown[offset - 1] === '!' || (span !== undefined && offset >= span.start && offset < span.end)) return match
+    return `${prefix}${rewrite(destination)}`
+  })
 }
 
 const rewriteMarkdownLinks = (markdown: string, rewrite: (destination: string) => string): string => {
   const lines = markdown.replaceAll('\r\n', '\n').split('\n')
-  let fenceMarker: string | null = null
-  return lines.map(line => {
-    const fence = FENCE.exec(line)?.[1]
-    if (fence) {
-      const marker = fence[0]!
-      if (fenceMarker === null) fenceMarker = marker
-      else if (marker === fenceMarker) fenceMarker = null
-      return line
+  const output: string[] = []
+  let inlineLines: string[] = []
+  let fence: MarkdownFence | null = null
+  const flushInlineLines = (): void => {
+    if (inlineLines.length === 0) return
+    output.push(...rewriteInlineMarkdownLinks(inlineLines.join('\n'), rewrite).split('\n'))
+    inlineLines = []
+  }
+  for (const line of lines) {
+    const match = FENCE.exec(line)
+    const sequence = match?.[1]
+    if (fence !== null) {
+      flushInlineLines()
+      output.push(line)
+      if (sequence?.[0] === fence.marker && sequence.length >= fence.length && line.slice(match![0].length).trim().length === 0) fence = null
+      continue
     }
-    if (fenceMarker !== null) return line
-    return line.replace(MARKDOWN_LINK, (match, prefix: string, destination: string, offset: number) => {
-      if (line[offset - 1] === '!' || insideInlineCode(line, offset)) return match
-      return `${prefix}${rewrite(destination)}`
-    })
-  }).join('\n')
+    if (sequence !== undefined && (sequence[0] !== '`' || !line.slice(match![0].length).includes('`'))) {
+      flushInlineLines()
+      fence = { marker: sequence[0]!, length: sequence.length }
+      output.push(line)
+      continue
+    }
+    inlineLines.push(line)
+  }
+  flushInlineLines()
+  return output.join('\n')
 }
 
 export const exportOkfLinks = (markdown: string): string => rewriteMarkdownLinks(markdown, exportLink)
-export const importOkfLinks = (markdown: string, locale: string, pagePath: string): string => rewriteMarkdownLinks(markdown, destination => importLink(destination, okfFilePath(locale, pagePath)))
+export const importOkfLinks = (markdown: string, locale: string, pagePath: string): string =>
+  rewriteMarkdownLinks(markdown, destination => importLink(destination, okfFilePath(locale, pagePath)))
 
 export const createOkfPageDocument = (input: OkfPageInput, now = new Date()): OkfPageDocument => {
   const stored = safeStoredMetadata(input.metadata)

@@ -35,7 +35,7 @@ const createSchema = async (): Promise<void> => {
     table.string('contentType').notNullable()
     table.string('title').notNullable()
     table.text('description').nullable()
-    table.dateTime('updatedAt').notNullable()
+    table.dateTime('versionDate').notNullable()
     table.integer('authorId').notNullable()
     table.text('extra').notNullable()
   })
@@ -154,11 +154,25 @@ beforeEach(async () => {
 afterEach(async () => db.destroy())
 
 describe('page knowledge lifecycle', () => {
-  it('projects manual and agent revisions from their exact immutable source snapshots', async () => {
-    const first = page()
+  it('projects delayed revisions from production-shaped immutable history snapshots', async () => {
+    const generatedAt = '2026-08-01T09:00:00.000Z'
+    const verifiedAt = '2026-08-02T10:00:00.000Z'
+    const first = page({
+      extra: JSON.stringify({
+        okf: {
+          type: 'Procedure',
+          status: 'stable',
+          generated: { by: 'human:5', at: generatedAt },
+          verified: [{ by: 'human:9', at: verifiedAt }]
+        }
+      })
+    })
     await db('pages').insert(first)
     await enqueueKnowledge('1', String(first.content), 'create')
-    await db('pageHistory').insert({ ...first, pageId: 42 })
+    const { updatedAt: versionDate, ...historySnapshot } = first
+    const [historyId] = await db('pageHistory').insert({ ...historySnapshot, pageId: 42, versionDate })
+    const [tagId] = await db('tags').insert({ tag: 'historical-tag' })
+    await db('pageHistoryTags').insert({ pageId: historyId, tagId })
     const second = page({ sourceRevision: '2', content: '# Runbook\n\nUse the revised deployment runbook.\n' })
     await db('pages').where({ id: 42 }).update(second)
     await enqueueKnowledge('2', String(second.content), 'update')
@@ -171,6 +185,19 @@ describe('page knowledge lifecycle', () => {
     expect(rows.map(row => String(row.sourceRevision))).toEqual(['1', '2'])
     expect(rows.every(row => /^[a-f0-9]{64}$/.test(String(row.sourceSha256)))).toBe(true)
     expect(await db('pages').where({ id: 42 }).first('content')).toEqual({ content: second.content })
+    const historicalProjection = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('projection')
+    expect(JSON.parse(String(historicalProjection.projection))).toMatchObject({ source: { updatedAt: versionDate } })
+    expect(await new PageKnowledgeRepository(db).getRevision(42, '1')).toMatchObject({
+      sourceRevision: '1',
+      conceptType: 'Procedure',
+      tags: ['historical-tag'],
+      lifecycle: {
+        generatedAt,
+        verifiedAt,
+        trustTier: 'human-reviewed',
+        verification: 'current'
+      }
+    })
     expect(await new PageKnowledgeRepository(db).getCurrent(42)).toMatchObject({ sourceRevision: '2' })
   })
 
@@ -221,6 +248,46 @@ describe('page knowledge lifecycle', () => {
       utilityProfileVersionId: profileVersionId,
       utilityModel: 'utility-small'
     })
+  })
+
+  it('does not requeue unavailable utility gaps when no enricher is configured', async () => {
+    await enableUtilityEnrichment()
+    const current = page()
+    await db('pages').insert(current)
+    await enqueueKnowledge('1', String(current.content), 'create')
+    const lifecycle = new PageKnowledgeLifecycle(db, 'no-enricher-worker')
+
+    await lifecycle.runOnce()
+    expect(await db('pageKnowledgeProjections').first('enrichmentState')).toEqual({ enrichmentState: 'unavailable' })
+    expect(await lifecycle.runOnce()).toMatchObject({ requeued: 0, processed: 0 })
+  })
+
+  it('retries successful incomplete enrichment once when the active utility profile changes', async () => {
+    const originalProfileVersionId = '00000000-0000-4000-8000-000000000001'
+    const nextProfileVersionId = '00000000-0000-4000-8000-000000000003'
+    await enableUtilityEnrichment()
+    const current = page()
+    await db('pages').insert(current)
+    await enqueueKnowledge('1', String(current.content), 'create')
+    const enrichKnowledge = vi.fn(async () => utilityResult('profile-result'))
+    const lifecycle = new PageKnowledgeLifecycle(db, 'profile-worker', { enrichKnowledge })
+
+    await lifecycle.runOnce()
+    expect(enrichKnowledge).toHaveBeenCalledOnce()
+    expect(await db('pageKnowledgeProjections').first('state', 'enrichmentState', 'utilityProfileVersionId')).toMatchObject({
+      state: 'partial',
+      enrichmentState: 'succeeded',
+      utilityProfileVersionId: originalProfileVersionId
+    })
+
+    await db('agentProviderProfileVersions').insert({ id: nextProfileVersionId, conformed: true })
+    await db('agentProviderProfiles').update({ currentVersionId: nextProfileVersionId })
+    expect(await lifecycle.runOnce()).toMatchObject({ requeued: 1, processed: 1 })
+    expect(enrichKnowledge).toHaveBeenCalledTimes(2)
+    expect(await db('pageKnowledgeProjections').first('utilityProfileVersionId')).toEqual({ utilityProfileVersionId: nextProfileVersionId })
+
+    expect(await lifecycle.runOnce()).toMatchObject({ requeued: 0, processed: 0 })
+    expect(enrichKnowledge).toHaveBeenCalledTimes(2)
   })
 
   it('discards utility output when the exact source revision changes in flight', async () => {
@@ -480,5 +547,84 @@ describe('page knowledge lifecycle', () => {
 
     expect(enrichKnowledge).not.toHaveBeenCalled()
     expect(await db('pageKnowledgeProjections').first('state', 'enrichmentState')).toMatchObject({ state: 'partial', enrichmentState: 'withheld-private' })
+  })
+
+  it('treats SQL wildcard characters as literal knowledge search input', async () => {
+    const literal = page({ id: 1, title: '100% reliable', path: 'literal-percent' })
+    const ordinary = page({ id: 2, title: 'Ordinary runbook', path: 'ordinary' })
+    for (const source of [literal, ordinary]) {
+      await db('pages').insert(source)
+      await enqueuePageMutationEffects(db, {
+        pageId: Number(source.id),
+        sourceRevision: source.sourceRevision,
+        desiredState: 'present',
+        action: 'create',
+        source: String(source.content),
+        location: {
+          locale: String(source.localeCode),
+          path: String(source.path),
+          visibility: 'public',
+          ownerId: null
+        },
+        effects: ['knowledge']
+      })
+    }
+    await new PageKnowledgeLifecycle(db, 'search-worker').runOnce()
+    vi.stubGlobal('WIKI', { auth: { checkAccess: vi.fn().mockReturnValue(true) } })
+    try {
+      expect(
+        await new PageKnowledgeRepository(db).searchVisible({
+          query: '%',
+          requester: { id: 5 } as Express.User,
+          limit: 10
+        })
+      ).toMatchObject([{ id: 1, path: 'literal-percent' }])
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('fills the requested limit after password and knowledge filters in deterministic order', async () => {
+    const sources = [
+      page({ id: 1, path: 'protected', title: 'Common protected', extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) }),
+      page({ id: 2, path: 'filtered', title: 'Common filtered', extra: JSON.stringify({ okf: { type: 'Reference', status: 'stable' } }) }),
+      page({ id: 3, path: 'eligible/z', title: 'Common eligible Z', extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) }),
+      page({ id: 4, path: 'eligible/a', title: 'Common eligible A', extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }) })
+    ]
+    for (const source of sources) {
+      await db('pages').insert(source)
+      await enqueuePageMutationEffects(db, {
+        pageId: Number(source.id),
+        sourceRevision: source.sourceRevision,
+        desiredState: 'present',
+        action: 'create',
+        source: String(source.content),
+        location: {
+          locale: String(source.localeCode),
+          path: String(source.path),
+          visibility: 'public',
+          ownerId: null
+        },
+        effects: ['knowledge']
+      })
+    }
+    await db('pageAccessPasswords').insert({ pageId: 1 })
+    await new PageKnowledgeLifecycle(db, 'search-worker').runOnce()
+    vi.stubGlobal('WIKI', { auth: { checkAccess: vi.fn().mockReturnValue(true) } })
+    try {
+      expect(
+        await new PageKnowledgeRepository(db).searchVisible({
+          query: 'common',
+          requester: { id: 5 } as Express.User,
+          limit: 2,
+          filter: { conceptType: 'Procedure' }
+        })
+      ).toMatchObject([
+        { id: 4, path: 'eligible/a' },
+        { id: 3, path: 'eligible/z' }
+      ])
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

@@ -60,9 +60,12 @@ const startSetupHarness = async (configSaved: boolean) => {
   const authenticationInsert = vi.fn().mockResolvedValue({})
   const editorMutation = mutationQuery()
   const searchMutation = mutationQuery()
+  searchMutation.where.mockResolvedValue(1)
   const editorPatch = vi.fn(() => editorMutation)
   const searchPatch = vi.fn(() => searchMutation)
   const controller = new AbortController()
+  const searchRefresh = vi.fn().mockResolvedValue(undefined)
+  const searchInit = vi.fn().mockResolvedValue(undefined)
   const saveToDb = vi.fn().mockResolvedValue(configSaved)
   const wiki: SetupTestWiki = {
     IS_DEBUG: false,
@@ -95,7 +98,8 @@ const startSetupHarness = async (configSaved: boolean) => {
       navigation: { query: vi.fn(() => navigationQuery) },
       renderers: { refreshRenderersFromDisk: vi.fn().mockResolvedValue(undefined) },
       searchEngines: {
-        refreshSearchEnginesFromDisk: vi.fn().mockResolvedValue(undefined),
+        initEngine: searchInit,
+        refreshSearchEnginesFromDisk: searchRefresh,
         query: vi.fn(() => ({ patch: searchPatch }))
       },
       storage: { refreshTargetsFromDisk: vi.fn().mockResolvedValue(undefined) },
@@ -122,7 +126,9 @@ const startSetupHarness = async (configSaved: boolean) => {
     navigationInsert,
     saveToDb,
     searchMutation,
+    searchInit,
     searchPatch,
+    searchRefresh,
     server,
     settingsTruncate
   }
@@ -201,10 +207,13 @@ describe('setup finalization', () => {
       key: 'site',
       config: [{ locale: 'en', items: [] }]
     })
+    expect(harness.searchRefresh).toHaveBeenCalledTimes(1)
+    expect(harness.searchRefresh).toHaveBeenCalledWith({ strict: true })
     expect(harness.searchPatch).toHaveBeenCalledTimes(1)
     expect(harness.searchPatch).toHaveBeenCalledWith({ isEnabled: true })
     expect(harness.searchMutation.where).toHaveBeenCalledTimes(1)
     expect(harness.searchMutation.where).toHaveBeenCalledWith('key', 'postgres')
+    expect(harness.searchInit).toHaveBeenCalledTimes(1)
     expect(harness.editorPatch).toHaveBeenCalledTimes(1)
     expect(harness.editorPatch).toHaveBeenCalledWith({ isEnabled: true })
     expect(harness.editorMutation.where).toHaveBeenCalledTimes(1)

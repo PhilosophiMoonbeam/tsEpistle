@@ -76,7 +76,11 @@ interface SetupModels {
   loggers: { refreshLoggersFromDisk(): Promise<void> }
   navigation: { query(): ModelQuery<Record<string, unknown>> }
   renderers: { refreshRenderersFromDisk(): Promise<void> }
-  searchEngines: { refreshSearchEnginesFromDisk(): Promise<void>; query(): ModelQuery<Record<string, unknown>> }
+  searchEngines: {
+    initEngine(): Promise<void>
+    refreshSearchEnginesFromDisk(options?: { strict?: boolean }): Promise<void>
+    query(): ModelQuery<Record<string, unknown>>
+  }
   storage: { refreshTargetsFromDisk(): Promise<void> }
   users: { query(): ModelQuery<RelatedUser> }
 }
@@ -298,8 +302,10 @@ export default function startSetup(): Promise<void> {
       await wiki.models.editors.query().patch({ isEnabled: true }).where('key', 'markdown').orWhere('key', 'visual-markdown')
       await wiki.models.loggers.refreshLoggersFromDisk()
       await wiki.models.renderers.refreshRenderersFromDisk()
-      await wiki.models.searchEngines.refreshSearchEnginesFromDisk()
-      await wiki.models.searchEngines.query().patch({ isEnabled: true }).where('key', 'postgres')
+      await wiki.models.searchEngines.refreshSearchEnginesFromDisk({ strict: true })
+      const enabledSearchProviders = await wiki.models.searchEngines.query().patch({ isEnabled: true }).where('key', 'postgres')
+      if (enabledSearchProviders !== 1) throw new Error('Postgres search provider was not found after reconciliation')
+      await wiki.models.searchEngines.initEngine()
       await wiki.models.storage.refreshTargetsFromDisk()
 
       wiki.logger.info('Creating root administrator...')

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
@@ -5,6 +6,7 @@ import {
   claimPageMutationEffects,
   enqueuePageMutationEffects,
   executePageMutationEffect,
+  rearmPageMutationEffect,
   PageProjectionLifecycle,
   PageMutationOutboxError,
   type PageProjectionSink
@@ -121,7 +123,7 @@ describe('page mutation projection outbox', () => {
   })
 
   it('claims in deterministic order with fenced leases and reclaims expiry', async () => {
-    await enqueue({ effects: ['render', 'links'] })
+    await enqueue({ effects: ['render', 'knowledge'] })
     const now = new Date('2100-08-17T00:00:00.000Z')
     const first = await claimPageMutationEffects(knex, { leaseOwner: 'worker-a', limit: 1, leaseMs: 1_000, now })
     expect(first).toHaveLength(1)
@@ -132,11 +134,132 @@ describe('page mutation projection outbox', () => {
     expect(reclaimed.map(item => item.attempts)).toEqual([2, 2])
   })
 
-  it('verifies payload hashes before exposing claimed work', async () => {
-    await enqueue({ effects: ['render'] })
-    await knex('pageMutationOutbox').update({ payload: '{"tampered":true}' })
-    await expect(Promise.resolve(claimPageMutationEffects(knex, { leaseOwner: 'worker' }))).rejects.toMatchObject({ code: 'OUTBOX_PAYLOAD_TAMPERED' })
-    expect(await knex('pageMutationOutbox').first()).toMatchObject({ status: 'pending', attempts: 0 })
+  it('quarantines malformed work and claims the next valid row without exposing poison to a sink', async () => {
+    const [poisonId] = await enqueue({ effects: ['render'] })
+    const [validId] = await enqueue({
+      pageId: 43,
+      sourceRevision: '9',
+      effects: ['render'],
+      location: { ...location, path: 'docs/next' }
+    })
+    if (!poisonId || !validId) throw new Error('effect missing')
+    const malformed = '{'
+    await knex('pageMutationOutbox')
+      .where({ id: poisonId })
+      .update({
+        payload: malformed,
+        payloadSha256: createHash('sha256').update(malformed).digest('hex'),
+        availableAt: '2100-08-16T00:00:00.000Z',
+        createdAt: '2100-08-16T00:00:00.000Z'
+      })
+    await knex('pageMutationOutbox').where({ id: validId }).update({
+      availableAt: '2100-08-17T00:00:00.000Z',
+      createdAt: '2100-08-17T00:00:00.000Z'
+    })
+
+    const [claim] = await claimPageMutationEffects(knex, {
+      leaseOwner: 'worker',
+      limit: 1,
+      now: new Date('2100-08-18T00:00:00.000Z')
+    })
+    if (!claim) throw new Error('claim missing')
+    expect(claim).toMatchObject({ id: validId, attempts: 1, payload: { pageId: 43 } })
+    const reconcile = vi.fn(async () => ({
+      result: { rendered: true },
+      postcondition: { satisfied: true, observedSourceRevision: '9', detail: 'ok' }
+    }))
+    await executePageMutationEffect(knex, claim, new Map([['render', { kind: 'render' as const, reconcile }]]), new AbortController().signal)
+
+    expect(reconcile).toHaveBeenCalledTimes(1)
+    expect(reconcile).toHaveBeenCalledWith(expect.objectContaining({ pageId: 43 }), expect.any(AbortSignal))
+    const poison = await knex('pageMutationOutbox').where({ id: poisonId }).first()
+    expect(poison).toMatchObject({ status: 'failed', attempts: 0, leaseToken: null })
+    expect(JSON.parse(poison.result)).toMatchObject({ quarantined: true, code: 'INVALID_OUTBOX_PAYLOAD' })
+    expect(poison.result.length).toBeLessThan(1_300)
+  })
+
+  it('defers links behind pending, running, or retrying current render work without consuming attempts', async () => {
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 8,
+      content: '# Start\n',
+      render: '<p>old render</p>',
+      localeCode: 'en',
+      path: 'docs/start',
+      visibility: 'public',
+      ownerId: null
+    })
+    await enqueue({ effects: ['render', 'links'] })
+    const now = new Date('2100-08-17T00:00:00.000Z')
+
+    expect(await claimPageMutationEffects(knex, { leaseOwner: 'links-pending', effects: ['links'], now })).toEqual([])
+    const [renderClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'render', effects: ['render'], now })
+    if (!renderClaim) throw new Error('render claim missing')
+    expect(await claimPageMutationEffects(knex, { leaseOwner: 'links-running', effects: ['links'], now })).toEqual([])
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'attempts')).toMatchObject({
+      status: 'pending',
+      attempts: 0
+    })
+
+    await knex('pageMutationOutbox')
+      .where({ id: renderClaim.id })
+      .update({
+        status: 'retry',
+        availableAt: new Date(now.valueOf() + 60_000).toISOString(),
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null
+      })
+    expect(await claimPageMutationEffects(knex, { leaseOwner: 'links-retry', effects: ['links'], now })).toEqual([])
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('attempts')).toMatchObject({ attempts: 0 })
+
+    await knex('pageMutationOutbox').where({ id: renderClaim.id }).update({ status: 'succeeded' })
+    const [linkClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'links-ready', effects: ['links'], now })
+    expect(linkClaim).toMatchObject({ attempts: 1, payload: { effectKind: 'links' } })
+  })
+
+  it('rearms an exact terminal effect idempotently and fails closed for immutable tampering', async () => {
+    const [id] = await enqueue({ effects: ['render'] })
+    if (!id) throw new Error('effect missing')
+    const original = await knex('pageMutationOutbox').where({ id }).first()
+    const payload = JSON.parse(original.payload)
+    await knex('pageMutationOutbox').where({ id }).update({
+      status: 'succeeded',
+      attempts: 5,
+      result: '{"rendered":true}',
+      postcondition: '{"satisfied":true}'
+    })
+    const now = new Date('2100-08-17T00:00:00.000Z')
+
+    await expect(rearmPageMutationEffect(knex, { id, payload, now })).resolves.toBe(true)
+    const rearmed = await knex('pageMutationOutbox').where({ id }).first()
+    expect(rearmed).toMatchObject({
+      id: original.id,
+      pageId: original.pageId,
+      sourceRevision: original.sourceRevision,
+      effectKind: original.effectKind,
+      effectKey: original.effectKey,
+      desiredState: original.desiredState,
+      payload: original.payload,
+      payloadSha256: original.payloadSha256,
+      status: 'retry',
+      attempts: 0,
+      result: null,
+      postcondition: null
+    })
+    await expect(rearmPageMutationEffect(knex, { id, payload, now })).resolves.toBe(false)
+
+    await knex('pageMutationOutbox').where({ id }).update({ status: 'failed' })
+    await expect(rearmPageMutationEffect(knex, { id, payload, now })).resolves.toBe(true)
+    await knex('pageMutationOutbox')
+      .where({ id })
+      .update({ status: 'succeeded', payloadSha256: '0'.repeat(64) })
+    await expect(rearmPageMutationEffect(knex, { id, payload, now })).rejects.toMatchObject({ code: 'OUTBOX_PAYLOAD_TAMPERED' })
+    expect(await knex('pageMutationOutbox').where({ id }).first('status', 'payload', 'payloadSha256')).toMatchObject({
+      status: 'succeeded',
+      payload: original.payload,
+      payloadSha256: '0'.repeat(64)
+    })
   })
 
   it('accepts only a conforming sink result that proves the postcondition', async () => {
@@ -232,7 +355,8 @@ describe('production page projection lifecycle', () => {
       }
     })
 
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 2 })
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
 
     expect(renderPage).toHaveBeenCalledWith(42)
     expect(evicted).toEqual(['en/docs/old/public', 'en/docs/old/public'])

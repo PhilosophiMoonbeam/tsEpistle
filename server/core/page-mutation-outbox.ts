@@ -236,6 +236,53 @@ export const rearmFailedKnowledgeEffect = async (
   return updated === 1
 }
 
+export const rearmPageMutationEffect = async (
+  knex: Knex | Knex.Transaction,
+  input: {
+    readonly id: string
+    readonly payload: PageProjectionPayload
+    readonly now?: Date
+  }
+): Promise<boolean> => {
+  const expected = PageProjectionPayloadSchema.safeParse(input.payload)
+  if (!expected.success) throw new PageMutationOutboxError('INVALID_OUTBOX_PAYLOAD', 'Expected page projection payload is invalid')
+  const existing = await knex<PageMutationOutboxRow>('pageMutationOutbox').where({ id: input.id }).first()
+  if (!existing) return false
+  parseRowPayload(existing)
+  const encoded = canonicalJson(expected.data)
+  const payloadSha256 = sha256(encoded)
+  const effectKey = `page:${expected.data.pageId}:${expected.data.effectKind}`
+  if (existing.payload !== encoded || existing.payloadSha256 !== payloadSha256 || existing.effectKey !== effectKey) {
+    throw new PageMutationOutboxError('OUTBOX_IDEMPOTENCY_CONFLICT', 'Existing page projection effect has different immutable content')
+  }
+  const now = input.now ?? new Date()
+  const updated = await knex<PageMutationOutboxRow>('pageMutationOutbox')
+    .where({
+      id: existing.id,
+      pageId: expected.data.pageId,
+      sourceRevision: expected.data.sourceRevision,
+      effectKind: expected.data.effectKind,
+      effectKey,
+      desiredState: expected.data.desiredState,
+      payload: encoded,
+      payloadSha256
+    })
+    .whereIn('status', ['succeeded', 'failed'])
+    .whereNull('leaseToken')
+    .update({
+      status: 'retry',
+      attempts: 0,
+      availableAt: now.toISOString(),
+      result: null,
+      postcondition: null,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      updatedAt: now.toISOString()
+    })
+  return updated === 1
+}
+
 export const claimPageMutationEffects = async (
   knex: Knex,
   input: {
@@ -263,33 +310,75 @@ export const claimPageMutationEffects = async (
       .where('status', 'running')
       .where('leaseExpiresAt', '<=', nowIso)
       .update({ status: 'pending', leaseOwner: null, leaseToken: null, leaseExpiresAt: null, updatedAt: nowIso })
-    let claimQuery = transaction<PageMutationOutboxRow>('pageMutationOutbox')
-      .whereIn('status', ['pending', 'retry'])
-      .whereIn('effectKind', effects)
-      .where('availableAt', '<=', nowIso)
-      .orderBy('availableAt', 'asc')
-      .orderBy('createdAt', 'asc')
-      .limit(limit)
-      .forUpdate()
-    const client = String(transaction.client.config.client)
-    if (client === 'pg' || client === 'postgres' || client === 'postgresql' || client.includes('mysql')) claimQuery = claimQuery.skipLocked()
-    const rows = await claimQuery
     const claimed: ClaimedPageProjectionEffect[] = []
-    for (const row of rows) {
-      const leaseToken = randomUUID()
-      const updated = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
-        .where({ id: row.id, status: row.status })
+    while (claimed.length < limit) {
+      let claimQuery = transaction<PageMutationOutboxRow>('pageMutationOutbox')
+        .whereIn('status', ['pending', 'retry'])
+        .whereIn('effectKind', effects)
+        .where('availableAt', '<=', nowIso)
         .where(builder => builder.whereNull('leaseToken').orWhere('leaseExpiresAt', '<=', nowIso))
-        .update({
-          status: 'running',
-          attempts: Number(row.attempts) + 1,
-          leaseOwner: input.leaseOwner,
-          leaseToken,
-          leaseExpiresAt: new Date(now.valueOf() + leaseMs).toISOString(),
-          updatedAt: nowIso
-        })
-      if (updated !== 1) continue
-      claimed.push({ id: row.id, leaseToken, attempts: Number(row.attempts) + 1, payload: parseRowPayload(row) })
+        .where(builder =>
+          builder
+            .whereNot('effectKind', 'links')
+            .orWhereNotExists(function () {
+              this.select(transaction.raw('1'))
+                .from('pageMutationOutbox as renderDependency')
+                .whereRaw('?? = ??', ['renderDependency.pageId', 'pageMutationOutbox.pageId'])
+                .whereRaw('?? = ??', ['renderDependency.sourceRevision', 'pageMutationOutbox.sourceRevision'])
+                .where('renderDependency.effectKind', 'render')
+                .whereIn('renderDependency.status', ['pending', 'running', 'retry'])
+            })
+            .orWhereExists(function () {
+              this.select(transaction.raw('1'))
+                .from('pages as currentPage')
+                .whereRaw('?? = ??', ['currentPage.id', 'pageMutationOutbox.pageId'])
+                .whereRaw('?? <> ??', ['currentPage.sourceRevision', 'pageMutationOutbox.sourceRevision'])
+            })
+        )
+        .orderBy('availableAt', 'asc')
+        .orderBy('createdAt', 'asc')
+        .orderBy('id', 'asc')
+        .limit(limit - claimed.length)
+        .forUpdate()
+      const client = String(transaction.client.config.client)
+      if (client === 'pg' || client === 'postgres' || client === 'postgresql' || client.includes('mysql')) claimQuery = claimQuery.skipLocked()
+      const rows = await claimQuery
+      if (rows.length === 0) break
+      for (const row of rows) {
+        let payload: PageProjectionPayload
+        try {
+          payload = parseRowPayload(row)
+        } catch (error: unknown) {
+          if (!(error instanceof PageMutationOutboxError)) throw error
+          const detail = error.message.slice(0, 1_000)
+          await transaction<PageMutationOutboxRow>('pageMutationOutbox')
+            .where({ id: row.id, status: row.status })
+            .update({
+              status: 'failed',
+              result: canonicalJson({ quarantined: true, code: error.code, error: detail }),
+              postcondition: canonicalJson({ satisfied: false, observedSourceRevision: null, detail }),
+              leaseOwner: null,
+              leaseToken: null,
+              leaseExpiresAt: null,
+              updatedAt: nowIso
+            })
+          continue
+        }
+        const leaseToken = randomUUID()
+        const updated = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
+          .where({ id: row.id, status: row.status })
+          .where(builder => builder.whereNull('leaseToken').orWhere('leaseExpiresAt', '<=', nowIso))
+          .update({
+            status: 'running',
+            attempts: Number(row.attempts) + 1,
+            leaseOwner: input.leaseOwner,
+            leaseToken,
+            leaseExpiresAt: new Date(now.valueOf() + leaseMs).toISOString(),
+            updatedAt: nowIso
+          })
+        if (updated !== 1) continue
+        claimed.push({ id: row.id, leaseToken, attempts: Number(row.attempts) + 1, payload })
+      }
     }
     return claimed
   })

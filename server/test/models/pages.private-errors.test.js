@@ -206,6 +206,125 @@ describe('private page mutation existence isolation', () => {
     expect(associateTags).not.toHaveBeenCalled()
   })
 
+  it('advances OKF generation provenance when editor conversion rewrites the authoritative format', async () => {
+    const owner = { id: 7, permissions: [] }
+    const originalGeneratedAt = '2026-08-01T00:00:00.000Z'
+    const originalExtra = {
+      css: '.original{}',
+      js: 'original()',
+      okf: {
+        type: 'Reference',
+        status: 'stable',
+        generated: { by: 'human:3', at: originalGeneratedAt },
+        verified: [{ by: 'human:9', at: '2026-08-02T00:00:00.000Z' }]
+      }
+    }
+    const originalPage = {
+      ...privatePage,
+      authorId: 7,
+      content: '<h1>Runbook</h1><p>Body</p>',
+      contentType: 'html',
+      description: 'Original description',
+      editorKey: 'html',
+      extra: originalExtra,
+      hash: 'private:7:en:secret',
+      isPublished: true,
+      publishEndDate: '',
+      publishStartDate: '',
+      sourceRevision: '2',
+      title: 'Runbook',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }
+    const convertedPage = { ...originalPage, content: '# Runbook\n\nBody', contentType: 'markdown', editorKey: 'markdown' }
+    const patch = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(1) })
+    const query = vi.fn()
+      .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(originalPage) })
+      .mockReturnValueOnce({ patch })
+    global.WIKI.data.editors = [
+      { key: 'html', contentType: 'html' },
+      { key: 'markdown', contentType: 'markdown' }
+    ]
+    global.WIKI.models.pages = {
+      query,
+      getPageFromDb: vi.fn().mockResolvedValue(convertedPage),
+      deletePageFromCache: vi.fn()
+    }
+
+    await Page.convertPage({ id: 17, user: owner, editor: 'markdown' })
+
+    const patchValue = patch.mock.calls[0][0]
+    expect(patchValue).toMatchObject({
+      contentType: 'markdown',
+      editorKey: 'markdown',
+      extra: {
+        css: '.original{}',
+        js: 'original()',
+        okf: {
+          type: 'Reference',
+          status: 'stable',
+          generated: { by: 'human:7', at: expect.any(String) }
+        }
+      }
+    })
+    expect(patchValue.extra.okf.generated.at).not.toBe(originalGeneratedAt)
+    expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledWith(expect.objectContaining({ extra: originalExtra }))
+  })
+
+  it('preserves OKF generation and trust metadata across visibility-only changes', async () => {
+    const owner = { id: 7, permissions: [] }
+    const originalExtra = {
+      css: '',
+      js: '',
+      okf: {
+        type: 'Reference',
+        status: 'stable',
+        generated: { by: 'human:3', at: '2026-08-01T00:00:00.000Z' },
+        verified: [{ by: 'human:9', at: '2026-08-02T00:00:00.000Z' }]
+      }
+    }
+    const originalPage = {
+      ...privatePage,
+      authorId: 7,
+      content: '# Runbook',
+      contentType: 'markdown',
+      description: 'Original description',
+      extra: originalExtra,
+      hash: 'private:7:en:secret',
+      isPublished: false,
+      publishEndDate: '',
+      publishStartDate: '',
+      sourceRevision: '2',
+      title: 'Runbook',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }
+    const updatedPage = { ...originalPage, visibility: 'public', ownerId: null, extra: originalExtra }
+    const patch = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(1) })
+    const query = vi.fn()
+      .mockReturnValueOnce({ findOne: vi.fn().mockResolvedValue(undefined) })
+      .mockReturnValueOnce({ patch })
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.models.pages = {
+      query,
+      getPageFromDb: vi.fn().mockResolvedValueOnce(originalPage).mockResolvedValueOnce(updatedPage),
+      deletePageFromCache: vi.fn(),
+      rebuildTree: vi.fn(),
+      prepareSearchDocument: vi.fn(),
+      reconnectLinks: vi.fn()
+    }
+
+    const result = await Page.changeVisibility({
+      id: 17,
+      user: owner,
+      visibility: 'public',
+      confirmPublication: true,
+      skipStorage: true
+    })
+
+    expect(result.extra).toEqual(originalExtra)
+    expect(patch.mock.calls[0][0]).not.toHaveProperty('extra')
+    expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledWith(expect.objectContaining({ extra: originalExtra }))
+  })
+
   it('creates a page at a path already represented by a virtual folder', async () => {
     const owner = { id: 7, permissions: [] }
     const createdPage = {

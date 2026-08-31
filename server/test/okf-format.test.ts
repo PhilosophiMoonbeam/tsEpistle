@@ -4,11 +4,13 @@ import {
   createOkfPageDocument,
   exportOkfLinks,
   importOkfLinks,
+  OKF_MAX_DOCUMENT_BYTES,
   okfFilePath,
   okfMetadataForHumanMutation,
   OkfDocumentError,
   parseOkfDocument,
-  renderOkfDocument
+  renderOkfDocument,
+  validateStoredOkfMetadata
 } from '../okf/format.ts'
 
 const document = `---
@@ -55,9 +57,10 @@ describe('OKF v0.2 documents', () => {
   })
 
   it('marks verification older than generation as outdated and honors stale_after', () => {
-    const parsed = parseOkfDocument(document
-      .replace('2026-08-21T12:00:00Z', '2026-08-19T12:00:00Z')
-      .replace('2026-09-01T00:00:00Z', '2026-08-21T00:00:00Z'), new Date('2026-08-22T00:00:00Z'))
+    const parsed = parseOkfDocument(
+      document.replace('2026-08-21T12:00:00Z', '2026-08-19T12:00:00Z').replace('2026-09-01T00:00:00Z', '2026-08-21T00:00:00Z'),
+      new Date('2026-08-22T00:00:00Z')
+    )
     expect(parsed.trust).toMatchObject({ verification: 'outdated', stale: true })
   })
 
@@ -69,13 +72,48 @@ describe('OKF v0.2 documents', () => {
     expect(first.indexOf('type: Playbook')).toBeLessThan(first.indexOf('extension_family:'))
   })
 
+  it('rejects rendered frontmatter and documents beyond parser byte ceilings', () => {
+    expect(() => renderOkfDocument({ type: 'Reference', extension: 'é'.repeat(65_536) }, '')).toThrow(
+      expect.objectContaining<Partial<OkfDocumentError>>({ code: 'OKF_FRONTMATTER_TOO_LARGE' })
+    )
+    expect(() => renderOkfDocument({ type: 'Reference' }, 'x'.repeat(OKF_MAX_DOCUMENT_BYTES))).toThrow(
+      expect.objectContaining<Partial<OkfDocumentError>>({ code: 'OKF_DOCUMENT_TOO_LARGE' })
+    )
+  })
+
   it.each([
     ['missing frontmatter', '# Body', 'MISSING_OKF_FRONTMATTER'],
     ['missing type', '---\ntitle: No type\n---\n\nBody', 'INVALID_TYPE'],
     ['duplicate keys', '---\ntype: Reference\ntype: Playbook\n---\n\nBody', 'INVALID_OKF_YAML'],
-    ['impossible timestamp', '---\ntype: Reference\nstale_after: 2026-02-30T00:00:00Z\n---\n\nBody', 'INVALID_STALE_AFTER']
+    ['impossible timestamp', '---\ntype: Reference\nstale_after: 2026-02-30T00:00:00Z\n---\n\nBody', 'INVALID_STALE_AFTER'],
+    ['invalid UTC offset', '---\ntype: Reference\nstale_after: 2026-08-22T00:00:00+14:01\n---\n\nBody', 'INVALID_STALE_AFTER']
   ])('rejects %s', (_label, value, code) => {
     expect(() => parseOkfDocument(value)).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code }))
+  })
+
+  it('strictly validates stored metadata before producing trust', () => {
+    const metadata = {
+      type: 'Reference',
+      status: 'draft',
+      verified: { by: 'human:7', at: '2026-08-22T12:00:00Z' }
+    }
+    expect(validateStoredOkfMetadata(metadata, new Date('2026-08-23T00:00:00Z'))).toEqual({
+      metadata,
+      trust: {
+        trustTier: 'human-reviewed',
+        verification: 'current',
+        status: 'draft',
+        stale: false,
+        generatedAt: null,
+        verifiedAt: '2026-08-22T12:00:00Z'
+      }
+    })
+    for (const malformed of [
+      { type: 'Reference', verified: { by: '', at: '2026-08-22T12:00:00Z' } },
+      { type: 'Reference', verified: { by: 'human:7', at: '2026-08-22T12:00:00+14:01' } },
+      { type: 'Reference', status: 'trusted', verified: { by: 'human:7', at: '2026-08-22T12:00:00Z' } }
+    ])
+      expect(validateStoredOkfMetadata(malformed)).toBeNull()
   })
 })
 
@@ -85,15 +123,19 @@ describe('OKF page interchange', () => {
       'See [Core](/en/services/core#health) and [external](https://example.com/doc.md).',
       '![Diagram](/en/services/core)',
       '`[literal](/en/services/core)`',
-      '```md',
+      '`` `tick` [literal](/en/services/core) ``',
+      '````md',
+      '```',
       '[literal](/en/services/core)',
-      '```'
+      '```',
+      '````'
     ].join('\n')
     const exported = exportOkfLinks(wiki)
     expect(exported).toContain('[Core](/en/services/core.md#health)')
     expect(exported).toContain('![Diagram](/en/services/core)')
     expect(exported).toContain('`[literal](/en/services/core)`')
-    expect(exported).toContain('```md\n[literal](/en/services/core)\n```')
+    expect(exported).toContain('`` `tick` [literal](/en/services/core) ``')
+    expect(exported).toContain('````md\n```\n[literal](/en/services/core)\n```\n````')
     expect(importOkfLinks(exported, 'en', 'handbook/start')).toBe(wiki)
   })
 
@@ -125,12 +167,18 @@ describe('OKF page interchange', () => {
   })
 
   it('stamps meaningful human changes without discarding trust or provenance', () => {
-    expect(okfMetadataForHumanMutation({
-      type: 'Metric',
-      verified: { by: 'human:9', at: '2026-08-01T00:00:00Z' },
-      sources: [{ resource: 'https://example.com/source' }],
-      vendor: { retained: true }
-    }, 12, '2026-08-22T00:00:00Z')).toEqual({
+    expect(
+      okfMetadataForHumanMutation(
+        {
+          type: 'Metric',
+          verified: { by: 'human:9', at: '2026-08-01T00:00:00Z' },
+          sources: [{ resource: 'https://example.com/source' }],
+          vendor: { retained: true }
+        },
+        12,
+        '2026-08-22T00:00:00Z'
+      )
+    ).toEqual({
       type: 'Metric',
       verified: { by: 'human:9', at: '2026-08-01T00:00:00Z' },
       sources: [{ resource: 'https://example.com/source' }],

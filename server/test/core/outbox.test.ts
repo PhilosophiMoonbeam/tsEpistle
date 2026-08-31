@@ -1,4 +1,3 @@
-
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import { publishOutboxEvents, writeOutboxEvent } from '../../core/outbox.ts'
@@ -42,34 +41,75 @@ afterEach(async () => {
 })
 
 describe('transactional outbox', () => {
-  it('rolls back an event with its surrounding domain transaction', async () => {
-    await expect(Promise.resolve(knex.transaction(async transaction => {
-      await writeOutboxEvent(transaction, {
-        type: 'page.created',
+  it('accepts hyphenated event words and rejects malformed separators', async () => {
+    const acceptedTypes = ['page.visibility-changed', 'page.ownership-transferred']
+    for (const type of acceptedTypes) {
+      await writeOutboxEvent(knex, {
+        type,
         version: 1,
         aggregateType: 'page',
         aggregateId: 7,
         payload: { pageId: 7 }
       })
-      throw new Error('domain write failed')
-    }))).rejects.toThrow('domain write failed')
+    }
+
+    const malformedTypes = [
+      'Page.visibility-changed',
+      'page.visibility Changed',
+      '.page.visibility-changed',
+      'page.visibility-changed.',
+      'page..visibility-changed',
+      'page.-visibility-changed',
+      'page.visibility-changed-',
+      'page.visibility--changed',
+      'page.visibility_changed'
+    ]
+    for (const type of malformedTypes) {
+      await expect(
+        writeOutboxEvent(knex, {
+          type,
+          version: 1,
+          aggregateType: 'page',
+          aggregateId: 7,
+          payload: { pageId: 7 }
+        })
+      ).rejects.toThrow(`Invalid outbox event type: ${type}`)
+    }
+
+    expect(await knex('outboxEvents').orderBy('type').pluck('type')).toEqual([...acceptedTypes].sort())
+  })
+
+  it('rolls back an event with its surrounding domain transaction', async () => {
+    await expect(
+      Promise.resolve(
+        knex.transaction(async transaction => {
+          await writeOutboxEvent(transaction, {
+            type: 'page.created',
+            version: 1,
+            aggregateType: 'page',
+            aggregateId: 7,
+            payload: { pageId: 7 }
+          })
+          throw new Error('domain write failed')
+        })
+      )
+    ).rejects.toThrow('domain write failed')
 
     expect(await knex('outboxEvents')).toEqual([])
   })
 
   it('lets only one concurrent publisher own an outbox row', async () => {
-    const eventId = await knex.transaction(transaction => writeOutboxEvent(transaction, {
-      type: 'page.created',
-      version: 1,
-      aggregateType: 'page',
-      aggregateId: 7,
-      payload: { pageId: 7, visibility: 'public' }
-    }))
+    const eventId = await knex.transaction(transaction =>
+      writeOutboxEvent(transaction, {
+        type: 'page.created',
+        version: 1,
+        aggregateType: 'page',
+        aggregateId: 7,
+        payload: { pageId: 7, visibility: 'public' }
+      })
+    )
 
-    const published = await Promise.all([
-      publishOutboxEvents(knex),
-      publishOutboxEvents(knex)
-    ])
+    const published = await Promise.all([publishOutboxEvents(knex), publishOutboxEvents(knex)])
     expect(published.reduce((total, count) => total + count, 0)).toBe(1)
     await publishOutboxEvents(knex)
 
@@ -123,9 +163,7 @@ describe('transactional outbox', () => {
     await publishOutboxEvents(knex)
     await publishOutboxEvents(knex)
 
-    expect(await knex('pageWatchDeliveries')).toEqual([
-      expect.objectContaining({ eventId, userId: 8 })
-    ])
+    expect(await knex('pageWatchDeliveries')).toEqual([expect.objectContaining({ eventId, userId: 8 })])
     expect(await knex('durableJobs').where('type', 'notify-page-watcher')).toHaveLength(1)
     expect(await knex('pageWatchNotifications')).toEqual([])
     expect(await knex('pageWatchers').where('pageId', 42)).toEqual([])
@@ -159,9 +197,7 @@ describe('transactional outbox', () => {
     expect(jobs).toHaveLength(1)
     expect(JSON.parse(jobs[0].payload)).toMatchObject({ eventId: finalEventId, userId: 8 })
     expect(await knex('pageWatchNotifications')).toEqual([])
-    expect(await knex('pageWatchDeliveries')).toEqual([
-      expect.objectContaining({ eventId: finalEventId, userId: 8 })
-    ])
+    expect(await knex('pageWatchDeliveries')).toEqual([expect.objectContaining({ eventId: finalEventId, userId: 8 })])
     expect(firstEventId).not.toBe(finalEventId)
   })
 

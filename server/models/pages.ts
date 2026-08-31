@@ -221,6 +221,7 @@ interface PageVersionOptions {
   description: string
   editorKey: string
   hash: string
+  extra: PageExtra
   visibility: PageVisibility
   ownerId: number | null
   isPublished: boolean | number
@@ -1495,7 +1496,15 @@ export default class Page extends Model {
         .patch({
           contentType: targetContentType,
           editorKey: opts.editor,
-          ...(convertedContent ? { content: convertedContent } : {})
+          ...(convertedContent ? { content: convertedContent } : {}),
+          ...(shouldConvert
+            ? {
+                extra: {
+                  ...ogPage.extra,
+                  okf: okfMetadataForHumanMutation(ogPage.extra.okf, opts.user.id)
+                }
+              }
+            : {})
         })
         .where({ id: ogPage.id, sourceRevision: ogPage.sourceRevision })
       if (changedRows !== 1) throw pageUpdateConflict()

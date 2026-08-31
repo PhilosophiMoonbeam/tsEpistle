@@ -34,7 +34,7 @@ export interface PublishOutboxOptions {
   now?: Date
 }
 
-const validEventType = /^[a-z][a-z0-9]*(?:\.[a-z0-9]+)*$/
+const validEventType = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)*$/
 
 const eventSubscriptions = (value: string): string[] => {
   const parsed: unknown = JSON.parse(value)
@@ -76,10 +76,7 @@ export const publishOutboxEvents = async (knex: Knex, options: PublishOutboxOpti
 
   while (published < limit) {
     const didPublish = await knex.transaction(async transaction => {
-      const eventQuery = transaction<OutboxEventRow>('outboxEvents')
-        .whereNull('publishedAt')
-        .orderBy('createdAt', 'asc')
-        .orderBy('id', 'asc')
+      const eventQuery = transaction<OutboxEventRow>('outboxEvents').whereNull('publishedAt').orderBy('createdAt', 'asc').orderBy('id', 'asc')
       if (transaction.client.config.client === 'pg') eventQuery.forUpdate().skipLocked()
       const event = await eventQuery.first()
       if (!event) return false
@@ -164,10 +161,7 @@ export const publishOutboxEvents = async (knex: Knex, options: PublishOutboxOpti
           let selectedEventId = event.id
           let deliveryId = String(job.payload.deliveryId)
           if (isAggregatedUpdate) {
-            const lockedJob = await transaction<{ payload: string; state: string }>('durableJobs')
-              .where('id', job.id)
-              .forUpdate()
-              .first()
+            const lockedJob = await transaction<{ payload: string; state: string }>('durableJobs').where('id', job.id).forUpdate().first()
             if (!lockedJob) throw new Error(`Durable job ${job.id} disappeared while aggregating page events`)
             const lockedPayload: unknown = JSON.parse(lockedJob.payload)
             if (!lockedPayload || typeof lockedPayload !== 'object' || Array.isArray(lockedPayload)) {
@@ -187,16 +181,18 @@ export const publishOutboxEvents = async (knex: Knex, options: PublishOutboxOpti
                 .first()
               if (!currentEvent) throw new Error(`Aggregated outbox event ${currentEventId} does not exist`)
               if (lockedJob.state === 'pending' && eventIsNewer(event, currentEvent)) {
-                await transaction('durableJobs').where({ id: job.id, state: 'pending' }).update({
-                  payload: JSON.stringify({
-                    deliveryId,
-                    eventId: event.id,
-                    userId: watcher.userId,
-                    emailEnabled: Boolean(watcher.emailEnabled),
-                    inAppEnabled: Boolean(watcher.inAppEnabled)
-                  }),
-                  updatedAt: now
-                })
+                await transaction('durableJobs')
+                  .where({ id: job.id, state: 'pending' })
+                  .update({
+                    payload: JSON.stringify({
+                      deliveryId,
+                      eventId: event.id,
+                      userId: watcher.userId,
+                      emailEnabled: Boolean(watcher.emailEnabled),
+                      inAppEnabled: Boolean(watcher.inAppEnabled)
+                    }),
+                    updatedAt: now
+                  })
                 selectedEventId = event.id
               }
             }

@@ -19,6 +19,7 @@ vi.mockModule('../../modules/search/postgres/engine.ts', import.meta.url, () => 
 const wikiGlobal = globalThis as unknown as { WIKI?: Record<string, unknown> }
 const originalWiki = wikiGlobal.WIKI
 let SearchEngine: typeof SearchEngineModel
+let enabledEngines: Array<{ key: string; isEnabled: boolean; config: Record<string, unknown> }>
 let previousEngine = Object.assign(plugin, { key: 'previous', config: { dictLanguage: 'previous' } })
 let data: { searchEngine: unknown }
 let warn = vi.fn()
@@ -30,9 +31,9 @@ beforeEach(async () => {
   previousEngine = Object.assign(plugin, { key: 'previous', config: { dictLanguage: 'previous' } })
   data = { searchEngine: previousEngine }
   warn = vi.fn()
-  const enabledEngine = { key: 'postgres', isEnabled: true, config: { dictLanguage: 'english' } }
+  enabledEngines = [{ key: 'postgres', isEnabled: true, config: { dictLanguage: 'english' } }]
   const SearchEngineStore = Object.assign(() => undefined, {
-    query: vi.fn(() => ({ findOne: vi.fn(async () => enabledEngine) }))
+    query: vi.fn(() => ({ where: vi.fn(async () => enabledEngines) }))
   })
   const knex = vi.fn()
 
@@ -57,6 +58,33 @@ afterEach(() => {
 })
 
 describe('models/searchEngines.initEngine', () => {
+  it('rejects a missing enabled provider instead of silently skipping initialization', async () => {
+    enabledEngines = []
+
+    await expect(SearchEngine.initEngine()).rejects.toThrow('Expected exactly one enabled search provider, found 0')
+
+    expect(plugin.init).not.toHaveBeenCalled()
+    expect(data.searchEngine).toBe(previousEngine)
+  })
+
+  it('rejects ambiguous enabled providers', async () => {
+    enabledEngines.push({ key: 'legacy', isEnabled: true, config: {} })
+
+    await expect(SearchEngine.initEngine()).rejects.toThrow('Expected exactly one enabled search provider, found 2')
+
+    expect(plugin.init).not.toHaveBeenCalled()
+    expect(data.searchEngine).toBe(previousEngine)
+  })
+
+  it('rejects a sole enabled provider other than postgres', async () => {
+    enabledEngines = [{ key: 'legacy', isEnabled: true, config: {} }]
+
+    await expect(SearchEngine.initEngine()).rejects.toThrow('Expected postgres to be the enabled search provider, found legacy')
+
+    expect(plugin.init).not.toHaveBeenCalled()
+    expect(data.searchEngine).toBe(previousEngine)
+  })
+
   it('retains the previous engine and surfaces the original init failure', async () => {
     const failure = new Error('provider init failed')
     plugin.init.mockRejectedValueOnce(failure)
@@ -92,6 +120,30 @@ describe('models/searchEngines.initEngine', () => {
 })
 
 describe('models/searchEngines.refreshSearchEnginesFromDisk', () => {
+  it('propagates refresh failures only when strict reconciliation is requested', async () => {
+    const failure = new Error('definition refresh failed')
+    const error = vi.fn()
+    const SearchEngineStore = Object.assign(() => undefined, {
+      query: vi.fn(() => Promise.reject(failure))
+    })
+    wikiGlobal.WIKI = {
+      SERVERPATH: '/test/server',
+      data: {},
+      logger: { error, info: vi.fn(), warn: vi.fn() },
+      models: {
+        searchEngines: SearchEngineStore,
+        knex: vi.fn(),
+        Objection: { transaction: { start: vi.fn() } }
+      }
+    }
+
+    await expect(SearchEngine.refreshSearchEnginesFromDisk({ strict: true })).rejects.toBe(failure)
+    await expect(SearchEngine.refreshSearchEnginesFromDisk()).resolves.toBeUndefined()
+
+    expect(error).toHaveBeenCalledWith('Failed to scan or load new search engines: [ FAILED ]')
+    expect(error).toHaveBeenCalledWith(failure)
+  })
+
   it('retains the sole on-disk provider and removes every stale database definition', async () => {
     const dbRows = [
       { key: 'postgres', isEnabled: true, config: { dictLanguage: 'german' } },

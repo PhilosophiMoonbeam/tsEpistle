@@ -28,9 +28,7 @@ const RETRY_FAILED_AFTER_MILLISECONDS = 24 * 60 * 60 * 1_000
 const KNOWLEDGE_EFFECT_LEASE_MILLISECONDS = 120_000
 const KNOWLEDGE_EFFECT_HEARTBEAT_MILLISECONDS = KNOWLEDGE_EFFECT_LEASE_MILLISECONDS / 2
 
-interface SourceRow {
-  readonly id?: number
-  readonly pageId?: number
+interface SourceSnapshotRow {
   readonly sourceRevision: string | number
   readonly localeCode: string
   readonly path: string
@@ -39,9 +37,29 @@ interface SourceRow {
   readonly content: string
   readonly title: string
   readonly description: string | null
-  readonly updatedAt: string | Date
   readonly authorId: number
   readonly extra: unknown
+  readonly ownerId: number | null
+}
+
+interface CurrentSourceRow extends SourceSnapshotRow {
+  readonly id: number
+  readonly updatedAt: string | Date
+}
+
+interface HistorySourceRow extends SourceSnapshotRow {
+  readonly id: number
+  readonly pageId: number
+  readonly versionDate: string | Date
+}
+
+interface ProjectionQueueSourceRow {
+  readonly id: number
+  readonly sourceRevision: string | number
+  readonly content: string
+  readonly localeCode: string
+  readonly path: string
+  readonly visibility: 'public' | 'private'
   readonly ownerId: number | null
 }
 
@@ -114,13 +132,20 @@ const loadTags = async (knex: Knex, pageId: number, historyId?: number): Promise
 }
 
 const loadSource = async (knex: Knex, pageId: number, sourceRevision: string): Promise<KnowledgePageSource | null> => {
-  let row = await knex<SourceRow>('pages').where({ id: pageId, sourceRevision }).first()
+  const current = await knex<CurrentSourceRow>('pages').where({ id: pageId, sourceRevision }).first()
+  let row: SourceSnapshotRow
   let historyId: number | undefined
-  if (!row) {
-    row = await knex<SourceRow>('pageHistory').where({ pageId, sourceRevision }).orderBy('id', 'desc').first()
-    historyId = row?.id
+  let updatedAt: string | Date
+  if (current) {
+    row = current
+    updatedAt = current.updatedAt
+  } else {
+    const history = await knex<HistorySourceRow>('pageHistory').where({ pageId, sourceRevision }).orderBy('id', 'desc').first()
+    if (!history) return null
+    row = history
+    historyId = history.id
+    updatedAt = history.versionDate
   }
-  if (!row) return null
   const extra = parsedExtra(row.extra)
   return {
     pageId,
@@ -133,7 +158,7 @@ const loadSource = async (knex: Knex, pageId: number, sourceRevision: string): P
     title: row.title,
     description: row.description,
     tags: await loadTags(knex, pageId, historyId),
-    updatedAt: row.updatedAt,
+    updatedAt,
     authorId: row.authorId,
     metadata: extra.okf
   }
@@ -363,28 +388,31 @@ export class PageKnowledgeRepository {
   }): Promise<readonly KnowledgeSearchCandidate[]> {
     const query = input.query.trim().toLocaleLowerCase()
     if (!query) return []
+    const locale = input.locale
+    const path = input.path
     const operator = String(this.#knex.client.config.client).includes('pg') ? 'ILIKE' : 'LIKE'
+    const escapeLike = (value: string): string => value.replace(/[\\%_]/gu, '\\$&')
     const rows = (await this.#knex('pageKnowledgeProjections as projections')
       .join('pages', function () {
         this.on('pages.id', '=', 'projections.pageId').andOn('pages.sourceRevision', '=', 'projections.sourceRevision')
       })
       .where(builder => {
         scopePageQuery(builder, input.requester, { table: 'pages' })
-        builder.andWhere('projections.searchText', operator, `%${query}%`)
-        if (input.locale !== undefined) builder.andWhere('pages.localeCode', input.locale)
-        if (input.path !== undefined)
+        builder.andWhereRaw(`?? ${operator} ? ESCAPE ?`, ['projections.searchText', `%${escapeLike(query)}%`, '\\'])
+        if (locale !== undefined) builder.andWhere('pages.localeCode', locale)
+        if (path !== undefined)
           builder.andWhere(pathScope => {
-            pathScope.where('pages.path', input.path).orWhere('pages.path', 'LIKE', `${input.path}/%`)
+            pathScope.where('pages.path', path).orWhereRaw('?? LIKE ? ESCAPE ?', ['pages.path', `${escapeLike(path)}/%`, '\\'])
           })
       })
       .select('pages.id', 'pages.localeCode', 'pages.path', 'pages.visibility', 'pages.ownerId', 'projections.projection')
-      .limit(Math.max(1, Math.min(100, input.limit)))) as Array<{
+      .orderBy('pages.id')) as Array<{
       id: number
       localeCode: string
       path: string
       visibility: 'public' | 'private'
       ownerId: number | null
-      projection: string
+      projection: string | Record<string, unknown>
     }>
     const protectedRows =
       rows.length === 0
@@ -408,11 +436,11 @@ export class PageKnowledgeRepository {
             .select('pageTags.pageId', 'tags.tag')) as Array<{ pageId: number; tag: string }>)
     const tagsByPage = new Map<number, string[]>()
     for (const tag of tagRows) tagsByPage.set(tag.pageId, [...(tagsByPage.get(tag.pageId) ?? []), tag.tag])
+    const limit = Math.max(1, Math.min(100, input.limit))
     return rows
       .flatMap(row => {
         if (protectedIds.has(row.id) || !canReadPage(input.requester, { ...row, tags: tagsByPage.get(row.id) ?? [] })) return []
-        const projection = KnowledgeProjectionSchema.parse(JSON.parse(row.projection) as unknown)
-        const knowledge = knowledgeProjectionView(projection)
+        const knowledge = knowledgeProjectionView(parseProjection(row))
         if (!matchesKnowledgeFilter(knowledge, input.filter)) return []
         const exact = knowledge.conceptType?.toLocaleLowerCase() === query || knowledge.tags.some((tag: string) => tag.toLocaleLowerCase() === query)
         return [
@@ -427,7 +455,8 @@ export class PageKnowledgeRepository {
           }
         ]
       })
-      .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path))
+      .sort((left, right) => right.score - left.score || left.path.localeCompare(right.path) || left.locale.localeCompare(right.locale) || left.id - right.id)
+      .slice(0, limit)
   }
 }
 
@@ -437,7 +466,7 @@ const enqueueMissing = async (knex: Knex, limit: number): Promise<number> => {
     .whereRaw('"pageMutationOutbox"."pageId" = "pages"."id"')
     .whereRaw('"pageMutationOutbox"."sourceRevision" = "pages"."sourceRevision"')
     .where('pageMutationOutbox.effectKind', 'knowledge')
-  const rows = await knex<SourceRow>('pages')
+  const rows = await knex<ProjectionQueueSourceRow>('pages')
     .whereNotExists(missing)
     .select('id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId')
     .orderBy('id')
@@ -476,7 +505,7 @@ const recoverTerminalFailures = async (knex: Knex, now: Date): Promise<number> =
   let rearmed = 0
   for (const row of rows) {
     rearmed += await knex.transaction(async transaction => {
-      const source = await transaction<SourceRow>('pages')
+      const source = await transaction<ProjectionQueueSourceRow>('pages')
         .where({ id: row.pageId, sourceRevision: row.sourceRevision })
         .forUpdate()
         .first('id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId')
@@ -528,6 +557,7 @@ const requeueRetryable = async (knex: Knex, profileVersionId: string | null, now
       builder
         .where('projections.enrichmentState', 'unavailable')
         .orWhere(retry => retry.where('projections.enrichmentState', 'failed').andWhere('projections.updatedAt', '<=', retryBefore))
+        .orWhere(retry => retry.where('projections.enrichmentState', 'succeeded').andWhereNot('projections.utilityProfileVersionId', profileVersionId))
     )
     .select('effects.id')
     .limit(25)) as Array<{ id: string }>
@@ -603,7 +633,7 @@ export class PageKnowledgeLifecycle {
       const now = new Date()
       const profileVersionId = await currentProfileVersionId(this.#knex).catch(() => null)
       const backfilled = await enqueueMissing(this.#knex, 25)
-      const requeued = (await recoverTerminalFailures(this.#knex, now)) + (await requeueRetryable(this.#knex, profileVersionId, now))
+      const requeued = (await recoverTerminalFailures(this.#knex, now)) + (this.#enricher ? await requeueRetryable(this.#knex, profileVersionId, now) : 0)
       const claims = await claimPageMutationEffects(this.#knex, {
         leaseOwner: this.#workerId,
         limit: 10,

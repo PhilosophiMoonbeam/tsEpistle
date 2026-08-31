@@ -5,41 +5,35 @@ const knexHarness = (options = {}) => {
   const deleteRows = vi.fn().mockResolvedValue(1)
   const where = vi.fn().mockReturnValue({ delete: deleteRows })
   const rebuildPages = options.rebuildPages ?? []
-  let pageIdCursor = 0
-  let cursorSize = 0
-  const pageQuery = {}
-  const pageForShare = vi.fn(async () =>
-    rebuildPages
-      .filter(page => page.id > pageIdCursor)
-      .slice(0, cursorSize)
-      .map(page => ({ id: page.id }))
-  )
-  const pageLimit = vi.fn(limit => {
-    cursorSize = limit
-    return pageQuery
+  const transactionRaw = vi.fn().mockImplementation(async (sql, bindings = []) => {
+    const statement = String(sql)
+    if (statement.includes('pg_try_advisory_xact_lock')) return { rows: [{ value: options.lockAcquired !== false }] }
+    if (statement.includes('WITH expected_columns')) return { rows: [{ value: options.schemaCurrent !== false }] }
+    if (statement.includes('FROM "pagesSearchMetadata"')) {
+      const value = options.metadataDictionary === undefined
+        ? options.metadataCurrent !== false
+        : options.metadataDictionary === bindings[1]
+      return { rows: [{ value }] }
+    }
+    if (statement.includes('FULL OUTER JOIN "pagesVector"')) {
+      return { rows: [{ value: options.revisionsCurrent !== false }] }
+    }
+    if (statement.includes('FOR SHARE OF page')) {
+      const [cursor, limit] = bindings
+      return { rows: rebuildPages.filter(page => page.id > cursor).slice(0, limit) }
+    }
+    return { rows: [] }
   })
-  const pageOrderBy = vi.fn(() => pageQuery)
-  const pageAndWhere = vi.fn((column, operator, value) => {
-    if (column === 'id') pageIdCursor = value
-    return pageQuery
-  })
-  const pageWhere = vi.fn(() => pageQuery)
-  const pageSelect = vi.fn(() => pageQuery)
-  Object.assign(pageQuery, {
-    select: pageSelect,
-    where: pageWhere,
-    andWhere: pageAndWhere,
-    orderBy: pageOrderBy,
-    limit: pageLimit,
-    forShare: pageForShare
-  })
-  const table = vi.fn().mockImplementation(tableName =>
-    tableName === 'pages' ? pageQuery : { truncate, where }
-  )
-  const transactionRaw = vi.fn().mockResolvedValue({ rows: [] })
-  const transaction = Object.assign(table, { raw: transactionRaw })
+  const table = vi.fn().mockImplementation(() => ({ truncate, where }))
+  const transactionSchema = {
+    dropTableIfExists: vi.fn().mockResolvedValue(undefined)
+  }
+  const transactionClient = Object.assign(table, { raw: transactionRaw, schema: transactionSchema })
+  let transactionHeld = false
   const raw = vi.fn().mockImplementation(async (sql, bindings = []) => {
-    if (sql.includes('WITH RECURSIVE query_input')) {
+    if (options.rejectSecondConnection && transactionHeld) throw new Error('pool exhausted')
+    const statement = String(sql)
+    if (statement.includes('WITH RECURSIVE query_input')) {
       const rows = options.scope
         ? (options.queryRows ?? []).filter(row =>
             row.locale === options.scope.locale &&
@@ -48,29 +42,35 @@ const knexHarness = (options = {}) => {
         : (options.queryRows ?? [])
       return { rows: rows.slice(0, bindings.at(-1)) }
     }
+    if (statement.includes('FROM "pagesWords"')) {
+      const pageIds = new Set(bindings[0])
+      const words = []
+      for (const candidate of options.suggestionRows ?? []) {
+        if (pageIds.has(candidate.pageId) && !words.some(row => row.word === candidate.word)) words.push({ word: candidate.word })
+      }
+      return { rows: words.slice(0, 5) }
+    }
     return { rows: [] }
   })
-  const dropTableIfExists = vi.fn().mockResolvedValue(undefined)
   const schema = {
-    hasTable: vi.fn().mockResolvedValue(true),
-    hasColumn: vi.fn().mockImplementation(async (_table, column) => options.legacySchema !== true || column !== 'pageId'),
-    dropTableIfExists
+    dropTableIfExists: vi.fn().mockResolvedValue(undefined)
   }
-  const knex = Object.assign(vi.fn().mockImplementation(table), {
-    raw,
-    schema,
-    transaction: vi.fn(async callback => callback(transaction))
+  const transaction = vi.fn(async callback => {
+    transactionHeld = true
+    try {
+      return await callback(transactionClient)
+    } finally {
+      transactionHeld = false
+    }
   })
+  const knex = Object.assign(vi.fn().mockImplementation(table), { raw, schema, transaction })
   return {
     knex,
     raw,
+    transaction,
     transactionRaw,
     truncate,
-    dropTableIfExists,
-    pageWhere,
-    pageAndWhere,
-    pageForShare,
-    pageLimit
+    dropTableIfExists: transactionSchema.dropTableIfExists
   }
 }
 
@@ -80,7 +80,13 @@ const installWiki = (knex, pages = {}) => {
     data: {},
     Error: { SearchActivationFailed: class SearchActivationFailed extends Error {} },
     logger: { info: vi.fn(), warn: vi.fn() },
-    models: { knex, pages }
+    models: {
+      knex,
+      pages: {
+        cleanHTML: vi.fn(value => value),
+        ...pages
+      }
+    }
   }
 }
 
@@ -91,19 +97,65 @@ afterEach(() => {
 })
 
 describe('PostgreSQL hybrid search', () => {
-  it('replaces the legacy unindexed schema and rebuilds all derived search data', async () => {
-    const harness = knexHarness({ legacySchema: true })
+  it('atomically repairs schema, constraint, and invalid same-name index drift', async () => {
+    const harness = knexHarness({ schemaCurrent: false })
     installWiki(harness.knex)
     const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
     Object.assign(plugin, { config: { dictLanguage: 'english' } })
 
     await plugin.init()
 
+    expect(harness.dropTableIfExists).toHaveBeenCalledWith('pagesSearchMetadata')
     expect(harness.dropTableIfExists).toHaveBeenCalledWith('pagesWords')
     expect(harness.dropTableIfExists).toHaveBeenCalledWith('pagesVector')
-    expect(harness.raw.mock.calls.some(([sql]) => String(sql).includes('pages_vector_tokens_idx') && String(sql).includes('USING GIN'))).toBe(true)
+    const contractCheck = harness.transactionRaw.mock.calls.find(([sql]) => String(sql).includes('WITH expected_columns'))[0]
+    expect(contractCheck).toContain('indisvalid')
+    expect(contractCheck).toContain('opclass_names')
+    const recreation = harness.transactionRaw.mock.calls.find(([sql]) => String(sql).includes('CREATE TABLE "pagesVector"'))[0]
+    expect(recreation).toContain('"sourceRevision" bigint NOT NULL')
+    expect(recreation).toContain('CREATE UNIQUE INDEX pages_vector_identity_idx')
+    expect(recreation).not.toContain('CREATE UNIQUE INDEX IF NOT EXISTS pages_vector_identity_idx')
     expect(harness.truncate).toHaveBeenCalledTimes(2)
-    expect(harness.transactionRaw).not.toHaveBeenCalled()
+  })
+
+  it('rebuilds when the configured dictionary differs from persisted metadata', async () => {
+    const harness = knexHarness({ metadataDictionary: 'simple' })
+    installWiki(harness.knex)
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
+    Object.assign(plugin, { config: { dictLanguage: 'english' } })
+
+    await plugin.init()
+
+    expect(harness.truncate).toHaveBeenCalledTimes(2)
+    const metadataRead = harness.transactionRaw.mock.calls.find(([sql]) => String(sql).includes('FROM "pagesSearchMetadata"'))
+    expect(metadataRead[1]).toEqual([1, 'english'])
+    const metadataWrite = harness.transactionRaw.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO "pagesSearchMetadata"'))
+    expect(metadataWrite[1]).toEqual([1, 'english'])
+  })
+
+  it('reconciles stale vector source revisions before declaring readiness', async () => {
+    const harness = knexHarness({ revisionsCurrent: false })
+    installWiki(harness.knex)
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
+    Object.assign(plugin, { config: { dictLanguage: 'english' } })
+
+    await plugin.init()
+
+    expect(harness.transactionRaw.mock.calls.some(([sql]) =>
+      String(sql).includes('vector."sourceRevision" IS DISTINCT FROM page."sourceRevision"')
+    )).toBe(true)
+    expect(harness.truncate).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a concurrent rebuild before changing visible derived data', async () => {
+    const harness = knexHarness({ lockAcquired: false })
+    installWiki(harness.knex)
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
+    Object.assign(plugin, { config: { dictLanguage: 'english' } })
+
+    await expect(plugin.rebuild()).rejects.toThrow('PostgreSQL search rebuild is already in progress')
+    expect(harness.truncate).not.toHaveBeenCalled()
+    expect(harness.transactionRaw).toHaveBeenCalledTimes(1)
   })
 
   it('returns bounded ranked evidence while keeping the user query in SQL bindings', async () => {
@@ -177,6 +229,37 @@ describe('PostgreSQL hybrid search', () => {
     expect(bindings.slice(-2)).toEqual([7, 7])
   })
 
+  it('limits spelling candidates to identities in the returned scoped candidate set', async () => {
+    const inScope = {
+      id: 42,
+      path: 'runbooks/falcon',
+      locale: 'en',
+      title: 'Falcon Runbook',
+      description: '',
+      tags: [],
+      score: 1,
+      matchedFields: ['content']
+    }
+    const harness = knexHarness({
+      queryRows: [inScope],
+      scope: { locale: 'en', path: 'runbooks' },
+      suggestionRows: [
+        { pageId: 42, word: 'falcon' },
+        { pageId: 77, word: 'unrelated-french-term' }
+      ]
+    })
+    installWiki(harness.knex)
+    const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
+    Object.assign(plugin, { config: { dictLanguage: 'english' } })
+
+    const response = await plugin.query('falcn', { locale: 'en', path: 'runbooks' })
+
+    expect(response.suggestions).toEqual(['falcon'])
+    const [sql, bindings] = harness.raw.mock.calls.find(([statement]) => String(statement).includes('FROM "pagesWords"'))
+    expect(sql).toContain('"pageId" = ANY(?::integer[])')
+    expect(bindings).toEqual([[42], 'falcn', 'falcn'])
+  })
+
   it('atomically refreshes weighted tag and content terms for page mutations', async () => {
     const harness = knexHarness()
     installWiki(harness.knex)
@@ -186,6 +269,7 @@ describe('PostgreSQL hybrid search', () => {
     await plugin.updated({
       id: 42,
       path: 'runbooks/falcon',
+      sourceRevision: '7',
       localeCode: 'en',
       title: 'Falcon Runbook',
       description: 'Incident response',
@@ -200,83 +284,65 @@ describe('PostgreSQL hybrid search', () => {
     expect(harness.transactionRaw.mock.calls.some(([sql]) => String(sql).includes('tsvector_to_array') && String(sql).includes('pagesWords'))).toBe(true)
   })
 
-  it('uses the same canonical rendered document for incremental saves and full rebuilds', async () => {
+  it('rebuilds from canonical rendered rows without requesting a second pool connection', async () => {
     const page = {
       id: 42,
+      sourceRevision: '8',
       path: 'runbooks/falcon',
       localeCode: 'en',
       title: 'Falcon Runbook',
       description: 'Incident response',
-      safeContent: 'rendered-only unique-extension-term',
+      render: '<p>rendered-only unique-extension-term</p>',
       tags: [{ tag: 'incident', title: 'Incident response' }],
       visibility: 'public',
       isPublished: true
     }
-    const harness = knexHarness({ rebuildPages: [page] })
-    const pages = {
-      getPageFromDb: vi.fn().mockResolvedValue({ ...page, safeContent: 'raw source must not be indexed' }),
-      prepareSearchDocument: vi.fn().mockImplementation(async candidate => ({
-        ...candidate,
-        safeContent: 'rendered-only unique-extension-term'
-      }))
-    }
-    installWiki(harness.knex, pages)
+    const harness = knexHarness({ rebuildPages: [page], rejectSecondConnection: true })
+    const cleanHTML = vi.fn(() => 'rendered-only unique-extension-term')
+    installWiki(harness.knex, { cleanHTML })
     const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
     Object.assign(plugin, { config: { dictLanguage: 'english' } })
 
-    await plugin.updated(page)
-    await plugin.rebuild()
-    expect(harness.pageWhere).toHaveBeenCalledWith('isPublished', true)
-    expect(harness.pageAndWhere).toHaveBeenCalledWith('visibility', 'public')
+    await expect(plugin.rebuild()).resolves.toBeUndefined()
 
-    expect(pages.prepareSearchDocument).toHaveBeenCalledTimes(1)
-    const documents = harness.transactionRaw.mock.calls
-      .filter(([sql]) => String(sql).includes('ON CONFLICT ("pageId")'))
-      .map(([, bindings]) => bindings[7])
-    expect(documents).toEqual([
-      'rendered-only unique-extension-term',
-      'rendered-only unique-extension-term'
-    ])
-    expect(documents).not.toContain('raw source must not be indexed')
+    expect(harness.transaction).toHaveBeenCalledTimes(1)
+    expect(cleanHTML).toHaveBeenCalledWith('<p>rendered-only unique-extension-term</p>')
+    const vectorWrite = harness.transactionRaw.mock.calls.find(([sql]) => String(sql).includes('ON CONFLICT ("pageId")'))
+    expect(vectorWrite[1][1]).toBe('8')
+    expect(vectorWrite[1][8]).toBe('rendered-only unique-extension-term')
   })
 
-  it('walks rebuild bodies through a bounded keyset cursor without retaining the corpus', async () => {
+  it('walks canonical rebuild bodies through a bounded keyset cursor', async () => {
     const rebuildPages = Array.from({ length: 205 }, (_, index) => ({
       id: index + 1,
+      sourceRevision: String(index + 1),
       path: `pages/${index + 1}`,
       localeCode: 'en',
       title: `Page ${index + 1}`,
       description: '',
-      safeContent: `body ${index + 1}`,
+      render: `body ${index + 1}`,
       tags: [],
       visibility: 'public',
       isPublished: true
     }))
-    const pagesById = new Map(rebuildPages.map(page => [page.id, page]))
     const harness = knexHarness({ rebuildPages })
-    const pages = {
-      getPageFromDb: vi.fn(async id => pagesById.get(id)),
-      prepareSearchDocument: vi.fn(async page => page)
-    }
-    installWiki(harness.knex, pages)
+    const cleanHTML = vi.fn(value => value)
+    installWiki(harness.knex, { cleanHTML })
     const plugin = (await vi.importFresh('../modules/search/postgres/engine.ts', import.meta.url)).default
     Object.assign(plugin, { config: { dictLanguage: 'english' } })
 
     await plugin.rebuild()
 
-    expect(harness.pageLimit).toHaveBeenCalledTimes(3)
-    expect(harness.pageLimit).toHaveBeenNthCalledWith(1, 100)
-    expect(harness.pageLimit).toHaveBeenNthCalledWith(2, 100)
-    expect(harness.pageLimit).toHaveBeenNthCalledWith(3, 100)
-    expect(harness.pageForShare).toHaveBeenCalledTimes(3)
-    expect(pages.getPageFromDb).toHaveBeenCalledTimes(205)
-    expect(pages.prepareSearchDocument).toHaveBeenCalledTimes(205)
-    const firstVectorWrite = harness.transactionRaw.mock.calls.findIndex(([sql]) =>
-      String(sql).includes('ON CONFLICT ("pageId")')
-    )
-    expect(harness.transactionRaw.mock.invocationCallOrder[firstVectorWrite])
-      .toBeLessThan(pages.getPageFromDb.mock.invocationCallOrder[1])
-    const secondCursorRead = harness.pageForShare.mock.invocationCallOrder[1]
-    expect(harness.transactionRaw.mock.invocationCallOrder.filter(order => order < secondCursorRead)).toHaveLength(200)
+    const batches = harness.transactionRaw.mock.calls.filter(([sql]) => String(sql).includes('FOR SHARE OF page'))
+    expect(batches.map(([, bindings]) => bindings)).toEqual([
+      [0, 100],
+      [100, 100],
+      [200, 100]
+    ])
+    expect(cleanHTML).toHaveBeenCalledTimes(205)
+    const vectorWrites = harness.transactionRaw.mock.calls.filter(([sql]) => String(sql).includes('ON CONFLICT ("pageId")'))
+    expect(vectorWrites).toHaveLength(205)
+    expect(vectorWrites[0][1][1]).toBe('1')
+    expect(vectorWrites.at(-1)[1][1]).toBe('205')
   })
 })
