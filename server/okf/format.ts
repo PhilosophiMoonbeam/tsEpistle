@@ -85,6 +85,65 @@ export interface OkfPageInput {
   readonly authorId: number
   readonly metadata?: unknown
 }
+export interface OkfMetadataMutation {
+  readonly existing?: unknown
+  readonly proposed?: unknown
+  readonly producer: string
+  readonly knowledgeChanged: boolean
+  readonly at?: string | Date
+  readonly restore?: {
+    readonly revision: string | number
+  }
+}
+
+/**
+ * Normalize metadata at a mutation boundary.
+ *
+ * Metadata supplied by callers is never trusted for generated/verified
+ * provenance. Existing valid trust events are retained for no-ops (and as
+ * historical evidence after an edit), while every knowledge edit receives a
+ * server-stamped generated event. Unknown JSON extensions survive the merge.
+ */
+export const mutateOkfMetadata = (input: OkfMetadataMutation): OkfMetadata => {
+  const producer = nonEmptyString(input.producer, 'producer', 255, 'INVALID_OKF_PRODUCER')
+  const producerMatch = /^(human|agent|mcp|import):(\S+)$/u.exec(producer)
+  if (!producerMatch || (producerMatch[1] === 'human' && !/^\d+$/u.test(producerMatch[2]!)))
+    return fail('INVALID_OKF_PRODUCER', 'OKF producer must identify a human, agent, MCP request, or import')
+  let at: string
+  if (input.at instanceof Date) {
+    if (!Number.isFinite(input.at.valueOf())) return fail('INVALID_OKF_TIMESTAMP', 'OKF mutation timestamp must be an ISO 8601 datetime with an explicit UTC offset')
+    at = input.at.toISOString()
+  } else {
+    at = input.at ?? new Date().toISOString()
+  }
+  if (!isOkfTimestamp(at)) return fail('INVALID_OKF_TIMESTAMP', 'OKF mutation timestamp must be an ISO 8601 datetime with an explicit UTC offset')
+
+  const existing = input.existing === undefined ? undefined : validateMetadata(input.existing)
+  const proposed = input.proposed === undefined ? undefined : validateMetadata(input.proposed)
+  const metadata = validateMetadata({
+    ...(existing ?? { type: 'Reference', status: 'stable' }),
+    ...(proposed ?? {})
+  })
+
+  // Trust fields are server-owned. Never let a request add or replace them;
+  // an edit deliberately advances generated while retaining older verification
+  // so the trust summary marks it as outdated.
+  if (input.knowledgeChanged || existing === undefined) metadata.generated = { by: producer, at }
+  else if (existing.generated === undefined) delete metadata.generated
+  else metadata.generated = existing.generated
+  if (producer.startsWith('import:')) {
+    // Imported claims are external evidence, not locally issued trust.
+    delete metadata.verified
+  } else if (existing?.verified === undefined) delete metadata.verified
+  else metadata.verified = existing.verified
+
+  if (input.restore !== undefined) {
+    const revision = nonEmptyString(String(input.restore.revision), 'restore.revision', 255, 'INVALID_RESTORE')
+    metadata.restored_from = { revision, by: producer, at }
+  }
+  return validateMetadata(metadata)
+}
+
 
 export interface OkfPageDocument {
   readonly version: typeof OKF_VERSION
@@ -110,10 +169,10 @@ const fail = (code: string, message: string): never => {
   throw new OkfDocumentError(code, message)
 }
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
-const nonEmptyString = (value: unknown, field: string, maximum: number): string => {
-  if (typeof value !== 'string' || value.trim().length === 0) return fail(`INVALID_${field.toUpperCase()}`, `OKF field ${field} must be a non-empty string`)
+const nonEmptyString = (value: unknown, field: string, maximum: number, code = `INVALID_${field.toUpperCase()}`): string => {
+  if (typeof value !== 'string' || value.trim().length === 0) return fail(code, `OKF field ${field} must be a non-empty string`)
   const normalized = value.trim()
-  if (normalized.length > maximum) return fail(`INVALID_${field.toUpperCase()}`, `OKF field ${field} exceeds ${maximum} characters`)
+  if (normalized.length > maximum) return fail(code, `OKF field ${field} exceeds ${maximum} characters`)
   return normalized
 }
 
@@ -134,7 +193,7 @@ export const isOkfTimestamp = (value: string): boolean => {
   const second = Number(secondValue)
   const offsetHour = offsetHourValue === undefined ? 0 : Number(offsetHourValue)
   const offsetMinute = offsetMinuteValue === undefined ? 0 : Number(offsetMinuteValue)
-  const validOffset = offsetHour < 14 || (offsetHour === 14 && offsetMinute === 0)
+  const validOffset = offsetHour <= 14 && offsetMinute <= 59 && (offsetHour < 14 || offsetMinute === 0)
   return (
     month >= 1 &&
     month <= 12 &&
@@ -148,12 +207,12 @@ export const isOkfTimestamp = (value: string): boolean => {
   )
 }
 
-const actorEvent = (value: unknown, field: string): OkfActorEvent => {
-  if (!isRecord(value)) return fail(`INVALID_${field.toUpperCase()}`, `OKF field ${field} must be an actor event`)
-  const by = nonEmptyString(value.by, `${field}.by`, 255)
-  const at = value.at === undefined ? undefined : nonEmptyString(value.at, `${field}.at`, 64)
+const actorEvent = (value: unknown, field: string, code: string): OkfActorEvent => {
+  if (!isRecord(value)) return fail(code, `OKF field ${field} must be an actor event`)
+  const by = nonEmptyString(value.by, `${field}.by`, 255, code)
+  const at = value.at === undefined ? undefined : nonEmptyString(value.at, `${field}.at`, 64, code)
   if (at !== undefined && !isOkfTimestamp(at))
-    return fail(`INVALID_${field.toUpperCase()}`, `OKF field ${field}.at must be an ISO 8601 datetime with an explicit UTC offset`)
+    return fail(code, `OKF field ${field}.at must be an ISO 8601 datetime with an explicit UTC offset`)
   return { ...value, by, ...(at === undefined ? {} : { at }) }
 }
 
@@ -190,18 +249,18 @@ const validateMetadata = (value: unknown): OkfMetadata => {
   if (value.resource !== undefined) metadata.resource = nonEmptyString(value.resource, 'resource', 4_096)
   if (value.tags !== undefined) {
     if (!Array.isArray(value.tags) || value.tags.length > 100) return fail('INVALID_TAGS', 'OKF field tags must be a list of at most 100 non-empty strings')
-    metadata.tags = value.tags.map((tag, index) => nonEmptyString(tag, `tags[${index}]`, 255))
+    metadata.tags = value.tags.map((tag, index) => nonEmptyString(tag, `tags[${index}]`, 255, 'INVALID_TAGS'))
   }
   if (value.status !== undefined) {
     if (typeof value.status !== 'string' || !STATUS_VALUES.has(value.status))
       return fail('INVALID_STATUS', 'OKF field status must be draft, stable, or deprecated')
     metadata.status = value.status as 'draft' | 'stable' | 'deprecated'
   }
-  if (value.generated !== undefined) metadata.generated = actorEvent(value.generated, 'generated')
+  if (value.generated !== undefined) metadata.generated = actorEvent(value.generated, 'generated', 'INVALID_GENERATED')
   if (value.verified !== undefined) {
     const events = Array.isArray(value.verified) ? value.verified : [value.verified]
     if (events.length === 0 || events.length > 100) return fail('INVALID_VERIFIED', 'OKF field verified must contain between 1 and 100 actor events')
-    const normalized = events.map((event, index) => actorEvent(event, `verified[${index}]`))
+    const normalized = events.map((event, index) => actorEvent(event, `verified[${index}]`, 'INVALID_VERIFIED'))
     metadata.verified = Array.isArray(value.verified) ? normalized : normalized[0]!
   }
   if (value.stale_after !== undefined) {
@@ -216,9 +275,9 @@ const validateMetadata = (value: unknown): OkfMetadata => {
       if (!isRecord(source)) return fail('INVALID_SOURCES', `OKF source ${index + 1} must be a mapping`)
       return {
         ...source,
-        resource: nonEmptyString(source.resource, `sources[${index}].resource`, 4_096),
-        ...(source.id === undefined ? {} : { id: nonEmptyString(source.id, `sources[${index}].id`, 255) }),
-        ...(source.title === undefined ? {} : { title: nonEmptyString(source.title, `sources[${index}].title`, 512) })
+        resource: nonEmptyString(source.resource, `sources[${index}].resource`, 4_096, 'INVALID_SOURCES'),
+        ...(source.id === undefined ? {} : { id: nonEmptyString(source.id, `sources[${index}].id`, 255, 'INVALID_SOURCES') }),
+        ...(source.title === undefined ? {} : { title: nonEmptyString(source.title, `sources[${index}].title`, 512, 'INVALID_SOURCES') })
       }
     })
   }
@@ -308,18 +367,6 @@ export const renderOkfDocument = (metadataInput: OkfMetadata, body: string): str
   return document
 }
 
-const safeStoredMetadata = (value: unknown): OkfMetadata | undefined => {
-  try {
-    return validateMetadata(value)
-  } catch {
-    return undefined
-  }
-}
-
-export const okfMetadataForHumanMutation = (value: unknown, userId: number, at = new Date().toISOString()): OkfMetadata => {
-  const existing = safeStoredMetadata(value) ?? { type: 'Reference', status: 'stable' }
-  return { ...existing, generated: { by: `human:${userId}`, at } }
-}
 
 const escapedConceptPath = (pagePath: string): string => {
   const segments = pagePath.split('/')
@@ -417,7 +464,6 @@ const codeSpans = (markdown: string): readonly CodeSpan[] => {
   }
   return spans
 }
-
 const rewriteInlineMarkdownLinks = (markdown: string, rewrite: (destination: string) => string): string => {
   const spans = codeSpans(markdown)
   let spanIndex = 0
@@ -432,8 +478,8 @@ const rewriteInlineMarkdownLinks = (markdown: string, rewrite: (destination: str
 const rewriteMarkdownLinks = (markdown: string, rewrite: (destination: string) => string): string => {
   const lines = markdown.replaceAll('\r\n', '\n').split('\n')
   const output: string[] = []
-  let inlineLines: string[] = []
   let fence: MarkdownFence | null = null
+  let inlineLines: string[] = []
   const flushInlineLines = (): void => {
     if (inlineLines.length === 0) return
     output.push(...rewriteInlineMarkdownLinks(inlineLines.join('\n'), rewrite).split('\n'))
@@ -465,22 +511,27 @@ export const importOkfLinks = (markdown: string, locale: string, pagePath: strin
   rewriteMarkdownLinks(markdown, destination => importLink(destination, okfFilePath(locale, pagePath)))
 
 export const createOkfPageDocument = (input: OkfPageInput, now = new Date()): OkfPageDocument => {
-  const stored = safeStoredMetadata(input.metadata)
-  const metadata: OkfMetadata = {
-    ...(stored ?? { type: 'Reference', status: 'stable' }),
+  const metadata = mutateOkfMetadata({
+    proposed: input.metadata,
+    producer: `human:${input.authorId}`,
+    knowledgeChanged: true,
+    at: input.updatedAt
+  })
+  const authoritativeMetadata: OkfMetadata = {
+    ...metadata,
     title: input.title,
     ...(input.description.trim().length > 0 ? { description: input.description } : {}),
-    tags: [...input.tags],
-    generated: stored?.generated ?? { by: `human:${input.authorId}`, at: input.updatedAt }
+    tags: [...input.tags]
   }
-  const markdown = renderOkfDocument(metadata, exportOkfLinks(input.content))
+  const markdown = renderOkfDocument(authoritativeMetadata, exportOkfLinks(input.content))
+  const validatedMetadata = validateMetadata(authoritativeMetadata)
   return {
     version: OKF_VERSION,
     conceptId: okfConceptId(input.locale, input.path),
     filePath: okfFilePath(input.locale, input.path),
     markdown,
     sha256: createHash('sha256').update(markdown).digest('hex'),
-    metadata,
-    trust: summarizeOkfTrust(metadata, now)
+    metadata: validatedMetadata,
+    trust: summarizeOkfTrust(validatedMetadata, now)
   }
 }

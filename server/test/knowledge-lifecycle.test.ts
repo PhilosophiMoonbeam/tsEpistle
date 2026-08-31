@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from './bun-test.mts'
 import type { AgentKnowledgeEnricher } from '../agents/providers/utility.ts'
 import { claimPageMutationEffects, enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import { up as createProjectionStore } from '../db/migrations/2.5.152.ts'
+import { up as createMaintenanceStore } from '../db/migrations/tsfranki-000006-knowledge-maintenance.ts'
 import { PageKnowledgeLifecycle, PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 
 let db: Knex
@@ -88,6 +89,7 @@ const createSchema = async (): Promise<void> => {
     table.integer('pageId').notNullable()
   })
   await createProjectionStore(db)
+  await createMaintenanceStore(db)
 }
 
 const page = (overrides: Record<string, unknown> = {}) => ({
@@ -289,25 +291,42 @@ describe('page knowledge lifecycle', () => {
     expect(await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first()).toBeDefined()
   })
 
-  it('advances the bounded projection scan to later page IDs and wraps to low IDs', async () => {
+  it('resumes a finite knowledge maintenance epoch from its durable keyset cursor', async () => {
+    for (let id = 1; id <= 27; id += 1) await db('pages').insert(page({ id, path: `ops/epoch-${id}` }))
+    const first = new PageKnowledgeLifecycle(db, 'epoch-first-worker')
+    await first.runOnce()
+    expect(await db('pageKnowledgeMaintenance').first('status', 'cursorPageId', 'highWaterPageId')).toMatchObject({
+      status: 'running',
+      cursorPageId: 25,
+      highWaterPageId: 27
+    })
+    await db('pageKnowledgeMaintenance').update({ leaseExpiresAt: new Date(0).toISOString() })
+    await new PageKnowledgeLifecycle(db, 'epoch-restarted-worker').runOnce()
+    expect(await db('pageKnowledgeMaintenance').first('status', 'cursorPageId', 'highWaterPageId')).toMatchObject({
+      status: 'complete',
+      cursorPageId: 27,
+      highWaterPageId: 27
+    })
+  })
+
+  it('repairs pages passed by a finite epoch cursor in the next epoch', async () => {
     for (let id = 1; id <= 27; id += 1) {
       const source = page({ id, path: `ops/runbook-${id}` })
       await db('pages').insert(source)
       await enqueuePageKnowledge(source)
     }
-    const initializer = new PageKnowledgeLifecycle(db, 'scan-initializer')
-    await initializer.runOnce()
-    await initializer.runOnce()
-    await initializer.runOnce()
+    const lifecycle = new PageKnowledgeLifecycle(db, 'finite-epoch-repair-worker')
+    await lifecycle.runOnce()
+    await lifecycle.runOnce()
+    await lifecycle.runOnce()
     expect(await db('pageKnowledgeProjections').count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({ count: 27 })
 
     await db('pageKnowledgeProjections').whereIn('pageId', [1, 26]).delete()
-    const lifecycle = new PageKnowledgeLifecycle(db, 'rotating-repair-worker')
     await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
-    expect(await db('pageKnowledgeProjections').where({ pageId: 26 }).first()).toBeUndefined()
+    expect(await db('pageKnowledgeProjections').where({ pageId: 1 }).first()).toBeUndefined()
+    expect(await db('pageKnowledgeProjections').where({ pageId: 26 }).first()).toBeDefined()
 
-    await db('pageKnowledgeProjections').where({ pageId: 1 }).delete()
-    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 2, processed: 2 })
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
     expect(await db('pageKnowledgeProjections').whereIn('pageId', [1, 26]).orderBy('pageId').pluck('pageId')).toEqual([1, 26])
   })
 
@@ -554,7 +573,26 @@ describe('page knowledge lifecycle', () => {
       firstRelease.resolve()
       await firstRunning
 
-      expect(await db('pageKnowledgeProjections').first()).toBeUndefined()
+      const deterministic = await db('pageKnowledgeProjections').first(
+        'state',
+        'enrichmentState',
+        'utilityProfileVersionId',
+        'utilityModel',
+        'utilityInputSha256',
+        'utilityOutputSha256',
+        'utilityGeneratedAt',
+        'projection'
+      )
+      expect(deterministic).toMatchObject({
+        state: 'complete',
+        enrichmentState: 'pending',
+        utilityProfileVersionId: null,
+        utilityModel: null,
+        utilityInputSha256: null,
+        utilityOutputSha256: null,
+        utilityGeneratedAt: null
+      })
+      expect(JSON.parse(String(deterministic.projection)).provenance.utility).toBeNull()
       expect(await db('pageMutationOutbox').first('leaseOwner', 'leaseToken', 'status')).toEqual(replacementClaim)
 
       replacementRelease.resolve()
@@ -620,7 +658,26 @@ describe('page knowledge lifecycle', () => {
       await firstRunning
 
       expect(firstSignal?.aborted).toBe(true)
-      expect(await db('pageKnowledgeProjections').first()).toBeUndefined()
+      const deterministic = await db('pageKnowledgeProjections').first(
+        'state',
+        'enrichmentState',
+        'utilityProfileVersionId',
+        'utilityModel',
+        'utilityInputSha256',
+        'utilityOutputSha256',
+        'utilityGeneratedAt',
+        'projection'
+      )
+      expect(deterministic).toMatchObject({
+        state: 'complete',
+        enrichmentState: 'pending',
+        utilityProfileVersionId: null,
+        utilityModel: null,
+        utilityInputSha256: null,
+        utilityOutputSha256: null,
+        utilityGeneratedAt: null
+      })
+      expect(JSON.parse(String(deterministic.projection)).provenance.utility).toBeNull()
       expect(await db('pageMutationOutbox').first('leaseOwner', 'status')).toMatchObject({ leaseOwner: 'replacement-worker', status: 'running' })
 
       replacementRelease.resolve()
@@ -650,11 +707,14 @@ describe('page knowledge lifecycle', () => {
     await db('pages').insert(current)
     await enqueueKnowledge('1', String(current.content), 'create')
 
+    let observedBeforeFailure: { state: string; enrichmentState: string; projection: string } | undefined
     await new PageKnowledgeLifecycle(db, 'failure-worker', {
       enrichKnowledge: vi.fn(async () => {
+        observedBeforeFailure = await db('pageKnowledgeProjections').first('state', 'enrichmentState', 'projection')
         throw new Error('invalid utility output')
       })
     }).runOnce()
+    expect(observedBeforeFailure).toMatchObject({ state: 'complete', enrichmentState: 'pending' })
 
     expect(await db('pageKnowledgeProjections').first('state', 'enrichmentState', 'lastError')).toMatchObject({
       state: 'complete',

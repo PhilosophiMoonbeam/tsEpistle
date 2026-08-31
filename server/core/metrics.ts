@@ -17,8 +17,10 @@ const wiki = WIKI as unknown as WikiContext
 
 const RUN_STATUSES = ['queued', 'running', 'awaiting_approval', 'succeeded', 'failed', 'cancelled', 'recovery_required'] as const
 const PROPOSAL_STATUSES = ['pending', 'approved', 'denied', 'applying', 'applied', 'expired', 'cancelled', 'failed', 'recovery_required'] as const
-const PAGE_EFFECTS = ['render', 'links', 'knowledge'] as const
+const PAGE_EFFECTS = ['render', 'links', 'search', 'knowledge'] as const
 const PAGE_EFFECT_STATUSES = ['pending', 'retry', 'running', 'succeeded', 'failed'] as const
+const KNOWLEDGE_ENRICHMENT_STATES = ['not-needed', 'pending', 'unavailable', 'withheld-private', 'succeeded', 'failed', 'superseded'] as const
+const MAINTENANCE_STATUSES = ['pending', 'running', 'complete'] as const
 const ELIGIBLE_EFFECT_STATUSES = ['pending', 'retry'] as const
 const SEARCH_DOCUMENT_KINDS = ['eligible_pages', 'indexed_vectors'] as const
 const SEARCH_VECTOR_ANOMALIES = ['revision_mismatch', 'orphan'] as const
@@ -115,7 +117,7 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
         `
         SELECT "effectKind" AS effect, status, COUNT(*) AS total
         FROM "pageMutationOutbox"
-        WHERE "effectKind" IN ('render', 'links', 'knowledge')
+        WHERE "effectKind" IN ('render', 'links', 'search', 'knowledge')
           AND status IN ('pending', 'retry', 'running', 'succeeded', 'failed')
         GROUP BY "effectKind", status
       `
@@ -242,6 +244,102 @@ const registerPageProjectionMetrics = (knex: Knex, target: Record<string, Gauge<
       `
       )
       this.set(numeric(rows[0]?.total))
+    }
+  })
+  target.pageKnowledgeProjectionStates = new Gauge({
+    name: 'wiki_page_knowledge_projection_states',
+    help: 'Current knowledge projections by bounded validity and enrichment state',
+    labelNames: ['state', 'enrichment'],
+    async collect() {
+      this.reset()
+      const rows = await rawRows<{ state: string; enrichment: string; total: unknown }>(
+        knex,
+        `
+        SELECT
+          CASE WHEN projection.id IS NULL THEN 'missing' ELSE 'valid' END AS state,
+          COALESCE(projection."enrichmentState", 'unavailable') AS enrichment,
+          COUNT(*) AS total
+        FROM pages page
+        LEFT JOIN "pageKnowledgeProjections" projection
+          ON projection."pageId" = page.id
+          AND projection."sourceRevision" = page."sourceRevision"
+        GROUP BY state, enrichment
+      `
+      )
+      const totals = new Map(rows.map(row => [`${row.state}:${row.enrichment}`, numeric(row.total)]))
+      for (const state of ['missing', 'valid'] as const)
+        for (const enrichment of KNOWLEDGE_ENRICHMENT_STATES)
+          this.set({ state, enrichment }, totals.get(`${state}:${enrichment}`) ?? 0)
+    }
+  })
+  target.pageKnowledgeMaintenance = new Gauge({
+    name: 'wiki_page_knowledge_maintenance',
+    help: 'Current durable knowledge maintenance epoch status',
+    labelNames: ['status'],
+    async collect() {
+      this.reset()
+      const rows = await rawRows<{ status: string; total: unknown }>(
+        knex,
+        `
+        SELECT status, COUNT(*) AS total
+        FROM "pageKnowledgeMaintenance"
+        WHERE id = 1
+        GROUP BY status
+      `
+      )
+      const totals = new Map(rows.map(row => [row.status, numeric(row.total)]))
+      for (const status of MAINTENANCE_STATUSES) this.set({ status }, totals.get(status) ?? 0)
+    }
+  })
+  target.pageKnowledgeMaintenanceProgress = new Gauge({
+    name: 'wiki_page_knowledge_maintenance_progress',
+    help: 'Durable knowledge maintenance epoch progress counters',
+    labelNames: ['kind'],
+    async collect() {
+      this.reset()
+      const rows = await rawRows<{
+        epochId: unknown
+        highWaterPageId: unknown
+        cursorPageId: unknown
+        scanned: unknown
+        repaired: unknown
+        requeued: unknown
+      }>(
+        knex,
+        `
+        SELECT "epochId", "highWaterPageId", "cursorPageId", scanned, repaired, requeued
+        FROM "pageKnowledgeMaintenance"
+        WHERE id = 1
+      `
+      )
+      const row = rows[0]
+      const values = {
+        epoch: numeric(row?.epochId),
+        high_water: numeric(row?.highWaterPageId),
+        cursor: numeric(row?.cursorPageId),
+        scanned: numeric(row?.scanned),
+        repaired: numeric(row?.repaired),
+        requeued: numeric(row?.requeued)
+      }
+      for (const kind of Object.keys(values) as Array<keyof typeof values>) this.set({ kind }, values[kind])
+    }
+  })
+  target.pageKnowledgeMaintenanceReadiness = new Gauge({
+    name: 'wiki_page_knowledge_maintenance_readiness',
+    help: 'Whether durable knowledge maintenance is idle, running, or complete',
+    labelNames: ['state'],
+    async collect() {
+      this.reset()
+      const rows = await rawRows<{ status: string }>(
+        knex,
+        `
+        SELECT status
+        FROM "pageKnowledgeMaintenance"
+        WHERE id = 1
+      `
+      )
+      const status = rows[0]?.status
+      for (const state of ['idle', 'running', 'ready'] as const) this.set({ state }, state === 'running' ? Number(status === 'running') : state === 'ready' ? Number(status === 'complete') : Number(status === undefined))
     }
   })
 }

@@ -4,12 +4,13 @@ import {
   createOkfPageDocument,
   exportOkfLinks,
   importOkfLinks,
+  mutateOkfMetadata,
   OKF_MAX_DOCUMENT_BYTES,
   okfFilePath,
-  okfMetadataForHumanMutation,
   OkfDocumentError,
   parseOkfDocument,
   renderOkfDocument,
+  summarizeOkfTrust,
   validateStoredOkfMetadata
 } from '../okf/format.ts'
 
@@ -166,24 +167,91 @@ describe('OKF page interchange', () => {
     expect(result.sha256).toMatch(/^[a-f0-9]{64}$/u)
   })
 
-  it('stamps meaningful human changes without discarding trust or provenance', () => {
-    expect(
-      okfMetadataForHumanMutation(
-        {
-          type: 'Metric',
-          verified: { by: 'human:9', at: '2026-08-01T00:00:00Z' },
-          sources: [{ resource: 'https://example.com/source' }],
-          vendor: { retained: true }
-        },
-        12,
-        '2026-08-22T00:00:00Z'
-      )
-    ).toEqual({
+  it('strictly mutates metadata, preserves extensions, and owns trust provenance', () => {
+    const existing = {
       type: 'Metric',
       verified: { by: 'human:9', at: '2026-08-01T00:00:00Z' },
+      generated: { by: 'human:7', at: '2026-08-01T00:00:00Z' },
       sources: [{ resource: 'https://example.com/source' }],
-      vendor: { retained: true },
-      generated: { by: 'human:12', at: '2026-08-22T00:00:00Z' }
+      vendor: { retained: true }
+    }
+    const noOp = mutateOkfMetadata({
+      existing,
+      proposed: { type: 'Metric', vendor: { retained: false } },
+      producer: 'agent:run-12',
+      knowledgeChanged: false,
+      at: '2026-08-22T00:00:00Z'
     })
+    expect(noOp).toMatchObject({
+      generated: existing.generated,
+      verified: existing.verified,
+      vendor: { retained: false }
+    })
+    const changed = mutateOkfMetadata({
+      existing,
+      proposed: { type: 'Metric', vendor: { retained: false } },
+      producer: 'agent:run-12',
+      knowledgeChanged: true,
+      at: '2026-08-22T00:00:00Z'
+    })
+    expect(changed).toMatchObject({
+      generated: { by: 'agent:run-12', at: '2026-08-22T00:00:00Z' },
+      verified: existing.verified,
+      vendor: { retained: false }
+    })
+    expect(summarizeOkfTrust(changed)).toMatchObject({ trustTier: 'human-reviewed', verification: 'outdated' })
+    expect(() => mutateOkfMetadata({
+      existing,
+      proposed: { type: 'Metric', verified: { by: '', at: '2026-08-01T00:00:00Z' } },
+      producer: 'agent:run-12',
+      knowledgeChanged: true
+    })).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_VERIFIED' }))
+    expect(() => createOkfPageDocument({
+      locale: 'en',
+      path: 'bad',
+      title: 'Bad',
+      description: '',
+      tags: [],
+      content: '# Bad',
+      updatedAt: '2026-08-22T12:00:00Z',
+      authorId: 7,
+      metadata: { type: 'Reference', tags: [''] }
+    })).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_TAGS' }))
+  })
+
+  it('does not promote imported human claims to local verification', () => {
+    const imported = mutateOkfMetadata({
+      proposed: {
+        type: 'Reference',
+        verified: { by: 'human:9', at: '2026-08-01T00:00:00Z' },
+        vendor: { source: 'external' }
+      },
+      producer: 'import:partner-run-4',
+      knowledgeChanged: true,
+      at: '2026-08-22T00:00:00Z'
+    })
+    expect(imported).toMatchObject({
+      generated: { by: 'import:partner-run-4', at: '2026-08-22T00:00:00Z' },
+      vendor: { source: 'external' }
+    })
+    expect(imported.verified).toBeUndefined()
+    expect(summarizeOkfTrust(imported).trustTier).toBe('unverified')
+  })
+
+  it('records restore provenance without forging verification', () => {
+    const restored = mutateOkfMetadata({
+      existing: { type: 'Reference', verified: { by: 'human:4', at: '2026-08-01T00:00:00Z' } },
+      proposed: { type: 'Reference', vendor: { historical: true } },
+      producer: 'agent:restore-run-4',
+      knowledgeChanged: true,
+      at: '2026-08-22T00:00:00Z',
+      restore: { revision: '17' }
+    })
+    expect(restored).toMatchObject({
+      generated: { by: 'agent:restore-run-4', at: '2026-08-22T00:00:00Z' },
+      verified: { by: 'human:4', at: '2026-08-01T00:00:00Z' },
+      restored_from: { revision: '17', by: 'agent:restore-run-4', at: '2026-08-22T00:00:00Z' }
+    })
+    expect(summarizeOkfTrust(restored).verification).toBe('outdated')
   })
 })

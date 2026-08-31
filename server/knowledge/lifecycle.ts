@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { canReadPage, scopePageQuery, type PagePrincipal } from '../helpers/page-access.ts'
@@ -14,6 +14,7 @@ import {
   type PageProjectionPayload,
   type PageProjectionSink
 } from '../core/page-mutation-outbox.ts'
+import { validateStoredOkfMetadata } from '../okf/format.ts'
 import type { AgentKnowledgeEnricher } from '../agents/providers/utility.ts'
 import {
   KnowledgeProjectionSchema,
@@ -161,6 +162,8 @@ const loadSource = async (knex: Knex, pageId: number, sourceRevision: string): P
     updatedAt = history.versionDate
   }
   const extra = parsedExtra(row.extra)
+  if (Object.hasOwn(extra, 'okf') && validateStoredOkfMetadata(extra.okf) === null)
+    throw new Error('Invalid claimed OKF metadata in pages.extra.okf')
   return {
     pageId,
     sourceRevision,
@@ -241,21 +244,62 @@ class KnowledgeProjectionSink implements PageProjectionSink {
         }
       }
     }
-
     let projection = projectPageKnowledge(source)
-    let enrichmentState = projection.completeness.missingFields.length === 0 ? 'not-needed' : 'unavailable'
-    let error: string | null = null
+    const missingFields = projection.completeness.missingFields
     const currentBeforeEnrichment = (await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision')) as
       | { sourceRevision: string | number }
       | undefined
     const isCurrentRevision = currentBeforeEnrichment !== undefined && revision(currentBeforeEnrichment.sourceRevision) === sourceRevision
     const profileVersionId =
-      this.#enricher && isCurrentRevision && source.visibility === 'public' && projection.completeness.missingFields.length > 0
-        ? await currentProfileVersionId(this.#knex)
-        : null
-    if (!isCurrentRevision && projection.completeness.missingFields.length > 0) enrichmentState = 'superseded'
-    else if (source.visibility === 'private' && projection.completeness.missingFields.length > 0) enrichmentState = 'withheld-private'
-    if (this.#enricher && profileVersionId !== null && projection.completeness.missingFields.length > 0) {
+      this.#enricher && isCurrentRevision && source.visibility === 'public' && missingFields.length > 0 ? await currentProfileVersionId(this.#knex) : null
+    let enrichmentState =
+      missingFields.length === 0
+        ? 'not-needed'
+        : !isCurrentRevision
+          ? 'superseded'
+          : source.visibility === 'private'
+            ? 'withheld-private'
+            : profileVersionId === null
+              ? 'unavailable'
+              : 'pending'
+    let error: string | null = null
+    const persist = async (value: KnowledgeProjection, state: string, lastError: string | null, requireCurrentSource: boolean): Promise<boolean> => {
+      const now = new Date().toISOString()
+      return this.#knex.transaction(async transaction => {
+        const lease = await transaction('pageMutationOutbox')
+          .where({ id: this.#claim.id, status: 'running', leaseToken: this.#claim.leaseToken })
+          .forUpdate()
+          .first('id')
+        if (!lease) {
+          if (requireCurrentSource) throw new PageMutationOutboxError('PROJECTION_LEASE_LOST', 'Page projection effect lease was lost')
+          return false
+        }
+        if (requireCurrentSource) {
+          const current = (await transaction('pages').where({ id: payload.pageId }).forUpdate().first('sourceRevision', 'content')) as
+            | { sourceRevision: string | number; content: string }
+            | undefined
+          if (
+            !current ||
+            revision(current.sourceRevision) !== sourceRevision ||
+            payload.sourceSha256 === null ||
+            sha256(current.content) !== payload.sourceSha256
+          )
+            return false
+        }
+        const columns = projectionColumns(value, state, lastError, now)
+        await transaction('pageKnowledgeProjections')
+          .insert({ ...columns, createdAt: now })
+          .onConflict(['pageId', 'sourceRevision'])
+          .merge(columns)
+        return true
+      })
+    }
+
+    // The deterministic projection is authoritative and must become readable before
+    // any optional provider call starts.
+    await persist(projection, enrichmentState, null, false)
+
+    if (this.#enricher && profileVersionId !== null && missingFields.length > 0 && enrichmentState === 'pending') {
       try {
         const result = await this.#enricher.enrichKnowledge({
           profileVersionId,
@@ -267,56 +311,48 @@ class KnowledgeProjectionSink implements PageProjectionSink {
             contentType: source.contentType,
             content: source.content
           },
-          missingFields: projection.completeness.missingFields,
+          missingFields,
           signal
         })
         if (signal.aborted) throw signal.reason
-        const currentAfterEnrichment = (await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision')) as
-          | { sourceRevision: string | number }
+        const currentAfterEnrichment = (await this.#knex('pages').where({ id: payload.pageId }).first('sourceRevision', 'content')) as
+          | { sourceRevision: string | number; content: string }
           | undefined
         const reloaded = await loadSource(this.#knex, payload.pageId, sourceRevision)
         if (
           currentAfterEnrichment === undefined ||
           revision(currentAfterEnrichment.sourceRevision) !== sourceRevision ||
           !reloaded ||
+          payload.sourceSha256 === null ||
+          sha256(currentAfterEnrichment.content) !== payload.sourceSha256 ||
           sha256(reloaded.content) !== payload.sourceSha256
         ) {
           enrichmentState = 'superseded'
+          await persist(projection, enrichmentState, null, false)
         } else {
           const generatedAt = new Date().toISOString()
-          projection = mergeKnowledgeUtilityResult(projection, result.value, {
+          const merged = mergeKnowledgeUtilityResult(projection, result.value, {
             profileVersionId,
             model: result.model,
             inputSha256: result.inputSha256,
             outputSha256: result.outputSha256,
             generatedAt
           })
-          enrichmentState = 'succeeded'
+          if (await persist(merged, 'succeeded', null, true)) projection = merged
+          else enrichmentState = 'superseded'
         }
       } catch (cause: unknown) {
         if (signal.aborted) throw signal.reason
         enrichmentState = 'failed'
         error = cause instanceof Error ? cause.message.slice(0, 4_000) : 'Utility knowledge enrichment failed'
+        await persist(projection, enrichmentState, error, true)
       }
     }
 
-    const now = new Date().toISOString()
-    const columns = projectionColumns(projection, enrichmentState, error, now)
-    const stored = await this.#knex.transaction(async transaction => {
-      const lease = await transaction('pageMutationOutbox')
-        .where({ id: this.#claim.id, status: 'running', leaseToken: this.#claim.leaseToken })
-        .forUpdate()
-        .first('id')
-      if (!lease) throw new PageMutationOutboxError('PROJECTION_LEASE_LOST', 'Page projection effect lease was lost')
-      await transaction('pageKnowledgeProjections')
-        .insert({ ...columns, createdAt: now })
-        .onConflict(['pageId', 'sourceRevision'])
-        .merge(columns)
-      return (await transaction<StoredProjectionRow>('pageKnowledgeProjections')
-        .where({ pageId: payload.pageId, sourceRevision })
-        .first('sourceRevision', 'sourceSha256')) as (StoredProjectionRow & { sourceSha256: string }) | undefined
-    })
-    const satisfied = stored?.sourceSha256 === projection.source.sha256 && sha256(source.content) === payload.sourceSha256
+    const stored = (await this.#knex('pageKnowledgeProjections')
+      .where({ pageId: payload.pageId, sourceRevision })
+      .first('sourceRevision', 'sourceSha256')) as { sourceRevision: string | number; sourceSha256: string } | undefined
+    const satisfied = stored?.sourceSha256 === projection.source.sha256
     return {
       result: { state: projection.completeness.state, enrichmentState, missingFields: projection.completeness.missingFields },
       postcondition: {
@@ -474,15 +510,117 @@ export class PageKnowledgeRepository {
   }
 }
 
-const loadCurrentProjectionScan = async (knex: Knex, afterPageId: number, limit: number): Promise<CurrentProjectionScanRow[]> => {
-  const rows = await knex<CurrentProjectionScanRow>('pages').where('id', '>', afterPageId).select('id', 'sourceRevision').orderBy('id').limit(limit)
-  if (rows.length === limit) return rows
-  const wrapped = await knex<CurrentProjectionScanRow>('pages')
-    .where('id', '<=', afterPageId)
-    .select('id', 'sourceRevision')
-    .orderBy('id')
-    .limit(limit - rows.length)
-  return [...rows, ...wrapped]
+interface KnowledgeMaintenanceRow {
+  readonly id: number
+  readonly version: number
+  readonly epochId: string | number
+  readonly status: string
+  readonly highWaterPageId: string | number
+  readonly cursorPageId: string | number
+  readonly scanned: string | number
+  readonly repaired: string | number
+  readonly requeued: string | number
+  readonly leaseOwner: string | null
+  readonly leaseToken: string | null
+  readonly leaseExpiresAt: string | Date | null
+  readonly startedAt: string | Date | null
+}
+
+const loadCurrentProjectionScan = async (knex: Knex, afterPageId: number, limit: number, highWaterPageId?: number): Promise<CurrentProjectionScanRow[]> => {
+  const query = knex<CurrentProjectionScanRow>('pages').where('id', '>', afterPageId)
+  if (highWaterPageId !== undefined) query.andWhere('id', '<=', highWaterPageId)
+  return query.select('id', 'sourceRevision').orderBy('id').limit(limit)
+}
+
+const isMissingMaintenanceTable = (error: unknown): boolean =>
+  typeof error === 'object' &&
+  error !== null &&
+  (Reflect.get(error, 'code') === '42P01' || (Reflect.get(error, 'code') === 'SQLITE_ERROR' && String(error).includes('no such table')))
+
+const claimMaintenanceEpoch = async (knex: Knex, workerId: string, now: Date): Promise<KnowledgeMaintenanceRow | null> => {
+  try {
+    return await knex.transaction(async transaction => {
+      const current = (await transaction<KnowledgeMaintenanceRow>('pageKnowledgeMaintenance').where({ id: 1 }).forUpdate().first()) as
+        | KnowledgeMaintenanceRow
+        | undefined
+      if (!current) return null
+      const expires = current.leaseExpiresAt === null ? 0 : new Date(current.leaseExpiresAt).valueOf()
+      if (current.status === 'running' && expires > now.valueOf() && current.leaseOwner !== workerId) return null
+      const starting = current.status !== 'running'
+      const highWater = starting
+        ? Number(((await transaction('pages').max('id as highWater').first()) as { highWater?: number | string } | undefined)?.highWater ?? 0)
+        : Number(current.highWaterPageId)
+      const epochId = starting ? Number(current.epochId) + 1 : Number(current.epochId)
+      const cursorPageId = starting ? 0 : Number(current.cursorPageId)
+      const leaseToken = starting || current.leaseOwner !== workerId ? randomUUID() : current.leaseToken
+      const updatedAt = now.toISOString()
+      await transaction('pageKnowledgeMaintenance')
+        .where({ id: 1 })
+        .update({
+          version: 1,
+          epochId,
+          status: 'running',
+          highWaterPageId: highWater,
+          cursorPageId,
+          scanned: starting ? 0 : Number(current.scanned),
+          repaired: starting ? 0 : Number(current.repaired),
+          requeued: starting ? 0 : Number(current.requeued),
+          leaseOwner: workerId,
+          leaseToken,
+          leaseExpiresAt: new Date(now.valueOf() + KNOWLEDGE_EFFECT_LEASE_MILLISECONDS).toISOString(),
+          startedAt: starting ? updatedAt : current.startedAt,
+          completedAt: null,
+          updatedAt,
+          lastProgressAt: updatedAt,
+          lastError: null
+        })
+      return {
+        ...current,
+        epochId,
+        status: 'running',
+        highWaterPageId: highWater,
+        cursorPageId,
+        leaseOwner: workerId,
+        leaseToken,
+        leaseExpiresAt: new Date(now.valueOf() + KNOWLEDGE_EFFECT_LEASE_MILLISECONDS).toISOString()
+      }
+    })
+  } catch (error: unknown) {
+    if (isMissingMaintenanceTable(error)) return null
+    throw error
+  }
+}
+
+const maintainCurrentProjections = async (
+  knex: Knex,
+  workerId: string,
+  now: Date,
+  limit: number
+): Promise<{ repaired: number; cursor: number; durable: boolean } | null> => {
+  const epoch = await claimMaintenanceEpoch(knex, workerId, now)
+  if (epoch === null) return null
+  const cursor = Number(epoch.cursorPageId)
+  const highWater = Number(epoch.highWaterPageId)
+  const rows = await loadCurrentProjectionScan(knex, cursor, limit, highWater)
+  let repaired = 0
+  for (const row of rows) repaired += await repairCurrentProjection(knex, row, now)
+  const nextCursor = rows.at(-1)?.id ?? cursor
+  const finished = rows.length === 0 || nextCursor >= highWater
+  await knex('pageKnowledgeMaintenance')
+    .where({ id: 1, status: 'running', leaseToken: epoch.leaseToken })
+    .update({
+      cursorPageId: nextCursor,
+      scanned: knex.raw('?? + ?', ['scanned', rows.length]),
+      repaired: knex.raw('?? + ?', ['repaired', repaired]),
+      status: finished ? 'complete' : 'running',
+      leaseOwner: finished ? null : epoch.leaseOwner,
+      leaseToken: finished ? null : epoch.leaseToken,
+      leaseExpiresAt: finished ? null : epoch.leaseExpiresAt,
+      completedAt: finished ? now.toISOString() : null,
+      lastProgressAt: now.toISOString(),
+      updatedAt: now.toISOString()
+    })
+  return { repaired, cursor: nextCursor, durable: true }
 }
 
 const parseKnowledgeEffectPayload = (value: string): PageProjectionPayload => {
@@ -552,12 +690,6 @@ const repairCurrentProjection = async (knex: Knex, scanned: CurrentProjectionSca
     return (await rearmPageMutationEffect(transaction, { id: effect.id, payload, now })) ? 1 : 0
   })
 
-const validateCurrentProjections = async (knex: Knex, afterPageId: number, limit: number, now: Date): Promise<{ repaired: number; cursor: number }> => {
-  const rows = await loadCurrentProjectionScan(knex, afterPageId, limit)
-  let repaired = 0
-  for (const row of rows) repaired += await repairCurrentProjection(knex, row, now)
-  return { repaired, cursor: rows.at(-1)?.id ?? 0 }
-}
 
 const recoverTerminalFailures = async (knex: Knex, now: Date): Promise<number> => {
   const failedBefore = new Date(now.valueOf() - RETRY_FAILED_AFTER_MILLISECONDS)
@@ -707,9 +839,20 @@ export class PageKnowledgeLifecycle {
     try {
       const now = new Date()
       const profileVersionId = await currentProfileVersionId(this.#knex).catch(() => null)
-      const validation = await validateCurrentProjections(this.#knex, this.#projectionScanCursor, 25, now)
-      this.#projectionScanCursor = validation.cursor
-      const backfilled = validation.repaired
+      let backfilled = 0
+      let hasMaintenanceTable = false
+      try {
+        hasMaintenanceTable = await this.#knex.schema.hasTable('pageKnowledgeMaintenance')
+      } catch {
+        hasMaintenanceTable = false
+      }
+      if (hasMaintenanceTable) {
+        backfilled = (await maintainCurrentProjections(this.#knex, this.#workerId, now, 25))?.repaired ?? 0
+      } else {
+        const validation = await validateVolatileCurrentProjections(this.#knex, this.#projectionScanCursor, 25, now)
+        this.#projectionScanCursor = validation.cursor
+        backfilled = validation.repaired
+      }
       const requeued = (await recoverTerminalFailures(this.#knex, now)) + (this.#enricher ? await requeueRetryable(this.#knex, profileVersionId, now) : 0)
       const claims = await claimPageMutationEffects(this.#knex, {
         leaseOwner: this.#workerId,
@@ -723,4 +866,15 @@ export class PageKnowledgeLifecycle {
       this.#running = false
     }
   }
+}
+const validateVolatileCurrentProjections = async (
+  knex: Knex,
+  afterPageId: number,
+  limit: number,
+  now: Date
+): Promise<{ repaired: number; cursor: number }> => {
+  const rows = await loadCurrentProjectionScan(knex, afterPageId, limit)
+  let repaired = 0
+  for (const row of rows) repaired += await repairCurrentProjection(knex, row, now)
+  return { repaired, cursor: rows.at(-1)?.id ?? 0 }
 }

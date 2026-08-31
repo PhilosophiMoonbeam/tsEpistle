@@ -12,6 +12,7 @@ import { appendAgentEvent } from '../repository.ts'
 import { applyWikiLinePatch, inspectWikiLineSnapshotToken } from '../patch/wiki-line-patch.ts'
 import { getMcpProposal, getOwnedProposal, persistProposal, type PersistedProposal, type ProposalStatus } from '../proposals/repository.ts'
 import { applyApprovedProposal } from '../proposals/execution.ts'
+import { withOkfProducer } from '../../okf/mutation-context.ts'
 
 const PageSchema = z.looseObject({
   id: z.coerce.number().int().positive(),
@@ -503,10 +504,14 @@ const apply = async (dependencies: PageProposalActionDependencies, context: Acti
       if (context.authority.requester.kind === 'apiKey') {
         await dependencies.operations.authorizeMutation({ kind: metadata.kind, input: metadata.operationInput, requester: approverUser })
       }
-      const operationInput = { ...metadata.operationInput, requester: approverUser }
-      if (metadata.kind === 'create') await dependencies.operations.create({ input: metadata.operationInput, requester: approverUser })
-      else if (metadata.kind === 'patch') await dependencies.operations.update({ input: metadata.operationInput, requester: approverUser })
-      else if (metadata.kind === 'move') await dependencies.operations.move({ input: metadata.operationInput, requester: approverUser })
+      const producer = context.authority.transport === 'mcp'
+        ? `mcp:${context.authority.requestId}`
+        : `agent:${context.authority.requestId}`
+      const operationInput = withOkfProducer({ ...metadata.operationInput, requester: approverUser }, producer)
+      const nestedOperationInput = withOkfProducer({ input: metadata.operationInput, requester: approverUser }, producer)
+      if (metadata.kind === 'create') await dependencies.operations.create(nestedOperationInput)
+      else if (metadata.kind === 'patch') await dependencies.operations.update(nestedOperationInput)
+      else if (metadata.kind === 'move') await dependencies.operations.move(nestedOperationInput)
       else if (metadata.kind === 'restore') await dependencies.operations.restore(operationInput)
       else await dependencies.operations.remove(operationInput)
       return metadata.resultIdentity

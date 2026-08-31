@@ -4,6 +4,7 @@ import type { SearchResult as ProviderSearchResult } from '../modules/types.ts'
 import { canDeletePage, canReadPage, canWritePage, managesSystem, pageRoute, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
 import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../repositories/page-index.ts'
 import { isPageEditorKey, normalizeAvailableEditors } from '../../shared/page-editors.ts'
+import { OKF_PRODUCER_CONTEXT } from '../okf/mutation-context.ts'
 import { assertPageUnlocked } from './page-protection.ts'
 
 import errors from './errors.ts'
@@ -181,9 +182,11 @@ interface WikiPageOperations {
     }
   }
 }
+
 interface OperationInput extends Record<string, unknown> {
   requester?: Express.User
   sessionId?: string
+  readonly [OKF_PRODUCER_CONTEXT]?: string
 }
 const assertUnlocked = (input: OperationInput, pageId: number): Promise<void> =>
   assertPageUnlocked({
@@ -213,6 +216,11 @@ const expectedSourceRevision = (value: unknown): string | undefined => {
 const recordValue = (value: unknown, label: string): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApplicationError(`${label} must be an object`, { code: 'INVALID_INPUT' })
   return value as Record<string, unknown>
+}
+const mutationPayload = (input: OperationInput, omitted: readonly string[] = []): Record<string, unknown> => {
+  const payload = _.omit(recordValue(input.input, 'input'), [...omitted, 'okfProducer', 'okfRestoreRevision'])
+  const producer = input[OKF_PRODUCER_CONTEXT]
+  return typeof producer === 'string' ? { ...payload, okfProducer: producer } : payload
 }
 const withRequester = (payload: Record<string, unknown>, requester: Express.User | undefined): Record<string, unknown> & { user?: Express.User } =>
   requester === undefined ? payload : { ...payload, user: requester }
@@ -1073,7 +1081,7 @@ const getConflictLatest = async (input: OperationInput) => {
 }
 
 const create = (input: OperationInput): unknown => {
-  const payload = recordValue(input.input, 'input')
+  const payload = mutationPayload(input, ['ownerId', 'isPrivate', 'privateNS'])
   if (isPageEditorKey(payload.editor) && !normalizeAvailableEditors(wiki.config.editors?.available).includes(payload.editor)) {
     throw new ApplicationError('The selected editor is not available for new pages.', { code: 'EDITOR_NOT_AVAILABLE' })
   }
@@ -1084,7 +1092,7 @@ const create = (input: OperationInput): unknown => {
   return wiki.models.pages.createPage(
     withRequester(
       {
-        ..._.omit(payload, ['ownerId', 'isPrivate', 'privateNS']),
+        ...payload,
         visibility
       },
       input.requester
@@ -1092,12 +1100,12 @@ const create = (input: OperationInput): unknown => {
   )
 }
 const update = async (input: OperationInput): Promise<unknown> => {
-  const payload = _.omit(recordValue(input.input, 'input'), ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
+  const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
   return wiki.models.pages.updatePage(withRequester(payload, input.requester))
 }
 const convert = async (input: OperationInput): Promise<unknown> => {
-  const payload = _.omit(recordValue(input.input, 'input'), ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
+  const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS'])
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
   return wiki.models.pages.convertPage(withRequester(payload, input.requester))
 }
@@ -1206,7 +1214,12 @@ const restore = async (input: OperationInput): Promise<void> => {
         tags: version.tags,
         action: 'restored',
         expectedUpdatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : page.updatedAt,
-        expectedSourceRevision: String(page.sourceRevision)
+        expectedSourceRevision: String(page.sourceRevision),
+        ...(version.extra && typeof version.extra === 'object' && !Array.isArray(version.extra)
+          ? { okfMetadata: (version.extra as Record<string, unknown>).okf }
+          : {}),
+        ...(typeof input[OKF_PRODUCER_CONTEXT] === 'string' ? { okfProducer: input[OKF_PRODUCER_CONTEXT] } : {}),
+        okfRestoreRevision: versionId
       },
       requester
     )

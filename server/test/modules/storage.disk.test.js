@@ -496,3 +496,166 @@ describe('Git storage rename identities', () => {
     expect(deleteAssetCache).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('storage page-document ingress', () => {
+  let rootPath
+  let previousWiki
+  let hadPreviousWiki
+
+  beforeEach(async () => {
+    rootPath = undefined
+    hadPreviousWiki = Object.hasOwn(global, 'WIKI')
+    previousWiki = global.WIKI
+    vi.resetModules()
+    rootPath = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-storage-document-'))
+    global.WIKI = {
+      ROOTPATH: rootPath,
+      config: { lang: { code: 'en', namespacing: false } },
+      logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+      models: {}
+    }
+  })
+
+  afterEach(async () => {
+    try {
+      if (rootPath !== undefined) {
+        await fs.rm(rootPath, { recursive: true, force: true })
+      }
+    } finally {
+      if (hadPreviousWiki) {
+        global.WIKI = previousWiki
+      } else {
+        delete global.WIKI
+      }
+      rootPath = undefined
+    }
+  })
+
+  const input = {
+    contentType: 'markdown',
+    locale: 'en',
+    pagePath: 'guides/start',
+    importer: 'import:disk',
+    now: new Date('2026-08-31T00:00:00.000Z')
+  }
+
+  it('classifies valid OKF, imports links, and preserves extensions and source hash', async () => {
+    vi.resetModules()
+    const codec = (await vi.importFresh('../../modules/storage/page-document.ts', import.meta.url)).default
+    const raw = [
+      '---',
+      'type: Procedure',
+      'tags: [one, two]',
+      'verified:',
+      '  by: human:7',
+      '  at: 2026-08-30T00:00:00Z',
+      'vendor_extension:',
+      '  retained: true',
+      '---',
+      '',
+      'See [Next](/en/next.md).'
+    ].join('\n')
+    const parsed = codec({ ...input, rawDocument: raw })
+
+    expect(parsed).toMatchObject({
+      format: 'okf_valid',
+      body: 'See [Next](/en/next).',
+      tags: ['one', 'two'],
+      okfMetadata: {
+        type: 'Procedure',
+        verified: { by: 'human:7', at: '2026-08-30T00:00:00Z' },
+        vendor_extension: { retained: true }
+      },
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      diagnostics: []
+    })
+  })
+
+  it.each([
+    ['legacy wiki', '---\ntitle: Legacy\ntags: old, page\n---\nBody', 'legacy_wiki'],
+    ['legacy v1', '<!-- TITLE: Legacy -->\n<!-- SUBTITLE: Old -->\nBody', 'legacy_v1'],
+    ['plain Markdown', '# Plain\n\nBody', 'plain_markdown']
+  ])('classifies %s distinctly and stamps import provenance', async (_name, raw, format) => {
+    vi.resetModules()
+    const codec = (await vi.importFresh('../../modules/storage/page-document.ts', import.meta.url)).default
+    const parsed = codec({ ...input, rawDocument: raw })
+
+    expect(parsed.format).toBe(format)
+    expect(parsed.okfMetadata).toMatchObject({
+      type: 'Reference',
+      status: 'stable',
+      generated: { by: 'import:disk', at: '2026-08-31T00:00:00.000Z' }
+    })
+  })
+
+  it('quarantines claimed invalid OKF without returning a legacy classification', async () => {
+    vi.resetModules()
+    const codec = (await vi.importFresh('../../modules/storage/page-document.ts', import.meta.url)).default
+    const parsed = codec({ ...input, rawDocument: '---\ntype: [broken\n---\nBody' })
+
+    expect(parsed.format).toBe('okf_invalid')
+    expect(parsed.okfMetadata).toBeNull()
+    expect(parsed.diagnostics.length).toBeGreaterThan(0)
+  })
+
+  it('passes the validated metadata to page creation without rewriting the source', async () => {
+    const raw = Buffer.from('---\ntype: Reference\ntags: [source]\nvendor: retained\n---\n\nBody')
+    const filePath = path.join(rootPath, 'imported.md')
+    await fs.writeFile(filePath, raw)
+    const createPage = vi.fn().mockResolvedValue({ id: 1 })
+    global.WIKI.models.pages = {
+      getPageFromDb: vi.fn().mockResolvedValue(null),
+      createPage
+    }
+    global.WIKI.models.editors = {
+      getDefaultEditor: vi.fn().mockResolvedValue('markdown')
+    }
+    const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
+
+    const result = await commonDisk.processPage.call({}, {
+      user: { id: 7 },
+      relPath: 'imported.md',
+      fullPath: rootPath,
+      contentType: 'markdown',
+      moduleName: 'DISK'
+    })
+
+    expect(result).toMatchObject({ ok: true, format: 'okf_valid' })
+    expect(createPage).toHaveBeenCalledWith(expect.objectContaining({
+      content: 'Body',
+      tags: ['source'],
+      okfMetadata: {
+        type: 'Reference',
+        tags: ['source'],
+        vendor: 'retained'
+      },
+      skipStorage: true
+    }))
+    expect(await fs.readFile(filePath)).toEqual(raw)
+  })
+
+  it('does not mutate the database for a claimed invalid OKF document', async () => {
+    const filePath = path.join(rootPath, 'invalid.md')
+    await fs.writeFile(filePath, '---\ntype: [broken\n---\nBody')
+    const createPage = vi.fn()
+    const updatePage = vi.fn()
+    global.WIKI.models.pages = {
+      getPageFromDb: vi.fn().mockResolvedValue(null),
+      createPage,
+      updatePage
+    }
+    const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
+
+    const result = await commonDisk.processPage.call({}, {
+      user: { id: 7 },
+      relPath: 'invalid.md',
+      fullPath: rootPath,
+      contentType: 'markdown',
+      moduleName: 'DISK'
+    })
+
+    expect(result).toMatchObject({ ok: false, format: 'okf_invalid' })
+    expect(createPage).not.toHaveBeenCalled()
+    expect(updatePage).not.toHaveBeenCalled()
+  })
+})

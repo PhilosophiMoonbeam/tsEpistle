@@ -74,9 +74,17 @@ const makeKnex = (fixture = {}) => {
       throw missingTableError()
     }
     if (sql.includes('GROUP BY "effectKind", status')) return { rows: fixture.effects ?? [] }
+    if (sql.includes('FROM "pageKnowledgeMaintenance"')) {
+      if (sql.includes('GROUP BY status')) return { rows: fixture.maintenanceStatuses ?? [] }
+      if (sql.includes('SELECT status')) return { rows: fixture.maintenanceStatuses?.slice(0, 1).map(row => ({ status: row.status })) ?? [] }
+      return { rows: fixture.maintenanceProgress ?? [] }
+    }
     if (sql.includes('MIN("availableAt")')) return { rows: fixture.ages ?? [] }
     if (sql.includes("status = 'running'")) return { rows: [{ total: fixture.expiredLeases ?? 0 }] }
-    if (sql.includes('LEFT JOIN "pageKnowledgeProjections"')) return { rows: [{ total: fixture.knowledgeGaps ?? 0 }] }
+    if (sql.includes('LEFT JOIN "pageKnowledgeProjections"')) {
+      if (sql.includes('COALESCE(projection."enrichmentState"')) return { rows: fixture.knowledgeStates ?? [] }
+      return { rows: [{ total: fixture.knowledgeGaps ?? 0 }] }
+    }
     if (sql.includes('LEFT JOIN pages page')) {
       return {
         rows: [{
@@ -153,11 +161,12 @@ describe('core/metrics', () => {
     expect(res.send).toHaveBeenCalledWith(expect.stringContaining('wiki_users_total 7'))
   })
 
-  it('exports fixed label domains and healthy, stale, and failed aggregate values', async () => {
+  it('exports fixed label domains and healthy, stale, failed, and maintenance values', async () => {
     global.WIKI.models.knex = makeKnex({
       effects: [
         { effect: 'render', status: 'succeeded', total: '8' },
         { effect: 'links', status: 'failed', total: '2' },
+        { effect: 'search', status: 'pending', total: '4' },
         { effect: 'knowledge', status: 'retry', total: '3' },
         { effect: 'unsupported', status: 'failed', total: '999' }
       ],
@@ -170,7 +179,10 @@ describe('core/metrics', () => {
       indexedVectors: '11',
       revisionMismatches: '3',
       vectorOrphans: '1',
-      knowledgeGaps: '4'
+      knowledgeGaps: '4',
+      maintenanceStatuses: [{ status: 'running', total: '1' }],
+      maintenanceProgress: [{ epochId: '2', highWaterPageId: '10', cursorPageId: '5', scanned: '5', repaired: '1', requeued: '0' }],
+      knowledgeStates: [{ state: 'valid', enrichment: 'pending', total: '2' }]
     })
     const { default: metrics } = await vi.importFresh('../../core/metrics.ts', import.meta.url)
     const res = makeResponse()
@@ -180,14 +192,16 @@ describe('core/metrics', () => {
 
     const output = res.send.mock.calls[0][0]
     const effectLines = output.split('\n').filter(line => line.startsWith('wiki_page_mutation_effects{'))
-    expect(effectLines).toHaveLength(15)
+    expect(effectLines).toHaveLength(20)
     expect(output.split('\n').filter(line => line.startsWith('wiki_page_mutation_oldest_eligible_age_seconds{'))).toHaveLength(2)
     expect(output.split('\n').filter(line => line.startsWith('wiki_page_search_documents{'))).toHaveLength(2)
     expect(output.split('\n').filter(line => line.startsWith('wiki_page_search_vector_anomalies{'))).toHaveLength(2)
-    expect(effectLines).toContain('wiki_page_mutation_effects{effect="render",status="succeeded"} 8')
-    expect(effectLines).toContain('wiki_page_mutation_effects{effect="links",status="failed"} 2')
+    expect(effectLines).toContain('wiki_page_mutation_effects{effect="search",status="pending"} 4')
     expect(effectLines).toContain('wiki_page_mutation_effects{effect="knowledge",status="retry"} 3')
-    expect(effectLines).toContain('wiki_page_mutation_effects{effect="render",status="pending"} 0')
+    expect(output).toContain('wiki_page_knowledge_projection_states{state="valid",enrichment="pending"} 2')
+    expect(output).toContain('wiki_page_knowledge_maintenance{status="running"} 1')
+    expect(output).toContain('wiki_page_knowledge_maintenance_progress{kind="cursor"} 5')
+    expect(output).toContain('wiki_page_knowledge_maintenance_readiness{state="running"} 1')
     expect(output).not.toContain('unsupported')
     expect(output).toContain('wiki_page_mutation_oldest_eligible_age_seconds{status="pending"} 125.5')
     expect(output).toContain('wiki_page_mutation_oldest_eligible_age_seconds{status="retry"} 45')
@@ -211,7 +225,7 @@ describe('core/metrics', () => {
 
     const output = res.send.mock.calls[0][0]
     expect(res.status).not.toHaveBeenCalled()
-    expect(output.split('\n').filter(line => line.startsWith('wiki_page_mutation_effects{'))).toHaveLength(15)
+    expect(output.split('\n').filter(line => line.startsWith('wiki_page_mutation_effects{'))).toHaveLength(20)
     expect(output).toContain('wiki_page_mutation_effects{effect="render",status="pending"} 0')
     expect(output).toContain('wiki_page_mutation_oldest_eligible_age_seconds{status="retry"} 0')
     expect(output).toContain('wiki_page_mutation_expired_running_leases 0')
@@ -220,6 +234,9 @@ describe('core/metrics', () => {
     expect(output).toContain('wiki_page_search_vector_anomalies{kind="revision_mismatch"} 0')
     expect(output).toContain('wiki_page_search_vector_anomalies{kind="orphan"} 0')
     expect(output).toContain('wiki_page_knowledge_projection_gaps 0')
+    expect(output).toContain('wiki_page_knowledge_projection_states{state="missing",enrichment="unavailable"} 0')
+    expect(output).toContain('wiki_page_knowledge_maintenance{status="pending"} 0')
+    expect(output).toContain('wiki_page_knowledge_maintenance_progress{kind="cursor"} 0')
     expect(global.WIKI.readiness.fail).not.toHaveBeenCalled()
     expect(global.WIKI.readiness.set).not.toHaveBeenCalled()
   })

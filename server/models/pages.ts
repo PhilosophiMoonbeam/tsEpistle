@@ -25,7 +25,7 @@ import type Comment from './comments.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
 import { enqueuePageMutationEffects, type PageProjectionPayload } from '../core/page-mutation-outbox.ts'
 import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operations/page-protection.ts'
-import { okfMetadataForHumanMutation, type OkfMetadata } from '../okf/format.ts'
+import { mutateOkfMetadata, type OkfMetadata } from '../okf/format.ts'
 
 type UnknownRecord = Record<string, unknown>
 type PageErrorConstructor = new () => Error
@@ -115,6 +115,7 @@ interface CreatePageOptions {
   scriptJs?: string
   tags?: string[]
   okfMetadata?: OkfMetadata
+  okfProducer?: string
   skipStorage?: boolean
 }
 
@@ -138,6 +139,8 @@ interface UpdatePageOptions {
   scriptCss?: string
   scriptJs?: string
   okfMetadata?: OkfMetadata
+  okfProducer?: string
+  okfRestoreRevision?: string | number
   skipStorage?: boolean
 }
 interface ChangeVisibilityOptions {
@@ -159,6 +162,7 @@ interface TransferOwnershipOptions {
 interface ConvertPageOptions {
   id: number
   editor: string
+  okfProducer?: string
   user: PageUser
   expectedSourceRevision?: string
 }
@@ -852,7 +856,12 @@ export default class Page extends Model {
     ) {
       scriptJs = opts.scriptJs || ''
     }
-    const okfMetadata = opts.okfMetadata ?? okfMetadataForHumanMutation(undefined, opts.user.id)
+    const okfMetadata = mutateOkfMetadata({
+      proposed: opts.okfMetadata,
+      producer: opts.okfProducer ?? `human:${opts.user.id}`,
+      knowledgeChanged: true,
+      at: new Date()
+    })
 
     await wiki.models.knex.transaction(async transaction => {
       const inserted = await wiki.models.pages.query(transaction).insert({
@@ -988,16 +997,28 @@ export default class Page extends Model {
     ) {
       scriptJs = opts.scriptJs
     }
-    const knowledgeChanged = opts.content !== undefined || opts.title !== undefined || opts.description !== undefined || opts.tags !== undefined
-    const okfMetadata = opts.okfMetadata ?? (knowledgeChanged ? okfMetadataForHumanMutation(ogPage.extra.okf, opts.user.id) : ogPage.extra.okf)
 
     const destinationLocale = opts.locale ?? ogPage.localeCode
     let destinationPath = opts.path ?? ogPage.path
     if (destinationPath.includes('.') || destinationPath.includes(' ') || destinationPath.includes('\\') || destinationPath.includes('//')) {
       throw new wiki.Error.PageIllegalPath()
     }
-    if (destinationPath.endsWith('/')) destinationPath = destinationPath.slice(0, -1)
-    if (destinationPath.startsWith('/')) destinationPath = destinationPath.slice(1)
+    if (destinationPath.endsWith('/')) {
+      destinationPath = destinationPath.slice(0, -1)
+    }
+    if (destinationPath.startsWith('/')) {
+      destinationPath = destinationPath.slice(1)
+    }
+    const knowledgeChanged = opts.content !== undefined || opts.title !== undefined || opts.description !== undefined || opts.tags !== undefined
+    const restoringOkf = opts.okfRestoreRevision !== undefined
+    const okfMetadata = mutateOkfMetadata({
+      existing: restoringOkf ? opts.okfMetadata : ogPage.extra.okf,
+      proposed: restoringOkf ? undefined : opts.okfMetadata,
+      producer: opts.okfProducer ?? `human:${opts.user.id}`,
+      knowledgeChanged,
+      at: new Date(),
+      ...(restoringOkf ? { restore: { revision: opts.okfRestoreRevision! } } : {})
+    })
     const willMove = destinationLocale !== ogPage.localeCode || destinationPath !== ogPage.path
     if (
       willMove &&
@@ -1451,6 +1472,13 @@ export default class Page extends Model {
       }
     }
 
+    const okfMetadata = mutateOkfMetadata({
+      existing: ogPage.extra.okf,
+      producer: opts.okfProducer ?? `human:${opts.user.id}`,
+      knowledgeChanged: shouldConvert,
+      at: new Date()
+    })
+
     await wiki.models.knex.transaction(async transaction => {
       if (shouldConvert) {
         await wiki.models.pageHistory.addVersion({
@@ -1471,7 +1499,7 @@ export default class Page extends Model {
             ? {
                 extra: {
                   ...ogPage.extra,
-                  okf: okfMetadataForHumanMutation(ogPage.extra.okf, opts.user.id)
+                  okf: okfMetadata
                 }
               }
             : {})
