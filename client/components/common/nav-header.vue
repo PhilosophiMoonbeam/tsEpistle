@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 56 : 72', color='surface', flat, :class='{ "nav-header--dense": dense }', :extended='searchIsShown && $vuetify.display.smAndDown')
+  v-app-bar.nav-header(:height='dense ? 56 : 64', color='surface', flat, :class='{ "nav-header--dense": dense }', :extended='searchIsShown && $vuetify.display.smAndDown')
     template(v-slot:extension)
       v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', color='surface', flat)
         v-text-field.nav-header-search-control(
