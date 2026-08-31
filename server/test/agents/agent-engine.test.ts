@@ -207,7 +207,7 @@ describe('Ax agent engine', () => {
     expect(JSON.stringify(result)).not.toContain('hidden thought')
     expect(close).toHaveBeenCalledOnce()
   })
-  it('compacts search provenance so tool results can continue within a goal token budget', async () => {
+  it('compacts retrieval projections so tool results continue within a goal token budget', async () => {
     const calls: Readonly<AxChatRequest<unknown>>[] = []
     const responses: AxChatResponse[] = [
       {
@@ -222,8 +222,12 @@ describe('Ax agent engine', () => {
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 3, completionTokens: 4, totalTokens: 7 } }
       },
       {
-        results: [{ index: 0, content: 'Search candidates were found, but each page still needs to be read before answering.' }],
+        results: [{ index: 0, functionCalls: [{ id: 'budget-page', type: 'function', function: { name: 'wiki_get_page', params: '{"id":42}' } }] }],
         modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 6_000, completionTokens: 20, totalTokens: 6_020 } }
+      },
+      {
+        results: [{ index: 0, content: 'Budget evidence is available.[[cite:page:42:revision:1:section:1]]' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7_000, completionTokens: 30, totalTokens: 7_030 } }
       }
     ]
     const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
@@ -259,26 +263,50 @@ describe('Ax agent engine', () => {
             description: 'Searches visible pages',
             parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } } },
             risk: 'read'
+          },
+          {
+            name: 'pages.get',
+            title: 'Read page',
+            description: 'Reads a visible page',
+            parameters: { type: 'object', properties: { id: { type: 'number' } } },
+            risk: 'read'
           }
         ],
-        invoke: async () => ({
-          results: [
-            {
-              id: 42,
-              title: 'Search candidate',
-              knowledge: {
-                state: 'complete',
-                summary: 'A concise provider-facing search summary.',
-                provenance: { fields: 'review metadata '.repeat(3_000) }
+        invoke: async (actionName: string) =>
+          actionName === 'pages.search'
+            ? {
+                results: [
+                  {
+                    id: 42,
+                    title: 'Search candidate',
+                    knowledge: {
+                      state: 'complete',
+                      summary: 'A concise provider-facing search summary.',
+                      entities: [{ name: 'Internal review detail' }],
+                      provenance: { fields: 'review metadata '.repeat(3_000) }
+                    }
+                  }
+                ],
+                suggestions: [],
+                totalInWindow: 1,
+                windowLimit: 100,
+                windowTruncated: false,
+                nextOffset: null
               }
-            }
-          ],
-          suggestions: [],
-          totalInWindow: 1,
-          windowLimit: 100,
-          windowTruncated: false,
-          nextOffset: null
-        }),
+            : {
+                id: 42,
+                title: 'Budget Guide',
+                contentType: 'markdown',
+                content: `# Budget Guide\n\n## Evidence\n${'Budget evidence remains available. '.repeat(300)}`,
+                knowledge: {
+                  state: 'complete',
+                  summary: 'Budget evidence page.',
+                  relationships: [{ predicate: 'internal-review-detail' }],
+                  provenance: { fields: 'page review metadata '.repeat(3_000) }
+                },
+                citation: { evidenceId: 'page:42:revision:1', label: 'Budget Guide', href: '/en/budget-guide' },
+                citationSections: [{ evidenceId: 'page:42:revision:1:section:1', label: 'Budget Guide › Evidence', href: '/en/budget-guide#evidence' }]
+              },
         snapshot: async () => ({}),
         close: () => undefined
       })
@@ -310,11 +338,14 @@ describe('Ax agent engine', () => {
       },
       { text: async () => undefined, event: async () => undefined }
     )
-    expect(chat).toHaveBeenCalledTimes(2)
-    expect(reservedMaximums).toHaveLength(2)
+    expect(chat).toHaveBeenCalledTimes(3)
+    expect(reservedMaximums).toHaveLength(3)
     expect(JSON.stringify(calls[1]?.chatPrompt)).toContain('A concise provider-facing search summary.')
-    expect(JSON.stringify(calls[1]?.chatPrompt)).not.toContain('review metadata')
-    expect(result).toMatchObject({ inputTokens: 6_003, outputTokens: 24 })
+    expect(JSON.stringify(calls[2]?.chatPrompt)).toContain('Budget evidence remains available.')
+    expect(JSON.stringify(calls[2]?.chatPrompt)).not.toContain('review metadata')
+    expect(JSON.stringify(calls[2]?.chatPrompt)).not.toContain('Internal review detail')
+    expect(JSON.stringify(calls[2]?.chatPrompt)).not.toContain('internal-review-detail')
+    expect(result).toMatchObject({ inputTokens: 13_003, outputTokens: 54 })
   })
   it('accepts a citation placed after sentence punctuation and rejects an uncited page answer', async () => {
     const responses: AxChatResponse[] = [

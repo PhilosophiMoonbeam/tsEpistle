@@ -695,21 +695,34 @@ const toolCompletionSummary = (actionName: string, output: unknown, cacheHit: bo
   }
   return cacheHit ? 'Reused earlier result' : null
 }
-const providerActionOutput = (actionName: string, output: unknown): unknown => {
-  if (actionName !== 'pages.search' || typeof output !== 'object' || output === null || Array.isArray(output)) return output
-  const results = Reflect.get(output, 'results')
-  if (!Array.isArray(results)) return output
+const providerKnowledgeOutput = (knowledge: unknown): unknown => {
+  if (typeof knowledge !== 'object' || knowledge === null || Array.isArray(knowledge)) return knowledge
   return {
-    ...(output as Record<string, unknown>),
-    results: results.map(result => {
-      if (typeof result !== 'object' || result === null || Array.isArray(result)) return result
-      const knowledge = Reflect.get(result, 'knowledge')
-      if (typeof knowledge !== 'object' || knowledge === null || Array.isArray(knowledge)) return result
-      const providerKnowledge = { ...(knowledge as Record<string, unknown>) }
-      delete providerKnowledge.provenance
-      return { ...(result as Record<string, unknown>), knowledge: providerKnowledge }
-    })
+    sourceRevision: Reflect.get(knowledge, 'sourceRevision'),
+    state: Reflect.get(knowledge, 'state'),
+    conceptType: Reflect.get(knowledge, 'conceptType'),
+    summary: Reflect.get(knowledge, 'summary'),
+    tags: Reflect.get(knowledge, 'tags'),
+    lifecycle: Reflect.get(knowledge, 'lifecycle')
   }
+}
+const providerActionOutput = (actionName: string, output: unknown): unknown => {
+  if (typeof output !== 'object' || output === null || Array.isArray(output)) return output
+  if (actionName === 'pages.search') {
+    const results = Reflect.get(output, 'results')
+    if (!Array.isArray(results)) return output
+    return {
+      ...(output as Record<string, unknown>),
+      results: results.map(result => {
+        if (typeof result !== 'object' || result === null || Array.isArray(result)) return result
+        return { ...(result as Record<string, unknown>), knowledge: providerKnowledgeOutput(Reflect.get(result, 'knowledge')) }
+      })
+    }
+  }
+  if (actionName === 'pages.get' || actionName === 'pages.getVersion' || actionName === 'pages.getOkf') {
+    return { ...(output as Record<string, unknown>), knowledge: providerKnowledgeOutput(Reflect.get(output, 'knowledge')) }
+  }
+  return output
 }
 
 
