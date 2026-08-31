@@ -72,9 +72,9 @@ describe('Wiki action sessions', () => {
       expect.objectContaining({ name: 'pages.listTags', risk: 'read' }),
       expect.objectContaining({ name: 'pages.discover', risk: 'read' }),
       expect.objectContaining({ name: 'pages.get', risk: 'read' }),
+      expect.objectContaining({ name: 'pages.getOkf', risk: 'read' }),
       expect.objectContaining({ name: 'pages.related', risk: 'read' })
     ]))
-    expect(session?.functions.map(action => action.name)).not.toContain('pages.getOkf')
     session?.close()
   })
 

@@ -36,8 +36,10 @@ const page = {
   sourceRevision: '8',
   content: '# Start',
   updatedAt: '2026-08-17T00:00:00.000Z',
+  authority: { state: 'missing', metadata: null, trust: null },
+  okfResourceUri: 'wiki://pages/42/versions/current/revisions/8/okf',
   citation: {
-    evidenceId: 'page:42',
+    evidenceId: 'page:42:revision:8',
     label: 'Start',
     href: '/en/docs/start'
   },

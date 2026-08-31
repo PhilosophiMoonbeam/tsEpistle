@@ -195,6 +195,7 @@ describe('page history visibility boundaries', () => {
       editor: 'visual-markdown',
       tags: ['release'],
       action: 'restored',
+      okfRestoreRevision: 4,
       expectedUpdatedAt: '2026-08-15T00:00:00.000Z',
       expectedSourceRevision: sourceRevision
     })

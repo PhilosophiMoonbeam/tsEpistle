@@ -29,8 +29,10 @@ describe('storage model actions', () => {
     global.WIKI.models.storage = Storage
   })
 
-  it('runs declared actions and records an operational attempt', async () => {
-    const sync = vi.fn().mockResolvedValue(undefined)
+  it('runs declared actions, returns a summary, and records the completion', async () => {
+    const sync = vi.fn().mockResolvedValue([
+      { kind: 'page', path: 'docs/storage', outcome: 'succeeded', format: 'okf' }
+    ])
     const patch = vi.fn().mockResolvedValue(1)
     const target = {
       key: 'git',
@@ -39,19 +41,46 @@ describe('storage model actions', () => {
     }
     Storage.targets = [target]
 
-    expect(await Storage.executeAction('git', 'sync')).toBeUndefined()
+    const summary = await Storage.executeAction('git', 'sync')
 
+    expect(summary).toEqual({
+      targetKey: 'git',
+      handler: 'sync',
+      outcome: 'succeeded',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      formats: {
+        okf: 1,
+        legacyV1: 0,
+        legacyWiki: 0,
+        plain: 0,
+        invalid: 0
+      },
+      items: [{
+        kind: 'page',
+        path: 'docs/storage',
+        outcome: 'succeeded',
+        format: 'okf',
+        message: null,
+        diagnostics: []
+      }],
+      startedAt: expect.any(String),
+      completedAt: expect.any(String),
+      message: 'Action completed.'
+    })
     expect(sync).toHaveBeenCalledTimes(1)
     expect(patch).toHaveBeenCalledWith({
       state: {
         status: 'operational',
         message: '',
-        lastAttempt: expect.any(String)
+        lastAttempt: expect.any(String),
+        lastOperation: summary
       }
     })
   })
 
-  it('refreshes stale activity timestamps without writing every repeated success', async () => {
+  it('persists each repeated action completion', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-29T03:00:00.000Z'))
     try {
@@ -69,16 +98,64 @@ describe('storage model actions', () => {
       }
       Storage.targets = [target]
 
-      await Storage.executeAction('git', 'sync')
-      await Storage.executeAction('git', 'sync')
+      const firstSummary = await Storage.executeAction('git', 'sync')
+      vi.setSystemTime(new Date('2026-08-29T03:00:01.000Z'))
+      const secondSummary = await Storage.executeAction('git', 'sync')
 
+      expect(firstSummary).toEqual({
+        targetKey: 'git',
+        handler: 'sync',
+        outcome: 'succeeded',
+        total: 0,
+        succeeded: 0,
+        failed: 0,
+        formats: {
+          okf: 0,
+          legacyV1: 0,
+          legacyWiki: 0,
+          plain: 0,
+          invalid: 0
+        },
+        items: [],
+        startedAt: '2026-08-29T03:00:00.000Z',
+        completedAt: '2026-08-29T03:00:00.000Z',
+        message: 'Action completed.'
+      })
+      expect(secondSummary).toEqual({
+        targetKey: 'git',
+        handler: 'sync',
+        outcome: 'succeeded',
+        total: 0,
+        succeeded: 0,
+        failed: 0,
+        formats: {
+          okf: 0,
+          legacyV1: 0,
+          legacyWiki: 0,
+          plain: 0,
+          invalid: 0
+        },
+        items: [],
+        startedAt: '2026-08-29T03:00:01.000Z',
+        completedAt: '2026-08-29T03:00:01.000Z',
+        message: 'Action completed.'
+      })
       expect(sync).toHaveBeenCalledTimes(2)
-      expect(patch).toHaveBeenCalledTimes(1)
-      expect(patch).toHaveBeenCalledWith({
+      expect(patch).toHaveBeenCalledTimes(2)
+      expect(patch).toHaveBeenNthCalledWith(1, {
         state: {
           status: 'operational',
           message: '',
-          lastAttempt: '2026-08-29T03:00:00.000Z'
+          lastAttempt: '2026-08-29T03:00:00.000Z',
+          lastOperation: firstSummary
+        }
+      })
+      expect(patch).toHaveBeenNthCalledWith(2, {
+        state: {
+          status: 'operational',
+          message: '',
+          lastAttempt: '2026-08-29T03:00:01.000Z',
+          lastOperation: secondSummary
         }
       })
     } finally {
@@ -101,7 +178,7 @@ describe('storage model actions', () => {
     expect(target.$query).not.toHaveBeenCalled()
   })
 
-  it('records action failures without hiding the action error', async () => {
+  it('resolves action failures as failed summaries and records the message', async () => {
     const actionError = new Error('sync failed')
     const sync = vi.fn().mockRejectedValue(actionError)
     const patch = vi.fn().mockResolvedValue(1)
@@ -112,13 +189,33 @@ describe('storage model actions', () => {
     }
     Storage.targets = [target]
 
-    await expect(Promise.resolve(Storage.executeAction('git', 'sync'))).rejects.toBe(actionError)
+    const summary = await Storage.executeAction('git', 'sync')
 
+    expect(summary).toEqual({
+      targetKey: 'git',
+      handler: 'sync',
+      outcome: 'failed',
+      total: 0,
+      succeeded: 0,
+      failed: 0,
+      formats: {
+        okf: 0,
+        legacyV1: 0,
+        legacyWiki: 0,
+        plain: 0,
+        invalid: 0
+      },
+      items: [],
+      startedAt: expect.any(String),
+      completedAt: expect.any(String),
+      message: 'sync failed'
+    })
     expect(patch).toHaveBeenCalledWith({
       state: {
         status: 'error',
         message: 'sync failed',
-        lastAttempt: expect.any(String)
+        lastAttempt: expect.any(String),
+        lastOperation: summary
       }
     })
     expect(logger.warn).toHaveBeenCalledWith(actionError)

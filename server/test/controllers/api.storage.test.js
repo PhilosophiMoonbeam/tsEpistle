@@ -213,14 +213,16 @@ describe('controllers/api storage endpoints', () => {
         title: 'Git',
         status: 'operational',
         message: 'Ready',
-        lastAttempt: '2026-05-03T00:00:00.000Z'
+        lastAttempt: '2026-05-03T00:00:00.000Z',
+        lastOperation: null
       },
       {
         key: 'disk',
         title: 'Disk',
         status: 'pending',
         message: 'Initializing...',
-        lastAttempt: null
+        lastAttempt: null,
+        lastOperation: null
       }
     ])
   })
@@ -402,7 +404,34 @@ describe('controllers/api storage endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: message })
   })
 
-  it('executes a storage action and returns JSON success', async () => {
+  it('executes a storage action and returns its JSON summary', async () => {
+    const summary = {
+      targetKey: 'git',
+      handler: 'sync',
+      outcome: 'succeeded',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      formats: {
+        okf: 1,
+        legacyV1: 0,
+        legacyWiki: 0,
+        plain: 0,
+        invalid: 0
+      },
+      items: [{
+        kind: 'page',
+        path: 'docs/storage',
+        outcome: 'succeeded',
+        format: 'okf',
+        message: null,
+        diagnostics: []
+      }],
+      startedAt: '2026-08-31T10:00:00.000Z',
+      completedAt: '2026-08-31T10:00:01.000Z',
+      message: 'Action completed.'
+    }
+    global.WIKI.models.storage.executeAction.mockResolvedValueOnce(summary)
     const handler = await loadExecuteActionHandler()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
@@ -410,7 +439,7 @@ describe('controllers/api storage endpoints', () => {
 
     expect(global.WIKI.models.storage.executeAction).toHaveBeenCalledWith('git', 'sync')
     expect(res.status).not.toHaveBeenCalled()
-    expect(res.json).toHaveBeenCalledWith({ message: 'Action completed.' })
+    expect(res.json).toHaveBeenCalledWith(summary)
   })
 
   it('rejects undeclared storage actions before runtime dispatch', async () => {
