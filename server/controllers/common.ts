@@ -287,6 +287,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       head: wiki.config.theming.injectHead,
       body: wiki.config.theming.injectBody
     }
+    const spaNavigation =
+      _.isEmpty(page.extra?.css) && _.isEmpty(page.extra?.js) && !(wiki.config.features.featurePageComments && wiki.data.commentProvider.codeTemplate)
     page.extra = page.extra || { css: '', js: '' }
     if (!_.isEmpty(page.extra.css)) injectCode.css = `${injectCode.css}\n${page.extra.css}`
     if (!_.isEmpty(page.extra.js)) injectCode.body = `${injectCode.body}\n${page.extra.js}`
@@ -317,6 +319,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       injectCode,
       comments: commentTmpl,
       effectivePermissions,
+      spaNavigation,
       pageFilename
     })
   }

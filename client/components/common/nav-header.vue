@@ -298,6 +298,7 @@ import {
 } from '../../helpers/page-action-events'
 import { emitSearchEnter, emitSearchMove } from '../../helpers/search-navigation-events'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
+import { navigateToWikiPage } from '../../helpers/wiki-navigation'
 
 type PageLocation = { path: string, locale: string }
 type SiteLocale = { code: string, name: string }
@@ -574,11 +575,7 @@ export default defineComponent({
       window.location.assign('/logout')
     },
     goHome () {
-      if (this.locales && this.locales.length > 0) {
-        window.location.assign(`/${this.locale}/home`)
-      } else {
-        window.location.assign('/')
-      }
+      navigateToWikiPage(this.locales && this.locales.length > 0 ? `/${this.locale}/home` : '/')
     }
   }
 })

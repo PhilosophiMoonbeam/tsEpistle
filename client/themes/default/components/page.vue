@@ -36,7 +36,10 @@
         )
         v-icon {{ navShown ? 'mdi-close' : 'mdi-menu' }}
 
-    v-main.page-main(ref='content')
+    v-main.page-main(
+      ref='content'
+      :aria-busy='navigationPending ? `true` : undefined'
+    )
       template(v-if='path !== `home`')
         v-toolbar.page-breadcrumb-bar(color='surface', flat, density="compact")
           //- v-btn.pl-0(v-if='$vuetify.display.xsOnly', variant='flat', @click='toggleNavigation')
@@ -738,6 +741,7 @@ import {
 import { decodeBase64Json } from '../../../helpers/base64'
 import { hydrateContentExtensions, revealContentExtensionTarget } from '../../../helpers/content-extension-runtime'
 import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
+import { navigateToWikiPage } from '../../../helpers/wiki-navigation'
 import {
   flattenTableOfContents,
   type FlattenedTableOfContentsNode,
@@ -926,6 +930,14 @@ export default defineComponent({
       type: String,
       default: ''
     },
+    navigationKey: {
+      type: Number,
+      default: 0
+    },
+    navigationPending: {
+      type: Boolean,
+      default: false
+    },
     filename: {
       type: String,
       default: ''
@@ -937,6 +949,7 @@ export default defineComponent({
       navShown: false,
       navExpanded: false,
       upBtnShown: false,
+      pageEditFab: false,
       pageWatched: false,
       pageWatchLoading: false,
       pageWatchEmailEnabled: true,
@@ -1093,29 +1106,29 @@ export default defineComponent({
       }
     }
   },
+  watch: {
+    navigationKey: {
+      flush: 'post',
+      async handler(value: number, previous: number) {
+        if (value === previous) return
+        this.syncPageStore()
+        this.resetPageRouteState()
+        await this.$nextTick()
+        this.refreshPageContent()
+        this.animatePageRoute()
+        if (this.isAuthenticated) {
+          void this.loadPageWatchState()
+          void this.loadPageWatchNotifications()
+          void this.loadPageApproval()
+        }
+        if (this.hasWritePagesPermission || this.hasManagePagesPermission || this.hasAdminPermission) {
+          void this.loadPageProtection()
+        }
+      }
+    }
+  },
   created() {
-    wikiStore.page.authorId = this.authorId
-    wikiStore.page.authorName = this.authorName
-    wikiStore.page.createdAt = this.createdAt
-    wikiStore.page.description = this.description
-    wikiStore.page.isPublished = this.isPublished
-    wikiStore.page.id = this.pageId
-    wikiStore.page.locale = this.locale
-    wikiStore.page.path = this.path
-    wikiStore.page.visibility = this.visibility
-    wikiStore.page.tags = this.tags
-    wikiStore.page.title = this.title
-    wikiStore.page.editor = this.editor
-    wikiStore.page.updatedAt = this.updatedAt
-    wikiStore.page.sourceRevision = this.sourceRevision
-    if (this.effectivePermissions) {
-      wikiStore.page.effectivePermissions = decodeBase64Json(this.effectivePermissions)
-    }
-    if (this.editShortcuts) {
-      wikiStore.page.editShortcuts = decodeBase64Json(this.editShortcuts)
-    }
-
-    wikiStore.page.mode = 'view'
+    this.syncPageStore()
   },
   mounted () {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -1137,19 +1150,8 @@ export default defineComponent({
     this.resizeHandler = () => this.handleSideNavVisibility()
     window.addEventListener('resize', this.resizeHandler)
 
-    // -> Highlight Code Blocks
-    Prism.highlightAllUnder(this.$refs.container as HTMLElement)
+    this.refreshPageContent()
 
-    // -> Render Mermaid diagrams
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: 'strict',
-      theme: this.$vuetify.theme.current.dark ? `dark` : `default`
-    })
-    this.$nextTick(() => {
-      const diagrams = (this.$refs.container as HTMLElement).querySelectorAll<HTMLElement>('.mermaid')
-      void mermaid.run({ nodes: diagrams, suppressErrors: true })
-    })
     // -> Handle anchor scrolling
     if (window.location.hash && window.location.hash.length > 1) {
       if (document.readyState === 'complete') {
@@ -1159,25 +1161,9 @@ export default defineComponent({
       } else {
         window.addEventListener('load', () => {
           this.scrollToPageAnchor(decodeURIComponent(window.location.hash), false)
-        })
+        }, { once: true })
       }
     }
-
-    // -> Handle anchor links and activate safe content extensions within the page contents
-    this.$nextTick(() => {
-      const container = this.$refs.container as HTMLElement
-      container.querySelectorAll<HTMLAnchorElement>(`a[href^="#"], a[href^="${window.location.href.replace(window.location.hash, '')}#"]`).forEach(el => {
-        el.onclick = (ev: MouseEvent) => {
-          ev.preventDefault()
-          ev.stopPropagation()
-          this.scrollToPageAnchor(decodeURIComponent(el.hash))
-        }
-      })
-      this.contentExtensionCleanup?.()
-      this.contentExtensionCleanup = hydrateContentExtensions(container)
-
-      boot.notify('page-ready')
-    })
   },
   beforeUnmount () {
     if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
@@ -1185,6 +1171,78 @@ export default defineComponent({
     this.contentExtensionCleanup = null
   },
   methods: {
+    syncPageStore(): void {
+      wikiStore.page.authorId = this.authorId
+      wikiStore.page.authorName = this.authorName
+      wikiStore.page.createdAt = this.createdAt
+      wikiStore.page.description = this.description
+      wikiStore.page.isPublished = this.isPublished
+      wikiStore.page.id = this.pageId
+      wikiStore.page.locale = this.locale
+      wikiStore.page.path = this.path
+      wikiStore.page.visibility = this.visibility
+      wikiStore.page.tags = this.tags
+      wikiStore.page.title = this.title
+      wikiStore.page.editor = this.editor
+      wikiStore.page.updatedAt = this.updatedAt
+      wikiStore.page.sourceRevision = this.sourceRevision
+      if (this.effectivePermissions) wikiStore.page.effectivePermissions = decodeBase64Json(this.effectivePermissions)
+      if (this.editShortcuts) wikiStore.page.editShortcuts = decodeBase64Json(this.editShortcuts)
+      wikiStore.page.mode = 'view'
+    },
+    resetPageRouteState(): void {
+      this.pageEditFab = false
+      this.pageWatched = false
+      this.pageWatchLoading = false
+      this.pageWatchNotifications = []
+      this.pageWatchNotificationsError = ''
+      this.pageWatchUnreadCount = 0
+      this.pageApproval = null
+      this.approvalError = ''
+      this.protectionDialog = false
+      this.protectionError = ''
+      this.pageProtection = { protected: false, version: 0, updatedBy: null, updatedAt: null }
+      this.pageProtectionPassword = ''
+    },
+    refreshPageContent(): void {
+      const container = this.$refs.container as HTMLElement
+      Prism.highlightAllUnder(container)
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: this.$vuetify.theme.current.dark ? 'dark' : 'default'
+      })
+      const diagrams = container.querySelectorAll<HTMLElement>('.mermaid')
+      void mermaid.run({ nodes: diagrams, suppressErrors: true })
+
+      const currentPageUrl = window.location.href.replace(window.location.hash, '')
+      container.querySelectorAll<HTMLAnchorElement>(`a[href^="#"], a[href^="${currentPageUrl}#"]`).forEach(anchor => {
+        anchor.onclick = (event: MouseEvent) => {
+          event.preventDefault()
+          event.stopPropagation()
+          this.scrollToPageAnchor(decodeURIComponent(anchor.hash))
+        }
+      })
+      this.contentExtensionCleanup?.()
+      this.contentExtensionCleanup = hydrateContentExtensions(container)
+      boot.notify('page-ready')
+    },
+    animatePageRoute(): void {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      const contentRef = this.$refs.content as HTMLElement | { $el?: unknown }
+      const element = contentRef instanceof HTMLElement
+        ? contentRef
+        : contentRef.$el instanceof HTMLElement
+          ? contentRef.$el
+          : null
+      if (!element) return
+      element.classList.remove('page-main--route-enter')
+      void element.offsetWidth
+      element.classList.add('page-main--route-enter')
+      element.addEventListener('animationend', () => {
+        element.classList.remove('page-main--route-enter')
+      }, { once: true })
+    },
     scrollToPageAnchor(anchor: string, focusDestination = true) {
       const container = this.$refs.container as HTMLElement
       revealContentExtensionTarget(container, anchor)
@@ -1315,7 +1373,7 @@ export default defineComponent({
     },
     openApprovalInboxItem (approval: PageApproval) {
       const scope = approval.visibility === 'private' ? '/_private' : ''
-      window.location.assign(`${scope}/${approval.localeCode}/${approval.path}`)
+      navigateToWikiPage(`${scope}/${approval.localeCode}/${approval.path}`)
     },
     async submitPageApproval () {
       this.approvalLoading = true
@@ -1466,14 +1524,10 @@ export default defineComponent({
         })
       }
       const scope = notification.visibility === 'private' ? '/_private' : ''
-      window.location.assign(`${scope}/${notification.localeCode}/${notification.path}`)
+      navigateToWikiPage(`${scope}/${notification.localeCode}/${notification.path}`)
     },
     goHome () {
-      if (this.locales && this.locales.length > 0) {
-        window.location.assign(`/${this.locale}/home`)
-      } else {
-        window.location.assign('/')
-      }
+      navigateToWikiPage(this.locales && this.locales.length > 0 ? `/${this.locale}/home` : '/')
     },
     toggleNavigation () {
       this.navShown = !this.navShown
@@ -1570,6 +1624,22 @@ export default defineComponent({
       rgb(var(--v-theme-background)) calc(var(--wiki-grid-size) * 8)
     );
 }
+.page-main--route-enter > * {
+  animation: wiki-page-route-enter var(--wiki-motion-normal) var(--wiki-motion-ease-out) both;
+}
+
+@keyframes wiki-page-route-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--wiki-space-2));
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 
 .page-navigation {
   border-inline-end: 1px solid var(--wiki-surface-border) !important;
@@ -3061,6 +3131,10 @@ export default defineComponent({
   .page-toc-item,
   .v-main .contents * {
     transition-duration: .001ms !important;
+  }
+
+  .page-main--route-enter > * {
+    animation: none !important;
   }
 
   .page-return-top:hover,

@@ -36,9 +36,9 @@ const registrations = [
   asyncComponent('VCardChin', () => import('./components/common/v-card-chin.vue')),
   asyncComponent('VCardInfo', () => import('./components/common/v-card-info.vue')),
   asyncComponent('Welcome', () => import('./components/welcome.vue')),
+  asyncComponent('WikiPage', () => import('./components/wiki-page.vue')),
   asyncComponent('VueScroll', () => import('./components/common/vue-scroll.vue')),
-  asyncComponent('NavFooter', () => import('./themes/default/components/nav-footer.vue')),
-  asyncComponent('Page', () => import('./themes/default/components/page.vue'))
+  asyncComponent('NavFooter', () => import('./themes/default/components/nav-footer.vue'))
 ]
 
 wikiStore.refreshAuth()

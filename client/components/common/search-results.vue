@@ -227,6 +227,7 @@ import { wikiStore } from '@/store/index.ts'
 import { onSearchEnter, onSearchMove, offSearchEnter, offSearchMove } from '../../helpers/search-navigation-events'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
 import { createModalFocusScope, type ModalFocusScope } from './modal-focus-scope'
+import { navigateToWikiPage } from '../../helpers/wiki-navigation'
 
 type InlineAgentChatRef = {
   focusComposer: () => Promise<void>
@@ -626,7 +627,7 @@ export default defineComponent({
       return `${visibilityScope}/${item.locale}/${item.path}`
     },
     navigateToPage(item: PageSearchRow): void {
-      window.location.assign(this.pageHref(item))
+      navigateToWikiPage(this.pageHref(item))
     },
     retrySearch(): void {
       const query = this.normalizedSearch
