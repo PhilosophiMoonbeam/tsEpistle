@@ -61,7 +61,10 @@ describe('core/servers GraphQL transports', () => {
       info: vi.fn()
     }
     const authenticateUserToken = vi.fn()
-    const checkAccess = vi.fn(user => user?.permissions?.includes('manage:system') === true)
+    const checkAccess = vi.fn((user, permissions = []) =>
+      user?.permissions?.includes('manage:system') === true ||
+      permissions.some(permission => user?.permissions?.includes(permission) === true)
+    )
     global.WIKI = {
       auth: {
         authenticateUserToken,
@@ -153,13 +156,26 @@ describe('core/servers GraphQL transports', () => {
         isDev: false,
         maskError: expect.any(Function)
       },
-      graphiql: false
+      graphiql: expect.any(Function)
     }))
     expect(global.WIKI.app.use).toHaveBeenCalledWith('/graphql', expect.any(Function))
     const request = { kind: 'request' }
     const response = { kind: 'response' }
     global.WIKI.app.use.mock.calls[0][1](request, response, vi.fn())
     expect(yoga).toHaveBeenCalledWith(request, response)
+  })
+
+  it('serves GraphiQL only to users with API administration access', async () => {
+    const { servers, createYoga, checkAccess } = await setupModule()
+    await servers.startGraphQL()
+    const { graphiql } = createYoga.mock.calls[0][0]
+    const request = {}
+    const permissions = ['manage:system', 'manage:api']
+
+    expect(graphiql(request, { req: { user: { permissions: ['manage:api'] } } })).toEqual({ subscriptionsProtocol: 'WS' })
+    expect(graphiql(request, { req: { user: { permissions: ['read:pages'] } } })).toBe(false)
+    expect(graphiql(request, {})).toBe(false)
+    expect(checkAccess).toHaveBeenCalledWith({ permissions: ['manage:api'] }, permissions)
   })
 
   it('masks unexpected GraphQL causes while retaining classified conflicts', async () => {
