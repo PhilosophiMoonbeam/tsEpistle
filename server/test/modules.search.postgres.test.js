@@ -114,6 +114,7 @@ describe('PostgreSQL hybrid search', () => {
     const recreation = harness.transactionRaw.mock.calls.find(([sql]) => String(sql).includes('CREATE TABLE "pagesVector"'))[0]
     expect(recreation).toContain('"sourceRevision" bigint NOT NULL')
     expect(recreation).toContain('CREATE UNIQUE INDEX pages_vector_identity_idx')
+    expect(recreation).toContain('CREATE INDEX pages_vector_tags_idx')
     expect(recreation).not.toContain('CREATE UNIQUE INDEX IF NOT EXISTS pages_vector_identity_idx')
     expect(harness.truncate).toHaveBeenCalledTimes(2)
   })
@@ -128,9 +129,9 @@ describe('PostgreSQL hybrid search', () => {
 
     expect(harness.truncate).toHaveBeenCalledTimes(2)
     const metadataRead = harness.transactionRaw.mock.calls.find(([sql]) => String(sql).includes('FROM "pagesSearchMetadata"'))
-    expect(metadataRead[1]).toEqual([1, 'english'])
+    expect(metadataRead[1]).toEqual([2, 'english'])
     const metadataWrite = harness.transactionRaw.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO "pagesSearchMetadata"'))
-    expect(metadataWrite[1]).toEqual([1, 'english'])
+    expect(metadataWrite[1]).toEqual([2, 'english'])
   })
 
   it('reconciles stale vector source revisions before declaring readiness', async () => {
@@ -182,7 +183,7 @@ describe('PostgreSQL hybrid search', () => {
     const [sql, bindings] = harness.raw.mock.calls.find(([statement]) => String(statement).includes('WITH RECURSIVE query_input'))
     expect(sql).not.toContain('Amber Falcon')
     expect(bindings).toContain('Amber Falcon')
-    expect(bindings.at(-1)).toBe(100)
+    expect(bindings.slice(-5)).toEqual([300, 100, 300, 100, 100])
   })
 
   it('scopes locale and literal path before the configured result window', async () => {
@@ -223,10 +224,14 @@ describe('PostgreSQL hybrid search', () => {
     expect(sql.indexOf('vector.locale = input.locale_filter')).toBeLessThan(firstLimit)
     expect(sql.indexOf('vector.path = input.path_filter')).toBeLessThan(firstLimit)
     expect(sql.indexOf('vector.path LIKE input.path_prefix')).toBeLessThan(firstLimit)
+    expect(firstLimit).toBeLessThan(sql.indexOf('), lexical_ids AS MATERIALIZED'))
+    expect(sql.indexOf('(lower(vector.title) = input.raw_query) DESC')).toBeLessThan(firstLimit)
+    expect(sql.indexOf('vector.tags @> ARRAY[input.raw_query]::text[]')).toBeLessThan(firstLimit)
+    expect(sql.indexOf('(lower(vector.path) = input.raw_query) DESC')).toBeLessThan(firstLimit)
     expect(bindings).toContain('%100\\%\\_ literal%')
     expect(bindings).toContain('ops%_')
     expect(bindings).toContain('ops\\%\\_/%')
-    expect(bindings.slice(-2)).toEqual([7, 7])
+    expect(bindings.slice(-5)).toEqual([21, 7, 21, 7, 7])
   })
 
   it('limits spelling candidates to identities in the returned scoped candidate set', async () => {

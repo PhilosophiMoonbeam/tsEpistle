@@ -7,7 +7,9 @@ import {
   enqueuePageMutationEffects,
   executePageMutationEffect,
   PageMutationOutboxError,
+  PageProjectionPayloadSchema,
   rearmFailedKnowledgeEffect,
+  rearmPageMutationEffect,
   type ClaimedPageProjectionEffect,
   type PageProjectionPayload,
   type PageProjectionSink
@@ -61,6 +63,18 @@ interface ProjectionQueueSourceRow {
   readonly path: string
   readonly visibility: 'public' | 'private'
   readonly ownerId: number | null
+}
+
+interface CurrentProjectionScanRow {
+  readonly id: number
+  readonly sourceRevision: string | number
+}
+
+interface CurrentKnowledgeEffectRow {
+  readonly id: string
+  readonly attempts: number
+  readonly status: string
+  readonly payload: string
 }
 
 interface StoredProjectionRow {
@@ -460,29 +474,89 @@ export class PageKnowledgeRepository {
   }
 }
 
-const enqueueMissing = async (knex: Knex, limit: number): Promise<number> => {
-  const missing = knex('pageMutationOutbox')
-    .select(knex.raw('1'))
-    .whereRaw('"pageMutationOutbox"."pageId" = "pages"."id"')
-    .whereRaw('"pageMutationOutbox"."sourceRevision" = "pages"."sourceRevision"')
-    .where('pageMutationOutbox.effectKind', 'knowledge')
-  const rows = await knex<ProjectionQueueSourceRow>('pages')
-    .whereNotExists(missing)
-    .select('id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId')
+const loadCurrentProjectionScan = async (knex: Knex, afterPageId: number, limit: number): Promise<CurrentProjectionScanRow[]> => {
+  const rows = await knex<CurrentProjectionScanRow>('pages').where('id', '>', afterPageId).select('id', 'sourceRevision').orderBy('id').limit(limit)
+  if (rows.length === limit) return rows
+  const wrapped = await knex<CurrentProjectionScanRow>('pages')
+    .where('id', '<=', afterPageId)
+    .select('id', 'sourceRevision')
     .orderBy('id')
-    .limit(limit)
-  for (const row of rows) {
-    await enqueuePageMutationEffects(knex, {
-      pageId: Number(row.id),
-      sourceRevision: row.sourceRevision,
-      desiredState: 'present',
-      action: 'update',
-      source: row.content,
-      location: { locale: row.localeCode, path: row.path, visibility: row.visibility, ownerId: row.ownerId },
-      effects: ['knowledge']
-    })
+    .limit(limit - rows.length)
+  return [...rows, ...wrapped]
+}
+
+const parseKnowledgeEffectPayload = (value: string): PageProjectionPayload => {
+  let decoded: unknown
+  try {
+    decoded = JSON.parse(value)
+  } catch {
+    throw new PageMutationOutboxError('INVALID_OUTBOX_PAYLOAD', 'Page mutation outbox payload is invalid JSON')
   }
-  return rows.length
+  const payload = PageProjectionPayloadSchema.safeParse(decoded)
+  if (!payload.success) throw new PageMutationOutboxError('INVALID_OUTBOX_PAYLOAD', 'Page mutation outbox payload is invalid')
+  return payload.data
+}
+
+const repairCurrentProjection = async (knex: Knex, scanned: CurrentProjectionScanRow, now: Date): Promise<number> =>
+  knex.transaction(async transaction => {
+    const page = await transaction<ProjectionQueueSourceRow>('pages')
+      .where({ id: scanned.id, sourceRevision: scanned.sourceRevision })
+      .forUpdate()
+      .first('id', 'sourceRevision', 'content', 'localeCode', 'path', 'visibility', 'ownerId')
+    if (!page) return 0
+    const sourceRevision = revision(page.sourceRevision)
+    const authoritativeSource = await loadSource(transaction, Number(page.id), sourceRevision)
+    if (!authoritativeSource) return 0
+    const sourceSha256 = projectPageKnowledge(authoritativeSource).source.sha256
+    const projection = await transaction<StoredProjectionRow>('pageKnowledgeProjections')
+      .where({ pageId: page.id, sourceRevision })
+      .first('sourceSha256', 'projection')
+    if (isValidProjection(projection, Number(page.id), sourceRevision, sourceSha256)) return 0
+
+    const effect = await transaction<CurrentKnowledgeEffectRow>('pageMutationOutbox')
+      .where('pageId', page.id)
+      .where('sourceRevision', sourceRevision)
+      .where('effectKind', 'knowledge')
+      .first('id', 'status', 'attempts', 'payload')
+    const location = {
+      locale: page.localeCode,
+      path: page.path,
+      visibility: page.visibility,
+      ownerId: page.ownerId
+    }
+    if (!effect) {
+      await enqueuePageMutationEffects(transaction, {
+        pageId: Number(page.id),
+        sourceRevision,
+        desiredState: 'present',
+        action: 'update',
+        source: page.content,
+        location,
+        effects: ['knowledge']
+      })
+      return 1
+    }
+    if (effect.status !== 'succeeded' && !(effect.status === 'failed' && effect.attempts < 5)) return 0
+
+    const immutable = parseKnowledgeEffectPayload(effect.payload)
+    const payload = PageProjectionPayloadSchema.parse({
+      ...immutable,
+      version: 1,
+      effectKind: 'knowledge',
+      desiredState: 'present',
+      pageId: Number(page.id),
+      sourceRevision,
+      sourceSha256: sha256(page.content),
+      location
+    })
+    return (await rearmPageMutationEffect(transaction, { id: effect.id, payload, now })) ? 1 : 0
+  })
+
+const validateCurrentProjections = async (knex: Knex, afterPageId: number, limit: number, now: Date): Promise<{ repaired: number; cursor: number }> => {
+  const rows = await loadCurrentProjectionScan(knex, afterPageId, limit)
+  let repaired = 0
+  for (const row of rows) repaired += await repairCurrentProjection(knex, row, now)
+  return { repaired, cursor: rows.at(-1)?.id ?? 0 }
 }
 
 const recoverTerminalFailures = async (knex: Knex, now: Date): Promise<number> => {
@@ -582,6 +656,7 @@ export class PageKnowledgeLifecycle {
   readonly #enricher: AgentKnowledgeEnricher | undefined
   readonly #workerId: string
   #running = false
+  #projectionScanCursor = 0
 
   constructor(knex: Knex, workerId: string, enricher?: AgentKnowledgeEnricher) {
     this.#knex = knex
@@ -632,7 +707,9 @@ export class PageKnowledgeLifecycle {
     try {
       const now = new Date()
       const profileVersionId = await currentProfileVersionId(this.#knex).catch(() => null)
-      const backfilled = await enqueueMissing(this.#knex, 25)
+      const validation = await validateCurrentProjections(this.#knex, this.#projectionScanCursor, 25, now)
+      this.#projectionScanCursor = validation.cursor
+      const backfilled = validation.repaired
       const requeued = (await recoverTerminalFailures(this.#knex, now)) + (this.#enricher ? await requeueRetryable(this.#knex, profileVersionId, now) : 0)
       const claims = await claimPageMutationEffects(this.#knex, {
         leaseOwner: this.#workerId,

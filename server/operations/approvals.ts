@@ -4,7 +4,6 @@ import { canReadPage, canWritePage, managesSystem, principalId, type PagePrincip
 import { writeOutboxEvent } from '../core/outbox.ts'
 import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import errors from './errors.ts'
-import { redactProtectedPageForSearch } from './page-protection.ts'
 
 const { ApplicationError } = errors
 
@@ -41,16 +40,13 @@ interface ApprovalRequestRow extends Record<string, unknown> {
 
 interface WikiContext {
   auth: { checkAccess(user: PagePrincipal, permissions: readonly string[], context: Record<string, unknown>): boolean }
-  data: { searchEngine: { updated(page: unknown): Promise<void> } }
   models: {
     knex: Knex
     pages: {
       getPageFromDb(id: number): Promise<ApprovalPage | undefined>
       query(transaction?: Knex.Transaction): {
         patch(input: Record<string, unknown>): { where(criteria: Record<string, unknown>): Promise<number> }
-        findById(id: number): { select(...columns: string[]): Promise<Record<string, unknown> | undefined> }
       }
-      cleanHTML(value: string): string
     }
     pageHistory: {
       addVersion(input: Record<string, unknown>): Promise<{ id: number }>
@@ -384,16 +380,5 @@ export const transitionApproval = async (input: {
     return updated
   })
 
-  if (published) {
-    const page = await wiki.models.pages.getPageFromDb(result.pageId)
-    if (page && page.visibility === 'public') {
-      const contents = await wiki.models.pages.query().findById(page.id).select('render')
-      if (contents && typeof contents.render === 'string') {
-        Reflect.set(page, 'safeContent', wiki.models.pages.cleanHTML(contents.render))
-      }
-      await redactProtectedPageForSearch(page)
-      await wiki.data.searchEngine.updated(page)
-    }
-  }
   return result
 }

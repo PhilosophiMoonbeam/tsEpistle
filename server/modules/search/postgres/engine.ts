@@ -4,9 +4,10 @@ import type { Knex } from 'knex'
 const VECTOR_TABLE = 'pagesVector'
 const WORDS_TABLE = 'pagesWords'
 const METADATA_TABLE = 'pagesSearchMetadata'
-const SEARCH_SCHEMA_VERSION = 1
+const SEARCH_SCHEMA_VERSION = 2
 const GRAPH_DEPTH = 2
 const REBUILD_CURSOR_SIZE = 100
+const EXACT_MATCH_CANDIDATE_MULTIPLIER = 3
 const REBUILD_LOCK_NAME = 'wiki.search.postgres.derived-index'
 
 interface PostgresSearchConfig extends SearchConfig {
@@ -93,8 +94,8 @@ const hasCurrentSearchSchema = async (transaction: Knex.Transaction): Promise<bo
         ('pagesVector', 'path', 'text', true, NULL),
         ('pagesVector', 'locale', 'character varying(35)', true, NULL),
         ('pagesVector', 'title', 'text', true, NULL),
-        ('pagesVector', 'description', 'text', true, ''''::text),
-        ('pagesVector', 'tags', 'text[]', true, '''{}''::text[]),
+        ('pagesVector', 'description', 'text', true, $default$''::text$default$),
+        ('pagesVector', 'tags', 'text[]', true, $default$'{}'::text[]$default$),
         ('pagesVector', 'facets', 'text', true, NULL),
         ('pagesVector', 'tokens', 'tsvector', true, NULL),
         ('pagesWords', 'pageId', 'integer', true, NULL),
@@ -139,6 +140,7 @@ const hasCurrentSearchSchema = async (transaction: Knex.Transaction): Promise<bo
       VALUES
         ('pages_vector_identity_idx', 'pagesVector', 'btree', true, ARRAY['locale', 'path']::text[], ARRAY['text_ops', 'text_ops']::text[]),
         ('pages_vector_tokens_idx', 'pagesVector', 'gin', false, ARRAY['tokens']::text[], ARRAY['tsvector_ops']::text[]),
+        ('pages_vector_tags_idx', 'pagesVector', 'gin', false, ARRAY['tags']::text[], ARRAY['array_ops']::text[]),
         ('pages_vector_facets_trgm_idx', 'pagesVector', 'gin', false, ARRAY['facets']::text[], ARRAY['gin_trgm_ops']::text[]),
         ('pages_words_word_trgm_idx', 'pagesWords', 'gin', false, ARRAY['word']::text[], ARRAY['gin_trgm_ops']::text[])
     ), actual_indexes AS (
@@ -153,7 +155,7 @@ const hasCurrentSearchSchema = async (transaction: Knex.Transaction): Promise<bo
         index_data.indexprs IS NULL AND index_data.indpred IS NULL
           AND index_data.indnatts = index_data.indnkeyatts AS is_plain,
         ARRAY(
-          SELECT attribute.attname
+          SELECT attribute.attname::text
           FROM unnest(index_data.indkey::smallint[]) WITH ORDINALITY AS index_key(attnum, ordinal)
           JOIN pg_attribute attribute ON attribute.attrelid = index_data.indrelid
             AND attribute.attnum = index_key.attnum
@@ -161,7 +163,7 @@ const hasCurrentSearchSchema = async (transaction: Knex.Transaction): Promise<bo
           ORDER BY index_key.ordinal
         ) AS column_names,
         ARRAY(
-          SELECT operator_class.opcname
+          SELECT operator_class.opcname::text
           FROM unnest(index_data.indclass::oid[]) WITH ORDINALITY AS index_operator(opclass_oid, ordinal)
           JOIN pg_opclass operator_class ON operator_class.oid = index_operator.opclass_oid
           WHERE index_operator.ordinal <= index_data.indnkeyatts
@@ -176,6 +178,7 @@ const hasCurrentSearchSchema = async (transaction: Knex.Transaction): Promise<bo
         AND index_class.relname IN (
           'pages_vector_identity_idx',
           'pages_vector_tokens_idx',
+          'pages_vector_tags_idx',
           'pages_vector_facets_trgm_idx',
           'pages_words_word_trgm_idx'
         )
@@ -251,6 +254,7 @@ const recreateSearchSchema = async (transaction: Knex.Transaction): Promise<void
     );
     CREATE UNIQUE INDEX pages_vector_identity_idx ON "pagesVector" (locale, path);
     CREATE INDEX pages_vector_tokens_idx ON "pagesVector" USING GIN (tokens);
+    CREATE INDEX pages_vector_tags_idx ON "pagesVector" USING GIN (tags);
     CREATE INDEX pages_vector_facets_trgm_idx ON "pagesVector" USING GIN (facets gin_trgm_ops);
     CREATE INDEX pages_words_word_trgm_idx ON "pagesWords" USING GIN (word gin_trgm_ops);
   `)
@@ -557,13 +561,14 @@ const queryPages = async (
         ?::text AS locale_filter,
         ?::text AS path_filter,
         ?::text AS path_prefix
-    ), exact_ids AS MATERIALIZED (
+    ), priority_ids AS MATERIALIZED (
       SELECT vector."pageId"
       FROM "pagesVector" vector
       CROSS JOIN query_input input
       WHERE (
-        (input.query <> ''::tsquery AND vector.tokens @@ input.query) OR
-        vector.facets ILIKE input.like_query ESCAPE '\\'
+        lower(vector.title) = input.raw_query OR
+        vector.tags @> ARRAY[input.raw_query]::text[] OR
+        lower(vector.path) = input.raw_query
       )
       AND (input.locale_filter IS NULL OR vector.locale = input.locale_filter)
       AND (
@@ -571,6 +576,38 @@ const queryPages = async (
         vector.path = input.path_filter OR
         vector.path LIKE input.path_prefix ESCAPE '\\'
       )
+      ORDER BY
+        (lower(vector.title) = input.raw_query) DESC,
+        (vector.tags @> ARRAY[input.raw_query]::text[]) DESC,
+        (lower(vector.path) = input.raw_query) DESC,
+        lower(vector.title),
+        vector."pageId"
+      LIMIT ?
+    ), lexical_ids AS MATERIALIZED (
+      SELECT vector."pageId"
+      FROM "pagesVector" vector
+      CROSS JOIN query_input input
+      WHERE (SELECT count(*) FROM priority_ids) < ?
+      AND (
+        (input.query <> ''::tsquery AND vector.tokens @@ input.query) OR
+        vector.facets ILIKE input.like_query ESCAPE '\\'
+      )
+      AND NOT EXISTS (SELECT 1 FROM priority_ids priority WHERE priority."pageId" = vector."pageId")
+      AND (input.locale_filter IS NULL OR vector.locale = input.locale_filter)
+      AND (
+        input.path_filter IS NULL OR
+        vector.path = input.path_filter OR
+        vector.path LIKE input.path_prefix ESCAPE '\\'
+      )
+      ORDER BY
+        ts_rank_cd('{0.05,0.2,0.6,1.0}'::real[], vector.tokens, input.query, 32) DESC,
+        lower(vector.title),
+        vector."pageId"
+      LIMIT ?
+    ), exact_ids AS MATERIALIZED (
+      SELECT "pageId" FROM priority_ids
+      UNION ALL
+      SELECT "pageId" FROM lexical_ids
     ), fuzzy_ids AS MATERIALIZED (
       SELECT vector."pageId"
       FROM "pagesVector" vector
@@ -689,7 +726,7 @@ const queryPages = async (
     FROM ranked
     ORDER BY score DESC, ranked.preliminary_score DESC, lower(ranked.title), ranked."pageId"
   `,
-    [dictionary, dictionary, query, query, escapedLikeTerm(query), options.locale ?? null, path, pathPrefix, maxHits, maxHits]
+    [dictionary, dictionary, query, query, escapedLikeTerm(query), options.locale ?? null, path, pathPrefix, maxHits * EXACT_MATCH_CANDIDATE_MULTIPLIER, maxHits, maxHits * EXACT_MATCH_CANDIDATE_MULTIPLIER, maxHits, maxHits]
   )
   return results.rows
 }

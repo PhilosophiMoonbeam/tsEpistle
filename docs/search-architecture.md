@@ -15,7 +15,7 @@ Wiki search exposes PostgreSQL Advanced as its sole engine. The browser UI, Wiki
 
 PostgreSQL Advanced applies an exact locale filter and an exact path-or-descendant filter before ranking and before the configured `search.maxHits` window. A path scope includes only the selected path or values beginning with `path/`; `%` and `_` are literal scope characters. The engine returns no more than the configured limit.
 
-Rebuild success means the live derived index is an authoritative replacement, including removal of documents absent from the rebuilt corpus. Page batches are indexed inside one transaction, so a failed stage or document write rolls back while the prior live index remains selected and unchanged.
+Rebuild success means the derived index is an authoritative replacement, including removal of documents absent from the canonical page corpus. Rebuild runs in one transaction: transactional truncation and all replacement writes commit together, while a failed rebuild rolls back to the prior derived state. A transaction-scoped advisory lock named `wiki.search.postgres.derived-index` prevents concurrent initializations or rebuilds; lock contention fails rather than permitting two writers.
 
 The engine key is `postgres`. Fresh installations, upgraded deployments, browser configuration, Agent search, and MCP search all reconcile to this single provider; no alternate engine is selectable.
 
@@ -23,9 +23,12 @@ The engine key is `postgres`. Fresh installations, upgraded deployments, browser
 
 `pagesVector` contains one row per published public page:
 
+`pages` is authoritative. Search tables are derived projections and may be discarded and rebuilt.
+
 | Column | Purpose |
 | --- | --- |
 | `pageId` | Canonical page identity and primary key |
+| `sourceRevision` | Exact authoritative page revision represented by this vector |
 | `path`, `locale` | Stable routing identity and scope filters |
 | `title`, `description` | Result metadata and field-specific evidence |
 | `tags` | Normalized tag values returned with results |
@@ -35,10 +38,13 @@ The engine key is `postgres`. Fresh installations, upgraded deployments, browser
 Weights are: title and tags `A`, path and description `B`, content `C`. The index has:
 
 - a GIN index on `tokens` for full-text retrieval;
+- a GIN array index on normalized `tags` for bounded exact-tag retrieval;
 - a trigram GIN index on `facets` for substring and typo retrieval;
 - a unique locale/path identity index.
 
 `pagesWords` stores per-page, unstemmed metadata terms. Its trigram GIN index supports spelling suggestions while page identity makes mutation-time replacement bounded and exact.
+
+`pagesSearchMetadata` is the singleton schema contract. Contract ID `1` records search schema version `2` and the configured PostgreSQL text-search dictionary. Initialization validates the complete column, primary-key, index validity/readiness, access-method, indexed-column, and operator-class contract. Any mismatch recreates the derived schema before rebuilding; a dictionary change also forces a rebuild. Startup additionally compares every eligible page's `sourceRevision` with `pagesVector.sourceRevision` and removes orphaned or ineligible vectors through the same rebuild path.
 
 The PostgreSQL engine also ensures source-side indexes on `pageLinks.pageId`, `pageTags.pageId`, and `pageTags.tagId`. Existing target path/locale and page identity indexes resolve graph edges without denormalizing the link graph.
 
@@ -46,10 +52,13 @@ The PostgreSQL engine also ensures source-side indexes on `pageLinks.pageId`, `p
 
 ```mermaid
 flowchart LR
-    Q[User query] --> P[websearch_to_tsquery]
-    P --> E[GIN lexical and substring candidates]
-    E -->|fewer than 5| F[Trigram fuzzy fallback]
-    E --> R[Field-aware lexical rerank]
+    Q[User query] --> P[Normalize and parse query]
+    P --> E[Exact title, tag, and path priority set]
+    P --> L[GIN lexical and substring candidates]
+    E --> B[Bounded candidate union]
+    L --> B
+    B -->|fewer than 5| F[Trigram fuzzy fallback]
+    B --> R[Field-aware lexical rerank]
     F --> R
     R --> C[Top 100 candidates]
     C --> G[Depth-2 recursive link CTE]
@@ -88,17 +97,19 @@ Both Agent chat and MCP expose the same grounded retrieval sequence:
 
 The breadth-first walk runs over a set-based PostgreSQL edge read rather than inside the search CTE. Authorization rules can depend on live path, locale, and tags, so filtering nodes before constructing adjacency is safer than traversing the database graph first and filtering results afterward. The search CTE remains a candidate-only depth-two reranker; `pages.related` provides intentional broad graph retrieval.
 
-Internal Wiki links are durable graph edges. Rendering a created or patched page synchronously replaces its `pageLinks` records from the canonical authored content. Agent instructions and Agent/MCP proposal descriptions therefore require authors to search and read related pages before a knowledge-changing create or patch, then add canonical links and precise tags only when supported by the page content. Links remain visible, reviewable, and reproducible from page history; the Agent must not invent invisible edges merely to influence retrieval.
+Internal Wiki links are durable graph edges derived from canonical authored content. A page mutation records a `links` projection intent alongside the authoritative page revision; the projection worker replaces `pageLinks` only after validating that immutable intent against the current page identity and source hash. Agent instructions and Agent/MCP proposal descriptions therefore require authors to search and read related pages before a knowledge-changing create or patch, then add canonical links and precise tags only when supported by the page content. Links remain visible, reviewable, and reproducible from page history; the Agent must not invent invisible edges merely to influence retrieval.
 
 `pages.listLinks` / `wiki_list_page_links` reports only canonical internal page links. External URLs and rendered asset references are not stored in `pageLinks` and are therefore not advertised by this contract.
 
 ## Mutation and rebuild lifecycle
 
-- Create and update events upsert the page vector and replace only that page's suggestion terms in one transaction.
-- Rename events upsert the complete destination identity and current metadata; no stale title or path remains.
-- Delete events remove the vector and suggestion terms in one transaction.
-- Activation detects the legacy search schema, replaces the derived tables, creates the required indexes, and performs one rebuild.
-- Rebuild truncates the derived tables inside the atomic transaction, then walks published public page identities in bounded keyset-cursor batches. Each canonical rendered document is prepared and indexed before the next identity batch is loaded; rollback restores the prior live index on any failure.
+- Page mutations persist authoritative page state and immutable `render`, `links`, `search`, and `knowledge` intents in the durable `pageMutationOutbox`. Each intent is keyed by page, source revision, desired presence, and effect kind; its canonical payload and SHA-256 hash are validated fail-closed before execution or repair.
+- Workers claim bounded batches with expiring leases and heartbeats. A lost lease cannot complete an effect, failures retain durable retry state, and superseded revisions cannot overwrite a newer projection.
+- A `search` intent waits for the exact revision's render intent to succeed. Published public pages are reconciled through the PostgreSQL engine; private, unpublished, and absent pages have both `pagesVector` and `pagesWords` removed. Success is recorded only after `pagesVector.sourceRevision` proves the current authoritative revision, or after absence of both derived rows is proven.
+- Search maintenance scans bounded sets for missing current-revision intents, revision mismatches, orphan vectors, and stale suggestion rows. It re-arms only an immutable payload that still matches the current page revision, identity, and source hash. Payload or hash corruption remains terminal evidence rather than being silently rewritten.
+- Knowledge projection is maintained independently from search retrieval. Its lifecycle discovers missing current/history projections, retries eligible work, and re-arms failed durable `knowledge` effects only from validated canonical intent. `pages` and page history remain authoritative; `pageKnowledgeProjections` is repairable derived state.
+- Rename and delete intents carry the prior identity or desired absence, so stale link/search identities are evicted without treating a derived row as source truth.
+- Activation validates or recreates the search schema and performs a rebuild when its schema, dictionary, or source revisions are stale. An explicit rebuild truncates the derived tables inside the advisory-locked transaction, then walks published public page identities in bounded keyset-cursor batches. Each canonical rendered document is indexed before the next identity batch is loaded; rollback restores the prior derived state on any failure.
 
 Protected pages never contribute content tokens during either incremental indexing or rebuild. Their visible title, path, description, and tags remain searchable. Private pages stay outside the shared index and are searched only inside the requester's owner scope. Private retrieval applies the requested locale and path scope and matches title, description, content, path, and tags before merging results into the same deterministic ordering.
 
@@ -150,29 +161,39 @@ Every checked draft emits a bounded `evidence.provenance` event. It records whet
 
 ## Performance envelope
 
-Measured on PostgreSQL 17.11 with 20,000 synthetic published pages, 20,001 links, and 20,000 page-tag relations:
+Two executable benchmarks cover different contracts and must not be compared as if they measured the same path:
 
-- full set-based index build: **2.724 s**;
-- exact title/content query p95: **24.90 ms**;
-- typo-tolerant query p95: **22.47 ms**;
-- multi-term description query p95: **20.08 ms**;
-- common tag query p95: **24.59 ms**.
+- `bun run benchmark:page-index` exercises the discovery repository's bounded page-index candidate read, authorization principals, overflow sentinel, query count, connection use, heap growth, and PostgreSQL plan counters. It does not invoke the search plugin.
+- `bun run benchmark:postgres-search` starts an isolated PostgreSQL 17 container and invokes `server/modules/search/postgres/engine.ts` against a deterministic 20,000-page corpus (seed `20_260_831`) containing rendered content, normalized tags, and canonical links. It measures the plugin rebuild and warmed exact title/content, typo/fuzzy, multi-term description, and common-tag distributions.
 
-Each query was warmed once and measured over 30 sequential executions with a 100-result cap. These numbers are a regression reference, not a universal capacity guarantee; production latency also includes authorization and page hydration.
+The PostgreSQL search report records the PostgreSQL and `pg_trgm` versions, corpus seed and expected/observed shape, vector/suggestion counts and revision/orphan checks, search schema version and dictionary, engine caps, iterations, warmups, raw samples, nearest-rank percentiles, representative result checks, configured thresholds, and every violation. By default, every query distribution must meet a 200 ms p95 threshold; `POSTGRES_SEARCH_MAX_QUERY_P95_MS` provides an environment override. Representative correctness checks cover exact-title precedence, rendered-content retrieval, typo fallback, multi-term description retrieval, and common-tag cap/membership. Publication is an atomic JSON replacement; invariant or threshold failure still publishes the diagnostic report and exits nonzero. The wrapper refuses non-dedicated database names and removes its container on every exit, so it cannot read production data.
+
+Measured timings are machine-specific and depend on machine load and PostgreSQL settings; they are not universal performance claims. No historical latency values are claimed here. A benchmark result is evidence only when retained from the executable command with its complete self-describing report.
+
+## Projection observability
+
+- `wiki_page_mutation_effects` reports durable render, links, and knowledge effects by lifecycle status. `wiki_page_mutation_oldest_eligible_age_seconds` and `wiki_page_mutation_expired_running_leases` expose queue delay and abandoned work across eligible effects.
+- `wiki_page_search_documents{kind=\"eligible_pages\"}` and `{kind=\"indexed_vectors\"}` expose the authoritative/derived document counts.
+- `wiki_page_search_vector_anomalies{kind=\"revision_mismatch\"}` detects vectors whose `sourceRevision` differs from the authoritative page, while `{kind=\"orphan\"}` detects vectors for missing, private, or unpublished pages.
+- `wiki_page_knowledge_projection_gaps` counts authoritative pages without a knowledge projection for the current source revision.
+
+Search document counts are not a sufficient correctness check by themselves: equal counts can still hide a revision mismatch and an orphan. Alerting should evaluate the vector anomaly gauges together with durable-effect age and failure status. Derived-state repair may re-arm matching immutable intent; operators must investigate payload/hash validation failures rather than bypassing them.
 
 ## Operational checks
 
 After activating or upgrading the PostgreSQL engine:
 
-1. Rebuild the search index once if activation did not already replace the legacy schema.
-2. Confirm `pagesVector` has one row per published public page.
-3. Confirm the `pages_vector_tokens_idx` and `pages_vector_facets_trgm_idx` indexes are valid.
-4. Search an exact title, a tag, a content-only phrase, a quoted phrase, an excluded term, and a misspelling; confirm suggestions and window metadata.
-5. Confirm locale and path scope work for public results and the owner's private title, content, path, and tag matches.
-6. Confirm a protected content-only term is absent while the protected page's visible metadata remains searchable.
-7. Confirm tag search, tag pagination, and structured discovery return only authorized records and reject an over-broad discovery scope.
-8. Confirm `pages.related` returns authorized direct links and backlinks, continues a connected component with its opaque cursor, rejects a modified cursor, and does not traverse through a denied page.
-9. Confirm the Wiki Agent calls search or discovery, optionally `pages.related`, then `pages.get`, and emits a page citation.
-10. Use an adversarial page where an incident name appears in the introduction and procedures appear in another section. Confirm the wrong section is rejected, the corrected grouped answer is accepted, unsupported verification language is withheld, and `evidence.provenance` records the claim-to-section mapping.
+1. Rebuild the search index once if activation did not already repair the schema or stale revisions; investigate advisory-lock contention instead of retrying concurrent rebuilds.
+2. Confirm `pagesSearchMetadata` records contract ID `1`, schema version `2`, and the configured dictionary.
+3. Confirm every published public page has one `pagesVector` row with the same `sourceRevision`, and that no ineligible or absent page retains vector or suggestion rows.
+4. Confirm the `pages_vector_tokens_idx`, `pages_vector_tags_idx`, `pages_vector_facets_trgm_idx`, and `pages_words_word_trgm_idx` indexes are valid, ready, live, and use their expected operator classes.
+5. Search an exact title, a tag, a content-only phrase, a quoted phrase, an excluded term, and a misspelling; confirm suggestions and window metadata.
+6. Confirm locale and path scope work for public results and the owner's private title, content, path, and tag matches.
+7. Confirm a protected content-only term is absent while the protected page's visible metadata remains searchable.
+8. Confirm tag search, tag pagination, and structured discovery return only authorized records and reject an over-broad discovery scope.
+9. Confirm `pages.related` returns authorized direct links and backlinks, continues a connected component with its opaque cursor, rejects a modified cursor, and does not traverse through a denied page.
+10. Confirm the Wiki Agent calls search or discovery, optionally `pages.related`, then `pages.get`, and emits a page citation.
+11. Use an adversarial page where an incident name appears in the introduction and procedures appear in another section. Confirm the wrong section is rejected, the corrected grouped answer is accepted, unsupported verification language is withheld, and `evidence.provenance` records the claim-to-section mapping.
+12. Run `bun run benchmark:page-index` for discovery regressions and `bun run benchmark:postgres-search` for engine regressions; retain each atomic JSON report rather than transcribing isolated latency values.
 
-No embedding generation, asynchronous vector queue, or document chunk synchronization is required.
+No embedding generation or document-chunk synchronization is required. Search vectors and knowledge records are derived asynchronously from durable page-mutation intent and remain reproducible from authoritative pages and history.

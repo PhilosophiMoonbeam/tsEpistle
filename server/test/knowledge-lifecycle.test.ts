@@ -118,6 +118,22 @@ const enqueueKnowledge = async (sourceRevision: string, content: string, action:
     effects: ['knowledge']
   })
 
+const enqueuePageKnowledge = async (source: Record<string, unknown>) =>
+  enqueuePageMutationEffects(db, {
+    pageId: Number(source.id),
+    sourceRevision: String(source.sourceRevision),
+    desiredState: 'present',
+    action: 'create',
+    source: String(source.content),
+    location: {
+      locale: String(source.localeCode),
+      path: String(source.path),
+      visibility: source.visibility as 'public' | 'private',
+      ownerId: source.ownerId === null ? null : Number(source.ownerId)
+    },
+    effects: ['knowledge']
+  })
+
 const enableUtilityEnrichment = async (): Promise<void> => {
   const profileVersionId = '00000000-0000-4000-8000-000000000001'
   await db('agentProviderProfileVersions').insert({ id: profileVersionId, conformed: true })
@@ -199,6 +215,121 @@ describe('page knowledge lifecycle', () => {
       }
     })
     expect(await new PageKnowledgeRepository(db).getCurrent(42)).toMatchObject({ sourceRevision: '2' })
+  })
+
+  it('repairs missing, unparsable, wrong-source, and hash-mismatched current projections through their succeeded effect', async () => {
+    const current = page()
+    await db('pages').insert(current)
+    await enqueueKnowledge('1', String(current.content), 'create')
+    const lifecycle = new PageKnowledgeLifecycle(db, 'repair-worker')
+    await lifecycle.runOnce()
+
+    const expectRepair = async () => {
+      await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
+      const stored = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('sourceSha256', 'projection')
+      const projection = JSON.parse(String(stored.projection))
+      expect(stored.sourceSha256).toBe(projection.source.sha256)
+      expect(projection.source).toMatchObject({ pageId: 42, sourceRevision: '1' })
+      expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('status')).toEqual({ status: 'succeeded' })
+    }
+
+    await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).delete()
+    await expectRepair()
+
+    await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).update({ projection: '{' })
+    await expectRepair()
+
+    let stored = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('projection')
+    let projection = JSON.parse(String(stored.projection))
+    projection.source.pageId = 99
+    await db('pageKnowledgeProjections')
+      .where({ pageId: 42, sourceRevision: '1' })
+      .update({ projection: JSON.stringify(projection) })
+    await expectRepair()
+
+    stored = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('projection')
+    projection = JSON.parse(String(stored.projection))
+    projection.source.sourceRevision = '2'
+    await db('pageKnowledgeProjections')
+      .where({ pageId: 42, sourceRevision: '1' })
+      .update({ projection: JSON.stringify(projection) })
+    await expectRepair()
+
+    stored = await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first('projection')
+    projection = JSON.parse(String(stored.projection))
+    projection.source.sha256 = '0'.repeat(64)
+    await db('pageKnowledgeProjections')
+      .where({ pageId: 42, sourceRevision: '1' })
+      .update({ sourceSha256: '0'.repeat(64), projection: JSON.stringify(projection) })
+    await expectRepair()
+  })
+
+  it('enqueues missing effects, avoids healthy requeues, leaves pending work singular, and rearms failed work', async () => {
+    const current = page()
+    await db('pages').insert(current)
+    const lifecycle = new PageKnowledgeLifecycle(db, 'healthy-projection-worker')
+
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 0, processed: 0 })
+    expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({
+      count: 1
+    })
+
+    await db('pageKnowledgeProjections').delete()
+    await db('pageMutationOutbox').update({ status: 'pending' })
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 0, processed: 1 })
+    expect(await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({
+      count: 1
+    })
+    expect(await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first()).toBeDefined()
+
+    await db('pageKnowledgeProjections').delete()
+    await db('pageMutationOutbox').update({ status: 'failed' })
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
+    expect(await db('pageKnowledgeProjections').where({ pageId: 42, sourceRevision: '1' }).first()).toBeDefined()
+  })
+
+  it('advances the bounded projection scan to later page IDs and wraps to low IDs', async () => {
+    for (let id = 1; id <= 27; id += 1) {
+      const source = page({ id, path: `ops/runbook-${id}` })
+      await db('pages').insert(source)
+      await enqueuePageKnowledge(source)
+    }
+    const initializer = new PageKnowledgeLifecycle(db, 'scan-initializer')
+    await initializer.runOnce()
+    await initializer.runOnce()
+    await initializer.runOnce()
+    expect(await db('pageKnowledgeProjections').count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({ count: 27 })
+
+    await db('pageKnowledgeProjections').whereIn('pageId', [1, 26]).delete()
+    const lifecycle = new PageKnowledgeLifecycle(db, 'rotating-repair-worker')
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 1, processed: 1 })
+    expect(await db('pageKnowledgeProjections').where({ pageId: 26 }).first()).toBeUndefined()
+
+    await db('pageKnowledgeProjections').where({ pageId: 1 }).delete()
+    await expect(lifecycle.runOnce()).resolves.toMatchObject({ backfilled: 2, processed: 2 })
+    expect(await db('pageKnowledgeProjections').whereIn('pageId', [1, 26]).orderBy('pageId').pluck('pageId')).toEqual([1, 26])
+  })
+
+  it('fails closed when a terminal effect needed for repair has tampered immutable content', async () => {
+    const current = page()
+    await db('pages').insert(current)
+    await enqueueKnowledge('1', String(current.content), 'create')
+    const lifecycle = new PageKnowledgeLifecycle(db, 'tamper-worker')
+    await lifecycle.runOnce()
+    await db('pageKnowledgeProjections').delete()
+    const original = await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('payload', 'payloadSha256')
+    const tampered = JSON.parse(String(original.payload))
+    tampered.location.path = 'tampered/path'
+    await db('pageMutationOutbox')
+      .where({ effectKind: 'knowledge' })
+      .update({ payload: JSON.stringify(tampered) })
+
+    await expect(lifecycle.runOnce()).rejects.toMatchObject({ code: 'OUTBOX_PAYLOAD_TAMPERED' })
+    expect(await db('pageKnowledgeProjections').first()).toBeUndefined()
+    const unchanged = await db('pageMutationOutbox').where({ effectKind: 'knowledge' }).first('status', 'payload', 'payloadSha256')
+    expect(unchanged).toMatchObject({ status: 'succeeded', payloadSha256: original.payloadSha256 })
+    expect(JSON.parse(String(unchanged.payload))).toMatchObject({ location: { path: 'tampered/path' } })
   })
 
   it('uses the global utility model only for declared public gaps', async () => {

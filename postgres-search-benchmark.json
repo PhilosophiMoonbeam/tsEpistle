@@ -1,0 +1,268 @@
+{
+  "reportVersion": 1,
+  "status": "passed",
+  "environment": {
+    "postgresVersion": "17.10",
+    "postgresMajorVersion": 17,
+    "pgTrgmVersion": "1.6"
+  },
+  "corpus": {
+    "seed": 20260831,
+    "expected": {
+      "pages": 20000,
+      "renderedPages": 20000,
+      "links": 20000,
+      "distinctTags": 21,
+      "tagAssignments": 25000,
+      "locales": {
+        "en": 18000,
+        "fr": 2000
+      }
+    },
+    "observed": {
+      "pages": 20000,
+      "renderedPages": 20000,
+      "links": 20000,
+      "distinctTags": 21,
+      "tagAssignments": 25000,
+      "locales": {
+        "en": 18000,
+        "fr": 2000
+      }
+    }
+  },
+  "searchSchema": {
+    "version": 2,
+    "dictionary": "english"
+  },
+  "derivedSearch": {
+    "vectors": 20000,
+    "suggestionTerms": 330606,
+    "revisionMismatches": 0,
+    "orphanVectors": 0
+  },
+  "caps": {
+    "maxHits": 100,
+    "fuzzyFallbackExactHitThreshold": 5,
+    "suggestionLimit": 5,
+    "graphDepth": 2,
+    "rebuildBatchSize": 100
+  },
+  "iterations": 30,
+  "warmupsPerDistribution": 5,
+  "thresholds": {
+    "maxRebuildMilliseconds": 300000,
+    "maxQueryP95Milliseconds": 200
+  },
+  "rebuildMilliseconds": 25799.800893,
+  "queryDistributions": [
+    {
+      "kind": "exactTitleContent",
+      "queries": [
+        "Amber Falcon Runbook",
+        "ultraviolet marmot checksum"
+      ],
+      "samples": 30,
+      "durationsMilliseconds": [
+        24.710841000000073,
+        23.592760999999882,
+        24.684450999997352,
+        23.437189000000217,
+        24.845063000000664,
+        23.743053000001964,
+        24.74239999999918,
+        23.91056699999899,
+        24.904954999998154,
+        24.019803000002867,
+        23.67955399999846,
+        23.453660000002856,
+        25.242409999998927,
+        23.25468499999988,
+        24.701983999999356,
+        23.945363000002544,
+        24.089403999998467,
+        23.849592999999004,
+        24.911707999999635,
+        23.559908999999607,
+        24.353919999997743,
+        22.896982999998727,
+        24.471811999999773,
+        22.84906299999784,
+        23.832030000001396,
+        22.98490899999888,
+        24.33165899999949,
+        22.742292999999336,
+        23.87090299999909,
+        22.672280999999202
+      ],
+      "p50Milliseconds": 23.87090299999909,
+      "p95Milliseconds": 24.911707999999635,
+      "p99Milliseconds": 25.242409999998927,
+      "maximumMilliseconds": 25.242409999998927
+    },
+    {
+      "kind": "typoFuzzy",
+      "queries": [
+        "celestal harbor handbook",
+        "amber falcn runbook"
+      ],
+      "samples": 30,
+      "durationsMilliseconds": [
+        23.772727999999915,
+        23.76878100000249,
+        22.984026999998605,
+        23.192748999998003,
+        23.069417999999132,
+        22.891003000000637,
+        22.655108999999356,
+        23.84629700000005,
+        22.97191400000156,
+        23.025564999999915,
+        23.422210000000632,
+        23.968246000000363,
+        25.828911000000517,
+        26.55962499999805,
+        22.60197899999912,
+        23.274443000002066,
+        23.13984999999957,
+        23.31463799999983,
+        22.64782600000035,
+        23.142135000001872,
+        23.402061999997386,
+        23.748633999999583,
+        22.65526999999929,
+        23.325328000002628,
+        23.787405999999464,
+        23.549659000000247,
+        23.159947000000102,
+        23.5101250000007,
+        23.11571499999991,
+        23.364380999999412
+      ],
+      "p50Milliseconds": 23.274443000002066,
+      "p95Milliseconds": 25.828911000000517,
+      "p99Milliseconds": 26.55962499999805,
+      "maximumMilliseconds": 26.55962499999805
+    },
+    {
+      "kind": "multiTermDescription",
+      "queries": [
+        "orbital cedar calibration protocol",
+        "deterministic actuator calibration"
+      ],
+      "samples": 30,
+      "durationsMilliseconds": [
+        26.21255200000087,
+        25.745985000001383,
+        26.254531000002316,
+        25.02175499999794,
+        26.209335999999894,
+        25.67190699999992,
+        26.409362000002147,
+        25.17855000000054,
+        26.41108499999973,
+        25.34219700000176,
+        26.210728000001836,
+        25.229175000000396,
+        26.351232999997592,
+        29.23005000000194,
+        26.07094599999982,
+        25.24199800000133,
+        26.653070000000298,
+        25.20988800000123,
+        25.86609099999987,
+        24.990576000000146,
+        26.139124000001175,
+        25.107707000002847,
+        26.053211999998894,
+        25.97606799999994,
+        25.980846999998903,
+        25.650495999998384,
+        25.958966000001965,
+        25.115642000000662,
+        25.93949900000007,
+        25.211331000002247
+      ],
+      "p50Milliseconds": 25.93949900000007,
+      "p95Milliseconds": 26.653070000000298,
+      "p99Milliseconds": 29.23005000000194,
+      "maximumMilliseconds": 29.23005000000194
+    },
+    {
+      "kind": "commonTag",
+      "queries": [
+        "common-platform"
+      ],
+      "samples": 30,
+      "durationsMilliseconds": [
+        58.29923899999994,
+        57.782397999999375,
+        58.16320300000007,
+        58.04636400000163,
+        58.01864199999909,
+        57.86046500000157,
+        57.74347499999931,
+        59.212445000001026,
+        58.380801999999676,
+        60.25173600000198,
+        57.29223700000148,
+        57.541345000001456,
+        58.653504999998404,
+        58.92128799999773,
+        57.60941200000161,
+        57.255088000001706,
+        57.746149999999034,
+        59.9263749999991,
+        57.595155999999406,
+        57.710793999998714,
+        57.8918330000015,
+        59.80908500000078,
+        57.63549200000125,
+        57.613400000002,
+        57.928862999997364,
+        58.14613100000133,
+        58.16765099999975,
+        57.81936700000006,
+        57.23250499999995,
+        61.135025999999925
+      ],
+      "p50Milliseconds": 57.8918330000015,
+      "p95Milliseconds": 60.25173600000198,
+      "p99Milliseconds": 61.135025999999925,
+      "maximumMilliseconds": 61.135025999999925
+    }
+  ],
+  "representativeChecks": [
+    {
+      "name": "exact title ranks the seeded page first",
+      "passed": true,
+      "expected": "first page id 42",
+      "observed": "first page id 42"
+    },
+    {
+      "name": "rendered content retrieves the seeded page",
+      "passed": true,
+      "expected": "results include page id 42",
+      "observed": "result ids 42"
+    },
+    {
+      "name": "typo fallback retrieves the seeded page",
+      "passed": true,
+      "expected": "results include page id 314",
+      "observed": "result ids 314"
+    },
+    {
+      "name": "multi-term description retrieves the seeded page",
+      "passed": true,
+      "expected": "results include page id 2718",
+      "observed": "result ids 2718"
+    },
+    {
+      "name": "common tag fills the cap with matching pages",
+      "passed": true,
+      "expected": "100 results tagged common-platform",
+      "observed": "100 results, 100 tagged common-platform"
+    }
+  ],
+  "thresholdViolations": []
+}

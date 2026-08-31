@@ -244,16 +244,18 @@ describe('page approval workflow', () => {
       'approved',
       'published'
     ])
-    expect(searchUpdated).toHaveBeenCalledOnce()
+    expect(searchUpdated).not.toHaveBeenCalled()
     const publicationRevision = await knex('pageHistory').where({ pageId: 42, action: 'approval-published' }).first()
     expect(publicationRevision).toMatchObject({ sourceRevision: 1 })
     const projections = await knex('pageMutationOutbox').where({ pageId: 42 }).orderBy('effectKind')
-    expect(projections).toHaveLength(3)
-    expect(projections.map(row => row.sourceRevision)).toEqual([2, 2, 2])
+    expect(projections).toHaveLength(4)
+    expect(projections.map(row => row.effectKind)).toEqual(['knowledge', 'links', 'render', 'search'])
+    expect(projections.map(row => row.sourceRevision)).toEqual([2, 2, 2, 2])
     expect(projections.map(row => JSON.parse(String(row.payload)))).toEqual([
       expect.objectContaining({ effectKind: 'knowledge', sourceRevision: '2', desiredState: 'present', action: 'update' }),
       expect.objectContaining({ effectKind: 'links', sourceRevision: '2', desiredState: 'present', action: 'update' }),
-      expect.objectContaining({ effectKind: 'render', sourceRevision: '2', desiredState: 'present', action: 'update' })
+      expect.objectContaining({ effectKind: 'render', sourceRevision: '2', desiredState: 'present', action: 'update' }),
+      expect.objectContaining({ effectKind: 'search', sourceRevision: '2', desiredState: 'present', action: 'update' })
     ])
   })
 

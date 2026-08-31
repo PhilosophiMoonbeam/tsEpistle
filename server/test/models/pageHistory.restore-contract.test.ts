@@ -33,6 +33,7 @@ const createSchema = async (): Promise<void> => {
     table.string('publishEndDate').notNullable()
     table.text('content').notNullable()
     table.string('contentType').notNullable()
+    table.json('extra').nullable()
     table.string('editorKey').notNullable()
     table.string('localeCode').notNullable()
     table.string('action').notNullable()
@@ -86,11 +87,19 @@ describe('page history restore metadata contract', () => {
   })
 
   it('snapshots tag relations and returns canonical editor metadata for restore', async () => {
+    const extra = {
+      okf: {
+        type: 'Reference',
+        status: 'stable',
+        generated: { by: 'human:7', at: '2026-08-15T00:00:00.000Z' }
+      }
+    }
     await PageHistory.addVersion({
       id: 42,
       authorId: 7,
       content: '# Release\n',
       contentType: 'markdown',
+      extra,
       description: 'Release notes',
       editorKey: 'visual-markdown',
       hash: 'public:en:release',
@@ -124,6 +133,7 @@ describe('page history restore metadata contract', () => {
       contentType: 'markdown',
       editor: 'visual-markdown',
       locale: 'en',
+      extra,
       tags: ['release', 'docs'],
       visibility: 'public'
     })

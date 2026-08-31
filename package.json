@@ -18,6 +18,7 @@
     "openapi:check": "bun server/scripts/check-openapi.ts && REDOCLY_SUPPRESS_UPDATE_NOTICE=true REDOCLY_TELEMETRY=off bun --bun redocly lint node_modules/.cache/wiki/openapi-v1.json --lint-config=error",
     "placeholders:check": "bun server/scripts/check-production-placeholders.ts",
     "benchmark:page-index": "dev/e2e/page-index-benchmark.sh",
+    "benchmark:postgres-search": "dev/e2e/postgres-search-benchmark.sh",
     "scarlett:report": "bun server/scripts/check-scarlett-upstream.ts --fetch",
     "agents:maintenance": "bun server/scripts/agent-maintenance.ts",
     "agents:release-check": "bun server/scripts/check-agent-release.ts",

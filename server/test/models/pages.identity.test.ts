@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import os from 'node:os'
 import path from 'node:path'
@@ -7,15 +8,13 @@ import type { Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import type PageModel from '../../models/pages.ts'
 
-const localeRelationMovePatch = vi.fn(async (_transaction: unknown, _page: unknown, _locale: string) => ({}))
+const localeRelationMovePatch = vi.fn(async (_transaction: Knex.Transaction, _page: { id: number }, _locale: string) => ({}))
 const writeOutboxEvent = vi.fn(async (_knex: unknown, _event: { type: string; payload: Record<string, unknown> }) => undefined)
-const enqueuePageMutationEffects = vi.fn(async (_knex: unknown, _input: Record<string, unknown>) => undefined)
 const redactProtectedPageForSearch = vi.fn((page: unknown) => page)
 const syncProtectedPageAssets = vi.fn(async (_knex: unknown, _pageId: number, _content: string, _render: string) => undefined)
 
 vi.mockModule('../../helpers/page-locale-relations.ts', import.meta.url, () => ({ localeRelationMovePatch }))
 vi.mockModule('../../core/outbox.ts', import.meta.url, () => ({ writeOutboxEvent }))
-vi.mockModule('../../core/page-mutation-outbox.ts', import.meta.url, () => ({ enqueuePageMutationEffects }))
 vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({ redactProtectedPageForSearch, syncProtectedPageAssets }))
 
 const wikiGlobal = globalThis as unknown as { WIKI?: Record<string, unknown> }
@@ -32,6 +31,24 @@ let db: Knex
 let Page: typeof PageModel
 let tempRoot: string
 let generatePageHash: (options: { path: string; locale: string; visibility: 'public' | 'private'; ownerId: number | null }) => string
+const sourceRevisionFields = [
+  'path',
+  'hash',
+  'title',
+  'description',
+  'visibility',
+  'ownerId',
+  'isPublished',
+  'publishStartDate',
+  'publishEndDate',
+  'content',
+  'contentType',
+  'editorKey',
+  'localeCode',
+  'authorId',
+  'creatorId',
+  'extra'
+] as const
 
 const pageRow = (overrides: Record<string, unknown> = {}) => ({
   id: 42,
@@ -78,13 +95,59 @@ const installSchema = async () => {
     table.text('contentType').notNullable()
     table.text('createdAt').notNullable()
     table.text('updatedAt').notNullable()
-    table.integer('sourceRevision').notNullable()
+    table.bigInteger('sourceRevision').notNullable().defaultTo(1)
     table.text('editorKey').notNullable()
     table.text('localeCode').notNullable()
     table.text('localeGroupId').nullable()
     table.integer('authorId').notNullable()
     table.integer('creatorId').notNullable()
     table.text('extra').notNullable()
+  })
+  await db.raw(`
+    CREATE TRIGGER pages_source_revision_trigger
+    AFTER UPDATE OF path, hash, title, description, visibility, ownerId, isPublished, publishStartDate, publishEndDate, content, contentType, editorKey, localeCode, authorId, creatorId, extra
+    ON pages
+    FOR EACH ROW
+    WHEN NEW.path IS NOT OLD.path
+      OR NEW.hash IS NOT OLD.hash
+      OR NEW.title IS NOT OLD.title
+      OR NEW.description IS NOT OLD.description
+      OR NEW.visibility IS NOT OLD.visibility
+      OR NEW.ownerId IS NOT OLD.ownerId
+      OR NEW.isPublished IS NOT OLD.isPublished
+      OR NEW.publishStartDate IS NOT OLD.publishStartDate
+      OR NEW.publishEndDate IS NOT OLD.publishEndDate
+      OR NEW.content IS NOT OLD.content
+      OR NEW.contentType IS NOT OLD.contentType
+      OR NEW.editorKey IS NOT OLD.editorKey
+      OR NEW.localeCode IS NOT OLD.localeCode
+      OR NEW.authorId IS NOT OLD.authorId
+      OR NEW.creatorId IS NOT OLD.creatorId
+      OR NEW.extra IS NOT OLD.extra
+    BEGIN
+      UPDATE pages SET sourceRevision = OLD.sourceRevision + 1 WHERE id = OLD.id;
+    END
+  `)
+  await db.schema.createTable('pageMutationOutbox', table => {
+    table.uuid('id').primary()
+    table.integer('pageId').notNullable()
+    table.bigInteger('sourceRevision').notNullable()
+    table.string('effectKind').notNullable()
+    table.string('effectKey').notNullable()
+    table.string('desiredState').notNullable()
+    table.string('payloadSha256').notNullable()
+    table.text('payload').notNullable()
+    table.string('status').notNullable().defaultTo('pending')
+    table.integer('attempts').notNullable().defaultTo(0)
+    table.string('leaseOwner').nullable()
+    table.uuid('leaseToken').nullable()
+    table.dateTime('leaseExpiresAt').nullable()
+    table.dateTime('availableAt').notNullable().defaultTo(db.fn.now())
+    table.text('result').nullable()
+    table.text('postcondition').nullable()
+    table.dateTime('createdAt').notNullable().defaultTo(db.fn.now())
+    table.dateTime('updatedAt').notNullable().defaultTo(db.fn.now())
+    table.unique(['pageId', 'sourceRevision', 'effectKind'])
   })
   await db.schema.createTable('pageHistory', table => {
     table.increments('id').primary()
@@ -94,6 +157,7 @@ const installSchema = async () => {
     table.text('visibility').notNullable()
     table.integer('ownerId').nullable()
     table.text('localeCode').notNullable()
+    table.bigInteger('sourceRevision').notNullable().defaultTo(1)
   })
   await db.schema.createTable('pageLinks', table => {
     table.increments('id').primary()
@@ -129,8 +193,6 @@ beforeEach(async () => {
   vi.resetModules()
   writeOutboxEvent.mockReset()
   writeOutboxEvent.mockResolvedValue(undefined)
-  enqueuePageMutationEffects.mockReset()
-  enqueuePageMutationEffects.mockResolvedValue(undefined)
   localeRelationMovePatch.mockReset()
   localeRelationMovePatch.mockResolvedValue({})
   searchRenamed.mockReset()
@@ -170,14 +232,15 @@ beforeEach(async () => {
       comments: {},
       knex: db,
       pageHistory: {
-        addVersion: vi.fn(async (page: Record<string, unknown> & { transaction: Knex.Transaction }) => {
+        addVersion: vi.fn(async (page: Record<string, unknown> & { transaction: Knex.Transaction; sourceRevision?: string | number }) => {
           await page.transaction('pageHistory').insert({
             pageId: page.id,
             path: page.path,
             hash: page.hash,
             visibility: page.visibility,
             ownerId: page.ownerId,
-            localeCode: page.localeCode
+            localeCode: page.localeCode,
+            sourceRevision: page.sourceRevision ?? 1
           })
         })
       },
@@ -190,6 +253,20 @@ beforeEach(async () => {
 
   Page = (await vi.importFresh('../../models/pages.ts', import.meta.url)).default
   Page.knex(db)
+  // SQLite cannot assign to NEW in a BEFORE trigger. Its AFTER trigger commits
+  // the same revision, while these hooks retain the fenced outer UPDATE count
+  // instead of exposing the trigger's internal UPDATE through Objection.
+  const fencedUpdateRows = new WeakMap<object, number>()
+  vi.spyOn(Page, 'beforeUpdate').mockImplementation(async args => {
+    if (sourceRevisionFields.some(field => args.inputItems.some(item => Object.hasOwn(item, field)))) {
+      fencedUpdateRows.set(args.context, (await args.asFindQuery().select('id')).length)
+    }
+  })
+  vi.spyOn(Page, 'afterUpdate').mockImplementation(args => {
+    const affectedRows = fencedUpdateRows.get(args.context)
+    fencedUpdateRows.delete(args.context)
+    return affectedRows
+  })
   // page.ts captures the test WIKI global, so the known helper module must be loaded after the isolated global is installed.
   generatePageHash = (await import('../../helpers/page.ts')).default.generateHash
   ;(wikiGlobal.WIKI.models as Record<string, unknown>).pages = Page
@@ -229,18 +306,74 @@ describe('models/pages identity aggregate', () => {
   it('emits visibility and ownership identities from the committed state', async () => {
     await db('pages').insert(pageRow())
 
-    await Page.changeVisibility({ id: 42, visibility: 'private', user: actor, expectedSourceRevision: '1' })
+    const visibilityPage = await Page.changeVisibility({ id: 42, visibility: 'private', user: actor, expectedSourceRevision: '1' })
     const visibilityEvent = writeOutboxEvent.mock.calls.find(([, event]) => event.type === 'page.visibility-changed')?.[1]
     expect(visibilityEvent?.payload).toMatchObject({ pageId: 42, visibility: 'private', ownerId: 11 })
-    expect(await db('pages').where({ id: 42 }).first('visibility', 'ownerId')).toMatchObject({ visibility: 'private', ownerId: 11 })
+    expect(visibilityPage).toMatchObject({ visibility: 'private', ownerId: 11, sourceRevision: 2 })
+    expect(await db('pages').where({ id: 42 }).first('visibility', 'ownerId', 'sourceRevision')).toMatchObject({
+      visibility: 'private',
+      ownerId: 11,
+      sourceRevision: 2
+    })
 
-    await Page.transferOwnership({ id: 42, ownerId: 27, user: actor })
+    const visibilityEffects = await db('pageMutationOutbox').where({ pageId: 42, sourceRevision: 2 }).orderBy('effectKind')
+    expect(visibilityEffects.map(row => row.effectKind)).toEqual(['knowledge', 'links', 'render', 'search'])
+    const visibilitySearch = visibilityEffects.find(row => row.effectKind === 'search')
+    expect(visibilitySearch).toMatchObject({
+      pageId: 42,
+      sourceRevision: 2,
+      effectKind: 'search',
+      effectKey: 'page:42:search',
+      desiredState: 'present',
+      status: 'pending'
+    })
+    expect(JSON.parse(String(visibilitySearch?.payload))).toEqual({
+      version: 1,
+      effectKind: 'search',
+      desiredState: 'present',
+      action: 'visibility',
+      pageId: 42,
+      sourceRevision: '2',
+      sourceSha256: createHash('sha256').update('# Identity').digest('hex'),
+      location: { locale: 'en', path: 'guides/identity', visibility: 'private', ownerId: 11 },
+      previousLocation: { locale: 'en', path: 'guides/identity', visibility: 'public', ownerId: null }
+    })
+
+    const ownershipPage = await Page.transferOwnership({ id: 42, ownerId: 27, user: actor, expectedSourceRevision: '2' })
     const ownershipEvent = writeOutboxEvent.mock.calls.find(([, event]) => event.type === 'page.ownership-transferred')?.[1]
     expect(ownershipEvent?.payload).toMatchObject({ pageId: 42, visibility: 'private', ownerId: 27 })
-    expect(await db('pages').where({ id: 42 }).first('visibility', 'ownerId')).toMatchObject({ visibility: 'private', ownerId: 27 })
+    expect(ownershipPage).toMatchObject({ visibility: 'private', ownerId: 27, sourceRevision: 3 })
+    expect(await db('pages').where({ id: 42 }).first('visibility', 'ownerId', 'sourceRevision')).toMatchObject({
+      visibility: 'private',
+      ownerId: 27,
+      sourceRevision: 3
+    })
+
+    const ownershipEffects = await db('pageMutationOutbox').where({ pageId: 42, sourceRevision: 3 }).orderBy('effectKind')
+    expect(ownershipEffects.map(row => row.effectKind)).toEqual(['knowledge', 'links', 'render', 'search'])
+    const ownershipSearch = ownershipEffects.find(row => row.effectKind === 'search')
+    expect(ownershipSearch).toMatchObject({
+      pageId: 42,
+      sourceRevision: 3,
+      effectKind: 'search',
+      effectKey: 'page:42:search',
+      desiredState: 'present',
+      status: 'pending'
+    })
+    expect(JSON.parse(String(ownershipSearch?.payload))).toEqual({
+      version: 1,
+      effectKind: 'search',
+      desiredState: 'present',
+      action: 'ownership',
+      pageId: 42,
+      sourceRevision: '3',
+      sourceSha256: createHash('sha256').update('# Identity').digest('hex'),
+      location: { locale: 'en', path: 'guides/identity', visibility: 'private', ownerId: 27 },
+      previousLocation: { locale: 'en', path: 'guides/identity', visibility: 'private', ownerId: 11 }
+    })
   })
 
-  it('moves locale identity, history, tree, links, projections, caches, search, and storage together', async () => {
+  it('moves locale identity and creates revision-fenced durable search work with storage', async () => {
     const oldHash = generatePageHash({ path: 'guides/identity', locale: 'en', visibility: 'public', ownerId: null })
     const newHash = generatePageHash({ path: 'guides/identity', locale: 'fr', visibility: 'public', ownerId: null })
     const backlinkHash = generatePageHash({ path: 'references/backlink', locale: 'de', visibility: 'public', ownerId: null })
@@ -253,7 +386,15 @@ describe('models/pages identity aggregate', () => {
       render: '<a href="/en/guides/identity" class="is-internal-link is-valid-page">Identity</a>'
     })
     await db('pages').insert([source, backlink])
-    await db('pageHistory').insert({ pageId: 42, path: 'guides/identity', hash: oldHash, visibility: 'public', ownerId: null, localeCode: 'en' })
+    await db('pageHistory').insert({
+      pageId: 42,
+      path: 'guides/identity',
+      hash: oldHash,
+      visibility: 'public',
+      ownerId: null,
+      localeCode: 'en',
+      sourceRevision: 1
+    })
     await db('pageLinks').insert({ pageId: 84, path: 'guides/identity', localeCode: 'en' })
     await Page.savePageToCache({ ...source, extra: {}, tags: [], authorName: 'Author', creatorName: 'Author' } as never)
     await Page.savePageToCache({
@@ -269,21 +410,40 @@ describe('models/pages identity aggregate', () => {
 
     await expect(Page.migrateToLocale({ sourceLocale: 'en', targetLocale: 'fr', user: actor })).resolves.toBe(1)
 
-    expect(await db('pages').where({ id: 42 }).first('localeCode', 'hash')).toMatchObject({ localeCode: 'fr', hash: newHash })
-    expect(await db('pageHistory').where({ pageId: 42 }).select('localeCode', 'hash')).toEqual(
-      expect.arrayContaining([expect.objectContaining({ localeCode: 'fr', hash: newHash })])
-    )
+    expect(await db('pages').where({ id: 42 }).first('localeCode', 'hash', 'sourceRevision')).toMatchObject({
+      localeCode: 'fr',
+      hash: newHash,
+      sourceRevision: 2
+    })
+    expect(await db('pageHistory').where({ pageId: 42 }).select('localeCode', 'hash', 'sourceRevision').orderBy('id')).toEqual([
+      { localeCode: 'fr', hash: newHash, sourceRevision: 1 },
+      { localeCode: 'fr', hash: newHash, sourceRevision: 1 }
+    ])
     expect(await db('pageTree').where({ pageId: 42 }).first('localeCode', 'path')).toMatchObject({ localeCode: 'fr', path: 'guides/identity' })
     expect(await db('pageLinks').where({ pageId: 84 }).first('localeCode', 'path')).toMatchObject({ localeCode: 'fr', path: 'guides/identity' })
     expect((await db('pages').where({ id: 84 }).first('render')).render).toContain('/fr/guides/identity')
-    expect(enqueuePageMutationEffects).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        action: 'move',
-        location: expect.objectContaining({ locale: 'fr' }),
-        previousLocation: expect.objectContaining({ locale: 'en' })
-      })
-    )
+    const projectionRows = await db('pageMutationOutbox').where({ pageId: 42 }).orderBy('effectKind')
+    expect(projectionRows.map(row => row.effectKind)).toEqual(['knowledge', 'links', 'render', 'search'])
+    const searchEffect = projectionRows.find(row => row.effectKind === 'search')
+    expect(searchEffect).toMatchObject({
+      pageId: 42,
+      sourceRevision: 2,
+      effectKind: 'search',
+      effectKey: 'page:42:search',
+      desiredState: 'present',
+      status: 'pending'
+    })
+    expect(JSON.parse(String(searchEffect?.payload))).toEqual({
+      version: 1,
+      effectKind: 'search',
+      desiredState: 'present',
+      action: 'move',
+      pageId: 42,
+      sourceRevision: '2',
+      sourceSha256: createHash('sha256').update('# Identity').digest('hex'),
+      location: { locale: 'fr', path: 'guides/identity', visibility: 'public', ownerId: null },
+      previousLocation: { locale: 'en', path: 'guides/identity', visibility: 'public', ownerId: null }
+    })
     expect(await Page.getPageFromCache({ path: 'guides/identity', locale: 'en', visibility: 'public', ownerId: null })).toBe(false)
     const movedEvent = writeOutboxEvent.mock.calls.find(([, event]) => event.type === 'page.moved')?.[1]
     expect(movedEvent?.payload).toMatchObject({ actorId: 11, localeCode: 'fr' })
@@ -293,7 +453,8 @@ describe('models/pages identity aggregate', () => {
       hash: newHash,
       localeCode: 'fr'
     })
-    expect(searchRenamed).toHaveBeenCalledWith(expect.objectContaining({ localeCode: 'en', destinationLocaleCode: 'fr', destinationHash: newHash }))
+    expect(searchRenamed).not.toHaveBeenCalled()
+    expect(Page.prepareSearchDocument).not.toHaveBeenCalled()
     expect(storagePageEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'renamed',
@@ -302,10 +463,18 @@ describe('models/pages identity aggregate', () => {
     )
   })
 
-  it('rolls every database-owned identity back when projection enqueue fails', async () => {
+  it('creates no durable search work when a conflicted locale mutation rolls back', async () => {
     const oldHash = generatePageHash({ path: 'guides/identity', locale: 'en', visibility: 'public', ownerId: null })
     await db('pages').insert(pageRow({ hash: oldHash }))
-    await db('pageHistory').insert({ pageId: 42, path: 'guides/identity', hash: oldHash, visibility: 'public', ownerId: null, localeCode: 'en' })
+    await db('pageHistory').insert({
+      pageId: 42,
+      path: 'guides/identity',
+      hash: oldHash,
+      visibility: 'public',
+      ownerId: null,
+      localeCode: 'en',
+      sourceRevision: 1
+    })
     await db('pageTree').insert({
       id: 1,
       localeCode: 'en',
@@ -319,15 +488,20 @@ describe('models/pages identity aggregate', () => {
       pageId: 42,
       ancestors: '[]'
     })
-    enqueuePageMutationEffects.mockRejectedValueOnce(new Error('projection enqueue failed'))
+    localeRelationMovePatch.mockImplementationOnce(async (transaction, page) => {
+      await transaction('pages').where({ id: page.id }).update({ sourceRevision: 2 })
+      return {}
+    })
 
-    await expect(Page.migrateToLocale({ sourceLocale: 'en', targetLocale: 'fr', user: actor })).rejects.toThrow('projection enqueue failed')
+    await expect(Page.migrateToLocale({ sourceLocale: 'en', targetLocale: 'fr', user: actor })).rejects.toThrow('The page changed after history was opened.')
 
     expect(await db('pages').where({ id: 42 }).first('localeCode', 'hash')).toMatchObject({ localeCode: 'en', hash: oldHash })
     expect(await db('pageHistory').where({ pageId: 42 }).select('localeCode', 'hash')).toEqual([expect.objectContaining({ localeCode: 'en', hash: oldHash })])
     expect(await db('pageTree').where({ pageId: 42 }).first('localeCode')).toMatchObject({ localeCode: 'en' })
     expect(storagePageEvent).not.toHaveBeenCalled()
     expect(searchRenamed).not.toHaveBeenCalled()
+    expect(await db('pageMutationOutbox')).toEqual([])
+    expect(writeOutboxEvent).not.toHaveBeenCalled()
     expect(outboundEmit).not.toHaveBeenCalledWith('deletePageFromCache', expect.anything())
   })
 })

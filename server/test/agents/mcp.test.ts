@@ -325,7 +325,11 @@ describe('Wiki MCP transport', () => {
     expect(pageResult.structuredContent).toMatchObject({
       id: 42,
       sourceRevision: '8',
-      knowledge: { state: 'partial', conceptType: 'Reference', summary: 'Projected knowledge summary' }
+      knowledge: { state: 'complete', conceptType: 'Reference', summary: 'Projected knowledge summary' }
+    })
+    expect(pageResult.structuredContent).toMatchObject({
+      citation: { evidenceId: 'page:42', label: 'Start', href: '/en/docs/start' },
+      citationSections: []
     })
     const resource = await client.readResource({ uri: 'wiki://pages/en/docs/start' })
     expect(resource.contents).toHaveLength(1)
@@ -342,11 +346,11 @@ describe('Wiki MCP transport', () => {
         trustTier: 'unverified',
         verification: 'unverified',
         stale: false,
-        projectionState: 'partial'
+        projectionState: 'complete'
       }
     })
     expect(resourceText).toContain('x-wiki:')
-    expect(resourceText).toContain('state: partial')
+    expect(resourceText).toContain('state: complete')
     expect(resourceText).toContain('summary: Projected knowledge summary')
   })
 

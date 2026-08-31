@@ -268,13 +268,6 @@ interface EditorDefinition {
   contentType: string
 }
 
-interface SearchEngine {
-  created(page: Page): Promise<unknown>
-  updated(page: Page): Promise<unknown>
-  deleted(page: Page): Promise<unknown>
-  renamed(page: PageRenameDetails): Promise<unknown>
-}
-
 interface SchedulerJob {
   finished: Promise<unknown>
 }
@@ -309,7 +302,6 @@ interface PagesWikiContext {
   }
   data: {
     editors: EditorDefinition[]
-    searchEngine: SearchEngine
   }
   events: {
     inbound: EventEmitter
@@ -531,9 +523,6 @@ const frontmatterRegex = {
 
 const punctuationRegex = /[!,:;/\\_+\-=()&#@<>$~%^*[\]{}"'|]+|(\.\s)|(\s\.)/gi
 // const htmlEntitiesRegex = /(&#[0-9]{3};)|(&#x[a-zA-Z0-9]{2};)/ig
-
-const isPublishedPublicPage = (page: Pick<Page, 'visibility' | 'isPublished'>): boolean =>
-  page.visibility === 'public' && (page.isPublished === true || page.isPublished === 1)
 
 /**
  * Pages model
@@ -917,9 +906,6 @@ export default class Page extends Model {
     await wiki.models.pages.rebuildTree()
 
     if (page.visibility === 'public') {
-      await wiki.models.pages.prepareSearchDocument(page)
-      if (isPublishedPublicPage(page)) await wiki.data.searchEngine.created(page)
-
       if (!opts.skipStorage) {
         await wiki.models.storage.pageEvent({
           event: 'created',
@@ -1117,7 +1103,6 @@ export default class Page extends Model {
     if (willMove) wiki.events.outbound.emit('deletePageFromCache', ogPage.hash)
 
     if (page.visibility === 'public') {
-      await wiki.models.pages.prepareSearchDocument(page)
       if (willMove) {
         const renamedPage: PageRenameDetails = {
           ...page,
@@ -1127,12 +1112,6 @@ export default class Page extends Model {
           destinationPath,
           destinationLocaleCode: destinationLocale,
           destinationHash
-        }
-        if (isPublishedPublicPage(page)) {
-          if (isPublishedPublicPage(ogPage)) await wiki.data.searchEngine.renamed(renamedPage)
-          else await wiki.data.searchEngine.created(page)
-        } else if (isPublishedPublicPage(ogPage)) {
-          await wiki.data.searchEngine.deleted(ogPage)
         }
         if (!opts.skipStorage) {
           await wiki.models.storage.pageEvent({
@@ -1150,12 +1129,6 @@ export default class Page extends Model {
           })
         }
       } else {
-        if (isPublishedPublicPage(page)) {
-          if (isPublishedPublicPage(ogPage)) await wiki.data.searchEngine.updated(page)
-          else await wiki.data.searchEngine.created(page)
-        } else if (isPublishedPublicPage(ogPage)) {
-          await wiki.data.searchEngine.deleted(ogPage)
-        }
         if (!opts.skipStorage) await wiki.models.storage.pageEvent({ event: 'updated', page })
       }
     }
@@ -1261,10 +1234,8 @@ export default class Page extends Model {
 
     const updated = await wiki.models.pages.getPageFromDb(page.id)
     if (!updated) throw new wiki.Error.PageNotFound()
-    await wiki.models.pages.prepareSearchDocument(updated)
 
     if (updated.visibility === 'public') {
-      if (isPublishedPublicPage(updated)) await wiki.data.searchEngine.created(updated)
       if (!opts.skipStorage) {
         await wiki.models.storage.pageEvent({ event: 'created', page: updated })
       }
@@ -1274,7 +1245,6 @@ export default class Page extends Model {
         mode: 'create'
       })
     } else {
-      if (isPublishedPublicPage(page)) await wiki.data.searchEngine.deleted(page)
       if (!opts.skipStorage) {
         await wiki.models.storage.pageEvent({ event: 'deleted', page })
       }
@@ -1637,16 +1607,6 @@ export default class Page extends Model {
     await wiki.models.pages.rebuildTree()
 
     if (page.visibility === 'public') {
-      await wiki.models.pages.prepareSearchDocument(page)
-      const renamedPage: PageRenameDetails = {
-        ...page,
-        title: destinationTitle,
-        destinationPath: opts.destinationPath,
-        destinationLocaleCode: opts.destinationLocale,
-        destinationHash
-      }
-      if (isPublishedPublicPage(page)) await wiki.data.searchEngine.renamed(renamedPage)
-
       if (!opts.skipStorage) {
         await wiki.models.storage.pageEvent({
           event: 'renamed',
@@ -1732,8 +1692,6 @@ export default class Page extends Model {
     wiki.events.outbound.emit('deletePageFromCache', page.hash)
     await wiki.models.pages.rebuildTree()
     if (page.visibility === 'public') {
-      if (isPublishedPublicPage(page)) await wiki.data.searchEngine.deleted(page)
-
       if (!opts.skipStorage) {
         await wiki.models.storage.pageEvent({
           event: 'deleted',
@@ -2116,21 +2074,10 @@ export default class Page extends Model {
       const updated = await wiki.models.pages.getPageFromDb(previous.id)
       if (!updated) throw new wiki.Error.PageNotFound()
       if (updated.visibility === 'public') {
-        const prepared = await wiki.models.pages.prepareSearchDocument(updated)
-        const renamedPage: PageRenameDetails = {
-          ...prepared,
-          hash: previous.hash,
-          path: previous.path,
-          localeCode: previous.localeCode,
-          destinationPath: updated.path,
-          destinationLocaleCode: updated.localeCode,
-          destinationHash
-        }
-        if (isPublishedPublicPage(updated)) await wiki.data.searchEngine.renamed(renamedPage)
         await wiki.models.storage.pageEvent({
           event: 'renamed',
           page: {
-            ...prepared,
+            ...updated,
             hash: previous.hash,
             path: previous.path,
             localeCode: previous.localeCode,

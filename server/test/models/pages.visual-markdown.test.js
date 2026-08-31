@@ -184,7 +184,17 @@ describe('Visual Markdown page contracts', () => {
     expect(patch).toHaveBeenCalledWith({
       contentType: 'markdown',
       editorKey: 'visual-markdown',
-      content: '# Visual page\n\nText with **bold**.'
+      content: '# Visual page\n\nText with **bold**.',
+      extra: {
+        okf: {
+          type: 'Reference',
+          status: 'stable',
+          generated: {
+            by: 'human:7',
+            at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u)
+          }
+        }
+      }
     })
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
   })
@@ -203,7 +213,17 @@ describe('Visual Markdown page contracts', () => {
     expect(patch).toHaveBeenCalledWith({
       contentType: 'html',
       editorKey: 'ckeditor',
-      content: '<h1>Visual Markdown</h1><p>Rendered text.</p>'
+      content: '<h1>Visual Markdown</h1><p>Rendered text.</p>',
+      extra: {
+        okf: {
+          type: 'Reference',
+          status: 'stable',
+          generated: {
+            by: 'human:7',
+            at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u)
+          }
+        }
+      }
     })
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
   })
