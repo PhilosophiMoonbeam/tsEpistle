@@ -9,10 +9,10 @@
 | Last reviewed | 2026-08-31 |
 | Review owner | tsFranki maintainers |
 | External reviewer | Unassigned — blocks the first external release |
-| Covered source | `1d1e25a7c131880fc963084fa993b73a19d579bc` |
+| Covered source | `601d576eb91383ae0df7765c9a14cb19156c022a` |
 
 This is a living release artifact. Update it whenever an authentication flow, externally reachable route, renderer, extension, worker payload, import/export path, database migration, secret boundary, or deployment topology changes. Every release candidate must resolve each open finding below, record an explicit risk acceptance, or remain blocked.
-An internal independent read-only review of application source `f5177bfc9b819b35a7271b1c5cd0be1b6c9f8502` reviewed the OKF implementation and regression contracts cited in this register but did not execute tests. The main agent then validated the successor's tag-only Vue template closure through the production client build at covered source `1d1e25a7c131880fc963084fa993b73a19d579bc`; test execution results are attributable only to the main agent. This supporting evidence is not an external review, and SEC-EXT-001 remains open, unassigned, and release-blocking.
+An internal independent read-only review of application source `f5177bfc9b819b35a7271b1c5cd0be1b6c9f8502` reviewed the OKF implementation and regression contracts cited in this register but did not execute tests. The main agent then validated the successor's tag-only Vue template closure through the production client build at source `1d1e25a7c131880fc963084fa993b73a19d579bc`; test execution results are attributable only to the main agent. A focused independent read-only review of the incremental MCP API-key runtime-configuration fix at covered source `601d576eb91383ae0df7765c9a14cb19156c022a` found no security or correctness defects in the claim derivation, signing, admission, or regression contract and did not execute validation commands. This supporting evidence is not an external review, and SEC-EXT-001 remains open, unassigned, and release-blocking.
 
 ## Security objectives
 
