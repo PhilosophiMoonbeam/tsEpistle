@@ -339,6 +339,13 @@ export const claimPageMutationEffects = async (
           builder
             .whereNot('effectKind', 'search')
             .orWhereNot('desiredState', 'present')
+            .orWhereNotExists(function () {
+              this.select(transaction.raw('1'))
+                .from('pageMutationOutbox as renderDependency')
+                .whereRaw('?? = ??', ['renderDependency.pageId', 'pageMutationOutbox.pageId'])
+                .whereRaw('?? = ??', ['renderDependency.sourceRevision', 'pageMutationOutbox.sourceRevision'])
+                .where('renderDependency.effectKind', 'render')
+            })
             .orWhereExists(function () {
               this.select(transaction.raw('1'))
                 .from('pageMutationOutbox as renderDependency')
@@ -742,9 +749,11 @@ class SearchProjectionSink implements PageProjectionSink {
       }
     }
     const renderEffect = await this.#knex<PageMutationOutboxRow>('pageMutationOutbox')
-      .where({ pageId: payload.pageId, sourceRevision: payload.sourceRevision, effectKind: 'render', status: 'succeeded' })
-      .first('id')
-    if (!renderEffect) throw new PageMutationOutboxError('RENDER_PROJECTION_NOT_READY', 'Exact render projection has not completed')
+      .where({ pageId: payload.pageId, sourceRevision: payload.sourceRevision, effectKind: 'render' })
+      .first('id', 'status')
+    if (renderEffect && renderEffect.status !== 'succeeded') {
+      throw new PageMutationOutboxError('RENDER_PROJECTION_NOT_READY', 'Exact render projection has not completed')
+    }
 
     const publishedPublic = before.visibility === 'public' && (before.isPublished === true || before.isPublished === 1)
     if (publishedPublic) await this.#runtime.reconcileSearchPage(payload.pageId)

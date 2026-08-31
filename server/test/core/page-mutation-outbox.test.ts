@@ -459,11 +459,11 @@ describe('production page projection lifecycle', () => {
 
     expect(renderPage).not.toHaveBeenCalled()
     expect(await knex('pageLinks').select('localeCode', 'path')).toEqual([{ localeCode: 'en', path: 'current' }])
-    expect(await knex('pagesVector')).toEqual([])
+    expect(await knex('pagesVector')).toEqual([{ pageId: 42, sourceRevision: 9 }])
     expect(await knex('pageMutationOutbox').where({ sourceRevision: 8 }).whereNot({ status: 'succeeded' })).toHaveLength(0)
     expect(await knex('pageMutationOutbox').where({ effectKind: 'search', sourceRevision: 9 }).first('status', 'attempts')).toMatchObject({
-      status: 'pending',
-      attempts: 0
+      status: 'succeeded',
+      attempts: 1
     })
   })
 
@@ -481,8 +481,9 @@ describe('production page projection lifecycle', () => {
     await enqueue({ effects: ['links'] })
     const lifecycle = new PageProjectionLifecycle(knex, 'retry-worker', projectionRuntime())
 
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 2 })
     expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'attempts')).toMatchObject({ status: 'retry', attempts: 1 })
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('status')).toEqual({ status: 'succeeded' })
     expect(await knex('pageLinks')).toHaveLength(0)
   })
 
@@ -625,5 +626,25 @@ describe('production page projection lifecycle', () => {
       { pageId: 42, status: 'succeeded' },
       { pageId: 43, status: 'succeeded' }
     ])
+
+  })
+
+  it('processes legacy search backfills that predate durable render intent', async () => {
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 8,
+      content: '# Legacy\n',
+      render: '<p>legacy render</p>',
+      localeCode: 'en',
+      path: 'docs/legacy',
+      visibility: 'public',
+      ownerId: null
+    })
+    const reconcileSearchPage = vi.fn(projectionRuntime().reconcileSearchPage)
+    const lifecycle = new PageProjectionLifecycle(knex, 'legacy-maintenance-worker', projectionRuntime({ reconcileSearchPage }))
+
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
+    expect(reconcileSearchPage).toHaveBeenCalledWith(42)
+    expect(await knex('pageMutationOutbox').select('effectKind', 'status')).toEqual([{ effectKind: 'search', status: 'succeeded' }])
   })
 })
