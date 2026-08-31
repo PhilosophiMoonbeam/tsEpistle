@@ -24,7 +24,7 @@
         )
     v-row.nav-header-layout(no-gutters)
       v-col.nav-header-brand-col(cols='5', md='4')
-        v-toolbar.nav-header-inner.nav-header-brand(color='surface', flat)
+        .nav-header-inner.nav-header-brand
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
           button.nav-header-logo(
             v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp'
@@ -36,7 +36,7 @@
           v-toolbar-title.nav-header-title(v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp')
             span {{title}}
       v-col.nav-header-search-col(md='4', v-if='$vuetify.display.mdAndUp')
-        v-toolbar.nav-header-inner.nav-header-command(color='surface', flat)
+        .nav-header-inner.nav-header-command
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
               v-text-field.nav-header-search-control(
@@ -65,7 +65,7 @@
                   v-icon mdi-tag-multiple
               span {{$t('common:header.browseTags')}}
       v-col.nav-header-actions-col(cols='7', md='4')
-        v-toolbar.nav-header-inner.nav-header-actions(color='surface', flat)
+        .nav-header-inner.nav-header-actions
           v-spacer
           .navHeaderLoading(v-show='isLoading')
             v-progress-circular(indeterminate, color='primary', :size='22', :width='2', aria-label='Page loading')
@@ -621,7 +621,7 @@ export default defineComponent({
 
   .v-toolbar__extension {
     overflow: hidden;
-    padding: 0 var(--wiki-space-4) var(--wiki-space-3);
+    padding-inline: var(--wiki-space-4);
     background: var(--wiki-surface-raised);
 
     .v-toolbar__content {
@@ -644,23 +644,16 @@ export default defineComponent({
   }
 
   .nav-header-inner {
+    display: flex;
     width: 100%;
     height: 100%;
-    background: transparent !important;
-
-    > .v-toolbar__content {
-      height: 100% !important;
-      gap: var(--wiki-space-1);
-      padding: 0;
-    }
+    align-items: center;
+    gap: var(--wiki-space-1);
   }
 
   .nav-header-brand {
+    gap: var(--wiki-space-3);
     padding-inline: var(--wiki-space-4) var(--wiki-space-3);
-
-    > .v-toolbar__content {
-      gap: var(--wiki-space-3);
-    }
   }
 
   .nav-header-logo {
@@ -723,10 +716,8 @@ export default defineComponent({
   }
 
   .nav-header-command {
-    > .v-toolbar__content {
-      justify-content: center;
-      gap: var(--wiki-space-2);
-    }
+    justify-content: center;
+    gap: var(--wiki-space-2);
   }
 
   .nav-header-search-control {
@@ -790,11 +781,8 @@ export default defineComponent({
   }
 
   .nav-header-actions {
+    gap: var(--wiki-space-1);
     padding-inline: var(--wiki-space-3) var(--wiki-space-4);
-
-    > .v-toolbar__content {
-      gap: var(--wiki-space-1);
-    }
   }
 
   .nav-header-slot-actions {
@@ -1084,15 +1072,11 @@ export default defineComponent({
   .nav-header {
     .v-toolbar__extension {
       padding-inline: var(--wiki-space-3);
-      padding-bottom: var(--wiki-space-2);
     }
 
     .nav-header-brand {
+      gap: var(--wiki-space-2);
       padding-inline: var(--wiki-space-3) var(--wiki-space-1);
-
-      > .v-toolbar__content {
-        gap: var(--wiki-space-2);
-      }
     }
 
     .nav-header-actions {
