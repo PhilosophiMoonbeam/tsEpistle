@@ -80,6 +80,8 @@
         :aria-expanded="skillsEnabled ? skillCommandOpen : undefined"
         :aria-controls="skillsEnabled && skillCommandOpen ? 'agent-skill-command-results' : undefined"
         :aria-activedescendant="skillsEnabled && skillCommandOpen && activeCommandSkill ? `agent-skill-command-${activeCommandSkill.versionId}` : undefined"
+        @input="handleInput"
+        @select="handleSelectionChange"
         @keydown="handleKeydown"
       />
     </div>
@@ -229,7 +231,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import type { VisibleAgentSkill } from '../../helpers/agents-api.ts'
 import { filterSkillsForCommand } from './agent-skill-command.ts'
-
+import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 const props = defineProps<{
   disabled: boolean
   sending: boolean
@@ -287,18 +289,138 @@ const composerStatus = computed(() => {
 })
 const submitLabel = computed(() => sendFailed.value ? 'Retry' : goalMode.value ? 'Start goal' : 'Send')
 const isSelected = (versionId: string): boolean => selectedSkillIdSet.value.has(versionId)
-const resizeInput = (): void => {
+const getTextarea = (): HTMLTextAreaElement | null => {
   const textarea = messageInput.value?.$el?.querySelector('textarea')
-  if (!(textarea instanceof HTMLTextAreaElement)) return
+  return textarea instanceof HTMLTextAreaElement ? textarea : null
+}
+let caretMirror: HTMLDivElement | null = null
+let caretMirrorPrefix: Text | null = null
+let caretMirrorMarker: HTMLSpanElement | null = null
+let caretMirrorSuffix: Text | null = null
+
+const mountCaretMirror = (): void => {
+  if (typeof document === 'undefined' || !document.body || caretMirror) return
+  const mirror = document.createElement('div')
+  const prefix = document.createTextNode('')
+  const marker = document.createElement('span')
+  const suffix = document.createTextNode('\u200b')
+  marker.appendChild(suffix)
+  mirror.append(prefix, marker)
+  mirror.setAttribute('aria-hidden', 'true')
+  mirror.setAttribute('inert', '')
+  mirror.style.position = 'fixed'
+  mirror.style.left = '-100000px'
+  mirror.style.top = '0'
+  mirror.style.visibility = 'hidden'
+  mirror.style.pointerEvents = 'none'
+  mirror.style.overflow = 'hidden'
+  mirror.style.margin = '0'
+  mirror.style.border = '0'
+  mirror.style.boxSizing = 'border-box'
+  document.body.appendChild(mirror)
+  caretMirror = mirror
+  caretMirrorPrefix = prefix
+  caretMirrorMarker = marker
+  caretMirrorSuffix = suffix
+}
+
+const unmountCaretMirror = (): void => {
+  caretMirror?.remove()
+  caretMirror = null
+  caretMirrorPrefix = null
+  caretMirrorMarker = null
+  caretMirrorSuffix = null
+}
+
+interface CaretBounds {
+  readonly top: number
+  readonly bottom: number
+}
+
+const measureCaretBounds = (textarea: HTMLTextAreaElement, styles: CSSStyleDeclaration): CaretBounds | null => {
+  const mirror = caretMirror
+  const prefix = caretMirrorPrefix
+  const marker = caretMirrorMarker
+  const suffix = caretMirrorSuffix
+  if (!mirror || !prefix || !marker || !suffix || textarea.clientWidth <= 0) return null
+
+  const mirrorStyle = mirror.style
+  mirrorStyle.width = `${textarea.clientWidth}px`
+  mirrorStyle.paddingTop = styles.paddingTop
+  mirrorStyle.paddingRight = styles.paddingRight
+  mirrorStyle.paddingBottom = styles.paddingBottom
+  mirrorStyle.paddingLeft = styles.paddingLeft
+  mirrorStyle.font = styles.font
+  mirrorStyle.fontKerning = styles.fontKerning
+  mirrorStyle.fontFeatureSettings = styles.fontFeatureSettings
+  mirrorStyle.fontVariationSettings = styles.fontVariationSettings
+  mirrorStyle.lineHeight = styles.lineHeight
+  mirrorStyle.letterSpacing = styles.letterSpacing
+  mirrorStyle.wordSpacing = styles.wordSpacing
+  mirrorStyle.textAlign = styles.textAlign
+  mirrorStyle.textIndent = styles.textIndent
+  mirrorStyle.textTransform = styles.textTransform
+  mirrorStyle.direction = styles.direction
+  mirrorStyle.tabSize = styles.tabSize
+  mirrorStyle.whiteSpace = styles.whiteSpace
+  mirrorStyle.overflowWrap = styles.overflowWrap
+  mirrorStyle.wordBreak = styles.wordBreak
+
+  const selectionStart = textarea.selectionStart ?? textarea.value.length
+  const selectionEnd = textarea.selectionEnd ?? selectionStart
+  const caretIndex = textarea.selectionDirection === 'backward' ? selectionStart : selectionEnd
+  prefix.data = textarea.value.slice(0, caretIndex)
+  suffix.data = textarea.value.slice(caretIndex) || '\u200b'
+
+  const caretRect = marker.getClientRects()[0]
+  if (!caretRect) return null
+  const mirrorRect = mirror.getBoundingClientRect()
+  const lineHeight = Number.parseFloat(styles.lineHeight) || caretRect.height || 24
+  return caretBoundsFromMirror(caretRect.top, mirrorRect.top, caretRect.height, lineHeight)
+}
+
+const keepCaretVisible = (textarea: HTMLTextAreaElement): void => {
+  if (typeof window === 'undefined' || textarea.clientHeight <= 0) return
+  const styles = window.getComputedStyle(textarea)
+  const maxHeight = Number.parseFloat(styles.maxHeight)
+  if (!Number.isFinite(maxHeight) || textarea.scrollHeight <= maxHeight) return
+  const caret = measureCaretBounds(textarea, styles)
+  if (!caret) return
+  const paddingTop = Number.parseFloat(styles.paddingTop) || 0
+  const paddingBottom = Number.parseFloat(styles.paddingBottom) || 0
+  const nextScrollTop = scrollTopForCaret({
+    scrollTop: textarea.scrollTop,
+    clientHeight: textarea.clientHeight,
+    scrollHeight: textarea.scrollHeight,
+    paddingTop,
+    paddingBottom,
+    caret
+  })
+  textarea.scrollTop = nextScrollTop
+}
+const resizeInput = (): void => {
+  const textarea = getTextarea()
+  if (!textarea) return
   textarea.style.height = '0px'
   textarea.style.overflowY = 'hidden'
   const styles = window.getComputedStyle(textarea)
   const minHeight = Number.parseFloat(styles.minHeight) || 0
   const maxHeight = Number.parseFloat(styles.maxHeight) || Number.POSITIVE_INFINITY
   const contentHeight = textarea.scrollHeight
-  const height = Math.min(Math.max(contentHeight, minHeight), maxHeight)
+  const { height, overflowing } = calculateComposerSizing(contentHeight, minHeight, maxHeight)
   textarea.style.height = `${height}px`
-  textarea.style.overflowY = contentHeight > maxHeight ? 'auto' : 'hidden'
+  textarea.style.overflowY = overflowing ? 'auto' : 'hidden'
+  if (!overflowing) textarea.scrollTop = 0
+  else keepCaretVisible(textarea)
+}
+const handleInput = (): void => {
+  void nextTick(resizeInput)
+}
+const handleSelectionChange = (): void => {
+  void nextTick(() => {
+    const textarea = getTextarea()
+    if (textarea) keepCaretVisible(textarea)
+  })
 }
 const focusInput = async (): Promise<void> => {
   await nextTick()
@@ -412,7 +534,11 @@ watch(draft, value => {
     value.slice(0, dismissed.start) !== dismissed.prefix
   )) dismissedCommandToken.value = null
   if (sendFailed.value) sendFailed.value = false
-  void nextTick(resizeInput)
+  void nextTick(() => {
+    resizeInput()
+    const textarea = getTextarea()
+    if (textarea) keepCaretVisible(textarea)
+  })
 })
 watch(skillCommandQuery, () => {
   activeCommandIndex.value = 0
@@ -445,6 +571,11 @@ const focusSkillsTrigger = async (): Promise<void> => {
   else if (trigger?.$el instanceof HTMLElement) trigger.$el.focus()
   else trigger?.focus?.()
 }
+const resetInput = (): void => {
+  resizeInput()
+  const textarea = getTextarea()
+  if (textarea) textarea.scrollTop = 0
+}
 const submit = (): void => {
   if (props.disabled || sendInProgress.value || skillCommandOpen.value || !draft.value.trim()) return
   const content = draft.value
@@ -458,7 +589,10 @@ const submit = (): void => {
     submissionPending.value = false
     sendFailed.value = !success
     if (success) {
-      if (draft.value === content) draft.value = ''
+      if (draft.value === content) {
+        draft.value = ''
+        void nextTick(resetInput)
+      }
       selectedSkillIds.value = []
       goalMode.value = false
     } else {
@@ -472,11 +606,13 @@ const submit = (): void => {
 }
 defineExpose({ focusInput, focusSkillsTrigger })
 onMounted(() => {
+  mountCaretMirror()
   resizeInput()
   window.addEventListener('resize', resizeInput)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resizeInput)
+  unmountCaretMirror()
 })
 </script>
 
@@ -484,11 +620,11 @@ onBeforeUnmount(() => {
 .agent-composer {
   position: relative;
   display: flex;
-  max-height: min(calc(var(--wiki-space-12) * 8), 48dvh);
+  max-height: min(calc(var(--wiki-space-12) * 7), 44dvh);
   flex-direction: column;
   overflow: visible;
   min-width: 0;
-  padding: var(--wiki-space-2);
+  padding: var(--wiki-space-1);
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
@@ -522,12 +658,12 @@ onBeforeUnmount(() => {
   min-height: 0;
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: var(--wiki-space-2) var(--wiki-space-2) 0;
+  padding: var(--wiki-space-1) var(--wiki-space-1) 0;
 }
 
 .agent-composer__editor-label {
   display: flex;
-  min-height: var(--wiki-space-5);
+  min-height: var(--wiki-space-4);
   align-items: center;
   gap: var(--wiki-space-2);
   padding-inline: var(--wiki-space-1);
@@ -550,13 +686,13 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__input :deep(.v-field__input) {
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-3));
-  padding: var(--wiki-space-2) var(--wiki-space-1) var(--wiki-space-1);
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+  padding: var(--wiki-space-1) var(--wiki-space-1) 0;
 }
 
 .agent-composer__input :deep(textarea) {
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-3));
-  max-height: min(calc(var(--wiki-space-12) * 4), 42dvh);
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+  max-height: min(calc(var(--wiki-space-12) * 3), 30dvh);
   overflow-y: hidden;
   overscroll-behavior: contain;
   color: rgb(var(--v-theme-on-surface));
@@ -579,13 +715,13 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
-  max-height: min(calc(var(--wiki-space-12) * 4), 28dvh);
+  max-height: min(calc(var(--wiki-space-12) * 3), 24dvh);
   align-items: flex-start;
-  gap: var(--wiki-space-2);
-  margin: 0 var(--wiki-space-2) var(--wiki-space-2);
+  gap: var(--wiki-space-1);
+  margin: 0 var(--wiki-space-1) var(--wiki-space-1);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--wiki-space-2);
+  padding: var(--wiki-space-1);
   border-block: 1px solid var(--wiki-surface-border);
 }
 
@@ -607,7 +743,7 @@ onBeforeUnmount(() => {
   flex: 1;
   flex-wrap: wrap;
   align-content: flex-start;
-  gap: var(--wiki-space-2);
+  gap: var(--wiki-space-1);
 }
 
 
@@ -618,8 +754,8 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   grid-template-columns: minmax(0, auto) minmax(var(--wiki-space-12), 1fr) auto;
   align-items: center;
-  gap: var(--wiki-space-2);
-  padding: var(--wiki-space-1);
+  gap: var(--wiki-space-1);
+  padding: 0;
   border-top: 1px solid var(--wiki-surface-border);
 }
 
@@ -657,7 +793,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   align-items: center;
   justify-content: flex-end;
-  gap: var(--wiki-space-2);
+  gap: var(--wiki-space-1);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
@@ -699,12 +835,12 @@ onBeforeUnmount(() => {
 
 .agent-composer__hint {
   display: flex;
-  min-height: var(--wiki-space-5);
+  min-height: var(--wiki-space-4);
   flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   gap: var(--wiki-space-1);
-  margin: var(--wiki-space-1) var(--wiki-space-2) 0;
+  margin: var(--wiki-space-1) var(--wiki-space-1) 0;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 52%, transparent);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
@@ -771,7 +907,7 @@ onBeforeUnmount(() => {
   }
 
   .agent-composer__editor {
-    padding-inline: var(--wiki-space-2);
+    padding-inline: var(--wiki-space-1);
   }
 
   .agent-composer__actions {

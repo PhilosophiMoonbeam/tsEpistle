@@ -316,3 +316,6 @@ export interface AgentVerticalBounds {
 
 export const isAgentApprovalOutsideViewport = (viewport: AgentVerticalBounds, approval: AgentVerticalBounds): boolean =>
   approval.bottom <= viewport.top || approval.top >= viewport.bottom
+
+export const shouldFollowGoalExpansion = (expanded: boolean, transcriptFollowing: boolean, transcriptNearBottom: boolean): boolean =>
+  expanded && (transcriptFollowing || transcriptNearBottom)

@@ -10,7 +10,8 @@ import {
   buildAgentThreadPresentation,
   groupAgentCitations,
   groupAgentToolsByRun,
-  isAgentApprovalOutsideViewport
+  isAgentApprovalOutsideViewport,
+  shouldFollowGoalExpansion
 } from './agent-thread-presentation.ts'
 
 const tool = (input: Partial<AgentToolCallView> & Pick<AgentToolCallView, 'id' | 'runId'>): AgentToolCallView => ({
@@ -295,5 +296,11 @@ describe('Agent thread presentation', () => {
     expect(isAgentApprovalOutsideViewport(viewport, { top: 720, bottom: 920 })).toBe(true)
     expect(isAgentApprovalOutsideViewport(viewport, { top: -100, bottom: 80 })).toBe(true)
     expect(isAgentApprovalOutsideViewport(viewport, { top: 650, bottom: 900 })).toBe(false)
+  })
+  it('follows only when expanding from a following or near-bottom transcript', () => {
+    expect(shouldFollowGoalExpansion(true, true, false)).toBe(true)
+    expect(shouldFollowGoalExpansion(true, false, true)).toBe(true)
+    expect(shouldFollowGoalExpansion(true, false, false)).toBe(false)
+    expect(shouldFollowGoalExpansion(false, true, true)).toBe(false)
   })
 })

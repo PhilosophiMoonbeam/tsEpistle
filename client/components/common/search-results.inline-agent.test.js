@@ -279,7 +279,9 @@ describe('inline Ask mode contract', () => {
     const wideLayout = inline.match(/@media \(min-width:\s*1440px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
     expect(wideLayout).toMatch(/\.inline-agent\.inline-agent--history-open\s*\{[\s\S]*?minmax\(16rem,\s*22rem\)[\s\S]*?minmax\(0,\s*68rem\)/)
     expect(wideLayout).toMatch(/\.inline-agent\.inline-agent--memory-open\s*\{[\s\S]*?minmax\(0,\s*68rem\)[\s\S]*?minmax\(16rem,\s*22rem\)/)
-    expect(wideLayout).toMatch(/\.inline-agent\.inline-agent--panels-open\s*\{[\s\S]*?minmax\(16rem,\s*19rem\)[\s\S]*?minmax\(0,\s*68rem\)[\s\S]*?minmax\(16rem,\s*21rem\)/)
+    expect(wideLayout).toMatch(
+      /\.inline-agent\.inline-agent--panels-open\s*\{[\s\S]*?minmax\(16rem,\s*19rem\)[\s\S]*?minmax\(0,\s*68rem\)[\s\S]*?minmax\(16rem,\s*21rem\)/
+    )
 
     const dockedLayout = inline.match(/@media \(min-width:\s*1024px\) and \(max-width:\s*1439\.98px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
     expect(dockedLayout).toMatch(/\.inline-agent\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*68rem\)[\s\S]*?justify-content:\s*center/)
@@ -369,7 +371,7 @@ describe('inline Ask mode contract', () => {
 
     expect(composerRootStyle).toMatch(/display:\s*flex/)
     expect(composerRootStyle).toMatch(/flex-direction:\s*column/)
-    expect(composerRootStyle).toMatch(/max-height:\s*min\(\s*calc\(\s*var\(--wiki-space-12\)\s*\*\s*8\s*\)\s*,\s*48dvh\s*\)/)
+    expect(composerRootStyle).toMatch(/max-height:\s*min\(\s*calc\(\s*var\(--wiki-space-12\)\s*\*\s*7\s*\)\s*,\s*44dvh\s*\)/)
     expect(editorStyle).toMatch(/min-height:\s*0/)
     expect(editorStyle).toMatch(/flex:\s*\d+\s+1\s+auto/)
     expect(editorStyle).toMatch(/overflow-y:\s*auto/)

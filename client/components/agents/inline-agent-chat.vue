@@ -160,85 +160,96 @@
             :disabled="Boolean(activeRun) || Boolean(openGoal)"
             :apply-provider-profile="applyProviderProfile"
           />
-          <AgentGoalStatus
-            v-if="thread?.goal"
-            :goal="thread.goal"
-            :busy="goalBusy"
-            :run-active="Boolean(activeRun)"
-            @pause="agents.pauseGoal"
-            @resume="agents.resumeGoal"
-            @cancel="agents.cancelGoal"
-          />
 
-          <div
-            ref="transcript"
-            class="inline-agent__transcript"
-            :class="{ 'inline-agent__transcript--approval-jump': approvalJumpVisible }"
-            tabindex="-1"
-            aria-label="Conversation transcript"
-            @scroll.passive="handleTranscriptScroll"
-          >
-            <div v-if="loading && !thread" class="inline-agent__loading" role="status">
-              <span class="inline-agent__loading-mark" aria-hidden="true" />
-              <span>
-                <strong>Opening conversation</strong>
-                <small>Recovering your latest working context</small>
-              </span>
+          <div class="inline-agent__transcript-wrap">
+            <div
+              ref="transcript"
+              class="inline-agent__transcript"
+              :class="{ 'inline-agent__transcript--approval-jump': approvalJumpVisible }"
+              tabindex="-1"
+              aria-label="Conversation transcript"
+              @scroll.passive="handleTranscriptScroll"
+            >
+              <div v-if="loading && !thread" class="inline-agent__loading" role="status">
+                <span class="inline-agent__loading-mark" aria-hidden="true" />
+                <span>
+                  <strong>Opening conversation</strong>
+                  <small>Recovering your latest working context</small>
+                </span>
+              </div>
+
+              <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
+                <p class="inline-agent__welcome-index">Archive desk · Ready</p>
+                <h2 id="inline-agent-welcome-title">Begin with what you need to understand.</h2>
+                <p class="inline-agent__welcome-copy">
+                  Wiki Agent traces answers through the knowledge you can access, keeps sources visible, and turns careful intent into auditable work.
+                </p>
+                <div class="inline-agent__starters" role="group" aria-label="Conversation starters">
+                  <v-btn
+                    v-for="starter in starters"
+                    :key="starter.prompt"
+                    class="inline-agent__starter"
+                    color="primary"
+                    variant="text"
+                    :disabled="!canSubmit"
+                    :title="!canSubmit ? submitUnavailableReason : undefined"
+                    @click="sendPrompt(starter.prompt)"
+                  >
+                    <v-icon start :icon="starter.icon" />
+                    {{ starter.label }}
+                    <v-icon class="inline-agent__starter-arrow" end icon="mdi-arrow-right" size="16" />
+                  </v-btn>
+                </div>
+              </section>
+
+              <AgentThread
+                v-else-if="thread"
+                :thread="thread"
+                :connection="connection"
+                :deciding-approval-id="decidingApprovalId"
+                :can-submit="canSubmit"
+                @suggest="sendPrompt"
+                @decision="agents.decideProposal"
+              />
+              <div
+                v-if="thread?.goal"
+                class="inline-agent__goal-dock"
+                :class="{ 'inline-agent__goal-dock--expanded': goalExpanded }"
+              >
+                <AgentGoalStatus
+                  :goal="thread.goal"
+                  :busy="goalBusy"
+                  :run-active="Boolean(activeRun)"
+                  :expanded="goalExpanded"
+                  @pause="agents.pauseGoal"
+                  @resume="agents.resumeGoal"
+                  @cancel="agents.cancelGoal"
+                  @update:expanded="handleGoalExpanded"
+                />
+              </div>
             </div>
 
-            <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
-              <p class="inline-agent__welcome-index">Archive desk · Ready</p>
-              <h2 id="inline-agent-welcome-title">Begin with what you need to understand.</h2>
-              <p class="inline-agent__welcome-copy">
-                Wiki Agent traces answers through the knowledge you can access, keeps sources visible, and turns careful intent into auditable work.
-              </p>
-              <div class="inline-agent__starters" role="group" aria-label="Conversation starters">
-                <v-btn
-                  v-for="starter in starters"
-                  :key="starter.prompt"
-                  class="inline-agent__starter"
-                  color="primary"
-                  variant="text"
-                  :disabled="!canSubmit"
-                  :title="!canSubmit ? submitUnavailableReason : undefined"
-                  @click="sendPrompt(starter.prompt)"
-                >
-                  <v-icon start :icon="starter.icon" />
-                  {{ starter.label }}
-                  <v-icon class="inline-agent__starter-arrow" end icon="mdi-arrow-right" size="16" />
-                </v-btn>
-              </div>
-            </section>
-
-            <AgentThread
-              v-else-if="thread"
-              :thread="thread"
-              :connection="connection"
-              :deciding-approval-id="decidingApprovalId"
-              :can-submit="canSubmit"
-              @suggest="sendPrompt"
-              @decision="agents.decideProposal"
-            />
+            <v-btn
+              v-if="approvalJumpVisible"
+              class="inline-agent__approval-jump"
+              :class="{ 'inline-agent__jump--goal': thread?.goal }"
+              color="warning"
+              variant="elevated"
+              prepend-icon="mdi-shield-alert-outline"
+              append-icon="mdi-arrow-down"
+              @click="jumpToApproval"
+            >Approval required</v-btn>
+            <v-btn
+              v-else-if="followJumpVisible"
+              class="inline-agent__follow-jump"
+              :class="{ 'inline-agent__jump--goal': thread?.goal }"
+              color="primary"
+              variant="tonal"
+              prepend-icon="mdi-arrow-down"
+              aria-label="Jump to latest response"
+              @click="scrollToLatest"
+            >Latest response</v-btn>
           </div>
-
-          <v-btn
-            v-if="approvalJumpVisible"
-            class="inline-agent__approval-jump"
-            color="warning"
-            variant="elevated"
-            prepend-icon="mdi-shield-alert-outline"
-            append-icon="mdi-arrow-down"
-            @click="jumpToApproval"
-          >Approval required</v-btn>
-          <v-btn
-            v-else-if="followJumpVisible"
-            class="inline-agent__follow-jump"
-            color="primary"
-            variant="tonal"
-            prepend-icon="mdi-arrow-down"
-            aria-label="Jump to latest response"
-            @click="scrollToLatest"
-          >Latest response</v-btn>
         </div>
 
         <footer class="inline-agent__composer">
@@ -332,7 +343,7 @@ import AgentMcpApproval from './agent-mcp-approval.vue'
 import AgentSessionSettings from './agent-session-settings.vue'
 import AgentGoalStatus from './agent-goal-status.vue'
 import AgentThread from './agent-thread.vue'
-import { isAgentApprovalOutsideViewport } from './agent-thread-presentation.ts'
+import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
 
 const props = defineProps<{
   csrfToken: string
@@ -358,6 +369,7 @@ const composer = ref<{ focusInput: () => Promise<void>; focusSkillsTrigger: () =
 const historyPanel = ref<HTMLElement | null>(null)
 const memoryPanel = ref<HTMLElement | null>(null)
 const panelScrim = ref<HTMLElement | null>(null)
+const goalExpanded = ref(false)
 const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
 const resetHistoryOpen = ref(false)
@@ -682,6 +694,19 @@ const reconcileTranscriptGrowth = async (shouldFollow: boolean): Promise<void> =
   }
   updateApprovalJump()
 }
+const handleGoalExpanded = async (expanded: boolean): Promise<void> => {
+  const container = transcript.value
+  const shouldFollow = shouldFollowGoalExpansion(expanded, transcriptFollowing.value, transcriptIsNearBottom(container))
+  goalExpanded.value = expanded
+  await nextTick()
+  if (shouldFollow && container) {
+    container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
+    transcriptFollowing.value = true
+  } else {
+    transcriptFollowing.value = transcriptIsNearBottom(container)
+  }
+  updateApprovalJump()
+}
 const scheduleTranscriptReconcile = (): void => {
   transcriptFrameShouldFollow ||= transcriptFollowing.value || transcriptIsNearBottom(transcript.value)
   if (transcriptFrame !== null) return
@@ -733,6 +758,7 @@ watch([historyOpen, memoryOpen], ([history, memory]) => {
   triggerForPanel(restoreKind)?.focus({ preventScroll: true })
 }, { flush: 'post' })
 watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
+  if (sessionId !== previousSessionId) goalExpanded.value = false
   if (!sessionId || !previousSessionId || sessionId === previousSessionId) return
   const restoreWorkspaceFocus = !resetHistoryOpen.value
   if (historyOpen.value) {
@@ -753,6 +779,9 @@ watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
     }
     updateApprovalJump()
   })
+})
+watch(() => thread.value?.goal?.id, (goalId, previousGoalId) => {
+  if (goalId !== previousGoalId) goalExpanded.value = false
 })
 watch([thread, pendingApprovalId, connection], () => {
   void nextTick(() => { if (!hasConversation.value && transcript.value) transcript.value.scrollTop = 0; updateApprovalJump() })
@@ -964,7 +993,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 }
 
 .inline-agent__body {
-  position: relative;
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
@@ -980,6 +1008,17 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     ),
     rgb(var(--v-theme-background));
 }
+.inline-agent__transcript-wrap {
+  position: relative;
+  display: flex;
+  container-name: inline-agent-transcript;
+  container-type: size;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 
 .inline-agent__alert {
   flex: 0 0 auto;
@@ -1010,6 +1049,28 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   scrollbar-gutter: stable both-edges;
   scroll-behavior: smooth;
   scroll-padding-block: var(--wiki-space-4);
+}
+.inline-agent__goal-dock {
+  position: sticky;
+  z-index: 2;
+  inset-block-end: 0;
+  width: min(100%, var(--agent-conversation-width));
+  margin: var(--wiki-space-3) auto 0;
+  padding-block: var(--wiki-space-2) var(--wiki-space-3);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, rgb(var(--v-theme-background)) 0%, transparent),
+    rgb(var(--v-theme-background)) var(--wiki-space-3)
+  );
+}
+
+.inline-agent__goal-dock :deep(.agent-goal) {
+  box-shadow: var(--wiki-shadow-md);
+}
+
+.inline-agent__jump--goal {
+  inset-block-start: var(--wiki-space-4);
+  inset-block-end: auto;
 }
 
 .inline-agent__transcript:focus-visible {
@@ -1598,6 +1659,10 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   .inline-agent__follow-jump {
     inset-block-end: var(--wiki-space-3);
     inset-inline: var(--wiki-space-6);
+  }
+  .inline-agent__jump--goal {
+    inset-block-start: var(--wiki-space-3);
+    inset-block-end: auto;
   }
 }
 

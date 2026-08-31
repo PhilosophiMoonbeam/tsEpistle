@@ -1,138 +1,169 @@
 <template>
   <section
     class="agent-goal"
-    :class="`agent-goal--${goal.status}`"
-    :aria-labelledby="goalTitleId"
-    :aria-describedby="goalSummaryId"
+    :class="[`agent-goal--${goal.status}`, { 'agent-goal--expanded': expanded }]"
+    :aria-labelledby="goalCollapsedObjectiveId"
     :aria-busy="busy"
   >
-    <div class="agent-goal__rail" aria-hidden="true">
-      <div class="agent-goal__mark">
-        <v-icon :icon="statusIcon" size="21" />
-      </div>
-      <span />
-    </div>
-
-    <div class="agent-goal__body">
-      <header class="agent-goal__header">
-        <div class="agent-goal__heading">
-          <p class="agent-goal__eyebrow">Durable goal</p>
-          <h2 :id="goalTitleId" class="agent-goal__title">{{ goal.objective }}</h2>
-        </div>
-        <v-chip class="agent-goal__status" :color="statusColor" :prepend-icon="statusIcon" size="small" variant="tonal">{{ statusLabel }}</v-chip>
-      </header>
-
-      <div class="agent-goal__continuity" aria-label="Goal continuity">
-        <span><v-icon icon="mdi-source-branch" size="15" /> Run {{ goal.continuationCount + 1 }} of {{ goal.maxContinuations + 1 }}</span>
-        <span><v-icon icon="mdi-calendar-clock-outline" size="15" /> {{ timelinePrefix }} <time :datetime="timelineAt">{{ timelineLabel }}</time></span>
-      </div>
-
-      <div class="agent-goal__progress">
-        <div class="agent-goal__progress-heading">
-          <span>Resource use</span>
-          <strong>{{ Math.round(budgetPercent) }}% peak</strong>
-        </div>
-        <div
-          class="agent-goal__meter"
-          :class="{ 'agent-goal__meter--warning': budgetPercent >= 80 }"
-          role="progressbar"
-          :aria-valuenow="Math.round(budgetPercent)"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          :aria-valuetext="budgetAriaLabel"
-          aria-label="Peak goal resource use"
-        >
-          <span :style="{ width: `${budgetPercent}%` }" />
-        </div>
-      </div>
-
-      <dl class="agent-goal__budgets" aria-label="Goal resource budgets">
-        <div v-for="metric in budgetMetrics" :key="metric.label" class="agent-goal__budget">
-          <dt>{{ metric.label }}</dt>
-          <dd>
-            <span>{{ metric.value }}</span>
-            <small>of {{ metric.limit }}</small>
-          </dd>
-          <span class="agent-goal__budget-track" aria-hidden="true">
-            <span :style="{ width: `${metric.percent}%` }" />
-          </span>
-        </div>
-      </dl>
-
-      <p :id="goalSummaryId" class="agent-goal__summary" aria-live="polite">{{ progressLabel }}</p>
-
-      <aside
-        v-if="blockerMessages.length"
-        class="agent-goal__blockers"
-        :class="{ 'agent-goal__blockers--error': goal.status === 'failed' }"
-        :aria-labelledby="goalBlockersTitleId"
+    <div class="agent-goal__summary-row">
+      <span class="agent-goal__mark" aria-hidden="true">
+        <v-icon :icon="statusIcon" size="18" />
+      </span>
+      <span
+        :id="goalStatusId"
+        class="agent-goal__status-label"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >{{ statusLabel }}</span>
+      <span :id="goalCollapsedObjectiveId" class="agent-goal__collapsed-objective">{{ goal.objective }}</span>
+      <span class="agent-goal__collapsed-meta" aria-label="Goal run and peak resource use">
+        <span>Run {{ goal.continuationCount + 1 }}</span>
+        <span aria-hidden="true">·</span>
+        <span>{{ Math.round(budgetPercent) }}% peak</span>
+      </span>
+      <button
+        :id="goalToggleId"
+        class="agent-goal__toggle"
+        type="button"
+        :aria-expanded="expanded"
+        :aria-controls="goalDetailsId"
+        :aria-label="toggleAriaLabel"
+        @click="toggleExpanded"
       >
-        <div class="agent-goal__blockers-heading">
-          <v-icon :icon="goal.status === 'failed' ? 'mdi-alert-octagon-outline' : 'mdi-alert-circle-outline'" size="19" />
-          <h3 :id="goalBlockersTitleId">{{ goal.status === 'failed' ? 'Why this goal stopped' : 'Needs attention' }}</h3>
-        </div>
-        <ul>
-          <li v-for="(issue, index) in blockerMessages" :key="`${issue.code}-${index}`">
-            <span>{{ issue.message }}</span>
-            <span class="agent-goal__issue-state">{{ issue.retryable ? 'Can continue after review' : 'Not automatically retryable' }}</span>
-          </li>
-        </ul>
-      </aside>
-
-      <p v-if="busy" class="agent-goal__pending" role="status" aria-live="polite">
-        <v-progress-circular color="primary" indeterminate size="15" width="2" />
-        {{ pendingActionLabel }}
-      </p>
-
-      <div v-if="canPause || canResume || canCancel" class="agent-goal__actions" aria-label="Goal actions">
-        <v-btn
-          v-if="canPause"
-          size="small"
-          variant="tonal"
-          prepend-icon="mdi-pause"
-          :loading="pendingAction === 'pause' && busy"
-          :disabled="busy"
-          @click="runAction('pause')"
-        >Pause</v-btn>
-        <v-btn
-          v-if="canResume"
-          size="small"
-          color="primary"
-          variant="tonal"
-          prepend-icon="mdi-play"
-          :loading="pendingAction === 'resume' && busy"
-          :disabled="busy"
-          @click="runAction('resume')"
-        >Resume goal</v-btn>
-        <v-btn
-          v-if="canCancel"
-          size="small"
-          color="error"
-          variant="text"
-          prepend-icon="mdi-close"
-          :disabled="busy"
-          :loading="pendingAction === 'cancel' && busy"
-          @click="cancelDialogOpen = true"
-        >Cancel goal</v-btn>
-      </div>
-
-      <v-dialog v-model="cancelDialogOpen" max-width="30rem" :aria-labelledby="cancelGoalTitleId">
-        <v-card rounded="xl">
-          <v-card-title class="agent-goal__dialog-title">
-            <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-stop-circle-outline" /></v-avatar>
-            <span :id="cancelGoalTitleId">Cancel durable goal?</span>
-          </v-card-title>
-          <v-card-text>
-            This will stop <strong>{{ goal.objective }}</strong> and prevent every future continuation. Completed work remains in this conversation, but the goal cannot be resumed.
-          </v-card-text>
-          <v-card-actions class="agent-goal__dialog-actions">
-            <v-spacer />
-            <v-btn variant="text" :disabled="busy" @click="cancelDialogOpen = false">Keep goal</v-btn>
-            <v-btn color="error" variant="tonal" :loading="pendingAction === 'cancel' && busy" :disabled="busy" @click="confirmCancel">Cancel goal</v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
+        <span class="agent-goal__toggle-label">{{ expanded ? 'Hide details' : 'Show details' }}</span>
+        <v-icon class="agent-goal__toggle-icon" icon="mdi-chevron-down" size="18" aria-hidden="true" />
+      </button>
     </div>
+
+    <div
+      v-if="expanded"
+      :id="goalDetailsId"
+      class="agent-goal__details"
+      role="region"
+      :aria-labelledby="goalToggleId"
+    >
+      <div class="agent-goal__body">
+        <header class="agent-goal__header">
+          <div class="agent-goal__heading">
+            <p class="agent-goal__eyebrow">Durable goal</p>
+            <h2 :id="goalTitleId" class="agent-goal__title">{{ goal.objective }}</h2>
+          </div>
+          <v-chip class="agent-goal__status" :color="statusColor" :prepend-icon="statusIcon" size="small" variant="tonal">{{ statusLabel }}</v-chip>
+        </header>
+
+        <div class="agent-goal__continuity" aria-label="Goal continuity">
+          <span><v-icon icon="mdi-source-branch" size="15" /> Run {{ goal.continuationCount + 1 }} of {{ goal.maxContinuations + 1 }}</span>
+          <span><v-icon icon="mdi-calendar-clock-outline" size="15" /> {{ timelinePrefix }} <time :datetime="timelineAt">{{ timelineLabel }}</time></span>
+        </div>
+
+        <div class="agent-goal__progress">
+          <div class="agent-goal__progress-heading">
+            <span>Resource use</span>
+            <strong>{{ Math.round(budgetPercent) }}% peak</strong>
+          </div>
+          <div
+            class="agent-goal__meter"
+            :class="{ 'agent-goal__meter--warning': budgetPercent >= 80 }"
+            role="progressbar"
+            :aria-valuenow="Math.round(budgetPercent)"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            :aria-valuetext="budgetAriaLabel"
+            aria-label="Peak goal resource use"
+          >
+            <span :style="{ width: `${budgetPercent}%` }" />
+          </div>
+        </div>
+
+        <dl class="agent-goal__budgets" aria-label="Goal resource budgets">
+          <div v-for="metric in budgetMetrics" :key="metric.label" class="agent-goal__budget">
+            <dt>{{ metric.label }}</dt>
+            <dd>
+              <span>{{ metric.value }}</span>
+              <small>of {{ metric.limit }}</small>
+            </dd>
+            <span class="agent-goal__budget-track" aria-hidden="true">
+              <span :style="{ width: `${metric.percent}%` }" />
+            </span>
+          </div>
+        </dl>
+
+        <p :id="goalSummaryId" class="agent-goal__summary" aria-live="polite">{{ progressLabel }}</p>
+
+        <aside
+          v-if="blockerMessages.length"
+          class="agent-goal__blockers"
+          :class="{ 'agent-goal__blockers--error': goal.status === 'failed' }"
+          :aria-labelledby="goalBlockersTitleId"
+        >
+          <div class="agent-goal__blockers-heading">
+            <v-icon :icon="goal.status === 'failed' ? 'mdi-alert-octagon-outline' : 'mdi-alert-circle-outline'" size="19" />
+            <h3 :id="goalBlockersTitleId">{{ goal.status === 'failed' ? 'Why this goal stopped' : 'Needs attention' }}</h3>
+          </div>
+          <ul>
+            <li v-for="(issue, index) in blockerMessages" :key="`${issue.code}-${index}`">
+              <span>{{ issue.message }}</span>
+              <span class="agent-goal__issue-state">{{ issue.retryable ? 'Can continue after review' : 'Not automatically retryable' }}</span>
+            </li>
+          </ul>
+        </aside>
+
+        <p v-if="busy" class="agent-goal__pending" role="status" aria-live="polite">
+          <v-progress-circular color="primary" indeterminate size="15" width="2" />
+          {{ pendingActionLabel }}
+        </p>
+
+        <div v-if="canPause || canResume || canCancel" class="agent-goal__actions" aria-label="Goal actions">
+          <v-btn
+            v-if="canPause"
+            size="small"
+            variant="tonal"
+            prepend-icon="mdi-pause"
+            :loading="pendingAction === 'pause' && busy"
+            :disabled="busy"
+            @click="runAction('pause')"
+          >Pause</v-btn>
+          <v-btn
+            v-if="canResume"
+            size="small"
+            color="primary"
+            variant="tonal"
+            prepend-icon="mdi-play"
+            :loading="pendingAction === 'resume' && busy"
+            :disabled="busy"
+            @click="runAction('resume')"
+          >Resume goal</v-btn>
+          <v-btn
+            v-if="canCancel"
+            size="small"
+            color="error"
+            variant="text"
+            prepend-icon="mdi-close"
+            :disabled="busy"
+            :loading="pendingAction === 'cancel' && busy"
+            @click="cancelDialogOpen = true"
+          >Cancel goal</v-btn>
+        </div>
+      </div>
+    </div>
+
+    <v-dialog v-model="cancelDialogOpen" max-width="30rem" :aria-labelledby="cancelGoalTitleId">
+      <v-card rounded="xl">
+        <v-card-title class="agent-goal__dialog-title">
+          <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-stop-circle-outline" /></v-avatar>
+          <span :id="cancelGoalTitleId">Cancel durable goal?</span>
+        </v-card-title>
+        <v-card-text>
+          This will stop <strong>{{ goal.objective }}</strong> and prevent every future continuation. Completed work remains in this conversation, but the goal cannot be resumed.
+        </v-card-text>
+        <v-card-actions class="agent-goal__dialog-actions">
+          <v-spacer />
+          <v-btn variant="text" :disabled="busy" @click="cancelDialogOpen = false">Keep goal</v-btn>
+          <v-btn color="error" variant="tonal" :loading="pendingAction === 'cancel' && busy" :disabled="busy" @click="confirmCancel">Cancel goal</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </section>
 </template>
 
@@ -140,14 +171,20 @@
 import { computed, ref, watch } from 'vue'
 import type { AgentGoalView } from '../../../shared/agents/contracts.ts'
 
-const props = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean }>()
-const emit = defineEmits<{ pause: []; resume: []; cancel: [] }>()
+const props = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean; expanded: boolean }>()
+const emit = defineEmits<{ 'update:expanded': [value: boolean]; pause: []; resume: []; cancel: [] }>()
 const pendingAction = ref<'pause' | 'resume' | 'cancel' | null>(null)
 const cancelDialogOpen = ref(false)
 const goalTitleId = computed(() => `agent-goal-${props.goal.id}-title`)
 const goalSummaryId = computed(() => `agent-goal-${props.goal.id}-summary`)
+const goalCollapsedObjectiveId = computed(() => `agent-goal-${props.goal.id}-collapsed-objective`)
+const goalStatusId = computed(() => `agent-goal-${props.goal.id}-status`)
+const goalToggleId = computed(() => `agent-goal-${props.goal.id}-toggle`)
+const goalDetailsId = computed(() => `agent-goal-${props.goal.id}-details`)
 const goalBlockersTitleId = computed(() => `agent-goal-${props.goal.id}-blockers-title`)
 const cancelGoalTitleId = computed(() => `agent-goal-${props.goal.id}-cancel-title`)
+const toggleAriaLabel = computed(() => `${props.expanded ? 'Hide' : 'Show'} durable goal details: ${props.goal.objective}`)
+const toggleExpanded = (): void => emit('update:expanded', !props.expanded)
 watch(() => props.busy, busy => { if (!busy) pendingAction.value = null })
 watch(() => props.goal.status, status => {
   if (!['active', 'paused', 'blocked'].includes(status)) cancelDialogOpen.value = false
@@ -166,7 +203,7 @@ const confirmCancel = () => {
 }
 
 const statusPresentation = {
-  active: { label: 'In progress', icon: 'mdi-bullseye-arrow', color: 'primary' },
+  active: { label: 'In progress', icon: 'mdi-bullseye-arrow', color: 'success' },
   paused: { label: 'Paused', icon: 'mdi-pause-circle-outline', color: 'warning' },
   blocked: { label: 'Needs attention', icon: 'mdi-alert-circle-outline', color: 'warning' },
   budget_limited: { label: 'Limit reached', icon: 'mdi-speedometer-slow', color: 'warning' },
@@ -274,46 +311,123 @@ const progressLabel = computed(() => {
 
 <style scoped>
 .agent-goal {
-  --goal-accent: rgb(var(--v-theme-primary));
-  align-items: stretch;
-  background: var(--wiki-surface-raised);
-  border: 1px solid color-mix(in srgb, var(--goal-accent) 32%, var(--wiki-surface-border));
-  border-radius: var(--wiki-panel-radius);
+  --goal-accent: rgb(var(--v-theme-success));
+  --goal-ink: color-mix(in srgb, var(--goal-accent) 72%, rgb(var(--v-theme-on-surface)));
+  --goal-transcript-available-block-size: max(
+    0px,
+    calc(
+      100cqh
+      - var(--wiki-space-3)
+      - var(--wiki-space-6)
+      - var(--wiki-space-3)
+      - var(--wiki-space-2)
+      - var(--wiki-space-3)
+    )
+  );
+  background: color-mix(in srgb, var(--goal-accent) 8%, var(--wiki-surface-raised));
+  border: 1px solid color-mix(in srgb, var(--goal-accent) 30%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
   box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
-  display: grid;
-  gap: var(--wiki-space-3);
-  grid-template-columns: var(--wiki-control-height) minmax(0, 1fr);
-  margin: 0 auto var(--wiki-space-4);
-  max-width: 52rem;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
-  padding: var(--wiki-space-4);
   position: relative;
   width: 100%;
 }
+.agent-goal--active,
+.agent-goal--completed { --goal-accent: rgb(var(--v-theme-success)); }
 .agent-goal--paused,
 .agent-goal--blocked,
 .agent-goal--budget_limited { --goal-accent: rgb(var(--v-theme-warning)); }
-.agent-goal--completed { --goal-accent: rgb(var(--v-theme-success)); }
 .agent-goal--failed { --goal-accent: rgb(var(--v-theme-error)); }
 .agent-goal--cancelled { --goal-accent: rgba(var(--v-theme-on-surface), .58); }
-.agent-goal__rail { align-items: center; display: flex; flex-direction: column; min-height: 100%; }
-.agent-goal__rail > span {
-  background: linear-gradient(to bottom, color-mix(in srgb, var(--goal-accent) 42%, transparent), transparent);
-  flex: 1;
-  margin-top: var(--wiki-space-2);
-  min-height: var(--wiki-space-6);
-  width: 1px;
+.agent-goal--expanded { max-block-size: var(--goal-transcript-available-block-size); }
+.agent-goal__summary-row {
+  align-items: center;
+  display: grid;
+  flex: 0 0 auto;
+  gap: var(--wiki-space-2);
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  min-height: 2.5rem;
+  padding: var(--wiki-space-1) var(--wiki-space-2);
 }
 .agent-goal__mark {
   align-items: center;
-  background: color-mix(in srgb, var(--goal-accent) 12%, transparent);
-  border: 1px solid color-mix(in srgb, var(--goal-accent) 26%, transparent);
+  background: color-mix(in srgb, var(--goal-accent) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--goal-accent) 28%, transparent);
   border-radius: var(--wiki-control-radius);
-  color: var(--goal-accent);
+  color: var(--goal-ink);
   display: flex;
-  height: var(--wiki-control-height);
+  height: 1.75rem;
   justify-content: center;
-  width: var(--wiki-control-height);
+  width: 1.75rem;
+}
+.agent-goal__status-label {
+  color: var(--goal-ink);
+  font-size: .7rem;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.agent-goal__collapsed-objective {
+  color: rgb(var(--v-theme-on-surface));
+  font-size: .78rem;
+  font-weight: 625;
+  line-height: 1.35;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-goal__collapsed-meta {
+  align-items: center;
+  color: rgba(var(--v-theme-on-surface), .66);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: .66rem;
+  font-variant-numeric: tabular-nums;
+  gap: var(--wiki-space-1);
+  white-space: nowrap;
+}
+.agent-goal__toggle {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: var(--wiki-control-radius);
+  color: var(--goal-ink);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: var(--wiki-space-1);
+  justify-content: center;
+  min-height: 1.75rem;
+  padding: 0 var(--wiki-space-1) 0 var(--wiki-space-2);
+  white-space: nowrap;
+}
+.agent-goal__toggle:hover { background: color-mix(in srgb, var(--goal-accent) 10%, transparent); }
+.agent-goal__toggle:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: 2px;
+}
+.agent-goal__toggle-label { font-size: .68rem; font-weight: 675; }
+.agent-goal__toggle-icon {
+  transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
+}
+.agent-goal--expanded .agent-goal__toggle-icon { transform: rotate(180deg); }
+.agent-goal__details {
+  border-top: 1px solid color-mix(in srgb, var(--goal-accent) 20%, var(--wiki-surface-border));
+  flex: 0 1 auto;
+  max-block-size: min(
+    36rem,
+    max(0px, calc(var(--goal-transcript-available-block-size) - 2.5rem))
+  );
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: var(--wiki-space-3);
+  scrollbar-gutter: stable;
 }
 .agent-goal__body { min-width: 0; }
 .agent-goal__header {
@@ -325,7 +439,7 @@ const progressLabel = computed(() => {
 .agent-goal__heading { min-width: 0; }
 .agent-goal__status { flex: 0 0 auto; }
 .agent-goal__eyebrow {
-  color: var(--goal-accent);
+  color: var(--goal-ink);
   font-size: var(--wiki-label-size);
   font-weight: 750;
   letter-spacing: .1em;
@@ -365,7 +479,7 @@ const progressLabel = computed(() => {
   margin-bottom: var(--wiki-space-2);
 }
 .agent-goal__progress-heading span { color: rgba(var(--v-theme-on-surface), .62); font-weight: 650; }
-.agent-goal__progress-heading strong { color: var(--goal-accent); font-variant-numeric: tabular-nums; }
+.agent-goal__progress-heading strong { color: var(--goal-ink); font-variant-numeric: tabular-nums; }
 .agent-goal__meter {
   background: rgba(var(--v-theme-on-surface), .1);
   border-radius: var(--wiki-radius-pill);
@@ -436,7 +550,7 @@ const progressLabel = computed(() => {
   background: color-mix(in srgb, rgb(var(--v-theme-error)) 8%, transparent);
   border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 28%, transparent);
 }
-.agent-goal__blockers-heading { align-items: center; color: var(--goal-accent); display: flex; gap: var(--wiki-space-2); }
+.agent-goal__blockers-heading { align-items: center; color: var(--goal-ink); display: flex; gap: var(--wiki-space-2); }
 .agent-goal__blockers-heading h3 { font-size: .76rem; font-weight: 750; margin: 0; }
 .agent-goal__blockers ul { margin: var(--wiki-space-2) 0 0; padding-inline-start: var(--wiki-space-5); }
 .agent-goal__blockers li { font-size: .74rem; line-height: 1.45; overflow-wrap: anywhere; padding-inline-start: var(--wiki-space-1); }
@@ -455,13 +569,32 @@ const progressLabel = computed(() => {
 .agent-goal__dialog-actions { flex-wrap: wrap; padding: 0 var(--wiki-space-5) var(--wiki-space-4); }
 .agent-goal__dialog-actions :deep(.v-spacer) { min-width: 0; }
 @media (max-width: 600px) {
-  .agent-goal {
-    border-radius: var(--wiki-control-radius);
-    gap: var(--wiki-space-2);
-    grid-template-columns: 2rem minmax(0, 1fr);
-    padding: var(--wiki-space-3);
+  .agent-goal__summary-row {
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    padding: var(--wiki-space-1) var(--wiki-space-2);
   }
-  .agent-goal__mark { height: 2rem; width: 2rem; }
+  .agent-goal__mark { grid-column: 1; grid-row: 1; }
+  .agent-goal__status-label { grid-column: 2; grid-row: 1; }
+  .agent-goal__collapsed-objective { grid-column: 3; grid-row: 1; }
+  .agent-goal__collapsed-meta {
+    grid-column: 2 / 4;
+    grid-row: 2;
+  }
+  .agent-goal__toggle {
+    grid-column: 4;
+    grid-row: 1 / 3;
+    padding: 0 var(--wiki-space-1);
+  }
+  .agent-goal__toggle-label {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+  .agent-goal__details { padding: var(--wiki-space-3); }
   .agent-goal__header { align-items: flex-start; flex-direction: column; gap: var(--wiki-space-2); }
   .agent-goal__budgets { grid-template-columns: 1fr; }
   .agent-goal__budget,
@@ -476,13 +609,20 @@ const progressLabel = computed(() => {
   .agent-goal__dialog-actions :deep(.v-spacer) { display: none; }
   .agent-goal__dialog-actions :deep(.v-btn) { min-height: var(--wiki-control-height); width: 100%; }
 }
+@media (max-height: 520px) {
+  .agent-goal__details { padding-block: var(--wiki-space-2); }
+}
 @media (prefers-reduced-motion: reduce) {
-  .agent-goal__meter > span { transition: none; }
+  .agent-goal__meter > span,
+  .agent-goal__toggle-icon { transition: none; }
 }
 @media (forced-colors: active) {
   .agent-goal,
+  .agent-goal__mark,
   .agent-goal__progress,
-  .agent-goal__blockers { border: 1px solid CanvasText; }
+  .agent-goal__blockers,
+  .agent-goal__details { border-color: CanvasText; }
+  .agent-goal__toggle:focus-visible { outline-color: Highlight; }
   .agent-goal__meter,
   .agent-goal__budget-track { border: 1px solid CanvasText; }
   .agent-goal__meter > span,
