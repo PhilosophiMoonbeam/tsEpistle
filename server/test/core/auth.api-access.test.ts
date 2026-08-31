@@ -128,6 +128,28 @@ describe('API-key authentication boundary', () => {
   })
 
   test.each([
+    ['query-bearing MCP URL', '/mcp?probe=1', '/mcp'],
+    ['trailing-slash MCP URL', '/mcp/', '/mcp'],
+    ['encoded MCP suffix', '/mcp%2Fadmin', '/mcp'],
+    ['MCP prefix lookalike', '/mcpx', '/mcp'],
+    ['unrelated mounted route', '/mcp', '/unrelated']
+  ])('rejects API-key authentication on the %s', async (_case, originalUrl, mountedRoutePath) => {
+    const req = createRequest('/', mountedRoutePath, originalUrl)
+
+    const next = await authenticate(req)
+
+    expect(next).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'API_KEY_TRANSPORT_FORBIDDEN',
+        status: 403
+      })
+    )
+    expect(req.user).toBeUndefined()
+    expect(req.authContext).toBeUndefined()
+    expect(req.apiKeyAuth).toBeUndefined()
+  })
+
+  test.each([
     ['application-internal REST', '/_api/system/info'],
     ['upload', '/u'],
     ['HTML authentication', '/login'],
