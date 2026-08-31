@@ -71,9 +71,10 @@ export default {
 <style lang="scss">
 .nav-footer {
   --nav-footer-accent-direction: 90deg;
+  overflow: visible;
   height: auto;
   min-height: var(--wiki-footer-height);
-  padding: var(--wiki-space-3) var(--wiki-page-gutter) calc(var(--wiki-space-3) + env(safe-area-inset-bottom));
+  padding: var(--wiki-space-1) var(--wiki-page-gutter) calc(var(--wiki-space-1) + env(safe-area-inset-bottom));
   border-top: 1px solid var(--wiki-surface-border);
   background:
     linear-gradient(
@@ -113,7 +114,7 @@ export default {
   margin-inline: auto;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
   font-family: var(--wiki-font-body);
-  font-size: .75rem;
+  font-size: var(--wiki-label-size);
   line-height: 1.5;
   text-align: center;
 
@@ -196,7 +197,7 @@ export default {
 
 @media (max-width: 599px) {
   .nav-footer {
-    padding: var(--wiki-space-2) var(--wiki-space-4) calc(var(--wiki-space-2) + env(safe-area-inset-bottom));
+    padding: var(--wiki-space-1) var(--wiki-space-4) calc(var(--wiki-space-1) + env(safe-area-inset-bottom));
   }
 
   .footer-attribution {

@@ -26,7 +26,6 @@ const API_CONTROLLER_NAMES = [
   'assets',
   'auth',
   'comments',
-  'contribute',
   'groups',
   'locales',
   'logging',

@@ -34,7 +34,6 @@ const API_MOUNTS = [
   ['site', '/site'],
   ['rendering', '/rendering'],
   ['comments', '/comments'],
-  ['contribute', '/contribute'],
   ['content-extensions', '/content-extensions'],
   ['locales', '/locales'],
   ['groups', '/groups'],

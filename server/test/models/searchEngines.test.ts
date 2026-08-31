@@ -1,6 +1,4 @@
-import { readFile } from 'node:fs/promises'
-import { Readable } from 'node:stream'
-import { load as loadYaml } from 'js-yaml'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import type SearchEngineModel from '../../models/searchEngines.ts'
 
@@ -70,6 +68,16 @@ describe('models/searchEngines.initEngine', () => {
     expect(warn).toHaveBeenCalledWith(failure)
   })
 
+  it('propagates PostgreSQL activation failures without selecting a fallback provider', async () => {
+    const failure = new Error('postgres activation failed')
+    plugin.activate.mockRejectedValueOnce(failure)
+
+    await expect(SearchEngine.initEngine({ activate: true })).rejects.toBe(failure)
+
+    expect(data.searchEngine).toBe(previousEngine)
+    expect(plugin.init).not.toHaveBeenCalled()
+  })
+
   it('publishes the candidate only after initialization succeeds', async () => {
     plugin.init.mockImplementationOnce(async () => {
       expect(data.searchEngine).toBe(previousEngine)
@@ -83,274 +91,55 @@ describe('models/searchEngines.initEngine', () => {
   })
 })
 
-describe('search provider contract', () => {
-  it('keeps selectable availability in parity with the documented support matrix', async () => {
-    const providerKeys = ['algolia', 'aws', 'azure', 'db', 'elasticsearch', 'manticore', 'postgres', 'solr', 'sphinx']
-    const definitions = await Promise.all(
-      providerKeys.map(async providerKey => {
-        const source = await readFile(new URL(`../../modules/search/${providerKey}/definition.yml`, import.meta.url), 'utf8')
-        return loadYaml(source) as { isAvailable: boolean; key: string }
-      })
-    )
-    const architecture = await readFile(new URL('../../../docs/search-architecture.md', import.meta.url), 'utf8')
-    const documentedAvailability = Object.fromEntries(
-      [...architecture.matchAll(/^\| `([^`]+)` \| (available|unavailable) \|/gmu)].map(([, key, availability]) => [key, availability === 'available'])
-    )
-
-    expect(Object.fromEntries(definitions.map(definition => [definition.key, definition.isAvailable]))).toEqual({
-      algolia: true,
-      aws: false,
-      azure: false,
-      db: true,
-      elasticsearch: true,
-      manticore: false,
-      postgres: true,
-      solr: false,
-      sphinx: false
-    })
-    expect(documentedAvailability).toEqual(Object.fromEntries(definitions.map(definition => [definition.key, definition.isAvailable])))
-  })
-
-  it('applies Algolia scope facets before the configured bounded window', async () => {
-    const candidates = [
-      ...Array.from({ length: 50 }, (_, index) => ({
-        objectID: String(index),
-        locale: index % 2 === 0 ? 'fr' : 'en',
-        path: `ops%_other/${index}`,
-        title: `Higher ranked ${index}`,
-        description: ''
-      })),
-      {
-        objectID: 'in-scope',
-        locale: 'en',
-        path: 'ops%_/inside',
-        title: 'Literal path result',
-        description: ''
-      }
+describe('models/searchEngines.refreshSearchEnginesFromDisk', () => {
+  it('retains the sole on-disk provider and removes every stale database definition', async () => {
+    const dbRows = [
+      { key: 'postgres', isEnabled: true, config: { dictLanguage: 'german' } },
+      { key: 'algolia', isEnabled: false, config: { appId: 'legacy' } },
+      { key: 'solr', isEnabled: false, config: {} }
     ]
-    const searchSingleIndex = vi.fn(async (request: { searchParams: { filters?: string; hitsPerPage: number } }) => {
-      expect(request.searchParams.filters).toBe('locale:"en" AND pathScopes:"ops%_"')
-      const hits = candidates.filter(hit => hit.locale === 'en' && (hit.path === 'ops%_' || hit.path.startsWith('ops%_/')))
-      return { hits: hits.slice(0, request.searchParams.hitsPerPage), nbHits: hits.length }
+    const patchedConfigs: Array<Record<string, unknown>> = []
+    const removedKeys: string[] = []
+    const query = vi.fn(() => {
+      let selectedKey = ''
+      const builder = {
+        patch: vi.fn((patch: { config: Record<string, unknown> }) => {
+          patchedConfigs.push(patch.config)
+          return builder
+        }),
+        where: vi.fn((_column: string, key: string) => {
+          selectedKey = key
+          return builder
+        }),
+        del: vi.fn(async () => {
+          removedKeys.push(selectedKey)
+          return 1
+        }),
+        then: (resolve: (rows: typeof dbRows) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve(dbRows).then(resolve, reject)
+      }
+      return builder
     })
+    const SearchEngineStore = Object.assign(() => undefined, { query })
+    const info = vi.fn()
+    const reconciliationData: { searchEngines?: Array<{ key: string }> } = {}
     wikiGlobal.WIKI = {
-      config: { search: { maxHits: 7 } },
-      logger: { warn: vi.fn() },
-      models: {}
-    }
-    const engine = (await vi.importFresh('../../modules/search/algolia/engine.ts', import.meta.url)).default
-    Object.assign(engine, {
-      client: { searchSingleIndex },
-      config: { indexName: 'wiki' }
-    })
-
-    const result = await engine.query('literal', { locale: 'en', path: 'ops%_' })
-
-    expect(result.results).toEqual([expect.objectContaining({ id: 'in-scope', locale: 'en', path: 'ops%_/inside' })])
-    expect(searchSingleIndex.mock.calls[0]?.[0].searchParams.hitsPerPage).toBe(7)
-  })
-
-  it('delegates Algolia rebuild to atomic replacement and removes stale documents only on success', async () => {
-    const rows = [{ id: 'current', locale: 'en', path: 'current', title: 'Current', description: '', render: '<p>current</p>' }]
-    const stream = vi.fn(() => Readable.from(rows, { objectMode: true }))
-    const query = {
-      column: vi.fn().mockReturnThis(),
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      stream
-    }
-    const liveDocuments: Array<Record<string, unknown>> = [{ objectID: 'stale' }]
-    const middleBatchFailure = new Error('Algolia middle batch failed')
-    const replaceAllObjects = vi
-      .fn()
-      .mockRejectedValueOnce(middleBatchFailure)
-      .mockImplementationOnce(async ({ objects }: { objects: Array<Record<string, unknown>> }) => {
-        liveDocuments.splice(0, liveDocuments.length, ...objects)
-      })
-    wikiGlobal.WIKI = {
-      config: { search: { maxHits: 7 } },
-      logger: { info: vi.fn(), warn: vi.fn() },
+      SERVERPATH: fileURLToPath(new URL('../../', import.meta.url)),
+      Error: { SearchActivationFailed: class extends Error {} },
+      data: reconciliationData,
+      logger: { error: vi.fn(), info, warn: vi.fn() },
       models: {
-        knex: query,
-        pages: { cleanHTML: vi.fn(() => 'current') }
+        searchEngines: SearchEngineStore,
+        knex: vi.fn(),
+        Objection: { transaction: { start: vi.fn() } }
       }
     }
-    const engine = (await vi.importFresh('../../modules/search/algolia/engine.ts', import.meta.url)).default
-    Object.assign(engine, {
-      client: { replaceAllObjects },
-      config: { indexName: 'wiki' }
-    })
 
-    await expect(engine.rebuild()).rejects.toBe(middleBatchFailure)
-    expect(liveDocuments).toEqual([{ objectID: 'stale' }])
+    await SearchEngine.refreshSearchEnginesFromDisk()
 
-    await engine.rebuild()
-    expect(replaceAllObjects).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        indexName: 'wiki',
-        batchSize: 1000
-      })
-    )
-    expect(liveDocuments).toEqual([expect.objectContaining({ objectID: 'current', path: 'current', pathScopes: ['current'] })])
-  })
-
-  it('applies Elasticsearch keyword scope filters before its configured size', async () => {
-    const search = vi.fn(async () => ({
-      hits: {
-        hits: [
-          {
-            _id: 'in-scope',
-            _source: {
-              locale: 'en',
-              path: 'ops%_/inside',
-              title: 'Literal path result',
-              description: ''
-            }
-          }
-        ],
-        total: { value: 1 }
-      },
-      suggest: { suggestions: [] }
-    }))
-    wikiGlobal.WIKI = {
-      config: { search: { maxHits: 7 } },
-      logger: { warn: vi.fn() }
-    }
-    const engine = (await vi.importFresh('../../modules/search/elasticsearch/engine.ts', import.meta.url)).default
-    Object.assign(engine, {
-      client: { search },
-      config: { indexName: 'wiki' }
-    })
-
-    const result = await engine.query('literal', { locale: 'en', path: 'ops%_' })
-    const request = search.mock.calls[0]?.[0]
-
-    expect(result.results).toEqual([expect.objectContaining({ id: 'in-scope', locale: 'en', path: 'ops%_/inside' })])
-    expect(request.size).toBe(7)
-    expect(request.query.bool.filter).toEqual([
-      { term: { locale: 'en' } },
-      {
-        bool: {
-          minimum_should_match: 1,
-          should: [{ term: { path: 'ops%_' } }, { prefix: { path: 'ops%_/' } }]
-        }
-      }
-    ])
-  })
-
-  it('rejects an Elasticsearch middle bulk failure without replacing the live alias', async () => {
-    const rows = Array.from({ length: 1001 }, (_, index) => ({
-      id: String(index),
-      realId: index,
-      locale: 'en',
-      path: `pages/${index}`,
-      title: `Page ${index}`,
-      description: '',
-      render: '<p>body</p>'
-    }))
-    const query = {
-      column: vi.fn().mockReturnThis(),
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      stream: vi.fn(() => Readable.from(rows, { objectMode: true }))
-    }
-    const documentFailure = { type: 'mapper_parsing_exception', reason: 'invalid document' }
-    const bulk = vi
-      .fn()
-      .mockResolvedValueOnce({ errors: false, items: [] })
-      .mockResolvedValueOnce({
-        errors: true,
-        items: [{ index: { _id: '1000', error: documentFailure } }]
-      })
-    const indices = {
-      create: vi.fn().mockResolvedValue({}),
-      delete: vi.fn().mockResolvedValue({}),
-      getAlias: vi.fn().mockResolvedValue({ 'wiki-old': {} }),
-      updateAliases: vi.fn().mockResolvedValue({})
-    }
-    wikiGlobal.WIKI = {
-      logger: { info: vi.fn(), warn: vi.fn() },
-      models: {
-        knex: query,
-        pages: {
-          cleanHTML: vi.fn(() => 'body'),
-          query: vi.fn()
-        }
-      }
-    }
-    const engine = (await vi.importFresh('../../modules/search/elasticsearch/engine.ts', import.meta.url)).default
-    Object.assign(engine, {
-      client: { bulk, indices },
-      config: { analyzer: 'simple', indexName: 'wiki' },
-      buildTags: vi.fn(async () => [])
-    })
-
-    await expect(engine.rebuild()).rejects.toThrow('Elasticsearch bulk index failed for document 1000')
-
-    expect(bulk).toHaveBeenCalledTimes(2)
-    expect(indices.getAlias).not.toHaveBeenCalled()
-    expect(indices.updateAliases).not.toHaveBeenCalled()
-    expect(indices.delete).toHaveBeenCalledTimes(1)
-    expect(indices.delete).not.toHaveBeenCalledWith({ index: 'wiki-old' })
-  })
-
-  it('atomically selects a complete Elasticsearch stage before removing stale live documents', async () => {
-    const query = {
-      column: vi.fn().mockReturnThis(),
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      stream: vi.fn(() =>
-        Readable.from(
-          [
-            {
-              id: 'current',
-              realId: 1,
-              locale: 'en',
-              path: 'current',
-              title: 'Current',
-              description: '',
-              render: '<p>current</p>'
-            }
-          ],
-          { objectMode: true }
-        )
-      )
-    }
-    const bulk = vi.fn().mockResolvedValue({ errors: false, items: [] })
-    const indices = {
-      create: vi.fn().mockResolvedValue({}),
-      delete: vi.fn().mockResolvedValue({}),
-      getAlias: vi.fn().mockResolvedValue({ 'wiki-old': {} }),
-      updateAliases: vi.fn().mockResolvedValue({})
-    }
-    wikiGlobal.WIKI = {
-      logger: { info: vi.fn(), warn: vi.fn() },
-      models: {
-        knex: query,
-        pages: {
-          cleanHTML: vi.fn(() => 'current'),
-          query: vi.fn()
-        }
-      }
-    }
-    const engine = (await vi.importFresh('../../modules/search/elasticsearch/engine.ts', import.meta.url)).default
-    Object.assign(engine, {
-      client: { bulk, indices },
-      config: { analyzer: 'simple', indexName: 'wiki' },
-      buildTags: vi.fn(async () => [])
-    })
-
-    await engine.rebuild()
-
-    const aliasActions = indices.updateAliases.mock.calls[0]?.[0].actions
-    expect(aliasActions).toEqual([
-      { remove: { index: 'wiki-old', alias: 'wiki' } },
-      { add: { index: expect.stringMatching(/^wiki-wiki-/u), alias: 'wiki', is_write_index: true } }
-    ])
-    expect(indices.updateAliases.mock.invocationCallOrder[0]).toBeLessThan(indices.delete.mock.invocationCallOrder[0])
-    expect(indices.delete).toHaveBeenCalledWith({ index: 'wiki-old' })
+    expect(reconciliationData.searchEngines?.map(engine => engine.key)).toEqual(['postgres'])
+    expect(patchedConfigs).toEqual([{ dictLanguage: 'german' }])
+    expect(removedKeys).toEqual(['algolia', 'solr'])
+    expect(info).toHaveBeenCalledWith('Removed search engine algolia because it is no longer present in the modules folder: [ OK ]')
+    expect(info).toHaveBeenCalledWith('Removed search engine solr because it is no longer present in the modules folder: [ OK ]')
   })
 })

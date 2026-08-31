@@ -1,6 +1,6 @@
 # Search architecture
 
-Wiki search exposes one provider contract. PostgreSQL hybrid search is the default advanced provider, while the basic database, Algolia, and Elasticsearch implementations remain selectable only because they enforce the same scope, window, and rebuild invariants. Providers that cannot meet those invariants with their installed backend SDK are not selectable.
+Wiki search exposes PostgreSQL Advanced as its sole engine. The browser UI, Wiki Agent, and MCP all use this shared PostgreSQL retrieval contract, so scope, ranking, suggestions, and rebuild behavior stay consistent across every caller.
 
 ## Design decisions
 
@@ -11,25 +11,13 @@ Wiki search exposes one provider contract. PostgreSQL hybrid search is the defau
 - **Fuzzy retrieval is a fallback.** Exact lexical and substring candidates run first. Trigram word similarity runs only when fewer than five exact candidates exist. This preserves typo tolerance without making common tag or keyword queries scan a broad fuzzy set.
 - **Stable, inspectable evidence.** Every result carries its final `score`, normalized `tags`, and `matchedFields` (`title`, `tag`, `path`, `description`, `content`, or `graph`). Scores have deterministic title and page-ID tie breakers.
 
-## Provider support and invariants
+## Engine contract and invariants
 
-Every selectable provider applies an exact locale filter and an exact path-or-descendant filter before ranking and before the configured `search.maxHits` window. A path scope includes only the selected path or values beginning with `path/`; `%`, `_`, and provider wildcard syntax are literal scope characters. Providers return no more than the configured limit.
+PostgreSQL Advanced applies an exact locale filter and an exact path-or-descendant filter before ranking and before the configured `search.maxHits` window. A path scope includes only the selected path or values beginning with `path/`; `%` and `_` are literal scope characters. The engine returns no more than the configured limit.
 
-Rebuild success always means the live canonical index is an authoritative replacement, including removal of documents absent from the rebuilt corpus. A failed stage or document write rejects the rebuild while the prior live index remains selected and unchanged.
+Rebuild success means the live derived index is an authoritative replacement, including removal of documents absent from the rebuilt corpus. Page batches are indexed inside one transaction, so a failed stage or document write rolls back while the prior live index remains selected and unchanged.
 
-| Provider key | Availability | Scope and bounded-window implementation | Authoritative rebuild implementation |
-| --- | --- | --- | --- |
-| `db` | available | Bound exact locale plus escaped SQL `LIKE` equality-or-`path/` descendant predicates before `LIMIT` | No derived index; canonical PostgreSQL pages are queried directly |
-| `postgres` | available | Bind exact locale and escaped equality-or-`path/` descendant predicates in exact and fuzzy candidate CTEs before the configured candidate limit | Keyset-cursor canonical page batches are prepared and indexed inside one transaction; rollback preserves the prior tables |
-| `algolia` | available | Filter-only `locale` and precomputed `pathScopes` facets are applied before `hitsPerPage` | The SDK `replaceAllObjects` helper writes and verifies a temporary index before its final move over the configured index |
-| `elasticsearch` | available | Keyword `term` locale plus keyword exact-or-literal-prefix path filters wrap the ranked query before `size` | A fresh physical index receives checked bulk writes, then one alias update atomically selects it; failed stages are deleted without changing the alias |
-| `aws` | unavailable | AWS CloudSearch can filter literals, but its configured single domain is not an atomic replacement boundary | The installed domain SDK can only mutate the live domain and cannot stage then atomically swap a complete corpus |
-| `azure` | unavailable | Azure AI Search supports filters, but the established configuration names a concrete index rather than a safely migrated alias | The installed SDK exposes aliases, but cannot atomically migrate an existing configured concrete index and preserve the live index on every failure |
-| `manticore` | unavailable | Provider implementation is incomplete | No authoritative rebuild |
-| `solr` | unavailable | Provider implementation is incomplete | No authoritative rebuild |
-| `sphinx` | unavailable | Provider implementation is incomplete | No authoritative rebuild |
-
-The provider availability definitions and this matrix are checked together by the search-engine contract tests. An unavailable provider cannot be advertised as selectable merely because its client can submit incremental writes.
+The engine key is `postgres`. Fresh installations, upgraded deployments, browser configuration, Agent search, and MCP search all reconcile to this single provider; no alternate engine is selectable.
 
 ## Derived schema
 
@@ -67,7 +55,7 @@ flowchart LR
     C --> G[Depth-2 recursive link CTE]
     G --> S[Stable final score]
     S --> A[ACL and protected-page filter]
-    A --> U[UI and Wiki Agent]
+    A --> U[UI, Wiki Agent, and MCP]
 ```
 
 The graph score is deliberately capped at `1.25`. Links can settle close lexical results, but cannot outrank an exact title or exact tag by themselves.

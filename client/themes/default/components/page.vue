@@ -1773,7 +1773,6 @@ export default defineComponent({
   overflow: hidden;
   min-height: 0;
   padding: 0 !important;
-  border-bottom: 1px solid var(--wiki-surface-border);
   background:
     radial-gradient(
       circle at 82% 18%,
@@ -1804,16 +1803,6 @@ export default defineComponent({
     content: '';
     mask-image: linear-gradient(to right, transparent, rgb(var(--v-theme-on-surface)) 72%, transparent);
     pointer-events: none;
-  }
-
-  &::after {
-    position: absolute;
-    inset-block-end: 0;
-    inset-inline-start: max(var(--wiki-page-gutter), calc((100% - var(--wiki-shell-max)) / 2));
-    width: calc(var(--wiki-grid-size) * 1.5);
-    height: .125rem;
-    background: var(--wiki-ambient-accent);
-    content: '';
   }
 }
 
@@ -3010,8 +2999,7 @@ export default defineComponent({
     box-shadow: none !important;
   }
 
-  .page-hero::before,
-  .page-hero::after {
+  .page-hero::before {
     display: none;
   }
 

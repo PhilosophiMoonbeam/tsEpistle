@@ -803,10 +803,7 @@
       "versionNew": "A new version is available: {{version}}",
       "recentPages": "Recent Pages",
       "versionLatest": "You are running the latest version.",
-      "contributeHelp": "We need your help!",
-      "mostPopularPages": "Most Popular Pages",
-      "contributeSubtitle": "tsFranki is an independent open-source project. Contributions belong in the fork repository; upstream Wiki.js support remains separate.",
-      "contributeLearnMore": "Learn More"
+      "mostPopularPages": "Most Popular Pages"
     },
     "rendering": {
       "title": "Rendering",
@@ -830,32 +827,6 @@
       "telemetrySubtitle": "Enable/Disable telemetry or reset the client ID",
       "graphEndpointTitle": "GraphQL Endpoint",
       "graphEndpointSubtitle": "Change the GraphQL endpoint used by tsFranki"
-    },
-    "contribute": {
-      "shop": "Wiki.js Shop",
-      "title": "Project & Upstream",
-      "github": "Support the upstream Wiki.js lead developer through GitHub Sponsors:",
-      "paypal": "Support upstream Wiki.js with a one-time or recurring PayPal donation:",
-      "patreon": "Support the upstream Wiki.js lead developer through Patreon:",
-      "tshirts": "Purchase upstream Wiki.js merchandise:",
-      "ethereum": "Support upstream Wiki.js with Ethereum:",
-      "subtitle": "Contribute to tsFranki or support the Wiki.js project it derives from",
-      "foundABug": "Found a tsFranki bug? Submit an issue on {{0}}.",
-      "contribute": "Contribute to tsFranki",
-      "openSource": "tsFranki is an independent fork built with {{0}} from Wiki.js by {{1}} and {{2}}.",
-      "fundOurWork": "Support upstream Wiki.js",
-      "needYourHelp": "Code, documentation, testing, accessibility, and translation improvements are welcome in the tsFranki repository.",
-      "submitAnIdea": "Propose an improvement in the {{0}}.",
-      "becomeAPatron": "Support upstream on Patreon",
-      "helpTranslate": "Help improve the inherited Wiki.js translations through the upstream {{0}}.",
-      "makeADonation": "Support upstream",
-      "spreadTheWord": "Share tsFranki",
-      "talkToFriends": "Tell your team about tsFranki and its independently maintained TypeScript stack.",
-      "becomeASponsor": "Support upstream on GitHub Sponsors",
-      "openCollective": "Wiki.js participates in Open Collective. Contributions there support the upstream project, not tsFranki:",
-      "submitAnIdeaLink": "feature requests board",
-      "followUsOnTwitter": "Follow us on {{0}}.",
-      "openSourceContributors": "contributors"
     },
     "extensions": {
       "title": "Extensions",

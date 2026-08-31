@@ -112,6 +112,25 @@
   box-shadow: var(--wiki-shadow-xs);
 }
 
+// Keep unchecked admin controls legible against the near-white light surface.
+// Checked semantic colors and Vuetify's disabled treatment remain untouched.
+.admin.v-theme--light .v-selection-control:not(.v-selection-control--dirty):not(.v-selection-control--disabled) {
+  .v-switch__track {
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent);
+    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 18%, rgb(var(--v-theme-surface)));
+    opacity: 1;
+  }
+
+  .v-switch__thumb {
+    border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent);
+  }
+
+  .v-selection-control__input > .v-icon {
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+    opacity: 1;
+  }
+}
+
 .v-overlay__scrim {
   background: rgb(var(--v-theme-on-surface));
 }

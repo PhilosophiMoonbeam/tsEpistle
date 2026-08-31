@@ -1,26 +1,22 @@
 import { describe, expect, it } from '../server/test/bun-test.mts'
-import {
-  defaultAvailableEditors,
-  isPageEditorKey,
-  normalizeAvailableEditors,
-  validateAvailableEditors
-} from './page-editors.ts'
+import { defaultAvailableEditors, isPageEditorKey, normalizeAvailableEditors, validateAvailableEditors } from './page-editors.ts'
 
 describe('page editor availability', () => {
-  it('defaults legacy or unusable configuration to every page editor', () => {
+  it('defaults legacy or unusable configuration to Markdown editors', () => {
+    expect(defaultAvailableEditors()).toEqual(['markdown', 'visual-markdown'])
     expect(normalizeAvailableEditors(undefined)).toEqual(defaultAvailableEditors())
     expect(normalizeAvailableEditors([])).toEqual(defaultAvailableEditors())
     expect(normalizeAvailableEditors(['unsupported'])).toEqual(defaultAvailableEditors())
   })
 
-  it('normalizes valid selections into the stable product order', () => {
-    expect(normalizeAvailableEditors(['code', 'markdown', 'code'])).toEqual(['markdown', 'code'])
+  it('normalizes explicit non-default selections into the stable product order', () => {
+    expect(normalizeAvailableEditors(['code', 'asciidoc', 'ckeditor'])).toEqual(['ckeditor', 'asciidoc', 'code'])
   })
 
-  it('accepts a non-empty unique selection and canonicalizes its order', () => {
-    expect(validateAvailableEditors(['code', 'visual-markdown'])).toEqual({
+  it('accepts explicit non-default editors and canonicalizes their order', () => {
+    expect(validateAvailableEditors(['code', 'asciidoc', 'ckeditor'])).toEqual({
       ok: true,
-      value: ['visual-markdown', 'code']
+      value: ['ckeditor', 'asciidoc', 'code']
     })
   })
 

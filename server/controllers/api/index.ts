@@ -5,7 +5,6 @@ import analyticsRouter from './analytics.ts'
 import assetsRouter from './assets.ts'
 import authRouter from './auth.ts'
 import commentsRouter from './comments.ts'
-import contributeRouter from './contribute.ts'
 import contentExtensionsRouter from './content-extensions.ts'
 import groupsRouter from './groups.ts'
 import localesRouter from './locales.ts'
@@ -40,7 +39,6 @@ router.use('/storage', storageRouter)
 router.use('/site', siteRouter)
 router.use('/rendering', renderingRouter)
 router.use('/comments', commentsRouter)
-router.use('/contribute', contributeRouter)
 router.use('/content-extensions', contentExtensionsRouter)
 router.use('/locales', localesRouter)
 router.use('/groups', groupsRouter)

@@ -295,11 +295,11 @@ export default function startSetup(): Promise<void> {
       })
 
       await wiki.models.editors.refreshEditorsFromDisk()
-      await wiki.models.editors.query().patch({ isEnabled: true }).where('key', 'markdown')
+      await wiki.models.editors.query().patch({ isEnabled: true }).where('key', 'markdown').orWhere('key', 'visual-markdown')
       await wiki.models.loggers.refreshLoggersFromDisk()
       await wiki.models.renderers.refreshRenderersFromDisk()
       await wiki.models.searchEngines.refreshSearchEnginesFromDisk()
-      await wiki.models.searchEngines.query().patch({ isEnabled: true }).where('key', 'db')
+      await wiki.models.searchEngines.query().patch({ isEnabled: true }).where('key', 'postgres')
       await wiki.models.storage.refreshTargetsFromDisk()
 
       wiki.logger.info('Creating root administrator...')
@@ -340,18 +340,7 @@ export default function startSetup(): Promise<void> {
         config: [
           {
             locale: 'en',
-            items: [
-              {
-                id: randomUUID(),
-                icon: 'mdi-home',
-                kind: 'link',
-                label: 'Home',
-                target: '/',
-                targetType: 'home',
-                visibilityMode: 'all',
-                visibilityGroups: null
-              }
-            ]
+            items: []
           }
         ]
       })

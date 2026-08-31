@@ -49,6 +49,19 @@ describe('page creation editor availability', () => {
     }))
     expect(createPage).toHaveBeenCalledOnce()
   })
+  it.each(['ckeditor', 'asciidoc', 'code'])('creates pages when %s is explicitly enabled', async editor => {
+    const { operations, createPage } = await arrange([editor])
+
+    expect(operations.create({
+      requester: { id: 7 },
+      input: { editor, path: `${editor}-page`, locale: 'en' }
+    })).toEqual(expect.objectContaining({
+      editor,
+      visibility: 'public'
+    }))
+    expect(createPage).toHaveBeenCalledOnce()
+  })
+
 
   it('does not apply chooser restrictions to internal editor types', async () => {
     const { operations, createPage } = await arrange(['markdown'])

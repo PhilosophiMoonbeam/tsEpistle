@@ -26,7 +26,6 @@ const API_CONTROLLER_NAMES = [
   'assets',
   'auth',
   'comments',
-  'contribute',
   'groups',
   'locales',
   'logging',
@@ -74,7 +73,14 @@ describe('controllers/api navigation endpoints', () => {
       models: {
         navigation: {
           getTree: vi.fn().mockResolvedValue([
-            { locale: 'en', ignored: true, items: [{ id: 'home', kind: 'link', label: 'Home', ignored: true }] }
+            {
+              locale: 'en',
+              ignored: true,
+              items: [
+                { id: 'home', kind: 'link', label: 'Home', targetType: 'home', target: '/', ignored: true },
+                { id: 'docs', kind: 'link', label: 'Docs', targetType: 'page', target: '/en/docs' }
+              ]
+            }
           ]),
           query: vi.fn(() => ({
             patch: vi.fn(() => ({
@@ -112,7 +118,8 @@ describe('controllers/api navigation endpoints', () => {
       {
         locale: 'en',
         items: [
-          { id: 'home', kind: 'link', label: 'Home', targetType: 'home', target: '/', visibilityGroups: [1] }
+          { id: 'home', kind: 'link', label: 'Home', targetType: 'home', target: '/', visibilityGroups: [1] },
+          { id: 'docs', kind: 'link', label: 'Docs', targetType: 'page', target: '/en/docs', visibilityMode: 'all', visibilityGroups: [] }
         ]
       },
       {
@@ -153,12 +160,12 @@ describe('controllers/api navigation endpoints', () => {
       tree: [{
         locale: 'en',
         items: [{
-          id: 'home',
+          id: 'docs',
           kind: 'link',
-          label: 'Home',
+          label: 'Docs',
           icon: undefined,
-          targetType: undefined,
-          target: undefined,
+          targetType: 'page',
+          target: '/en/docs',
           visibilityMode: undefined,
           visibilityGroups: undefined
         }]
@@ -248,10 +255,14 @@ describe('controllers/api navigation endpoints', () => {
     expect(global.WIKI.models.navigation.query).not.toHaveBeenCalled()
   })
 
-  it('saves navigation tree, refreshes sidebar cache per locale, persists browse expansion, and returns JSON success', async () => {
+  it('saves normalized navigation trees, refreshes sidebar cache per locale, preserves mode and expansion, and returns JSON success', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
     const handler = await saveHandler()
     const body = validBody()
+    const normalizedTree = body.tree.map(row => ({
+      ...row,
+      items: row.items.filter(item => item.targetType !== 'home')
+    }))
     const req = { user: { permissions: ['manage:navigation'] }, body }
     const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
 
@@ -260,10 +271,10 @@ describe('controllers/api navigation endpoints', () => {
     const query = global.WIKI.models.navigation.query.mock.results[0].value
     const patch = query.patch
     const where = patch.mock.results[0].value.where
-    expect(patch).toHaveBeenCalledWith({ config: body.tree })
+    expect(patch).toHaveBeenCalledWith({ config: normalizedTree })
     expect(where).toHaveBeenCalledWith('key', 'site')
-    expect(global.WIKI.cache.set).toHaveBeenNthCalledWith(1, 'nav:sidebar:en', body.tree[0].items, 300)
-    expect(global.WIKI.cache.set).toHaveBeenNthCalledWith(2, 'nav:sidebar:fr', body.tree[1].items, 300)
+    expect(global.WIKI.cache.set).toHaveBeenNthCalledWith(1, 'nav:sidebar:en', normalizedTree[0].items, 300)
+    expect(global.WIKI.cache.set).toHaveBeenNthCalledWith(2, 'nav:sidebar:fr', normalizedTree[1].items, 300)
     expect(global.WIKI.config.nav).toEqual({ mode: 'MIXED', expandParent: true })
     expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['nav'])
     expect(res.json).toHaveBeenCalledWith({ message: 'Navigation saved successfully.' })

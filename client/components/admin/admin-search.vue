@@ -162,7 +162,7 @@ export default {
       this.engine = _.find(this.engines, ['key', newValue]) || createEmptySearchEngine()
     },
     engines(newValue: SearchEngine[]) {
-      this.selectedEngine = _.find(newValue, 'isEnabled')?.key || 'db'
+      this.selectedEngine = _.find(newValue, 'isEnabled')?.key || 'postgres'
     }
   },
   created() {

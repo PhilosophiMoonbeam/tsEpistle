@@ -1,6 +1,6 @@
 <template lang="pug">
   nav.nav-sidebar(:aria-label='currentMode === `browse` ? $t(`common:sidebar.browse`) : $t(`common:sidebar.mainMenu`)')
-    .nav-sidebar-switcher.d-flex(v-if='navMode === `MIXED`')
+    .nav-sidebar-switcher.d-flex(v-if='navMode === `MIXED` || navMode === `STATIC`')
       v-btn.nav-sidebar-home(
         variant="tonal"
         color='primary'
@@ -9,14 +9,14 @@
         )
         v-icon(size='20') mdi-home
       v-btn.nav-sidebar-mode.ms-3(
-        v-if='currentMode === `custom`'
+        v-if='navMode === `MIXED` && currentMode === `custom`'
         variant="tonal"
         @click='switchMode(`browse`)'
         )
         v-icon(start) mdi-file-tree
         .text-body-medium.text-none {{$t('common:sidebar.browse')}}
       v-btn.nav-sidebar-mode.ms-3(
-        v-else-if='currentMode === `browse`'
+        v-else-if='navMode === `MIXED` && currentMode === `browse`'
         variant="tonal"
         color='primary'
         @click='switchMode(`custom`)'
@@ -27,11 +27,11 @@
     //-> Custom Navigation
     v-list.nav-sidebar-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav, role='presentation')
       async-state(
-        v-if='items.length === 0'
+        v-if='customItems.length === 0'
         state='empty'
         title='No navigation items'
       )
-      template(v-else, v-for='(item, idx) of items', :key='`${item.k}-${item.id || item.t || item.l || idx}`')
+      template(v-else, v-for='(item, idx) of customItems', :key='`${item.k}-${item.id || item.t || item.l || idx}`')
         v-list-item(
           v-if='item.k === `link`'
           :href='item.t'
@@ -202,6 +202,9 @@ export default defineComponent({
     },
     canEditCurrentParent () {
       return this.currentParent.canEdit === true && this.currentParent.pageId !== wikiStore.page.id
+    },
+    customItems (): SidebarItem[] {
+      return this.items.filter(item => item.k !== 'link' || item.y !== 'home')
     }
   },
   methods: {
@@ -309,7 +312,8 @@ export default defineComponent({
     } else if (this.navMode === 'STATIC') {
       this.currentMode = 'custom'
     } else {
-      this.currentMode = (window.localStorage.getItem('navPref') || 'custom') as NavigationMode
+      const storedPreference = window.localStorage.getItem('navPref')
+      this.currentMode = storedPreference === 'custom' || storedPreference === 'browse' ? storedPreference : 'custom'
     }
     if (this.currentMode === 'browse') {
       if (this.expandParentByDefault) this.loadFromCurrentPath()

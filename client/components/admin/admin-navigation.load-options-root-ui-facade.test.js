@@ -76,9 +76,11 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
     expect(loadNavigation).toContain("wikiStore.startLoading('admin-navigation-refresh')")
     expect(loadNavigation).toContain("const navigation = await fetchNavigation(window.fetch.bind(window), 'Navigation response is invalid')")
     expect(loadNavigation).toContain('this.config = _.cloneDeep(navigation.config)')
-    expect(loadNavigation).toContain('this.trees = _.cloneDeep(navigation.tree)')
+    expect(loadNavigation).toContain('const normalizedTrees = normalizeNavigationTrees(navigation.tree)')
+    expect(loadNavigation).toContain('this.trees = _.cloneDeep(normalizedTrees)')
     expect(loadNavigation).toContain('this.persistedConfig = _.cloneDeep(this.config)')
-    expect(loadNavigation).toContain('this.persistedTrees = _.cloneDeep(this.trees)')
+    expect(loadNavigation).toContain('this.persistedTrees = _.cloneDeep(normalizedTrees)')
+    expect(loadNavigation).not.toContain('this.trees = _.cloneDeep(navigation.tree)')
     expect(loadNavigation).toContain('this.current = createEmptyNavigationItem()')
     expect(loadNavigation).toContain('this.loaded = true')
     expect(loadNavigation).toContain('if (notify)')
@@ -100,11 +102,12 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
   test('save and Apply controls honor loaded, loading, saving, and dirty state', () => {
     expect(save).toMatch(/if\s*\(\s*!this\.loaded\s*\|\|\s*this\.initialLoading\s*\|\|\s*this\.saving\s*\|\|\s*!this\.dirty\s*\)\s*return/)
     expect(save).toMatch(
-      /this\.saving\s*=\s*true[\s\S]*wikiStore\.startLoading\('admin-navigation-save'\)[\s\S]*await\s+saveNavigation\(window\.fetch\.bind\(window\),\s*this\.trees,\s*this\.config\.mode,\s*this\.config\.expandParent\)/
+      /this\.saving\s*=\s*true[\s\S]*wikiStore\.startLoading\('admin-navigation-save'\)[\s\S]*const\s+normalizedTrees\s*=\s*normalizeNavigationTrees\(this\.trees\)[\s\S]*this\.trees\s*=\s*normalizedTrees[\s\S]*await\s+saveNavigation\(window\.fetch\.bind\(window\),\s*normalizedTrees,\s*this\.config\.mode,\s*this\.config\.expandParent\)/
     )
     expect(save).toMatch(
-      /this\.persistedConfig\s*=\s*_\.cloneDeep\(this\.config\)[\s\S]*this\.persistedTrees\s*=\s*_\.cloneDeep\(this\.trees\)[\s\S]*wikiStore\.showNotification\(/
+      /this\.persistedConfig\s*=\s*_\.cloneDeep\(this\.config\)[\s\S]*this\.persistedTrees\s*=\s*_\.cloneDeep\(normalizedTrees\)[\s\S]*wikiStore\.showNotification\(/
     )
+    expect(save).not.toMatch(/saveNavigation\(window\.fetch\.bind\(window\),\s*this\.trees,/)
     expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\(err\)\s*\}/)
     expect(save).toMatch(/finally\s*\{\s*this\.saving\s*=\s*false\s*wikiStore\.stopLoading\('admin-navigation-save'\)\s*\}/)
 

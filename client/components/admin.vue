@@ -107,18 +107,6 @@
               v-icon(size='28') mdi-magnify-close
               .text-body-medium No settings found
               .text-body-small.text-medium-emphasis Try a different search
-        .admin-sidebar__footer
-          nav(aria-label='Administration support')
-            v-list-item(
-              to='/contribute'
-              color='primary'
-              prepend-icon='mdi-heart-outline'
-              rounded='lg'
-              nav
-            )
-              v-list-item-title {{ $t('admin:contribute.title') }}
-              template(v-slot:append)
-                v-icon(size='16') {{ $vuetify.locale.isRtl ? 'mdi-arrow-left' : 'mdi-arrow-right' }}
 
     v-main.admin-main(ref='adminMain' tabindex='-1')
       .admin-route-bar
@@ -316,13 +304,11 @@ export default defineComponent({
     },
     currentRouteLabel(): string {
       if (this.$route.path === '/dashboard') return this.$t('admin:dashboard.title')
-      if (this.$route.path === '/contribute') return this.$t('admin:contribute.title')
       if (this.$route.path === '/agents') return this.$t('admin:agents.title')
       return this.currentRouteItem?.label || 'Administration'
     },
     currentRouteIcon(): string {
       if (this.$route.path === '/dashboard') return 'mdi-view-dashboard-variant-outline'
-      if (this.$route.path === '/contribute') return 'mdi-heart-outline'
       if (this.$route.path === '/agents') return 'mdi-robot-outline'
       return this.currentRouteItem?.icon || 'mdi-shield-crown-outline'
     }

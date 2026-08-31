@@ -60,6 +60,8 @@ const startSetupHarness = async (configSaved: boolean) => {
   const authenticationInsert = vi.fn().mockResolvedValue({})
   const editorMutation = mutationQuery()
   const searchMutation = mutationQuery()
+  const editorPatch = vi.fn(() => editorMutation)
+  const searchPatch = vi.fn(() => searchMutation)
   const controller = new AbortController()
   const saveToDb = vi.fn().mockResolvedValue(configSaved)
   const wiki: SetupTestWiki = {
@@ -84,7 +86,7 @@ const startSetupHarness = async (configSaved: boolean) => {
       authentication: { query: vi.fn(() => ({ insert: authenticationInsert })) },
       editors: {
         refreshEditorsFromDisk: vi.fn().mockResolvedValue(undefined),
-        query: vi.fn(() => ({ patch: vi.fn(() => editorMutation) }))
+        query: vi.fn(() => ({ patch: editorPatch }))
       },
       groups: { query: vi.fn(() => ({ insert: groupInsert })) },
       knex,
@@ -94,7 +96,7 @@ const startSetupHarness = async (configSaved: boolean) => {
       renderers: { refreshRenderersFromDisk: vi.fn().mockResolvedValue(undefined) },
       searchEngines: {
         refreshSearchEnginesFromDisk: vi.fn().mockResolvedValue(undefined),
-        query: vi.fn(() => ({ patch: vi.fn(() => searchMutation) }))
+        query: vi.fn(() => ({ patch: searchPatch }))
       },
       storage: { refreshTargetsFromDisk: vi.fn().mockResolvedValue(undefined) },
       users: { query: vi.fn(() => ({ insert: userInsert })) }
@@ -114,8 +116,13 @@ const startSetupHarness = async (configSaved: boolean) => {
     completion,
     controller,
     domainMutations: [localesDelete, localesInsert, navigationTruncate, navigationInsert, knex.raw, groupInsert, authenticationInsert, userInsert],
+    editorMutation,
+    editorPatch,
     extensionInsert,
+    navigationInsert,
     saveToDb,
+    searchMutation,
+    searchPatch,
     server,
     settingsTruncate
   }
@@ -190,6 +197,20 @@ describe('setup finalization', () => {
 
     expect(result).toMatchObject({ ok: true, redirectPath: '/' })
     expect(harness.extensionInsert).not.toHaveBeenCalled()
+    expect(harness.navigationInsert).toHaveBeenCalledWith({
+      key: 'site',
+      config: [{ locale: 'en', items: [] }]
+    })
+    expect(harness.searchPatch).toHaveBeenCalledTimes(1)
+    expect(harness.searchPatch).toHaveBeenCalledWith({ isEnabled: true })
+    expect(harness.searchMutation.where).toHaveBeenCalledTimes(1)
+    expect(harness.searchMutation.where).toHaveBeenCalledWith('key', 'postgres')
+    expect(harness.editorPatch).toHaveBeenCalledTimes(1)
+    expect(harness.editorPatch).toHaveBeenCalledWith({ isEnabled: true })
+    expect(harness.editorMutation.where).toHaveBeenCalledTimes(1)
+    expect(harness.editorMutation.where).toHaveBeenCalledWith('key', 'markdown')
+    expect(harness.editorMutation.orWhere).toHaveBeenCalledTimes(1)
+    expect(harness.editorMutation.orWhere).toHaveBeenCalledWith('key', 'visual-markdown')
     expect(harness.settingsTruncate).not.toHaveBeenCalled()
     expect(globalThis.WIKI.config).toMatchObject({ setup: false })
     expect(harness.server.listening).toBe(false)

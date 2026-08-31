@@ -456,7 +456,6 @@ describe('controllers/api search endpoints', () => {
       '../../controllers/api/assets.ts',
       '../../controllers/api/auth.ts',
       '../../controllers/api/comments.ts',
-      '../../controllers/api/contribute.ts',
       '../../controllers/api/content-extensions.ts',
       '../../controllers/api/groups.ts',
       '../../controllers/api/locales.ts',

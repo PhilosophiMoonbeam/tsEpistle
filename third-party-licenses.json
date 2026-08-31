@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "c580bcddb45ddcfe640bfe25b568e77c418ad0ce04a266bde7762ce592481202",
+    "sha256": "74c7f3ca38b8c0d06c199a42aa6f5c4e02d29cf3d4a7e5a86ca4400fe178b5bf",
     "scope": "production",
     "policy": {
       "file": "license-policy.json",
@@ -32,132 +32,6 @@
     }
   },
   "packages": [
-    {
-      "name": "@algolia/abtesting",
-      "versions": [
-        "1.22.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/abtesting#readme"
-    },
-    {
-      "name": "@algolia/client-abtesting",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/client-abtesting#readme"
-    },
-    {
-      "name": "@algolia/client-analytics",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/client-analytics#readme"
-    },
-    {
-      "name": "@algolia/client-common",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript#readme"
-    },
-    {
-      "name": "@algolia/client-insights",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/client-insights#readme"
-    },
-    {
-      "name": "@algolia/client-personalization",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/client-personalization#readme"
-    },
-    {
-      "name": "@algolia/client-query-suggestions",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/client-query-suggestions#readme"
-    },
-    {
-      "name": "@algolia/client-search",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/client-search#readme"
-    },
-    {
-      "name": "@algolia/ingestion",
-      "versions": [
-        "1.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/ingestion#readme"
-    },
-    {
-      "name": "@algolia/monitoring",
-      "versions": [
-        "1.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/monitoring#readme"
-    },
-    {
-      "name": "@algolia/recommend",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/recommend#readme"
-    },
-    {
-      "name": "@algolia/requester-browser-xhr",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript#readme"
-    },
-    {
-      "name": "@algolia/requester-fetch",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript#readme"
-    },
-    {
-      "name": "@algolia/requester-node-http",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript#readme"
-    },
     {
       "name": "@apm-js-collab/code-transformer",
       "versions": [
@@ -213,24 +87,6 @@
       "license": "Apache-2.0",
       "author": "AWS SDK for JavaScript Team",
       "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/packages-internal/checksums"
-    },
-    {
-      "name": "@aws-sdk/client-cloudsearch",
-      "versions": [
-        "3.1108.0"
-      ],
-      "license": "Apache-2.0",
-      "author": "AWS SDK for JavaScript Team",
-      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-cloudsearch"
-    },
-    {
-      "name": "@aws-sdk/client-cloudsearch-domain",
-      "versions": [
-        "3.1108.0"
-      ],
-      "license": "Apache-2.0",
-      "author": "AWS SDK for JavaScript Team",
-      "homepage": "https://github.com/aws/aws-sdk-js-v3/tree/main/clients/client-cloudsearch-domain"
     },
     {
       "name": "@aws-sdk/client-s3",
@@ -395,15 +251,6 @@
       "homepage": "https://github.com/ax-llm/ax#readme"
     },
     {
-      "name": "@azure-rest/core-client",
-      "versions": [
-        "2.8.0"
-      ],
-      "license": "MIT",
-      "author": "Microsoft Corporation",
-      "homepage": "https://github.com/Azure/azure-sdk-for-js/blob/main/sdk/core/core-client-rest/"
-    },
-    {
       "name": "@azure/abort-controller",
       "versions": [
         "2.2.0"
@@ -501,15 +348,6 @@
       "license": "MIT",
       "author": "Microsoft Corporation",
       "homepage": "https://github.com/Azure/azure-sdk-for-js/tree/main/sdk/core/logger/README.md"
-    },
-    {
-      "name": "@azure/search-documents",
-      "versions": [
-        "13.0.0"
-      ],
-      "license": "MIT",
-      "author": "Microsoft Corporation",
-      "homepage": "https://github.com/Azure/azure-sdk-for-js/tree/main/sdk/search/search-documents/README.md"
     },
     {
       "name": "@azure/storage-blob",
@@ -734,23 +572,6 @@
       "license": "MIT",
       "author": "Arnout Kazemier",
       "homepage": "https://github.com/DABH/diagnostics"
-    },
-    {
-      "name": "@elastic/elasticsearch",
-      "versions": [
-        "9.5.0"
-      ],
-      "license": "Apache-2.0",
-      "homepage": "http://www.elastic.co/guide/en/elasticsearch/client/javascript-api/current/index.html"
-    },
-    {
-      "name": "@elastic/transport",
-      "versions": [
-        "9.4.0"
-      ],
-      "license": "Apache-2.0",
-      "author": "Elastic Client Library Maintainers",
-      "homepage": "https://github.com/elastic/elastic-transport-js#readme"
     },
     {
       "name": "@envelop/core",
@@ -1677,15 +1498,6 @@
       "license": "MIT",
       "author": "Evgeny Poberezkin",
       "homepage": "https://github.com/ajv-validator/ajv-formats#readme"
-    },
-    {
-      "name": "algoliasearch",
-      "versions": [
-        "5.56.0"
-      ],
-      "license": "MIT",
-      "author": "Algolia",
-      "homepage": "https://github.com/algolia/algoliasearch-client-javascript/tree/main/packages/algoliasearch#readme"
     },
     {
       "name": "ansi-regex",
@@ -3028,15 +2840,6 @@
       "license": "MIT",
       "author": "Yusuke Wada <yusuke@kamawada.com> (https://github.com/yusukebe)",
       "homepage": "https://hono.dev"
-    },
-    {
-      "name": "hpagent",
-      "versions": [
-        "1.2.0"
-      ],
-      "license": "MIT",
-      "author": "Tomas Della Vedova",
-      "homepage": "https://github.com/delvedor/hpagent#readme"
     },
     {
       "name": "html-encoding-sniffer",
@@ -4735,15 +4538,6 @@
       ],
       "license": "ISC",
       "author": "Louis-Dominique Dubeau <ldd@lddubeau.com>"
-    },
-    {
-      "name": "secure-json-parse",
-      "versions": [
-        "4.1.0"
-      ],
-      "license": "BSD-3-Clause",
-      "author": "Eran Hammer <eran@sideway.com>",
-      "homepage": "https://github.com/fastify/secure-json-parse#readme"
     },
     {
       "name": "semifies",

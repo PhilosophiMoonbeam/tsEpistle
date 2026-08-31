@@ -144,14 +144,6 @@
                   router-link.admin-record-link(:to='`/users/${props.item.id}`') {{ props.item.name }}
                 td.text-end.text-body-small(width='200') {{ $helpers.formatMoment(props.item.lastLoginAt, 'calendar') }}
 
-    v-card.dashboard-contribute(flat)
-      .dashboard-contribute__art
-        img(src='/_assets/svg/icon-heart-health.svg' alt='')
-      .dashboard-contribute__copy
-        .dashboard-contribute__eyebrow Open source, made together
-        h2 {{ $t('admin:dashboard.contributeSubtitle') }}
-        p {{ $t('admin:dashboard.contributeHelp') }}
-      v-btn(color='primary' variant='tonal' to='/contribute' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') {{ $t('admin:dashboard.contributeLearnMore') }}
 </template>
 
 <script lang='ts'>
@@ -662,61 +654,6 @@ export default {
   background: transparent;
 }
 
-.dashboard-contribute {
-  display: flex;
-  align-items: center;
-  gap: var(--wiki-space-5);
-  margin-top: var(--wiki-space-6);
-  padding: var(--wiki-space-5) var(--wiki-space-6);
-  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 20%, transparent) !important;
-  border-radius: var(--wiki-panel-radius) !important;
-  background:
-    linear-gradient(110deg, color-mix(in srgb, var(--wiki-ambient-accent) 9%, var(--wiki-surface-raised)), var(--wiki-surface-raised)) !important;
-  color: rgb(var(--v-theme-on-surface)) !important;
-  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
-
-  &__art {
-    display: grid;
-    width: 4rem;
-    height: 4rem;
-    flex: 0 0 auto;
-    place-items: center;
-    border-radius: var(--wiki-control-radius);
-    background: rgb(var(--v-theme-surface));
-    box-shadow: var(--wiki-shadow-xs);
-
-    img {
-      width: 2.875rem;
-      height: 2.875rem;
-    }
-  }
-
-  &__copy {
-    min-width: 0;
-    flex: 1 1 auto;
-
-    h2 {
-      margin: var(--wiki-space-1) 0;
-      font-size: 1rem;
-      font-weight: 720;
-    }
-
-    p {
-      margin: 0;
-      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
-      font-size: .82rem;
-    }
-  }
-
-  &__eyebrow {
-    color: var(--wiki-accent-warm);
-    font-size: var(--wiki-label-size);
-    font-weight: var(--wiki-label-weight);
-    letter-spacing: .1em;
-    text-transform: uppercase;
-  }
-}
-
 @include until($tablet) {
   .admin-dashboard {
     &__build {
@@ -737,18 +674,6 @@ export default {
 
   .dashboard-panel__header {
     align-items: flex-start;
-  }
-
-  .dashboard-contribute {
-    flex-wrap: wrap;
-
-    &__copy {
-      flex: 1 1 calc(100% - 5.5rem);
-    }
-
-    > .v-btn {
-      width: 100%;
-    }
   }
 }
 
@@ -775,16 +700,11 @@ export default {
   .dashboard-section-heading {
     margin-top: var(--wiki-space-6);
   }
-
-  .dashboard-contribute {
-    padding: var(--wiki-space-4);
-  }
 }
 
 @media print {
   .admin-stat,
-  .dashboard-panel,
-  .dashboard-contribute {
+  .dashboard-panel {
     break-inside: avoid;
     box-shadow: none !important;
   }

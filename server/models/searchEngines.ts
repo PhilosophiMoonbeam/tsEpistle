@@ -6,11 +6,7 @@ import _ from 'lodash'
 import * as yaml from 'js-yaml'
 import commonHelper from '../helpers/common.ts'
 import { hasMethod, isRecord, readModuleDefinition, readModuleDirectories } from './moduleTypes.ts'
-import type {
-  LoadedModuleDefinition,
-  ModuleConfig,
-  ModuleDefinition
-} from './moduleTypes.ts'
+import type { LoadedModuleDefinition, ModuleConfig, ModuleDefinition } from './moduleTypes.ts'
 import type { SearchOptions, SearchResult, WikiPage } from '../modules/types.ts'
 
 interface SearchEnginePlugin {
@@ -43,9 +39,6 @@ interface SearchEngineLogger {
 
 interface SearchEngineWikiRuntime {
   SERVERPATH: string
-  Error: {
-    SearchActivationFailed: new (...args: unknown[]) => Error
-  }
   data: SearchEngineData
   logger: SearchEngineLogger
   models: {
@@ -63,48 +56,34 @@ interface InitEngineOptions {
   activate?: boolean
 }
 
-const pluginMethods = [
-  'activate',
-  'deactivate',
-  'init',
-  'query',
-  'created',
-  'updated',
-  'deleted',
-  'renamed',
-  'rebuild'
-] as const
+const pluginMethods = ['activate', 'deactivate', 'init', 'query', 'created', 'updated', 'deleted', 'renamed', 'rebuild'] as const
 
-function isSearchEnginePlugin (value: unknown): value is SearchEnginePlugin {
+function isSearchEnginePlugin(value: unknown): value is SearchEnginePlugin {
   return isRecord(value) && pluginMethods.every(method => typeof value[method] === 'function')
 }
 
-function readSearchEnginePlugin (value: unknown, source: string): SearchEnginePlugin {
+function readSearchEnginePlugin(value: unknown, source: string): SearchEnginePlugin {
   if (!isRecord(value) || !isSearchEnginePlugin(value.default)) {
     throw new Error(`Invalid search engine module: ${source}`)
   }
   return value.default
 }
 
-function isSearchEngineWikiRuntime (value: unknown): value is SearchEngineWikiRuntime {
+function isSearchEngineWikiRuntime(value: unknown): value is SearchEngineWikiRuntime {
   if (!isRecord(value) || typeof value.SERVERPATH !== 'string') return false
-  if (!isRecord(value.Error) || typeof value.Error.SearchActivationFailed !== 'function') return false
   if (!isRecord(value.data) || !isRecord(value.logger) || !isRecord(value.models)) return false
-  if (
-    typeof value.logger.error !== 'function' ||
-    typeof value.logger.info !== 'function' ||
-    typeof value.logger.warn !== 'function'
-  ) return false
+  if (typeof value.logger.error !== 'function' || typeof value.logger.info !== 'function' || typeof value.logger.warn !== 'function') return false
   if (
     typeof value.models.searchEngines !== 'function' ||
     typeof value.models.knex !== 'function' ||
     !isRecord(value.models.Objection) ||
     !hasMethod(value.models.Objection.transaction, 'start')
-  ) return false
+  )
+    return false
   return true
 }
 
-function getWiki (): SearchEngineWikiRuntime {
+function getWiki(): SearchEngineWikiRuntime {
   const value: unknown = WIKI
   if (!isSearchEngineWikiRuntime(value)) {
     throw new Error('WIKI search engine services are not initialized')
@@ -112,7 +91,7 @@ function getWiki (): SearchEngineWikiRuntime {
   return value
 }
 
-function createDefaultConfig (props: LoadedModuleDefinition['props']): ModuleConfig {
+function createDefaultConfig(props: LoadedModuleDefinition['props']): ModuleConfig {
   const config: ModuleConfig = {}
   for (const [key, value] of Object.entries(props)) {
     _.set(config, key, value.default)
@@ -120,10 +99,7 @@ function createDefaultConfig (props: LoadedModuleDefinition['props']): ModuleCon
   return config
 }
 
-function addMissingConfigDefaults (
-  config: ModuleConfig,
-  props: LoadedModuleDefinition['props']
-): ModuleConfig {
+function addMissingConfigDefaults(config: ModuleConfig, props: LoadedModuleDefinition['props']): ModuleConfig {
   for (const [key, value] of Object.entries(props)) {
     if (!_.has(config, key)) {
       _.set(config, key, value.default)
@@ -141,15 +117,15 @@ export default class SearchEngine extends Model {
   declare level?: string
   declare config: ModuleConfig
 
-  static override get tableName () {
+  static override get tableName() {
     return 'searchEngines'
   }
 
-  static override get idColumn () {
+  static override get idColumn() {
     return 'key'
   }
 
-  static override get jsonSchema () {
+  static override get jsonSchema() {
     return {
       type: 'object',
       required: ['key', 'isEnabled'],
@@ -162,15 +138,15 @@ export default class SearchEngine extends Model {
     }
   }
 
-  static override get jsonAttributes () {
+  static override get jsonAttributes() {
     return ['config']
   }
 
-  static async getSearchEngines (): Promise<SearchEngine[]> {
+  static async getSearchEngines(): Promise<SearchEngine[]> {
     return getWiki().models.searchEngines.query()
   }
 
-  static async refreshSearchEnginesFromDisk (): Promise<void> {
+  static async refreshSearchEnginesFromDisk(): Promise<void> {
     const wiki = getWiki()
     let trx: Knex.Transaction | undefined
     try {
@@ -202,9 +178,12 @@ export default class SearchEngine extends Model {
           })
         } else {
           const config = isRecord(dbSearchEngine.config) ? dbSearchEngine.config : {}
-          await wiki.models.searchEngines.query().patch({
-            config: addMissingConfigDefaults(config, searchEngine.props)
-          }).where('key', searchEngine.key)
+          await wiki.models.searchEngines
+            .query()
+            .patch({
+              config: addMissingConfigDefaults(config, searchEngine.props)
+            })
+            .where('key', searchEngine.key)
         }
       }
       if (newSearchEngines.length > 0) {
@@ -217,6 +196,14 @@ export default class SearchEngine extends Model {
       } else {
         wiki.logger.info('No new search engines found: [ SKIPPED ]')
       }
+
+      // -> Delete removed search engines
+      for (const searchEngine of dbSearchEngines) {
+        if (!diskSearchEngines.some(candidate => candidate.key === searchEngine.key)) {
+          await wiki.models.searchEngines.query().where('key', searchEngine.key).del()
+          wiki.logger.info(`Removed search engine ${searchEngine.key} because it is no longer present in the modules folder: [ OK ]`)
+        }
+      }
     } catch (err) {
       wiki.logger.error('Failed to scan or load new search engines: [ FAILED ]')
       wiki.logger.error(err)
@@ -226,7 +213,7 @@ export default class SearchEngine extends Model {
     }
   }
 
-  static async initEngine ({ activate = false }: InitEngineOptions = {}): Promise<void> {
+  static async initEngine({ activate = false }: InitEngineOptions = {}): Promise<void> {
     const wiki = getWiki()
     const searchEngine = await wiki.models.searchEngines.query().findOne('isEnabled', true)
     if (!searchEngine) return
@@ -240,17 +227,7 @@ export default class SearchEngine extends Model {
       config: searchEngine.config
     }
     if (activate) {
-      try {
-        await engine.activate()
-      } catch (err) {
-        // -> Revert to basic engine
-        if (err instanceof wiki.Error.SearchActivationFailed) {
-          await wiki.models.searchEngines.query().patch({ isEnabled: false }).where('key', searchEngine.key)
-          await wiki.models.searchEngines.query().patch({ isEnabled: true }).where('key', 'db')
-          await wiki.models.searchEngines.initEngine()
-        }
-        throw err
-      }
+      await engine.activate()
     }
 
     try {

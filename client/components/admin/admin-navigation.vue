@@ -102,6 +102,13 @@
                               v-icon mdi-arrange-send-backward
                           span {{$t('admin:navigation.copyFromLocale')}}
                       v-list.navigation-tree.py-2(density="compact", nav)
+                        v-list-item.navigation-tree__home
+                          template(v-slot:prepend)
+                            v-avatar(size='24', rounded='0')
+                              v-icon mdi-home
+                          v-list-item-title {{$t('common:header.home')}}
+                          template(v-slot:append)
+                            v-icon(size='18', aria-hidden='true') mdi-lock
                         v-list-item(v-if='currentTree.length < 1')
                           template(v-slot:prepend)
                             v-avatar(size='24'): v-icon(color="secondary") mdi-alert
@@ -350,6 +357,18 @@ const createEmptyNavigationItem = (): NavigationItem => ({
   visibilityGroups: []
 })
 
+const isHomeLink = (item: NavigationItem): boolean =>
+  item.kind === 'link' && item.targetType === 'home'
+
+const normalizeNavigationItems = (items: NavigationItem[]): NavigationItem[] =>
+  items.filter(item => !isHomeLink(item))
+
+const normalizeNavigationTrees = (trees: NavigationTreeRow[]): NavigationTreeRow[] =>
+  trees.map(tree => ({
+    ...tree,
+    items: normalizeNavigationItems(tree.items)
+  }))
+
 export default {
   components: {
     draggable
@@ -386,7 +405,6 @@ export default {
       return [
         { text: this.$t('admin:navigation.navType.external'), value: 'external' },
         { text: this.$t('admin:navigation.navType.externalblank'), value: 'externalblank' },
-        { text: this.$t('admin:navigation.navType.home'), value: 'home' },
         { text: this.$t('admin:navigation.navType.page'), value: 'page' }
         // { text: this.$t('admin:navigation.navType.searchQuery'), value: 'search' }
       ]
@@ -399,7 +417,7 @@ export default {
       return this.locales.filter(locale => locale.code !== this.currentLang)
     },
     copySourceCount () {
-      return (_.find(this.trees, ['locale', this.copyFromLocaleCode])?.items || []).length
+      return normalizeNavigationItems(_.find(this.trees, ['locale', this.copyFromLocaleCode])?.items || []).length
     },
     currentTree: {
       get () {
@@ -408,11 +426,11 @@ export default {
       set (val: NavigationItem[]) {
         const tree = _.find(this.trees, ['locale', this.currentLang])
         if (tree) {
-          tree.items = val
+          tree.items = normalizeNavigationItems(val)
         } else {
           this.trees = [...this.trees, {
             locale: this.currentLang,
-            items: val
+            items: normalizeNavigationItems(val)
           }]
         }
       }
@@ -469,7 +487,7 @@ export default {
             ...newItem,
             label: this.$t('admin:navigation.untitled', { kind: this.$t('admin:navigation.link') }),
             icon: 'mdi-chevron-right',
-            targetType: 'home',
+            targetType: 'page',
             target: ''
           }
           break
@@ -503,7 +521,7 @@ export default {
       this.current.target = `/${locale}/${path}`
     },
     copyFromLocale () {
-      const source = _.get(_.find(this.trees, ['locale', this.copyFromLocaleCode]), 'items', null) || []
+      const source = normalizeNavigationItems(_.get(_.find(this.trees, ['locale', this.copyFromLocaleCode]), 'items', null) || [])
       if (source.length < 1) return
       this.copyFromLocaleDialogIsShown = false
       this.currentTree = [...this.currentTree, ..._.cloneDeep(source)]
@@ -513,9 +531,11 @@ export default {
       this.saving = true
       wikiStore.startLoading('admin-navigation-save')
       try {
-        await saveNavigation(window.fetch.bind(window), this.trees, this.config.mode, this.config.expandParent)
+        const normalizedTrees = normalizeNavigationTrees(this.trees)
+        this.trees = normalizedTrees
+        await saveNavigation(window.fetch.bind(window), normalizedTrees, this.config.mode, this.config.expandParent)
         this.persistedConfig = _.cloneDeep(this.config)
-        this.persistedTrees = _.cloneDeep(this.trees)
+        this.persistedTrees = _.cloneDeep(normalizedTrees)
         wikiStore.showNotification({
           message: this.$t('admin:navigation.saveSuccess'),
           style: 'success',
@@ -534,10 +554,11 @@ export default {
       wikiStore.startLoading('admin-navigation-refresh')
       try {
         const navigation = await fetchNavigation(window.fetch.bind(window), 'Navigation response is invalid')
+        const normalizedTrees = normalizeNavigationTrees(navigation.tree)
         this.config = _.cloneDeep(navigation.config)
-        this.trees = _.cloneDeep(navigation.tree)
+        this.trees = _.cloneDeep(normalizedTrees)
         this.persistedConfig = _.cloneDeep(this.config)
-        this.persistedTrees = _.cloneDeep(this.trees)
+        this.persistedTrees = _.cloneDeep(normalizedTrees)
         this.current = createEmptyNavigationItem()
         this.loaded = true
         if (notify) {

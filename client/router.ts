@@ -35,8 +35,7 @@ const adminRoutes: RouteRecordRaw[] = [
   { path: '/system', component: () => import('./components/admin/admin-system.vue') },
   { path: '/utilities', component: () => import('./components/admin/admin-utilities.vue') },
   { path: '/webhooks', component: () => import('./components/admin/admin-webhooks.vue') },
-  { path: '/dev-flags', component: () => import('./components/admin/admin-dev-flags.vue') },
-  { path: '/contribute', component: () => import('./components/admin/admin-contribute.vue') }
+  { path: '/dev-flags', component: () => import('./components/admin/admin-dev-flags.vue') }
 ]
 
 const profileRoutes: RouteRecordRaw[] = [
