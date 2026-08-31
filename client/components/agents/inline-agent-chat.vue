@@ -4,6 +4,12 @@
     class="inline-agent"
     aria-labelledby="inline-agent-title"
     :aria-busy="loading"
+    :class="{
+      'inline-agent--panel-open': historyOpen || memoryOpen,
+      'inline-agent--history-open': historyOpen,
+      'inline-agent--memory-open': memoryOpen,
+      'inline-agent--panels-open': historyOpen && memoryOpen
+    }"
   >
     <button
       v-if="panelMode === 'modal' && (historyOpen || memoryOpen)"
@@ -181,28 +187,18 @@
             </div>
 
             <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
-              <div class="inline-agent__welcome-intro">
-                <div class="inline-agent__welcome-mark" aria-hidden="true">
-                  <v-icon icon="mdi-auto-fix" size="25" />
-                </div>
-                <div>
-                  <p class="inline-agent__welcome-index">Archive desk · Ready</p>
-                  <h2 id="inline-agent-welcome-title">Begin with what you need to understand.</h2>
-                </div>
-              </div>
+              <p class="inline-agent__welcome-index">Archive desk · Ready</p>
+              <h2 id="inline-agent-welcome-title">Begin with what you need to understand.</h2>
               <p class="inline-agent__welcome-copy">
                 Wiki Agent traces answers through the knowledge you can access, keeps sources visible, and turns careful intent into auditable work.
               </p>
-              <div class="inline-agent__welcome-rule" aria-hidden="true">
-                <span>Explore</span>
-              </div>
               <div class="inline-agent__starters" role="group" aria-label="Conversation starters">
                 <v-btn
                   v-for="starter in starters"
                   :key="starter.prompt"
                   class="inline-agent__starter"
                   color="primary"
-                  variant="tonal"
+                  variant="text"
                   :disabled="!canSubmit"
                   :title="!canSubmit ? submitUnavailableReason : undefined"
                   @click="sendPrompt(starter.prompt)"
@@ -234,31 +230,46 @@
             append-icon="mdi-arrow-down"
             @click="jumpToApproval"
           >Approval required</v-btn>
+          <v-btn
+            v-else-if="followJumpVisible"
+            class="inline-agent__follow-jump"
+            color="primary"
+            variant="tonal"
+            prepend-icon="mdi-arrow-down"
+            aria-label="Jump to latest response"
+            @click="scrollToLatest"
+          >Latest response</v-btn>
         </div>
 
         <footer class="inline-agent__composer">
-          <div v-if="currentPage" class="inline-agent__page-context">
-            <v-icon icon="mdi-file-link-outline" size="16" aria-hidden="true" />
-            <span><strong>Page context available</strong> · Wiki Agent can consult the page you are viewing</span>
-          </div>
-          <AgentComposer
-            ref="composer"
-            :sending="sending"
-            :can-stop="Boolean(activeRun?.canCancel)"
-            :disabled="!canSubmit"
-            :skills-enabled="skillsEnabled"
-            :goals-enabled="goalsEnabled"
-            :skills="skills"
-            :preferred-skills="thread?.session.skills ?? []"
-            :invocation-limit="invocationLimit"
-            @send="sendPrompt"
-            @stop="agents.stop"
-            @manage-skills="openSkillManager"
-            @update-skill-preferences="agents.setSkillPreferences"
-          />
-          <div class="inline-agent__notice">
-            <v-icon icon="mdi-shield-check-outline" size="15" aria-hidden="true" />
-            <span>Permissions are enforced. Verify cited sources before relying on model output.</span>
+          <div class="inline-agent__composer-inner">
+            <div class="inline-agent__composer-meta">
+              <div v-if="currentPage" class="inline-agent__page-context" role="note" :aria-label="`${currentPage.locale}/${currentPage.path} is available to consult`">
+                <v-icon icon="mdi-file-link-outline" size="16" aria-hidden="true" />
+                <span>
+                  <strong>Page context</strong> · <bdi dir="auto">{{ currentPage.locale }}/{{ currentPage.path }}</bdi>
+                </span>
+              </div>
+              <div class="inline-agent__notice">
+                <v-icon icon="mdi-shield-check-outline" size="15" aria-hidden="true" />
+                <span>Permissions are enforced. Verify cited sources before relying on model output.</span>
+              </div>
+            </div>
+            <AgentComposer
+              ref="composer"
+              :sending="sending"
+              :can-stop="Boolean(activeRun?.canCancel)"
+              :disabled="!canSubmit"
+              :skills-enabled="skillsEnabled"
+              :goals-enabled="goalsEnabled"
+              :skills="skills"
+              :preferred-skills="thread?.session.skills ?? []"
+              :invocation-limit="invocationLimit"
+              @send="sendPrompt"
+              @stop="agents.stop"
+              @manage-skills="openSkillManager"
+              @update-skill-preferences="agents.setSkillPreferences"
+            />
           </div>
         </footer>
       </template>
@@ -379,6 +390,7 @@ const activeRun = computed(() => {
 })
 const openGoal = computed(() => thread.value?.goal && ['active', 'paused', 'blocked'].includes(thread.value.goal.status) ? thread.value.goal : null)
 const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length || thread.value.goal)))
+const followJumpVisible = computed(() => Boolean(hasConversation.value && !transcriptFollowing.value && !approvalJumpVisible.value))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
 const providerAvailable = computed(() => props.providerEnabled && profiles.value.length > 0)
 const providerUnavailableMessage = computed(() => props.providerEnabled
@@ -450,6 +462,15 @@ const sendPrompt = async (
 const focusConversation = async (): Promise<void> => {
   await nextTick()
   transcript.value?.focus({ preventScroll: true })
+}
+const scrollToLatest = async (): Promise<void> => {
+  const container = transcript.value
+  if (!container) return
+  container.scrollTo({ top: container.scrollHeight, behavior: reducedMotion() ? 'auto' : 'smooth' })
+  transcriptFollowing.value = true
+  await nextTick()
+  container.focus({ preventScroll: true })
+  updateApprovalJump()
 }
 const reloadSkillCatalog = async (): Promise<void> => {
   try { await agents.reloadSkills() } catch (value) {
@@ -741,8 +762,8 @@ onMounted(() => {
     window.matchMedia('(min-width: 1440px)'),
     window.matchMedia('(min-width: 1024px) and (max-width: 1439.98px)')
   ]
-  reconcilePanelMode()
   panelModeMedia.forEach(media => media.addEventListener('change', reconcilePanelMode))
+  reconcilePanelMode()
   transcriptObserver = new MutationObserver(scheduleTranscriptReconcile)
   if (transcript.value) transcriptObserver.observe(transcript.value, { childList: true, subtree: true, characterData: true })
   window.addEventListener('resize', scheduleTranscriptReconcile)
@@ -758,11 +779,12 @@ onBeforeUnmount(() => {
   window.visualViewport?.removeEventListener('resize', scheduleTranscriptReconcile)
   agents.closeWorkspace()
 })
-defineExpose({ sendPrompt, focusComposer, focusConversation })
+defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 </script>
 
 <style scoped>
 .inline-agent {
+  --agent-conversation-width: 56rem;
   position: relative;
   display: grid;
   width: 100%;
@@ -985,6 +1007,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   overflow-y: auto;
   outline: none;
   overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
   scroll-behavior: smooth;
   scroll-padding-block: var(--wiki-space-4);
 }
@@ -993,10 +1016,9 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   border-radius: var(--wiki-control-radius);
   box-shadow: inset var(--wiki-focus-ring);
 }
-
 .inline-agent__transcript :deep(.agent-thread) {
   width: 100%;
-  max-width: 56rem;
+  max-width: var(--agent-conversation-width);
   margin-inline: auto;
 }
 
@@ -1042,26 +1064,23 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   position: absolute;
   z-index: 2;
   inset-block-end: var(--wiki-space-4);
-  inset-inline-end: var(--wiki-space-8);
+  inset-inline-end: max(var(--wiki-space-4), calc((100% - var(--agent-conversation-width)) / 2));
+  box-shadow: var(--wiki-shadow-md);
+}
+
+.inline-agent__follow-jump {
+  position: absolute;
+  z-index: 2;
+  inset-block-end: var(--wiki-space-4);
+  inset-inline-end: max(var(--wiki-space-4), calc((100% - var(--agent-conversation-width)) / 2));
   box-shadow: var(--wiki-shadow-md);
 }
 
 .inline-agent__welcome {
   position: relative;
-  width: min(100%, 48rem);
+  width: min(100%, var(--agent-conversation-width));
   margin: auto;
   padding: clamp(var(--wiki-space-6), 5vw, var(--wiki-space-10));
-  overflow: hidden;
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-panel-radius);
-  background:
-    linear-gradient(
-      145deg,
-      color-mix(in srgb, var(--wiki-accent-warm) 7%, var(--wiki-surface-raised)),
-      var(--wiki-surface-raised) 48%,
-      color-mix(in srgb, var(--wiki-accent-spectral) 5%, var(--wiki-surface-raised))
-    );
-  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
   text-align: start;
 }
 
@@ -1070,40 +1089,15 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   inset-block: var(--wiki-space-6);
   inset-inline-start: 0;
   width: var(--wiki-space-1);
-  border-radius: 0 var(--wiki-radius-pill) var(--wiki-radius-pill) 0;
+  border-start-start-radius: 0;
+  border-start-end-radius: var(--wiki-radius-pill);
+  border-end-end-radius: var(--wiki-radius-pill);
+  border-end-start-radius: 0;
   background: var(--wiki-ambient-accent);
   content: '';
 }
 
-.inline-agent__welcome::after {
-  position: absolute;
-  inset-block-start: var(--wiki-space-4);
-  inset-inline-end: var(--wiki-space-4);
-  width: var(--wiki-space-10);
-  height: var(--wiki-space-10);
-  border-block-start: 1px solid color-mix(in srgb, var(--wiki-accent-spectral) 30%, transparent);
-  border-inline-end: 1px solid color-mix(in srgb, var(--wiki-accent-spectral) 30%, transparent);
-  content: '';
-}
 
-.inline-agent__welcome-intro {
-  display: flex;
-  align-items: center;
-  gap: var(--wiki-space-4);
-}
-
-.inline-agent__welcome-mark {
-  display: grid;
-  width: calc(var(--wiki-space-12) + var(--wiki-space-2));
-  height: calc(var(--wiki-space-12) + var(--wiki-space-2));
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 30%, var(--wiki-surface-border));
-  border-radius: var(--wiki-control-radius);
-  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
-  color: var(--wiki-accent-warm);
-  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
-}
 
 .inline-agent__welcome-index {
   margin: 0 0 var(--wiki-space-1);
@@ -1132,38 +1126,21 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   line-height: var(--wiki-leading-body);
 }
 
-.inline-agent__welcome-rule {
-  display: flex;
-  align-items: center;
-  gap: var(--wiki-space-3);
-  margin-bottom: var(--wiki-space-3);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 54%, transparent);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-
-.inline-agent__welcome-rule::after {
-  height: 1px;
-  flex: 1;
-  background: var(--wiki-surface-border);
-  content: '';
-}
 
 .inline-agent__starters {
   display: grid;
   width: 100%;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--wiki-space-2);
+  grid-template-columns: 1fr;
+  gap: 0;
 }
 
 .inline-agent__starter {
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+  min-height: var(--wiki-control-height);
   justify-content: flex-start;
-  padding-inline: var(--wiki-space-3);
-  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, var(--wiki-surface-border));
-  border-radius: var(--wiki-control-radius);
+  padding-inline: var(--wiki-space-2);
+  border: 0;
+  border-block-end: 1px solid var(--wiki-surface-border);
+  border-radius: 0;
   text-align: start;
 }
 
@@ -1186,15 +1163,35 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     );
   box-shadow: 0 calc(var(--wiki-space-2) * -1) var(--wiki-space-8) color-mix(in srgb, var(--wiki-shadow-color) 42%, transparent);
 }
+.inline-agent__composer-inner {
+  width: min(100%, var(--agent-conversation-width));
+  margin-inline: auto;
+}
+
+.inline-agent__composer-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--wiki-space-3);
+  justify-content: space-between;
+  margin-bottom: var(--wiki-space-2);
+}
 
 .inline-agent__page-context {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: var(--wiki-space-2);
-  margin: 0 var(--wiki-space-2) var(--wiki-space-2);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
+}
+
+.inline-agent__page-context > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inline-agent__page-context .v-icon {
@@ -1208,14 +1205,17 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
 .inline-agent__notice {
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
-  justify-content: center;
   gap: var(--wiki-space-1);
-  margin-top: var(--wiki-space-2);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 52%, transparent);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
-  text-align: center;
+  text-align: end;
+}
+
+.inline-agent__notice span {
+  white-space: nowrap;
 }
 
 .inline-agent__side {
@@ -1298,8 +1298,15 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 }
 
 @media (min-width: 1440px) {
-  .inline-agent {
-    grid-template-columns: minmax(0, 1fr) minmax(36rem, 68rem) minmax(0, 1fr);
+  .inline-agent.inline-agent--history-open {
+    grid-template-columns: minmax(16rem, 22rem) minmax(0, 68rem) minmax(0, 1fr);
+  }
+
+  .inline-agent.inline-agent--memory-open {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 68rem) minmax(16rem, 22rem);
+  }
+  .inline-agent.inline-agent--panels-open {
+    grid-template-columns: minmax(16rem, 19rem) minmax(0, 68rem) minmax(16rem, 21rem);
   }
 
   .inline-agent__side {
@@ -1307,11 +1314,26 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     z-index: auto;
     filter: none;
   }
+
+  .inline-agent--panel-open .inline-agent__side {
+    width: auto;
+    max-width: none;
+    justify-self: stretch;
+  }
 }
 
 @media (min-width: 1024px) and (max-width: 1439.98px) {
   .inline-agent {
+    grid-template-columns: minmax(0, 68rem);
+    justify-content: center;
+  }
+
+  .inline-agent.inline-agent--history-open {
     grid-template-columns: minmax(16rem, 22rem) minmax(0, 68rem);
+  }
+
+  .inline-agent.inline-agent--memory-open {
+    grid-template-columns: minmax(0, 68rem) minmax(16rem, 22rem);
   }
 
   .inline-agent__side {
@@ -1319,21 +1341,28 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     z-index: auto;
     width: auto;
     max-width: none;
-    grid-column: 1;
     grid-row: 1;
     box-sizing: border-box;
     filter: none;
   }
 
-  .inline-agent__side--history,
-  .inline-agent__side--memory {
+  .inline-agent__side--history {
     grid-column: 1;
     justify-self: stretch;
   }
 
-  .inline-agent__card {
+  .inline-agent__side--memory {
     grid-column: 2;
+    justify-self: stretch;
+  }
+
+  .inline-agent__card {
+    grid-column: 1;
     grid-row: 1;
+  }
+
+  .inline-agent--history-open .inline-agent__card {
+    grid-column: 2;
   }
 }
 
@@ -1393,6 +1422,28 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
   }
 }
 
+@media (min-width: 640px) and (max-width: 1023.98px) {
+  .inline-agent__toolbar {
+    min-height: calc(var(--wiki-control-height) + var(--wiki-space-4));
+    padding-inline: var(--wiki-space-3);
+  }
+
+  .inline-agent__avatar,
+  .inline-agent__eyebrow,
+  .inline-agent__desktop-panel-btn {
+    display: none;
+  }
+
+  .inline-agent__mobile-panel-menu {
+    display: inline-flex !important;
+    min-width: auto !important;
+    padding-inline: var(--wiki-space-2) !important;
+  }
+
+  .inline-agent__panel-actions {
+    gap: 0;
+  }
+}
 @media (max-width: 639.98px) {
   .inline-agent {
     grid-template-columns: minmax(0, 1fr);
@@ -1520,14 +1571,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     padding: var(--wiki-space-5);
   }
 
-  .inline-agent__welcome-intro {
-    align-items: flex-start;
-  }
-
-  .inline-agent__welcome-mark {
-    width: var(--wiki-space-10);
-    height: var(--wiki-space-10);
-  }
 
   .inline-agent__welcome h2 {
     font-size: 1.5rem;
@@ -1551,16 +1594,14 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     white-space: nowrap;
   }
 
-  .inline-agent__approval-jump {
+  .inline-agent__approval-jump,
+  .inline-agent__follow-jump {
     inset-block-end: var(--wiki-space-3);
     inset-inline: var(--wiki-space-6);
   }
 }
 
 @media (max-width: 380px) {
-  .inline-agent__identity {
-    display: none;
-  }
 
   .inline-agent__connection {
     width: var(--wiki-space-10);
@@ -1581,17 +1622,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     margin: 0;
   }
 
-  .inline-agent__welcome-intro {
-    display: block;
-  }
 
-  .inline-agent__welcome-mark {
-    margin-bottom: var(--wiki-space-3);
-  }
-
-  .inline-agent__page-context {
-    display: none;
-  }
 }
 
 @media (max-height: 500px) {
@@ -1623,9 +1654,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
     padding-block-end: max(var(--wiki-space-1), env(safe-area-inset-bottom));
   }
 
-  .inline-agent__page-context {
-    display: none;
-  }
 
   .inline-agent__notice {
     justify-content: flex-start;
@@ -1648,7 +1676,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation })
 
 @media (forced-colors: active) {
   .inline-agent__card,
-  .inline-agent__welcome,
   .inline-agent__side {
     border: 1px solid CanvasText;
   }

@@ -68,18 +68,18 @@
         class="agent-composer__input"
         :aria-label="composerInputLabel"
         aria-describedby="agent-composer-status agent-composer-keyboard-hint"
-        role="combobox"
-        aria-autocomplete="list"
-        aria-haspopup="listbox"
+        :role="skillsEnabled ? 'combobox' : undefined"
+        :aria-autocomplete="skillsEnabled ? 'list' : undefined"
+        :aria-haspopup="skillsEnabled ? 'listbox' : undefined"
         :placeholder="goalMode ? 'Describe a bounded outcome for Wiki Agent' : skillsEnabled ? 'Ask a follow-up · Type / for skills' : 'Ask a follow-up'"
         rows="1"
         variant="solo"
         flat
         hide-details
         :disabled="disabled || sendInProgress"
-        :aria-expanded="skillCommandOpen"
-        :aria-controls="skillCommandOpen ? 'agent-skill-command-results' : undefined"
-        :aria-activedescendant="skillCommandOpen && activeCommandSkill ? `agent-skill-command-${activeCommandSkill.versionId}` : undefined"
+        :aria-expanded="skillsEnabled ? skillCommandOpen : undefined"
+        :aria-controls="skillsEnabled && skillCommandOpen ? 'agent-skill-command-results' : undefined"
+        :aria-activedescendant="skillsEnabled && skillCommandOpen && activeCommandSkill ? `agent-skill-command-${activeCommandSkill.versionId}` : undefined"
         @keydown="handleKeydown"
       />
     </div>
@@ -107,7 +107,6 @@
 
     <div class="agent-composer__actions">
       <div class="agent-composer__context-controls" role="group" aria-label="Conversation context controls">
-        <span v-if="skillsEnabled || goalsEnabled" class="agent-composer__context-label">Context</span>
         <v-menu v-if="skillsEnabled" v-model="skillMenuOpen" :close-on-content-click="false">
           <template #activator="{ props: activatorProps }">
             <v-btn
@@ -129,13 +128,11 @@
           <v-card id="agent-composer-skills-menu" class="agent-composer__skill-menu" min-width="300" max-width="420" role="dialog" aria-labelledby="agent-composer-skills-title">
             <v-card-title id="agent-composer-skills-title" class="text-body-large">Skills</v-card-title>
             <v-card-subtitle>Select for the next message or always load in conversations.</v-card-subtitle>
-            <v-list v-if="skillMenuItems.length > 0" role="listbox" aria-label="Available skills" aria-multiselectable="true" density="compact" max-height="320" class="overflow-y-auto">
+            <v-list v-if="skillMenuItems.length > 0" aria-label="Available skills" density="compact" max-height="320" class="overflow-y-auto">
               <v-list-item
                 v-for="skill in skillMenuItems"
                 :key="skill.versionId"
-                role="option"
                 :active="isSelected(skill.versionId) || isPreferred(skill.versionId)"
-                :aria-selected="isSelected(skill.versionId) || isPreferred(skill.versionId)"
                 :disabled="disabled || sendInProgress"
                 @click="toggleSkill(skill.versionId)"
               >
@@ -144,7 +141,7 @@
                     :model-value="isSelected(skill.versionId) || isPreferred(skill.versionId)"
                     :aria-label="`${skill.name}: ${isSelected(skill.versionId) || isPreferred(skill.versionId) ? 'selected' : 'not selected'}`"
                     :disabled="disabled || sendInProgress || isPreferred(skill.versionId) || (!isSelected(skill.versionId) && selectedSkillIds.length >= invocationLimit)"
-                    tabindex="-1"
+                    @click.stop="toggleSkill(skill.versionId)"
                   />
                 </template>
                 <v-list-item-title>{{ skill.name }}</v-list-item-title>
@@ -486,33 +483,20 @@ onBeforeUnmount(() => {
 <style scoped>
 .agent-composer {
   position: relative;
+  display: flex;
+  max-height: min(calc(var(--wiki-space-12) * 8), 48dvh);
+  flex-direction: column;
+  overflow: visible;
   min-width: 0;
   padding: var(--wiki-space-2);
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--wiki-accent-warm) 6%, transparent),
-      transparent 42%
-    ),
-    rgb(var(--v-theme-surface));
-  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs);
   font-family: var(--wiki-font-body);
   transition:
     border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
     box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
-}
-
-.agent-composer::before {
-  position: absolute;
-  inset-block-start: 0;
-  inset-inline: var(--wiki-space-6);
-  height: var(--wiki-space-1);
-  border-radius: 0 0 var(--wiki-radius-pill) var(--wiki-radius-pill);
-  background: var(--wiki-ambient-accent);
-  content: '';
-  opacity: .72;
 }
 
 .agent-composer:focus-within {
@@ -535,6 +519,9 @@ onBeforeUnmount(() => {
 
 .agent-composer__editor {
   min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
   padding: var(--wiki-space-2) var(--wiki-space-2) 0;
 }
 
@@ -547,8 +534,6 @@ onBeforeUnmount(() => {
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
-  letter-spacing: .08em;
-  text-transform: uppercase;
 }
 
 .agent-composer__mode-badge {
@@ -591,12 +576,19 @@ onBeforeUnmount(() => {
 
 .agent-composer__attachments {
   display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: min(calc(var(--wiki-space-12) * 4), 28dvh);
   align-items: flex-start;
   gap: var(--wiki-space-2);
   margin: 0 var(--wiki-space-2) var(--wiki-space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: var(--wiki-space-2);
   border-block: 1px solid var(--wiki-surface-border);
 }
+
 
 .agent-composer__attachments-label {
   display: inline-flex;
@@ -614,13 +606,16 @@ onBeforeUnmount(() => {
   min-width: 0;
   flex: 1;
   flex-wrap: wrap;
+  align-content: flex-start;
   gap: var(--wiki-space-2);
 }
+
 
 .agent-composer__actions {
   display: grid;
   min-width: 0;
   min-height: var(--wiki-control-height);
+  flex: 0 0 auto;
   grid-template-columns: minmax(0, auto) minmax(var(--wiki-space-12), 1fr) auto;
   align-items: center;
   gap: var(--wiki-space-2);
@@ -636,14 +631,18 @@ onBeforeUnmount(() => {
   gap: var(--wiki-space-1);
 }
 
-.agent-composer__context-label {
-  margin-inline: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 54%, transparent);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .06em;
-  text-transform: uppercase;
+.agent-composer__primary-actions {
+  min-width: calc(var(--wiki-space-12) * 2.5);
+  justify-content: stretch;
 }
+
+.agent-composer__primary-actions > .agent-composer__submit,
+.agent-composer__primary-actions > .agent-composer__stop {
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 
 .agent-composer__actions :deep(.v-btn) {
   min-height: var(--wiki-control-height);
@@ -697,9 +696,11 @@ onBeforeUnmount(() => {
   min-width: calc(var(--wiki-space-12) * 1.6);
 }
 
+
 .agent-composer__hint {
   display: flex;
   min-height: var(--wiki-space-5);
+  flex: 0 0 auto;
   align-items: center;
   justify-content: flex-end;
   gap: var(--wiki-space-1);
@@ -756,9 +757,6 @@ onBeforeUnmount(() => {
   border: 0;
 }
 
-.agent-composer__skill-menu :deep(.v-selection-control) {
-  pointer-events: none;
-}
 
 @keyframes composerPulse {
   50% {
@@ -772,10 +770,6 @@ onBeforeUnmount(() => {
     border-radius: var(--wiki-control-radius);
   }
 
-  .agent-composer::before {
-    inset-inline: var(--wiki-space-4);
-  }
-
   .agent-composer__editor {
     padding-inline: var(--wiki-space-2);
   }
@@ -784,9 +778,6 @@ onBeforeUnmount(() => {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .agent-composer__context-label {
-    display: none;
-  }
 
   .agent-composer__state {
     position: absolute;
@@ -814,10 +805,32 @@ onBeforeUnmount(() => {
 
   .agent-composer__attachments {
     flex-direction: column;
+    max-height: min(calc(var(--wiki-space-12) * 3), 24dvh);
   }
 
   .agent-composer__hint {
     justify-content: flex-start;
+  }
+}
+
+@media (max-width: 740px) and (max-height: 500px) {
+  .agent-composer__attachments {
+    flex-direction: row;
+    align-items: center;
+    max-height: calc(var(--wiki-control-height) + var(--wiki-space-3));
+    overflow: hidden;
+  }
+
+  .agent-composer__skills {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+  }
+
+  .agent-composer__skills::-webkit-scrollbar {
+    display: none;
   }
 }
 
@@ -867,12 +880,10 @@ onBeforeUnmount(() => {
     border: 1px solid CanvasText;
   }
 
-  .agent-composer::before,
   .agent-composer__state-dot {
     background: Highlight;
   }
 }
-
 @media (prefers-reduced-motion: reduce) {
   .agent-composer,
   .agent-composer__state-dot {

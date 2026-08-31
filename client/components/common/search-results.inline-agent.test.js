@@ -80,6 +80,8 @@ describe('inline Ask mode contract', () => {
     expect(inline).toMatch(/<AgentMemoryManager :model-value="memoryOpen"[\s\S]*@update:model-value="updateMemoryOpen"/)
     expect(search).toMatch(/&--ask \.inline-agent\s*\{[\s\S]*max-width:\s*112rem/)
     expect(inline).toMatch(/panelMode = ref<'wide' \| 'docked' \| 'modal'>/)
+    expect(inline).toMatch(/panelModeMedia\.forEach\(media => media\.addEventListener\(['"]change['"],\s*reconcilePanelMode\)\)/)
+    expect(inline).toMatch(/panelModeMedia\.forEach\(media => media\.removeEventListener\(['"]change['"],\s*reconcilePanelMode\)\)/)
     expect(inline).toMatch(/window\.matchMedia\(['"]\(min-width: 1440px\)['"]\)/)
     expect(inline).toMatch(/window\.matchMedia\(['"]\(min-width: 1024px\)['"]\)/)
     expect(inline).toMatch(/@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)/)
@@ -182,7 +184,7 @@ describe('inline Ask mode contract', () => {
     expect(header).toMatch(/this\.searchIsFocused\s*=\s*true[\s\S]*this\.searchMode\s*=\s*['"]ask['"]/)
     expect(header).toMatch(/event\.ctrlKey\s*\|\|\s*event\.metaKey/)
     expect(search).toMatch(/focusComposer\(\)/)
-    expect(inline).toMatch(/defineExpose\(\{\s*sendPrompt,\s*focusComposer,\s*focusConversation\s*\}\)/)
+    expect(inline).toMatch(/defineExpose\(\{\s*sendPrompt,\s*focusComposer,\s*focusConversation,\s*scrollToLatest\s*\}\)/)
     expect(composer).toMatch(/defineExpose\(\{\s*focusInput,\s*focusSkillsTrigger\s*\}\)/)
     expect(search).toMatch(/async submitAskPrompt\(\): Promise<void>/)
   })
@@ -261,6 +263,130 @@ describe('inline Ask mode contract', () => {
     expect(inline.match(/if \(sessionChanged\(\)\) return \{ success: true \}/g)).toHaveLength(2)
     expect(inline).not.toMatch(/watch\(error,/)
     expect(inline).toMatch(/const reloadHistory = async[\s\S]*historyLoadError\.value = ''[\s\S]*historyLoadError\.value = value instanceof Error/)
+  })
+  test('keeps docked rails conditional and conversation measures shared', () => {
+    expect(inline).toMatch(/['"]inline-agent--panel-open['"]\s*:\s*historyOpen\s*\|\|\s*memoryOpen/)
+    expect(inline).toMatch(/['"]inline-agent--history-open['"]\s*:\s*historyOpen/)
+    expect(inline).toMatch(/['"]inline-agent--memory-open['"]\s*:\s*memoryOpen/)
+    expect(inline).toMatch(/['"]inline-agent--panels-open['"]\s*:\s*historyOpen\s*&&\s*memoryOpen/)
+    expect(inline).toMatch(/--agent-conversation-width:\s*56rem/)
+    expect(inline).toMatch(/inline-agent__composer-inner/)
+    expect(inline).toMatch(/inline-agent__composer-meta/)
+    expect(inline).toMatch(/agent-thread\)\s*\{[\s\S]*?max-width:\s*var\(--agent-conversation-width\)/)
+    expect(inline).toMatch(/\.inline-agent__composer-inner\s*\{[\s\S]*?width:\s*min\(100%,\s*var\(--agent-conversation-width\)\)/)
+    expect(inline).toMatch(/scrollbar-gutter:\s*stable both-edges/)
+
+    const wideLayout = inline.match(/@media \(min-width:\s*1440px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    expect(wideLayout).toMatch(/\.inline-agent\.inline-agent--history-open\s*\{[\s\S]*?minmax\(16rem,\s*22rem\)[\s\S]*?minmax\(0,\s*68rem\)/)
+    expect(wideLayout).toMatch(/\.inline-agent\.inline-agent--memory-open\s*\{[\s\S]*?minmax\(0,\s*68rem\)[\s\S]*?minmax\(16rem,\s*22rem\)/)
+    expect(wideLayout).toMatch(/\.inline-agent\.inline-agent--panels-open\s*\{[\s\S]*?minmax\(16rem,\s*19rem\)[\s\S]*?minmax\(0,\s*68rem\)[\s\S]*?minmax\(16rem,\s*21rem\)/)
+
+    const dockedLayout = inline.match(/@media \(min-width:\s*1024px\) and \(max-width:\s*1439\.98px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    expect(dockedLayout).toMatch(/\.inline-agent\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*68rem\)[\s\S]*?justify-content:\s*center/)
+    expect(dockedLayout).toMatch(/\.inline-agent\.inline-agent--history-open\s*\{[\s\S]*?grid-template-columns:/)
+    expect(dockedLayout).toMatch(/\.inline-agent\.inline-agent--memory-open\s*\{[\s\S]*?grid-template-columns:/)
+    expect(dockedLayout).toMatch(/\.inline-agent__side--memory\s*\{[\s\S]*?grid-column:\s*2/)
+  })
+
+  test('keeps current-page locale and path identity available on narrow phones', () => {
+    const pageContext = inline.match(/<div[^>]*class=['"]inline-agent__page-context['"][^>]*>/)?.[0] ?? ''
+    expect(pageContext).toMatch(/\brole=['"]note['"]/)
+    expect(pageContext).toMatch(/:aria-label="`\$\{currentPage\.locale\}\/\$\{currentPage\.path\} is available to consult`"/)
+    expect(inline).toMatch(/<bdi\s+dir=['"]auto['"]>\s*\{\{\s*currentPage\.locale\s*\}\}\s*\/\s*\{\{\s*currentPage\.path\s*\}\}\s*<\/bdi>/)
+    expect(inline).toMatch(/:aria-label="`\$\{currentPage\.locale\}\/\$\{currentPage\.path\} is available to consult`"/)
+    const narrowPhone = inline.match(/@media \(max-width:\s*380px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    expect(narrowPhone).not.toMatch(/\.inline-agent__page-context\s*\{[\s\S]*?display:\s*none/)
+  })
+
+  test('offers a general latest-response jump without outranking approvals', () => {
+    expect(inline).toMatch(/const transcriptFollowing\s*=\s*ref\(true\)/)
+    expect(inline).toMatch(/const scrollToLatest\s*=\s*async\s*\(\):\s*Promise<void>\s*=>/)
+    expect(inline).toMatch(/scrollToLatest[\s\S]*?transcriptFollowing\.value\s*=\s*true/)
+    expect(inline).toMatch(/scrollToLatest[\s\S]*?reducedMotion\(\)[\s\S]*?scrollTo\([\s\S]*?behavior/)
+    expect(inline).toMatch(/defineExpose\(\{[\s\S]*scrollToLatest[\s\S]*\}\)/)
+    expect(inline).toMatch(/const followJumpVisible\s*=\s*computed\(\(\)\s*=>\s*Boolean\([\s\S]*!transcriptFollowing\.value[\s\S]*!approvalJumpVisible\.value/)
+
+    expect(inline).toMatch(
+      /v-if=['"]approvalJumpVisible['"][\s\S]*class=['"]inline-agent__approval-jump['"][\s\S]*v-else-if=['"]followJumpVisible['"][\s\S]*class=['"]inline-agent__follow-jump['"]/
+    )
+    expect(inline).toMatch(/class=['"]inline-agent__follow-jump['"][\s\S]*@click=['"]scrollToLatest['"]/)
+  })
+  test('keeps welcome content flat and starters as text rows', () => {
+    const welcomeStyle = inline.match(/\.inline-agent__welcome\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(welcomeStyle).not.toMatch(/border\s*:|background\s*:|box-shadow\s*:/)
+    expect(inline).toMatch(/class="inline-agent__starter"[\s\S]*variant=['"]text['"]/)
+    expect(inline).toMatch(/\.inline-agent__starters\s*\{[\s\S]*?grid-template-columns:\s*1fr[\s\S]*?gap:\s*0/)
+    expect(inline).toMatch(/\.inline-agent__starter\s*\{[\s\S]*?border-block-end:\s*1px[\s\S]*?border-radius:\s*0/)
+    const welcomeSpine = inline.match(/\.inline-agent__welcome::before\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(welcomeSpine).not.toMatch(/border-radius\s*:/)
+    expect(welcomeSpine).toMatch(/border-start-start-radius:\s*0/)
+    expect(welcomeSpine).toMatch(/border-start-end-radius:\s*var\(--wiki-radius-pill\)/)
+    expect(welcomeSpine).toMatch(/border-end-end-radius:\s*var\(--wiki-radius-pill\)/)
+    expect(welcomeSpine).toMatch(/border-end-start-radius:\s*0/)
+  })
+
+  test('keeps tablet toolbar density while preserving the smallest-screen identity rule', () => {
+    const tablet = inline.match(/@media \(min-width:\s*640px\) and \(max-width:\s*1023\.98px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    expect(tablet).toMatch(/\.inline-agent__toolbar\s*\{[\s\S]*?min-height:/)
+    const smallestScreen = inline.match(/@media \(max-width:\s*380px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    expect(smallestScreen).not.toMatch(/\.inline-agent__identity\s*\{[\s\S]*?display:\s*none/)
+    expect(inline).toMatch(/\.inline-agent__identity\s*\{\s*display:\s*flex/)
+  })
+
+  test('makes autocomplete semantics conditional on the skills popup feature', () => {
+    expect(composer).toMatch(/:role="skillsEnabled\s*\?\s*['"]combobox['"]\s*:\s*undefined"/)
+    expect(composer).toMatch(/:aria-autocomplete="skillsEnabled\s*\?\s*['"]list['"]\s*:\s*undefined"/)
+    expect(composer).toMatch(/:aria-haspopup="skillsEnabled\s*\?\s*['"]listbox['"]\s*:\s*undefined"/)
+    expect(composer).toMatch(/:aria-expanded="skillsEnabled\s*\?\s*skillCommandOpen\s*:\s*undefined"/)
+    expect(composer).toMatch(/:aria-controls="skillsEnabled\s*&&\s*skillCommandOpen\s*\?[\s\S]*?:\s*undefined"/)
+    expect(composer).toMatch(/:aria-activedescendant="skillsEnabled\s*&&\s*skillCommandOpen\s*&&\s*activeCommandSkill\s*\?[\s\S]*?:\s*undefined"/)
+  })
+
+  test('keeps command autocomplete listbox semantics separate from the manual Skills list', () => {
+    const commandList = composer.match(/<v-list\s+id=['"]agent-skill-command-results['"][\s\S]*?<\/v-list>/)?.[0] ?? ''
+    expect(commandList).toMatch(/\brole=['"]listbox['"]/)
+    expect(commandList).toMatch(/\brole=['"]option['"]/)
+
+    const manualList = composer.match(/<v-list\s+v-if=['"]skillMenuItems\.length > 0['"][\s\S]*?<\/v-list>/)?.[0] ?? ''
+    expect(manualList).toMatch(/aria-label=['"]Available skills['"]/)
+    expect(manualList).not.toMatch(/\brole=['"]listbox['"]|\brole=['"]option['"]/)
+    expect(manualList).not.toMatch(/aria-multiselectable|aria-selected/)
+
+    const manualCheckbox = manualList.match(/<v-checkbox-btn[\s\S]*?\/>/)?.[0] ?? ''
+    expect(manualCheckbox).toMatch(/:aria-label=/)
+    expect(manualCheckbox).not.toMatch(/tabindex=['"]-1['"]/)
+    expect(manualCheckbox).toMatch(/@click\.stop=['"]toggleSkill\(skill\.versionId\)['"]/)
+    expect(manualList).toMatch(/@click\.stop=['"]togglePreference\(skill\.versionId\)['"]/)
+    expect(composer).not.toMatch(/\.agent-composer__skill-menu\s*:deep\(\.v-selection-control\)\s*\{[\s\S]*?pointer-events:\s*none/)
+  })
+
+  test('bounds the aggregate composer while allowing its content to yield', () => {
+    const composerRootStyle = composer.match(/\.agent-composer\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    const editorStyle = composer.match(/\.agent-composer__editor\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    const attachmentsStyle = composer.match(/\.agent-composer__attachments\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    const actionsStyle = composer.match(/\.agent-composer__actions\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    const hintStyle = composer.match(/\.agent-composer__hint\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+
+    expect(composerRootStyle).toMatch(/display:\s*flex/)
+    expect(composerRootStyle).toMatch(/flex-direction:\s*column/)
+    expect(composerRootStyle).toMatch(/max-height:\s*min\(\s*calc\(\s*var\(--wiki-space-12\)\s*\*\s*8\s*\)\s*,\s*48dvh\s*\)/)
+    expect(editorStyle).toMatch(/min-height:\s*0/)
+    expect(editorStyle).toMatch(/flex:\s*\d+\s+1\s+auto/)
+    expect(editorStyle).toMatch(/overflow-y:\s*auto/)
+    expect(attachmentsStyle).toMatch(/min-height:\s*0/)
+    expect(attachmentsStyle).toMatch(/flex:\s*\d+\s+1\s+auto/)
+    expect(attachmentsStyle).toMatch(/overflow-y:\s*auto/)
+    expect(actionsStyle).toMatch(/flex:\s*0\s+0\s+auto/)
+    expect(hintStyle).toMatch(/flex:\s*0\s+0\s+auto/)
+    expect(composer).toMatch(/class="agent-composer__primary-actions"[\s\S]*?agent-composer__stop[\s\S]*?agent-composer__submit/)
+    expect(composer.match(/class="agent-composer__primary-actions"/g)).toHaveLength(1)
+    expect(composer).toMatch(/\.agent-composer__primary-actions\s*\{[\s\S]*?min-width:/)
+    expect(composer).toMatch(
+      /\.agent-composer__primary-actions\s*>\s*\.agent-composer__submit,[\s\S]*?\.agent-composer__primary-actions\s*>\s*\.agent-composer__stop[\s\S]*?width:\s*100%/
+    )
+    const shortViewport = composer.match(/@media \(max-width:\s*740px\) and \(max-height:\s*500px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    expect(shortViewport).toMatch(/\.agent-composer__attachments\s*\{[\s\S]*?max-height:/)
+    expect(shortViewport).toMatch(/\.agent-composer__skills\s*\{[\s\S]*?flex-wrap:\s*nowrap[\s\S]*?overflow-x:\s*auto/)
   })
 
   test('keeps compact transcript follow and composer controls stable', () => {
