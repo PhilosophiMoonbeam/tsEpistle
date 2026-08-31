@@ -128,10 +128,21 @@ describe('disk storage target', () => {
     await Storage.initTargets()
 
     const page = {
+      id: 7,
       path: 'guide',
       localeCode: 'en',
+      title: 'Healthy',
+      description: '',
       contentType: 'markdown',
-      injectMetadata: () => 'healthy page'
+      content: 'healthy page',
+      sourceRevision: '1',
+      authorId: 7,
+      createdAt: '2026-08-30T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+      extra: { okf: { type: 'Reference', status: 'stable' } },
+      isPublished: true,
+      editorKey: 'markdown',
+      tags: []
     }
     const asset = { path: 'images/logo.txt', data: Buffer.from('healthy asset') }
 
@@ -150,12 +161,212 @@ describe('disk storage target', () => {
     expect(failedCreated).not.toHaveBeenCalled()
     expect(failedAssetUploaded).not.toHaveBeenCalled()
     expect(failedGetLocalLocation).not.toHaveBeenCalled()
-    expect(await fs.readFile(path.join(rootPath, 'content', 'guide.md'), 'utf8')).toBe('healthy page')
+    expect(await fs.readFile(path.join(rootPath, 'content', 'guide.md'), 'utf8')).toContain('source_revision: \'1\'')
     expect(await fs.readFile(path.join(rootPath, 'content', 'images', 'logo.txt'), 'utf8')).toBe('healthy asset')
     expect(locations).toEqual([{
       path: path.join(rootPath, 'content', 'images', 'logo.txt'),
       key: 'disk'
     }])
+  })
+
+  it('serializes event and bulk Markdown exports byte-identically with authoritative OKF metadata', async () => {
+    const page = {
+      id: 8,
+      path: 'round-trip',
+      localeCode: 'en',
+      title: 'Round trip',
+      description: 'Stored description',
+      contentType: 'markdown',
+      content: 'See [next](/en/next).',
+      sourceRevision: 42,
+      authorId: 7,
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+      extra: {
+        okf: {
+          type: 'Procedure',
+          status: 'stable',
+          verified: { by: 'human:9', at: '2026-08-30T00:00:00Z' },
+          vendor_extension: { retained: true }
+        }
+      },
+      isPublished: true,
+      editorKey: 'markdown',
+      tags: [{ tag: 'one' }]
+    }
+
+    await plugin.created.call(context, page)
+    const eventBytes = await fs.readFile(path.join(rootPath, 'content', 'round-trip.md'))
+
+    const pageSource = Readable.from([{
+      id: page.id,
+      path: page.path,
+      localeCode: page.localeCode,
+      title: page.title,
+      description: page.description,
+      contentType: page.contentType,
+      content: page.content,
+      sourceRevision: page.sourceRevision,
+      authorId: page.authorId,
+      extra: page.extra,
+      isPublished: page.isPublished,
+      updatedAt: page.updatedAt,
+      createdAt: page.createdAt,
+      editorKey: page.editorKey
+    }])
+    const query = {
+      column: vi.fn(function () { return this }),
+      select: vi.fn(function () { return this }),
+      from: vi.fn(function () { return this }),
+      where: vi.fn(function () { return this }),
+      join: vi.fn(function () { return this }),
+      stream: vi.fn()
+        .mockReturnValueOnce(pageSource)
+        .mockReturnValueOnce(Readable.from([]))
+    }
+    global.WIKI.models.knex = query
+    global.WIKI.models.pages = {
+      query: vi.fn(() => ({
+        findOne: vi.fn().mockResolvedValue({
+          $relatedQuery: vi.fn().mockResolvedValue([{ tag: 'one' }])
+        })
+      }))
+    }
+    global.WIKI.models.assetFolders = { getAllPaths: vi.fn().mockResolvedValue({}) }
+
+    await plugin.dump.call(context)
+    const bulkBytes = await fs.readFile(path.join(rootPath, 'content', 'round-trip.md'))
+    expect(bulkBytes).toEqual(eventBytes)
+
+    const codec = (await vi.importFresh('../../modules/storage/page-document.ts', import.meta.url)).default
+    const parsed = codec({
+      rawDocument: eventBytes,
+      contentType: 'markdown',
+      locale: 'en',
+      pagePath: 'round-trip',
+      importer: 'import:disk'
+    })
+    expect(parsed.okfMetadata).toMatchObject({
+      type: 'Procedure',
+      verified: { by: 'human:9', at: '2026-08-30T00:00:00Z' },
+      vendor_extension: { retained: true },
+      'x-wiki': {
+        published: true,
+        editor: 'markdown',
+        source_revision: '42',
+        created_at: '2026-08-29T00:00:00.000Z',
+        updated_at: '2026-08-30T00:00:00.000Z'
+      }
+    })
+  })
+
+  it('serializes Markdown with compatibility metadata when extra.okf is absent', async () => {
+    await plugin.created.call(context, {
+      path: 'compatibility',
+      localeCode: 'en',
+      title: 'Compatibility',
+      description: '',
+      contentType: 'markdown',
+      content: 'Compatibility body',
+      sourceRevision: 9007199254740993n,
+      authorId: 7,
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+      extra: {},
+      isPublished: true,
+      editorKey: 'markdown',
+      tags: []
+    })
+
+    const source = await fs.readFile(path.join(rootPath, 'content', 'compatibility.md'))
+    const codec = (await vi.importFresh('../../modules/storage/page-document.ts', import.meta.url)).default
+    const parsed = codec({
+      rawDocument: source,
+      contentType: 'markdown',
+      locale: 'en',
+      pagePath: 'compatibility',
+      importer: 'import:disk'
+    })
+    expect(parsed.okfMetadata).toMatchObject({
+      type: 'Reference',
+      status: 'stable',
+      'x-wiki': {
+        source_revision: '9007199254740993'
+      }
+    })
+    expect(parsed.okfMetadata).not.toHaveProperty('generated')
+  })
+
+  it('rejects an existing invalid extra.okf claim instead of exporting compatibility metadata', async () => {
+    const filePath = path.join(rootPath, 'content', 'invalid-okf.md')
+    await expect(plugin.created.call(context, {
+      path: 'invalid-okf',
+      localeCode: 'en',
+      title: 'Invalid OKF',
+      description: '',
+      contentType: 'markdown',
+      content: 'Must not be exported',
+      sourceRevision: 1,
+      authorId: 7,
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+      extra: { okf: null },
+      isPublished: true,
+      editorKey: 'markdown',
+      tags: []
+    })).rejects.toThrow('Storage page extra.okf must contain valid OKF metadata')
+    await expect(fs.readFile(filePath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects non-string Markdown content before export', async () => {
+    await expect(plugin.created.call(context, {
+      path: 'invalid-content',
+      localeCode: 'en',
+      title: 'Invalid content',
+      description: '',
+      contentType: 'markdown',
+      content: { blocks: [] },
+      sourceRevision: 1,
+      authorId: 7,
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+      extra: {},
+      isPublished: true,
+      editorKey: 'markdown',
+      tags: []
+    })).rejects.toThrow('Markdown storage content must be a string')
+  })
+
+  it('keeps non-Markdown event serialization unchanged', async () => {
+    await plugin.created.call(context, {
+      path: 'legacy',
+      localeCode: 'en',
+      title: 'Legacy',
+      description: 'Description',
+      contentType: 'html',
+      content: '<p>Body</p>',
+      sourceRevision: 1,
+      authorId: 7,
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+      extra: {},
+      isPublished: true,
+      editorKey: 'html',
+      tags: [{ tag: 'one' }]
+    })
+    expect(await fs.readFile(path.join(rootPath, 'content', 'legacy.html'), 'utf8')).toBe([
+      '<!--',
+      'title: Legacy',
+      'description: Description',
+      'published: true',
+      'date: 2026-08-30T00:00:00.000Z',
+      'tags: one',
+      'editor: html',
+      'dateCreated: 2026-08-29T00:00:00.000Z',
+      '-->',
+      '',
+      '<p>Body</p>'
+    ].join('\n'))
   })
 })
 

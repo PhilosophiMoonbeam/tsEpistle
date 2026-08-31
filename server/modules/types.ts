@@ -16,16 +16,23 @@ export interface WikiPage {
   title: string
   description: string
   contentType: string
+  content: string
   safeContent: string
   render: string
   destinationHash: string
   destinationPath: string
   destinationLocaleCode: string
+  authorId: number
   authorName: string
   authorEmail: string
   moveAuthorName: string
   moveAuthorEmail: string
+  sourceRevision: string | number | bigint
+  createdAt: Date | string
   updatedAt: Date | string
+  extra: UnknownRecord
+  isPublished: boolean | number
+  editorKey: string
   tags: UnknownRecord[]
   injectMetadata(): string
   $relatedQuery(relation: string): Promise<UnknownRecord[]>

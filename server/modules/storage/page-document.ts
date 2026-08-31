@@ -2,16 +2,110 @@ import { createHash } from 'node:crypto'
 import * as yaml from 'js-yaml'
 import {
   OKF_MAX_DOCUMENT_BYTES,
+  exportOkfLinks,
   importOkfLinks,
+  okfConceptId,
+  okfFilePath,
   parseOkfDocument,
-  type OkfMetadata
+  renderOkfDocument,
+  validateStoredOkfMetadata,
+  type OkfMetadata,
+  type OkfPageDocument
 } from '../../okf/format.ts'
+import pageHelper from '../../helpers/page.ts'
 import type {
   StoragePageDocument,
   StoragePageDocumentInput,
   StoragePageDocumentFormat,
   StoragePageFields
 } from './types.ts'
+
+export interface StoragePageEncodingInput {
+  readonly path: string
+  readonly localeCode: string
+  readonly title: string
+  readonly description: string
+  readonly contentType: string
+  readonly content: string | Record<string, unknown>
+  readonly sourceRevision: string | number | bigint
+  readonly authorId: number
+  readonly createdAt: Date | string
+  readonly updatedAt: Date | string
+  readonly extra?: Record<string, unknown> | null
+  readonly isPublished: boolean | number
+  readonly editorKey: string
+  readonly tags?: readonly (string | { readonly tag?: unknown })[]
+}
+
+const encodingTags = (tags: StoragePageEncodingInput['tags']): string[] =>
+  (tags ?? []).flatMap(tag => {
+    if (typeof tag === 'string') return tag.trim().length > 0 ? [tag.trim()] : []
+    return typeof tag?.tag === 'string' && tag.tag.trim().length > 0 ? [tag.tag.trim()] : []
+  })
+
+const encodingDate = (value: Date | string): string => {
+  const date = value instanceof Date ? value : new Date(value)
+  if (!Number.isFinite(date.valueOf())) throw new TypeError('Storage page dates must be valid ISO datetimes')
+  return date.toISOString()
+}
+
+/**
+ * Encode one DB-owned page for storage.
+ *
+ * Markdown is always emitted as canonical OKF. Existing valid metadata is
+ * authoritative and is never passed through a mutation boundary, while the
+ * bounded x-wiki extension carries the DB facts needed to round-trip the
+ * page. Other content types retain the historical page metadata serializer.
+ */
+export const encodeStoragePageDocument = (
+  page: StoragePageEncodingInput
+): OkfPageDocument | string | Record<string, unknown> => {
+  const tags = encodingTags(page.tags)
+  if (page.contentType !== 'markdown') {
+    return pageHelper.injectPageMetadata({
+      title: page.title,
+      description: page.description,
+      isPublished: page.isPublished === true || page.isPublished === 1,
+      updatedAt: page.updatedAt,
+      tags: tags.map(tag => ({ tag })),
+      editorKey: page.editorKey,
+      createdAt: page.createdAt,
+      contentType: page.contentType,
+      content: page.content
+    })
+  }
+
+  if (typeof page.content !== 'string') throw new TypeError('Markdown storage content must be a string')
+
+  let stored: ReturnType<typeof validateStoredOkfMetadata> = null
+  if (page.extra !== null && page.extra !== undefined && Object.hasOwn(page.extra, 'okf')) {
+    stored = validateStoredOkfMetadata(page.extra.okf)
+    if (stored === null) throw new TypeError('Storage page extra.okf must contain valid OKF metadata')
+  }
+  const metadata: OkfMetadata = {
+    ...(stored?.metadata ?? { type: 'Reference', status: 'stable' }),
+    title: page.title,
+    ...(page.description.trim().length > 0 ? { description: page.description } : {}),
+    tags,
+    'x-wiki': {
+      published: page.isPublished === true || page.isPublished === 1,
+      editor: page.editorKey,
+      source_revision: String(page.sourceRevision),
+      created_at: encodingDate(page.createdAt),
+      updated_at: encodingDate(page.updatedAt)
+    }
+  }
+  const markdown = renderOkfDocument(metadata, exportOkfLinks(page.content))
+  return {
+    version: '0.2',
+    conceptId: okfConceptId(page.localeCode, page.path),
+    filePath: okfFilePath(page.localeCode, page.path),
+    markdown,
+    sha256: sourceHash(markdown),
+    metadata,
+    trust: validateStoredOkfMetadata(metadata)!.trust
+  }
+}
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u
 const LEGACY_V1 = /^\s*<!--\s*(?:TITLE|SUBTITLE):/iu

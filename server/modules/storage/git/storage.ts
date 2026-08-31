@@ -12,8 +12,8 @@ import os from 'node:os'
 import pageHelper from '../../../helpers/page.ts'
 import assetHelper from '../../../helpers/asset.ts'
 import commonDisk from '../disk/common.ts'
+import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
 import { pullRemoteAuthoritative, reattachUnrelatedHistory, recoverInterruptedGitOperation, sharesHistoryWith } from './repository.ts'
-
 interface GitStorageFile {
   file: { path: string; stats: { size: number } }
   oldPath: string
@@ -54,6 +54,9 @@ interface PageExportRow {
   description: string
   contentType: string
   content: string | Record<string, unknown>
+  sourceRevision: string | number
+  authorId: number
+  extra: Record<string, unknown>
   isPublished: boolean
   updatedAt: Date | string
   createdAt: Date | string
@@ -98,7 +101,15 @@ function isPageExportRow(value: unknown): value is PageExportRow {
     'contentType' in value &&
     typeof value.contentType === 'string' &&
     'content' in value &&
-    (typeof value.content === 'string' || (typeof value.content === 'object' && value.content !== null)) &&
+    (typeof value.content === 'string' || (typeof value.content === 'object' && value.content !== null && !Array.isArray(value.content))) &&
+    'sourceRevision' in value &&
+    (typeof value.sourceRevision === 'string' || typeof value.sourceRevision === 'number') &&
+    'authorId' in value &&
+    typeof value.authorId === 'number' &&
+    'extra' in value &&
+    typeof value.extra === 'object' &&
+    value.extra !== null &&
+    !Array.isArray(value.extra) &&
     'isPublished' in value &&
     typeof value.isPublished === 'boolean' &&
     'updatedAt' in value &&
@@ -110,6 +121,15 @@ function isPageExportRow(value: unknown): value is PageExportRow {
   )
 }
 
+
+function serializePage(page: StoragePageEncodingInput): string {
+  const encoded = encodeStoragePageDocument(page)
+  if (page.contentType === 'markdown') {
+    if (typeof encoded === 'object' && encoded !== null && 'markdown' in encoded && typeof encoded.markdown === 'string') return encoded.markdown
+    throw new TypeError('Markdown page encoder did not return a document')
+  }
+  return typeof encoded === 'string' ? encoded : JSON.stringify(encoded)
+}
 function isAssetExportRow(value: unknown): value is AssetExportRow {
   return (
     typeof value === 'object' &&
@@ -447,7 +467,7 @@ const plugin: GitStoragePlugin = {
       fileName = `${page.localeCode}/${fileName}`
     }
     const filePath = path.join(this.repoPath, fileName)
-    await fs.outputFile(filePath, page.injectMetadata(), 'utf8')
+    await fs.outputFile(filePath, serializePage(page), 'utf8')
 
     const gitFilePath = `./${fileName}`
     if ((await this.git.checkIgnore(gitFilePath)).length === 0) {
@@ -469,7 +489,7 @@ const plugin: GitStoragePlugin = {
       fileName = `${page.localeCode}/${fileName}`
     }
     const filePath = path.join(this.repoPath, fileName)
-    await fs.outputFile(filePath, page.injectMetadata(), 'utf8')
+    await fs.outputFile(filePath, serializePage(page), 'utf8')
 
     const gitFilePath = `./${fileName}`
     if ((await this.git.checkIgnore(gitFilePath)).length === 0) {
@@ -636,7 +656,10 @@ const plugin: GitStoragePlugin = {
     // -> Pages
     await pipeline(
       wiki.models.knex
-        .column('id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey')
+        .column(
+          'id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content',
+          'sourceRevision', 'authorId', 'extra', 'isPublished', 'updatedAt', 'createdAt', 'editorKey'
+        )
         .select()
         .from('pages')
         .where({
@@ -663,8 +686,7 @@ const plugin: GitStoragePlugin = {
             }
             wiki.logger.info(`(STORAGE/GIT) Adding page ${fileName}...`)
             const filePath = path.join(this.repoPath, fileName)
-            const content = pageHelper.injectPageMetadata(page)
-            await fs.outputFile(filePath, typeof content === 'string' ? content : JSON.stringify(content), 'utf8')
+            await fs.outputFile(filePath, serializePage(page), 'utf8')
             await this.git.add(`./${fileName}`)
             callback()
           } catch (error: unknown) {

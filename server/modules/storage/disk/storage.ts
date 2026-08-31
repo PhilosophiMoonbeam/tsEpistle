@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto'
 
 import pageHelper from '../../../helpers/page.ts'
 import commonDisk from './common.ts'
-
+import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../page-document.ts'
 interface DiskStorageContext extends StorageContext<StorageConfig> {
   sync(options?: { manual: boolean }): Promise<void>
 }
@@ -23,12 +23,14 @@ interface PageExportRow {
   description: string
   contentType: string
   content: string | Record<string, unknown>
-  isPublished: boolean
-  updatedAt: Date | string
+  sourceRevision: string | number
+  authorId: number
   createdAt: Date | string
+  updatedAt: Date | string
+  extra: Record<string, unknown>
+  isPublished: boolean
   editorKey: string
 }
-
 interface PageTag extends UnknownRecord {
   tag: string
 }
@@ -51,12 +53,14 @@ function isPageExportRow (value: unknown): value is PageExportRow {
     'content' in value &&
     (typeof value.content === 'string' ||
       (typeof value.content === 'object' && value.content !== null && !Array.isArray(value.content))) &&
-    'isPublished' in value && typeof value.isPublished === 'boolean' &&
-    'updatedAt' in value && (value.updatedAt instanceof Date || typeof value.updatedAt === 'string') &&
+    'sourceRevision' in value && (typeof value.sourceRevision === 'string' || typeof value.sourceRevision === 'number') &&
+    'authorId' in value && typeof value.authorId === 'number' &&
     'createdAt' in value && (value.createdAt instanceof Date || typeof value.createdAt === 'string') &&
+    'updatedAt' in value && (value.updatedAt instanceof Date || typeof value.updatedAt === 'string') &&
+    'extra' in value && typeof value.extra === 'object' && value.extra !== null && !Array.isArray(value.extra) &&
+    'isPublished' in value && typeof value.isPublished === 'boolean' &&
     'editorKey' in value && typeof value.editorKey === 'string'
 }
-
 function isAssetExportRow (value: unknown): value is AssetExportRow {
   return typeof value === 'object' &&
     value !== null &&
@@ -67,6 +71,15 @@ function isAssetExportRow (value: unknown): value is AssetExportRow {
 
 function serializeContent (content: string | Record<string, unknown>): string {
   return typeof content === 'string' ? content : JSON.stringify(content)
+}
+
+function serializePage (page: StoragePageEncodingInput): string {
+  const encoded = encodeStoragePageDocument(page)
+  if (page.contentType === 'markdown') {
+    if (typeof encoded === 'object' && encoded !== null && 'markdown' in encoded && typeof encoded.markdown === 'string') return encoded.markdown
+    throw new TypeError('Markdown page encoder did not return a document')
+  }
+  return serializeContent(encoded as string | Record<string, unknown>)
 }
 
 function toError (value: unknown): Error {
@@ -146,7 +159,7 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
       fileName = `${page.localeCode}/${fileName}`
     }
     const filePath = storagePath(this.config, fileName)
-    await writeFileAtomic(filePath, page.injectMetadata(), 'utf8')
+    await writeFileAtomic(filePath, serializePage(page), 'utf8')
   },
   async updated(page) {
     wiki.logger.info(`(STORAGE/DISK) Updating file [${page.localeCode}] ${page.path}...`)
@@ -155,7 +168,7 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
       fileName = `${page.localeCode}/${fileName}`
     }
     const filePath = storagePath(this.config, fileName)
-    await writeFileAtomic(filePath, page.injectMetadata(), 'utf8')
+    await writeFileAtomic(filePath, serializePage(page), 'utf8')
   },
   async deleted(page) {
     wiki.logger.info(`(STORAGE/DISK) Deleting file [${page.localeCode}] ${page.path}...`)
@@ -221,7 +234,10 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
 
     // -> Pages
     await pipeline(
-      wiki.models.knex.column('id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content', 'isPublished', 'updatedAt', 'createdAt', 'editorKey').select().from('pages').where({
+      wiki.models.knex.column(
+        'id', 'path', 'localeCode', 'title', 'description', 'contentType', 'content',
+        'sourceRevision', 'authorId', 'extra', 'isPublished', 'updatedAt', 'createdAt', 'editorKey'
+      ).select().from('pages').where({
         visibility: 'public'
       }).stream(),
       new Transform({
@@ -246,7 +262,7 @@ const plugin: StoragePlugin<StorageConfig, DiskStorageContext> = {
             }
             wiki.logger.info(`(STORAGE/DISK) Dumping page ${fileName}...`)
             const filePath = storagePath(this.config, fileName)
-            await writeFileAtomic(filePath, serializeContent(pageHelper.injectPageMetadata(page)), 'utf8')
+            await writeFileAtomic(filePath, serializePage(page), 'utf8')
             callback()
           } catch (error: unknown) {
             callback(toError(error))
