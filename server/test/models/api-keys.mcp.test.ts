@@ -10,11 +10,22 @@ describe('MCP API-key resource binding', () => {
     Reflect.deleteProperty(globalThis, 'WIKI')
   })
 
-  it('derives the resource claim from any configured Wiki domain', async () => {
+  it('derives the resource claim from the active runtime configuration', async () => {
     const patch = vi.fn().mockResolvedValue(undefined)
     const query = vi.fn()
       .mockReturnValueOnce({ insert: vi.fn().mockResolvedValue({ id: 17 }) })
       .mockReturnValueOnce({ findById: vi.fn(() => ({ patch })) })
+    Reflect.set(globalThis, 'WIKI', {
+      config: {
+        agents: { mcp: { enabled: false } },
+        auth: { audience: 'urn:wiki:stale' },
+        certs: { private: 'stale-private-key' },
+        host: 'https://stale.example.test',
+        sessionSecret: 'stale-session-secret'
+      },
+      models: { apiKeys: { query: vi.fn() } }
+    })
+    const ApiKey = (await vi.importFresh('../../models/apiKeys.ts', import.meta.url)).default
     Reflect.set(globalThis, 'WIKI', {
       config: {
         agents: { mcp: { enabled: true } },
@@ -25,7 +36,6 @@ describe('MCP API-key resource binding', () => {
       },
       models: { apiKeys: { query } }
     })
-    const ApiKey = (await vi.importFresh('../../models/apiKeys.ts', import.meta.url)).default
 
     expect(await ApiKey.createNewKey({ name: 'MCP', expiration: '1h', fullAccess: false, group: 3 })).toBe('signed-key')
 

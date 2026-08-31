@@ -11,6 +11,19 @@ interface CreateKeyOptions {
   fullAccess: boolean
   group: number
 }
+type WikiRuntime = {
+  config: {
+    agents?: { mcp?: { enabled?: boolean } }
+    auth: { audience: string }
+    certs: { private: string | Buffer }
+    host: string
+    sessionSecret: string
+  }
+  models: { apiKeys: typeof ApiKey }
+}
+
+const getWiki = (): WikiRuntime => WIKI as unknown as WikiRuntime
+
 
 export default class ApiKey extends Model {
   declare id: number
@@ -52,6 +65,7 @@ export default class ApiKey extends Model {
   }
 
   static async createNewKey ({ name, expiration, fullAccess, group }: CreateKeyOptions): Promise<string> {
+    const wiki = getWiki()
     const entry = await wiki.models.apiKeys.query().insert({
       name,
       key: 'pending',
@@ -77,15 +91,4 @@ export default class ApiKey extends Model {
     await wiki.models.apiKeys.query().findById(entry.id).patch({ key, isRevoked: false })
     return key
   }
-}
-
-const wiki = WIKI as unknown as {
-  config: {
-    agents?: { mcp?: { enabled?: boolean } }
-    auth: { audience: string }
-    certs: { private: string | Buffer }
-    host: string
-    sessionSecret: string
-  }
-  models: { apiKeys: typeof ApiKey }
 }
