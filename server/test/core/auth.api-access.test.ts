@@ -116,6 +116,7 @@ describe('API-key authentication boundary', () => {
 
   test('preserves API-key authentication on the exact separately mounted MCP route', async () => {
     const req = createRequest('/', '/mcp', '/mcp')
+    vi.mocked(req.get).mockReturnValue('bearer test-api-token')
 
     const next = await authenticate(req)
 
@@ -125,6 +126,7 @@ describe('API-key authentication boundary', () => {
       apiKeyId: 7,
       groupId: 3
     })
+    expect(req.apiKeyAuth?.bearerToken).toBe('test-api-token')
   })
 
   test.each([

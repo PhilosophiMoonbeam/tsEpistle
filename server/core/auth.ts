@@ -296,7 +296,7 @@ const randomBytesPromise = (size: number): Promise<Buffer> => {
 const extractBearerToken = (req: Request): string | null => {
   const authorization = req.get('authorization')
   if (!authorization) return null
-  const match = /^Bearer ([^\\s]+)$/.exec(authorization)
+  const match = /^Bearer ([^\s]+)$/i.exec(authorization)
   return match?.[1] ?? null
 }
 const isDedicatedMcpRequest = (req: Request): boolean =>
