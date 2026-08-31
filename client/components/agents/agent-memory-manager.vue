@@ -167,11 +167,11 @@
 
     <v-divider />
     <v-card-actions class="agent-memory__footer">
-      <v-btn color="error" prepend-icon="mdi-delete-sweep-outline" variant="text" :disabled="memoryCount === 0 || Boolean(actionBusy) || stale || loading" @click="beginClear($event)">
+      <v-btn color="error" prepend-icon="mdi-delete-sweep-outline" variant="text" :disabled="Boolean(clearMemoryDisabledReason) || Boolean(actionBusy)" :title="clearMemoryDisabledReason" @click="beginClear($event)">
         Clear archive
       </v-btn>
       <v-spacer />
-      <v-btn color="primary" prepend-icon="mdi-plus" variant="flat" :disabled="!canAddMemory || Boolean(actionBusy)" :title="!canAddMemory ? 'Memory is at capacity' : undefined" @click="beginAdd()">
+      <v-btn color="primary" prepend-icon="mdi-plus" variant="flat" :disabled="!canAddMemory || Boolean(actionBusy)" :title="addMemoryDisabledReason" @click="beginAdd()">
         Add memory
       </v-btn>
     </v-card-actions>
@@ -280,7 +280,19 @@ const canAddTo = (target: AgentMemoryTarget): boolean => {
   const requiredCharacters = store.entries.length ? 4 : 1
   return remainingCharacters(store) >= requiredCharacters
 }
-const canAddMemory = computed(() => loaded.value && !stale.value && !loading.value && (canAddTo('user') || canAddTo('agent')))
+const addMemoryDisabledReason = computed<string | undefined>(() => {
+  if (loading.value || !loaded.value) return 'Loading Agent memory'
+  if (stale.value) return 'Refresh Agent memory before adding'
+  if (!canAddTo('user') && !canAddTo('agent')) return 'Memory is at capacity'
+  return undefined
+})
+const clearMemoryDisabledReason = computed<string | undefined>(() => {
+  if (loading.value || !loaded.value) return 'Loading Agent memory'
+  if (stale.value) return 'Refresh Agent memory before clearing'
+  if (memoryCount.value === 0) return 'No saved memory to clear'
+  return undefined
+})
+const canAddMemory = computed(() => addMemoryDisabledReason.value === undefined)
 const memoryDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 const memoryDateLabel = (entry: AgentMemoryEntry): string => {
   const revised = entry.updatedAt !== entry.createdAt
@@ -463,7 +475,7 @@ watch([removing, clearing], async ([entry, clearOpen]) => {
     }
   })
 })
-watch(open, value => { if (value) void load() })
+watch(open, value => { if (value) void load() }, { immediate: true })
 onBeforeUnmount(() => {
   loadController?.abort()
   destructiveFocusScope?.deactivate({ restoreFocus: false })
@@ -849,7 +861,7 @@ onBeforeUnmount(() => {
 
 .agent-memory__empty {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: var(--wiki-space-3);
   align-items: center;
   padding: var(--wiki-space-4);
@@ -864,6 +876,10 @@ onBeforeUnmount(() => {
 
 .agent-memory__empty p {
   margin-top: var(--wiki-space-1);
+}
+.agent-memory__empty .v-btn {
+  grid-column: 1 / -1;
+  width: 100%;
 }
 
 .agent-memory__safety {
@@ -951,20 +967,17 @@ onBeforeUnmount(() => {
     justify-items: start;
   }
 
-  .agent-memory__entry,
-  .agent-memory__empty {
+  .agent-memory__entry {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .agent-memory__entry-actions,
-  .agent-memory__empty .v-btn {
+  .agent-memory__entry-actions {
     grid-column: 1 / -1;
     width: 100%;
     opacity: 1;
   }
 
-  .agent-memory__entry-actions .v-btn,
-  .agent-memory__empty .v-btn {
+  .agent-memory__entry-actions .v-btn {
     flex: 1 1 50%;
   }
 
