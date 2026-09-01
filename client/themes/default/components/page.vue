@@ -80,7 +80,7 @@
         v-row.page-header-section(no-gutters)
           v-col.page-col-content.is-page-header(
             cols='12'
-            :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn) }]'
+            :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, `page-header--toc-${tocPosition}`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn) }]'
             )
             .page-header-headings
               .page-title-row.d-flex.align-center
@@ -1827,14 +1827,14 @@ export default defineComponent({
     width: 100%;
     min-width: 0;
     max-width: 80rem;
-    margin-inline: auto;
-    text-align: center;
+    margin-inline: 0;
+    text-align: start;
   }
 
   .page-title-row {
     min-width: 0;
     flex-wrap: wrap;
-    justify-content: center;
+    justify-content: flex-start;
     gap: var(--wiki-space-2) var(--wiki-space-3);
   }
 
@@ -1860,7 +1860,7 @@ export default defineComponent({
 
   .page-description {
     max-width: 68ch;
-    margin: var(--wiki-space-1) auto 0;
+    margin: var(--wiki-space-1) 0 0;
     color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
     font-size: clamp(.9375rem, .9rem + .14vw, 1rem);
     line-height: 1.45;
@@ -1913,13 +1913,12 @@ export default defineComponent({
         calc(var(--wiki-control-height) * 6 + var(--wiki-space-4))
       );
       grid-template-columns:
-        minmax(var(--page-header-action-reserve), 1fr)
         minmax(0, 1fr)
-        minmax(var(--page-header-action-reserve), 1fr);
+        minmax(0, var(--page-header-action-reserve));
     }
 
     .has-edit-shortcuts .page-header-headings {
-      grid-column: 2;
+      grid-column: 1;
     }
 
     .has-edit-shortcuts .page-edit-shortcuts {
@@ -1927,7 +1926,7 @@ export default defineComponent({
       width: min(100%, var(--page-header-action-reserve));
       min-width: 0;
       max-width: var(--page-header-action-reserve);
-      grid-column: 3;
+      grid-column: 2;
       justify-self: end;
       overflow: hidden;
 
@@ -1956,10 +1955,53 @@ export default defineComponent({
 
 @media (min-width: 1280px) {
   .page-header-section {
+    --page-header-toc-column: calc(3.3 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
+
     > .is-page-header {
       min-height: inherit;
+      gap: var(--v-col-gap-x);
       align-content: center;
     }
+
+    > .page-header--toc-left {
+      grid-template-columns:
+        var(--page-header-toc-column)
+        minmax(0, 1fr);
+
+      .page-header-headings {
+        grid-column: 2;
+      }
+    }
+
+    > .page-header--toc-left.has-edit-shortcuts {
+      grid-template-columns:
+        var(--page-header-toc-column)
+        minmax(0, 1fr)
+        minmax(0, var(--page-header-action-reserve));
+
+      .page-edit-shortcuts {
+        grid-column: 3;
+      }
+    }
+
+    > .page-header--toc-right {
+      grid-template-columns:
+        minmax(0, 1fr)
+        var(--page-header-toc-column);
+    }
+
+    > .page-header--toc-right.has-edit-shortcuts {
+      grid-template-columns:
+        minmax(0, 1fr)
+        minmax(0, var(--page-header-action-reserve))
+        var(--page-header-toc-column);
+    }
+  }
+}
+
+@media (min-width: 1920px) {
+  .page-header-section {
+    --page-header-toc-column: calc(2.2 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
   }
 }
 
