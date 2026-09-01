@@ -2,7 +2,7 @@
   v-container.admin-dashboard(fluid)
     admin-hero(
       :title='$t(`admin:dashboard.title`)'
-      :description='$t(`admin:dashboard.subtitle`)'
+      :description='siteTitle'
       icon='/_assets/svg/icon-features-list.svg'
       eyebrow='Control room'
     )
@@ -72,8 +72,8 @@
                 span Access
                 strong {{ info.usersTotal }} users · {{ info.groupsTotal }} groups
               .dashboard-overview__row
-                span Foundation
-                strong {{ info.product.upstreamBase }}
+                span Platform
+                strong tsFranki {{ info.product.version }}
             v-btn.dashboard-overview__button(v-if='hasPermission(`manage:system`)' to='/system' variant='tonal' color='primary' block prepend-icon='mdi-monitor-dashboard' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') Open system details
 
     .dashboard-section-heading(v-if='canViewRecentPages || canViewLastLogins')

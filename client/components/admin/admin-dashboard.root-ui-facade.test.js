@@ -84,13 +84,14 @@ describe('admin-dashboard recent pages / last logins root UI facade migration gu
 
   test('uses the shared compact hero with the configured workspace identity and deployed build status', () => {
     expect(source).toMatch(
-      /admin-hero\([\s\S]*?:title='\$t\(`admin:dashboard\.title`\)'[\s\S]*?:description='\$t\(`admin:dashboard\.subtitle`\)'[\s\S]*?icon='\/_assets\/svg\/icon-features-list\.svg'[\s\S]*?eyebrow='Control room'/
+      /admin-hero\([\s\S]*?:title='\$t\(`admin:dashboard\.title`\)'[\s\S]*?:description='siteTitle'[\s\S]*?icon='\/_assets\/svg\/icon-features-list\.svg'[\s\S]*?eyebrow='Control room'/
     )
     expect(source).toContain('template(#status)')
     expect(source).toContain('Deployed build')
     expect(source).toContain("siteTitle() { return wikiStore.site.title?.trim() || 'tsFranki' },")
     expect(source.match(/\{\{ siteTitle \}\}/g) || []).toHaveLength(2)
-    expect(source).not.toContain('{{ info.product.name }}')
+    expect(source).toContain('strong tsFranki {{ info.product.version }}')
+    expect(source).not.toContain('info.product.upstreamBase')
     expect(source).not.toMatch(/Wiki\.js/i)
     expect(source).not.toContain('.admin-header')
     expect(source).not.toContain('admin-dashboard__header')
