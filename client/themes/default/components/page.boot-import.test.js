@@ -42,16 +42,24 @@ describe('default page focused contracts', () => {
     expect(template).toContain('page-col-sd--toc-off')
     expect(template).toContain('page-col-content--with-toc')
     expect(template).toContain('page-col-content--toc-off')
-    expect(style).toMatch(/\.page-col-sd--with-toc\s*\{[^}]*flex:\s*0 0 27\.5%;[^}]*max-width:\s*27\.5%;/s)
-    expect(style).toMatch(/\.page-col-content--with-toc\s*\{[^}]*flex:\s*0 0 72\.5%;[^}]*max-width:\s*72\.5%;/s)
-    expect(style).toMatch(/\.page-col-sd--with-toc\s*\{[^}]*flex-basis:\s*18\.333333%;[^}]*max-width:\s*18\.333333%;/s)
-    expect(style).toMatch(/\.page-col-content--with-toc\s*\{[^}]*flex-basis:\s*81\.666667%;[^}]*max-width:\s*81\.666667%;/s)
+    expect(style).toMatch(
+      /\.page-col-sd--with-toc\s*\{[^}]*flex:\s*0 0 calc\(3\.3 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[^}]*max-width:\s*calc\(3\.3 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/s
+    )
+    expect(style).toMatch(
+      /\.page-col-content--with-toc\s*\{[^}]*flex:\s*0 0 calc\(8\.7 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[^}]*max-width:\s*calc\(8\.7 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/s
+    )
+    expect(style).toMatch(
+      /\.page-col-sd--with-toc\s*\{[^}]*flex-basis:\s*calc\(2\.2 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[^}]*max-width:\s*calc\(2\.2 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/s
+    )
+    expect(style).toMatch(
+      /\.page-col-content--with-toc\s*\{[^}]*flex-basis:\s*calc\(9\.8 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[^}]*max-width:\s*calc\(9\.8 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/s
+    )
     expect(style).toMatch(/\.page-col-sd--toc-off,\s*\.page-col-content--toc-off\s*\{[^}]*flex:\s*0 0 100%;[^}]*max-width:\s*100%;/s)
-    expect(template).toMatch(/v-col\.page-col-content\.is-page-header\([\s\S]*?cols='12'[\s\S]*?:class=/)
+    expect(template).toMatch(/v-col\.page-col-content\.is-page-header\([\s\S]*?cols='12'[\s\S]*?has-edit-shortcuts/)
     expect(template).not.toContain(":offset-xl='tocPosition === `left` ? 2 : 0'")
     expect(template).not.toContain(":offset-lg='tocPosition === `left` ? 3 : 0'")
     expect(style).toMatch(
-      /@media\s*\(min-width:\s*1280px\)\s*\{[\s\S]*?\.page-header-section[\s\S]*?align-content:\s*center;[\s\S]*?text-align:\s*center;[\s\S]*?justify-content:\s*center;[\s\S]*?\.page-edit-shortcuts\s*\{[^}]*position:\s*absolute;[^}]*inset-inline-end:\s*var\(--wiki-page-gutter\);/s
+      /@media\s*\(min-width:\s*1280px\)\s*\{[\s\S]*?\.is-page-header\.has-edit-shortcuts\s*\{[^}]*grid-template-columns:[\s\S]*?minmax\(var\(--page-header-action-reserve\), 1fr\)[\s\S]*?minmax\(0, 1fr\)[\s\S]*?minmax\(var\(--page-header-action-reserve\), 1fr\);[\s\S]*?\.has-edit-shortcuts \.page-header-headings\s*\{[^}]*grid-column:\s*2;[\s\S]*?\.has-edit-shortcuts \.page-edit-shortcuts\s*\{[^}]*grid-column:\s*3;[^}]*justify-self:\s*end;/s
     )
     expect(style).toMatch(/--page-toc-desktop-lift:\s*calc\(var\(--page-toc-empty-height\) \/ 2 \+ var\(--wiki-space-12\)\)/)
     expect(style).toMatch(/@media\s*\(max-width:\s*1279px\)\s*\{[\s\S]*?\.page-col-sd\s*\{[\s\S]*?margin-block-start:\s*0;/s)

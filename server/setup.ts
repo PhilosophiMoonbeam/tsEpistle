@@ -167,7 +167,7 @@ export default function startSetup(): Promise<void> {
       _.set(wiki.config, 'auth', {
         audience: 'urn:wiki.js',
         tokenExpiration: '30m',
-        tokenRenewal: '365d'
+        tokenRenewal: '14d'
       })
       _.set(wiki.config, 'company', '')
       _.set(wiki.config, 'features', {

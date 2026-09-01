@@ -80,7 +80,7 @@
         v-row.page-header-section(no-gutters)
           v-col.page-col-content.is-page-header(
             cols='12'
-            :class='$vuetify.locale.isRtl ? `pr-4` : `pl-4`'
+            :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar }]'
             )
             .page-header-headings
               .page-title-row.d-flex.align-center
@@ -1903,10 +1903,22 @@ export default defineComponent({
       align-content: center;
     }
 
+    > .is-page-header.has-edit-shortcuts {
+      --page-header-action-reserve: calc(var(--wiki-control-height) * 6 + var(--wiki-space-4));
+      grid-template-columns:
+        minmax(var(--page-header-action-reserve), 1fr)
+        minmax(0, 1fr)
+        minmax(var(--page-header-action-reserve), 1fr);
+    }
+
     .page-header-headings {
       width: 100%;
       margin-inline: auto;
       text-align: center;
+    }
+
+    .has-edit-shortcuts .page-header-headings {
+      grid-column: 2;
     }
 
     .page-title-row {
@@ -1917,11 +1929,9 @@ export default defineComponent({
       margin-inline: auto;
     }
 
-    .page-edit-shortcuts {
-      position: absolute;
-      inset-block-start: 50%;
-      inset-inline-end: var(--wiki-page-gutter);
-      transform: translateY(-50%);
+    .has-edit-shortcuts .page-edit-shortcuts {
+      grid-column: 3;
+      justify-self: end;
     }
   }
 }
@@ -1991,27 +2001,28 @@ export default defineComponent({
 
 @media (min-width: 1280px) {
   .page-col-sd--with-toc {
-    flex: 0 0 27.5%;
-    max-width: 27.5%;
+    flex: 0 0 calc(3.3 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
+    max-width: calc(3.3 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
   }
 
   .page-col-content--with-toc {
-    flex: 0 0 72.5%;
-    max-width: 72.5%;
+    flex: 0 0 calc(8.7 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
+    max-width: calc(8.7 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
   }
 }
 
 @media (min-width: 1920px) {
   .page-col-sd--with-toc {
-    flex-basis: 18.333333%;
-    max-width: 18.333333%;
+    flex-basis: calc(2.2 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
+    max-width: calc(2.2 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
   }
 
   .page-col-content--with-toc {
-    flex-basis: 81.666667%;
-    max-width: 81.666667%;
+    flex-basis: calc(9.8 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
+    max-width: calc(9.8 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
   }
 }
+
 
 
 .page-toc-card {

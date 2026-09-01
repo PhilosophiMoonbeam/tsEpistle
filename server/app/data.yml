@@ -156,7 +156,7 @@ defaults:
       loginBgUrl: ''
       audience: 'urn:wiki.js'
       tokenExpiration: '30m'
-      tokenRenewal: '365d'
+      tokenRenewal: '14d'
     editShortcuts:
       editFab: true
       editMenuBar: false

@@ -453,7 +453,7 @@
       "strategyConfiguration": "Strategy Configuration",
       "strategyIsEnabledHint": "Are users able to login using this strategy?",
       "strategyStateInactive": "not active",
-      "tokenRenewalPeriodHint": "The maximum period a token can be renewed when expired. (default: 365d)",
+      "tokenRenewalPeriodHint": "The maximum period a token can be renewed when expired. (default: 14d)",
       "configReferenceSubtitle": "Some strategies may require some configuration values to be set on your provider. These are provided for reference only and may not be needed by the current strategy.",
       "strategyNoConfiguration": "This strategy has no configuration options you can modify.",
       "tokenEndpointAuthMethod": "Token Endpoint Authentication Method"
