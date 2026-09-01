@@ -26,7 +26,7 @@ describe('default page focused contracts', () => {
     expect(template).toMatch(/v-card\.page-toc-card\.mb-4\(v-if='tocPosition !== `off`', tag='nav', :aria-label=/)
     expect(template).toContain(":href='tocItem.anchor'")
     expect(template).toContain("@click='tocLinkClicked($event, tocItem.anchor)'")
-    expect(template).not.toContain(":href='`#${tocItem.anchor}`'")
+    expect(template).not.toMatch(/:href='`#\$\{tocItem\.anchor\}`'/)
     expect(template).toMatch(/\.page-toc-empty\(v-else\)/)
     expect(template).not.toMatch(/page-return-top--docked|:style='upBtnPosition'|location='bottom start'/)
     expect(template).toContain("@navigate='sidebarNavigationStarted'")

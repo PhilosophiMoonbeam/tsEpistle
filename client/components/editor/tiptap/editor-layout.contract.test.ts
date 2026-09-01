@@ -57,7 +57,7 @@ describe('TipTap editor layout and page-theme ownership', () => {
     expect(shellScript).toContain('.filter(rule => rule.type !== CSSRule.IMPORT_RULE)')
     expect(shellScript).toContain('rule => rule.cssText')
     expect(shellScript.indexOf('.filter(rule => rule.type !== CSSRule.IMPORT_RULE)')).toBeLessThan(
-      shellScript.indexOf('`@scope (${EDITOR_PAGE_CANVAS_SCOPE}) {')
+      shellScript.indexOf('`@scope ($' + '{EDITOR_PAGE_CANVAS_SCOPE}) {')
     )
     expect(shellScript).toContain('styl.textContent = scopeEditorPageCss(css)')
     expect(shellScript).not.toContain('createTextNode(css)')

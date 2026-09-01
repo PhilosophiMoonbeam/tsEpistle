@@ -9,7 +9,7 @@ const style = editorSource.match(/<style lang=['"]scss['"]>\s*([\s\S]*?)\s*<\/st
 
 describe('Markdown editor layout', () => {
   it('starts the formatting toolbar at the leading edge without a reserved sidebar strip', () => {
-    expect(template).toMatch(/^\.editor-markdown\(ref='root'\)\n    v-toolbar\.editor-markdown-toolbar/)
+    expect(template).toMatch(/^\.editor-markdown\(ref='root'\)\n {4}v-toolbar\.editor-markdown-toolbar/)
     expect(template.indexOf('v-toolbar.editor-markdown-toolbar')).toBeLessThan(template.indexOf('.editor-markdown-main'))
     expect(style).toContain('padding-inline: 0;')
     expect(style).not.toContain('padding-left: 64px;')
