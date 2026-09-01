@@ -915,7 +915,6 @@ export default {
     --login-field-autofill-surface: rgb(var(--v-theme-surface));
 
     .v-field {
-      overflow: hidden;
       border-radius: var(--wiki-control-radius);
       background: var(--login-field-autofill-surface);
       isolation: isolate;
