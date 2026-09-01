@@ -4,12 +4,19 @@ import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../../shared/theme-color
 import { applyWikiThemeColors, createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './theme.ts'
 
 describe('frontend theme helpers', () => {
-  test('resolves user appearance before the site default', () => {
-    expect(resolveThemeName('', false)).toBe('light')
-    expect(resolveThemeName('', true)).toBe('dark')
+  test('defaults unset, blank, and invalid user appearance to the device preference', () => {
+    expect(resolveThemeName(undefined, false)).toBe('system')
+    expect(resolveThemeName(null, true)).toBe('system')
+    expect(resolveThemeName('', false)).toBe('system')
+    expect(resolveThemeName('', true)).toBe('system')
+    expect(resolveThemeName('invalid', true)).toBe('system')
+  })
+
+  test('preserves every explicit user appearance regardless of the configured site mode', () => {
     expect(resolveThemeName('light', true)).toBe('light')
     expect(resolveThemeName('dark', false)).toBe('dark')
     expect(resolveThemeName('system', false)).toBe('system')
+    expect(resolveThemeName('system', true)).toBe('system')
   })
 
   test('creates independent light and dark Vuetify definitions', () => {

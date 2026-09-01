@@ -468,12 +468,22 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
   }
 
   async #visibleAgentProfileIds(database: Knex | Knex.Transaction, ownerId: number, limit = 100): Promise<string[]> {
-    const candidateIds = await database('agentProviderProfiles')
-      .where({ status: 'enabled', conformed: true })
-      .whereNull('deletedAt')
+    const rows = (await database('agentProviderProfiles')
+      .join('agentProviderProfileVersions', function () {
+        this.on('agentProviderProfileVersions.id', '=', 'agentProviderProfiles.currentVersionId').andOn(
+          'agentProviderProfileVersions.profileId',
+          '=',
+          'agentProviderProfiles.id'
+        )
+      })
+      .where('agentProviderProfiles.status', 'enabled')
+      .andWhere('agentProviderProfiles.conformed', true)
+      .andWhere('agentProviderProfileVersions.conformed', true)
+      .whereNull('agentProviderProfiles.deletedAt')
+      .whereNotNull('agentProviderProfileVersions.secretReference')
       .andWhere(query =>
         query
-          .where({ exposureMode: 'all_agent_users' })
+          .where('agentProviderProfiles.exposureMode', 'all_agent_users')
           .orWhereExists(
             database('agentProviderGrants')
               .join('userGroups', 'userGroups.groupId', 'agentProviderGrants.groupId')
@@ -482,30 +492,28 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
               .select(database.raw('1'))
           )
       )
-      .orderBy('isGlobalDefault', 'desc')
-      .orderBy('displayName')
-      .limit(Math.max(1, Math.min(100, limit)))
-      .pluck<string>('id')
-    if (candidateIds.length === 0) return []
-    const rows = (await database('agentProviderProfiles')
-      .join('agentProviderProfileVersions', 'agentProviderProfileVersions.id', 'agentProviderProfiles.currentVersionId')
-      .whereIn('agentProviderProfiles.id', candidateIds)
-      .select('agentProviderProfiles.id', 'agentProviderProfileVersions.capabilities', 'agentProviderProfileVersions.policies')) as Array<{
-      id: string
-      capabilities: string
-      policies: string
-    }>
-    const compatible = new Set(
-      rows
-        .filter(row =>
+      .orderBy('agentProviderProfiles.isGlobalDefault', 'desc')
+      .orderBy('agentProviderProfiles.displayName')
+      .select(
+        'agentProviderProfiles.id',
+        'agentProviderProfileVersions.secretReference',
+        'agentProviderProfileVersions.capabilities',
+        'agentProviderProfileVersions.policies'
+      )) as Array<{ id: string; secretReference: string; capabilities: string; policies: string }>
+    const admissible = await Promise.all(
+      rows.map(
+        async row =>
           supportsAgentExecution(
             parseJson(AgentProviderCapabilitiesSchema, row.capabilities, 'PROVIDER_PROFILE_CORRUPT'),
             parseJson(AgentProviderPoliciesSchema, row.policies, 'PROVIDER_PROFILE_CORRUPT')
-          )
-        )
-        .map(row => row.id)
+          ) && (await this.#secrets.has(row.secretReference, database))
+      )
     )
-    return candidateIds.filter(id => compatible.has(id))
+    const maximum = Math.max(1, Math.min(100, limit))
+    return rows
+      .filter((_row, index) => admissible[index])
+      .slice(0, maximum)
+      .map(row => row.id)
   }
 
   async #implicitProfileId(database: Knex | Knex.Transaction, ownerId: number): Promise<string | null> {
@@ -863,18 +871,13 @@ export class AgentProviderRegistry implements AgentAdmissionResolver {
         .update({ providerProfileId: input.profileId, executionMode: 'agent', version: input.expectedSessionVersion + 1, updatedAt: new Date() })
     })
   }
-  async assertProfileAvailable(
-    ownerId: number,
-    profileId: string,
-    database: Knex | Knex.Transaction = this.#knex
-  ): Promise<void> {
+  async assertProfileAvailable(ownerId: number, profileId: string, database: Knex | Knex.Transaction = this.#knex): Promise<void> {
     const { version } = await this.#availableProfileVersion(database, ownerId, profileId)
     const capabilities = parseJson(AgentProviderCapabilitiesSchema, version.capabilities, 'PROVIDER_PROFILE_CORRUPT')
     const policies = parseJson(AgentProviderPoliciesSchema, version.policies, 'PROVIDER_PROFILE_CORRUPT')
     if (!supportsAgentExecution(capabilities, policies))
       throw new AgentRepositoryError('PROFILE_MODE_INCOMPATIBLE', 'Provider profile does not support Wiki Agent actions', 409)
   }
-
 
   async listVisible(ownerId: number, limit = 100): Promise<AgentProviderSelectionView[]> {
     const profileIds = await this.#visibleAgentProfileIds(this.#knex, ownerId, limit)

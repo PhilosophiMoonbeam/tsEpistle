@@ -15,6 +15,7 @@ const asyncComponent = (name: string, loader: AsyncComponentLoader) => [name, de
 
 const registrations = [
   asyncComponent('Admin', () => import('./components/admin.vue')),
+  asyncComponent('AdminHero', () => import('./components/common/admin-hero.vue')),
   asyncComponent('Comments', () => import('./components/comments.vue')),
   asyncComponent('Editor', () => import('./components/editor.vue')),
   asyncComponent('History', () => import('./components/history.vue')),

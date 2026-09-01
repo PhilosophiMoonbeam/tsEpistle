@@ -326,7 +326,7 @@ export default defineComponent({
         const heading = main?.querySelector('h1') as HTMLElement | null
         if (heading) {
           heading.setAttribute('tabindex', '-1')
-          heading.focus()
+          heading.focus({ preventScroll: true })
         }
       })
       if (this.$vuetify.display.smAndDown) {
@@ -610,6 +610,11 @@ export default defineComponent({
   background:
     radial-gradient(circle at 88% -8%, color-mix(in srgb, var(--wiki-ambient-accent) 10%, transparent), transparent 34rem),
     var(--wiki-surface-sunken);
+
+  h1[tabindex='-1']:focus {
+    outline: none;
+    box-shadow: none;
+  }
 
   > .admin-route-bar {
     display: flex;

@@ -120,13 +120,15 @@ const currentSettingsId = async (knex: Knex, profileId: string): Promise<string>
 describe('agent provider profile registry', () => {
   let knex: Knex
   let registry: AgentProviderRegistry
+  let secretAvailable: boolean
   beforeEach(async () => {
+    secretAvailable = true
     knex = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await createTables(knex)
     registry = new AgentProviderRegistry(
       knex,
       {
-        has: reference => reference === 'env:TEST_PROVIDER_KEY',
+        has: reference => secretAvailable && reference === 'env:TEST_PROVIDER_KEY',
         get: () => null,
         store: () => {
           throw new Error('unexpected managed secret')
@@ -325,6 +327,20 @@ describe('agent provider profile registry', () => {
     expect(await knex('agentProviderProfiles').where({ id: secondary.id }).first('isGlobalDefault')).toMatchObject({ isGlobalDefault: 0 })
     expect(await knex('agentProviderConfiguration').where({ id: 1 }).first('defaultGeneration')).toMatchObject({ defaultGeneration: 2 })
   })
+
+  it('omits enabled profiles whose configured secret is unavailable', async () => {
+    const created = await registry.create({ ...profileInput, displayName: 'Unavailable secret', exposureMode: 'all_agent_users', actorId: 1 })
+    const settingsId = await currentSettingsId(knex, created.id)
+    await registry.setConformed(created.id, settingsId, true, 1)
+    await registry.setEnabled(created.id, true, 1, settingsId)
+    expect(await registry.listVisible(7)).toHaveLength(1)
+
+    secretAvailable = false
+
+    expect(await registry.listVisible(7)).toEqual([])
+    await expect(Promise.resolve(registry.assertProfileAvailable(7, created.id))).rejects.toMatchObject({ code: 'PROFILE_UNAVAILABLE' })
+  })
+
   it('stores a UI-supplied credential as an encrypted managed reference in the profile transaction', async () => {
     const vault = new DatabaseAgentSecretRegistry(knex, { currentKeyId: 'primary', keys: { primary: Buffer.alloc(32, 7) } })
     const managedRegistry = new AgentProviderRegistry(knex, vault, {

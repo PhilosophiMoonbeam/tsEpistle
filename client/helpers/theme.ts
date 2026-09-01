@@ -3,9 +3,9 @@ import { THEME_COLOR_KEYS, type ThemeColors, type ThemeModeColors } from '../../
 
 export type WikiThemeName = 'light' | 'dark' | 'system'
 
-export const resolveThemeName = (appearance: string, siteDarkMode: boolean): WikiThemeName => {
+export const resolveThemeName = (appearance: string | null | undefined, _siteDarkMode: boolean): WikiThemeName => {
   if (appearance === 'dark' || appearance === 'light' || appearance === 'system') return appearance
-  return siteDarkMode ? 'dark' : 'light'
+  return 'system'
 }
 
 export const WIKI_THEME_VARIATIONS = {

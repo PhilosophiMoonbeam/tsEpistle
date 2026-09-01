@@ -92,6 +92,7 @@ export const useAgentsStore = defineStore('agents', {
     async initialize(csrfToken: string, options: AgentStoreInitializeOptions = {}) {
       this.cancelSessionTransition()
       this.closeStream()
+      this.profiles = []
       this.invalidateRefresh()
       this.invalidateFolderReload()
       const folderReloadGeneration = this.folderReloadGeneration
@@ -178,6 +179,7 @@ export const useAgentsStore = defineStore('agents', {
     closeWorkspace() {
       this.workspaceVersion += 1
       this.workspaceDisposed = true
+      this.profiles = []
       this.loading = false
       this.sending = false
       this.goalBusy = false

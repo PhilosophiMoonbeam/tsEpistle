@@ -48,6 +48,7 @@ describe('HTML auth controller', () => {
         }
       },
       config: {
+        logoUrl: '',
         auth: {
           autoLogin: false,
           enforce2FA: false,
@@ -124,9 +125,29 @@ describe('HTML auth controller', () => {
 
     expect(res.render).toHaveBeenCalledWith('login', {
       bgUrl: '/_assets/img/splash/1.jpg',
-      hideLocal: false
+      hideLocal: false,
+      faviconUrl: '/_assets/favicon.ico'
     })
     expect(res.render).not.toHaveBeenCalledWith('legacy/login', expect.anything())
+  })
+  it('trims a configured logo URL for the authentication favicon local', async () => {
+    global.WIKI.config.logoUrl = '  /uploads/site-logo.svg  '
+    await loadController()
+    const route = express.__router.get.mock.calls.find(([path]) => path === '/login')
+    const login = route[route.length - 1]
+    const res = {
+      locals: {},
+      redirect: vi.fn(),
+      render: vi.fn()
+    }
+
+    await login({ query: {} }, res)
+
+    expect(res.render).toHaveBeenCalledWith('login', {
+      bgUrl: '/_assets/img/splash/1.jpg',
+      hideLocal: false,
+      faviconUrl: '/uploads/site-logo.svg'
+    })
   })
 
   it('renders email confirmation without consuming or applying the token', async () => {
@@ -147,6 +168,7 @@ describe('HTML auth controller', () => {
     expect(res.render).toHaveBeenCalledWith('login', {
       bgUrl: '/_assets/img/splash/1.jpg',
       hideLocal: false,
+      faviconUrl: '/_assets/favicon.ico',
       verificationToken: 'verify-token'
     })
     expect(res.locals.pageMeta.title).toBe('Confirm Email Address')
@@ -170,6 +192,7 @@ describe('HTML auth controller', () => {
     expect(res.render).toHaveBeenCalledWith('login', {
       bgUrl: '/_assets/img/splash/1.jpg',
       hideLocal: false,
+      faviconUrl: '/_assets/favicon.ico',
       resetPasswordToken: 'reset-token'
     })
     expect(res.locals.pageMeta.title).toBe('Reset Password')

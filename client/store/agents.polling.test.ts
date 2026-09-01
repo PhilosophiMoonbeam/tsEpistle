@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 
-import type { AgentConversationFolderView, AgentThreadState } from '../../shared/agents/contracts.ts'
+import type { AgentConversationFolderView, AgentProviderProfileView, AgentThreadState } from '../../shared/agents/contracts.ts'
 import { useAgentsStore } from './agents.ts'
 
 const activeThread = (): AgentThreadState => ({
@@ -345,6 +345,43 @@ describe('Agent store initialization', () => {
     expect(store.csrfToken).toBe('initialized-csrf')
     expect(new Headers(createCall?.[1]?.headers).get('x-wiki-csrf')).toBe('initialized-csrf')
     store.closeWorkspace()
+  })
+
+  it('clears stale profiles when a new workspace fails to initialize or closes', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const staleProfile: AgentProviderProfileView = {
+      id: '00000000-0000-4000-8000-000000000064',
+      name: 'Stale provider',
+      transport: 'openai-responses',
+      model: 'gpt-stale',
+      utilityModel: null,
+      destinationHost: 'api.example.test',
+      capabilities: {
+        streaming: true,
+        toolCalling: 'native',
+        parallelToolCalls: false,
+        structuredOutput: 'native-json-schema',
+        usage: 'terminal',
+        cancellation: true,
+        maxContextTokens: 32_000,
+        maxOutputTokens: 4_000
+      },
+      capabilityRevision: 'stale-v1',
+      policyVersion: 1,
+      isGlobalDefault: true
+    }
+    store.profiles = [staleProfile]
+    vi.spyOn(window, 'fetch').mockRejectedValue(new TypeError('Workspace unavailable'))
+
+    const initializing = store.initialize('csrf-token', { routeSync: false })
+    expect(store.profiles).toEqual([])
+    await initializing
+    expect(store.profiles).toEqual([])
+
+    store.profiles = [staleProfile]
+    store.closeWorkspace()
+    expect(store.profiles).toEqual([])
   })
 
   it('rejects folder mutations until the initial authoritative folders have loaded', async () => {

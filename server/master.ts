@@ -17,7 +17,7 @@ import system from './core/system.ts'
 import viteAssets from './helpers/vite-assets.ts'
 import securityMiddleware from './middlewares/security.ts'
 import seoMiddleware from './middlewares/seo.ts'
-import createAuthController, { type AuthWiki } from './controllers/auth.ts'
+import createAuthController, { normalizeFaviconUrl, type AuthWiki } from './controllers/auth.ts'
 import createAgentsHostController from './controllers/agents-host.ts'
 import createUploadController, { type UploadWiki } from './controllers/upload.ts'
 import createCommonController, { type CommonWiki } from './controllers/common.ts'
@@ -483,6 +483,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   })
 
   app.use(async (_req, res, next) => {
+    res.locals.faviconUrl = normalizeFaviconUrl(wiki.config.logoUrl)
     res.locals.siteConfig = {
       title: wiki.config.title,
       theme: wiki.config.theming.theme,

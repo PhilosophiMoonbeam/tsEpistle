@@ -23,6 +23,7 @@ export interface AuthWiki {
     }
   }
   config: {
+    logoUrl: string
     auth: {
       autoLogin: boolean
       hideLocal: boolean
@@ -35,6 +36,12 @@ export interface AuthWiki {
   }
   data: { authentication: Array<{ key: string; useForm: boolean }> }
   Error: { AuthRegistrationDisabled: new () => Error }
+}
+
+export const normalizeFaviconUrl = (logoUrl: unknown): string => {
+  if (typeof logoUrl !== 'string') return '/_assets/favicon.ico'
+  const normalizedLogoUrl = logoUrl.trim()
+  return normalizedLogoUrl || '/_assets/favicon.ico'
 }
 
 const routeParam = (req: Request, name: string): string => {
@@ -65,7 +72,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
 
     // -> Show Login
     const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
-    res.render('login', { bgUrl, hideLocal: wiki.config.auth.hideLocal })
+    res.render('login', { bgUrl, hideLocal: wiki.config.auth.hideLocal, faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl) })
   })
 
   /**
@@ -144,7 +151,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
     _.set(res.locals, 'pageMeta.title', 'Register')
     const localStrg = await wiki.models.authentication.getStrategy('local')
     if (localStrg.selfRegistration) {
-      res.render('register')
+      res.render('register', { faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl) })
     } else {
       next(new wiki.Error.AuthRegistrationDisabled())
     }
@@ -165,6 +172,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
       res.render('login', {
         bgUrl,
         hideLocal: wiki.config.auth.hideLocal,
+        faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl),
         verificationToken: token
       })
     } catch (err) {
@@ -187,6 +195,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
       res.render('login', {
         bgUrl,
         hideLocal: wiki.config.auth.hideLocal,
+        faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl),
         resetPasswordToken: token
       })
     } catch (err) {
