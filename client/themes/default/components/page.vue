@@ -1875,7 +1875,7 @@ export default defineComponent({
     gap: var(--wiki-space-2);
 
     .v-btn {
-      min-height: var(--wiki-control-height);
+      min-height: calc(var(--wiki-control-height) * .85);
       border: 1px solid var(--wiki-surface-border) !important;
       border-radius: var(--wiki-control-radius) !important;
       background: var(--wiki-surface-raised) !important;
@@ -1933,7 +1933,7 @@ export default defineComponent({
       .v-btn {
         min-width: 0;
         max-width: 100%;
-        flex: 1 1 0;
+        flex: 0 1 auto;
         overflow: hidden;
       }
 
