@@ -55,11 +55,16 @@ describe('default page focused contracts', () => {
       /\.page-col-content--with-toc\s*\{[^}]*flex-basis:\s*calc\(9\.8 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[^}]*max-width:\s*calc\(9\.8 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/s
     )
     expect(style).toMatch(/\.page-col-sd--toc-off,\s*\.page-col-content--toc-off\s*\{[^}]*flex:\s*0 0 100%;[^}]*max-width:\s*100%;/s)
-    expect(template).toMatch(/v-col\.page-col-content\.is-page-header\([\s\S]*?cols='12'[\s\S]*?has-edit-shortcuts/)
+    expect(template).toMatch(
+      /v-col\.page-col-content\.is-page-header\([\s\S]*?cols='12'[\s\S]*?"has-edit-shortcuts":\s*editShortcutsObj\.editMenuBar\s*&&\s*\(editShortcutsObj\.editMenuBtn\s*\|\|\s*editShortcutsObj\.editMenuExternalBtn\)/
+    )
+    expect(template).toMatch(
+      /\.page-edit-shortcuts\([\s\S]*?v-if='editShortcutsObj\.editMenuBar && \(editShortcutsObj\.editMenuBtn \|\| editShortcutsObj\.editMenuExternalBtn\)'/
+    )
     expect(template).not.toContain(":offset-xl='tocPosition === `left` ? 2 : 0'")
     expect(template).not.toContain(":offset-lg='tocPosition === `left` ? 3 : 0'")
     expect(style).toMatch(
-      /@media\s*\(min-width:\s*1280px\)\s*\{[\s\S]*?\.is-page-header\.has-edit-shortcuts\s*\{[^}]*grid-template-columns:[\s\S]*?minmax\(var\(--page-header-action-reserve\), 1fr\)[\s\S]*?minmax\(0, 1fr\)[\s\S]*?minmax\(var\(--page-header-action-reserve\), 1fr\);[\s\S]*?\.has-edit-shortcuts \.page-header-headings\s*\{[^}]*grid-column:\s*2;[\s\S]*?\.has-edit-shortcuts \.page-edit-shortcuts\s*\{[^}]*grid-column:\s*3;[^}]*justify-self:\s*end;/s
+      /@media\s*\(min-width:\s*1280px\)\s*\{[\s\S]*?\.is-page-header\.has-edit-shortcuts\s*\{[^}]*grid-template-columns:[\s\S]*?minmax\(var\(--page-header-action-reserve\), 1fr\)[\s\S]*?minmax\(0, 1fr\)[\s\S]*?minmax\(var\(--page-header-action-reserve\), 1fr\);[\s\S]*?\.has-edit-shortcuts \.page-header-headings\s*\{[^}]*grid-column:\s*2;[\s\S]*?\.has-edit-shortcuts \.page-edit-shortcuts\s*\{[^}]*width:\s*min\(100%, var\(--page-header-action-reserve\)\);[^}]*max-width:\s*var\(--page-header-action-reserve\);[\s\S]*?grid-column:\s*3;[^}]*justify-self:\s*end;[^}]*overflow:\s*hidden;[\s\S]*?\.v-btn\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*1 1 0;[^}]*overflow:\s*hidden;[\s\S]*?\.v-btn \.text-none\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s
     )
     expect(style).toMatch(/--page-toc-desktop-lift:\s*calc\(var\(--page-toc-empty-height\) \/ 2 \+ var\(--wiki-space-12\)\)/)
     expect(style).toMatch(/@media\s*\(max-width:\s*1279px\)\s*\{[\s\S]*?\.page-col-sd\s*\{[\s\S]*?margin-block-start:\s*0;/s)

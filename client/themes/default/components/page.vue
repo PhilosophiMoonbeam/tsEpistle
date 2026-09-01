@@ -80,7 +80,7 @@
         v-row.page-header-section(no-gutters)
           v-col.page-col-content.is-page-header(
             cols='12'
-            :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar }]'
+            :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn) }]'
             )
             .page-header-headings
               .page-title-row.d-flex.align-center
@@ -88,7 +88,7 @@
                 v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') Private
               p.page-description(v-if='description') {{description}}
             .page-edit-shortcuts(
-              v-if='editShortcutsObj.editMenuBar'
+              v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
               :class='tocPosition === `right` ? `is-right` : ``'
               )
               v-btn(
@@ -1930,8 +1930,33 @@ export default defineComponent({
     }
 
     .has-edit-shortcuts .page-edit-shortcuts {
+      display: flex;
+      width: min(100%, var(--page-header-action-reserve));
+      min-width: 0;
+      max-width: var(--page-header-action-reserve);
       grid-column: 3;
       justify-self: end;
+      overflow: hidden;
+
+      .v-btn {
+        min-width: 0;
+        max-width: 100%;
+        flex: 1 1 0;
+        overflow: hidden;
+      }
+
+      .v-btn__content {
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+      }
+
+      .v-btn .text-none {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
     }
   }
 }
