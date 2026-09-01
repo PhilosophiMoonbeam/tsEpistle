@@ -1872,6 +1872,7 @@ export default defineComponent({
     position: static;
     z-index: 2;
     display: flex;
+    justify-content: flex-end;
     gap: var(--wiki-space-2);
 
     .v-btn {

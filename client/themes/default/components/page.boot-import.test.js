@@ -70,7 +70,7 @@ describe('default page focused contracts', () => {
     expect(style).toMatch(
       /@media\s*\(min-width:\s*600px\)\s*\{[\s\S]*?\.is-page-header\.has-edit-shortcuts\s*\{[^}]*--page-header-action-reserve:\s*clamp\([\s\S]*?grid-template-columns:[\s\S]*?minmax\(0, 1fr\)[\s\S]*?minmax\(0, var\(--page-header-action-reserve\)\);[\s\S]*?\.has-edit-shortcuts \.page-header-headings\s*\{[^}]*grid-column:\s*1;[\s\S]*?\.has-edit-shortcuts \.page-edit-shortcuts\s*\{[^}]*width:\s*min\(100%, var\(--page-header-action-reserve\)\);[^}]*max-width:\s*var\(--page-header-action-reserve\);[^}]*grid-column:\s*2;[^}]*justify-self:\s*end;[^}]*overflow:\s*hidden;[\s\S]*?\.v-btn\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*0 1 auto;[^}]*overflow:\s*hidden;[\s\S]*?\.v-btn \.text-none\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s
     )
-    expect(style).toMatch(/\.page-edit-shortcuts\s*\{[\s\S]*?\.v-btn\s*\{[^}]*min-height:\s*calc\(var\(--wiki-control-height\) \* \.85\);/)
+    expect(style).toMatch(/\.page-edit-shortcuts\s*\{[^}]*justify-content:\s*flex-end;[\s\S]*?\.v-btn\s*\{[^}]*min-height:\s*calc\(var\(--wiki-control-height\) \* \.85\);/)
     expect(style).toMatch(
       /@media\s*\(min-width:\s*1280px\)\s*\{[\s\S]*?--page-header-toc-column:\s*calc\(3\.3 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[\s\S]*?\.is-page-header\s*\{[^}]*min-height:\s*inherit;[^}]*gap:\s*var\(--v-col-gap-x\);[^}]*align-content:\s*center;[\s\S]*?\.page-header--toc-left\s*\{[\s\S]*?var\(--page-header-toc-column\)[\s\S]*?minmax\(0, 1fr\);[\s\S]*?\.page-header-headings\s*\{[^}]*grid-column:\s*2;[\s\S]*?\.page-header--toc-left\.has-edit-shortcuts\s*\{[\s\S]*?\.page-edit-shortcuts\s*\{[^}]*grid-column:\s*3;/s
     )
