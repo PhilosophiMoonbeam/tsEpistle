@@ -446,7 +446,7 @@ export default {
 
 <style lang='scss'>
 .tags {
-  font-family: 'WikiAgentSans', 'Roboto', sans-serif;
+  font-family: var(--wiki-font-body);
 }
 
 .tags-sidebar {

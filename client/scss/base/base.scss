@@ -21,9 +21,10 @@
   --wiki-radius-pill: 999rem;
   --wiki-footer-height: 2rem;
   --wiki-control-height: 2.75rem;
-  --wiki-font-body: 'WikiAgentSans', 'Avenir Next', 'Segoe UI', sans-serif;
-  --wiki-font-heading: 'WikiAgentSans', 'Avenir Next', 'Segoe UI', sans-serif;
-  --wiki-font-mono: 'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace;
+  --wiki-font-body: 'Roboto Flex', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --wiki-font-heading: 'Roboto Flex', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --wiki-font-reader: 'Newsreader', ui-serif, Georgia, Cambria, 'Times New Roman', serif;
+  --wiki-font-mono: 'Roboto Mono', 'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace;
   --wiki-leading-body: 1.625;
   --wiki-leading-heading: 1.12;
   --wiki-label-size: .6875rem;
@@ -74,8 +75,8 @@ body {
   background: rgb(var(--v-theme-background));
   color: rgb(var(--v-theme-on-background));
   font-family: var(--v-font-body);
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
   font-kerning: normal;
+  font-optical-sizing: auto;
   line-height: var(--wiki-leading-body);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;

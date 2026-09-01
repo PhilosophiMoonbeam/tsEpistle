@@ -1838,13 +1838,19 @@ export default defineComponent({
     gap: var(--wiki-space-2) var(--wiki-space-3);
   }
 
+  .page-title,
+  .page-description {
+    font-family: var(--wiki-font-reader);
+    font-optical-sizing: auto;
+    font-synthesis: none;
+  }
+
   .page-title {
     min-width: 0;
     margin: 0;
     color: rgb(var(--v-theme-on-surface));
-    font-family: var(--wiki-font-heading);
-    font-size: clamp(1.9375rem, 1.5rem + 1.5vw, 3.125rem);
-    font-weight: 760;
+    font-size: clamp(2.125rem, 1.6rem + 1.8vw, 3.25rem);
+    font-weight: 700;
     letter-spacing: -.052em;
     line-height: 1.02;
     overflow-wrap: anywhere;
@@ -1862,8 +1868,8 @@ export default defineComponent({
     max-width: 68ch;
     margin: var(--wiki-space-1) 0 0;
     color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
-    font-size: clamp(.9375rem, .9rem + .14vw, 1rem);
-    line-height: 1.45;
+    font-size: 1.0625rem;
+    line-height: 1.5;
     overflow-wrap: anywhere;
     text-wrap: pretty;
   }
@@ -2317,11 +2323,13 @@ export default defineComponent({
   }
 }
 
-.v-main .contents {
+.wiki-page .v-main .contents {
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 88%, transparent);
-  font-family: var(--wiki-font-body);
-  font-size: clamp(.9875rem, .95rem + .14vw, 1.0625rem);
-  line-height: 1.78;
+  font-family: var(--wiki-font-reader);
+  font-size: 1.0625rem;
+  line-height: 1.68;
+  font-optical-sizing: auto;
+  font-synthesis: none;
   text-wrap: pretty;
 
   > div:not(.page-gutter-ornament) > :first-child {
@@ -2340,10 +2348,8 @@ export default defineComponent({
   h6 {
     position: relative;
     color: rgb(var(--v-theme-on-surface));
-    font-family: var(--wiki-font-heading);
-    font-weight: 720;
+    font-family: inherit;
     letter-spacing: -.025em;
-    line-height: var(--wiki-leading-heading);
     scroll-margin-block-start: calc(var(--v-layout-top, var(--wiki-grid-size)) + var(--wiki-space-8));
     text-wrap: balance;
 
@@ -2375,10 +2381,19 @@ export default defineComponent({
   h1 {
     margin: 0 0 var(--wiki-space-6);
     color: var(--wiki-accent-warm);
-    font-size: clamp(1.75rem, 1.5rem + 1vw, 2.375rem);
+    font-size: 2.375rem;
+    font-weight: 700;
     letter-spacing: -.04em;
+    line-height: 1.1;
+
     strong {
       color: inherit;
+      font-weight: inherit;
+    }
+
+    b {
+      color: inherit;
+      font-weight: inherit;
     }
   }
 
@@ -2386,20 +2401,41 @@ export default defineComponent({
     margin: var(--wiki-space-12) 0 var(--wiki-space-4);
     padding-block-end: var(--wiki-space-2);
     border-bottom: 1px solid var(--wiki-surface-border);
-    font-size: clamp(1.4rem, 1.2rem + .7vw, 1.8125rem);
+    font-size: 1.8125rem;
+    font-weight: 650;
+    line-height: 1.14;
   }
 
   h3 {
     margin: var(--wiki-space-10) 0 var(--wiki-space-3);
-    font-size: clamp(1.1875rem, 1.08rem + .35vw, 1.375rem);
+    font-size: 1.375rem;
+    font-weight: 650;
+    line-height: 1.2;
   }
 
   h4,
   h5,
   h6 {
     margin: var(--wiki-space-8) 0 var(--wiki-space-2);
-    font-size: 1.0625rem;
     letter-spacing: -.012em;
+  }
+
+  h4 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    line-height: 1.25;
+  }
+
+  h5 {
+    font-size: 1.0625rem;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  h6 {
+    font-size: 1rem;
+    font-weight: 650;
+    line-height: 1.35;
   }
 
   p {
@@ -2408,9 +2444,57 @@ export default defineComponent({
     color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 86%, transparent);
   }
 
-  strong {
+  strong,
+  b {
     color: rgb(var(--v-theme-on-surface));
-    font-weight: 680;
+    font-weight: 650;
+  }
+
+  :where(em, i, cite) {
+    font-family: inherit;
+    font-style: italic;
+  }
+
+  :where(
+    button,
+    input,
+    select,
+    textarea,
+    label,
+    legend,
+    [role='button'],
+    table,
+    th,
+    td,
+    details > summary,
+    .toc-anchor,
+    .admonition__title,
+    .admonitionblock td.icon,
+    .admonitionblock td.content > .title,
+    .codeblock-title,
+    .exampleblock > .title,
+    .content-extension-tabs__list,
+    .content-extension-tabs__tab,
+    .content-extension-tabs__fallback-label,
+    .content-extension-spoiler__toggle,
+    .content-extension-index__list,
+    .content-extension-index__link,
+    .content-extension-index__status,
+    .content-extension-infobox__title,
+    .content-extension-infobox__facts,
+    .content-extension-infobox__boolean,
+    .content-extension-qr__label,
+    .content-extension-remote__consent,
+    .content-extension-remote__load,
+    .content-extension-remote__fallback,
+    .content-extension-media__fallback
+  ) {
+    font-family: var(--wiki-font-body);
+  }
+
+  :where(code, kbd, samp, pre),
+  .content-extension-qr__value {
+    font-family: var(--wiki-font-mono);
   }
 
   a {
@@ -2557,6 +2641,7 @@ export default defineComponent({
 
     td.content {
       border: 0;
+      font-family: var(--wiki-font-reader);
       background: transparent;
       color: rgb(var(--v-theme-on-surface));
     }
@@ -3026,13 +3111,14 @@ export default defineComponent({
     }
 
     .page-title {
-      font-size: clamp(1.6875rem, 1.35rem + 2.2vw, 2rem);
-      line-height: 1.06;
+      font-size: clamp(1.875rem, 1.55rem + 2vw, 2.25rem);
+      line-height: 1.05;
     }
 
     .page-description {
       margin-top: var(--wiki-space-1);
-      font-size: .875rem;
+      font-size: 1rem;
+      line-height: 1.5;
     }
 
     .page-edit-shortcuts {
@@ -3065,22 +3151,22 @@ export default defineComponent({
     border-radius: var(--wiki-panel-radius);
   }
 
-  .v-main .contents {
-    font-size: .975rem;
-    line-height: 1.72;
+  .wiki-page .v-main .contents {
+    font-size: 1rem;
+    line-height: 1.65;
 
     h1 {
-      font-size: 1.7rem;
+      font-size: 1.75rem;
     }
 
     h2 {
       margin-block-start: var(--wiki-space-10);
-      font-size: 1.4rem;
+      font-size: 1.5rem;
     }
 
     h3 {
       margin-block-start: var(--wiki-space-8);
-      font-size: 1.1875rem;
+      font-size: 1.25rem;
     }
 
     h1,
@@ -3202,6 +3288,16 @@ export default defineComponent({
   .page-header-section .page-description {
     color: CanvasText;
   }
+  .page-header-section .page-title {
+    font-size: 28pt;
+    font-weight: 700;
+    line-height: 1.05;
+  }
+
+  .page-header-section .page-description {
+    font-size: 12pt;
+    line-height: 1.4;
+  }
 
   .page-body,
   .page-col-content > .contents {
@@ -3214,10 +3310,11 @@ export default defineComponent({
     flex-basis: 100% !important;
   }
 
-  .v-main .contents {
+  .wiki-page .v-main .contents {
     color: CanvasText;
+    font-family: var(--wiki-font-reader);
     font-size: 11pt;
-    line-height: 1.55;
+    line-height: 1.5;
 
     > div:not(.page-gutter-ornament) {
       width: 100%;
