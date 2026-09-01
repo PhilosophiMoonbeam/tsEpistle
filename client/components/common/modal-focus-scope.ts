@@ -4,6 +4,7 @@ const focusableSelector = [
   'input:not([disabled]):not([type="hidden"])',
   'select:not([disabled])',
   'textarea:not([disabled])',
+  'iframe',
   '[contenteditable="true"]',
   '[tabindex]:not([tabindex="-1"])'
 ].join(',')

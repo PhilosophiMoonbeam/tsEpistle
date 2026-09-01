@@ -1,7 +1,15 @@
 <template lang='pug'>
-  v-card.editor-modal-drawio.animated.fadeIn(flat, rounded='0', role='dialog', aria-modal='true', aria-labelledby='drawio-editor-title')
+  v-card.editor-modal-drawio.animated.fadeIn(
+    ref='modalRoot'
+    flat
+    rounded='0'
+    role='dialog'
+    aria-modal='true'
+    aria-labelledby='drawio-editor-title'
+  )
     v-toolbar.editor-modal-drawio__toolbar(color='surface', density='comfortable')
       v-btn(
+        ref='closeButton'
         icon='mdi-arrow-left'
         variant='text'
         aria-label='Back to editor'
@@ -35,6 +43,7 @@ import { wikiStore } from '@/store/index.ts'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
 import { isRecord } from '../../helpers/type-guards'
 import AsyncState from '@/components/common/async-state.vue'
+import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
 const DRAWIO_ORIGIN = 'https://embed.diagrams.net'
 
@@ -74,7 +83,10 @@ export default {
       loading: true,
       loadError: '',
       frameVersion: 0,
-      loadTimer: null as ReturnType<typeof setTimeout> | null
+      loadTimer: null as ReturnType<typeof setTimeout> | null,
+      returnFocus: null as HTMLElement | null,
+      focusScope: null as ModalFocusScope | null,
+      disposed: false
     }
   },
   methods: {
@@ -178,10 +190,25 @@ export default {
     }
   },
   mounted () {
+    this.returnFocus = document.activeElement as HTMLElement | null
     window.addEventListener('message', this.receive)
     this.startLoadTimer()
+    this.$nextTick(() => {
+      if (this.disposed) return
+      const root = this.$refs.modalRoot as HTMLElement | undefined
+      if (!root) return
+      this.focusScope = createModalFocusScope({
+        root,
+        restoreTarget: () => this.returnFocus,
+        onEscape: this.close
+      })
+      ;(this.$refs.closeButton as { focus?: () => void })?.focus?.()
+    })
   },
   beforeUnmount () {
+    this.disposed = true
+    this.focusScope?.deactivate()
+    this.focusScope = null
     this.clearLoadTimer()
     window.removeEventListener('message', this.receive)
   }

@@ -65,6 +65,20 @@ describe('admin-auth strategies REST facade', () => {
     expect(script).not.toContain('this.$apollo.queries')
   })
 
+  test('uses native list semantics for selectable strategy rows with independent reorder controls', () => {
+    expect(source).toContain('v-list(lines="two", density="compact", :aria-label=')
+    expect(source).toContain("v-for='(str, idx) in activeStrategies'")
+    expect(source).not.toMatch(/\brole=(['"])(?:listbox|option)\1/)
+    expect(source).not.toContain(':aria-selected=')
+    expect(source).toContain(":aria-current='selectedStrategy === str.key ? `true` : undefined'")
+    expect(source).toContain("                  link\n                  @click='selectedStrategy = str.key'")
+    expect(source).toMatch(/:aria-label=['"]`Move \$\{str\.displayName\} \(position \$\{idx \+ 1\}\)`['"]/)
+    expect(source).toMatch(/:aria-label=['"]`Move \$\{str\.displayName\} up`['"]/)
+    expect(source).toContain("@click.stop='moveStrategy(idx, -1)'")
+    expect(source).toMatch(/:aria-label=['"]`Move \$\{str\.displayName\} down`['"]/)
+    expect(source).toContain("@click.stop='moveStrategy(idx, 1)'")
+  })
+
   test('loads strategy definitions and active strategies through REST helpers', () => {
     expect(loadStrategies).toContain("wikiStore.startLoading('admin-auth-strategies-refresh')")
     expect(loadStrategies).toContain("fetchAdminAuthStrategies(window.fetch.bind(window), 'Authentication strategies response is invalid')")

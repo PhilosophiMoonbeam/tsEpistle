@@ -45,7 +45,7 @@
         v-card.animated.fadeInUp(v-if='loaded && !initialLoading')
           v-toolbar(flat, color='teal', density="compact")
             .text-body-large {{$t('admin:auth.activeStrategies')}}
-          v-list(lines="two", density="compact", role='listbox', :aria-label='$t(`admin:auth.activeStrategies`)').py-0
+          v-list(lines="two", density="compact", :aria-label='$t(`admin:auth.activeStrategies`)').py-0
             draggable(
               v-model='activeStrategies'
               handle='.is-handle:not(:disabled)'
@@ -54,8 +54,7 @@
                 v-list-item(
                   v-for='(str, idx) in activeStrategies'
                   :key='str.key'
-                  role='option'
-                  :aria-selected='selectedStrategy === str.key'
+                  :aria-current='selectedStrategy === str.key ? `true` : undefined'
                   link
                   @click='selectedStrategy = str.key'
                 )
