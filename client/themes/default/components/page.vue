@@ -2334,6 +2334,9 @@ export default defineComponent({
     color: var(--wiki-accent-warm);
     font-size: clamp(1.75rem, 1.5rem + 1vw, 2.375rem);
     letter-spacing: -.04em;
+    strong {
+      color: inherit;
+    }
   }
 
   h2 {

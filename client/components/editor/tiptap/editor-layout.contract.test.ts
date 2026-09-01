@@ -59,6 +59,8 @@ describe('TipTap editor layout and page-theme ownership', () => {
 
     expect(themeStylesheet.slice(modernThemeStart)).toMatch(/\.v-main \.contents\s*\{[\s\S]*?\n {2}h1\s*\{[\s\S]*?\n {4}color:\s*var\(--wiki-accent-warm\)\s*;/)
     expect(pageStyle).toMatch(/\.v-main \.contents\s*\{[\s\S]*?\n {2}h1\s*\{[\s\S]*?\n {4}color:\s*var\(--wiki-accent-warm\)\s*;/)
+    expect(themeStylesheet.slice(modernThemeStart)).toMatch(/h1\s*\{[\s\S]*?\n {4}strong\s*\{[\s\S]*?\n {6}color:\s*inherit\s*;/)
+    expect(pageStyle).toMatch(/h1\s*\{[\s\S]*?\n {4}strong\s*\{[\s\S]*?\n {6}color:\s*inherit\s*;/)
   })
 
   test('matches the published page reading measure without owning its theme', () => {

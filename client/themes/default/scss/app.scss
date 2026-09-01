@@ -2179,6 +2179,9 @@
     color: var(--wiki-accent-warm);
     margin: 0 0 1.25rem;
     font-size: clamp(1.75rem, 3vw, 2.35rem);
+    strong {
+      color: inherit;
+    }
   }
 
   h2 {
