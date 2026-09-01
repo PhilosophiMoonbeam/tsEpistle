@@ -115,7 +115,7 @@
         v-card.editor-tiptap-glyph-menu(elevation='5', width='420')
           .editor-tiptap-glyph-header
             div
-              .text-subtitle-1.font-weight-bold Icons & emoji
+              .text-body-large.font-weight-bold Icons & emoji
               .text-caption Search by name, meaning, or a close spelling
             v-btn(icon, size='small', variant='text', aria-label='Close icon and emoji picker', @click='glyphMenuOpen = false')
               v-icon mdi-close
@@ -246,7 +246,6 @@ type EditorSaveOptions = {
 }
 
 type EditorSaveHandler = (options?: EditorSaveOptions) => void | Promise<void>
-type EditorMode = 'create' | 'update'
 type EditorHost = HTMLElement & { __wikiEditor?: Editor }
 type SourceNodeName = 'wikiSourceBlock' | 'wikiSourceInline'
 
@@ -320,9 +319,6 @@ export default defineComponent({
     },
     path (): string {
       return wikiStore.page.path
-    },
-    mode (): EditorMode {
-      return wikiStore.editor.mode as EditorMode
     },
     activeModal: {
       get (): string {

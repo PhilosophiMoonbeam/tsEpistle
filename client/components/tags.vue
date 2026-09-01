@@ -164,15 +164,14 @@
         section.tags-results(v-else aria-live='polite')
           v-data-iterator(
             :items='pages'
-            :items-per-page='12'
+            :items-per-page='pagination.itemsPerPage'
             :search='innerSearch'
             :loading='isLoading'
-            v-model:options='pagination'
-            @page-count='pageTotal = $event'
-            hide-default-footer
-            ref='dude'
+            v-model:page='pagination.page'
+            :sort-by='pagination.sortBy'
+            must-sort
           )
-            template(v-slot:loading)
+            template(v-slot:loader)
               .tags-state
                 v-progress-circular(
                   indeterminate
@@ -191,6 +190,13 @@
                 retry-label='Try again'
                 @retry='loadPages'
               )
+              .tags-state(v-else-if='innerSearch')
+                v-icon(size='48' color='primary') mdi-text-search
+                h2 {{$t('tags:noResultsWithFilter')}}
+                p Try a different search or clear the filter.
+                v-btn(color='primary' variant='tonal' @click='innerSearch = ""')
+                  v-icon(start) mdi-close
+                  span Clear search
               .tags-state(v-else)
                 v-icon(size='48' color='primary') mdi-file-search-outline
                 h2 {{$t('tags:noResults')}}
@@ -198,14 +204,6 @@
                 v-btn(color='primary' variant='tonal' @click='clearSelection')
                   v-icon(start) mdi-filter-remove-outline
                   span {{$t('tags:clearSelection')}}
-            template(v-slot:no-results)
-              .tags-state
-                v-icon(size='48' color='primary') mdi-text-search
-                h2 {{$t('tags:noResultsWithFilter')}}
-                p Try a different search or clear the filter.
-                v-btn(color='primary' variant='tonal' @click='innerSearch = ""')
-                  v-icon(start) mdi-close
-                  span Clear search
             template(v-slot:default='props')
               .tags-result-grid
                 article(v-for='entry of props.items' :key='`page-` + entry.raw.id')
@@ -223,8 +221,9 @@
                         v-icon(size='17') mdi-file-tree-outline
                         span /{{entry.raw.path}}
                         v-icon.tags-result-arrow(size='18') mdi-arrow-up-right
-          .tags-pagination(v-if='pageTotal > 1')
-            v-pagination(v-model='pagination.page' :length='pageTotal')
+            template(v-slot:footer='{ pageCount }')
+              .tags-pagination(v-if='pageCount > 1')
+                v-pagination(v-model='pagination.page' :length='pageCount')
 
     nav-footer
     notify
@@ -240,7 +239,7 @@ import AsyncState from '@/components/common/async-state.vue'
 import { pathFromTagSelection, tagSelectionFromPath } from '../helpers/tag-navigation'
 import { wikiStore } from '@/store/index.ts'
 
-/* global siteConfig, siteLangs */
+/* global siteLangs */
 
 type TagLocale = {
   name: string
@@ -271,35 +270,16 @@ export default {
       pagination: {
         page: 1,
         itemsPerPage: 12,
-        mustSort: true,
-        sortBy: ['title'],
-        sortDesc: [false]
+        sortBy: [{ key: 'title', order: 'asc' as 'asc' | 'desc' }]
       },
       pages: [] as PageListRow[],
       tagsLoading: true,
       tagsError: '',
       pagesError: '',
-      pageTotal: 0,
       isLoading: true,
       scrollStyle: {
-        vuescroll: {},
         scrollPanel: {
-          initialScrollY: 0,
-          initialScrollX: 0,
-          scrollingX: false,
-          easing: 'easeOutQuad',
-          speed: 1000,
-          verticalNativeBarPos: siteConfig.rtl ? `left` : `right`
-        },
-        rail: {
-          gutterOfEnds: '2px'
-        },
-        bar: {
-          onlyShowBarOnScroll: false,
-          background: 'color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent)',
-          hoverStyle: {
-            background: 'color-mix(in srgb, rgb(var(--v-theme-on-surface)) 42%, transparent)'
-          }
+          scrollingX: false
         }
       }
     }
@@ -327,11 +307,11 @@ export default {
     },
     orderBy (newValue: string, _oldValue: string) {
       this.rebuildURL()
-      this.pagination.sortBy = [newValue]
+      this.pagination.sortBy = [{ key: newValue, order: this.orderByDirection === 0 ? 'asc' : 'desc' }]
     },
     orderByDirection (newValue: number, _oldValue: number) {
       this.rebuildURL()
-      this.pagination.sortDesc = [newValue === 1]
+      this.pagination.sortBy = [{ key: this.orderBy, order: newValue === 0 ? 'asc' : 'desc' }]
     },
     $route () {
       this.selection = tagSelectionFromPath(this.$route.path)
@@ -362,12 +342,12 @@ export default {
           this.orderBy = 'updatedAt'
           break
       }
-      this.pagination.sortBy = [this.orderBy]
+      this.pagination.sortBy = [{ key: this.orderBy, order: this.orderByDirection === 0 ? 'asc' : 'desc' }]
     }
     const direction = normalizeQueryValue(this.$route.query.dir)
     if (direction) {
       this.orderByDirection = direction === 'asc' ? 0 : 1
-      this.pagination.sortDesc = [this.orderByDirection === 1]
+      this.pagination.sortBy = [{ key: this.orderBy, order: this.orderByDirection === 0 ? 'asc' : 'desc' }]
     }
     this.loadTags()
     this.loadPages()

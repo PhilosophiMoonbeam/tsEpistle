@@ -42,8 +42,9 @@
       v-model='isConfirming'
       persistent
       max-width='520'
+      aria-labelledby='export-confirm-title'
       )
-      v-card(role='dialog', aria-labelledby='export-confirm-title')
+      v-card
         v-card-title#export-confirm-title Confirm export
         v-card-text
           .text-body-medium Export {{ entities.join(', ') }} to:
@@ -57,8 +58,9 @@
       v-model='isLoading'
       persistent
       max-width='350'
+      aria-labelledby='export-progress-title'
       )
-      v-card(color="primary" role='dialog' aria-labelledby='export-progress-title')
+      v-card(color="primary")
         v-card-text.pa-10.text-center
           self-building-square-spinner.animated.fadeIn(
             :animation-duration='4500'
@@ -82,8 +84,9 @@
       v-model='isSuccess'
       persistent
       max-width='350'
+      aria-labelledby='export-success-title'
       )
-      v-card(color="success" role='dialog' aria-labelledby='export-success-title')
+      v-card(color="success")
         v-card-text.pa-10.text-center
           v-icon(size='60', aria-hidden='true') mdi-check-circle-outline
           .my-5.text-body-large.text-white#export-success-title Export completed
@@ -96,8 +99,9 @@
       v-model='isFailed'
       persistent
       max-width='800'
+      aria-labelledby='export-failed-title'
       )
-      v-card(color="error" role='dialog' aria-labelledby='export-failed-title')
+      v-card(color="error")
         v-toolbar(color="error", density="compact")
           v-icon(aria-hidden='true') mdi-alert
           .text-body-medium.pl-3#export-failed-title Export failed
@@ -263,7 +267,7 @@ export default defineComponent({
 
         switch (respStatusObj.status) {
           case 'error': {
-            throw new Error(respStatusObj.message || 'An unexpected error occured.')
+            throw new Error(respStatusObj.message || 'An unexpected error occurred.')
           }
           case 'running': {
             this.progress = respStatusObj.progress || 0

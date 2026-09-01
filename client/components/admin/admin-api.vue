@@ -17,15 +17,15 @@
                 span Unable to load status
           template(v-slot:actions)
             .admin-api-actions.d-flex.align-center.flex-wrap.ga-2
-              v-btn(variant="outlined", color='grey', icon, @click='refresh', :loading='loadState === `loading`', aria-label='Refresh API status')
+              v-btn(variant="outlined", color='grey', icon, @click='refresh', :loading='loadState === `loading`', :disabled='adminApiBusy', aria-label='Refresh API status')
                 v-icon mdi-refresh
-              v-btn(v-if='loadState === `success` && enabled', variant="outlined", color='error', @click='disableDialog = true', :loading='isToggleLoading')
+              v-btn(v-if='loadState === `success` && enabled', variant="outlined", color='error', @click='disableDialog = true', :loading='isToggleLoading', :disabled='adminApiBusy')
                 v-icon(start) mdi-power
                 span {{$t('admin:api.disableButton')}}
-              v-btn(v-else-if='loadState === `success`', variant="outlined", color='success', @click='globalSwitch', :loading='isToggleLoading')
+              v-btn(v-else-if='loadState === `success`', variant="outlined", color='success', @click='globalSwitch', :loading='isToggleLoading', :disabled='adminApiBusy')
                 v-icon(start) mdi-power
                 span {{$t('admin:api.enableButton')}}
-              v-btn(color='primary', variant="flat", size="large", @click='newKey', :disabled='loadState !== `success`')
+              v-btn(color='primary', variant="flat", size="large", @click='newKey', :disabled='loadState !== `success` || adminApiBusy')
                 v-icon(start) mdi-plus
                 span {{$t('admin:api.newKeyButton')}}
         v-alert.mt-3(
@@ -67,7 +67,7 @@
                     td {{ $helpers.formatMoment(key.createdAt, 'calendar') }}
                     td {{ $helpers.formatMoment(key.updatedAt, 'calendar') }}
                     td
-                      v-btn(icon, @click='revoke(key)', :disabled='key.isRevoked', :aria-label='`Revoke ${key.name}`')
+                      v-btn(icon, @click='revoke(key)', :disabled='key.isRevoked || adminApiBusy', :aria-label='`Revoke ${key.name}`')
                         v-icon(color='error') mdi-cancel
             div.api-key-mobile(v-if='keys.length > 0')
               .admin-mobile-record(v-for='key of keys', :key='`mobile-key-` + key.id')
@@ -78,7 +78,7 @@
                 .admin-mobile-record-meta {{ key.keyShort }}
                 .text-body-small.text-grey.mt-2 Expires {{ $helpers.formatMoment(key.expiration, 'LL') }}
                 .text-body-small.text-grey Updated {{ $helpers.formatMoment(key.updatedAt, 'calendar') }}
-                v-btn.mt-2(v-if='!key.isRevoked', variant="outlined", size="small", color='error', @click='revoke(key)')
+                v-btn.mt-2(v-if='!key.isRevoked', variant="outlined", size="small", color='error', @click='revoke(key)', :disabled='adminApiBusy')
                   v-icon(start) mdi-cancel
                   span {{$t('admin:api.revoke')}}
             v-card-text(v-if='!keys.length')
@@ -117,24 +117,26 @@
 
     create-api-key(v-model='isCreateDialogShown', :refresh-api-keys='refresh')
 
-    v-dialog(v-model='isRevokeConfirmDialogShown', max-width='500', persistent)
+    v-dialog(v-model='isRevokeConfirmDialogShown', max-width='500', persistent, aria-labelledby='revoke-api-key-dialog-title')
       v-card
-        .dialog-header.is-red {{$t('admin:api.revokeConfirm')}}
+        .dialog-header.is-red
+          span#revoke-api-key-dialog-title {{$t('admin:api.revokeConfirm')}}
         v-card-text.pa-4
           i18next(tag='span', path='admin:api.revokeConfirmText')
             strong(place='name') {{ current ? current.name : '' }}
         v-card-actions
           v-spacer
           v-btn(variant="text", @click='isRevokeConfirmDialogShown = false', :disabled='revokeLoading') {{$t('common:actions.cancel')}}
-          v-btn(color='red', @click='revokeConfirm', :loading='revokeLoading') {{$t('admin:api.revoke')}}
-    v-dialog(v-model='disableDialog', max-width='500', persistent)
+          v-btn(color='red', @click='revokeConfirm', :loading='revokeLoading', :disabled='revokeLoading') {{$t('admin:api.revoke')}}
+    v-dialog(v-model='disableDialog', max-width='500', persistent, aria-labelledby='disable-api-access-dialog-title')
       v-card
-        .dialog-header.is-red Disable API-key access?
+        .dialog-header.is-red
+          span#disable-api-access-dialog-title Disable API-key access?
         v-card-text.pa-4 Existing API keys remain stored, but all API-key requests will stop until access is enabled again. Continue?
         v-card-actions
           v-spacer
           v-btn(variant="text", @click='disableDialog = false', :disabled='isToggleLoading') {{$t('common:actions.cancel')}}
-          v-btn(color='error', @click='disableApi', :loading='isToggleLoading') Disable API access
+          v-btn(color='error', @click='disableApi', :loading='isToggleLoading', :disabled='isToggleLoading') Disable API access
 </template>
 
 <script lang='ts'>
@@ -163,6 +165,9 @@ export default {
     }
   },
   computed: {
+    adminApiBusy(): boolean {
+      return this.loadState === 'loading' || this.isToggleLoading || this.revokeLoading
+    },
     apiAccessContract() {
       return apiAccessContract
     },
@@ -212,6 +217,7 @@ export default {
       }
     },
     async refresh (notify = true) {
+      if (this.loadState === 'loading') return false
       const loaded = await this.loadApiBootstrap()
       if (notify && loaded) {
         wikiStore.showNotification({
@@ -223,6 +229,7 @@ export default {
       return loaded
     },
     async globalSwitch () {
+      if (this.isToggleLoading || this.revokeLoading || this.loadState !== 'success') return
       const wasEnabled = this.enabled
       this.isToggleLoading = true
       wikiStore.startLoading('admin-api-toggle')
@@ -247,18 +254,20 @@ export default {
       this.disableDialog = false
       await this.globalSwitch()
     },
-    async newKey () {
+    newKey () {
+      if (this.adminApiBusy) return
       this.isCreateDialogShown = true
     },
     revoke (key: AdminApiKey) {
+      if (this.adminApiBusy || key.isRevoked) return
       this.current = key
       this.isRevokeConfirmDialogShown = true
     },
     async revokeConfirm () {
+      if (this.revokeLoading || !this.current) return
       this.revokeLoading = true
       wikiStore.startLoading('admin-api-revoke')
       try {
-        if (!this.current) throw new Error('No API key selected for revocation.')
         await revokeAdminApiKey(window.fetch.bind(window), this.current.id)
         const loaded = await this.refresh(false)
         if (loaded) {

@@ -80,7 +80,7 @@ describe('admin-logging root UI facade migration guard', () => {
       /import\s+\{(?=[^}]*\bfetchLoggingLoggers\b)(?=[^}]*\bsaveLoggingLoggers\b)(?=[^}]*\bLogger\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/logging-api['"]/
     )
     expect(script).not.toMatch(/logging-mutation-save-loggers\.gql|loggersSaveMutation/)
-    expect(script).toMatch(/activeLoggers\s*\(\s*\)\s*\{\s*return\s+_\.filter\s*\(\s*this\.loggers\s*,\s*['"]isEnabled['"]\s*\)\s*\}/)
+    expect(script).toMatch(/activeLoggers\s*\(\s*\)\s*\{\s*return\s+this\.loggers\.filter\s*\(\s*logger\s*=>\s*logger\.isEnabled\s*\)\s*\}/)
     expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*this\.loadLoggers\s*\(\s*\)\.catch\s*\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)\s*\}/)
     expect(script).toMatch(/toggleConsole\s*\(\s*\)\s*\{\s*this\.showConsole\s*=\s*!this\.showConsole\s*\}/)
   })
@@ -106,11 +106,11 @@ describe('admin-logging root UI facade migration guard', () => {
     expect(loadLoggers.match(/\bwikiStore\.stopLoading\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('refresh waits for logger reload before showing the success notification through the wiki store', () => {
+  test('refresh coordinates with active loads and saves and only reports successful reloads', () => {
     expect(refresh).not.toBeNull()
 
     expect(refresh).toMatch(
-      /async\s+refresh\s*\(\s*\)\s*\{\s*await\s+this\.loadLoggers\s*\(\s*\)\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]List of loggers has been refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)\s*\}/
+      /async\s+refresh\s*\(\s*\)\s*\{\s*if\s*\(this\.loading \|\| this\.saving\) return\s*try\s*\{\s*await\s+this\.loadLoggers\s*\(\s*\)\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]List of loggers has been refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)\s*\}\s*catch\s*\{\s*\/\/ loadLoggers reports the request error\.\s*\}\s*\}/
     )
     expect(refresh).not.toMatch(directRootUiCommit)
 
@@ -120,12 +120,13 @@ describe('admin-logging root UI facade migration guard', () => {
   test('save preserves the complete helper payload, silent reload, outcomes, and balanced cleanup', () => {
     expect(save).not.toBeNull()
 
+    expect(save).toContain('if (this.saving || this.loading || !this.loggersLoaded) return')
     expect(save).toMatch(/this\.saving\s*=\s*true\s*wikiStore\.startLoading\(['"]admin-logging-saveloggers['"]\)/)
     expect(save).toMatch(
       /await\s+saveLoggingLoggers\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadLoggers\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Logging configuration saved successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
     )
     expect(save).toMatch(
-      /this\.loggers\.map\s*\(\s*tgt\s*=>\s*_\.pick\s*\(\s*tgt\s*,\s*\[\s*['"]isEnabled['"]\s*,\s*['"]key['"]\s*,\s*['"]config['"]\s*,\s*['"]level['"]\s*\]\s*\)\s*\)\.map\s*\(\s*str\s*=>\s*\(\s*\{\s*\.\.\.str\s*,\s*config:\s*str\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)/
+      /this\.loggers\.map\s*\(\s*tgt\s*=>\s*\(\s*\{\s*isEnabled:\s*tgt\.isEnabled,\s*key:\s*tgt\.key,\s*config:\s*tgt\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\),\s*level:\s*tgt\.level\s*\}\s*\)\s*\)/
     )
     expect(save).toMatch(/['"]Logging loggers update failed['"]/)
     expect(save).toMatch(

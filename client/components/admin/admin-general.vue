@@ -60,6 +60,7 @@
                     .text-label-large.mb-2 {{ $t('admin:general.logo') }}
                     v-avatar(size='100', rounded='0')
                       v-img(
+                        :key='logoRefreshKey'
                         :src='config.logoUrl'
                         alt='Current site logo preview'
                         lazy-src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNcWQ8AAdcBKrJda2oAAAAASUVORK5CYII='
@@ -323,6 +324,7 @@
 </template>
 
 <script lang='ts'>
+import { defineAsyncComponent } from 'vue'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
@@ -336,16 +338,17 @@ export default {
   i18nOptions: { namespaces: 'editor' },
   components: {
     SiteBanner,
-    editorModalMedia: () => import('../editor/editor-modal-media.vue')
+    editorModalMedia: defineAsyncComponent(() => import('../editor/editor-modal-media.vue'))
   },
   data(): {
     config: SiteConfig,
     persistedConfig: SiteConfig | null,
     metaRobots: Array<{ text: string, value: string }>,
+    logoRefreshKey: number,
     initialLoading: boolean,
     loaded: boolean,
     saving: boolean,
-    formValid: boolean
+    formValid: boolean | null
   } {
     return {
       config: {
@@ -379,10 +382,11 @@ export default {
         editMenuExternalUrl: ''
       },
       persistedConfig: null,
+      logoRefreshKey: 0,
       initialLoading: true,
       loaded: false,
       saving: false,
-      formValid: false,
+      formValid: null,
       metaRobots: [
         { text: 'Index', value: 'index' },
         { text: 'Follow', value: 'follow' },
@@ -528,7 +532,7 @@ export default {
       this.activeModal = 'editorModalMedia'
     },
     refreshLogo () {
-      this.$forceUpdate()
+      this.logoRefreshKey++
     },
     handleEditorInsert (opts: EditorInsertPayload) {
       if (typeof opts.path === 'string') {

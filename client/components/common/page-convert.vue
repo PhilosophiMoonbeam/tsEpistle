@@ -71,14 +71,18 @@ export default defineComponent({
     pageTitle(): string { return wikiStore.page.title },
     pagePath(): string { return wikiStore.page.path },
     pageLocale(): string { return wikiStore.page.locale },
+    pageVisibility(): string { return wikiStore.page.visibility },
     pageId(): number { return wikiStore.page.id },
     pageEditor(): string { return wikiStore.page.editor },
     pageSourceRevision(): string { return wikiStore.page.sourceRevision },
     canConvert(): boolean { return Boolean(this.newEditor) && this.newEditor !== this.pageEditor }
   },
   watch: {
-    isShown(newValue: boolean) {
-      if (newValue) this.newEditor = this.pageEditor
+    isShown: {
+      immediate: true,
+      handler(newValue: boolean) {
+        if (newValue) this.newEditor = this.pageEditor
+      }
     }
   },
   methods: {
@@ -86,15 +90,15 @@ export default defineComponent({
       this.isShown = false
     },
     async convertPage(): Promise<void> {
-      if (!this.canConvert) return
+      if (!this.canConvert || this.loading) return
 
       this.loading = true
       wikiStore.startLoading('page-convert')
       try {
-        await this.$nextTick()
         await convertPage(window.fetch.bind(window), this.pageId, this.newEditor, this.pageSourceRevision)
         this.isShown = false
-        window.location.assign(`/e/${this.pageLocale}/${this.pagePath}`)
+        const scope = this.pageVisibility === 'private' ? '/_private' : ''
+        window.location.assign(`/e${scope}/${this.pageLocale}/${this.pagePath}`)
       } catch (err) {
         wikiStore.showError(err)
       } finally {

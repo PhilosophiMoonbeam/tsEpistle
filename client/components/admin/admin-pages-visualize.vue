@@ -51,13 +51,14 @@
           retry-label='Try again'
           @retry='loadPages'
         )
-        async-state(
-          v-else-if='pages.length < 1'
-          state='empty'
-          :title='`No pages for ${currentLocale}`'
-          message='Create a page in this locale or return to Pages.'
-        )
-        v-btn(v-if='!loading && !errorMessage && pages.length < 1', to='/pages', color='primary', variant='text') Return to Pages
+        template(v-else-if='pages.length < 1')
+          async-state(
+            state='empty'
+            :title='`No pages for ${currentLocale}`'
+            message='Create a page in this locale or return to Pages.'
+          )
+          v-btn(to='/pages', color='primary', variant='text') Return to Pages
+        .admin-pages-visualize-svg(v-else, ref='svgContainer')
 
 </template>
 <script lang='ts'>
@@ -143,8 +144,13 @@ export default defineComponent({
     }
   },
   watch: {
-    pages () {
-      this.redraw()
+    loading: {
+      handler (loading: boolean) {
+        if (!loading) {
+          this.redraw()
+        }
+      },
+      flush: 'post'
     },
     graphMode () {
       this.redraw()
@@ -186,20 +192,21 @@ export default defineComponent({
       }
     },
     goToPage (event: MouseEvent | KeyboardEvent, node: d3.HierarchyNode<PageGraphNode>): void {
+      const id = node.data.id
+      if (id === undefined) {
+        return
+      }
       if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') {
         return
       }
       if (event instanceof KeyboardEvent) {
         event.preventDefault()
       }
-      const id = node.data.id
-      if (id) {
-        if (event.ctrlKey || event.metaKey) {
-          const { href } = this.$router.resolve(String(id))
-          window.open(href, '_blank')
-        } else {
-          this.$router.push(String(id))
-        }
+      if (event.ctrlKey || event.metaKey) {
+        const { href } = this.$router.resolve(String(id))
+        window.open(href, '_blank')
+      } else {
+        this.$router.push(String(id))
       }
     },
     bilink (root: d3.HierarchyNode<PageGraphNode>): BilinkHierarchyNode {
@@ -280,6 +287,8 @@ export default defineComponent({
 
       const svg = d3.create('svg')
         .attr('viewBox', [-this.width / 2, -this.width / 2, this.width, this.width])
+      svg.append('title').text('Interactive page relationship diagram')
+      svg.append('desc').text('Focus a page label to highlight incoming and outgoing links. Press Enter or Space to open the page.')
 
       const g = svg.append('g')
 
@@ -313,10 +322,12 @@ export default defineComponent({
         .attr('text-anchor', node => node.x < Math.PI ? 'start' : 'end')
         .attr('transform', node => node.x >= Math.PI ? 'rotate(180)' : null)
         .attr('fill', 'rgb(var(--v-theme-on-background))')
-        .attr('cursor', 'pointer')
+        .attr('cursor', node => node.data.id === undefined ? null : 'pointer')
         .attr('tabindex', 0)
-        .attr('role', 'link')
-        .attr('aria-label', node => `Open ${node.data.title}, ${node.data.path}`)
+        .attr('role', node => node.data.id === undefined ? 'img' : 'link')
+        .attr('aria-label', node => node.data.id === undefined
+          ? `Inspect relationships for ${node.data.title}, ${node.data.path}`
+          : `Open ${node.data.title}, ${node.data.path}`)
         .text(node => node.data.title)
         .each(function (node: RelationPointNode) {
           node.text = this
@@ -441,10 +452,12 @@ export default defineComponent({
         .attr('x', descendant => descendant.children ? -6 : 6)
         .attr('text-anchor', descendant => descendant.children ? 'end' : 'start')
         .attr('fill', 'rgb(var(--v-theme-on-background))')
-        .attr('cursor', 'pointer')
-        .attr('tabindex', 0)
-        .attr('role', 'link')
-        .attr('aria-label', descendant => `Open ${descendant.data.title}, ${descendant.data.path}`)
+        .attr('cursor', descendant => descendant.data.id === undefined ? null : 'pointer')
+        .attr('tabindex', descendant => descendant.data.id === undefined ? null : 0)
+        .attr('role', descendant => descendant.data.id === undefined ? null : 'link')
+        .attr('aria-label', descendant => descendant.data.id === undefined
+          ? null
+          : `Open ${descendant.data.title}, ${descendant.data.path}`)
         .text(descendant => descendant.data.title)
         .on('click', (event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
           this.goToPage(event, descendant))
@@ -525,10 +538,12 @@ export default defineComponent({
         .attr('text-anchor', descendant => descendant.x < Math.PI === !descendant.children ? 'start' : 'end')
         .attr('transform', descendant => descendant.x >= Math.PI ? 'rotate(180)' : null)
         .attr('fill', 'rgb(var(--v-theme-on-background))')
-        .attr('cursor', 'pointer')
-        .attr('tabindex', 0)
-        .attr('role', 'link')
-        .attr('aria-label', descendant => `Open ${descendant.data.title}, ${descendant.data.path}`)
+        .attr('cursor', descendant => descendant.data.id === undefined ? null : 'pointer')
+        .attr('tabindex', descendant => descendant.data.id === undefined ? null : 0)
+        .attr('role', descendant => descendant.data.id === undefined ? null : 'link')
+        .attr('aria-label', descendant => descendant.data.id === undefined
+          ? null
+          : `Open ${descendant.data.title}, ${descendant.data.path}`)
         .text(descendant => descendant.data.title)
         .on('click', (event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
           this.goToPage(event, descendant))
@@ -555,10 +570,11 @@ export default defineComponent({
       svg.attr('viewBox', autoBox)
     },
     redraw (): void {
-      const container = this.$refs.svgContainer as HTMLDivElement
-      while (container.firstChild) {
-        container.firstChild.remove()
+      const container = this.$refs.svgContainer as HTMLDivElement | undefined
+      if (!container) {
+        return
       }
+      container.replaceChildren()
       if (this.pages.length > 0) {
         switch (this.graphMode) {
           case 'rradial':
@@ -576,6 +592,9 @@ export default defineComponent({
   },
   mounted () {
     this.loadPages()
+  },
+  beforeUnmount () {
+    this.pageLoadRequestId++
   }
 })
 </script>

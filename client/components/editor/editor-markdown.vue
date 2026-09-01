@@ -240,7 +240,7 @@
               :spellcheck='false'
               )
 
-    v-system-bar.editor-status-bar.editor-markdown-sysbar(status, color="grey-darken-3")
+    v-system-bar.editor-status-bar.editor-markdown-sysbar(color="grey-darken-3")
       .text-body-small.editor-markdown-sysbar-locale {{locale.toUpperCase()}}
       .text-body-small.editor-markdown-sysbar-path.px-3(:title='`/${path}`') /{{path}}
       template(v-if='collaborationStatus')
@@ -336,10 +336,6 @@ function requireEditor (editor: TextEditorHandle | null): TextEditorHandle {
 // INIT
 // ========================================
 
-// Platform detection
-const CtrlKey = /Mac/.test(navigator.platform) ? 'Cmd' : 'Ctrl'
-
-
 const md = createWikiMarkdownRenderer()
 
 // ========================================
@@ -396,7 +392,6 @@ export default defineComponent({
   },
   data() {
     return {
-      fabInsertMenu: false,
       cm: null as TextEditorHandle | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: this.mdAndUp,
@@ -412,9 +407,6 @@ export default defineComponent({
     }
   },
   computed: {
-    isMobile() {
-      return this.$vuetify.display.smAndDown
-    },
     isModalShown() {
       return this.helpShown || this.activeModal !== ''
     },
@@ -461,11 +453,15 @@ export default defineComponent({
     previewShown (newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
         this.$nextTick(() => {
-          enhanceWikiMarkdownPreview(
-            this.$refs.editorPreview as HTMLElement,
-            this.$vuetify.theme.current.dark
-          )
+          if (this.editorDisposed) return
+          const preview = this.$refs.editorPreview as HTMLElement | undefined
+          if (preview) {
+            enhanceWikiMarkdownPreview(preview, this.$vuetify.theme.current.dark)
+          }
         })
+      } else if (!newValue && oldValue) {
+        const preview = this.$refs.editorPreview as HTMLElement | undefined
+        if (preview) Velocity(preview, 'stop', true)
       }
     },
     spellModeActive (newValue: boolean) {
@@ -475,7 +471,9 @@ export default defineComponent({
       }
       if (newValue) {
         this.$nextTick(() => {
-          requireEditor(this.cm).focus()
+          if (!this.editorDisposed && this.cm) {
+            this.cm.focus()
+          }
         })
       }
     }
@@ -542,7 +540,9 @@ export default defineComponent({
       this.processMarkers(0, cm.lineCount)
       this.previewHTML = sanitizeWikiMarkdownHtml(md.render(newContent))
       this.$nextTick(() => {
-        const preview = this.$refs.editorPreview as HTMLElement
+        if (this.editorDisposed || !this.previewShown) return
+        const preview = this.$refs.editorPreview as HTMLElement | undefined
+        if (!preview) return
         enhanceWikiMarkdownPreview(preview, this.$vuetify.theme.current.dark)
         this.scrollSync(cm)
       })
@@ -691,7 +691,9 @@ export default defineComponent({
       this.$el.requestFullscreen?.()
     },
     refresh() {
-      this.$nextTick(() => requireEditor(this.cm).requestMeasure())
+      this.$nextTick(() => {
+        if (!this.editorDisposed) this.cm?.requestMeasure()
+      })
     },
     insertLink () {
       this.insertLinkDialog = true
@@ -861,7 +863,8 @@ export default defineComponent({
       value: cm
     })
     this.$nextTick(() => {
-      const source = (this.$refs.cm as HTMLElement).querySelector<HTMLElement>('.cm-content')
+      if (this.editorDisposed) return
+      const source = (this.$refs.cm as HTMLElement | undefined)?.querySelector<HTMLElement>('.cm-content')
       source?.setAttribute('spellcheck', 'false')
     })
 
@@ -880,6 +883,8 @@ export default defineComponent({
     this.editorDisposed = true
     this.debouncedProcessContent?.cancel()
     this.debouncedScrollSync?.cancel()
+    const preview = this.$refs.editorPreview as HTMLElement | undefined
+    if (preview) Velocity(preview, 'stop', true)
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)

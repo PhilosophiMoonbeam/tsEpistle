@@ -1,5 +1,5 @@
 <template lang='pug'>
-v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, @update:model-value='close'): v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0', role='dialog', aria-modal='true', aria-labelledby='content-extension-title')
+v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='content-extension-title', @update:model-value='close'): v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0')
   v-toolbar(color="grey-darken-4", flat)
     v-icon.mr-3(color="teal-lighten-2") {{activeStatus?.icon || 'mdi-shape-outline'}}
     v-toolbar-title#content-extension-title Insert content extension
@@ -76,7 +76,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                 template(v-else-if='selectedKey === `gallery`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
                     | Gallery images must be same-origin asset paths. Each image requires alternative text and remains available as a normal link without JavaScript.
-                  v-card.mb-4(v-for='(image, index) in gallery.images', :key='index', variant='outlined')
+                  v-card.mb-4(v-for='(image, index) in gallery.images', :key='image.id', variant='outlined')
                     v-card-title.d-flex.align-center.text-body-large
                       span Image {{index + 1}}
                       v-spacer
@@ -167,7 +167,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                 template(v-else-if='selectedKey === `tabs`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
                     | Every panel keeps a readable no-script and print fallback. Panel content is preserved as plain text in canonical page source.
-                  v-card.mb-4(v-for='(panel, panelIndex) in tabs.panels', :key='panelIndex', variant='outlined')
+                  v-card.mb-4(v-for='(panel, panelIndex) in tabs.panels', :key='panel.id', variant='outlined')
                     v-card-title.d-flex.align-center.text-body-large
                       span Panel {{panelIndex + 1}}
                       v-spacer
@@ -195,7 +195,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                     | Add panel
                   v-select(
                     v-model='tabs.active'
-                    :items='tabs.panels.map((panel, panelIndex) => ({ title: panel.label || `Panel ${panelIndex + 1}`, value: panelIndex }))'
+                    :items='tabPanelOptions'
                     label='Initially selected panel'
                   )
                 template(v-else-if='selectedKey === `spoiler`')
@@ -215,7 +215,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                   )
                   v-text-field.mt-4(v-if='infobox.image', v-model='infobox.imageAlt', label='Image alternative text', counter='200', required)
                   v-text-field.mt-4(v-if='infobox.image', v-model='infobox.caption', label='Image caption (optional)', counter='300')
-                  v-card.mt-4.mb-4(v-for='(fact, factIndex) in infobox.facts', :key='factIndex', variant='outlined')
+                  v-card.mt-4.mb-4(v-for='(fact, factIndex) in infobox.facts', :key='fact.id', variant='outlined')
                     v-card-title.d-flex.align-center.text-body-large
                       span Fact {{factIndex + 1}}
                       v-spacer
@@ -340,11 +340,15 @@ import {
 } from '../../../shared/content-extensions.ts'
 
 type ErrorCorrection = 'L' | 'M' | 'Q' | 'H'
-type GalleryImageForm = { src: string, alt: string, caption: string }
+type GalleryImageForm = { id: number, src: string, alt: string, caption: string }
 type TabHeadingLevel = 1 | 2 | 3 | 4 | 5 | 6
-type TabPanelForm = { label: string, content: string, headingLevel: TabHeadingLevel | null }
+type TabPanelForm = { id: number, label: string, content: string, headingLevel: TabHeadingLevel | null }
 type FactKind = 'text' | 'yes' | 'no'
-type InfoboxFactForm = { label: string, value: string, kind: FactKind }
+type InfoboxFactForm = { id: number, label: string, value: string, kind: FactKind }
+let nextFormItemId = 0
+const createGalleryImage = (): GalleryImageForm => ({ id: ++nextFormItemId, src: '', alt: '', caption: '' })
+const createTabPanel = (label: string, content = ''): TabPanelForm => ({ id: ++nextFormItemId, label, content, headingLevel: null })
+const createInfoboxFact = (): InfoboxFactForm => ({ id: ++nextFormItemId, label: '', value: '', kind: 'text' })
 
 const readYoutubeVideoId = (source: string): string | null => {
   const value = source.trim()
@@ -374,6 +378,7 @@ export default defineComponent({
       isLoading: true,
       loadError: '',
       submitError: '',
+      loadRequestId: 0,
       qr: {
         value: '',
         label: '',
@@ -381,7 +386,7 @@ export default defineComponent({
         errorCorrection: 'M' as ErrorCorrection
       },
       gallery: {
-        images: [{ src: '', alt: '', caption: '' }] as GalleryImageForm[],
+        images: [createGalleryImage()] as GalleryImageForm[],
         columns: 3 as 1 | 2 | 3 | 4,
         fit: 'cover' as 'cover' | 'contain',
         aspectRatio: 'square' as 'square' | 'natural'
@@ -398,8 +403,8 @@ export default defineComponent({
       },
       tabs: {
         panels: [
-          { label: 'First tab', content: 'Content of the first tab.', headingLevel: null },
-          { label: 'Second tab', content: 'Content of the second tab.', headingLevel: null }
+          createTabPanel('First tab', 'Content of the first tab.'),
+          createTabPanel('Second tab', 'Content of the second tab.')
         ] as TabPanelForm[],
         active: 0
       },
@@ -413,7 +418,7 @@ export default defineComponent({
         image: '',
         imageAlt: '',
         caption: '',
-        facts: [{ label: '', value: '', kind: 'text' as FactKind }] as InfoboxFactForm[]
+        facts: [createInfoboxFact()] as InfoboxFactForm[]
       },
       pdf: {
         src: '',
@@ -504,6 +509,12 @@ export default defineComponent({
         value: extension.key
       }))
     },
+    tabPanelOptions(): Array<{ title: string, value: number }> {
+      return this.tabs.panels.map((panel, panelIndex) => ({
+        title: panel.label || `Panel ${panelIndex + 1}`,
+        value: panelIndex
+      }))
+    },
     activeStatus(): ContentExtensionStatus | undefined {
       return this.extensions.find(extension => extension.key === this.selectedKey)
     },
@@ -561,7 +572,7 @@ export default defineComponent({
       }
       if (this.selectedKey === 'media') {
         return this.media.src.length >= 1 && this.media.title.length <= 200 &&
-          this.media.caption.length <= 300 && (this.media.kind === 'video' || this.media.poster.length === 0)
+          this.media.caption.length <= 300
       }
       if (this.selectedKey === 'youtube') {
         return this.youtubeVideoId !== null && this.youtube.title.length <= 200 &&
@@ -588,21 +599,22 @@ export default defineComponent({
       wikiStore.editor.activeModal = ''
     },
     addGalleryImage () {
-      if (this.gallery.images.length < 50) this.gallery.images.push({ src: '', alt: '', caption: '' })
+      if (this.gallery.images.length < 50) this.gallery.images.push(createGalleryImage())
     },
     removeGalleryImage (index: number) {
       if (this.gallery.images.length > 1) this.gallery.images.splice(index, 1)
     },
     addTabPanel () {
-      if (this.tabs.panels.length < 12) this.tabs.panels.push({ label: `Panel ${this.tabs.panels.length + 1}`, content: '', headingLevel: null })
+      if (this.tabs.panels.length < 12) this.tabs.panels.push(createTabPanel(`Panel ${this.tabs.panels.length + 1}`))
     },
     removeTabPanel (index: number) {
       if (this.tabs.panels.length <= 2) return
       this.tabs.panels.splice(index, 1)
-      if (this.tabs.active >= this.tabs.panels.length) this.tabs.active = this.tabs.panels.length - 1
+      if (index < this.tabs.active) this.tabs.active -= 1
+      else if (this.tabs.active >= this.tabs.panels.length) this.tabs.active = this.tabs.panels.length - 1
     },
     addInfoboxFact () {
-      if (this.infobox.facts.length < 50) this.infobox.facts.push({ label: '', value: '', kind: 'text' })
+      if (this.infobox.facts.length < 50) this.infobox.facts.push(createInfoboxFact())
     },
     removeInfoboxFact (index: number) {
       if (this.infobox.facts.length > 1) this.infobox.facts.splice(index, 1)
@@ -777,17 +789,20 @@ export default defineComponent({
       }
     },
     async loadExtensions () {
+      const requestId = ++this.loadRequestId
       this.isLoading = true
       this.loadError = ''
       try {
         const status = await fetchContentExtensions(fetch)
+        if (requestId !== this.loadRequestId) return
         this.extensions = status.extensions
         const available = this.extensions.find(extension => extension.isEnabled && extension.compatible)
         if (available) this.selectedKey = available.key
       } catch (err) {
+        if (requestId !== this.loadRequestId) return
         this.loadError = err instanceof Error ? err.message : 'Content extensions could not be loaded.'
       } finally {
-        this.isLoading = false
+        if (requestId === this.loadRequestId) this.isLoading = false
       }
     },
     insertExtension () {
@@ -807,7 +822,7 @@ export default defineComponent({
     void this.loadExtensions()
   },
   beforeUnmount () {
-    // Extension loading is request-scoped and does not require a global listener.
+    this.loadRequestId += 1
   }
 })
 </script>

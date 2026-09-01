@@ -6,7 +6,7 @@
       .text-body-large.pb-3.text-primary Rebuild Page Tree
       .text-body-medium The virtual structure of your wiki is automatically inferred from all page paths. You can trigger a full rebuild of the tree if some virtual folders are missing or not valid anymore.
       v-btn(variant="outlined", color='primary', @click='rebuildTree', :disabled='loading', :loading='loading && activeAction === "rebuild"').ml-0.mt-3
-        v-icon(start) mdi-file-tree
+        v-icon(start, aria-hidden='true') mdi-file-tree
         span Rebuild Page Tree
 
       v-divider.my-5
@@ -14,14 +14,15 @@
       .text-body-large.pb-3.text-primary Rerender All Pages
       .text-body-medium All pages will be rendered again. Useful if internal links are broken or the rendering pipeline has changed.
       v-btn(variant="outlined", color='primary', @click='rerenderPages', :disabled='loading', :loading='isRerendering').ml-0.mt-3
-        v-icon(start) mdi-refresh
+        v-icon(start, aria-hidden='true') mdi-refresh
         span Rerender All Pages
       v-dialog(
         v-model='isRerendering'
         persistent
         max-width='450'
+        aria-labelledby='rerender-dialog-title'
         )
-        v-card(color="blue-darken-2" role="dialog" aria-labelledby="rerender-dialog-title")
+        v-card(color="blue-darken-2")
           v-card-text.pa-10.text-center
             semipolar-spinner.animated.fadeIn(
               :animation-duration='1500'
@@ -75,7 +76,7 @@
           )
       .text-body-medium.mt-2(v-if='migrationLocaleError') {{ migrationLocaleError }}
       v-btn(variant="outlined", color='error', @click='requestMigration', :disabled='loading || !isMigrationValid', :loading='loading && activeAction === "migrate"').ml-0.mt-3
-        v-icon(start) mdi-database-export
+        v-icon(start, aria-hidden='true') mdi-database-export
         span Review Migration
 
       v-divider.my-5
@@ -95,10 +96,10 @@
             :disabled='loading'
           )
       v-btn(variant="outlined", color='error', @click='requestPurge', :disabled='loading || !purgeHistorySelection', :loading='loading && activeAction === `purge`').ml-0.mt-3
-        v-icon(start) mdi-delete-clock
+        v-icon(start, aria-hidden='true') mdi-delete-clock
         span Review Purge
-      v-dialog(v-model='isConfirmShown', persistent, max-width='520')
-        v-card(role="dialog" aria-labelledby="content-confirm-title")
+      v-dialog(v-model='isConfirmShown', persistent, max-width='520', aria-labelledby='content-confirm-title')
+        v-card
           v-card-title#content-confirm-title Confirm destructive operation
           v-card-text
             .text-body-medium(v-if='pendingConfirmation === `migrate`') This will migrate all eligible pages from {{ sourceLocale }} to {{ targetLocale }}. Existing target pages are not overwritten.
@@ -131,6 +132,7 @@ export default defineComponent({
       pendingConfirmation: '' as '' | 'migrate' | 'purge',
       activeAction: '' as '' | 'rebuild' | 'rerender' | 'migrate' | 'purge',
       loading: false,
+      isDisposed: false,
       renderProgress: 0,
       renderIndex: 0,
       renderTotal: 0,
@@ -149,6 +151,9 @@ export default defineComponent({
         { key: 'P5Y', title: '5 years' }
       ]
     }
+  },
+  beforeUnmount () {
+    this.isDisposed = true
   },
   computed: {
     currentLocale () {
@@ -193,7 +198,7 @@ export default defineComponent({
       }
     },
     async confirmDestructiveAction () {
-      if (this.loading) {
+      if (this.loading || this.isDisposed) {
         return
       }
       const action = this.pendingConfirmation
@@ -206,11 +211,17 @@ export default defineComponent({
       }
     },
     async rebuildTree () {
+      if (this.loading || this.isDisposed) {
+        return
+      }
       this.loading = true
       this.activeAction = 'rebuild'
       wikiStore.startLoading('admin-utilities-content-rebuildtree')
       try {
         await rebuildPageTree(window.fetch.bind(window))
+        if (this.isDisposed) {
+          return
+        }
         wikiStore.showNotification({
           message: 'Page Tree rebuilt successfully.',
           style: 'success',
@@ -225,12 +236,18 @@ export default defineComponent({
       }
     },
     async rerenderPages () {
+      if (this.loading || this.isDisposed) {
+        return
+      }
       this.loading = true
       this.activeAction = 'rerender'
       this.isRerendering = true
       wikiStore.startLoading('admin-utilities-content-rerender')
       try {
         const pages = await fetchPageList(window.fetch.bind(window))
+        if (this.isDisposed) {
+          return
+        }
         if (pages.length < 1) {
           throw new Error('Could not find any page to render!')
         }
@@ -246,9 +263,15 @@ export default defineComponent({
           } catch (err) {
             failed++
           } finally {
+            if (this.isDisposed) {
+              break
+            }
             this.renderIndex++
             this.renderProgress = Math.round(this.renderIndex / this.renderTotal * 100)
           }
+        }
+        if (this.isDisposed) {
+          return
         }
         if (failed > 0) {
           wikiStore.showNotification({
@@ -276,11 +299,17 @@ export default defineComponent({
       if (!this.isMigrationValid) {
         return
       }
+      if (this.loading || this.isDisposed) {
+        return
+      }
       this.loading = true
       this.activeAction = 'migrate'
       wikiStore.startLoading('admin-utilities-content-migratelocale')
       try {
         const resp = await migratePagesToLocale(window.fetch.bind(window), this.sourceLocale, this.targetLocale)
+        if (this.isDisposed) {
+          return
+        }
         wikiStore.showNotification({
           message: `Migrated ${resp.count} page(s) to target locale successfully.`,
           style: 'success',
@@ -295,6 +324,9 @@ export default defineComponent({
       }
     },
     async purgeHistory () {
+      if (this.loading || this.isDisposed) {
+        return
+      }
       if (!this.purgeHistorySelection) {
         return
       }
@@ -303,6 +335,9 @@ export default defineComponent({
       wikiStore.startLoading('admin-utilities-content-purgehistory')
       try {
         await purgePageHistory(window.fetch.bind(window), this.purgeHistorySelection)
+        if (this.isDisposed) {
+          return
+        }
         wikiStore.showNotification({
           message: 'Purged history successfully.',
           style: 'success',

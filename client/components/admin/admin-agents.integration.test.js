@@ -63,7 +63,7 @@ describe('ordinary Wiki agent administration integration', () => {
     expect(agentAdmin).toMatch(/agentProviderProtocolExecutionModes\(option\.value\)\.includes\('agent'\)/)
     expect(agentAdmin).toMatch(/policies: \{ allowedModes: \['agent'\]/)
     expect(agentAdmin).toMatch(/Advanced limits and quotas/)
-    expect(agentAdmin).toMatch(/request<GroupOption\[]>\(\s*['"]\/_api\/groups['"]\s*\)/)
+    expect(agentAdmin).toMatch(/request<GroupOption\[]>\(\s*['"]\/_api\/groups['"]\s*,\s*\{\s*signal:\s*controller\.signal\s*\}\s*\)/)
     expect(skillAdmin).toMatch(/request\(\s*['"]\/_api\/groups['"][^)]*\)/)
     expect(agentAdmin).not.toMatch(/request<GroupOption\[]>\(\s*['"]\/api\/groups['"]\s*\)/)
     expect(skillAdmin).not.toMatch(/request\(\s*['"]\/api\/groups['"]\s*\)/)

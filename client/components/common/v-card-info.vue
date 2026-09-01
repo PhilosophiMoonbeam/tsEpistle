@@ -1,7 +1,7 @@
 <template lang='pug'>
   .v-card-info(:class='`v-card-info--` + color')
     v-card-text.d-flex.align-center
-      v-icon(:color='color', start) {{icon}}
+      v-icon(:icon='icon', :color='color', start)
       slot
 </template>
 

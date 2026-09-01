@@ -24,13 +24,12 @@
             em(:class='$vuetify.theme.current.dark ? `text-grey` : `text-blue-grey`') This group has no page rules yet.
           .rule(v-for='rule of group.pageRules', :key='rule.id')
             v-btn.ma-0.radius-4.rule-deny-btn(
-              solo
               :color='rule.deny ? "red" : "green"'
-              @click='rule.deny = !rule.deny'
+              @click='updateRule(rule.id, { deny: !rule.deny })'
               :disabled='group.id <= 0'
               height='48'
               :aria-label='rule.deny ? "Set rule to Allow" : "Set rule to Deny"'
-              :aria-pressed='String(!rule.deny)'
+              :aria-pressed='String(rule.deny)'
               )
               v-icon(v-if='rule.deny') mdi-cancel
               v-icon(v-else) mdi-check-circle
@@ -40,7 +39,8 @@
               :items='roles'
               item-title='text'
               item-value='value'
-              v-model='rule.roles'
+              :model-value='rule.roles'
+              @update:model-value='updateRule(rule.id, { roles: $event })'
               label='Roles'
               hide-details
               multiple
@@ -52,14 +52,15 @@
               :disabled='group.id <= 0'
               )
               template(v-slot:chip='{ item, index }')
-                v-chip.text-white.ml-0(v-if='index <= 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.raw.text }}
+                v-chip.text-white.ml-0(v-if='index <= 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.text }}
                 v-chip.text-white.ml-0(v-if='index === 2', size="small", label, :color='rule.deny ? `red-lighten-2` : `green-lighten-2`').text-body-small + {{ rule.roles.length - 2 }} more
 
             //- Match
             v-select.rule-match(
               variant="solo"
               :items='matches'
-              v-model='rule.match'
+              :model-value='rule.match'
+              @update:model-value='updateRule(rule.id, { match: $event })'
               item-title='text'
               item-value='value'
               label='Match'
@@ -68,13 +69,14 @@
               density="compact"
               )
               template(v-slot:selection='{ item }')
-                .text-body-medium {{item.raw.text}}
+                .text-body-medium {{item.text}}
             //- Locales
             v-select.rule-locales(
               :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `blue-grey-lighten-5`'
               variant="solo"
               :items='locales'
-              v-model='rule.locales'
+              :model-value='rule.locales'
+              @update:model-value='updateRule(rule.id, { locales: $event })'
               label='Locale'
               item-value='code'
               item-title='name'
@@ -85,10 +87,10 @@
               :disabled='group.id <= 0'
               )
               template(v-slot:selection='{ item, index }')
-                v-chip.text-white.ml-0(v-if='rule.locales.length === 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.raw.code.toUpperCase() }}
+                v-chip.text-white.ml-0(v-if='rule.locales.length === 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.code.toUpperCase() }}
                 v-chip.text-white.ml-0(v-else-if='index === 0', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ rule.locales.length }} locales
               template(v-slot:prepend-item)
-                v-list-item(@click='rule.locales = []')
+                v-list-item(@click='updateRule(rule.id, { locales: [] })')
                   template(v-slot:append)
                     v-checkbox(
                       :model-value='rule.locales.length === 0'
@@ -104,7 +106,8 @@
             //- Path
             v-text-field.rule-path(
               variant="solo"
-              v-model='rule.path'
+              :model-value='rule.path'
+              @update:model-value='updateRule(rule.id, { path: $event })'
               :disabled='group.id <= 0'
               label='Path'
               :prefix='(rule.match !== `END` && rule.match !== `TAG`) ? `/` : null'
@@ -144,10 +147,9 @@
 <script lang='ts'>
 import type { PropType } from 'vue'
 
-import _ from 'lodash'
 import { customAlphabet } from 'nanoid/non-secure'
 
-import { createEmptyGroupEditorState, type GroupEditorState } from '../../helpers/groups-api'
+import { createEmptyGroupEditorState, type GroupEditorState, type GroupPageRule } from '../../helpers/groups-api'
 
 /* global siteLangs */
 
@@ -198,19 +200,33 @@ export default {
   methods: {
     addRule() {
       if (this.group.id <= 0) return
-      this.group.pageRules.push({
-        id: nanoid(),
-        path: '',
-        roles: [],
-        match: 'START',
-        deny: false,
-        locales: []
-      })
+      this.group = {
+        ...this.group,
+        pageRules: [
+          ...this.group.pageRules,
+          {
+            id: nanoid(),
+            path: '',
+            roles: [],
+            match: 'START',
+            deny: false,
+            locales: []
+          }
+        ]
+      }
+    },
+    updateRule(ruleId: string, patch: Partial<Omit<GroupPageRule, 'id'>>) {
+      this.group = {
+        ...this.group,
+        pageRules: this.group.pageRules.map(rule => rule.id === ruleId ? { ...rule, ...patch } : rule)
+      }
     },
     removeRule(ruleId: string) {
       if (this.group.id <= 0) return
-      const index = _.findIndex(this.group.pageRules, ['id', ruleId])
-      if (index >= 0) this.group.pageRules.splice(index, 1)
+      this.group = {
+        ...this.group,
+        pageRules: this.group.pageRules.filter(rule => rule.id !== ruleId)
+      }
     }
   }
 }

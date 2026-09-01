@@ -18,7 +18,7 @@
   </component>
 </template>
 <script setup lang="ts">
-import { nextTick, onMounted, onUpdated, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, onUpdated, ref } from 'vue'
 
 const props = withDefaults(defineProps<{
   modelValue: unknown[]
@@ -45,6 +45,7 @@ let pointerStartY = 0
 let pointerDragging = false
 let keyboardIndex = -1
 let keyboardOriginal: unknown[] | null = null
+let refreshPending = false
 
 function itemChildren (): HTMLElement[] {
   return Array.from(root.value?.children ?? [])
@@ -75,6 +76,15 @@ function refreshChildren (): void {
       child.tabIndex = 0
     }
   }
+}
+
+function scheduleRefreshChildren (): void {
+  if (refreshPending) return
+  refreshPending = true
+  void nextTick(() => {
+    refreshPending = false
+    refreshChildren()
+  })
 }
 
 function directChildIndex (target: EventTarget | null): number {
@@ -134,10 +144,14 @@ function handlePointerMove (event: PointerEvent): void {
   sourceIndex.value = targetIndex
   dropTargetIndex.value = targetIndex
   liveMessage.value = `Moved item, ${positionMessage(targetIndex)}`
-  void nextTick(refreshChildren)
+  scheduleRefreshChildren()
 }
 
 function handlePointerUp (event: PointerEvent): void {
+  if (pointerId === null) {
+    handlePressed = false
+    return
+  }
   if (pointerId !== event.pointerId) return
   if (pointerDragging) liveMessage.value = `Dropped item, ${positionMessage(sourceIndex.value)}`
   root.value?.releasePointerCapture?.(event.pointerId)
@@ -159,7 +173,7 @@ function handleKeydown (event: KeyboardEvent): void {
     keyboardOriginal = [...props.modelValue]
     sourceIndex.value = index
     liveMessage.value = `Picked up item, ${positionMessage(index)}`
-    void nextTick(refreshChildren)
+    scheduleRefreshChildren()
     return
   }
   if (event.key === 'Escape') {
@@ -192,7 +206,7 @@ function handleKeydown (event: KeyboardEvent): void {
   sourceIndex.value = targetIndex
   dropTargetIndex.value = targetIndex
   liveMessage.value = `Moved item, ${positionMessage(targetIndex)}`
-  void nextTick(refreshChildren)
+  scheduleRefreshChildren()
 }
 
 function handleDragStart (event: DragEvent): void {
@@ -209,7 +223,7 @@ function handleDragStart (event: DragEvent): void {
   event.dataTransfer?.setData('text/plain', String(index))
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
   liveMessage.value = `Picked up item, ${positionMessage(index)}`
-  void nextTick(refreshChildren)
+  scheduleRefreshChildren()
 }
 
 function handleDragOver (event: DragEvent): void {
@@ -218,7 +232,7 @@ function handleDragOver (event: DragEvent): void {
   const targetIndex = directChildIndex(event.target)
   if (targetIndex >= 0) {
     dropTargetIndex.value = targetIndex
-    void nextTick(refreshChildren)
+    scheduleRefreshChildren()
   }
 }
 
@@ -236,11 +250,18 @@ function resetDrag (): void {
   sourceIndex.value = -1
   dropTargetIndex.value = -1
   handlePressed = false
-  void nextTick(refreshChildren)
+  scheduleRefreshChildren()
 }
 
 onMounted(refreshChildren)
-onUpdated(refreshChildren)
+onUpdated(() => {
+  if (!refreshPending) refreshChildren()
+})
+onBeforeUnmount(() => {
+  if (pointerId !== null && root.value?.hasPointerCapture?.(pointerId)) {
+    root.value.releasePointerCapture(pointerId)
+  }
+})
 </script>
 
 <style scoped>

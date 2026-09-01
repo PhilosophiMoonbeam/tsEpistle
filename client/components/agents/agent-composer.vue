@@ -26,6 +26,7 @@
       <v-list
         id="agent-skill-command-results"
         role="listbox"
+        aria-multiselectable="true"
         aria-label="Matching skills"
         density="compact"
         max-height="320"
@@ -52,7 +53,7 @@
             </div>
           </template>
         </v-list-item>
-        <v-list-item v-if="skillCommandResults.length === 0" title="No matching skills" subtitle="Try another name or description." disabled />
+        <v-list-item v-if="skillCommandResults.length === 0" role="option" aria-disabled="true" title="No matching skills" subtitle="Try another name or description." disabled />
         <div class="agent-composer__command-status sr-only" role="status" aria-live="polite">{{ skillCommandResults.length ? `${skillCommandResults.length} matching skills` : 'No matching skills' }}</div>
       </v-list>
     </v-card>
@@ -92,6 +93,7 @@
           v-for="skill in selectedSkills"
           :key="skill.versionId"
           closable
+          :close-label="`Remove ${skill.name}`"
           size="small"
           color="primary"
           variant="tonal"
@@ -259,6 +261,7 @@ const sendFailed = ref(false)
 const submissionPending = ref(false)
 const sendInProgress = computed(() => props.sending || submissionPending.value)
 let restoreInputWhenReady = false
+let mounted = false
 const preferredSkillIds = computed(() => new Set(props.preferredSkills.map(skill => skill.skillId)))
 const preferredSkillIdByVersionId = computed(() => new Map(props.preferredSkills.map(skill => [skill.versionId, skill.skillId])))
 const selectedSkillIdSet = computed(() => new Set(selectedSkillIds.value))
@@ -581,6 +584,7 @@ const submit = (): void => {
   restoreInputWhenReady = true
   sendFailed.value = false
   emit('send', content, invokedSkillVersionIds, mode, (success: boolean) => {
+    if (!mounted) return
     submissionPending.value = false
     sendFailed.value = !success
     if (success) {
@@ -601,11 +605,13 @@ const submit = (): void => {
 }
 defineExpose({ focusInput, focusSkillsTrigger })
 onMounted(() => {
+  mounted = true
   mountCaretMirror()
   resizeInput()
   window.addEventListener('resize', resizeInput)
 })
 onBeforeUnmount(() => {
+  mounted = false
   window.removeEventListener('resize', resizeInput)
   unmountCaretMirror()
 })

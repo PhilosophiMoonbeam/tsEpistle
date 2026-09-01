@@ -1,9 +1,9 @@
 <template lang="pug">
-  v-dialog(v-model='isShown', max-width='650', persistent, :fullscreen='$vuetify.display.smAndDown')
+  v-dialog(v-model='isShown', max-width='650', persistent, :fullscreen='$vuetify.display.smAndDown', aria-labelledby='admin-user-create-title')
     v-card.admin-dialog--scrollable
       .dialog-header.is-short
         v-icon.mr-3 mdi-plus
-        span New User
+        span#admin-user-create-title New User
         v-spacer
         v-btn.mx-0(v-if='$vuetify.display.mdAndUp', variant="outlined", disabled, aria-label='Bulk import unavailable')
           v-icon(start) mdi-database-import
@@ -183,19 +183,26 @@ export default {
     }
   },
   watch: {
-    modelValue(newValue: boolean) {
-      if (newValue) {
-        if (!this.providersLoaded) {
-          this.loadProviders()
+    modelValue: {
+      immediate: true,
+      handler (newValue: boolean) {
+        if (newValue) {
+          if (!this.providersLoaded) {
+            this.loadProviders()
+          }
+          this.$nextTick(() => {
+            if (this.modelValue) this.focusEmail()
+          })
         }
-        this.$nextTick(() => {
-          ;(this.$refs.emailInput as FocusableRef).focus()
-        })
       }
     }
   },
   methods: {
+    focusEmail() {
+      ;(this.$refs.emailInput as FocusableRef | undefined)?.focus()
+    },
     async loadProviders() {
+      if (this.providerLoading) return
       this.providerLoading = true
       this.providerLoadError = ''
       wikiStore.startLoading('admin-users-strategies-refresh')
@@ -210,6 +217,11 @@ export default {
           this.provider = this.availableProviders[0].key
         }
         this.providersLoaded = true
+        if (this.modelValue) {
+          this.$nextTick(() => {
+            if (this.modelValue) this.focusEmail()
+          })
+        }
       } catch (err) {
         this.providersLoaded = false
         this.providerLoadError = getErrorMessage(err)
@@ -233,8 +245,9 @@ export default {
           message: getErrorMessage(err),
           icon: 'alert'
         })
+      } finally {
+        wikiStore.stopLoading('admin-auth-groups-refresh')
       }
-      wikiStore.stopLoading('admin-auth-groups-refresh')
     },
     async newUser(close = false) {
       if (this.submitting) return
@@ -296,10 +309,10 @@ export default {
         const resp = await createAdminUser(window.fetch.bind(window), {
           providerKey: this.provider,
           email: this.email,
-          passwordRaw: this.password,
+          passwordRaw: this.provider === 'local' ? this.password : '',
           name: this.name,
           groups: this.group,
-          mustChangePassword: this.mustChangePwd,
+          mustChangePassword: this.provider === 'local' && this.mustChangePwd,
           sendWelcomeEmail: this.sendWelcomeEmail
         }, 'User create response is invalid')
 
@@ -335,7 +348,7 @@ export default {
         if (close) {
           this.isShown = false
         } else {
-          ;(this.$refs.emailInput as FocusableRef).focus()
+          this.focusEmail()
         }
       } catch (err) {
         wikiStore.showNotification({

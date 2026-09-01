@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const extractScript = (source) => {
+const extractScript = source => {
   const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
@@ -28,17 +28,52 @@ const extractMethod = (script, name) => {
   return null
 }
 
+const deferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const compileMethod = (method, dependencies) => {
+  const executable = method.replace(/^async\s+\w+\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*\{/, 'async function () {')
+  return new Function(...Object.keys(dependencies), `return (${executable})`)(...Object.values(dependencies))
+}
+
+const createWikiStore = () => {
+  const loadingEvents = []
+  const notifications = []
+  const errors = []
+  return {
+    loadingEvents,
+    notifications,
+    errors,
+    store: {
+      startLoading: id => loadingEvents.push(['start', id]),
+      stopLoading: id => loadingEvents.push(['stop', id]),
+      showNotification: notification => notifications.push(notification),
+      showError: error => errors.push(error)
+    }
+  }
+}
+
 describe('admin-api REST mutation migration guard', () => {
   const componentPath = path.join(process.cwd(), 'client/components/admin/admin-api.vue')
   const source = fs.readFileSync(componentPath, 'utf8')
   const script = extractScript(source)
-  const globalSwitch = script && extractMethod(script, 'globalSwitch')
-  const revokeConfirm = script && extractMethod(script, 'revokeConfirm')
+  const globalSwitchSource = script && extractMethod(script, 'globalSwitch')
+  const revokeConfirmSource = script && extractMethod(script, 'revokeConfirm')
+  const windowStub = { fetch: () => {} }
 
-  test('admin-api.vue imports typed API REST helpers and the explicit wiki store without inline GraphQL mutations', () => {
+  test('uses typed REST helpers without restoring inline GraphQL mutations', () => {
     expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchAdminApiBootstrap\b)(?=[^}]*\brevokeAdminApiKey\b)(?=[^}]*\bsetAdminApiState\b)(?=[^}]*\btype AdminApiKey\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/auth-api['"]/)
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bfetchAdminApiBootstrap\b)(?=[^}]*\brevokeAdminApiKey\b)(?=[^}]*\bsetAdminApiState\b)(?=[^}]*\btype AdminApiKey\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/auth-api['"]/
+    )
     expect(script).toContain("import { getErrorMessage } from '../../helpers/root-ui-store'")
     expect(script).toMatch(/keys:\s*\[\]\s+as\s+AdminApiKey\[\]/)
     expect(script).toMatch(/current:\s*null\s+as\s+AdminApiKey\s*\|\s*null/)
@@ -50,30 +85,183 @@ describe('admin-api REST mutation migration guard', () => {
     expect(script).not.toMatch(/\brevokeApiKey\s*\(/)
   })
 
-  test('globalSwitch() uses REST helper while preserving refresh, loading, notification, and error flow', () => {
-    expect(globalSwitch).not.toBeNull()
-    expect(globalSwitch).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-api-toggle['"]\s*\)/)
-    expect(globalSwitch).toMatch(/await\s+setAdminApiState\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*!this\.enabled\s*\)/)
-    expect(globalSwitch).toMatch(/const\s+loaded\s*=\s*await\s+this\.refresh\(\s*false\s*\)/)
-    expect(globalSwitch).toMatch(/if\s*\(\s*loaded\s*\)\s*\{\s*wikiStore\.showNotification\s*\(\s*\{/)
-    expect(globalSwitch).toMatch(/admin:api\.toggleStateDisabledSuccess/)
-    expect(globalSwitch).toMatch(/admin:api\.toggleStateEnabledSuccess/)
-    expect(globalSwitch).toMatch(/wikiStore\.showError\s*\(\s*err\s*\)/)
-    expect(globalSwitch).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-api-toggle['"]\s*\)/)
-    expect(globalSwitch).toMatch(/this\.isToggleLoading\s*=\s*false/)
+  test('globalSwitch serializes toggles and refreshes before reporting REST success', async () => {
+    const mutation = deferred()
+    const mutationCalls = []
+    const refreshCalls = []
+    const wiki = createWikiStore()
+    const globalSwitch = compileMethod(globalSwitchSource, {
+      setAdminApiState: (fetchImplementation, enabled) => {
+        mutationCalls.push({ fetchImplementation, enabled })
+        return mutation.promise
+      },
+      wikiStore: wiki.store,
+      window: windowStub
+    })
+    const viewModel = {
+      enabled: false,
+      isToggleLoading: false,
+      revokeLoading: false,
+      loadState: 'success',
+      refresh: async notify => {
+        refreshCalls.push(notify)
+        return true
+      },
+      $t: key => key
+    }
+
+    const firstToggle = globalSwitch.call(viewModel)
+    await globalSwitch.call(viewModel)
+
+    expect(mutationCalls).toHaveLength(1)
+    expect(mutationCalls[0].enabled).toBe(true)
+    expect(typeof mutationCalls[0].fetchImplementation).toBe('function')
+    expect(viewModel.isToggleLoading).toBe(true)
+    mutation.resolve()
+    await firstToggle
+
+    expect(refreshCalls).toEqual([false])
+    expect(wiki.notifications).toEqual([
+      {
+        style: 'success',
+        message: 'admin:api.toggleStateEnabledSuccess',
+        icon: 'check'
+      }
+    ])
+    expect(wiki.errors).toEqual([])
+    expect(wiki.loadingEvents).toEqual([
+      ['start', 'admin-api-toggle'],
+      ['stop', 'admin-api-toggle']
+    ])
+    expect(viewModel.isToggleLoading).toBe(false)
   })
 
-  test('revokeConfirm() uses REST helper while preserving refresh, guard, dialog, loading, notification, and error flow', () => {
-    expect(revokeConfirm).not.toBeNull()
-    expect(revokeConfirm).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-api-revoke['"]\s*\)/)
-    expect(revokeConfirm).toMatch(/if\s*\(\s*!this\.current\s*\)\s*throw\s+new\s+Error\s*\(\s*['"]No API key selected for revocation\.['"]\s*\)/)
-    expect(revokeConfirm).toMatch(/await\s+revokeAdminApiKey\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*this\.current\.id\s*\)/)
-    expect(revokeConfirm).toMatch(/const\s+loaded\s*=\s*await\s+this\.refresh\(\s*false\s*\)/)
-    expect(revokeConfirm).toMatch(/if\s*\(\s*loaded\s*\)\s*\{\s*wikiStore\.showNotification\s*\(\s*\{/)
-    expect(revokeConfirm).toMatch(/admin:api\.revokeSuccess/)
-    expect(revokeConfirm).toMatch(/wikiStore\.showError\s*\(\s*err\s*\)/)
-    expect(revokeConfirm).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-api-revoke['"]\s*\)/)
-    expect(revokeConfirm).toMatch(/this\.isRevokeConfirmDialogShown\s*=\s*false/)
-    expect(revokeConfirm).toMatch(/this\.revokeLoading\s*=\s*false/)
+  test('globalSwitch retains state guards and always releases loading after REST errors', async () => {
+    let mutationCalls = 0
+    const failure = new Error('toggle failed')
+    const wiki = createWikiStore()
+    const globalSwitch = compileMethod(globalSwitchSource, {
+      setAdminApiState: async () => {
+        mutationCalls++
+        throw failure
+      },
+      wikiStore: wiki.store,
+      window: windowStub
+    })
+    const viewModel = {
+      enabled: true,
+      isToggleLoading: false,
+      revokeLoading: true,
+      loadState: 'success',
+      refresh: async () => true,
+      $t: key => key
+    }
+
+    await globalSwitch.call(viewModel)
+    expect(mutationCalls).toBe(0)
+
+    viewModel.revokeLoading = false
+    viewModel.loadState = 'error'
+    await globalSwitch.call(viewModel)
+    expect(mutationCalls).toBe(0)
+
+    viewModel.loadState = 'success'
+    await globalSwitch.call(viewModel)
+    expect(mutationCalls).toBe(1)
+    expect(wiki.errors).toEqual([failure])
+    expect(wiki.notifications).toEqual([])
+    expect(wiki.loadingEvents).toEqual([
+      ['start', 'admin-api-toggle'],
+      ['stop', 'admin-api-toggle']
+    ])
+    expect(viewModel.isToggleLoading).toBe(false)
+  })
+
+  test('revokeConfirm guards missing and concurrent selections, then refreshes before notifying', async () => {
+    const mutation = deferred()
+    const revokeCalls = []
+    const refreshCalls = []
+    const wiki = createWikiStore()
+    const revokeConfirm = compileMethod(revokeConfirmSource, {
+      revokeAdminApiKey: (fetchImplementation, id) => {
+        revokeCalls.push({ fetchImplementation, id })
+        return mutation.promise
+      },
+      wikiStore: wiki.store,
+      window: windowStub
+    })
+    const viewModel = {
+      current: null,
+      revokeLoading: false,
+      isRevokeConfirmDialogShown: true,
+      refresh: async notify => {
+        refreshCalls.push(notify)
+        return true
+      },
+      $t: key => key
+    }
+
+    await revokeConfirm.call(viewModel)
+    expect(revokeCalls).toEqual([])
+    expect(wiki.loadingEvents).toEqual([])
+
+    viewModel.current = { id: 42, name: 'deployment' }
+    const firstRevoke = revokeConfirm.call(viewModel)
+    await revokeConfirm.call(viewModel)
+    expect(revokeCalls).toHaveLength(1)
+    expect(revokeCalls[0].id).toBe(42)
+    expect(typeof revokeCalls[0].fetchImplementation).toBe('function')
+    expect(viewModel.revokeLoading).toBe(true)
+
+    mutation.resolve()
+    await firstRevoke
+
+    expect(refreshCalls).toEqual([false])
+    expect(wiki.notifications).toEqual([
+      {
+        style: 'success',
+        message: 'admin:api.revokeSuccess',
+        icon: 'check'
+      }
+    ])
+    expect(wiki.errors).toEqual([])
+    expect(wiki.loadingEvents).toEqual([
+      ['start', 'admin-api-revoke'],
+      ['stop', 'admin-api-revoke']
+    ])
+    expect(viewModel.isRevokeConfirmDialogShown).toBe(false)
+    expect(viewModel.revokeLoading).toBe(false)
+  })
+
+  test('revokeConfirm reports REST failures and closes the guarded operation cleanly', async () => {
+    const failure = new Error('revoke failed')
+    const wiki = createWikiStore()
+    const revokeConfirm = compileMethod(revokeConfirmSource, {
+      revokeAdminApiKey: async () => {
+        throw failure
+      },
+      wikiStore: wiki.store,
+      window: windowStub
+    })
+    const viewModel = {
+      current: { id: 7, name: 'broken' },
+      revokeLoading: false,
+      isRevokeConfirmDialogShown: true,
+      refresh: async () => {
+        throw new Error('failed revocation must not refresh')
+      },
+      $t: key => key
+    }
+
+    await revokeConfirm.call(viewModel)
+
+    expect(wiki.errors).toEqual([failure])
+    expect(wiki.notifications).toEqual([])
+    expect(wiki.loadingEvents).toEqual([
+      ['start', 'admin-api-revoke'],
+      ['stop', 'admin-api-revoke']
+    ])
+    expect(viewModel.isRevokeConfirmDialogShown).toBe(false)
+    expect(viewModel.revokeLoading).toBe(false)
   })
 })

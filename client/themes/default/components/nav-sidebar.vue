@@ -30,7 +30,7 @@
         .text-body-medium.text-none {{$t('common:sidebar.mainMenu')}}
     v-divider.nav-sidebar-edge
     //-> Custom Navigation
-    v-list.nav-sidebar-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav, role='presentation')
+    v-list.nav-sidebar-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav)
       async-state(
         v-if='customItems.length === 0'
         state='empty'
@@ -59,7 +59,6 @@
       density="compact"
       :class='color'
       nav
-      role='presentation'
       :aria-busy='navLoading'
     )
       .nav-sidebar-loading-status(
@@ -199,7 +198,8 @@ export default defineComponent({
         title: '/ (root)'
       } as NavigationTreeItem,
       parents: [] as NavigationTreeItem[],
-      loadedCache: [] as number[]
+      loadedCache: [] as number[],
+      browseRequestSequence: 0
     }
   },
   computed: {
@@ -214,9 +214,29 @@ export default defineComponent({
     },
     customItems (): SidebarItem[] {
       return this.items.filter(item => item.k !== 'link' || item.y !== 'home')
+    },
+    pageLocationKey (): string {
+      return `${this.locale}:${this.path}`
+    }
+  },
+  watch: {
+    pageLocationKey (value: string, previous: string) {
+      if (value === previous || this.currentMode !== 'browse') return
+      this.resetBrowseRoot()
+      if (this.expandParentByDefault) void this.loadFromCurrentPath()
+      else void this.fetchBrowseItems(this.currentParent)
     }
   },
   methods: {
+    resetBrowseRoot () {
+      this.currentParent = {
+        id: 0,
+        title: `/ ${this.$t('common:sidebar.root')}`
+      }
+      this.parents = []
+      this.currentItems = []
+      this.loadedCache = []
+    },
     sidebarLinkClicked (event: MouseEvent) {
       const target = event.currentTarget
       if (target instanceof HTMLAnchorElement && isWikiNavigationClick(event, target)) this.$emit('navigate')
@@ -230,6 +250,8 @@ export default defineComponent({
       }
     },
     async fetchBrowseItems (requestedItem?: NavigationTreeItem) {
+      const requestSequence = ++this.browseRequestSequence
+      const locale = this.locale
       loadingStart(wikiStore, 'browse-load')
       this.navLoading = true
       this.navError = ''
@@ -246,31 +268,40 @@ export default defineComponent({
           this.parents.push(item)
         }
         this.currentParent = item
-        this.currentItems = await fetchPageTree(window.fetch.bind(window), {
+        const items = await fetchPageTree(window.fetch.bind(window), {
           parent: item.id,
-          locale: this.locale,
+          locale,
           mode: 'ALL'
         })
+        if (requestSequence !== this.browseRequestSequence) return
+        this.currentItems = items
         this.loadedCache = _.union(this.loadedCache, [item.id])
       } catch (error) {
-        this.navError = error instanceof Error ? error.message : 'Navigation could not be loaded.'
+        if (requestSequence === this.browseRequestSequence) {
+          this.navError = error instanceof Error ? error.message : 'Navigation could not be loaded.'
+        }
       } finally {
-        this.navLoading = false
+        if (requestSequence === this.browseRequestSequence) this.navLoading = false
         loadingStop(wikiStore, 'browse-load')
       }
     },
     async loadFromCurrentPath() {
+      const requestSequence = ++this.browseRequestSequence
+      const locale = this.locale
+      const path = this.path
+      const pageId = wikiStore.page.id
       loadingStart(wikiStore, 'browse-load')
       this.navLoading = true
       this.navError = ''
       try {
         const items = await fetchPageTree(window.fetch.bind(window), {
-          path: this.path,
-          locale: this.locale,
+          path,
+          locale,
           mode: 'ALL',
           includeAncestors: true
         })
-        const curPage = _.find(items, ['pageId', wikiStore.page.id])
+        if (requestSequence !== this.browseRequestSequence) return
+        const curPage = _.find(items, ['pageId', pageId])
         if (!curPage) throw new Error('Could not find the current page in navigation.')
         let curParentId = curPage.parent
         const invertedAncestors: PageTreeRow[] = []
@@ -285,9 +316,11 @@ export default defineComponent({
         this.loadedCache = [curPage.parent]
         this.currentItems = _.filter(items, ['parent', curPage.parent])
       } catch (error) {
-        this.navError = error instanceof Error ? error.message : 'Navigation could not be loaded.'
+        if (requestSequence === this.browseRequestSequence) {
+          this.navError = error instanceof Error ? error.message : 'Navigation could not be loaded.'
+        }
       } finally {
-        this.navLoading = false
+        if (requestSequence === this.browseRequestSequence) this.navLoading = false
         loadingStop(wikiStore, 'browse-load')
       }
     },
@@ -320,7 +353,7 @@ export default defineComponent({
     }
   },
   mounted () {
-    this.currentParent.title = `/ ${this.$t('common:sidebar.root')}`
+    this.resetBrowseRoot()
     if (this.navMode === 'TREE') {
       this.currentMode = 'browse'
     } else if (this.navMode === 'STATIC') {
@@ -333,6 +366,9 @@ export default defineComponent({
       if (this.expandParentByDefault) this.loadFromCurrentPath()
       else this.fetchBrowseItems()
     }
+  },
+  beforeUnmount () {
+    this.browseRequestSequence += 1
   }
 })
 </script>

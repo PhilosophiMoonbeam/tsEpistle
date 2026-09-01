@@ -1,6 +1,6 @@
 <template lang='pug'>
   v-app.page-unlock-app
-    .page-unlock
+    main.page-unlock
       v-card.page-unlock-card(variant='flat')
         v-card-text.page-unlock-content
           .page-unlock-brand
@@ -32,6 +32,7 @@
                 required
                 variant='outlined'
                 :aria-describedby='error ? "page-unlock-error" : undefined'
+                :aria-invalid='error ? "true" : undefined'
               )
                 template(v-slot:append-inner)
                   v-btn(

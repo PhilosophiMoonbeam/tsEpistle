@@ -1,9 +1,11 @@
 <template lang="pug">
   div.comments(v-intersect.once='onIntersect')
-    section.comments-composer(
+    form.comments-composer(
       v-if='permissions.write'
       :aria-label='$t(`common:comments.postComment`)'
       :aria-busy='isPosting'
+      novalidate
+      @submit.prevent='postComment'
     )
       v-textarea#discussion-new.comments-composer-field(
         variant="outlined"
@@ -57,7 +59,7 @@
             strong(place='name') {{userDisplayName}}
         v-btn.comments-submit(
           color="primary"
-          @click='postComment'
+          type='submit'
           variant="flat"
           :aria-label='$t(`common:comments.postComment`)'
           :loading='isPosting'
@@ -80,7 +82,7 @@
     )
     v-timeline.comments-thread(
       density="compact"
-      v-else-if='comments && comments.length > 0'
+      v-else-if='comments.length > 0'
       aria-label='Comment thread'
     )
       v-timeline-item.comments-post(
@@ -118,7 +120,7 @@
             .comments-post-name.text-body-small(:id='`comment-author-${cm.id}`'): strong {{cm.authorName}}
             .comments-post-date.text-label-small {{ $helpers.formatMoment(cm.createdAt, 'from') }} #[em(v-if='cm.createdAt !== cm.updatedAt') - {{$t('common:comments.modified', { reldate: $helpers.formatMoment(cm.updatedAt, 'from') })}}]
             .comments-post-content.mt-3(v-if='commentEditId !== cm.id', v-html='cm.render')
-            .comments-post-editcontent.mt-3(v-else)
+            form.comments-post-editcontent.mt-3(v-else, novalidate, @submit.prevent='updateComment')
               v-textarea(
                 variant="outlined"
                 flat
@@ -136,6 +138,7 @@
                 v-spacer
                 v-btn.mr-3(
                   color="primary"
+                  type='button'
                   @click='editCommentCancel'
                   variant="outlined"
                   :disabled='isBusy'
@@ -144,7 +147,7 @@
                   span.text-none {{$t('common:actions.cancel')}}
                 v-btn(
                   color="primary"
-                  @click='updateComment'
+                  type='submit'
                   variant="flat"
                   :loading='isBusy'
                   :disabled='isBusy'
@@ -230,6 +233,9 @@ export default defineComponent({
       isLoading: true,
       hasLoadedOnce: false,
       fetchError: '',
+      fetchGeneration: 0,
+      fetchController: null as AbortController | null,
+      hasIntersected: false,
       isPosting: false,
       comments: [] as CommentWithInitials[],
       guestName: '',
@@ -252,20 +258,46 @@ export default defineComponent({
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
     userDisplayName(): string { return wikiStore.user.name }
   },
+  watch: {
+    pageId (pageId: number, previousPageId: number) {
+      if (pageId === previousPageId) return
+      this.fetchController?.abort()
+      this.fetchController = null
+      this.fetchGeneration += 1
+      this.comments = []
+      this.hasLoadedOnce = false
+      this.fetchError = ''
+      this.commentToDelete = null
+      this.commentEditId = 0
+      this.commentEditContent = null
+      this.deleteCommentDialogShown = false
+      if (this.hasIntersected) void this.fetch(true)
+    }
+  },
+  beforeUnmount () {
+    this.fetchGeneration += 1
+    this.fetchController?.abort()
+    this.fetchController = null
+  },
   methods: {
     onIntersect (isIntersecting: boolean, _entries: IntersectionObserverEntry[], _observer: IntersectionObserver): void {
-      if (isIntersecting) {
-        this.fetch(true)
-      }
+      if (!isIntersecting) return
+      this.hasIntersected = true
+      void this.fetch(true)
     },
     async fetch (silent = false) {
+      this.fetchController?.abort()
+      const controller = new AbortController()
+      this.fetchController = controller
+      const requestId = ++this.fetchGeneration
       this.isLoading = true
       this.fetchError = ''
       try {
         const comments = await fetchComments(
-          window.fetch.bind(window),
+          (url, options) => window.fetch(url, { ...options, signal: controller.signal }),
           this.pageId
         )
+        if (requestId !== this.fetchGeneration) return
         this.comments = comments.map(comment => {
           const nameParts = comment.authorName.toUpperCase().split(' ')
           const firstInitial = nameParts[0].charAt(0)
@@ -276,6 +308,7 @@ export default defineComponent({
           }
         })
       } catch (err) {
+        if (requestId !== this.fetchGeneration) return
         console.warn(err)
         this.fetchError = getErrorMessage(err)
         if (!silent) {
@@ -286,8 +319,11 @@ export default defineComponent({
           })
         }
       } finally {
-        this.isLoading = false
-        this.hasLoadedOnce = true
+        if (requestId === this.fetchGeneration) {
+          this.fetchController = null
+          this.isLoading = false
+          this.hasLoadedOnce = true
+        }
       }
     },
     /**

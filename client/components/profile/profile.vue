@@ -749,27 +749,6 @@ export default {
     currentAppearance () {
       return _.get(_.find(this.appearances, ['value', this.user?.appearance]), 'text', false) || this.$t('profile:appearanceDefault')
     },
-    pictureUrl () {
-      return wikiStore.user.pictureUrl
-    },
-    picture () {
-      if (this.pictureUrl && this.pictureUrl.length > 1) {
-        return {
-          kind: 'image',
-          url: this.pictureUrl
-        }
-      } else {
-        const nameParts = (this.user?.name ?? '').toUpperCase().split(' ')
-        let initials = nameParts[0]?.charAt(0) ?? ''
-        if (nameParts.length > 1) {
-          initials += nameParts[nameParts.length - 1]?.charAt(0) ?? ''
-        }
-        return {
-          kind: 'initials',
-          initials
-        }
-      }
-    }
   },
   watch: {
     'user.appearance': function (newValue: string, _oldValue: string) {
@@ -866,6 +845,7 @@ export default {
      * Change Password
      */
     async changePassword () {
+      if (this.changePassLoading) return
       this.passwordErrors = {
         current: [],
         password: [],
@@ -953,10 +933,10 @@ export default {
           })
         } catch (err) {
           wikiStore.showError(err)
+        } finally {
+          wikiStore.stopLoading('profile-changepassword')
+          this.changePassLoading = false
         }
-
-        wikiStore.stopLoading('profile-changepassword')
-        this.changePassLoading = false
       }
     }
   }

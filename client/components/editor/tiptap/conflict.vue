@@ -49,7 +49,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { showNotification } from '../../../helpers/root-ui-store'
 import { emitEditorConflictReset, emitEditorConflictResolved } from '../../../helpers/editor-conflict-events'
@@ -74,7 +74,8 @@ export default defineComponent({
         title: '',
         description: ''
       } as PageConflictLatest,
-      isRemoteConfirmDiagShown: false
+      isRemoteConfirmDiagShown: false,
+      requestController: null as AbortController | null
     }
   },
   computed: {
@@ -100,13 +101,21 @@ export default defineComponent({
     }
   },
   async mounted () {
+    const requestController = markRaw(new AbortController())
+    this.requestController = requestController
     let resp: PageConflictLatest | null = null
     try {
-      resp = await fetchPageConflictLatest(window.fetch.bind(window), wikiStore.page.id)
-    } catch {
+      resp = await fetchPageConflictLatest(
+        (url, init) => window.fetch(url, { ...init, signal: requestController.signal }),
+        wikiStore.page.id
+      )
+    } catch (err) {
+      if (requestController.signal.aborted && err instanceof DOMException && err.name === 'AbortError') return
       // The warning below is the user-facing error state.
     }
 
+    if (requestController.signal.aborted && resp) return
+    this.requestController = null
     if (!resp) {
       return showNotification(wikiStore, {
         message: 'Failed to fetch latest version.',
@@ -115,6 +124,10 @@ export default defineComponent({
       })
     }
     this.latest = resp
+  },
+  beforeUnmount () {
+    this.requestController?.abort()
+    this.requestController = null
   }
 })
 </script>

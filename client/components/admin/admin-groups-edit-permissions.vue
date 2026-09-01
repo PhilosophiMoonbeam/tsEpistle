@@ -16,14 +16,15 @@
             v-card-text.pt-0
               template(v-for='(pm, idx) in pmGroup.items', :key='pm.permission')
                 v-checkbox.pt-0(
+                  :id='permissionId(pm.permission)'
                   style='justify-content: space-between;'
                   :label='pm.permission'
                   :hint='permissionHint(pm)'
                   persistent-hint
                   color='primary'
                   :model-value='isPermissionEnabled(pm.permission)'
-                  @update:model-value='togglePermission(pm.permission, $event)'
-                  :aria-describedby='pm.warning || pm.disabled ? riskId(pm.permission) : undefined'
+                  @update:model-value='togglePermission(pm.permission, $event === true)'
+                  :aria-describedby='permissionDescriptionIds(pm.permission, pm.warning || pm.disabled)'
                   :disabled='(group.isSystem && pm.restrictedForSystem) || group.id === 1 || pm.disabled'
                 )
                 .text-body-small.text-warning(v-if='pm.warning || pm.disabled', :id='riskId(pm.permission)') {{pm.disabled ? 'Reserved for root administrators.' : 'High-impact permission. Review before granting.'}}
@@ -251,6 +252,13 @@ export default {
     }
   },
   methods: {
+    permissionId (permission: string): string {
+      return `permission-${permission.replace(/[^a-z0-9]+/g, '-')}`
+    },
+    permissionDescriptionIds (permission: string, hasRisk: boolean): string {
+      const messagesId = `${this.permissionId(permission)}-messages`
+      return hasRisk ? `${messagesId} ${this.riskId(permission)}` : messagesId
+    },
     categoryId (category: string): string {
       return `permission-category-${category.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
     },

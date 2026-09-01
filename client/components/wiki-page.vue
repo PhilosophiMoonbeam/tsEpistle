@@ -162,7 +162,9 @@ export default defineComponent({
         this.updateDocumentMetadata(parsed.documentTitle, parsed.description, parsed.url)
 
         await nextTick()
+        if (controller.signal.aborted || sequence !== this.navigationSequence) return
         await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+        if (controller.signal.aborted || sequence !== this.navigationSequence) return
         this.restoreScroll(parsed.url, options.scrollY)
         window.dispatchEvent(new CustomEvent('wiki:navigation', {
           detail: { url: parsed.url.href, title: parsed.payload.props.title }
@@ -193,7 +195,14 @@ export default defineComponent({
     },
     restoreScroll(destination: URL, savedScrollY = 0): void {
       if (destination.hash) {
-        const target = document.getElementById(decodeURIComponent(destination.hash.slice(1)))
+        const encodedId = destination.hash.slice(1)
+        let targetId = encodedId
+        try {
+          targetId = decodeURIComponent(encodedId)
+        } catch {
+          // Keep the literal fragment when it is not valid percent-encoding.
+        }
+        const target = document.getElementById(targetId)
         if (target) {
           target.scrollIntoView()
           target.setAttribute('tabindex', '-1')

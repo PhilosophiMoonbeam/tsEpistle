@@ -165,7 +165,7 @@
                 v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
                   v-icon(:icon='hideNewPassword ? `mdi-eye-off` : `mdi-eye`')
               template(v-slot:loader)
-                password-strength(v-model='newPassword')
+                password-strength(:model-value='newPassword')
             v-text-field.mt-2(
               variant='outlined'
               prepend-inner-icon='mdi-lock-check-outline'
@@ -210,7 +210,7 @@
                 v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
                   v-icon(:icon='hideNewPassword ? `mdi-eye-off` : `mdi-eye`')
               template(v-slot:loader)
-                password-strength(v-model='newPassword')
+                password-strength(:model-value='newPassword')
             v-text-field.mt-2(
               variant='outlined'
               prepend-inner-icon='mdi-lock-check-outline'
@@ -353,10 +353,8 @@ export default {
   },
   data () {
     return {
-      error: false,
       strategies: [] as AuthStrategy[],
       selectedStrategyKey: 'unselected',
-      selectedStrategy: { key: 'unselected', displayName: '', order: 0, selfRegistration: false, strategy: { useForm: false, usernameType: 'email', color: '', icon: '' } } as AuthStrategy,
       screen: 'login' as LoginScreen,
       username: '',
       password: '',
@@ -368,13 +366,14 @@ export default {
       isLoading: false,
       loaderColor: 'grey-darken-4',
       loaderTitle: 'Working...',
-      isShown: false,
       newPassword: '',
       newPasswordVerify: '',
       isTFAShown: false,
       isTFASetupShown: false,
       tfaQRImage: '',
       tfaSecret: '',
+      focusTimer: null as number | null,
+      redirectTimer: null as number | null,
       errorShown: false,
       errorMessage: '',
       successMessage: '',
@@ -387,15 +386,11 @@ export default {
     }
   },
   computed: {
-    activeModal: {
-      get(): string { return wikiStore.editor.activeModal },
-      set(value: string) { wikiStore.editor.activeModal = value }
+    selectedStrategy (): AuthStrategy {
+      return _.find(this.strategies, ['key', this.selectedStrategyKey]) || { key: 'unselected', displayName: '', order: 0, selfRegistration: false, strategy: { useForm: false, usernameType: 'email', color: '', icon: '' } } as AuthStrategy
     },
     siteTitle () {
       return siteConfig.title
-    },
-    isSocialShown () {
-      return this.strategies.length > 1
     },
     logoUrl () { return siteConfig.logoUrl },
     filteredStrategies () {
@@ -417,7 +412,6 @@ export default {
       })
     },
     selectedStrategyKey (newValue: string) {
-      this.selectedStrategy = _.find(this.strategies, ['key', newValue]) || { key: 'unselected', displayName: '', order: 0, selfRegistration: false, strategy: { useForm: false, usernameType: 'email', color: '', icon: '' } }
       if (['changePwd', 'verifyEmail', 'resetPwd', 'success'].includes(this.screen)) {
         return
       }
@@ -433,7 +427,6 @@ export default {
     }
   },
   mounted () {
-    this.isShown = true
     if (this.verificationToken) {
       this.screen = 'verifyEmail'
     } else if (this.resetPasswordToken) {
@@ -443,6 +436,10 @@ export default {
       this.continuationToken = this.changePwdContinuationToken
     }
     this.loadStrategies()
+  },
+  beforeUnmount () {
+    if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
+    if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
   },
   methods: {
     showError (error: unknown) {
@@ -671,8 +668,10 @@ export default {
       } else if (respObj.mustProvideTFA === true) {
         this.securityCode = ''
         this.isTFAShown = true
-        setTimeout(() => {
-          ;(this.$refs.iptTFA as { focus: () => void }).focus()
+        if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
+        this.focusTimer = window.setTimeout(() => {
+          focusComponent(this.$refs.iptTFA)
+          this.focusTimer = null
         }, 500)
         this.isLoading = false
       } else if (respObj.mustSetupTFA === true) {
@@ -680,8 +679,10 @@ export default {
         this.isTFASetupShown = true
         this.tfaQRImage = respObj.tfaQRImage || ''
         this.tfaSecret = respObj.tfaSecret || ''
-        setTimeout(() => {
-          ;(this.$refs.iptTFASetup as { focus: () => void }).focus()
+        if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
+        this.focusTimer = window.setTimeout(() => {
+          focusComponent(this.$refs.iptTFASetup)
+          this.focusTimer = null
         }, 500)
         this.isLoading = false
       } else {
@@ -689,7 +690,8 @@ export default {
         this.loaderTitle = this.$t('auth:loginSuccess')
         if (!respObj.jwt) throw new Error('Authentication response did not include a token.')
         Cookies.set('jwt', respObj.jwt, { expires: 365, secure: window.location.protocol === 'https:' })
-        _.delay(() => {
+        if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
+        this.redirectTimer = window.setTimeout(() => {
           const loginRedirect = Cookies.get('loginRedirect')
           const isValidRedirect = loginRedirect && loginRedirect.startsWith('/') && !loginRedirect.startsWith('//') && !loginRedirect.includes('://')
           if (loginRedirect === '/' && respObj.redirect) {
@@ -708,6 +710,7 @@ export default {
               window.location.replace('/')
             }
           }
+          this.redirectTimer = null
         }, 1000)
       }
     }

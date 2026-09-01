@@ -72,14 +72,6 @@ export default {
       get() { return this.modelValue },
       set(val: boolean) { this.$emit('update:modelValue', val) }
     },
-    currentEditor: {
-      get() {
-        return wikiStore.editor.editor
-      },
-      set(value: string) {
-        wikiStore.editor.editor = value
-      }
-    },
     availableEditors() {
       const selected = new Set(normalizeAvailableEditors(siteConfig.availableEditors))
       return PAGE_EDITOR_DEFINITIONS.filter(editor => selected.has(editor.key))
@@ -93,7 +85,7 @@ export default {
   },
   methods: {
     selectEditor (name: PageEditorKey) {
-      this.currentEditor = getEditorComponentName(name)
+      wikiStore.editor.editor = getEditorComponentName(name)
       this.isShown = false
     },
     goBack () {

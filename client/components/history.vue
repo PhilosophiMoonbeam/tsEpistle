@@ -181,7 +181,7 @@
             v-card.history-comparison-card.radius-7(v-else-if='trailLoaded' :class='$vuetify.display.mdAndUp ? `mt-8` : ``')
               v-card-text
                 v-card.history-comparison-frame.radius-7(flat)
-                  v-row.history-comparison-summary.align-center(no-gutters)
+                  v-row.history-comparison-summary.align-center(:gap='0')
                     v-col
                       v-card-text
                         h2#history-comparison-heading.history-comparison-heading(ref='comparisonHeading' tabindex='-1') {{target.title}}
@@ -348,7 +348,9 @@ export default {
       trailLoading: true,
       trailLoaded: false,
       loadingMore: false,
-      restoreLoading: false
+      restoreLoading: false,
+      restoreRedirectTimer: null as number | null,
+      requestsAbortController: new AbortController()
     }
   },
   computed: {
@@ -387,30 +389,42 @@ export default {
     }
   },
   watch: {
-    trail (newValue, oldValue) {
-      if (newValue && newValue.length > 0) {
+    trail (newValue: PageHistoryTrailItem[], oldValue: PageHistoryTrailItem[]) {
+      if (newValue.length > 0 && oldValue.length === 0) {
         this.diffTarget = 0
-        this.diffSource = _.get(_.head(newValue), 'versionId', 0)
+        this.diffSource = newValue[0]!.versionId
       }
     },
-    async diffSource (newValue, oldValue) {
-      if (this.diffSource !== this.source.versionId) {
-        const page = _.find(this.cache, { versionId: newValue })
-        if (page) {
-          this.source = page
-        } else {
-          this.source = await this.loadVersion(newValue)
-        }
+    async diffSource (
+      newValue: number,
+      _oldValue: number,
+      onCleanup: (cleanup: () => void) => void
+    ) {
+      if (newValue === this.source.versionId) return
+
+      let cancelled = false
+      onCleanup(() => {
+        cancelled = true
+      })
+      const page = _.find(this.cache, { versionId: newValue }) ?? await this.loadVersion(newValue)
+      if (!cancelled && this.diffSource === newValue) {
+        this.source = page
       }
     },
-    async diffTarget (newValue, oldValue) {
-      if (this.diffTarget !== this.target.versionId) {
-        const page = _.find(this.cache, { versionId: newValue })
-        if (page) {
-          this.target = page
-        } else {
-          this.target = await this.loadVersion(newValue)
-        }
+    async diffTarget (
+      newValue: number,
+      _oldValue: number,
+      onCleanup: (cleanup: () => void) => void
+    ) {
+      if (newValue === this.target.versionId) return
+
+      let cancelled = false
+      onCleanup(() => {
+        cancelled = true
+      })
+      const page = _.find(this.cache, { versionId: newValue }) ?? await this.loadVersion(newValue)
+      if (!cancelled && this.diffTarget === newValue) {
+        this.target = page
       }
     }
   },
@@ -452,21 +466,39 @@ export default {
     }
   },
   mounted() {
-    this.loadHistory()
+    void this.loadHistory()
+  },
+  beforeUnmount() {
+    this.requestsAbortController.abort()
+    if (this.restoreRedirectTimer !== null) {
+      window.clearTimeout(this.restoreRedirectTimer)
+      this.restoreRedirectTimer = null
+    }
   },
   methods: {
+    fetchWithAbort (url: string, init: RequestInit): Promise<Response> {
+      return window.fetch(url, {
+        ...init,
+        signal: this.requestsAbortController.signal
+      })
+    },
     async loadVersion (versionId: number): Promise<PageVersion> {
       loadingStart(wikiStore, 'history-version-' + versionId)
       try {
-        const page = await fetchPageVersion(window.fetch.bind(window), this.pageId, versionId)
+        const page = await fetchPageVersion(this.fetchWithAbort, this.pageId, versionId)
+        if (this.requestsAbortController.signal.aborted) {
+          return { ...emptyPageVersion(versionId), path: this.path, locale: this.locale }
+        }
         this.cache.push(page)
         return page
       } catch (err) {
-        showNotification(wikiStore, {
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        if (!this.requestsAbortController.signal.aborted) {
+          showNotification(wikiStore, {
+            style: 'red',
+            message: getErrorMessage(err),
+            icon: 'alert'
+          })
+        }
         return { ...emptyPageVersion(versionId), path: this.path, locale: this.locale }
       } finally {
         loadingStop(wikiStore, 'history-version-' + versionId)
@@ -489,25 +521,29 @@ export default {
       this.restoreLoading = true
       loadingStart(wikiStore, 'history-restore')
       try {
-        await restorePageVersion(window.fetch.bind(window), this.pageId, this.restoreTarget.versionId, this.sourceRevision)
+        await restorePageVersion(this.fetchWithAbort, this.pageId, this.restoreTarget.versionId, this.sourceRevision)
+        if (this.requestsAbortController.signal.aborted) return
         showNotification(wikiStore, {
           style: 'success',
           message: this.$t('history:restore.success'),
           icon: 'check'
         })
         this.isRestoreConfirmDialogShown = false
-        setTimeout(() => {
+        this.restoreRedirectTimer = window.setTimeout(() => {
           window.location.assign(`/${this.locale}/${this.path}`)
         }, 1000)
       } catch (err) {
-        showNotification(wikiStore, {
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        if (!this.requestsAbortController.signal.aborted) {
+          showNotification(wikiStore, {
+            style: 'red',
+            message: getErrorMessage(err),
+            icon: 'alert'
+          })
+        }
+      } finally {
+        loadingStop(wikiStore, 'history-restore')
+        this.restoreLoading = false
       }
-      loadingStop(wikiStore, 'history-restore')
-      this.restoreLoading = false
     },
     branchOff (versionId: number) {
       const pathParts = this.path.split('/')
@@ -569,14 +605,17 @@ export default {
       this.loadingMore = offsetPage > 0
       setLoading(wikiStore, 'history-trail-refresh', true)
       try {
-        return await fetchPageHistory(
-          window.fetch.bind(window),
+        const result = await fetchPageHistory(
+          this.fetchWithAbort,
           this.pageId,
           offsetPage,
           this.$vuetify.display.mdAndUp ? 25 : 5
         )
+        return this.requestsAbortController.signal.aborted ? null : result
       } catch (error) {
-        this.trailError = getErrorMessage(error)
+        if (!this.requestsAbortController.signal.aborted) {
+          this.trailError = getErrorMessage(error)
+        }
         return null
       } finally {
         this.trailLoading = false

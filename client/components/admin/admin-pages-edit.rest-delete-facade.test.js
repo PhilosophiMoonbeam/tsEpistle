@@ -51,6 +51,12 @@ const createViewModel = options => {
   return viewModel
 }
 
+const loadRoutedPage = (options, viewModel) => {
+  const routeWatcher = options.watch['$route.params.id']
+  const handler = typeof routeWatcher === 'function' ? routeWatcher : routeWatcher.handler
+  return handler.call(viewModel)
+}
+
 describe('admin pages edit REST delete facade', () => {
   it('routes page deletes through the pages REST helper instead of the common GraphQL mutation', () => {
     expect(script).toContain("import { deletePage as deletePageById, fetchPage, type PageDetails } from '../../helpers/pages-api'")
@@ -96,7 +102,7 @@ describe('admin pages edit REST delete facade', () => {
 
     const firstLoad = viewModel.loadPage()
     viewModel.$route.params.id = '2'
-    const secondLoad = options.watch['$route.params.id'].call(viewModel)
+    const secondLoad = loadRoutedPage(options, viewModel)
     const latestPage = { id: 2, sourceRevision: 22, title: 'Page 2' }
     page2.resolve(latestPage)
     await secondLoad
@@ -143,7 +149,7 @@ describe('admin pages edit REST delete facade', () => {
 
     const pendingDelete = viewModel.deletePage()
     viewModel.$route.params.id = '3'
-    await options.watch['$route.params.id'].call(viewModel)
+    await loadRoutedPage(options, viewModel)
     expect(stoppedLoads).toEqual(['admin-pages-refresh', 'admin-pages-refresh'])
     viewModel.deletePageDialog = true
     viewModel.loading = true
@@ -190,7 +196,7 @@ describe('admin pages edit REST delete facade', () => {
 
     const pendingDelete = viewModel.deletePage()
     viewModel.$route.params.id = '3'
-    await options.watch['$route.params.id'].call(viewModel)
+    await loadRoutedPage(options, viewModel)
     expect(stoppedLoads).toEqual(['admin-pages-refresh', 'admin-pages-refresh'])
     viewModel.deletePageDialog = true
     viewModel.loading = true

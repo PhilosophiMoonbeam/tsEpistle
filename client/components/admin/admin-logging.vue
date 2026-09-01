@@ -9,7 +9,7 @@
         )
           template(v-slot:actions)
             .admin-logging-actions
-              v-btn(variant="outlined", color='primary', @click='refresh', size="small", :loading='loading')
+              v-btn(variant="outlined", color='primary', @click='refresh', size="small", :loading='loading', :disabled='saving')
                 v-icon(start) mdi-refresh
                 span Refresh
               v-btn(variant="tonal", color='primary', @click='toggleConsole', size="small")
@@ -39,7 +39,7 @@
                 title='Logging services could not be loaded'
                 :message='errorMessage'
                 retry-label='Try again'
-                @retry='loadLoggers'
+                @retry='retryLoad'
               )
               async-state(
                 v-else-if='loggers.length === 0'
@@ -50,7 +50,7 @@
               v-card.pa-3(flat, rounded='0', v-else)
                 .text-body-medium.text-grey-darken-1 Select which logging service to enable:
                 .text-body-small.text-grey.pb-2 Some loggers require additional configuration in their dedicated tab (when selected).
-                v-form
+                div(role='group', aria-label='Logging services')
                   v-checkbox.my-0(
                     v-for='logger in loggers'
                     v-model='logger.isEnabled'
@@ -62,7 +62,7 @@
 
             v-tabs-window-item(v-for='logger in activeLoggers', :key='logger.key', :value='logger.key', :transition='false', :reverse-transition='false')
               v-card.wiki-form.pa-3(flat, rounded='0')
-                v-form
+                div(role='group', :aria-label='`${logger.title} configuration`')
                   .logger-provider-info
                     .loggerlogo
                       img(:src='logger.logo', :alt='logger.title')
@@ -73,12 +73,11 @@
                   v-divider.mt-3
                   .text-title-small.font-weight-medium.mt-3 Configuration
                   .text-body-large.ml-3(v-if='!logger.config || logger.config.length < 1') This logger has no configuration options you can modify.
-                  template(v-else, v-for='cfg in logger.config')
+                  template(v-else, v-for='cfg in logger.config', :key='cfg.key')
                     v-select(
                       v-if='cfg.value.type === "string" && cfg.value.enum'
                       variant="outlined"
                       :items='cfg.value.enum'
-                      :key='cfg.key'
                       :label='cfg.value.title'
                       v-model='cfg.value.value'
                       :hint='cfg.value.hint ? cfg.value.hint : ""'
@@ -87,7 +86,6 @@
                     )
                     v-switch(
                       v-else-if='cfg.value.type === "boolean"'
-                      :key='cfg.key'
                       :label='cfg.value.title'
                       v-model='cfg.value.value'
                       color='primary'
@@ -97,7 +95,6 @@
                     v-text-field(
                       v-else
                       variant="outlined"
-                      :key='cfg.key'
                       :label='cfg.value.title'
                       v-model='cfg.value.value'
                       :hint='cfg.value.hint ? cfg.value.hint : ""'
@@ -126,7 +123,6 @@
 
 
 <script lang='ts'>
-import _ from 'lodash'
 import AsyncState from '@/components/common/async-state.vue'
 
 import LoggingConsole from './admin-logging-console.vue'
@@ -160,7 +156,14 @@ export default {
   },
   computed: {
     activeLoggers() {
-      return _.filter(this.loggers, 'isEnabled')
+      return this.loggers.filter(logger => logger.isEnabled)
+    }
+  },
+  watch: {
+    activeLoggers(activeLoggers: Logger[]) {
+      if (this.tab !== 'settings' && !activeLoggers.some(logger => logger.key === this.tab)) {
+        this.tab = 'settings'
+      }
     }
   },
   created() {
@@ -192,24 +195,33 @@ export default {
         wikiStore.stopLoading('admin-logging-refresh')
       }
     },
+    async retryLoad() {
+      await this.loadLoggers().catch(() => {})
+    },
     async refresh() {
-      await this.loadLoggers()
-      wikiStore.showNotification({
-        message: 'List of loggers has been refreshed.',
-        style: 'success',
-        icon: 'cached'
-      })
+      if (this.loading || this.saving) return
+      try {
+        await this.loadLoggers()
+        wikiStore.showNotification({
+          message: 'List of loggers has been refreshed.',
+          style: 'success',
+          icon: 'cached'
+        })
+      } catch {
+        // loadLoggers reports the request error.
+      }
     },
     async save() {
+      if (this.saving || this.loading || !this.loggersLoaded) return
       this.saving = true
       wikiStore.startLoading('admin-logging-saveloggers')
       try {
-        await saveLoggingLoggers(window.fetch.bind(window), this.loggers.map(tgt => _.pick(tgt, [
-          'isEnabled',
-          'key',
-          'config',
-          'level'
-        ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))})), 'Logging loggers update failed')
+        await saveLoggingLoggers(window.fetch.bind(window), this.loggers.map(tgt => ({
+          isEnabled: tgt.isEnabled,
+          key: tgt.key,
+          config: tgt.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })})),
+          level: tgt.level
+        })), 'Logging loggers update failed')
         await this.loadLoggers({ notifyError: false })
         wikiStore.showNotification({
           message: 'Logging configuration saved successfully.',

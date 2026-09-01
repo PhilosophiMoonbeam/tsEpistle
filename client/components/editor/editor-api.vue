@@ -210,7 +210,7 @@
                                       v-model='ept.description'
                                     )
 
-    v-system-bar.editor-status-bar.editor-api-sysbar(absolute, status, color="grey-darken-3")
+    v-system-bar.editor-status-bar.editor-api-sysbar(absolute, color="grey-darken-3")
       .text-body-small.editor-api-sysbar-locale {{locale.toUpperCase()}}
       .editor-status-path(title='/' + path) /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
@@ -258,18 +258,51 @@ type ApiEndpointMethod = {
   color: string
 }
 
+function isRecord (value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeEditorServer (value: unknown, index: number): ApiServer | null {
+  if (!isRecord(value)) return null
+  return {
+    id: crypto.randomUUID(),
+    name: typeof value.name === 'string' ? value.name : `Server ${index + 1}`,
+    url: typeof value.url === 'string' ? value.url : '',
+    icon: typeof value.icon === 'string' ? value.icon : 'server'
+  }
+}
+
+function normalizeEditorGroup (value: unknown): ApiEndpointGroup | null {
+  if (!isRecord(value)) return null
+  const endpoints = Array.isArray(value.endpoints)
+    ? value.endpoints.flatMap(endpoint => {
+      if (!isRecord(endpoint)) return []
+      const method = typeof endpoint.method === 'string' ? endpoint.method.toUpperCase() : 'GET'
+      return [{
+        id: crypto.randomUUID(),
+        method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].includes(method) ? method : 'GET',
+        path: typeof endpoint.path === 'string' ? endpoint.path : '',
+        summary: typeof endpoint.summary === 'string' ? endpoint.summary : '',
+        description: typeof endpoint.description === 'string' ? endpoint.description : '',
+        expanded: endpoint.expanded === true
+      }]
+    })
+    : []
+  return {
+    id: crypto.randomUUID(),
+    name: typeof value.name === 'string' ? value.name : '',
+    description: typeof value.description === 'string' ? value.description : '',
+    endpoints
+  }
+}
+
 export default defineComponent({
   data() {
     return {
       tab: `endpoints`,
       kind: 'rest',
-      helpShown: false,
       parseError: '',
       isInitializing: true,
-      kinds: [
-        { text: 'REST', value: 'rest' },
-        { text: 'GraphQL', value: 'graphql' }
-      ],
       info: {
         title: '',
         version: '1.0.0',
@@ -359,9 +392,6 @@ export default defineComponent({
     }
   },
   computed: {
-    isMobile() {
-      return this.$vuetify.display.smAndDown
-    },
     locale() {
       return wikiStore.page.locale
     },
@@ -371,14 +401,6 @@ export default defineComponent({
     mode() {
       return wikiStore.editor.mode
     },
-    activeModal: {
-      get() {
-        return wikiStore.editor.activeModal
-      },
-      set(value: string) {
-        wikiStore.editor.activeModal = value
-      }
-    }
   },
   watch: {
     info: { deep: true, handler() { this.serializeDocument() } },
@@ -432,33 +454,48 @@ export default defineComponent({
       grp.endpoints = grp.endpoints.filter(endpoint => endpoint.id !== eptId)
     },
     parseDocument (content: string) {
-      const document = JSON.parse(content) as Record<string, unknown>
+      const parsed: unknown = JSON.parse(content)
+      if (!isRecord(parsed)) throw new Error('The API document must be a JSON object.')
+      const document = parsed
       if (document.openapi !== undefined && typeof document.openapi !== 'string') throw new Error('The API document has an invalid OpenAPI version.')
-      const info = document.info as Record<string, unknown> | undefined
+      const info = isRecord(document.info) ? document.info : undefined
       if (info) {
         this.info.title = typeof info.title === 'string' ? info.title : ''
         this.info.version = typeof info.version === 'string' ? info.version : '1.0.0'
         this.info.description = typeof info.description === 'string' ? info.description : ''
       }
-      const editorData = document['x-wiki-editor'] as Record<string, unknown> | undefined
+      const editorData = isRecord(document['x-wiki-editor']) ? document['x-wiki-editor'] : undefined
       if (editorData && Array.isArray(editorData.servers) && Array.isArray(editorData.endpointGroups)) {
         this.kind = editorData.kind === 'graphql' ? 'graphql' : 'rest'
-        this.servers = editorData.servers as ApiServer[]
-        this.endpointGroups = editorData.endpointGroups as ApiEndpointGroup[]
+        this.servers = editorData.servers.flatMap((server, index) => {
+          const normalized = normalizeEditorServer(server, index)
+          return normalized ? [normalized] : []
+        })
+        this.endpointGroups = editorData.endpointGroups.flatMap(group => {
+          const normalized = normalizeEditorGroup(group)
+          return normalized ? [normalized] : []
+        })
         return
       }
       this.servers = Array.isArray(document.servers)
-        ? document.servers.map((server, index) => {
-          const item = server as Record<string, unknown>
-          return { id: crypto.randomUUID(), name: typeof item.description === 'string' ? item.description : `Server ${index + 1}`, url: typeof item.url === 'string' ? item.url : '', icon: 'server' }
+        ? document.servers.flatMap((server, index) => {
+          if (!isRecord(server)) return []
+          return [{
+            id: crypto.randomUUID(),
+            name: typeof server.description === 'string' ? server.description : `Server ${index + 1}`,
+            url: typeof server.url === 'string' ? server.url : '',
+            icon: 'server'
+          }]
         })
         : []
       const groups = new Map<string, ApiEndpointGroup>()
-      const paths = document.paths as Record<string, unknown> | undefined
+      const paths = isRecord(document.paths) ? document.paths : undefined
       for (const [path, operations] of Object.entries(paths ?? {})) {
-        for (const [method, operation] of Object.entries((operations as Record<string, unknown>) ?? {})) {
+        if (!isRecord(operations)) continue
+        for (const [method, operation] of Object.entries(operations)) {
           if (!['get', 'post', 'put', 'patch', 'delete', 'head', 'options'].includes(method)) continue
-          const details = operation as Record<string, unknown>
+          if (!isRecord(operation)) continue
+          const details = operation
           const groupName = Array.isArray(details.tags) && typeof details.tags[0] === 'string' ? details.tags[0] : 'Default'
           const group = groups.get(groupName) ?? { id: crypto.randomUUID(), name: groupName, description: '', endpoints: [] }
           group.endpoints.push({ id: crypto.randomUUID(), method: method.toUpperCase(), path, summary: typeof details.summary === 'string' ? details.summary : '', description: typeof details.description === 'string' ? details.description : '', expanded: false })
@@ -490,14 +527,6 @@ export default defineComponent({
         'x-wiki-editor': { kind: this.kind, servers: this.servers, endpointGroups: this.endpointGroups }
       }, null, 2)
     },
-    toggleModal(key: string) {
-      this.activeModal = (this.activeModal === key) ? '' : key
-      this.helpShown = false
-    },
-    closeAllModal() {
-      this.activeModal = ''
-      this.helpShown = false
-    }
   },
   mounted() {
     wikiStore.editor.editorKey = 'api'

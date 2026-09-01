@@ -97,7 +97,7 @@
                 variant="text"
                 :disabled="canSubmit === false"
                 prepend-icon="mdi-reload"
-                @click="$emit('suggest', entry.retryPrompt)"
+                @click="emit('suggest', entry.retryPrompt)"
               >
                 Try again
               </v-btn>
@@ -183,7 +183,7 @@
         :tool="proposalEntry.tool"
         :proposal="proposalEntry.proposal"
         :busy="Boolean(decidingApprovalId && proposalEntry.proposal.approval?.id === decidingApprovalId)"
-        @decision="(...args) => $emit('decision', ...args)"
+        @decision="forwardDecision"
       />
     </template>
     <section v-if="thread.artifacts.length" class="artifact-grid mt-4" aria-label="Browser screenshots">
@@ -214,7 +214,7 @@
         variant="tonal"
         size="small"
         :disabled="canSubmit === false"
-        @click="$emit('suggest', suggestion.prompt)"
+        @click="emit('suggest', suggestion.prompt)"
       >{{ suggestion.label }}</v-btn>
     </div>
   </section>
@@ -232,6 +232,16 @@ import {
 } from './agent-thread-presentation.ts'
 
 const props = defineProps<{ thread: AgentThreadState; connection: string; decidingApprovalId?: string | null; canSubmit?: boolean }>()
+const emit = defineEmits<{
+  suggest: [prompt: string]
+  decision: [proposalId: string, approvalId: string, decision: 'approved' | 'denied', confirmationPath?: string]
+}>()
+const forwardDecision = (
+  proposalId: string,
+  approvalId: string,
+  decision: 'approved' | 'denied',
+  confirmationPath?: string
+): void => emit('decision', proposalId, approvalId, decision, confirmationPath)
 
 const messageTimeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const messageTimestampFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })

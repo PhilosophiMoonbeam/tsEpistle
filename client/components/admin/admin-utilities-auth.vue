@@ -15,18 +15,18 @@
       v-btn(variant="outlined", color='warning', @click='openConfirmation("guest")', :loading='activeOperation === "guest"', :disabled='loading && activeOperation !== "guest"').ml-0.mt-3
         v-icon(start) mdi-account-alert-outline
         span Reset guest user
-    v-dialog(v-model='confirmationDialog', max-width='520', persistent)
+    v-dialog(v-model='confirmationDialog', max-width='520', persistent, aria-labelledby='authentication-confirmation-title')
       v-card
-        v-card-title {{ confirmationTitle }}
+        v-card-title#authentication-confirmation-title {{ confirmationTitle }}
         v-card-text
           .text-body-medium {{ confirmationText }}
         v-card-actions
           v-btn(variant="text", @click='confirmationDialog = false', :disabled='loading') Cancel
           v-spacer
           v-btn(:color='confirmAction === "certificates" ? "error" : "warning"', @click='confirmAction === "certificates" ? regenCerts() : resetGuest()', :loading='loading') {{ confirmAction === "certificates" ? "Regenerate certificates" : "Reset guest user" }}
-    v-dialog(v-model='resultDialog', max-width='520', persistent)
+    v-dialog(v-model='resultDialog', max-width='520', persistent, aria-labelledby='authentication-result-title')
       v-card
-        v-card-title.text-success Authentication certificates regenerated
+        v-card-title.text-success#authentication-result-title Authentication certificates regenerated
         v-card-text(aria-live='polite') {{ resultMessage }}
 
 </template>
@@ -61,10 +61,12 @@ export default {
   },
   methods: {
     openConfirmation (action: Exclude<AuthAction, ''>) {
+      if (this.loading) return
       this.confirmAction = action
       this.confirmationDialog = true
     },
     async regenCerts () {
+      if (this.loading) return
       this.loading = true
       this.activeOperation = 'certificates'
       wikiStore.startLoading('admin-utilities-auth-regencerts')
@@ -86,6 +88,7 @@ export default {
       }
     },
     async resetGuest () {
+      if (this.loading) return
       this.loading = true
       this.activeOperation = 'guest'
       wikiStore.startLoading('admin-utilities-auth-resetguest')

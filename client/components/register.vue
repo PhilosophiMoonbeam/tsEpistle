@@ -67,7 +67,7 @@
                         v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hidePassword ? `Show password` : `Hide password`' @click='hidePassword = !hidePassword')
                           v-icon(:icon='hidePassword ? `mdi-eye-off` : `mdi-eye`')
                       template(v-slot:loader)
-                        password-strength(v-model='password')
+                        password-strength(:model-value='password')
                     v-text-field.mt-2(
                       variant="outlined"
                       prepend-inner-icon='mdi-lock-check-outline'

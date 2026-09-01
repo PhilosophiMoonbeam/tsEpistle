@@ -6,7 +6,7 @@
   )
     v-progress-linear(
       :color='passwordStrengthColor'
-      v-model='passwordStrength'
+      :model-value='passwordStrength'
       height='2'
       role="progressbar"
       aria-label="Password strength"

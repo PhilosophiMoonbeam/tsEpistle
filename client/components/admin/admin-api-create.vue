@@ -1,10 +1,10 @@
 <template lang="pug">
   div
-    v-dialog(v-model='isShown', max-width='650', persistent)
+    v-dialog(v-model='isShown', max-width='650', persistent, aria-labelledby='api-key-create-title')
       v-card.admin-dialog--scrollable
         .dialog-header.is-short
           v-icon.mr-3(color='white') mdi-plus
-          span {{$t('admin:api.newKeyTitle')}}
+          span#api-key-create-title {{$t('admin:api.newKeyTitle')}}
         v-card-text.pt-5.admin-dialog--scrollable__body
           v-text-field(
             variant="outlined"
@@ -30,10 +30,10 @@
           v-divider.mt-4
           v-list-subheader.pl-2: strong.text-indigo {{$t('admin:api.newKeyPermissionScopes')}}
           v-radio-group.pl-4(v-model='scope', :rules='[scopeRule]')
-            v-radio(value='full', color='indigo', label='System administrator permissions')
-            .text-body-small.text-medium-emphasis.ml-10.mb-3 Grants the key unrestricted system-administrator authority.
-            v-radio(value='group', color='indigo', label='Use a group’s permissions')
-            .text-body-small.text-medium-emphasis.ml-10 The key is limited to the selected group’s permissions and page rules.
+            v-radio(value='full', color='indigo', label='System administrator permissions', aria-describedby='api-key-full-scope-description')
+            #api-key-full-scope-description.text-body-small.text-medium-emphasis.ml-10.mb-3 Grants the key unrestricted system-administrator authority.
+            v-radio(value='group', color='indigo', label='Use a group’s permissions', aria-describedby='api-key-group-scope-description')
+            #api-key-group-scope-description.text-body-small.text-medium-emphasis.ml-10 The key is limited to the selected group’s permissions and page rules.
           v-select.ml-8.mt-2(
             v-if='scope === `group`'
             :items='groups'
@@ -57,10 +57,11 @@
       v-model='isCopyKeyDialogShown'
       max-width='750'
       persistent
+      aria-labelledby='api-key-copy-title'
       )
       v-card
         v-toolbar(density="compact", flat, color='primary')
-          v-toolbar-title 2. Copy key
+          v-toolbar-title#api-key-copy-title 2. Copy key
         v-card-text.pt-5
           .text-body-medium.text-center
             i18next(tag='span', path='admin:api.newKeyCopyWarn')
@@ -70,7 +71,7 @@
             variant="outlined"
             no-resize
             readonly
-            v-model='key'
+            :model-value='key'
             :rows='5'
             hide-details
             class='api-key-value'
@@ -79,7 +80,7 @@
             v-btn(variant="outlined", color='primary', @click='copyKey')
               v-icon(start) mdi-content-copy
               span {{ copied ? 'Copied' : 'Copy key' }}
-            span.text-body-small.text-medium-emphasis(v-if='copied') Key copied. Store it somewhere safe before continuing.
+            span.text-body-small.text-medium-emphasis(v-if='copied', role='status', aria-live='polite') Key copied. Store it somewhere safe before continuing.
         div.v-card-chin
           v-spacer
           v-btn.px-3(variant="flat", color='primary', @click='finishCopyKey') I’ve saved this key
@@ -137,11 +138,16 @@ export default {
     }
   },
   watch: {
-    modelValue (newValue: boolean) {
-      if (newValue) {
-        this.$nextTick(() => {
-          ;(this.$refs.keyNameInput as { focus: () => void })?.focus()
-        })
+    modelValue: {
+      immediate: true,
+      handler (newValue: boolean) {
+        if (newValue) {
+          this.$nextTick(() => {
+            if (this.modelValue) {
+              ;(this.$refs.keyNameInput as { focus?: () => void } | undefined)?.focus?.()
+            }
+          })
+        }
       }
     },
     isCopyKeyDialogShown (newValue: boolean) {
@@ -154,7 +160,7 @@ export default {
         await navigator.clipboard.writeText(this.key)
         this.copied = true
       } catch {
-        const input = (this.$refs.keyContentsIpt as { $refs?: { input?: HTMLTextAreaElement } }).$refs?.input
+        const input = this.$refs.keyContentsIpt as { select: () => void } | undefined
         input?.select()
         wikiStore.showNotification({ style: 'red', message: 'Copy failed. Select the key and copy it manually.', icon: 'alert' })
       }
@@ -174,10 +180,12 @@ export default {
           message: getErrorMessage(err),
           icon: 'alert'
         })
+      } finally {
+        wikiStore.stopLoading('admin-api-groups-refresh')
       }
-      wikiStore.stopLoading('admin-api-groups-refresh')
     },
     async generate () {
+      if (this.loading) return
       try {
         if (_.trim(this.name).length < 2 || this.name.length > 255) {
           throw new Error(this.$t('admin:api.newKeyNameError'))

@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-modal-drawio.animated.fadeIn(flat, rounded='0')
+  v-card.editor-modal-drawio.animated.fadeIn(flat, rounded='0', role='dialog', aria-modal='true', aria-labelledby='drawio-editor-title')
     v-toolbar.editor-modal-drawio__toolbar(color='surface', density='comfortable')
       v-btn(
         icon='mdi-arrow-left'
@@ -7,13 +7,12 @@
         aria-label='Back to editor'
         @click='close'
       )
-      v-toolbar-title Draw.io
+      v-toolbar-title#drawio-editor-title Draw.io
     iframe(
       v-if='!loadError'
       ref='drawio'
       :key='frameVersion'
       src='https://embed.diagrams.net/?embed=1&proto=json&spin=1&saveAndExit=1&noSaveBtn=1&noExitBtn=0'
-      frameborder='0'
       title='Diagram editor'
     )
     async-state.editor-modal-drawio__state(
@@ -33,10 +32,11 @@
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'
-import { emitEditorConflictResolved } from '../../helpers/editor-conflict-events'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
 import { isRecord } from '../../helpers/type-guards'
 import AsyncState from '@/components/common/async-state.vue'
+
+const DRAWIO_ORIGIN = 'https://embed.diagrams.net'
 
 type DrawioRequest =
   | {
@@ -71,24 +71,10 @@ export default {
   components: { AsyncState },
   data() {
     return {
-      content: '',
       loading: true,
       loadError: '',
       frameVersion: 0,
       loadTimer: null as ReturnType<typeof setTimeout> | null
-    }
-  },
-  computed: {
-    editorKey() {
-      return wikiStore.editor.editorKey
-    },
-    activeModal: {
-      get() {
-        return wikiStore.editor.activeModal
-      },
-      set(value: string) {
-        wikiStore.editor.activeModal = value
-      }
     }
   },
   methods: {
@@ -115,15 +101,11 @@ export default {
       this.loading = true
       this.loadError = ''
       this.frameVersion += 1
-      this.$nextTick(() => this.startLoadTimer())
+      this.startLoadTimer()
     },
     close () {
       this.clearLoadTimer()
-      this.activeModal = ''
-    },
-    overwriteAndClose() {
-      emitEditorConflictResolved()
-      this.close()
+      wikiStore.editor.activeModal = ''
     },
     send (msg: DrawioRequest) {
       const drawio = this.$refs.drawio as HTMLIFrameElement | undefined
@@ -131,11 +113,11 @@ export default {
         this.showError('The diagram editor is unavailable.')
         return
       }
-      drawio.contentWindow.postMessage(JSON.stringify(msg), '*')
+      drawio.contentWindow.postMessage(JSON.stringify(msg), DRAWIO_ORIGIN)
     },
     receive (evt: MessageEvent<unknown>) {
       const drawio = this.$refs.drawio as HTMLIFrameElement | undefined
-      if (!drawio?.contentWindow || evt.source !== drawio.contentWindow || typeof evt.data !== 'string' || evt.data.length < 1) {
+      if (evt.origin !== DRAWIO_ORIGIN || !drawio?.contentWindow || evt.source !== drawio.contentWindow || typeof evt.data !== 'string' || evt.data.length < 1) {
         return
       }
       try {

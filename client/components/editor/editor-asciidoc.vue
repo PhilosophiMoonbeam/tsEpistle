@@ -163,7 +163,7 @@
               v-btn.ml-2(size='small', variant='text', @click='retryPreview') Retry
             div(ref='editorPreview', v-html='previewHTML')
 
-    v-system-bar.editor-status-bar.editor-asciidoc-sysbar(absolute, status, color="grey-darken-3")
+    v-system-bar.editor-status-bar.editor-asciidoc-sysbar(absolute, color="grey-darken-3")
       .text-body-small.editor-asciidoc-sysbar-locale {{locale.toUpperCase()}}
       .editor-status-path(title='/' + path) /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
@@ -225,7 +225,6 @@ export default defineComponent({
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: this.mdAndUp,
       insertLinkDialog: false,
-      helpShown: false,
       previewHTML: '',
       previewLoading: false,
       previewError: '',
@@ -233,11 +232,8 @@ export default defineComponent({
     }
   },
   computed: {
-    isMobile() {
-      return this.$vuetify.display.smAndDown
-    },
     isModalShown() {
-      return this.helpShown || this.activeModal !== ''
+      return this.activeModal !== ''
     },
     locale() {
       return wikiStore.page.locale
@@ -260,7 +256,6 @@ export default defineComponent({
   methods: {
     toggleModal(key: string) {
       this.activeModal = this.activeModal === key ? '' : key
-      this.helpShown = false
     },
     handleEditorSaveConflict() {
       this.toggleModal('editorModalConflict')
@@ -288,7 +283,6 @@ export default defineComponent({
     },
     closeAllModal() {
       this.activeModal = ''
-      this.helpShown = false
     },
     editor(): TextEditorHandle {
       if (!this.cm) throw new Error('CodeMirror editor is not initialized')
@@ -310,7 +304,7 @@ export default defineComponent({
         const $ = cheerio.load(html, { decodeEntities: true })
         $('pre.highlight > code.language-diagram').each((_index: number, element: Element) => {
           const diagramContent = decodeBase64Text($(element).html() ?? '')
-          $(element).parent().replaceWith(`<pre class="diagram">${diagramContent}</div>`)
+          $(element).parent().replaceWith(`<pre class="diagram">${diagramContent}</pre>`)
         })
         this.previewHTML = DOMPurify.sanitize($.html(), {
           ADD_TAGS: ['foreignObject'],
@@ -458,7 +452,7 @@ export default defineComponent({
     this.cm = cm
 
     // Render initial preview
-    this.processContent(wikiStore.editor.content)
+    void this.processContent(wikiStore.editor.content)
 
     onEditorInsert(this.handleEditorInsert)
 
@@ -467,6 +461,7 @@ export default defineComponent({
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeUnmount() {
+    this.previewRequestId += 1
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)

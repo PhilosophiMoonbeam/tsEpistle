@@ -24,7 +24,7 @@
           dl.admin-stat__body
             dt.admin-stat__label {{ stat.label }}
             dd.admin-stat__value
-              animated-number(v-if='stat.value !== undefined' :value='stat.value' :duration='1200' :formatValue='round' easing='easeOutQuint')
+              animated-number(v-if='stat.value !== undefined' :value='stat.value' :duration='1200' :formatValue='round')
               span.admin-stat__value--text(v-else) {{ stat.textValue }}
             dd.admin-stat__hint {{ stat.hint }}
           v-icon.admin-stat__arrow(size='18') mdi-arrow-up-right
@@ -162,6 +162,7 @@ export default {
       recentPages: [] as RecentPageRow[],
       recentPagesLoading: false,
       recentPagesError: '',
+      recentPagesRequestId: 0,
       recentPagesHeaders: [
         { title: 'Title', value: 'title' },
         { title: 'Path', value: 'path' },
@@ -170,6 +171,7 @@ export default {
       lastLogins: [] as LastLoginRow[],
       lastLoginsLoading: false,
       lastLoginsError: '',
+      lastLoginsRequestId: 0,
       lastLoginsHeaders: [
         { title: 'User', value: 'displayName' },
         { title: 'Last Login', value: 'lastLoginAt', width: 250 }
@@ -204,11 +206,21 @@ export default {
   watch: {
     canViewRecentPages(newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) this.loadRecentPages()
-      else if (!newValue) this.recentPages = []
+      else if (!newValue) {
+        this.recentPagesRequestId++
+        this.recentPages = []
+        this.recentPagesError = ''
+        this.recentPagesLoading = false
+      }
     },
     canViewLastLogins(newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) this.loadLastLogins()
-      else if (!newValue) this.lastLogins = []
+      else if (!newValue) {
+        this.lastLoginsRequestId++
+        this.lastLogins = []
+        this.lastLoginsError = ''
+        this.lastLoginsLoading = false
+      }
     }
   },
   created() {
@@ -221,37 +233,49 @@ export default {
       return _.isArray(prm) ? _.some(prm, p => _.includes(this.permissions, p)) : _.includes(this.permissions, prm)
     },
     async loadRecentPages() {
+      const requestId = ++this.recentPagesRequestId
       this.recentPagesLoading = true
       this.recentPagesError = ''
       loadingStart(wikiStore, 'admin-dashboard-recentpages')
       try {
-        this.recentPages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')
+        const pages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')
+        if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false
+        this.recentPages = pages
         return true
       } catch (err) {
+        if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false
         this.recentPagesError = getErrorMessage(err)
         showNotification(wikiStore, { message: this.recentPagesError, style: 'error', icon: 'alert' })
         return false
       } finally {
-        this.recentPagesLoading = false
         loadingStop(wikiStore, 'admin-dashboard-recentpages')
+        if (requestId === this.recentPagesRequestId) this.recentPagesLoading = false
       }
     },
     async loadLastLogins() {
+      const requestId = ++this.lastLoginsRequestId
       this.lastLoginsLoading = true
       this.lastLoginsError = ''
       loadingStart(wikiStore, 'admin-dashboard-lastlogins')
       try {
-        this.lastLogins = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')
+        const users = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')
+        if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false
+        this.lastLogins = users
         return true
       } catch (err) {
+        if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false
         this.lastLoginsError = getErrorMessage(err)
         showNotification(wikiStore, { message: this.lastLoginsError, style: 'error', icon: 'alert' })
         return false
       } finally {
-        this.lastLoginsLoading = false
         loadingStop(wikiStore, 'admin-dashboard-lastlogins')
+        if (requestId === this.lastLoginsRequestId) this.lastLoginsLoading = false
       }
     }
+  },
+  beforeUnmount() {
+    this.recentPagesRequestId++
+    this.lastLoginsRequestId++
   }
 }
 </script>

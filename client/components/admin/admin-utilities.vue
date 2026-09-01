@@ -18,7 +18,7 @@
             :items='tools'
             item-value='key'
             :item-title='toolTitle'
-            :item-disabled='toolDisabled'
+            :item-props='toolProps'
             v-model='selectedTool'
             variant='outlined'
             hide-details
@@ -48,15 +48,16 @@
 </template>
 
 <script lang='ts'>
+import { defineAsyncComponent } from 'vue'
 
 export default {
   components: {
-    UtilityAuth: () => import('./admin-utilities-auth.vue'),
-    UtilityContent: () => import('./admin-utilities-content.vue'),
-    UtilityCache: () => import('./admin-utilities-cache.vue'),
-    UtilityExport: () => import('./admin-utilities-export.vue'),
-    UtilityImportv1: () => import('./admin-utilities-importv1.vue'),
-    UtilityTelemetry: () => import('./admin-utilities-telemetry.vue')
+    UtilityAuth: defineAsyncComponent(() => import('./admin-utilities-auth.vue')),
+    UtilityContent: defineAsyncComponent(() => import('./admin-utilities-content.vue')),
+    UtilityCache: defineAsyncComponent(() => import('./admin-utilities-cache.vue')),
+    UtilityExport: defineAsyncComponent(() => import('./admin-utilities-export.vue')),
+    UtilityImportv1: defineAsyncComponent(() => import('./admin-utilities-importv1.vue')),
+    UtilityTelemetry: defineAsyncComponent(() => import('./admin-utilities-telemetry.vue'))
   },
   data() {
     return {
@@ -111,8 +112,8 @@ export default {
     toolTitle(tool: { i18nKey: string }) {
       return this.$t(`admin:utilities.${tool.i18nKey}Title`)
     },
-    toolDisabled(tool: { isAvailable: boolean }) {
-      return !tool.isAvailable
+    toolProps(tool: { isAvailable: boolean }) {
+      return { disabled: !tool.isAvailable }
     }
   }
 }

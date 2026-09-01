@@ -89,8 +89,8 @@
         <small>{{ diffLines.length }} diff {{ diffLines.length === 1 ? 'line' : 'lines' }}</small>
       </summary>
       <div class="proposal-diff">
-        <pre tabindex="0" :aria-label="`Proposed output record for ${proposal.target?.path || actionLabel}`"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
-        <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" @click="expanded = !expanded">
+        <pre :id="`agent-approval-diff-${proposal.id}`" tabindex="0" :aria-label="`Proposed output record for ${proposal.target?.path || actionLabel}`"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+        <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" :aria-controls="`agent-approval-diff-${proposal.id}`" :aria-expanded="expanded" @click="expanded = !expanded">
           {{ expanded ? 'Show less' : `Show all ${diffLines.length} lines` }}
         </v-btn>
       </div>
@@ -217,8 +217,8 @@
           <small>{{ diffLines.length }} diff {{ diffLines.length === 1 ? 'line' : 'lines' }}</small>
         </summary>
         <div class="proposal-diff">
-          <pre tabindex="0" :aria-label="`Proposed output for ${proposal.target?.path || actionLabel}`"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
-          <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" @click="expanded = !expanded">
+          <pre :id="`agent-approval-diff-${proposal.id}`" tabindex="0" :aria-label="`Proposed output for ${proposal.target?.path || actionLabel}`"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+          <v-btn v-if="diffLines.length > collapsedLineCount" class="agent-operation__diff-toggle" size="small" variant="text" :aria-controls="`agent-approval-diff-${proposal.id}`" :aria-expanded="expanded" @click="expanded = !expanded">
             {{ expanded ? 'Show less' : `Show all ${diffLines.length} lines` }}
           </v-btn>
         </div>
@@ -228,7 +228,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import type { AgentProposalView, AgentToolCallView, AgentToolState } from '../../../shared/agents/contracts.ts'
 import { agentApprovalTitle, agentProposalReceiptLabel } from './agent-thread-presentation.ts'
 
@@ -328,14 +328,22 @@ const expiryLabel = computed(() => {
   return minutes === 1 ? 'expires in 1 minute' : `expires in ${minutes} minutes`
 })
 const canDecide = computed(() => approvalPending.value && !locallyExpired.value && !props.busy && !decisionInFlight.value)
-const diffLines = computed(() => props.proposal.diff ? props.proposal.diff.split('\n').map(text => ({
-  text,
-  kind: text.startsWith('+') && !text.startsWith('+++')
-    ? 'insert' as const
-    : text.startsWith('-') && !text.startsWith('---')
-      ? 'delete' as const
-      : 'context' as const
-})) : [])
+const diffLines = computed(() => {
+  const occurrences = new Map<string, number>()
+  return props.proposal.diff?.split('\n').map(text => {
+    const occurrence = occurrences.get(text) ?? 0
+    occurrences.set(text, occurrence + 1)
+    return {
+      key: `${text.length}:${text}:${occurrence}`,
+      text,
+      kind: text.startsWith('+') && !text.startsWith('+++')
+        ? 'insert' as const
+        : text.startsWith('-') && !text.startsWith('---')
+          ? 'delete' as const
+          : 'context' as const
+    }
+  }) ?? []
+})
 const reviewAdequate = computed(() => Boolean(props.proposal.target?.path.trim() || props.proposal.diff?.trim()))
 const reviewDescription = computed(() => reviewAdequate.value
   ? 'Approve authorizes only the effect represented by the available target or proposed diff. The visible command, target, diff, and hashes are this bounded review record.'
@@ -392,7 +400,7 @@ watch(approvalPending, (pending, wasPending) => {
   if (pending) startExpiryTimer()
   else {
     stopExpiryTimer()
-    if (wasPending) void Promise.resolve().then(() => receiptSummary.value?.focus())
+    if (wasPending) void nextTick(() => receiptSummary.value?.focus())
   }
 }, { immediate: true })
 watch(statusKey, startExpiryTimer)
@@ -400,12 +408,12 @@ watch(() => props.proposal.expiresAt, startExpiryTimer)
 watch(() => props.tool.completedAt, startExpiryTimer)
 watch(() => props.busy, busy => {
   if (busy) return
-  if (decisionInFlight.value && approvalPending.value) {
-    const target = decisionInFlight.value === 'approved' ? approveButton.value : denyButton.value
-    void Promise.resolve().then(() => elementForRef(target)?.focus())
-    decisionMessage.value = 'The decision could not be completed. Review the request and try again.'
-  }
+  const target = decisionInFlight.value && approvalPending.value
+    ? decisionInFlight.value === 'approved' ? approveButton.value : denyButton.value
+    : null
+  if (target) decisionMessage.value = 'The decision could not be completed. Review the request and try again.'
   decisionInFlight.value = null
+  if (target) void nextTick(() => elementForRef(target)?.focus())
 })
 onBeforeUnmount(stopExpiryTimer)
 const decide = (decision: 'approved' | 'denied'): void => {

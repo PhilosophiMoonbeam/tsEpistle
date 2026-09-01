@@ -273,7 +273,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { decideAgentProposal, getMcpAgentProposal, type McpAgentProposal } from '../../helpers/agents-api.ts'
 
 const props = defineProps<{ csrfToken: string; proposalId: string }>()
@@ -290,6 +290,9 @@ const settledReceipt = ref<{ $el: HTMLElement } | null>(null)
 const errorAlert = ref<{ $el: HTMLElement } | null>(null)
 let clockTimer: number | null = null
 let expiryDeadlineTimer: number | null = null
+let loadController: AbortController | null = null
+let loadGeneration = 0
+let disposed = false
 
 type ApprovalSurfaceStatus = 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'cancelled' | 'expired' | 'idle'
 
@@ -455,23 +458,35 @@ const focusError = async (): Promise<void> => {
   errorAlert.value?.$el.focus()
 }
 const load = async (): Promise<void> => {
+  if (disposed) return
+  loadController?.abort()
+  const controller = new AbortController()
+  loadController = controller
+  const generation = ++loadGeneration
   loading.value = true
   error.value = ''
   if (!props.proposalId) {
     error.value = 'Proposal URL is invalid.'
     loading.value = false
+    if (loadController === controller) loadController = null
     await focusError()
     return
   }
   try {
-    proposal.value = await getMcpAgentProposal(window.fetch.bind(window), props.csrfToken, props.proposalId)
+    const nextProposal = await getMcpAgentProposal(window.fetch.bind(window), props.csrfToken, props.proposalId, controller.signal)
+    if (generation !== loadGeneration) return
+    proposal.value = nextProposal
     syncExpiryDeadline()
     syncClockTimer()
   } catch (value) {
+    if (generation !== loadGeneration || controller.signal.aborted) return
     error.value = value instanceof Error ? value.message : 'Proposal could not be loaded.'
     await focusError()
   } finally {
-    loading.value = false
+    if (generation === loadGeneration) {
+      loading.value = false
+      if (loadController === controller) loadController = null
+    }
   }
 }
 
@@ -488,18 +503,21 @@ const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
   if (decision === 'approved' && current.risk === 'destructive-write' && confirmationPath.value !== current.confirmationPath) return
   pendingDecision.value = decision
   error.value = ''
+  const proposalId = props.proposalId
   try {
     await decideAgentProposal(window.fetch.bind(window), props.csrfToken, current.id, current.approval.id, {
       decision,
       ...(decisionNote.value.trim() ? { decisionNote: decisionNote.value.trim() } : {}),
       ...(decision === 'approved' && current.confirmationPath ? { confirmationPath: confirmationPath.value } : {})
     })
+    if (disposed || props.proposalId !== proposalId) return
     await load()
-    if (proposal.value?.approval.status !== 'pending') {
+    if (!disposed && props.proposalId === proposalId && proposal.value?.approval.status !== 'pending') {
       await nextTick()
       settledReceipt.value?.$el.focus()
     }
   } catch (value) {
+    if (disposed || props.proposalId !== proposalId) return
     error.value = value instanceof Error ? value.message : 'Proposal decision failed.'
     await focusError()
   } finally {
@@ -507,10 +525,23 @@ const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
   }
 }
 
-onMounted(() => {
-  void load()
-})
+watch(
+  () => [props.proposalId, props.csrfToken] as const,
+  () => {
+    stopClockTimer()
+    clearExpiryDeadline()
+    proposal.value = null
+    expanded.value = false
+    decisionNote.value = ''
+    confirmationPath.value = ''
+    void load()
+  },
+  { immediate: true }
+)
 onBeforeUnmount(() => {
+  disposed = true
+  loadGeneration++
+  loadController?.abort()
   stopClockTimer()
   clearExpiryDeadline()
 })

@@ -22,7 +22,7 @@
           @keyup.up='searchMove(`up`)'
           autocomplete='off'
         )
-    v-row.nav-header-layout(no-gutters)
+    v-row.nav-header-layout(gap='0')
       v-col.nav-header-brand-col(cols='5', md='4')
         .nav-header-inner.nav-header-brand
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
@@ -330,9 +330,7 @@ export default defineComponent({
   },
   data() {
     return {
-      menuIsShown: true,
       searchIsShown: true,
-      searchAdvMenuShown: false,
       newPageModal: false,
       movePageModal: false,
       convertPageModal: false,
@@ -359,18 +357,7 @@ export default defineComponent({
       get(): boolean { return wikiStore.site.searchIsFocused },
       set(value: boolean) { wikiStore.site.searchIsFocused = value }
     },
-    searchIsLoading: {
-      get(): boolean { return wikiStore.site.searchIsLoading },
-      set(value: boolean) { wikiStore.site.searchIsLoading = value }
-    },
-    searchRestrictLocale: {
-      get(): boolean { return wikiStore.site.searchRestrictLocale },
-      set(value: boolean) { wikiStore.site.searchRestrictLocale = value }
-    },
-    searchRestrictPath: {
-      get(): boolean { return wikiStore.site.searchRestrictPath },
-      set(value: boolean) { wikiStore.site.searchRestrictPath = value }
-    },
+    searchIsLoading(): boolean { return wikiStore.site.searchIsLoading },
     isLoading(): boolean { return wikiStore.isLoading },
     title(): string { return wikiStore.site.title },
     logoUrl(): string { return wikiStore.site.logoUrl },

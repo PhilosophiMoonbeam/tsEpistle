@@ -1,4 +1,5 @@
 <template>
+  <span class="agent-tasks__live sr-only" role="status" aria-live="polite" aria-atomic="true">{{ liveSummary }}</span>
   <details
     class="agent-tasks"
     :class="`agent-tasks--${planState}`"
@@ -16,7 +17,6 @@
       <span v-if="tasks.length" class="agent-tasks__count" aria-hidden="true">{{ terminalCount }}/{{ tasks.length }}</span>
     </summary>
 
-    <div class="agent-tasks__live sr-only" role="status" aria-live="polite" aria-atomic="true">{{ liveSummary }}</div>
     <div
       v-if="tasks.length"
       class="agent-tasks__progress"
@@ -84,7 +84,7 @@
               <template v-if="task.sourceScope.length">
                 <dt>Scope</dt>
                 <dd class="agent-task-record__scopes">
-                  <span v-for="scope in task.sourceScope" :key="scope" :title="scope">{{ scope }}</span>
+                  <span v-for="(scope, index) in task.sourceScope" :key="`${index}:${scope}`" :title="scope">{{ scope }}</span>
                 </dd>
               </template>
 

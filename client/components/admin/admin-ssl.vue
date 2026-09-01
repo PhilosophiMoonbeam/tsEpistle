@@ -16,6 +16,7 @@
               @click='renewCertificate'
               size="small"
               :loading='loadingRenew'
+              :disabled='loadingRedir || loading || !infoLoaded'
             )
               v-icon(start) mdi-cached
               span {{$t('admin:ssl.renewCertificate')}}
@@ -33,7 +34,7 @@
           retry-label='Try again'
           @retry='loadInfo'
         )
-        v-form.pt-3(v-else-if='infoLoaded')
+        .pt-3(v-else-if='infoLoaded')
           v-row
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp
@@ -91,6 +92,7 @@
                     color='primary'
                     @click='toggleRedir'
                     :loading='loadingRedir'
+                    :disabled='loadingRenew || loading || !infoLoaded'
                   )
                     v-icon(start) mdi-power
                     span {{info.httpRedirection ? $t('admin:ssl.httpPortRedirectTurnOff') : $t('admin:ssl.httpPortRedirectTurnOn')}}
@@ -114,12 +116,16 @@
               .text-body-small.text-medium-emphasis.mt-4 {{$t('admin:ssl.renewCertificateLoadingSubtitle')}}</template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import AsyncState from '@/components/common/async-state.vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchSystemSsl, renewSystemSslCertificate, updateSystemSslRedirection } from '../../helpers/system-api'
 import type { SystemSslInfo } from '../../helpers/system-api'
 import { loadingStart, loadingStop, showNotification, pushGraphError, getErrorMessage } from '../../helpers/root-ui-store'
+
+const createAbortableFetch = (signal: AbortSignal) => (
+  input: RequestInfo | URL,
+  init?: RequestInit
+) => window.fetch(input, { ...init, signal })
 
 const makeDefaultSslInfo = (): SystemSslInfo => ({
   sslDomain: null,
@@ -143,7 +149,11 @@ export default {
       loadingRedir: false,
       infoLoaded: false,
       errorMessage: '',
-      info: makeDefaultSslInfo()
+      info: makeDefaultSslInfo(),
+      loadController: null as AbortController | null,
+      redirectionController: null as AbortController | null,
+      renewalController: null as AbortController | null,
+      isUnmounted: false
     }
   },
   created () {
@@ -201,65 +211,123 @@ export default {
   },
   methods: {
     async loadInfo ({ notifyError = true } = {}) {
+      this.loadController?.abort()
+      const controller = new AbortController()
+      this.loadController = controller
       this.loading = true
       this.errorMessage = ''
       this.infoLoaded = false
       loadingStart(wikiStore, 'admin-ssl-refresh')
       try {
-        this.info = await fetchSystemSsl(window.fetch.bind(window), 'SSL status response is invalid')
+        const info = await fetchSystemSsl(
+          createAbortableFetch(controller.signal),
+          'SSL status response is invalid'
+        )
+        if (controller.signal.aborted) {
+          return false
+        }
+        this.info = info
         this.infoLoaded = true
         return true
       } catch (err) {
+        if (controller.signal.aborted) {
+          return false
+        }
         this.info = makeDefaultSslInfo()
-        this.errorMessage = getErrorMessage(err)
+        this.errorMessage = getErrorMessage(err) || this.$t('common:error.unexpected')
         if (notifyError) {
           pushGraphError(wikiStore, err)
         }
         throw err
       } finally {
-        this.loading = false
+        if (this.loadController === controller) {
+          this.loadController = null
+          if (!this.isUnmounted) {
+            this.loading = false
+          }
+        }
         loadingStop(wikiStore, 'admin-ssl-refresh')
       }
     },
     async toggleRedir () {
+      if (this.loadingRedir || this.loadingRenew || !this.infoLoaded) return
+      const previousValue = this.info.httpRedirection
+      const controller = new AbortController()
+      this.redirectionController = controller
       this.loadingRedir = true
       loadingStart(wikiStore, 'admin-ssl-toggleRedirection')
       try {
-        this.info.httpRedirection = !this.info.httpRedirection
+        this.info.httpRedirection = !previousValue
         await updateSystemSslRedirection(
-          window.fetch.bind(window),
-          _.get(this.info, 'httpRedirection', false)
+          createAbortableFetch(controller.signal),
+          this.info.httpRedirection
         )
+        if (controller.signal.aborted) {
+          return
+        }
         showNotification(wikiStore, {
           style: 'success',
           message: this.$t('admin:ssl.httpPortRedirectSaveSuccess'),
           icon: 'check'
         })
       } catch (err) {
-        this.info.httpRedirection = !this.info.httpRedirection
+        if (controller.signal.aborted) {
+          return
+        }
+        this.info.httpRedirection = previousValue
         pushGraphError(wikiStore, err)
       } finally {
+        if (this.redirectionController === controller) {
+          this.redirectionController = null
+          if (!this.isUnmounted) {
+            this.loadingRedir = false
+          }
+        }
         loadingStop(wikiStore, 'admin-ssl-toggleRedirection')
-        this.loadingRedir = false
       }
     },
     async renewCertificate () {
+      if (
+        this.loadingRenew ||
+        this.loadingRedir ||
+        !this.infoLoaded ||
+        this.info.sslProvider !== 'letsencrypt' ||
+        this.info.httpsPort <= 0
+      ) return
+      const controller = new AbortController()
+      this.renewalController = controller
       this.loadingRenew = true
       loadingStart(wikiStore, 'admin-ssl-renew')
       try {
-        await renewSystemSslCertificate(window.fetch.bind(window))
+        await renewSystemSslCertificate(createAbortableFetch(controller.signal))
+        if (controller.signal.aborted) {
+          return
+        }
         showNotification(wikiStore, {
           style: 'success',
           message: this.$t('admin:ssl.renewCertificateSuccess'),
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(wikiStore, err)
+        if (!controller.signal.aborted) {
+          pushGraphError(wikiStore, err)
+        }
       } finally {
+        if (this.renewalController === controller) {
+          this.renewalController = null
+          if (!this.isUnmounted) {
+            this.loadingRenew = false
+          }
+        }
         loadingStop(wikiStore, 'admin-ssl-renew')
-        this.loadingRenew = false
       }
     }
+  },
+  beforeUnmount () {
+    this.isUnmounted = true
+    this.loadController?.abort()
+    this.redirectionController?.abort()
+    this.renewalController?.abort()
   }
 }
 </script>

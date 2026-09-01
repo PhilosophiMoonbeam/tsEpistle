@@ -2,7 +2,7 @@
   <section
     class="agent-goal"
     :class="[`agent-goal--${goal.status}`, { 'agent-goal--expanded': expanded }]"
-    :aria-labelledby="goalCollapsedObjectiveId"
+    :aria-labelledby="`${goalStatusId} ${goalCollapsedObjectiveId}`"
     :aria-busy="busy"
   >
     <div class="agent-goal__summary-row">
@@ -41,7 +41,7 @@
       :id="goalDetailsId"
       class="agent-goal__details"
       role="region"
-      :aria-labelledby="goalToggleId"
+      :aria-labelledby="goalTitleId"
     >
       <div class="agent-goal__body">
         <header class="agent-goal__header">
@@ -83,13 +83,13 @@
               <span>{{ metric.value }}</span>
               <small>of {{ metric.limit }}</small>
             </dd>
-            <span class="agent-goal__budget-track" aria-hidden="true">
+            <dd class="agent-goal__budget-track" aria-hidden="true">
               <span :style="{ width: `${metric.percent}%` }" />
-            </span>
+            </dd>
           </div>
         </dl>
 
-        <p :id="goalSummaryId" class="agent-goal__summary" aria-live="polite">{{ progressLabel }}</p>
+        <p class="agent-goal__summary" aria-live="polite">{{ progressLabel }}</p>
 
         <aside
           v-if="blockerMessages.length"
@@ -102,7 +102,7 @@
             <h3 :id="goalBlockersTitleId">{{ goal.status === 'failed' ? 'Why this goal stopped' : 'Needs attention' }}</h3>
           </div>
           <ul>
-            <li v-for="(issue, index) in blockerMessages" :key="`${issue.code}-${index}`">
+            <li v-for="{ issue, key } in blockerEntries" :key="key">
               <span>{{ issue.message }}</span>
               <span class="agent-goal__issue-state">{{ issue.retryable ? 'Can continue after review' : 'Not automatically retryable' }}</span>
             </li>
@@ -176,7 +176,6 @@ const emit = defineEmits<{ 'update:expanded': [value: boolean]; pause: []; resum
 const pendingAction = ref<'pause' | 'resume' | 'cancel' | null>(null)
 const cancelDialogOpen = ref(false)
 const goalTitleId = computed(() => `agent-goal-${props.goal.id}-title`)
-const goalSummaryId = computed(() => `agent-goal-${props.goal.id}-summary`)
 const goalCollapsedObjectiveId = computed(() => `agent-goal-${props.goal.id}-collapsed-objective`)
 const goalStatusId = computed(() => `agent-goal-${props.goal.id}-status`)
 const goalToggleId = computed(() => `agent-goal-${props.goal.id}-toggle`)
@@ -186,6 +185,10 @@ const cancelGoalTitleId = computed(() => `agent-goal-${props.goal.id}-cancel-tit
 const toggleAriaLabel = computed(() => `${props.expanded ? 'Hide' : 'Show'} durable goal details: ${props.goal.objective}`)
 const toggleExpanded = (): void => emit('update:expanded', !props.expanded)
 watch(() => props.busy, busy => { if (!busy) pendingAction.value = null })
+watch(() => props.goal.id, () => {
+  pendingAction.value = null
+  cancelDialogOpen.value = false
+})
 watch(() => props.goal.status, status => {
   if (!['active', 'paused', 'blocked'].includes(status)) cancelDialogOpen.value = false
 })
@@ -262,6 +265,15 @@ const blockerMessages = computed(() => {
     })
   }
   return issues
+})
+const blockerEntries = computed(() => {
+  const occurrences = new Map<string, number>()
+  return blockerMessages.value.map(issue => {
+    const fingerprint = `${issue.code.length}:${issue.code}:${issue.message.length}:${issue.message}:${issue.retryable}`
+    const occurrence = occurrences.get(fingerprint) ?? 0
+    occurrences.set(fingerprint, occurrence + 1)
+    return { issue, key: `${fingerprint}:${occurrence}` }
+  })
 })
 const currentYear = new Date().getFullYear()
 const timelineFormatter = new Intl.DateTimeFormat(undefined, {
@@ -525,6 +537,7 @@ const progressLabel = computed(() => {
   overflow-wrap: anywhere;
 }
 .agent-goal__budget-track {
+  margin: 0;
   background: rgba(var(--v-theme-on-surface), .08);
   border-radius: var(--wiki-radius-pill);
   display: block;

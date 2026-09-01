@@ -52,9 +52,9 @@
                     template(v-slot:item='{ props, item }')
                       v-list-item(v-bind='props')
                         template(v-slot:prepend)
-                          v-avatar.bg-blue.text-white(rounded='0', size='40') {{ item.raw.code.toUpperCase() }}
-                        v-list-item-title {{ item.raw.name }}
-                        v-list-item-subtitle {{ item.raw.nativeName }}
+                          v-avatar.bg-blue.text-white(rounded='0', size='40') {{ item.code.toUpperCase() }}
+                        v-list-item-title {{ item.name }}
+                        v-list-item-subtitle {{ item.nativeName }}
                   v-alert.mt-3(v-if='configError || localesError', variant='outlined', color='error', icon='mdi-alert')
                     span(v-if='configError') Locale configuration could not be loaded.
                     span(v-else) Installed locales could not be loaded.
@@ -110,11 +110,11 @@
                     template(v-slot:item='{ props, item }')
                       v-list-item(v-bind='props')
                         template(v-slot:prepend)
-                          v-avatar.bg-blue.text-white(rounded='0', size='40') {{ item.raw.code.toUpperCase() }}
-                        v-list-item-title {{ item.raw.name }}
-                        v-list-item-subtitle {{ item.raw.nativeName }}
+                          v-avatar.bg-blue.text-white(rounded='0', size='40') {{ item.code.toUpperCase() }}
+                        v-list-item-title {{ item.name }}
+                        v-list-item-subtitle {{ item.nativeName }}
                         template(v-slot:append)
-                          v-checkbox-btn(:model-value='namespaces.includes(item.raw.code)', tabindex='-1')
+                          v-checkbox-btn(:model-value='namespaces.includes(item.code)', tabindex='-1')
             v-col(xl='6' lg='7' cols='12')
               v-card.animated.fadeInUp.wait-p4s
                 v-toolbar(color='teal', density="compact", flat)

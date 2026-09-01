@@ -7,10 +7,16 @@ describe('Ask modal accessibility contract', () => {
   const tags = fs.readFileSync(path.join(process.cwd(), 'client/components/tags.vue'), 'utf8')
   const focusScope = fs.readFileSync(path.join(process.cwd(), 'client/components/common/modal-focus-scope.ts'), 'utf8')
 
-  test('stacks Search and Ask in one accessible modal focus lifecycle', () => {
+  test('exposes modal semantics only while Ask owns the complete focus scope', () => {
     expect(search).toMatch(/role=['"]dialog['"]/)
-    expect(search).toMatch(/aria-modal=['"]true['"]/)
+    expect(search).toMatch(/:aria-modal=['"]isAgentOpen \? `true` : undefined['"]/)
+    expect(search).not.toMatch(/^\s+aria-modal=['"]true['"]/m)
     expect(search).toMatch(/:aria-labelledby=['"]isAgentOpen \? `wiki-agent-title` : `wiki-search-title`['"]/)
+    const agentFocusScope = search.match(/const focusScope = createModalFocusScope\(\{([\s\S]*?)\n\s+\}\)/)?.[1] ?? ''
+    const searchFocusScope = search.match(/this\.searchModalFocusScope = createModalFocusScope\(\{([\s\S]*?)\n\s+\}\)/)?.[1] ?? ''
+    expect(agentFocusScope).toMatch(/root,[\s\S]*restoreTarget:\s*this\.restoreTargetFor\(agentOpener\),[\s\S]*onEscape:\s*this\.returnToSearch/)
+    expect(agentFocusScope).not.toMatch(/additionalRoots/)
+    expect(searchFocusScope).toMatch(/additionalRoots:\s*this\.searchModalAdditionalRoots/)
     expect(search).toMatch(
       /isAgentOpen\(open:\s*boolean\)\s*\{[\s\S]*if\s*\(open\)\s*\{[\s\S]*void this\.activateAgentModal\(\)[\s\S]*return[\s\S]*if \(this\.directPromptHandoffPending\) this\.directPromptHandoffId \+= 1[\s\S]*if\s*\(this\.searchIsFocused\)\s*void this\.reactivateSearchModal\(\)[\s\S]*else this\.deactivateAgentModal\(false\)/
     )

@@ -58,8 +58,8 @@
                             .text-body-medium: strong No conditional rule
                             em Add conditional rules to direct users to a different page based on their group.
                       v-timeline-item(
-                        v-for='(rule, index) in conditionalRules'
-                        :key='`cond-rule-${index}`'
+                        v-for='rule in conditionalRules'
+                        :key='rule.key'
                         size="small"
                         dot-color='primary'
                         )
@@ -74,6 +74,7 @@
                                 :items='groups'
                                 item-title='name'
                                 item-value='id'
+                                aria-label='Groups used for this redirect rule'
                                 multiple
                                 variant="solo"
                                 flat
@@ -141,7 +142,7 @@
                       single-line
                     )
 
-    v-system-bar.editor-status-bar.editor-redirect-sysbar(absolute, status, color="grey-darken-3")
+    v-system-bar.editor-status-bar.editor-redirect-sysbar(absolute, color="grey-darken-3")
       .text-body-small.editor-redirect-sysbar-locale {{locale.toUpperCase()}}
       .text-body-small.px-3 /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
@@ -158,6 +159,7 @@ import AsyncState from '@/components/common/async-state.vue'
 
 type RedirectMode = 'page' | 'url'
 type ConditionalRedirectRule = {
+  key: number
   groups: number[]
   mode: RedirectMode
   url: string
@@ -171,15 +173,14 @@ export default {
       groups: [] as GroupOption[],
       groupsLoading: false,
       groupsError: '',
+      groupsAbortController: null as AbortController | null,
       conditionalRules: [] as ConditionalRedirectRule[],
+      nextRuleKey: 0,
       fallbackMode: 'page' as RedirectMode,
       fallbackUrl: 'https://'
     }
   },
   computed: {
-    isMobile() {
-      return this.$vuetify.display.smAndDown
-    },
     locale() {
       return wikiStore.page.locale
     },
@@ -188,36 +189,46 @@ export default {
     },
     mode() {
       return wikiStore.editor.mode
-    },
-    activeModal: {
-      get() {
-        return wikiStore.editor.activeModal
-      },
-      set(value: string) {
-        wikiStore.editor.activeModal = value
-      }
     }
   },
   methods: {
     addConditionalRule () {
       this.conditionalRules.push({
+        key: this.nextRuleKey++,
         groups: [],
         mode: 'page',
         url: 'https://'
       })
     },
     async loadGroups () {
+      this.groupsAbortController?.abort()
+      const wasLoading = this.groupsLoading
+      const abortController = new AbortController()
+      this.groupsAbortController = abortController
       this.groupsLoading = true
       this.groupsError = ''
-      setLoading(wikiStore, 'editor-redirect-groups', true)
+      if (!wasLoading) {
+        setLoading(wikiStore, 'editor-redirect-groups', true)
+      }
       try {
-        this.groups = await fetchGroupOptions(window.fetch.bind(window))
+        const groups = await fetchGroupOptions((url, init) => window.fetch(url, {
+          ...init,
+          signal: abortController.signal
+        }))
+        if (this.groupsAbortController === abortController && !abortController.signal.aborted) {
+          this.groups = groups
+        }
       } catch (error) {
-        this.groups = []
-        this.groupsError = getErrorMessage(error)
+        if (this.groupsAbortController === abortController && !abortController.signal.aborted) {
+          this.groups = []
+          this.groupsError = getErrorMessage(error)
+        }
       } finally {
-        this.groupsLoading = false
-        setLoading(wikiStore, 'editor-redirect-groups', false)
+        if (this.groupsAbortController === abortController) {
+          this.groupsAbortController = null
+          this.groupsLoading = false
+          setLoading(wikiStore, 'editor-redirect-groups', false)
+        }
       }
     }
   },
@@ -228,6 +239,14 @@ export default {
       wikiStore.editor.content = '<h1>Title</h1>\n\n<p>Some text here</p>'
     }
     await this.loadGroups()
+  },
+  beforeUnmount() {
+    this.groupsAbortController?.abort()
+    this.groupsAbortController = null
+    if (this.groupsLoading) {
+      this.groupsLoading = false
+      setLoading(wikiStore, 'editor-redirect-groups', false)
+    }
   }
 }
 </script>

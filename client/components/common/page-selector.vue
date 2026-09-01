@@ -22,17 +22,17 @@
           :width='2'
           aria-hidden='true'
         )
-      .d-flex.page-selector__panes
+      v-row.page-selector__panes(gap='0')
         v-col.page-selector__pane.page-selector__tree-pane(cols='12' md='5')
           v-toolbar(color='surface-variant' density='compact' flat)
             h3#page-selector-folders.page-selector__folders-label.text-body-medium {{$t('common:pageSelector.virtualFolders')}}
             v-spacer
             v-tooltip(location='top')
               template(v-slot:activator='{ props }')
-                v-btn(v-bind='props' icon rounded='0' href='https://docs.requarks.io/guide/pages#folders' target='_blank' aria-label='Open virtual folders help')
+                v-btn(v-bind='props' icon rounded='0' href='https://docs.requarks.io/guide/pages#folders' target='_blank' rel='noopener noreferrer' aria-label='Open virtual folders help')
                   v-icon mdi-help-box-outline
               span {{$t('common:pageSelector.virtualFolders')}}
-          div.page-selector__scroller(aria-labelledby='page-selector-folders')
+          div.page-selector__scroller(role='region' aria-labelledby='page-selector-folders')
             vue-scroll(:ops='scrollStyle')
               v-treeview(
                 :key='`pageTree-` + treeViewCacheId'
@@ -52,7 +52,7 @@
         v-col.page-selector__pane.page-selector__pages-pane(cols='12' md='7')
           v-toolbar(color='surface-variant' density='compact' flat)
             h3#page-selector-pages.text-body-medium {{$t('common:pageSelector.pages')}}
-          div.page-selector__scroller(aria-labelledby='page-selector-pages')
+          div.page-selector__scroller(role='region' aria-labelledby='page-selector-pages')
             async-state(
               v-if='searchLoading'
               state='loading'
@@ -70,7 +70,6 @@
             v-list.py-0(v-else-if='currentPages.length > 0' density='compact')
               template(v-for='(page, idx) of currentPages' :key='`page-` + page.id')
                 v-list-item(
-                  :value='page'
                   :active='currentPage?.id === page.id'
                   @click='currentPage = page'
                 )
@@ -129,10 +128,10 @@ const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
 type PageSelectorMode = 'create' | 'move' | 'select'
 type PageSelection = { locale: string, path: string, id: number }
 type OpenHandler = (selection: PageSelection) => boolean | void | Promise<boolean | void>
-type PageTreeItem = PageTreeRow & { children?: PageTreeItem[] }
+type PageTreeItem = PageTreeRow & { treeId: number, children?: PageTreeItem[] }
 type PageEntry = PageTreeRow & { pageId: number }
 
-function createRootNode (locale: string): PageTreeItem {
+function createRootNode (locale: string, treeId: number): PageTreeItem {
   return {
     id: 0,
     path: '',
@@ -143,6 +142,7 @@ function createRootNode (locale: string): PageTreeItem {
     locale,
     visibility: 'public',
     ownerId: null,
+    treeId,
     children: []
   }
 }
@@ -152,7 +152,9 @@ function isPageEntry (item: PageTreeRow): item is PageEntry {
 }
 
 function isPageTreeItem (item: unknown): item is PageTreeItem {
-  return typeof item === 'object' && item !== null && typeof (item as { id?: unknown }).id === 'number'
+  return typeof item === 'object' && item !== null &&
+    typeof (item as { id?: unknown }).id === 'number' &&
+    typeof (item as { treeId?: unknown }).treeId === 'number'
 }
 
 /* global siteLangs, siteConfig */
@@ -177,20 +179,16 @@ export default defineComponent({
       submissionError: '',
       isSubmitting: false,
       currentLocale: siteConfig.lang,
-      currentFolderPath: '',
       currentPath: 'new-page' as string | null,
       currentPage: null as PageEntry | null,
       currentNode: [0] as number[],
       openNodes: [0] as number[],
-      tree: [createRootNode(siteConfig.lang)] as PageTreeItem[],
+      tree: [createRootNode(siteConfig.lang, 0)] as PageTreeItem[],
       pages: [] as PageEntry[],
       all: [] as PageTreeRow[],
       namespaces: siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang],
       scrollStyle: {
-        vuescroll: {},
-        scrollPanel: { initialScrollX: 0.01, scrollingX: false, speed: 50 },
-        rail: { gutterOfEnds: '2px' },
-        bar: { onlyShowBarOnScroll: false, background: '#999', hoverStyle: { background: '#64B5F6' } }
+        scrollPanel: { scrollingX: false }
       }
     }
   },
@@ -211,14 +209,17 @@ export default defineComponent({
     }
   },
   watch: {
-    isShown (newValue: boolean, oldValue: boolean) {
-      if (newValue && !oldValue) {
-        this.currentPath = this.path
-        this.submissionError = ''
-        const localeChanged = this.currentLocale !== this.locale
-        this.currentLocale = this.locale
-        if (!localeChanged) void this.reloadTree(this.locale)
-        _.delay(() => (this.$refs.pathIpt as { focus: () => void }).focus(), 0)
+    isShown: {
+      immediate: true,
+      handler(newValue: boolean, oldValue: boolean | undefined) {
+        if (newValue && !oldValue) {
+          this.currentPath = this.path
+          this.submissionError = ''
+          const localeChanged = this.currentLocale !== this.locale
+          this.currentLocale = this.locale
+          if (!localeChanged) void this.reloadTree(this.locale)
+          void this.$nextTick(() => (this.$refs.pathIpt as { focus?: () => void } | undefined)?.focus?.())
+        }
       }
     },
     currentNode (newValue: number[], oldValue: number[]) {
@@ -254,7 +255,7 @@ export default defineComponent({
           path: this.currentPath,
           id: (this.mustExist && this.currentPage) ? this.currentPage.pageId : 0
         })
-        if (exit !== false) this.close()
+        if (exit !== false) this.isShown = false
       } catch (err) {
         this.submissionError = getErrorMessage(err) || 'The page selection could not be completed.'
       } finally {
@@ -262,7 +263,9 @@ export default defineComponent({
       }
     },
     async reloadTree (locale: string): Promise<void> {
-      const root = createRootNode(locale)
+      this.treeViewCacheId += 1
+      const root = createRootNode(locale, this.treeViewCacheId)
+      this.pendingRequests = 0
       this.loadError = ''
       this.tree = [root]
       this.currentNode = [0]
@@ -270,26 +273,27 @@ export default defineComponent({
       this.currentPage = null
       this.pages = []
       this.all = []
-      this.treeViewCacheId += 1
       await this.fetchFolders(root)
     },
     async fetchFolders (item: unknown): Promise<void> {
       if (!isPageTreeItem(item)) throw new TypeError('Invalid page tree item')
       const requestLocale = this.currentLocale
+      const requestTreeId = item.treeId
+      if (requestTreeId !== this.treeViewCacheId) return
       this.pendingRequests += 1
       try {
         const items = await fetchPageTree(window.fetch.bind(window), { parent: item.id, mode: 'ALL', locale: requestLocale })
-        if (item.locale !== this.currentLocale || requestLocale !== this.currentLocale) return
-        const itemFolders: PageTreeItem[] = items.filter(item => item.isFolder).map(folder => ({ ...folder, children: [] }))
+        if (requestTreeId !== this.treeViewCacheId || item.locale !== this.currentLocale || requestLocale !== this.currentLocale) return
+        const itemFolders: PageTreeItem[] = items.filter(item => item.isFolder).map(folder => ({ ...folder, treeId: requestTreeId, children: [] }))
         const itemPages = items.filter(isPageEntry)
         item.children = itemFolders.length > 0 ? itemFolders : undefined
         this.pages = _.unionBy(this.pages, itemPages, 'id')
         this.all = _.unionBy(this.all, items, 'id')
         this.loadError = ''
       } catch (err) {
-        if (requestLocale === this.currentLocale) this.loadError = getErrorMessage(err) || 'Pages could not be loaded.'
+        if (requestTreeId === this.treeViewCacheId && requestLocale === this.currentLocale) this.loadError = getErrorMessage(err) || 'Pages could not be loaded.'
       } finally {
-        this.pendingRequests = Math.max(0, this.pendingRequests - 1)
+        if (requestTreeId === this.treeViewCacheId) this.pendingRequests = Math.max(0, this.pendingRequests - 1)
       }
     }
   }

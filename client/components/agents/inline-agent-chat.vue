@@ -72,20 +72,22 @@
         <div class="inline-agent__panel-actions" role="group" aria-label="Agent workspace panels">
           <v-btn
             class="inline-agent__desktop-panel-btn"
+            ref="historyTrigger"
             icon="mdi-history"
             :color="historyOpen ? 'primary' : undefined"
             :variant="historyOpen ? 'tonal' : 'text'"
-            aria-label="Open agent conversation history"
+            :aria-label="historyOpen ? 'Close agent conversation history' : 'Open agent conversation history'"
             :aria-expanded="historyOpen"
             aria-controls="agent-history-panel"
             @click="toggleHistory"
           />
           <v-btn
             class="inline-agent__desktop-panel-btn"
+            ref="memoryTrigger"
             icon="mdi-brain"
             :color="memoryOpen ? 'primary' : undefined"
             :variant="memoryOpen ? 'tonal' : 'text'"
-            aria-label="Manage agent memory"
+            :aria-label="memoryOpen ? 'Close agent memory' : 'Manage agent memory'"
             :aria-expanded="memoryOpen"
             aria-controls="agent-memory-panel"
             @click="toggleMemory"
@@ -293,7 +295,7 @@
 
   <AgentPersonalSkills v-if="skillsEnabled" v-model="skillManagerOpen" :csrf-token="csrfToken" @changed="reloadSkillCatalog" />
 
-  <v-dialog v-model="resetHistoryOpen" max-width="30rem" aria-labelledby="reset-history-title">
+  <v-dialog v-model="resetHistoryOpen" max-width="30rem" aria-labelledby="reset-history-title" :persistent="resetting">
     <v-card rounded="xl">
       <v-card-title class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" aria-hidden="true" /></v-avatar>
@@ -308,11 +310,11 @@
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" @click="closeResetHistory">{{ resetCommitted ? 'Close' : 'Cancel' }}</v-btn>
-        <v-btn v-if="resetCommitted" color="primary" prepend-icon="mdi-refresh" :loading="resetting" @click="recoverResetHistory">
+        <v-btn variant="text" :disabled="resetting" @click="closeResetHistory">{{ resetCommitted ? 'Close' : 'Cancel' }}</v-btn>
+        <v-btn v-if="resetCommitted" color="primary" prepend-icon="mdi-refresh" :loading="resetting" :disabled="resetting" @click="recoverResetHistory">
           Retry opening conversation
         </v-btn>
-        <v-btn v-else color="error" :loading="resetting" @click="resetHistory">
+        <v-btn v-else color="error" :loading="resetting" :disabled="resetting" @click="resetHistory">
           {{ resetError ? 'Retry reset' : 'Reset history' }}
         </v-btn>
       </v-card-actions>
@@ -357,6 +359,9 @@ const { connection, decidingApprovalId, error, goalBusy, loading, profiles, send
 const inlineAgentRoot = ref<HTMLElement | null>(null)
 const transcript = ref<HTMLElement | null>(null)
 const composer = ref<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void> } | null>(null)
+type ComponentRoot = { $el?: HTMLElement }
+const historyTrigger = ref<ComponentRoot | HTMLElement | null>(null)
+const memoryTrigger = ref<ComponentRoot | HTMLElement | null>(null)
 const historyPanel = ref<HTMLElement | null>(null)
 const memoryPanel = ref<HTMLElement | null>(null)
 const panelScrim = ref<HTMLElement | null>(null)
@@ -474,6 +479,7 @@ const scrollToLatest = async (): Promise<void> => {
   container.scrollTo({ top: container.scrollHeight, behavior: reducedMotion() ? 'auto' : 'smooth' })
   transcriptFollowing.value = true
   await nextTick()
+  if (container !== transcript.value || !container.isConnected) return
   container.focus({ preventScroll: true })
   updateApprovalJump()
 }
@@ -514,11 +520,14 @@ const isVisibleTrigger = (element: HTMLElement | null): element is HTMLElement =
   const style = window.getComputedStyle(element)
   return style.display !== 'none' && style.visibility !== 'hidden'
 }
+const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLElement | null => {
+  if (!component) return null
+  return component instanceof HTMLElement ? component : component.$el ?? null
+}
 const triggerForPanel = (kind: 'history' | 'memory'): HTMLElement | null => {
   const root = inlineAgentRoot.value
   if (!root) return null
-  const directLabel = kind === 'history' ? 'Open agent conversation history' : 'Manage agent memory'
-  const direct = root.querySelector<HTMLElement>(`[aria-label="${directLabel}"]`)
+  const direct = componentElement(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
   const mobile = root.querySelector<HTMLElement>('[aria-label="Open Agent panels: conversation history and memory"]')
   const useMobileTrigger = window.matchMedia(mobilePanelQuery).matches
   return (useMobileTrigger ? [mobile, direct] : [direct, mobile]).find(isVisibleTrigger) ?? null
@@ -666,6 +675,7 @@ const jumpToApproval = async (): Promise<void> => {
   if (!approval) return
   approval.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' })
   await nextTick()
+  if (!approval.isConnected || !transcript.value?.contains(approval)) return
   approval.focus({ preventScroll: true })
   approvalJumpVisible.value = false
 }
@@ -692,7 +702,8 @@ const handleGoalExpanded = async (expanded: boolean): Promise<void> => {
   const shouldFollow = shouldFollowGoalExpansion(expanded, transcriptFollowing.value, transcriptIsNearBottom(container))
   goalExpanded.value = expanded
   await nextTick()
-  if (shouldFollow && container) {
+  if (container !== transcript.value || !container?.isConnected) return
+  if (shouldFollow) {
     container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
     transcriptFollowing.value = true
   } else {
@@ -710,7 +721,12 @@ const scheduleTranscriptReconcile = (): void => {
     void reconcileTranscriptGrowth(shouldFollow)
   })
 }
+const observeTranscript = (container: HTMLElement | null): void => {
+  transcriptObserver?.disconnect()
+  if (container) transcriptObserver?.observe(container, { childList: true, subtree: true, characterData: true })
+}
 
+watch(transcript, observeTranscript, { flush: 'post' })
 watch(currentPage, page => agents.setCurrentPage(page), { immediate: true })
 watch(skillManagerOpen, (open, wasOpen) => {
   if (!open && wasOpen) void nextTick(() => composer.value?.focusSkillsTrigger())
@@ -787,7 +803,7 @@ onMounted(() => {
   panelModeMedia.forEach(media => media.addEventListener('change', reconcilePanelMode))
   reconcilePanelMode()
   transcriptObserver = new MutationObserver(scheduleTranscriptReconcile)
-  if (transcript.value) transcriptObserver.observe(transcript.value, { childList: true, subtree: true, characterData: true })
+  observeTranscript(transcript.value)
   window.addEventListener('resize', scheduleTranscriptReconcile)
   window.visualViewport?.addEventListener('resize', scheduleTranscriptReconcile)
   void ensureInitialized()

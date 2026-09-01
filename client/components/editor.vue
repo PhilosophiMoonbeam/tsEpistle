@@ -238,7 +238,7 @@ export default defineComponent({
     },
     checkoutDate: {
       type: String,
-      default: new Date().toISOString()
+      default: () => new Date().toISOString()
     },
     sourceRevision: {
       type: String,
@@ -255,6 +255,8 @@ export default defineComponent({
       isConflict: false,
       conflictTimer: null as number | null,
       customCssTimer: null as number | null,
+      modalTimer: null as number | null,
+      navigationTimer: null as number | null,
       dialogProps: false,
       dialogProgress: false,
       dialogEditorSelector: false,
@@ -316,8 +318,10 @@ export default defineComponent({
   watch: {
     currentEditor(newValue: string) {
       if (newValue !== '' && this.mode === 'create') {
-        _.delay(() => {
+        if (this.modalTimer !== null) window.clearTimeout(this.modalTimer)
+        this.modalTimer = window.setTimeout(() => {
           this.dialogProps = true
+          this.modalTimer = null
         }, 500)
       }
     },
@@ -361,21 +365,17 @@ export default defineComponent({
       if (availableEditors.length === 1) {
         this.currentEditor = getEditorComponentName(availableEditors[0])
       } else {
-        _.delay(() => {
+        if (this.modalTimer !== null) window.clearTimeout(this.modalTimer)
+        this.modalTimer = window.setTimeout(() => {
           this.dialogEditorSelector = true
+          this.modalTimer = null
         }, 500)
       }
     } else {
       this.currentEditor = getEditorComponentName(this.initEditor || 'markdown')
     }
 
-    window.onbeforeunload = () => {
-      if (!this.exitConfirmed && this.initContentParsed !== wikiStore.editor.content) {
-        return this.$t('editor:unsavedWarning')
-      } else {
-        return undefined
-      }
-    }
+    window.addEventListener('beforeunload', this.handleBeforeUnload)
     if (this.mode !== 'create' && this.pageId > 0) {
       void this.hydratePage()
     }
@@ -389,9 +389,18 @@ export default defineComponent({
     offEditorConflictReset(this.handleEditorConflictReset)
     if (this.conflictTimer !== null) window.clearInterval(this.conflictTimer)
     if (this.customCssTimer !== null) window.clearTimeout(this.customCssTimer)
+    if (this.modalTimer !== null) window.clearTimeout(this.modalTimer)
+    if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
+    window.removeEventListener('beforeunload', this.handleBeforeUnload)
     removeEditorPageCss()
   },
   methods: {
+    handleBeforeUnload(event: BeforeUnloadEvent) {
+      if (!this.exitConfirmed && this.isDirty) {
+        event.preventDefault()
+        event.returnValue = true
+      }
+    },
     openPropsModal() {
       this.dialogProps = true
     },
@@ -449,10 +458,6 @@ export default defineComponent({
       if (this.isSaving) return
       this.showProgressDialog()
       this.isSaving = true
-
-      const saveTimeoutHandle = window.setTimeout(() => {
-        throw new Error('Save operation timed out.')
-      }, 30000)
 
       try {
         const pageInput = this.getPageInput()
@@ -515,9 +520,11 @@ export default defineComponent({
             this.path !== wikiStore.page.path ||
             this.savedState.visibility !== wikiStore.page.visibility
           ) {
-            _.delay(() => {
+            if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
+            this.navigationTimer = window.setTimeout(() => {
               const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
               window.location.replace(`/e${scope}/${wikiStore.page.locale}/${wikiStore.page.path}`)
+              this.navigationTimer = null
             }, 1000)
           }
         }
@@ -531,13 +538,11 @@ export default defineComponent({
           icon: 'warning'
         })
         if (rethrow === true) {
-          clearTimeout(saveTimeoutHandle)
           this.isSaving = false
           this.hideProgressDialog()
           throw err
         }
       }
-      clearTimeout(saveTimeoutHandle)
       this.isSaving = false
       this.hideProgressDialog()
     },
@@ -564,13 +569,15 @@ export default defineComponent({
       wikiStore.startLoading('editor-close')
       this.currentEditor = ''
       this.exitConfirmed = true
-      _.delay(() => {
+      if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
+      this.navigationTimer = window.setTimeout(() => {
         if (wikiStore.editor.mode === 'create') {
           window.location.assign(`/`)
         } else {
           const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
           window.location.assign(`${scope}/${wikiStore.page.locale}/${wikiStore.page.path}`)
         }
+        this.navigationTimer = null
       }, 500)
     },
     getPageInput () {

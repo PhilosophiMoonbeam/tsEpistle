@@ -15,7 +15,8 @@ const nanoid = customAlphabet('1234567890abcdef', 10)
 export default defineComponent({
   data() {
     return {
-      currentTab: 0
+      currentTab: 0,
+      listenersAbortController: null as AbortController | null
     }
   },
   watch: {
@@ -24,18 +25,20 @@ export default defineComponent({
     }
   },
   methods: {
-    tabElements () {
-      return Array.from((this.$refs.tabs as HTMLUListElement).children) as HTMLElement[]
+    tabElements (): HTMLElement[] {
+      const tabs = this.$refs.tabs as HTMLUListElement | undefined
+      return tabs ? Array.from(tabs.children) as HTMLElement[] : []
     },
-    panelElements () {
-      return Array.from((this.$refs.content as HTMLElement).children) as HTMLElement[]
+    panelElements (): HTMLElement[] {
+      const content = this.$refs.content as HTMLElement | undefined
+      return content ? Array.from(content.children) as HTMLElement[] : []
     },
     revealActiveTab () {
-      const tabs = this.$refs.tabs as HTMLUListElement
+      const tabs = this.$refs.tabs as HTMLUListElement | undefined
+      if (!tabs) return
+
       const activeTab = this.tabElements()[this.currentTab]
-      if (!activeTab) {
-        return
-      }
+      if (!activeTab) return
 
       const tabsRect = tabs.getBoundingClientRect()
       const tabRect = activeTab.getBoundingClientRect()
@@ -55,22 +58,18 @@ export default defineComponent({
     },
     setActiveTab () {
       this.tabElements().forEach((node, idx) => {
-        if (idx === this.currentTab) {
-          node.className = 'is-active'
-          node.setAttribute('aria-selected', 'true')
-          node.setAttribute('tabindex', '0')
-        } else {
-          node.className = ''
-          node.setAttribute('aria-selected', 'false')
-          node.setAttribute('tabindex', '-1')
-        }
+        const isActive = idx === this.currentTab
+        node.classList.toggle('is-active', isActive)
+        node.setAttribute('aria-selected', String(isActive))
+        node.setAttribute('tabindex', isActive ? '0' : '-1')
       })
       this.panelElements().forEach((node, idx) => {
-        if (idx === this.currentTab) {
-          node.className = 'tabset-panel is-active'
+        const isActive = idx === this.currentTab
+        node.classList.add('tabset-panel')
+        node.classList.toggle('is-active', isActive)
+        if (isActive) {
           node.removeAttribute('hidden')
         } else {
-          node.className = 'tabset-panel'
           node.setAttribute('hidden', '')
         }
       })
@@ -81,9 +80,16 @@ export default defineComponent({
     const panels = this.panelElements()
 
     // Handle scroll to header on load within hidden tab content
-    if (window.location.hash && window.location.hash.length > 1) {
-      const headerId = decodeURIComponent(window.location.hash)
-      const foundIdx = panels.findIndex(node => node.querySelector(headerId) !== null)
+    if (window.location.hash.length > 1) {
+      const encodedId = window.location.hash.slice(1)
+      let targetId = encodedId
+      try {
+        targetId = decodeURIComponent(encodedId)
+      } catch {
+        // Keep the literal fragment when it is not valid percent-encoding.
+      }
+      const target = document.getElementById(targetId)
+      const foundIdx = target ? panels.findIndex(node => node.contains(target)) : -1
       if (foundIdx >= 0) {
         this.currentTab = foundIdx
       }
@@ -93,6 +99,8 @@ export default defineComponent({
 
     const tabRefId = nanoid()
     const tabs = this.tabElements()
+    const controller = new AbortController()
+    this.listenersAbortController = controller
 
     tabs.forEach((node, idx) => {
       node.setAttribute('id', `${tabRefId}-${idx}`)
@@ -101,7 +109,7 @@ export default defineComponent({
       node.setAttribute('tabindex', idx === this.currentTab ? '0' : '-1')
       node.addEventListener('click', () => {
         this.currentTab = idx
-      })
+      }, { signal: controller.signal })
       node.addEventListener('keydown', (ev: KeyboardEvent) => {
         const isNavigationKey = ev.key === 'ArrowLeft' || ev.key === 'ArrowRight' || ev.key === 'Home' || ev.key === 'End'
         const isActivationKey = ev.key === 'Enter' || ev.key === ' '
@@ -125,7 +133,7 @@ export default defineComponent({
           this.currentTab = tabs.length - 1
           this.tabElements()[tabs.length - 1]?.focus()
         }
-      })
+      }, { signal: controller.signal })
     })
 
     panels.forEach((node, idx) => {
@@ -134,6 +142,10 @@ export default defineComponent({
       node.setAttribute('aria-labelledby', `${tabRefId}-${idx}`)
       node.setAttribute('tabindex', '0')
     })
+  },
+  beforeUnmount () {
+    this.listenersAbortController?.abort()
+    this.listenersAbortController = null
   }
 })
 </script>

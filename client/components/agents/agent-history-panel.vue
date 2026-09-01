@@ -494,15 +494,18 @@ const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLEl
   return component instanceof HTMLElement ? component : component.$el ?? null
 }
 
+const sessionTimeFormatter = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+const sessionDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
+const sessionDateWithYearFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 const formatSessionDate = (value: string): string => {
   const date = new Date(value)
   const now = new Date()
   const sameDay = date.toDateString() === now.toDateString()
-  if (sameDay) return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(date)
+  if (sameDay) return sessionTimeFormatter.format(date)
   const yesterday = new Date(now)
   yesterday.setDate(now.getDate() - 1)
   if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric' }).format(date)
+  return (date.getFullYear() === now.getFullYear() ? sessionDateFormatter : sessionDateWithYearFormatter).format(date)
 }
 const closeHistory = (): void => {
   agents.cancelSessionTransition()

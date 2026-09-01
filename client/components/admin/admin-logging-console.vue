@@ -1,14 +1,16 @@
 <template lang='pug'>
-  v-dialog(v-model='isShown', width='calc(100vw - 2rem)', max-width='1200')
+  v-dialog(v-model='isShown', width='calc(100vw - 2rem)', max-width='1200', aria-labelledby='logging-console-title')
     v-card.logging-console
       .dialog-header
-        .text-title-large Live Console
+        #logging-console-title.text-title-large Live Console
         v-spacer
         v-chip(
           size='small'
           variant='tonal'
           :color='connectionStatusColor'
           :aria-label='connectionStatusLabel'
+          role='status'
+          aria-live='polite'
         )
           v-progress-circular(
             v-if='connectionState === "connecting" || connectionState === "error"'
@@ -16,9 +18,18 @@
             :color='connectionStatusColor'
             :size='14'
             :width='2'
+            aria-hidden='true'
           )
           span {{ connectionStatusLabel }}
-      pre.consoleTerm(ref='consoleContainer', :aria-label='`Live console output: ${connectionStatusLabel}`') {{output}}
+      pre.consoleTerm(
+        ref='consoleContainer'
+        role='log'
+        tabindex='0'
+        aria-live='polite'
+        aria-atomic='false'
+        aria-relevant='additions text'
+        :aria-label='`Live console output: ${connectionStatusLabel}`'
+      ) {{output}}
       v-card-actions.logging-console-actions
         v-spacer
         v-btn(variant="text", @click='clear')
@@ -32,11 +43,13 @@
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'
 export default {
+  emits: ['update:modelValue'],
   data() {
     return {
       liveSource: null as EventSource | null,
       output: '',
-      connectionState: 'closed' as 'closed' | 'connecting' | 'live' | 'error'
+      connectionState: 'closed' as 'closed' | 'connecting' | 'live' | 'error',
+      attachTimer: null as number | null
     }
   },
   props: {
@@ -76,25 +89,27 @@ export default {
     }
   },
   watch: {
-    modelValue(newValue: boolean) {
-      if (newValue) {
-        this.connectionState = 'connecting'
-        setTimeout(() => {
-          if (this.modelValue) {
-            this.output = 'Connecting to console output...'
-            this.attach()
-          }
-        }, 100)
-      } else {
-        this.liveSource?.close()
-        this.liveSource = null
-        this.connectionState = 'closed'
+    modelValue: {
+      immediate: true,
+      handler (newValue: boolean) {
+        if (newValue) {
+          this.disconnect()
+          this.connectionState = 'connecting'
+          this.attachTimer = window.setTimeout(() => {
+            this.attachTimer = null
+            if (this.modelValue) {
+              this.output = 'Connecting to console output...'
+              this.attach()
+            }
+          }, 100)
+        } else {
+          this.disconnect()
+        }
       }
     }
   },
   beforeUnmount() {
-    this.liveSource?.close()
-    this.connectionState = 'closed'
+    this.disconnect()
   },
   methods: {
     clear() {
@@ -103,33 +118,53 @@ export default {
     close() {
       this.isShown = false
     },
+    disconnect() {
+      if (this.attachTimer !== null) {
+        window.clearTimeout(this.attachTimer)
+        this.attachTimer = null
+      }
+      this.liveSource?.close()
+      this.liveSource = null
+      this.connectionState = 'closed'
+    },
+    appendOutput(message: string) {
+      this.output += `${this.output ? '\n' : ''}${message}`
+      this.$nextTick(() => {
+        const container = this.$refs.consoleContainer as HTMLElement | undefined
+        if (container) container.scrollTop = container.scrollHeight
+      })
+    },
     attach() {
+      if (!this.modelValue) return
+
       this.liveSource?.close()
       this.liveSource = new EventSource('/_api/logging/live')
+      const source = this.liveSource
       this.liveSource.onopen = () => {
-        this.connectionState = 'live'
+        if (this.liveSource === source) this.connectionState = 'live'
       }
       this.liveSource.onmessage = (event: MessageEvent<string>) => {
+        if (this.liveSource !== source) return
         try {
           const item = JSON.parse(event.data) as { level?: unknown, output?: unknown }
           const level = typeof item.level === 'string' ? item.level : 'log'
           const message = typeof item.output === 'string' ? item.output : event.data
-          this.output += `${this.output ? '\n' : ''}${level}: ${message}`
-          this.$nextTick(() => {
-            const container = this.$refs.consoleContainer as HTMLElement
-            container.scrollTop = container.scrollHeight
-          })
+          this.appendOutput(`${level}: ${message}`)
         } catch {
-          this.output += `${this.output ? '\n' : ''}${event.data}`
+          this.appendOutput(event.data)
         }
       }
       this.liveSource.onerror = () => {
+        if (this.liveSource !== source) return
+        const wasAlreadyReconnecting = this.connectionState === 'error'
         this.connectionState = 'error'
-        wikiStore.showNotification({
-          style: 'red',
-          message: 'Live console connection failed.',
-          icon: 'warning'
-        })
+        if (!wasAlreadyReconnecting) {
+          wikiStore.showNotification({
+            style: 'red',
+            message: 'Live console connection failed.',
+            icon: 'warning'
+          })
+        }
       }
     }
   }

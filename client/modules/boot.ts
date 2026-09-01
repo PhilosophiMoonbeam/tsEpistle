@@ -11,28 +11,34 @@ const callbacks: ReadyCallback[] = []
 const boot = {
   readyStates,
   callbacks,
-  isReady (event: string): boolean {
+  isReady(event: string): boolean {
     return readyStates.includes(event)
   },
-  register (event: string, callback: () => void, once = false): void {
+  register(event: string, callback: () => void, once = false): void {
     if (this.isReady(event)) {
       callback()
       return
     }
     callbacks.push({ event, callback, once, called: false })
   },
-  registerOnce (event: string, callback: () => void): void {
+  registerOnce(event: string, callback: () => void): void {
     this.register(event, callback, true)
   },
-  notify (event: string): void {
-    readyStates.push(event)
-    for (const entry of callbacks) {
-      if (entry.event !== event || (entry.once && entry.called)) continue
+  notify(event: string): void {
+    if (!this.isReady(event)) readyStates.push(event)
+    for (let index = 0; index < callbacks.length; ) {
+      const entry = callbacks[index]
+      if (entry.event !== event || (entry.once && entry.called)) {
+        index++
+        continue
+      }
       entry.called = true
+      if (entry.once) callbacks.splice(index, 1)
+      else index++
       entry.callback()
     }
   },
-  onDOMReady (callback: () => void): void {
+  onDOMReady(callback: () => void): void {
     if (document.readyState === 'interactive' || document.readyState === 'complete') callback()
     else document.addEventListener('DOMContentLoaded', callback, { once: true })
   }

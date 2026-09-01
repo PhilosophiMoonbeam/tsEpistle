@@ -49,6 +49,12 @@ const createViewModel = options => {
   return viewModel
 }
 
+const loadRoutedPage = (options, viewModel) => {
+  const routeWatcher = options.watch['$route.params.id']
+  const handler = typeof routeWatcher === 'function' ? routeWatcher : routeWatcher.handler
+  return handler.call(viewModel)
+}
+
 describe('admin pages edit REST single facade', () => {
   it('loads page details through the pages REST helper instead of Apollo', () => {
     expect(script).toContain("import { deletePage as deletePageById, fetchPage, type PageDetails } from '../../helpers/pages-api'")
@@ -67,7 +73,8 @@ describe('admin pages edit REST single facade', () => {
     expect(loadPageBody).toContain("wikiStore.startLoading('admin-pages-refresh')")
     expect(loadPageBody).toContain("wikiStore.stopLoading('admin-pages-refresh')")
     expect(loadPageBody).toContain('wikiStore.showError(err)')
-    expect(script).toMatch(/mounted\s*\(\s*\)\s*\{\s*this\.loadPage\(\)\s*\}/)
+    const options = createComponentOptions({ fetchPage: async () => ({}), wikiStore: {} })
+    expect(options.watch['$route.params.id'].immediate).toBe(true)
   })
 
   it('keeps only the latest routed page response and error while releasing every loading owner', async () => {
@@ -89,7 +96,7 @@ describe('admin pages edit REST single facade', () => {
     expect(viewModel.loadGeneration).toBe(1)
     viewModel.deletePageDialog = true
     viewModel.$route.params.id = '2'
-    const secondLoad = options.watch['$route.params.id'].call(viewModel)
+    const secondLoad = loadRoutedPage(options, viewModel)
     expect(viewModel.loadGeneration).toBe(2)
     expect(viewModel.deletePageDialog).toBe(false)
 
@@ -126,7 +133,7 @@ describe('admin pages edit REST single facade', () => {
 
     const firstLoad = viewModel.loadPage()
     viewModel.$route.params.id = '2'
-    const secondLoad = options.watch['$route.params.id'].call(viewModel)
+    const secondLoad = loadRoutedPage(options, viewModel)
     page2.resolve({ id: 2, title: 'Page 2' })
     await secondLoad
 

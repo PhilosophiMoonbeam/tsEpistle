@@ -14,6 +14,7 @@
           color='grey'
           href='https://docs.requarks.io/auth'
           target='_blank'
+          rel='noopener'
           :aria-label='$t(`admin:auth.configReference`)'
           title='Open authentication documentation'
         )
@@ -26,6 +27,7 @@
           :aria-label='$t(`common:actions.refresh`)'
           title='Refresh authentication settings'
           :loading='initialLoading'
+          :disabled='initialLoading || saving'
         )
           v-icon mdi-refresh
         v-btn(
@@ -43,11 +45,10 @@
         v-card.animated.fadeInUp(v-if='loaded && !initialLoading')
           v-toolbar(flat, color='teal', density="compact")
             .text-body-large {{$t('admin:auth.activeStrategies')}}
-          v-list(lines="two", density="compact").py-0
+          v-list(lines="two", density="compact", role='listbox', :aria-label='$t(`admin:auth.activeStrategies`)').py-0
             draggable(
               v-model='activeStrategies'
-              handle='.is-handle'
-              direction='vertical'
+              handle='.is-handle:not(:disabled)'
               )
               transition-group
                 v-list-item(
@@ -55,6 +56,7 @@
                   :key='str.key'
                   role='option'
                   :aria-selected='selectedStrategy === str.key'
+                  link
                   @click='selectedStrategy = str.key'
                 )
                   template(v-slot:prepend)
@@ -63,13 +65,14 @@
                       size='small'
                       variant='text'
                       :aria-label='`Move ${str.displayName} (position ${idx + 1})`'
+                      :disabled='saving'
                       @click.stop='selectedStrategy = str.key'
                     )
                       v-icon(:color='selectedStrategy === str.key ? `teal` : `grey`') mdi-drag-horizontal
                     .d-flex.flex-column
-                      v-btn(size='x-small', icon, variant='text', :disabled='idx === 0', :aria-label='`Move ${str.displayName} up`', @click.stop='moveStrategy(idx, -1)')
+                      v-btn(size='x-small', icon, variant='text', :disabled='saving || idx === 0', :aria-label='`Move ${str.displayName} up`', @click.stop='moveStrategy(idx, -1)')
                         v-icon(size='16') mdi-chevron-up
-                      v-btn(size='x-small', icon, variant='text', :disabled='idx === activeStrategies.length - 1', :aria-label='`Move ${str.displayName} down`', @click.stop='moveStrategy(idx, 1)')
+                      v-btn(size='x-small', icon, variant='text', :disabled='saving || idx === activeStrategies.length - 1', :aria-label='`Move ${str.displayName} down`', @click.stop='moveStrategy(idx, 1)')
                         v-icon(size='16') mdi-chevron-down
                   v-list-item-title.text-body-medium(:class='selectedStrategy === str.key ? `text-teal` : ``') {{ str.displayName }}
                   v-list-item-subtitle: .text-body-small(:class='selectedStrategy === str.key ? `text-teal ` : ``') {{ str.strategy.title }}
@@ -79,13 +82,14 @@
           div.v-card-chin
             v-menu(location="bottom", min-width='250px', max-width='550px', max-height='50vh', style='flex: 1 1;')
               template(v-slot:activator='{ props }')
-                v-btn(v-bind='props', color='primary', variant="flat", block)
+                v-btn(v-bind='props', color='primary', variant="flat", block, :disabled='saving')
                   v-icon(start) mdi-plus
                   span {{$t('admin:auth.addStrategy')}}
               v-list(density="compact")
                 template(v-for='(str, idx) of strategies', :key='str.key')
                   v-list-item(
                     :disabled='str.isDisabled'
+                    link
                     @click='addStrategy(str)'
                     )
                     template(v-slot:prepend)
@@ -120,6 +124,7 @@
                   prepend-icon='mdi-format-title'
                   :hint='$t(`admin:auth.displayNameHint`)'
                   persistent-hint
+                  :disabled='saving'
                 )
               v-col(cols='12', sm='4')
                 v-switch.mt-1(
@@ -132,7 +137,7 @@
                   inset
                   :disabled='strategy.key === `local` || saving'
                 )
-            template(v-if='strategy.config && Object.keys(strategy.config).length > 0')
+            template(v-if='strategy.config && strategy.config.length > 0')
               v-divider
               .text-label-small.my-5 {{$t('admin:auth.strategyConfiguration')}}
               .pr-3
@@ -148,6 +153,7 @@
                     persistent-hint
                     :class='cfg.value.hint ? "mb-2" : ""'
                     :style='cfg.value.maxWidth > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
+                    :disabled='saving'
                   )
                   v-switch.mb-6(
                     v-else-if='cfg.value.type === "boolean"'
@@ -158,13 +164,14 @@
                     :hint='cfg.value.hint ? cfg.value.hint : ""'
                     persistent-hint
                     inset
+                    :disabled='saving'
                     )
                   v-textarea.mb-3(
                     v-else-if='cfg.value.type === "string" && cfg.value.multiline'
                     variant="outlined"
                     :label='cfg.value.title'
-                    :model-value='cfg.value.sensitive && !revealedSecrets[cfg.key] && cfg.value.value !== "********" ? "********" : cfg.value.value'
-                    :append-inner-icon='cfg.value.sensitive ? (revealedSecrets[cfg.key] ? "mdi-eye-off" : "mdi-eye") : undefined'
+                    :model-value='cfg.value.sensitive && !isSecretRevealed(cfg.key) && cfg.value.value !== "********" ? "********" : cfg.value.value'
+                    :append-inner-icon='cfg.value.sensitive ? (isSecretRevealed(cfg.key) ? "mdi-eye-off" : "mdi-eye") : undefined'
                     @update:model-value='updateSecret(cfg.key, $event, cfg.value)'
                     @click:append-inner='cfg.value.sensitive && toggleSecret(cfg.key)'
                     prepend-icon='mdi-cog-box'
@@ -172,14 +179,15 @@
                     persistent-hint
                     :class='cfg.value.hint ? "mb-2" : ""'
                     @update:focused='selectStoredSecret($event, cfg.value)'
+                    :disabled='saving'
                   )
                   v-text-field.mb-3(
                     v-else
                     variant="outlined"
                     :label='cfg.value.title'
                     v-model='cfg.value.value'
-                    :type='cfg.value.sensitive && !revealedSecrets[cfg.key] ? "password" : "text"'
-                    :append-inner-icon='cfg.value.sensitive ? (revealedSecrets[cfg.key] ? "mdi-eye-off" : "mdi-eye") : undefined'
+                    :type='cfg.value.sensitive && !isSecretRevealed(cfg.key) ? "password" : "text"'
+                    :append-inner-icon='cfg.value.sensitive ? (isSecretRevealed(cfg.key) ? "mdi-eye-off" : "mdi-eye") : undefined'
                     @click:append-inner='cfg.value.sensitive && toggleSecret(cfg.key)'
                     prepend-icon='mdi-cog-box'
                     :hint='cfg.value.sensitive ? "Stored secret is masked; leave unchanged or reveal to replace." : (cfg.value.hint ? cfg.value.hint : "")'
@@ -187,6 +195,7 @@
                     :class='cfg.value.hint ? "mb-2" : ""'
                     :style='cfg.value.maxWidth > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
                     @update:focused='selectStoredSecret($event, cfg.value)'
+                    :disabled='saving'
                   )
             v-divider
             .text-label-small.my-5 {{$t('admin:auth.registration')}}
@@ -198,13 +207,14 @@
                 :hint='$t(`admin:auth.selfRegistrationHint`)'
                 persistent-hint
                 inset
+                :disabled='saving'
               )
               v-combobox.ml-3.mt-5(
                 :label='$t(`admin:auth.domainsWhitelist`)'
                 v-model='strategy.domainWhitelist'
                 prepend-icon='mdi-email-check-outline'
                 variant="outlined"
-                :disabled='!strategy.selfRegistration'
+                :disabled='saving || !strategy.selfRegistration'
                 :hint='$t(`admin:auth.domainsWhitelistHint`)'
                 persistent-hint
                 closable-chips
@@ -214,7 +224,7 @@
                 )
               v-autocomplete.mt-3.ml-3(
                 variant="outlined"
-                :disabled='!strategy.selfRegistration'
+                :disabled='saving || !strategy.selfRegistration'
                 :items='groups'
                 item-title='name'
                 item-value='id'
@@ -296,7 +306,6 @@ export default {
       activeStrategies: [] as AdminActiveAuthStrategy[],
       selectedStrategy: '',
       host: '',
-      strategy: createEmptyStrategy(),
       initialLoading: true,
       loaded: false,
       saving: false,
@@ -306,20 +315,15 @@ export default {
   },
   computed: {
     dirty (): boolean {
-      return JSON.stringify(this.activeStrategies) !== JSON.stringify(this.persistedStrategies)
+      return !_.isEqual(this.activeStrategies, this.persistedStrategies)
+    },
+    strategy (): AdminActiveAuthStrategy {
+      return _.find(this.activeStrategies, ['key', this.selectedStrategy]) || createEmptyStrategy()
     }
   },
   watch: {
-    selectedStrategy(newValue: string) {
-      this.strategy = _.find(this.activeStrategies, ['key', newValue]) || createEmptyStrategy()
-    },
-    activeStrategies: {
-      handler() {
-        if (this.loaded && !_.find(this.activeStrategies, ['key', this.selectedStrategy])) {
-          this.selectedStrategy = this.activeStrategies[0]?.key || ''
-        }
-      },
-      deep: true
+    selectedStrategy() {
+      this.revealedSecrets = {}
     }
   },
   methods: {
@@ -388,6 +392,7 @@ export default {
     },
     async loadInitial() {
       this.initialLoading = true
+      this.revealedSecrets = {}
       this.loaded = false
       try {
         await Promise.all([
@@ -406,6 +411,7 @@ export default {
       }
     },
     async refresh() {
+      if (this.initialLoading || this.saving) return
       if (this.dirty && !window.confirm('Discard unsaved authentication changes and refresh?')) return
       await this.loadInitial()
       if (this.loaded) {
@@ -452,6 +458,9 @@ export default {
       if (!window.confirm(`Remove ${this.strategy.displayName}? This change will be pending until Apply.`)) return
       this.activeStrategies = _.reject(this.activeStrategies, ['key', this.strategy.key])
       this.selectedStrategy = this.activeStrategies[0]?.key || ''
+    },
+    isSecretRevealed (key: string): boolean {
+      return Boolean(this.revealedSecrets[key])
     },
     toggleSecret (key: string) {
       this.revealedSecrets = { ...this.revealedSecrets, [key]: !this.revealedSecrets[key] }

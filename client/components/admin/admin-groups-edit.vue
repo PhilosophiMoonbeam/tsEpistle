@@ -21,7 +21,7 @@
           template(v-slot:actions)
             v-btn(color='grey' icon variant="outlined" to='/groups' aria-label='Back to groups')
               v-icon mdi-arrow-left
-            v-dialog(v-model='deleteGroupDialog' max-width='500' :fullscreen='$vuetify.display.smAndDown' v-if='!group.isSystem')
+            v-dialog(v-model='deleteGroupDialog' max-width='500' :fullscreen='$vuetify.display.smAndDown' v-if='!group.isSystem' aria-label='Delete group')
               template(v-slot:activator='{ props }')
                 v-btn(color='red' icon variant="outlined" v-bind='props' aria-label='Delete group' :disabled='!groupReady || groupAction !== ``')
                   v-icon(color='red') mdi-trash-can-outline

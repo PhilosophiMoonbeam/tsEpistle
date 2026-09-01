@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='`is-editor-` + editorKey', ref='mediaDialog', role='dialog', aria-modal='true', aria-labelledby='editor-media-title', tabindex='-1', @keydown.esc='cancel', @keydown.tab='trapFocus')
+  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='`is-editor-` + editorKey', ref='mediaDialog', role='dialog', aria-modal='true', aria-labelledby='editor-media-title', tabindex='-1')
     v-container.pa-3(fluid)
       v-row
         v-col(cols='12', lg='9')
@@ -68,7 +68,6 @@
                 template(v-slot:item='props')
                   tr.is-clickable(
                     tabindex='0'
-                    role='option'
                     :aria-selected='currentFileId === props.item.id'
                     :aria-label='`Select ${props.item.filename}`'
                     @keydown.enter.space.prevent='selectAsset(props.item.id)'
@@ -111,7 +110,7 @@
                           //-       v-avatar(size='24')
                           //-         v-icon(color='purple') mdi-flash-circle
                           //-     v-list-item-title {{$t('common:actions.optimize')}}
-                          v-list-item(@click='openRenameDialog')
+                          v-list-item(@click='openRenameDialog(props.item.id)')
                             template(v-slot:prepend)
                               v-avatar(size='24')
                                 v-icon(color='orange') mdi-keyboard-outline
@@ -121,7 +120,7 @@
                           //-     v-avatar(size='24')
                           //-       v-icon(color='blue') mdi-file-move
                           //-   v-list-item-title {{$t('common:actions.move')}}
-                          v-list-item(@click='deleteDialog = true')
+                          v-list-item(@click='openDeleteDialog(props.item.id)')
                             template(v-slot:prepend)
                               v-avatar(size='24')
                                 v-icon(color='red') mdi-file-hidden
@@ -155,9 +154,9 @@
                 name='mediaUpload'
                 ref='pond'
                 :label-idle='$t(`editor:assets.uploadAssetsDropZone`)'
-                allow-multiple='true'
+                allow-multiple
                 :files='files'
-                max-files='10'
+                :max-files='10'
                 :server='filePondServerOpts'
                 :instant-upload='false'
                 :allow-revert='false'
@@ -178,6 +177,8 @@
               v-select.mt-3(
                 v-model='imageAlignment'
                 :items='imageAlignments'
+                item-title='text'
+                item-value='value'
                 variant="outlined"
                 single-line
                 color='teal'
@@ -217,7 +218,7 @@
           span {{$t('editor:assets.deleteAsset')}}
         v-card-text.pt-5
           .text-body-medium {{$t('editor:assets.deleteAssetConfirm')}}
-          .text-body-medium.text-red-darken-2 {{currentAsset.filename}}?
+          .text-body-medium.text-red-darken-2 {{currentAsset?.filename}}?
           .text-body-small.mt-3 {{$t('editor:assets.deleteAssetWarn')}}
         div.v-card-chin
           v-spacer
@@ -233,6 +234,7 @@ import vueFilePond from 'vue-filepond'
 import 'filepond/dist/filepond.min.css'
 import { createAssetFolder, deleteAsset as deleteAssetRequest, fetchAssetFolders, fetchAssets, renameAsset as renameAssetRequest, type Asset, type AssetFolder } from '../../helpers/assets-api'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
+import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
 const FilePond = vueFilePond() as unknown as Component
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
@@ -267,7 +269,6 @@ export default defineComponent({
       files: [] as FilePondFile[],
       assets: [] as Asset[],
       pagination: 1,
-      remoteImageUrl: '',
       imageAlignments: [
         { text: 'None', value: '' },
         { text: 'Left', value: 'left' },
@@ -280,14 +281,18 @@ export default defineComponent({
       newFolderDialog: false,
       newFolderName: '',
       newFolderLoading: false,
-      previewDialog: false,
       renameDialog: false,
       deleteDialog: false,
       renameAssetName: '',
       renameAssetLoading: false,
       deleteAssetLoading: false,
       mediaLoadError: '',
-      returnFocus: null as HTMLElement | null
+      returnFocus: null as HTMLElement | null,
+      focusScope: null as ModalFocusScope | null,
+      mediaRequest: 0,
+      mediaLoadsInFlight: 0,
+      fileRemovalTimers: [] as number[],
+      disposed: false
     }
   },
   computed: {
@@ -372,45 +377,42 @@ export default defineComponent({
     newFolderDialog(newValue: boolean) {
       if (newValue) {
         this.$nextTick(() => {
-          ;(this.$refs.folderNameIpt as { focus: () => void }).focus()
+          if (!this.disposed && this.newFolderDialog) {
+            ;(this.$refs.folderNameIpt as { focus?: () => void })?.focus?.()
+          }
         })
       }
     },
     currentFolderId () {
-      this.loadMedia()
+      void this.loadMedia()
     }
   },
   mounted() {
     this.returnFocus = document.activeElement as HTMLElement | null
     this.$nextTick(() => {
+      if (this.disposed) return
+      const root = this.$refs.mediaDialog as HTMLElement | undefined
+      if (!root) return
+      this.focusScope = createModalFocusScope({
+        root,
+        restoreTarget: () => this.returnFocus,
+        onEscape: this.cancel
+      })
       ;(this.$refs.refreshButton as { focus?: () => void })?.focus?.()
     })
-    this.loadMedia()
+    void this.loadMedia()
   },
   beforeUnmount() {
-    this.returnFocus?.focus?.()
+    this.disposed = true
+    this.mediaRequest++
+    for (const timer of this.fileRemovalTimers) window.clearTimeout(timer)
+    this.fileRemovalTimers = []
+    this.focusScope?.deactivate()
+    this.focusScope = null
   },
   methods: {
     selectAsset(id: number) {
       this.currentFileId = id
-    },
-    trapFocus(event: KeyboardEvent) {
-      if (event.key !== 'Tab') return
-      const root = this.$refs.mediaDialog as HTMLElement | undefined
-      if (!root) return
-      const focusable = Array.from(root.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      ))
-      if (focusable.length === 0) return
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault()
-        first.focus()
-      }
     },
     prettyBytes(num: number) {
       if (typeof num !== 'number' || isNaN(num)) {
@@ -469,7 +471,7 @@ export default defineComponent({
           icon: 'warning'
         })
       }
-      for (let file of files) {
+      for (const file of files) {
         file.setMetadata({
           folderId: this.currentFolderId
         })
@@ -484,9 +486,13 @@ export default defineComponent({
           icon: 'error'
         })
       }
-      _.delay(() => {
-        ;(this.$refs.pond as FilePondRef).removeFile(file.id)
+      const timer = window.setTimeout(() => {
+        this.fileRemovalTimers = this.fileRemovalTimers.filter(value => value !== timer)
+        if (!this.disposed) {
+          ;(this.$refs.pond as FilePondRef | undefined)?.removeFile(file.id)
+        }
       }, 5000)
+      this.fileRemovalTimers.push(timer)
 
       await this.loadMedia()
     },
@@ -502,11 +508,16 @@ export default defineComponent({
       this.currentFileId = null
     },
     async createFolder() {
+      if (this.newFolderLoading || !this.isFolderNameValid) return
+      const folderId = this.currentFolderId
+      const folderName = this.newFolderName
       wikiStore.startLoading('editor-media-createfolder')
       this.newFolderLoading = true
       try {
-        await createAssetFolder(window.fetch.bind(window), this.currentFolderId, this.newFolderName)
-        await this.loadMedia()
+        await createAssetFolder(window.fetch.bind(window), folderId, folderName)
+        if (this.disposed) return
+        if (this.currentFolderId === folderId) await this.loadMedia()
+        if (this.disposed) return
         wikiStore.showNotification({
           message: this.$t('editor:assets.folderCreateSuccess'),
           style: 'success',
@@ -515,24 +526,34 @@ export default defineComponent({
         this.newFolderDialog = false
         this.newFolderName = ''
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.disposed) wikiStore.showError(err)
+      } finally {
+        if (!this.disposed) this.newFolderLoading = false
+        wikiStore.stopLoading('editor-media-createfolder')
       }
-      this.newFolderLoading = false
-      wikiStore.stopLoading('editor-media-createfolder')
     },
-    openRenameDialog() {
+    openRenameDialog(id: number) {
+      this.currentFileId = id
       if (!this.currentAsset) throw new Error('No asset selected for renaming.')
       this.renameAssetName = this.currentAsset.filename
       this.renameDialog = true
     },
+    openDeleteDialog(id: number) {
+      this.currentFileId = id
+      if (!this.currentAsset) throw new Error('No asset selected for deletion.')
+      this.deleteDialog = true
+    },
     async renameAsset() {
-      if (!this.isRenameValid) return
+      if (this.renameAssetLoading || !this.isRenameValid || this.currentFileId === null) return
+      const assetId = this.currentFileId
+      const assetName = this.renameAssetName
       wikiStore.startLoading('editor-media-renameasset')
       this.renameAssetLoading = true
       try {
-        if (this.currentFileId === null) throw new Error('No asset selected for renaming.')
-        await renameAssetRequest(window.fetch.bind(window), this.currentFileId, this.renameAssetName)
+        await renameAssetRequest(window.fetch.bind(window), assetId, assetName)
+        if (this.disposed) return
         await this.loadMedia()
+        if (this.disposed) return
         wikiStore.showNotification({
           message: this.$t('editor:assets.renameSuccess'),
           style: 'success',
@@ -541,19 +562,23 @@ export default defineComponent({
         this.renameDialog = false
         this.renameAssetName = ''
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.disposed) wikiStore.showError(err)
+      } finally {
+        if (!this.disposed) this.renameAssetLoading = false
+        wikiStore.stopLoading('editor-media-renameasset')
       }
-      this.renameAssetLoading = false
-      wikiStore.stopLoading('editor-media-renameasset')
     },
     async deleteAsset() {
+      if (this.deleteAssetLoading || this.currentFileId === null) return
+      const assetId = this.currentFileId
       wikiStore.startLoading('editor-media-deleteasset')
       this.deleteAssetLoading = true
       try {
-        if (this.currentFileId === null) throw new Error('No asset selected for deletion.')
-        await deleteAssetRequest(window.fetch.bind(window), this.currentFileId)
-        this.currentFileId = null
+        await deleteAssetRequest(window.fetch.bind(window), assetId)
+        if (this.disposed) return
+        if (this.currentFileId === assetId) this.currentFileId = null
         await this.loadMedia()
+        if (this.disposed) return
         wikiStore.showNotification({
           message: this.$t('editor:assets.deleteSuccess'),
           style: 'success',
@@ -561,37 +586,52 @@ export default defineComponent({
         })
         this.deleteDialog = false
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.disposed) wikiStore.showError(err)
+      } finally {
+        if (!this.disposed) this.deleteAssetLoading = false
+        wikiStore.stopLoading('editor-media-deleteasset')
       }
-      this.deleteAssetLoading = false
-      wikiStore.stopLoading('editor-media-deleteasset')
     },
     async loadMedia (): Promise<boolean> {
+      const request = ++this.mediaRequest
       this.loading = true
       this.mediaLoadError = ''
-      wikiStore.startLoading('editor-media-list-refresh')
-      wikiStore.startLoading('editor-media-folders-list-refresh')
+      this.mediaLoadsInFlight++
+      if (this.mediaLoadsInFlight === 1) {
+        wikiStore.startLoading('editor-media-list-refresh')
+        wikiStore.startLoading('editor-media-folders-list-refresh')
+      }
       try {
+        const folderId = this.currentFolderId
         const [folders, assets] = await Promise.all([
-          fetchAssetFolders(window.fetch.bind(window), this.currentFolderId),
-          fetchAssets(window.fetch.bind(window), this.currentFolderId)
+          fetchAssetFolders(window.fetch.bind(window), folderId),
+          fetchAssets(window.fetch.bind(window), folderId)
         ])
+        if (this.disposed || request !== this.mediaRequest || folderId !== this.currentFolderId) return false
         this.folders = folders
         this.assets = assets
+        if (this.currentFileId !== null && !assets.some(asset => asset.id === this.currentFileId)) {
+          this.currentFileId = null
+        }
         return true
       } catch (err) {
+        if (this.disposed || request !== this.mediaRequest) return false
         this.mediaLoadError = 'Unable to load assets. Try again.'
         wikiStore.showError(err)
         return false
       } finally {
-        this.loading = false
-        wikiStore.stopLoading('editor-media-list-refresh')
-        wikiStore.stopLoading('editor-media-folders-list-refresh')
+        this.mediaLoadsInFlight--
+        if (this.mediaLoadsInFlight === 0) {
+          wikiStore.stopLoading('editor-media-list-refresh')
+          wikiStore.stopLoading('editor-media-folders-list-refresh')
+        }
+        if (!this.disposed && request === this.mediaRequest) {
+          this.loading = false
+        }
       }
     },
     cancel () {
       this.activeModal = ''
-      this.$nextTick(() => this.returnFocus?.focus?.())
     }
   }
 

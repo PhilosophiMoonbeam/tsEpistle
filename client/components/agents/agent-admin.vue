@@ -479,7 +479,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import {
   agentProviderReasoningEfforts,
@@ -544,7 +544,7 @@ interface ProfileDraft { displayName: string; transportKind: AgentProviderTransp
 
 const props = withDefaults(defineProps<{ csrfToken: string; embedded?: boolean }>(), { embedded: false })
 const { smAndDown } = useDisplay()
-const { embedded } = props
+const embedded = computed(() => props.embedded)
 const tab = ref('runtime')
 type ProfileStep = 'identity' | 'models' | 'connection' | 'access' | 'limits'
 const profileStep = ref<ProfileStep>('identity')
@@ -576,6 +576,9 @@ const browserEnableTarget = ref<BrowserTarget | null>(null)
 const browserUrl = ref('')
 const browserEnabled = ref(false)
 const grantDraft = reactive({ exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups', groupIds: [] as number[] })
+let loadController: AbortController | null = null
+let loadGeneration = 0
+let disposed = false
 const sameIdSet = (left: readonly number[], right: readonly number[]): boolean => {
   if (left.length !== right.length) return false
   const sortedLeft = [...left].sort((a, b) => a - b)
@@ -803,15 +806,38 @@ const run = async (operation: () => Promise<void>, busyKey = 'global', onError: 
   error.value = ''
   try { await operation() } catch (value) { onError(value instanceof Error ? value.message : 'Agent administration request failed.') } finally { saving.value = false; actionBusyKey.value = '' }
 }
-const load = async () => {
-  if (loading.value) return
+const load = async (): Promise<void> => {
+  if (disposed) return
+  loadController?.abort()
+  const controller = new AbortController()
+  loadController = controller
+  const generation = ++loadGeneration
   loading.value = true
   loadFailed.value = false
   error.value = ''
   try {
-    const [runtimeResult, profileResult, browserResult, groupResult] = await Promise.all([request<{ runtime: RuntimePolicy }>('/_api/agents/admin/runtime'), request<{ profiles: Profile[] }>('/_api/agents/admin/profiles'), request<{ targets: BrowserTarget[] }>('/_api/agents/admin/browser-targets'), request<GroupOption[]>('/_api/groups')])
-    runtime.value = runtimeResult.runtime; profiles.value = profileResult.profiles; browserTargets.value = browserResult.targets; groups.value = groupResult; dataLoaded.value = true
-  } catch (value) { loadFailed.value = true; error.value = value instanceof Error ? value.message : 'Agent administration could not be loaded.' } finally { loading.value = false }
+    const [runtimeResult, profileResult, browserResult, groupResult] = await Promise.all([
+      request<{ runtime: RuntimePolicy }>('/_api/agents/admin/runtime', { signal: controller.signal }),
+      request<{ profiles: Profile[] }>('/_api/agents/admin/profiles', { signal: controller.signal }),
+      request<{ targets: BrowserTarget[] }>('/_api/agents/admin/browser-targets', { signal: controller.signal }),
+      request<GroupOption[]>('/_api/groups', { signal: controller.signal })
+    ])
+    if (generation !== loadGeneration) return
+    runtime.value = runtimeResult.runtime
+    profiles.value = profileResult.profiles
+    browserTargets.value = browserResult.targets
+    groups.value = groupResult
+    dataLoaded.value = true
+  } catch (value) {
+    if (generation !== loadGeneration || controller.signal.aborted) return
+    loadFailed.value = true
+    error.value = value instanceof Error ? value.message : 'Agent administration could not be loaded.'
+  } finally {
+    if (generation === loadGeneration) {
+      loading.value = false
+      if (loadController === controller) loadController = null
+    }
+  }
 }
 const openProfile = (profile?: Profile) => {
   profileError.value = ''
@@ -950,6 +976,12 @@ const allowConfirmedBrowserTarget = (): void => {
   const target = browserEnableTarget.value
   if (target) updateBrowserTarget(target, true, message => { browserEnableError.value = message })
 }
+onBeforeUnmount(() => {
+  disposed = true
+  loadGeneration += 1
+  loadController?.abort()
+  loadController = null
+})
 onMounted(() => void load())
 </script>
 

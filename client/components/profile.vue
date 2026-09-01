@@ -46,8 +46,9 @@
             template(v-slot:prepend): v-icon mdi-file-document-outline
             v-list-item-title {{$t('profile:pages.title')}}
     v-main.profile-main
-      transition(name='profile-router')
-        router-view
+      router-view(v-slot='{ Component }')
+        transition(name='profile-router')
+          component(:is='Component')
 
     nav-footer
     notify

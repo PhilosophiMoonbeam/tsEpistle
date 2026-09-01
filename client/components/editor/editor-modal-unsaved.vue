@@ -1,8 +1,8 @@
 <template lang="pug">
-  v-dialog(v-model='isShown', max-width='550', aria-labelledby='unsaved-dialog-title', aria-describedby='unsaved-dialog-description')
+  v-dialog(v-model='isShown', max-width='550', role='alertdialog', aria-labelledby='unsaved-dialog-title', aria-describedby='unsaved-dialog-description')
     v-card
       .dialog-header.is-short.is-red
-        v-icon.mr-2(color='white') mdi-alert
+        v-icon.mr-2(color='white', aria-hidden='true') mdi-alert
         span#unsaved-dialog-title {{$t('editor:unsaved.title')}}
       v-card-text.pt-4#unsaved-dialog-description
         .text-body-medium {{$t('editor:unsaved.body')}}
@@ -13,7 +13,6 @@
 </template>
 
 <script lang='ts'>
-
 export default {
   emits: ['discard', 'update:modelValue'],
   props: {
@@ -22,9 +21,6 @@ export default {
       default: false
     }
   },
-  data() {
-    return { }
-  },
   computed: {
     isShown: {
       get() { return this.modelValue },
@@ -32,7 +28,7 @@ export default {
     }
   },
   methods: {
-    async discard() {
+    discard() {
       this.isShown = false
       this.$emit('discard', true)
     }

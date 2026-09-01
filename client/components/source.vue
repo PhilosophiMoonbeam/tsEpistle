@@ -75,9 +75,6 @@ export default {
       default: ''
     }
   },
-  data() {
-    return {}
-  },
   created () {
     wikiStore.page.id = this.pageId
     wikiStore.page.locale = this.locale

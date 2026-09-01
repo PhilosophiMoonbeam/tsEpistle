@@ -2,11 +2,11 @@
   v-dialog(
     v-model='dialogOpen'
     max-width='650'
-    aria-labelledby='user-search-dialog-title'
+    :aria-labelledby='dialogTitleId'
     )
     v-card
       .dialog-header
-        span#user-search-dialog-title {{$t('common:user.search')}}
+        span(:id='dialogTitleId') {{$t('common:user.search')}}
         v-spacer
         v-progress-circular(
           indeterminate
@@ -57,7 +57,7 @@
           density="compact"
         )
           template(v-for='(usr, idx) in items', :key='usr.id')
-            v-list-item(@click='setUser(usr)')
+            v-list-item(tag='button', type='button', role='button', @click='setUser(usr)')
               template(v-slot:prepend)
                 v-avatar(size='40', color='primary', aria-hidden='true')
                   span.text-body-large.text-white(aria-hidden='true') {{ initials(usr.name) }}
@@ -71,13 +71,11 @@
         v-btn(
           variant="text"
           @click='close'
-          :disabled='loading'
         ) {{$t('common:actions.cancel')}}
 </template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
-import _ from 'lodash'
+import { defineComponent, useId } from 'vue'
 
 import AsyncState from './async-state.vue'
 import { searchUsers, type UserSearchRow } from '../../helpers/users-api'
@@ -99,16 +97,22 @@ export default defineComponent({
   components: {
     AsyncState
   },
+  setup() {
+    return {
+      dialogTitleId: useId()
+    }
+  },
   data() {
     return {
-      loading: false,
       searchLoading: false,
       search: '',
       items: [] as UserSearchRow[],
       searchRequestId: 0,
       searchAttempted: false,
       searchError: '',
-      searchTimer: null as number | null
+      searchTimer: null as number | null,
+      focusTimer: null as number | null,
+      searchAbortController: null as AbortController | null
     }
   },
   computed: {
@@ -132,7 +136,13 @@ export default defineComponent({
         this.searchAttempted = false
         this.searchError = ''
         this.searchLoading = false
-        _.delay(() => { (this.$refs.searchIpt as { focus: () => void }).focus() }, 100)
+        if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
+        this.focusTimer = window.setTimeout(() => {
+          this.focusTimer = null
+          if (!this.modelValue) return
+          const input = this.$refs.searchIpt as { focus?: () => void } | undefined
+          input?.focus?.()
+        }, 100)
       } else if (!newValue && oldValue) {
         this.cancelSearch()
       }
@@ -153,17 +163,22 @@ export default defineComponent({
     },
     cancelSearch(): void {
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
+      if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
       this.searchTimer = null
+      this.focusTimer = null
       this.searchRequestId += 1
+      this.searchAbortController?.abort()
+      this.searchAbortController = null
       this.searchLoading = false
     },
     queueSearch(): void {
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
       this.searchRequestId += 1
+      this.searchAbortController?.abort()
+      this.searchAbortController = null
       this.searchError = ''
       this.items = []
-
       const query = this.search
       if (query.trim().length < 2) {
         this.searchAttempted = false
@@ -182,8 +197,14 @@ export default defineComponent({
     async loadUsers(query?: string, requestId?: number): Promise<UserSearchRow[]> {
       if (query === undefined) query = this.search
       if (requestId === undefined) requestId = ++this.searchRequestId
+      const controller = new AbortController()
+      this.searchAbortController = controller
       try {
-        const items = await searchUsers(window.fetch.bind(window), query, this.$t('common:error.generic'))
+        const items = await searchUsers(
+          (url, init) => window.fetch(url, { ...init, signal: controller.signal }),
+          query,
+          this.$t('common:error.generic')
+        )
         if (requestId !== this.searchRequestId || query !== this.search) {
           return []
         }
@@ -198,6 +219,9 @@ export default defineComponent({
         wikiStore.showError(err)
         return []
       } finally {
+        if (this.searchAbortController === controller) {
+          this.searchAbortController = null
+        }
         if (requestId === this.searchRequestId) {
           this.searchLoading = false
         }
@@ -212,9 +236,6 @@ export default defineComponent({
     setUser(usr: UserSearchRow): void {
       this.$emit('select', usr)
       this.close()
-    },
-    searchFilter(item: UserSearchRow, queryText: string, itemText: string): boolean {
-      return _.includes(_.toLower(item.email), _.toLower(queryText)) || _.includes(_.toLower(item.name), _.toLower(queryText))
     }
   }
 })

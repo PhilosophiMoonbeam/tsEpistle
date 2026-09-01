@@ -14,12 +14,14 @@ describe('page-convert REST migration guard', () => {
     expect(script).not.toMatch(/graphql-tag|\$apollo/)
   })
 
-  test('preserves the conversion guard, loading ownership, errors, dialog close, and redirect behavior through wikiStore', () => {
+  test('preserves the conversion reentry guard, loading ownership, errors, dialog close, and scoped redirect', () => {
+    expect(script).toContain('if (!this.canConvert || this.loading) return')
     expect(script).toMatch(
-      /async\s+convertPage\s*\(\s*\)\s*:\s*Promise<void>\s*\{\s*if\s*\(\s*!this\.canConvert\s*\)\s*return\s+this\.loading\s*=\s*true\s+wikiStore\.startLoading\s*\(\s*['"]page-convert['"]\s*\)\s*try\s*\{\s*await\s+this\.\$nextTick\s*\(\s*\)/
+      /this\.loading\s*=\s*true\s+wikiStore\.startLoading\s*\(\s*['"]page-convert['"]\s*\)\s+try\s*\{\s+await convertPage\(window\.fetch\.bind\(window\), this\.pageId, this\.newEditor, this\.pageSourceRevision\)/
     )
-    expect(script).toContain('this.isShown = false')
-    expect(script).toMatch(/window\.location\.assign\(`\/e\/\$\{this\.pageLocale\}\/\$\{this\.pagePath\}`\)/)
+    expect(script).toMatch(/await convertPage[\s\S]*?this\.isShown = false/)
+    expect(script).toContain("const scope = this.pageVisibility === 'private' ? '/_private' : ''")
+    expect(script).toMatch(/window\.location\.assign\s*\(\s*`\/e\$\{scope\}\/\$\{this\.pageLocale\}\/\$\{this\.pagePath\}`\s*\)/)
     expect(script).toContain('wikiStore.showError(err)')
     expect(script).toMatch(/finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]page-convert['"]\s*\)\s*this\.loading\s*=\s*false\s*\}/)
   })

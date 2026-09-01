@@ -19,14 +19,14 @@ describe('admin-dev-flags root UI facade migration guard', () => {
     expect(source).toMatch(/async-state\(\s*v-else-if='errorMessage'[\s\S]*?state='error'[\s\S]*?:message='errorMessage'[\s\S]*?@retry='loadFlags'/)
     expect(source).toMatch(/template\(v-else-if='flagsLoaded'\)[\s\S]*?v-model='flags\.ldapdebug'[\s\S]*?v-model='flags\.sqllog'/)
     expect(source).not.toMatch(/template\(v-else\)/)
-    expect(source).toMatch(/v-btn\([\s\S]*?:disabled='!flagsLoaded \|\| loading'[\s\S]*?:loading='saving'/)
+    expect(source).toMatch(/v-btn\([\s\S]*?:disabled=['"]!flagsLoaded \|\| loading \|\| saving['"][\s\S]*?:loading=['"]saving['"]/)
     expect(script).toMatch(/flagsLoaded:\s*false,\s*loading:\s*false,\s*saving:\s*false,\s*errorMessage:\s*(['"])\1/)
     expect(script).toMatch(/mounted\s*\(\s*\)\s*\{\s*this\.loadFlags\(\)\s*\}/)
 
     const loadFlags = script.match(/async\s+loadFlags[\s\S]*?(?=\n\s+async\s+save)/)?.[0]
     expect(loadFlags).toBeDefined()
     expect(loadFlags).toMatch(
-      /async\s+loadFlags\s*\(\s*\)\s*\{\s*this\.loading\s*=\s*true\s*this\.errorMessage\s*=\s*(['"])\1\s*this\.flagsLoaded\s*=\s*false\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-dev-flags-refresh['"]\s*\)\s*try\s*\{/
+      /async\s+loadFlags\s*\(\s*\)\s*\{\s*if\s*\(\s*this\.loading\s*\|\|\s*this\.saving\s*\)\s*\{\s*return\s+false\s*\}\s*this\.loading\s*=\s*true\s*this\.errorMessage\s*=\s*(['"])\1\s*this\.flagsLoaded\s*=\s*false\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-dev-flags-refresh['"]\s*\)\s*try\s*\{/
     )
     expect(loadFlags).toMatch(
       /this\.flags\s*=\s*await\s+fetchSystemFlags\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]System flags response is invalid['"]\s*\)\s*this\.flagsLoaded\s*=\s*true\s*return\s+true/
@@ -39,7 +39,7 @@ describe('admin-dev-flags root UI facade migration guard', () => {
     const save = script.match(/async\s+save[\s\S]*?(?=\n\s+\}\n\})/)?.[0]
     expect(save).toBeDefined()
     expect(save).toMatch(
-      /async\s+save\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.flagsLoaded\s*\)\s*\{\s*return\s*\}\s*this\.saving\s*=\s*true\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-dev-flags-update['"]\s*\)\s*try\s*\{/
+      /async\s+save\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.flagsLoaded\s*\|\|\s*this\.loading\s*\|\|\s*this\.saving\s*\)\s*\{\s*return\s*\}\s*this\.saving\s*=\s*true\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-dev-flags-update['"]\s*\)\s*try\s*\{/
     )
     expect(save).toMatch(
       /await\s+updateSystemFlags\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*this\.flags\s*,\s*['"]System flags update failed['"]\s*\)[\s\S]*?showNotification\s*\(\s*wikiStore\s*,\s*\{\s*style:\s*['"]success['"],\s*message:\s*['"]Flags applied successfully\.['"],\s*icon:\s*['"]check['"]\s*\}\s*\)/

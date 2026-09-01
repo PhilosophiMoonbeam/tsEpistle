@@ -14,6 +14,7 @@
               color='grey'
               href='https://docs.requarks.io/rendering'
               target='_blank'
+              rel='noopener'
               v-bind='props'
               aria-label='Rendering documentation — opens in a new tab'
             )
@@ -26,6 +27,8 @@
               variant="outlined"
               color='grey'
               @click='refresh'
+              :loading='renderersLoading'
+              :disabled='renderersLoading || saving'
               v-bind='props'
               aria-label='Refresh rendering modules'
             )
@@ -36,7 +39,8 @@
           @click='save'
           variant="flat"
           size="large"
-          :disabled='!renderersLoaded'
+          :loading='saving'
+          :disabled='!renderersLoaded || renderersLoading || saving'
         )
           v-icon(start) mdi-check
           span {{$t('common:actions.apply')}}
@@ -81,12 +85,14 @@
                 .text-body-small {{core.output}}
                 v-spacer
             v-expansion-panel-text
-              v-list.py-0(lines="two", density="compact")
+              v-list.py-0(lines="two", density="compact", role='listbox', aria-label='Rendering modules')
                 template(v-for='(rdr, n) in core.children', :key='rdr.key')
                   v-list-item(
                     @click='selectRenderer(rdr.key)'
+                    link
+                    role='option'
                     :active='currentRenderer.key === rdr.key'
-                    :aria-current='currentRenderer.key === rdr.key ? "page" : undefined'
+                    :aria-selected='currentRenderer.key === rdr.key'
                     :class='currentRenderer.key === rdr.key ? ($vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-blue-lighten-5`) : ``'
                     )
                     template(v-slot:prepend)
@@ -124,15 +130,16 @@
               v-model='currentRenderer.isEnabled'
               hide-details
               inset
+              :disabled='renderersLoading || saving'
             )
           div.v-card-info(color='info')
             div
               div {{currentRenderer.description}}
-              span.text-body-small: a(href='https://docs.requarks.io/en/rendering', target='_blank') Documentation
+              span.text-body-small: a(href='https://docs.requarks.io/en/rendering', target='_blank', rel='noopener', aria-label='Rendering documentation — opens in a new tab') Documentation
           v-card-text.pb-4.pl-4
             .text-label-small.mb-5 Rendering Module Configuration
             .text-body-medium.ml-3(v-if='!currentRenderer.config || currentRenderer.config.length < 1'): em This rendering module has no configuration options you can modify.
-            template(v-else, v-for='(cfg, idx) in currentRenderer.config', :key='cfg.key')
+            template(v-else, v-for='cfg in currentRenderer.config', :key='cfg.key')
               v-select(
                 v-if='cfg.value.type === "string" && cfg.value.enum'
                 variant="outlined"
@@ -143,6 +150,7 @@
                 persistent-hint
                 :class='cfg.value.hint ? "mb-2" : ""'
                 color='primary'
+                :disabled='renderersLoading || saving'
               )
               v-switch(
                 v-else-if='cfg.value.type === "boolean"'
@@ -152,6 +160,7 @@
                 :hint='cfg.value.hint ? cfg.value.hint : ""'
                 persistent-hint
                 inset
+                :disabled='renderersLoading || saving'
               )
               v-text-field(
                 v-else
@@ -162,6 +171,7 @@
                 persistent-hint
                 :class='cfg.value.hint ? "mb-2" : ""'
                 color='primary'
+                :disabled='renderersLoading || saving'
               )
           div.v-card-chin
             v-spacer
@@ -175,7 +185,7 @@ import StatusIndicator from '@/components/common/status-indicator.vue'
 import { wikiStore } from '@/store/index.ts'
 
 import { fetchRenderingRenderers, saveRenderingRenderers, type Renderer } from '../../helpers/rendering-api'
-import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+import { getErrorMessage, loadingStart, loadingStop, pushGraphError, showNotification } from '../../helpers/root-ui-store'
 
 type RendererTree = Renderer & {
   children: Renderer[]
@@ -203,16 +213,9 @@ export default {
       renderers: [] as RendererTree[],
       currentRenderer: createEmptyRenderer(),
       renderersLoading: false,
+      saving: false,
       renderersLoaded: false,
       renderersLoadError: false
-    }
-  },
-  watch: {
-    renderers(newValue: RendererTree[]) {
-      _.delay(() => {
-        this.selectedCore = _.findIndex(newValue, ['key', 'markdownCore'])
-        this.selectRenderer('markdownCore')
-      }, 500)
     }
   },
   created () {
@@ -247,9 +250,13 @@ export default {
       try {
         const flatRenderers = await fetchRenderingRenderers(window.fetch.bind(window), 'Rendering renderers response is invalid')
         this.renderers = this.buildRendererTree(flatRenderers)
+        this.selectedCore = _.findIndex(this.renderers, ['key', 'markdownCore'])
+        this.currentRenderer = createEmptyRenderer()
+        if (this.selectedCore >= 0) this.selectRenderer('markdownCore')
         this.renderersLoaded = true
       } catch (err) {
         this.renderers = []
+        this.selectedCore = -1
         this.currentRenderer = createEmptyRenderer()
         this.renderersLoaded = false
         this.renderersLoadError = true
@@ -278,7 +285,12 @@ export default {
       })
     },
     async refresh () {
-      await this.loadRenderers()
+      if (this.renderersLoading || this.saving) return
+      try {
+        await this.loadRenderers()
+      } catch {
+        return
+      }
       showNotification(wikiStore, {
         message: 'Rendering active configuration has been reloaded.',
         style: 'success',
@@ -286,6 +298,8 @@ export default {
       })
     },
     async save () {
+      if (!this.renderersLoaded || this.renderersLoading || this.saving) return
+      this.saving = true
       loadingStart(wikiStore, 'admin-rendering-saverenderers')
       try {
         await saveRenderingRenderers(window.fetch.bind(window), this.renderers.reduce<unknown[]>((result, core) => {
@@ -301,7 +315,10 @@ export default {
           style: 'success',
           icon: 'check'
         })
+      } catch (err) {
+        pushGraphError(wikiStore, err)
       } finally {
+        this.saving = false
         loadingStop(wikiStore, 'admin-rendering-saverenderers')
       }
     }

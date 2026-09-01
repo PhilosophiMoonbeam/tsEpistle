@@ -130,10 +130,13 @@ const profileId = ref<string | null>(props.session.providerProfileId)
 const applying = ref(false)
 const profileError = ref('')
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+let applyGeneration = 0
 
 watch(
   () => [props.session.id, props.session.providerProfileId] as const,
   ([, providerProfileId]) => {
+    applyGeneration++
+    applying.value = false
     profileId.value = providerProfileId
     profileError.value = ''
   }
@@ -189,19 +192,24 @@ const resetProfileSelection = (): void => {
 }
 const applyProfile = async (): Promise<void> => {
   if (props.disabled || applying.value || !profileChanged.value) return
+  const sessionId = props.session.id
+  const selectedProfileId = profileId.value
+  const generation = ++applyGeneration
   applying.value = true
   profileError.value = ''
   try {
-    const result = await props.applyProviderProfile(profileId.value)
+    const result = await props.applyProviderProfile(selectedProfileId)
+    if (generation !== applyGeneration || props.session.id !== sessionId) return
     if (!result.success) {
       const error = typeof result.error === 'string' ? result.error.trim() : ''
       profileError.value = error || 'The provider profile could not be applied. Try again.'
     }
   } catch (value) {
+    if (generation !== applyGeneration || props.session.id !== sessionId) return
     const error = value instanceof Error && typeof value.message === 'string' ? value.message.trim() : ''
     profileError.value = error || 'The provider profile could not be applied. Try again.'
   } finally {
-    applying.value = false
+    if (generation === applyGeneration) applying.value = false
   }
 }
 </script>

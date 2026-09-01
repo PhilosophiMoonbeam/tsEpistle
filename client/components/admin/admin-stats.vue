@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-container.fill-height(fluid)
+  v-container.fill-height.d-flex.align-center.flex-wrap(fluid)
     v-row
       v-col(cols='12')
         .admin-header-icon: v-icon(size='80', color='primary') mdi-chart-box-outline
@@ -22,6 +22,3 @@ export default {
 }
 </script>
 
-<style lang='scss'>
-
-</style>

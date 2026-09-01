@@ -32,7 +32,7 @@
             .text-body-small.mt-1
               a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') View source at revision {{ product.revision.slice(0, 12) }}
 
-          form#setup-form.setup-form(@submit.prevent='install', :aria-busy='loading')
+          form#setup-form.setup-form(@submit.prevent='install', :aria-busy='loading', novalidate)
             section.setup-section
               .setup-section-heading
                 .setup-section-icon
@@ -165,7 +165,6 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import validateValues from '../../shared/validation'
 import { BreedingRhombusSpinner } from 'epic-spinners'
 import confetti from 'canvas-confetti'
@@ -191,8 +190,14 @@ type FinalizeResponse = {
 
 function focusComponent (ref: unknown): void {
   if (!ref || typeof ref !== 'object') return
-  const candidate = ref as { focus?: unknown }
-  if (typeof candidate.focus === 'function') candidate.focus()
+  const candidate = ref as { focus?: unknown, $el?: unknown }
+  if (typeof candidate.focus === 'function') {
+    candidate.focus()
+    return
+  }
+  if (!candidate.$el || typeof candidate.$el !== 'object') return
+  const root = candidate.$el as { focus?: unknown }
+  if (typeof root.focus === 'function') root.focus()
 }
 
 function normalizeFinalizeResponse (payload: unknown): FinalizeResponse {
@@ -230,16 +235,32 @@ export default {
         telemetry: true
       } as SetupConfig,
       pwdMode: true,
-      pwdConfirmMode: true
+      pwdConfirmMode: true,
+      focusTimer: null as number | null,
+      finalizeTimer: null as number | null,
+      celebrationTimer: null as number | null,
+      redirectTimer: null as number | null,
+      finalizeController: null as AbortController | null,
+      isDisposed: false
     }
   },
   mounted() {
-    _.delay(() => {
-      focusComponent(this.$refs.adminEmailInput)
+    this.focusTimer = window.setTimeout(() => {
+      this.focusTimer = null
+      if (!this.isDisposed) focusComponent(this.$refs.adminEmailInput)
     }, 500)
   },
+  beforeUnmount() {
+    this.isDisposed = true
+    if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
+    if (this.finalizeTimer !== null) window.clearTimeout(this.finalizeTimer)
+    if (this.celebrationTimer !== null) window.clearTimeout(this.celebrationTimer)
+    if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
+    this.finalizeController?.abort()
+  },
   methods: {
-    async install () {
+    install () {
+      if (this.loading) return
       this.fieldErrors = {
         adminEmail: '',
         adminPassword: '',
@@ -298,30 +319,40 @@ export default {
 
       this.loading = true
       this.success = false
-      this.$forceUpdate()
 
-      _.delay(async () => {
+      this.finalizeTimer = window.setTimeout(async () => {
+        this.finalizeTimer = null
+        if (this.isDisposed) return
+        const controller = new AbortController()
+        this.finalizeController = controller
         try {
-          const resp = await sameOriginJsonFetch(window.fetch.bind(window), '/finalize', {
+          const response = await sameOriginJsonFetch(window.fetch.bind(window), '/finalize', {
             method: 'POST',
             cache: 'no-cache',
+            signal: controller.signal,
             headers: {
               Accept: 'application/json',
               'Content-Type': 'application/json'
             },
             body: JSON.stringify(this.conf)
-          }).then(async res => normalizeFinalizeResponse(await res.json()))
+          })
+          const resp = normalizeFinalizeResponse(await response.json())
+          this.finalizeController = null
 
+          if (this.isDisposed) return
           if (resp.ok === true) {
-            _.delay(() => {
+            this.celebrationTimer = window.setTimeout(() => {
+              this.celebrationTimer = null
+              if (this.isDisposed) return
               confetti({
                 particleCount: 100,
                 spread: 70,
                 zIndex: 100000
               })
               this.success = true
-              _.delay(() => {
-                window.location.assign('/login')
+              this.redirectTimer = window.setTimeout(() => {
+                this.redirectTimer = null
+                if (!this.isDisposed) window.location.assign('/login')
               }, 3000)
             }, 10000)
           } else {
@@ -331,6 +362,8 @@ export default {
             this.$nextTick(() => focusComponent(this.$refs.setupAlert))
           }
         } catch (err) {
+          this.finalizeController = null
+          if (this.isDisposed) return
           console.error(err)
           this.error = true
           this.errorMessage = getErrorMessage(err)

@@ -39,7 +39,7 @@ export default {
     notification(): Notification { return wikiStore.notification },
     notificationState: {
       get(): boolean { return wikiStore.notification.isActive },
-      set(value: boolean) { wikiStore.notification.isActive = value }
+      set(value: boolean) { wikiStore.setNotificationActive(value) }
     },
     notificationKind(): NotificationKind {
       const style = this.notification.style.toLowerCase()
@@ -69,11 +69,8 @@ export default {
     }
   },
   watch: {
-    notification: {
-      handler(): void {
-        this.notificationRevision += 1
-      },
-      deep: true
+    notification(): void {
+      this.notificationRevision += 1
     }
   },
   methods: {

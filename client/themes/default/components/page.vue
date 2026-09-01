@@ -77,7 +77,7 @@
         fluid
         :class='{ "page-hero--with-toc": tocPosition !== `off` }'
       )
-        v-row.page-header-section(no-gutters)
+        v-row.page-header-section(:gap='0')
           v-col.page-col-content.is-page-header(
             cols='12'
             :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, `page-header--toc-${tocPosition}`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn) }]'
@@ -103,6 +103,7 @@
                 v-if='editShortcutsObj.editMenuExternalBtn'
                 :href='editMenuExternalUrl'
                 target='_blank'
+                rel='noopener'
                 variant="flat"
                 size="small"
                 )
@@ -326,6 +327,7 @@
                         color='primary'
                         density='compact'
                         hide-details
+                        :disabled='pageWatchLoading'
                         @update:model-value='savePageWatchSettings'
                       )
                       v-switch(
@@ -334,6 +336,7 @@
                         color='primary'
                         density='compact'
                         hide-details
+                        :disabled='pageWatchLoading'
                         @update:model-value='savePageWatchSettings'
                       )
                 v-menu(v-if='isAuthenticated', location="bottom", min-width='340', max-width='440')
@@ -693,13 +696,13 @@
               @click='submitPageApproval'
             ) {{ pageApproval ? 'Submit new revision' : 'Submit for approval' }}
             template(v-if='pageApproval')
-              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='success', :disabled='pageApproval.stale', @click='transitionPageApproval(`approve`)') Approve
-              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='warning', @click='transitionPageApproval(`request-changes`)') Request changes
-              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='error', @click='transitionPageApproval(`reject`)') Reject
-              v-btn(v-if='pageApproval.status === `changes-requested` && pageApproval.canSubmitter', color='primary', @click='transitionPageApproval(`resubmit`)') Resubmit
-              v-btn(v-if='pageApproval.status === `approved` && pageApproval.canReview', color='success', :disabled='pageApproval.stale', @click='transitionPageApproval(`publish`)') Publish approved revision
-              v-btn(v-if='pageApproval.canReview && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', @click='transitionPageApproval(`reassign`)') Reassign
-              v-btn(v-if='pageApproval.canSubmitter && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', color='error', variant='text', @click='transitionPageApproval(`cancel`)') Cancel request
+              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='success', :disabled='approvalLoading || pageApproval.stale', @click='transitionPageApproval(`approve`)') Approve
+              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='warning', :disabled='approvalLoading', @click='transitionPageApproval(`request-changes`)') Request changes
+              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='error', :disabled='approvalLoading', @click='transitionPageApproval(`reject`)') Reject
+              v-btn(v-if='pageApproval.status === `changes-requested` && pageApproval.canSubmitter', color='primary', :disabled='approvalLoading', @click='transitionPageApproval(`resubmit`)') Resubmit
+              v-btn(v-if='pageApproval.status === `approved` && pageApproval.canReview', color='success', :disabled='approvalLoading || pageApproval.stale', @click='transitionPageApproval(`publish`)') Publish approved revision
+              v-btn(v-if='pageApproval.canReview && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', :disabled='approvalLoading', @click='transitionPageApproval(`reassign`)') Reassign
+              v-btn(v-if='pageApproval.canSubmitter && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', color='error', variant='text', :disabled='approvalLoading', @click='transitionPageApproval(`cancel`)') Cancel request
             v-spacer
             v-btn(@click='approvalDialog = false') Close
     v-fab-transition
@@ -753,6 +756,11 @@ import {
 type Breadcrumb = {
   path: string
   name: string
+}
+
+type PageTag = {
+  tag: string
+  title: string | null
 }
 
 
@@ -875,7 +883,7 @@ export default defineComponent({
       default: ''
     },
     tags: {
-      type: Array as PropType<string[]>,
+      type: Array as PropType<PageTag[]>,
       default: () => ([])
     },
     authorName: {
@@ -947,7 +955,6 @@ export default defineComponent({
     return {
       locales: siteLangs,
       navShown: false,
-      navExpanded: false,
       upBtnShown: false,
       pageEditFab: false,
       pageWatched: false,
@@ -1001,6 +1008,7 @@ export default defineComponent({
       },
       winWidth: 0,
       resizeHandler: null as (() => void) | null,
+      loadHandler: null as (() => void) | null,
       contentExtensionCleanup: null as (() => void) | null
     }
   },
@@ -1011,22 +1019,11 @@ export default defineComponent({
     isAuthenticated () {
       return wikiStore.user.authenticated
     },
-    commentsCount () {
-      return wikiStore.page.commentsCount
-    },
     commentsPerms () {
       return wikiStore.page.effectivePermissions.comments
     },
     editShortcutsObj () {
       return wikiStore.page.editShortcuts
-    },
-    rating: {
-      get () {
-        return 3.5
-      },
-      set (_val: number) {
-
-      }
     },
     breadcrumbs(): Breadcrumb[] {
       const scope = this.visibility === 'private' ? '/_private' : ''
@@ -1146,14 +1143,17 @@ export default defineComponent({
           this.scrollToPageAnchor(decodeURIComponent(window.location.hash), false)
         })
       } else {
-        window.addEventListener('load', () => {
+        this.loadHandler = () => {
+          this.loadHandler = null
           this.scrollToPageAnchor(decodeURIComponent(window.location.hash), false)
-        }, { once: true })
+        }
+        window.addEventListener('load', this.loadHandler, { once: true })
       }
     }
   },
   beforeUnmount () {
     if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
+    if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
     this.contentExtensionCleanup?.()
     this.contentExtensionCleanup = null
   },
@@ -1168,7 +1168,7 @@ export default defineComponent({
       wikiStore.page.locale = this.locale
       wikiStore.page.path = this.path
       wikiStore.page.visibility = this.visibility
-      wikiStore.page.tags = this.tags
+      wikiStore.page.tags = this.tags.map(tag => tag.tag)
       wikiStore.page.title = this.title
       wikiStore.page.editor = this.editor
       wikiStore.page.updatedAt = this.updatedAt
@@ -1181,12 +1181,22 @@ export default defineComponent({
       this.pageEditFab = false
       this.pageWatched = false
       this.pageWatchLoading = false
+      this.pageWatchEmailEnabled = true
+      this.pageWatchInAppEnabled = true
+      this.pageWatchNotificationsLoading = false
       this.pageWatchNotifications = []
       this.pageWatchNotificationsError = ''
       this.pageWatchUnreadCount = 0
+      this.approvalDialog = false
+      this.approvalLoading = false
+      this.approvalInitialLoading = false
+      this.approvalComment = ''
+      this.approvalAssigneeId = null
       this.pageApproval = null
       this.approvalError = ''
       this.protectionDialog = false
+      this.protectionLoading = false
+      this.protectionInitialLoading = false
       this.protectionError = ''
       this.pageProtection = { protected: false, version: 0, updatedBy: null, updatedAt: null }
       this.pageProtectionPassword = ''
@@ -1249,20 +1259,24 @@ export default defineComponent({
       })
     },
     async loadPageProtection () {
+      const pageId = this.pageId
       this.protectionInitialLoading = true
       this.protectionError = ''
       try {
-        const response = await fetch(`/_api/pages/${this.pageId}/protection`, {
+        const response = await fetch(`/_api/pages/${pageId}/protection`, {
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
         if (!response.ok) throw new Error(`Page protection request failed (${response.status})`)
-        this.pageProtection = await response.json() as PageProtection
+        const protection = await response.json() as PageProtection
+        if (pageId !== this.pageId) return
+        this.pageProtection = protection
       } catch (error) {
+        if (pageId !== this.pageId) return
         this.protectionError = getErrorMessage(error)
         pushGraphError(wikiStore, error)
       } finally {
-        this.protectionInitialLoading = false
+        if (pageId === this.pageId) this.protectionInitialLoading = false
       }
     },
     openPageProtection () {
@@ -1273,43 +1287,50 @@ export default defineComponent({
       void this.loadPageProtection()
     },
     async savePageProtection () {
+      if (this.protectionLoading) return
+      const pageId = this.pageId
       this.protectionLoading = true
       try {
-        const response = await fetch(`/_api/pages/${this.pageId}/protection`, {
+        const response = await fetch(`/_api/pages/${pageId}/protection`, {
           method: 'PUT',
           credentials: 'same-origin',
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
           body: JSON.stringify({ password: this.pageProtectionPassword })
         })
         if (!response.ok) throw await this.approvalResponseError(response, 'Page protection update failed')
-        this.pageProtection = await response.json() as PageProtection
+        const protection = await response.json() as PageProtection
+        if (pageId !== this.pageId) return
+        this.pageProtection = protection
         this.pageProtectionPassword = ''
         showNotification(wikiStore, {
           style: 'success',
-          message: this.pageProtection.version > 1 ? 'Page password rotated and prior unlocks revoked.' : 'Page password protection enabled.'
+          message: protection.version > 1 ? 'Page password rotated and prior unlocks revoked.' : 'Page password protection enabled.'
         })
       } catch (error) {
-        pushGraphError(wikiStore, error)
+        if (pageId === this.pageId) pushGraphError(wikiStore, error)
       } finally {
-        this.protectionLoading = false
+        if (pageId === this.pageId) this.protectionLoading = false
       }
     },
     async removePageProtection () {
+      if (this.protectionLoading) return
+      const pageId = this.pageId
       this.protectionLoading = true
       try {
-        const response = await fetch(`/_api/pages/${this.pageId}/protection`, {
+        const response = await fetch(`/_api/pages/${pageId}/protection`, {
           method: 'DELETE',
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
         if (!response.ok) throw await this.approvalResponseError(response, 'Page protection removal failed')
+        if (pageId !== this.pageId) return
         this.pageProtection = { protected: false, version: 0, updatedBy: null, updatedAt: null }
         this.pageProtectionPassword = ''
         showNotification(wikiStore, { style: 'success', message: 'Page password protection removed.' })
       } catch (error) {
-        pushGraphError(wikiStore, error)
+        if (pageId === this.pageId) pushGraphError(wikiStore, error)
       } finally {
-        this.protectionLoading = false
+        if (pageId === this.pageId) this.protectionLoading = false
       }
     },
     approvalStatusLabel (status: string) {
@@ -1320,22 +1341,25 @@ export default defineComponent({
       return new Error(typeof payload.error === 'string' ? payload.error : `${fallback} (${response.status})`)
     },
     async loadPageApproval () {
+      const pageId = this.pageId
       this.approvalInitialLoading = true
       this.approvalError = ''
       try {
-        const response = await fetch(`/_api/pages/${this.pageId}/approval`, {
+        const response = await fetch(`/_api/pages/${pageId}/approval`, {
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
         if (!response.ok) throw await this.approvalResponseError(response, 'Page approval request failed')
         const payload = await response.json() as { approval?: unknown }
+        if (pageId !== this.pageId) return
         this.pageApproval = payload.approval && typeof payload.approval === 'object' ? payload.approval as PageApproval : null
         this.approvalAssigneeId = this.pageApproval?.assigneeId ?? null
       } catch (error) {
+        if (pageId !== this.pageId) return
         this.approvalError = getErrorMessage(error)
         pushGraphError(wikiStore, error)
       } finally {
-        this.approvalInitialLoading = false
+        if (pageId === this.pageId) this.approvalInitialLoading = false
       }
     },
     async loadApprovalInbox () {
@@ -1368,9 +1392,11 @@ export default defineComponent({
       navigateToWikiPage(`${scope}/${approval.localeCode}/${approval.path}`)
     },
     async submitPageApproval () {
+      if (this.approvalLoading) return
+      const pageId = this.pageId
       this.approvalLoading = true
       try {
-        const response = await fetch(`/_api/pages/${this.pageId}/approval`, {
+        const response = await fetch(`/_api/pages/${pageId}/approval`, {
           method: 'POST',
           credentials: 'same-origin',
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -1380,20 +1406,23 @@ export default defineComponent({
           })
         })
         if (!response.ok) throw await this.approvalResponseError(response, 'Approval submission failed')
+        if (pageId !== this.pageId) return
         this.approvalComment = ''
         await Promise.all([this.loadPageApproval(), this.loadApprovalInbox()])
         showNotification(wikiStore, { style: 'success', message: 'Page submitted for approval.' })
       } catch (error) {
-        pushGraphError(wikiStore, error)
+        if (pageId === this.pageId) pushGraphError(wikiStore, error)
       } finally {
-        this.approvalLoading = false
+        if (pageId === this.pageId) this.approvalLoading = false
       }
     },
     async transitionPageApproval (action: 'approve' | 'request-changes' | 'reject' | 'cancel' | 'resubmit' | 'publish' | 'reassign') {
-      if (!this.pageApproval) return
+      if (!this.pageApproval || this.approvalLoading) return
+      const pageId = this.pageId
+      const approvalId = this.pageApproval.id
       this.approvalLoading = true
       try {
-        const response = await fetch(`/_api/pages/approvals/${encodeURIComponent(this.pageApproval.id)}/transition`, {
+        const response = await fetch(`/_api/pages/approvals/${encodeURIComponent(approvalId)}/transition`, {
           method: 'POST',
           credentials: 'same-origin',
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -1404,43 +1433,49 @@ export default defineComponent({
           })
         })
         if (!response.ok) throw await this.approvalResponseError(response, 'Approval transition failed')
+        if (pageId !== this.pageId) return
         this.approvalComment = ''
         await Promise.all([this.loadPageApproval(), this.loadApprovalInbox()])
         showNotification(wikiStore, { style: 'success', message: `Approval ${this.approvalStatusLabel(action)} completed.` })
       } catch (error) {
-        pushGraphError(wikiStore, error)
+        if (pageId === this.pageId) pushGraphError(wikiStore, error)
       } finally {
-        this.approvalLoading = false
+        if (pageId === this.pageId) this.approvalLoading = false
       }
     },
     async loadPageWatchState () {
+      const pageId = this.pageId
       this.pageWatchLoading = true
       try {
-        const response = await fetch(`/_api/pages/${this.pageId}/watch`, {
+        const response = await fetch(`/_api/pages/${pageId}/watch`, {
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
         if (!response.ok) throw new Error(`Page watch request failed (${response.status})`)
         const payload = await response.json() as { watched?: unknown; emailEnabled?: unknown; inAppEnabled?: unknown }
+        if (pageId !== this.pageId) return
         this.pageWatched = payload.watched === true
         this.pageWatchEmailEnabled = payload.emailEnabled === true
         this.pageWatchInAppEnabled = payload.inAppEnabled === true
       } catch (error) {
-        pushGraphError(wikiStore, error)
+        if (pageId === this.pageId) pushGraphError(wikiStore, error)
       } finally {
-        this.pageWatchLoading = false
+        if (pageId === this.pageId) this.pageWatchLoading = false
       }
     },
     async togglePageWatch () {
+      if (this.pageWatchLoading) return
+      const pageId = this.pageId
       this.pageWatchLoading = true
       try {
-        const response = await fetch(`/_api/pages/${this.pageId}/watch`, {
+        const response = await fetch(`/_api/pages/${pageId}/watch`, {
           method: this.pageWatched ? 'DELETE' : 'PUT',
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
         if (!response.ok) throw new Error(`Page watch request failed (${response.status})`)
         const payload = await response.json() as { watched?: unknown; emailEnabled?: unknown; inAppEnabled?: unknown }
+        if (pageId !== this.pageId) return
         this.pageWatched = payload.watched === true
         if (this.pageWatched) {
           this.pageWatchEmailEnabled = payload.emailEnabled === true
@@ -1451,16 +1486,17 @@ export default defineComponent({
           message: this.pageWatched ? 'You are now watching this page.' : 'You are no longer watching this page.'
         })
       } catch (error) {
-        pushGraphError(wikiStore, error)
+        if (pageId === this.pageId) pushGraphError(wikiStore, error)
       } finally {
-        this.pageWatchLoading = false
+        if (pageId === this.pageId) this.pageWatchLoading = false
       }
     },
     async savePageWatchSettings () {
       if (!this.pageWatched || this.pageWatchLoading) return
+      const pageId = this.pageId
       this.pageWatchLoading = true
       try {
-        const response = await fetch(`/_api/pages/${this.pageId}/watch`, {
+        const response = await fetch(`/_api/pages/${pageId}/watch`, {
           method: 'PUT',
           credentials: 'same-origin',
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -1471,10 +1507,11 @@ export default defineComponent({
         })
         if (!response.ok) throw new Error(`Page watch settings request failed (${response.status})`)
       } catch (error) {
+        if (pageId !== this.pageId) return
         pushGraphError(wikiStore, error)
         await this.loadPageWatchState()
       } finally {
-        this.pageWatchLoading = false
+        if (pageId === this.pageId) this.pageWatchLoading = false
       }
     },
     async loadPageWatchNotifications () {

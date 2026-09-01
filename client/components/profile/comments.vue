@@ -2,18 +2,6 @@
   v-container.fill-height(fluid)
     v-row
       v-col(cols='12')
-        .text-headline-medium.text-primary Comments
+        h1.text-headline-medium.text-primary Comments
         .text-body-large.text-grey List of comments I posted</template>
 
-<script lang='ts'>
-
-export default {
-  data() {
-    return { }
-  }
-}
-</script>
-
-<style lang='scss'>
-
-</style>

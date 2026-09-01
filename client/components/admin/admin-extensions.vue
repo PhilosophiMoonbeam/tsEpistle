@@ -7,7 +7,7 @@
           :description='$t(`admin:extensions.subtitle`)'
           icon='/_assets/svg/icon-installing-updates.svg'
         )
-        v-form.pt-3
+        .pt-3
           v-row
             v-col(xl='6' lg='8' cols='12')
               v-alert.mb-4(type='info', variant="tonal", icon='mdi-information')
@@ -15,13 +15,13 @@
               v-alert.mb-4(v-if='loadState === `error`', type='error', variant="tonal", icon='mdi-alert')
                 span Unable to load extensions.
                 v-btn.ml-2(variant="text", size="small", @click='loadExtensions') Retry
-              div(v-if='loadState === `loading`')
+              div(v-if='loadState === `loading`', role='status', aria-label='Loading extensions')
                 v-skeleton-loader.mb-3(v-for='index in 3', :key='`extension-skeleton-` + index', type='list-item-two-line')
               v-alert.mb-0(v-else-if='loadState === `success` && !extensions.length', type='info', variant="outlined", icon='mdi-puzzle-outline')
                 span No extensions are available.
               v-expansion-panels.admin-extensions-exp(v-else-if='extensions.length', variant="popout")
-                v-expansion-panel(v-for='ext of extensions', :key='`ext-` + ext.key')
-                  v-expansion-panel-title(disable-icon-rotate)
+                v-expansion-panel(v-for='ext of extensions', :key='ext.key')
+                  v-expansion-panel-title
                     span {{ext.title}}
                     template(v-slot:actions)
                       v-chip(label, color='success', size="small", v-if='ext.isInstalled', prepend-icon='mdi-check-circle') Installed
@@ -58,6 +58,7 @@ export default {
   methods: {
     async loadExtensions () {
       this.loadState = 'loading'
+      this.extensions = []
       loadingStart(wikiStore, 'admin-extensions-refresh')
       try {
         this.extensions = await fetchSystemExtensions(window.fetch.bind(window), 'System extensions response is invalid')

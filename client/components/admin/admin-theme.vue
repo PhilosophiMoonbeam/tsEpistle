@@ -199,13 +199,12 @@ v-container.admin-theme(fluid)
                 .text-body-medium.text-medium-emphasis.mt-1
                   | Choose a restrained ornament for the open space beside article text. Decorations recede automatically when the reading gutter narrows.
               v-chip(size='small', variant='outlined', color='primary') Article pages only
-            .gutter-style-grid.mt-5(role='radiogroup', aria-label='Reading gutter ornament')
+            .gutter-style-grid.mt-5(role='group', aria-label='Reading gutter ornament')
               button.gutter-style-option(
                 v-for='option in gutterStyles'
                 :key='option.value'
                 type='button'
-                role='radio'
-                :aria-checked='config.gutterStyle === option.value'
+                :aria-pressed='config.gutterStyle === option.value'
                 :class='{ "is-selected": config.gutterStyle === option.value }'
                 @click='config.gutterStyle = option.value'
               )
@@ -304,9 +303,9 @@ v-container.admin-theme(fluid)
     )
       v-icon(start) mdi-check
       span {{ $t('common:actions.apply') }}
-  v-dialog(v-model='deletePaletteDialog', max-width='520')
+  v-dialog(v-model='deletePaletteDialog', max-width='520', aria-labelledby='delete-palette-title')
     v-card
-      v-card-title Delete color theme?
+      v-card-title#delete-palette-title Delete color theme?
       v-card-text
         | {{ activePalette.name }} will be removed. Pages immediately use the next available color theme after you apply changes.
       v-card-actions
@@ -440,7 +439,7 @@ const syncActivePalette = (): void => {
   applyWikiThemeColors(theme, config.colors)
 }
 
-watch([() => config.activePaletteId, () => config.palettes], syncActivePalette, { deep: true })
+watch([() => config.activePaletteId, () => activePalette.value.colors], syncActivePalette, { deep: true })
 
 const loadConfig = async (): Promise<void> => {
   initialLoading.value = true

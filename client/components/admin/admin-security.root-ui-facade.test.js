@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const extractScript = (source) => {
+const extractScript = source => {
   const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
@@ -40,29 +40,60 @@ describe('admin-security site REST facade migration guard', () => {
     expect(script).not.toBeNull()
     expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchSiteConfig\b)(?=[^}]*\bsaveSiteConfig\b)(?=[^}]*\btype SiteConfig\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/site-api['"]/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)(?=[^}]*\bsetLoading\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bonEditorInsert\b)(?=[^}]*\boffEditorInsert\b)(?=[^}]*\btype EditorInsertPayload\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/editor-insert-events['"]/)
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bfetchSiteConfig\b)(?=[^}]*\bsaveSiteConfig\b)(?=[^}]*\btype SiteConfig\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/site-api['"]/
+    )
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)(?=[^}]*\bsetLoading\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+    )
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bonEditorInsert\b)(?=[^}]*\boffEditorInsert\b)(?=[^}]*\btype EditorInsertPayload\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/editor-insert-events['"]/
+    )
     expect(script).not.toContain("store.registerModule('editor'")
     expect(script).not.toContain('graphql-tag')
     expect(script).not.toContain('this.$apollo')
   })
 
-  test('save routes REST save loading, success, and errors through root UI facades', () => {
+  test('save rejects unavailable or concurrent submissions and balances root loading state', () => {
     expect(save).not.toBeNull()
-    expect(save).toMatch(/loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)/)
+    expect(save).toMatch(
+      /async\s+save\s*\(\s*\)\s*\{[\s\S]*?if\s*\(\s*!this\.configLoaded\s*\|\|\s*this\.configSaving\s*\)\s*return[\s\S]*?this\.configSaving\s*=\s*true[\s\S]*?loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)/
+    )
     expect(save).toMatch(/await\s+saveSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*this\.siteConfigPayload\s*\(\s*\)\s*\)/)
-    expect(save).toMatch(/showNotification\s*\(\s*wikiStore\s*,\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*['"]Configuration saved successfully\.['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/)
-    expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}\s*finally\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)/)
+    expect(save).toMatch(
+      /showNotification\s*\(\s*wikiStore\s*,\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*['"]Configuration saved successfully\.['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
+    )
+    expect(save).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{[\s\S]*?pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)[\s\S]*?\}\s*finally\s*\{[\s\S]*?this\.configSaving\s*=\s*false[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)[\s\S]*?\}/
+    )
     expect(save).not.toMatch(/\$store\.commit\(\s*(?:`loading|['"]loading|['"]showNotification|['"]pushGraphError)/)
+    expect(save.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
+    expect(save.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('loadConfig routes REST refresh loading and errors through root UI facade', () => {
+  test('loadConfig ignores stale results while balancing every root loading request', () => {
     expect(loadConfig).not.toBeNull()
-    expect(loadConfig).toMatch(/setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-security-refresh['"]\s*,\s*true\s*\)/)
-    expect(loadConfig).toMatch(/this\.config\s*=\s*_\.cloneDeep\s*\(\s*await\s+fetchSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)\s*\)\s+as\s+SecurityConfig/)
-    expect(loadConfig).toMatch(/pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
-    expect(loadConfig).toMatch(/setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-security-refresh['"]\s*,\s*false\s*\)/)
+    expect(script).toContain('configLoadRequestId: 0')
+    expect(loadConfig).toMatch(
+      /const\s+requestId\s*=\s*\+\+this\.configLoadRequestId[\s\S]*?this\.configLoading\s*=\s*true[\s\S]*?this\.configLoadError\s*=\s*false[\s\S]*?setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-security-refresh['"]\s*,\s*true\s*\)/
+    )
+    expect(loadConfig).toMatch(
+      /const\s+config\s*=\s*await\s+fetchSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)[\s\S]*?if\s*\(\s*requestId\s*!==\s*this\.configLoadRequestId\s*\)\s*return[\s\S]*?this\.config\s*=\s*_\.cloneDeep\s*\(\s*config\s*\)\s+as\s+SecurityConfig[\s\S]*?this\.configLoaded\s*=\s*true/
+    )
+    expect(loadConfig).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{[\s\S]*?if\s*\(\s*requestId\s*!==\s*this\.configLoadRequestId\s*\)\s*return[\s\S]*?this\.configLoaded\s*=\s*false[\s\S]*?this\.configLoadError\s*=\s*true[\s\S]*?pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/
+    )
+    expect(loadConfig).toMatch(
+      /finally\s*\{[\s\S]*?setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-security-refresh['"]\s*,\s*false\s*\)[\s\S]*?if\s*\(\s*requestId\s*===\s*this\.configLoadRequestId\s*\)\s*this\.configLoading\s*=\s*false[\s\S]*?\}/
+    )
+    expect(loadConfig.match(/\bsetLoading\s*\(/g) || []).toHaveLength(2)
+  })
+
+  test('the form and apply action preserve guarded submit prevention', () => {
+    expect(source).toMatch(/v-form\.pt-3\((?=[^\n)]*\bv-else-if=['"]configLoaded['"])(?=[^\n)]*@submit\.prevent=['"]save['"])[^\n)]*\)/)
+    expect(source).toMatch(
+      /v-btn\((?=[^\n)]*@click=['"]save['"])(?=[^\n)]*:loading=['"]configSaving['"])(?=[^\n)]*:disabled=['"]!configLoaded \|\| configSaving['"])[^\n)]*\)/
+    )
   })
 
   test('security payload preserves its typed return, numeric coercion, and config fields', () => {
@@ -78,9 +109,10 @@ describe('admin-security site REST facade migration guard', () => {
     expect(script).toContain("wikiStore.editor.editorKey = 'common'")
     expect(script).toContain("this.activeModal = 'editorModalMedia'")
     expect(script).toMatch(/handleEditorInsert\s*\(\s*opts:\s*EditorInsertPayload\s*\)/)
-    expect(script).toContain('this.loadConfig()')
-    expect(script).toContain('onEditorInsert(this.handleEditorInsert)')
-    expect(script).toContain('offEditorInsert(this.handleEditorInsert)')
+    expect(script).toMatch(/mounted\s*\(\s*\)\s*\{[\s\S]*?this\.loadConfig\s*\(\s*\)[\s\S]*?onEditorInsert\s*\(\s*this\.handleEditorInsert\s*\)[\s\S]*?\}/)
+    expect(script).toMatch(
+      /beforeUnmount\s*\(\s*\)\s*\{[\s\S]*?this\.configLoadRequestId\+\+[\s\S]*?offEditorInsert\s*\(\s*this\.handleEditorInsert\s*\)[\s\S]*?\}/
+    )
     expect(script).toContain('this.config.authLoginBgUrl = opts.path')
   })
 })

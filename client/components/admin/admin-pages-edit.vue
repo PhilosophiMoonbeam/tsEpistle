@@ -201,6 +201,7 @@ export default {
       }
     },
     async deletePage() {
+      if (this.loading) return
       const routePageId = _.toSafeInteger(this.$route.params.id)
       const requestGeneration = this.loadGeneration
       const page = this.page
@@ -250,12 +251,15 @@ export default {
     }
   },
   watch: {
-    '$route.params.id' () {
-      return this.loadPage()
+    '$route.params.id': {
+      handler () {
+        return this.loadPage()
+      },
+      immediate: true
     }
   },
-  mounted () {
-    this.loadPage()
+  beforeUnmount () {
+    this.loadGeneration++
   }
 }
 </script>

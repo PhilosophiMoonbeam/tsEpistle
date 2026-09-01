@@ -60,31 +60,37 @@ describe('admin-system loadInfo/refresh root UI facade migration guard', () => {
   const directRootUiCommit =
     /\bthis\.\$store\.commit\s*\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-system.vue imports typed wiki store and the facades required by loadInfo() and refresh()', () => {
+  test('admin-system.vue imports the typed store, request helper, and root UI facades', () => {
     expect(script).not.toBeNull()
     expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+      /import\s+\{(?=[^}]*\bgetErrorMessage\b)(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
     )
     expect(script).toMatch(/import\s+\{\s*fetchSystemInfo\s*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/)
     expect(script).not.toMatch(/performSystemUpgrade/)
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
   })
 
-  test('loadInfo() uses loading and error facades while preserving fetch assignment, boolean return, and cleanup behavior', () => {
+  test('loadInfo() aborts stale requests and only lets the current request update visible state', () => {
     expect(loadInfo).not.toBeNull()
-
     expect(loadInfo).toMatch(
-      /this\.loading\s*=\s*true\s*this\.errorMessage\s*=\s*['"]{2}\s*this\.infoLoaded\s*=\s*false\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-system-refresh['"]\s*\)\s*try\s*\{/
+      /this\.loadController\?\.abort\s*\(\s*\)\s*const\s+controller\s*=\s*new\s+AbortController\s*\(\s*\)\s*this\.loadController\s*=\s*controller/
     )
     expect(loadInfo).toMatch(
-      /this\.info\s*=\s*await\s+fetchSystemInfo\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]System info response is invalid['"]\s*\)\s*this\.infoLoaded\s*=\s*true\s*return\s+true/
+      /this\.loading\s*=\s*true\s*this\.errorMessage\s*=\s*['"]{2}\s*this\.infoLoaded\s*=\s*false\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-system-refresh['"]\s*\)/
     )
     expect(loadInfo).toMatch(
-      /catch\s*\(\s*err\s*\)\s*\{\s*this\.errorMessage\s*=\s*getErrorMessage\s*\(\s*err\s*\)\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*return\s+false\s*\}/
+      /const\s+info\s*=\s*await\s+fetchSystemInfo\s*\(\s*createAbortableFetch\s*\(\s*controller\.signal\s*\)\s*,\s*['"]System info response is invalid['"]\s*\)/
     )
-    expect(loadInfo).toMatch(/finally\s*\{\s*this\.loading\s*=\s*false\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-system-refresh['"]\s*\)\s*\}/)
+    expect(loadInfo).toMatch(
+      /if\s*\(\s*controller\.signal\.aborted\s*\)\s*\{\s*return\s+false\s*\}\s*this\.info\s*=\s*info\s*this\.infoLoaded\s*=\s*true\s*return\s+true/
+    )
+    expect(loadInfo).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*controller\.signal\.aborted\s*\)\s*\{\s*return\s+false\s*\}\s*this\.errorMessage\s*=\s*getErrorMessage\s*\(\s*err\s*\)\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*return\s+false\s*\}/
+    )
+    expect(loadInfo).toMatch(
+      /finally\s*\{\s*if\s*\(\s*this\.loadController\s*===\s*controller\s*\)\s*\{\s*this\.loadController\s*=\s*null\s*if\s*\(\s*!this\.isUnmounted\s*\)\s*\{\s*this\.loading\s*=\s*false\s*\}\s*\}\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-system-refresh['"]\s*\)\s*\}/
+    )
     expect(loadInfo).not.toMatch(directRootUiCommit)
-
     expect(loadInfo.match(/\bloadingStart\s*\(/g) || []).toHaveLength(1)
     expect(loadInfo.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
     expect(loadInfo.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
@@ -99,6 +105,10 @@ describe('admin-system loadInfo/refresh root UI facade migration guard', () => {
     expect(refresh).not.toMatch(directRootUiCommit)
 
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
+  })
+
+  test('unmount aborts the active request and prevents its cleanup from mutating local loading state', () => {
+    expect(script).toMatch(/beforeUnmount\s*\(\s*\)\s*\{\s*this\.isUnmounted\s*=\s*true\s*this\.loadController\?\.abort\s*\(\s*\)\s*\}/)
   })
 
   test('renders exact build identity and an honest unavailable update state', () => {

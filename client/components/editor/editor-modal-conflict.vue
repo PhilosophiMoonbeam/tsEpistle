@@ -1,10 +1,10 @@
 <template lang='pug'>
-  v-dialog.editor-modal-conflict-dialog(:model-value='true', fullscreen, scrollable, @update:model-value='close')
+  v-dialog.editor-modal-conflict-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='editor-conflict-title', @update:model-value='close')
     v-card.editor-modal-conflict.animated.fadeIn(flat, rounded='0')
       .editor-modal-conflict-header
         v-toolbar.radius-7(flat, color='indigo', style='border-bottom-left-radius: 0; border-bottom-right-radius: 0;')
           v-icon.mr-3 mdi-merge
-          .text-body-large {{$t('editor:conflict.title')}}
+          .text-body-large#editor-conflict-title {{$t('editor:conflict.title')}}
           v-spacer
           v-progress-circular(v-if='isLoading', indeterminate, size='20', width='2', color='white', aria-label='Loading latest version')
           v-btn(variant="outlined", color="indigo-lighten-4", @click='close')
@@ -46,6 +46,7 @@
           v-dialog(
             v-model='isRemoteConfirmDiagShown'
             width='500'
+            aria-labelledby='editor-conflict-overwrite-title'
           )
             template(v-slot:activator='{ props }')
               v-btn(
@@ -60,7 +61,7 @@
             v-card
               .dialog-header.is-short.is-indigo
                 v-icon.mr-3(color='white') mdi-alpha-r-box
-                span {{$t('editor:conflict.overwrite.title')}}
+                span#editor-conflict-overwrite-title {{$t('editor:conflict.overwrite.title')}}
               v-card-text.pa-4
                 i18next.text-body-medium(tag='div', path='editor:conflict.overwrite.description')
                   strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
@@ -102,7 +103,8 @@ export default {
       latestLoaded: false,
       isLoading: true,
       loadError: '',
-      isRemoteConfirmDiagShown: false
+      isRemoteConfirmDiagShown: false,
+      conflictRequestId: 0
     }
   },
   computed: {
@@ -117,17 +119,11 @@ export default {
         wikiStore.editor.activeModal = value
       }
     },
-    pageId() {
-      return wikiStore.page.id
-    },
     title() {
       return wikiStore.page.title
     },
     description() {
       return wikiStore.page.description
-    },
-    updatedAt() {
-      return wikiStore.page.updatedAt
     },
     checkoutDateActive: {
       get() {
@@ -160,6 +156,7 @@ export default {
       this.overwriteAndClose()
     },
     async loadConflict () {
+      const requestId = ++this.conflictRequestId
       this.isLoading = true
       this.loadError = ''
       this.latestLoaded = false
@@ -171,6 +168,7 @@ export default {
       } catch {
         resp = null
       }
+      if (requestId !== this.conflictRequestId) return
       if (this.activeModal !== 'editorModalConflict') return
       if (!resp) {
         this.loadError = 'Failed to fetch the latest version. Retry to try again, or cancel to keep editing locally.'
@@ -185,12 +183,17 @@ export default {
       this.latest = resp
       this.isLoading = false
       await this.$nextTick()
+      if (requestId !== this.conflictRequestId || this.activeModal !== 'editorModalConflict') return
       const language: Extension | undefined = this.editorKey === 'markdown'
         ? markdown()
         : this.editorKey === 'code' || this.editorKey === 'html'
           ? html()
           : undefined
-      const container = this.$refs.cm as HTMLElement
+      const container = this.$refs.cm
+      if (!(container instanceof HTMLElement)) {
+        this.loadError = 'The conflict editor could not be initialized.'
+        return
+      }
       this.cm = new TextEditor({
         parent: container,
         value: wikiStore.editor.content,
@@ -215,6 +218,7 @@ export default {
     await this.loadConflict()
   },
   beforeUnmount () {
+    this.conflictRequestId += 1
     this.cm?.destroy()
     this.cm = null
   }

@@ -52,8 +52,9 @@
               v-spacer
               v-btn(variant='text' color='primary' @click='loadUsers') Try again
           v-divider
-          v-data-table.admin-responsive-table(
+          v-data-table-server.admin-responsive-table(
             :items='users'
+            :items-length='totalUsers'
             :headers='responsiveHeaders'
             :hide-default-header='$vuetify.display.smAndDown'
             v-model:page='pagination'
@@ -123,6 +124,7 @@ export default {
     return {
       pagination: 1,
       pageCount: 0,
+      totalUsers: 0,
       sortBy: [{ key: 'name', order: 'asc' }] as UserTableSort[],
       users: [] as AdminUserListRow[],
       headers: [
@@ -209,6 +211,7 @@ export default {
         }, 'Users list response is invalid')
         if (requestId !== this.loadRequestId) return
         this.users = result.users
+        this.totalUsers = result.total
         this.pageCount = Math.max(1, Math.ceil(result.total / 15))
       } catch (err) {
         if (requestId === this.loadRequestId) {

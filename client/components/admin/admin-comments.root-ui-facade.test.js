@@ -70,17 +70,17 @@ describe('admin-comments root UI facade migration guard', () => {
   const source = fs.readFileSync(componentPath, 'utf8')
   const scriptMatch = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   const script = scriptMatch && scriptMatch[1]
-  const watchStart = script && script.search(/\bwatch\s*:/)
-  const watchBlock = watchStart !== -1 ? extractBlock(script, watchStart) : null
+  const computedStart = script && script.search(/\bcomputed\s*:/)
+  const computedBlock = computedStart !== -1 ? extractBlock(script, computedStart) : null
   const loadProviders = script && extractMethod(script, 'loadProviders')
   const refresh = script && extractMethod(script, 'refresh')
   const save = script && extractMethod(script, 'save')
   const directRootUiCommit =
     /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-comments.vue imports the root UI facades and keeps comment provider selection watchers intact', () => {
+  test('admin-comments.vue keeps computed provider selection and accessible radio interactions', () => {
     expect(script).not.toBeNull()
-    expect(watchBlock).not.toBeNull()
+    expect(computedBlock).not.toBeNull()
 
     expect(source).toContain("<script lang='ts'>")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
@@ -96,22 +96,44 @@ describe('admin-comments root UI facade migration guard', () => {
     expect(source).toMatch(
       /async-state\s*\(\s*v-else-if=['"]providers\.length < 1['"][^)]*state=['"]empty['"][^)]*title=['"]No comment providers available['"][^)]*\)/
     )
-    expect(watchBlock).toMatch(
-      /selectedProvider\s*\(\s*newValue\s*:\s*string\s*\)\s*\{\s*this\.provider\s*=\s*_\.find\s*\(\s*this\.providers\s*,\s*\[\s*['"]key['"]\s*,\s*newValue\s*\]\s*\)\s*\|\|\s*\{\s*\}\s*\}/
+    expect(computedBlock).toMatch(
+      /provider\s*\(\s*\)\s*:\s*Partial<CommentProvider>\s*\{\s*return\s+this\.providers\.find\s*\(\s*provider\s*=>\s*provider\.key\s*===\s*this\.selectedProvider\s*\)\s*\|\|\s*\{\s*\}\s*\}/
     )
-    expect(watchBlock).toMatch(
-      /providers\s*\(\s*\)\s*\{\s*const\s+selected\s*=\s*_\.find\s*\(\s*this\.providers\s*,\s*provider\s*=>\s*provider\.isEnabled\s*&&\s*provider\.isAvailable\s*\)\s*\|\|\s*_\.find\s*\(\s*this\.providers\s*,\s*['"]isAvailable['"]\s*\)\s*this\.selectedProvider\s*=\s*selected\?\.key\s*\|\|\s*['"]{2}\s*\}/
+    expect(computedBlock).toMatch(
+      /canSave\s*\(\s*\)\s*:\s*boolean\s*\{[\s\S]*?!this\.loading[\s\S]*?!this\.refreshing[\s\S]*?!this\.saving[\s\S]*?provider\.key\s*===\s*this\.selectedProvider\)\?\.isAvailable/
+    )
+    expect(script).not.toMatch(/\bwatch\s*:/)
+    expect(source).toMatch(/v-list\.py-0\([^)]*role=['"]radiogroup['"][^)]*aria-label=['"]Comment provider['"]/)
+    expect(source).toMatch(
+      /v-list-item\([\s\S]*?role=['"]radio['"][\s\S]*?:aria-checked=['"]provider\.key === selectedProvider['"][\s\S]*?:tabindex=['"]provider\.isAvailable \? 0 : -1['"]/
+    )
+    expect(source).toMatch(/@keydown\.enter\.prevent=['"]selectProvider\(provider\)['"]/)
+    expect(source).toMatch(/@keydown\.space\.prevent=['"]selectProvider\(provider\)['"]/)
+    expect(script).toMatch(
+      /selectProvider\s*\(\s*provider\s*:\s*CommentProvider\s*\)\s*\{\s*if\s*\(\s*provider\.isAvailable\s*\)\s*\{\s*this\.selectedProvider\s*=\s*provider\.key/
     )
   })
 
-  test('loadProviders uses loading and notification facades without changing fetch, notifyError, rethrow, or cleanup behavior', () => {
+  test('loadProviders uses abortable REST fetches and only lets the current generation settle state', () => {
     expect(loadProviders).not.toBeNull()
 
     expect(loadProviders).toMatch(
-      /async\s+loadProviders\s*\(\s*\{\s*notifyError\s*=\s*true\s*\}\s*:\s*\{\s*notifyError\?\s*:\s*boolean\s*\}\s*=\s*\{\s*\}\s*\)\s*\{\s*this\.loading\s*=\s*true\s*this\.errorMessage\s*=\s*['"]{2}\s*this\.refreshing\s*=\s*notifyError\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-comments-refresh['"]\s*\)/
+      /this\.loadController\?\.abort\s*\(\s*\)[\s\S]*?const\s+controller\s*=\s*new\s+AbortController\s*\(\s*\)[\s\S]*?this\.loadController\s*=\s*controller/
     )
     expect(loadProviders).toMatch(
-      /try\s*\{\s*this\.providers\s*=\s*await\s+fetchCommentProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Comment providers response is invalid['"]\s*\)\s*\}\s*catch\s*\(\s*err\s*\)\s*\{\s*this\.errorMessage\s*=\s*getErrorMessage\s*\(\s*err\s*\)\s*\|\|\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)\s*if\s*\(\s*notifyError\s*\)\s*\{\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.errorMessage\s*,\s*style:\s*['"]red['"]\s*,\s*icon:\s*['"]alert['"]\s*\}\s*\)\s*\}\s*throw\s+err\s*\}\s*finally\s*\{\s*this\.loading\s*=\s*false\s*this\.refreshing\s*=\s*false\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-comments-refresh['"]\s*\)\s*\}/
+      /this\.loading\s*=\s*true[\s\S]*?this\.errorMessage\s*=\s*['"]{2}[\s\S]*?this\.refreshing\s*=\s*notifyError[\s\S]*?loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-comments-refresh['"]\s*\)/
+    )
+    expect(loadProviders).toMatch(
+      /const\s+providers\s*=\s*await\s+fetchCommentProviders\s*\(\s*createAbortableFetch\s*\(\s*controller\.signal\s*\)\s*,\s*['"]Comment providers response is invalid['"]\s*\)/
+    )
+    expect(loadProviders).toMatch(
+      /if\s*\(\s*controller\.signal\.aborted\s*\)\s*\{\s*return\s+false\s*\}[\s\S]*?providers\.find\s*\(\s*provider\s*=>\s*provider\.isEnabled\s*&&\s*provider\.isAvailable\s*\)\s*\|\|[\s\S]*?providers\.find\s*\(\s*provider\s*=>\s*provider\.isAvailable\s*\)[\s\S]*?this\.providers\s*=\s*providers[\s\S]*?this\.selectedProvider\s*=\s*selected\?\.key\s*\|\|\s*['"]{2}/
+    )
+    expect(loadProviders).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*controller\.signal\.aborted\s*\)\s*\{\s*return\s+false\s*\}[\s\S]*?this\.errorMessage\s*=\s*getErrorMessage\s*\(\s*err\s*\)\s*\|\|\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)[\s\S]*?if\s*\(\s*notifyError\s*\)[\s\S]*?showNotification\s*\([\s\S]*?throw\s+err/
+    )
+    expect(loadProviders).toMatch(
+      /finally\s*\{\s*if\s*\(\s*this\.loadController\s*===\s*controller\s*\)\s*\{[\s\S]*?this\.loadController\s*=\s*null[\s\S]*?if\s*\(\s*!this\.isUnmounted\s*\)\s*\{[\s\S]*?this\.loading\s*=\s*false[\s\S]*?this\.refreshing\s*=\s*false[\s\S]*?\}[\s\S]*?\}[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-comments-refresh['"]\s*\)/
     )
     expect(loadProviders).not.toMatch(directRootUiCommit)
 
@@ -120,14 +142,13 @@ describe('admin-comments root UI facade migration guard', () => {
     expect(loadProviders.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('refresh waits for provider reload, settles failures, and only shows success after a successful reload', () => {
+  test('refresh waits for the current reload and only announces a committed success', () => {
     expect(refresh).not.toBeNull()
 
     expect(refresh).toMatch(
-      /async\s+refresh\s*\(\s*\)\s*\{\s*if\s*\(\s*this\.refreshing\s*\|\|\s*this\.saving\s*\)\s*return\s*try\s*\{\s*await\s+this\.loadProviders\s*\(\s*\)\s*\}\s*catch\s*\{\s*return\s*\}\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*['"]Comment providers refreshed\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]cached['"]\s*\}\s*\)\s*\}/
+      /async\s+refresh\s*\(\s*\)\s*\{\s*if\s*\(\s*this\.refreshing\s*\|\|\s*this\.saving\s*\)\s*return\s*try\s*\{\s*const\s+loaded\s*=\s*await\s+this\.loadProviders\s*\(\s*\)\s*if\s*\(\s*!loaded\s*\)\s*return\s*\}\s*catch\s*\{\s*return\s*\}[\s\S]*?showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*?message:\s*['"]Comment providers refreshed\.['"][\s\S]*?style:\s*['"]success['"][\s\S]*?icon:\s*['"]cached['"]/
     )
     expect(refresh).not.toMatch(directRootUiCommit)
-
     expect(refresh.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
   })
 
@@ -139,12 +160,19 @@ describe('admin-comments root UI facade migration guard', () => {
     const showNotification = jest.fn((store, notification) => events.push(`notification:${notification.style}`))
     const context = {
       $t: key => key,
-      providers: []
+      providers: [],
+      loadController: null,
+      loading: false,
+      errorMessage: '',
+      refreshing: false,
+      isUnmounted: false
     }
 
     context.loadProviders = () =>
       executeMethodBody(loadProviders, context, {
         notifyError: true,
+        AbortController,
+        createAbortableFetch: jest.fn(),
         loadingStart,
         wikiStore,
         fetchCommentProviders: jest.fn().mockRejectedValue(new Error('refresh failed')),
@@ -168,16 +196,27 @@ describe('admin-comments root UI facade migration guard', () => {
     })
   })
 
-  test('save uses REST helper while preserving payload, silent reload, success/error facades, and trailing loading stop', () => {
+  test('save preserves the provider payload and suppresses stale or aborted outcomes', () => {
     expect(save).not.toBeNull()
 
     expect(save).toMatch(
-      /async\s+save\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.canSave\s*\)\s*return\s*this\.saving\s*=\s*true\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-comments-saveproviders['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?await\s+saveCommentProviders\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,[\s\S]*?await\s+this\.loadProviders\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*showNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*this\.\$t\s*\(\s*['"]admin:comments\.configSaveSuccess['"]\s*\)\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}\s*finally\s*\{\s*this\.saving\s*=\s*false\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-comments-saveproviders['"]\s*\)\s*\}\s*\}/
+      /async\s+save\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.canSave\s*\)\s*return\s*const\s+controller\s*=\s*new\s+AbortController\s*\(\s*\)\s*this\.saveController\s*=\s*controller\s*this\.saving\s*=\s*true\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-comments-saveproviders['"]\s*\)/
+    )
+    expect(save).toMatch(
+      /saveCommentProviders\s*\(\s*createAbortableFetch\s*\(\s*controller\.signal\s*\)\s*,[\s\S]*?['"]Comment providers save response is invalid['"]\s*\)/
     )
     expect(save).toMatch(
       /this\.providers\.map\s*\(\s*tgt\s*=>\s*\(\s*\{\s*isEnabled:\s*tgt\.key\s*===\s*this\.selectedProvider\s*,\s*key:\s*tgt\.key\s*,\s*config:\s*tgt\.config\.map\s*\(\s*cfg\s*=>\s*\(\s*\{\s*\.\.\.cfg\s*,\s*value:\s*JSON\.stringify\s*\(\s*\{\s*v:\s*cfg\.value\.value\s*\}\s*\)\s*\}\s*\)\s*\)\s*\}\s*\)\s*\)/
     )
-    expect(save).toMatch(/['"]Comment providers save response is invalid['"]/)
+    expect(save).toMatch(
+      /if\s*\(\s*controller\.signal\.aborted\s*\)\s*\{\s*return\s*\}\s*await\s+this\.loadProviders\s*\(\s*\{\s*notifyError:\s*false\s*\}\s*\)\s*if\s*\(\s*controller\.signal\.aborted\s*\)\s*\{\s*return\s*\}[\s\S]*?showNotification\s*\(\s*wikiStore/
+    )
+    expect(save).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*!controller\.signal\.aborted\s*\)\s*\{\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*\}\s*\}/
+    )
+    expect(save).toMatch(
+      /finally\s*\{\s*if\s*\(\s*this\.saveController\s*===\s*controller\s*\)\s*\{\s*this\.saveController\s*=\s*null\s*if\s*\(\s*!this\.isUnmounted\s*\)\s*\{\s*this\.saving\s*=\s*false\s*\}\s*\}[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-comments-saveproviders['"]\s*\)/
+    )
     expect(save).not.toMatch(/this\.\$apollo\.mutate|updateProviders\.responseResult|graphql-tag|\bgql\b/)
     expect(save).not.toMatch(directRootUiCommit)
 

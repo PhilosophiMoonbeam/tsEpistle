@@ -70,8 +70,8 @@ describe('admin-analytics root UI facade migration guard', () => {
   const source = fs.readFileSync(componentPath, 'utf8')
   const scriptMatch = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   const script = scriptMatch && scriptMatch[1]
-  const watchStart = script && script.search(/\bwatch\s*:/)
-  const watchBlock = watchStart !== -1 ? extractBlock(script, watchStart) : null
+  const computedStart = script ? script.search(/\bcomputed\s*:/) : -1
+  const computedBlock = computedStart >= 0 ? extractBlock(script, computedStart) : null
   const loadProviders = script && extractMethod(script, 'loadProviders')
   const refresh = script && extractMethod(script, 'refresh')
   const save = script && extractMethod(script, 'save')
@@ -82,7 +82,7 @@ describe('admin-analytics root UI facade migration guard', () => {
     expect(script).not.toBeNull()
     expect(source).toContain("<script lang='ts'>")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(watchBlock).not.toBeNull()
+    expect(computedBlock).not.toBeNull()
 
     expect(script).toMatch(
       /import\s+\{(?=[^}]*\bgetErrorMessage\b)(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
@@ -95,11 +95,11 @@ describe('admin-analytics root UI facade migration guard', () => {
     expect(source).toMatch(/:loading=['"]refreshing['"][\s\S]*?:disabled=['"]refreshing \|\| saving['"]/)
     expect(source).toMatch(/:loading=['"]saving['"][\s\S]*?:disabled=['"]!canSave['"]/)
     expect(script).toMatch(/canSave\s*\(\s*\)\s*:\s*boolean\s*\{[\s\S]*?!this\.loading\s*&&\s*!this\.refreshing\s*&&\s*!this\.saving/)
-    expect(watchBlock).toMatch(
-      /selectedProvider\s*\(\s*newValue\s*:\s*string\s*\)\s*\{\s*this\.provider\s*=\s*_\.find\s*\(\s*this\.providers\s*,\s*\[\s*['"]key['"]\s*,\s*newValue\s*\]\s*\)\s*\|\|\s*\{\s*\}\s*\}/
+    expect(computedBlock).toMatch(
+      /provider\s*\(\s*\)\s*:\s*Partial<AnalyticsProvider>\s*\{\s*return\s+_\.find\s*\(\s*this\.providers\s*,\s*\[\s*['"]key['"]\s*,\s*this\.selectedProvider\s*\]\s*\)\s*\|\|\s*\{\s*\}\s*\}/
     )
-    expect(watchBlock).toMatch(
-      /providers\s*\(\s*\)\s*\{[\s\S]*?_\.find\s*\(\s*this\.providers\s*,\s*provider\s*=>\s*provider\.isAvailable\s*&&\s*provider\.isEnabled\s*\)\s*\|\|[\s\S]*?_\.find\s*\(\s*this\.providers\s*,\s*['"]isAvailable['"]\s*\)[\s\S]*?this\.selectedProvider\s*=\s*selected\?\.key\s*\|\|\s*['"]['"]/
+    expect(loadProviders).toMatch(
+      /const\s+selected\s*=\s*_\.find\s*\(\s*this\.providers\s*,\s*provider\s*=>\s*provider\.isAvailable\s*&&\s*provider\.isEnabled\s*\)\s*\|\|[\s\S]*?_\.find\s*\(\s*this\.providers\s*,\s*['"]isAvailable['"]\s*\)[\s\S]*?this\.selectedProvider\s*=\s*selected\?\.key\s*\|\|\s*['"]['"]/
     )
   })
 

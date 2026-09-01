@@ -67,7 +67,7 @@
                     hide-details
                   )
                 v-col(cols='12', md='10')
-                  v-form(ref='propsForm', v-model='propertiesValid', @submit.prevent='close')
+                  v-form(ref='propsForm', @submit.prevent='close')
                     v-text-field(
                       ref='iptPath'
                       variant="outlined"
@@ -364,9 +364,12 @@ export default defineComponent({
       tagSearchTimer: null as number | null,
       tagSearchLoading: false,
       currentTab: 0,
-      propertiesValid: false,
       privatePageConfirm: false,
       cm: null as TextEditorHandle | null,
+      editorLoadTimer: null as number | null,
+      tagSearchRequest: 0,
+      translationsRequest: 0,
+      editorDisposed: false,
       rules: {
         required: (value: string) => !!value || 'This field is required.',
         path: (value: string) => {
@@ -454,16 +457,16 @@ export default defineComponent({
       get() {
         return wikiStore.page.publishStartDate
       },
-      set(value: string) {
-        wikiStore.page.publishStartDate = value
+      set(value: string | null) {
+        wikiStore.page.publishStartDate = value ?? ''
       }
     },
     publishEndDate: {
       get() {
         return wikiStore.page.publishEndDate
       },
-      set(value: string) {
-        wikiStore.page.publishEndDate = value
+      set(value: string | null) {
+        wikiStore.page.publishEndDate = value ?? ''
       }
     },
     scriptJs: {
@@ -501,8 +504,25 @@ export default defineComponent({
         this.currentTab = 0
         if (this.mode !== 'create') void this.loadTranslations()
         this.$nextTick(() => {
-          ;(this.$refs.iptTitle as { focus?: () => void })?.focus?.()
+          if (!this.editorDisposed && this.modelValue) {
+            ;(this.$refs.iptTitle as { focus?: () => void })?.focus?.()
+          }
         })
+      } else {
+        if (this.tagSearchTimer !== null) {
+          window.clearTimeout(this.tagSearchTimer)
+          this.tagSearchTimer = null
+        }
+        if (this.editorLoadTimer !== null) {
+          window.clearTimeout(this.editorLoadTimer)
+          this.editorLoadTimer = null
+        }
+        this.tagSearchRequest++
+        this.translationsRequest++
+        this.tagSearchLoading = false
+        this.translationsLoading = false
+        this.cm?.destroy()
+        this.cm = null
       }
     },
     isPublishStartShown (newValue: boolean) {
@@ -516,68 +536,99 @@ export default defineComponent({
       }
     },
     newTagSearch (newValue: string) {
-      if (this.tagSearchTimer !== null) window.clearTimeout(this.tagSearchTimer)
+      if (this.tagSearchTimer !== null) {
+        window.clearTimeout(this.tagSearchTimer)
+        this.tagSearchTimer = null
+      }
       if (!this.modelValue || _.isEmpty(newValue)) {
+        this.tagSearchRequest++
+        this.tagSearchLoading = false
         this.newTagSuggestions = []
         return
       }
-      this.tagSearchTimer = window.setTimeout(() => this.loadTagSuggestions(newValue), 500)
+      this.tagSearchTimer = window.setTimeout(() => {
+        this.tagSearchTimer = null
+        void this.loadTagSuggestions(newValue)
+      }, 500)
     },
     currentTab (newValue: number) {
-      if (this.cm) {
-        this.cm.destroy()
+      if (this.editorLoadTimer !== null) {
+        window.clearTimeout(this.editorLoadTimer)
+        this.editorLoadTimer = null
       }
-      if (newValue === 2) {
-        this.$nextTick(() => {
-          setTimeout(() => {
-            this.loadEditor(this.$refs.codejs as HTMLElement, 'js')
-          }, 100)
-        })
-      } else if (newValue === 3) {
-        this.$nextTick(() => {
-          setTimeout(() => {
-            this.loadEditor(this.$refs.codecss as HTMLElement, 'css')
-          }, 100)
-        })
-      }
+      this.cm?.destroy()
+      this.cm = null
+      if (newValue !== 2 && newValue !== 3) return
+      this.$nextTick(() => {
+        if (this.editorDisposed || !this.modelValue || this.currentTab !== newValue) return
+        this.editorLoadTimer = window.setTimeout(() => {
+          this.editorLoadTimer = null
+          if (this.editorDisposed || !this.modelValue || this.currentTab !== newValue) return
+          const ref = this.$refs[newValue === 2 ? 'codejs' : 'codecss'] as HTMLElement | undefined
+          if (ref) this.loadEditor(ref, newValue === 2 ? 'js' : 'css')
+        }, 100)
+      })
     }
   },
   beforeUnmount() {
+    this.editorDisposed = true
+    this.tagSearchRequest++
+    this.translationsRequest++
     if (this.tagSearchTimer !== null) window.clearTimeout(this.tagSearchTimer)
+    if (this.editorLoadTimer !== null) window.clearTimeout(this.editorLoadTimer)
     this.cm?.destroy()
+    this.cm = null
   },
   methods: {
     async loadTranslations () {
+      const request = ++this.translationsRequest
       this.translationsLoading = true
       this.translationError = ''
       try {
-        this.translations = await fetchPageLocaleRelations(window.fetch.bind(window), wikiStore.page.id)
+        const translations = await fetchPageLocaleRelations(window.fetch.bind(window), wikiStore.page.id)
+        if (this.editorDisposed || request !== this.translationsRequest) return
+        this.translations = translations
       } catch (err) {
+        if (this.editorDisposed || request !== this.translationsRequest) return
         this.translationError = 'Unable to load translations. Try again.'
         wikiStore.showError(err)
       } finally {
-        this.translationsLoading = false
+        if (!this.editorDisposed && request === this.translationsRequest) {
+          this.translationsLoading = false
+        }
       }
     },
     async linkTranslation ({ id }: { id: number }) {
+      const request = ++this.translationsRequest
       this.translationsLoading = true
       try {
-        this.translations = await linkPageLocaleRelation(window.fetch.bind(window), wikiStore.page.id, id)
+        const translations = await linkPageLocaleRelation(window.fetch.bind(window), wikiStore.page.id, id)
+        if (this.editorDisposed || request !== this.translationsRequest) return false
+        this.translations = translations
       } catch (err) {
+        if (this.editorDisposed || request !== this.translationsRequest) return false
         wikiStore.showError(err)
         return false
       } finally {
-        this.translationsLoading = false
+        if (!this.editorDisposed && request === this.translationsRequest) {
+          this.translationsLoading = false
+        }
       }
     },
     async unlinkTranslation (translation: PageLocaleRelation) {
+      const request = ++this.translationsRequest
       this.translationsLoading = true
       try {
-        this.translations = await unlinkPageLocaleRelation(window.fetch.bind(window), wikiStore.page.id, translation.id)
+        const translations = await unlinkPageLocaleRelation(window.fetch.bind(window), wikiStore.page.id, translation.id)
+        if (this.editorDisposed || request !== this.translationsRequest) return
+        this.translations = translations
       } catch (err) {
+        if (this.editorDisposed || request !== this.translationsRequest) return
         wikiStore.showError(err)
       } finally {
-        this.translationsLoading = false
+        if (!this.editorDisposed && request === this.translationsRequest) {
+          this.translationsLoading = false
+        }
       }
     },
     applyPublishStartDate() {
@@ -611,14 +662,20 @@ export default defineComponent({
       this.path = path
     },
     async loadTagSuggestions(query: string) {
+      const request = ++this.tagSearchRequest
       this.tagSearchLoading = true
       try {
-        this.newTagSuggestions = await searchPageTags(window.fetch.bind(window), query)
+        const suggestions = await searchPageTags(window.fetch.bind(window), query)
+        if (this.editorDisposed || request !== this.tagSearchRequest || !this.modelValue) return
+        this.newTagSuggestions = suggestions
       } catch (err) {
+        if (this.editorDisposed || request !== this.tagSearchRequest || !this.modelValue) return
         console.warn(err)
         this.newTagSuggestions = []
       } finally {
-        this.tagSearchLoading = false
+        if (!this.editorDisposed && request === this.tagSearchRequest) {
+          this.tagSearchLoading = false
+        }
       }
     },
     loadEditor(ref: HTMLElement, mode: 'js' | 'css') {
@@ -636,6 +693,7 @@ export default defineComponent({
       })
       this.cm = cm
       this.$nextTick(() => {
+        if (this.editorDisposed || this.cm !== cm) return
         cm.requestMeasure()
         cm.focus()
       })

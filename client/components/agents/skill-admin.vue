@@ -133,13 +133,13 @@
     </div>
   </section>
 
-  <v-dialog v-model="createOpen" max-width="46rem" scrollable :fullscreen="smAndDown">
+  <v-dialog v-model="createOpen" max-width="46rem" scrollable :fullscreen="smAndDown" aria-labelledby="skill-create-title" :persistent="actionBusyId === 'create'">
     <v-card class="skill-dialog">
       <div class="skill-dialog__header">
         <span><v-icon size="23">mdi-book-plus-outline</v-icon></span>
-        <div><div class="skill-eyebrow">Organization policy</div><h2>Map a page-native skill</h2><p>Choose one trusted page tree, then define who receives the approved revision.</p></div>
+        <div><div class="skill-eyebrow">Organization policy</div><h2 id="skill-create-title">Map a page-native skill</h2><p>Choose one trusted page tree, then define who receives the approved revision.</p></div>
         <v-spacer />
-        <v-btn icon="mdi-close" variant="text" aria-label="Close skill editor" @click="createOpen = false" />
+        <v-btn icon="mdi-close" variant="text" aria-label="Close skill editor" :disabled="actionBusyId === 'create'" @click="createOpen = false" />
       </div>
       <v-card-text class="skill-dialog__body">
         <v-form id="skill-create-form" @submit.prevent="createSkill">
@@ -162,21 +162,21 @@
           </section>
         </v-form>
       </v-card-text>
-      <v-card-actions class="skill-dialog__actions"><v-alert v-if="createError" class="skill-dialog__error" type="error" variant="tonal" density="compact">{{ createError }}</v-alert><v-spacer /><v-btn @click="createOpen = false">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-check" form="skill-create-form" type="submit" :disabled="!createValid || Boolean(actionBusyId)" :loading="actionBusyId === 'create'">Map skill</v-btn></v-card-actions>
+      <v-card-actions class="skill-dialog__actions"><v-alert v-if="createError" class="skill-dialog__error" type="error" variant="tonal" density="compact">{{ createError }}</v-alert><v-spacer /><v-btn :disabled="actionBusyId === 'create'" @click="createOpen = false">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-check" form="skill-create-form" type="submit" :disabled="!createValid || Boolean(actionBusyId)" :loading="actionBusyId === 'create'">Map skill</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
-  <v-dialog v-model="accessOpen" max-width="40rem" scrollable :fullscreen="smAndDown">
+  <v-dialog v-model="accessOpen" max-width="40rem" scrollable :fullscreen="smAndDown" aria-labelledby="skill-access-title" :persistent="actionBusyId === 'access'">
     <v-card class="skill-dialog">
-      <div class="skill-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><div class="skill-eyebrow">Audience policy</div><h2>{{ policySkill ? `Access for ${policySkill.name}` : 'Skill access' }}</h2><p>Control who receives this organization-approved expertise.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close audience editor" @click="accessOpen = false" /></div>
+      <div class="skill-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><div class="skill-eyebrow">Audience policy</div><h2 id="skill-access-title">{{ policySkill ? `Access for ${policySkill.name}` : 'Skill access' }}</h2><p>Control who receives this organization-approved expertise.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close audience editor" :disabled="actionBusyId === 'access'" @click="accessOpen = false" /></div>
       <v-card-text class="skill-dialog__body"><v-alert v-if="accessError" class="skill-error" type="error" variant="tonal" density="compact">{{ accessError }}</v-alert><v-select v-model="policy.exposureMode" :items="exposureModes" item-title="title" item-value="value" label="Available to" /><v-autocomplete v-if="policy.exposureMode === 'groups'" v-model="policy.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this skill through any selected group." persistent-hint /></v-card-text>
-      <v-card-actions class="skill-dialog__actions"><v-spacer /><v-btn @click="accessOpen = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyId === 'access'" :disabled="Boolean(actionBusyId) || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)" @click="saveAccess">Save audience policy</v-btn></v-card-actions>
+      <v-card-actions class="skill-dialog__actions"><v-spacer /><v-btn :disabled="actionBusyId === 'access'" @click="accessOpen = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyId === 'access'" :disabled="Boolean(actionBusyId) || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)" @click="saveAccess">Save audience policy</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
-  <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="smAndDown">
+  <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="smAndDown" aria-labelledby="skill-preview-title" :persistent="actionBusyId === 'approve' || actionBusyId === 'reject'">
     <v-card v-if="preview" class="skill-dialog skill-review">
-      <div class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-eyebrow">Immutable organization source</div><h2>Review {{ preview.name }}</h2><p>Approve only the exact candidate revision shown below.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close skill review" @click="previewOpen = false" /></div>
+      <div class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-eyebrow">Immutable organization source</div><h2 id="skill-preview-title">Review {{ preview.name }}</h2><p>Approve only the exact candidate revision shown below.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close skill review" :disabled="actionBusyId === 'approve' || actionBusyId === 'reject'" @click="previewOpen = false" /></div>
       <v-card-text class="skill-dialog__body">
         <v-alert v-if="previewError" class="skill-error" type="error" variant="tonal" density="compact">{{ previewError }}</v-alert>
         <v-alert v-if="preview.previousSkillMarkdown === null" class="skill-boundary" type="info" variant="tonal">This is the first candidate revision. No previously approved source exists.</v-alert>
@@ -203,7 +203,7 @@
           <pre class="source-view" tabindex="0">{{ preview.previousSkillMarkdown }}</pre>
         </template>
       </v-card-text>
-      <v-card-actions class="skill-dialog__actions skill-dialog__actions--review"><v-btn color="error" variant="text" prepend-icon="mdi-close-octagon-outline" :loading="actionBusyId === 'reject'" :disabled="Boolean(actionBusyId)" @click="review(false)">Reject candidate</v-btn><v-spacer /><v-btn @click="previewOpen = false">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-check-decagram-outline" :loading="actionBusyId === 'approve'" :disabled="Boolean(actionBusyId)" @click="review(true)">Approve exact revision</v-btn></v-card-actions>
+      <v-card-actions class="skill-dialog__actions skill-dialog__actions--review"><v-btn color="error" variant="text" prepend-icon="mdi-close-octagon-outline" :loading="actionBusyId === 'reject'" :disabled="Boolean(actionBusyId)" @click="review(false)">Reject candidate</v-btn><v-spacer /><v-btn :disabled="actionBusyId === 'approve' || actionBusyId === 'reject'" @click="previewOpen = false">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-check-decagram-outline" :loading="actionBusyId === 'approve'" :disabled="Boolean(actionBusyId)" @click="review(true)">Approve exact revision</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 </template>

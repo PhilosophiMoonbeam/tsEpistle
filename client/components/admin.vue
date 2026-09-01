@@ -119,8 +119,9 @@
         .admin-route-bar__section(v-if='currentRouteGroup')
           v-icon(size='16') {{ currentRouteGroup.icon }}
           span {{ currentRouteGroup.label }}
-      transition(name='admin-router')
-        router-view
+      router-view(v-slot='{ Component }')
+        transition(name='admin-router')
+          component(:is='Component')
 
     nav-footer
     notify
@@ -130,7 +131,7 @@
 <script lang='ts'>
 import _ from 'lodash'
 import { defineComponent, ref, watch } from 'vue'
-import { useDisplay, useLocale } from 'vuetify'
+import { useDisplay } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
 
 import { fetchSystemSummary } from '../helpers/system-api'
@@ -158,7 +159,6 @@ export default defineComponent({
   i18nOptions: { namespaces: 'admin' },
   setup() {
     const { mdAndUp } = useDisplay()
-    const { isRtl } = useLocale()
     const adminDrawerShown = ref(mdAndUp.value)
     const navSearch = ref('')
     const openedSections = ref<string[]>([])
@@ -180,24 +180,8 @@ export default defineComponent({
     })
 
     const scrollStyle = {
-      vuescroll: {},
       scrollPanel: {
-        initialScrollY: 0,
-        initialScrollX: 0,
-        scrollingX: false,
-        easing: 'easeOutQuad',
-        speed: 400,
-        verticalNativeBarPos: isRtl.value ? 'left' : 'right'
-      },
-      rail: {
-        gutterOfEnds: '4px'
-      },
-      bar: {
-        onlyShowBarOnScroll: true,
-        background: 'rgba(var(--v-theme-on-surface), .22)',
-        hoverStyle: {
-          background: 'rgba(var(--v-theme-on-surface), .4)'
-        }
+        scrollingX: false
       }
     }
 
@@ -365,8 +349,9 @@ export default defineComponent({
           message: getErrorMessage(err),
           icon: 'alert'
         })
+      } finally {
+        loadingStop(wikiStore, 'admin-stats-refresh')
       }
-      loadingStop(wikiStore, 'admin-stats-refresh')
     },
     hasPermission(prm: string | string[]) {
       if (_.isArray(prm)) {

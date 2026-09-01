@@ -99,14 +99,17 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
     expect(refresh).not.toContain('this.$apollo.queries.trees.refetch')
   })
 
-  test('save and Apply controls honor loaded, loading, saving, and dirty state', () => {
+  test('save and Apply controls honor snapshot dirtiness, mutation locking, and busy state', () => {
+    expect(source).toMatch(
+      /dirty\s*\(\s*\)\s*:\s*boolean\s*\{[\s\S]*?this\.persistedConfig\s*!==\s*null[\s\S]*?JSON\.stringify\(this\.config\)\s*!==\s*JSON\.stringify\(this\.persistedConfig\)[\s\S]*?JSON\.stringify\(this\.trees\)\s*!==\s*JSON\.stringify\(this\.persistedTrees\)/
+    )
     expect(save).toMatch(/if\s*\(\s*!this\.loaded\s*\|\|\s*this\.initialLoading\s*\|\|\s*this\.saving\s*\|\|\s*!this\.dirty\s*\)\s*return/)
     expect(save).toMatch(
-      /this\.saving\s*=\s*true[\s\S]*wikiStore\.startLoading\('admin-navigation-save'\)[\s\S]*const\s+normalizedTrees\s*=\s*normalizeNavigationTrees\(this\.trees\)[\s\S]*this\.trees\s*=\s*normalizedTrees[\s\S]*await\s+saveNavigation\(window\.fetch\.bind\(window\),\s*normalizedTrees,\s*this\.config\.mode,\s*this\.config\.expandParent\)/
+      /this\.saving\s*=\s*true[\s\S]*wikiStore\.startLoading\('admin-navigation-save'\)[\s\S]*const\s+normalizedTrees\s*=\s*normalizeNavigationTrees\(this\.trees\)[\s\S]*const\s+savedTrees\s*=\s*_\.cloneDeep\(normalizedTrees\)[\s\S]*const\s+savedConfig\s*=\s*_\.cloneDeep\(this\.config\)[\s\S]*this\.trees\s*=\s*normalizedTrees[\s\S]*await\s+saveNavigation\(window\.fetch\.bind\(window\),\s*savedTrees,\s*savedConfig\.mode,\s*savedConfig\.expandParent\)/
     )
-    expect(save).toMatch(
-      /this\.persistedConfig\s*=\s*_\.cloneDeep\(this\.config\)[\s\S]*this\.persistedTrees\s*=\s*_\.cloneDeep\(normalizedTrees\)[\s\S]*wikiStore\.showNotification\(/
-    )
+    expect(save).toMatch(/this\.persistedConfig\s*=\s*savedConfig[\s\S]*this\.persistedTrees\s*=\s*savedTrees[\s\S]*wikiStore\.showNotification\(/)
+    expect(save.indexOf('const savedTrees')).toBeLessThan(save.indexOf('await saveNavigation'))
+    expect(save.indexOf('const savedConfig')).toBeLessThan(save.indexOf('await saveNavigation'))
     expect(save).not.toMatch(/saveNavigation\(window\.fetch\.bind\(window\),\s*this\.trees,/)
     expect(save).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\(err\)\s*\}/)
     expect(save).toMatch(/finally\s*\{\s*this\.saving\s*=\s*false\s*wikiStore\.stopLoading\('admin-navigation-save'\)\s*\}/)

@@ -15,10 +15,10 @@
               span(v-if='$vuetify.display.mdAndUp') Visualize
         v-card.mt-3.animated.fadeInUp
           .admin-filter-bar.pa-2.d-flex.align-center
-            v-text-field.admin-pages-filter-search(variant="solo" flat v-model='search' prepend-inner-icon='mdi-file-search-outline' label='Search pages' hide-details density="compact")
+            v-text-field.admin-pages-filter-search(variant="solo" flat v-model='search' prepend-inner-icon='mdi-file-search-outline' label='Search pages' hide-details density="compact" @update:model-value='pagination = 1')
             v-spacer
-            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Locale' :items='langs' item-title='text' v-model='selectedLang')
-            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Publish state' :items='states' item-title='text' v-model='selectedState')
+            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Locale' :items='langs' item-title='text' v-model='selectedLang' @update:model-value='pagination = 1')
+            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Publish state' :items='states' item-title='text' v-model='selectedState' @update:model-value='pagination = 1')
             v-btn.admin-pages-filter-clear(v-if='hasActiveFilters' variant='text' size='small' color='primary' @click='clearFilters') Clear filters
           v-alert(v-if='errorMessage && pages.length' type='error' variant='tonal' class='ma-3')
             .d-flex.align-center
@@ -35,9 +35,8 @@
             :items-per-page='15'
             :loading='loading'
             must-sort
-            :sort-by="[{ key: 'updatedAt', order: 'desc' }]"
+            :sort-by='sortBy'
             hide-default-footer
-            @page-count="pageTotal = $event"
           )
             template(v-slot:item='props')
               tr(v-if='$vuetify.display.mdAndUp')
@@ -68,8 +67,9 @@
               async-state(v-else-if='errorMessage' state='error' title='Pages could not be loaded' :message='errorMessage' retry-label='Try again' @retry='loadPages')
               async-state(v-else-if='hasActiveFilters' state='empty' title='No pages match these filters' message='Clear the filters to see all pages.')
               async-state(v-else state='empty' title='No pages to display' message='There are no pages yet.')
-          .text-center.py-2.animated.fadeInDown(v-if='pageTotal > 1')
-            v-pagination(v-model='pagination' :length='pageTotal')
+            template(v-slot:bottom='{ pageCount }')
+              .text-center.py-2.animated.fadeInDown(v-if='pageCount > 1')
+                v-pagination(v-model='pagination' :length='pageCount' aria-label='Pages pagination')
 </template>
 
 <script lang='ts'>
@@ -87,7 +87,6 @@ export default {
     return {
       pagination: 1,
       pages: [] as PageListRow[],
-      pageTotal: 0,
       headers: [
         { title: 'ID', value: 'id', width: 80, sortable: true },
         { title: 'Title', value: 'title' },
@@ -96,6 +95,7 @@ export default {
         { title: 'Created', value: 'createdAt', width: 250 },
         { title: 'Last Updated', value: 'updatedAt', width: 250 }
       ],
+      sortBy: [{ key: 'updatedAt', order: 'desc' as const }],
       search: '',
       selectedLang: null as string | null,
       selectedState: null as boolean | null,
@@ -105,7 +105,8 @@ export default {
         { text: 'Not Published', value: false }
       ] as PageFilterOption<boolean | null>[],
       errorMessage: '',
-      loading: false
+      loading: false,
+      loadRequestId: 0
     }
   },
   computed: {
@@ -130,21 +131,26 @@ export default {
       this.search = ''
       this.selectedLang = null
       this.selectedState = null
+      this.pagination = 1
     },
     async loadPages(): Promise<boolean> {
+      const requestId = ++this.loadRequestId
       this.errorMessage = ''
       this.loading = true
       wikiStore.startLoading('admin-pages-refresh')
       try {
-        this.pages = await fetchPageList(window.fetch.bind(window))
+        const pages = await fetchPageList(window.fetch.bind(window))
+        if (requestId !== this.loadRequestId) return false
+        this.pages = pages
         return true
       } catch (err) {
+        if (requestId !== this.loadRequestId) return false
         this.errorMessage = getErrorMessage(err)
         wikiStore.showError(err)
         return false
       } finally {
-        this.loading = false
         wikiStore.stopLoading('admin-pages-refresh')
+        if (requestId === this.loadRequestId) this.loading = false
       }
     },
     async refresh() {
@@ -153,6 +159,9 @@ export default {
   },
   mounted() {
     this.loadPages()
+  },
+  beforeUnmount() {
+    this.loadRequestId++
   }
 }
 </script>

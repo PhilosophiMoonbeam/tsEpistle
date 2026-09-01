@@ -26,7 +26,7 @@
 import { computed, useId } from 'vue'
 import { isHexThemeColor } from '../../../shared/theme-colors.ts'
 
-const props = defineProps<{ label: string }>()
+defineProps<{ label: string }>()
 const model = defineModel<string>({ required: true })
 const id = useId()
 const swatchId = `${id}-swatch`

@@ -47,10 +47,9 @@ describe('admin-extensions root UI facade migration guard', () => {
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
 
     expect(loadExtensions).toMatch(
-      /async\s+loadExtensions\s*\(\s*\)\s*\{\s*this\.loadState\s*=\s*['"]loading['"]\s*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-extensions-refresh['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?this\.extensions\s*=\s*await\s+fetchSystemExtensions\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]System extensions response is invalid['"]\s*\)\s*this\.loadState\s*=\s*['"]success['"]\s*return\s+true[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{\s*this\.loadState\s*=\s*['"]error['"]\s*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)\s*return\s+false[\s\S]*?\}\s*finally\s*\{\s*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-extensions-refresh['"]\s*\)\s*\}/
+      /async\s+loadExtensions\s*\(\s*\)\s*\{[\s\S]*?this\.loadState\s*=\s*['"]loading['"][\s\S]*?this\.extensions\s*=\s*\[\s*\][\s\S]*?loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-extensions-refresh['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?this\.extensions\s*=\s*await\s+fetchSystemExtensions\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]System extensions response is invalid['"]\s*\)[\s\S]*?this\.loadState\s*=\s*['"]success['"][\s\S]*?return\s+true[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{[\s\S]*?this\.loadState\s*=\s*['"]error['"][\s\S]*?pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)[\s\S]*?return\s+false[\s\S]*?\}\s*finally\s*\{[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-extensions-refresh['"]\s*\)[\s\S]*?\}/
     )
-    expect(loadExtensions).not.toMatch(/this\.extensions\s*=\s*\[\s*\]/)
-    expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*this\.loadExtensions\s*\(\s*\)\s*\}/)
+    expect(script).toMatch(/created\s*\(\s*\)\s*\{[\s\S]*?this\.loadExtensions\s*\(\s*\)[\s\S]*?\}/)
 
     expect(loadExtensions).not.toMatch(
       /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
@@ -64,6 +63,13 @@ describe('admin-extensions root UI facade migration guard', () => {
 
     const loadingStopCalls = loadExtensions.match(/\bloadingStop\s*\(/g) || []
     expect(loadingStopCalls).toHaveLength(1)
+  })
+
+  test('admin-extensions.vue uses the current expansion-panel variant contract', () => {
+    expect(source).toMatch(
+      /v-expansion-panels\.admin-extensions-exp\((?=[^\n)]*\bv-else-if=['"]extensions\.length['"])(?=[^\n)]*\bvariant=["']popout["'])[^\n)]*\)/
+    )
+    expect(source).not.toMatch(/v-expansion-panels[^\n]*(?:\bfocusable\b|\bpopout\b(?!["'])|\binset\b)/)
   })
 
   test('admin-extensions.vue does not keep stale commented save/Apollo root UI code', () => {

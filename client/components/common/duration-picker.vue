@@ -82,10 +82,15 @@
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
-import _ from 'lodash'
 import moment from 'moment'
 
 type DurationUnit = 'minutes' | 'hours' | 'days' | 'months' | 'years'
+
+function parseDurationUnit (value: unknown): number | null {
+  if (value === '' || value === null || value === undefined) return null
+  const numericValue = Number(value)
+  return Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : null
+}
 
 export default defineComponent({
   emits: ['update:modelValue'],
@@ -97,52 +102,47 @@ export default defineComponent({
   },
   data() {
     return {
-      duration: moment.duration(0)
+      duration: moment.duration(this.modelValue)
     }
   },
   computed: {
     years: {
       get() { return this.duration.years() || 0 },
       set(val: string | number) {
-        if (val === '' || val === null || val === undefined) return
-        const numericValue = _.toNumber(val)
-        if (!_.isFinite(numericValue) || numericValue < 0) return
+        const numericValue = parseDurationUnit(val)
+        if (numericValue === null) return
         this.rebuild(numericValue, 'years')
       }
     },
     months: {
       get() { return this.duration.months() || 0 },
       set(val: string | number) {
-        if (val === '' || val === null || val === undefined) return
-        const numericValue = _.toNumber(val)
-        if (!_.isFinite(numericValue) || numericValue < 0) return
+        const numericValue = parseDurationUnit(val)
+        if (numericValue === null) return
         this.rebuild(numericValue, 'months')
       }
     },
     days: {
       get() { return this.duration.days() || 0 },
       set(val: string | number) {
-        if (val === '' || val === null || val === undefined) return
-        const numericValue = _.toNumber(val)
-        if (!_.isFinite(numericValue) || numericValue < 0) return
+        const numericValue = parseDurationUnit(val)
+        if (numericValue === null) return
         this.rebuild(numericValue, 'days')
       }
     },
     hours: {
       get() { return this.duration.hours() || 0 },
       set(val: string | number) {
-        if (val === '' || val === null || val === undefined) return
-        const numericValue = _.toNumber(val)
-        if (!_.isFinite(numericValue) || numericValue < 0) return
+        const numericValue = parseDurationUnit(val)
+        if (numericValue === null) return
         this.rebuild(numericValue, 'hours')
       }
     },
     minutes: {
       get() { return this.duration.minutes() || 0 },
       set(val: string | number) {
-        if (val === '' || val === null || val === undefined) return
-        const numericValue = _.toNumber(val)
-        if (!_.isFinite(numericValue) || numericValue < 0) return
+        const numericValue = parseDurationUnit(val)
+        if (numericValue === null) return
         this.rebuild(numericValue, 'minutes')
       }
     }
@@ -154,7 +154,7 @@ export default defineComponent({
   },
   methods: {
     rebuild(val: number, unit: DurationUnit) {
-      if (!_.isFinite(val) || val < 0) return
+      if (!Number.isFinite(val) || val < 0) return
       const newDuration = {
         minutes: this.duration.minutes(),
         hours: this.duration.hours(),
@@ -162,13 +162,10 @@ export default defineComponent({
         months: this.duration.months(),
         years: this.duration.years()
       }
-      _.set(newDuration, unit, val)
+      newDuration[unit] = val
       this.duration = moment.duration(newDuration)
       this.$emit('update:modelValue', this.duration.toISOString())
     }
-  },
-  mounted() {
-    this.duration = moment.duration(this.modelValue)
   }
 })
 </script>

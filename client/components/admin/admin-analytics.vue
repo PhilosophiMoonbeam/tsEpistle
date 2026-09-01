@@ -37,13 +37,14 @@
           template(v-else)
             v-list(lines="two", density="compact", role='listbox', aria-label='Analytics providers').py-0
               template(v-for='(str, idx) in providers', :key='str.key')
-                v-list-item(@click='selectedProvider = str.key', :disabled='!str.isAvailable', :aria-selected='str.key === selectedProvider')
+                v-list-item(link, role='option', @click='selectedProvider = str.key', :disabled='!str.isAvailable', :aria-selected='str.key === selectedProvider')
                   template(v-slot:prepend)
                     v-checkbox-btn(
                       v-if='str.isAvailable'
                       v-model='str.isEnabled'
                       color='primary'
                       :aria-label='`${str.title} active`'
+                      :disabled='saving'
                       @click.stop
                     )
                     v-icon(color='grey', v-else) mdi-minus-box-outline
@@ -146,7 +147,6 @@ export default {
     return {
       providers: [] as AnalyticsProvider[],
       selectedProvider: '',
-      provider: {} as Partial<AnalyticsProvider>,
       loading: false,
       errorMessage: '',
       refreshing: false,
@@ -154,19 +154,12 @@ export default {
     }
   },
   computed: {
+    provider (): Partial<AnalyticsProvider> {
+      return _.find(this.providers, ['key', this.selectedProvider]) || {}
+    },
     canSave (): boolean {
       return !this.loading && !this.refreshing && !this.saving && this.providers.length > 0 &&
-        Boolean(_.find(this.providers, ['key', this.selectedProvider])?.isAvailable)
-    }
-  },
-  watch: {
-    selectedProvider(newValue: string) {
-      this.provider = _.find(this.providers, ['key', newValue]) || {}
-    },
-    providers() {
-      const selected = _.find(this.providers, provider => provider.isAvailable && provider.isEnabled) ||
-        _.find(this.providers, 'isAvailable')
-      this.selectedProvider = selected?.key || ''
+        Boolean(this.provider.isAvailable)
     }
   },
   created() {
@@ -180,6 +173,9 @@ export default {
       loadingStart(wikiStore, 'admin-analytics-refresh')
       try {
         this.providers = await fetchAnalyticsProviders(window.fetch.bind(window), 'Analytics providers response is invalid')
+        const selected = _.find(this.providers, provider => provider.isAvailable && provider.isEnabled) ||
+          _.find(this.providers, 'isAvailable')
+        this.selectedProvider = selected?.key || ''
         return true
       } catch (err) {
         this.errorMessage = getErrorMessage(err) || this.$t('common:error.unexpected')

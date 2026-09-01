@@ -15,8 +15,8 @@
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
       .editor-code-editor
-        div(ref='cm')
-    v-system-bar.editor-status-bar.editor-code-sysbar(absolute, status, color="grey-darken-3")
+        div(ref='cm', role='region', aria-label='Code editor')
+    v-system-bar.editor-status-bar.editor-code-sysbar(absolute, color="grey-darken-3")
       .text-body-small.editor-code-sysbar-locale {{locale.toUpperCase()}}
       .editor-status-path(title='/' + path) /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
@@ -34,7 +34,18 @@ import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../..
 import type { ContentInsertOptions, LineInsertOptions, MultiLineInsertOptions } from './common/editor-types'
 import { TextEditor, type TextEditorHandle, type TextPosition } from './common/text-editor'
 import { html } from '@codemirror/lang-html'
+const HTML_ESCAPE_REPLACEMENTS: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;'
+}
+const IMAGE_ALIGNMENTS = new Set(['left', 'center', 'right', 'abstopright'])
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, character => HTML_ESCAPE_REPLACEMENTS[character] ?? character)
+}
 
 // ========================================
 // Vue Component
@@ -44,14 +55,10 @@ export default defineComponent({
   data() {
     return {
       cm: null as TextEditorHandle | null,
-      cursorPos: { ch: 0, line: 1 } as TextPosition,
-      helpShown: false
+      cursorPos: { ch: 0, line: 1 } as TextPosition
     }
   },
   computed: {
-    isMobile() {
-      return this.$vuetify.display.smAndDown
-    },
     locale() {
       return wikiStore.page.locale
     },
@@ -73,7 +80,6 @@ export default defineComponent({
   methods: {
     toggleModal(key: string) {
       this.activeModal = (this.activeModal === key) ? '' : key
-      this.helpShown = false
     },
     handleEditorSaveConflict() {
       this.toggleModal(`editorModalConflict`)
@@ -84,8 +90,10 @@ export default defineComponent({
     handleEditorInsert(opts: EditorInsertPayload) {
       switch (opts.kind) {
         case 'IMAGE': {
-          let img = `<img src="${opts.path}" alt="${opts.text}"`
-          if (opts.align && opts.align !== '') {
+          if (typeof opts.path !== 'string') break
+          const text = typeof opts.text === 'string' ? opts.text : ''
+          let img = `<img src="${escapeHtml(opts.path)}" alt="${escapeHtml(text)}"`
+          if (typeof opts.align === 'string' && IMAGE_ALIGNMENTS.has(opts.align)) {
             img += ` class="align-${opts.align}"`
           }
           img += ` />`
@@ -94,16 +102,18 @@ export default defineComponent({
           })
           break
         }
-        case 'BINARY':
+        case 'BINARY': {
+          if (typeof opts.path !== 'string') break
+          const text = typeof opts.text === 'string' && opts.text.length > 0 ? opts.text : opts.path
           this.insertAtCursor({
-            content: `<a href="${opts.path}" title="${opts.text}">${opts.text}</a>`
+            content: `<a href="${escapeHtml(opts.path)}" title="${escapeHtml(text)}">${escapeHtml(text)}</a>`
           })
           break
+        }
       }
     },
     closeAllModal() {
       this.activeModal = ''
-      this.helpShown = false
     },
     editor(): TextEditorHandle {
       if (!this.cm) throw new Error('CodeMirror editor is not initialized')
@@ -147,10 +157,10 @@ export default defineComponent({
       this.cursorPos = position
     },
     toggleFullscreen () {
-      this.$el.requestFullscreen?.()
+      return this.$el.requestFullscreen?.()
     },
     refresh() {
-      this.$nextTick(() => this.editor().requestMeasure())
+      this.$nextTick(() => this.cm?.requestMeasure())
     }
   },
   mounted() {

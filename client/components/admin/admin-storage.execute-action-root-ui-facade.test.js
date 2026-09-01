@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const extractScript = (source) => {
+const extractScript = source => {
   const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
 }
@@ -71,20 +71,30 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
   const executeAction = script && extractMethod(script, 'executeAction')
   const requestAction = script && extractMethod(script, 'requestAction')
   const confirmAction = script && extractMethod(script, 'confirmAction')
+  const loadTargets = script && extractMethod(script, 'loadTargets')
+  const loadStatus = script && extractMethod(script, 'loadStatus')
+  const refresh = script && extractMethod(script, 'refresh')
+  const save = script && extractMethod(script, 'save')
 
   test('executeAction() uses root-ui-store facades for root UI calls only in this action flow', () => {
     expect(script).not.toBeNull()
     expect(source).toMatch(/<script\s+lang=["']ts["']>/)
     expect(executeAction).not.toBeNull()
 
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bsetLoading\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/)
-    expect(script).toMatch(/import\s+\{(?=[^}]*\bexecuteStorageAction\b)(?=[^}]*\bfetchStorageStatus\b)(?=[^}]*\bfetchStorageTargets\b)(?=[^}]*\bsaveStorageTargets\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/)
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)(?=[^}]*\bshowNotification\b)(?=[^}]*\bsetLoading\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
+    )
+    expect(script).toMatch(
+      /import\s+\{(?=[^}]*\bexecuteStorageAction\b)(?=[^}]*\bfetchStorageStatus\b)(?=[^}]*\bfetchStorageTargets\b)(?=[^}]*\bsaveStorageTargets\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/
+    )
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).not.toContain('gql/admin/storage/')
     expect(script).not.toContain('apollo:')
     expect(executeAction).toMatch(/\bloadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
     expect(executeAction).toMatch(/partial:\s*\{\s*style:\s*['"]warning['"]\s*,\s*icon:\s*['"]alert['"]\s*\}/)
-    expect(executeAction).toMatch(/\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*result\.message\s*,\s*style:\s*presentation\.style\s*,\s*icon:\s*presentation\.icon\s*\}\s*\)/)
+    expect(executeAction).toMatch(
+      /\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*result\.message\s*,\s*style:\s*presentation\.style\s*,\s*icon:\s*presentation\.icon\s*\}\s*\)/
+    )
     expect(executeAction).not.toContain('Action completed.')
     expect(executeAction).toMatch(/\bloadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
 
@@ -108,13 +118,17 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
     expect(executeAction).not.toBeNull()
 
     expectPatternsInOrder(executeAction, [
+      ['reject overlapping storage mutations', /if\s*\(\s*this\.saving\s*\|\|\s*this\.targetsLoading\s*\|\|\s*this\.runningAction\s*\)\s*return/],
       ['start loading via facade', /\bloadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-storage-executeaction['"]\s*\)/],
       ['mark action as running', /this\.runningAction\s*=\s*true/],
       ['store running action handler', /this\.runningActionHandler\s*=\s*handler/],
       ['enter try block', /try\s*\{/],
       ['execute storage REST action', /await\s+executeStorageAction\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*targetKey\s*,\s*handler\s*\)/],
       ['store structured operation', /this\.lastOperation\s*=\s*result/],
-      ['show outcome notification via facade', /\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*result\.message\s*,\s*style:\s*presentation\.style\s*,\s*icon:\s*presentation\.icon\s*\}\s*\)/],
+      [
+        'show outcome notification via facade',
+        /\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*result\.message\s*,\s*style:\s*presentation\.style\s*,\s*icon:\s*presentation\.icon\s*\}\s*\)/
+      ],
       ['catch action errors', /\}\s*catch\s*\(\s*err\s*\)\s*\{/],
       ['surface caught error', /pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/],
       ['enter cleanup', /\}\s*finally\s*\{/],
@@ -125,31 +139,77 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
     ])
   })
 
-  test('storage targets and status are loaded through REST helpers with preserved config mapping', () => {
-    expect(script).not.toBeNull()
+  test('target loading, status polling, refresh, and save keep their helper payload and mutual-exclusion contracts', () => {
+    expect(loadTargets).not.toBeNull()
+    expect(loadStatus).not.toBeNull()
+    expect(refresh).not.toBeNull()
+    expect(save).not.toBeNull()
 
-    expect(script).toMatch(/async\s+loadTargets\s*\(\)\s*\{[\s\S]*this\.targets\s*=\s*this\.normalizeTargets\s*\(\s*await\s+fetchStorageTargets\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)\s*\)[\s\S]*setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-storage-targets-refresh['"]\s*,\s*false\s*\)/)
-    expect(script).toMatch(/async\s+loadStatus\s*\(\)\s*\{[\s\S]*const\s+status\s*=\s*await\s+fetchStorageStatus\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)[\s\S]*this\.status\s*=\s*status[\s\S]*entry\.lastOperation[\s\S]*this\.lastOperation\s*=\s*latestOperation[\s\S]*setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-storage-status-refresh['"]\s*,\s*false\s*\)/)
+    expect(loadTargets).toMatch(/if\s*\(\s*this\.targetsLoading\s*\)\s*return\s+false/)
+    expect(loadTargets).toMatch(/this\.targetsLoading\s*=\s*true[\s\S]*setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-storage-targets-refresh['"]\s*,\s*true\s*\)/)
+    expect(loadTargets).toMatch(
+      /this\.targets\s*=\s*this\.normalizeTargets\s*\(\s*await\s+fetchStorageTargets\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)\s*\)/
+    )
+    expect(loadTargets).toMatch(/return\s+true/)
+    expect(loadTargets).toMatch(/catch\s*\(\s*err\s*\)[\s\S]*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)[\s\S]*return\s+false/)
+    expect(loadTargets).toMatch(
+      /finally\s*\{[\s\S]*this\.targetsLoading\s*=\s*false[\s\S]*setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-storage-targets-refresh['"]\s*,\s*false\s*\)/
+    )
+
+    expect(loadStatus).toMatch(/if\s*\(\s*this\.statusRefreshing\s*\)\s*return/)
+    expect(loadStatus).toMatch(/this\.statusRefreshing\s*=\s*true[\s\S]*setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-storage-status-refresh['"]\s*,\s*true\s*\)/)
+    expect(loadStatus).toMatch(/const\s+status\s*=\s*await\s+fetchStorageStatus\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)/)
+    expect(loadStatus).toMatch(/this\.status\s*=\s*status[\s\S]*entry\.lastOperation[\s\S]*this\.lastOperation\s*=\s*latestOperation/)
+    expect(loadStatus).toMatch(/catch\s*\(\s*err\s*\)[\s\S]*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
+    expect(loadStatus).toMatch(
+      /finally\s*\{[\s\S]*this\.statusRefreshing\s*=\s*false[\s\S]*setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-storage-status-refresh['"]\s*,\s*false\s*\)/
+    )
+
+    expect(refresh).toMatch(/if\s*\(\s*this\.saving\s*\|\|\s*this\.runningAction\s*\)\s*return/)
+    expect(refresh).toMatch(/if\s*\(\s*!await\s+this\.loadTargets\s*\(\s*\)\s*\)\s*return/)
+    expect(refresh).toMatch(
+      /showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*message:\s*['"]List of storage targets has been refreshed\.['"][\s\S]*style:\s*['"]success['"][\s\S]*icon:\s*['"]cached['"]/
+    )
+    expect(save).toMatch(/if\s*\(\s*this\.saving\s*\|\|\s*this\.targetsLoading\s*\|\|\s*this\.runningAction\s*\)\s*return/)
+    expect(save).toMatch(/this\.saving\s*=\s*true[\s\S]*loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
+    expect(save).toMatch(/await\s+saveStorageTargets\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*this\.storageTargetsPayload\s*\(\s*\)\s*\)/)
+    expect(save).toMatch(
+      /showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*message:\s*['"]Storage configuration saved successfully\.['"][\s\S]*style:\s*['"]success['"][\s\S]*icon:\s*['"]check['"]/
+    )
+    expect(save).toMatch(/catch\s*\(\s*err\s*\)[\s\S]*pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
+    expect(save).toMatch(/finally\s*\{[\s\S]*this\.saving\s*=\s*false[\s\S]*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-storage-savetargets['"]\s*\)/)
+
     expect(script).toContain('value: JSON.parse(config.value) as StorageConfigValue')
     expect(script).toContain('value: JSON.stringify({ v: config.value.value })')
     expect(script).toMatch(/this\.statusRefreshInterval\s*=\s*setInterval\s*\([\s\S]*this\.loadStatus\s*\(\s*\)[\s\S]*3000\s*\)/)
     expect(script).toMatch(/clearInterval\s*\(\s*this\.statusRefreshInterval\s*\)/)
-    expect(script).toMatch(/await\s+saveStorageTargets\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*this\.storageTargetsPayload\s*\(\s*\)\s*\)/)
   })
 
   test('risky import, egress, synchronization, and purge-like actions require cancelable confirmation', () => {
     expect(requestAction).not.toBeNull()
     expect(confirmAction).not.toBeNull()
-    expect(script).toMatch(/requiresActionConfirmation\s*\(\s*handler:\s*string\s*\)[\s\S]*\/import\|restore\|export\|dump\|backup\|syncUntracked\|purge\|delete\|remove\|migrate\/iu/)
+    expect(script).toMatch(
+      /requiresActionConfirmation\s*\(\s*handler:\s*string\s*\)[\s\S]*\/import\|restore\|export\|dump\|backup\|syncUntracked\|purge\|delete\|remove\|migrate\/iu/
+    )
     expectPatternsInOrder(requestAction, [
+      ['reject overlapping storage mutations', /if\s*\(\s*this\.saving\s*\|\|\s*this\.targetsLoading\s*\|\|\s*this\.runningAction\s*\)\s*return/],
       ['check confirmation policy', /this\.requiresActionConfirmation\s*\(\s*action\.handler\s*\)/],
-      ['store pending action', /this\.pendingAction\s*=\s*\{\s*targetKey\s*,\s*handler:\s*action\.handler\s*,\s*label:\s*action\.label\s*,\s*hint:\s*action\.hint\s*\}/],
+      [
+        'store pending action',
+        /this\.pendingAction\s*=\s*\{\s*targetKey\s*,\s*handler:\s*action\.handler\s*,\s*label:\s*action\.label\s*,\s*hint:\s*action\.hint\s*\}/
+      ],
       ['show confirmation', /this\.isActionConfirmationShown\s*=\s*true/],
       ['avoid immediate execution', /\breturn\b/],
       ['execute safe action directly', /await\s+this\.executeAction\s*\(\s*targetKey\s*,\s*action\.handler\s*\)/]
     ])
-    expect(script).toMatch(/cancelActionConfirmation\s*\(\)\s*\{[\s\S]*this\.isActionConfirmationShown\s*=\s*false[\s\S]*this\.pendingAction\s*=\s*null[\s\S]*\}/)
+    expect(script).toMatch(
+      /cancelActionConfirmation\s*\(\)\s*\{[\s\S]*this\.isActionConfirmationShown\s*=\s*false[\s\S]*this\.pendingAction\s*=\s*null[\s\S]*\}/
+    )
     expectPatternsInOrder(confirmAction, [
+      [
+        'reject unavailable or overlapping confirmed actions',
+        /if\s*\(\s*!this\.pendingAction\s*\|\|\s*this\.saving\s*\|\|\s*this\.targetsLoading\s*\|\|\s*this\.runningAction\s*\)\s*return/
+      ],
       ['read pending action', /const\s*\{\s*targetKey\s*,\s*handler\s*\}\s*=\s*this\.pendingAction/],
       ['execute accepted action', /await\s+this\.executeAction\s*\(\s*targetKey\s*,\s*handler\s*\)/],
       ['close confirmation', /this\.isActionConfirmationShown\s*=\s*false/],

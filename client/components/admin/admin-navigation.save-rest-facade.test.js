@@ -45,9 +45,16 @@ describe('admin-navigation save REST facade', () => {
     expect(source).not.toContain('config {')
   })
 
-  test('save uses REST helper while preserving loading, success notification, and error facade', () => {
+  test('save uses a locked REST snapshot while preserving loading, success notification, and error facade', () => {
     expect(save).toContain("wikiStore.startLoading('admin-navigation-save')")
-    expect(save).toContain('await saveNavigation(window.fetch.bind(window), normalizedTrees, this.config.mode, this.config.expandParent)')
+    expect(save).toContain('const normalizedTrees = normalizeNavigationTrees(this.trees)')
+    expect(save).toContain('const savedTrees = _.cloneDeep(normalizedTrees)')
+    expect(save).toContain('const savedConfig = _.cloneDeep(this.config)')
+    expect(save).toContain('await saveNavigation(window.fetch.bind(window), savedTrees, savedConfig.mode, savedConfig.expandParent)')
+    expect(save).toContain('this.persistedConfig = savedConfig')
+    expect(save).toContain('this.persistedTrees = savedTrees')
+    expect(save.indexOf('const savedTrees')).toBeLessThan(save.indexOf('await saveNavigation'))
+    expect(save.indexOf('const savedConfig')).toBeLessThan(save.indexOf('await saveNavigation'))
     expect(save).toContain('wikiStore.showNotification({')
     expect(save).toContain("message: this.$t('admin:navigation.saveSuccess')")
     expect(save).toContain("style: 'success'")

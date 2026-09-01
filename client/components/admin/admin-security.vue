@@ -9,7 +9,7 @@
           heading-id='admin-security-heading'
         )
           template(v-slot:actions)
-            v-btn(color='success', variant='flat', @click='save', size='large', :disabled='!configLoaded')
+            v-btn(color='success', variant='flat', @click='save', size='large', :loading='configSaving', :disabled='!configLoaded || configSaving')
               v-icon(start) mdi-check
               span {{$t('common:actions.apply')}}
         v-alert.mt-3(v-if='configLoading', variant='outlined', color='info', role='status')
@@ -18,7 +18,7 @@
         v-alert.mt-3(v-else-if='configLoadError', variant='outlined', color='error', role='alert')
           span Security configuration could not be loaded.
           v-btn.ml-3(variant='outlined', color='primary', size='small', @click='loadConfig') Retry
-        v-form.pt-3(v-else-if='configLoaded')
+        v-form.pt-3(v-else-if='configLoaded' @submit.prevent='save')
           v-row
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp
@@ -250,6 +250,7 @@
     component(:is='activeModal')</template>
 
 <script lang='ts'>
+import { defineAsyncComponent } from 'vue'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
@@ -283,7 +284,7 @@ type SecurityConfig = Required<Pick<SiteConfig,
 export default {
   i18nOptions: { namespaces: 'editor' },
   components: {
-    editorModalMedia: () => import('../editor/editor-modal-media.vue')
+    editorModalMedia: defineAsyncComponent(() => import('../editor/editor-modal-media.vue'))
   },
   data() {
     return {
@@ -312,6 +313,8 @@ export default {
       configLoading: false,
       configLoaded: false,
       configLoadError: false,
+      configSaving: false,
+      configLoadRequestId: 0,
       hstsDurations: [
         { value: 300, text: '5 minutes' },
         { value: 86400, text: '1 day' },
@@ -358,23 +361,28 @@ export default {
       }
     },
     async loadConfig () {
+      const requestId = ++this.configLoadRequestId
       this.configLoading = true
       this.configLoadError = false
       setLoading(wikiStore, 'admin-security-refresh', true)
       try {
-        this.config = _.cloneDeep(await fetchSiteConfig(window.fetch.bind(window))) as SecurityConfig
+        const config = await fetchSiteConfig(window.fetch.bind(window))
+        if (requestId !== this.configLoadRequestId) return
+        this.config = _.cloneDeep(config) as SecurityConfig
         this.configLoaded = true
       } catch (err) {
+        if (requestId !== this.configLoadRequestId) return
         this.configLoaded = false
         this.configLoadError = true
         pushGraphError(wikiStore, err)
       } finally {
-        this.configLoading = false
         setLoading(wikiStore, 'admin-security-refresh', false)
+        if (requestId === this.configLoadRequestId) this.configLoading = false
       }
     },
     async save () {
-      if (!this.configLoaded) return
+      if (!this.configLoaded || this.configSaving) return
+      this.configSaving = true
       loadingStart(wikiStore, 'admin-site-update')
       try {
         await saveSiteConfig(window.fetch.bind(window), this.siteConfigPayload())
@@ -386,6 +394,7 @@ export default {
       } catch (err) {
         pushGraphError(wikiStore, err)
       } finally {
+        this.configSaving = false
         loadingStop(wikiStore, 'admin-site-update')
       }
     },
@@ -404,6 +413,7 @@ export default {
     onEditorInsert(this.handleEditorInsert)
   },
   beforeUnmount() {
+    this.configLoadRequestId++
     offEditorInsert(this.handleEditorInsert)
   }
 }

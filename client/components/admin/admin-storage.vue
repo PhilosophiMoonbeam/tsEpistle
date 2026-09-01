@@ -10,15 +10,15 @@
           template(v-slot:actions)
             v-tooltip(location='top')
               template(v-slot:activator='{ props }')
-                v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/storage', target='_blank', v-bind='props', aria-label='Storage documentation — opens in a new tab')
+                v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/storage', target='_blank', rel='noopener noreferrer', v-bind='props', aria-label='Storage documentation — opens in a new tab')
                   v-icon mdi-help-circle
               span Storage documentation — opens in a new tab
             v-tooltip(location='top')
               template(v-slot:activator='{ props }')
-                v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', v-bind='props', aria-label='Refresh storage targets')
+                v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', :loading='targetsLoading', :disabled='targetsLoading || saving || runningAction', v-bind='props', aria-label='Refresh storage targets')
                   v-icon mdi-refresh
               span Refresh storage targets
-            v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large")
+            v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large", :loading='saving', :disabled='saving || targetsLoading || runningAction')
               v-icon(start) mdi-check
               span {{$t('common:actions.apply')}}
 
@@ -30,7 +30,7 @@
             template(v-for='(tgt, idx) in targets', :key='tgt.key')
               v-list-item(
                 :active='selectedTarget === tgt.key'
-                :aria-current='selectedTarget === tgt.key ? "page" : undefined'
+                :aria-current='selectedTarget === tgt.key ? "true" : undefined'
                 @click='selectedTarget = tgt.key'
                 :disabled='!tgt.isAvailable'
               )
@@ -159,7 +159,7 @@
               v-divider.my-4
               .text-title-small.mb-2 Failures, conflicts, and diagnostics
               v-list.operations-ledger-issues(lines='three', density='compact')
-                v-list-item(v-for='item in operationIssues', :key='`${item.kind}:${item.path}:${item.outcome}`')
+                v-list-item(v-for='(item, issueIndex) in operationIssues', :key='`${issueIndex}:${item.kind}:${item.path}:${item.outcome}`')
                   v-list-item-title.operations-ledger-path {{ item.path }}
                   v-list-item-subtitle
                     .d-flex.flex-wrap.ga-2.my-1
@@ -168,7 +168,7 @@
                       v-chip(size='x-small', variant='outlined', label) {{ item.kind }}
                     .text-body-small(v-if='item.message') {{ item.message }}
                     ul.operations-ledger-diagnostics(v-if='item.diagnostics.length')
-                      li(v-for='diagnostic in item.diagnostics', :key='diagnostic') {{ diagnostic }}
+                      li(v-for='(diagnostic, diagnosticIndex) in item.diagnostics', :key='`${diagnosticIndex}:${diagnostic}`') {{ diagnostic }}
           v-card-text.text-medium-emphasis(v-else)
             .text-title-small No storage operation has been reported
             .text-body-medium.mt-1 Run a storage action or wait for status polling to report the latest terminal operation.
@@ -305,11 +305,11 @@
                             @click='requestAction(target.key, act)'
                             variant='outlined'
                             color='primary'
-                            :disabled='runningAction || !target.isEnabled'
+                            :disabled='runningAction || saving || targetsLoading || !target.isEnabled'
                             :loading='runningActionHandler === act.handler'
                             ) {{$t('admin:storage.actionRun')}}
-        v-dialog(v-model='isActionConfirmationShown', persistent, max-width='520')
-          v-card(role='dialog', aria-labelledby='storage-action-confirm-title')
+        v-dialog(v-model='isActionConfirmationShown', persistent, max-width='520', aria-labelledby='storage-action-confirm-title')
+          v-card
             v-card-title#storage-action-confirm-title Confirm storage operation
             v-card-text
               .text-title-small {{ pendingAction ? pendingAction.label : '' }}
@@ -328,6 +328,7 @@
                 variant='flat'
                 @click='confirmAction'
                 :loading='runningAction'
+                :disabled='runningAction'
               ) {{ actionConfirmationButton }}
 </template>
 
@@ -414,14 +415,13 @@ export default {
       target: makeDefaultStorageTarget(),
       targets: [] as NormalizedStorageTarget[],
       status: [] as StorageStatus[],
+      saving: false,
       statusRefreshing: false,
-      statusRefreshInterval: null as ReturnType<typeof setInterval> | null
+      statusRefreshInterval: null as ReturnType<typeof setInterval> | null,
+      targetsLoading: false
     }
   },
   computed: {
-    activeTargets() {
-      return _.filter(this.targets, 'isEnabled')
-    },
     operationFormatRows(): Array<{ key: StorageActionFormat, label: string, count: number }> {
       if (!this.lastOperation) return []
       return (['okf', 'legacyV1', 'legacyWiki', 'plain', 'invalid'] as StorageActionFormat[]).map(key => ({
@@ -527,17 +527,23 @@ export default {
         }
       })
     },
-    async loadTargets() {
+    async loadTargets(): Promise<boolean> {
+      if (this.targetsLoading) return false
+      this.targetsLoading = true
       setLoading(wikiStore, 'admin-storage-targets-refresh', true)
       try {
         this.targets = this.normalizeTargets(await fetchStorageTargets(window.fetch.bind(window)))
+        return true
       } catch (err) {
         pushGraphError(wikiStore, err)
+        return false
       } finally {
+        this.targetsLoading = false
         setLoading(wikiStore, 'admin-storage-targets-refresh', false)
       }
     },
     async loadStatus() {
+      if (this.statusRefreshing) return
       this.statusRefreshing = true
       setLoading(wikiStore, 'admin-storage-status-refresh', true)
       try {
@@ -558,7 +564,8 @@ export default {
       }
     },
     async refresh() {
-      await this.loadTargets()
+      if (this.saving || this.runningAction) return
+      if (!await this.loadTargets()) return
       showNotification(wikiStore, {
         message: 'List of storage targets has been refreshed.',
         style: 'success',
@@ -566,6 +573,8 @@ export default {
       })
     },
     async save() {
+      if (this.saving || this.targetsLoading || this.runningAction) return
+      this.saving = true
       loadingStart(wikiStore, 'admin-storage-savetargets')
       try {
         await saveStorageTargets(window.fetch.bind(window), this.storageTargetsPayload())
@@ -577,6 +586,7 @@ export default {
       } catch (err) {
         pushGraphError(wikiStore, err)
       } finally {
+        this.saving = false
         loadingStop(wikiStore, 'admin-storage-savetargets')
       }
     },
@@ -637,6 +647,7 @@ export default {
       return /import|restore|export|dump|backup|syncUntracked|purge|delete|remove|migrate/iu.test(handler)
     },
     async requestAction(targetKey: string, action: StorageAction) {
+      if (this.saving || this.targetsLoading || this.runningAction) return
       if (this.requiresActionConfirmation(action.handler)) {
         this.pendingAction = { targetKey, handler: action.handler, label: action.label, hint: action.hint }
         this.isActionConfirmationShown = true
@@ -650,13 +661,14 @@ export default {
       this.pendingAction = null
     },
     async confirmAction() {
-      if (!this.pendingAction || this.runningAction) return
+      if (!this.pendingAction || this.saving || this.targetsLoading || this.runningAction) return
       const { targetKey, handler } = this.pendingAction
       await this.executeAction(targetKey, handler)
       this.isActionConfirmationShown = false
       this.pendingAction = null
     },
     async executeAction(targetKey: string, handler: string) {
+      if (this.saving || this.targetsLoading || this.runningAction) return
       loadingStart(wikiStore, 'admin-storage-executeaction')
       this.runningAction = true
       this.runningActionHandler = handler

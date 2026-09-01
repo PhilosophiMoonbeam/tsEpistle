@@ -167,6 +167,7 @@ export default {
       if (await this.loadGroups()) wikiStore.showNotification({ message: 'Groups have been refreshed.', style: 'success', icon: 'cached' })
     },
     async createGroup() {
+      if (this.creating) return
       if (_.trim(this.newGroupName).length < 1) {
         this.createError = 'Enter a group name.'
         return

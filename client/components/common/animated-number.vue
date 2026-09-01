@@ -17,7 +17,7 @@ const props = withDefaults(defineProps<{
 
 const displayValue = ref<string | number>(props.formatValue(0))
 const announcementValue = ref<string | number>(props.formatValue(props.value))
-let frame = 0
+let frame: number | null = null
 let renderedValue = 0
 let mediaQuery: MediaQueryList | null = null
 
@@ -29,28 +29,44 @@ function reducedMotionEnabled (): boolean {
   )
 }
 
+function cancelFrame (): void {
+  if (frame !== null && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame)
+  frame = null
+}
+
 function commitTarget (target: number): void {
   renderedValue = target
   displayValue.value = props.formatValue(target)
 }
 
 function animateTo (target: number): void {
-  cancelAnimationFrame(frame)
+  cancelFrame()
   announcementValue.value = props.formatValue(target)
   if (reducedMotionEnabled()) {
     commitTarget(target)
     return
   }
+  if (
+    typeof requestAnimationFrame !== 'function' ||
+    typeof performance === 'undefined'
+  ) {
+    commitTarget(target)
+    return
+  }
   const from = renderedValue
   const startedAt = performance.now()
-  const duration = Math.max(0, props.duration)
+  const duration = Number.isFinite(props.duration) ? Math.max(0, props.duration) : 0
   const render = (now: number): void => {
     const progress = duration === 0 ? 1 : Math.min(1, (now - startedAt) / duration)
     const eased = 1 - Math.pow(1 - progress, 5)
     renderedValue = from + (target - from) * eased
     displayValue.value = props.formatValue(renderedValue)
-    if (progress < 1) frame = requestAnimationFrame(render)
-    else renderedValue = target
+    if (progress < 1) {
+      frame = requestAnimationFrame(render)
+    } else {
+      frame = null
+      commitTarget(target)
+    }
   }
   frame = requestAnimationFrame(render)
 }
@@ -59,7 +75,7 @@ watch(() => props.value, animateTo, { immediate: true })
 
 function handleMotionPreferenceChange (event: MediaQueryListEvent): void {
   if (event.matches) {
-    cancelAnimationFrame(frame)
+    cancelFrame()
     commitTarget(props.value)
   }
 }
@@ -72,7 +88,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  cancelAnimationFrame(frame)
+  cancelFrame()
   mediaQuery?.removeEventListener?.('change', handleMotionPreferenceChange)
 })
 

@@ -13,23 +13,38 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toContain("import { loadingStart, loadingStop } from '../../../helpers/root-ui-store'")
     expect(script).toMatch(
-      /async fetchBrowseItems\s*\(\s*requestedItem\?\s*:\s*NavigationTreeItem\s*\)[\s\S]*?const item\s*=\s*requestedItem\s*\|\|\s*this\.currentParent[\s\S]*?fetchPageTree\(window\.fetch\.bind\(window\),\s*\{[\s\S]*parent: item\.id,[\s\S]*locale: this\.locale,[\s\S]*mode: 'ALL'/
+      /async fetchBrowseItems\s*\(\s*requestedItem\?\s*:\s*NavigationTreeItem\s*\)[\s\S]*?const requestSequence\s*=\s*\+\+this\.browseRequestSequence[\s\S]*?const locale\s*=\s*this\.locale[\s\S]*?const item\s*=\s*requestedItem\s*\|\|\s*this\.currentParent[\s\S]*?fetchPageTree\(window\.fetch\.bind\(window\),\s*\{[\s\S]*?parent: item\.id,\s*locale,\s*mode: 'ALL'/
     )
     expect(script).toMatch(
-      /async loadFromCurrentPath\s*\(\)[\s\S]*fetchPageTree\(window\.fetch\.bind\(window\),\s*\{[\s\S]*path: this\.path,[\s\S]*locale: this\.locale,[\s\S]*mode: 'ALL',[\s\S]*includeAncestors: true/
+      /async loadFromCurrentPath\s*\(\)[\s\S]*?const requestSequence\s*=\s*\+\+this\.browseRequestSequence[\s\S]*?const locale\s*=\s*this\.locale[\s\S]*?const path\s*=\s*this\.path[\s\S]*?const pageId\s*=\s*wikiStore\.page\.id[\s\S]*?fetchPageTree\(window\.fetch\.bind\(window\),\s*\{\s*path,\s*locale,\s*mode: 'ALL',\s*includeAncestors: true/
     )
-    expect(script).toMatch(/loadingStart\(wikiStore,\s*'browse-load'\)[\s\S]*loadingStop\(wikiStore,\s*'browse-load'\)/)
+    expect(script.match(/loadingStart\(wikiStore,\s*'browse-load'\)/g)).toHaveLength(2)
+    expect(script.match(/loadingStop\(wikiStore,\s*'browse-load'\)/g)).toHaveLength(2)
     expect(script).not.toMatch(/graphql-tag|\$apollo/)
   })
 
-  test('preserves cache, ancestor, mode, and home navigation behavior', () => {
+  test('preserves cache, ancestor, page-location, mode, and home navigation behavior', () => {
     expect(script).toContain('this.loadedCache = _.union(this.loadedCache, [item.id])')
-    expect(script).toContain("const curPage = _.find(items, ['pageId', wikiStore.page.id])")
+    expect(script).toContain("const curPage = _.find(items, ['pageId', pageId])")
     expect(script).toContain('this.parents = [this.currentParent, ...invertedAncestors.reverse()]')
+    expect(script).toContain('this.loadedCache = [curPage.parent]')
     expect(script).toContain("window.localStorage.setItem('navPref', mode)")
     expect(script).toMatch(/navigateToWikiPage\(siteLangs\.length > 0 \? `\/\$\{this\.locale\}\/home` : '\/'\)/)
+    expect(script).toMatch(
+      /pageLocationKey \(value: string, previous: string\) \{\s*if \(value === previous \|\| this\.currentMode !== 'browse'\) return\s*this\.resetBrowseRoot\(\)\s*if \(this\.expandParentByDefault\) void this\.loadFromCurrentPath\(\)\s*else void this\.fetchBrowseItems\(this\.currentParent\)/
+    )
     expect(script).toContain('if (this.expandParentByDefault) this.loadFromCurrentPath()')
     expect(script).toContain('else this.fetchBrowseItems()')
+  })
+
+  test('lets only the latest page-tree response own browse state while balancing global loading', () => {
+    expect(script).toContain('browseRequestSequence: 0')
+    expect(script.match(/const requestSequence = \+\+this\.browseRequestSequence/g)).toHaveLength(2)
+    expect(script.match(/if \(requestSequence !== this\.browseRequestSequence\) return/g)).toHaveLength(2)
+    expect(script.match(/if \(requestSequence === this\.browseRequestSequence\) \{/g)).toHaveLength(2)
+    expect(script.match(/if \(requestSequence === this\.browseRequestSequence\) this\.navLoading = false/g)).toHaveLength(2)
+    expect(script.match(/loadingStop\(wikiStore, 'browse-load'\)/g)).toHaveLength(2)
+    expect(script).toMatch(/beforeUnmount\s*\(\)\s*\{\s*this\.browseRequestSequence \+= 1\s*\}/)
   })
 
   test('announces every SPA sidebar destination before navigation', () => {

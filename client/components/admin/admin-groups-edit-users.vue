@@ -19,14 +19,13 @@
       :search='search'
       v-model:page='pagination'
       :items-per-page='15'
-      @page-count='pageCount = $event'
       must-sort
       hide-default-footer
     )
       template(v-slot:item.actions='{ item }')
         v-menu(location="bottom right", min-width='200')
           template(v-slot:activator='{ props }')
-            v-btn(icon, v-bind='props', size="small", aria-label='User actions')
+            v-btn(icon, v-bind='props', size="small", :aria-label='`User actions for ${item.name}`')
               v-icon.text-grey-darken-1 mdi-dots-horizontal
           v-list(density="compact", nav)
             v-list-item(:to='`/users/` + item.id')
@@ -41,8 +40,9 @@
           span(v-if='search') No users match “{{search}}”. 
           span(v-else) No users are assigned to this group yet.
           v-btn.ml-2(v-if='search', variant="text", size="small", @click='search = ``') Clear search
-    .text-center.py-2(v-if='group.users.length > 15')
-      v-pagination(v-model='pagination', :length='pageCount')
+      template(v-slot:bottom='{ pageCount }')
+        .text-center.py-2(v-if='pageCount > 1')
+          v-pagination(v-model='pagination', :length='pageCount')
 
     user-search(v-model='searchUserDialog', @select='assignUser')
 </template>
@@ -78,7 +78,6 @@ export default {
       ],
       searchUserDialog: false,
       pagination: 1,
-      pageCount: 0,
       search: '',
       busyUserId: 0
     }

@@ -49,7 +49,7 @@
                   v-list-item(value='TREE', role='radio', :aria-checked='config.mode === `TREE`', :active='config.mode === `TREE`', @click='config.mode = `TREE`')
                     template(v-slot:prepend)
                       v-avatar
-                        img(src='/_assets/svg/icon-tree-structure-dotted.svg', alt='Site Tree')
+                        img(src='/_assets/svg/icon-tree-structure-dotted.svg', alt='')
                     v-list-item-title {{$t('admin:navigation.modeSiteTree.title')}}
                     v-list-item-subtitle {{$t('admin:navigation.modeSiteTree.description')}}
                     template(v-slot:append)
@@ -58,7 +58,7 @@
                   v-list-item(value='STATIC', role='radio', :aria-checked='config.mode === `STATIC`', :active='config.mode === `STATIC`', @click='config.mode = `STATIC`')
                     template(v-slot:prepend)
                       v-avatar
-                        img(src='/_assets/svg/icon-features-list.svg', alt='Static Navigation')
+                        img(src='/_assets/svg/icon-features-list.svg', alt='')
                     v-list-item-title {{$t('admin:navigation.modeStatic.title')}}
                     v-list-item-subtitle {{$t('admin:navigation.modeStatic.description')}}
                     template(v-slot:append)
@@ -67,7 +67,7 @@
                   v-list-item(value='MIXED', role='radio', :aria-checked='config.mode === `MIXED`', :active='config.mode === `MIXED`', @click='config.mode = `MIXED`')
                     template(v-slot:prepend)
                       v-avatar
-                        img(src='/_assets/svg/icon-user-menu-male-dotted.svg', alt='Custom Navigation')
+                        img(src='/_assets/svg/icon-user-menu-male-dotted.svg', alt='')
                     v-list-item-title {{$t('admin:navigation.modeCustom.title')}}
                     v-list-item-subtitle {{$t('admin:navigation.modeCustom.description')}}
                     template(v-slot:append)
@@ -76,7 +76,7 @@
                   v-list-item(value='NONE', role='radio', :aria-checked='config.mode === `NONE`', :active='config.mode === `NONE`', @click='config.mode = `NONE`')
                     template(v-slot:prepend)
                       v-avatar
-                        img(src='/_assets/svg/icon-cancel-dotted.svg', alt='None')
+                        img(src='/_assets/svg/icon-cancel-dotted.svg', alt='')
                     v-list-item-title {{$t('admin:navigation.modeNone.title')}}
                     v-list-item-subtitle {{$t('admin:navigation.modeNone.description')}}
                     template(v-slot:append)
@@ -93,7 +93,7 @@
                   .text-body-small.text-medium-emphasis.mt-2 When enabled, Browse opens at the current page location. Disable it to start at the site root.
             v-col(cols='12', md='9', v-if='config.mode === `MIXED` || config.mode === `STATIC`')
               v-card.animated.fadeInUp.wait-p2s
-                v-row.align-stretch(no-gutters)
+                v-row.align-stretch(gap='0')
                   v-col(cols='12', lg='5', xl='4')
                     v-card.navigation-builder(flat)
                       .navigation-builder__locale.pa-2.d-flex
@@ -112,7 +112,7 @@
                         )
                         v-tooltip(location="top")
                           template(v-slot:activator='{ props }')
-                            v-btn.ml-2(icon, variant='text', v-bind='props', @click='copyFromLocaleDialogIsShown = true')
+                            v-btn.ml-2(icon, variant='text', v-bind='props', :aria-label='$t(`admin:navigation.copyFromLocale`)', @click='openCopyFromLocaleDialog')
                               v-icon mdi-arrange-send-backward
                           span {{$t('admin:navigation.copyFromLocale')}}
                       v-list.navigation-tree.py-2(density="compact", nav)
@@ -128,10 +128,9 @@
                             v-avatar(size='24'): v-icon(color="secondary") mdi-alert
                           em.text-body-small.text-medium-emphasis {{$t('admin:navigation.emptyList')}}
                         draggable(v-model='currentTree', handle='.nav-drag-handle')
-                          template(v-for='(navItem, idx) in currentTree')
+                          template(v-for='(navItem, idx) in currentTree', :key='navItem.id')
                             v-list-item(
                               v-if='navItem.kind === "link"'
-                              :key='navItem.id'
                               role='option'
                               :aria-selected='navItem === current'
                               tabindex='0'
@@ -144,12 +143,11 @@
                                 v-btn.nav-drag-handle(icon, size='small', variant='text', :aria-label='`Reorder ${navItem.label}`', @click.stop='selectItem(navItem)')
                                   v-icon(size='18') mdi-drag-horizontal
                                 v-avatar(size='24', rounded='0')
-                                  v-icon(v-if='navItem.icon.match(/fa[a-z] fa-/)', size='19') {{ navItem.icon }}
+                                  v-icon(v-if='navItem.icon?.match(/fa[a-z] fa-/)', size='19') {{ navItem.icon }}
                                   v-icon(v-else) {{ navItem.icon }}
                               v-list-item-title {{navItem.label}}
                             .py-2.clickable(
                               v-else-if='navItem.kind === "divider"'
-                              :key='navItem.id'
                               role='option'
                               :aria-selected='navItem === current'
                               tabindex='0'
@@ -165,7 +163,6 @@
                               v-divider
                             v-list-subheader.pl-4.clickable(
                               v-else-if='navItem.kind === "header"'
-                              :key='navItem.id'
                               role='option'
                               :aria-selected='navItem === current'
                               tabindex='0'
@@ -400,7 +397,7 @@ export default {
         expandParent: true
       } as NavigationConfig,
       allLocales: [] as LocaleRow[],
-      copyFromLocaleCode: 'en',
+      copyFromLocaleCode: '',
       initialLoading: true,
       loaded: false,
       saving: false,
@@ -452,13 +449,7 @@ export default {
   },
   watch: {
     currentLang () {
-      this.$nextTick(() => {
-        if (this.currentTree.length > 0) {
-          this.current = this.currentTree[0]!
-        } else {
-          this.current = createEmptyNavigationItem()
-        }
-      })
+      this.current = this.currentTree[0] || createEmptyNavigationItem()
     }
   },
   methods: {
@@ -514,7 +505,7 @@ export default {
     },
     deleteItem(item: NavigationItem) {
       if (!window.confirm(`Remove this ${item.kind}? This change will be pending until Apply.`)) return
-      this.currentTree = _.pull(this.currentTree, item)
+      this.currentTree = this.currentTree.filter(candidate => candidate !== item)
       this.current = createEmptyNavigationItem()
     },
     selectItem(item: NavigationItem) {
@@ -534,11 +525,19 @@ export default {
     selectPageHandle ({ path, locale }: { path: string, locale: string }) {
       this.current.target = `/${locale}/${path}`
     },
+    openCopyFromLocaleDialog () {
+      if (!this.copyLocales.some(locale => locale.code === this.copyFromLocaleCode)) {
+        this.copyFromLocaleCode = this.copyLocales[0]?.code || ''
+      }
+      this.copyFromLocaleDialogIsShown = true
+    },
     copyFromLocale () {
+      if (!this.copyLocales.some(locale => locale.code === this.copyFromLocaleCode)) return
       const source = normalizeNavigationItems(_.get(_.find(this.trees, ['locale', this.copyFromLocaleCode]), 'items', null) || [])
       if (source.length < 1) return
       this.copyFromLocaleDialogIsShown = false
-      this.currentTree = [...this.currentTree, ..._.cloneDeep(source)]
+      const copies = _.cloneDeep(source).map(item => ({ ...item, id: crypto.randomUUID() }))
+      this.currentTree = [...this.currentTree, ...copies]
     },
     async save() {
       if (!this.loaded || this.initialLoading || this.saving || !this.dirty) return
@@ -546,10 +545,12 @@ export default {
       wikiStore.startLoading('admin-navigation-save')
       try {
         const normalizedTrees = normalizeNavigationTrees(this.trees)
+        const savedTrees = _.cloneDeep(normalizedTrees)
+        const savedConfig = _.cloneDeep(this.config)
         this.trees = normalizedTrees
-        await saveNavigation(window.fetch.bind(window), normalizedTrees, this.config.mode, this.config.expandParent)
-        this.persistedConfig = _.cloneDeep(this.config)
-        this.persistedTrees = _.cloneDeep(normalizedTrees)
+        await saveNavigation(window.fetch.bind(window), savedTrees, savedConfig.mode, savedConfig.expandParent)
+        this.persistedConfig = savedConfig
+        this.persistedTrees = savedTrees
         wikiStore.showNotification({
           message: this.$t('admin:navigation.saveSuccess'),
           style: 'success',

@@ -212,6 +212,7 @@ const destructiveRestoreTarget = ref<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
 let loadController: AbortController | null = null
 let loadGeneration = 0
+let disposed = false
 
 const targetLimit = computed(() => memories.value[draftTarget.value].limit)
 const memoryCount = computed(() => memories.value.user.entries.length + memories.value.agent.entries.length)
@@ -275,6 +276,7 @@ const sections = computed(() => [
 ])
 const message = (value: unknown, fallback: string): string => value instanceof Error ? value.message : fallback
 const load = async (committedMessage?: string): Promise<boolean> => {
+  if (disposed) return false
   loadController?.abort()
   const controller = new AbortController()
   loadController = controller
@@ -407,15 +409,19 @@ const clear = async (): Promise<void> => {
   saving.value = false; actionBusy.value = ''
 }
 
-watch([removing, clearing], async ([entry, clearOpen]) => {
+watch([removing, clearing], async ([entry, clearOpen], _previous, onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
   if (!entry && !clearOpen) {
     await nextTick()
+    if (cancelled) return
     destructiveFocusScope?.deactivate({ restoreFocus: true })
     destructiveFocusScope = null
     destructiveRestoreTarget.value = null
     return
   }
   await nextTick()
+  if (cancelled) return
   const root = componentElement(entry ? removeDialogCard.value : clearDialogCard.value)
   if (!root) return
   destructiveFocusScope?.deactivate({ restoreFocus: false })
@@ -431,8 +437,12 @@ watch([removing, clearing], async ([entry, clearOpen]) => {
 })
 watch(open, value => { if (value) void load() }, { immediate: true })
 onBeforeUnmount(() => {
+  disposed = true
+  loadGeneration += 1
   loadController?.abort()
+  loadController = null
   destructiveFocusScope?.deactivate({ restoreFocus: false })
+  destructiveFocusScope = null
 })
 </script>
 

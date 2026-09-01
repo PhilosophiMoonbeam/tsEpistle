@@ -4,6 +4,7 @@
       icon='/_assets/svg/icon-chat-bubble.svg'
       title='Comment providers'
       description='Configure page discussion providers'
+      heading-id='admin-comments-heading'
     )
       template(v-slot:actions)
         v-btn.animated.fadeInDown.wait-p3s(
@@ -52,7 +53,9 @@
                   role='radio'
                   :aria-checked='provider.key === selectedProvider'
                   :tabindex='provider.isAvailable ? 0 : -1'
-                  @click='selectedProvider = provider.key'
+                  @click='selectProvider(provider)'
+                  @keydown.enter.prevent='selectProvider(provider)'
+                  @keydown.space.prevent='selectProvider(provider)'
                   :disabled='!provider.isAvailable'
                 )
                   template(v-slot:prepend)
@@ -135,10 +138,15 @@
 </template>
 <script lang='ts'>
 import AsyncState from '@/components/common/async-state.vue'
-import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { fetchCommentProviders, saveCommentProviders, type CommentProvider } from '../../helpers/comments-api'
 import { getErrorMessage, loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+
+const createAbortableFetch = (signal: AbortSignal) => (
+  input: RequestInfo | URL,
+  init?: RequestInit
+) => window.fetch(input, { ...init, signal })
+
 export default {
   components: {
     AsyncState
@@ -147,41 +155,58 @@ export default {
     return {
       providers: [] as CommentProvider[],
       selectedProvider: '',
-      provider: {} as Partial<CommentProvider>,
       loading: false,
       errorMessage: '',
       refreshing: false,
-      saving: false
+      saving: false,
+      loadController: null as AbortController | null,
+      saveController: null as AbortController | null,
+      isUnmounted: false
     }
   },
   computed: {
+    provider (): Partial<CommentProvider> {
+      return this.providers.find(provider => provider.key === this.selectedProvider) || {}
+    },
     canSave (): boolean {
       return !this.loading && !this.refreshing && !this.saving && this.providers.length > 0 &&
-        Boolean(_.find(this.providers, ['key', this.selectedProvider])?.isAvailable)
-    }
-  },
-  watch: {
-    selectedProvider(newValue: string) {
-      this.provider = _.find(this.providers, ['key', newValue]) || {}
-    },
-    providers() {
-      const selected = _.find(this.providers, provider => provider.isEnabled && provider.isAvailable) ||
-        _.find(this.providers, 'isAvailable')
-      this.selectedProvider = selected?.key || ''
+        Boolean(this.providers.find(provider => provider.key === this.selectedProvider)?.isAvailable)
     }
   },
   created() {
     this.loadProviders().catch(() => {})
   },
   methods: {
+    selectProvider (provider: CommentProvider) {
+      if (provider.isAvailable) {
+        this.selectedProvider = provider.key
+      }
+    },
     async loadProviders({ notifyError = true }: { notifyError?: boolean } = {}) {
+      this.loadController?.abort()
+      const controller = new AbortController()
+      this.loadController = controller
       this.loading = true
       this.errorMessage = ''
       this.refreshing = notifyError
       loadingStart(wikiStore, 'admin-comments-refresh')
       try {
-        this.providers = await fetchCommentProviders(window.fetch.bind(window), 'Comment providers response is invalid')
+        const providers = await fetchCommentProviders(
+          createAbortableFetch(controller.signal),
+          'Comment providers response is invalid'
+        )
+        if (controller.signal.aborted) {
+          return false
+        }
+        const selected = providers.find(provider => provider.isEnabled && provider.isAvailable) ||
+          providers.find(provider => provider.isAvailable)
+        this.providers = providers
+        this.selectedProvider = selected?.key || ''
+        return true
       } catch (err) {
+        if (controller.signal.aborted) {
+          return false
+        }
         this.errorMessage = getErrorMessage(err) || this.$t('common:error.unexpected')
         if (notifyError) {
           showNotification(wikiStore, {
@@ -192,15 +217,21 @@ export default {
         }
         throw err
       } finally {
-        this.loading = false
-        this.refreshing = false
+        if (this.loadController === controller) {
+          this.loadController = null
+          if (!this.isUnmounted) {
+            this.loading = false
+            this.refreshing = false
+          }
+        }
         loadingStop(wikiStore, 'admin-comments-refresh')
       }
     },
     async refresh() {
       if (this.refreshing || this.saving) return
       try {
-        await this.loadProviders()
+        const loaded = await this.loadProviders()
+        if (!loaded) return
       } catch {
         return
       }
@@ -212,27 +243,47 @@ export default {
     },
     async save() {
       if (!this.canSave) return
+      const controller = new AbortController()
+      this.saveController = controller
       this.saving = true
       loadingStart(wikiStore, 'admin-comments-saveproviders')
       try {
-        await saveCommentProviders(window.fetch.bind(window), this.providers.map(tgt => ({
+        await saveCommentProviders(createAbortableFetch(controller.signal), this.providers.map(tgt => ({
           isEnabled: tgt.key === this.selectedProvider,
           key: tgt.key,
           config: tgt.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))
         })), 'Comment providers save response is invalid')
+        if (controller.signal.aborted) {
+          return
+        }
         await this.loadProviders({ notifyError: false })
+        if (controller.signal.aborted) {
+          return
+        }
         showNotification(wikiStore, {
           message: this.$t('admin:comments.configSaveSuccess'),
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(wikiStore, err)
+        if (!controller.signal.aborted) {
+          pushGraphError(wikiStore, err)
+        }
       } finally {
-        this.saving = false
+        if (this.saveController === controller) {
+          this.saveController = null
+          if (!this.isUnmounted) {
+            this.saving = false
+          }
+        }
         loadingStop(wikiStore, 'admin-comments-saveproviders')
       }
     }
+  },
+  beforeUnmount () {
+    this.isUnmounted = true
+    this.loadController?.abort()
+    this.saveController?.abort()
   }
 }
 </script>

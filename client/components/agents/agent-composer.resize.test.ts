@@ -380,6 +380,7 @@ describe('Agent composer dense presentation', () => {
 describe('Agent composer send completion', () => {
   it('resets the draft, attachments, and goal mode only after a successful send', () => {
     const composer = loadComposer()
+    composer.mounted()
     composer.draft.value = 'start a goal'
     composer.selectedSkillIds.value.push('skill-version')
     composer.goalMode.value = true
@@ -402,6 +403,7 @@ describe('Agent composer send completion', () => {
 
   it('retains the draft and context for a failed send so it can be retried', () => {
     const composer = loadComposer()
+    composer.mounted()
     composer.draft.value = 'retry this request'
     composer.selectedSkillIds.value.push('skill-version')
     composer.goalMode.value = true
@@ -412,5 +414,21 @@ describe('Agent composer send completion', () => {
     expect(composer.selectedSkillIds.value).toEqual(['skill-version'])
     expect(composer.goalMode.value).toBe(true)
     expect(composer.sendFailed.value).toBe(true)
+  })
+
+  it('ignores a send completion after the composer unmounts', () => {
+    const composer = loadComposer()
+    composer.mounted()
+    composer.draft.value = 'keep this request'
+    composer.selectedSkillIds.value.push('skill-version')
+    composer.goalMode.value = true
+    composer.submit()
+    composer.unmount()
+    composer.sent[0].complete(true)
+
+    expect(composer.draft.value).toBe('keep this request')
+    expect(composer.selectedSkillIds.value).toEqual(['skill-version'])
+    expect(composer.goalMode.value).toBe(true)
+    expect(composer.sendFailed.value).toBe(false)
   })
 })

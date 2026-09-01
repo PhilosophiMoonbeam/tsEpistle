@@ -332,6 +332,8 @@
                     v-select(
                       ref='iptTimezone'
                       :items='timezones'
+                      item-title='text'
+                      item-value='value'
                       v-model='user.timezone'
                       :label='$t(`admin:users.timezone`)'
                       variant="solo"
@@ -354,9 +356,7 @@
             .text-body-medium: strong {{ $helpers.formatMoment(user.updatedAt, 'LLLL') }}
             .text-body-small.text-grey.mt-3 {{$t('profile:activity.lastLoginOn')}}
             .text-body-medium: strong {{ $helpers.formatMoment(user.lastLoginAt, 'LLLL') }}
-
-
-    v-dialog(v-model='deleteUserDialog', max-width='500')
+    v-dialog(v-model='deleteUserDialog', max-width='500', aria-label='Delete user')
       v-card
         .dialog-header.is-red {{$t('admin:users.deleteConfirmTitle')}}
         v-card-text.pt-5
@@ -825,8 +825,9 @@ export default {
      * Activate a user (if previously deactivated)
      */
     async activateUser () {
-      if (!this.recordReady) return
+      if (!this.recordReady || this.actionLoading !== '') return
       this.actionLoading = 'activate'
+      wikiStore.startLoading('admin-users-activate')
       try {
         await setAdminUserActive(window.fetch.bind(window), this.user.id, true)
         wikiStore.showNotification({
@@ -841,16 +842,18 @@ export default {
           message: getErrorMessage(err),
           icon: 'warning'
         })
+      } finally {
+        wikiStore.stopLoading('admin-users-activate')
+        this.actionLoading = ''
       }
-      wikiStore.stopLoading('admin-users-activate')
-      this.actionLoading = ''
     },
     /**
      * Deactivate a currently active user
      */
     async deactivateUser () {
-      if (!this.recordReady) return
+      if (!this.recordReady || this.actionLoading !== '') return
       this.actionLoading = 'deactivate'
+      wikiStore.startLoading('admin-users-deactivate')
       try {
         await setAdminUserActive(window.fetch.bind(window), this.user.id, false)
         wikiStore.showNotification({
@@ -865,9 +868,10 @@ export default {
           message: getErrorMessage(err),
           icon: 'warning'
         })
+      } finally {
+        wikiStore.stopLoading('admin-users-deactivate')
+        this.actionLoading = ''
       }
-      wikiStore.stopLoading('admin-users-deactivate')
-      this.actionLoading = ''
     },
     /**
      * Delete a user
@@ -879,10 +883,12 @@ export default {
         name: wikiStore.user.name,
         email: wikiStore.user.email
       }
+      this.deleteUserDialog = true
     },
     async deleteUser () {
-      if (!this.recordReady) return
+      if (!this.recordReady || this.actionLoading !== '') return
       this.actionLoading = 'delete'
+      wikiStore.startLoading('admin-users-delete')
       try {
         await deleteAdminUser(window.fetch.bind(window), this.user.id, this.deleteReplaceUser.id)
         wikiStore.showNotification({
@@ -924,8 +930,9 @@ export default {
      * Update a user
      */
     async updateUser() {
-      if (!this.recordReady || !this.hasUnsavedChanges) return
+      if (!this.recordReady || !this.hasUnsavedChanges || this.actionLoading !== '') return
       this.actionLoading = 'update'
+      wikiStore.startLoading('admin-users-update')
       try {
         await updateAdminUser(window.fetch.bind(window), this.user.id, {
           email: this.user.email,
@@ -950,9 +957,10 @@ export default {
           message: getErrorMessage(err),
           icon: 'warning'
         })
+      } finally {
+        wikiStore.stopLoading('admin-users-update')
+        this.actionLoading = ''
       }
-      wikiStore.stopLoading('admin-users-update')
-      this.actionLoading = ''
     },
     /**
      * Focus an input after delay
@@ -960,7 +968,7 @@ export default {
     focusField (ipt: UserEditorFieldRef) {
       this.$nextTick(() => {
         _.delay(() => {
-          ;(this.$refs[ipt] as FocusableRef).focus()
+          ;(this.$refs[ipt] as FocusableRef | undefined)?.focus()
         }, 200)
       })
     },
@@ -994,8 +1002,9 @@ export default {
      * Manually set user as verified
      */
     async verifyUser () {
-      if (!this.recordReady) return
+      if (!this.recordReady || this.actionLoading !== '') return
       this.actionLoading = 'verify'
+      wikiStore.startLoading('admin-users-verify')
       try {
         await verifyAdminUser(window.fetch.bind(window), this.user.id)
         wikiStore.showNotification({
@@ -1010,15 +1019,17 @@ export default {
           message: getErrorMessage(err),
           icon: 'warning'
         })
+      } finally {
+        wikiStore.stopLoading('admin-users-verify')
+        this.actionLoading = ''
       }
-      wikiStore.stopLoading('admin-users-verify')
-      this.actionLoading = ''
     },
     /**
      * Send or resend the account invitation without changing the user.
      */
     async sendWelcomeEmail () {
-      if (!this.recordReady) return
+      if (!this.recordReady || this.welcomeEmailLoading) return
+      this.welcomeEmailLoading = true
       try {
         await sendAdminUserWelcomeEmail(window.fetch.bind(window), this.user.id)
         wikiStore.showNotification({
@@ -1040,7 +1051,9 @@ export default {
      * Toggle 2FA State
      */
     async toggle2FA () {
-      if (!this.recordReady) return
+      if (!this.recordReady || this.actionLoading !== '') return
+      this.actionLoading = 'toggle2fa'
+      wikiStore.startLoading('admin-users-toggle2fa')
       const enabled = !this.user.tfaIsActive
       try {
         await setAdminUserTfa(window.fetch.bind(window), this.user.id, enabled)
@@ -1056,9 +1069,10 @@ export default {
           message: getErrorMessage(err),
           icon: 'warning'
         })
+      } finally {
+        wikiStore.stopLoading('admin-users-toggle2fa')
+        this.actionLoading = ''
       }
-      wikiStore.stopLoading('admin-users-toggle2fa')
-      this.actionLoading = ''
     }
   },
   created() {

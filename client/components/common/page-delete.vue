@@ -6,12 +6,13 @@
     scrim='red-darken-4'
     style='--v-overlay-opacity: .7'
     aria-labelledby='page-delete-dialog-title'
+    aria-describedby='page-delete-dialog-description'
     )
     v-card
       .dialog-header.is-short.is-red
         v-icon.mr-2(color='white') mdi-file-document-box-remove-outline
         span#page-delete-dialog-title {{$t('common:page.delete')}}
-      v-card-text.pt-5
+      v-card-text#page-delete-dialog-description.pt-5
         i18next.text-body-large(path='common:page.deleteTitle', tag='div')
           span.text-red-darken-2(place='title') {{pageTitle}}
         .text-body-small {{$t('common:page.deleteSubtitle')}}
@@ -23,12 +24,11 @@
       v-card-chin
         v-spacer
         v-btn(variant="text", @click='discard', :disabled='loading') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color="red-darken-2", @click='deletePage', :loading='loading').text-white {{$t('common:actions.delete')}}
+        v-btn.px-4(color="red-darken-2", @click='deletePage', :loading='loading', :disabled='loading').text-white {{$t('common:actions.delete')}}
 </template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
-import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 
 import { deletePage as deletePageById } from '../../helpers/pages-api'
@@ -43,7 +43,11 @@ export default defineComponent({
   },
   data() {
     return {
-      loading: false
+      loading: false,
+      retainPendingClass: false,
+      deleteTransitionTimer: undefined as number | undefined,
+      redirectTimer: undefined as number | undefined,
+      deleteRequestId: 0
     }
   },
   computed: {
@@ -57,10 +61,24 @@ export default defineComponent({
     pageId(): number { return wikiStore.page.id },
     pageSourceRevision(): string { return wikiStore.page.sourceRevision }
   },
+  mounted() {
+    if (this.isShown) {
+      document.body.classList.add('page-deleted-pending')
+    }
+  },
+  beforeUnmount() {
+    this.deleteRequestId += 1
+    window.clearTimeout(this.deleteTransitionTimer)
+    window.clearTimeout(this.redirectTimer)
+    document.body.classList.remove('page-deleted-pending', 'page-deleted')
+  },
   watch: {
     isShown(newValue: boolean) {
       if (newValue) {
+        this.retainPendingClass = false
         document.body.classList.add('page-deleted-pending')
+      } else if (!this.retainPendingClass) {
+        document.body.classList.remove('page-deleted-pending')
       }
     }
   },
@@ -70,29 +88,51 @@ export default defineComponent({
       this.isShown = false
     },
     async deletePage(): Promise<void> {
+      if (this.loading) {
+        return
+      }
+      const requestId = ++this.deleteRequestId
       this.loading = true
       wikiStore.startLoading('page-delete')
-      this.$nextTick(async () => {
-        try {
-          await deletePageById(
-            window.fetch.bind(window),
-            this.pageId,
-            this.pageSourceRevision,
-            this.$t('common:error.unexpected')
-          )
-          this.isShown = false
-          _.delay(() => {
-            document.body.classList.add('page-deleted')
-            _.delay(() => {
+      try {
+        await this.$nextTick()
+        if (requestId !== this.deleteRequestId) {
+          return
+        }
+        await deletePageById(
+          window.fetch.bind(window),
+          this.pageId,
+          this.pageSourceRevision,
+          this.$t('common:error.unexpected')
+        )
+        if (requestId !== this.deleteRequestId) {
+          return
+        }
+        this.retainPendingClass = true
+        this.isShown = false
+        this.deleteTransitionTimer = window.setTimeout(() => {
+          this.deleteTransitionTimer = undefined
+          if (requestId !== this.deleteRequestId) {
+            return
+          }
+          document.body.classList.add('page-deleted')
+          this.redirectTimer = window.setTimeout(() => {
+            this.redirectTimer = undefined
+            if (requestId === this.deleteRequestId) {
               window.location.assign('/')
-            }, 1200)
-          }, 400)
-        } catch (err) {
+            }
+          }, 1200)
+        }, 400)
+      } catch (err) {
+        if (requestId === this.deleteRequestId) {
           wikiStore.showError(err)
         }
+      } finally {
         wikiStore.stopLoading('page-delete')
-        this.loading = false
-      })
+        if (requestId === this.deleteRequestId) {
+          this.loading = false
+        }
+      }
     }
   }
 })

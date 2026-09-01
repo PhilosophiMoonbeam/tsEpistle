@@ -73,14 +73,6 @@
                 :message='$t("profile:pages.loadingMessage", { defaultValue: "Fetching your contributions." })'
               )
               async-state(
-                v-else-if='errorMessage'
-                state='error'
-                :title='$t("profile:pages.loadError", { defaultValue: "Pages could not be loaded" })'
-                :message='errorMessage'
-                :retry-label='$t("common:actions.retry", { defaultValue: "Try again" })'
-                @retry='loadPages'
-              )
-              async-state(
                 v-else
                 state='empty'
                 :title='$t("profile:pages.emptyList", { defaultValue: "No pages to display" })'
@@ -102,7 +94,6 @@ export default {
 
   data() {
     return {
-      selectedPage: null as PageListRow | null,
       pagination: 1,
       pages: [] as PageListRow[],
       loading: false,

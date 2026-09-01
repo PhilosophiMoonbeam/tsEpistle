@@ -69,7 +69,7 @@
             v-icon(start) mdi-plus
             span Add source
         .text-body-small.text-medium-emphasis.mb-2(v-if='sources.length === 0') No sources recorded.
-        v-row(v-for='(source, index) of sources', :key='`source-${index}`', density='compact', align='center')
+        v-row.align-center(v-for='(source, index) of sources', :key='sourceKeys[index]', density='compact')
           v-col(cols='12', md='4')
             v-text-field(:model-value='source.resource', label='Source resource', variant='outlined', density='compact', :disabled='!hasMetadata', @update:model-value='updateSource(index, { resource: $event })')
           v-col(cols='12', sm='6', md='3')
@@ -198,7 +198,9 @@ export default defineComponent({
       extensionError: '',
       extensionEditing: false,
       statusItems: ['draft', 'stable', 'deprecated'],
-      okfStore: wikiStore
+      okfStore: wikiStore,
+      sourceKeys: [] as number[],
+      nextSourceKey: 0
     }
   },
   computed: {
@@ -284,6 +286,17 @@ export default defineComponent({
       handler (value: string) {
         if (!this.extensionEditing) this.extensionText = value
       }
+    },
+    sources: {
+      immediate: true,
+      handler (value: OkfSource[]) {
+        while (this.sourceKeys.length < value.length) {
+          this.sourceKeys.push(this.nextSourceKey++)
+        }
+        if (this.sourceKeys.length > value.length) {
+          this.sourceKeys.splice(value.length)
+        }
+      }
     }
   },
   methods: {
@@ -312,6 +325,7 @@ export default defineComponent({
     },
     addSource () {
       if (!this.hasMetadata) return
+      this.sourceKeys.push(this.nextSourceKey++)
       this.updateMetadata({ sources: [...this.sources, { resource: '' }] })
     },
     updateSource (index: number, patch: Partial<OkfSource>) {
@@ -321,6 +335,7 @@ export default defineComponent({
     },
     removeSource (index: number) {
       if (!this.hasMetadata) return
+      this.sourceKeys.splice(index, 1)
       this.updateMetadata({ sources: this.sources.filter((_source, sourceIndex) => sourceIndex !== index) })
     },
     resetInvalid () {

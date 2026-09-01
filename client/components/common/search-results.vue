@@ -3,7 +3,7 @@
     v-if='isAgentOpen || searchIsFocused || normalizedSearch.length > 1'
     :class='{ "search-results--ask": isAgentOpen }'
     role='dialog'
-    aria-modal='true'
+    :aria-modal='isAgentOpen ? `true` : undefined'
     :aria-labelledby='isAgentOpen ? `wiki-agent-title` : `wiki-search-title`'
     :aria-busy='!isAgentOpen && searchIsLoading'
     tabindex='-1'

@@ -57,7 +57,9 @@ describe('admin utilities import v1 wiki store error migration guard', () => {
     expect(source).toContain("@click='startImport'")
     expect(source).toContain("v-dialog(v-model='confirmImport'")
     expect(source).toContain("@click='confirmImport = false; executeImport()'")
-    expect(script).toMatch(/startImport\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.canStartImport\s*\)\s*return\s*this\.confirmImport\s*=\s*true\s*\}/)
+    expect(script).toMatch(
+      /startImport\s*\(\s*\)\s*\{\s*if\s*\(\s*this\.isLoading\s*\|\|\s*!this\.canStartImport\s*\)\s*return\s*this\.confirmImport\s*=\s*true\s*\}/
+    )
     expect(executeImport).not.toMatch(/\bthis\.\$store\.commit\s*\(\s*['"]pushGraphError['"]\s*,/)
     expect(executeImport).toContain('const result = await importV1Users(')
     expect(executeImport).toContain('this.successUsers = result.usersCount')
@@ -78,6 +80,9 @@ describe('admin utilities import v1 wiki store error migration guard', () => {
   test('executeImport preserves v1 import, credential plumbing, typed storage save, and partial-result flow', () => {
     expect(executeImport).not.toBeNull()
 
+    expect(executeImport).toMatch(
+      /async\s+executeImport\s*\(\s*\)\s*\{\s*if\s*\(\s*this\.isLoading\s*\|\|\s*!this\.canStartImport\s*\)\s*return\s*this\.isLoading\s*=\s*true/
+    )
     expect(executeImport).toMatch(/this\.isLoading\s*=\s*true\s*this\.isSuccess\s*=\s*false\s*this\.progress\s*=\s*0\s*this\.failedUsers\s*=\s*\[\]/)
     expect(executeImport).toMatch(/importV1Users\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*this\.dbConnStr\s*,\s*this\.groupMode\s*\)/)
     expect(executeImport).toMatch(/const\s+nStr:\s*StorageTarget\s*=\s*\{/)

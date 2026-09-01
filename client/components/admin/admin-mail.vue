@@ -39,7 +39,7 @@
               size='large'
               @click='save'
               :loading='saveLoading'
-              :disabled='!isDirty || !isConfigValid || loadState !== `success`'
+              :disabled='!isDirty || !isConfigValid || loadState !== `success` || testLoading'
             )
               v-icon(start) mdi-check
               span {{ $t('common:actions.apply') }}
@@ -86,7 +86,8 @@
                   )
                   v-text-field.mail-port-field(
                     variant='outlined'
-                    v-model.number='config.port'
+                    :model-value='config.port'
+                    @update:model-value='updatePort'
                     :label='$t(`admin:mail.smtpPort`)'
                     type='number'
                     min='1'
@@ -238,7 +239,7 @@
               size='large'
               type='submit'
               :loading='saveLoading'
-              :disabled='!isDirty || !isConfigValid || loadState !== `success`'
+              :disabled='!isDirty || !isConfigValid || loadState !== `success` || testLoading'
             )
               v-icon(start) mdi-check
               span {{ $t('common:actions.apply') }}
@@ -289,6 +290,11 @@ import _ from 'lodash'
 import { fetchMailConfig, saveMailConfig, sendMailTest } from '../../helpers/mail-api'
 import { wikiStore } from '@/store/index.ts'
 
+const createAbortableFetch = (signal: AbortSignal) => (
+  input: RequestInfo | URL,
+  init?: RequestInit
+) => window.fetch(input, { ...init, signal })
+
 export default {
   data() {
     return {
@@ -319,7 +325,11 @@ export default {
       secretClearTarget: null as 'smtp' | 'dkim' | null,
       testEmail: '',
       testLoading: false,
-      testState: 'idle' as 'idle' | 'passed' | 'failed'
+      testState: 'idle' as 'idle' | 'passed' | 'failed',
+      loadController: null as AbortController | null,
+      saveController: null as AbortController | null,
+      testController: null as AbortController | null,
+      isUnmounted: false
     }
   },
   computed: {
@@ -370,7 +380,8 @@ export default {
       return this.hasLoaded && !this.isDirty && this.isConfigValid
     },
     testUnavailable (): boolean {
-      return this.loadState !== 'success' || this.isDirty || !this.isConfigured || this.saveLoading
+      return this.loadState !== 'success' || this.isDirty || !this.isConfigured ||
+        this.saveLoading || this.testLoading
     },
     requiredRule (): (value: string) => true | string {
       return (value: string) => Boolean(value && value.trim()) || 'This field is required.'
@@ -397,6 +408,9 @@ export default {
   methods: {
     isEmail (value: string): boolean {
       return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((value || '').trim())
+    },
+    updatePort (value: string | number) {
+      this.config.port = value === '' ? 0 : Number(value)
     },
     replaceSmtpPassword () {
       this.smtpPasswordMode = 'replace'
@@ -431,9 +445,16 @@ export default {
       this.secretClearDialog = false
     },
     async save () {
+      if (this.saveLoading || this.testLoading) return
+      this.saveLoading = true
       const form = this.$refs.configForm as { validate?: () => Promise<{ valid: boolean }> }
       const validation = await form.validate?.()
-      if (!validation?.valid || !this.isConfigValid || this.loadState !== 'success') return
+      if (this.isUnmounted || !validation?.valid || !this.isConfigValid || this.loadState !== 'success') {
+        if (!this.isUnmounted) {
+          this.saveLoading = false
+        }
+        return
+      }
 
       const pass = this.smtpPasswordMode === 'keep'
         ? (this.smtpPasswordStored ? '********' : '')
@@ -441,11 +462,11 @@ export default {
       const dkimPrivateKey = this.dkimKeyMode === 'keep'
         ? this.storedDkimPrivateKey
         : (this.dkimKeyMode === 'replace' ? this.config.dkimPrivateKey : '')
-
-      this.saveLoading = true
+      const controller = new AbortController()
+      this.saveController = controller
       wikiStore.startLoading('admin-mail-update')
       try {
-        await saveMailConfig(window.fetch.bind(window), {
+        await saveMailConfig(createAbortableFetch(controller.signal), {
           senderName: this.config.senderName.trim(),
           senderEmail: this.config.senderEmail.trim(),
           host: this.config.host.trim(),
@@ -460,6 +481,9 @@ export default {
           dkimKeySelector: this.config.dkimKeySelector.trim(),
           dkimPrivateKey
         }, 'Mail configuration update failed')
+        if (controller.signal.aborted) {
+          return
+        }
 
         this.config.senderName = this.config.senderName.trim()
         this.config.senderEmail = this.config.senderEmail.trim()
@@ -478,6 +502,9 @@ export default {
         this.config.dkimPrivateKey = ''
         this.testState = 'idle'
         await this.$nextTick()
+        if (controller.signal.aborted) {
+          return
+        }
         this.savedSignature = this.configurationSignature
 
         wikiStore.showNotification({
@@ -486,17 +513,30 @@ export default {
           icon: 'check'
         })
       } catch (err) {
-        wikiStore.showError(err)
+        if (!controller.signal.aborted) {
+          wikiStore.showError(err)
+        }
       } finally {
+        if (this.saveController === controller) {
+          this.saveController = null
+          if (!this.isUnmounted) {
+            this.saveLoading = false
+          }
+        }
         wikiStore.stopLoading('admin-mail-update')
-        this.saveLoading = false
       }
     },
     async loadConfig () {
+      this.loadController?.abort()
+      const controller = new AbortController()
+      this.loadController = controller
       this.loadState = 'loading'
       wikiStore.startLoading('admin-mail-refresh')
       try {
-        const loaded = _.cloneDeep(await fetchMailConfig(window.fetch.bind(window)))
+        const loaded = _.cloneDeep(await fetchMailConfig(createAbortableFetch(controller.signal)))
+        if (controller.signal.aborted) {
+          return
+        }
         this.smtpPasswordStored = loaded.pass === '********'
         this.smtpPasswordMode = this.smtpPasswordStored ? 'keep' : 'replace'
         this.storedDkimPrivateKey = loaded.dkimPrivateKey
@@ -510,23 +550,53 @@ export default {
         this.loadState = 'success'
         this.testState = 'idle'
         await this.$nextTick()
+        if (controller.signal.aborted) {
+          return
+        }
         this.savedSignature = this.configurationSignature
       } catch (err) {
-        this.loadState = 'error'
-        wikiStore.showError(err)
+        if (!controller.signal.aborted) {
+          this.loadState = 'error'
+          wikiStore.showError(err)
+        }
       } finally {
+        if (this.loadController === controller) {
+          this.loadController = null
+        }
         wikiStore.stopLoading('admin-mail-refresh')
       }
     },
     async sendTest () {
+      if (this.testLoading || this.saveLoading) return
+      this.testLoading = true
       const form = this.$refs.testForm as { validate?: () => Promise<{ valid: boolean }> }
       const validation = await form.validate?.()
-      if (!validation?.valid || this.testUnavailable || !this.isEmail(this.testEmail)) return
+      if (
+        this.isUnmounted ||
+        !validation?.valid ||
+        this.loadState !== 'success' ||
+        this.isDirty ||
+        !this.isConfigured ||
+        !this.isEmail(this.testEmail)
+      ) {
+        if (!this.isUnmounted) {
+          this.testLoading = false
+        }
+        return
+      }
 
-      this.testLoading = true
+      const controller = new AbortController()
+      this.testController = controller
       wikiStore.startLoading('admin-mail-test')
       try {
-        await sendMailTest(window.fetch.bind(window), this.testEmail.trim(), 'An unexpected error occurred.')
+        await sendMailTest(
+          createAbortableFetch(controller.signal),
+          this.testEmail.trim(),
+          'An unexpected error occurred.'
+        )
+        if (controller.signal.aborted) {
+          return
+        }
         this.testEmail = ''
         this.testState = 'passed'
         wikiStore.showNotification({
@@ -535,16 +605,29 @@ export default {
           icon: 'check'
         })
       } catch (err) {
-        this.testState = 'failed'
-        wikiStore.showError(err)
+        if (!controller.signal.aborted) {
+          this.testState = 'failed'
+          wikiStore.showError(err)
+        }
       } finally {
+        if (this.testController === controller) {
+          this.testController = null
+          if (!this.isUnmounted) {
+            this.testLoading = false
+          }
+        }
         wikiStore.stopLoading('admin-mail-test')
-        this.testLoading = false
       }
     }
   },
   created () {
     this.loadConfig()
+  },
+  beforeUnmount () {
+    this.isUnmounted = true
+    this.loadController?.abort()
+    this.saveController?.abort()
+    this.testController?.abort()
   }
 }
 </script>

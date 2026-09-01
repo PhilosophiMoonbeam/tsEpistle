@@ -109,26 +109,30 @@ describe('admin-dashboard recent pages / last logins root UI facade migration gu
     expect(source).toContain("{ key: 'version', label: 'Current build'")
   })
 
-  test('loadRecentPages() uses loading/notification facades while preserving fetch, state, returns, and cleanup order', () => {
+  test('loadRecentPages() uses generation and permission guards around facade-managed request state', () => {
     expect(loadRecentPages).not.toBeNull()
 
     expectInOrder(loadRecentPages, [
+      'const requestId = ++this.recentPagesRequestId',
       'this.recentPagesLoading = true',
       "this.recentPagesError = ''",
       "loadingStart(wikiStore, 'admin-dashboard-recentpages')",
-      "this.recentPages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')",
+      "const pages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')",
+      'if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false',
+      'this.recentPages = pages',
       'return true',
+      'if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false',
       'this.recentPagesError = getErrorMessage(err)',
       "showNotification(wikiStore, { message: this.recentPagesError, style: 'error', icon: 'alert' })",
       'return false',
-      'this.recentPagesLoading = false',
-      "loadingStop(wikiStore, 'admin-dashboard-recentpages')"
+      "loadingStop(wikiStore, 'admin-dashboard-recentpages')",
+      'if (requestId === this.recentPagesRequestId) this.recentPagesLoading = false'
     ])
     expect(loadRecentPages).toMatch(
-      /catch\s*\(\s*err\s*\)\s*\{[\s\S]*?this\.recentPagesError\s*=\s*getErrorMessage\s*\(\s*err\s*\)[\s\S]*?showNotification\s*\(/
+      /catch\s*\(\s*err\s*\)\s*\{[\s\S]*?requestId\s*!==\s*this\.recentPagesRequestId\s*\|\|\s*!this\.canViewRecentPages[\s\S]*?this\.recentPagesError\s*=\s*getErrorMessage\s*\(\s*err\s*\)[\s\S]*?showNotification\s*\(/
     )
     expect(loadRecentPages).toMatch(
-      /finally\s*\{[\s\S]*?this\.recentPagesLoading\s*=\s*false[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-dashboard-recentpages['"]\s*\)\s*\}/
+      /finally\s*\{[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-dashboard-recentpages['"]\s*\)[\s\S]*?requestId\s*===\s*this\.recentPagesRequestId[\s\S]*?this\.recentPagesLoading\s*=\s*false[\s\S]*?\}/
     )
     expect(loadRecentPages).not.toMatch(directRootUiCommit)
 
@@ -137,24 +141,30 @@ describe('admin-dashboard recent pages / last logins root UI facade migration gu
     expect(loadRecentPages.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
   })
 
-  test('loadLastLogins() uses loading/notification facades while preserving fetch, state, returns, and cleanup order', () => {
+  test('loadLastLogins() uses generation and permission guards around facade-managed request state', () => {
     expect(loadLastLogins).not.toBeNull()
 
     expectInOrder(loadLastLogins, [
+      'const requestId = ++this.lastLoginsRequestId',
       'this.lastLoginsLoading = true',
       "this.lastLoginsError = ''",
       "loadingStart(wikiStore, 'admin-dashboard-lastlogins')",
-      "this.lastLogins = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')",
+      "const users = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')",
+      'if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false',
+      'this.lastLogins = users',
       'return true',
+      'if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false',
       'this.lastLoginsError = getErrorMessage(err)',
       "showNotification(wikiStore, { message: this.lastLoginsError, style: 'error', icon: 'alert' })",
       'return false',
-      'this.lastLoginsLoading = false',
-      "loadingStop(wikiStore, 'admin-dashboard-lastlogins')"
+      "loadingStop(wikiStore, 'admin-dashboard-lastlogins')",
+      'if (requestId === this.lastLoginsRequestId) this.lastLoginsLoading = false'
     ])
-    expect(loadLastLogins).toMatch(/catch\s*\(\s*err\s*\)\s*\{[\s\S]*?this\.lastLoginsError\s*=\s*getErrorMessage\s*\(\s*err\s*\)[\s\S]*?showNotification\s*\(/)
     expect(loadLastLogins).toMatch(
-      /finally\s*\{[\s\S]*?this\.lastLoginsLoading\s*=\s*false[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-dashboard-lastlogins['"]\s*\)\s*\}/
+      /catch\s*\(\s*err\s*\)\s*\{[\s\S]*?requestId\s*!==\s*this\.lastLoginsRequestId\s*\|\|\s*!this\.canViewLastLogins[\s\S]*?this\.lastLoginsError\s*=\s*getErrorMessage\s*\(\s*err\s*\)[\s\S]*?showNotification\s*\(/
+    )
+    expect(loadLastLogins).toMatch(
+      /finally\s*\{[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-dashboard-lastlogins['"]\s*\)[\s\S]*?requestId\s*===\s*this\.lastLoginsRequestId[\s\S]*?this\.lastLoginsLoading\s*=\s*false[\s\S]*?\}/
     )
     expect(loadLastLogins).not.toMatch(directRootUiCommit)
 

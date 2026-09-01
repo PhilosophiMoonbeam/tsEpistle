@@ -123,6 +123,11 @@ import { fetchSystemInfo } from '../../helpers/system-api'
 import type { SystemInfo } from '../../helpers/system-api'
 import { getErrorMessage, loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
 
+const createAbortableFetch = (signal: AbortSignal) => (
+  input: RequestInfo | URL,
+  init?: RequestInit
+) => window.fetch(input, { ...init, signal })
+
 const makeDefaultSystemInfo = (): SystemInfo => ({
   product: siteConfig.product,
   currentVersion: siteConfig.product.version,
@@ -155,7 +160,9 @@ export default {
       info: makeDefaultSystemInfo(),
       loading: false,
       infoLoaded: false,
-      errorMessage: ''
+      errorMessage: '',
+      loadController: null as AbortController | null,
+      isUnmounted: false
     }
   },
   computed: {
@@ -180,20 +187,38 @@ export default {
   },
   methods: {
     async loadInfo () {
+      this.loadController?.abort()
+      const controller = new AbortController()
+      this.loadController = controller
       this.loading = true
       this.errorMessage = ''
       this.infoLoaded = false
       loadingStart(wikiStore, 'admin-system-refresh')
       try {
-        this.info = await fetchSystemInfo(window.fetch.bind(window), 'System info response is invalid')
+        const info = await fetchSystemInfo(
+          createAbortableFetch(controller.signal),
+          'System info response is invalid'
+        )
+        if (controller.signal.aborted) {
+          return false
+        }
+        this.info = info
         this.infoLoaded = true
         return true
       } catch (err) {
+        if (controller.signal.aborted) {
+          return false
+        }
         this.errorMessage = getErrorMessage(err)
         pushGraphError(wikiStore, err)
         return false
       } finally {
-        this.loading = false
+        if (this.loadController === controller) {
+          this.loadController = null
+          if (!this.isUnmounted) {
+            this.loading = false
+          }
+        }
         loadingStop(wikiStore, 'admin-system-refresh')
       }
     },
@@ -212,6 +237,10 @@ export default {
   },
   created () {
     this.loadInfo()
+  },
+  beforeUnmount () {
+    this.isUnmounted = true
+    this.loadController?.abort()
   }
 }
 </script>

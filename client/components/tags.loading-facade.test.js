@@ -25,9 +25,9 @@ describe('tags REST migration guard', () => {
     expect(source).toContain('this.isLoading = false')
   })
 
-  test('initializes the root tags page without depending on an injected component instance', () => {
-    expect(source).toContain('verticalNativeBarPos: siteConfig.rtl ? `left` : `right`')
-    expect(source).not.toMatch(/verticalNativeBarPos:\s*this\.\$vuetify/)
+  test('keeps the tags scroll wrapper within the supported vue-scroll option boundary', () => {
+    expect(source).toMatch(/scrollStyle:\s*\{\s*scrollPanel:\s*\{\s*scrollingX:\s*false\s*\}\s*\}/)
+    expect(source).not.toMatch(/verticalNativeBarPos|(?:vuescroll|rail|bar)\s*:/)
   })
 
   test('renders native page links from Vuetify iterator raw values', () => {

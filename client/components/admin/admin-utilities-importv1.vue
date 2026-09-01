@@ -2,7 +2,7 @@
   v-card
     v-toolbar(flat, color='primary', density="compact")
       .text-body-large {{ $t('admin:utilities.importv1Title') }}
-    v-form(ref='importForm', v-model='formValid')
+    v-form
       .text-center
         img.animated.fadeInUp.wait-p1s(src='/_assets/svg/icon-software.svg', alt='')
         .text-body-medium Import from Wiki.js 1.x
@@ -17,7 +17,7 @@
         )
         template(v-slot:label)
           strong.text-deep-orange-darken-2 Content + Uploads
-      .pl-8(v-if='wantContent')
+      .admin-import-option-indent(v-if='wantContent')
         v-radio-group(v-model='contentMode', hide-details)
           v-radio(
             value='git'
@@ -27,7 +27,7 @@
               div
                 span Import from Git Connection
                 .text-body-small: em #[strong.text-primary Recommended] | The Git storage module will also be configured for you.
-        .pl-8.mt-5(v-if='needGit')
+        .admin-import-option-indent.mt-5(v-if='needGit')
           v-row
             v-col(cols='12', md='8')
               v-select(
@@ -124,7 +124,7 @@
               div
                 span Import from local folder
                 .text-body-small: em Choose this option only if you didn't have git configured in your Wiki.js 1.x installation.
-        .pl-8.mt-5(v-if='needDisk')
+        .admin-import-option-indent.mt-5(v-if='needDisk')
           v-text-field(
             variant="outlined"
             label='Content Repo Path'
@@ -143,7 +143,7 @@
         )
         template(v-slot:label)
           strong.text-deep-orange-darken-2 Users
-      .pl-8.mt-5(v-if='wantUsers')
+      .admin-import-option-indent.mt-5(v-if='wantUsers')
         v-text-field(
           variant="outlined"
           label='MongoDB Connection String'
@@ -188,9 +188,9 @@
       v-btn.px-3(variant="flat", color='warning', :disabled='!canStartImport || isLoading', @click='startImport').ml-0
         v-icon(start, color='on-warning') mdi-database-import
         span.text-on-warning Start Import
-    v-dialog(v-model='confirmImport', max-width='620', persistent, :fullscreen='$vuetify.display.smAndDown')
+    v-dialog(v-model='confirmImport', max-width='620', persistent, :fullscreen='$vuetify.display.smAndDown', aria-labelledby='import-confirmation-title')
       v-card
-        v-card-title Review Wiki.js 1.x import
+        v-card-title#import-confirmation-title Review Wiki.js 1.x import
         v-card-text
           .text-body-medium You are about to import:
           ul.mt-2
@@ -198,7 +198,8 @@
             li(v-if='wantContent') Content and uploads from {{contentMode === 'git' ? 'the configured Git repository' : 'the configured local folder'}}
           v-alert.mt-4(v-if='wantContent && contentMode === "git"', color='warning', variant='outlined', icon='mdi-alert')
             .text-body-medium Git imports replace the existing Git storage-module configuration before importing content.
-            .text-body-small.mt-2 Existing users are skipped when their email already exists.
+            .text-body-small.mt-2(v-if='wantUsers') Existing users are skipped when their email already exists.
+          .text-body-small.mt-2(v-if='wantUsers && (!wantContent || contentMode !== "git")') Existing users are skipped when their email already exists.
         v-card-actions
           v-btn(variant="text", @click='confirmImport = false') Cancel
           v-spacer
@@ -391,7 +392,6 @@ export default defineComponent({
       contentMode: 'git' as ContentMode,
       dbConnStr: 'mongodb://',
       contentPath: '/wiki-v1/repo',
-      formValid: true,
       confirmImport: false,
       isLoading: false,
       isSuccess: false,
@@ -412,7 +412,6 @@ export default defineComponent({
       progress: 0,
       successGroups: 0,
       successUsers: 0,
-      successPages: 0,
       userStage: 'pending' as ImportStage,
       contentStage: 'pending' as ImportStage,
       userStageError: '',
@@ -473,10 +472,11 @@ export default defineComponent({
       this.progress = Math.min(100, this.progress + this.stageWeight() * step / 50)
     },
     startImport () {
-      if (!this.canStartImport) return
+      if (this.isLoading || !this.canStartImport) return
       this.confirmImport = true
     },
     async executeImport () {
+      if (this.isLoading || !this.canStartImport) return
       this.isLoading = true
       this.isSuccess = false
       this.progress = 0
@@ -564,11 +564,14 @@ export default defineComponent({
             if (st.status === 'operational') break
             if (st.status === 'error') throw new Error(st.message)
             if (statusAttempts >= 10) throw new Error('Storage target is stuck in pending state. Try again.')
+            await new Promise<void>(resolve => window.setTimeout(resolve, 1000))
           }
           this.advanceContent(15)
-          await executeStorageAction(window.fetch.bind(window), this.contentMode, 'importAll')
+          const result = await executeStorageAction(window.fetch.bind(window), this.contentMode, 'importAll')
+          if (result.outcome !== 'succeeded') {
+            throw new Error(result.message || 'Content import did not complete successfully.')
+          }
           this.advanceContent(15)
-          this.successPages = 1
           this.contentStage = 'succeeded'
         } catch (err) {
           this.contentStage = 'failed'
@@ -587,14 +590,18 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+.admin-import-option-indent {
+  padding-left: 2rem;
+}
+
 .failed-users-table td {
   white-space: normal;
   overflow-wrap: anywhere;
 }
 
 @media (max-width: 599.98px) {
-  .pl-8 {
-    padding-left: 1rem !important;
+  .admin-import-option-indent {
+    padding-left: 1rem;
   }
 }
 </style>

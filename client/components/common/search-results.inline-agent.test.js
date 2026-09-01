@@ -29,7 +29,8 @@ describe('inline Ask mode contract', () => {
     expect(template).toMatch(/@return-search=['"]returnToSearch['"]/)
     expect(template).toMatch(/@close=['"]closeSearch['"]/)
     expect(template).toMatch(/role=['"]dialog['"]/)
-    expect(template).toMatch(/aria-modal=['"]true['"]/)
+    expect(template).toMatch(/:aria-modal=['"]isAgentOpen \? `true` : undefined['"]/)
+    expect(template).not.toMatch(/^\s+aria-modal=['"]true['"]/m)
     expect(template).toMatch(/:aria-labelledby=['"]isAgentOpen \? `wiki-agent-title` : `wiki-search-title`['"]/)
     expect(search).toMatch(/\.search-results\s*\{[\s\S]*height:\s*100dvh[\s\S]*inset:\s*0/)
     expect(search).toMatch(/&--ask\s*\{[\s\S]*overflow:\s*hidden[\s\S]*z-index:\s*1009/)
@@ -123,10 +124,13 @@ describe('inline Ask mode contract', () => {
     expect(memory).not.toMatch(/<v-dialog v-model="open"/)
   })
 
-  test('keeps direct panel controls on desktop and groups them only on mobile', () => {
-    expect(inline).toMatch(/aria-label="Open agent conversation history"/)
-    expect(inline).toMatch(/aria-label="Manage agent memory"/)
+  test('keeps direct panel controls on desktop and groups them in responsive modal layouts', () => {
+    expect(inline).toMatch(/:aria-label="historyOpen \? 'Close agent conversation history' : 'Open agent conversation history'"/)
+    expect(inline).toMatch(/:aria-label="memoryOpen \? 'Close agent memory' : 'Manage agent memory'"/)
     expect(inline).toMatch(/\.inline-agent__mobile-panel-menu\s*\{\s*display:\s*none !important/)
+    expect(inline).toMatch(
+      /@media \(min-width: 640px\) and \(max-width: 1023\.98px\)\s*\{[\s\S]*\.inline-agent__desktop-panel-btn\s*\{\s*display:\s*none;[\s\S]*\.inline-agent__mobile-panel-menu\s*\{\s*display:\s*inline-flex !important;/
+    )
     expect(inline).toMatch(
       /@media \(max-width: 639\.98px\)\s*\{[\s\S]*\.inline-agent__desktop-panel-btn\s*\{\s*display:\s*none;[\s\S]*\.inline-agent__mobile-panel-menu\s*\{\s*display:\s*inline-flex !important;/
     )

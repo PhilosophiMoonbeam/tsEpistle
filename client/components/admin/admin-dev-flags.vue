@@ -8,7 +8,7 @@
           icon='/_assets/svg/icon-console.svg'
         )
           template(v-slot:actions)
-            v-btn(color='success', variant="flat", @click='save', size="small", :disabled='!flagsLoaded || loading', :loading='saving')
+            v-btn(color='success', variant="flat", @click='save', size="small", :disabled='!flagsLoaded || loading || saving', :loading='saving')
               v-icon(start) mdi-check
               span {{$t('common:actions.apply')}}
 
@@ -40,6 +40,7 @@
                   persistent-hint
                   label='LDAP Debug'
                   v-model='flags.ldapdebug'
+                  :disabled='loading || saving'
                   inset
                   hide-details='auto'
                 )
@@ -52,6 +53,7 @@
                   persistent-hint
                   label='SQL Query Logging'
                   v-model='flags.sqllog'
+                  :disabled='loading || saving'
                   inset
                   hide-details='auto'
                 )
@@ -83,6 +85,9 @@ export default {
   },
   methods: {
     async loadFlags() {
+      if (this.loading || this.saving) {
+        return false
+      }
       this.loading = true
       this.errorMessage = ''
       this.flagsLoaded = false
@@ -105,7 +110,7 @@ export default {
       }
     },
     async save() {
-      if (!this.flagsLoaded) {
+      if (!this.flagsLoaded || this.loading || this.saving) {
         return
       }
       this.saving = true

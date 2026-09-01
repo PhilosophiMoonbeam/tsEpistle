@@ -15,7 +15,7 @@
               span Search documentation — opens in a new tab
             v-tooltip(location='top')
               template(v-slot:activator='{ props }')
-                v-btn.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', v-bind='props', aria-label='Refresh search engines')
+                v-btn.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', v-bind='props', aria-label='Refresh search engines', :loading='enginesLoading', :disabled='saving')
                   v-icon mdi-refresh
               span Refresh search engines
             .admin-action-group.ml-3
@@ -24,7 +24,7 @@
                 v-icon(start) mdi-cached
                 span {{$t('admin:search.rebuildIndex')}}
               .text-caption.text-medium-emphasis Rebuilds the search index immediately.
-            v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large", :disabled='!enginesLoaded')
+            v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large", :disabled='!enginesLoaded || enginesLoading', :loading='saving')
               v-icon(start) mdi-check
               span {{$t('common:actions.apply')}}
 
@@ -32,7 +32,7 @@
         v-card.animated.fadeInUp
           v-toolbar(flat, color='primary', density="compact")
             .text-body-large Active search engine (saved when Apply is selected)
-          v-list.py-0(lines="two", density="compact", role='radiogroup')
+          v-list.py-0(lines="two", density="compact", :role='enginesLoaded && engines.length ? `radiogroup` : undefined', aria-label='Active search engine', :aria-busy='enginesLoading')
             v-list-item(v-if='enginesLoading')
               v-progress-circular(indeterminate, size='20', width='2', color='primary', aria-label='Loading search engines')
               span.ml-3 Loading search engines
@@ -44,6 +44,7 @@
             template(v-else, v-for='(eng, idx) in engines', :key='eng.key')
               v-list-item(
                 @click='selectedEngine = eng.key'
+                link
                 :disabled='!eng.isAvailable'
                 role='radio'
                 :aria-checked='selectedEngine === eng.key'
@@ -66,7 +67,7 @@
           v-toolbar(color='primary', density="compact", flat)
             .text-body-large {{engine.title || 'Search engine configuration'}}
             .text-caption.text-medium-emphasis(v-if='engine.key') Pending changes are saved when Apply is selected.
-          div.v-card-info(v-if='engine.key', color='info')
+          div.v-card-info(v-if='engine.key')
             div
               div {{engine.description}}
               span.text-body-small.provider-url: a(:href='engine.website') {{engine.website}}
@@ -128,7 +129,6 @@
                 )</template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 
 import { fetchSearchEngines, rebuildSearchIndex, saveSearchEngines, type SearchEngine } from '../../helpers/search-api'
@@ -150,19 +150,16 @@ export default {
     return {
       engines: [] as SearchEngine[],
       selectedEngine: '',
-      engine: createEmptySearchEngine(),
       enginesLoading: false,
       enginesLoaded: false,
       enginesLoadError: false,
-      rebuilding: false
+      rebuilding: false,
+      saving: false
     }
   },
-  watch: {
-    selectedEngine(newValue: string) {
-      this.engine = _.find(this.engines, ['key', newValue]) || createEmptySearchEngine()
-    },
-    engines(newValue: SearchEngine[]) {
-      this.selectedEngine = _.find(newValue, 'isEnabled')?.key || 'postgres'
+  computed: {
+    engine(): SearchEngine {
+      return this.engines.find(engine => engine.key === this.selectedEngine) || createEmptySearchEngine()
     }
   },
   created() {
@@ -170,15 +167,17 @@ export default {
   },
   methods: {
     async loadEngines({ notifyError = true }: { notifyError?: boolean } = {}) {
+      if (this.enginesLoading) return
       this.enginesLoading = true
       this.enginesLoadError = false
       loadingStart(wikiStore, 'admin-search-refresh')
       try {
         this.engines = await fetchSearchEngines(window.fetch.bind(window), 'Search engines response is invalid')
+        this.selectedEngine = this.engines.find(engine => engine.isEnabled)?.key || 'postgres'
         this.enginesLoaded = true
       } catch (err) {
         this.engines = []
-        this.engine = createEmptySearchEngine()
+        this.selectedEngine = ''
         this.enginesLoaded = false
         this.enginesLoadError = true
         if (notifyError) {
@@ -198,14 +197,21 @@ export default {
       await this.loadEngines().catch(() => {})
     },
     async refresh() {
-      await this.loadEngines()
-      showNotification(wikiStore, {
-        message: this.$t('admin:search.listRefreshSuccess'),
-        style: 'success',
-        icon: 'cached'
-      })
+      if (this.saving || this.rebuilding || this.enginesLoading) return
+      try {
+        await this.loadEngines()
+        showNotification(wikiStore, {
+          message: this.$t('admin:search.listRefreshSuccess'),
+          style: 'success',
+          icon: 'cached'
+        })
+      } catch {
+        // loadEngines reports the request error.
+      }
     },
     async save() {
+      if (this.saving || this.rebuilding || this.enginesLoading) return
+      this.saving = true
       loadingStart(wikiStore, 'admin-search-saveengines')
       try {
         await saveSearchEngines(window.fetch.bind(window), this.engines.map(tgt => ({
@@ -221,10 +227,13 @@ export default {
         })
       } catch (err) {
         pushGraphError(wikiStore, err)
+      } finally {
+        this.saving = false
+        loadingStop(wikiStore, 'admin-search-saveengines')
       }
-      loadingStop(wikiStore, 'admin-search-saveengines')
     },
     async rebuild () {
+      if (this.saving || this.rebuilding || this.enginesLoading) return
       this.rebuilding = true
       loadingStart(wikiStore, 'admin-search-rebuildindex')
       try {

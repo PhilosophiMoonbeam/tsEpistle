@@ -111,21 +111,34 @@ export default defineComponent({
       loadError: '',
       activeMutation: '' as '' | 'save' | 'reset',
       telemetry: false,
-      clientId: 'N/A'
+      clientId: 'N/A',
+      isDisposed: false
     }
+  },
+  beforeUnmount () {
+    this.isDisposed = true
   },
   methods: {
     async loadTelemetry({ notifyError = true } = {}) {
+      if (this.isDisposed) {
+        return
+      }
       this.loaded = false
       this.loadError = ''
       wikiStore.startLoading('admin-utilities-telemetry-refresh')
 
       try {
         const telemetryState = await fetchSystemTelemetry(window.fetch.bind(window))
+        if (this.isDisposed) {
+          return
+        }
         this.telemetry = telemetryState.telemetry
         this.clientId = telemetryState.telemetryClientId || 'N/A'
         this.loaded = true
       } catch (err) {
+        if (this.isDisposed) {
+          return
+        }
         this.loadError = err instanceof Error ? err.message : String(err)
         if (notifyError) {
           wikiStore.showError(err)
@@ -145,6 +158,9 @@ export default defineComponent({
 
       try {
         await updateSystemTelemetry(window.fetch.bind(window), this.telemetry)
+        if (this.isDisposed) {
+          return
+        }
         wikiStore.showNotification({
           message: 'Telemetry updated successfully.',
           style: 'success',
@@ -168,7 +184,13 @@ export default defineComponent({
 
       try {
         await resetSystemTelemetryClientId(window.fetch.bind(window))
+        if (this.isDisposed) {
+          return
+        }
         await this.loadTelemetry({ notifyError: false })
+        if (this.isDisposed) {
+          return
+        }
         wikiStore.showNotification({
           message: 'Telemetry Client ID reset successfully.',
           style: 'success',
@@ -185,6 +207,9 @@ export default defineComponent({
     async copyClientId() {
       try {
         await navigator.clipboard.writeText(this.clientId)
+        if (this.isDisposed) {
+          return
+        }
         wikiStore.showNotification({
           message: 'Telemetry Client ID copied.',
           style: 'success',
