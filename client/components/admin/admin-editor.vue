@@ -1,26 +1,24 @@
 <template lang='pug'>
   v-container.admin-editor(fluid)
+    admin-hero(
+      icon='/_assets/svg/icon-web-design.svg'
+      title='Editors'
+      description='Choose which editors authors can use when creating pages'
+    )
+      template(v-slot:status)
+        v-chip(v-if='hasChanges', color='warning', variant='tonal', size='small') Unsaved changes
+      template(v-slot:actions)
+        v-btn.animated.fadeInRight(
+          color='success'
+          variant='flat'
+          size='large'
+          :loading='saving'
+          :disabled='loading || saving || !hasChanges'
+          @click='save'
+        )
+          v-icon(start) mdi-check
+          span Save changes
     v-row
-      v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-web-design.svg', alt='', width='80', height='80')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft Editors
-            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s Choose which editors authors can use when creating pages
-          v-spacer
-          v-chip(v-if='hasChanges', color='warning', variant='tonal', size='small') Unsaved changes
-          v-btn.animated.fadeInRight(
-            color='success'
-            variant='flat'
-            size='large'
-            :loading='saving'
-            :disabled='loading || saving || !hasChanges'
-            @click='save'
-          )
-            v-icon(start) mdi-check
-            span Save changes
-
-    v-row.pt-3
       v-col(cols='12', lg='8')
         v-card.animated.fadeInUp
           v-toolbar(color='primary', density='compact')

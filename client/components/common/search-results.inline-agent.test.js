@@ -66,6 +66,32 @@ describe('inline Ask mode contract', () => {
     expect(search).toMatch(/inlineAgent\.focusConversation\(\)/)
   })
 
+  test('keeps one compact identity and delegates operational status to the composer', () => {
+    const toolbar = inline.match(/<v-toolbar[\s\S]*?<\/v-toolbar>/)?.[0] ?? ''
+    expect(toolbar).toMatch(/inline-agent__avatar[\s\S]*inline-agent-title">Wiki Agent<\/h2>[\s\S]*inline-agent__session-title/)
+    expect(toolbar).not.toMatch(/Knowledge workspace|inline-agent__connection|role="status"/)
+    expect(inline).not.toMatch(/\.inline-agent__toolbar::after/)
+    expect(inline).toMatch(/<AgentComposer[\s\S]*:status-label="connectionLabel"[\s\S]*:status-tone="connectionTone"/)
+    expect(inline).toMatch(
+      /const connectionLabel = computed\(\(\) => loading\.value[\s\S]*connection\.value === 'reconnecting'[\s\S]*!providerAvailable\.value[\s\S]*Boolean\(error\.value\)[\s\S]*\? 'Try again'[\s\S]*activeRun\.value\?\.status === 'awaiting_approval'[\s\S]*sending\.value[\s\S]*activeRun\.value[\s\S]*\? 'Working'[\s\S]*: 'Ready'/
+    )
+    expect(inline).toMatch(
+      /const connectionTone = computed<'ready' \| 'error' \| 'busy'>\([\s\S]*!providerAvailable\.value \|\| Boolean\(error\.value\)[\s\S]*\? 'error'[\s\S]*\? 'busy'[\s\S]*: 'ready'/
+    )
+  })
+
+  test('uses the toolbar atmosphere as the shared translucent workspace surface', () => {
+    const cardStyle = inline.match(/\.inline-agent__card\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    const toolbarStyle = inline.match(/\.inline-agent__toolbar\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    const bodyStyle = inline.match(/\.inline-agent__body\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(inline).toMatch(/--inline-agent-workspace-gradient:/)
+    expect(cardStyle).toMatch(/background:\s*color-mix\([\s\S]*transparent\)/)
+    expect(toolbarStyle).toMatch(/border-bottom:\s*1px solid var\(--wiki-surface-border\)/)
+    expect(toolbarStyle).toMatch(/var\(--inline-agent-workspace-gradient\)/)
+    expect(bodyStyle).toMatch(/color-mix\(in srgb, var\(--inline-agent-workspace-base\)[\s\S]*transparent\)/)
+    expect(inline).toMatch(/\.inline-agent__side :deep\(\.agent-history\),[\s\S]*\.agent-memory[\s\S]*background:\s*color-mix\([\s\S]*transparent\)/)
+  })
+
   test('reuses authenticated sessions without changing the Wiki page route', () => {
     expect(inline).toMatch(/agents\.initialize\(props\.csrfToken,\s*\{[\s\S]*routeSync:\s*false[\s\S]*reuseLatest:\s*true/)
     expect(inline).toMatch(/<AgentThread/)
@@ -110,7 +136,9 @@ describe('inline Ask mode contract', () => {
     expect(history).toMatch(/New folder/)
     expect(history).toMatch(/Filed conversations do not expire/)
     expect(historyActions).toMatch(/title="Recent"[\s\S]*Returns to the 90-day history window/)
-    expect(historyActions).toMatch(/Delete conversation/)
+    expect(historyActions).toMatch(
+      /:aria-label="`Actions for \$\{session\.title \|\| 'New conversation'\}`"[\s\S]*title="Delete"[\s\S]*@click="requestRemove"[\s\S]*const requestRemove = \(\): void => emit\('remove', triggerElement\(\)\)/
+    )
     expect(history).toMatch(/fresh 90-day timer/)
     expect(history).toMatch(/agents\.moveSessionToFolder/)
     expect(history).toMatch(/agents\.removeSession/)
@@ -200,7 +228,10 @@ describe('inline Ask mode contract', () => {
     expect(focusScope).toMatch(/target\.focus\(\{\s*preventScroll:\s*true\s*\}\)/)
     expect(focusScope).toMatch(/event\.stopImmediatePropagation\(\)/)
     expect(search).toMatch(/onEscape:\s*this\.returnToSearch/)
-    expect(search).toMatch(/additionalRoots:\s*\(\) => this\.syncSearchInputA11y\(\)/)
+    expect(search).toMatch(
+      /additionalRoots:\s*this\.searchModalAdditionalRoots[\s\S]*searchModalAdditionalRoots\(\): HTMLElement\[\]\s*\{[\s\S]*document\.querySelectorAll<HTMLElement>\('\.nav-header-search-control input, \[data-search-modal-action\]'\)/
+    )
+    expect(header).toMatch(/v-btn\.nav-header-browse\([^\n]*data-search-modal-action[\s\S]*v-btn\.nav-header-search-toggle\([\s\S]*?data-search-modal-action/)
     expect(inline).toMatch(/:role="panelMode === 'modal' \? 'dialog' : undefined"/)
     expect(inline).toMatch(/:aria-modal="panelMode === 'modal' \? 'true' : undefined"/)
     expect(inline).toMatch(/triggerForPanel/)
@@ -300,7 +331,7 @@ describe('inline Ask mode contract', () => {
     expect(narrowPhone).not.toMatch(/\.inline-agent__page-context\s*\{[\s\S]*?display:\s*none/)
   })
 
-  test('offers a general latest-response jump without outranking approvals', () => {
+  test('reserves a non-message dock for latest-response navigation without outranking approvals', () => {
     expect(inline).toMatch(/const transcriptFollowing\s*=\s*ref\(true\)/)
     expect(inline).toMatch(/const scrollToLatest\s*=\s*async\s*\(\):\s*Promise<void>\s*=>/)
     expect(inline).toMatch(/scrollToLatest[\s\S]*?transcriptFollowing\.value\s*=\s*true/)
@@ -309,9 +340,32 @@ describe('inline Ask mode contract', () => {
     expect(inline).toMatch(/const followJumpVisible\s*=\s*computed\(\(\)\s*=>\s*Boolean\([\s\S]*!transcriptFollowing\.value[\s\S]*!approvalJumpVisible\.value/)
 
     expect(inline).toMatch(
-      /v-if=['"]approvalJumpVisible['"][\s\S]*class=['"]inline-agent__approval-jump['"][\s\S]*v-else-if=['"]followJumpVisible['"][\s\S]*class=['"]inline-agent__follow-jump['"]/
+      /v-if="approvalJumpVisible \|\| followJumpVisible"[\s\S]*class="inline-agent__jump-dock"[\s\S]*v-if="approvalJumpVisible"[\s\S]*class="inline-agent__approval-jump"[\s\S]*v-else[\s\S]*class="inline-agent__follow-jump"/
     )
-    expect(inline).toMatch(/class=['"]inline-agent__follow-jump['"][\s\S]*@click=['"]scrollToLatest['"]/)
+    expect(inline).toMatch(/class="inline-agent__follow-jump"[\s\S]*@click="scrollToLatest"/)
+    const jumpDockStyle = inline.match(/\.inline-agent__jump-dock\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    const jumpControlsStyle = inline.match(/\.inline-agent__approval-jump,[\s\S]*?\.inline-agent__follow-jump\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(jumpDockStyle).toMatch(/display:\s*flex/)
+    expect(jumpDockStyle).toMatch(/flex:\s*0 0 auto/)
+    expect(jumpDockStyle).not.toMatch(/position:\s*absolute/)
+    expect(jumpControlsStyle).not.toMatch(/position:\s*absolute/)
+    expect(inline).not.toMatch(/inline-agent__transcript--approval-jump|inline-agent__jump--goal/)
+
+    const transcriptStart = inline.indexOf('class="inline-agent__transcript"')
+    const jumpDockStart = inline.indexOf('class="inline-agent__jump-dock"', transcriptStart)
+    const composerStart = inline.indexOf('<footer class="inline-agent__composer">', jumpDockStart)
+    expect(transcriptStart).toBeGreaterThanOrEqual(0)
+    expect(jumpDockStart).toBeGreaterThan(transcriptStart)
+    expect(composerStart).toBeGreaterThan(jumpDockStart)
+  })
+
+  test('keeps the expandable goal sticky with half its former vertical dock spacing', () => {
+    const goalDockStyle = inline.match(/\.inline-agent__goal-dock\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(goalDockStyle).toMatch(/position:\s*sticky/)
+    expect(goalDockStyle).toMatch(/inset-block-end:\s*0/)
+    expect(goalDockStyle).toMatch(/margin:\s*calc\(var\(--wiki-space-3\) \/ 2\) auto 0/)
+    expect(goalDockStyle).toMatch(/padding-block:\s*var\(--wiki-space-1\) calc\(var\(--wiki-space-3\) \/ 2\)/)
+    expect(inline).toMatch(/@update:expanded="handleGoalExpanded"/)
   })
   test('keeps welcome content flat and starters as text rows', () => {
     const welcomeStyle = inline.match(/\.inline-agent__welcome\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
@@ -327,12 +381,15 @@ describe('inline Ask mode contract', () => {
     expect(welcomeSpine).toMatch(/border-end-start-radius:\s*0/)
   })
 
-  test('keeps tablet toolbar density while preserving the smallest-screen identity rule', () => {
+  test('keeps the wand, product, and session identity vertically intact at every toolbar density', () => {
     const tablet = inline.match(/@media \(min-width:\s*640px\) and \(max-width:\s*1023\.98px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    const mobile = inline.match(/@media \(max-width:\s*639\.98px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    const shortViewport = inline.match(/@media \(max-height:\s*500px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
     expect(tablet).toMatch(/\.inline-agent__toolbar\s*\{[\s\S]*?min-height:/)
-    const smallestScreen = inline.match(/@media \(max-width:\s*380px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
-    expect(smallestScreen).not.toMatch(/\.inline-agent__identity\s*\{[\s\S]*?display:\s*none/)
-    expect(inline).toMatch(/\.inline-agent__identity\s*\{\s*display:\s*flex/)
+    expect(tablet).not.toMatch(/\.inline-agent__(?:avatar|session-title)[\s\S]*?display:\s*none/)
+    expect(mobile).not.toMatch(/\.inline-agent__(?:avatar|session-title)[\s\S]*?display:\s*none/)
+    expect(shortViewport).not.toMatch(/\.inline-agent__(?:avatar|session-title)[\s\S]*?display:\s*none/)
+    expect(inline).toMatch(/\.inline-agent__identity\s*\{\s*display:\s*flex[\s\S]*align-items:\s*center/)
   })
 
   test('makes autocomplete semantics conditional on the skills popup feature', () => {
@@ -374,12 +431,14 @@ describe('inline Ask mode contract', () => {
     expect(composerRootStyle).toMatch(/max-height:\s*min\(\s*calc\(\s*var\(--wiki-space-12\)\s*\*\s*7\s*\)\s*,\s*44dvh\s*\)/)
     expect(editorStyle).toMatch(/min-height:\s*0/)
     expect(editorStyle).toMatch(/flex:\s*\d+\s+1\s+auto/)
-    expect(editorStyle).toMatch(/overflow-y:\s*auto/)
+    expect(editorStyle).toMatch(/overflow:\s*hidden/)
     expect(attachmentsStyle).toMatch(/min-height:\s*0/)
-    expect(attachmentsStyle).toMatch(/flex:\s*\d+\s+1\s+auto/)
+    expect(attachmentsStyle).toMatch(/flex:\s*0\s+1\s+auto/)
     expect(attachmentsStyle).toMatch(/overflow-y:\s*auto/)
     expect(actionsStyle).toMatch(/flex:\s*0\s+0\s+auto/)
-    expect(hintStyle).toMatch(/flex:\s*0\s+0\s+auto/)
+    expect(hintStyle).toMatch(/position:\s*absolute/)
+    expect(hintStyle).toMatch(/width:\s*1px/)
+    expect(hintStyle).toMatch(/clip:\s*rect\(0,\s*0,\s*0,\s*0\)/)
     expect(composer).toMatch(/class="agent-composer__primary-actions"[\s\S]*?agent-composer__stop[\s\S]*?agent-composer__submit/)
     expect(composer.match(/class="agent-composer__primary-actions"/g)).toHaveLength(1)
     expect(composer).toMatch(/\.agent-composer__primary-actions\s*\{[\s\S]*?min-width:/)
@@ -389,6 +448,9 @@ describe('inline Ask mode contract', () => {
     const shortViewport = composer.match(/@media \(max-width:\s*740px\) and \(max-height:\s*500px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
     expect(shortViewport).toMatch(/\.agent-composer__attachments\s*\{[\s\S]*?max-height:/)
     expect(shortViewport).toMatch(/\.agent-composer__skills\s*\{[\s\S]*?flex-wrap:\s*nowrap[\s\S]*?overflow-x:\s*auto/)
+    const mobile = composer.match(/@media \(max-width:\s*740px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    expect(composer).toMatch(/class="agent-composer__state"[\s\S]*role="status"[\s\S]*\{\{\s*statusLabel\s*\}\}/)
+    expect(mobile).not.toMatch(/\.agent-composer__state\s*\{[\s\S]*?(?:display:\s*none|position:\s*absolute|clip:)/)
   })
 
   test('keeps compact transcript follow and composer controls stable', () => {

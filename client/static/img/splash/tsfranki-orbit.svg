@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1200" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="ground" x1="180" y1="80" x2="1760" y2="1120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#181A1C"/>
+      <stop offset=".52" stop-color="#24272A"/>
+      <stop offset="1" stop-color="#151719"/>
+    </linearGradient>
+    <radialGradient id="warm-field" cx="0" cy="0" r="1" gradientTransform="translate(1450 300) rotate(132) scale(760 620)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F9A134" stop-opacity=".28"/>
+      <stop offset=".48" stop-color="#F9A134" stop-opacity=".07"/>
+      <stop offset="1" stop-color="#F9A134" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="cool-field" cx="0" cy="0" r="1" gradientTransform="translate(1280 980) rotate(-64) scale(680 900)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#73ADD3" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#73ADD3" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="core" cx="0" cy="0" r="1" gradientTransform="translate(1362 478) rotate(54) scale(196)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD29B"/>
+      <stop offset=".5" stop-color="#F9A134"/>
+      <stop offset="1" stop-color="#A85B00"/>
+    </radialGradient>
+    <linearGradient id="leaf" x1="0" y1="0" x2="122" y2="154" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8F9FA" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#A6A8AA" stop-opacity=".64"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" fill="none" stroke="#F8F9FA" stroke-opacity=".055"/>
+      <circle cx="0" cy="0" r="1.4" fill="#F9A134" fill-opacity=".2"/>
+    </pattern>
+    <filter id="soft-shadow" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#0B0C0D" flood-opacity=".46"/>
+    </filter>
+    <clipPath id="frame">
+      <rect width="1920" height="1200" rx="28"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1920" height="1200" fill="url(#ground)"/>
+    <rect width="1920" height="1200" fill="url(#warm-field)"/>
+    <rect width="1920" height="1200" fill="url(#cool-field)"/>
+    <rect width="1920" height="1200" fill="url(#grid)"/>
+
+    <g fill="none" stroke="#A6A8AA" stroke-opacity=".16">
+      <path d="M-160 1010C238 667 483 280 610-160"/>
+      <path d="M-74 1120C351 769 626 336 764-178" stroke-dasharray="3 14"/>
+      <path d="M54 1200C454 849 733 447 904-62"/>
+    </g>
+
+    <g transform="translate(1350 492)">
+      <circle r="410" fill="none" stroke="#F8F9FA" stroke-opacity=".08"/>
+      <circle r="314" fill="none" stroke="#F9A134" stroke-opacity=".2" stroke-dasharray="2 15"/>
+      <ellipse rx="520" ry="246" fill="none" stroke="#A6A8AA" stroke-opacity=".3" stroke-width="2" transform="rotate(-14)"/>
+      <ellipse rx="430" ry="178" fill="none" stroke="#73ADD3" stroke-opacity=".32" transform="rotate(34)"/>
+      <ellipse rx="354" ry="130" fill="none" stroke="#F9A134" stroke-opacity=".4" stroke-width="2" transform="rotate(-48)"/>
+      <path d="M-490 118C-219 326 257 318 501 79" fill="none" stroke="#F8F9FA" stroke-opacity=".13" stroke-dasharray="42 12 3 12"/>
+
+      <g fill="#F9A134">
+        <circle cx="-493" cy="119" r="6"/>
+        <circle cx="388" cy="-179" r="5"/>
+        <circle cx="-207" cy="-273" r="4"/>
+      </g>
+      <g fill="#73ADD3">
+        <circle cx="341" cy="254" r="6"/>
+        <circle cx="-328" cy="207" r="4"/>
+      </g>
+
+      <g filter="url(#soft-shadow)">
+        <circle r="152" fill="#181A1C" stroke="#F8F9FA" stroke-opacity=".18"/>
+        <circle r="121" fill="url(#core)"/>
+        <path d="M-52-24-83 0l31 24M52-24 83 0 52 24" fill="none" stroke="#181A1C" stroke-opacity=".76" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+        <text x="0" y="19" fill="#181A1C" fill-opacity=".78" font-family="Avenir Next, Segoe UI, sans-serif" font-size="58" font-weight="750" letter-spacing="-4" text-anchor="middle">ts</text>
+        <circle r="121" fill="none" stroke="#FFF4E6" stroke-opacity=".34" stroke-width="2"/>
+      </g>
+
+      <g transform="translate(-375 -219) rotate(-22)" filter="url(#soft-shadow)">
+        <rect width="118" height="148" rx="10" fill="url(#leaf)"/>
+        <path d="M24 35h70M24 57h52M24 91h70M24 113h42" stroke="#484C51" stroke-opacity=".72" stroke-width="5" stroke-linecap="round"/>
+        <rect x="18" y="17" width="16" height="8" rx="4" fill="#F9A134"/>
+      </g>
+      <g transform="translate(336 -268) rotate(20)" filter="url(#soft-shadow)">
+        <rect width="126" height="158" rx="10" fill="url(#leaf)"/>
+        <path d="M25 41h76M25 65h76M25 99h55M25 123h69" stroke="#484C51" stroke-opacity=".72" stroke-width="5" stroke-linecap="round"/>
+        <rect x="20" y="19" width="31" height="8" rx="4" fill="#73ADD3"/>
+      </g>
+      <g transform="translate(422 179) rotate(39)" filter="url(#soft-shadow)">
+        <rect width="106" height="134" rx="9" fill="url(#leaf)"/>
+        <path d="M22 35h62M22 56h46M22 87h62M22 108h37" stroke="#484C51" stroke-opacity=".72" stroke-width="5" stroke-linecap="round"/>
+        <rect x="17" y="16" width="15" height="7" rx="3.5" fill="#F9A134"/>
+      </g>
+    </g>
+
+    <g transform="translate(1090 1024)">
+      <path d="M0 0h610" stroke="#F8F9FA" stroke-opacity=".22"/>
+      <path d="M0-12v24M152-8V8M305-12v24M458-8V8M610-12v24" stroke="#F8F9FA" stroke-opacity=".26"/>
+      <rect x="0" y="34" width="188" height="5" rx="2.5" fill="#F9A134" fill-opacity=".78"/>
+      <rect x="204" y="34" width="76" height="5" rx="2.5" fill="#A6A8AA" fill-opacity=".42"/>
+    </g>
+
+    <g opacity=".58">
+      <path d="M104 104h176" stroke="#F9A134" stroke-width="3"/>
+      <path d="M104 124h74" stroke="#F8F9FA" stroke-opacity=".36" stroke-width="2"/>
+      <circle cx="104" cy="104" r="7" fill="#F9A134"/>
+      <path d="M1816 1096h-176" stroke="#73ADD3" stroke-width="3"/>
+      <path d="M1816 1076h-74" stroke="#F8F9FA" stroke-opacity=".36" stroke-width="2"/>
+      <circle cx="1816" cy="1096" r="7" fill="#73ADD3"/>
+    </g>
+  </g>
+</svg>

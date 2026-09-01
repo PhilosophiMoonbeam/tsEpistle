@@ -58,10 +58,6 @@
     </v-card>
 
     <div class="agent-composer__editor">
-      <div class="agent-composer__editor-label">
-        <span>{{ goalMode ? 'Define an outcome' : 'Message Wiki Agent' }}</span>
-        <span v-if="goalMode" class="agent-composer__mode-badge">Goal mode</span>
-      </div>
       <v-textarea
         ref="messageInput"
         v-model="draft"
@@ -72,7 +68,7 @@
         :aria-autocomplete="skillsEnabled ? 'list' : undefined"
         :aria-haspopup="skillsEnabled ? 'listbox' : undefined"
         :placeholder="goalMode ? 'Describe a bounded outcome for Wiki Agent' : skillsEnabled ? 'Ask a follow-up · Type / for skills' : 'Ask a follow-up'"
-        rows="1"
+        rows="3"
         variant="solo"
         flat
         hide-details
@@ -152,11 +148,16 @@
                   <div class="d-flex align-center ga-1">
                     <v-chip v-if="skill.exposureMode === 'owner'" size="x-small" variant="tonal">Mine</v-chip>
                     <v-btn
-                      :icon="isPreferred(skill.versionId) ? 'mdi-autorenew' : 'mdi-autorenew-off'"
+                      class="agent-composer__pin"
+                      :class="{ 'agent-composer__pin--active': isPreferred(skill.versionId) }"
+                      :icon="isPreferred(skill.versionId) ? 'mdi-pin' : 'mdi-pin-outline'"
+                      :color="isPreferred(skill.versionId) ? 'primary' : undefined"
                       :variant="isPreferred(skill.versionId) ? 'tonal' : 'text'"
                       size="small"
                       :disabled="disabled || sendInProgress || (!isPreferred(skill.versionId) && invocationLimit === 0)"
                       :aria-label="isPreferred(skill.versionId) ? `Stop always loading ${skill.name}` : `Always load ${skill.name} in conversations`"
+                      :aria-pressed="isPreferred(skill.versionId)"
+                      :title="isPreferred(skill.versionId) ? `Pinned: ${skill.name} always loads` : `Pin ${skill.name} to always load`"
                       @click.stop="togglePreference(skill.versionId)"
                     />
                   </div>
@@ -189,13 +190,14 @@
       <div
         id="agent-composer-status"
         class="agent-composer__state"
-        :class="{ 'agent-composer__state--error': sendFailed, 'agent-composer__state--active': sendInProgress || canStop }"
+        :class="`agent-composer__state--${statusTone}`"
         role="status"
         aria-live="polite"
         aria-atomic="true"
+        :title="statusLabel"
       >
         <span class="agent-composer__state-dot" aria-hidden="true" />
-        <span>{{ composerStatus }}</span>
+        <span>{{ statusLabel }}</span>
       </div>
 
       <div class="agent-composer__primary-actions" role="group" aria-label="Message actions">
@@ -219,10 +221,9 @@
       </div>
     </div>
 
-    <p id="agent-composer-keyboard-hint" class="agent-composer__hint">
-      <v-icon icon="mdi-keyboard-return" size="14" aria-hidden="true" />
-      Enter to send <span aria-hidden="true">·</span> Shift+Enter for a new line
-    </p>
+    <span id="agent-composer-keyboard-hint" class="agent-composer__hint">
+      Enter to send; Shift+Enter for a new line
+    </span>
   </v-form>
 </template>
 
@@ -230,7 +231,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import type { VisibleAgentSkill } from '../../helpers/agents-api.ts'
-import { filterSkillsForCommand } from './agent-skill-command.ts'
+import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 const props = defineProps<{
   disabled: boolean
@@ -241,6 +242,8 @@ const props = defineProps<{
   skills: readonly VisibleAgentSkill[]
   preferredSkills: readonly AgentSessionSkillView[]
   invocationLimit: number
+  statusLabel: string
+  statusTone: 'ready' | 'error' | 'busy'
 }>()
 const emit = defineEmits<{ send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const draft = ref('')
@@ -266,9 +269,10 @@ const selectedSkills = computed(() => selectedSkillIds.value.flatMap(id => {
   return skill ? [skill] : []
 }))
 const skillMenuItems = computed(() => [
-  ...props.skills,
+  ...filterUserSelectableSkills(props.skills),
+  ...filterPreferredBuiltInSkills(props.skills, preferredSkillIdByVersionId.value),
   ...props.preferredSkills
-    .filter(skill => !visibleSkillIds.value.has(skill.skillId))
+    .filter(skill => skill.sourcePath.startsWith('personal/') && !visibleSkillIds.value.has(skill.skillId))
     .map(skill => ({ ...skill, exposureMode: undefined }))
 ])
 const skillIdForVersion = (versionId: string): string | undefined =>
@@ -278,15 +282,6 @@ const isPreferred = (versionId: string): boolean => {
   return skillId !== undefined && preferredSkillIds.value.has(skillId)
 }
 const composerInputLabel = computed(() => goalMode.value ? 'Define an outcome for Wiki Agent' : 'Message Wiki Agent')
-const composerStatus = computed(() => {
-  if (sendInProgress.value) return 'Sending request'
-  if (props.canStop) return 'Agent responding'
-  if (sendFailed.value) return 'Send failed · Ready to retry'
-  if (props.disabled) return 'Waiting for the current operation'
-  if (goalMode.value) return 'Goal mode ready'
-  if (selectedSkills.value.length) return `${selectedSkills.value.length} context ${selectedSkills.value.length === 1 ? 'attachment' : 'attachments'}`
-  return 'Ready'
-})
 const submitLabel = computed(() => sendFailed.value ? 'Retry' : goalMode.value ? 'Start goal' : 'Send')
 const isSelected = (versionId: string): boolean => selectedSkillIdSet.value.has(versionId)
 const getTextarea = (): HTMLTextAreaElement | null => {
@@ -657,27 +652,8 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
-  overflow-y: auto;
-  padding: var(--wiki-space-1) var(--wiki-space-1) 0;
-}
-
-.agent-composer__editor-label {
-  display: flex;
-  min-height: var(--wiki-space-4);
-  align-items: center;
-  gap: var(--wiki-space-2);
-  padding-inline: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-}
-
-.agent-composer__mode-badge {
-  padding: 0 var(--wiki-space-2);
-  border-radius: var(--wiki-radius-pill);
-  background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent);
-  color: var(--wiki-accent-warm);
-  letter-spacing: .04em;
+  overflow: hidden;
+  padding: var(--wiki-space-1) 0 0;
 }
 
 .agent-composer__input :deep(.v-field) {
@@ -686,18 +662,19 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__input :deep(.v-field__input) {
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
-  padding: var(--wiki-space-1) var(--wiki-space-1) 0;
+  min-height: calc(var(--wiki-space-12) * 2);
+  padding: var(--wiki-space-3) var(--wiki-space-1) var(--wiki-space-2);
 }
 
 .agent-composer__input :deep(textarea) {
-  min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
+  box-sizing: border-box;
+  min-height: calc(var(--wiki-space-12) * 2);
   max-height: min(calc(var(--wiki-space-12) * 3), 30dvh);
   overflow-y: hidden;
   overscroll-behavior: contain;
   color: rgb(var(--v-theme-on-surface));
   font-size: 1rem;
-  line-height: 1.55;
+  line-height: var(--wiki-leading-body);
   resize: none;
 }
 
@@ -714,8 +691,8 @@ onBeforeUnmount(() => {
   display: flex;
   min-width: 0;
   min-height: 0;
-  flex: 1 1 auto;
-  max-height: min(calc(var(--wiki-space-12) * 3), 24dvh);
+  flex: 0 1 auto;
+  max-height: min(calc(var(--wiki-space-12) * 2), 24dvh);
   align-items: flex-start;
   gap: var(--wiki-space-1);
   margin: 0 var(--wiki-space-1) var(--wiki-space-1);
@@ -724,7 +701,6 @@ onBeforeUnmount(() => {
   padding: var(--wiki-space-1);
   border-block: 1px solid var(--wiki-surface-border);
 }
-
 
 .agent-composer__attachments-label {
   display: inline-flex;
@@ -746,7 +722,6 @@ onBeforeUnmount(() => {
   gap: var(--wiki-space-1);
 }
 
-
 .agent-composer__actions {
   display: grid;
   min-width: 0;
@@ -755,7 +730,7 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, auto) minmax(var(--wiki-space-12), 1fr) auto;
   align-items: center;
   gap: var(--wiki-space-1);
-  padding: 0;
+  padding: var(--wiki-space-1) 0 0;
   border-top: 1px solid var(--wiki-surface-border);
 }
 
@@ -768,7 +743,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__primary-actions {
-  min-width: calc(var(--wiki-space-12) * 2.5);
+  min-width: calc(var(--wiki-space-12) * 2);
   justify-content: stretch;
 }
 
@@ -779,13 +754,21 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
 }
 
-
 .agent-composer__actions :deep(.v-btn) {
   min-height: var(--wiki-control-height);
 }
 
 .agent-composer__skill-button {
   max-width: 100%;
+}
+
+.agent-composer__pin {
+  min-width: var(--wiki-control-height);
+  min-height: var(--wiki-control-height);
+}
+
+.agent-composer__pin--active {
+  box-shadow: var(--wiki-shadow-inset);
 }
 
 .agent-composer__state {
@@ -800,6 +783,12 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.agent-composer__state > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .agent-composer__state-dot {
   width: var(--wiki-space-2);
   height: var(--wiki-space-2);
@@ -809,14 +798,13 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, currentColor 18%, transparent);
 }
 
-.agent-composer__state--active {
-  color: var(--wiki-accent-warm);
+.agent-composer__state--ready {
+  color: rgb(var(--v-theme-success));
 }
 
-.agent-composer__state--active .agent-composer__state-dot {
+.agent-composer__state--ready .agent-composer__state-dot,
+.agent-composer__state--error .agent-composer__state-dot {
   background: currentColor;
-  box-shadow: 0 0 0 var(--wiki-space-1) color-mix(in srgb, currentColor 14%, transparent);
-  animation: composerPulse 1.8s var(--wiki-motion-ease) infinite;
 }
 
 .agent-composer__state--error {
@@ -824,7 +812,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__submit {
-  min-width: calc(var(--wiki-space-12) * 2.5);
+  min-width: calc(var(--wiki-space-12) * 2);
   box-shadow: var(--wiki-shadow-xs);
 }
 
@@ -832,18 +820,14 @@ onBeforeUnmount(() => {
   min-width: calc(var(--wiki-space-12) * 1.6);
 }
 
-
 .agent-composer__hint {
-  display: flex;
-  min-height: var(--wiki-space-4);
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: flex-end;
-  gap: var(--wiki-space-1);
-  margin: var(--wiki-space-1) var(--wiki-space-1) 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 52%, transparent);
-  font-size: var(--wiki-label-size);
-  line-height: 1.4;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .agent-composer__command-menu {
@@ -893,36 +877,10 @@ onBeforeUnmount(() => {
   border: 0;
 }
 
-
-@keyframes composerPulse {
-  50% {
-    opacity: .52;
-  }
-}
-
 @media (max-width: 740px) {
   .agent-composer {
     padding: var(--wiki-space-1);
     border-radius: var(--wiki-control-radius);
-  }
-
-  .agent-composer__editor {
-    padding-inline: var(--wiki-space-1);
-  }
-
-  .agent-composer__actions {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-
-  .agent-composer__state {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
   }
 
   .agent-composer__context-controls {
@@ -935,18 +893,11 @@ onBeforeUnmount(() => {
     display: none;
   }
 
-  .agent-composer__primary-actions {
-    grid-column: 2;
-  }
-
   .agent-composer__attachments {
     flex-direction: column;
-    max-height: min(calc(var(--wiki-space-12) * 3), 24dvh);
+    max-height: min(calc(var(--wiki-space-12) * 2), 24dvh);
   }
 
-  .agent-composer__hint {
-    justify-content: flex-start;
-  }
 }
 
 @media (max-width: 740px) and (max-height: 500px) {
@@ -971,15 +922,6 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 430px) {
-  .agent-composer__editor-label,
-  .agent-composer__hint {
-    display: none;
-  }
-
-  .agent-composer__input :deep(.v-field__input),
-  .agent-composer__input :deep(textarea) {
-    min-height: var(--wiki-control-height);
-  }
 
   .agent-composer__skill-button,
   .agent-composer__goal-button {
@@ -993,20 +935,25 @@ onBeforeUnmount(() => {
     margin: 0;
   }
 
+  .agent-composer__primary-actions,
   .agent-composer__submit {
-    min-width: var(--wiki-control-height);
+    min-width: calc(var(--wiki-space-12) * 1.5);
+  }
+
+  .agent-composer__submit {
     padding-inline: var(--wiki-space-3);
+  }
+
+  .agent-composer__submit :deep(.v-btn__prepend) {
+    display: none;
   }
 }
 
 @media (max-height: 500px) {
+  .agent-composer__input :deep(.v-field__input),
   .agent-composer__input :deep(textarea) {
+    min-height: calc(var(--wiki-space-12) * 1.5);
     max-height: calc(var(--wiki-space-12) * 1.5);
-  }
-
-  .agent-composer__editor-label,
-  .agent-composer__hint {
-    display: none;
   }
 }
 

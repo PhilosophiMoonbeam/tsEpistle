@@ -1,6 +1,11 @@
 export interface SkillCommandCandidate {
   readonly name: string
   readonly description: string
+  readonly exposureMode: 'all_agent_users' | 'groups' | 'owner'
+}
+
+export interface VersionedSkillCommandCandidate extends SkillCommandCandidate {
+  readonly versionId: string
 }
 
 const subsequenceScore = (target: string, query: string): number | null => {
@@ -35,11 +40,19 @@ const compareNames = (left: string, right: string): number => {
   return 0
 }
 
+export const filterUserSelectableSkills = <T extends SkillCommandCandidate>(skills: readonly T[]): T[] => skills.filter(skill => skill.exposureMode === 'owner')
+
+export const filterPreferredBuiltInSkills = <T extends VersionedSkillCommandCandidate>(
+  skills: readonly T[],
+  preferredSkillVersionIds: { has: (versionId: string) => boolean }
+): T[] => skills.filter(skill => skill.exposureMode !== 'owner' && preferredSkillVersionIds.has(skill.versionId))
+
 export const filterSkillsForCommand = <T extends SkillCommandCandidate>(skills: readonly T[], queryValue: string): T[] => {
   const query = queryValue.trim().toLowerCase()
-  if (!query) return [...skills]
+  const userSelectableSkills = filterUserSelectableSkills(skills)
+  if (!query) return userSelectableSkills
 
-  return skills
+  return userSelectableSkills
     .map((skill, index) => {
       const nameScore = fieldScore(skill.name.toLowerCase(), query)
       const descriptionScore = fieldScore(skill.description.toLowerCase(), query, false)

@@ -2,31 +2,31 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-search.svg', alt='', aria-hidden='true', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:search.title')}}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s {{$t('admin:search.subtitle')}}
-          v-spacer
-          v-tooltip(location='top')
-            template(v-slot:activator='{ props }')
-              v-btn.mr-3.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/search', target='_blank', v-bind='props', aria-label='Search documentation — opens in a new tab')
-                v-icon mdi-help-circle
-            span Search documentation — opens in a new tab
-          v-tooltip(location='top')
-            template(v-slot:activator='{ props }')
-              v-btn.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', v-bind='props', aria-label='Refresh search engines')
-                v-icon mdi-refresh
-            span Refresh search engines
-          .admin-action-group.ml-3
-            .text-body-small.text-medium-emphasis Index maintenance
-            v-btn.animated.fadeInDown.wait-p1s(color='primary', variant="outlined", @click='rebuild', :loading='rebuilding')
-              v-icon(start) mdi-cached
-              span {{$t('admin:search.rebuildIndex')}}
-            .text-caption.text-medium-emphasis Rebuilds the search index immediately.
-          v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large", :disabled='!enginesLoaded')
-            v-icon(start) mdi-check
-            span {{$t('common:actions.apply')}}
+        admin-hero(
+          :title='$t(`admin:search.title`)'
+          :description='$t(`admin:search.subtitle`)'
+          icon='/_assets/svg/icon-search.svg'
+        )
+          template(v-slot:actions)
+            v-tooltip(location='top')
+              template(v-slot:activator='{ props }')
+                v-btn.mr-3.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/search', target='_blank', v-bind='props', aria-label='Search documentation — opens in a new tab')
+                  v-icon mdi-help-circle
+              span Search documentation — opens in a new tab
+            v-tooltip(location='top')
+              template(v-slot:activator='{ props }')
+                v-btn.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', v-bind='props', aria-label='Refresh search engines')
+                  v-icon mdi-refresh
+              span Refresh search engines
+            .admin-action-group.ml-3
+              .text-body-small.text-medium-emphasis Index maintenance
+              v-btn.animated.fadeInDown.wait-p1s(color='primary', variant="outlined", @click='rebuild', :loading='rebuilding')
+                v-icon(start) mdi-cached
+                span {{$t('admin:search.rebuildIndex')}}
+              .text-caption.text-medium-emphasis Rebuilds the search index immediately.
+            v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large", :disabled='!enginesLoaded')
+              v-icon(start) mdi-check
+              span {{$t('common:actions.apply')}}
 
       v-col(lg='3', cols='12')
         v-card.animated.fadeInUp

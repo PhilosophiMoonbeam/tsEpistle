@@ -1,15 +1,15 @@
 <template lang='pug'>
   v-container.admin-dashboard(fluid)
-    .admin-header.admin-dashboard__header
-      img(src='/_assets/svg/icon-features-list.svg' alt='')
-      .admin-header-title
-        .admin-dashboard__eyebrow Control room
-        h1.text-headline-medium.text-primary(tabindex='-1') {{ $t('admin:dashboard.title') }}
-        .text-body-large.text-medium-emphasis {{ $t('admin:dashboard.subtitle') }}
-      v-spacer
-      .admin-dashboard__build
-        span Deployed build
-        v-chip(size='small' variant='tonal' color='primary' prepend-icon='mdi-source-fork') {{ info.product.name }} {{ info.product.version }}
+    admin-hero(
+      :title='$t(`admin:dashboard.title`)'
+      :description='$t(`admin:dashboard.subtitle`)'
+      icon='/_assets/svg/icon-features-list.svg'
+      eyebrow='Control room'
+    )
+      template(#status)
+        .admin-dashboard__build
+          span Deployed build
+          v-chip(size='small' variant='tonal' color='primary' prepend-icon='mdi-source-fork') {{ siteTitle }} {{ info.product.version }}
 
     .dashboard-section-heading.dashboard-section-heading--compact(v-if='dashboardStats.length')
       div
@@ -62,7 +62,7 @@
               .dashboard-overview__product-icon
                 v-icon(size='26') mdi-book-open-page-variant-outline
               div
-                .dashboard-overview__product-name {{ info.product.name }}
+                .dashboard-overview__product-name {{ siteTitle }}
                 .dashboard-overview__product-version Version {{ info.product.version }}
             .dashboard-overview__list
               .dashboard-overview__row
@@ -180,6 +180,7 @@ export default {
     canViewRecentPages() { return this.hasPermission(['manage:system', 'read:pages']) },
     canViewLastLogins() { return this.hasPermission(['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users']) },
     info() { return wikiStore.admin.info },
+    siteTitle() { return wikiStore.site.title?.trim() || 'tsFranki' },
     permissions() { return wikiStore.user.permissions },
     dashboardStats() {
       return [
@@ -256,19 +257,6 @@ export default {
 </script>
 <style lang='scss'>
 .admin-dashboard {
-  &__header {
-    margin-bottom: var(--wiki-space-2) !important;
-  }
-
-  &__eyebrow {
-    margin-bottom: var(--wiki-space-1);
-    color: var(--wiki-accent-warm);
-    font-size: var(--wiki-label-size);
-    font-weight: var(--wiki-label-weight);
-    letter-spacing: .1em;
-    text-transform: uppercase;
-  }
-
   &__build {
     display: grid;
     justify-items: end;
@@ -298,10 +286,10 @@ export default {
   display: flex;
   overflow: hidden;
   width: 100%;
-  min-height: 8.5rem;
-  align-items: flex-start;
-  gap: var(--wiki-space-4);
-  padding: var(--wiki-space-5);
+  min-height: calc(var(--wiki-control-height) + var(--wiki-space-10));
+  align-items: center;
+  gap: var(--wiki-space-3);
+  padding: var(--wiki-space-3) var(--wiki-space-4);
   border: 1px solid var(--wiki-surface-border) !important;
   border-radius: var(--wiki-panel-radius) !important;
   background: var(--wiki-surface-raised) !important;
@@ -361,12 +349,12 @@ export default {
   &__value {
     display: block;
     min-width: 0;
-    margin: var(--wiki-space-1) 0 0;
+    margin: 0;
     color: rgb(var(--v-theme-on-surface));
     font-size: 2rem;
     font-weight: 760;
     letter-spacing: -.045em;
-    line-height: 1.08;
+    line-height: 1;
 
     &--text {
       display: block;
@@ -380,15 +368,15 @@ export default {
   }
 
   &__hint {
-    margin: var(--wiki-space-1) 0 0;
+    margin: 0;
     color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
     font-size: .77rem;
   }
 
   &__arrow {
     position: absolute !important;
-    inset-block-start: var(--wiki-space-4);
-    inset-inline-end: var(--wiki-space-4);
+    inset-block-start: var(--wiki-space-3);
+    inset-inline-end: var(--wiki-space-3);
     color: var(--stat-color);
     opacity: .58;
   }
@@ -678,9 +666,6 @@ export default {
 }
 
 @media (max-width: 599px) {
-  .admin-stat {
-    min-height: 7.5rem;
-  }
 
   .dashboard-panel {
     &__header {

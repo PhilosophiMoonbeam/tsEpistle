@@ -4,8 +4,10 @@ export interface ComposerSizing {
 }
 
 export const calculateComposerSizing = (contentHeight: number, minHeight: number, maxHeight: number): ComposerSizing => {
-  const height = Math.min(Math.max(contentHeight, minHeight), maxHeight)
-  return { height, overflowing: contentHeight > maxHeight }
+  const lowerBound = Math.max(0, minHeight)
+  const upperBound = Math.max(lowerBound, maxHeight)
+  const height = Math.min(Math.max(contentHeight, lowerBound), upperBound)
+  return { height, overflowing: contentHeight > upperBound }
 }
 
 export interface CaretBounds {
@@ -28,9 +30,10 @@ export interface CaretScrollInput {
 }
 
 export const scrollTopForCaret = ({ scrollTop, clientHeight, scrollHeight, paddingTop, paddingBottom, caret }: CaretScrollInput): number => {
+  const maxScrollTop = Math.max(0, scrollHeight - clientHeight)
   const visibleTop = scrollTop + paddingTop
   const visibleBottom = scrollTop + clientHeight - paddingBottom
-  if (caret.top < visibleTop) return Math.max(0, caret.top - paddingTop)
-  if (caret.bottom > visibleBottom) return Math.min(scrollHeight - clientHeight, caret.bottom - clientHeight + paddingBottom)
-  return scrollTop
+  if (caret.top < visibleTop) return Math.min(maxScrollTop, Math.max(0, caret.top - paddingTop))
+  if (caret.bottom > visibleBottom) return Math.min(maxScrollTop, Math.max(0, caret.bottom - clientHeight + paddingBottom))
+  return Math.min(maxScrollTop, Math.max(0, scrollTop))
 }

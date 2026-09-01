@@ -46,6 +46,10 @@
       />
       <span class="agent-history__search-status" role="status" aria-live="polite">{{ searchStatus }}</span>
     </div>
+    <span id="agent-history-drag-instructions" class="agent-history__search-status">
+      Drag a conversation to Recent or a saved folder. Use its actions menu to move it with a keyboard.
+    </span>
+    <span class="agent-history__search-status" role="status" aria-live="polite">{{ dragStatus }}</span>
 
     <v-alert v-if="localError" class="mx-3 mb-3" density="compact" type="error" variant="tonal" closable @click:close="localError = ''">
       {{ localError }}
@@ -72,7 +76,19 @@
       </div>
 
       <template v-else>
-        <section class="agent-history__recent" aria-labelledby="agent-history-recent-title">
+        <section
+          class="agent-history__recent"
+          :class="{
+            'agent-history__drop-target--available': canDropTo(null),
+            'agent-history__drop-target--active': isActiveDropTarget(null)
+          }"
+          aria-labelledby="agent-history-recent-title"
+          aria-describedby="agent-history-drag-instructions"
+          @dragenter="setDropTarget($event, null)"
+          @dragover="setDropTarget($event, null)"
+          @dragleave="leaveDropTarget($event, null)"
+          @drop="dropSession($event, null)"
+        >
           <div class="agent-history__section-heading">
             <div>
               <h3 id="agent-history-recent-title" class="agent-history__section-title">Recent</h3>
@@ -90,12 +106,17 @@
                   :key="session.id"
                   class="agent-history__session"
                   :active="session.id === thread?.session.id"
+                  :class="{ 'agent-history__session--dragging': draggedSessionId === session.id }"
                   :aria-current="session.id === thread?.session.id ? 'page' : undefined"
                   :title="session.title || 'New conversation'"
                   :subtitle="session.id === thread?.session.id ? `${formatSessionDate(session.lastActivityAt)} · Current session` : formatSessionDate(session.lastActivityAt)"
                   :disabled="sessionBusy(session.id)"
+                  :draggable="canDragSession(session)"
+                  aria-describedby="agent-history-drag-instructions"
                   rounded="lg"
                   @click="openSession(session.id)"
+                  @dragstart.stop="beginSessionDrag($event, session)"
+                  @dragend="finishSessionDrag"
                 >
                   <template #prepend>
                     <v-progress-circular v-if="openingSessionIds.has(session.id)" color="primary" indeterminate size="18" width="2" aria-label="Opening conversation" />
@@ -130,7 +151,21 @@
           </div>
 
           <v-expansion-panels v-if="visibleFolderGroups.length" v-model="openFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
-            <v-expansion-panel v-for="group in visibleFolderGroups" :key="group.folder.id" :value="group.folder.id" rounded="lg">
+            <v-expansion-panel
+              v-for="group in visibleFolderGroups"
+              :key="group.folder.id"
+              :value="group.folder.id"
+              :class="{
+                'agent-history__drop-target--available': canDropTo(group.folder.id),
+                'agent-history__drop-target--active': isActiveDropTarget(group.folder.id)
+              }"
+              aria-describedby="agent-history-drag-instructions"
+              rounded="lg"
+              @dragenter="setDropTarget($event, group.folder.id)"
+              @dragover="setDropTarget($event, group.folder.id)"
+              @dragleave="leaveDropTarget($event, group.folder.id)"
+              @drop="dropSession($event, group.folder.id)"
+            >
               <div class="agent-history__folder-row">
                 <v-expansion-panel-title class="agent-history__folder-title">
                   <v-icon class="me-2" color="primary" icon="mdi-folder-outline" size="19" />
@@ -156,11 +191,16 @@
                     class="agent-history__session"
                     :active="session.id === thread?.session.id"
                     :aria-current="session.id === thread?.session.id ? 'page' : undefined"
+                    :class="{ 'agent-history__session--dragging': draggedSessionId === session.id }"
                     :title="session.title || 'New conversation'"
                     :subtitle="session.id === thread?.session.id ? `${formatSessionDate(session.lastActivityAt)} · Current session` : formatSessionDate(session.lastActivityAt)"
                     :disabled="sessionBusy(session.id)"
+                    :draggable="canDragSession(session)"
+                    aria-describedby="agent-history-drag-instructions"
                     rounded="lg"
                     @click="openSession(session.id)"
+                    @dragstart.stop="beginSessionDrag($event, session)"
+                    @dragend="finishSessionDrag"
                   >
                     <template #prepend>
                       <v-progress-circular v-if="openingSessionIds.has(session.id)" color="primary" indeterminate size="18" width="2" aria-label="Opening conversation" />
@@ -303,6 +343,10 @@ const committedDeletedSessionIds = ref(new Set<string>())
 const projectedFolderIds = ref(new Map<string, string | null>())
 const refreshError = ref('')
 const refreshingHistory = ref(false)
+const draggedSessionId = ref<string | null>(null)
+const activeDropTarget = ref<string | null>(null)
+const dragStatus = ref('')
+const recentDropTarget = '__agent_history_recent__'
 type ComponentRoot = { $el?: HTMLElement }
 const historyCloseButton = ref<ComponentRoot | HTMLElement | null>(null)
 const deleteDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
@@ -319,6 +363,8 @@ const displaySessions = computed<AgentSessionSummary[]>(() => sessions.value
   .map(session => projectedFolderIds.value.has(session.id)
     ? { ...session, folderId: projectedFolderIds.value.get(session.id) ?? null }
     : session))
+const draggedSession = computed(() =>
+  displaySessions.value.find(session => session.id === draggedSessionId.value) ?? null)
 const filteredRecentSessions = computed(() =>
   displaySessions.value.filter(session => session.folderId === null && sessionMatchesSearch(session)))
 const sessionsForFolder = (folderId: string): AgentSessionSummary[] =>
@@ -372,6 +418,53 @@ const clearProjectedFolder = (sessionId: string): void => {
 }
 const sessionBusy = (sessionId: string): boolean =>
   refreshingHistory.value || openingSessionIds.value.has(sessionId) || movingSessionIds.value.has(sessionId)
+const hasRenderedDropDestination = (session: AgentSessionSummary): boolean =>
+  session.folderId !== null || visibleFolderGroups.value.some(group => group.folder.id !== session.folderId)
+const canDragSession = (session: AgentSessionSummary): boolean =>
+  !sessionBusy(session.id) && hasRenderedDropDestination(session)
+const dropTargetKey = (folderId: string | null): string => folderId ?? recentDropTarget
+const isActiveDropTarget = (folderId: string | null): boolean =>
+  activeDropTarget.value === dropTargetKey(folderId)
+const canDropTo = (folderId: string | null): boolean => {
+  const session = draggedSession.value
+  return Boolean(session && session.folderId !== folderId && !sessionBusy(session.id))
+}
+const clearDragState = (): void => {
+  draggedSessionId.value = null
+  activeDropTarget.value = null
+}
+const beginSessionDrag = (event: DragEvent, session: AgentSessionSummary): void => {
+  if (!canDragSession(session)) {
+    event.preventDefault()
+    return
+  }
+  draggedSessionId.value = session.id
+  activeDropTarget.value = null
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', session.id)
+  }
+  dragStatus.value = `Dragging ${session.title || 'New conversation'}. Drop it on Recent or a saved folder.`
+}
+const finishSessionDrag = (): void => {
+  if (draggedSessionId.value) dragStatus.value = 'Conversation move cancelled.'
+  clearDragState()
+}
+const setDropTarget = (event: DragEvent, folderId: string | null): void => {
+  if (!canDropTo(folderId)) return
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  activeDropTarget.value = dropTargetKey(folderId)
+}
+const leaveDropTarget = (event: DragEvent, folderId: string | null): void => {
+  const currentTarget = event.currentTarget as HTMLElement | null
+  if (event.relatedTarget && currentTarget?.contains(event.relatedTarget as Node)) return
+  if (isActiveDropTarget(folderId)) activeDropTarget.value = null
+}
+const dropDestinationName = (folderId: string | null): string =>
+  folderId === null ? 'Recent' : folders.value.find(folder => folder.id === folderId)?.name ?? 'the saved folder'
+const sessionLocationName = (session: AgentSessionSummary): string =>
+  session.folderId === null ? 'Recent' : folders.value.find(folder => folder.id === session.folderId)?.name ?? 'its current folder'
 const showCommittedRefreshFailure = (): boolean => {
   if (!agents.error) return false
   refreshError.value = `Showing last-loaded conversation history. ${agents.error}`
@@ -435,22 +528,37 @@ const openSession = async (sessionId: string): Promise<void> => {
   }
 }
 
-const moveSession = async (session: AgentSessionSummary, folderId: string | null): Promise<void> => {
-  if (refreshingHistory.value || session.folderId === folderId || movingSessionIds.value.has(session.id)) return
+const moveSession = async (session: AgentSessionSummary, folderId: string | null): Promise<boolean> => {
+  if (refreshingHistory.value || session.folderId === folderId || movingSessionIds.value.has(session.id)) return false
+  const title = session.title || 'New conversation'
+  const destination = dropDestinationName(folderId)
+  const originalLocation = sessionLocationName(session)
   localError.value = ''
   refreshError.value = ''
   agents.error = ''
+  dragStatus.value = `Moving ${title} to ${destination}.`
   updatePendingSet(movingSessionIds, session.id, true)
   try {
     await agents.moveSessionToFolder(session.id, folderId)
     setProjectedFolder(session.id, folderId)
     if (!showCommittedRefreshFailure()) clearProjectedFolder(session.id)
     if (folderId && !openFolderIds.value.includes(folderId)) openFolderIds.value.push(folderId)
+    dragStatus.value = `Moved ${title} to ${destination}.`
+    return true
   } catch (value) {
     localError.value = message(value, 'The conversation could not be moved.')
+    dragStatus.value = `${title} could not be moved. It remains in ${originalLocation}.`
+    return false
   } finally {
     updatePendingSet(movingSessionIds, session.id, false)
   }
+}
+const dropSession = async (event: DragEvent, folderId: string | null): Promise<void> => {
+  if (!canDropTo(folderId)) return
+  event.preventDefault()
+  const session = draggedSession.value
+  clearDragState()
+  if (session) await moveSession(session, folderId)
 }
 const beginCreateFolder = (): void => {
   if (loading.value) return
@@ -682,7 +790,11 @@ onBeforeUnmount(() => {
   justify-content: center;
   min-height: var(--wiki-control-height);
 }
-.agent-history__recent { border-bottom: 1px solid var(--wiki-surface-border); padding-bottom: var(--wiki-space-3); }
+.agent-history__recent {
+  border-bottom: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-control-radius);
+  padding-bottom: var(--wiki-space-3);
+}
 .agent-history__folders { padding-top: var(--wiki-space-4); }
 .agent-history__section-heading {
   align-items: center;
@@ -724,6 +836,14 @@ onBeforeUnmount(() => {
   min-height: 3.25rem;
   position: relative;
   transition: background-color var(--wiki-motion-fast) var(--wiki-motion-ease), border-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+.agent-history__session[draggable='true'] { cursor: grab; }
+.agent-history__session[draggable='true']:active { cursor: grabbing; }
+.agent-history__session--dragging {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
+  border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 38%, transparent);
+  cursor: grabbing;
+  opacity: .52;
 }
 .agent-history__session::before {
   background: rgb(var(--v-theme-primary));
@@ -787,6 +907,18 @@ onBeforeUnmount(() => {
 .agent-history__folder-row { align-items: stretch; display: flex; }
 .agent-history__folder-row .agent-history__folder-title { flex: 1; min-width: 0; }
 .agent-history__folder-actions { align-self: center; flex: 0 0 auto; margin-inline-end: var(--wiki-space-1); }
+.agent-history__drop-target--available {
+  outline: 1px dashed color-mix(in srgb, rgb(var(--v-theme-primary)) 48%, transparent);
+  outline-offset: -2px;
+}
+.agent-history__drop-target--active {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 14%, var(--wiki-surface-sunken));
+  outline: 2px solid rgb(var(--v-theme-primary));
+  outline-offset: -2px;
+}
+.agent-history__folder-panels :deep(.v-expansion-panel.agent-history__drop-target--active) {
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 14%, var(--wiki-surface-sunken));
+}
 
 @media (pointer: coarse) {
   .agent-history__folder-actions {
@@ -819,6 +951,9 @@ onBeforeUnmount(() => {
   .agent-history__empty,
   .agent-history__folder-panels :deep(.v-expansion-panel),
   .agent-history__session.v-list-item--active { border: 1px solid CanvasText; }
+  .agent-history__drop-target--available,
+  .agent-history__drop-target--active,
+  .agent-history__session--dragging { outline: 2px solid Highlight; }
   .agent-history__session.v-list-item--active::before { background: Highlight; }
 }
 </style>

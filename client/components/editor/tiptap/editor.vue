@@ -1,6 +1,6 @@
 <template lang='pug'>
   .editor-tiptap(ref='root')
-    v-toolbar.editor-tiptap-toolbar(flat)
+    v-toolbar.editor-tiptap-toolbar(flat, density='compact')
       .editor-tiptap-toolbar-inner(role='toolbar', aria-label='Formatting toolbar')
         .editor-tiptap-toolbar-group(role='group', aria-label='History')
           v-btn.editor-tiptap-tool(icon, size='small', title='Undo', aria-label='Undo', :disabled='!canUndo', @click='editor?.chain().focus().undo().run()')
@@ -164,10 +164,8 @@
           .editor-tiptap-glyph-footer
             span {{filteredGlyphs.length}} of {{glyphs.length}}
             span Fuzzy search
-    .editor-tiptap-page-status(aria-hidden='true')
-      v-icon(size='16') mdi-eye-outline
-      span Live page appearance
-    editor-content.editor-tiptap-page-canvas.contents(:editor='editor')
+    .editor-tiptap-page-canvas.editor-page-canvas
+      editor-content.contents(:editor='editor')
     v-system-bar.editor-status-bar.editor-tiptap-sysbar(status)
       .text-body-small.editor-tiptap-sysbar-locale {{locale.toUpperCase()}}
       .text-body-small.editor-tiptap-sysbar-path.px-3(:title='`/${path}`') /{{path}}
@@ -619,47 +617,53 @@ export default defineComponent({
   position: relative;
 
   &-toolbar {
-    background: color-mix(in srgb, var(--editor-surface) 94%, var(--editor-primary) 6%) !important;
-    border-bottom: 1px solid var(--editor-border);
-    box-shadow: 0 4px 18px rgba(0, 0, 0, .06);
-    flex: 0 0 auto;
     overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    border-bottom: 1px solid var(--editor-border);
+    background: color-mix(in srgb, var(--editor-surface) 94%, var(--editor-primary) 6%) !important;
+    box-shadow: var(--wiki-shadow-xs);
     scrollbar-color: rgba(var(--v-theme-on-surface), .18) transparent;
     scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
 
     .v-toolbar__content {
-      justify-content: center;
-      min-height: 54px;
       min-width: max-content;
-      padding: 7px 12px;
+      min-height: calc(var(--wiki-control-height) + var(--wiki-space-1));
+      justify-content: safe center;
+      padding: var(--wiki-space-1) var(--wiki-space-3);
+
+      @include until($tablet) {
+        justify-content: flex-start;
+        padding-inline: var(--wiki-space-2);
+      }
     }
   }
 
   &-toolbar-inner {
-    align-items: center;
     display: flex;
-    gap: 7px;
-    margin-inline: auto;
     width: max-content;
+    align-items: center;
+    gap: var(--wiki-space-1);
+    margin-inline: auto;
   }
 
   &-toolbar-group {
-    align-items: center;
-    background: rgba(var(--v-theme-on-surface), .045);
-    border: 1px solid rgba(var(--v-theme-on-surface), .08);
-    border-radius: 12px;
     display: inline-flex;
-    gap: 1px;
-    padding: 3px;
+    align-items: center;
+    gap: 0;
+    padding: var(--wiki-space-1);
+    border: 1px solid rgba(var(--v-theme-on-surface), .08);
+    border-radius: var(--wiki-control-radius);
+    background: rgba(var(--v-theme-on-surface), .045);
   }
 
   &-tool,
   &-style-trigger {
-    border-radius: 8px !important;
-    color: rgba(var(--v-theme-on-surface), .82);
-    height: 32px !important;
-    letter-spacing: 0;
+    height: calc(var(--wiki-control-height) - var(--wiki-space-3)) !important;
     margin: 0;
+    border-radius: var(--wiki-radius-xs) !important;
+    color: rgba(var(--v-theme-on-surface), .82);
+    letter-spacing: 0;
 
     &:hover {
       background: rgba(var(--v-theme-primary), .1);
@@ -673,51 +677,59 @@ export default defineComponent({
   }
 
   &-tool {
-    min-width: 32px !important;
-    width: 32px;
+    width: calc(var(--wiki-control-height) - var(--wiki-space-3));
+    min-width: calc(var(--wiki-control-height) - var(--wiki-space-3)) !important;
   }
 
   &-style-trigger {
-    min-width: 88px;
-    padding-inline: 10px;
+    min-width: calc(var(--wiki-control-height) * 2);
+    padding-inline: var(--wiki-space-2);
     text-transform: none;
   }
 
   &-source-trigger {
-    border-radius: 9px !important;
+    border-radius: var(--wiki-control-radius) !important;
     text-transform: none;
   }
 
   &-markdown-tools {
-    align-items: center;
-    background: color-mix(in srgb, var(--editor-surface) 97%, var(--editor-primary) 3%);
-    border-bottom: 1px solid var(--editor-border);
     display: flex;
     flex: 0 0 auto;
-    gap: 8px;
-    justify-content: center;
+    align-items: center;
+    justify-content: safe center;
+    gap: var(--wiki-space-2);
+    min-height: var(--wiki-control-height);
+    padding: var(--wiki-space-1) var(--wiki-space-3);
     overflow-x: auto;
-    padding: 8px 12px;
+    overscroll-behavior-inline: contain;
+    border-bottom: 1px solid var(--editor-border);
+    background: color-mix(in srgb, var(--editor-surface) 97%, var(--editor-primary) 3%);
+    scrollbar-color: rgba(var(--v-theme-on-surface), .18) transparent;
     scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+
+    @include until($tablet) {
+      justify-content: flex-start;
+      padding-inline: var(--wiki-space-2);
+    }
   }
 
   &-insert-label {
-    align-items: center;
-    color: var(--editor-muted);
     display: inline-flex;
     flex: 0 0 auto;
+    align-items: center;
+    gap: var(--wiki-space-1);
+    color: var(--editor-muted);
     font-size: .72rem;
     font-weight: 700;
-    gap: 5px;
     letter-spacing: .08em;
-    margin-right: 2px;
     text-transform: uppercase;
   }
 
   &-insert-button {
-    border-radius: 10px !important;
-    color: rgba(var(--v-theme-on-surface), .84);
     flex: 0 0 auto;
+    border-radius: var(--wiki-control-radius) !important;
+    color: rgba(var(--v-theme-on-surface), .84);
     letter-spacing: 0;
     text-transform: none;
 
@@ -754,44 +766,22 @@ export default defineComponent({
     }
   }
 
-  &-page-status {
-    display: inline-flex;
-    flex: 0 0 auto;
-    align-items: center;
-    align-self: center;
-    gap: var(--wiki-space-2);
-    margin-block-start: var(--wiki-space-3);
-    padding: var(--wiki-space-1) var(--wiki-space-3);
-    border: 1px solid var(--wiki-surface-border);
-    border-radius: 999px;
-    background: var(--wiki-surface-soft);
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
-    font-size: .7rem;
-    font-weight: var(--wiki-label-weight);
-    letter-spacing: .06em;
-    text-transform: uppercase;
-  }
-
-  > .contents {
+  > .editor-tiptap-page-canvas {
     position: relative;
     isolation: isolate;
     flex: 1 1 auto;
     width: min(1000px, calc(100% - var(--wiki-space-8)));
     min-height: 0;
-    margin: var(--wiki-space-2) auto var(--wiki-space-5);
+    margin: 0 auto var(--wiki-space-5);
     padding: clamp(var(--wiki-space-6), 3vw, var(--wiki-space-12));
     overflow-x: hidden;
     overflow-y: auto;
     border: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-hero-radius);
     background: rgb(var(--v-theme-surface));
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 88%, transparent);
     box-shadow:
       var(--wiki-shadow-inset),
       var(--wiki-shadow-sm);
-    font-family: var(--wiki-font-body);
-    font-size: clamp(.9875rem, .95rem + .14vw, 1.0625rem);
-    line-height: 1.78;
     transition:
       border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
       box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
@@ -820,239 +810,47 @@ export default defineComponent({
 
   .tiptap {
     max-width: 76ch;
-    min-height: 100%;
     margin-inline: auto;
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 88%, transparent);
+    min-height: 100%;
     caret-color: var(--wiki-accent-warm);
-    font-family: var(--wiki-font-body);
-    font-size: inherit;
-    line-height: inherit;
     outline: none;
     overflow-wrap: anywhere;
-    text-wrap: pretty;
-
-    > :first-child {
-      margin-block-start: 0;
-    }
-
-    > :last-child {
-      margin-block-end: 0;
-    }
 
     ::selection {
       background: color-mix(in srgb, var(--wiki-accent-spectral) 26%, transparent);
     }
 
-    h1,
-    h2,
-    h3,
-    h4,
-    h5,
-    h6 {
-      color: rgb(var(--v-theme-on-surface));
-      font-family: var(--wiki-font-heading);
-      font-weight: 720;
-      letter-spacing: -.025em;
-      line-height: var(--wiki-leading-heading);
-      text-wrap: balance;
-    }
-
-    h1 {
-      margin: 0 0 var(--wiki-space-6);
-      color: color-mix(in srgb, var(--wiki-accent-warm) 82%, rgb(var(--v-theme-on-surface)));
-      font-size: clamp(1.75rem, 1.5rem + 1vw, 2.375rem);
-      letter-spacing: -.04em;
-    }
-
-    h2 {
-      margin: var(--wiki-space-12) 0 var(--wiki-space-4);
-      padding-block-end: var(--wiki-space-2);
-      border-bottom: 1px solid var(--wiki-surface-border);
-      font-size: clamp(1.4rem, 1.2rem + .7vw, 1.8125rem);
-    }
-
-    h3 {
-      margin: var(--wiki-space-10) 0 var(--wiki-space-3);
-      font-size: clamp(1.1875rem, 1.08rem + .35vw, 1.375rem);
-    }
-
-    h4,
-    h5,
-    h6 {
-      margin: var(--wiki-space-8) 0 var(--wiki-space-2);
-      font-size: 1.0625rem;
-      letter-spacing: -.012em;
-    }
-
-    p {
-      margin: 0 0 var(--wiki-space-5);
-      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 86%, transparent);
-    }
-
-    a {
-      color: color-mix(in srgb, var(--wiki-accent-warm) 82%, rgb(var(--v-theme-on-surface)));
-      font-weight: 580;
-      text-decoration-color: color-mix(in srgb, currentColor 38%, transparent);
-      text-decoration-thickness: .08em;
-      text-underline-offset: .18em;
-
-      &:hover,
-      &:focus-visible {
-        color: var(--wiki-accent-warm);
-        text-decoration-color: currentColor;
-      }
-    }
-
-    blockquote {
-      --page-callout-tone: var(--wiki-accent-warm);
-
-      margin: var(--wiki-space-6) 0;
-      padding: var(--wiki-space-4) var(--wiki-space-5);
-      border: 1px solid color-mix(in srgb, var(--page-callout-tone) 24%, var(--wiki-surface-border));
-      border-inline-start: .25rem solid var(--page-callout-tone);
-      border-radius: var(--wiki-panel-radius);
-      background: color-mix(in srgb, var(--page-callout-tone) 7%, rgb(var(--v-theme-surface)));
-      color: rgb(var(--v-theme-on-surface));
-      box-shadow: var(--wiki-shadow-inset);
-    }
-
-    ul:not([data-type='taskList']),
-    ol {
-      width: 100%;
-      margin: var(--wiki-space-3) 0 var(--wiki-space-5);
-      padding-inline-start: var(--wiki-space-6);
-
-      > li {
-        margin: var(--wiki-space-1) 0;
-        padding-inline-start: var(--wiki-space-1);
-
-        &::marker {
-          color: color-mix(in srgb, var(--wiki-accent-warm) 72%, var(--wiki-accent-spectral));
-          font-weight: 650;
-        }
-      }
-    }
-
-    hr {
-      height: 1px;
-      margin: var(--wiki-space-10) 0;
-      border: 0;
-      background: linear-gradient(
-        to right,
-        transparent,
-        var(--wiki-surface-border-strong) 18%,
-        var(--wiki-surface-border-strong) 82%,
-        transparent
-      );
-    }
-
-    img {
-      border-radius: 10px;
-      height: auto;
-      max-width: 100%;
-    }
-
     p.is-editor-empty:first-child::before {
-      color: rgba(var(--v-theme-on-surface), .42);
-      content: attr(data-placeholder);
       float: left;
       height: 0;
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 42%, transparent);
+      content: attr(data-placeholder);
       pointer-events: none;
     }
 
-    dl {
-      margin: 1em 0;
-    }
+    table .selectedCell {
+      position: relative;
 
-    dt {
-      font-weight: 700;
-    }
-
-    dd {
-      border-left: 2px solid var(--editor-border);
-      margin: .25em 0 .9em .5em;
-      padding-left: 1em;
-    }
-
-    table {
-      width: 100%;
-      margin: var(--wiki-space-6) 0;
-      border: 1px solid var(--wiki-surface-border);
-      border-collapse: separate;
-      border-spacing: 0;
-      border-radius: var(--wiki-panel-radius);
-      background: rgb(var(--v-theme-surface));
-      box-shadow: var(--wiki-shadow-xs);
-      table-layout: fixed;
-
-      td,
-      th {
-        position: relative;
-        min-width: 1em;
-        padding: var(--wiki-space-3) var(--wiki-space-4);
-        border-inline-end: 1px solid var(--wiki-surface-border);
-        border-block-end: 1px solid var(--wiki-surface-border);
-        vertical-align: top;
-
-        &:first-child {
-          border-left: 1px solid var(--editor-border);
-        }
-      }
-
-      tr:first-child {
-        td,
-        th {
-          border-top: 1px solid var(--editor-border);
-        }
-
-        > :first-child {
-          border-top-left-radius: 9px;
-        }
-
-        > :last-child {
-          border-top-right-radius: 9px;
-        }
-      }
-
-      tr:last-child {
-        > :first-child {
-          border-bottom-left-radius: 9px;
-        }
-
-        > :last-child {
-          border-bottom-right-radius: 9px;
-        }
-      }
-
-      th {
-        background: color-mix(in srgb, var(--wiki-accent-spectral) 7%, var(--wiki-surface-raised));
-        color: rgb(var(--v-theme-on-surface));
-        font-size: var(--wiki-label-size);
-        font-weight: var(--wiki-label-weight);
-        letter-spacing: .055em;
-        text-transform: uppercase;
-      }
-
-      .selectedCell::after {
-        background: rgba(var(--v-theme-primary), .18);
-        content: '';
-        inset: 0;
-        pointer-events: none;
+      &::after {
         position: absolute;
+        inset: 0;
+        background: color-mix(in srgb, rgb(var(--v-theme-primary)) 18%, transparent);
+        content: '';
+        pointer-events: none;
       }
     }
 
     ul[data-type='taskList'] {
+      padding-inline-start: 0;
       list-style: none;
-      padding-left: 0;
 
       li {
-        align-items: flex-start;
         display: flex;
-        gap: .6em;
+        align-items: flex-start;
+        gap: var(--wiki-space-2);
 
         > label {
-          margin-top: .18em;
+          margin-block-start: var(--wiki-space-1);
         }
 
         > div {
@@ -1063,50 +861,6 @@ export default defineComponent({
       input[type='checkbox'] {
         accent-color: var(--editor-primary);
       }
-    }
-
-    pre {
-      overflow-x: auto;
-      margin: var(--wiki-space-6) 0;
-      padding: var(--wiki-space-4);
-      border: 1px solid var(--wiki-surface-border);
-      border-radius: var(--wiki-panel-radius);
-      background: var(--wiki-surface-sunken);
-      color: rgb(var(--v-theme-on-surface));
-      box-shadow: var(--wiki-shadow-sm);
-      font-family: var(--wiki-font-mono);
-      line-height: 1.65;
-      scrollbar-gutter: stable;
-    }
-
-    code:not(pre code) {
-      padding: .16em .42em;
-      border: 1px solid var(--wiki-surface-border);
-      border-radius: var(--wiki-radius-xs);
-      background: color-mix(in srgb, var(--wiki-accent-spectral) 6%, var(--wiki-surface-sunken));
-      color: color-mix(in srgb, var(--wiki-accent-warm) 74%, rgb(var(--v-theme-on-surface)));
-      font-family: var(--wiki-font-mono);
-      font-size: .88em;
-    }
-
-    kbd {
-      padding: .16em .42em;
-      border: 1px solid var(--wiki-surface-border);
-      border-bottom-color: var(--wiki-surface-border-strong);
-      border-radius: var(--wiki-radius-xs);
-      background: color-mix(in srgb, var(--wiki-accent-spectral) 6%, var(--wiki-surface-sunken));
-      color: color-mix(in srgb, var(--wiki-accent-warm) 74%, rgb(var(--v-theme-on-surface)));
-      box-shadow: 0 .125rem 0 var(--wiki-surface-border);
-      font-family: var(--wiki-font-mono);
-      font-size: .88em;
-      font-weight: 650;
-    }
-
-    mark {
-      background: rgba(255, 193, 7, .32);
-      border-radius: 3px;
-      color: inherit;
-      padding-inline: .08em;
     }
 
     wiki-source-block,
@@ -1120,20 +874,20 @@ export default defineComponent({
 
     wiki-source-block {
       display: block;
-      margin: 1em 0;
+      margin: var(--wiki-space-4) 0;
+      padding: var(--wiki-space-3);
       overflow-x: auto;
-      padding: .8em;
       white-space: pre-wrap;
 
       .wiki-source-label {
-        background: color-mix(in srgb, var(--wiki-accent-warm) 82%, rgb(var(--v-theme-surface)));
-        border-radius: var(--wiki-radius-xs);
-        color: rgb(var(--v-theme-on-primary));
         display: inline-block;
+        margin: 0 var(--wiki-space-2) var(--wiki-space-1) 0;
+        padding: 0 var(--wiki-space-1);
+        border-radius: var(--wiki-radius-xs);
+        background: color-mix(in srgb, var(--wiki-accent-warm) 82%, rgb(var(--v-theme-surface)));
+        color: rgb(var(--v-theme-on-primary));
         font-size: .7em;
         font-weight: 700;
-        margin: 0 .7em .3em 0;
-        padding: .12em .45em;
         text-transform: uppercase;
       }
 
@@ -1144,13 +898,13 @@ export default defineComponent({
 
     wiki-source-inline {
       display: inline;
+      padding: 0 var(--wiki-space-1);
       font-family: var(--wiki-font-mono);
-      padding: .1em .3em;
       white-space: pre-wrap;
     }
 
     .ProseMirror-selectednode {
-      box-shadow: 0 0 0 3px rgba(var(--v-theme-primary), .35);
+      box-shadow: 0 0 0 var(--wiki-space-1) color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, transparent);
     }
   }
 }

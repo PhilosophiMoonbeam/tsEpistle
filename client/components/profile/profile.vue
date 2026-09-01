@@ -136,14 +136,13 @@
               .text-body-large {{$t('profile:auth.title')}}
           v-card-text.pt-0
             v-list-subheader.pl-0: span.text-label-large {{$t('profile:auth.provider')}}
-            v-toolbar(
+            v-toolbar.profile-auth-provider(
               flat
-              :color='$vuetify.theme.current.dark ? "grey-darken-2" : "purple-lighten-5"'
               density="compact"
-              :class='$vuetify.theme.current.dark ? "text-grey-lighten-1" : "text-purple-darken-4"'
               )
-              v-icon(:color='$vuetify.theme.current.dark ? "grey-lighten-1" : "purple-darken-4"') mdi-shield-lock
-              .text-body-large.ml-3 {{ user.providerName }}
+              .profile-auth-provider__mark
+                v-icon(aria-hidden='true') mdi-shield-lock
+              .profile-auth-provider__name.text-body-large {{ user.providerName }}
             //- v-divider.mt-3
             //- v-list-subheader.pl-0: span.text-label-large Two-Factor Authentication (2FA)
             //- .text-body-small.mb-2 2FA adds an extra layer of security by requiring a unique code generated on your smartphone when signing in.
@@ -965,5 +964,35 @@ export default {
 </script>
 
 <style lang='scss'>
+.profile-auth-provider {
+  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background:
+    linear-gradient(110deg, color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent), transparent 60%),
+    color-mix(in srgb, var(--wiki-surface-raised) 92%, transparent);
+  color: rgb(var(--v-theme-on-surface));
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
 
+  .v-toolbar__content {
+    gap: var(--wiki-space-3);
+    padding-inline: var(--wiki-space-3);
+  }
+
+  &__mark {
+    display: grid;
+    width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+    height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+    flex: 0 0 auto;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, var(--wiki-surface-border));
+    border-radius: var(--wiki-control-radius);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, transparent);
+    color: var(--wiki-accent-warm);
+    box-shadow: var(--wiki-shadow-inset);
+  }
+
+  &__name {
+    min-width: 0;
+  }
+}
 </style>

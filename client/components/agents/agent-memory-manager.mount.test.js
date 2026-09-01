@@ -29,10 +29,14 @@ const loadManager = view => {
     'createModalFocusScope',
     'window',
     'HTMLElement',
-    `${executableScript}\nreturn { loaded, memories, sections, canAddMemory, addMemoryDisabledReason, clearMemoryDisabledReason }`
+    `${executableScript}\nreturn { loaded, memories, sections, memoryCountLabel, canAddMemory, addMemoryDisabledReason, clearMemoryDisabledReason }`
   )
   const manager = evaluate(
-    getter => ({ get value () { return getter() } }),
+    getter => ({
+      get value() {
+        return getter()
+      }
+    }),
     () => Promise.resolve(),
     () => undefined,
     ref,
@@ -65,9 +69,30 @@ describe('Agent memory manager initial loading', () => {
 
     expect(getAgentMemories).toHaveBeenCalledTimes(1)
     expect(manager.loaded.value).toBe(true)
-    expect(manager.sections.value.map(section => section.title)).toEqual(['About you', 'Agent notes'])
+    expect(manager.sections.value.map(section => section.title)).toEqual(['You', 'Agent'])
+    expect(manager.memoryCountLabel.value).toBe('0 saved records')
     expect(manager.canAddMemory.value).toBe(true)
     expect(manager.addMemoryDisabledReason.value).toBeUndefined()
     expect(manager.clearMemoryDisabledReason.value).toBe('No saved memory to clear')
+  })
+
+  it('reports one accurate saved-record count across both sections', async () => {
+    const entry = (id, target) => ({
+      id,
+      target,
+      content: `Memory ${id}`,
+      version: 1,
+      createdAt: '2026-09-01T10:00:00.000Z',
+      updatedAt: '2026-09-01T10:00:00.000Z'
+    })
+    const { manager } = loadManager({
+      agent: { entries: [entry('agent-1', 'agent'), entry('agent-2', 'agent')], characters: 30, limit: 2_200 },
+      user: { entries: [entry('user-1', 'user')], characters: 13, limit: 1_375 }
+    })
+
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(manager.memoryCountLabel.value).toBe('3 saved records')
   })
 })

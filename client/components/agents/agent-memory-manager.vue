@@ -2,15 +2,20 @@
   <v-card class="agent-memory" elevation="0" rounded="xl" :aria-busy="loading">
     <header class="agent-memory__hero">
       <div class="agent-memory__mark" aria-hidden="true">
-        <v-icon icon="mdi-archive-outline" size="24" />
+        <v-icon icon="mdi-archive-outline" size="21" />
       </div>
       <div class="agent-memory__heading">
-        <p class="agent-memory__eyebrow">Personal archive</p>
         <div class="agent-memory__title-row">
-          <h2 class="text-title-large">Agent memory</h2>
-          <v-chip color="primary" size="x-small" variant="tonal">New conversations</v-chip>
+          <h2 class="text-title-medium">Agent memory</h2>
+          <span
+            v-if="loaded"
+            class="agent-memory__count"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+          >{{ memoryCountLabel }}</span>
         </div>
-        <p class="agent-memory__intro">Review the durable details Wiki carries forward on your account.</p>
+        <p class="agent-memory__intro">A deliberate snapshot, not hidden learning.</p>
       </div>
       <v-btn ref="memoryCloseButton" class="agent-memory__close" icon="mdi-close" variant="text" aria-label="Close agent memory" @click="open = false" />
     </header>
@@ -27,30 +32,15 @@
       </v-alert>
 
       <div v-if="loading && !loaded" class="agent-memory__state" role="status" aria-live="polite">
-        <v-progress-circular color="primary" indeterminate :size="32" :width="3" aria-hidden="true" />
-        <div>
-          <h3 class="text-title-medium">Opening your memory archive</h3>
-          <p>Loading saved profile details and Agent notes.</p>
-        </div>
+        <v-progress-circular color="primary" indeterminate :size="24" :width="2" aria-hidden="true" />
+        <span>Loading memory…</span>
       </div>
 
       <template v-else-if="loaded">
         <p v-if="loading" class="agent-memory__refresh" role="status" aria-live="polite">
           <v-icon icon="mdi-sync" size="16" aria-hidden="true" />
-          Refreshing the archive…
+          Refreshing memory…
         </p>
-
-        <section class="agent-memory__scope" aria-labelledby="agent-memory-scope-title">
-          <div>
-            <p class="agent-memory__eyebrow">Scope &amp; retention</p>
-            <h3 id="agent-memory-scope-title" class="text-title-medium">A deliberate snapshot, not hidden learning</h3>
-            <p>Memory is copied into a conversation when it begins. Changes here affect future conversations only; existing transcripts keep their original snapshot.</p>
-          </div>
-          <div class="agent-memory__scope-count" aria-label="Current memory count">
-            <strong>{{ memoryCount }}</strong>
-            <span>{{ memoryCount === 1 ? 'saved record' : 'saved records' }}</span>
-          </div>
-        </section>
 
         <v-expand-transition>
           <section v-if="editing" class="agent-memory__editor" aria-labelledby="agent-memory-editor-title">
@@ -63,10 +53,10 @@
             </header>
 
             <fieldset class="agent-memory__target">
-              <legend>File this record under</legend>
+              <legend>Save under</legend>
               <v-btn-toggle v-model="draftTarget" color="primary" divided mandatory variant="outlined">
-                <v-btn value="user" prepend-icon="mdi-account-outline">About you</v-btn>
-                <v-btn value="agent" prepend-icon="mdi-notebook-outline">Agent notes</v-btn>
+                <v-btn value="user" prepend-icon="mdi-account-outline">You</v-btn>
+                <v-btn value="agent" prepend-icon="mdi-notebook-outline">Agent</v-btn>
               </v-btn-toggle>
             </fieldset>
 
@@ -104,31 +94,10 @@
         >
           <header class="agent-memory__section-header">
             <div class="agent-memory__section-mark" :class="`agent-memory__section-mark--${section.target}`" aria-hidden="true">
-              <v-icon :icon="section.icon" size="20" />
+              <v-icon :icon="section.icon" size="18" />
             </div>
-            <div class="agent-memory__section-heading">
-              <div class="agent-memory__section-title-row">
-                <h3 :id="`agent-memory-${section.target}`" class="text-title-medium">{{ section.title }}</h3>
-                <v-chip :color="capacityColor(section.store)" size="x-small" variant="tonal">{{ capacityState(section.store) }}</v-chip>
-              </div>
-              <p>{{ section.description }}</p>
-            </div>
+            <h3 :id="`agent-memory-${section.target}`" class="text-title-small">{{ section.title }}</h3>
           </header>
-
-          <div class="agent-memory__capacity-copy">
-            <span>{{ section.store.characters.toLocaleString() }} / {{ section.store.limit.toLocaleString() }} characters</span>
-            <strong>{{ remainingLabel(section.store) }}</strong>
-          </div>
-          <v-progress-linear
-            class="agent-memory__capacity"
-            :color="capacityColor(section.store)"
-            :model-value="capacityPercent(section.store)"
-            rounded
-            :aria-label="`${section.title} memory capacity: ${section.store.characters.toLocaleString()} of ${section.store.limit.toLocaleString()} characters used`"
-          />
-          <v-alert v-if="!canAddTo(section.target)" class="agent-memory__limit-alert" color="warning" icon="mdi-archive-lock-outline" variant="tonal" density="compact">
-            This section has no room for another record. Consolidate or remove an item before adding more.
-          </v-alert>
 
           <div v-if="section.store.entries.length" class="agent-memory__entries">
             <article v-for="(entry, index) in section.store.entries" :key="entry.id" class="agent-memory__entry">
@@ -144,23 +113,20 @@
             </article>
           </div>
           <div v-else class="agent-memory__empty">
-            <v-icon :icon="section.icon" size="24" aria-hidden="true" />
-            <div>
-              <h4 class="text-title-small">{{ section.emptyTitle }}</h4>
-              <p>{{ section.empty }}</p>
-            </div>
+            <v-icon :icon="section.icon" size="20" aria-hidden="true" />
+            <p>{{ section.empty }}</p>
             <v-btn color="primary" variant="tonal" prepend-icon="mdi-plus" :aria-label="`Add ${section.target === 'user' ? 'personal detail' : 'Agent note'} to ${section.title}`" :disabled="Boolean(actionBusy) || stale || loading || !canAddTo(section.target)" @click="beginAdd(section.target)">
-              {{ section.target === 'user' ? 'Add first personal detail' : 'Add first Agent note' }}
+              {{ section.target === 'user' ? 'Add detail' : 'Add note' }}
             </v-btn>
           </div>
+          <v-alert v-if="!canAddTo(section.target)" class="agent-memory__limit-alert" color="warning" icon="mdi-archive-lock-outline" variant="tonal" density="compact">
+            Full. Edit or remove a record to add another.
+          </v-alert>
         </section>
 
         <aside class="agent-memory__safety" aria-label="Memory safety">
-          <v-icon icon="mdi-shield-lock-outline" size="21" aria-hidden="true" />
-          <div>
-            <strong>Private to your Wiki account</strong>
-            <p>Memory is bounded and reviewed by you. Do not store passwords, API keys, access tokens, or short-lived details.</p>
-          </div>
+          <v-icon icon="mdi-shield-lock-outline" size="18" aria-hidden="true" />
+          <p><strong>Private to your account.</strong> Changes apply to future conversations only. Never save passwords, keys, or tokens.</p>
         </aside>
       </template>
     </v-card-text>
@@ -249,6 +215,7 @@ let loadGeneration = 0
 
 const targetLimit = computed(() => memories.value[draftTarget.value].limit)
 const memoryCount = computed(() => memories.value.user.entries.length + memories.value.agent.entries.length)
+const memoryCountLabel = computed(() => `${memoryCount.value} saved ${memoryCount.value === 1 ? 'record' : 'records'}`)
 const projectedStoreCharacters = computed(() => {
   const currentId = editing.value?.id
   const contents = memories.value[draftTarget.value].entries
@@ -266,15 +233,6 @@ const draftCapacityLabel = computed(() => {
 })
 
 const remainingCharacters = (store: MemoryStore): number => Math.max(0, store.limit - store.characters)
-const capacityPercent = (store: MemoryStore): number => store.limit > 0 ? Math.min(100, store.characters / store.limit * 100) : 0
-const capacityState = (store: MemoryStore): string => {
-  const percent = capacityPercent(store)
-  if (percent >= 100) return 'Full'
-  if (percent >= 80) return 'Near limit'
-  return store.entries.length ? 'Curated' : 'Empty'
-}
-const capacityColor = (store: MemoryStore): string => capacityPercent(store) >= 80 ? 'warning' : 'primary'
-const remainingLabel = (store: MemoryStore): string => `${remainingCharacters(store).toLocaleString()} remaining`
 const canAddTo = (target: AgentMemoryTarget): boolean => {
   const store = memories.value[target]
   const requiredCharacters = store.entries.length ? 4 : 1
@@ -302,19 +260,15 @@ const memoryDateLabel = (entry: AgentMemoryEntry): string => {
 const sections = computed(() => [
   {
     target: 'user' as const,
-    title: 'About you',
-    description: 'Preferences, role, communication style, and durable working habits.',
-    emptyTitle: 'No profile records',
-    empty: 'Add a lasting preference that should shape how Wiki works with you.',
+    title: 'You',
+    empty: 'Save a lasting preference or personal detail.',
     icon: 'mdi-account-outline',
     store: memories.value.user
   },
   {
     target: 'agent' as const,
-    title: 'Agent notes',
-    description: 'Stable project, environment, convention, and workflow facts.',
-    emptyTitle: 'No Agent notes',
-    empty: 'Add project context worth carrying into future conversations.',
+    title: 'Agent',
+    empty: 'Save durable project or workflow context.',
     icon: 'mdi-notebook-outline',
     store: memories.value.agent
   }
@@ -498,12 +452,12 @@ onBeforeUnmount(() => {
 .agent-memory__hero {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: var(--wiki-control-height) minmax(0, 1fr) var(--wiki-control-height);
-  gap: var(--wiki-space-3);
-  align-items: start;
-  padding: var(--wiki-space-5);
+  grid-template-columns: calc(var(--wiki-control-height) - var(--wiki-space-1)) minmax(0, 1fr) var(--wiki-control-height);
+  gap: var(--wiki-space-2);
+  align-items: center;
+  padding: var(--wiki-space-3) var(--wiki-space-4);
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent), transparent 58%),
+    linear-gradient(135deg, color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent), transparent 58%),
     var(--wiki-surface-raised);
 }
 
@@ -519,8 +473,8 @@ onBeforeUnmount(() => {
 }
 
 .agent-memory__mark {
-  width: var(--wiki-control-height);
-  height: var(--wiki-control-height);
+  width: calc(var(--wiki-control-height) - var(--wiki-space-1));
+  height: calc(var(--wiki-control-height) - var(--wiki-space-1));
 }
 
 .agent-memory__heading {
@@ -536,8 +490,7 @@ onBeforeUnmount(() => {
   text-transform: uppercase;
 }
 
-.agent-memory__title-row,
-.agent-memory__section-title-row {
+.agent-memory__title-row {
   display: flex;
   flex-wrap: wrap;
   gap: var(--wiki-space-2);
@@ -545,21 +498,31 @@ onBeforeUnmount(() => {
 }
 
 .agent-memory__title-row h2,
-.agent-memory__section-title-row h3,
 .agent-memory__editor-header h3,
-.agent-memory__scope h3,
-.agent-memory__empty h4 {
+.agent-memory__section-header h3 {
   margin: 0;
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-heading);
   line-height: var(--wiki-leading-heading);
 }
 
+.agent-memory__count {
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
+  border-radius: var(--wiki-radius-pill);
+  background: color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent);
+  color: var(--wiki-accent-warm);
+  font-size: var(--wiki-label-size);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--wiki-label-weight);
+  line-height: 1;
+}
+
 .agent-memory__intro {
   margin: var(--wiki-space-1) 0 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
-  font-size: .8125rem;
-  line-height: 1.5;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
+  font-size: .75rem;
+  line-height: 1.35;
 }
 
 .agent-memory__close {
@@ -569,24 +532,22 @@ onBeforeUnmount(() => {
 .agent-memory__body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: var(--wiki-space-5) !important;
+  padding: var(--wiki-space-4) !important;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 .agent-memory__error,
-.agent-memory__scope,
 .agent-memory__editor,
 .agent-memory__section,
 .agent-memory__safety {
-  margin-bottom: var(--wiki-space-5);
+  margin-bottom: var(--wiki-space-3);
 }
 
 .agent-memory__error-content,
 .agent-memory__refresh,
 .agent-memory__editor-header,
 .agent-memory__editor-actions,
-.agent-memory__capacity-copy,
 .agent-memory__safety {
   display: flex;
   align-items: center;
@@ -600,35 +561,29 @@ onBeforeUnmount(() => {
 
 .agent-memory__state {
   display: flex;
-  min-height: calc(var(--wiki-space-12) * 4);
-  gap: var(--wiki-space-4);
+  min-height: calc(var(--wiki-space-12) * 2);
+  gap: var(--wiki-space-3);
   align-items: center;
   justify-content: center;
-  padding: var(--wiki-space-6);
+  padding: var(--wiki-space-4);
   border: 1px dashed var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-sunken);
 }
 
-.agent-memory__state h3,
-.agent-memory__state p,
 .agent-memory__refresh,
-.agent-memory__scope p,
-.agent-memory__section-heading p,
 .agent-memory__empty p,
 .agent-memory__safety p,
 .agent-memory__dialog p {
   margin: 0;
 }
 
-.agent-memory__state p,
-.agent-memory__scope p,
-.agent-memory__section-heading p,
+.agent-memory__state,
 .agent-memory__empty p,
 .agent-memory__safety p {
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
   font-size: .8125rem;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 
 .agent-memory__refresh {
@@ -638,49 +593,9 @@ onBeforeUnmount(() => {
   font-size: .75rem;
 }
 
-.agent-memory__scope {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--wiki-space-4);
-  align-items: center;
-  padding: var(--wiki-space-4);
-  border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 22%, var(--wiki-surface-border));
-  border-radius: var(--wiki-panel-radius);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--wiki-ambient-accent) 7%, transparent), transparent 64%),
-    var(--wiki-surface-sunken);
-  box-shadow: var(--wiki-shadow-inset);
-}
-
-.agent-memory__scope p:last-child {
-  margin-top: var(--wiki-space-2);
-}
-
-.agent-memory__scope-count {
-  display: grid;
-  min-width: calc(var(--wiki-space-12) * 2);
-  justify-items: end;
-}
-
-.agent-memory__scope-count strong {
-  color: var(--wiki-accent-warm);
-  font-family: var(--wiki-font-mono);
-  font-size: 1.375rem;
-  line-height: var(--wiki-leading-heading);
-}
-
-.agent-memory__scope-count span,
-.agent-memory__entry-meta,
-.agent-memory__shortcut,
-.agent-memory__capacity-copy {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .045em;
-}
 
 .agent-memory__editor {
-  padding: var(--wiki-space-4);
+  padding: var(--wiki-space-3);
   border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 32%, var(--wiki-surface-border));
   border-radius: var(--wiki-panel-radius);
   background: color-mix(in srgb, var(--wiki-accent-warm) 5%, var(--wiki-surface-raised));
@@ -688,14 +603,14 @@ onBeforeUnmount(() => {
 }
 
 .agent-memory__editor-header {
-  gap: var(--wiki-space-3);
+  gap: var(--wiki-space-2);
   justify-content: space-between;
-  margin-bottom: var(--wiki-space-4);
+  margin-bottom: var(--wiki-space-3);
 }
 
 .agent-memory__target {
   min-width: 0;
-  margin: 0 0 var(--wiki-space-4);
+  margin: 0 0 var(--wiki-space-3);
   padding: 0;
   border: 0;
 }
@@ -734,7 +649,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: var(--wiki-space-2);
   justify-content: flex-end;
-  margin-top: var(--wiki-space-4);
+  margin-top: var(--wiki-space-3);
 }
 
 .agent-memory__shortcut {
@@ -746,21 +661,21 @@ onBeforeUnmount(() => {
 }
 
 .agent-memory__section {
-  padding-bottom: var(--wiki-space-5);
+  padding-bottom: var(--wiki-space-3);
   border-bottom: 1px solid var(--wiki-surface-border);
 }
 
 .agent-memory__section-header {
   display: grid;
-  grid-template-columns: var(--wiki-control-height) minmax(0, 1fr);
-  gap: var(--wiki-space-3);
+  grid-template-columns: calc(var(--wiki-control-height) - var(--wiki-space-2)) minmax(0, 1fr);
+  gap: var(--wiki-space-2);
   align-items: center;
-  margin-bottom: var(--wiki-space-3);
+  margin-bottom: var(--wiki-space-2);
 }
 
 .agent-memory__section-mark {
-  width: var(--wiki-control-height);
-  height: var(--wiki-control-height);
+  width: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  height: calc(var(--wiki-control-height) - var(--wiki-space-2));
 }
 
 .agent-memory__section-mark--agent {
@@ -769,30 +684,9 @@ onBeforeUnmount(() => {
   color: var(--wiki-accent-spectral);
 }
 
-.agent-memory__section-heading {
-  min-width: 0;
-}
-
-.agent-memory__section-heading p {
-  margin-top: var(--wiki-space-1);
-}
-
-.agent-memory__capacity-copy {
-  gap: var(--wiki-space-2);
-  justify-content: space-between;
-  margin-bottom: var(--wiki-space-2);
-}
-
-.agent-memory__capacity-copy strong {
-  color: rgb(var(--v-theme-on-surface));
-}
-
-.agent-memory__capacity {
-  margin-bottom: var(--wiki-space-3);
-}
 
 .agent-memory__limit-alert {
-  margin-bottom: var(--wiki-space-3);
+  margin-top: var(--wiki-space-2);
 }
 
 .agent-memory__entries {
@@ -807,11 +701,11 @@ onBeforeUnmount(() => {
   display: grid;
   min-width: 0;
   content-visibility: auto;
-  contain-intrinsic-size: auto 7rem;
+  contain-intrinsic-size: auto 6rem;
   grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: var(--wiki-space-3);
+  gap: var(--wiki-space-2);
   align-items: start;
-  padding: var(--wiki-space-4);
+  padding: var(--wiki-space-3);
 }
 
 .agent-memory__entry + .agent-memory__entry {
@@ -861,12 +755,12 @@ onBeforeUnmount(() => {
 
 .agent-memory__empty {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: var(--wiki-space-3);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--wiki-space-2);
   align-items: center;
-  padding: var(--wiki-space-4);
+  padding: var(--wiki-space-3);
   border: 1px dashed var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-panel-radius);
+  border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-sunken);
 }
 
@@ -874,18 +768,10 @@ onBeforeUnmount(() => {
   color: var(--wiki-accent-warm);
 }
 
-.agent-memory__empty p {
-  margin-top: var(--wiki-space-1);
-}
-.agent-memory__empty .v-btn {
-  grid-column: 1 / -1;
-  width: 100%;
-}
-
 .agent-memory__safety {
-  gap: var(--wiki-space-3);
-  align-items: flex-start;
-  padding: var(--wiki-space-4);
+  gap: var(--wiki-space-2);
+  align-items: center;
+  padding: var(--wiki-space-2) var(--wiki-space-3);
   border-inline-start: var(--wiki-space-1) solid rgb(var(--v-theme-info));
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, rgb(var(--v-theme-info)) 8%, var(--wiki-surface-sunken));
@@ -899,7 +785,7 @@ onBeforeUnmount(() => {
 .agent-memory__footer {
   flex: 0 0 auto;
   gap: var(--wiki-space-2);
-  padding: var(--wiki-space-4) var(--wiki-space-5);
+  padding: var(--wiki-space-3) var(--wiki-space-4);
   background: var(--wiki-surface-raised);
 }
 
@@ -956,16 +842,15 @@ onBeforeUnmount(() => {
     grid-template-columns: var(--wiki-control-height) minmax(0, 1fr) var(--wiki-control-height);
   }
 
-  .agent-memory__scope {
-    grid-template-columns: minmax(0, 1fr);
+  .agent-memory__empty {
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .agent-memory__scope-count {
-    display: flex;
-    gap: var(--wiki-space-2);
-    align-items: baseline;
-    justify-items: start;
+  .agent-memory__empty .v-btn {
+    grid-column: 1 / -1;
+    width: 100%;
   }
+
 
   .agent-memory__entry {
     grid-template-columns: auto minmax(0, 1fr);
@@ -1000,7 +885,6 @@ onBeforeUnmount(() => {
 
 @media (forced-colors: active) {
   .agent-memory,
-  .agent-memory__scope,
   .agent-memory__editor,
   .agent-memory__entries,
   .agent-memory__empty,

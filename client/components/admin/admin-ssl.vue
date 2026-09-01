@@ -2,14 +2,14 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-validation.svg', alt='SSL', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:ssl.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft {{ $t('admin:ssl.subtitle') }}
-          v-spacer
-          .admin-header-actions
-            v-btn.animated.fadeInDown(
+        AdminHero(
+          :title='$t(`admin:ssl.title`)'
+          :description='$t(`admin:ssl.subtitle`)'
+          icon='/_assets/svg/icon-validation.svg'
+          heading-id='admin-ssl-heading'
+        )
+          template(v-slot:actions)
+            v-btn(
               v-if='infoLoaded && info.sslProvider === `letsencrypt` && info.httpsPort > 0'
               color='primary'
               variant="outlined"
@@ -266,12 +266,6 @@ export default {
 
 <style lang='scss'>
 
-.admin-header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: .5rem;
-}
 
 .ssl-redirect-action {
   flex-wrap: wrap;
@@ -279,11 +273,6 @@ export default {
 }
 
 @media (max-width: 599.98px) {
-  .admin-header-actions {
-    flex: 1 1 100%;
-  }
-
-  .admin-header-actions .v-btn,
   .ssl-redirect-action .v-btn {
     width: 100%;
   }

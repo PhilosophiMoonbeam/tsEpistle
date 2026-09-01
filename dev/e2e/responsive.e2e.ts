@@ -23,7 +23,55 @@ test.describe('responsive UI quality matrix', () => {
         await expectLocatorWithinViewport(headerPageActions, 'Header page actions')
       }
 
-      if (path === '/en/visual-markdown-browser' && viewport.width <= 959.98) {
+      const tocCard = page.locator('.page-toc-card').first()
+      if (await tocCard.count()) {
+        await expect(tocCard).toBeVisible()
+        const headingLinks = tocCard.locator('.page-toc-item')
+        for (const headingLink of await headingLinks.all()) {
+          await expect(headingLink).toHaveAttribute('href', /^#[^#].*$/)
+        }
+
+        if (viewport.width >= 1280) {
+          const hero = page.locator('.page-hero').first()
+          const title = page.locator('.page-title').first()
+          const [heroBounds, titleBounds, tocBounds] = await Promise.all([hero.boundingBox(), title.boundingBox(), tocCard.boundingBox()])
+          expect(heroBounds).not.toBeNull()
+          expect(titleBounds).not.toBeNull()
+          expect(tocBounds).not.toBeNull()
+          if (heroBounds && titleBounds && tocBounds) {
+            expect(tocBounds.y, 'Page Contents begins inside the title gradient').toBeGreaterThanOrEqual(heroBounds.y)
+            expect(tocBounds.y, 'Page Contents begins before the title gradient ends').toBeLessThan(heroBounds.y + heroBounds.height)
+            expect(Math.abs(tocBounds.y - titleBounds.y), 'Page Contents aligns with the title row').toBeLessThanOrEqual(4)
+            expect(tocBounds.height, 'Page Contents retains useful empty geometry').toBeGreaterThanOrEqual(128)
+          }
+
+          if (await tocCard.locator('.page-toc-empty').count()) {
+            const firstMetadataCard = page.locator('.page-col-sd > :is(.page-tags-card, .page-comments-card, .page-author-card, .page-shortcuts-card)').first()
+            const [metadataBounds, currentHeroBounds] = await Promise.all([firstMetadataCard.boundingBox(), hero.boundingBox()])
+            expect(metadataBounds).not.toBeNull()
+            expect(currentHeroBounds).not.toBeNull()
+            if (metadataBounds && currentHeroBounds) {
+              expect(metadataBounds.y, 'Reader metadata follows the empty Page Contents card without dead space').toBeLessThanOrEqual(
+                currentHeroBounds.y + currentHeroBounds.height + 4
+              )
+            }
+          }
+        }
+      }
+
+      const shortcutButtons = page.locator('.page-shortcuts-card .v-btn')
+      for (const shortcutButton of await shortcutButtons.all()) {
+        const bounds = await shortcutButton.boundingBox()
+        expect(bounds).not.toBeNull()
+        if (bounds) {
+          expect(bounds.width, 'Reader shortcut target remains compact and usable').toBeGreaterThanOrEqual(38)
+          expect(bounds.width, 'Reader shortcut target remains compact and usable').toBeLessThanOrEqual(40)
+          expect(bounds.height, 'Reader shortcut target remains compact and usable').toBeGreaterThanOrEqual(38)
+          expect(bounds.height, 'Reader shortcut target remains compact and usable').toBeLessThanOrEqual(40)
+        }
+      }
+
+      if (path === '/en/visual-markdown-browser' && viewport.width < 1280) {
         const article = page.locator('.page-col-content:not(.is-page-header) > .contents').first()
         const sidebar = page.locator('.page-col-sd').first()
         await expect(article).toBeVisible()
@@ -48,24 +96,68 @@ test.describe('responsive UI quality matrix', () => {
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
       await expectLocatorWithinViewport(drawer, 'Open page navigation')
       await expectResponsiveLayout(page, 'Open page navigation')
-      await page.locator('.v-navigation-drawer__scrim').click({
-        position: { x: viewport.width - 16, y: viewport.height / 2 }
-      })
+
+      await drawer.getByRole('button', { name: 'Home', exact: true }).click()
+      await expect(page).toHaveURL('/en/home')
+      await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
+
+      await page.getByRole('button', { name: 'Open navigation' }).click()
+      await drawer.getByRole('button', { name: 'Browse', exact: true }).click()
+      const browseDestination = drawer.locator('a[href="/en/visual-markdown-browser"]').first()
+      await expect(browseDestination).toBeVisible()
+      await browseDestination.click()
+      await expect(page).toHaveURL('/en/visual-markdown-browser')
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
     } else {
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--temporary/)
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
+      await drawer.getByRole('button', { name: 'Home', exact: true }).click()
+      await expect(page).toHaveURL('/en/home')
+      await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
+      await drawer.getByRole('button', { name: 'Browse', exact: true }).click()
+      const browseDestination = drawer.locator('a[href="/en/visual-markdown-browser"]').first()
+      await expect(browseDestination).toBeVisible()
+      await browseDestination.click()
+      await expect(page).toHaveURL('/en/visual-markdown-browser')
+      await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
     }
 
-    const editPage = page.getByRole('button', { name: /edit page/i })
+    const pageEditFab = page.locator('.page-edit-fab')
     if (viewport.width <= 959.98) {
-      await expect(page.locator('.page-edit-fab')).toHaveCount(0)
-    } else if (await editPage.count()) {
-      await expectLocatorWithinViewport(editPage, 'Quick edit action')
+      await expect(pageEditFab).toHaveCount(0)
+    } else if (await pageEditFab.count()) {
+      await expectLocatorWithinViewport(pageEditFab, 'Page actions')
     }
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
     const returnToTop = page.getByRole('button', { name: /return to top/i })
     await expectLocatorWithinViewport(returnToTop, 'Return to top action')
+    const returnToTopBounds = await returnToTop.boundingBox()
+    expect(returnToTopBounds).not.toBeNull()
+    if (returnToTopBounds) {
+      expect(returnToTopBounds.x, 'Return to top stays on the right').toBeGreaterThan(viewport.width / 2)
+      expect(viewport.width - returnToTopBounds.x - returnToTopBounds.width, 'Return to top keeps a safe right inset').toBeGreaterThanOrEqual(0)
+      expect(viewport.width - returnToTopBounds.x - returnToTopBounds.width, 'Return to top keeps a safe right inset').toBeLessThanOrEqual(32)
+
+      if (await pageEditFab.count()) {
+        await pageEditFab.click()
+        await expect(pageEditFab).toHaveAttribute('aria-expanded', 'true')
+        await expect(page.locator('.v-speed-dial__content .v-btn:visible').first()).toBeVisible()
+      }
+      const neighboringFixedActions = page.locator('.page-nav-toggle:visible, .page-edit-fab:visible, .v-speed-dial__content .v-btn:visible')
+      for (const neighboringAction of await neighboringFixedActions.all()) {
+        const neighboringBounds = await neighboringAction.boundingBox()
+        expect(neighboringBounds).not.toBeNull()
+        if (neighboringBounds) {
+          const controlsOverlap = !(
+            returnToTopBounds.x + returnToTopBounds.width <= neighboringBounds.x ||
+            neighboringBounds.x + neighboringBounds.width <= returnToTopBounds.x ||
+            returnToTopBounds.y + returnToTopBounds.height <= neighboringBounds.y ||
+            neighboringBounds.y + neighboringBounds.height <= returnToTopBounds.y
+          )
+          expect(controlsOverlap, 'Return to top must not overlap navigation or page actions').toBe(false)
+        }
+      }
+    }
     await returnToTop.click()
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(2)
   })

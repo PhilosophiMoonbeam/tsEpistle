@@ -25,7 +25,7 @@
       .d-flex.page-selector__panes
         v-col.page-selector__pane.page-selector__tree-pane(cols='12' md='5')
           v-toolbar(color='surface-variant' density='compact' flat)
-            h3#page-selector-folders.text-body-medium {{$t('common:pageSelector.virtualFolders')}}
+            h3#page-selector-folders.page-selector__folders-label.text-body-medium {{$t('common:pageSelector.virtualFolders')}}
             v-spacer
             v-tooltip(location='top')
               template(v-slot:activator='{ props }')
@@ -312,6 +312,10 @@ export default defineComponent({
 
   &__pane {
     min-width: 0;
+  }
+
+  &__folders-label {
+    padding-inline-start: var(--wiki-space-3);
   }
 
   &__scroller {

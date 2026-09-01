@@ -2,21 +2,22 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-tags.svg', alt='', style='width: 80px;', width='80', height='80')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:tags.title')}}
-            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p4s {{$t('admin:tags.subtitle')}}
-          v-spacer
-          v-btn.animated.fadeInDown(
-            variant="outlined"
-            color='grey'
-            @click='refresh'
-            icon
-            :loading='refreshing'
-            :disabled='refreshing || saving || deleting'
-            aria-label='Refresh tags'
-          )
+        admin-hero(
+          :title='$t("admin:tags.title")'
+          :description='$t("admin:tags.subtitle")'
+          icon='/_assets/svg/icon-tags.svg'
+        )
+          template(v-slot:actions)
+            v-btn.animated.fadeInDown(
+              variant="outlined"
+              color='grey'
+              @click='refresh'
+              icon
+              :loading='refreshing'
+              :disabled='refreshing || saving || deleting'
+              aria-label='Refresh tags'
+            )
+              v-icon mdi-refresh
         v-container.pa-0.mt-3(fluid)
           v-row
             v-col(cols='12', md='4', lg='3', style='min-width:0;')

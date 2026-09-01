@@ -2,18 +2,33 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-globe-earth.svg', alt='Locale', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:locale.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:locale.subtitle') }}
-          v-spacer
-          v-btn.animated.fadeInDown(icon, variant="outlined", color='grey', href='https://docs.requarks.io/locales', target='_blank', aria-label='Open locale documentation', title='Open locale documentation')
-            v-icon(aria-hidden='true') mdi-help-circle
-          v-btn.animated.fadeInDown.ml-3(color='success', variant="flat", @click='save', size="large", :loading='loading', :disabled='!canSave')
-            v-icon(start, aria-hidden='true') mdi-check
-            span {{$t('common:actions.apply')}}
-        v-form.pt-3
+        admin-hero(
+          icon='/_assets/svg/icon-globe-earth.svg'
+          :title='$t(`admin:locale.title`)'
+          :description='$t(`admin:locale.subtitle`)'
+        )
+          template(v-slot:actions)
+            v-btn(
+              icon
+              variant="outlined"
+              color='grey'
+              href='https://docs.requarks.io/locales'
+              target='_blank'
+              aria-label='Open locale documentation'
+              title='Open locale documentation'
+            )
+              v-icon(aria-hidden='true') mdi-help-circle
+            v-btn(
+              color='success'
+              variant="flat"
+              @click='save'
+              size="large"
+              :loading='loading'
+              :disabled='!canSave'
+            )
+              v-icon(start, aria-hidden='true') mdi-check
+              span {{$t('common:actions.apply')}}
+        v-form
           v-row
             v-col(xl='6' lg='5' cols='12')
               v-card.wiki-form.animated.fadeInUp

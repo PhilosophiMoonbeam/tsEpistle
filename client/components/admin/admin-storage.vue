@@ -2,25 +2,25 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-cloud-storage.svg', alt='', aria-hidden='true', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:storage.title')}}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{$t('admin:storage.subtitle')}}
-          v-spacer
-          v-tooltip(location='top')
-            template(v-slot:activator='{ props }')
-              v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/storage', target='_blank', v-bind='props', aria-label='Storage documentation — opens in a new tab')
-                v-icon mdi-help-circle
-            span Storage documentation — opens in a new tab
-          v-tooltip(location='top')
-            template(v-slot:activator='{ props }')
-              v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', v-bind='props', aria-label='Refresh storage targets')
-                v-icon mdi-refresh
-            span Refresh storage targets
-          v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large")
-            v-icon(start) mdi-check
-            span {{$t('common:actions.apply')}}
+        admin-hero(
+          :title='$t(`admin:storage.title`)'
+          :description='$t(`admin:storage.subtitle`)'
+          icon='/_assets/svg/icon-cloud-storage.svg'
+        )
+          template(v-slot:actions)
+            v-tooltip(location='top')
+              template(v-slot:activator='{ props }')
+                v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/storage', target='_blank', v-bind='props', aria-label='Storage documentation — opens in a new tab')
+                  v-icon mdi-help-circle
+              span Storage documentation — opens in a new tab
+            v-tooltip(location='top')
+              template(v-slot:activator='{ props }')
+                v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', v-bind='props', aria-label='Refresh storage targets')
+                  v-icon mdi-refresh
+              span Refresh storage targets
+            v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large")
+              v-icon(start) mdi-check
+              span {{$t('common:actions.apply')}}
 
       v-col(lg='3', cols='12')
         v-card.animated.fadeInUp

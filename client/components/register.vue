@@ -1,6 +1,6 @@
 <template lang="pug">
   v-app
-    main.register(aria-labelledby='register-site-title')
+    main.register(:style='`background-image: url(` + bgUrl + `);`', aria-labelledby='register-site-title')
       v-container
         v-row
           v-col(
@@ -134,6 +134,12 @@ export default {
   i18nOptions: { namespaces: 'auth' },
   components: {
     PasswordStrength
+  },
+  props: {
+    bgUrl: {
+      type: String,
+      default: ''
+    }
   },
   data () {
     return {
@@ -303,6 +309,9 @@ export default {
       var(--wiki-surface-sunken),
       rgb(var(--v-theme-background))
     );
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
   color: rgb(var(--v-theme-on-background));
   font-family: var(--wiki-font-body);
   isolation: isolate;
@@ -442,7 +451,7 @@ export default {
 
 @media (max-width: 599px) {
   .register {
-    background: color-mix(
+    background-color: color-mix(
       in srgb,
       rgb(var(--v-theme-surface)) 96%,
       rgb(var(--v-theme-background))

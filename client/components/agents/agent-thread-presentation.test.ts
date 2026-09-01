@@ -291,16 +291,20 @@ describe('Agent thread presentation', () => {
     expect(agentProposalReceiptLabel('recovery_required')).toBe('Recovery required')
   })
 
-  it('shows the approval jump only while the approval is outside the transcript viewport', () => {
+  it('claims the approval jump dock only when the approval is fully outside the transcript viewport', () => {
     const viewport = { top: 100, bottom: 700 }
     expect(isAgentApprovalOutsideViewport(viewport, { top: 720, bottom: 920 })).toBe(true)
     expect(isAgentApprovalOutsideViewport(viewport, { top: -100, bottom: 80 })).toBe(true)
+    expect(isAgentApprovalOutsideViewport(viewport, { top: 700, bottom: 920 })).toBe(true)
+    expect(isAgentApprovalOutsideViewport(viewport, { top: -100, bottom: 100 })).toBe(true)
+    expect(isAgentApprovalOutsideViewport(viewport, { top: 699, bottom: 920 })).toBe(false)
     expect(isAgentApprovalOutsideViewport(viewport, { top: 650, bottom: 900 })).toBe(false)
   })
-  it('follows only when expanding from a following or near-bottom transcript', () => {
+  it('preserves scroll follow only when expanding a following or near-bottom goal dock', () => {
     expect(shouldFollowGoalExpansion(true, true, false)).toBe(true)
     expect(shouldFollowGoalExpansion(true, false, true)).toBe(true)
     expect(shouldFollowGoalExpansion(true, false, false)).toBe(false)
     expect(shouldFollowGoalExpansion(false, true, true)).toBe(false)
+    expect(shouldFollowGoalExpansion(false, false, false)).toBe(false)
   })
 })

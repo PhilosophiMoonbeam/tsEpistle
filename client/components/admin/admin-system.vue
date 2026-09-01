@@ -2,14 +2,14 @@
   v-container.admin-system(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-tune.svg', alt='System Info', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:system.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p2s {{ $t('admin:system.subtitle') }}
-          v-spacer
-          .admin-header-actions
-            v-btn.animated.fadeInDown(
+        AdminHero(
+          :title='$t(`admin:system.title`)'
+          :description='$t(`admin:system.subtitle`)'
+          icon='/_assets/svg/icon-tune.svg'
+          heading-id='admin-system-heading'
+        )
+          template(v-slot:actions)
+            v-btn(
               variant="outlined"
               color='primary'
               size="small"
@@ -217,13 +217,6 @@ export default {
 </script>
 
 <style lang='scss'>
-.admin-header-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: .5rem;
-}
-
 .admin-system {
   .v-list-item-title,
   .v-list-item-subtitle {
@@ -238,16 +231,6 @@ export default {
 
   .system-mono {
     font-family: 'Roboto Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-}
-
-@media (max-width: 599.98px) {
-  .admin-header-actions {
-    flex: 1 1 100%;
-  }
-
-  .admin-header-actions .v-btn {
-    width: 100%;
   }
 }
 </style>

@@ -921,6 +921,53 @@ export default {
   }
 
   &-form {
+    --login-field-autofill-surface: rgb(var(--v-theme-surface));
+
+    .v-field {
+      overflow: hidden;
+      border-radius: var(--wiki-control-radius);
+      background: var(--login-field-autofill-surface);
+      isolation: isolate;
+    }
+
+    .v-field__overlay {
+      border-radius: inherit;
+    }
+
+    .v-field__outline {
+      z-index: 3;
+    }
+
+    .v-field__prepend-inner,
+    .v-field__append-inner,
+    .v-field__input {
+      position: relative;
+      z-index: 2;
+    }
+
+    .v-field:has(input:-webkit-autofill),
+    .v-field:has(input:autofill) {
+      background: var(--login-field-autofill-surface);
+    }
+
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus,
+    input:-webkit-autofill:active {
+      border-radius: 0;
+      -webkit-box-shadow: inset 0 0 0 100vmax var(--login-field-autofill-surface);
+      box-shadow: inset 0 0 0 100vmax var(--login-field-autofill-surface);
+      caret-color: rgb(var(--v-theme-on-surface));
+      -webkit-text-fill-color: rgb(var(--v-theme-on-surface));
+    }
+
+    input:autofill {
+      border-radius: 0;
+      box-shadow: inset 0 0 0 100vmax var(--login-field-autofill-surface);
+      caret-color: rgb(var(--v-theme-on-surface));
+      color: rgb(var(--v-theme-on-surface));
+    }
+
     .v-input + .v-input {
       margin-top: var(--wiki-space-2) !important;
     }

@@ -61,7 +61,7 @@
               )
             v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
-                v-btn.nav-header-browse(icon, v-bind='props', href='/t', :aria-label='$t(`common:header.browseTags`)')
+                v-btn.nav-header-browse(icon, v-bind='props', href='/t', data-search-modal-action, :aria-label='$t(`common:header.browseTags`)')
                   v-icon mdi-tag-multiple
               span {{$t('common:header.browseTags')}}
       v-col.nav-header-actions-col(cols='7', md='4')
@@ -72,17 +72,18 @@
 
           //- (mobile) SEARCH TOGGLE
 
-          v-btn(
+          v-btn.nav-header-search-toggle(
             v-if='!hideSearch && $vuetify.display.smAndDown'
             @click='searchToggle'
             icon
+            data-search-modal-action
             :size='dense ? `small` : `default`'
             :aria-expanded='searchIsShown ? `true` : `false`'
             aria-controls='nav-header-mobile-search'
             :aria-label='searchIsShown ? `Close search` : `Open search`'
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
-          .nav-header-slot-actions(v-if='$vuetify.display.mdAndUp')
+          .nav-header-slot-actions(v-if='$vuetify.display.mdAndUp || mobileActions')
             slot(name='actions')
           //- LANGUAGES
 
@@ -321,6 +322,10 @@ export default defineComponent({
     hideSearch: {
       type: Boolean,
       default: false
+    },
+    mobileActions: {
+      type: Boolean,
+      default: false
     }
   },
   data() {
@@ -418,6 +423,11 @@ export default defineComponent({
       )
     }
   },
+  watch: {
+    searchIsFocused(open: boolean): void {
+      if (!open && this.$vuetify.display.smAndDown) this.searchIsShown = false
+    }
+  },
   created () {
     if (this.hideSearch || this.dense || this.$vuetify.display.smAndDown) {
       this.searchIsShown = false
@@ -456,9 +466,9 @@ export default defineComponent({
       this.searchIsFocused = true
     },
     searchClose () {
-      this.search = ''
-      this.searchMode = 'search'
       this.searchIsFocused = false
+      this.searchMode = 'search'
+      this.search = ''
     },
     async focusSearchField(): Promise<void> {
       this.searchIsShown = true

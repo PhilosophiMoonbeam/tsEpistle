@@ -635,44 +635,6 @@ export default defineComponent({
   }
 
   > .v-container:not(.admin-agents) {
-    .admin-header {
-      display: flex;
-      min-height: 5rem;
-      align-items: center;
-      margin-bottom: var(--wiki-space-3);
-      padding: var(--wiki-space-1);
-
-      > img {
-        width: 4rem !important;
-        height: 4rem !important;
-        padding: var(--wiki-space-2);
-        border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 24%, transparent);
-        border-radius: var(--wiki-panel-radius);
-        background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, var(--wiki-surface-raised));
-        object-fit: contain;
-        box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
-      }
-
-      &-title {
-        min-width: 0;
-        margin-inline: var(--wiki-space-5);
-
-        > .text-headline-medium {
-          color: rgb(var(--v-theme-on-surface)) !important;
-          font-size: clamp(1.65rem, 2vw, 2.1rem) !important;
-          font-weight: 720;
-          letter-spacing: -.035em !important;
-          line-height: var(--wiki-leading-heading);
-        }
-
-        > .text-body-large {
-          margin-top: var(--wiki-space-1);
-          color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent) !important;
-          font-size: .98rem !important;
-          line-height: 1.45;
-        }
-      }
-    }
 
     .v-card:not(.v-card--flat) {
       border: 1px solid var(--wiki-surface-border);
@@ -910,41 +872,6 @@ export default defineComponent({
     }
 
     > .v-container:not(.admin-agents) {
-      .admin-header {
-        min-height: auto;
-        flex-wrap: wrap;
-        gap: var(--wiki-space-2);
-        margin-bottom: var(--wiki-space-2);
-
-        > img {
-          width: 3.125rem !important;
-          height: 3.125rem !important;
-          padding: var(--wiki-space-2);
-          border-radius: var(--wiki-control-radius);
-        }
-
-        &-title {
-          flex: 1 1 calc(100% - 4.5rem);
-          margin-inline: var(--wiki-space-1);
-
-          > .text-headline-medium {
-            font-size: 1.5rem !important;
-          }
-
-          > .text-body-large {
-            font-size: .88rem !important;
-          }
-        }
-
-        > .v-spacer {
-          display: none;
-        }
-
-        > .v-btn,
-        > .v-dialog {
-          margin-top: var(--wiki-space-1);
-        }
-      }
 
       .v-card-text {
         padding: var(--wiki-space-4);

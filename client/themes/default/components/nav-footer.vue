@@ -10,8 +10,6 @@
         span.footer-attribution__product {{ product.name }} {{ product.version }}
         span.footer-attribution__separator(aria-hidden='true')
         a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') Source Code
-        span.footer-attribution__separator(aria-hidden='true')
-        span Derived from #[a(href='https://github.com/Requarks/wiki', target='_blank', rel='nofollow noopener noreferrer') Wiki.js]
 </template>
 
 <script lang='ts'>

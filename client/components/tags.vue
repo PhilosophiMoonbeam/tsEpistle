@@ -1,10 +1,11 @@
 <template lang='pug'>
   v-app.tags
-    nav-header
+    nav-header(mobile-actions)
       template(v-slot:actions)
         v-btn.tags-filter-toggle(
           v-if='$vuetify.display.smAndDown'
           icon
+          data-search-modal-action
           @click='tagDrawerShown = !tagDrawerShown'
           :aria-expanded='tagDrawerShown'
           aria-controls='tag-navigation'

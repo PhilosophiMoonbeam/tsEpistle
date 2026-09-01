@@ -7,6 +7,7 @@ describe('ordinary Wiki agent administration integration', () => {
   const navigation = read('client/components/admin.vue')
   const page = read('client/components/admin/admin-agents.vue')
   const agentAdmin = read('client/components/agents/agent-admin.vue')
+  const theme = read('client/components/admin/admin-theme.vue')
   const skillAdmin = read('client/components/agents/skill-admin.vue')
   const sessionSettings = read('client/components/agents/agent-session-settings.vue')
   const vite = read('vite.config.mts')
@@ -25,6 +26,25 @@ describe('ordinary Wiki agent administration integration', () => {
     expect(page).toMatch(/AgentAdmin\(v-if='agentsEnabled'/)
     expect(page).toMatch(/const agentsEnabled = siteConfig\.agentsEnabled/)
     expect(page).toMatch(/Agents are not enabled/)
+  })
+
+  test('uses the compact shared administration hero for Agents and Theme', () => {
+    expect(page).toMatch(/AdminHero\([^]*title='Agents are not enabled'[^]*heading-id='agents-disabled-title'/)
+    expect(page).toMatch(/AdminHero\([^]*template\(#status\)/)
+    expect(page).not.toMatch(/admin-agents__disabled-(?:mark|copy)/)
+    expect(agentAdmin).toContain('<AdminHero')
+    expect(agentAdmin).toContain('<template #extra>')
+    expect(agentAdmin).toContain('<template #status>')
+    expect(agentAdmin).toContain('<template #actions>')
+    expect(agentAdmin).toMatch(/description="Review runtime safeguards, provider access, and browser boundaries for every Agent run\."/)
+    expect(agentAdmin).not.toContain('<header class="agent-hero">')
+    expect(agentAdmin).not.toContain('agent-docket')
+    expect(agentAdmin).not.toMatch(/min-height:\s*calc\(var\(--wiki-space-12\) \* 5\)/)
+
+    expect(theme).toMatch(/AdminHero\([^]*heading-id='admin-theme-title'/)
+    expect(theme).toMatch(/template\(#status\)[^]*Unsaved changes[^]*Theme up to date/)
+    expect(theme).toMatch(/template\(#actions\)[^]*@click='save'/)
+    expect(theme).not.toContain('.admin-header')
   })
 
   test('keeps navigation limited to operational administration sections', () => {

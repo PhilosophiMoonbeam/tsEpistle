@@ -2,17 +2,17 @@
   v-container.admin-pages(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-file.svg', alt='', style='width: 80px;')
-          .admin-header-title
-            h1.text-headline-medium.text-primary.animated.fadeInLeft(tabindex='-1') Pages
-            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s Manage pages
-          v-spacer
-          v-btn.animated.fadeInDown.wait-p1s(icon color='grey' variant="outlined" @click='refresh' :loading='loading' :disabled='loading' aria-label='Refresh pages')
-            v-icon.text-grey mdi-refresh
-          v-btn.animated.fadeInDown(color='primary' variant="flat" size="large" to='pages/visualize' :icon='$vuetify.display.smAndDown' aria-label='Visualize pages')
-            v-icon(:start='$vuetify.display.mdAndUp') mdi-graph
-            span(v-if='$vuetify.display.mdAndUp') Visualize
+        admin-hero(
+          title='Pages'
+          description='Manage pages'
+          icon='/_assets/svg/icon-file.svg'
+        )
+          template(v-slot:actions)
+            v-btn.animated.fadeInDown.wait-p1s(icon color='grey' variant="outlined" @click='refresh' :loading='loading' :disabled='loading' aria-label='Refresh pages')
+              v-icon.text-grey mdi-refresh
+            v-btn.animated.fadeInDown(color='primary' variant="flat" size="large" to='pages/visualize' :icon='$vuetify.display.smAndDown' aria-label='Visualize pages')
+              v-icon(:start='$vuetify.display.mdAndUp') mdi-graph
+              span(v-if='$vuetify.display.mdAndUp') Visualize
         v-card.mt-3.animated.fadeInUp
           .admin-filter-bar.pa-2.d-flex.align-center
             v-text-field.admin-pages-filter-search(variant="solo" flat v-model='search' prepend-inner-icon='mdi-file-search-outline' label='Search pages' hide-details density="compact")

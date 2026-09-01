@@ -17,37 +17,51 @@
       <v-list
         class="agent-history-session-actions__menu"
         density="compact"
-        min-width="14.5rem"
+        min-width="12rem"
         :aria-label="`Actions for ${session.title || 'New conversation'}`"
       >
-        <v-list-subheader v-if="canMove" class="agent-history-session-actions__heading">
-          Move conversation
-        </v-list-subheader>
-        <v-list-item
-          v-if="session.folderId !== null"
-          prepend-icon="mdi-history"
-          title="Recent"
-          subtitle="Returns to the 90-day history window"
-          :disabled="busy"
-          @click="emit('move', null)"
-        />
-        <v-list-item
-          v-for="folder in availableFolders"
-          :key="folder.id"
-          prepend-icon="mdi-folder-outline"
-          :title="folder.name"
-          :disabled="busy"
-          @click="emit('move', folder.id)"
-        />
+        <v-menu v-if="canMove" location="end" submenu>
+          <template #activator="{ props: moveMenuProps }">
+            <v-list-item
+              v-bind="moveMenuProps"
+              prepend-icon="mdi-folder-move-outline"
+              title="Move"
+              :disabled="busy"
+            >
+              <template #append>
+                <v-icon icon="mdi-chevron-right" size="18" />
+              </template>
+            </v-list-item>
+          </template>
+          <v-list
+            class="agent-history-session-actions__menu"
+            density="compact"
+            min-width="14.5rem"
+            :aria-label="`Move ${session.title || 'New conversation'}`"
+          >
+            <v-list-item
+              v-if="session.folderId !== null"
+              prepend-icon="mdi-history"
+              title="Recent"
+              subtitle="Returns to the 90-day history window"
+              :disabled="busy"
+              @click="emit('move', null)"
+            />
+            <v-list-item
+              v-for="folder in availableFolders"
+              :key="folder.id"
+              prepend-icon="mdi-folder-outline"
+              :title="folder.name"
+              :disabled="busy"
+              @click="emit('move', folder.id)"
+            />
+          </v-list>
+        </v-menu>
         <v-divider v-if="canMove" class="agent-history-session-actions__divider" />
-        <v-list-subheader class="agent-history-session-actions__heading">
-          Manage
-        </v-list-subheader>
         <v-list-item
           class="agent-history-session-actions__delete text-error"
           prepend-icon="mdi-delete-outline"
-          title="Delete conversation"
-          subtitle="Permanently removes its messages"
+          title="Delete"
           :disabled="busy"
           @click="requestRemove"
         />
@@ -95,14 +109,6 @@ const canMove = computed(() => props.session.folderId !== null || availableFolde
   border-radius: var(--wiki-control-radius);
   box-shadow: var(--wiki-shadow-md);
   padding-block: var(--wiki-space-1);
-}
-.agent-history-session-actions__heading {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .07em;
-  min-height: 1.75rem;
-  text-transform: uppercase;
 }
 .agent-history-session-actions__divider { margin-block: var(--wiki-space-1); }
 .agent-history-session-actions__delete { color: rgb(var(--v-theme-error)); }

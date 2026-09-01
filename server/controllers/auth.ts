@@ -38,6 +38,14 @@ export interface AuthWiki {
   Error: { AuthRegistrationDisabled: new () => Error }
 }
 
+const DEFAULT_AUTH_BACKGROUND_URL = '/_assets/img/splash/tsfranki-orbit.svg'
+
+const normalizeAuthBackgroundUrl = (backgroundUrl: unknown): string => {
+  if (typeof backgroundUrl !== 'string') return DEFAULT_AUTH_BACKGROUND_URL
+  const normalizedBackgroundUrl = backgroundUrl.trim()
+  return normalizedBackgroundUrl || DEFAULT_AUTH_BACKGROUND_URL
+}
+
 export const normalizeFaviconUrl = (logoUrl: unknown): string => {
   if (typeof logoUrl !== 'string') return '/_assets/favicon.ico'
   const normalizedLogoUrl = logoUrl.trim()
@@ -71,7 +79,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
     }
 
     // -> Show Login
-    const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
+    const bgUrl = normalizeAuthBackgroundUrl(wiki.config.auth.loginBgUrl)
     res.render('login', { bgUrl, hideLocal: wiki.config.auth.hideLocal, faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl) })
   })
 
@@ -150,8 +158,12 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
   router.get('/register', async (req, res, next) => {
     _.set(res.locals, 'pageMeta.title', 'Register')
     const localStrg = await wiki.models.authentication.getStrategy('local')
+    const bgUrl = normalizeAuthBackgroundUrl(wiki.config.auth.loginBgUrl)
     if (localStrg.selfRegistration) {
-      res.render('register', { faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl) })
+      res.render('register', {
+        bgUrl,
+        faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl)
+      })
     } else {
       next(new wiki.Error.AuthRegistrationDisabled())
     }
@@ -168,7 +180,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
       _.set(res.locals, 'pageMeta.title', 'Confirm Email Address')
       const token = routeParam(req, 'token')
       await wiki.models.userKeys.validateToken({ kind: 'verify', token, skipDelete: true })
-      const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
+      const bgUrl = normalizeAuthBackgroundUrl(wiki.config.auth.loginBgUrl)
       res.render('login', {
         bgUrl,
         hideLocal: wiki.config.auth.hideLocal,
@@ -191,7 +203,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
       _.set(res.locals, 'pageMeta.title', 'Reset Password')
       const token = routeParam(req, 'token')
       await wiki.models.userKeys.validateToken({ kind: 'resetPwd', token, skipDelete: true })
-      const bgUrl = !_.isEmpty(wiki.config.auth.loginBgUrl) ? wiki.config.auth.loginBgUrl : '/_assets/img/splash/1.jpg'
+      const bgUrl = normalizeAuthBackgroundUrl(wiki.config.auth.loginBgUrl)
       res.render('login', {
         bgUrl,
         hideLocal: wiki.config.auth.hideLocal,

@@ -2,11 +2,12 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img(src='/_assets/svg/icon-maintenance.svg', alt='', aria-hidden='true', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary {{$t('admin:utilities.title')}}
-            .text-body-large.text-grey {{$t('admin:utilities.subtitle')}}
+        AdminHero(
+          :title='$t(`admin:utilities.title`)'
+          :description='$t(`admin:utilities.subtitle`)'
+          icon='/_assets/svg/icon-maintenance.svg'
+          heading-id='admin-utilities-heading'
+        )
 
       v-col(lg='3', cols='12')
         v-card.animated.fadeInUp

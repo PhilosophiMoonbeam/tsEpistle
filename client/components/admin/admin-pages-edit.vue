@@ -2,71 +2,72 @@
   v-container.admin-pages-edit(fluid)
     v-row(v-if='page')
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-view-details.svg', alt='', style='width: 80px;', width='80', height='80')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft Page Details
-            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s
-              v-chip.ml-0.mr-2(label, size="small").text-body-small ID {{page.id}}
-              span /{{page.locale}}/{{page.path}}
-          v-spacer
-          .page-status-group
-            .page-status
-              status-indicator(positive, pulse)
-              .text-body-small.text-green(v-if='page.isPublished') {{$t('common:page.published')}}
-              .text-body-small.text-red(v-else) {{$t('common:page.unpublished')}}
-            .page-status
-              status-indicator(intermediary, pulse, v-if="page.visibility === 'private'")
-              status-indicator(active, pulse, v-else)
-              .text-body-small.text-deep-orange(v-if="page.visibility === 'private'") {{$t('common:page.private')}}
-              .text-body-small.text-blue(v-else) {{$t('common:page.global')}}
-          .page-action-group
-            v-btn.animated.fadeInDown.wait-p3s(color='grey', icon, variant="outlined", to='/pages', aria-label='Back to pages')
-              v-icon mdi-arrow-left
-            v-menu(origin='top right')
-              template(v-slot:activator='{ props }')
-                v-btn.mx-3.animated.fadeInDown.wait-p2s(color='black', v-bind='props', variant="flat")
-                  span Actions
-                  v-icon(end) mdi-chevron-down
-              v-list(density="compact", nav)
-                v-list-item(:href='(page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
-                  template(v-slot:prepend)
-                    v-icon(color='indigo') mdi-text-subject
-                  v-list-item-title View
-                v-list-item(:href='`/e` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
-                  template(v-slot:prepend)
-                    v-icon(color='indigo') mdi-pencil
-                  v-list-item-title Edit
-                v-list-item(:href='`/s` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
-                  template(v-slot:prepend)
-                    v-icon(color='indigo') mdi-code-tags
-                  v-list-item-title View Source
-                v-list-item(:href='`/h` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
-                  template(v-slot:prepend)
-                    v-icon(color='indigo') mdi-history
-                  v-list-item-title View History
-                v-dialog(v-model='deletePageDialog', max-width='500')
-                  template(v-slot:activator='{ props }')
-                    v-list-item(v-bind='props')
-                      template(v-slot:prepend)
-                        v-icon(color='red') mdi-trash-can-outline
-                      v-list-item-title Delete
-                  v-card
-                    .dialog-header.is-short.is-red
-                      v-icon.mr-2(color='white') mdi-file-document-box-remove-outline
-                      span {{$t('common:page.delete')}}
-                    v-card-text.pt-5
-                      i18next.text-body-medium(path='common:page.deleteTitle', tag='div')
-                        span.text-red-darken-2(place='title') {{page.title}}
-                      .text-body-small {{$t('common:page.deleteSubtitle')}}
-                      v-chip.mt-3.ml-0.mr-1(label, color="red-lighten-4", size="small")
-                        .text-body-small.text-red-darken-2 {{page.locale.toUpperCase()}}
-                      v-chip.mt-3.mx-0(label, color="red-lighten-5", size="small")
-                        span.text-red-darken-2 /{{page.path}}
-                    div.v-card-chin
-                      v-spacer
-                      v-btn(variant="text", @click='deletePageDialog = false', :disabled='loading') {{$t('common:actions.cancel')}}
-                      v-btn(color="red-darken-2", @click='deletePage', :loading='loading').text-white {{$t('common:actions.delete')}}
+        admin-hero(
+          title='Page Details'
+          icon='/_assets/svg/icon-view-details.svg'
+        )
+          template(v-slot:extra)
+            v-chip.ml-0.mr-2(label, size="small").text-body-small ID {{page.id}}
+            span /{{page.locale}}/{{page.path}}
+          template(v-slot:status)
+            .page-status-group
+              .page-status
+                status-indicator(positive, pulse)
+                .text-body-small.text-green(v-if='page.isPublished') {{$t('common:page.published')}}
+                .text-body-small.text-red(v-else) {{$t('common:page.unpublished')}}
+              .page-status
+                status-indicator(intermediary, pulse, v-if="page.visibility === 'private'")
+                status-indicator(active, pulse, v-else)
+                .text-body-small.text-deep-orange(v-if="page.visibility === 'private'") {{$t('common:page.private')}}
+                .text-body-small.text-blue(v-else) {{$t('common:page.global')}}
+          template(v-slot:actions)
+            .page-action-group
+              v-btn.animated.fadeInDown.wait-p3s(color='grey', icon, variant="outlined", to='/pages', aria-label='Back to pages')
+                v-icon mdi-arrow-left
+              v-menu(origin='top right')
+                template(v-slot:activator='{ props }')
+                  v-btn.mx-3.animated.fadeInDown.wait-p2s(color='black', v-bind='props', variant="flat")
+                    span Actions
+                    v-icon(end) mdi-chevron-down
+                v-list(density="compact", nav)
+                  v-list-item(:href='(page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
+                    template(v-slot:prepend)
+                      v-icon(color='indigo') mdi-text-subject
+                    v-list-item-title View
+                  v-list-item(:href='`/e` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
+                    template(v-slot:prepend)
+                      v-icon(color='indigo') mdi-pencil
+                    v-list-item-title Edit
+                  v-list-item(:href='`/s` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
+                    template(v-slot:prepend)
+                      v-icon(color='indigo') mdi-code-tags
+                    v-list-item-title View Source
+                  v-list-item(:href='`/h` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
+                    template(v-slot:prepend)
+                      v-icon(color='indigo') mdi-history
+                    v-list-item-title View History
+                  v-dialog(v-model='deletePageDialog', max-width='500')
+                    template(v-slot:activator='{ props }')
+                      v-list-item(v-bind='props')
+                        template(v-slot:prepend)
+                          v-icon(color='red') mdi-trash-can-outline
+                        v-list-item-title Delete
+                    v-card
+                      .dialog-header.is-short.is-red
+                        v-icon.mr-2(color='white') mdi-file-document-box-remove-outline
+                        span {{$t('common:page.delete')}}
+                      v-card-text.pt-5
+                        i18next.text-body-medium(path='common:page.deleteTitle', tag='div')
+                          span.text-red-darken-2(place='title') {{page.title}}
+                        .text-body-small {{$t('common:page.deleteSubtitle')}}
+                        v-chip.mt-3.ml-0.mr-1(label, color="red-lighten-4", size="small")
+                          .text-body-small.text-red-darken-2 {{page.locale.toUpperCase()}}
+                        v-chip.mt-3.mx-0(label, color="red-lighten-5", size="small")
+                          span.text-red-darken-2 /{{page.path}}
+                      div.v-card-chin
+                        v-spacer
+                        v-btn(variant="text", @click='deletePageDialog = false', :disabled='loading') {{$t('common:actions.cancel')}}
+                        v-btn(color="red-darken-2", @click='deletePage', :loading='loading').text-white {{$t('common:actions.delete')}}
       v-col(cols='12', lg='6')
         v-card.animated.fadeInUp
           v-toolbar(color='primary', density="compact", flat)

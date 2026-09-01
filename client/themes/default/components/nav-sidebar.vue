@@ -1,13 +1,18 @@
 <template lang="pug">
   nav.nav-sidebar(:aria-label='currentMode === `browse` ? $t(`common:sidebar.browse`) : $t(`common:sidebar.mainMenu`)')
-    .nav-sidebar-switcher.d-flex(v-if='navMode === `MIXED` || navMode === `STATIC`')
+    .nav-sidebar-switcher.d-flex(
+      v-if='navMode === `MIXED` || navMode === `STATIC`'
+      :class='{ "nav-sidebar-switcher--static": navMode === `STATIC` }'
+    )
       v-btn.nav-sidebar-home(
+        :class='{ "nav-sidebar-home--static": navMode === `STATIC` }'
         variant="tonal"
         color='primary'
         @click='goHome'
         :aria-label='$t(`common:header.home`)'
         )
-        v-icon(size='20') mdi-home
+        v-icon(:start='navMode === `STATIC`', size='20') mdi-home
+        span.nav-sidebar-home-label.text-body-medium.text-none(v-if='navMode === `STATIC`') {{$t('common:header.home')}}
       v-btn.nav-sidebar-mode.ms-3(
         v-if='navMode === `MIXED` && currentMode === `custom`'
         variant="tonal"
@@ -39,6 +44,7 @@
           :rel='item.y === `externalblank` ? `noopener` : ``'
           :active='isCurrentCustomLink(item)'
           :aria-current='isCurrentCustomLink(item) ? `page` : undefined'
+          @click='sidebarLinkClicked'
         )
           template(v-slot:prepend)
             v-avatar(size='24', rounded='0', variant='text')
@@ -102,6 +108,7 @@
             :key='`directorypage-` + currentParent.id'
             :active='path === currentParent.path'
             :aria-current='path === currentParent.path ? `page` : undefined'
+            @click='sidebarLinkClicked'
           )
             template(v-slot:prepend)
               v-avatar(size='24', variant='text')
@@ -122,7 +129,7 @@
             v-avatar(size='24', variant='text')
               v-icon mdi-folder
           v-list-item-title {{ item.title }}
-        v-list-item.nav-sidebar-page(v-else, :href='(item.visibility === `private` ? `/_private` : ``) + `/` + item.locale + `/` + item.path', :key='`childpage-` + item.id', :active='path === item.path', :aria-current='path === item.path ? `page` : undefined')
+        v-list-item.nav-sidebar-page(v-else, :href='(item.visibility === `private` ? `/_private` : ``) + `/` + item.locale + `/` + item.path', :key='`childpage-` + item.id', :active='path === item.path', :aria-current='path === item.path ? `page` : undefined', @click='sidebarLinkClicked')
           template(v-slot:prepend)
             v-avatar(size='24', variant='text')
               v-icon mdi-text-box
@@ -133,6 +140,7 @@ import _ from 'lodash'
 import AsyncState from '@/components/common/async-state.vue'
 import { defineComponent, type PropType } from 'vue'
 import { fetchPageTree, type PageTreeRow } from '../../../helpers/pages-api'
+import { isWikiNavigationClick, navigateToWikiPage } from '../../../helpers/wiki-navigation'
 import { wikiStore } from '@/store/index.ts'
 import { loadingStart, loadingStop } from '../../../helpers/root-ui-store'
 
@@ -157,6 +165,7 @@ export type SidebarItem =
 
 export default defineComponent({
   components: { AsyncState },
+  emits: ['navigate'],
   props: {
     color: {
       type: String,
@@ -208,6 +217,10 @@ export default defineComponent({
     }
   },
   methods: {
+    sidebarLinkClicked (event: MouseEvent) {
+      const target = event.currentTarget
+      if (target instanceof HTMLAnchorElement && isWikiNavigationClick(event, target)) this.$emit('navigate')
+    },
     switchMode (mode: NavigationMode) {
       this.currentMode = mode
       window.localStorage.setItem('navPref', mode)
@@ -302,7 +315,8 @@ export default defineComponent({
       return `/e${item.visibility === 'private' ? '/_private' : ''}/${item.locale}/${item.path}`
     },
     goHome () {
-      window.location.assign(siteLangs.length > 0 ? `/${this.locale}/home` : '/')
+      this.$emit('navigate')
+      navigateToWikiPage(siteLangs.length > 0 ? `/${this.locale}/home` : '/')
     }
   },
   mounted () {
@@ -579,6 +593,19 @@ export default defineComponent({
     width: var(--wiki-control-height);
     min-width: var(--wiki-control-height);
     padding: 0;
+  }
+
+  &.nav-sidebar-switcher--static {
+    justify-content: center;
+    padding-block: var(--wiki-space-4);
+
+    .nav-sidebar-home--static {
+      width: calc(100% - (var(--wiki-space-6) * 2));
+      min-width: calc(var(--wiki-control-height) * 3);
+      max-width: 100%;
+      flex: 0 1 calc(100% - (var(--wiki-space-6) * 2));
+      padding-inline: var(--wiki-space-5);
+    }
   }
 
   .nav-sidebar-mode {

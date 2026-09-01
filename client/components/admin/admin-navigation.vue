@@ -2,17 +2,31 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-triangle-arrow.svg', alt='Navigation', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:navigation.title')}}
-            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p4s {{$t('admin:navigation.subtitle')}}
-          v-spacer
-          v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
-          .d-flex.flex-wrap.align-center.ga-2
-            v-btn(icon, variant="outlined", href='https://docs.requarks.io/navigation', target='_blank', :aria-label='$t(`admin:navigation.title`)', title='Open navigation documentation')
+        admin-hero(
+          icon='/_assets/svg/icon-triangle-arrow.svg'
+          :title='$t(`admin:navigation.title`)'
+          :description='$t(`admin:navigation.subtitle`)'
+        )
+          template(v-slot:status)
+            v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
+          template(v-slot:actions)
+            v-btn(
+              icon
+              variant="outlined"
+              href='https://docs.requarks.io/navigation'
+              target='_blank'
+              :aria-label='$t(`admin:navigation.title`)'
+              title='Open navigation documentation'
+            )
               v-icon mdi-help-circle
-            v-btn(icon, variant="outlined", @click='refresh', :aria-label='$t(`common:actions.refresh`)', title='Refresh navigation settings', :loading='initialLoading')
+            v-btn(
+              icon
+              variant="outlined"
+              @click='refresh'
+              :aria-label='$t(`common:actions.refresh`)'
+              title='Refresh navigation settings'
+              :loading='initialLoading'
+            )
               v-icon mdi-refresh
             v-btn(
               type='button'

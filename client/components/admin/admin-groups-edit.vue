@@ -9,39 +9,41 @@
         v-skeleton-loader.mt-3(type='article')
     v-row(v-if='groupReady')
       v-col(cols='12')
-        .admin-header
-          img(src='/_assets/svg/icon-social-group.svg', alt='Edit Group', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary Edit Group
-            .text-body-large.text-medium-emphasis {{group.name}}
+        AdminHero(
+          title='Edit Group'
+          :description='group.name'
+          icon='/_assets/svg/icon-social-group.svg'
+          heading-id='admin-groups-edit-heading'
+        )
+          template(v-slot:extra)
             .text-body-small.text-orange Settings, permissions, and page rules are staged until Update Group.
             .text-body-small.text-orange(v-if='group.isSystem') System group — settings are protected
-          v-spacer
-          v-btn(color='grey', icon, variant="outlined", to='/groups', aria-label='Back to groups')
-            v-icon mdi-arrow-left
-          v-dialog(v-model='deleteGroupDialog', max-width='500', :fullscreen='$vuetify.display.smAndDown', v-if='!group.isSystem')
-            template(v-slot:activator='{ props }')
-              v-btn.ml-3(color='red', icon, variant="outlined", v-bind='props', aria-label='Delete group', :disabled='!groupReady || groupAction !== ``')
-                v-icon(color='red') mdi-trash-can-outline
-            v-card
-              .dialog-header.is-red Delete Group?
-              v-card-text.pa-4 Are you sure you want to delete group #[strong {{ group.name }}]? All users will be unassigned from this group.
-              v-card-actions
-                v-spacer
-                v-btn(variant="text", @click='deleteGroupDialog = false', :disabled='groupAction !== ``') Cancel
-                v-btn(color='red', @click='deleteGroup', :disabled='groupAction !== ``', :loading='groupAction === `delete`') Delete
-          v-btn.ml-3(
-            color='success'
-            size="large"
-            variant="flat"
-            @click='updateGroup'
-            :icon='$vuetify.display.smAndDown'
-            :disabled='!groupReady || groupAction !== ``'
-            :loading='groupAction === `update`'
-            aria-label='Update group'
-          )
-            v-icon(:start='$vuetify.display.mdAndUp') mdi-check
-            span(v-if='$vuetify.display.mdAndUp') Update Group
+          template(v-slot:actions)
+            v-btn(color='grey' icon variant="outlined" to='/groups' aria-label='Back to groups')
+              v-icon mdi-arrow-left
+            v-dialog(v-model='deleteGroupDialog' max-width='500' :fullscreen='$vuetify.display.smAndDown' v-if='!group.isSystem')
+              template(v-slot:activator='{ props }')
+                v-btn(color='red' icon variant="outlined" v-bind='props' aria-label='Delete group' :disabled='!groupReady || groupAction !== ``')
+                  v-icon(color='red') mdi-trash-can-outline
+              v-card
+                .dialog-header.is-red Delete Group?
+                v-card-text.pa-4 Are you sure you want to delete group #[strong {{ group.name }}]? All users will be unassigned from this group.
+                v-card-actions
+                  v-spacer
+                  v-btn(variant="text" @click='deleteGroupDialog = false' :disabled='groupAction !== ``') Cancel
+                  v-btn(color='red' @click='deleteGroup' :disabled='groupAction !== ``' :loading='groupAction === `delete`') Delete
+            v-btn(
+              color='success'
+              size="large"
+              variant="flat"
+              @click='updateGroup'
+              :icon='$vuetify.display.smAndDown'
+              :disabled='!groupReady || groupAction !== ``'
+              :loading='groupAction === `update`'
+              aria-label='Update group'
+            )
+              v-icon(:start='$vuetify.display.mdAndUp') mdi-check
+              span(v-if='$vuetify.display.mdAndUp') Update Group
         v-card.mt-3
           v-tabs.grad-tabs(v-model='tab', :color='$vuetify.theme.current.dark ? `blue` : `primary`', fixed-tabs, show-arrows, stacked)
             v-tab(value='settings')

@@ -59,12 +59,6 @@
   --wiki-shadow-inset: inset 0 1px 0 color-mix(in srgb, rgb(var(--v-theme-on-surface)) 9%, transparent);
 }
 
-@supports (scrollbar-gutter: stable) {
-  html {
-    scrollbar-gutter: stable;
-  }
-}
-
 html {
   box-sizing: border-box;
   height: 100%;

@@ -261,6 +261,7 @@ export default defineComponent({
       modalFocusScope: null as ModalFocusScope | null,
       searchModalFocusScope: null as ModalFocusScope | null,
       pendingAskRestoreTarget: null as HTMLElement | null,
+      searchRestoreTarget: null as HTMLElement | null,
       directPromptHandoffId: 0,
       directPromptHandoffPending: false
     }
@@ -366,7 +367,7 @@ export default defineComponent({
     },
     searchIsFocused(open: boolean) {
       if (open) void this.activateAgentModal()
-      else this.deactivateModalLayers(true)
+      else this.finishSearchFocus()
     },
     canAsk(allowed: boolean) {
       if (!allowed && this.searchMode === 'ask') this.searchMode = 'search'
@@ -403,6 +404,7 @@ export default defineComponent({
     onSearchMove(this.handleSearchMove)
     onSearchEnter(this.handleSearchEnter)
     void this.$nextTick(this.syncSearchInputA11y)
+    document.addEventListener('focusin', this.captureSearchRestoreTarget, true)
     if (this.searchIsFocused) void this.activateAgentModal()
   },
   beforeUnmount() {
@@ -413,20 +415,25 @@ export default defineComponent({
     this.searchIsLoading = false
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
+    document.removeEventListener('focusin', this.captureSearchRestoreTarget, true)
     this.deactivateModalLayers(false)
   },
   methods: {
     async activateAgentModal(): Promise<void> {
-      const opener = this.pendingAskRestoreTarget ?? this.activeModalOpener() ?? this.findSearchControl()
+      const activeOpener = this.activeModalOpener()
+      const searchOpener = this.searchRestoreTarget ??
+        (this.isSearchControl(activeOpener) ? null : activeOpener) ??
+        this.findSearchTrigger()
+      const agentOpener = this.pendingAskRestoreTarget ?? activeOpener ?? this.findSearchControl()
       await this.$nextTick()
       if (!this.searchIsFocused && !this.isAgentOpen) return
-      this.activateSearchModal(opener ?? this.findSearchControl())
+      this.activateSearchModal(searchOpener)
       if (!this.isAgentOpen || this.modalFocusScope) return
       const root = this.$el
       if (!(root instanceof HTMLElement)) return
       const focusScope = createModalFocusScope({
         root,
-        restoreTarget: this.restoreTargetFor(opener),
+        restoreTarget: this.restoreTargetFor(agentOpener),
         onEscape: this.returnToSearch
       })
       this.pendingAskRestoreTarget = null
@@ -441,7 +448,7 @@ export default defineComponent({
       this.searchModalFocusScope = createModalFocusScope({
         root,
         restoreTarget: this.restoreTargetFor(restoreTarget),
-        additionalRoots: () => this.syncSearchInputA11y(),
+        additionalRoots: this.searchModalAdditionalRoots,
         onEscape: this.closeSearch
       })
     },
@@ -449,7 +456,7 @@ export default defineComponent({
       await this.$nextTick()
       if (this.isAgentOpen || !this.searchIsFocused) return
       this.deactivateAgentModal(true)
-      this.activateSearchModal(this.findSearchControl())
+      this.activateSearchModal(this.searchRestoreTarget ?? this.findSearchTrigger())
       if (this.searchModalFocusScope && !this.searchModalFocusScope.containsFocus()) this.searchModalFocusScope.focusFirst()
     },
     deactivateAgentModal(restoreFocus = true): void {
@@ -463,9 +470,33 @@ export default defineComponent({
       this.searchModalFocusScope = null
       this.syncSearchInputA11y()
     },
+    finishSearchFocus(): void {
+      this.deactivateModalLayers(true)
+      const active = document.activeElement
+      if (this.isSearchControl(active)) active.blur()
+      this.searchRestoreTarget = null
+    },
+    captureSearchRestoreTarget(event: FocusEvent): void {
+      if (this.searchModalFocusScope || !this.isSearchControl(event.target)) return
+      const previous = event.relatedTarget
+      this.searchRestoreTarget = previous instanceof HTMLElement &&
+        previous !== document.body &&
+        previous.tabIndex >= 0 &&
+        !previous.matches(':disabled') &&
+        !this.isSearchControl(previous)
+        ? previous
+        : null
+    },
+    isSearchControl(target: EventTarget | null): target is HTMLElement {
+      return target instanceof HTMLElement && target.matches('.nav-header-search-control input')
+    },
     activeModalOpener(): HTMLElement | null {
       const active = document.activeElement
-      return active instanceof HTMLElement && active !== document.body && active.tabIndex >= 0 ? active : null
+      return active instanceof HTMLElement &&
+        active !== document.body &&
+        active.tabIndex >= 0
+        ? active
+        : null
     },
     restoreTargetFor(target: HTMLElement | null): () => HTMLElement | null {
       const key = target?.dataset.modalFocusKey
@@ -475,7 +506,7 @@ export default defineComponent({
           const replacement = document.querySelector<HTMLElement>(`[data-modal-focus-key="${key}"]`)
           if (replacement && replacement.tabIndex >= 0 && !replacement.matches(':disabled')) return replacement
         }
-        return this.findSearchControl()
+        return this.findSearchTrigger()
       }
     },
     findSearchControls(): HTMLElement[] {
@@ -484,6 +515,9 @@ export default defineComponent({
     },
     findSearchControl(): HTMLElement | null {
       return this.findSearchControls().find(control => control.getClientRects().length > 0) ?? null
+    },
+    findSearchTrigger(): HTMLElement | null {
+      return document.querySelector<HTMLElement>('.nav-header-search-toggle[data-search-modal-action]')
     },
     syncSearchInputA11y(): HTMLElement[] {
       const controls = this.findSearchControls()
@@ -502,6 +536,11 @@ export default defineComponent({
         else input.removeAttribute('aria-activedescendant')
       }
       return controls
+    },
+    searchModalAdditionalRoots(): HTMLElement[] {
+      this.syncSearchInputA11y()
+      return Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control input, [data-search-modal-action]'))
+        .filter(element => !element.matches(':disabled'))
     },
     openAsk(): void {
       if (!this.canAsk) return
@@ -604,7 +643,7 @@ export default defineComponent({
     closeSearch(): void {
       this.directPromptHandoffId += 1
       this.pendingAskRestoreTarget = null
-      this.deactivateModalLayers(true)
+      this.finishSearchFocus()
       this.searchIsFocused = false
       this.searchMode = 'search'
       this.search = ''

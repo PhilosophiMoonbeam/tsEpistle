@@ -51,6 +51,15 @@ describe('admin-general site REST facade migration guard', () => {
     expect(script).not.toContain('apollo:')
   })
 
+  test('general route header uses AdminHero slots without changing the REST facade', () => {
+    expect(source).toMatch(
+      /admin-hero\([\s\S]*icon-categorize\.svg[\s\S]*:title='\$t\(`admin:general\.title`\)'[\s\S]*:description='\$t\(`admin:general\.subtitle`\)'/
+    )
+    expect(source).toContain('template(v-slot:status)')
+    expect(source).toContain('template(v-slot:actions)')
+    expect(source).not.toContain('.admin-header')
+  })
+
   test('loadConfig fetches site config by REST with refresh loading and error facade', () => {
     expect(loadConfig).not.toBeNull()
     expect(loadConfig).toMatch(

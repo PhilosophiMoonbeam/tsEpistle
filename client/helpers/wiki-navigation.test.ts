@@ -115,4 +115,20 @@ describe('wiki navigation routing', () => {
     expect(handler.mock.calls[0]?.[0].pathname).toBe('/en/next-page')
     remove()
   })
+
+  test('preserves a locale-aware Home route through the mounted shell', async () => {
+    const handler = vi.fn()
+    const remove = installWikiNavigationHandler(handler)
+
+    try {
+      navigateToWikiPage('/fr/home')
+      await Promise.resolve()
+
+      expect(handler).toHaveBeenCalledOnce()
+      expect(handler.mock.calls[0]?.[0]).toBeInstanceOf(URL)
+      expect(handler.mock.calls[0]?.[0].pathname).toBe('/fr/home')
+    } finally {
+      remove()
+    }
+  })
 })

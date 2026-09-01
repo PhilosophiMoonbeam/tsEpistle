@@ -1,33 +1,32 @@
 <template lang='pug'>
   v-container(fluid)
+    admin-hero(
+      icon='/_assets/svg/icon-line-chart.svg'
+      :title='$t(`admin:analytics.title`)'
+      :description='$t(`admin:analytics.subtitle`)'
+    )
+      template(v-slot:actions)
+        v-btn.animated.fadeInDown.wait-p2s(
+          icon
+          variant="outlined"
+          color='grey'
+          @click='refresh'
+          :loading='refreshing'
+          :disabled='refreshing || saving'
+          aria-label='Refresh analytics providers'
+        )
+          v-icon mdi-refresh
+        v-btn.animated.fadeInDown(
+          color='success'
+          @click='save'
+          variant="flat"
+          size="large"
+          :loading='saving'
+          :disabled='!canSave'
+        )
+          v-icon(start) mdi-check
+          span {{$t('common:actions.apply')}}
     v-row
-      v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-line-chart.svg', alt='', style='width: 80px;', width='80', height='80')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:analytics.title') }}
-            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p4s {{ $t('admin:analytics.subtitle') }}
-          v-spacer
-          v-btn.animated.fadeInDown.wait-p2s.mr-3(
-            icon
-            variant="outlined"
-            color='grey'
-            @click='refresh'
-            :loading='refreshing'
-            :disabled='refreshing || saving'
-            aria-label='Refresh analytics providers'
-          )
-            v-icon mdi-refresh
-          v-btn.animated.fadeInDown(
-            color='success'
-            @click='save'
-            variant="flat"
-            size="large"
-            :loading='saving'
-            :disabled='!canSave'
-          )
-            v-icon(start) mdi-check
-            span {{$t('common:actions.apply')}}
       v-col(lg='3', cols='12')
         v-card.animated.fadeInUp
           v-toolbar(flat, color='primary', density="compact")

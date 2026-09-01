@@ -2,15 +2,16 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-private.svg', alt='', aria-hidden='true', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:security.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft {{ $t('admin:security.subtitle') }}
-          v-spacer
-          v-btn.animated.fadeInDown(color='success', variant="flat", @click='save', size="large", :disabled='!configLoaded')
-            v-icon(start) mdi-check
-            span {{$t('common:actions.apply')}}
+        AdminHero(
+          :title='$t(`admin:security.title`)'
+          :description='$t(`admin:security.subtitle`)'
+          icon='/_assets/svg/icon-private.svg'
+          heading-id='admin-security-heading'
+        )
+          template(v-slot:actions)
+            v-btn(color='success', variant='flat', @click='save', size='large', :disabled='!configLoaded')
+              v-icon(start) mdi-check
+              span {{$t('common:actions.apply')}}
         v-alert.mt-3(v-if='configLoading', variant='outlined', color='info', role='status')
           v-progress-circular(indeterminate, size='20', width='2', color='primary', aria-label='Loading security configuration')
           span.ml-3 Loading security configuration

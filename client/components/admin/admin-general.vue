@@ -2,25 +2,26 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-categorize.svg', alt='General', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:general.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft {{ $t('admin:general.subtitle') }}
-          v-spacer
-          v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
-          v-btn.animated.fadeInDown(
-            type='submit'
-            form='general-form'
-            color='success'
-            variant="flat"
-            size="large"
-            :loading='saving'
-            :disabled='!loaded || initialLoading || saving || !dirty || !formValid'
-          )
-            v-icon(start) mdi-check
-            span {{$t('common:actions.apply')}}
-        v-form#general-form.pt-3(
+        admin-hero(
+          icon='/_assets/svg/icon-categorize.svg'
+          :title='$t(`admin:general.title`)'
+          :description='$t(`admin:general.subtitle`)'
+        )
+          template(v-slot:status)
+            v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
+          template(v-slot:actions)
+            v-btn(
+              type='submit'
+              form='general-form'
+              color='success'
+              variant="flat"
+              size="large"
+              :loading='saving'
+              :disabled='!loaded || initialLoading || saving || !dirty || !formValid'
+            )
+              v-icon(start) mdi-check
+              span {{$t('common:actions.apply')}}
+        v-form#general-form(
           @submit.prevent='save'
           v-model='formValid'
           :disabled='initialLoading || !loaded || saving'

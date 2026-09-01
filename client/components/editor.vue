@@ -124,6 +124,32 @@ import { decodeBase64Json } from '../helpers/base64'
 import { getEditorComponentName } from '../helpers/editor-key.ts'
 import { normalizeAvailableEditors } from '../../shared/page-editors.ts'
 
+const EDITOR_PAGE_CANVAS_SCOPE = '.editor-page-canvas'
+
+function scopeEditorPageCss (css: string): string {
+  const parserStyle = document.createElement('style')
+  parserStyle.media = 'not all'
+  parserStyle.textContent = css
+  document.head.appendChild(parserStyle)
+
+  try {
+    const parsedRules = Array.from(parserStyle.sheet?.cssRules ?? [])
+    const importRules = parsedRules.filter(rule => rule.type === CSSRule.IMPORT_RULE)
+    if (importRules.length > 0) {
+      console.warn('Page CSS @import rules are unsupported in the editor preview and were omitted.')
+    }
+    const scopedRules = parsedRules
+      .filter(rule => rule.type !== CSSRule.IMPORT_RULE)
+      .map(rule => rule.cssText)
+    return `@scope (${EDITOR_PAGE_CANVAS_SCOPE}) {\n${scopedRules.join('\n')}\n}`
+  } finally {
+    parserStyle.remove()
+  }
+}
+
+function removeEditorPageCss () {
+  document.querySelector('#editor-script-css')?.remove()
+}
 
 export default defineComponent({
   i18nOptions: { namespaces: 'editor' },
@@ -228,6 +254,7 @@ export default defineComponent({
       isSaving: false,
       isConflict: false,
       conflictTimer: null as number | null,
+      customCssTimer: null as number | null,
       dialogProps: false,
       dialogProgress: false,
       dialogEditorSelector: false,
@@ -355,11 +382,14 @@ export default defineComponent({
 
     onEditorConflictReset(this.handleEditorConflictReset)
     this.conflictTimer = window.setInterval(this.refreshConflict, 5000)
+    this.injectCustomCss(this.currentStyling)
 
   },
   beforeUnmount() {
     offEditorConflictReset(this.handleEditorConflictReset)
     if (this.conflictTimer !== null) window.clearInterval(this.conflictTimer)
+    if (this.customCssTimer !== null) window.clearTimeout(this.customCssTimer)
+    removeEditorPageCss()
   },
   methods: {
     openPropsModal() {
@@ -576,19 +606,20 @@ export default defineComponent({
         okfMetadata: _.cloneDeep(validateOkfMetadataPayload(wikiStore.page.okf.authority.metadata))
       }
     },
-    injectCustomCss: _.debounce((css: string) => {
-      const oldStyl = document.querySelector('#editor-script-css')
-      if (oldStyl) {
-        document.head.removeChild(oldStyl)
-      }
-      if (!_.isEmpty(css)) {
+    injectCustomCss(css: string) {
+      if (this.customCssTimer !== null) window.clearTimeout(this.customCssTimer)
+      removeEditorPageCss()
+      if (_.isEmpty(css)) return
+
+      this.customCssTimer = window.setTimeout(() => {
         const styl = document.createElement('style')
         styl.type = 'text/css'
         styl.id = 'editor-script-css'
+        styl.textContent = scopeEditorPageCss(css)
         document.head.appendChild(styl)
-        styl.appendChild(document.createTextNode(css))
-      }
-    }, 1000)
+        this.customCssTimer = null
+      }, 1000)
+    }
   }
 })
 </script>

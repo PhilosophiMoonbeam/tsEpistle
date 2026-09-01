@@ -19,6 +19,7 @@
           :items='sidebarDecoded'
           :nav-mode='navMode'
           :expand-parent-by-default='navExpandParent'
+          @navigate='sidebarNavigationStarted'
         )
 
     v-fab-transition(v-if='navMode !== `NONE`')
@@ -71,14 +72,16 @@
             .text-body-small.text-warning {{$t('common:page.unpublished')}}
             status-indicator.ml-3(negative, pulse)
         v-divider
-      v-container.page-hero(fluid)
-        v-row.page-header-section.align-content-center(no-gutters)
+      v-container.page-hero(
+        fluid
+        :class='{ "page-hero--with-toc": tocPosition !== `off` }'
+      )
+        v-row.page-header-section(no-gutters)
           v-col.page-col-content.is-page-header(
             :offset-xl='tocPosition === `left` ? 2 : 0'
             :offset-lg='tocPosition === `left` ? 3 : 0'
             :xl='tocPosition === `right` ? 10 : false'
             :lg='tocPosition === `right` ? 9 : false'
-            style='margin-top: auto; margin-bottom: auto;'
             :class='$vuetify.locale.isRtl ? `pr-4` : `pl-4`'
             )
             .page-header-headings
@@ -114,23 +117,26 @@
             cols='12'
             :lg='tocPosition !== `off` ? 3 : 12'
             :xl='tocPosition !== `off` ? 2 : 12'
-            :class='tocPosition === `right` ? `order-2 order-lg-2` : `order-2 order-lg-1`'
+            :class='[tocPosition === `right` ? `order-2 order-lg-2` : `order-2 order-lg-1`, { "page-col-sd--with-toc": tocPosition !== `off` }]'
             )
-            v-card.page-toc-card.mb-5(v-if='tocFlattened.length')
-              .text-label-small.pa-5.pb-2.text-primary {{$t('common:page.toc')}}
-              v-list.py-2(density="compact", nav)
+            v-card.page-toc-card.mb-4(v-if='tocPosition !== `off`', tag='nav', :aria-label='$t(`common:page.toc`)')
+              .text-label-small.text-primary {{$t('common:page.toc')}}
+              v-list.py-2(v-if='tocFlattened.length', density="compact", nav)
                 v-list-item.page-toc-item(
                   v-for='tocItem in tocFlattened'
                   :key='tocItem.anchor'
+                  :href='tocItem.anchor'
                   :style='`--toc-indent: ${Math.min(tocItem.depth, 5) * 14}px`'
-                  @click='scrollToPageAnchor(tocItem.anchor)'
+                  @click='tocLinkClicked($event, tocItem.anchor)'
                   )
                   template(v-slot:prepend)
                     v-icon.page-toc-item-marker(size="x-small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
                   v-list-item-title.page-toc-item-title(
                     :class='{ "font-weight-medium": tocItem.depth === 0 }'
                     ) {{tocItem.title}}
-                    //- v-divider(inset, v-if='tocIdx < toc.length - 1')
+              .page-toc-empty(v-else)
+                v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
+                span.text-body-small No sections on this page
 
             v-card.page-tags-card.mb-5(v-if='tags.length > 0')
               .pa-5
@@ -700,15 +706,11 @@
             v-btn(@click='approvalDialog = false') Close
     v-fab-transition
       v-btn.page-return-top(
-        :class='{ "page-return-top--docked": isReturnTopDocked }'
         v-if='upBtnShown'
         icon
         fixed
-        location='bottom start'
+        color='primary'
         @click='returnToTop'
-        :variant="isReturnTopDocked ? 'flat' : undefined"
-        :color='upBtnColor'
-        :style='upBtnPosition'
         :aria-label='$t(`common:actions.returnToTop`)'
         )
         v-icon mdi-arrow-up
@@ -1040,19 +1042,6 @@ export default defineComponent({
         }, []))
     },
     pageUrl () { return window.location.href },
-    isReturnTopDocked () {
-      return this.$vuetify.display.width >= 1280 && this.navMode !== 'NONE' && this.navShown
-    },
-    upBtnColor () {
-      return this.isReturnTopDocked ? 'primary-lighten-1' : 'primary'
-    },
-    upBtnPosition () {
-      if (this.isReturnTopDocked) {
-        return this.$vuetify.locale.isRtl ? 'right: 0; bottom: 0;' : 'left: 216px; bottom: 0;'
-      }
-      const offset = this.navMode !== 'NONE' ? 65 : 16
-      return this.$vuetify.locale.isRtl ? `right: ${offset}px;` : `left: ${offset}px;`
-    },
     sidebarDecoded (): SidebarItem[] {
       return decodeBase64Json<SidebarItem[]>(this.sidebar)
     },
@@ -1242,6 +1231,11 @@ export default defineComponent({
       element.addEventListener('animationend', () => {
         element.classList.remove('page-main--route-enter')
       }, { once: true })
+    },
+    tocLinkClicked (event: MouseEvent, anchor: string) {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      event.preventDefault()
+      this.scrollToPageAnchor(anchor)
     },
     scrollToPageAnchor(anchor: string, focusDestination = true) {
       const container = this.$refs.container as HTMLElement
@@ -1529,6 +1523,9 @@ export default defineComponent({
     goHome () {
       navigateToWikiPage(this.locales && this.locales.length > 0 ? `/${this.locale}/home` : '/')
     },
+    sidebarNavigationStarted () {
+      if (this.$vuetify.display.width < 1280) this.navShown = false
+    },
     toggleNavigation () {
       this.navShown = !this.navShown
     },
@@ -1608,6 +1605,9 @@ export default defineComponent({
 
 <style lang="scss">
 .wiki-page {
+  --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
+  --page-toc-desktop-lift: calc(var(--page-toc-empty-height) + var(--wiki-space-12));
+
   font-family: var(--wiki-font-body);
 }
 
@@ -1692,7 +1692,7 @@ export default defineComponent({
 
 .page-edit-fab {
   inset-block-end: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-5));
-  inset-inline-end: var(--wiki-space-6);
+  inset-inline-end: calc(var(--wiki-space-5) + var(--wiki-control-height) + var(--wiki-space-3));
 }
 
 .page-nav-toggle {
@@ -1705,14 +1705,9 @@ export default defineComponent({
 }
 
 .page-return-top {
-  inset-block-end: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-4)) !important;
-  inset-inline-start: var(--wiki-space-5);
-}
-
-.page-return-top--docked {
-  z-index: 1007;
-  border-color: var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-control-radius) !important;
+  right: calc(env(safe-area-inset-right) + var(--wiki-space-5)) !important;
+  bottom: calc(var(--v-layout-bottom, 0px) + var(--wiki-grid-size) + var(--wiki-space-6)) !important;
+  left: auto !important;
 }
 
 .page-breadcrumb-bar {
@@ -1806,6 +1801,11 @@ export default defineComponent({
   }
 }
 
+.page-hero--with-toc,
+.page-hero--with-toc .page-header-section {
+  min-height: calc(var(--page-toc-empty-height) + var(--wiki-space-8));
+}
+
 .page-header-section {
   position: relative;
   width: min(100%, var(--wiki-shell-max));
@@ -1819,6 +1819,7 @@ export default defineComponent({
     grid-template-columns: minmax(0, 1fr) auto;
     gap: var(--wiki-space-4);
     align-items: center;
+    align-content: start;
     padding:
       var(--wiki-space-4)
       var(--wiki-page-gutter) !important;
@@ -1897,6 +1898,8 @@ export default defineComponent({
 }
 
 .page-body {
+  position: relative;
+  z-index: 1;
   width: min(100%, var(--wiki-shell-max));
   margin-inline: auto;
   padding:
@@ -1946,7 +1949,15 @@ export default defineComponent({
   }
 }
 
+.page-col-sd--with-toc {
+  margin-block-start: calc(var(--page-toc-desktop-lift) * -1);
+}
+
 .page-toc-card {
+  display: flex;
+  min-height: var(--page-toc-empty-height);
+  flex-direction: column;
+
   > .text-label-small {
     padding:
       var(--wiki-space-4)
@@ -1961,6 +1972,18 @@ export default defineComponent({
       var(--wiki-space-3);
     background: transparent;
   }
+}
+
+.page-toc-empty {
+  display: grid;
+  min-height: var(--wiki-grid-size);
+  flex: 1 1 auto;
+  place-content: center;
+  justify-items: center;
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-4);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  text-align: center;
 }
 
 .page-toc-item {
@@ -2050,22 +2073,25 @@ export default defineComponent({
 }
 
 .page-shortcuts-card {
+  --page-shortcut-target: calc(var(--wiki-control-height) - var(--wiki-space-1));
+
   border: 1px solid var(--wiki-surface-border) !important;
+  overflow: visible !important;
 
   .v-toolbar {
     height: auto !important;
-    min-height: var(--wiki-control-height);
+    min-height: var(--page-shortcut-target);
     background: transparent !important;
   }
 
   .v-toolbar__content {
     display: flex;
     height: auto !important;
-    min-height: var(--wiki-control-height);
+    min-height: var(--page-shortcut-target);
     flex-wrap: wrap;
     gap: var(--wiki-space-1);
     justify-content: center;
-    padding: var(--wiki-space-1);
+    padding-inline: var(--wiki-space-1);
   }
 
   .v-spacer {
@@ -2073,9 +2099,9 @@ export default defineComponent({
   }
 
   .v-btn {
-    width: var(--wiki-control-height);
-    min-width: var(--wiki-control-height);
-    height: var(--wiki-control-height);
+    width: var(--page-shortcut-target);
+    min-width: var(--page-shortcut-target);
+    height: var(--page-shortcut-target);
     border-radius: var(--wiki-radius-xs) !important;
 
     &:hover {
@@ -2754,6 +2780,11 @@ export default defineComponent({
 }
 
 @media (max-width: 1279px) {
+  .page-hero--with-toc,
+  .page-hero--with-toc .page-header-section {
+    min-height: 0;
+  }
+
   .page-col-sd {
     position: static;
     display: grid;
@@ -2763,6 +2794,7 @@ export default defineComponent({
     align-items: start;
     overflow: visible;
     padding-block-end: var(--wiki-space-5);
+    margin-block-start: 0;
 
     > .v-card {
       margin-bottom: 0 !important;
@@ -2781,6 +2813,10 @@ export default defineComponent({
 }
 
 @media (max-width: 959px) {
+  .page-return-top {
+    bottom: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-4)) !important;
+  }
+
   .page-col-sd {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2973,8 +3009,9 @@ export default defineComponent({
   }
 
   .page-return-top {
-    inset-block-end: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-3)) !important;
-    inset-inline-start: var(--wiki-space-4);
+    right: calc(env(safe-area-inset-right) + var(--wiki-space-4)) !important;
+    bottom: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-3)) !important;
+    left: auto !important;
   }
 }
 
@@ -3003,6 +3040,7 @@ export default defineComponent({
     display: none;
   }
 
+  .page-hero,
   .page-header-section,
   .page-header-section > .is-page-header {
     min-height: 0;

@@ -2,11 +2,11 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-installing-updates.svg', alt='Extensions', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:extensions.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft {{ $t('admin:extensions.subtitle') }}
+        admin-hero(
+          :title='$t(`admin:extensions.title`)'
+          :description='$t(`admin:extensions.subtitle`)'
+          icon='/_assets/svg/icon-installing-updates.svg'
+        )
         v-form.pt-3
           v-row
             v-col(xl='6' lg='8' cols='12')

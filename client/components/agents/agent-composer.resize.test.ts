@@ -23,11 +23,11 @@ class FakeElement {
   readonly style: FakeStyle = {
     height: '',
     overflowY: '',
-    minHeight: '40px',
-    maxHeight: '100px',
-    paddingTop: '8px',
+    minHeight: '96px',
+    maxHeight: '144px',
+    paddingTop: '12px',
     paddingBottom: '8px',
-    lineHeight: '24px'
+    lineHeight: '26px'
   }
   parentNode: FakeElement | null = null
   children: FakeElement[] = []
@@ -137,7 +137,9 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     goalsEnabled: true,
     skills: [],
     preferredSkills: [],
-    invocationLimit: 3
+    invocationLimit: 3,
+    statusLabel: 'Ready',
+    statusTone: 'ready'
   }
   const evaluate = new Function(
     'computed',
@@ -154,6 +156,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     'HTMLElement',
     'HTMLTextAreaElement',
     'filterSkillsForCommand',
+    'filterUserSelectableSkills',
     'caretBoundsFromMirror',
     'calculateComposerSizing',
     'scrollTopForCaret',
@@ -196,6 +199,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     FakeElement,
     FakeTextArea,
     () => [],
+    <T>(skills: readonly T[]) => [...skills],
     caretBoundsFromMirror,
     calculateComposerSizing,
     scrollTopForCaret
@@ -230,26 +234,28 @@ describe('Agent composer sizing and caret behavior', () => {
     expect(calculateComposerSizing(72, 40, 100)).toEqual({ height: 72, overflowing: false })
     expect(calculateComposerSizing(100, 40, 100)).toEqual({ height: 100, overflowing: false })
     expect(calculateComposerSizing(140, 40, 100)).toEqual({ height: 100, overflowing: true })
+    expect(calculateComposerSizing(80, 96, 72)).toEqual({ height: 96, overflowing: false })
+    expect(calculateComposerSizing(120, 96, 72)).toEqual({ height: 96, overflowing: true })
 
     const composer = loadComposer()
     composer.textarea.scrollHeight = 20
     composer.resizeInput()
-    expect(composer.textarea.style.height).toBe('40px')
+    expect(composer.textarea.style.height).toBe('96px')
     expect(composer.textarea.style.overflowY).toBe('hidden')
 
-    composer.textarea.scrollHeight = 72
+    composer.textarea.scrollHeight = 112
     composer.resizeInput()
-    expect(composer.textarea.style.height).toBe('72px')
+    expect(composer.textarea.style.height).toBe('112px')
     expect(composer.textarea.style.overflowY).toBe('hidden')
 
-    composer.textarea.scrollHeight = 100
+    composer.textarea.scrollHeight = 144
     composer.resizeInput()
-    expect(composer.textarea.style.height).toBe('100px')
+    expect(composer.textarea.style.height).toBe('144px')
     expect(composer.textarea.style.overflowY).toBe('hidden')
 
-    composer.textarea.scrollHeight = 140
+    composer.textarea.scrollHeight = 180
     composer.resizeInput()
-    expect(composer.textarea.style.height).toBe('100px')
+    expect(composer.textarea.style.height).toBe('144px')
     expect(composer.textarea.style.overflowY).toBe('auto')
   })
 
@@ -262,7 +268,7 @@ describe('Agent composer sizing and caret behavior', () => {
 
     composer.textarea.scrollHeight = 32
     composer.resizeInput()
-    expect(composer.textarea.style.height).toBe('40px')
+    expect(composer.textarea.style.height).toBe('96px')
     expect(composer.textarea.style.overflowY).toBe('hidden')
     expect(composer.textarea.scrollTop).toBe(0)
   })
@@ -276,7 +282,7 @@ describe('Agent composer sizing and caret behavior', () => {
     composer.mounted()
     composer.resizeInput()
 
-    expect(caretBoundsFromMirror(700, 100, 24, 24)).toEqual({ top: 600, bottom: 624 })
+    expect(caretBoundsFromMirror(700, 100, 24, 26)).toEqual({ top: 600, bottom: 626 })
     expect(composer.textarea.scrollTop).toBe(400)
   })
 
@@ -311,6 +317,16 @@ describe('Agent composer sizing and caret behavior', () => {
         caret: { top: 148, bottom: 172 }
       })
     ).toBe(120)
+    expect(
+      scrollTopForCaret({
+        scrollTop: 20,
+        clientHeight: 100,
+        scrollHeight: 80,
+        paddingTop: 12,
+        paddingBottom: 8,
+        caret: { top: 40, bottom: 66 }
+      })
+    ).toBe(0)
   })
 
   it('mounts one reusable caret mirror and removes it on unmount', () => {
@@ -320,6 +336,44 @@ describe('Agent composer sizing and caret behavior', () => {
     expect(composer.body.children).toHaveLength(1)
     composer.unmount()
     expect(composer.body.children).toHaveLength(0)
+  })
+})
+
+describe('Agent composer dense presentation', () => {
+  const template = source.slice(source.indexOf('<template>'), source.indexOf('<script setup'))
+
+  it('keeps the textarea dominant without a visible field label or a second status row', () => {
+    expect(template).not.toContain('agent-composer__editor-label')
+    expect(template).not.toContain('Message Wiki Agent')
+    expect(template).toMatch(/<v-textarea[\s\S]*?rows="3"/)
+    expect(template.match(/id="agent-composer-status"/g)).toHaveLength(1)
+    expect(template).toMatch(/:class="`agent-composer__state--\$\{statusTone\}`"/)
+    expect(template).toMatch(/<span>\{\{\s*statusLabel\s*\}\}<\/span>/)
+    expect(source).toMatch(/statusTone:\s*'ready'\s*\|\s*'error'\s*\|\s*'busy'/)
+    expect(source).toMatch(/\.agent-composer__state--ready\s*\{[\s\S]*?rgb\(var\(--v-theme-success\)\)/)
+    expect(source).toMatch(/\.agent-composer__state--error\s*\{[\s\S]*?rgb\(var\(--v-theme-error\)\)/)
+
+    const inputStyle = source.match(/\.agent-composer__input :deep\(textarea\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(inputStyle).toMatch(/min-height:\s*calc\(var\(--wiki-space-12\)\s*\*\s*2\)/)
+    expect(inputStyle).toMatch(/line-height:\s*var\(--wiki-leading-body\)/)
+    expect(source).toMatch(
+      /\.agent-composer__input :deep\(\.v-field__input\)\s*\{[\s\S]*?padding:\s*var\(--wiki-space-3\)\s+var\(--wiki-space-1\)\s+var\(--wiki-space-2\)/
+    )
+
+    const submitStyle = source.match(/\.agent-composer__submit\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(submitStyle).toMatch(/min-width:\s*calc\(var\(--wiki-space-12\)\s*\*\s*2\)/)
+    expect(submitStyle).not.toMatch(/\*\s*2\.5/)
+  })
+
+  it('exposes visually distinct and pressed pin states in the manual picker', () => {
+    const manualList = template.match(/<v-list v-if="skillMenuItems\.length > 0"[\s\S]*?<\/v-list>/)?.[0] ?? ''
+    expect(source).toMatch(
+      /const skillMenuItems = computed\(\(\) => \[[\s\S]*?filterUserSelectableSkills\(props\.skills\)[\s\S]*?\.\.\.props\.preferredSkills[\s\S]*?sourcePath\.startsWith\('personal\/'\)/
+    )
+    expect(manualList).toMatch(/'mdi-pin'\s*:\s*'mdi-pin-outline'/)
+    expect(manualList).toMatch(/:aria-pressed="isPreferred\(skill\.versionId\)"/)
+    expect(manualList).toMatch(/:color="isPreferred\(skill\.versionId\) \? 'primary' : undefined"/)
+    expect(manualList).toMatch(/:variant="isPreferred\(skill\.versionId\) \? 'tonal' : 'text'"/)
   })
 })
 
@@ -335,11 +389,15 @@ describe('Agent composer send completion', () => {
     expect(composer.selectedSkillIds.value).toEqual(['skill-version'])
     expect(composer.goalMode.value).toBe(true)
 
+    composer.textarea.scrollHeight = 32
+    composer.textarea.scrollTop = 48
     composer.sent[0].complete(true)
     expect(composer.draft.value).toBe('')
     expect(composer.selectedSkillIds.value).toEqual([])
     expect(composer.goalMode.value).toBe(false)
     expect(composer.sendFailed.value).toBe(false)
+    expect(composer.textarea.style.height).toBe('96px')
+    expect(composer.textarea.scrollTop).toBe(0)
   })
 
   it('retains the draft and context for a failed send so it can be retried', () => {

@@ -2,31 +2,47 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-people.svg', alt='', style='width: 80px;')
-          .admin-header-title
-            h1.text-headline-medium.text-primary.animated.fadeInLeft(tabindex='-1') Groups
-            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p4s Manage groups and their permissions
-          v-spacer
-          v-btn.animated.fadeInDown.wait-p3s(icon variant="outlined" color='grey' href='https://docs.requarks.io/groups' target='_blank' aria-label='Group documentation')
-            v-icon mdi-help-circle
-          v-btn.animated.fadeInDown.wait-p2s.mx-3(icon color='grey' variant="outlined" @click='refresh' :loading='loading' :disabled='loading' aria-label='Refresh groups')
-            v-icon mdi-refresh
-          v-dialog(v-model='newGroupDialog' max-width='500' :fullscreen='$vuetify.display.smAndDown' aria-labelledby='new-group-title')
-            template(v-slot:activator='{ props }')
-              v-btn.animated.fadeInDown(color='primary' variant="flat" v-bind='props' size="large" :icon='$vuetify.display.smAndDown' aria-label='New group')
-                v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
-                span(v-if='$vuetify.display.mdAndUp') New Group
-            v-card
-              .dialog-header.is-short
-                h2#new-group-title New Group
-              v-card-text.pt-5
-                v-alert(v-if='createError' type='error' variant='tonal' class='mb-3') {{ createError }}
-                v-text-field(variant="outlined" prepend-icon='mdi-account-group' v-model='newGroupName' label='Group Name' counter='255' @keyup.enter='createGroup' @keyup.esc='newGroupDialog = false' ref='groupNameIpt')
-              div.admin-dialog-actions.v-card-chin
-                v-spacer
-                v-btn(variant="text" @click='newGroupDialog = false' :disabled='creating') Cancel
-                v-btn(color='primary' @click='createGroup' :loading='creating' :disabled='creating') Create
+        AdminHero(
+          title='Groups'
+          description='Manage groups and their permissions'
+          icon='/_assets/svg/icon-people.svg'
+          heading-id='admin-groups-heading'
+        )
+          template(v-slot:actions)
+            v-btn(
+              icon
+              variant="outlined"
+              color='grey'
+              href='https://docs.requarks.io/groups'
+              target='_blank'
+              aria-label='Group documentation'
+            )
+              v-icon mdi-help-circle
+            v-btn(
+              icon
+              color='grey'
+              variant="outlined"
+              @click='refresh'
+              :loading='loading'
+              :disabled='loading'
+              aria-label='Refresh groups'
+            )
+              v-icon mdi-refresh
+            v-dialog(v-model='newGroupDialog' max-width='500' :fullscreen='$vuetify.display.smAndDown' aria-labelledby='new-group-title')
+              template(v-slot:activator='{ props }')
+                v-btn(color='primary' variant="flat" v-bind='props' size="large" :icon='$vuetify.display.smAndDown' aria-label='New group')
+                  v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
+                  span(v-if='$vuetify.display.mdAndUp') New Group
+              v-card
+                .dialog-header.is-short
+                  h2#new-group-title New Group
+                v-card-text.pt-5
+                  v-alert(v-if='createError' type='error' variant='tonal' class='mb-3') {{ createError }}
+                  v-text-field(variant="outlined" prepend-icon='mdi-account-group' v-model='newGroupName' label='Group Name' counter='255' @keyup.enter='createGroup' @keyup.esc='newGroupDialog = false' ref='groupNameIpt')
+                div.admin-dialog-actions.v-card-chin
+                  v-spacer
+                  v-btn(variant="text" @click='newGroupDialog = false' :disabled='creating') Cancel
+                  v-btn(color='primary' @click='createGroup' :loading='creating' :disabled='creating') Create
         v-card.mt-3.animated.fadeInUp
           .admin-filter-bar.pa-2.d-flex.align-center
             v-text-field(variant="solo" flat v-model='search' prepend-inner-icon='mdi-account-search-outline' label='Search groups' hide-details density="compact")

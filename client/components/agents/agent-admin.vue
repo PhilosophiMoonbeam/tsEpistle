@@ -1,32 +1,14 @@
 <template>
   <section class="agent-control" aria-labelledby="admin-title">
-    <header class="agent-hero">
-      <div class="agent-hero__copy">
-        <div class="agent-eyebrow">
-          <span class="agent-eyebrow__signal" aria-hidden="true" />
-          Operations ledger · AI–01
-        </div>
-        <h1 id="admin-title" tabindex="-1">{{ embedded ? 'Agents' : 'Agent administration' }}</h1>
-        <p><span class="agent-hero__summary-full">Define the operational envelope for every AI interaction: approved inference, curated expertise, network boundaries, and the safeguards that keep work accountable.</span><span class="agent-hero__summary-compact">Review runtime safeguards, provider access, and browser boundaries for every Agent run.</span></p>
-        <div class="agent-hero__status" aria-label="Control center status" role="status" aria-live="polite">
-          <v-chip
-            size="small"
-            variant="tonal"
-            :color="loadFailed ? 'error' : !dataLoaded ? undefined : runtime?.enabled ? 'success' : 'warning'"
-            :prepend-icon="loadFailed ? 'mdi-alert-circle-outline' : !dataLoaded ? 'mdi-progress-clock' : runtime?.enabled ? 'mdi-check-circle-outline' : 'mdi-pause-circle-outline'"
-          >
-            {{ loadFailed ? dataLoaded ? 'Refresh failed · showing last loaded status' : 'Deployment state unavailable' : !dataLoaded ? 'Reading deployment state' : runtime?.enabled ? 'Agent runtime active' : 'Agent runtime paused' }}
-          </v-chip>
-          <v-chip size="small" variant="outlined" prepend-icon="mdi-shield-check-outline">Policy governed</v-chip>
-          <span class="agent-hero__live"><span aria-hidden="true" />Deployment view</span>
-        </div>
-      </div>
-      <aside class="agent-docket" aria-label="Current administration summary">
-        <div class="agent-docket__head">
-          <span>Control docket</span>
-          <strong>{{ loadFailed ? dataLoaded ? 'Last loaded' : 'Unavailable' : dataLoaded ? 'Current' : 'Pending' }}</strong>
-        </div>
-        <dl>
+    <AdminHero
+      :title="embedded ? 'Agents' : 'Agent administration'"
+      description="Review runtime safeguards, provider access, and browser boundaries for every Agent run."
+      icon="mdi-robot-outline"
+      eyebrow="Operations ledger · AI–01"
+      heading-id="admin-title"
+    >
+      <template #extra>
+        <dl class="agent-hero__facts" aria-label="Current administration summary">
           <div>
             <dt>Runtime</dt>
             <dd>{{ dataLoaded ? runtime?.enabled ? 'Active' : 'Paused' : error ? 'Unavailable' : 'Loading' }}</dd>
@@ -40,12 +22,25 @@
             <dd>{{ dataLoaded ? `${enabledBrowserCount} allowed` : '—' }}</dd>
           </div>
         </dl>
-        <div class="agent-docket__foot"><v-icon size="16">mdi-text-box-check-outline</v-icon><span>Administrative actions are retained in the audit ledger.</span></div>
-      </aside>
-      <div class="agent-hero__actions">
-        <v-btn variant="tonal" color="primary" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || Boolean(actionBusyKey)" @click="load">Refresh status</v-btn>
-      </div>
-    </header>
+      </template>
+      <template #status>
+        <div class="agent-hero__status" aria-label="Control center status" role="status" aria-live="polite">
+          <v-chip
+            size="small"
+            variant="tonal"
+            :color="loadFailed ? 'error' : !dataLoaded ? undefined : runtime?.enabled ? 'success' : 'warning'"
+            :prepend-icon="loadFailed ? 'mdi-alert-circle-outline' : !dataLoaded ? 'mdi-progress-clock' : runtime?.enabled ? 'mdi-check-circle-outline' : 'mdi-pause-circle-outline'"
+          >
+            {{ loadFailed ? dataLoaded ? 'Refresh failed · showing last loaded status' : 'Deployment state unavailable' : !dataLoaded ? 'Reading deployment state' : runtime?.enabled ? 'Agent runtime active' : 'Agent runtime paused' }}
+          </v-chip>
+          <v-chip size="small" variant="outlined" prepend-icon="mdi-shield-check-outline">Policy governed</v-chip>
+          <span class="agent-hero__live"><span aria-hidden="true" />Deployment view</span>
+        </div>
+      </template>
+      <template #actions>
+        <v-btn class="agent-hero__refresh" variant="tonal" color="primary" prepend-icon="mdi-refresh" :loading="loading" :disabled="loading || Boolean(actionBusyKey)" @click="load">Refresh status</v-btn>
+      </template>
+    </AdminHero>
 
     <v-alert v-if="error" class="agent-global-error" type="error" variant="tonal" closable role="alert" @click:close="error = ''">
       <strong>Control center could not complete the request.</strong>
@@ -964,68 +959,31 @@ onMounted(() => void load())
   font-family: var(--wiki-font-body);
 }
 
-.agent-hero {
-  position: relative;
-  display: grid;
-  overflow: hidden;
-  min-height: calc(var(--wiki-space-12) * 5);
-  grid-template-columns: minmax(0, 1fr) minmax(17rem, 21rem);
-  gap: var(--wiki-space-5) var(--wiki-space-8);
-  margin-block-end: var(--wiki-space-4);
-  padding: clamp(var(--wiki-space-6), 4vw, var(--wiki-space-10));
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-hero-radius);
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--wiki-accent-warm) 72%, transparent) 0 var(--wiki-space-1), transparent var(--wiki-space-1)),
-    linear-gradient(var(--wiki-surface-border) 1px, transparent 1px),
-    linear-gradient(90deg, var(--wiki-surface-border) 1px, transparent 1px),
-    linear-gradient(145deg, color-mix(in srgb, var(--wiki-ambient-accent) 7%, var(--wiki-surface-raised)), var(--wiki-surface-raised) 64%);
-  background-size: auto, var(--wiki-grid-size) var(--wiki-grid-size), var(--wiki-grid-size) var(--wiki-grid-size), auto;
-  box-shadow: var(--wiki-shadow-md), var(--wiki-shadow-inset);
-  isolation: isolate;
-}
-
-.agent-hero::after {
-  position: absolute;
-  z-index: -1;
-  inset-block: 0;
-  inset-inline-end: 0;
-  width: min(42%, 30rem);
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--wiki-accent-spectral) 7%, transparent));
-  content: '';
-  mask-image: linear-gradient(to bottom, transparent, rgb(var(--v-theme-on-surface)) 18%, rgb(var(--v-theme-on-surface)) 82%, transparent);
-  pointer-events: none;
-}
-
-.agent-hero__copy {
-  align-self: end;
-  max-width: 48rem;
-}
-
-.agent-hero h1 {
-  margin: var(--wiki-space-3) 0 var(--wiki-space-3);
-  color: rgb(var(--v-theme-on-surface));
-
-  font-family: var(--wiki-font-heading);
-  font-size: clamp(2.2rem, 4.2vw, 3.75rem);
-  font-weight: 760;
-  letter-spacing: -.052em;
-  line-height: var(--wiki-leading-heading);
-}
-
-.agent-hero p {
-  max-width: 46rem;
+.agent-hero__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wiki-space-2) var(--wiki-space-4);
   margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
-  font-size: 1rem;
-  line-height: var(--wiki-leading-body);
-}
-.agent-hero__summary-compact {
-  display: none;
 }
 
+.agent-hero__facts > div {
+  display: flex;
+  align-items: baseline;
+  gap: var(--wiki-space-2);
+}
 
-.agent-eyebrow,
+.agent-hero__facts dt {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  font-size: var(--wiki-label-size);
+}
+
+.agent-hero__facts dd {
+  margin: 0;
+  font-family: var(--wiki-font-mono);
+  font-size: var(--wiki-label-size);
+  font-weight: 680;
+}
+
 .agent-panel__eyebrow {
   color: var(--wiki-accent-warm);
   font-size: var(--wiki-label-size);
@@ -1034,26 +992,11 @@ onMounted(() => void load())
   text-transform: uppercase;
 }
 
-.agent-eyebrow {
-  display: flex;
-  align-items: center;
-  gap: var(--wiki-space-2);
-}
-
-.agent-eyebrow__signal {
-  width: var(--wiki-space-2);
-  height: var(--wiki-space-2);
-  border-radius: var(--wiki-radius-pill);
-  background: var(--wiki-accent-warm);
-  box-shadow: 0 0 0 var(--wiki-space-1) color-mix(in srgb, var(--wiki-accent-warm) 14%, transparent);
-}
-
 .agent-hero__status {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--wiki-space-2);
-  margin-block-start: var(--wiki-space-5);
 }
 
 .agent-hero__live {
@@ -1073,82 +1016,6 @@ onMounted(() => void load())
   border-radius: var(--wiki-radius-pill);
   background: rgb(var(--v-theme-success));
   box-shadow: 0 0 0 var(--wiki-space-1) color-mix(in srgb, rgb(var(--v-theme-success)) 12%, transparent);
-}
-
-.agent-hero__actions {
-  align-self: start;
-}
-
-.agent-docket {
-  align-self: stretch;
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  padding: var(--wiki-space-4);
-  border: 1px solid var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-panel-radius);
-  background: color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent);
-  box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
-}
-
-.agent-docket__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--wiki-space-3);
-  padding-block-end: var(--wiki-space-3);
-  border-block-end: 1px solid var(--wiki-surface-border-strong);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .1em;
-  text-transform: uppercase;
-}
-
-.agent-docket__head strong {
-  color: var(--wiki-accent-warm);
-  font: inherit;
-}
-
-.agent-docket dl {
-  display: grid;
-  margin: 0;
-}
-
-.agent-docket dl > div {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--wiki-space-4);
-  padding-block: var(--wiki-space-3);
-  border-block-end: 1px solid var(--wiki-surface-border);
-}
-
-.agent-docket dt {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
-  font-size: .75rem;
-}
-
-.agent-docket dd {
-  margin: 0;
-  font-family: var(--wiki-font-mono);
-  font-size: .75rem;
-  font-weight: 680;
-  text-align: end;
-}
-
-.agent-docket__foot {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--wiki-space-2);
-  padding-block-start: var(--wiki-space-3);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
-  font-size: var(--wiki-label-size);
-  line-height: 1.5;
-}
-
-.agent-docket__foot .v-icon {
-  flex: 0 0 auto;
-  color: var(--wiki-accent-warm);
 }
 
 .agent-global-error {
@@ -2550,13 +2417,10 @@ code {
 }
 
 @media (max-width: 960px) {
-  .agent-hero {
-    grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem);
-  }
-
   .agent-workspace {
     grid-template-columns: minmax(0, 1fr);
   }
+
 
   .agent-sections {
     position: static;
@@ -2591,36 +2455,15 @@ code {
 }
 
 @media (max-width: 760px) {
-  .agent-hero {
-    min-height: auto;
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--wiki-space-3);
-    padding: var(--wiki-space-4);
+  .agent-hero__facts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--wiki-space-2);
   }
 
-  .agent-hero::after {
-    width: 100%;
-  }
-
-  .agent-hero__summary-full {
-    display: none;
-  }
-
-  .agent-hero__summary-compact {
-    display: inline;
-  }
-
-  .agent-hero h1 {
-    margin-block: var(--wiki-space-2);
-    font-size: 1.9rem;
-  }
-  .agent-hero p {
-    font-size: .8125rem;
-    line-height: 1.45;
-  }
-
-  .agent-hero__status {
-    margin-block-start: var(--wiki-space-3);
+  .agent-hero__facts > div {
+    display: grid;
+    gap: 0;
   }
 
   .agent-hero__status > :deep(.v-chip:nth-of-type(2)),
@@ -2628,45 +2471,7 @@ code {
     display: none;
   }
 
-
-  .agent-docket {
-    grid-column: 1;
-    grid-row: auto;
-    padding: var(--wiki-space-2);
-  }
-  .agent-docket__head,
-  .agent-docket__foot {
-    display: none;
-  }
-
-  .agent-docket dl {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .agent-docket dl > div {
-    display: grid;
-    justify-items: center;
-    gap: var(--wiki-space-1);
-    padding: var(--wiki-space-1) var(--wiki-space-2);
-    border-block-end: 0;
-    text-align: center;
-  }
-
-  .agent-docket dl > div + div {
-    border-inline-start: 1px solid var(--wiki-surface-border);
-  }
-
-  .agent-docket dd {
-    font-size: var(--wiki-label-size);
-    text-align: center;
-  }
-
-
-  .agent-hero__actions {
-    order: 3;
-  }
-
-  .agent-hero__actions .v-btn {
+  .agent-hero__refresh {
     width: 100%;
   }
 
@@ -2795,17 +2600,8 @@ code {
 }
 
 @media (max-width: 480px) {
-  .agent-hero {
-    padding: var(--wiki-space-3);
-  }
-
-  .agent-hero h1 {
-    font-size: 1.75rem;
-  }
-
-  .agent-hero__live {
-    width: 100%;
-    margin: var(--wiki-space-1) 0 0;
+  .agent-hero__facts {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .agent-panel__body,
@@ -2842,8 +2638,6 @@ code {
 }
 
 @media (forced-colors: active) {
-  .agent-hero,
-  .agent-docket,
   .agent-snapshot__item,
   .agent-sections,
   .agent-panel,
@@ -2871,7 +2665,6 @@ code {
     outline-offset: 2px;
   }
 
-  .agent-eyebrow__signal,
   .agent-hero__live > span,
   .connection-state__dot {
     background: Highlight;

@@ -2,23 +2,22 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img(src='/_assets/svg/icon-registry-editor.svg', alt='Logging', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary Logging
-            .text-body-large.text-grey Configure system loggers and inspect the live trail
-          v-spacer
-          .admin-header-actions
-            v-btn(variant="outlined", color='primary', @click='refresh', size="small", :loading='loading')
-              v-icon(start) mdi-refresh
-              span Refresh
-            v-btn(variant="tonal", color='primary', @click='toggleConsole', size="small")
-              v-icon(start) mdi-console
-              span Live Trail
-            v-btn(color='success', @click='save', variant="flat", size="small", :disabled='!loggersLoaded || loading', :loading='saving')
-              v-icon(start) mdi-check
-              span {{$t('common:actions.apply')}}
-
+        admin-hero(
+          title='Logging'
+          description='Configure system loggers and inspect the live trail'
+          icon='/_assets/svg/icon-registry-editor.svg'
+        )
+          template(v-slot:actions)
+            .admin-logging-actions
+              v-btn(variant="outlined", color='primary', @click='refresh', size="small", :loading='loading')
+                v-icon(start) mdi-refresh
+                span Refresh
+              v-btn(variant="tonal", color='primary', @click='toggleConsole', size="small")
+                v-icon(start) mdi-console
+                span Live Trail
+              v-btn(color='success', @click='save', variant="flat", size="small", :disabled='!loggersLoaded || loading', :loading='saving')
+                v-icon(start) mdi-check
+                span {{$t('common:actions.apply')}}
         v-card.mt-3
           v-tabs(v-model='tab', color='primary', show-arrows)
             v-tab(value='settings')
@@ -232,7 +231,7 @@ export default {
 </script>
 
 <style lang='scss' scoped>
-.admin-header-actions {
+.admin-logging-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -269,11 +268,11 @@ export default {
 }
 
 @media (max-width: 599.98px) {
-  .admin-header-actions {
+  .admin-logging-actions {
     flex: 1 1 100%;
   }
 
-  .admin-header-actions .v-btn {
+  .admin-logging-actions .v-btn {
     flex: 1 1 auto;
   }
 

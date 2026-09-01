@@ -2,15 +2,15 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img(src='/_assets/svg/icon-console.svg', alt='Developer Tools', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary Developer Tools
-            .text-body-large.text-grey Diagnostic flags for temporary developer logging
-          v-spacer
-          v-btn(color='success', variant="flat", @click='save', size="small", :disabled='!flagsLoaded || loading', :loading='saving')
-            v-icon(start) mdi-check
-            span {{$t('common:actions.apply')}}
+        admin-hero(
+          title='Developer Tools'
+          description='Diagnostic flags for temporary developer logging'
+          icon='/_assets/svg/icon-console.svg'
+        )
+          template(v-slot:actions)
+            v-btn(color='success', variant="flat", @click='save', size="small", :disabled='!flagsLoaded || loading', :loading='saving')
+              v-icon(start) mdi-check
+              span {{$t('common:actions.apply')}}
 
         v-card.mt-3
           v-card-title.text-title-medium Developer diagnostics

@@ -2,30 +2,32 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-rest-api.svg', alt='API', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:api.title')}}
-            .text-body-large.text-grey.animated.fadeInLeft {{$t('admin:api.subtitle')}}
-          .admin-header-status.admin-api-status.d-flex.align-center
-            v-chip(v-if='loadState === `success`', label, size="small", :color='enabled ? `success` : `warning`')
-              v-icon(start, size="small") {{ enabled ? 'mdi-check-circle' : 'mdi-api-off' }}
-              span {{ enabled ? $t('admin:api.enabled') : $t('admin:api.disabled') }}
-            v-chip(v-else-if='loadState === `error`', label, size="small", color='error')
-              v-icon(start, size="small") mdi-alert
-              span Unable to load status
-          .admin-header-actions.admin-api-actions.d-flex.align-center.flex-wrap.ga-2
-            v-btn(variant="outlined", color='grey', icon, @click='refresh', :loading='loadState === `loading`', aria-label='Refresh API status')
-              v-icon mdi-refresh
-            v-btn(v-if='loadState === `success` && enabled', variant="outlined", color='error', @click='disableDialog = true', :loading='isToggleLoading')
-              v-icon(start) mdi-power
-              span {{$t('admin:api.disableButton')}}
-            v-btn(v-else-if='loadState === `success`', variant="outlined", color='success', @click='globalSwitch', :loading='isToggleLoading')
-              v-icon(start) mdi-power
-              span {{$t('admin:api.enableButton')}}
-            v-btn(color='primary', variant="flat", size="large", @click='newKey', :disabled='loadState !== `success`')
-              v-icon(start) mdi-plus
-              span {{$t('admin:api.newKeyButton')}}
+        admin-hero(
+          :title='$t(`admin:api.title`)'
+          :description='$t(`admin:api.subtitle`)'
+          icon='/_assets/svg/icon-rest-api.svg'
+        )
+          template(v-slot:status)
+            .admin-api-status.d-flex.align-center
+              v-chip(v-if='loadState === `success`', label, size="small", :color='enabled ? `success` : `warning`')
+                v-icon(start, size="small") {{ enabled ? 'mdi-check-circle' : 'mdi-api-off' }}
+                span {{ enabled ? $t('admin:api.enabled') : $t('admin:api.disabled') }}
+              v-chip(v-else-if='loadState === `error`', label, size="small", color='error')
+                v-icon(start, size="small") mdi-alert
+                span Unable to load status
+          template(v-slot:actions)
+            .admin-api-actions.d-flex.align-center.flex-wrap.ga-2
+              v-btn(variant="outlined", color='grey', icon, @click='refresh', :loading='loadState === `loading`', aria-label='Refresh API status')
+                v-icon mdi-refresh
+              v-btn(v-if='loadState === `success` && enabled', variant="outlined", color='error', @click='disableDialog = true', :loading='isToggleLoading')
+                v-icon(start) mdi-power
+                span {{$t('admin:api.disableButton')}}
+              v-btn(v-else-if='loadState === `success`', variant="outlined", color='success', @click='globalSwitch', :loading='isToggleLoading')
+                v-icon(start) mdi-power
+                span {{$t('admin:api.enableButton')}}
+              v-btn(color='primary', variant="flat", size="large", @click='newKey', :disabled='loadState !== `success`')
+                v-icon(start) mdi-plus
+                span {{$t('admin:api.newKeyButton')}}
         v-alert.mt-3(
           v-if='loadState === `success` && !enabled'
           type='warning'

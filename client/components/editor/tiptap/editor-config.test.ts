@@ -1,21 +1,9 @@
 import { Editor, type JSONContent } from '@tiptap/core'
 import { afterEach, describe, expect, it } from '../../../../server/test/bun-test.mts'
 import markdownRenderer from '../../../../server/modules/rendering/markdown-core/renderer.ts'
-import {
-  createWikiMarkdownRenderer,
-  sanitizeWikiMarkdownHtml
-} from '../markdown/preview.ts'
-import {
-  createTiptapExtensions,
-  getVisualEditorDefinition,
-  serializeVisualEditorData,
-  type VisualEditorFormat
-} from './editor-config.ts'
-import {
-  decodeWikiSource,
-  prepareTiptapHtml,
-  prepareTiptapMarkdown
-} from './dialect.ts'
+import { createWikiMarkdownRenderer, sanitizeWikiMarkdownHtml } from '../markdown/preview.ts'
+import { createTiptapExtensions, getVisualEditorDefinition, serializeVisualEditorData, type VisualEditorFormat } from './editor-config.ts'
+import { decodeWikiSource, prepareTiptapHtml, prepareTiptapMarkdown } from './dialect.ts'
 import {
   VISUAL_MARKDOWN_GLYPHS,
   insertVisualMarkdownAdmonition,
@@ -27,7 +15,7 @@ import {
 
 const editors: Editor[] = []
 
-function createEditor (format: VisualEditorFormat, content: string): Editor {
+function createEditor(format: VisualEditorFormat, content: string): Editor {
   const element = document.createElement('div')
   document.body.appendChild(element)
   const editor = new Editor({
@@ -40,33 +28,37 @@ function createEditor (format: VisualEditorFormat, content: string): Editor {
   return editor
 }
 
-function findSourceNodes (node: JSONContent): JSONContent[] {
+function findSourceNodes(node: JSONContent): JSONContent[] {
   const children = node.content?.flatMap(findSourceNodes) ?? []
   return node.type?.startsWith('wikiSource') ? [node, ...children] : children
 }
 
-async function renderServerMarkdown (input: string): Promise<string> {
-  return Reflect.apply(markdownRenderer.render, {
-    input,
-    config: {
-      allowHTML: true,
-      linebreaks: false,
-      linkify: false,
-      typographer: false,
-      quotes: 'English',
-      underline: false
+async function renderServerMarkdown(input: string): Promise<string> {
+  return Reflect.apply(
+    markdownRenderer.render,
+    {
+      input,
+      config: {
+        allowHTML: true,
+        linebreaks: false,
+        linkify: false,
+        typographer: false,
+        quotes: 'English',
+        underline: false
+      },
+      children: [
+        { key: 'markdownAbbr', config: {} },
+        { key: 'markdownDeflist', config: {} },
+        { key: 'markdownFootnotes', config: {} },
+        { key: 'markdownImsize', config: {} },
+        { key: 'markdownMark', config: {} },
+        { key: 'markdownMultiTable', config: {} },
+        { key: 'markdownSupsub', config: {} },
+        { key: 'markdownTasklists', config: {} }
+      ]
     },
-    children: [
-      { key: 'markdownAbbr', config: {} },
-      { key: 'markdownDeflist', config: {} },
-      { key: 'markdownFootnotes', config: {} },
-      { key: 'markdownImsize', config: {} },
-      { key: 'markdownMark', config: {} },
-      { key: 'markdownMultiTable', config: {} },
-      { key: 'markdownSupsub', config: {} },
-      { key: 'markdownTasklists', config: {} }
-    ]
-  }, []) as Promise<string>
+    []
+  ) as Promise<string>
 }
 
 afterEach(() => {
@@ -229,9 +221,7 @@ graph TD
 
   it('keeps code fence presentation metadata in the shared preview renderer', () => {
     const markdown = createWikiMarkdownRenderer()
-    const preview = sanitizeWikiMarkdownHtml(markdown.render(
-      '```ts title="src/main.ts" linesStart=30 linesHighlight="31,30"\nfirst\nsecond\n```'
-    ))
+    const preview = sanitizeWikiMarkdownHtml(markdown.render('```ts title="src/main.ts" linesStart=30 linesHighlight="31,30"\nfirst\nsecond\n```'))
 
     expect(preview).toContain('<figure class="codeblock-framed">')
     expect(preview).not.toContain('data-source-line')
@@ -289,8 +279,25 @@ graph TD
     expect(searchVisualMarkdownGlyphs('zzqxy')).toEqual([])
   })
 
+  it('keeps both serializers independent of canvas theme and layout classes', () => {
+    const fixtures: Array<{ format: VisualEditorFormat; source: string }> = [
+      { format: 'markdown', source: '# Themed heading\n\nBody with **meaning**.' },
+      { format: 'html', source: '<h1>Themed heading</h1><p>Body with <strong>meaning</strong>.</p>' }
+    ]
+
+    for (const fixture of fixtures) {
+      const editor = createEditor(fixture.format, fixture.source)
+      const serialized = serializeVisualEditorData(fixture.format, editor)
+
+      editor.options.element.classList.add('contents', 'editor-page-canvas')
+
+      expect(serializeVisualEditorData(fixture.format, editor)).toBe(serialized)
+    }
+  })
+
   it('preserves unknown HTML elements and comments as editable source nodes', () => {
-    const source = '<h2 id="heading">Known</h2><custom-widget data-mode="full"><b>Unknown</b></custom-widget><!--keep--><table style="min-width: 75px"><colgroup><col style="min-width: 25px"></colgroup><tbody><tr><td><p>Cell</p></td></tr></tbody></table>'
+    const source =
+      '<h2 id="heading">Known</h2><custom-widget data-mode="full"><b>Unknown</b></custom-widget><!--keep--><table style="min-width: 75px"><colgroup><col style="min-width: 25px"></colgroup><tbody><tr><td><p>Cell</p></td></tr></tbody></table>'
     const editor = createEditor('html', source)
     const sourceNodes = findSourceNodes(editor.getJSON())
 

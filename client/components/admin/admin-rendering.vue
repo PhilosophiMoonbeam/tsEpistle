@@ -1,27 +1,46 @@
 <template lang='pug'>
   v-container(fluid)
+    admin-hero(
+      icon='/_assets/svg/icon-process.svg'
+      :title='$t(`admin:rendering.title`)'
+      :description='$t(`admin:rendering.subtitle`)'
+    )
+      template(v-slot:actions)
+        v-tooltip(location='top')
+          template(v-slot:activator='{ props }')
+            v-btn.animated.fadeInDown.wait-p3s(
+              icon
+              variant="outlined"
+              color='grey'
+              href='https://docs.requarks.io/rendering'
+              target='_blank'
+              v-bind='props'
+              aria-label='Rendering documentation — opens in a new tab'
+            )
+              v-icon mdi-help-circle
+          span Rendering documentation — opens in a new tab
+        v-tooltip(location='top')
+          template(v-slot:activator='{ props }')
+            v-btn.animated.fadeInDown.wait-p2s(
+              icon
+              variant="outlined"
+              color='grey'
+              @click='refresh'
+              v-bind='props'
+              aria-label='Refresh rendering modules'
+            )
+              v-icon mdi-refresh
+          span Refresh rendering modules
+        v-btn.animated.fadeInDown(
+          color='success'
+          @click='save'
+          variant="flat"
+          size="large"
+          :disabled='!renderersLoaded'
+        )
+          v-icon(start) mdi-check
+          span {{$t('common:actions.apply')}}
     v-row
-      v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-process.svg', alt='', aria-hidden='true', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:rendering.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:rendering.subtitle') }}
-          v-spacer
-          v-tooltip(location='top')
-            template(v-slot:activator='{ props }')
-              v-btn.animated.fadeInDown.wait-p3s(icon, variant="outlined", color='grey', href='https://docs.requarks.io/rendering', target='_blank', v-bind='props', aria-label='Rendering documentation — opens in a new tab')
-                v-icon mdi-help-circle
-            span Rendering documentation — opens in a new tab
-          v-tooltip(location='top')
-            template(v-slot:activator='{ props }')
-              v-btn.mx-3.animated.fadeInDown.wait-p2s(icon, variant="outlined", color='grey', @click='refresh', v-bind='props', aria-label='Refresh rendering modules')
-                v-icon mdi-refresh
-            span Refresh rendering modules
-          v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large", :disabled='!renderersLoaded')
-            v-icon(start) mdi-check
-            span {{$t('common:actions.apply')}}
-
       v-col.animated.fadeInUp(lg='3', cols='12')
         v-toolbar(
           color="primary"

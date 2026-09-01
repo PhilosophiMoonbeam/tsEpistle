@@ -9,55 +9,57 @@
         v-skeleton-loader.mt-3(type='article')
     v-row(v-if='recordReady')
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-male-user.svg', :alt='$t(`admin:users.edit`)', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{$t('admin:users.edit')}}
-            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s {{user.name}}
+        AdminHero(
+          :title='$t(`admin:users.edit`)'
+          :description='user.name'
+          icon='/_assets/svg/icon-male-user.svg'
+          heading-id='admin-users-edit-heading'
+        )
+          template(v-slot:extra)
             .text-body-small.text-orange(v-if='hasUnsavedChanges') Unsaved changes — saved with Update User
-          v-spacer
-          i18next.pr-4.text-body-small.text-grey.animated.fadeInDown(path='admin:users.id', tag='div')
-            strong(place='id') {{user.id}}
-          template(v-if='user.isActive')
-            status-indicator.mr-3(positive, pulse)
-            .text-body-small.text-green {{$t('admin:users.active')}}
-          template(v-else)
-            status-indicator.mr-3(negative, pulse)
-            .text-body-small.text-red {{$t('admin:users.inactive')}}
-          template(v-if='user.isVerified')
-            status-indicator.mr-3.ml-4(active, pulse)
-            .text-body-small.text-blue {{$t('admin:users.verified')}}
-          template(v-else)
-            status-indicator.mr-3.ml-4(intermediary, pulse)
-            .text-body-small.text-deep-orange {{$t('admin:users.unverified')}}
-          v-spacer
-          v-btn.ml-3.animated.fadeInDown.wait-p3s(color='grey', icon, variant="outlined", @click='navigateBack', aria-label='Back to users')
-            v-icon mdi-arrow-left
-          v-menu(origin='top right')
-            template(v-slot:activator='{ props }')
-              v-btn.ml-3.animated.fadeInDown.wait-p2s(color='black', v-bind='props', variant="flat", :disabled='!recordReady')
-                span Actions
-                v-icon(end) mdi-chevron-down
-            v-list(density="compact", nav)
-              v-list-item(v-if='!user.isActive', @click='activateUser', :disabled='actionLoading !== ``')
-                template(v-slot:prepend)
-                  v-icon(color='purple') mdi-account-key
-                v-list-item-title Activate
-              v-list-item(v-else, @click='deactivateUser', :disabled='user.id == currentUserId || user.isSystem || actionLoading !== ``')
-                template(v-slot:prepend)
-                  v-icon(color='purple') mdi-account-cancel
-                v-list-item-title Deactivate
-              v-list-item(@click='verifyUser', :disabled='user.isVerified || actionLoading !== ``')
-                template(v-slot:prepend)
-                  v-icon(color='blue') mdi-account-check
-                v-list-item-title Set as Verified
-              v-list-item(@click='deleteUserConfirm', :disabled='user.id == currentUserId || user.isSystem || actionLoading !== ``')
-                template(v-slot:prepend)
-                  v-icon(color='red') mdi-trash-can-outline
-                v-list-item-title Delete
-          v-btn.ml-3.animated.fadeInDown(color='primary', size="large", variant="flat", @click='updateUser', :disabled='!hasUnsavedChanges || actionLoading !== ``', :loading='actionLoading === `update`')
-            v-icon(start) mdi-check
-            span {{$t('admin:users.updateUser')}}
+          template(v-slot:status)
+            i18next.pr-4.text-body-small.text-grey(path='admin:users.id', tag='div')
+              strong(place='id') {{user.id}}
+            template(v-if='user.isActive')
+              status-indicator.mr-3(positive, pulse)
+              .text-body-small.text-green {{$t('admin:users.active')}}
+            template(v-else)
+              status-indicator.mr-3(negative, pulse)
+              .text-body-small.text-red {{$t('admin:users.inactive')}}
+            template(v-if='user.isVerified')
+              status-indicator.mr-3.ml-4(active, pulse)
+              .text-body-small.text-blue {{$t('admin:users.verified')}}
+            template(v-else)
+              status-indicator.mr-3.ml-4(intermediary, pulse)
+              .text-body-small.text-deep-orange {{$t('admin:users.unverified')}}
+          template(v-slot:actions)
+            v-btn(color='grey' icon variant="outlined" @click='navigateBack' aria-label='Back to users')
+              v-icon mdi-arrow-left
+            v-menu(origin='top right')
+              template(v-slot:activator='{ props }')
+                v-btn(color='black' v-bind='props' variant="flat" :disabled='!recordReady')
+                  span Actions
+                  v-icon(end) mdi-chevron-down
+              v-list(density="compact" nav)
+                v-list-item(v-if='!user.isActive' @click='activateUser' :disabled='actionLoading !== ``')
+                  template(v-slot:prepend)
+                    v-icon(color='purple') mdi-account-key
+                  v-list-item-title Activate
+                v-list-item(v-else @click='deactivateUser' :disabled='user.id == currentUserId || user.isSystem || actionLoading !== ``')
+                  template(v-slot:prepend)
+                    v-icon(color='purple') mdi-account-cancel
+                  v-list-item-title Deactivate
+                v-list-item(@click='verifyUser' :disabled='user.isVerified || actionLoading !== ``')
+                  template(v-slot:prepend)
+                    v-icon(color='blue') mdi-account-check
+                  v-list-item-title Set as Verified
+                v-list-item(@click='deleteUserConfirm' :disabled='user.id == currentUserId || user.isSystem || actionLoading !== ``')
+                  template(v-slot:prepend)
+                    v-icon(color='red') mdi-trash-can-outline
+                  v-list-item-title Delete
+            v-btn(color='primary' size="large" variant="flat" @click='updateUser' :disabled='!hasUnsavedChanges || actionLoading !== ``' :loading='actionLoading === `update`')
+              v-icon(start) mdi-check
+              span {{$t('admin:users.updateUser')}}
       v-col(cols='12', lg='6')
         v-card.animated.fadeInUp
           v-toolbar(color='primary', density="compact", flat)

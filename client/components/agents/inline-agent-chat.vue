@@ -61,7 +61,6 @@
             <v-icon icon="mdi-auto-fix" size="20" aria-hidden="true" />
           </v-avatar>
           <div class="inline-agent__heading">
-            <p class="inline-agent__eyebrow">Knowledge workspace</p>
             <h2 id="inline-agent-title">Wiki Agent</h2>
             <p class="inline-agent__session-title">{{ sessionTitle }}</p>
           </div>
@@ -69,19 +68,6 @@
 
         <v-spacer />
 
-        <v-chip
-          class="inline-agent__connection"
-          :class="{ 'inline-agent__connection--active': loading || sending || Boolean(activeRun) || connection === 'reconnecting' }"
-          :color="connectionColor"
-          size="small"
-          variant="tonal"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-        >
-          <span class="inline-agent__connection-dot" aria-hidden="true" />
-          <span class="inline-agent__connection-label">{{ connectionLabel }}</span>
-        </v-chip>
 
         <div class="inline-agent__panel-actions" role="group" aria-label="Agent workspace panels">
           <v-btn
@@ -165,7 +151,6 @@
             <div
               ref="transcript"
               class="inline-agent__transcript"
-              :class="{ 'inline-agent__transcript--approval-jump': approvalJumpVisible }"
               tabindex="-1"
               aria-label="Conversation transcript"
               @scroll.passive="handleTranscriptScroll"
@@ -179,7 +164,7 @@
               </div>
 
               <section v-if="thread && !hasConversation" class="inline-agent__welcome" aria-labelledby="inline-agent-welcome-title">
-                <p class="inline-agent__welcome-index">Archive desk · Ready</p>
+                <p class="inline-agent__welcome-index">Archive desk</p>
                 <h2 id="inline-agent-welcome-title">Begin with what you need to understand.</h2>
                 <p class="inline-agent__welcome-copy">
                   Wiki Agent traces answers through the knowledge you can access, keeps sources visible, and turns careful intent into auditable work.
@@ -229,26 +214,30 @@
               </div>
             </div>
 
-            <v-btn
-              v-if="approvalJumpVisible"
-              class="inline-agent__approval-jump"
-              :class="{ 'inline-agent__jump--goal': thread?.goal }"
-              color="warning"
-              variant="elevated"
-              prepend-icon="mdi-shield-alert-outline"
-              append-icon="mdi-arrow-down"
-              @click="jumpToApproval"
-            >Approval required</v-btn>
-            <v-btn
-              v-else-if="followJumpVisible"
-              class="inline-agent__follow-jump"
-              :class="{ 'inline-agent__jump--goal': thread?.goal }"
-              color="primary"
-              variant="tonal"
-              prepend-icon="mdi-arrow-down"
-              aria-label="Jump to latest response"
-              @click="scrollToLatest"
-            >Latest response</v-btn>
+            <nav
+              v-if="approvalJumpVisible || followJumpVisible"
+              class="inline-agent__jump-dock"
+              aria-label="Conversation navigation"
+            >
+              <v-btn
+                v-if="approvalJumpVisible"
+                class="inline-agent__approval-jump"
+                color="warning"
+                variant="elevated"
+                prepend-icon="mdi-shield-alert-outline"
+                append-icon="mdi-arrow-down"
+                @click="jumpToApproval"
+              >Approval required</v-btn>
+              <v-btn
+                v-else
+                class="inline-agent__follow-jump"
+                color="primary"
+                variant="tonal"
+                prepend-icon="mdi-arrow-down"
+                aria-label="Jump to latest response"
+                @click="scrollToLatest"
+              >Latest response</v-btn>
+            </nav>
           </div>
         </div>
 
@@ -276,6 +265,8 @@
               :skills="skills"
               :preferred-skills="thread?.session.skills ?? []"
               :invocation-limit="invocationLimit"
+              :status-label="connectionLabel"
+              :status-tone="connectionTone"
               @send="sendPrompt"
               @stop="agents.stop"
               @manage-skills="openSkillManager"
@@ -419,20 +410,22 @@ const connectionLabel = computed(() => loading.value
     ? 'Reconnecting'
     : !providerAvailable.value
       ? 'Unavailable'
-      : activeRun.value?.status === 'awaiting_approval'
-        ? 'Review needed'
-        : sending.value
-          ? 'Sending'
-          : activeRun.value
-            ? 'Working'
-            : 'Ready')
-const connectionColor = computed(() => !providerAvailable.value && !loading.value
-  ? 'error'
-  : connection.value === 'reconnecting' || activeRun.value?.status === 'awaiting_approval'
-    ? 'warning'
-    : loading.value || sending.value || activeRun.value
-      ? 'primary'
-      : 'success')
+      : Boolean(error.value)
+        ? 'Try again'
+        : activeRun.value?.status === 'awaiting_approval'
+          ? 'Review needed'
+          : sending.value
+            ? 'Sending'
+            : activeRun.value
+              ? 'Working'
+              : 'Ready')
+const connectionTone = computed<'ready' | 'error' | 'busy'>(() => loading.value || connection.value === 'reconnecting'
+  ? 'busy'
+  : !providerAvailable.value || Boolean(error.value)
+    ? 'error'
+    : sending.value || Boolean(activeRun.value)
+      ? 'busy'
+      : 'ready')
 const starters = computed(() => [
   ...(currentPage.value ? [{ label: 'Summarize this page', prompt: 'Summarize the current Wiki page and cite the key sections.', icon: 'mdi-text-box-search-outline' }] : []),
   { label: 'Find related pages', prompt: 'Find Wiki pages related to the current topic and explain how they connect.', icon: 'mdi-file-link-outline' },
@@ -814,6 +807,14 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 <style scoped>
 .inline-agent {
   --agent-conversation-width: 56rem;
+  --inline-agent-workspace-base: color-mix(in srgb, var(--wiki-surface-raised) 76%, rgb(var(--v-theme-background)));
+  --inline-agent-workspace-gradient:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--wiki-accent-warm) 7%, transparent),
+      transparent 42%,
+      color-mix(in srgb, var(--wiki-accent-spectral) 4%, transparent)
+    );
   position: relative;
   display: grid;
   width: 100%;
@@ -825,7 +826,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   gap: var(--wiki-space-4);
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-body);
-  background: rgb(var(--v-theme-background));
+  background: var(--inline-agent-workspace-gradient), var(--inline-agent-workspace-base);
   isolation: isolate;
   text-align: start;
 }
@@ -862,7 +863,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-hero-radius) !important;
-  background: rgb(var(--v-theme-surface));
+  background: color-mix(in srgb, var(--wiki-surface-raised) 28%, transparent);
   box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
   text-align: start;
 }
@@ -874,24 +875,11 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   padding-inline: var(--wiki-space-4);
   border-bottom: 1px solid var(--wiki-surface-border);
   background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--wiki-accent-warm) 7%, var(--wiki-surface-raised)),
-      var(--wiki-surface-raised) 42%,
-      color-mix(in srgb, var(--wiki-accent-spectral) 4%, var(--wiki-surface-raised))
-    ) !important;
+    var(--inline-agent-workspace-gradient),
+    color-mix(in srgb, var(--wiki-surface-raised) 78%, transparent) !important;
   box-shadow: var(--wiki-shadow-xs);
 }
 
-.inline-agent__toolbar::after {
-  position: absolute;
-  inset-block-end: -1px;
-  inset-inline-start: var(--wiki-space-6);
-  width: calc(var(--wiki-space-12) * 2);
-  height: 1px;
-  background: var(--wiki-ambient-accent);
-  content: '';
-}
 
 .inline-agent__identity {
   display: flex;
@@ -929,7 +917,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 }
 
 .inline-agent__heading h2 {
-  margin: var(--wiki-space-1) 0 0;
+  margin: 0;
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-heading);
   font-size: 1rem;
@@ -946,24 +934,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   line-height: 1.2;
 }
 
-.inline-agent__connection {
-  flex: 0 0 auto;
-  margin-inline: var(--wiki-space-2);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-}
-
-.inline-agent__connection-dot {
-  width: var(--wiki-space-2);
-  height: var(--wiki-space-2);
-  margin-inline-end: var(--wiki-space-2);
-  border-radius: var(--wiki-radius-pill);
-  background: currentColor;
-  box-shadow: 0 0 0 var(--wiki-space-1) color-mix(in srgb, currentColor 14%, transparent);
-}
-.inline-agent__connection--active .inline-agent__connection-dot {
-  animation: agentPulse 1.8s var(--wiki-motion-ease) infinite;
-}
 
 .inline-agent__panel-actions {
   display: flex;
@@ -1006,7 +976,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
       transparent calc(var(--wiki-space-12) - 1px),
       color-mix(in srgb, var(--wiki-surface-border) 34%, transparent) var(--wiki-space-12)
     ),
-    rgb(var(--v-theme-background));
+    color-mix(in srgb, var(--inline-agent-workspace-base) 72%, transparent);
 }
 .inline-agent__transcript-wrap {
   position: relative;
@@ -1055,12 +1025,12 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   z-index: 2;
   inset-block-end: 0;
   width: min(100%, var(--agent-conversation-width));
-  margin: var(--wiki-space-3) auto 0;
-  padding-block: var(--wiki-space-2) var(--wiki-space-3);
+  margin: calc(var(--wiki-space-3) / 2) auto 0;
+  padding-block: var(--wiki-space-1) calc(var(--wiki-space-3) / 2);
   background: linear-gradient(
     to bottom,
-    color-mix(in srgb, rgb(var(--v-theme-background)) 0%, transparent),
-    rgb(var(--v-theme-background)) var(--wiki-space-3)
+    transparent,
+    color-mix(in srgb, var(--inline-agent-workspace-base) 94%, transparent) var(--wiki-space-2)
   );
 }
 
@@ -1068,10 +1038,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   box-shadow: var(--wiki-shadow-md);
 }
 
-.inline-agent__jump--goal {
-  inset-block-start: var(--wiki-space-4);
-  inset-block-end: auto;
-}
 
 .inline-agent__transcript:focus-visible {
   border-radius: var(--wiki-control-radius);
@@ -1087,9 +1053,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   display: flex;
 }
 
-.inline-agent__transcript--approval-jump {
-  padding-bottom: calc(var(--wiki-space-12) * 1.5);
-}
 
 .inline-agent__loading {
   display: flex;
@@ -1121,19 +1084,17 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   font-size: var(--wiki-label-size);
 }
 
-.inline-agent__approval-jump {
-  position: absolute;
-  z-index: 2;
-  inset-block-end: var(--wiki-space-4);
-  inset-inline-end: max(var(--wiki-space-4), calc((100% - var(--agent-conversation-width)) / 2));
-  box-shadow: var(--wiki-shadow-md);
+.inline-agent__jump-dock {
+  display: flex;
+  width: min(100%, var(--agent-conversation-width));
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-inline: auto;
+  padding: var(--wiki-space-1) var(--wiki-space-1) var(--wiki-space-2);
 }
 
+.inline-agent__approval-jump,
 .inline-agent__follow-jump {
-  position: absolute;
-  z-index: 2;
-  inset-block-end: var(--wiki-space-4);
-  inset-inline-end: max(var(--wiki-space-4), calc((100% - var(--agent-conversation-width)) / 2));
   box-shadow: var(--wiki-shadow-md);
 }
 
@@ -1219,9 +1180,10 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--wiki-accent-warm) 3%, var(--wiki-surface-raised)),
-      var(--wiki-surface-raised)
-    );
+      color-mix(in srgb, var(--wiki-accent-warm) 3%, transparent),
+      transparent
+    ),
+    color-mix(in srgb, var(--wiki-surface-raised) 74%, transparent);
   box-shadow: 0 calc(var(--wiki-space-2) * -1) var(--wiki-space-8) color-mix(in srgb, var(--wiki-shadow-color) 42%, transparent);
 }
 .inline-agent__composer-inner {
@@ -1283,6 +1245,14 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   position: relative;
   min-width: 0;
   outline: none;
+  background:
+    var(--inline-agent-workspace-gradient),
+    color-mix(in srgb, var(--wiki-surface-raised) 58%, transparent);
+}
+
+.inline-agent__side :deep(.agent-history),
+.inline-agent__side :deep(.agent-memory) {
+  background: color-mix(in srgb, var(--wiki-surface-raised) 72%, transparent);
 }
 
 .inline-agent__side:focus-visible {
@@ -1489,7 +1459,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     padding-inline: var(--wiki-space-3);
   }
 
-  .inline-agent__avatar,
   .inline-agent__eyebrow,
   .inline-agent__desktop-panel-btn {
     display: none;
@@ -1552,9 +1521,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-4) + env(safe-area-inset-top) - var(--wiki-space-1));
   }
 
-  .inline-agent__avatar,
-  .inline-agent__eyebrow,
-  .inline-agent__session-title {
+  .inline-agent__eyebrow {
     display: none;
   }
   .inline-agent__identity {
@@ -1568,13 +1535,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     white-space: nowrap;
   }
 
-  .inline-agent__connection {
-    max-width: 7rem;
-    margin-inline: var(--wiki-space-1);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
 
   .inline-agent__desktop-panel-btn {
     display: none;
@@ -1655,40 +1615,11 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     white-space: nowrap;
   }
 
-  .inline-agent__approval-jump,
-  .inline-agent__follow-jump {
-    inset-block-end: var(--wiki-space-3);
-    inset-inline: var(--wiki-space-6);
-  }
-  .inline-agent__jump--goal {
-    inset-block-start: var(--wiki-space-3);
-    inset-block-end: auto;
+  .inline-agent__jump-dock {
+    padding-inline: 0;
   }
 }
 
-@media (max-width: 380px) {
-
-  .inline-agent__connection {
-    width: var(--wiki-space-10);
-    max-width: var(--wiki-space-10);
-    padding-inline: var(--wiki-space-2) !important;
-  }
-
-  .inline-agent__connection-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
-
-  .inline-agent__connection-dot {
-    margin: 0;
-  }
-
-
-}
 
 @media (max-height: 500px) {
   .inline-agent__card {
@@ -1700,9 +1631,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     min-height: calc(var(--wiki-control-height) + var(--wiki-space-2));
   }
 
-  .inline-agent__avatar,
-  .inline-agent__eyebrow,
-  .inline-agent__session-title {
+  .inline-agent__eyebrow {
     display: none;
   }
 
@@ -1750,9 +1679,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     opacity: .72;
   }
 
-  .inline-agent__toolbar::after,
   .inline-agent__welcome::before,
-  .inline-agent__connection-dot,
   .inline-agent__loading-mark {
     background: Highlight;
   }
@@ -1763,7 +1690,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     scroll-behavior: auto;
   }
 
-  .inline-agent__connection-dot,
   .inline-agent__loading-mark {
     animation: none;
   }

@@ -1,30 +1,44 @@
 <template lang='pug'>
   v-container(fluid)
+    admin-hero(
+      icon='/_assets/svg/icon-unlock.svg'
+      :title='$t(`admin:auth.title`)'
+      :description='$t(`admin:auth.subtitle`)'
+    )
+      template(v-slot:status)
+        v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
+      template(v-slot:actions)
+        v-btn(
+          icon
+          variant="outlined"
+          color='grey'
+          href='https://docs.requarks.io/auth'
+          target='_blank'
+          :aria-label='$t(`admin:auth.configReference`)'
+          title='Open authentication documentation'
+        )
+          v-icon mdi-help-circle
+        v-btn(
+          icon
+          variant="outlined"
+          color='grey'
+          @click='refresh'
+          :aria-label='$t(`common:actions.refresh`)'
+          title='Refresh authentication settings'
+          :loading='initialLoading'
+        )
+          v-icon mdi-refresh
+        v-btn(
+          type='button'
+          color='success'
+          :loading='saving'
+          :disabled='!loaded || initialLoading || saving || !dirty'
+          @click='save'
+        )
+          v-icon(start) mdi-check
+          span {{$t('common:actions.apply')}}
+    v-alert(v-if='initialLoading', type='info', variant='tonal', class='mb-4', role='status') Loading authentication settings…
     v-row
-      v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-unlock.svg', alt='Authentication', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:auth.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:auth.subtitle') }}
-          v-spacer
-          v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
-          .d-flex.flex-wrap.align-center.ga-2
-            v-btn(icon, variant="outlined", color='grey', href='https://docs.requarks.io/auth', target='_blank', :aria-label='$t(`admin:auth.configReference`)', title='Open authentication documentation')
-              v-icon mdi-help-circle
-            v-btn(icon, variant="outlined", color='grey', @click='refresh', :aria-label='$t(`common:actions.refresh`)', title='Refresh authentication settings', :loading='initialLoading')
-              v-icon mdi-refresh
-            v-btn(
-              type='button'
-              color='success'
-              :loading='saving'
-              :disabled='!loaded || initialLoading || saving || !dirty'
-              @click='save'
-            )
-              v-icon(start) mdi-check
-              span {{$t('common:actions.apply')}}
-
-      v-alert(v-if='initialLoading', type='info', variant='tonal', class='mb-4', role='status') Loading authentication settings…
       v-col(lg='3', cols='12')
         v-card.animated.fadeInUp(v-if='loaded && !initialLoading')
           v-toolbar(flat, color='teal', density="compact")

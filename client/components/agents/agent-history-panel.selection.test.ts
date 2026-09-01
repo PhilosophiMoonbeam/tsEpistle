@@ -2,23 +2,36 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
+import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 
 interface Ref<T> {
   value: T
 }
 
 interface PanelAgents {
+  error?: string
   openSession: (sessionId: string) => Promise<boolean>
   cancelSessionTransition: () => void
+  moveSessionToFolder?: (sessionId: string, folderId: string | null) => Promise<unknown>
 }
 
 type PanelEmit = (event: 'close' | 'reset') => void
 
 interface PanelHarness {
-  emit: PanelEmit
+  activeDropTarget: Ref<string | null>
+  beginSessionDrag: (event: DragEvent, session: AgentSessionSummary) => void
+  canDropTo: (folderId: string | null) => boolean
   closeHistory: () => void
+  dragStatus: Ref<string>
+  draggedSessionId: Ref<string | null>
+  dropSession: (event: DragEvent, folderId: string | null) => Promise<void>
+  emit: PanelEmit
+  finishSessionDrag: () => void
   localError: Ref<string>
+  moveSession: (session: AgentSessionSummary, folderId: string | null) => Promise<boolean>
   openSession: (sessionId: string) => Promise<void>
+  setDropTarget: (event: DragEvent, folderId: string | null) => void
   unmount: () => void
 }
 
@@ -29,7 +42,12 @@ if (!script) throw new Error('agent-history-panel.vue script block was not found
 
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
 
-const loadPanel = (agents: PanelAgents, compact = true): PanelHarness => {
+const loadPanel = (
+  agents: PanelAgents,
+  compact = true,
+  sessionFixtures: AgentSessionSummary[] = [],
+  folderFixtures: AgentConversationFolderView[] = []
+): PanelHarness => {
   const emit = vi.fn()
   const unmountCallbacks: Array<() => void> = []
   const ref = <T>(value: T): Ref<T> => ({ value })
@@ -43,8 +61,21 @@ const loadPanel = (agents: PanelAgents, compact = true): PanelHarness => {
     'defineEmits',
     'useAgentsStore',
     'window',
-    `${executableScript}\nreturn { closeHistory, localError, openSession }`
-  ) as (...dependencies: unknown[]) => Pick<PanelHarness, 'closeHistory' | 'localError' | 'openSession'>
+    `${executableScript}\nreturn {
+      activeDropTarget,
+      beginSessionDrag,
+      canDropTo,
+      closeHistory,
+      dragStatus,
+      draggedSessionId,
+      dropSession,
+      finishSessionDrag,
+      localError,
+      moveSession,
+      openSession,
+      setDropTarget
+    }`
+  ) as (...dependencies: unknown[]) => Omit<PanelHarness, 'emit' | 'unmount'>
   const panel = evaluate(
     (getter: () => unknown) => ({
       get value() {
@@ -56,7 +87,16 @@ const loadPanel = (agents: PanelAgents, compact = true): PanelHarness => {
     (_source: unknown, callback: () => void, options?: { immediate?: boolean }) => {
       if (options?.immediate) callback()
     },
-    () => ({ folders: ref([]), sessions: ref([]), thread }),
+    () => ({
+      folders: ref(folderFixtures),
+      loading: ref(false),
+      sessions: ref(sessionFixtures),
+      sessionsLoadMoreError: ref(''),
+      sessionsLoadingMore: ref(false),
+      sessionsNextCursor: ref<string | null>(null),
+      sessionsReloading: ref(false),
+      thread
+    }),
     () => emit,
     () => agents,
     { matchMedia: () => ({ matches: compact }) }
@@ -67,6 +107,45 @@ const loadPanel = (agents: PanelAgents, compact = true): PanelHarness => {
     unmount: () => {
       for (const callback of unmountCallbacks) callback()
     }
+  }
+}
+
+const makeSession = (overrides: Partial<AgentSessionSummary> = {}): AgentSessionSummary => ({
+  id: '00000000-0000-4000-8000-000000000002',
+  title: 'Release planning',
+  retention: 'temporary',
+  folderId: null,
+  executionMode: 'agent',
+  version: 1,
+  providerProfileId: null,
+  createdAt: '2026-08-31T10:00:00.000Z',
+  updatedAt: '2026-08-31T10:00:00.000Z',
+  lastActivityAt: '2026-08-31T10:00:00.000Z',
+  expiresAt: '2026-11-29T10:00:00.000Z',
+  deletedAt: null,
+  ...overrides
+})
+
+const makeFolder = (overrides: Partial<AgentConversationFolderView> = {}): AgentConversationFolderView => ({
+  id: '10000000-0000-4000-8000-000000000001',
+  name: 'Roadmap',
+  version: 1,
+  createdAt: '2026-08-31T10:00:00.000Z',
+  updatedAt: '2026-08-31T10:00:00.000Z',
+  ...overrides
+})
+
+const makeDragEvent = (): {
+  dataTransfer: { dropEffect: string; effectAllowed: string; setData: (format: string, data: string) => void }
+  event: DragEvent
+  preventDefault: () => void
+} => {
+  const preventDefault = vi.fn()
+  const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+  return {
+    dataTransfer,
+    event: { dataTransfer, preventDefault } as unknown as DragEvent,
+    preventDefault
   }
 }
 
@@ -174,5 +253,106 @@ describe('Agent history session selection', () => {
     panel.unmount()
 
     expect(agents.cancelSessionTransition).toHaveBeenCalledTimes(1)
+  })
+
+  it('moves a pointer-dragged recent conversation through the existing folder action', async () => {
+    const session = makeSession()
+    const folder = makeFolder()
+    const moveSessionToFolder = vi.fn().mockResolvedValue({})
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionTransition: vi.fn(),
+      moveSessionToFolder
+    }
+    const panel = loadPanel(agents, true, [session], [folder])
+    const drag = makeDragEvent()
+
+    panel.beginSessionDrag(drag.event, session)
+
+    expect(drag.dataTransfer.effectAllowed).toBe('move')
+    expect(drag.dataTransfer.setData).toHaveBeenCalledWith('text/plain', session.id)
+    expect(panel.draggedSessionId.value).toBe(session.id)
+    expect(panel.canDropTo(null)).toBe(false)
+    expect(panel.canDropTo(folder.id)).toBe(true)
+
+    panel.setDropTarget(drag.event, folder.id)
+    expect(drag.preventDefault).toHaveBeenCalled()
+    expect(drag.dataTransfer.dropEffect).toBe('move')
+    expect(panel.activeDropTarget.value).toBe(folder.id)
+
+    await panel.dropSession(drag.event, folder.id)
+
+    expect(moveSessionToFolder).toHaveBeenCalledTimes(1)
+    expect(moveSessionToFolder).toHaveBeenCalledWith(session.id, folder.id)
+    expect(panel.draggedSessionId.value).toBeNull()
+    expect(panel.activeDropTarget.value).toBeNull()
+    expect(panel.dragStatus.value).toBe('Moved Release planning to Roadmap.')
+  })
+
+  it('uses Recent as a drop destination for a filed conversation', async () => {
+    const folder = makeFolder()
+    const session = makeSession({ folderId: folder.id, retention: 'saved' })
+    const moveSessionToFolder = vi.fn().mockResolvedValue({})
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionTransition: vi.fn(),
+      moveSessionToFolder
+    }
+    const panel = loadPanel(agents, true, [session], [folder])
+    const drag = makeDragEvent()
+
+    panel.beginSessionDrag(drag.event, session)
+    expect(panel.canDropTo(folder.id)).toBe(false)
+    expect(panel.canDropTo(null)).toBe(true)
+
+    await panel.dropSession(drag.event, null)
+
+    expect(moveSessionToFolder).toHaveBeenCalledWith(session.id, null)
+    expect(panel.dragStatus.value).toBe('Moved Release planning to Recent.')
+  })
+
+  it('clears drag state and leaves the conversation in place when a move fails', async () => {
+    const session = makeSession()
+    const folder = makeFolder()
+    const moveSessionToFolder = vi.fn().mockRejectedValue(new Error('Folder version changed'))
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionTransition: vi.fn(),
+      moveSessionToFolder
+    }
+    const panel = loadPanel(agents, true, [session], [folder])
+    const drag = makeDragEvent()
+
+    panel.beginSessionDrag(drag.event, session)
+    panel.setDropTarget(drag.event, folder.id)
+    await panel.dropSession(drag.event, folder.id)
+
+    expect(session.folderId).toBeNull()
+    expect(panel.draggedSessionId.value).toBeNull()
+    expect(panel.activeDropTarget.value).toBeNull()
+    expect(panel.localError.value).toBe('Folder version changed')
+    expect(panel.dragStatus.value).toBe('Release planning could not be moved. It remains in Recent.')
+  })
+
+  it('announces cancellation when pointer dragging ends outside a target', () => {
+    const session = makeSession()
+    const folder = makeFolder()
+    const agents: PanelAgents = {
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionTransition: vi.fn()
+    }
+    const panel = loadPanel(agents, true, [session], [folder])
+    const drag = makeDragEvent()
+
+    panel.beginSessionDrag(drag.event, session)
+    expect(panel.draggedSessionId.value).toBe(session.id)
+    panel.finishSessionDrag()
+
+    expect(panel.draggedSessionId.value).toBeNull()
+    expect(panel.activeDropTarget.value).toBeNull()
+    expect(panel.dragStatus.value).toBe('Conversation move cancelled.')
   })
 })

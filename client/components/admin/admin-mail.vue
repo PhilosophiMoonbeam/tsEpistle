@@ -2,35 +2,37 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-new-post.svg', alt='Mail', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:mail.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:mail.subtitle') }}
-          .admin-mail-status.d-flex.align-center
-            v-chip(v-if='loadState === `loading`', label, size='small', color='info')
-              v-icon(start, size='small') mdi-loading
-              span Loading
-            v-chip(v-else-if='loadState === `error`', label, size='small', color='error')
-              v-icon(start, size='small') mdi-alert
-              span Load failed
-            v-chip(v-else-if='isDirty', label, size='small', color='warning')
-              v-icon(start, size='small') mdi-content-save-alert
-              span Unsaved changes
-            v-chip(v-else-if='testState === `passed`', label, size='small', color='success')
-              v-icon(start, size='small') mdi-email-check
-              span Test passed
-            v-chip(v-else-if='testState === `failed`', label, size='small', color='error')
-              v-icon(start, size='small') mdi-email-alert
-              span Test failed
-            v-chip(v-else-if='isConfigured', label, size='small', color='success')
-              v-icon(start, size='small') mdi-check-circle
-              span Saved
-            v-chip(v-else-if='hasLoaded', label, size='small', color='warning')
-              v-icon(start, size='small') mdi-alert-circle-outline
-              span Not configured
-          .admin-mail-actions.d-flex.align-center.flex-wrap.ga-2
-            v-btn.animated.fadeInDown(
+        AdminHero(
+          :title='$t(`admin:mail.title`)'
+          :description='$t(`admin:mail.subtitle`)'
+          icon='/_assets/svg/icon-new-post.svg'
+          heading-id='admin-mail-heading'
+        )
+          template(v-slot:status)
+            .d-flex.align-center
+              v-chip(v-if='loadState === `loading`', label, size='small', color='info')
+                v-icon(start, size='small') mdi-loading
+                span Loading
+              v-chip(v-else-if='loadState === `error`', label, size='small', color='error')
+                v-icon(start, size='small') mdi-alert
+                span Load failed
+              v-chip(v-else-if='isDirty', label, size='small', color='warning')
+                v-icon(start, size='small') mdi-content-save-alert
+                span Unsaved changes
+              v-chip(v-else-if='testState === `passed`', label, size='small', color='success')
+                v-icon(start, size='small') mdi-email-check
+                span Test passed
+              v-chip(v-else-if='testState === `failed`', label, size='small', color='error')
+                v-icon(start, size='small') mdi-email-alert
+                span Test failed
+              v-chip(v-else-if='isConfigured', label, size='small', color='success')
+                v-icon(start, size='small') mdi-check-circle
+                span Saved
+              v-chip(v-else-if='hasLoaded', label, size='small', color='warning')
+                v-icon(start, size='small') mdi-alert-circle-outline
+                span Not configured
+          template(v-slot:actions)
+            v-btn(
               v-if='hasLoaded'
               color='success'
               variant='flat'
@@ -41,7 +43,6 @@
             )
               v-icon(start) mdi-check
               span {{ $t('common:actions.apply') }}
-
         v-alert.mt-3(v-if='loadState === `error`', type='error', variant='tonal', icon='mdi-alert')
           span Unable to load the mail configuration. Existing values have been preserved.
           v-btn.ml-2(variant='text', size='small', @click='loadConfig') Retry
@@ -553,16 +554,6 @@ export default {
   max-width: 300px;
 }
 
-@media (max-width: 959px) {
-  .admin-mail-status,
-  .admin-mail-actions {
-    flex-basis: 100%;
-  }
-
-  .admin-mail-actions .v-btn {
-    flex: 1;
-  }
-}
 
 @media (max-width: 599px) {
   .mail-port-field {

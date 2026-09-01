@@ -1,24 +1,29 @@
 <template lang="pug">
 v-container.admin-theme(fluid)
-  v-row
-    v-col(cols='12')
-      .admin-header
-        img.animated.fadeInUp(src='/_assets/svg/icon-paint-palette.svg', alt='', width='80', height='80')
-        .admin-header-title
-          .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:theme.title') }}
-          .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s {{ $t('admin:theme.subtitle') }}
-        v-spacer
-        v-chip(v-if='dirty', color='warning', variant='tonal', size='small') Unsaved changes
-        v-btn.animated.fadeInRight(
-          color='success'
-          variant='flat'
-          size='large'
-          :loading='saving'
-          :disabled='!loaded || initialLoading || saving || !dirty || !configValid'
-          @click='save'
-        )
-          v-icon(start) mdi-check
-          span {{ $t('common:actions.apply') }}
+  AdminHero(
+    :title='$t(`admin:theme.title`)'
+    :description='$t(`admin:theme.subtitle`)'
+    icon='/_assets/svg/icon-paint-palette.svg'
+    eyebrow='Interface presentation'
+    heading-id='admin-theme-title'
+  )
+    template(#status)
+      v-chip(
+        :color='!loaded && !initialLoading ? `error` : dirty ? `warning` : loaded ? `success` : undefined'
+        variant='tonal'
+        size='small'
+        :prepend-icon='initialLoading ? `mdi-progress-clock` : !loaded ? `mdi-alert-circle-outline` : dirty ? `mdi-circle-edit-outline` : `mdi-check-circle-outline`'
+      ) {{ initialLoading ? 'Loading theme' : !loaded ? 'Theme status unavailable' : dirty ? 'Unsaved changes' : 'Theme up to date' }}
+    template(#actions)
+      v-btn(
+        color='success'
+        variant='flat'
+        :loading='saving'
+        :disabled='!loaded || initialLoading || saving || !dirty || !configValid'
+        @click='save'
+      )
+        v-icon(start) mdi-check
+        span {{ $t('common:actions.apply') }}
 
   v-form#theme-form.pt-3(
     @submit.prevent='save'
@@ -773,16 +778,6 @@ onBeforeUnmount(() => {
     grid-template-columns: 1fr;
   }
 
-  .admin-header {
-    > .v-spacer {
-      display: none;
-    }
-
-    > .v-btn {
-      flex: 1 0 100%;
-      margin-top: 4px;
-    }
-  }
 
   .theme-preview {
     padding: 16px;

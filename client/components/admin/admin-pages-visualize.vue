@@ -2,41 +2,41 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-venn-diagram.svg', alt='', style='width: 80px;', width='80', height='80')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft Visualize Pages
-            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s Dendrogram representation of your pages
-        .admin-pages-visualize-controls
-          v-select.animated.fadeInDown.wait-p1s(
-            v-if='locales.length > 0'
-            v-model='currentLocale'
-            :items='locales'
-            label='Locale'
-            variant="outlined"
-            density="compact"
-            hide-details
-            item-value='code'
-            item-title='name'
-          )
-          v-btn-toggle.animated.fadeInDown(
-            v-model='graphMode'
-            color='primary'
-            density="compact"
-            rounded
-            mandatory
-            aria-label='Visualization mode'
-          )
-            v-btn.px-5(value='htree', aria-label='Hierarchical Tree')
-              v-icon(start) mdi-sitemap
-              span.text-none Hierarchical Tree
-            v-btn.px-5(value='hradial', aria-label='Hierarchical Radial')
-              v-icon(start) mdi-chart-donut-variant
-              span.text-none Hierarchical Radial
-            v-btn.px-5(value='rradial', aria-label='Relational Radial')
-              v-icon(start) mdi-blur-radial
-              span.text-none Relational Radial
-        .admin-pages-visualize-svg(ref='svgContainer', v-show='pages.length >= 1 && !loading && !errorMessage', role='img', aria-label='Interactive page visualization')
+        admin-hero(
+          title='Visualize Pages'
+          description='Dendrogram representation of your pages'
+          icon='/_assets/svg/icon-venn-diagram.svg'
+        )
+          template(v-slot:actions)
+            .admin-pages-visualize-controls
+              v-select.animated.fadeInDown.wait-p1s(
+                v-if='locales.length > 0'
+                v-model='currentLocale'
+                :items='locales'
+                label='Locale'
+                variant="outlined"
+                density="compact"
+                hide-details
+                item-value='code'
+                item-title='name'
+              )
+              v-btn-toggle.animated.fadeInDown(
+                v-model='graphMode'
+                color='primary'
+                density="compact"
+                rounded
+                mandatory
+                aria-label='Visualization mode'
+              )
+                v-btn.px-5(value='htree', aria-label='Hierarchical Tree')
+                  v-icon(start) mdi-sitemap
+                  span.text-none Hierarchical Tree
+                v-btn.px-5(value='hradial', aria-label='Hierarchical Radial')
+                  v-icon(start) mdi-chart-donut-variant
+                  span.text-none Hierarchical Radial
+                v-btn.px-5(value='rradial', aria-label='Relational Radial')
+                  v-icon(start) mdi-blur-radial
+                  span.text-none Relational Radial
         async-state(
           v-if='loading'
           state='loading'

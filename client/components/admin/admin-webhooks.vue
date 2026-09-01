@@ -2,15 +2,16 @@
   v-container(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-winter.svg', alt='Webhooks', style='width: 80px;')
-          .admin-header-title
-            .text-headline-medium.text-primary.animated.fadeInLeft {{ $t('admin:webhooks.title') }}
-            .text-body-large.text-grey.animated.fadeInLeft.wait-p4s {{ $t('admin:webhooks.subtitle') }}
-          .admin-header-actions.admin-webhook-actions.d-flex.align-center.flex-wrap.ga-2
-            v-btn(color='primary', variant="flat", @click='newHook', :disabled='Boolean(revealedSecret) || (!draft.id && editorVisible)')
-              v-icon(start) mdi-plus
-              span New webhook
+        admin-hero(
+          :title='$t(`admin:webhooks.title`)'
+          :description='$t(`admin:webhooks.subtitle`)'
+          icon='/_assets/svg/icon-winter.svg'
+        )
+          template(v-slot:actions)
+            .admin-webhook-actions.d-flex.align-center.flex-wrap.ga-2
+              v-btn(color='primary', variant="flat", @click='newHook', :disabled='Boolean(revealedSecret) || (!draft.id && editorVisible)')
+                v-icon(start) mdi-plus
+                span New webhook
 
       v-col(cols='12', lg='4')
         v-card(border)

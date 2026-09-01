@@ -39,7 +39,9 @@ describe('HTML auth controller', () => {
 
     global.WIKI = {
       models: {
-        authentication: {},
+        authentication: {
+          getStrategy: vi.fn().mockResolvedValue({ selfRegistration: true })
+        },
         users: {
           login: vi.fn().mockResolvedValue({ jwt: 'login-jwt' })
         },
@@ -124,12 +126,52 @@ describe('HTML auth controller', () => {
     await login(req, res)
 
     expect(res.render).toHaveBeenCalledWith('login', {
-      bgUrl: '/_assets/img/splash/1.jpg',
+      bgUrl: '/_assets/img/splash/tsfranki-orbit.svg',
       hideLocal: false,
       faviconUrl: '/_assets/favicon.ico'
     })
     expect(res.render).not.toHaveBeenCalledWith('legacy/login', expect.anything())
   })
+
+  it('uses the project splash when registration has no configured background', async () => {
+    await loadController()
+    const route = express.__router.get.mock.calls.find(([path]) => path === '/register')
+    const register = route[route.length - 1]
+    const res = { locals: {}, render: vi.fn() }
+
+    await register({}, res, vi.fn())
+
+    expect(global.WIKI.models.authentication.getStrategy).toHaveBeenCalledWith('local')
+    expect(res.render).toHaveBeenCalledWith('register', {
+      bgUrl: '/_assets/img/splash/tsfranki-orbit.svg',
+      faviconUrl: '/_assets/favicon.ico'
+    })
+  })
+
+  it('keeps a configured custom authentication background for login and registration', async () => {
+    global.WIKI.config.auth.loginBgUrl = '/uploads/custom-login-background.jpg'
+    await loadController()
+
+    const loginRoute = express.__router.get.mock.calls.find(([path]) => path === '/login')
+    const login = loginRoute[loginRoute.length - 1]
+    const loginResponse = { locals: {}, redirect: vi.fn(), render: vi.fn() }
+    await login({ query: {} }, loginResponse)
+    expect(loginResponse.render).toHaveBeenCalledWith('login', {
+      bgUrl: '/uploads/custom-login-background.jpg',
+      hideLocal: false,
+      faviconUrl: '/_assets/favicon.ico'
+    })
+
+    const registerRoute = express.__router.get.mock.calls.find(([path]) => path === '/register')
+    const register = registerRoute[registerRoute.length - 1]
+    const registerResponse = { locals: {}, render: vi.fn() }
+    await register({}, registerResponse, vi.fn())
+    expect(registerResponse.render).toHaveBeenCalledWith('register', {
+      bgUrl: '/uploads/custom-login-background.jpg',
+      faviconUrl: '/_assets/favicon.ico'
+    })
+  })
+
   it('trims a configured logo URL for the authentication favicon local', async () => {
     global.WIKI.config.logoUrl = '  /uploads/site-logo.svg  '
     await loadController()
@@ -144,7 +186,7 @@ describe('HTML auth controller', () => {
     await login({ query: {} }, res)
 
     expect(res.render).toHaveBeenCalledWith('login', {
-      bgUrl: '/_assets/img/splash/1.jpg',
+      bgUrl: '/_assets/img/splash/tsfranki-orbit.svg',
       hideLocal: false,
       faviconUrl: '/uploads/site-logo.svg'
     })
@@ -166,7 +208,7 @@ describe('HTML auth controller', () => {
       skipDelete: true
     })
     expect(res.render).toHaveBeenCalledWith('login', {
-      bgUrl: '/_assets/img/splash/1.jpg',
+      bgUrl: '/_assets/img/splash/tsfranki-orbit.svg',
       hideLocal: false,
       faviconUrl: '/_assets/favicon.ico',
       verificationToken: 'verify-token'
@@ -190,7 +232,7 @@ describe('HTML auth controller', () => {
       skipDelete: true
     })
     expect(res.render).toHaveBeenCalledWith('login', {
-      bgUrl: '/_assets/img/splash/1.jpg',
+      bgUrl: '/_assets/img/splash/tsfranki-orbit.svg',
       hideLocal: false,
       faviconUrl: '/_assets/favicon.ico',
       resetPasswordToken: 'reset-token'

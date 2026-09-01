@@ -231,9 +231,9 @@
             span {{$t('editor:markup.markdownFormattingHelp')}}
       .editor-markdown-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
         div(ref='cm')
-      transition(name='editor-markdown-preview')
+      transition(name='editor-markdown-preview', :css='$vuetify.display.mdAndUp')
         .editor-markdown-preview(v-if='previewShown')
-          .editor-markdown-preview-content.contents(ref='editorPreviewContainer')
+          .editor-markdown-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer')
             div(
               ref='editorPreview'
               v-html='previewHTML'
@@ -923,6 +923,11 @@ export default defineComponent({
     &.is-mobile-hidden {
       display: none;
     }
+
+    @include until($tablet) {
+      flex-basis: 100%;
+      width: 100%;
+    }
   }
 
   &-preview {
@@ -936,24 +941,10 @@ export default defineComponent({
     @include until($tablet) {
       display: block;
       flex: 1 1 100%;
-      max-width: 100vw !important;
+      max-width: 100%;
       padding: 12px;
       width: 100%;
     }
-
-    &-enter-active, &-leave-active {
-      transition: max-width .5s ease;
-      max-width: 50vw;
-
-      .editor-code-preview-content {
-        width: 50vw;
-        overflow:hidden;
-      }
-    }
-    &-enter-from, &-leave-to {
-      max-width: 0;
-    }
-
     &-content {
       flex: 1 1 auto;
       min-height: 0;
@@ -1006,6 +997,22 @@ export default defineComponent({
     }
   }
 
+  &-preview-enter-active,
+  &-preview-leave-active {
+    max-width: 50vw;
+    transition: max-width .5s ease;
+
+    .editor-markdown-preview-content {
+      overflow: hidden;
+      width: 50vw;
+    }
+  }
+
+  &-preview-enter-from,
+  &-preview-leave-to {
+    max-width: 0;
+  }
+
   &-toolbar {
     background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%) !important;
     border-bottom: 1px solid rgba(var(--v-theme-on-surface), .12);
@@ -1016,11 +1023,7 @@ export default defineComponent({
 
     .v-toolbar__content {
       min-width: max-content;
-      padding-left: 64px;
-
-      @include until($tablet) {
-        padding-left: 8px;
-      }
+      padding-inline: 0;
     }
   }
 

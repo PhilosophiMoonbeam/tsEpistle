@@ -2,25 +2,26 @@
   v-container.admin-users(fluid)
     v-row
       v-col(cols='12')
-        .admin-header
-          img.animated.fadeInUp(src='/_assets/svg/icon-customer.svg', alt='', style='width: 80px;')
-          .admin-header-title
-            h1.text-headline-medium.text-primary.animated.fadeInLeft(tabindex='-1') Users
-            .text-body-large.text-medium-emphasis.animated.fadeInLeft.wait-p2s Manage users
-          v-spacer
-          v-btn.animated.fadeInDown.wait-p2s.me-3(
-            variant="outlined"
-            color='grey'
-            icon
-            :loading='loading'
-            :disabled='loading'
-            @click='refresh'
-            aria-label='Refresh users'
-          )
-            v-icon mdi-refresh
-          v-btn.animated.fadeInDown(color='primary' size="large" variant="flat" @click='createUser' :icon='$vuetify.display.smAndDown' aria-label='New user')
-            v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
-            span(v-if='$vuetify.display.mdAndUp') New User
+        AdminHero(
+          title='Users'
+          description='Manage users'
+          icon='/_assets/svg/icon-customer.svg'
+          heading-id='admin-users-heading'
+        )
+          template(v-slot:actions)
+            v-btn(
+              icon
+              variant="outlined"
+              color='grey'
+              :loading='loading'
+              :disabled='loading'
+              @click='refresh'
+              aria-label='Refresh users'
+            )
+              v-icon mdi-refresh
+            v-btn(color='primary' size="large" variant="flat" @click='createUser' :icon='$vuetify.display.smAndDown' aria-label='New user')
+              v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
+              span(v-if='$vuetify.display.mdAndUp') New User
         v-card.mt-3.animated.fadeInUp
           .admin-filter-bar.pa-2.d-flex.align-center
             v-text-field.admin-users-filter-search(

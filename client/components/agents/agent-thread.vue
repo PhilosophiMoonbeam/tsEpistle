@@ -102,12 +102,12 @@
                 Try again
               </v-btn>
             </aside>
-            <aside v-if="entry.message.citations.length" class="agent-sources mt-3" aria-label="Sources">
-              <div class="agent-sources__heading">
-                <v-icon icon="mdi-book-open-page-variant-outline" size="18" />
+            <details v-if="entry.message.citations.length" class="agent-sources mt-3" aria-label="Sources">
+              <summary class="agent-sources__heading">
+                <v-icon icon="mdi-book-open-page-variant-outline" size="18" aria-hidden="true" />
                 <strong>Sources</strong>
                 <span class="agent-sources__count">{{ entry.message.citations.length }}</span>
-              </div>
+              </summary>
               <ol class="agent-sources__groups">
                 <li v-for="group in entry.citationGroups" :key="group.key" class="agent-sources__group">
                   <component
@@ -140,7 +140,7 @@
                   </ol>
                 </li>
               </ol>
-            </aside>
+            </details>
             <nav
               v-if="entry.message.role === 'assistant' && entry.run?.pageLinks.length"
               class="agent-page-links mt-3"
@@ -578,11 +578,29 @@ watch(
   background: color-mix(in srgb, var(--wiki-surface-raised) 84%, var(--wiki-surface-sunken));
   border-block-end: 1px solid var(--wiki-surface-border);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  cursor: pointer;
   display: flex;
   font-size: .78rem;
   gap: var(--wiki-space-2);
+  list-style: none;
   min-height: var(--wiki-space-10);
   padding-inline: var(--wiki-space-3);
+}
+
+.agent-sources__heading::-webkit-details-marker {
+  display: none;
+}
+
+.agent-sources__heading::after {
+  content: '›';
+  font-size: 1.25rem;
+  margin-inline-start: var(--wiki-space-1);
+  transform: rotate(90deg);
+  transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+}
+
+.agent-sources[open] > .agent-sources__heading::after {
+  transform: rotate(270deg);
 }
 
 .agent-sources__heading > .v-icon {
@@ -643,6 +661,7 @@ watch(
   background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent);
 }
 
+.agent-sources__heading:focus-visible,
 .agent-sources__page:focus-visible,
 .agent-sources__sections a:focus-visible,
 .agent-page-links a:focus-visible,
@@ -946,6 +965,7 @@ watch(
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .agent-sources__heading::after,
   .agent-activity summary::after,
   .agent-page-links a {
     transition: none;
@@ -981,6 +1001,7 @@ watch(
     color: Canvas;
   }
 
+  .agent-sources__heading:focus-visible,
   .agent-sources__page:focus-visible,
   .agent-sources__sections a:focus-visible,
   .agent-page-links a:focus-visible,
