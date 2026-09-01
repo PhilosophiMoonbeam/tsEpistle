@@ -49,7 +49,6 @@
               ref='iptEmail'
               v-model='username'
               :label='isUsernameEmail ? $t(`auth:fields.email`) : $t(`auth:fields.username`)'
-              :placeholder='isUsernameEmail ? $t(`auth:fields.email`) : $t(`auth:fields.username`)'
               :type='isUsernameEmail ? `email` : `text`'
               :autocomplete='isUsernameEmail ? `email` : `username`'
               :error-messages='fieldErrors.username'
@@ -64,7 +63,6 @@
               v-model='password'
               :type='hidePassword ? "password" : "text"'
               :label='$t("auth:fields.password")'
-              :placeholder='$t("auth:fields.password")'
               autocomplete='current-password'
               :error-messages='fieldErrors.password'
               required
@@ -114,7 +112,6 @@
               ref='iptForgotPwdEmail'
               v-model='username'
               :label='$t(`auth:fields.email`)'
-              :placeholder='$t(`auth:fields.email`)'
               type='email'
               autocomplete='email'
               :error-messages='fieldErrors.username'
@@ -160,7 +157,6 @@
               v-model='newPassword'
               :type='hideNewPassword ? "password" : "text"'
               :label='$t(`auth:changePwd.newPasswordPlaceholder`)'
-              :placeholder='$t(`auth:changePwd.newPasswordPlaceholder`)'
               autocomplete='new-password'
               :error-messages='fieldErrors.newPassword'
               required
@@ -179,7 +175,6 @@
               v-model='newPasswordVerify'
               :type='hideNewPasswordVerify ? "password" : "text"'
               :label='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
-              :placeholder='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
               autocomplete='new-password'
               :error-messages='fieldErrors.newPasswordVerify'
               required
@@ -207,7 +202,6 @@
               v-model='newPassword'
               :type='hideNewPassword ? "password" : "text"'
               :label='$t(`auth:changePwd.newPasswordPlaceholder`)'
-              :placeholder='$t(`auth:changePwd.newPasswordPlaceholder`)'
               autocomplete='new-password'
               :error-messages='fieldErrors.newPassword'
               required
@@ -226,7 +220,6 @@
               v-model='newPasswordVerify'
               :type='hideNewPasswordVerify ? "password" : "text"'
               :label='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
-              :placeholder='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
               autocomplete='new-password'
               :error-messages='fieldErrors.newPasswordVerify'
               required
@@ -265,7 +258,6 @@
             ref='iptTFA'
             v-model='securityCode'
             :label='$t("auth:tfa.placeholder")'
-            :placeholder='$t("auth:tfa.placeholder")'
             autocomplete='one-time-code'
             inputmode='numeric'
             maxlength='6'
@@ -298,7 +290,6 @@
             ref='iptTFASetup'
             v-model='securityCode'
             :label='$t("auth:tfa.placeholder")'
-            :placeholder='$t("auth:tfa.placeholder")'
             autocomplete='one-time-code'
             inputmode='numeric'
             maxlength='6'
