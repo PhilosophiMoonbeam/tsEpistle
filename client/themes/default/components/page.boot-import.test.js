@@ -239,7 +239,7 @@ describe('default page focused contracts', () => {
 
   test('keeps editorial type scoped, responsive, printable, and technically legible', () => {
     const pageRoot = extractCssRule(style, '.wiki-page')
-    const heroReader = extractCssRule(style, '.page-title, .page-description')
+    const heroSystem = extractCssRule(style, '.page-title, .page-description')
     const title = extractCssRule(style, '.page-title')
     const description = extractCssRule(style, '.page-description')
     const contents = extractCssRule(style, '.wiki-page .v-main .contents')
@@ -247,11 +247,11 @@ describe('default page focused contracts', () => {
     expectDeclarations(pageRoot, {
       'font-family': 'var\\(--wiki-font-body\\)'
     })
-    expectDeclarations(heroReader, {
-      'font-family': 'var\\(--wiki-font-reader\\)',
-      'font-optical-sizing': 'auto',
-      'font-synthesis': 'none'
+    expectDeclarations(heroSystem, {
+      'font-family': 'var\\(--wiki-font-body\\)',
+      'font-optical-sizing': 'auto'
     })
+    expect(heroSystem).not.toMatch(/font-synthesis|wiki-font-reader/)
     expectDeclarations(title, {
       'font-size': 'clamp\\(2\\.125rem,\\s*1\\.6rem \\+ 1\\.8vw,\\s*3\\.25rem\\)',
       'font-weight': '700',

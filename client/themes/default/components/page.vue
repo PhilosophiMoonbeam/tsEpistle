@@ -1840,9 +1840,8 @@ export default defineComponent({
 
   .page-title,
   .page-description {
-    font-family: var(--wiki-font-reader);
+    font-family: var(--wiki-font-body);
     font-optical-sizing: auto;
-    font-synthesis: none;
   }
 
   .page-title {
