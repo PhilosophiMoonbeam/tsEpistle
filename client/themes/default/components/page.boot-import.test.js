@@ -35,13 +35,28 @@ describe('default page focused contracts', () => {
     )
     expect(script).toMatch(/sidebarNavigationStarted\s*\(\)\s*\{\s*if \(this\.\$vuetify\.display\.width < 1280\) this\.navShown = false/)
     expect(style).toMatch(/--page-toc-empty-height:\s*calc\(var\(--wiki-grid-size\) \* 2\)/)
+    expect(template).toMatch(
+      /v-navigation-drawer\([\s\S]*?:width='\$vuetify\.display\.width >= 1280 \? 281\.6 : 256'[\s\S]*?:temporary='\$vuetify\.display\.width < 1280'/
+    )
+    expect(template).toContain('page-col-sd--with-toc')
+    expect(template).toContain('page-col-sd--toc-off')
+    expect(template).toContain('page-col-content--with-toc')
+    expect(template).toContain('page-col-content--toc-off')
+    expect(style).toMatch(/\.page-col-sd--with-toc\s*\{[^}]*flex:\s*0 0 27\.5%;[^}]*max-width:\s*27\.5%;/s)
+    expect(style).toMatch(/\.page-col-content--with-toc\s*\{[^}]*flex:\s*0 0 72\.5%;[^}]*max-width:\s*72\.5%;/s)
+    expect(style).toMatch(/\.page-col-sd--with-toc\s*\{[^}]*flex-basis:\s*18\.333333%;[^}]*max-width:\s*18\.333333%;/s)
+    expect(style).toMatch(/\.page-col-content--with-toc\s*\{[^}]*flex-basis:\s*81\.666667%;[^}]*max-width:\s*81\.666667%;/s)
+    expect(style).toMatch(/\.page-col-sd--toc-off,\s*\.page-col-content--toc-off\s*\{[^}]*flex:\s*0 0 100%;[^}]*max-width:\s*100%;/s)
+    expect(template).toMatch(/v-col\.page-col-content\.is-page-header\([\s\S]*?cols='12'[\s\S]*?:class=/)
+    expect(template).not.toContain(":offset-xl='tocPosition === `left` ? 2 : 0'")
+    expect(template).not.toContain(":offset-lg='tocPosition === `left` ? 3 : 0'")
+    expect(style).toMatch(
+      /@media\s*\(min-width:\s*1280px\)\s*\{[\s\S]*?\.page-header-section[\s\S]*?align-content:\s*center;[\s\S]*?text-align:\s*center;[\s\S]*?justify-content:\s*center;[\s\S]*?\.page-edit-shortcuts\s*\{[^}]*position:\s*absolute;[^}]*inset-inline-end:\s*var\(--wiki-page-gutter\);/s
+    )
+    expect(style).toMatch(/--page-toc-desktop-lift:\s*calc\(var\(--page-toc-empty-height\) \/ 2 \+ var\(--wiki-space-12\)\)/)
+    expect(style).toMatch(/@media\s*\(max-width:\s*1279px\)\s*\{[\s\S]*?\.page-col-sd\s*\{[\s\S]*?margin-block-start:\s*0;/s)
+    expect(style).toMatch(/\.v-main \.contents[\s\S]*?h1\s*\{[^}]*color:\s*var\(--wiki-accent-warm\);/s)
+    expect(style).not.toContain(':has(')
     expect(style).toMatch(/\.page-col-sd--with-toc\s*\{[^}]*margin-block-start:\s*calc\(var\(--page-toc-desktop-lift\) \* -1\)/s)
-    expect(style).toMatch(/--page-shortcut-target:\s*calc\(var\(--wiki-control-height\) - var\(--wiki-space-1\)\)/)
-    expect(style).toMatch(
-      /\.page-return-top\s*\{[^}]*right:\s*calc\(env\(safe-area-inset-right\) \+ var\(--wiki-space-5\)\) !important;[^}]*left:\s*auto !important;/s
-    )
-    expect(style).toMatch(
-      /\.page-edit-fab\s*\{[^}]*inset-inline-end:\s*calc\(var\(--wiki-space-5\) \+ var\(--wiki-control-height\) \+ var\(--wiki-space-3\)\);/s
-    )
   })
 })

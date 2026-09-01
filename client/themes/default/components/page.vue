@@ -7,6 +7,7 @@
       class='page-navigation'
       color='surface'
       mobile-breakpoint='1280'
+      :width='$vuetify.display.width >= 1280 ? 281.6 : 256'
       :temporary='$vuetify.display.width < 1280'
       v-model='navShown'
       :aria-label='$t(`common:sidebar.mainMenu`)'
@@ -78,10 +79,7 @@
       )
         v-row.page-header-section(no-gutters)
           v-col.page-col-content.is-page-header(
-            :offset-xl='tocPosition === `left` ? 2 : 0'
-            :offset-lg='tocPosition === `left` ? 3 : 0'
-            :xl='tocPosition === `right` ? 10 : false'
-            :lg='tocPosition === `right` ? 9 : false'
+            cols='12'
             :class='$vuetify.locale.isRtl ? `pr-4` : `pl-4`'
             )
             .page-header-headings
@@ -117,7 +115,7 @@
             cols='12'
             :lg='tocPosition !== `off` ? 3 : 12'
             :xl='tocPosition !== `off` ? 2 : 12'
-            :class='[tocPosition === `right` ? `order-2 order-lg-2` : `order-2 order-lg-1`, { "page-col-sd--with-toc": tocPosition !== `off` }]'
+            :class='[tocPosition === `right` ? `order-2 order-lg-2` : `order-2 order-lg-1`, { "page-col-sd--with-toc": tocPosition !== `off`, "page-col-sd--toc-off": tocPosition === `off` }]'
             )
             v-card.page-toc-card.mb-4(v-if='tocPosition !== `off`', tag='nav', :aria-label='$t(`common:page.toc`)')
               .text-label-small.text-primary {{$t('common:page.toc')}}
@@ -419,7 +417,7 @@
             cols='12'
             :lg='tocPosition !== `off` ? 9 : 12'
             :xl='tocPosition !== `off` ? 10 : 12'
-            :class='tocPosition === `right` ? `order-1 order-lg-1` : `order-1 order-lg-2`'
+            :class='[tocPosition === `right` ? `order-1 order-lg-1` : `order-1 order-lg-2`, { "page-col-content--with-toc": tocPosition !== `off`, "page-col-content--toc-off": tocPosition === `off` }]'
             )
             v-tooltip(location='start', v-if='hasAnyPagePermissions && editShortcutsObj.editFab && !$vuetify.display.smAndDown')
               template(v-slot:activator='{ props: tooltipProps }')
@@ -1606,7 +1604,7 @@ export default defineComponent({
 <style lang="scss">
 .wiki-page {
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
-  --page-toc-desktop-lift: calc(var(--page-toc-empty-height) + var(--wiki-space-12));
+  --page-toc-desktop-lift: calc(var(--page-toc-empty-height) / 2 + var(--wiki-space-12));
 
   font-family: var(--wiki-font-body);
 }
@@ -1897,6 +1895,38 @@ export default defineComponent({
   }
 }
 
+@media (min-width: 1280px) {
+  .page-header-section {
+    > .is-page-header {
+      min-height: inherit;
+      grid-template-columns: minmax(0, 1fr);
+      align-content: center;
+    }
+
+    .page-header-headings {
+      width: 100%;
+      margin-inline: auto;
+      text-align: center;
+    }
+
+    .page-title-row {
+      justify-content: center;
+    }
+
+    .page-description {
+      margin-inline: auto;
+    }
+
+    .page-edit-shortcuts {
+      position: absolute;
+      inset-block-start: 50%;
+      inset-inline-end: var(--wiki-page-gutter);
+      transform: translateY(-50%);
+    }
+  }
+}
+
+
 .page-body {
   position: relative;
   z-index: 1;
@@ -1952,6 +1982,37 @@ export default defineComponent({
 .page-col-sd--with-toc {
   margin-block-start: calc(var(--page-toc-desktop-lift) * -1);
 }
+
+.page-col-sd--toc-off,
+.page-col-content--toc-off {
+  flex: 0 0 100%;
+  max-width: 100%;
+}
+
+@media (min-width: 1280px) {
+  .page-col-sd--with-toc {
+    flex: 0 0 27.5%;
+    max-width: 27.5%;
+  }
+
+  .page-col-content--with-toc {
+    flex: 0 0 72.5%;
+    max-width: 72.5%;
+  }
+}
+
+@media (min-width: 1920px) {
+  .page-col-sd--with-toc {
+    flex-basis: 18.333333%;
+    max-width: 18.333333%;
+  }
+
+  .page-col-content--with-toc {
+    flex-basis: 81.666667%;
+    max-width: 81.666667%;
+  }
+}
+
 
 .page-toc-card {
   display: flex;
@@ -2232,7 +2293,7 @@ export default defineComponent({
 
   h1 {
     margin: 0 0 var(--wiki-space-6);
-    color: color-mix(in srgb, var(--wiki-accent-warm) 82%, rgb(var(--v-theme-on-surface)));
+    color: var(--wiki-accent-warm);
     font-size: clamp(1.75rem, 1.5rem + 1vw, 2.375rem);
     letter-spacing: -.04em;
   }

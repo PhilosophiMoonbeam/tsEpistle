@@ -24,7 +24,7 @@ const consumeRenewedJwt = (response: JsonResponse): void => {
   if (expiration <= Date.now() / 1000) throw new Error('Renewed JWT is expired.')
 
   Cookies.set('jwt', token, {
-    expires: new Date(expiration * 1000),
+    expires: 365,
     secure: window.location.protocol === 'https:'
   })
   refreshPrincipal()

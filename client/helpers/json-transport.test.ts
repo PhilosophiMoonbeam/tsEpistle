@@ -55,7 +55,7 @@ describe('same-origin JSON transport', () => {
     const response = await sameOriginJsonFetch(fetcher, '/_api/example', { credentials: 'same-origin' }).then(response => {
       expect(cookies.get('jwt')).toBe(renewedToken)
       expect(cookieApi.set).toHaveBeenCalledWith('jwt', renewedToken, {
-        expires: new Date(expiration * 1000),
+        expires: 365,
         secure: true
       })
       expect(wikiStore.user.id).toBe(42)
@@ -75,11 +75,27 @@ describe('same-origin JSON transport', () => {
     await expect(sameOriginJsonFetch(async () => response, '/_api/example', { credentials: 'same-origin' })).resolves.toBe(response)
   })
 
-  it('rejects a malformed explicitly present renewal header', async () => {
+  it('rejects a malformed explicitly present renewal header without persisting it', async () => {
+    vi.mockModule('js-cookie', import.meta.url, () => ({ default: cookieApi }))
     const { sameOriginJsonFetch } = await import('./json-transport.ts')
     const response = new Response(null, { headers: { 'new-jwt': 'not-a-jwt' } })
 
     await expect(sameOriginJsonFetch(async () => response, '/_api/example', { credentials: 'same-origin' })).rejects.toThrow('JWT payload is missing.')
+    expect(cookies.get('jwt')).toBeUndefined()
+    expect(cookieApi.set).not.toHaveBeenCalled()
+  })
+
+  it('rejects an expired explicitly present renewal header without persisting it', async () => {
+    vi.mockModule('js-cookie', import.meta.url, () => ({ default: cookieApi }))
+    installWindow()
+    await vi.importFresh<typeof WikiStoreModule>('../store/index.ts', import.meta.url)
+    const { sameOriginJsonFetch } = await import('./json-transport.ts')
+    const expiredToken = tokenFor({ exp: Math.floor(Date.now() / 1000) - 1 })
+    const response = new Response(null, { headers: { 'new-jwt': expiredToken } })
+
+    await expect(sameOriginJsonFetch(async () => response, '/_api/example', { credentials: 'same-origin' })).rejects.toThrow('Renewed JWT is expired.')
+    expect(cookies.get('jwt')).toBeUndefined()
+    expect(cookieApi.set).not.toHaveBeenCalled()
   })
 
   it('returns the original response without consuming its body', async () => {

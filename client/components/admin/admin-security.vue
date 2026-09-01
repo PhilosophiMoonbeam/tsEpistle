@@ -307,7 +307,7 @@ export default {
         authLoginBgUrl: '',
         authJwtAudience: 'urn:wiki.js',
         authJwtExpiration: '30m',
-        authJwtRenewablePeriod: '14d'
+        authJwtRenewablePeriod: '365d'
       } as SecurityConfig,
       configLoading: false,
       configLoaded: false,

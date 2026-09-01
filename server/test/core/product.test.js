@@ -3,7 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { createProductMetadata, loadProductMetadata, productDefinition } from '../../core/product.ts'
-import { normalizeLegacyProductDefaults } from '../../core/config.ts'
+import { normalizeLegacyAuthDefaults, normalizeLegacyProductDefaults } from '../../core/config.ts'
 
 const revision = '0123456789abcdef0123456789abcdef01234567'
 const date = '2026-08-13T12:34:56.000Z'
@@ -52,6 +52,45 @@ describe('product metadata contract', () => {
     const customConfig = { title: 'Engineering Handbook', logoUrl: '/assets/company.svg' }
     expect(normalizeLegacyProductDefaults(customConfig, 'tsFranki')).toEqual([])
     expect(customConfig).toEqual({ title: 'Engineering Handbook', logoUrl: '/assets/company.svg' })
+  })
+
+  test('migrates only the inherited auth token renewal default', () => {
+    const legacyConfig = {
+      auth: {
+        tokenExpiration: '30m',
+        tokenRenewal: '14d'
+      }
+    }
+    expect(normalizeLegacyAuthDefaults(legacyConfig)).toEqual(['auth'])
+    expect(legacyConfig.auth.tokenRenewal).toBe('365d')
+
+    const unchangedConfigs = [
+      { auth: { tokenRenewal: '30d' } },
+      { auth: { tokenRenewal: '365d' } },
+      { auth: {} },
+      { auth: null },
+      { auth: '14d' },
+      { auth: [] },
+      {}
+    ]
+    for (const config of unchangedConfigs) {
+      const original = structuredClone(config)
+      expect(normalizeLegacyAuthDefaults(config)).toEqual([])
+      expect(config).toEqual(original)
+    }
+  })
+
+  test('combines product and auth migrations without duplicate save keys', () => {
+    const config = {
+      title: 'Wiki.js',
+      logoUrl: '/_assets/svg/logo-wikijs.svg',
+      auth: { tokenRenewal: '14d' }
+    }
+    const migratedKeys = [
+      ...normalizeLegacyProductDefaults(config, 'tsFranki'),
+      ...normalizeLegacyAuthDefaults(config)
+    ]
+    expect([...new Set(migratedKeys)]).toEqual(['title', 'logoUrl', 'auth'])
   })
 
   test('loads deterministic generated identity without a Git checkout', () => {

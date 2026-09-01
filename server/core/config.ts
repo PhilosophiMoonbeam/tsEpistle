@@ -101,6 +101,13 @@ export function normalizeLegacyProductDefaults(config: Record<string, unknown>, 
   return changed
 }
 
+export function normalizeLegacyAuthDefaults(config: Record<string, unknown>): string[] {
+  const auth = config.auth
+  if (!isRecord(auth) || Array.isArray(auth) || auth.tokenRenewal !== '14d') return []
+  auth.tokenRenewal = '365d'
+  return ['auth']
+}
+
 const configService: ConfigService = {
   init() {
     const wiki = getWiki()
@@ -166,9 +173,10 @@ const configService: ConfigService = {
     const conf = await wiki.models.settings.getConfig()
     if (conf) {
       const canonicalConfig = wiki.config
+      const persistedAuthKeys = isRecord(conf) ? normalizeLegacyAuthDefaults(conf) : []
       const reloadedConfig = _.defaultsDeep({}, conf, canonicalConfig) as AppConfig
       Object.assign(canonicalConfig, reloadedConfig)
-      const migratedKeys = normalizeLegacyProductDefaults(canonicalConfig, wiki.product.name)
+      const migratedKeys = [...new Set([...normalizeLegacyProductDefaults(canonicalConfig, wiki.product.name), ...persistedAuthKeys])]
       if (migratedKeys.length > 0) await this.saveToDb(migratedKeys, false)
     } else {
       wiki.logger.warn('DB Configuration is empty or incomplete. Switching to Setup mode...')
