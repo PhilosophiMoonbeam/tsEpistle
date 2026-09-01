@@ -63,9 +63,13 @@ describe('default page focused contracts', () => {
     )
     expect(template).not.toContain(":offset-xl='tocPosition === `left` ? 2 : 0'")
     expect(template).not.toContain(":offset-lg='tocPosition === `left` ? 3 : 0'")
+    expect(style).toMatch(/\.page-header-headings\s*\{[^}]*width:\s*100%;[^}]*margin-inline:\s*auto;[^}]*text-align:\s*center;/)
+    expect(style).toMatch(/\.page-title-row\s*\{[^}]*justify-content:\s*center;/s)
+    expect(style).toMatch(/\.page-description\s*\{[^}]*margin:\s*var\(--wiki-space-1\) auto 0;/s)
     expect(style).toMatch(
-      /@media\s*\(min-width:\s*1280px\)\s*\{[\s\S]*?\.is-page-header\.has-edit-shortcuts\s*\{[^}]*grid-template-columns:[\s\S]*?minmax\(var\(--page-header-action-reserve\), 1fr\)[\s\S]*?minmax\(0, 1fr\)[\s\S]*?minmax\(var\(--page-header-action-reserve\), 1fr\);[\s\S]*?\.has-edit-shortcuts \.page-header-headings\s*\{[^}]*grid-column:\s*2;[\s\S]*?\.has-edit-shortcuts \.page-edit-shortcuts\s*\{[^}]*width:\s*min\(100%, var\(--page-header-action-reserve\)\);[^}]*max-width:\s*var\(--page-header-action-reserve\);[\s\S]*?grid-column:\s*3;[^}]*justify-self:\s*end;[^}]*overflow:\s*hidden;[\s\S]*?\.v-btn\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*1 1 0;[^}]*overflow:\s*hidden;[\s\S]*?\.v-btn \.text-none\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s
+      /@media\s*\(min-width:\s*600px\)\s*\{[\s\S]*?\.is-page-header\.has-edit-shortcuts\s*\{[^}]*--page-header-action-reserve:\s*clamp\([\s\S]*?grid-template-columns:[\s\S]*?minmax\(var\(--page-header-action-reserve\), 1fr\)[\s\S]*?minmax\(0, 1fr\)[\s\S]*?minmax\(var\(--page-header-action-reserve\), 1fr\);[\s\S]*?\.has-edit-shortcuts \.page-header-headings\s*\{[^}]*grid-column:\s*2;[\s\S]*?\.has-edit-shortcuts \.page-edit-shortcuts\s*\{[^}]*width:\s*min\(100%, var\(--page-header-action-reserve\)\);[^}]*max-width:\s*var\(--page-header-action-reserve\);[\s\S]*?grid-column:\s*3;[^}]*justify-self:\s*end;[^}]*overflow:\s*hidden;[\s\S]*?\.v-btn\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*1 1 0;[^}]*overflow:\s*hidden;[\s\S]*?\.v-btn \.text-none\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s
     )
+    expect(style).toMatch(/@media\s*\(min-width:\s*1280px\)\s*\{[\s\S]*?\.is-page-header\s*\{[^}]*min-height:\s*inherit;[^}]*align-content:\s*center;/)
     expect(style).toMatch(/--page-toc-desktop-lift:\s*calc\(var\(--page-toc-empty-height\) \/ 2 \+ var\(--wiki-space-12\)\)/)
     expect(style).toMatch(/@media\s*\(max-width:\s*1279px\)\s*\{[\s\S]*?\.page-col-sd\s*\{[\s\S]*?margin-block-start:\s*0;/s)
     expect(style).toMatch(/\.v-main \.contents[\s\S]*?h1\s*\{[^}]*color:\s*var\(--wiki-accent-warm\);/s)

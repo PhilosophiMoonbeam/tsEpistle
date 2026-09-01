@@ -1824,13 +1824,17 @@ export default defineComponent({
   }
 
   .page-header-headings {
+    width: 100%;
     min-width: 0;
     max-width: 80rem;
+    margin-inline: auto;
+    text-align: center;
   }
 
   .page-title-row {
     min-width: 0;
     flex-wrap: wrap;
+    justify-content: center;
     gap: var(--wiki-space-2) var(--wiki-space-3);
   }
 
@@ -1856,7 +1860,7 @@ export default defineComponent({
 
   .page-description {
     max-width: 68ch;
-    margin: var(--wiki-space-1) 0 0;
+    margin: var(--wiki-space-1) auto 0;
     color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
     font-size: clamp(.9375rem, .9rem + .14vw, 1rem);
     line-height: 1.45;
@@ -1894,39 +1898,28 @@ export default defineComponent({
     }
   }
 }
+ 
 
-@media (min-width: 1280px) {
+@media (min-width: 600px) {
   .page-header-section {
     > .is-page-header {
-      min-height: inherit;
       grid-template-columns: minmax(0, 1fr);
-      align-content: center;
     }
 
     > .is-page-header.has-edit-shortcuts {
-      --page-header-action-reserve: calc(var(--wiki-control-height) * 6 + var(--wiki-space-4));
+      --page-header-action-reserve: clamp(
+        calc(var(--wiki-control-height) * 3),
+        22vw,
+        calc(var(--wiki-control-height) * 6 + var(--wiki-space-4))
+      );
       grid-template-columns:
         minmax(var(--page-header-action-reserve), 1fr)
         minmax(0, 1fr)
         minmax(var(--page-header-action-reserve), 1fr);
     }
 
-    .page-header-headings {
-      width: 100%;
-      margin-inline: auto;
-      text-align: center;
-    }
-
     .has-edit-shortcuts .page-header-headings {
       grid-column: 2;
-    }
-
-    .page-title-row {
-      justify-content: center;
-    }
-
-    .page-description {
-      margin-inline: auto;
     }
 
     .has-edit-shortcuts .page-edit-shortcuts {
@@ -1957,6 +1950,15 @@ export default defineComponent({
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+    }
+  }
+}
+
+@media (min-width: 1280px) {
+  .page-header-section {
+    > .is-page-header {
+      min-height: inherit;
+      align-content: center;
     }
   }
 }
