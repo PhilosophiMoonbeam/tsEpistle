@@ -50,8 +50,10 @@ describe('Markdown editor layout', () => {
   })
 
   it('keeps both Markdown status bars from reserving space above their editors', () => {
-    expect(template).toContain('v-system-bar.editor-status-bar.editor-markdown-sysbar(absolute, color="grey-darken-3")')
-    expect(visualEditorSource).toContain('v-system-bar.editor-status-bar.editor-tiptap-sysbar(absolute)')
+    expect(template).toContain('.v-system-bar.editor-status-bar.editor-markdown-sysbar.bg-grey-darken-3')
+    expect(visualEditorSource).toContain('.v-system-bar.editor-status-bar.editor-tiptap-sysbar')
+    expect(template).not.toMatch(/^\s*v-system-bar\.editor-status-bar\.editor-markdown-sysbar/m)
+    expect(visualEditorSource).not.toMatch(/^\s*v-system-bar\.editor-status-bar\.editor-tiptap-sysbar/m)
   })
 
   it('preserves pane controls and collaboration accessibility metadata', () => {
