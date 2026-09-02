@@ -1714,6 +1714,9 @@ export default defineComponent({
 .wiki-page {
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
   --page-toc-desktop-lift: calc(var(--page-toc-empty-height) + var(--wiki-space-6));
+  --page-reader-shell-max: 132rem;
+  --page-metadata-rail-width: clamp(14rem, 18vw, 16rem);
+  --page-reader-column-gap: var(--wiki-space-6);
 
   font-family: var(--wiki-font-body);
 }
@@ -1915,7 +1918,7 @@ export default defineComponent({
 
 .page-header-section {
   position: relative;
-  width: min(100%, var(--wiki-shell-max));
+  width: min(100%, var(--page-reader-shell-max));
   min-height: 0;
   margin-inline: auto;
 
@@ -2070,27 +2073,26 @@ export default defineComponent({
 
 @media (min-width: 1280px) {
   .page-header-section {
-    --page-header-toc-column: calc(3.3 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
-
     > .is-page-header {
       min-height: inherit;
-      gap: var(--v-col-gap-x);
+      gap: var(--page-reader-column-gap);
       align-content: center;
     }
 
     > .page-header--toc-left {
       grid-template-columns:
-        var(--page-header-toc-column)
+        var(--page-metadata-rail-width)
         minmax(0, 1fr);
 
       .page-header-headings {
         grid-column: 2;
+        padding-inline-start: var(--wiki-space-4);
       }
     }
 
     > .page-header--toc-left.has-edit-shortcuts {
       grid-template-columns:
-        var(--page-header-toc-column)
+        var(--page-metadata-rail-width)
         minmax(0, 1fr)
         minmax(0, var(--page-header-action-reserve));
 
@@ -2102,21 +2104,19 @@ export default defineComponent({
     > .page-header--toc-right {
       grid-template-columns:
         minmax(0, 1fr)
-        var(--page-header-toc-column);
+        var(--page-metadata-rail-width);
     }
 
     > .page-header--toc-right.has-edit-shortcuts {
       grid-template-columns:
         minmax(0, 1fr)
         minmax(0, var(--page-header-action-reserve))
-        var(--page-header-toc-column);
-    }
-  }
-}
+        var(--page-metadata-rail-width);
 
-@media (min-width: 1920px) {
-  .page-header-section {
-    --page-header-toc-column: calc(2.2 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
+      .page-edit-shortcuts {
+        padding-inline-end: var(--wiki-space-4);
+      }
+    }
   }
 }
 
@@ -2124,7 +2124,7 @@ export default defineComponent({
 .page-body {
   position: relative;
   z-index: 1;
-  width: min(100%, var(--wiki-shell-max));
+  width: min(100%, var(--page-reader-shell-max));
   margin-inline: auto;
   padding:
     var(--wiki-space-8)
@@ -2205,28 +2205,15 @@ export default defineComponent({
   }
 
   .page-col-sd--with-toc {
-    flex: 0 0 calc(3.3 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
-    max-width: calc(3.3 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
+    flex: 0 0 var(--page-metadata-rail-width);
+    max-width: var(--page-metadata-rail-width);
   }
 
   .page-col-content--with-toc {
-    flex: 0 0 calc(8.7 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
-    max-width: calc(8.7 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
+    flex: 0 0 calc(100% - var(--page-metadata-rail-width) - var(--v-col-gap-x));
+    max-width: calc(100% - var(--page-metadata-rail-width) - var(--v-col-gap-x));
   }
 }
-
-@media (min-width: 1920px) {
-  .page-col-sd--with-toc {
-    flex-basis: calc(2.2 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
-    max-width: calc(2.2 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
-  }
-
-  .page-col-content--with-toc {
-    flex-basis: calc(9.8 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
-    max-width: calc(9.8 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
-  }
-}
-
 
 
 .page-toc-card {

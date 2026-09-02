@@ -87,7 +87,7 @@ export default defineConfig({
       testMatch: '**/responsive.e2e.ts',
       use: {
         ...devices['Desktop Chrome'],
-        viewport: { width: 1920, height: 1080 }
+        viewport: { width: 2560, height: 1440 }
       }
     },
     {

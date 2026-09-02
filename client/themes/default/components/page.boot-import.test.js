@@ -174,6 +174,24 @@ describe('default page focused contracts', () => {
   test('keeps reader geometry compact, useful, and clear of mobile navigation', () => {
     expect(template).not.toBeNull()
     expect(style).not.toBeNull()
+    const pageRoot = extractCssRule(style, '.wiki-page')
+    const pageHeader = extractCssRule(style, '.page-header-section')
+    const pageBody = extractCssRule(style, '.page-body')
+    const desktopRules = extractCssRules(style).filter(({ selector }) => selector === '@media (min-width: 1280px)')
+    const desktopHeader = desktopRules.find(({ block }) => block.includes('.page-header-section'))?.block ?? null
+    const desktopBody = desktopRules.find(({ block }) => block.includes('.page-col-sd--with-toc'))?.block ?? null
+
+    expectDeclarations(pageRoot, {
+      '--page-reader-shell-max': '132rem',
+      '--page-metadata-rail-width': 'clamp\\(14rem,\\s*18vw,\\s*16rem\\)',
+      '--page-reader-column-gap': 'var\\(--wiki-space-6\\)'
+    })
+    expectDeclarations(pageHeader, {
+      width: 'min\\(100%,\\s*var\\(--page-reader-shell-max\\)\\)'
+    })
+    expectDeclarations(pageBody, {
+      width: 'min\\(100%,\\s*var\\(--page-reader-shell-max\\)\\)'
+    })
     expect(template).toMatch(/v-card\.page-toc-card\.mb-4\(v-if='tocPosition !== `off`', tag='nav', :aria-label=/)
     expect(template).toContain(":href='tocItem.anchor'")
     expect(template).toContain("@click='tocLinkClicked($event, tocItem.anchor)'")
@@ -198,18 +216,14 @@ describe('default page focused contracts', () => {
     expect(template).toContain('page-col-sd--toc-off')
     expect(template).toContain('page-col-content--with-toc')
     expect(template).toContain('page-col-content--toc-off')
-    expect(style).toMatch(
-      /\.page-col-sd--with-toc\s*\{[^}]*flex:\s*0 0 calc\(3\.3 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[^}]*max-width:\s*calc\(3\.3 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/s
-    )
-    expect(style).toMatch(
-      /\.page-col-content--with-toc\s*\{[^}]*flex:\s*0 0 calc\(8\.7 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[^}]*max-width:\s*calc\(8\.7 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/s
-    )
-    expect(style).toMatch(
-      /\.page-col-sd--with-toc\s*\{[^}]*flex-basis:\s*calc\(2\.2 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[^}]*max-width:\s*calc\(2\.2 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/s
-    )
-    expect(style).toMatch(
-      /\.page-col-content--with-toc\s*\{[^}]*flex-basis:\s*calc\(9\.8 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[^}]*max-width:\s*calc\(9\.8 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/s
-    )
+    expectDeclarations(extractCssRule(desktopBody, '.page-col-sd--with-toc'), {
+      flex: '0 0 var\\(--page-metadata-rail-width\\)',
+      'max-width': 'var\\(--page-metadata-rail-width\\)'
+    })
+    expectDeclarations(extractCssRule(desktopBody, '.page-col-content--with-toc'), {
+      flex: '0 0 calc\\(100% - var\\(--page-metadata-rail-width\\) - var\\(--v-col-gap-x\\)\\)',
+      'max-width': 'calc\\(100% - var\\(--page-metadata-rail-width\\) - var\\(--v-col-gap-x\\)\\)'
+    })
     expect(style).toMatch(/\.page-col-sd--toc-off,\s*\.page-col-content--toc-off\s*\{[^}]*flex:\s*0 0 100%;[^}]*max-width:\s*100%;/s)
     expect(template).toMatch(
       /v-col\.page-col-content\.is-page-header\([\s\S]*?cols='12'[\s\S]*?"has-edit-shortcuts":\s*editShortcutsObj\.editMenuBar\s*&&\s*\(editShortcutsObj\.editMenuBtn\s*\|\|\s*editShortcutsObj\.editMenuExternalBtn\)/
@@ -230,12 +244,27 @@ describe('default page focused contracts', () => {
     expect(style).toMatch(
       /\.page-edit-shortcuts\s*\{[^}]*justify-content:\s*flex-end;[\s\S]*?\.v-btn\s*\{[^}]*min-height:\s*calc\(var\(--wiki-control-height\) \* \.85\);/
     )
-    expect(style).toMatch(
-      /@media\s*\(min-width:\s*1280px\)\s*\{[\s\S]*?--page-header-toc-column:\s*calc\(3\.3 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);[\s\S]*?\.is-page-header\s*\{[^}]*min-height:\s*inherit;[^}]*gap:\s*var\(--v-col-gap-x\);[^}]*align-content:\s*center;[\s\S]*?\.page-header--toc-left\s*\{[\s\S]*?var\(--page-header-toc-column\)[\s\S]*?minmax\(0, 1fr\);[\s\S]*?\.page-header-headings\s*\{[^}]*grid-column:\s*2;[\s\S]*?\.page-header--toc-left\.has-edit-shortcuts\s*\{[\s\S]*?\.page-edit-shortcuts\s*\{[^}]*grid-column:\s*3;/s
-    )
-    expect(style).toMatch(
-      /@media\s*\(min-width:\s*1920px\)\s*\{[\s\S]*?--page-header-toc-column:\s*calc\(2\.2 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/
-    )
+    const desktopHeaderSection = extractCssRule(desktopHeader, '.page-header-section')
+    expectDeclarations(extractCssRule(desktopHeaderSection, '> .is-page-header'), {
+      'min-height': 'inherit',
+      gap: 'var\\(--page-reader-column-gap\\)',
+      'align-content': 'center'
+    })
+    const desktopLeftHeader = extractCssRule(desktopHeaderSection, '> .page-header--toc-left')
+    expectDeclarations(desktopLeftHeader, {
+      'grid-template-columns': 'var\\(--page-metadata-rail-width\\) minmax\\(0,\\s*1fr\\)'
+    })
+    expectDeclarations(extractCssRule(desktopLeftHeader, '.page-header-headings'), {
+      'grid-column': '2',
+      'padding-inline-start': 'var\\(--wiki-space-4\\)'
+    })
+    const desktopLeftHeaderWithActions = extractCssRule(desktopHeaderSection, '> .page-header--toc-left.has-edit-shortcuts')
+    expectDeclarations(desktopLeftHeaderWithActions, {
+      'grid-template-columns': 'var\\(--page-metadata-rail-width\\) minmax\\(0,\\s*1fr\\) minmax\\(0,\\s*var\\(--page-header-action-reserve\\)\\)'
+    })
+    expectDeclarations(extractCssRule(desktopLeftHeaderWithActions, '.page-edit-shortcuts'), {
+      'grid-column': '3'
+    })
     expect(style).toMatch(/--page-toc-desktop-lift:\s*calc\(var\(--page-toc-empty-height\) \+ var\(--wiki-space-6\)\)/)
     expect(style).toMatch(/@media\s*\(max-width:\s*1279px\)\s*\{[\s\S]*?\.page-col-sd\s*\{[\s\S]*?margin-block-start:\s*0;/s)
     expect(style).toMatch(/\.v-main \.contents[\s\S]*?h1\s*\{[^}]*color:\s*var\(--wiki-accent-ink\);/s)

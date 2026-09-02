@@ -160,6 +160,95 @@ test.describe('responsive UI quality matrix', () => {
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeLessThan(2)
   })
 
+  test('uses expanded and aligned desktop reader geometry', async ({ page }) => {
+    const viewport = page.viewportSize()
+    expect(viewport).not.toBeNull()
+    if (!viewport || viewport.width < 1280) return
+
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+
+    const headerShell = page.locator('.page-header-section').first()
+    const bodyShell = page.locator('.page-body').first()
+    const title = page.locator('.page-header--toc-left .page-title').first()
+    const description = page.locator('.page-header--toc-left .page-description').first()
+    const metadataRail = page.locator('.page-col-sd.page-col-sd--toc-left').first()
+    const article = page.locator('.page-col-content.page-col-content--toc-left:not(.is-page-header) > .contents').first()
+
+    await expect(headerShell).toBeVisible()
+    await expect(bodyShell).toBeVisible()
+    await expect(title).toBeVisible()
+    await expect(metadataRail).toBeVisible()
+    await expect(article).toBeVisible()
+
+    const shellSizing = await page.evaluate(() => {
+      const containingBlockWidth = (selector: string): number => {
+        const element = document.querySelector<HTMLElement>(selector)
+        const parent = element?.parentElement
+        if (!parent) return 0
+        const styles = getComputedStyle(parent)
+        return parent.clientWidth - (Number.parseFloat(styles.paddingLeft) || 0) - (Number.parseFloat(styles.paddingRight) || 0)
+      }
+
+      return {
+        rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
+        headerAvailableWidth: containingBlockWidth('.page-header-section'),
+        bodyAvailableWidth: containingBlockWidth('.page-body')
+      }
+    })
+
+    const [headerShellBounds, bodyShellBounds, titleBounds, metadataBounds, articleBounds] = await Promise.all([
+      headerShell.boundingBox(),
+      bodyShell.boundingBox(),
+      title.boundingBox(),
+      metadataRail.boundingBox(),
+      article.boundingBox()
+    ])
+    expect(headerShellBounds).not.toBeNull()
+    expect(bodyShellBounds).not.toBeNull()
+    expect(titleBounds).not.toBeNull()
+    expect(metadataBounds).not.toBeNull()
+    expect(articleBounds).not.toBeNull()
+    if (!headerShellBounds || !bodyShellBounds || !titleBounds || !metadataBounds || !articleBounds) return
+
+    for (const [name, bounds] of [
+      ['Page header shell', headerShellBounds],
+      ['Page body shell', bodyShellBounds]
+    ] as const) {
+      expect(bounds.x, `${name} stays inside the viewport`).toBeGreaterThanOrEqual(-1)
+      expect(bounds.x + bounds.width, `${name} stays inside the viewport`).toBeLessThanOrEqual(viewport.width + 1)
+    }
+    expect(Math.abs(headerShellBounds.x - bodyShellBounds.x), 'Reader header and body shells share a left edge').toBeLessThanOrEqual(2)
+    expect(Math.abs(headerShellBounds.width - bodyShellBounds.width), 'Reader header and body shells share a width').toBeLessThanOrEqual(2)
+
+    const legacyShellMax = 110 * shellSizing.rootFontSize
+    const readerShellMax = 132 * shellSizing.rootFontSize
+    for (const [name, bounds, availableWidth] of [
+      ['Page header shell', headerShellBounds, shellSizing.headerAvailableWidth],
+      ['Page body shell', bodyShellBounds, shellSizing.bodyAvailableWidth]
+    ] as const) {
+      expect(bounds.width, `${name} does not exceed the reader maximum`).toBeLessThanOrEqual(readerShellMax + 1)
+      if (availableWidth > legacyShellMax + 2) {
+        expect(bounds.width, `${name} uses the wider reader allowance`).toBeGreaterThan(legacyShellMax)
+        expect(
+          Math.abs(bounds.width - Math.min(availableWidth, readerShellMax)),
+          `${name} fills the available reader width up to its maximum`
+        ).toBeLessThanOrEqual(2)
+      }
+    }
+
+    expect(Math.abs(titleBounds.x - articleBounds.x), 'Page title aligns with the article card outer edge').toBeLessThanOrEqual(2)
+    if (await description.isVisible()) {
+      const descriptionBounds = await description.boundingBox()
+      expect(descriptionBounds).not.toBeNull()
+      if (descriptionBounds) {
+        expect(Math.abs(descriptionBounds.x - articleBounds.x), 'Page description aligns with the article card outer edge').toBeLessThanOrEqual(2)
+      }
+    }
+    expect(metadataBounds.width, 'Reader metadata rail stays within 16rem').toBeLessThanOrEqual(16 * shellSizing.rootFontSize + 1)
+    expect(metadataBounds.x, 'Reader metadata rail remains before the primary article').toBeLessThan(articleBounds.x)
+    expect(metadataBounds.x + metadataBounds.width, 'Reader metadata rail must not overlap the primary article').toBeLessThanOrEqual(articleBounds.x)
+  })
+
   test('keeps search interaction and results inside every viewport', async ({ page }) => {
     await page.route('**/_api/pages/search?**', async route => {
       await route.fulfill({
