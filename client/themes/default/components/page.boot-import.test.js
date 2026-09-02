@@ -177,6 +177,7 @@ describe('default page focused contracts', () => {
     const pageRoot = extractCssRule(style, '.wiki-page')
     const pageHeader = extractCssRule(style, '.page-header-section')
     const pageBody = extractCssRule(style, '.page-body')
+    const pageSidebar = extractCssRule(style, '.page-col-sd')
     const desktopRules = extractCssRules(style).filter(({ selector }) => selector === '@media (min-width: 1280px)')
     const desktopHeader = desktopRules.find(({ block }) => block.includes('.page-header-section'))?.block ?? null
     const desktopBody = desktopRules.find(({ block }) => block.includes('.page-col-sd--with-toc'))?.block ?? null
@@ -201,6 +202,17 @@ describe('default page focused contracts', () => {
     expect(template).toContain("@click='tocLinkClicked($event, tocItem.anchor)'")
     expectDeclarations(readerCopy, {
       width: 'min\\(100%,\\s*var\\(--page-reader-copy-max\\)\\)'
+    })
+    const shortcutCardIndex = template.indexOf('v-card.page-shortcuts-card.mb-4')
+    const tocCardIndex = template.indexOf('v-card.page-toc-card.mb-4')
+    expect(shortcutCardIndex).toBeGreaterThan(-1)
+    expect(tocCardIndex).toBeGreaterThan(-1)
+    expect(shortcutCardIndex).toBeLessThan(tocCardIndex)
+    expectDeclarations(pageSidebar, {
+      position: 'sticky',
+      'max-height': 'calc\\(100dvh - var\\(--v-layout-top,\\s*var\\(--wiki-grid-size\\)\\) - var\\(--wiki-space-12\\)\\)',
+      'overflow-y': 'auto',
+      'overscroll-behavior': 'contain'
     })
     expectDeclarations(readerGutter, {
       width:

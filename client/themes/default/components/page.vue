@@ -115,116 +115,7 @@
             cols='12'
             :class='[tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`, { "page-col-sd--with-toc": tocPosition !== `off`, "page-col-sd--toc-off": tocPosition === `off` }]'
             )
-            v-card.page-toc-card.mb-4(v-if='tocPosition !== `off`', tag='nav', :aria-label='$t(`common:page.toc`)')
-              .text-label-small {{$t('common:page.toc')}}
-              v-list.py-2(v-if='tocFlattened.length', density="compact", nav, role='group', tabindex='-1')
-                v-list-item.page-toc-item(
-                  v-for='tocItem in tocFlattened'
-                  :key='tocItem.anchor'
-                  :href='tocItem.anchor'
-                  :style='`--toc-indent: ${Math.min(tocItem.depth, 5) * 14}px`'
-                  @click='tocLinkClicked($event, tocItem.anchor)'
-                  )
-                  template(v-slot:prepend)
-                    v-icon.page-toc-item-marker(size="x-small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
-                  v-list-item-title.page-toc-item-title(
-                    :class='{ "font-weight-medium": tocItem.depth === 0 }'
-                    ) {{tocItem.title}}
-              .page-toc-empty(v-else)
-                v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
-                span.text-body-small {{$t('common:page.noSections')}}
-
-            v-card.page-tags-card.mb-5(v-if='tags.length > 0')
-              .pa-5
-                .text-label-small.pb-2.text-secondary {{$t('common:page.tags')}}
-                v-chip.mr-1.mb-1(
-                  label
-                  color='secondary'
-                  variant='tonal'
-                  v-for='tag in tags'
-                  :href='`/t/` + tag.tag'
-                  :key='`tag-` + tag.tag'
-                  )
-                  v-icon(start, size="small") mdi-tag
-                  span {{tag.title}}
-                v-chip.mr-1.mb-1(
-                  label
-                  color='secondary'
-                  variant='tonal'
-                  :href='`/t/` + tags.map(t => t.tag).join(`/`)'
-                  :aria-label='$t(`common:page.tagsMatching`)'
-                  )
-                  v-icon(size='20') mdi-tag-multiple
-
-            v-card.page-comments-card.mb-5(v-if='commentsEnabled && commentsPerms.read')
-              .pa-5
-                .text-label-small.pb-2.d-flex.align-center.text-secondary
-                  span {{$t('common:comments.sdTitle')}}
-                  //- v-spacer
-                  //- v-chip.text-center.text-white(
-                  //-   v-if='!commentsExternal'
-                  //-   label
-                  //-   size='x-small'
-                  //-   :color='$vuetify.theme.current.dark ? `blue-grey-darken-3` : `blue-grey-darken-2`'
-                  //-   style='min-width: 50px; justify-content: center;'
-                  //-   )
-                  //-   span {{commentsCount}}
-                .d-flex
-                  v-btn.text-none(
-                    @click='goToComments()'
-                    color='secondary'
-                    variant="outlined"
-                    style='flex: 1 1 100%;'
-                    size="small"
-                    )
-                    span {{$t('common:comments.viewDiscussion')}}
-                  v-tooltip(location="right", v-if='commentsPerms.write')
-                    template(v-slot:activator='{ props }')
-                      v-btn.ml-2(
-                        @click='goToComments(true)'
-                        v-bind='props'
-                        variant="outlined"
-                        size="small"
-                        color='secondary'
-                        :aria-label='$t(`common:comments.newComment`)'
-                        )
-                        v-icon(size="small") mdi-comment-plus
-                    span {{$t('common:comments.newComment')}}
-
-            v-card.page-author-card.mb-5
-              .pa-5
-                .text-label-small.d-flex
-                  span {{$t('common:page.lastEditedBy')}}
-                  v-spacer
-                  v-tooltip(location="right", v-if='isAuthenticated')
-                    template(v-slot:activator='{ props }')
-                      v-btn.btn-animate-edit(
-                        icon
-                        :href='(visibility === `private` ? `/h/_private` : `/h`) + `/` + locale + `/` + path'
-                        v-bind='props'
-                        size="x-small"
-                        v-if='hasReadHistoryPermission'
-                        :aria-label='$t(`common:header.history`)'
-                        )
-                        v-icon(color='accent', size="small") mdi-history
-                    span {{$t('common:header.history')}}
-                .page-author-card-name.text-body-medium {{ authorName }}
-                .page-author-card-date.text-body-small.text-medium-emphasis {{ $helpers.formatMoment(updatedAt, 'calendar') }}
-
-            //- v-card.mb-5
-            //-   .pa-5
-            //-     .text-label-small.pb-2(:class='$vuetify.theme.current.dark ? `text-yellow-darken-3` : `text-yellow-darken-4`') Rating
-            //-     .text-center
-            //-       v-rating(
-            //-         v-model='rating'
-            //-         color='yellow-darken-3'
-            //-         bg-color='grey-lighten-1'
-            //-         half-increments
-            //-         hover
-            //-         )
-            //-       .text-body-small.text-grey 5 votes
-
-            v-card.page-shortcuts-card(flat)
+            v-card.page-shortcuts-card.mb-4(flat)
               v-toolbar(color='surface', flat, density="compact")
                 v-spacer
                 //- v-tooltip(bottom)
@@ -412,6 +303,115 @@
                       v-icon(:color='printView ? `primary` : `grey`') mdi-printer
                   span {{$t('common:page.printFormat')}}
                 v-spacer
+            v-card.page-toc-card.mb-4(v-if='tocPosition !== `off`', tag='nav', :aria-label='$t(`common:page.toc`)')
+              .text-label-small {{$t('common:page.toc')}}
+              v-list.py-2(v-if='tocFlattened.length', density="compact", nav, role='group', tabindex='-1')
+                v-list-item.page-toc-item(
+                  v-for='tocItem in tocFlattened'
+                  :key='tocItem.anchor'
+                  :href='tocItem.anchor'
+                  :style='`--toc-indent: ${Math.min(tocItem.depth, 5) * 14}px`'
+                  @click='tocLinkClicked($event, tocItem.anchor)'
+                  )
+                  template(v-slot:prepend)
+                    v-icon.page-toc-item-marker(size="x-small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
+                  v-list-item-title.page-toc-item-title(
+                    :class='{ "font-weight-medium": tocItem.depth === 0 }'
+                    ) {{tocItem.title}}
+              .page-toc-empty(v-else)
+                v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
+                span.text-body-small {{$t('common:page.noSections')}}
+
+            v-card.page-tags-card.mb-5(v-if='tags.length > 0')
+              .pa-5
+                .text-label-small.pb-2.text-secondary {{$t('common:page.tags')}}
+                v-chip.mr-1.mb-1(
+                  label
+                  color='secondary'
+                  variant='tonal'
+                  v-for='tag in tags'
+                  :href='`/t/` + tag.tag'
+                  :key='`tag-` + tag.tag'
+                  )
+                  v-icon(start, size="small") mdi-tag
+                  span {{tag.title}}
+                v-chip.mr-1.mb-1(
+                  label
+                  color='secondary'
+                  variant='tonal'
+                  :href='`/t/` + tags.map(t => t.tag).join(`/`)'
+                  :aria-label='$t(`common:page.tagsMatching`)'
+                  )
+                  v-icon(size='20') mdi-tag-multiple
+
+            v-card.page-comments-card.mb-5(v-if='commentsEnabled && commentsPerms.read')
+              .pa-5
+                .text-label-small.pb-2.d-flex.align-center.text-secondary
+                  span {{$t('common:comments.sdTitle')}}
+                  //- v-spacer
+                  //- v-chip.text-center.text-white(
+                  //-   v-if='!commentsExternal'
+                  //-   label
+                  //-   size='x-small'
+                  //-   :color='$vuetify.theme.current.dark ? `blue-grey-darken-3` : `blue-grey-darken-2`'
+                  //-   style='min-width: 50px; justify-content: center;'
+                  //-   )
+                  //-   span {{commentsCount}}
+                .d-flex
+                  v-btn.text-none(
+                    @click='goToComments()'
+                    color='secondary'
+                    variant="outlined"
+                    style='flex: 1 1 100%;'
+                    size="small"
+                    )
+                    span {{$t('common:comments.viewDiscussion')}}
+                  v-tooltip(location="right", v-if='commentsPerms.write')
+                    template(v-slot:activator='{ props }')
+                      v-btn.ml-2(
+                        @click='goToComments(true)'
+                        v-bind='props'
+                        variant="outlined"
+                        size="small"
+                        color='secondary'
+                        :aria-label='$t(`common:comments.newComment`)'
+                        )
+                        v-icon(size="small") mdi-comment-plus
+                    span {{$t('common:comments.newComment')}}
+
+            v-card.page-author-card.mb-5
+              .pa-5
+                .text-label-small.d-flex
+                  span {{$t('common:page.lastEditedBy')}}
+                  v-spacer
+                  v-tooltip(location="right", v-if='isAuthenticated')
+                    template(v-slot:activator='{ props }')
+                      v-btn.btn-animate-edit(
+                        icon
+                        :href='(visibility === `private` ? `/h/_private` : `/h`) + `/` + locale + `/` + path'
+                        v-bind='props'
+                        size="x-small"
+                        v-if='hasReadHistoryPermission'
+                        :aria-label='$t(`common:header.history`)'
+                        )
+                        v-icon(color='accent', size="small") mdi-history
+                    span {{$t('common:header.history')}}
+                .page-author-card-name.text-body-medium {{ authorName }}
+                .page-author-card-date.text-body-small.text-medium-emphasis {{ $helpers.formatMoment(updatedAt, 'calendar') }}
+
+            //- v-card.mb-5
+            //-   .pa-5
+            //-     .text-label-small.pb-2(:class='$vuetify.theme.current.dark ? `text-yellow-darken-3` : `text-yellow-darken-4`') Rating
+            //-     .text-center
+            //-       v-rating(
+            //-         v-model='rating'
+            //-         color='yellow-darken-3'
+            //-         bg-color='grey-lighten-1'
+            //-         half-increments
+            //-         hover
+            //-         )
+            //-       .text-body-small.text-grey 5 votes
+
 
           v-col.page-col-content(
             cols='12'
@@ -2137,7 +2137,7 @@ export default defineComponent({
   position: sticky;
   top: calc(var(--v-layout-top, var(--wiki-grid-size)) + var(--wiki-space-4));
   align-self: flex-start;
-  max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - var(--wiki-space-8));
+  max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - var(--wiki-space-12));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-color: color-mix(in srgb, var(--wiki-accent-warm) 54%, transparent) transparent;

@@ -23,7 +23,9 @@ test.describe('responsive UI quality matrix', () => {
         await expectLocatorWithinViewport(headerPageActions, 'Header page actions')
       }
 
+      const shortcutCard = page.locator('.page-shortcuts-card').first()
       const tocCard = page.locator('.page-toc-card').first()
+      await expect(shortcutCard).toBeVisible()
       if (await tocCard.count()) {
         await expect(tocCard).toBeVisible()
         const headingLinks = tocCard.locator('.page-toc-item')
@@ -34,27 +36,65 @@ test.describe('responsive UI quality matrix', () => {
         if (viewport.width >= 1280) {
           const hero = page.locator('.page-hero').first()
           const title = page.locator('.page-title').first()
-          const [heroBounds, titleBounds, tocBounds] = await Promise.all([hero.boundingBox(), title.boundingBox(), tocCard.boundingBox()])
+          const [heroBounds, titleBounds, shortcutBounds, tocBounds] = await Promise.all([
+            hero.boundingBox(),
+            title.boundingBox(),
+            shortcutCard.boundingBox(),
+            tocCard.boundingBox()
+          ])
           expect(heroBounds).not.toBeNull()
           expect(titleBounds).not.toBeNull()
+          expect(shortcutBounds).not.toBeNull()
           expect(tocBounds).not.toBeNull()
-          if (heroBounds && titleBounds && tocBounds) {
-            expect(tocBounds.y, 'Page Contents begins inside the title gradient').toBeGreaterThanOrEqual(heroBounds.y)
-            expect(tocBounds.y, 'Page Contents begins before the title gradient ends').toBeLessThan(heroBounds.y + heroBounds.height)
-            expect(Math.abs(tocBounds.y - titleBounds.y), 'Page Contents aligns with the title row').toBeLessThanOrEqual(4)
+          if (heroBounds && titleBounds && shortcutBounds && tocBounds) {
+            expect(shortcutBounds.y, 'Reader shortcuts begin inside the title gradient').toBeGreaterThanOrEqual(heroBounds.y)
+            expect(shortcutBounds.y, 'Reader shortcuts begin before the title gradient ends').toBeLessThan(heroBounds.y + heroBounds.height)
+            expect(Math.abs(shortcutBounds.y - titleBounds.y), 'Reader shortcuts align with the title row').toBeLessThanOrEqual(4)
+            expect(tocBounds.y, 'Page Contents follows the reader shortcuts').toBeGreaterThanOrEqual(shortcutBounds.y + shortcutBounds.height)
             expect(tocBounds.height, 'Page Contents retains useful empty geometry').toBeGreaterThanOrEqual(128)
+
+            if (await tocCard.locator('.page-toc-empty').count()) {
+              const firstMetadataCard = page.locator('.page-col-sd > :is(.page-tags-card, .page-comments-card, .page-author-card)').first()
+              const metadataBounds = await firstMetadataCard.boundingBox()
+              expect(metadataBounds).not.toBeNull()
+              if (metadataBounds) {
+                expect(metadataBounds.y, 'Reader metadata follows the empty Page Contents card').toBeGreaterThanOrEqual(
+                  tocBounds.y + tocBounds.height
+                )
+                expect(
+                  metadataBounds.y - (tocBounds.y + tocBounds.height),
+                  'Reader metadata follows the empty Page Contents card without dead space'
+                ).toBeLessThanOrEqual(24)
+              }
+            }
           }
 
-          if (await tocCard.locator('.page-toc-empty').count()) {
-            const firstMetadataCard = page.locator('.page-col-sd > :is(.page-tags-card, .page-comments-card, .page-author-card, .page-shortcuts-card)').first()
-            const [metadataBounds, currentHeroBounds] = await Promise.all([firstMetadataCard.boundingBox(), hero.boundingBox()])
-            expect(metadataBounds).not.toBeNull()
-            expect(currentHeroBounds).not.toBeNull()
-            if (metadataBounds && currentHeroBounds) {
-              expect(metadataBounds.y, 'Reader metadata follows the empty Page Contents card without dead space').toBeLessThanOrEqual(
-                currentHeroBounds.y + currentHeroBounds.height + 4
+          if (path === '/en/home') {
+            const sidebar = page.locator('.page-col-sd').first()
+            const lastMetadataCard = page.locator('.page-col-sd > .v-card').last()
+            const initialPageScroll = await page.evaluate(() => window.scrollY)
+            await sidebar.evaluate(element => {
+              element.scrollTop = element.scrollHeight
+            })
+            const [sidebarBounds, lastMetadataBounds, pageScrollAfterSidebar] = await Promise.all([
+              sidebar.boundingBox(),
+              lastMetadataCard.boundingBox(),
+              page.evaluate(() => window.scrollY)
+            ])
+            expect(sidebarBounds).not.toBeNull()
+            expect(lastMetadataBounds).not.toBeNull()
+            expect(pageScrollAfterSidebar, 'Metadata scrolling does not move the Markdown page').toBe(initialPageScroll)
+            if (sidebarBounds && lastMetadataBounds) {
+              expect(sidebarBounds.y + sidebarBounds.height, 'Metadata scrollbar remains inside the viewport').toBeLessThanOrEqual(
+                viewport.height
+              )
+              expect(lastMetadataBounds.y + lastMetadataBounds.height, 'The final metadata card is reachable inside its own scroller').toBeLessThanOrEqual(
+                sidebarBounds.y + sidebarBounds.height + 1
               )
             }
+            await sidebar.evaluate(element => {
+              element.scrollTop = 0
+            })
           }
         }
       }
