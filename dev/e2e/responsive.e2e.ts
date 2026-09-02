@@ -32,6 +32,11 @@ test.describe('responsive UI quality matrix', () => {
         for (const headingLink of await headingLinks.all()) {
           await expect(headingLink).toHaveAttribute('href', /^#[^#].*$/)
         }
+        const highestAvailableHeadings = tocCard.locator('.page-toc-item-title.font-weight-bold')
+        expect(await highestAvailableHeadings.count(), 'Page Contents emphasizes at least one highest-level heading').toBeGreaterThan(0)
+        for (const heading of await highestAvailableHeadings.all()) {
+          await expect(heading).toHaveCSS('font-weight', '700')
+        }
 
         if (viewport.width >= 1280) {
           const hero = page.locator('.page-hero').first()

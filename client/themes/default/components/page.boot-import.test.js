@@ -198,6 +198,8 @@ describe('default page focused contracts', () => {
     expectDeclarations(pageBody, {
       width: 'min\\(100%,\\s*var\\(--page-reader-shell-max\\)\\)'
     })
+    expect(template).toContain(':class=\'{ "font-weight-bold": tocItem.depth === 0 }\'')
+    expect(template).not.toContain(':class=\'{ "font-weight-medium": tocItem.depth === 0 }\'')
     expect(template).toMatch(/v-card\.page-toc-card\.mb-4\(v-if='tocPosition !== `off`', tag='nav', :aria-label=/)
     expect(template).toContain(":href='tocItem.anchor'")
     expect(template).toContain("@click='tocLinkClicked($event, tocItem.anchor)'")
