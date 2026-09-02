@@ -90,24 +90,24 @@ export class TextEditor implements TextEditorHandle {
         EditorView.theme({
           '&': {
             height: '100%',
-            backgroundColor: '#1d1f21',
-            color: '#e0e0e0',
+            backgroundColor: 'rgb(var(--v-theme-surface))',
+            color: 'rgb(var(--v-theme-on-surface))',
             fontFamily: 'Roboto Mono, monospace',
             fontSize: '.9rem'
           },
           '.cm-scroller': { overflow: 'auto' },
-          '.cm-content': { caretColor: '#b0b0b0' },
-          '.cm-cursor': { borderLeftColor: '#b0b0b0' },
+          '.cm-content': { caretColor: 'rgb(var(--v-theme-on-surface))' },
+          '.cm-cursor': { borderLeftColor: 'rgb(var(--v-theme-on-surface))' },
           '.cm-gutters': {
-            backgroundColor: '#181a1b',
-            color: '#616161',
-            borderRight: '1px solid #212121'
+            backgroundColor: 'color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-on-surface)) 6%)',
+            color: 'rgba(var(--v-theme-on-surface), .54)',
+            borderRight: '1px solid rgba(var(--v-theme-on-surface), .12)'
           },
-          '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: '#212121' },
-          '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: '#1565c0' },
+          '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgba(var(--v-theme-on-surface), .06)' },
+          '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'rgba(var(--v-theme-primary), .24)' },
           '.cm-buttonmarker': {
-            backgroundColor: 'rgba(33, 150, 243, .3)',
-            border: '1px solid #2196f3',
+            backgroundColor: 'rgba(var(--v-theme-primary), .18)',
+            border: '1px solid rgba(var(--v-theme-primary), .7)',
             appearance: 'none',
             display: 'inline',
             cursor: 'pointer',

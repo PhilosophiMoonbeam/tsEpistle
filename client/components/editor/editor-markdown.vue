@@ -240,7 +240,7 @@
               :spellcheck='false'
               )
 
-    v-system-bar.editor-status-bar.editor-markdown-sysbar(color="grey-darken-3")
+    v-system-bar.editor-status-bar.editor-markdown-sysbar(absolute, color="grey-darken-3")
       .text-body-small.editor-markdown-sysbar-locale {{locale.toUpperCase()}}
       .text-body-small.editor-markdown-sysbar-path.px-3(:title='`/${path}`') /{{path}}
       template(v-if='collaborationStatus')

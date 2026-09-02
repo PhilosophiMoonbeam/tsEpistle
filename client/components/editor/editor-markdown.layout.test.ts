@@ -6,6 +6,10 @@ const editorPath = path.join(process.cwd(), 'client/components/editor/editor-mar
 const editorSource = fs.readFileSync(editorPath, 'utf8')
 const template = editorSource.match(/<template lang=['"]pug['"]>\s*([\s\S]*?)\s*<\/template>/)?.[1] ?? ''
 const style = editorSource.match(/<style lang=['"]scss['"]>\s*([\s\S]*?)\s*<\/style>/)?.[1] ?? ''
+const textEditorPath = path.join(process.cwd(), 'client/components/editor/common/text-editor.ts')
+const textEditorSource = fs.readFileSync(textEditorPath, 'utf8')
+const visualEditorPath = path.join(process.cwd(), 'client/components/editor/tiptap/editor.vue')
+const visualEditorSource = fs.readFileSync(visualEditorPath, 'utf8')
 
 describe('Markdown editor layout', () => {
   it('starts the formatting toolbar at the leading edge without a reserved sidebar strip', () => {
@@ -36,6 +40,18 @@ describe('Markdown editor layout', () => {
 
   it('marks the rendered preview as a page CSS canvas', () => {
     expect(template).toContain(".editor-markdown-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer')")
+  })
+
+  it('uses active Vuetify theme colors for the Markdown source pane', () => {
+    expect(textEditorSource).toContain("backgroundColor: 'rgb(var(--v-theme-surface))'")
+    expect(textEditorSource).toContain("color: 'rgb(var(--v-theme-on-surface))'")
+    expect(textEditorSource).toContain("backgroundColor: 'rgba(var(--v-theme-primary), .24)'")
+    expect(textEditorSource).not.toMatch(/#(?:1d1f21|181a1b|e0e0e0|616161|212121)/)
+  })
+
+  it('keeps both Markdown status bars from reserving space above their editors', () => {
+    expect(template).toContain('v-system-bar.editor-status-bar.editor-markdown-sysbar(absolute, color="grey-darken-3")')
+    expect(visualEditorSource).toContain('v-system-bar.editor-status-bar.editor-tiptap-sysbar(absolute)')
   })
 
   it('preserves pane controls and collaboration accessibility metadata', () => {
