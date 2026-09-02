@@ -226,7 +226,7 @@
 
           //- ACCOUNT
 
-          v-menu(v-if='isAuthenticated', location="bottom end", min-width='300', transition='slide-y-transition')
+          v-menu(v-if='isAuthenticated', location="bottom end", transition='slide-y-transition', :close-on-content-click='false')
             template(v-slot:activator='{ props: menuProps }')
               v-tooltip(location="bottom")
                 template(v-slot:activator='{ props: tooltipProps }')
@@ -242,7 +242,7 @@
                     v-avatar(v-else-if='picture.kind === `image`', :size='34')
                       v-img(:src='picture.url', alt='')
                 span {{$t('common:header.account')}}
-            v-list.nav-header-menu(nav)
+            v-list.nav-header-menu.account-menu(aria-label='Account menu')
               v-list-item.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`')
                 template(v-slot:prepend)
                   v-avatar
@@ -256,8 +256,10 @@
                 template(v-slot:append): v-icon(color='secondary') mdi-face-profile
                 v-list-item-title.text-secondary {{$t('common:header.profile')}}
               v-divider
-              v-list-item.py-3
+              section.account-menu__preferences(role='region' aria-labelledby='account-preferences-title')
+                h2#account-preferences-title.account-menu__preferences-title Presentation preferences
                 appearance-selector
+                presentation-selector
               v-divider
               v-list-item(role='button', link, @click='logout')
                 template(v-slot:append): v-icon(color='error') mdi-logout
@@ -326,6 +328,7 @@ const ADMIN_PERMISSION_NAMES = new Set([
 export default defineComponent({
   components: {
     AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
+    PresentationSelector: defineAsyncComponent(() => import('./presentation-selector.vue')),
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
     PageConvert: defineAsyncComponent(() => import('./page-convert.vue'))
   },
@@ -1033,6 +1036,37 @@ export default defineComponent({
     border-color: var(--wiki-surface-border);
     opacity: 1;
   }
+}
+
+.nav-header-menu.account-menu {
+  width: min(calc(100vw - (var(--wiki-space-4) * 2)), 34rem);
+  max-height: min(82dvh, 44rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.account-menu__preferences {
+  display: grid;
+  min-width: 0;
+  gap: var(--wiki-space-4);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+
+  > .presentation-selector {
+    padding-block-start: var(--wiki-space-4);
+    border-block-start: 1px solid var(--wiki-surface-border);
+  }
+}
+
+.account-menu__preferences-title {
+  padding: 0;
+  margin: 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .075em;
+  line-height: 1.4;
+  text-transform: uppercase;
 }
 
 .navHeaderSearch {

@@ -11,6 +11,8 @@ mock.module('../../models/groups.ts', () => ({ default: RelatedModelStub }))
 mock.module('../../models/authentication.ts', () => ({ default: RelatedModelStub }))
 mock.module('../../models/editors.ts', () => ({ default: RelatedModelStub }))
 mock.module('../../models/locales.ts', () => ({ default: RelatedModelStub }))
+const signJwt = mock((_payload: Record<string, unknown>) => 'signed-jwt')
+mock.module('jsonwebtoken', () => ({ default: { sign: signJwt } }))
 
 type Row = Record<string, unknown>
 type TableName = 'assets' | 'comments' | 'pageHistory' | 'pages' | 'userKeys' | 'users'
@@ -228,6 +230,7 @@ interface AggregateDatabase {
   commits: number
   failRelation: boolean
   failUserPatch: boolean
+  userPatches: Row[]
   nextUserId: number
 }
 
@@ -236,7 +239,8 @@ const createAggregateDatabase = (users: Row[] = []): AggregateDatabase => ({
   commits: 0,
   failRelation: false,
   failUserPatch: false,
-  nextUserId: 100
+  nextUserId: 100,
+  userPatches: []
 })
 
 const installAggregateDatabase = (database: AggregateDatabase): void => {
@@ -320,15 +324,18 @@ const installAggregateDatabase = (database: AggregateDatabase): void => {
         const row = trx.state.users.find(candidate => Object.entries(criteria).every(([key, value]) => candidate[key] === value))
         return row ? userRecord(row, trx) : undefined
       },
-      patch: (input: Row) => ({
-        findById: async (id: number): Promise<number> => {
-          if (database.failUserPatch) throw new Error('forced user patch failure')
-          const row = trx.state.users.find(candidate => candidate.id === id)
-          if (!row) return 0
-          Object.assign(row, input)
-          return 1
+      patch: (input: Row) => {
+        database.userPatches.push(structuredClone(input))
+        return {
+          findById: async (id: number): Promise<number> => {
+            if (database.failUserPatch) throw new Error('forced user patch failure')
+            const row = trx.state.users.find(candidate => candidate.id === id)
+            if (!row) return 0
+            Object.assign(row, input)
+            return 1
+          }
         }
-      }),
+      },
       deleteById: async (id: number): Promise<number> => {
         const before = trx.state.users.length
         trx.state.users = trx.state.users.filter(row => row.id !== id)
@@ -444,6 +451,31 @@ describe('User aggregate transactions', () => {
     expect(database.state.users[0]?.name).toBe('New')
     expect(database.state.memberships).toEqual([{ userId: 10, groupId: 2 }])
     expect(database.commits).toBe(1)
+  })
+
+  test('patches both presentation preference columns without changing unrelated profile fields', async () => {
+    const database = createAggregateDatabase([
+      {
+        id: 10,
+        email: 'old@example.test',
+        name: 'Unchanged',
+        providerKey: 'local',
+        appearance: 'system',
+        fontFamily: 'newsreader',
+        readingGutter: 'site'
+      }
+    ])
+    installAggregateDatabase(database)
+
+    await expect(User.updateUser({ id: 10, fontFamily: 'roboto-flex', readingGutter: 'aurora' })).resolves.toBe(false)
+
+    expect(database.userPatches).toEqual([{ fontFamily: 'roboto-flex', readingGutter: 'aurora' }])
+    expect(database.state.users[0]).toMatchObject({
+      name: 'Unchanged',
+      appearance: 'system',
+      fontFamily: 'roboto-flex',
+      readingGutter: 'aurora'
+    })
   })
 
   test.each([
@@ -574,5 +606,46 @@ describe('User aggregate transactions', () => {
     expect(database.state.users[0]?.password).toBe('new-password')
     expect(database.state.tokens).toEqual([])
     expect(database.commits).toBe(1)
+  })
+})
+
+describe('User.refreshToken', () => {
+  test('issues font-family and reading-gutter JWT claims', async () => {
+    const updateLastLogin = mock(async () => 1)
+    const knex = (_table: string) => ({
+      where: (_column: string, _id: number) => ({ update: updateLastLogin })
+    })
+    Object.assign(wiki, {
+      config: {
+        auth: { audience: 'wiki-test', tokenExpiration: '1h' },
+        certs: { private: 'private-key' },
+        sessionSecret: 'secret'
+      }
+    })
+    wiki.models = { knex }
+    const user = Object.assign(new User(), {
+      id: 10,
+      email: 'user@example.test',
+      name: 'User',
+      pictureUrl: '',
+      timezone: 'UTC',
+      localeCode: 'en',
+      dateFormat: 'YYYY-MM-DD',
+      appearance: 'system',
+      fontFamily: 'roboto-flex',
+      readingGutter: 'orbits',
+      groups: []
+    })
+    const callIndex = signJwt.mock.calls.length
+
+    await expect(User.refreshToken(user)).resolves.toMatchObject({ token: 'signed-jwt', user })
+
+    expect(signJwt.mock.calls[callIndex]?.[0]).toMatchObject({
+      id: 10,
+      ap: 'system',
+      ff: 'roboto-flex',
+      rg: 'orbits'
+    })
+    expect(updateLastLogin).toHaveBeenCalledTimes(1)
   })
 })

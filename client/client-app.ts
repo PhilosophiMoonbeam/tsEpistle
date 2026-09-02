@@ -1,4 +1,4 @@
-import { createApp } from 'vue'
+import { createApp, watch } from 'vue'
 import type { AsyncComponentLoader } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as vuetifyLocaleMessages from 'vuetify/locale'
@@ -45,6 +45,14 @@ const registrations = [
 ]
 
 wikiStore.refreshAuth()
+watch(
+  () => wikiStore.user.fontFamily,
+  fontFamily => {
+    document.documentElement.dataset.wikiFont = fontFamily
+  },
+  { immediate: true }
+)
+
 const resolveVuetifyMessageLocale = (language: string): keyof typeof vuetifyLocaleMessages | undefined => {
   const languageParts = language.trim().toLowerCase().replaceAll('_', '-').split('-')
   const baseLanguage = languageParts[0]

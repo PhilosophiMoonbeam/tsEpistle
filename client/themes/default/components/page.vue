@@ -763,6 +763,8 @@ import {
 import { decodeBase64Json } from '../../../helpers/base64'
 import { hydrateContentExtensions, revealContentExtensionTarget } from '../../../helpers/content-extension-runtime'
 import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
+import { normalizePageGutterCustomCss } from '../../../../shared/page-gutters.ts'
+import { resolveUserReadingGutter } from '../../../../shared/user-presentation.ts'
 import { navigateToWikiPage } from '../../../helpers/wiki-navigation'
 import {
   flattenTableOfContents,
@@ -1009,8 +1011,6 @@ export default defineComponent({
       protectionError: '',
       pageProtection: { protected: false, version: 0, updatedBy: null, updatedAt: null } as PageProtection,
       pageProtectionPassword: '',
-      gutterStyle: siteConfig.gutterStyle,
-      gutterCustomCss: siteConfig.gutterCustomCss,
       scrollOpts: markRaw({
         duration: 1500,
         offset: 0,
@@ -1032,8 +1032,17 @@ export default defineComponent({
     }
   },
   computed: {
+    gutterStyle () {
+      return resolveUserReadingGutter(
+        wikiStore.user.readingGutter,
+        wikiStore.site.gutterStyle,
+        wikiStore.site.gutterCustomCss
+      )
+    },
     gutterOrnamentStyle (): string | undefined {
-      return this.gutterStyle === 'custom' ? this.gutterCustomCss : undefined
+      return this.gutterStyle === 'custom'
+        ? normalizePageGutterCustomCss(wikiStore.site.gutterCustomCss)
+        : undefined
     },
     isAuthenticated () {
       return wikiStore.user.authenticated

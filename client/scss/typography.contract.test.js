@@ -82,17 +82,40 @@ const expectedLicenses = ['Newsreader-OFL.txt', 'RobotoFlex-OFL.txt', 'RobotoMon
 describe('self-hosted typography contracts', () => {
   const base = read('client/scss/base/base.scss')
   const fontSource = read('client/scss/fonts/default.scss')
+  const clientApp = read('client/client-app.ts')
+  const wikiStoreSource = read('client/store/index.ts')
   const fontFaces = extractBlocks(fontSource, '@font-face').map(declarations)
   const assetNames = fs.readdirSync(path.join(root, 'client/fonts/default'))
 
-  test('defines the fixed UI, reader, and technical font tokens', () => {
-    expect(base).toMatch(/--wiki-font-body:\s*'Roboto Flex',\s*system-ui,\s*-apple-system,\s*BlinkMacSystemFont,\s*'Segoe UI',\s*sans-serif;/)
-    expect(base).toMatch(/--wiki-font-heading:\s*'Roboto Flex',\s*system-ui,\s*-apple-system,\s*BlinkMacSystemFont,\s*'Segoe UI',\s*sans-serif;/)
-    expect(base).toMatch(/--wiki-font-reader:\s*'Newsreader',\s*ui-serif,\s*Georgia,\s*Cambria,\s*'Times New Roman',\s*serif;/)
-    expect(base).toMatch(/--wiki-font-mono:\s*'Roboto Mono',\s*'SFMono-Regular',\s*'Cascadia Code',\s*'Liberation Mono',\s*monospace;/)
-    expect(base).toMatch(/--v-font-body:\s*var\(--wiki-font-body\);/)
-    expect(base).toMatch(/--v-font-heading:\s*var\(--wiki-font-heading\);/)
+  test('uses Newsreader for every proportional role by default and switches them together', () => {
+    const rootTokens = declarations(extractBlocks(base, ':root')[0])
+    const robotoFlexTokens = declarations(extractBlocks(base, "html[data-wiki-font='roboto-flex']")[0])
+
+    expect(rootTokens['--wiki-font-newsreader']).toBe("'Newsreader', ui-serif, Georgia, Cambria, 'Times New Roman', serif")
+    expect(rootTokens['--wiki-font-roboto-flex']).toBe("'Roboto Flex', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif")
+    expect(rootTokens['--wiki-font-selected']).toBe('var(--wiki-font-newsreader)')
+    for (const token of ['--wiki-font-body', '--wiki-font-heading', '--wiki-font-reader']) {
+      expect(rootTokens[token]).toBe('var(--wiki-font-selected)')
+    }
+    expect(rootTokens['--v-font-body']).toBe('var(--wiki-font-body)')
+    expect(rootTokens['--v-font-heading']).toBe('var(--wiki-font-heading)')
+    expect(robotoFlexTokens['--wiki-font-selected']).toBe('var(--wiki-font-roboto-flex)')
+    expect(rootTokens['--wiki-font-mono']).toBe("'Roboto Mono', 'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace")
     expect(base).not.toMatch(/font-feature-settings\s*:/)
+  })
+
+  test('hydrates normalized presentation claims and synchronizes the root font reactively at bootstrap', () => {
+    expect(wikiStoreSource).toMatch(/import\s+\{\s*normalizeUserFontFamily,\s*normalizeUserReadingGutter\s*\}\s+from\s+'..\/..\/shared\/user-presentation\.ts'/)
+    expect(wikiStoreSource).toMatch(/fontFamily:\s*normalizeUserFontFamily\(undefined\)/)
+    expect(wikiStoreSource).toMatch(/readingGutter:\s*normalizeUserReadingGutter\(undefined\)/)
+    expect(wikiStoreSource).toMatch(/this\.user\.fontFamily\s*=\s*normalizeUserFontFamily\(payload\.ff\)/)
+    expect(wikiStoreSource).toMatch(/this\.user\.readingGutter\s*=\s*normalizeUserReadingGutter\(payload\.rg\)/)
+    expect(wikiStoreSource).toMatch(/gutterStyle:\s*window\.siteConfig\.gutterStyle/)
+    expect(wikiStoreSource).toMatch(/gutterCustomCss:\s*window\.siteConfig\.gutterCustomCss/)
+    expect(clientApp).toMatch(/import\s+\{\s*createApp,\s*watch\s*\}\s+from\s+'vue'/)
+    expect(clientApp).toMatch(
+      /watch\(\s*\(\)\s*=>\s*wikiStore\.user\.fontFamily,\s*fontFamily\s*=>\s*\{\s*document\.documentElement\.dataset\.wikiFont\s*=\s*fontFamily\s*\},\s*\{\s*immediate:\s*true\s*\}\s*\)/s
+    )
   })
 
   test('declares the exact local variable faces and real Newsreader italics', () => {

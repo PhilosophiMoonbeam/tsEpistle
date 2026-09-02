@@ -17,6 +17,7 @@ import type Comment from './comments.ts'
 import type PageHistory from './pageHistory.ts'
 import type Page from './pages.ts'
 import type UserKey from './userKeys.ts'
+import { USER_FONT_FAMILY_VALUES, USER_READING_GUTTER_VALUES, type UserFontFamily, type UserReadingGutter } from '../../shared/user-presentation.ts'
 
 interface AuthenticationInfo {
   key: string
@@ -209,6 +210,8 @@ interface UpdateUserOptions {
   timezone?: string
   dateFormat?: string
   appearance?: string
+  fontFamily?: UserFontFamily
+  readingGutter?: UserReadingGutter
 }
 
 interface UserPatch {
@@ -220,6 +223,8 @@ interface UserPatch {
   timezone?: string
   dateFormat?: string
   appearance?: string
+  fontFamily?: UserFontFamily
+  readingGutter?: UserReadingGutter
 }
 
 interface AvatarRow {
@@ -252,6 +257,8 @@ export default class User extends Model {
   declare timezone: string
   declare dateFormat: string
   declare appearance: string
+  declare fontFamily: UserFontFamily
+  declare readingGutter: UserReadingGutter
   declare isSystem: boolean
   declare isActive: boolean
   declare isVerified: boolean
@@ -286,6 +293,8 @@ export default class User extends Model {
         timezone: { type: 'string' },
         dateFormat: { type: 'string' },
         appearance: { type: 'string' },
+        fontFamily: { type: 'string', enum: [...USER_FONT_FAMILY_VALUES] },
+        readingGutter: { type: 'string', enum: [...USER_READING_GUTTER_VALUES] },
         isSystem: { type: 'boolean' },
         isActive: { type: 'boolean' },
         isVerified: { type: 'boolean' },
@@ -757,6 +766,8 @@ export default class User extends Model {
           lc: currentUser.localeCode,
           df: currentUser.dateFormat,
           ap: currentUser.appearance,
+          ff: currentUser.fontFamily,
+          rg: currentUser.readingGutter,
           // defaultEditor: currentUser.defaultEditor,
           permissions: currentUser.getGlobalPermissions(),
           groups: currentUser.getGroups()
@@ -1071,7 +1082,20 @@ export default class User extends Model {
    *
    * @param {Object} param0 User ID and fields to update
    */
-  static async updateUser({ id, email, name, newPassword, groups, location, jobTitle, timezone, dateFormat, appearance }: UpdateUserOptions): Promise<boolean> {
+  static async updateUser({
+    id,
+    email,
+    name,
+    newPassword,
+    groups,
+    location,
+    jobTitle,
+    timezone,
+    dateFormat,
+    appearance,
+    fontFamily,
+    readingGutter
+  }: UpdateUserOptions): Promise<boolean> {
     return wiki.models.knex.transaction(async trx => {
       const usr = await wiki.models.users.query(trx).findById(id).forUpdate()
       if (!usr) {
@@ -1131,6 +1155,12 @@ export default class User extends Model {
       }
       if (appearance !== undefined && appearance !== usr.appearance) {
         usrData.appearance = appearance
+      }
+      if (fontFamily !== undefined && fontFamily !== usr.fontFamily) {
+        usrData.fontFamily = fontFamily
+      }
+      if (readingGutter !== undefined && readingGutter !== usr.readingGutter) {
+        usrData.readingGutter = readingGutter
       }
       await wiki.models.users.query(trx).patch(usrData).findById(id)
       return authorizationChanged

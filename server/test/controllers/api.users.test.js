@@ -147,7 +147,7 @@ describe('controllers/api users endpoints', () => {
       status: express.__router.patch.mock.calls.find(([path]) => path === '/:id/status')[1],
       verification: express.__router.patch.mock.calls.find(([path]) => path === '/:id/verification')[1],
       tfa: express.__router.patch.mock.calls.find(([path]) => path === '/:id/tfa')[1],
-      appearance: express.__router.patch.mock.calls.find(([path]) => path === '/profile/appearance')[1],
+      preferences: express.__router.patch.mock.calls.find(([path]) => path === '/profile/preferences')[1],
       detail: express.__router.get.mock.calls.find(([path]) => path === '/:id')[1]
     }
   }
@@ -166,7 +166,7 @@ describe('controllers/api users endpoints', () => {
     expect(typeof handlers.status).toBe('function')
     expect(typeof handlers.verification).toBe('function')
     expect(typeof handlers.tfa).toBe('function')
-    expect(typeof handlers.appearance).toBe('function')
+    expect(typeof handlers.preferences).toBe('function')
     expect(typeof handlers.detail).toBe('function')
   })
 
@@ -497,31 +497,50 @@ describe('controllers/api users endpoints', () => {
     const registeredPatchPaths = express.__router.patch.mock.calls.map(([path]) => path)
     const registeredGetPaths = express.__router.get.mock.calls.map(([path]) => path)
 
-    expect(registeredPatchPaths).toEqual(['/profile', '/profile/appearance', '/:id/status', '/:id/verification', '/:id/tfa'])
+    expect(registeredPatchPaths).toEqual(['/profile', '/profile/preferences', '/:id/status', '/:id/verification', '/:id/tfa'])
     expect(registeredGetPaths.indexOf('/:id')).toBeGreaterThan(registeredGetPaths.indexOf('/profile'))
   })
-  it('persists an authenticated profile appearance and returns a refreshed token', async () => {
-    const { appearance } = await loadHandler()
-    const req = { user: { id: 42 }, body: { appearance: 'dark', name: 'must not update' } }
+
+  it.each([
+    [{ appearance: 'dark' }, { id: 42, appearance: 'dark' }],
+    [{ fontFamily: 'roboto-flex' }, { id: 42, fontFamily: 'roboto-flex' }],
+    [{ readingGutter: 'orbits' }, { id: 42, readingGutter: 'orbits' }],
+    [
+      { appearance: 'light', fontFamily: 'newsreader', readingGutter: 'site' },
+      { id: 42, appearance: 'light', fontFamily: 'newsreader', readingGutter: 'site' }
+    ]
+  ])('persists profile preferences and returns a refreshed token for %o', async (body, expectedUpdate) => {
+    const { preferences } = await loadHandler()
+    const req = { user: { id: 42 }, body }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await appearance(req, res, vi.fn())
+    await preferences(req, res, vi.fn())
 
-    expect(global.WIKI.models.users.updateUser).toHaveBeenCalledWith({ id: 42, appearance: 'dark' })
+    expect(global.WIKI.models.users.updateUser).toHaveBeenCalledWith(expectedUpdate)
     expect(global.WIKI.models.users.refreshToken).toHaveBeenCalledWith(42)
     expect(res.json).toHaveBeenCalledWith({ token: 'replacement-jwt' })
   })
 
-  it('rejects unsupported profile appearances before calling the model', async () => {
-    const { appearance } = await loadHandler()
-    const req = { user: { id: 42 }, body: { appearance: 'sepia' } }
+  it.each([
+    [{}],
+    [{ appearance: 'sepia' }],
+    [{ fontFamily: 'comic-sans' }],
+    [{ readingGutter: 'unknown' }],
+    [{ appearance: 'dark', extra: true }],
+    [null],
+    [[]]
+  ])('rejects invalid profile preferences before calling operations: %o', async body => {
+    const { preferences } = await loadHandler()
+    const req = { user: { id: 42 }, body }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await appearance(req, res, vi.fn())
+    await preferences(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({ error: 'appearance must be one of system, light or dark' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'Profile preferences are invalid' })
+    expect(global.WIKI.models.users.query).not.toHaveBeenCalled()
     expect(global.WIKI.models.users.updateUser).not.toHaveBeenCalled()
+    expect(global.WIKI.models.users.refreshToken).not.toHaveBeenCalled()
   })
 
 

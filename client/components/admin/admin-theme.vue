@@ -521,6 +521,8 @@ const save = async (): Promise<void> => {
     siteConfig.themeColors = cloneThemeColors(payload.colors)
     siteConfig.gutterStyle = payload.gutterStyle
     siteConfig.gutterCustomCss = payload.gutterCustomCss
+    wikiStore.site.gutterStyle = payload.gutterStyle
+    wikiStore.site.gutterCustomCss = payload.gutterCustomCss
     wikiStore.site.dark = payload.darkMode
     showNotification(wikiStore, {
       message: 'Theme settings updated successfully.',

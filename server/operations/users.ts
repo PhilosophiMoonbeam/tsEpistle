@@ -1,6 +1,7 @@
 import _ from 'lodash'
 
 import errors from './errors.ts'
+import { ProfilePreferencesInputSchema, isAdminCustomGutterAvailable } from '../../shared/user-presentation.ts'
 
 const { ApplicationError } = errors
 
@@ -96,6 +97,11 @@ interface WikiUsers {
     strategies: Record<string, unknown>
     checkAssignUserToGroupAccess(requester: Express.User | undefined, groups: number[] | undefined): Promise<boolean>
     revokeUserTokens(input: { id: number; kind: 'u' }): void
+  }
+  config: {
+    theming?: {
+      gutterCustomCss?: unknown
+    }
   }
   data: { authentication: unknown }
   events: { outbound: { emit(event: 'addAuthRevoke', input: { id: number; kind: 'u' }): void } }
@@ -387,12 +393,15 @@ const updateProfile = async ({ requester, input: value }: UserRequest): Promise<
   })
   return (await wiki.models.users.refreshToken(user.id)).token
 }
-const updateProfileAppearance = async ({ requester, input: value }: UserRequest): Promise<string> => {
+const updateProfilePreferences = async ({ requester, input: value }: UserRequest): Promise<string> => {
   const user = await requireProfileUser(requester)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
-  const appearance = stringValue(recordValue(value).appearance, 'appearance')
-  if (!['light', 'dark', 'system'].includes(appearance)) throw new wiki.Error.InputInvalid()
-  await wiki.models.users.updateUser({ id: user.id, appearance })
+  const result = ProfilePreferencesInputSchema.safeParse(value)
+  if (!result.success) throw new wiki.Error.InputInvalid()
+  if (result.data.readingGutter === 'custom' && !isAdminCustomGutterAvailable(wiki.config.theming?.gutterCustomCss)) {
+    throw new wiki.Error.InputInvalid()
+  }
+  await wiki.models.users.updateUser({ id: user.id, ...result.data })
   return (await wiki.models.users.refreshToken(user.id)).token
 }
 
@@ -434,6 +443,6 @@ export default {
   setTfa,
   update,
   updateProfile,
-  updateProfileAppearance,
+  updateProfilePreferences,
   verify
 }

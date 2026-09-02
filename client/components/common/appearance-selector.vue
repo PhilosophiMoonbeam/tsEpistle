@@ -44,7 +44,7 @@ import { computed, ref, useId } from 'vue'
 import Cookies from 'js-cookie'
 import { useTheme } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
-import { updateProfileAppearance } from '../../helpers/users-api.ts'
+import { updateProfilePreferences } from '../../helpers/users-api.ts'
 import { resolveThemeName, type WikiThemeName } from '../../helpers/theme.ts'
 
 /* global siteConfig */
@@ -67,7 +67,7 @@ const props = withDefaults(defineProps<{
 
 const theme = useTheme()
 const selectedAppearance = computed<Appearance>(() => normalizeAppearance(wikiStore.user.appearance))
-const saving = computed(() => (wikiStore.loadingCounts['profile-appearance-save'] ?? 0) > 0)
+const saving = computed(() => (wikiStore.loadingCounts['profile-preferences-save'] ?? 0) > 0)
 const descriptionId = useId()
 const statusMessage = ref('')
 const appearanceOptions: readonly AppearanceOption[] = [
@@ -89,14 +89,14 @@ async function selectAppearance (next: Appearance): Promise<void> {
 
   const previousAppearance = selectedAppearance.value
   const previousStoreAppearance = wikiStore.user.appearance
-  wikiStore.startLoading('profile-appearance-save')
+  wikiStore.startLoading('profile-preferences-save')
 
   try {
     wikiStore.user.appearance = next
     await theme.change(next, false)
-    const token = await updateProfileAppearance(
+    const token = await updateProfilePreferences(
       window.fetch.bind(window),
-      next,
+      { appearance: next },
       'Appearance update failed'
     )
     Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
@@ -110,7 +110,7 @@ async function selectAppearance (next: Appearance): Promise<void> {
     statusMessage.value = 'Appearance could not be saved. The previous setting was restored.'
     wikiStore.showError(error)
   } finally {
-    wikiStore.stopLoading('profile-appearance-save')
+    wikiStore.stopLoading('profile-preferences-save')
   }
 }
 </script>

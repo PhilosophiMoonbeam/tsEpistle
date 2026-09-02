@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { resolveUserReadingGutter } from '../../../../shared/user-presentation.ts'
 
 const read = relativePath => fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8')
 const extractBlock = (source, tag) => {
@@ -173,6 +174,42 @@ describe('default page focused contracts', () => {
     expect(script).not.toMatch(/window\.boot\.notify\s*\(/)
   })
 
+  test('resolves reactive user and site gutters and synchronizes admin saves', () => {
+    expect(script).toMatch(
+      /resolveUserReadingGutter\(\s*wikiStore\.user\.readingGutter,\s*wikiStore\.site\.gutterStyle,\s*wikiStore\.site\.gutterCustomCss\s*\)/
+    )
+    expect(script).not.toMatch(/gutterStyle:\s*siteConfig\.gutterStyle|gutterCustomCss:\s*siteConfig\.gutterCustomCss/)
+    expect(script).toMatch(
+      /gutterOrnamentStyle\s*\(\): string \| undefined\s*\{[\s\S]*?this\.gutterStyle === 'custom'[\s\S]*?normalizePageGutterCustomCss\(wikiStore\.site\.gutterCustomCss\)[\s\S]*?: undefined/
+    )
+
+    const presentation = {
+      user: { readingGutter: 'site' },
+      site: { gutterStyle: 'laurel', gutterCustomCss: '' }
+    }
+    const effectiveGutter = () => resolveUserReadingGutter(presentation.user.readingGutter, presentation.site.gutterStyle, presentation.site.gutterCustomCss)
+
+    expect(effectiveGutter()).toBe('laurel')
+    presentation.user.readingGutter = 'orbits'
+    expect(effectiveGutter()).toBe('orbits')
+    presentation.user.readingGutter = 'site'
+    presentation.site.gutterStyle = 'aurora'
+    expect(effectiveGutter()).toBe('aurora')
+    presentation.user.readingGutter = 'custom'
+    presentation.site.gutterStyle = 'columns'
+    presentation.site.gutterCustomCss = '.page { display: none; }'
+    expect(effectiveGutter()).toBe('columns')
+
+    expect(template).not.toContain('page-gutter-ornament--start')
+    expect(template).toContain('page-gutter-ornament--right')
+    expect(adminTheme).not.toContain('gutter-style-option__art--start')
+    expect(adminTheme).toContain('gutter-style-option__art--right')
+    expect(adminTheme).toContain("{ value: 'custom', title: 'Custom study'")
+    expect(adminTheme).toMatch(
+      /siteConfig\.gutterStyle = payload\.gutterStyle[\s\S]*?siteConfig\.gutterCustomCss = payload\.gutterCustomCss[\s\S]*?wikiStore\.site\.gutterStyle = payload\.gutterStyle[\s\S]*?wikiStore\.site\.gutterCustomCss = payload\.gutterCustomCss/
+    )
+  })
+
   test('keeps reader geometry compact, useful, and clear of mobile navigation', () => {
     expect(template).not.toBeNull()
     expect(style).not.toBeNull()
@@ -213,8 +250,7 @@ describe('default page focused contracts', () => {
       width: 'min\\(100%,\\s*var\\(--page-reader-copy-max\\)\\)'
     })
     expectDeclarations(readerSurface, {
-      '--page-reader-surface-padding':
-        'clamp\\(var\\(--wiki-space-6\\),\\s*3vw,\\s*var\\(--wiki-space-12\\)\\)',
+      '--page-reader-surface-padding': 'clamp\\(var\\(--wiki-space-6\\),\\s*3vw,\\s*var\\(--wiki-space-12\\)\\)',
       padding: 'var\\(--page-reader-surface-padding\\)'
     })
     expectDeclarations(readerCopy, {
@@ -237,7 +273,8 @@ describe('default page focused contracts', () => {
       'overscroll-behavior': 'contain'
     })
     expectDeclarations(readerGutter, {
-      width: 'max\\(\\s*calc\\(var\\(--wiki-grid-size\\) \\* 1\\.125\\),\\s*calc\\(\\s*100% - var\\(--page-reader-copy-max\\) - var\\(--page-reader-surface-padding\\) -\\s*var\\(--wiki-space-4\\) - var\\(--wiki-space-1\\)\\s*\\)\\s*\\)',
+      width:
+        'max\\(\\s*calc\\(var\\(--wiki-grid-size\\) \\* 1\\.125\\),\\s*calc\\(\\s*100% - var\\(--page-reader-copy-max\\) - var\\(--page-reader-surface-padding\\) -\\s*var\\(--wiki-space-4\\) - var\\(--wiki-space-1\\)\\s*\\)\\s*\\)',
       height: 'min\\(\\s*calc\\(100% - var\\(--wiki-space-8\\)\\),\\s*max\\(calc\\(var\\(--wiki-grid-size\\) \\* 7\\),\\s*95%\\)\\s*\\)'
     })
     expect(gutterColumn).toContain("path.wiki-gutter-column__base-neck(d='M61 480 H129 L131 493 H59 Z')")

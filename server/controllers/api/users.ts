@@ -2,6 +2,7 @@ import express from 'express'
 import { type Request, type Response, getWikiAuth } from '../_types.ts'
 import _ from 'lodash'
 import userOperations, { type ListUser } from '../../operations/users.ts'
+import { ProfilePreferencesInputSchema } from '../../../shared/user-presentation.ts'
 
 const router = express.Router()
 
@@ -20,18 +21,11 @@ interface LastLoginUser {
 const profileFields = ['name', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance'] as const
 type ProfileInput = Record<(typeof profileFields)[number], string>
 
-const isProfileInput = (value: Record<string, unknown>): value is ProfileInput =>
-  profileFields.every(field => typeof value[field] === 'string')
-const profileAppearances = ['system', 'light', 'dark'] as const
-type ProfileAppearance = (typeof profileAppearances)[number]
-
-const isProfileAppearance = (value: unknown): value is ProfileAppearance =>
-  typeof value === 'string' && profileAppearances.includes(value as ProfileAppearance)
-
+const isProfileInput = (value: Record<string, unknown>): value is ProfileInput => profileFields.every(field => typeof value[field] === 'string')
 
 const requestBody = (req: Request): Record<string, unknown> => {
   const body: unknown = req.body
-  return typeof body === 'object' && body !== null && !Array.isArray(body) ? body as Record<string, unknown> : {}
+  return typeof body === 'object' && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : {}
 }
 
 const errorMessage = (err: unknown, fallback: string): string => {
@@ -45,8 +39,6 @@ const errorStatus = (err: unknown, fallback: number): number => {
   }
   return fallback
 }
-
-
 
 const userActivityAccessPermissions = ['write:groups', 'manage:groups', 'write:users', 'manage:users', 'manage:system']
 const userMutationAccessPermissions = ['write:users', 'manage:users', 'manage:system']
@@ -189,12 +181,14 @@ router.get('/search', async (req, res, next) => {
   try {
     const users = await userOperations.search(query)
     const searchUsers: SearchUser[] = users
-    return res.json(searchUsers.map(user => ({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      providerKey: user.providerKey
-    })))
+    return res.json(
+      searchUsers.map(user => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        providerKey: user.providerKey
+      }))
+    )
   } catch (err) {
     return next(err)
   }
@@ -208,11 +202,13 @@ router.get('/last-logins', async (req, res, next) => {
   try {
     const users = await userOperations.lastLogins()
     const loginUsers: LastLoginUser[] = users
-    return res.json(loginUsers.map(user => ({
-      id: user.id,
-      name: user.name,
-      lastLoginAt: user.lastLoginAt
-    })))
+    return res.json(
+      loginUsers.map(user => ({
+        id: user.id,
+        name: user.name,
+        lastLoginAt: user.lastLoginAt
+      }))
+    )
   } catch (err) {
     return next(err)
   }
@@ -233,12 +229,23 @@ router.get('/whoami', async (req, res) => {
 router.get('/profile', async (req, res, next) => {
   try {
     const user = await userOperations.getProfile(req.user)
-    const [groups, pagesTotal] = await Promise.all([
-      userOperations.listProfileGroups(user),
-      userOperations.countPages(user)
-    ])
+    const [groups, pagesTotal] = await Promise.all([userOperations.listProfileGroups(user), userOperations.countPages(user)])
     res.json({
-      ..._.pick(user, ['id', 'name', 'email', 'providerKey', 'providerName', 'location', 'jobTitle', 'timezone', 'dateFormat', 'appearance', 'createdAt', 'updatedAt', 'lastLoginAt']),
+      ..._.pick(user, [
+        'id',
+        'name',
+        'email',
+        'providerKey',
+        'providerName',
+        'location',
+        'jobTitle',
+        'timezone',
+        'dateFormat',
+        'appearance',
+        'createdAt',
+        'updatedAt',
+        'lastLoginAt'
+      ]),
       isSystem: user.isSystem === true || user.isSystem === 1,
       isVerified: user.isVerified === true || user.isVerified === 1,
       groups,
@@ -262,19 +269,18 @@ router.patch('/profile', async (req, res, next) => {
     next(err)
   }
 })
-router.patch('/profile/appearance', async (req, res, next) => {
-  const appearance = requestBody(req).appearance
-  if (!isProfileAppearance(appearance)) {
-    return res.status(400).json({ error: 'appearance must be one of system, light or dark' })
+router.patch('/profile/preferences', async (req, res, next) => {
+  const result = ProfilePreferencesInputSchema.safeParse(req.body)
+  if (!result.success) {
+    return res.status(400).json({ error: 'Profile preferences are invalid' })
   }
   try {
-    const token = await userOperations.updateProfileAppearance({ requester: req.user, input: { appearance } })
+    const token = await userOperations.updateProfilePreferences({ requester: req.user, input: result.data })
     return res.json({ token })
   } catch (err) {
     return next(err)
   }
 })
-
 
 router.post('/profile/password', async (req, res, next) => {
   const current = _.get(req, 'body.current')
