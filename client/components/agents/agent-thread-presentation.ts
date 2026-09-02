@@ -157,6 +157,58 @@ const emptyMutableRunPresentation = (): MutableRunPresentation => ({
   proposals: [],
   tasks: []
 })
+const hasSameSemanticSignature = (left: unknown, right: unknown): boolean => {
+  if (Object.is(left, right)) return true
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false
+    for (let index = 0; index < left.length; index += 1) {
+      if (!hasSameSemanticSignature(left[index], right[index])) return false
+    }
+    return true
+  }
+
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  let leftKeyCount = 0
+  let rightKeyCount = 0
+  for (const key in leftRecord) {
+    if (!Object.hasOwn(leftRecord, key)) continue
+    leftKeyCount += 1
+    if (!Object.hasOwn(rightRecord, key) || !hasSameSemanticSignature(leftRecord[key], rightRecord[key])) return false
+  }
+  for (const key in rightRecord) {
+    if (Object.hasOwn(rightRecord, key)) rightKeyCount += 1
+  }
+  return leftKeyCount === rightKeyCount
+}
+
+const canonicalAgentCitations = (citations: readonly AgentCitation[], cached: readonly AgentCitation[]): readonly AgentCitation[] => {
+  if (hasSameSemanticSignature(citations, cached)) return cached
+  const cachedById = new Map(cached.map(citation => [citation.evidenceId, citation]))
+  return citations.map(citation => {
+    const cachedCitation = cachedById.get(citation.evidenceId)
+    return cachedCitation && hasSameSemanticSignature(citation, cachedCitation) ? cachedCitation : citation
+  })
+}
+
+const cachedAgentCitationGroups = (citations: readonly AgentCitation[], cached: readonly AgentCitationGroup[] | undefined): readonly AgentCitationGroup[] => {
+  const groups = groupAgentCitations(citations)
+  if (!cached) return groups
+  const cachedByKey = new Map(cached.map(group => [group.key, group]))
+  let preservedOrder = groups.length === cached.length
+  const canonicalGroups = groups.map((group, index) => {
+    const cachedGroup = cachedByKey.get(group.key)
+    if (!cachedGroup || !hasSameSemanticSignature(group, cachedGroup)) {
+      preservedOrder = false
+      return group
+    }
+    if (cached[index] !== cachedGroup) preservedOrder = false
+    return cachedGroup
+  })
+  return preservedOrder ? cached : canonicalGroups
+}
+
 const messageStatusLabel = (message: AgentMessageView): string => {
   if (message.status === 'complete') return ''
   if (message.role === 'user') {
@@ -187,7 +239,8 @@ export const buildAgentThreadPresentation = (
   messages: readonly AgentMessageView[],
   tools: readonly AgentToolCallView[],
   tasks: readonly AgentTaskView[],
-  proposals: readonly AgentProposalView[]
+  proposals: readonly AgentProposalView[],
+  previous?: AgentThreadPresentation
 ): AgentThreadPresentation => {
   const groupedTools = groupAgentToolsByRun(tools, proposals)
   const mutableRuns = new Map<string, MutableRunPresentation>()
@@ -200,19 +253,9 @@ export const buildAgentThreadPresentation = (
     run.tasks.push(task)
   }
 
-  const messageDetails: {
-    message: AgentMessageView
-    citationGroups: readonly AgentCitationGroup[]
-    retryPrompt: string
-  }[] = []
   let retryPrompt = ''
   for (const message of messages) {
     if (message.role === 'user' && message.content.trim()) retryPrompt = message.content
-    messageDetails.push({
-      message,
-      citationGroups: groupAgentCitations(message.citations),
-      retryPrompt
-    })
     if (message.runId && !mutableRuns.has(message.runId)) {
       mutableRuns.set(message.runId, emptyMutableRunPresentation())
     }
@@ -220,22 +263,54 @@ export const buildAgentThreadPresentation = (
 
   const runPresentations = new Map<string, AgentRunPresentation>()
   for (const [runId, run] of mutableRuns) {
+    const cached = previous?.runs.get(runId)
+    if (
+      cached &&
+      hasSameSemanticSignature(run.activity, cached.activity) &&
+      hasSameSemanticSignature(run.proposals, cached.proposals) &&
+      hasSameSemanticSignature(run.tasks, cached.tasks)
+    ) {
+      runPresentations.set(runId, cached)
+      continue
+    }
     runPresentations.set(runId, {
       ...run,
       pageLinks: agentAppliedPageLinks(run.proposals),
       activityLabel: agentActivityLabel(run.activity)
     })
   }
-  const orderedMessages = messageDetails.map<AgentMessagePresentation>(entry => {
-    const statusLabel = messageStatusLabel(entry.message)
-    return {
-      ...entry,
-      run: entry.message.runId ? (runPresentations.get(entry.message.runId) ?? null) : null,
-      statusLabel,
-      ariaLabel: `${entry.message.role === 'assistant' ? 'Wiki Agent' : 'Your'} message · ${statusLabel || 'Complete'}`,
-      recovery: messageRecovery(entry.message)
+
+  const orderedMessages: AgentMessagePresentation[] = []
+  retryPrompt = ''
+  for (const message of messages) {
+    if (message.role === 'user' && message.content.trim()) retryPrompt = message.content
+    const cached = previous?.messages.get(message.id)
+    const messageUnchanged = Boolean(cached && hasSameSemanticSignature(message, cached.message))
+    const canonicalCitations = cached ? canonicalAgentCitations(message.citations, cached.message.citations) : message.citations
+    const citationsUnchanged = Boolean(cached && canonicalCitations === cached.message.citations)
+    const canonicalMessage = messageUnchanged
+      ? cached!.message
+      : canonicalCitations !== message.citations
+        ? { ...message, citations: canonicalCitations }
+        : message
+    const run = canonicalMessage.runId ? (runPresentations.get(canonicalMessage.runId) ?? null) : null
+
+    if (cached && canonicalMessage === cached.message && retryPrompt === cached.retryPrompt && run === cached.run) {
+      orderedMessages.push(cached)
+      continue
     }
-  })
+
+    const statusLabel = messageStatusLabel(canonicalMessage)
+    orderedMessages.push({
+      message: canonicalMessage,
+      run,
+      citationGroups: citationsUnchanged ? cached!.citationGroups : cachedAgentCitationGroups(canonicalMessage.citations, cached?.citationGroups),
+      retryPrompt,
+      statusLabel,
+      ariaLabel: `${canonicalMessage.role === 'assistant' ? 'Wiki Agent' : 'Your'} message · ${statusLabel || 'Complete'}`,
+      recovery: messageRecovery(canonicalMessage)
+    })
+  }
   const messagePresentations = new Map(orderedMessages.map(entry => [entry.message.id, entry]))
   return { runs: runPresentations, messages: messagePresentations, orderedMessages }
 }

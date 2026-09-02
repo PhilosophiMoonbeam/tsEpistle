@@ -9,7 +9,7 @@
       .footer-attribution__meta
         span.footer-attribution__product {{ product.name }} {{ product.version }}
         span.footer-attribution__separator(aria-hidden='true')
-        a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') Source Code
+        a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') {{ $t('common:footer.sourceCode') }}
 </template>
 
 <script lang='ts'>
@@ -151,7 +151,7 @@ export default defineComponent({
 
   a {
     border-radius: var(--wiki-radius-xs);
-    color: var(--wiki-accent-warm);
+    color: var(--wiki-accent-ink);
     font-weight: 650;
     text-decoration: underline;
     text-decoration-color: color-mix(in srgb, var(--wiki-accent-warm) 34%, transparent);
@@ -162,12 +162,12 @@ export default defineComponent({
       text-decoration-color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
     &:hover {
-      color: var(--wiki-accent-spectral);
+      color: var(--wiki-accent-ink);
       text-decoration-color: currentColor;
     }
 
     &:focus-visible {
-      color: var(--wiki-accent-spectral);
+      color: var(--wiki-accent-ink);
       text-decoration-color: currentColor;
     }
   }

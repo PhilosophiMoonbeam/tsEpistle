@@ -109,7 +109,7 @@
                   :class="{ 'agent-history__session--dragging': draggedSessionId === session.id }"
                   :aria-current="session.id === thread?.session.id ? 'page' : undefined"
                   :title="session.title || 'New conversation'"
-                  :subtitle="session.id === thread?.session.id ? `${formatSessionDate(session.lastActivityAt)} · Current session` : formatSessionDate(session.lastActivityAt)"
+                  :subtitle="session.id === thread?.session.id ? `${sessionDateLabel(session.id)} · Current session` : sessionDateLabel(session.id)"
                   link
                   :disabled="sessionBusy(session.id)"
                   :draggable="canDragSession(session)"
@@ -194,7 +194,7 @@
                     :aria-current="session.id === thread?.session.id ? 'page' : undefined"
                     :class="{ 'agent-history__session--dragging': draggedSessionId === session.id }"
                     :title="session.title || 'New conversation'"
-                    :subtitle="session.id === thread?.session.id ? `${formatSessionDate(session.lastActivityAt)} · Current session` : formatSessionDate(session.lastActivityAt)"
+                    :subtitle="session.id === thread?.session.id ? `${sessionDateLabel(session.id)} · Current session` : sessionDateLabel(session.id)"
                     link
                     :disabled="sessionBusy(session.id)"
                     :draggable="canDragSession(session)"
@@ -358,48 +358,133 @@ const destructiveRestoreTarget = ref<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
 
 const normalizedSearch = computed(() => (searchQuery.value ?? '').trim().toLocaleLowerCase())
-const sessionMatchesSearch = (session: AgentSessionSummary): boolean =>
-  !normalizedSearch.value || (session.title || 'New conversation').toLocaleLowerCase().includes(normalizedSearch.value)
-const displaySessions = computed<AgentSessionSummary[]>(() => sessions.value
-  .filter(session => !committedDeletedSessionIds.value.has(session.id))
-  .map(session => projectedFolderIds.value.has(session.id)
-    ? { ...session, folderId: projectedFolderIds.value.get(session.id) ?? null }
-    : session))
+type SessionTimeGroupLabel = 'Today' | 'Yesterday' | 'Previous 7 days' | 'Earlier'
+const sessionTimeGroupLabels: readonly SessionTimeGroupLabel[] = ['Today', 'Yesterday', 'Previous 7 days', 'Earlier']
+interface SessionTimeMetadata {
+  readonly group: SessionTimeGroupLabel
+  readonly displayDate: string
+}
+interface HistoryPartition {
+  readonly displaySessions: readonly AgentSessionSummary[]
+  readonly sessionsById: ReadonlyMap<string, AgentSessionSummary>
+  readonly sessionDateLabels: ReadonlyMap<string, string>
+  readonly recentSessions: readonly AgentSessionSummary[]
+  readonly recentGroups: readonly { readonly label: SessionTimeGroupLabel; readonly sessions: readonly AgentSessionSummary[] }[]
+  readonly visibleFolderGroups: readonly { readonly folder: AgentConversationFolderView; readonly sessions: readonly AgentSessionSummary[] }[]
+  readonly matchingConversationCount: number
+}
+const sessionTimeFormatter = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+const sessionDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
+const sessionDateWithYearFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+const calendarDay = (value: Date): number => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate())
+const sessionTimeMetadata = (
+  value: string,
+  today: number,
+  todayDate: string,
+  yesterdayDate: string,
+  currentYear: number
+): SessionTimeMetadata => {
+  const date = new Date(value)
+  const daysAgo = Math.floor((today - calendarDay(date)) / 86_400_000)
+  const group: SessionTimeGroupLabel = daysAgo <= 0
+    ? 'Today'
+    : daysAgo === 1
+      ? 'Yesterday'
+      : daysAgo < 7
+        ? 'Previous 7 days'
+        : 'Earlier'
+  const displayDate = date.toDateString() === todayDate
+    ? sessionTimeFormatter.format(date)
+    : date.toDateString() === yesterdayDate
+      ? 'Yesterday'
+      : (date.getFullYear() === currentYear ? sessionDateFormatter : sessionDateWithYearFormatter).format(date)
+  return { group, displayDate }
+}
+const historyPartition = computed<HistoryPartition>(() => {
+  const query = normalizedSearch.value
+  const now = new Date()
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const today = calendarDay(now)
+  const todayDate = now.toDateString()
+  const yesterdayDate = yesterday.toDateString()
+  const currentYear = now.getFullYear()
+  const folderSessions = new Map<string, AgentSessionSummary[]>()
+  const matchingFolderSessions = new Map<string, AgentSessionSummary[]>()
+  for (const folder of folders.value) {
+    folderSessions.set(folder.id, [])
+    matchingFolderSessions.set(folder.id, [])
+  }
+
+  const displaySessions: AgentSessionSummary[] = []
+  const sessionsById = new Map<string, AgentSessionSummary>()
+  const sessionDateLabels = new Map<string, string>()
+  const recentSessions: AgentSessionSummary[] = []
+  const recentByTime: Record<SessionTimeGroupLabel, AgentSessionSummary[]> = {
+    Today: [],
+    Yesterday: [],
+    'Previous 7 days': [],
+    Earlier: []
+  }
+  for (const sourceSession of sessions.value) {
+    if (committedDeletedSessionIds.value.has(sourceSession.id)) continue
+    const session = projectedFolderIds.value.has(sourceSession.id)
+      ? { ...sourceSession, folderId: projectedFolderIds.value.get(sourceSession.id) ?? null }
+      : sourceSession
+    displaySessions.push(session)
+    sessionsById.set(session.id, session)
+    const time = sessionTimeMetadata(session.lastActivityAt, today, todayDate, yesterdayDate, currentYear)
+    sessionDateLabels.set(session.id, time.displayDate)
+    const matchesSearch = !query || (session.title || 'New conversation').toLocaleLowerCase().includes(query)
+    if (session.folderId === null) {
+      if (matchesSearch) {
+        recentSessions.push(session)
+        recentByTime[time.group].push(session)
+      }
+      continue
+    }
+    folderSessions.get(session.folderId)?.push(session)
+    if (matchesSearch) matchingFolderSessions.get(session.folderId)?.push(session)
+  }
+
+  const recentGroups: { label: SessionTimeGroupLabel; sessions: readonly AgentSessionSummary[] }[] = []
+  for (const label of sessionTimeGroupLabels) {
+    if (recentByTime[label].length) recentGroups.push({ label, sessions: recentByTime[label] })
+  }
+  const visibleFolderGroups: { folder: AgentConversationFolderView; sessions: readonly AgentSessionSummary[] }[] = []
+  let matchingConversationCount = recentSessions.length
+  for (const folder of folders.value) {
+    const folderMatches = folder.name.toLocaleLowerCase().includes(query)
+    const visibleSessions = !query || folderMatches
+      ? folderSessions.get(folder.id)!
+      : matchingFolderSessions.get(folder.id)!
+    if (!folderMatches && visibleSessions.length === 0) continue
+    visibleFolderGroups.push({ folder, sessions: visibleSessions })
+    matchingConversationCount += visibleSessions.length
+  }
+  return {
+    displaySessions,
+    sessionsById,
+    sessionDateLabels,
+    recentSessions,
+    recentGroups,
+    visibleFolderGroups,
+    matchingConversationCount
+  }
+})
+const displaySessions = computed(() => historyPartition.value.displaySessions)
+const filteredRecentSessions = computed(() => historyPartition.value.recentSessions)
+const recentSessionGroups = computed(() => historyPartition.value.recentGroups)
+const visibleFolderGroups = computed(() => historyPartition.value.visibleFolderGroups)
 const draggedSession = computed(() =>
-  displaySessions.value.find(session => session.id === draggedSessionId.value) ?? null)
-const filteredRecentSessions = computed(() =>
-  displaySessions.value.filter(session => session.folderId === null && sessionMatchesSearch(session)))
-const sessionsForFolder = (folderId: string): AgentSessionSummary[] =>
-  displaySessions.value.filter(session => session.folderId === folderId)
-const visibleFolderGroups = computed(() => folders.value.flatMap(folder => {
-  const folderSessions = sessionsForFolder(folder.id)
-  const folderMatches = folder.name.toLocaleLowerCase().includes(normalizedSearch.value)
-  const visibleSessions = !normalizedSearch.value || folderMatches
-    ? folderSessions
-    : folderSessions.filter(sessionMatchesSearch)
-  return folderMatches || visibleSessions.length ? [{ folder, sessions: visibleSessions }] : []
-}))
-const hasSearchResults = computed(() => filteredRecentSessions.value.length > 0 || visibleFolderGroups.value.length > 0)
-const matchingConversationCount = computed(() =>
-  filteredRecentSessions.value.length + visibleFolderGroups.value.reduce((count, group) => count + group.sessions.length, 0))
+  draggedSessionId.value ? historyPartition.value.sessionsById.get(draggedSessionId.value) ?? null : null)
+const hasSearchResults = computed(() =>
+  filteredRecentSessions.value.length > 0 || visibleFolderGroups.value.length > 0)
+const matchingConversationCount = computed(() => historyPartition.value.matchingConversationCount)
 const searchStatus = computed(() => normalizedSearch.value
   ? `${matchingConversationCount.value} matching ${matchingConversationCount.value === 1 ? 'conversation' : 'conversations'}`
   : '')
-const calendarDay = (value: Date): number => Date.UTC(value.getFullYear(), value.getMonth(), value.getDate())
-const sessionTimeGroup = (value: string): string => {
-  const daysAgo = Math.floor((calendarDay(new Date()) - calendarDay(new Date(value))) / 86_400_000)
-  if (daysAgo <= 0) return 'Today'
-  if (daysAgo === 1) return 'Yesterday'
-  if (daysAgo < 7) return 'Previous 7 days'
-  return 'Earlier'
-}
-const recentSessionGroups = computed(() => {
-  const labels = ['Today', 'Yesterday', 'Previous 7 days', 'Earlier']
-  return labels.flatMap(label => {
-    const groupedSessions = filteredRecentSessions.value.filter(session => sessionTimeGroup(session.lastActivityAt) === label)
-    return groupedSessions.length ? [{ label, sessions: groupedSessions }] : []
-  })
-})
+const sessionDateLabel = (sessionId: string): string => historyPartition.value.sessionDateLabels.get(sessionId) ?? ''
 const message = (value: unknown, fallback: string): string => {
   const text = value instanceof Error ? value.message.trim() : ''
   return (text || fallback).slice(0, 512)
@@ -421,7 +506,7 @@ const clearProjectedFolder = (sessionId: string): void => {
 const sessionBusy = (sessionId: string): boolean =>
   refreshingHistory.value || openingSessionIds.value.has(sessionId) || movingSessionIds.value.has(sessionId)
 const hasRenderedDropDestination = (session: AgentSessionSummary): boolean =>
-  session.folderId !== null || visibleFolderGroups.value.some(group => group.folder.id !== session.folderId)
+  session.folderId !== null || visibleFolderGroups.value.length > 0
 const canDragSession = (session: AgentSessionSummary): boolean =>
   !sessionBusy(session.id) && hasRenderedDropDestination(session)
 const dropTargetKey = (folderId: string | null): string => folderId ?? recentDropTarget
@@ -497,19 +582,6 @@ const componentElement = (component: ComponentRoot | null): HTMLElement | null =
   return component.$el instanceof HTMLElement ? component.$el : null
 }
 
-const sessionTimeFormatter = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
-const sessionDateFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
-const sessionDateWithYearFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-const formatSessionDate = (value: string): string => {
-  const date = new Date(value)
-  const now = new Date()
-  const sameDay = date.toDateString() === now.toDateString()
-  if (sameDay) return sessionTimeFormatter.format(date)
-  const yesterday = new Date(now)
-  yesterday.setDate(now.getDate() - 1)
-  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday'
-  return (date.getFullYear() === now.getFullYear() ? sessionDateFormatter : sessionDateWithYearFormatter).format(date)
-}
 const closeHistory = (): void => {
   agents.cancelSessionTransition()
   emit('close')

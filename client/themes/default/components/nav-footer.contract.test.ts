@@ -36,7 +36,7 @@ describe('global footer edge and attribution contract', () => {
 
   test('keeps project source attribution accessible without the Wiki.js derivation notice', () => {
     expect(template).toContain('span.footer-attribution__product {{ product.name }} {{ product.version }}')
-    expect(template).toContain("a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') Source Code")
+    expect(template).toContain("a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') {{ $t('common:footer.sourceCode') }}")
     expect(template).not.toMatch(/Derived from|Requarks\/wiki|Wiki\.js/)
   })
 })

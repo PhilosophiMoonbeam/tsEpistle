@@ -54,7 +54,7 @@
                   location='start'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptDisplayName`)')
+                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:displayName`)' @click='focusField(`iptDisplayName`)')
                       v-icon(start) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card
@@ -84,7 +84,7 @@
                   location='start'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptLocation`)')
+                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:location`)' @click='focusField(`iptLocation`)')
                       v-icon(start) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card
@@ -114,7 +114,7 @@
                   location='start'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptJobTitle`)')
+                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:jobTitle`)' @click='focusField(`iptJobTitle`)')
                       v-icon(start) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card
@@ -148,7 +148,7 @@
             //- v-btn.ml-0(color='purple-darken-4', disabled) Enable 2FA
             //- v-btn.ml-0(color='purple-darken-4', variant='flat', disabled) Disable 2FA
             template(v-if='user.providerKey === `local`')
-              form#change-password-form(@submit.prevent='changePassword')
+              form#change-password-form(@submit.prevent='changePassword' :aria-busy='changePassLoading')
                 v-divider.mt-3
                 v-list-subheader.pl-0: span.text-label-large {{$t('profile:auth.changePassword')}}
                 v-alert.mb-3(
@@ -166,6 +166,7 @@
                   :error-messages='passwordErrors.current'
                   prepend-inner-icon='mdi-form-textbox-password'
                   autocomplete='current-password'
+                  :disabled='changePassLoading'
                   )
                   template(v-slot:append-inner)
                     v-btn(
@@ -173,7 +174,8 @@
                       variant='text'
                       size='small'
                       type='button'
-                      :aria-label='hideCurrentPass ? "Show password" : "Hide password"'
+                      :aria-label='(hideCurrentPass ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`profile:auth.currentPassword`)'
+                      :disabled='changePassLoading'
                       @click='hideCurrentPass = !hideCurrentPass'
                     )
                       v-icon {{ hideCurrentPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
@@ -188,6 +190,7 @@
                   autocomplete='new-password'
                   counter='255'
                   loading
+                  :disabled='changePassLoading'
                   )
                   template(v-slot:loader)
                     password-strength(v-model='newPass')
@@ -197,7 +200,8 @@
                       variant='text'
                       size='small'
                       type='button'
-                      :aria-label='hideNewPass ? "Show password" : "Hide password"'
+                      :aria-label='(hideNewPass ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`profile:auth.newPassword`)'
+                      :disabled='changePassLoading'
                       @click='hideNewPass = !hideNewPass'
                     )
                       v-icon {{ hideNewPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
@@ -210,6 +214,7 @@
                   :error-messages='passwordErrors.verifyPassword'
                   prepend-inner-icon='mdi-form-textbox-password'
                   autocomplete='new-password'
+                  :disabled='changePassLoading'
                   )
                   template(v-slot:append-inner)
                     v-btn(
@@ -217,13 +222,14 @@
                       variant='text'
                       size='small'
                       type='button'
-                      :aria-label='hideVerifyPass ? "Show password" : "Hide password"'
+                      :aria-label='(hideVerifyPass ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`profile:auth.verifyPassword`)'
+                      :disabled='changePassLoading'
                       @click='hideVerifyPass = !hideVerifyPass'
                     )
                       v-icon {{ hideVerifyPass ? 'mdi-eye-outline' : 'mdi-eye-off-outline' }}
           div.v-card-chin(v-if='user.providerKey === `local`')
             v-spacer
-            v-btn.px-4(color="primary", variant="flat", :loading='changePassLoading', type='submit', form='change-password-form')
+            v-btn.px-4(color="primary", variant="flat", :loading='changePassLoading', :disabled='changePassLoading', type='submit', form='change-password-form')
               v-icon(start) mdi-progress-check
               span {{$t('profile:auth.changePassword')}}
       v-col(lg='6' cols='12')
@@ -257,7 +263,7 @@
                   location='start'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptTimezone`)')
+                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:timezone`)' @click='focusField(`iptTimezone`)')
                       v-icon(start) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card(flat)
@@ -302,7 +308,7 @@
                   location='start'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptDateFormat`)')
+                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:dateFormat`)' @click='focusField(`iptDateFormat`)')
                       v-icon(start) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card(flat)
@@ -347,7 +353,7 @@
                   location='start'
                   )
                   template(v-slot:activator='{ props }')
-                    v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptAppearance`)')
+                    v-btn(variant="text", color='grey', size="small", v-bind='props', :aria-label='$t(`common:actions.edit`) + ` ` + $t(`profile:appearance`)' @click='focusField(`iptAppearance`)')
                       v-icon(start) mdi-pencil
                       span {{ $t('common:actions:edit') }}
                   v-card(flat)

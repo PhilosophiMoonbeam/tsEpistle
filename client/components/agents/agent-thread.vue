@@ -230,7 +230,8 @@ import AgentTaskProgress from './agent-task-progress.vue'
 import AgentToolCard from './agent-tool-card.vue'
 import {
   agentLiveAnnouncement,
-  buildAgentThreadPresentation
+  buildAgentThreadPresentation,
+  type AgentThreadPresentation
 } from './agent-thread-presentation.ts'
 
 const props = defineProps<{ thread: AgentThreadState; connection: string; decidingApprovalId?: string | null; canSubmit?: boolean }>()
@@ -264,12 +265,24 @@ const temporalMetadataFor = (createdAt: string): MessageTemporalMetadata => {
 }
 const messageTime = (createdAt: string): string => temporalMetadataFor(createdAt).time
 const messageTimestamp = (createdAt: string): string => temporalMetadataFor(createdAt).timestamp
-const threadPresentation = computed(() => buildAgentThreadPresentation(
-  props.thread.messages,
-  props.thread.tools,
-  props.thread.tasks,
-  props.thread.proposals
-))
+interface CachedThreadPresentation {
+  readonly sessionId: string
+  readonly presentation: AgentThreadPresentation
+}
+const threadPresentationCache = computed<CachedThreadPresentation>(previous => {
+  const sessionId = props.thread.session.id
+  return {
+    sessionId,
+    presentation: buildAgentThreadPresentation(
+      props.thread.messages,
+      props.thread.tools,
+      props.thread.tasks,
+      props.thread.proposals,
+      previous?.sessionId === sessionId ? previous.presentation : undefined
+    )
+  }
+})
+const threadPresentation = computed(() => threadPresentationCache.value.presentation)
 const stateLabels: Record<AgentToolState, string> = { preparing: 'Preparing', running: 'Running', awaitingApproval: 'Awaiting approval', complete: 'Complete', failed: 'Failed', denied: 'Denied', cancelled: 'Cancelled' }
 const stateIcons: Record<AgentToolState, string> = { preparing: 'mdi-dots-horizontal', running: 'mdi-progress-clock', awaitingApproval: 'mdi-shield-alert-outline', complete: 'mdi-check-circle-outline', failed: 'mdi-alert-circle-outline', denied: 'mdi-cancel', cancelled: 'mdi-stop-circle-outline' }
 const toolStateLabel = (state: AgentToolState): string => stateLabels[state]

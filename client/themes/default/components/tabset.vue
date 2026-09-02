@@ -1,6 +1,6 @@
 <template lang="pug">
   .tabset
-    ul.tabset-tabs(ref='tabs', role='tablist', aria-label='Content tabs')
+    ul.tabset-tabs(ref='tabs', role='tablist', :aria-label='$t(`common:page.contentTabs`)')
       slot(name='tabs')
     .tabset-content(ref='content')
       slot(name='content')
@@ -138,6 +138,8 @@ export default defineComponent({
     })
 
     panels.forEach((node, idx) => {
+      const printHeading = tabs[idx]?.textContent?.trim()
+      if (printHeading) node.dataset.printHeading = printHeading
       node.setAttribute('id', `${tabRefId}-${idx}-tab`)
       node.setAttribute('role', 'tabpanel')
       node.setAttribute('aria-labelledby', `${tabRefId}-${idx}`)
@@ -221,7 +223,7 @@ export default defineComponent({
 
       &.is-active {
         background: rgb(var(--v-theme-surface));
-        color: var(--wiki-accent-warm);
+        color: var(--wiki-accent-ink);
 
         &::after {
           opacity: 1;
@@ -288,8 +290,27 @@ export default defineComponent({
     > .tabset-content {
       background: transparent;
 
-      .tabset-panel {
+      .tabset-panel,
+      .tabset-panel[hidden] {
+        display: block !important;
         padding: 0;
+
+        &::before {
+          display: block;
+          margin: 0 0 var(--wiki-space-3);
+          color: CanvasText;
+          content: attr(data-print-heading);
+          font-size: 14pt;
+          font-weight: 700;
+          line-height: 1.25;
+          break-after: avoid-page;
+        }
+
+        & + .tabset-panel {
+          margin-block-start: var(--wiki-space-8);
+          padding-block-start: var(--wiki-space-6);
+          border-block-start: 1px solid currentColor;
+        }
       }
     }
   }

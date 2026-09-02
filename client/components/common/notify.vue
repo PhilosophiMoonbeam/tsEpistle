@@ -9,16 +9,21 @@
     :timer='notificationTimeout > 0 ? "bottom" : false'
     :timer-color='notificationTimerColor'
   )
-    .nav-notify-content
-      v-icon.nav-notify-icon(:icon='notificationIcon' size='21' aria-hidden='true')
-      span.nav-notify-message {{ notification.message }}
-      v-btn.nav-notify-close(
-        icon='mdi-close'
-        variant='text'
-        size='small'
-        :aria-label='$t(`common:actions.close`)'
-        @click='dismissNotification'
+    template(v-slot:actions)
+      .nav-notify-content(
+        :role='notificationKind === "error" ? "alert" : "status"'
+        :aria-live='notificationKind === "error" ? "assertive" : "polite"'
+        aria-atomic='true'
       )
+        v-icon.nav-notify-icon(:icon='notificationIcon' size='21' aria-hidden='true')
+        span.nav-notify-message {{ notification.message }}
+        v-btn.nav-notify-close(
+          icon='mdi-close'
+          variant='text'
+          size='small'
+          :aria-label='$t(`common:actions.close`)'
+          @click='dismissNotification'
+        )
 </template>
 
 <script lang='ts'>
@@ -93,6 +98,12 @@ export default {
     box-shadow: 0 18px 48px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 26%, transparent);
   }
 
+  .v-snackbar__actions {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-inline-end: 0;
+  }
+
   .v-snackbar__timer .v-progress-linear {
     --v-progress-linear-height: 2px;
     opacity: .46;
@@ -105,6 +116,11 @@ export default {
   min-width: 0;
   align-items: center;
   gap: 11px;
+  width: 100%;
+  padding-block: 14px;
+  padding-inline: 16px;
+  font-size: .875rem;
+  letter-spacing: .0178571429em;
   font-weight: 600;
   line-height: 1.4;
 }

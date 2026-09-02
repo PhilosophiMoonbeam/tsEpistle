@@ -5,6 +5,7 @@
       v-if='navMode !== `NONE` && !printView'
       id='page-navigation-drawer'
       class='page-navigation'
+      tag='nav'
       color='surface'
       mobile-breakpoint='1280'
       :width='$vuetify.display.width >= 1280 ? 281.6 : 256'
@@ -31,7 +32,7 @@
         @click='toggleNavigation'
         :aria-expanded='navShown ? `true` : `false`'
         aria-controls='page-navigation-drawer'
-        :aria-label='navShown ? `Close navigation` : `Open navigation`'
+        :aria-label='navShown ? $t(`common:sidebar.closeNavigation`) : $t(`common:sidebar.openNavigation`)'
         v-if='$vuetify.display.width < 1280'
         )
         v-icon {{ navShown ? 'mdi-close' : 'mdi-menu' }}
@@ -48,7 +49,7 @@
             :items='breadcrumbs'
             divider='/'
             role='navigation'
-            aria-label='Breadcrumb'
+            :aria-label='$t(`common:header.breadcrumb`)'
           )
             template(v-slot:item='props')
               v-btn.ma-0(
@@ -56,7 +57,7 @@
                 size="small"
                 variant="text"
                 @click='goHome'
-                aria-label='Home'
+                :aria-label='$t(`common:header.home`)'
               )
                 v-icon(aria-hidden='true', size="small") mdi-home
               v-btn.ma-0(
@@ -83,7 +84,7 @@
             .page-header-headings
               .page-title-row.d-flex.align-center
                 h1.page-title {{title}}
-                v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') Private
+                v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') {{$t('common:page.private')}}
               p.page-description(v-if='description') {{description}}
             .page-edit-shortcuts(
               v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
@@ -112,12 +113,10 @@
         v-row
           v-col.page-col-sd(
             cols='12'
-            :lg='tocPosition !== `off` ? 3 : 12'
-            :xl='tocPosition !== `off` ? 2 : 12'
-            :class='[tocPosition === `right` ? `order-2 order-lg-2` : `order-2 order-lg-1`, { "page-col-sd--with-toc": tocPosition !== `off`, "page-col-sd--toc-off": tocPosition === `off` }]'
+            :class='[tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`, { "page-col-sd--with-toc": tocPosition !== `off`, "page-col-sd--toc-off": tocPosition === `off` }]'
             )
             v-card.page-toc-card.mb-4(v-if='tocPosition !== `off`', tag='nav', :aria-label='$t(`common:page.toc`)')
-              .text-label-small.text-primary {{$t('common:page.toc')}}
+              .text-label-small {{$t('common:page.toc')}}
               v-list.py-2(v-if='tocFlattened.length', density="compact", nav)
                 v-list-item.page-toc-item(
                   v-for='tocItem in tocFlattened'
@@ -133,7 +132,7 @@
                     ) {{tocItem.title}}
               .page-toc-empty(v-else)
                 v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
-                span.text-body-small No sections on this page
+                span.text-body-small {{$t('common:page.noSections')}}
 
             v-card.page-tags-card.mb-5(v-if='tags.length > 0')
               .pa-5
@@ -194,7 +193,7 @@
 
             v-card.page-author-card.mb-5
               .pa-5
-                .text-label-small.d-flex.text-accent
+                .text-label-small.d-flex
                   span {{$t('common:page.lastEditedBy')}}
                   v-spacer
                   v-tooltip(location="right", v-if='isAuthenticated')
@@ -257,24 +256,24 @@
                             rounded='0'
                             v-bind='{ ...menuProps, ...tooltipProps }'
                             @click='loadPageWatchNotifications'
-                            aria-label='Page notifications'
+                            :aria-label='$t(`common:page.pageNotifications`)'
                           )
                             v-icon(color='grey') mdi-bell
-                      span Page notifications
+                      span {{$t('common:page.pageNotifications')}}
                   v-card
-                    v-card-title.text-body-large Page notifications
+                    v-card-title.text-body-large {{$t('common:page.pageNotifications')}}
                     v-divider
                     async-state(
                       v-if='pageWatchNotificationsLoading'
                       state='loading'
-                      title='Loading page notifications'
+                      :title='$t(`common:page.loadingPageNotifications`)'
                     )
                     async-state(
                       v-else-if='pageWatchNotificationsError'
                       state='error'
-                      title='Page notifications could not be loaded'
+                      :title='$t(`common:page.pageNotificationsLoadError`)'
                       :message='pageWatchNotificationsError'
-                      retry-label='Try again'
+                      :retry-label='$t(`common:page.tryAgain`)'
                       @retry='loadPageWatchNotifications'
                     )
                     v-list(v-else-if='pageWatchNotifications.length > 0', lines='two', density='compact')
@@ -289,7 +288,7 @@
                     async-state(
                       v-else
                       state='empty'
-                      title='No page notifications'
+                      :title='$t(`common:page.noPageNotifications`)'
                     )
                 v-tooltip(location="bottom", v-if='isAuthenticated')
                   template(v-slot:activator='{ props }')
@@ -300,10 +299,10 @@
                       :loading='pageWatchLoading'
                       :disabled='pageWatchLoading'
                       @click='togglePageWatch'
-                      :aria-label='pageWatched ? `Stop watching page` : `Watch page`'
+                      :aria-label='pageWatched ? $t(`common:page.stopWatchingPage`) : $t(`common:page.watchPage`)'
                     )
                       v-icon(:color='pageWatched ? `primary` : `grey`') {{ pageWatched ? 'mdi-bell-ring' : 'mdi-bell-outline' }}
-                  span {{ pageWatched ? 'Stop watching page' : 'Watch page' }}
+                  span {{ pageWatched ? $t('common:page.stopWatchingPage') : $t('common:page.watchPage') }}
                 v-menu(v-if='pageWatched', location="bottom", :close-on-content-click='false', min-width='260')
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(location="bottom")
@@ -312,16 +311,16 @@
                           icon
                           rounded='0'
                           v-bind='{ ...menuProps, ...tooltipProps }'
-                          aria-label='Watch settings'
+                          :aria-label='$t(`common:page.watchSettings`)'
                         )
                           v-icon(color='grey') mdi-tune
-                      span Watch settings
+                      span {{$t('common:page.watchSettings')}}
                   v-card
-                    v-card-title.text-body-large Watch settings
+                    v-card-title.text-body-large {{$t('common:page.watchSettings')}}
                     v-card-text
                       v-switch(
                         v-model='pageWatchEmailEnabled'
-                        label='Email notifications'
+                        :label='$t(`common:page.emailNotifications`)'
                         color='primary'
                         density='compact'
                         hide-details
@@ -330,7 +329,7 @@
                       )
                       v-switch(
                         v-model='pageWatchInAppEnabled'
-                        label='In-app notifications'
+                        :label='$t(`common:page.inAppNotifications`)'
                         color='primary'
                         density='compact'
                         hide-details
@@ -351,24 +350,24 @@
                             rounded='0'
                             v-bind='{ ...menuProps, ...tooltipProps }'
                             @click='loadApprovalInbox'
-                            aria-label='Approval inbox'
+                            :aria-label='$t(`common:page.approvalInbox`)'
                           )
                             v-icon(color='grey') mdi-inbox-arrow-down
-                      span Approval inbox
+                      span {{$t('common:page.approvalInbox')}}
                   v-card
-                    v-card-title.text-body-large Approval inbox
+                    v-card-title.text-body-large {{$t('common:page.approvalInbox')}}
                     v-divider
                     async-state(
                       v-if='approvalInboxLoading'
                       state='loading'
-                      title='Loading approval inbox'
+                      :title='$t(`common:page.loadingApprovalInbox`)'
                     )
                     async-state(
                       v-else-if='approvalInboxError'
                       state='error'
-                      title='Approval inbox could not be loaded'
+                      :title='$t(`common:page.approvalInboxLoadError`)'
                       :message='approvalInboxError'
-                      retry-label='Try again'
+                      :retry-label='$t(`common:page.tryAgain`)'
                       @retry='loadApprovalInbox'
                     )
                     v-list(v-else-if='approvalInbox.length > 0', lines='three', density='compact')
@@ -378,12 +377,12 @@
                         @click='openApprovalInboxItem(approval)'
                       )
                         v-list-item-title {{ approval.title }}
-                        v-list-item-subtitle {{ approvalStatusLabel(approval.status) }} · Revision {{ approval.revisionId }}
-                        v-list-item-subtitle(v-if='approval.stale') Submitted revision is stale
+                        v-list-item-subtitle {{ approvalStatusLabel(approval.status) }} · {{ $t('common:page.revision', { id: approval.revisionId }) }}
+                        v-list-item-subtitle(v-if='approval.stale') {{$t('common:page.submittedRevisionStale')}}
                     async-state(
                       v-else
                       state='empty'
-                      title='No active approval requests'
+                      :title='$t(`common:page.noActiveApprovalRequests`)'
                     )
                 v-tooltip(location="bottom", v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
@@ -392,10 +391,10 @@
                       rounded='0'
                       v-bind='props'
                       @click='openApprovalWorkflow'
-                      aria-label='Approval workflow'
+                      :aria-label='$t(`common:page.approvalWorkflow`)'
                     )
                       v-icon(:color='pageApproval ? `primary` : `grey`') mdi-check-decagram-outline
-                  span Approval workflow
+                  span {{$t('common:page.approvalWorkflow')}}
                 v-tooltip(location="bottom", v-if='isAuthenticated && (hasWritePagesPermission || hasManagePagesPermission || hasAdminPermission)')
                   template(v-slot:activator='{ props }')
                     v-btn(
@@ -403,10 +402,10 @@
                       rounded='0'
                       v-bind='props'
                       @click='openPageProtection'
-                      aria-label='Page password protection'
+                      :aria-label='$t(`common:page.pagePasswordProtection`)'
                     )
                       v-icon(:color='pageProtection.protected ? `primary` : `grey`') {{ pageProtection.protected ? 'mdi-lock' : 'mdi-lock-open-outline' }}
-                  span Page password protection
+                  span {{$t('common:page.pagePasswordProtection')}}
                 v-tooltip(location="bottom")
                   template(v-slot:activator='{ props }')
                     v-btn(icon, rounded='0', v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
@@ -416,9 +415,7 @@
 
           v-col.page-col-content(
             cols='12'
-            :lg='tocPosition !== `off` ? 9 : 12'
-            :xl='tocPosition !== `off` ? 10 : 12'
-            :class='[tocPosition === `right` ? `order-1 order-lg-1` : `order-1 order-lg-2`, { "page-col-content--with-toc": tocPosition !== `off`, "page-col-content--toc-off": tocPosition === `off` }]'
+            :class='[tocPosition === `right` ? `page-col-content--toc-right` : `page-col-content--toc-left`, { "page-col-content--with-toc": tocPosition !== `off`, "page-col-content--toc-off": tocPosition === `off` }]'
             )
             v-tooltip(location='start', v-if='hasAnyPagePermissions && editShortcutsObj.editFab && !$vuetify.display.smAndDown')
               template(v-slot:activator='{ props: tooltipProps }')
@@ -434,12 +431,12 @@
                       color='primary'
                       v-bind='speedDialProps'
                       :aria-expanded='pageEditFab ? `true` : `false`'
-                      aria-label='Page actions'
+                      :aria-label='$t(`common:header.pageActions`)'
                     )
                       v-icon mdi-pencil
                   v-tooltip(location='start', v-if='hasWritePagesPermission')
                     template(v-slot:activator='{ props }')
-                      v-btn(icon, size="small", color='white', v-bind='props', @click='pageEdit', aria-label='Edit page')
+                      v-btn(icon, size="small", color='white', v-bind='props', @click='pageEdit', :aria-label='$t(`common:page.editPage`)')
                         v-icon(size='20') mdi-pencil
                     span {{$t('common:page.editPage')}}
                   v-tooltip(location='start', v-if='hasReadHistoryPermission')
@@ -515,6 +512,35 @@
                         v-icon(size='20') mdi-trash-can-outline
                     span {{$t('common:header.delete')}}
               span {{$t('common:page.editPage')}}
+            v-menu(
+              v-if='hasAnyPagePermissions && editShortcutsObj.editFab && $vuetify.display.smAndDown'
+              location='top end'
+              transition='scale-transition'
+            )
+              template(v-slot:activator='{ props }')
+                v-btn.page-edit-fab(
+                  icon
+                  color='primary'
+                  v-bind='props'
+                  :aria-label='$t(`common:header.pageActions`)'
+                )
+                  v-icon mdi-pencil
+              v-list(density='compact', nav)
+                v-list-subheader {{$t('common:header.pageActions')}}
+                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-pencil', @click='pageEdit')
+                  v-list-item-title {{$t('common:page.editPage')}}
+                v-list-item(v-if='hasReadHistoryPermission', prepend-icon='mdi-history', @click='pageHistory')
+                  v-list-item-title {{$t('common:header.history')}}
+                v-list-item(v-if='hasReadSourcePermission', prepend-icon='mdi-code-tags', @click='pageSource')
+                  v-list-item-title {{$t('common:header.viewSource')}}
+                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
+                  v-list-item-title {{$t('common:header.convert')}}
+                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
+                  v-list-item-title {{$t('common:header.duplicate')}}
+                v-list-item(v-if='hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
+                  v-list-item-title {{$t('common:header.move')}}
+                v-list-item.text-error(v-if='hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
+                  v-list-item-title {{$t('common:header.delete')}}
             v-alert.mb-5(v-if='!isPublished', color='warning', variant="outlined", icon='mdi-minus-circle', density="compact")
               .text-body-small {{$t('common:page.unpublishedWarning')}}
             site-banner(:banner='siteBanner')
@@ -536,7 +562,7 @@
               async-state(
                 v-else
                 state='empty'
-                title='This page has no content'
+                :title='$t(`common:page.noContent`)'
               )
             section.comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView' aria-labelledby='discussion-title')
               .comments-header
@@ -544,7 +570,7 @@
                   v-icon(size='20') mdi-comment-text-outline
                 div
                   h2#discussion-title.comments-title {{$t('common:comments.title')}}
-                  .comments-subtitle Join the conversation around this page
+                  .comments-subtitle {{$t('common:page.discussionSubtitle')}}
               .comments-main
                 slot(name='comments')
     nav-footer
@@ -558,22 +584,22 @@
     )
       v-card
         v-toolbar(color='primary', flat)
-          v-toolbar-title#page-protection-title(tag='h2') Page password protection
+          v-toolbar-title#page-protection-title(tag='h2') {{$t('common:page.pagePasswordProtection')}}
           v-spacer
-          v-btn(icon, @click='protectionDialog = false', aria-label='Close page password protection')
+          v-btn(icon, @click='protectionDialog = false', :aria-label='$t(`common:page.closePagePasswordProtection`)')
             v-icon mdi-close
         v-progress-linear(v-if='protectionLoading || protectionInitialLoading', indeterminate, color='primary')
         async-state(
           v-if='protectionInitialLoading'
           state='loading'
-          title='Loading page protection'
+          :title='$t(`common:page.loadingPageProtection`)'
         )
         async-state(
           v-else-if='protectionError'
           state='error'
-          title='Page protection could not be loaded'
+          :title='$t(`common:page.pageProtectionLoadError`)'
           :message='protectionError'
-          retry-label='Try again'
+          :retry-label='$t(`common:page.tryAgain`)'
           @retry='loadPageProtection'
         )
         template(v-else)
@@ -582,18 +608,18 @@
               :type='pageProtection.protected ? `info` : `warning`'
               variant='tonal'
             )
-              template(v-if='pageProtection.protected') Password protection is active. Setting a new password rotates it and immediately revokes every prior unlock.
-              template(v-else) Readers can currently access this page without a page password.
+              template(v-if='pageProtection.protected') {{$t('common:page.pageProtectionActive')}}
+              template(v-else) {{$t('common:page.pageProtectionInactive')}}
             p.text-body-medium.text-medium-emphasis.mb-4
-              | Unlocks last 12 hours in the current browser session. Group page permissions do not bypass the password; system administrators can recover access. Protected source, history, downloads, linked assets, and content APIs use the same unlock.
+              | {{$t('common:page.pageProtectionDetails')}}
             v-text-field(
               v-model='pageProtectionPassword'
               type='password'
-              label='New page password'
+              :label='$t(`common:page.newPagePassword`)'
               autocomplete='new-password'
               minlength='12'
               maxlength='1024'
-              hint='Use at least 12 characters. Passwords are stored only as bcrypt cost-12 hashes.'
+              :hint='$t(`common:page.newPagePasswordHint`)'
               persistent-hint
             )
           v-divider
@@ -603,16 +629,16 @@
               :disabled='pageProtectionPassword.length < 12'
               :loading='protectionLoading'
               @click='savePageProtection'
-            ) {{ pageProtection.protected ? 'Rotate password' : 'Enable protection' }}
+            ) {{ pageProtection.protected ? $t('common:page.rotatePassword') : $t('common:page.enableProtection') }}
             v-btn(
               v-if='pageProtection.protected'
               color='error'
               variant='text'
               :disabled='protectionLoading'
               @click='removePageProtection'
-            ) Remove protection
+            ) {{$t('common:page.removeProtection')}}
             v-spacer
-            v-btn(@click='protectionDialog = false') Close
+            v-btn(@click='protectionDialog = false') {{$t('common:actions.close')}}
     v-dialog(
       v-model='approvalDialog'
       :fullscreen='$vuetify.display.smAndDown'
@@ -622,22 +648,22 @@
     )
       v-card
         v-toolbar(color='primary', flat)
-          v-toolbar-title#page-approval-title(tag='h2') Approval workflow
+          v-toolbar-title#page-approval-title(tag='h2') {{$t('common:page.approvalWorkflow')}}
           v-spacer
-          v-btn(icon, @click='approvalDialog = false', aria-label='Close approval workflow')
+          v-btn(icon, @click='approvalDialog = false', :aria-label='$t(`common:page.closeApprovalWorkflow`)')
             v-icon mdi-close
         v-progress-linear(v-if='approvalLoading || approvalInitialLoading', indeterminate, color='primary')
         async-state(
           v-if='approvalInitialLoading'
           state='loading'
-          title='Loading approval workflow'
+          :title='$t(`common:page.loadingApprovalWorkflow`)'
         )
         async-state(
           v-else-if='approvalError'
           state='error'
-          title='Approval workflow could not be loaded'
+          :title='$t(`common:page.approvalWorkflowLoadError`)'
           :message='approvalError'
-          retry-label='Try again'
+          :retry-label='$t(`common:page.tryAgain`)'
           @retry='loadPageApproval'
         )
         template(v-else)
@@ -645,46 +671,46 @@
             template(v-if='pageApproval')
               .d-flex.align-center.flex-wrap.ga-2.mb-4
                 v-chip(color='primary', variant='tonal') {{ approvalStatusLabel(pageApproval.status) }}
-                v-chip(v-if='pageApproval.stale', color='warning', variant='tonal') Stale revision
-                span.text-medium-emphasis Revision {{ pageApproval.revisionId }}
+                v-chip(v-if='pageApproval.stale', color='warning', variant='tonal') {{$t('common:page.staleRevision')}}
+                span.text-medium-emphasis {{ $t('common:page.revision', { id: pageApproval.revisionId }) }}
               v-alert.mb-4(
                 v-if='pageApproval.stale'
                 type='warning'
                 variant='tonal'
-              ) This page changed after submission. Request changes and resubmit before approval.
+              ) {{$t('common:page.pageChangedAfterSubmission')}}
               v-text-field(
                 v-if='pageApproval.canReview'
                 v-model.number='approvalAssigneeId'
                 type='number'
                 min='1'
-                label='Reviewer user ID'
-                hint='Leave unchanged to keep the current reviewer.'
+                :label='$t(`common:page.reviewerUserId`)'
+                :hint='$t(`common:page.keepCurrentReviewerHint`)'
                 persistent-hint
               )
               v-textarea(
                 v-model='approvalComment'
-                label='Review comment'
+                :label='$t(`common:page.reviewComment`)'
                 rows='3'
                 auto-grow
-                hint='Required when requesting changes or rejecting.'
+                :hint='$t(`common:page.reviewCommentHint`)'
                 persistent-hint
               )
               v-card.mt-5(variant='outlined')
-                v-card-title.text-body-large Review history
+                v-card-title.text-body-large {{$t('common:page.reviewHistory')}}
                 v-list(lines='two', density='compact')
                   v-list-item(v-for='transition in pageApproval.transitions', :key='transition.id')
                     v-list-item-title {{ approvalStatusLabel(transition.toStatus) }}
-                    v-list-item-subtitle Reviewer {{ transition.actorId }} · {{ new Date(transition.createdAt).toLocaleString() }}
+                    v-list-item-subtitle {{ $t('common:page.reviewer', { id: transition.actorId }) }} · {{ new Date(transition.createdAt).toLocaleString() }}
                     v-list-item-subtitle(v-if='transition.comment') {{ transition.comment }}
             template(v-else)
-              p.text-body-large.mb-4 Submit the current page revision for review. Later edits make the submission stale and cannot be published without resubmission.
+              p.text-body-large.mb-4 {{$t('common:page.submitForReviewDescription')}}
               v-text-field(
                 v-model.number='approvalAssigneeId'
                 type='number'
                 min='1'
-                label='Reviewer user ID (optional)'
+                :label='$t(`common:page.reviewerUserIdOptional`)'
               )
-              v-textarea(v-model='approvalComment', label='Submission note', rows='3', auto-grow)
+              v-textarea(v-model='approvalComment', :label='$t(`common:page.submissionNote`)', rows='3', auto-grow)
           v-divider
           v-card-actions.flex-wrap.pa-4
             v-btn(
@@ -692,17 +718,17 @@
               color='primary'
               :loading='approvalLoading'
               @click='submitPageApproval'
-            ) {{ pageApproval ? 'Submit new revision' : 'Submit for approval' }}
+            ) {{ pageApproval ? $t('common:page.submitNewRevision') : $t('common:page.submitForApproval') }}
             template(v-if='pageApproval')
-              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='success', :disabled='approvalLoading || pageApproval.stale', @click='transitionPageApproval(`approve`)') Approve
-              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='warning', :disabled='approvalLoading', @click='transitionPageApproval(`request-changes`)') Request changes
-              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='error', :disabled='approvalLoading', @click='transitionPageApproval(`reject`)') Reject
-              v-btn(v-if='pageApproval.status === `changes-requested` && pageApproval.canSubmitter', color='primary', :disabled='approvalLoading', @click='transitionPageApproval(`resubmit`)') Resubmit
-              v-btn(v-if='pageApproval.status === `approved` && pageApproval.canReview', color='success', :disabled='approvalLoading || pageApproval.stale', @click='transitionPageApproval(`publish`)') Publish approved revision
-              v-btn(v-if='pageApproval.canReview && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', :disabled='approvalLoading', @click='transitionPageApproval(`reassign`)') Reassign
-              v-btn(v-if='pageApproval.canSubmitter && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', color='error', variant='text', :disabled='approvalLoading', @click='transitionPageApproval(`cancel`)') Cancel request
+              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='success', :disabled='approvalLoading || pageApproval.stale', @click='transitionPageApproval(`approve`)') {{$t('common:page.approve')}}
+              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='warning', :disabled='approvalLoading', @click='transitionPageApproval(`request-changes`)') {{$t('common:page.requestChanges')}}
+              v-btn(v-if='pageApproval.status === `submitted` && pageApproval.canReview', color='error', :disabled='approvalLoading', @click='transitionPageApproval(`reject`)') {{$t('common:page.reject')}}
+              v-btn(v-if='pageApproval.status === `changes-requested` && pageApproval.canSubmitter', color='primary', :disabled='approvalLoading', @click='transitionPageApproval(`resubmit`)') {{$t('common:page.resubmit')}}
+              v-btn(v-if='pageApproval.status === `approved` && pageApproval.canReview', color='success', :disabled='approvalLoading || pageApproval.stale', @click='transitionPageApproval(`publish`)') {{$t('common:page.publishApprovedRevision')}}
+              v-btn(v-if='pageApproval.canReview && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', :disabled='approvalLoading', @click='transitionPageApproval(`reassign`)') {{$t('common:page.reassign')}}
+              v-btn(v-if='pageApproval.canSubmitter && [`submitted`, `approved`, `changes-requested`].includes(pageApproval.status)', color='error', variant='text', :disabled='approvalLoading', @click='transitionPageApproval(`cancel`)') {{$t('common:page.cancelRequest')}}
             v-spacer
-            v-btn(@click='approvalDialog = false') Close
+            v-btn(@click='approvalDialog = false') {{$t('common:actions.close')}}
     v-fab-transition
       v-btn.page-return-top(
         v-if='upBtnShown'
@@ -717,6 +743,7 @@
 
 <script lang='ts'>
 import { defineComponent, markRaw, type PropType } from 'vue'
+import i18next from 'i18next'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
 import PageGutterColumn from '@/components/common/page-gutter-column.vue'
@@ -818,18 +845,18 @@ function decodePageAnchor (anchor: string): string {
 
 Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment) => {
   let linkCopy = document.createElement('button')
-  linkCopy.textContent = 'Copy'
+  linkCopy.textContent = i18next.t('page.copyCode', { ns: 'common' })
 
   const clip = new ClipboardJS(linkCopy, {
     text: () => env.code || ''
   })
 
   clip.on('success', () => {
-    linkCopy.textContent = 'Copied!'
+    linkCopy.textContent = i18next.t('page.codeCopied', { ns: 'common' })
     resetClipboardText()
   })
   clip.on('error', () => {
-    linkCopy.textContent = 'Press Ctrl+C to copy'
+    linkCopy.textContent = i18next.t('page.copyCodeShortcut', { ns: 'common' })
     resetClipboardText()
   })
 
@@ -837,7 +864,7 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
 
   function resetClipboardText() {
     setTimeout(() => {
-      linkCopy.textContent = 'Copy'
+      linkCopy.textContent = i18next.t('page.copyCode', { ns: 'common' })
     }, 5000)
   }
 })
@@ -1002,6 +1029,8 @@ export default defineComponent({
       winWidth: 0,
       resizeHandler: null as (() => void) | null,
       loadHandler: null as (() => void) | null,
+      afterPrintHandler: null as (() => void) | null,
+      printViewBeforePrint: null as boolean | null,
       contentExtensionCleanup: null as (() => void) | null,
       routeAnimationAbortController: null as AbortController | null,
       scrollAnimationFrame: null as number | null
@@ -1022,7 +1051,7 @@ export default defineComponent({
     },
     breadcrumbs(): Breadcrumb[] {
       const scope = this.visibility === 'private' ? '/_private' : ''
-      return [{ path: '/', name: 'Home' }].concat(
+      return [{ path: '/', name: this.$t('common:header.home') as string }].concat(
         _.reduce<string, Breadcrumb[]>(this.path.split('/'), (result, value) => {
           result.push({
             path: (_.last(result)?.path || `${scope}${this.locales.length > 0 ? `/${this.locale}` : ''}`) + `/${value}`,
@@ -1031,7 +1060,11 @@ export default defineComponent({
           return result
         }, []))
     },
-    pageUrl () { return window.location.href },
+    pageUrl (): string {
+      const scope = this.visibility === 'private' ? '/_private' : ''
+      const locale = this.locales.length > 0 ? `/${this.locale}` : ''
+      return new URL(`${scope}${locale}/${this.path}`, window.location.origin).href
+    },
     sidebarDecoded (): SidebarItem[] {
       return decodeBase64Json<SidebarItem[]>(this.sidebar)
     },
@@ -1149,6 +1182,7 @@ export default defineComponent({
   beforeUnmount () {
     if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
+    this.restorePrintView()
     this.routeAnimationAbortController?.abort()
     this.routeAnimationAbortController = null
     this.cancelScheduledScroll()
@@ -1280,7 +1314,7 @@ export default defineComponent({
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
-        if (!response.ok) throw new Error(`Page protection request failed (${response.status})`)
+        if (!response.ok) throw new Error(this.$t('common:page.pageProtectionRequestError', { status: response.status }))
         const protection = await response.json() as PageProtection
         if (pageId !== this.pageId) return
         this.pageProtection = protection
@@ -1310,14 +1344,14 @@ export default defineComponent({
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
           body: JSON.stringify({ password: this.pageProtectionPassword })
         })
-        if (!response.ok) throw await this.approvalResponseError(response, 'Page protection update failed')
+        if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.pageProtectionUpdateError'))
         const protection = await response.json() as PageProtection
         if (pageId !== this.pageId) return
         this.pageProtection = protection
         this.pageProtectionPassword = ''
         showNotification(wikiStore, {
           style: 'success',
-          message: protection.version > 1 ? 'Page password rotated and prior unlocks revoked.' : 'Page password protection enabled.'
+          message: protection.version > 1 ? this.$t('common:page.passwordRotatedSuccess') : this.$t('common:page.passwordProtectionEnabledSuccess')
         })
       } catch (error) {
         if (pageId === this.pageId) pushGraphError(wikiStore, error)
@@ -1335,11 +1369,11 @@ export default defineComponent({
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
-        if (!response.ok) throw await this.approvalResponseError(response, 'Page protection removal failed')
+        if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.pageProtectionRemovalError'))
         if (pageId !== this.pageId) return
         this.pageProtection = { protected: false, version: 0, updatedBy: null, updatedAt: null }
         this.pageProtectionPassword = ''
-        showNotification(wikiStore, { style: 'success', message: 'Page password protection removed.' })
+        showNotification(wikiStore, { style: 'success', message: this.$t('common:page.passwordProtectionRemovedSuccess') })
       } catch (error) {
         if (pageId === this.pageId) pushGraphError(wikiStore, error)
       } finally {
@@ -1347,7 +1381,9 @@ export default defineComponent({
       }
     },
     approvalStatusLabel (status: string) {
-      return status.replaceAll('-', ' ').replace(/\b\w/g, value => value.toUpperCase())
+      const key = `common:page.approvalStatus.${status}`
+      const translated = this.$t(key)
+      return translated === key ? status.replaceAll('-', ' ').replace(/\b\w/g, value => value.toUpperCase()) : translated
     },
     async approvalResponseError (response: Response, fallback: string): Promise<Error> {
       const payload = await response.json().catch(() => ({})) as { error?: unknown }
@@ -1362,7 +1398,7 @@ export default defineComponent({
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
-        if (!response.ok) throw await this.approvalResponseError(response, 'Page approval request failed')
+        if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.pageApprovalRequestError'))
         const payload = await response.json() as { approval?: unknown }
         if (pageId !== this.pageId) return
         this.pageApproval = payload.approval && typeof payload.approval === 'object' ? payload.approval as PageApproval : null
@@ -1383,7 +1419,7 @@ export default defineComponent({
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
-        if (!response.ok) throw await this.approvalResponseError(response, 'Approval inbox request failed')
+        if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.approvalInboxRequestError'))
         const payload = await response.json() as { items?: unknown }
         this.approvalInbox = Array.isArray(payload.items) ? payload.items as PageApproval[] : []
       } catch (error) {
@@ -1418,11 +1454,11 @@ export default defineComponent({
             ...(this.approvalComment.trim() ? { comment: this.approvalComment.trim() } : {})
           })
         })
-        if (!response.ok) throw await this.approvalResponseError(response, 'Approval submission failed')
+        if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.approvalSubmissionError'))
         if (pageId !== this.pageId) return
         this.approvalComment = ''
         await Promise.all([this.loadPageApproval(), this.loadApprovalInbox()])
-        showNotification(wikiStore, { style: 'success', message: 'Page submitted for approval.' })
+        showNotification(wikiStore, { style: 'success', message: this.$t('common:page.approvalSubmittedSuccess') })
       } catch (error) {
         if (pageId === this.pageId) pushGraphError(wikiStore, error)
       } finally {
@@ -1445,11 +1481,11 @@ export default defineComponent({
             ...(action === 'reassign' && this.approvalAssigneeId && this.approvalAssigneeId > 0 ? { assigneeId: this.approvalAssigneeId } : {})
           })
         })
-        if (!response.ok) throw await this.approvalResponseError(response, 'Approval transition failed')
+        if (!response.ok) throw await this.approvalResponseError(response, this.$t('common:page.approvalTransitionError'))
         if (pageId !== this.pageId) return
         this.approvalComment = ''
         await Promise.all([this.loadPageApproval(), this.loadApprovalInbox()])
-        showNotification(wikiStore, { style: 'success', message: `Approval ${this.approvalStatusLabel(action)} completed.` })
+        showNotification(wikiStore, { style: 'success', message: this.$t('common:page.approvalTransitionSuccess') })
       } catch (error) {
         if (pageId === this.pageId) pushGraphError(wikiStore, error)
       } finally {
@@ -1464,7 +1500,7 @@ export default defineComponent({
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
-        if (!response.ok) throw new Error(`Page watch request failed (${response.status})`)
+        if (!response.ok) throw new Error(this.$t('common:page.pageWatchRequestError', { status: response.status }))
         const payload = await response.json() as { watched?: unknown; emailEnabled?: unknown; inAppEnabled?: unknown }
         if (pageId !== this.pageId) return
         this.pageWatched = payload.watched === true
@@ -1486,7 +1522,7 @@ export default defineComponent({
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
-        if (!response.ok) throw new Error(`Page watch request failed (${response.status})`)
+        if (!response.ok) throw new Error(this.$t('common:page.pageWatchRequestError', { status: response.status }))
         const payload = await response.json() as { watched?: unknown; emailEnabled?: unknown; inAppEnabled?: unknown }
         if (pageId !== this.pageId) return
         this.pageWatched = payload.watched === true
@@ -1496,7 +1532,7 @@ export default defineComponent({
         }
         showNotification(wikiStore, {
           style: 'success',
-          message: this.pageWatched ? 'You are now watching this page.' : 'You are no longer watching this page.'
+          message: this.pageWatched ? this.$t('common:page.watchEnabled') : this.$t('common:page.watchDisabled')
         })
       } catch (error) {
         if (pageId === this.pageId) pushGraphError(wikiStore, error)
@@ -1518,7 +1554,7 @@ export default defineComponent({
             inAppEnabled: this.pageWatchInAppEnabled
           })
         })
-        if (!response.ok) throw new Error(`Page watch settings request failed (${response.status})`)
+        if (!response.ok) throw new Error(this.$t('common:page.pageWatchSettingsRequestError', { status: response.status }))
       } catch (error) {
         if (pageId !== this.pageId) return
         pushGraphError(wikiStore, error)
@@ -1535,7 +1571,7 @@ export default defineComponent({
           credentials: 'same-origin',
           headers: { Accept: 'application/json' }
         })
-        if (!response.ok) throw new Error(`Page notifications request failed (${response.status})`)
+        if (!response.ok) throw new Error(this.$t('common:page.pageNotificationsRequestError', { status: response.status }))
         const payload = await response.json() as { items?: unknown; unreadCount?: unknown }
         this.pageWatchNotifications = Array.isArray(payload.items) ? payload.items as PageWatchNotification[] : []
         this.pageWatchUnreadCount = typeof payload.unreadCount === 'number' ? payload.unreadCount : 0
@@ -1547,15 +1583,15 @@ export default defineComponent({
       }
     },
     pageWatchNotificationSummary (notification: PageWatchNotification) {
-      const action = ({
-        'page.updated': 'updated',
-        'page.restored': 'restored',
-        'page.moved': 'moved',
-        'page.deleted': 'deleted',
-        'page.visibility-changed': 'changed visibility for',
-        'page.ownership-transferred': 'transferred ownership of'
-      } as Record<string, string>)[notification.eventType] ?? 'changed'
-      return `${notification.actorName} ${action} this page`
+      const key = ({
+        'page.updated': 'common:page.watchEventUpdated',
+        'page.restored': 'common:page.watchEventRestored',
+        'page.moved': 'common:page.watchEventMoved',
+        'page.deleted': 'common:page.watchEventDeleted',
+        'page.visibility-changed': 'common:page.watchEventVisibilityChanged',
+        'page.ownership-transferred': 'common:page.watchEventOwnershipTransferred'
+      } as Record<string, string>)[notification.eventType] ?? 'common:page.watchEventChanged'
+      return this.$t(key, { actor: notification.actorName })
     },
     async openPageWatchNotification (notification: PageWatchNotification) {
       if (!notification.readAt) {
@@ -1612,13 +1648,23 @@ export default defineComponent({
       }
     },
     print () {
-      if (this.printView) {
-        this.printView = false
-      } else {
-        this.printView = true
-        this.$nextTick(() => {
-          window.print()
-        })
+      this.restorePrintView()
+      this.printViewBeforePrint = this.printView
+      this.printView = true
+      this.afterPrintHandler = () => this.restorePrintView()
+      window.addEventListener('afterprint', this.afterPrintHandler, { once: true })
+      this.$nextTick(() => {
+        window.print()
+      })
+    },
+    restorePrintView () {
+      if (this.afterPrintHandler) {
+        window.removeEventListener('afterprint', this.afterPrintHandler)
+        this.afterPrintHandler = null
+      }
+      if (this.printViewBeforePrint !== null) {
+        this.printView = this.printViewBeforePrint
+        this.printViewBeforePrint = null
       }
     },
     pageEdit () {
@@ -1808,7 +1854,7 @@ export default defineComponent({
 
     &:hover {
       background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-accent-ink);
     }
   }
 
@@ -2114,7 +2160,7 @@ export default defineComponent({
   }
 
   .text-label-small {
-    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, var(--wiki-accent-warm));
+    color: var(--wiki-accent-ink);
     font-weight: var(--wiki-label-weight) !important;
     letter-spacing: .09em !important;
     text-transform: uppercase;
@@ -2134,8 +2180,28 @@ export default defineComponent({
   flex: 0 0 100%;
   max-width: 100%;
 }
+.page-col-sd--toc-left,
+.page-col-sd--toc-right {
+  order: 2;
+}
+
+.page-col-content--toc-left,
+.page-col-content--toc-right {
+  order: 1;
+}
+
 
 @media (min-width: 1280px) {
+  .page-col-sd--toc-left,
+  .page-col-content--toc-right {
+    order: 1;
+  }
+
+  .page-col-sd--toc-right,
+  .page-col-content--toc-left {
+    order: 2;
+  }
+
   .page-col-sd--with-toc {
     flex: 0 0 calc(3.3 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
     max-width: calc(3.3 * (100% + var(--v-col-gap-x)) / 12 - var(--v-col-gap-x));
@@ -2210,7 +2276,7 @@ export default defineComponent({
   &:focus-within {
     border-inline-start-color: color-mix(in srgb, var(--wiki-accent-warm) 58%, transparent);
     background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
-    color: var(--wiki-accent-warm);
+    color: var(--wiki-accent-ink);
   }
 
   .v-list-item__prepend {
@@ -2323,7 +2389,7 @@ export default defineComponent({
   padding-inline: var(--wiki-space-4) 0;
 }
 
-.page-col-content.order-lg-1:not(.is-page-header) {
+.page-col-content--toc-right:not(.is-page-header) {
   padding-inline: 0 var(--wiki-space-4);
 }
 
@@ -2422,7 +2488,7 @@ export default defineComponent({
       inset-block-end: .08em;
       inset-inline-start: calc(100% + var(--wiki-space-2));
       display: inline-flex;
-      color: var(--wiki-accent-spectral);
+      color: var(--wiki-accent-ink);
       font-size: .72em;
       opacity: 0;
       transition:
@@ -2433,14 +2499,14 @@ export default defineComponent({
     &:hover .toc-anchor,
     .toc-anchor:focus-visible {
       display: inline-flex;
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-accent-ink);
       opacity: .72;
     }
   }
 
   h1 {
     margin: 0 0 var(--wiki-space-6);
-    color: var(--wiki-accent-warm);
+    color: var(--wiki-accent-ink);
     font-size: 2.375rem;
     font-weight: 700;
     letter-spacing: -.04em;
@@ -2558,7 +2624,7 @@ export default defineComponent({
   }
 
   a {
-    color: color-mix(in srgb, var(--wiki-accent-warm) 82%, rgb(var(--v-theme-on-surface)));
+    color: var(--wiki-accent-ink);
     font-weight: 580;
     text-decoration-color: color-mix(in srgb, currentColor 38%, transparent);
     text-decoration-thickness: .08em;
@@ -2569,7 +2635,7 @@ export default defineComponent({
 
     &:hover,
     &:focus-visible {
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-accent-ink);
       text-decoration-color: currentColor;
     }
 
@@ -2712,7 +2778,7 @@ export default defineComponent({
 
     > .title {
       margin-block-end: var(--wiki-space-2);
-      color: color-mix(in srgb, var(--wiki-accent-spectral) 68%, rgb(var(--v-theme-on-surface)));
+      color: var(--wiki-accent-ink);
       font-size: .875rem !important;
       font-style: normal;
       font-weight: 650;
@@ -2748,7 +2814,7 @@ export default defineComponent({
     border: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-radius-xs);
     background: color-mix(in srgb, var(--wiki-accent-spectral) 6%, var(--wiki-surface-sunken));
-    color: color-mix(in srgb, var(--wiki-accent-warm) 74%, rgb(var(--v-theme-on-surface)));
+    color: var(--wiki-accent-ink);
     font-family: var(--wiki-font-mono);
     font-size: .88em;
     box-shadow: none;
@@ -2958,7 +3024,7 @@ export default defineComponent({
 
     &[aria-selected='true'] {
       background: rgb(var(--v-theme-surface));
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-accent-ink);
       box-shadow: inset 0 .1875rem 0 var(--wiki-ambient-accent);
     }
 
@@ -3004,7 +3070,7 @@ export default defineComponent({
     border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 42%, var(--wiki-surface-border));
     border-radius: var(--wiki-control-radius);
     background: color-mix(in srgb, var(--wiki-accent-warm) 10%, rgb(var(--v-theme-surface)));
-    color: var(--wiki-accent-warm);
+    color: var(--wiki-accent-ink);
     font: inherit;
     font-weight: 650;
     cursor: pointer;
@@ -3097,7 +3163,7 @@ export default defineComponent({
   }
 
   .page-col-content:not(.is-page-header),
-  .page-col-content.order-lg-1:not(.is-page-header) {
+  .page-col-content--toc-right:not(.is-page-header) {
     padding-inline: 0;
   }
 }
@@ -3291,7 +3357,7 @@ export default defineComponent({
 
   .page-edit-fab {
     inset-block-end: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-4));
-    inset-inline-end: var(--wiki-space-4);
+    inset-inline-end: calc(var(--wiki-space-4) + var(--wiki-control-height) + var(--wiki-space-3));
   }
 
   .page-nav-toggle {
@@ -3420,6 +3486,23 @@ export default defineComponent({
     .content-extension-spoiler__toggle {
       display: none !important;
     }
+    .content-extension-tabs__panel,
+    .content-extension-tabs__panel[hidden] {
+      display: block !important;
+
+      & + .content-extension-tabs__panel {
+        margin-block-start: var(--wiki-space-8);
+        padding-block-start: var(--wiki-space-6);
+        border-block-start: 1px solid currentColor;
+      }
+    }
+
+    .content-extension-tabs__fallback-label[hidden] {
+      display: block !important;
+      color: CanvasText;
+      break-after: avoid-page;
+    }
+
 
     .content-extension,
     blockquote,

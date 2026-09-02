@@ -35,6 +35,7 @@
   --wiki-surface-sunken: color-mix(in srgb, rgb(var(--v-theme-background)) 72%, rgb(var(--v-theme-surface)) 28%);
   --wiki-surface-soft: var(--wiki-surface-sunken);
   --wiki-accent-warm: rgb(var(--v-theme-primary));
+  --wiki-accent-ink: color-mix(in srgb, var(--wiki-accent-warm) 38%, rgb(var(--v-theme-on-surface)) 62%);
   --wiki-accent-spectral: rgb(var(--v-theme-secondary));
   --wiki-ambient-accent: color-mix(in srgb, rgb(var(--v-theme-primary)) 62%, rgb(var(--v-theme-secondary)) 38%);
   --wiki-shadow-color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 15%, transparent);

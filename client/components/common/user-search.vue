@@ -88,10 +88,6 @@ import { wikiStore } from '@/store/index.ts'
 export default defineComponent({
   emits: ['select', 'update:modelValue'],
   props: {
-    multiple: {
-      type: Boolean,
-      default: false
-    },
     modelValue: {
       type: Boolean,
       default: false

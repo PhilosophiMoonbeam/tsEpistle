@@ -79,6 +79,7 @@
             :aria-label="historyOpen ? 'Close agent conversation history' : 'Open agent conversation history'"
             :aria-expanded="historyOpen"
             aria-controls="agent-history-panel"
+            :disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'"
             @click="toggleHistory"
           />
           <v-btn
@@ -90,6 +91,7 @@
             :aria-label="memoryOpen ? 'Close agent memory' : 'Manage agent memory'"
             :aria-expanded="memoryOpen"
             aria-controls="agent-memory-panel"
+            :disabled="memoryMutationBusy && !memoryOpen"
             @click="toggleMemory"
           />
           <v-menu location="bottom end">
@@ -97,8 +99,8 @@
               <v-btn v-bind="menuProps" class="inline-agent__mobile-panel-menu" icon="mdi-view-dashboard-outline" variant="text" size="small" aria-label="Open Agent panels: conversation history and memory" />
             </template>
             <v-list density="compact">
-              <v-list-item title="Conversation history" prepend-icon="mdi-history" @click="toggleHistory" />
-              <v-list-item title="Agent memory" prepend-icon="mdi-brain" @click="toggleMemory" />
+              <v-list-item title="Conversation history" prepend-icon="mdi-history" :disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'" @click="toggleHistory" />
+              <v-list-item title="Agent memory" prepend-icon="mdi-brain" :disabled="memoryMutationBusy && !memoryOpen" @click="toggleMemory" />
             </v-list>
           </v-menu>
           <v-btn
@@ -141,7 +143,7 @@
           >{{ error }}</v-alert>
 
           <AgentSessionSettings
-            v-if="thread && profiles.length > 1"
+            v-if="thread"
             class="inline-agent__settings"
             :session="thread.session"
             :profiles="profiles"
@@ -265,6 +267,9 @@
               :skills-enabled="skillsEnabled"
               :goals-enabled="goalsEnabled"
               :skills="skills"
+              :skills-loading="skillsLoading"
+              :skills-load-error="skillsLoadError"
+              :skills-partial="skillsPartial"
               :preferred-skills="thread?.session.skills ?? []"
               :invocation-limit="invocationLimit"
               :status-label="connectionLabel"
@@ -272,6 +277,7 @@
               @send="sendPrompt"
               @stop="agents.stop"
               @manage-skills="openSkillManager"
+              @retry-skills="agents.reloadSkills"
               @update-skill-preferences="agents.setSkillPreferences"
             />
           </div>
@@ -280,7 +286,7 @@
     </v-card>
 
     <aside
-      v-if="memoryOpen"
+      v-show="memoryOpen"
       id="agent-memory-panel"
       ref="memoryPanel"
       class="inline-agent__side inline-agent__side--memory"
@@ -289,7 +295,7 @@
       :aria-modal="panelMode === 'modal' ? 'true' : undefined"
       :tabindex="panelMode === 'modal' ? -1 : undefined"
     >
-      <AgentMemoryManager :model-value="memoryOpen" :csrf-token="csrfToken" @update:model-value="updateMemoryOpen" />
+      <AgentMemoryManager :model-value="memoryOpen" :csrf-token="csrfToken" @update:model-value="updateMemoryOpen" @update:busy="memoryMutationBusy = $event" />
     </aside>
   </section>
 
@@ -355,7 +361,7 @@ const emit = defineEmits<{
 }>()
 
 const agents = useAgentsStore()
-const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessions, skills, thread } = storeToRefs(agents)
+const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessions, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
 const inlineAgentRoot = ref<HTMLElement | null>(null)
 const transcript = ref<HTMLElement | null>(null)
 const composer = ref<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void> } | null>(null)
@@ -376,6 +382,7 @@ const historyOpen = ref(false)
 const historyLoadError = ref('')
 const historyLoading = ref(false)
 const memoryOpen = ref(false)
+const memoryMutationBusy = ref(false)
 const transcriptFollowing = ref(true)
 let transcriptObserver: MutationObserver | null = null
 let transcriptFrame: number | null = null
@@ -494,9 +501,7 @@ const scrollToLatest = async (): Promise<void> => {
   updateApprovalJump()
 }
 const reloadSkillCatalog = async (): Promise<void> => {
-  try { await agents.reloadSkills() } catch (value) {
-    agents.error = value instanceof Error ? value.message : 'The skill catalog could not be refreshed.'
-  }
+  await agents.reloadSkills()
 }
 const applyProviderProfile = async (providerProfileId: string | null): Promise<
   { readonly success: true } | { readonly success: false; readonly error: string }
@@ -575,6 +580,7 @@ const reloadHistory = async (): Promise<void> => {
   }
 }
 const toggleHistory = (): void => {
+  if (memoryMutationBusy.value && memoryOpen.value && panelMode.value !== 'wide') return
   if (historyOpen.value) {
     closeHistory()
     return
@@ -588,6 +594,7 @@ const toggleMemory = (): void => {
     closeMemory()
     return
   }
+  if (memoryMutationBusy.value) return
   memoryOpen.value = true
   if (panelMode.value !== 'wide') historyOpen.value = false
 }
@@ -598,6 +605,11 @@ const reconcilePanelMode = (): void => {
       ? 'docked'
       : 'modal'
   if (panelMode.value === 'wide' && nextMode !== 'wide' && historyOpen.value && memoryOpen.value) {
+    if (memoryMutationBusy.value) {
+      historyOpen.value = false
+      panelMode.value = nextMode
+      return
+    }
     const activeElement = document.activeElement
     const focusedPanel = memoryPanel.value?.contains(activeElement)
       ? 'memory'

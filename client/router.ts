@@ -1,7 +1,7 @@
 import type { RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 import { wikiStore } from './store/index.ts'
-import { loadingStart, loadingStop } from './helpers/root-ui-store'
+import { loadingStart, loadingStop, setLoading, showNotification } from './helpers/root-ui-store'
 
 const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')
 const isProfile = window.location.pathname === '/p' || window.location.pathname.startsWith('/p/')
@@ -48,6 +48,7 @@ const profileRoutes = (): RouteRecordRaw[] => [
 ]
 
 const profileLoadingKey = 'profile'
+let routeLoadRecoveryShown = false
 
 export const router = createRouter({
   history: createWebHistory(isAdmin ? '/a' : isProfile ? '/p' : '/'),
@@ -62,3 +63,16 @@ if (isProfile) {
     loadingStop(wikiStore, profileLoadingKey)
   })
 }
+
+router.onError?.(() => {
+  if (isProfile) setLoading(wikiStore, profileLoadingKey, false)
+  if (routeLoadRecoveryShown) return
+  routeLoadRecoveryShown = true
+  const message = 'This section could not be loaded. Reload the page to try again.'
+  showNotification(wikiStore, {
+    message,
+    style: 'error',
+    icon: 'refresh'
+  })
+  if (window.confirm(`${message}\n\nReload now?`)) window.location.reload()
+})

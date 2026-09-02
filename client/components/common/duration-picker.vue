@@ -10,12 +10,14 @@
       .duration-picker__field
         v-text-field.duration-picker__input(
           variant="solo"
-          hide-details
+          hide-details='auto'
+          :error-messages='durationErrors.minutes ? [durationErrors.minutes] : []'
           flat
           reverse
           type="number"
           inputmode="numeric"
           min="0"
+          max="9007199254740991"
           step="1"
           :label='$t("common:duration.minutes")'
           v-model='minutes'
@@ -24,12 +26,14 @@
       .duration-picker__field
         v-text-field.duration-picker__input(
           variant="solo"
-          hide-details
+          hide-details='auto'
+          :error-messages='durationErrors.hours ? [durationErrors.hours] : []'
           flat
           reverse
           type="number"
           inputmode="numeric"
           min="0"
+          max="9007199254740991"
           step="1"
           :label='$t("common:duration.hours")'
           v-model='hours'
@@ -38,12 +42,14 @@
       .duration-picker__field
         v-text-field.duration-picker__input(
           variant="solo"
-          hide-details
+          hide-details='auto'
+          :error-messages='durationErrors.days ? [durationErrors.days] : []'
           flat
           reverse
           type="number"
           inputmode="numeric"
           min="0"
+          max="9007199254740991"
           step="1"
           :label='$t("common:duration.days")'
           v-model='days'
@@ -52,12 +58,14 @@
       .duration-picker__field
         v-text-field.duration-picker__input(
           variant="solo"
-          hide-details
+          hide-details='auto'
+          :error-messages='durationErrors.months ? [durationErrors.months] : []'
           flat
           reverse
           type="number"
           inputmode="numeric"
           min="0"
+          max="9007199254740991"
           step="1"
           :label='$t("common:duration.months")'
           v-model='months'
@@ -66,12 +74,14 @@
       .duration-picker__field
         v-text-field.duration-picker__input(
           variant="solo"
-          hide-details
+          hide-details='auto'
+          :error-messages='durationErrors.years ? [durationErrors.years] : []'
           flat
           reverse
           type="number"
           inputmode="numeric"
           min="0"
+          max="9007199254740991"
           step="1"
           :label='$t("common:duration.years")'
           v-model='years'
@@ -85,11 +95,12 @@ import { defineComponent, markRaw } from 'vue'
 import moment from 'moment'
 
 type DurationUnit = 'minutes' | 'hours' | 'days' | 'months' | 'years'
+const durationUnitError = 'Enter a whole number from 0 to 9,007,199,254,740,991.'
 
 function parseDurationUnit (value: unknown): number | null {
-  if (value === '' || value === null || value === undefined) return null
+  if (value === null || value === undefined || String(value).trim() === '') return null
   const numericValue = Number(value)
-  return Number.isFinite(numericValue) && numericValue >= 0 ? numericValue : null
+  return Number.isSafeInteger(numericValue) && numericValue >= 0 ? numericValue : null
 }
 
 export default defineComponent({
@@ -102,59 +113,66 @@ export default defineComponent({
   },
   data() {
     return {
-      duration: markRaw(moment.duration(this.modelValue))
+      duration: markRaw(moment.duration(this.modelValue)),
+      durationErrors: {
+        minutes: '',
+        hours: '',
+        days: '',
+        months: '',
+        years: ''
+      } as Record<DurationUnit, string>
     }
   },
   computed: {
     years: {
       get() { return this.duration.years() || 0 },
       set(val: string | number) {
-        const numericValue = parseDurationUnit(val)
-        if (numericValue === null) return
-        this.rebuild(numericValue, 'years')
+        this.updateUnit(val, 'years')
       }
     },
     months: {
       get() { return this.duration.months() || 0 },
       set(val: string | number) {
-        const numericValue = parseDurationUnit(val)
-        if (numericValue === null) return
-        this.rebuild(numericValue, 'months')
+        this.updateUnit(val, 'months')
       }
     },
     days: {
       get() { return this.duration.days() || 0 },
       set(val: string | number) {
-        const numericValue = parseDurationUnit(val)
-        if (numericValue === null) return
-        this.rebuild(numericValue, 'days')
+        this.updateUnit(val, 'days')
       }
     },
     hours: {
       get() { return this.duration.hours() || 0 },
       set(val: string | number) {
-        const numericValue = parseDurationUnit(val)
-        if (numericValue === null) return
-        this.rebuild(numericValue, 'hours')
+        this.updateUnit(val, 'hours')
       }
     },
     minutes: {
       get() { return this.duration.minutes() || 0 },
       set(val: string | number) {
-        const numericValue = parseDurationUnit(val)
-        if (numericValue === null) return
-        this.rebuild(numericValue, 'minutes')
+        this.updateUnit(val, 'minutes')
       }
     }
   },
   watch: {
     modelValue(newValue: string) {
       this.duration = markRaw(moment.duration(newValue))
+      for (const unit of Object.keys(this.durationErrors) as DurationUnit[]) this.durationErrors[unit] = ''
     }
   },
   methods: {
+    updateUnit(value: string | number, unit: DurationUnit): void {
+      const numericValue = parseDurationUnit(value)
+      if (numericValue === null) {
+        this.durationErrors[unit] = durationUnitError
+        return
+      }
+      this.durationErrors[unit] = ''
+      this.rebuild(numericValue, unit)
+    },
     rebuild(val: number, unit: DurationUnit) {
-      if (!Number.isFinite(val) || val < 0) return
+      if (!Number.isSafeInteger(val) || val < 0) return
       const newDuration = {
         minutes: this.duration.minutes(),
         hours: this.duration.hours(),

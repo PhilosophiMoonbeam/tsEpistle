@@ -51,16 +51,21 @@ describe('TipTap editor layout and page-theme ownership', () => {
     expect(tiptapStyle.slice(canvasStart, canvasFocusState)).not.toMatch(/\b(?:color|font-family|font-size|line-height):/)
   })
 
-  test('keeps shared and published Markdown H1s on the active warm accent token', () => {
+  test('uses accessible accent ink for headings while keeping warm accents decorative', () => {
     expect(pageSfc.errors).toEqual([])
 
     const modernThemeStart = themeStylesheet.indexOf('// Modern reading surface')
     expect(modernThemeStart).toBeGreaterThanOrEqual(0)
 
-    expect(themeStylesheet.slice(modernThemeStart)).toMatch(/\.v-main \.contents\s*\{[\s\S]*?\n {2}h1\s*\{[\s\S]*?\n {4}color:\s*var\(--wiki-accent-warm\)\s*;/)
-    expect(pageStyle).toMatch(/\.v-main \.contents\s*\{[\s\S]*?\n {2}h1\s*\{[\s\S]*?\n {4}color:\s*var\(--wiki-accent-warm\)\s*;/)
-    expect(themeStylesheet.slice(modernThemeStart)).toMatch(/h1\s*\{[\s\S]*?\n {4}strong\s*\{[\s\S]*?\n {6}color:\s*inherit\s*;/)
+    const modernTheme = themeStylesheet.slice(modernThemeStart)
+    expect(modernTheme).toMatch(/\.v-main \.contents\s*\{[\s\S]*?\n {2}h1\s*\{[\s\S]*?\n {4}color:\s*var\(--wiki-accent-ink\)\s*;/)
+    expect(pageStyle).toMatch(/\.wiki-page \.v-main \.contents\s*\{[\s\S]*?\n {2}h1\s*\{[\s\S]*?\n {4}color:\s*var\(--wiki-accent-ink\)\s*;/)
+    expect(modernTheme).not.toMatch(/h1\s*\{\s*color:\s*var\(--wiki-accent-warm\)\s*;/)
+    expect(pageStyle).not.toMatch(/h1\s*\{\s*margin:[^;]+;\s*color:\s*var\(--wiki-accent-warm\)\s*;/)
+    expect(modernTheme).toMatch(/h1\s*\{[\s\S]*?\n {4}strong\s*\{[\s\S]*?\n {6}color:\s*inherit\s*;/)
     expect(pageStyle).toMatch(/h1\s*\{[\s\S]*?\n {4}strong\s*\{[\s\S]*?\n {6}color:\s*inherit\s*;/)
+    expect(tiptapStyle).toContain('caret-color: var(--wiki-accent-warm);')
+    expect(pageStyle).toMatch(/&::marker\s*\{[\s\S]*?color:\s*color-mix\(in srgb, var\(--wiki-accent-warm\)/)
   })
 
   test('matches the published page reading measure without owning its theme', () => {

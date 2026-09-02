@@ -1,5 +1,7 @@
-import { createApp, defineAsyncComponent, type AsyncComponentLoader } from 'vue'
+import { createApp } from 'vue'
+import type { AsyncComponentLoader } from 'vue'
 import { createVuetify } from 'vuetify'
+import * as vuetifyLocaleMessages from 'vuetify/locale'
 import Hammer from 'hammerjs'
 import moment from 'moment-timezone'
 import helpersPlugin from './helpers/index.ts'
@@ -9,8 +11,9 @@ import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
 import { createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './helpers/theme.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
+import { createAsyncComponent } from './components/common/async-component-state.vue'
 
-const asyncComponent = (name: string, loader: AsyncComponentLoader) => [name, defineAsyncComponent(loader)] as const
+const asyncComponent = (name: string, loader: AsyncComponentLoader) => [name, createAsyncComponent(loader)] as const
 
 const registrations = [
   asyncComponent('Admin', () => import('./components/admin.vue')),
@@ -42,9 +45,32 @@ const registrations = [
 ]
 
 wikiStore.refreshAuth()
+const resolveVuetifyMessageLocale = (language: string): keyof typeof vuetifyLocaleMessages | undefined => {
+  const languageParts = language.trim().toLowerCase().replaceAll('_', '-').split('-')
+  const baseLanguage = languageParts[0]
+
+  if (baseLanguage === 'sr') return languageParts.includes('latn') ? 'srLatn' : 'srCyrl'
+  if (baseLanguage === 'zh') {
+    const usesTraditionalCharacters =
+      languageParts.includes('hant') || languageParts.includes('tw') || languageParts.includes('hk') || languageParts.includes('mo')
+    return usesTraditionalCharacters ? 'zhHant' : 'zhHans'
+  }
+
+  return Object.hasOwn(vuetifyLocaleMessages, baseLanguage) ? (baseLanguage as keyof typeof vuetifyLocaleMessages) : undefined
+}
+
+const vuetifyMessageLocale = resolveVuetifyMessageLocale(siteConfig.lang)
+const selectedVuetifyMessages = vuetifyMessageLocale
+  ? { en: vuetifyLocaleMessages.en, [siteConfig.lang]: vuetifyLocaleMessages[vuetifyMessageLocale] }
+  : { en: vuetifyLocaleMessages.en }
 
 const vuetify = createVuetify({
-  locale: { rtl: { [siteConfig.lang]: siteConfig.rtl }, locale: siteConfig.lang },
+  locale: {
+    fallback: 'en',
+    locale: siteConfig.lang,
+    messages: selectedVuetifyMessages,
+    rtl: { [siteConfig.lang]: siteConfig.rtl }
+  },
   defaults: {
     VCard: {
       elevation: 0,

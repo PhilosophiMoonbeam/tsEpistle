@@ -1,12 +1,12 @@
 <template>
-  <v-card class="agent-memory" elevation="0" rounded="xl" :aria-busy="loading">
+  <v-card class="agent-memory" elevation="0" rounded="xl" :aria-busy="loading || Boolean(actionBusy)">
     <header class="agent-memory__hero">
       <div class="agent-memory__mark" aria-hidden="true">
         <v-icon icon="mdi-archive-outline" size="21" />
       </div>
       <div class="agent-memory__heading">
         <div class="agent-memory__title-row">
-          <h2 class="text-title-medium">Agent memory</h2>
+          <h2 ref="memoryHeading" class="text-title-medium" tabindex="-1">Agent memory</h2>
           <span
             v-if="loaded"
             class="agent-memory__count"
@@ -17,7 +17,7 @@
         </div>
         <p class="agent-memory__intro">A deliberate snapshot, not hidden learning.</p>
       </div>
-      <v-btn ref="memoryCloseButton" class="agent-memory__close" icon="mdi-close" variant="text" aria-label="Close agent memory" @click="open = false" />
+      <v-btn class="agent-memory__close" icon="mdi-close" variant="text" aria-label="Close agent memory" :disabled="Boolean(actionBusy)" :title="actionBusy ? 'Wait for the memory change to finish' : undefined" @click="requestClose" />
     </header>
 
     <v-divider />
@@ -43,16 +43,16 @@
         </p>
 
         <v-expand-transition>
-          <section v-if="editing" class="agent-memory__editor" aria-labelledby="agent-memory-editor-title">
+          <section v-if="editing" class="agent-memory__editor" aria-labelledby="agent-memory-editor-title" :aria-busy="saving">
             <header class="agent-memory__editor-header">
               <div>
                 <p class="agent-memory__eyebrow">{{ editing.id ? 'Revise record' : 'New record' }}</p>
                 <h3 id="agent-memory-editor-title" class="text-title-medium">{{ editing.id ? 'Edit memory' : 'Add to memory' }}</h3>
               </div>
-              <v-btn icon="mdi-close" size="small" variant="text" aria-label="Cancel memory edit" @click="cancelEdit" />
+              <v-btn icon="mdi-close" size="small" variant="text" aria-label="Cancel memory edit" :disabled="saving" @click="cancelEdit" />
             </header>
 
-            <fieldset class="agent-memory__target">
+            <fieldset class="agent-memory__target" :disabled="saving">
               <legend>Save under</legend>
               <v-btn-toggle v-model="draftTarget" color="primary" divided mandatory variant="outlined">
                 <v-btn value="user" prepend-icon="mdi-account-outline">You</v-btn>
@@ -70,8 +70,9 @@
               rows="3"
               auto-grow
               autofocus
+              :disabled="saving"
               variant="outlined"
-              @keydown.esc="cancelEdit"
+              @keydown.esc="saving ? undefined : cancelEdit()"
               @keydown.meta.enter="save"
               @keydown.ctrl.enter="save"
             />
@@ -143,7 +144,7 @@
     </v-card-actions>
   </v-card>
 
-  <v-dialog :model-value="Boolean(removing)" max-width="30rem" :persistent="actionBusy === 'remove'" @update:model-value="value => { if (!value && actionBusy !== 'remove') cancelRemove() }">
+  <v-dialog :model-value="open && Boolean(removing)" max-width="30rem" :persistent="open && actionBusy === 'remove'" @update:model-value="value => { if (open && !value && actionBusy !== 'remove') cancelRemove() }">
     <v-card ref="removeDialogCard" class="agent-memory__dialog" rounded="xl">
       <v-card-title class="agent-memory__dialog-title">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-archive-remove-outline" aria-hidden="true" /></v-avatar>
@@ -162,7 +163,7 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog :model-value="clearing" max-width="30rem" :persistent="actionBusy === 'clear'" @update:model-value="value => { if (!value && actionBusy !== 'clear') cancelClear() }">
+  <v-dialog :model-value="open && clearing" max-width="30rem" :persistent="open && actionBusy === 'clear'" @update:model-value="value => { if (open && !value && actionBusy !== 'clear') cancelClear() }">
     <v-card ref="clearDialogCard" class="agent-memory__dialog" rounded="xl">
       <v-card-title class="agent-memory__dialog-title">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" aria-hidden="true" /></v-avatar>
@@ -188,6 +189,7 @@ import { createModalFocusScope, type ModalFocusScope } from '../common/modal-foc
 
 const { csrfToken } = defineProps<{ csrfToken: string }>()
 const open = defineModel<boolean>({ required: true })
+const emit = defineEmits<{ 'update:busy': [busy: boolean] }>()
 const emptyStore = (limit: number) => ({ entries: [] as AgentMemoryEntry[], characters: 0, limit })
 const loading = ref(false)
 const loaded = ref(false)
@@ -205,7 +207,7 @@ const draftTarget = ref<AgentMemoryTarget>('user')
 const draftContent = ref('')
 type MemoryStore = AgentMemoryView[AgentMemoryTarget]
 type ComponentRoot = ComponentPublicInstance | HTMLElement
-const memoryCloseButton = useTemplateRef<ComponentRoot>('memoryCloseButton')
+const memoryHeading = useTemplateRef<ComponentRoot>('memoryHeading')
 const removeDialogCard = useTemplateRef<ComponentRoot>('removeDialogCard')
 const clearDialogCard = useTemplateRef<ComponentRoot>('clearDialogCard')
 const destructiveRestoreTarget = ref<HTMLElement | null>(null)
@@ -291,13 +293,13 @@ const load = async (committedMessage?: string): Promise<boolean> => {
   error.value = ''
   try {
     const nextMemories = await getAgentMemories(window.fetch.bind(window), csrfToken, controller.signal)
-    if (generation !== loadGeneration) return false
+    if (disposed || generation !== loadGeneration) return false
     memories.value = nextMemories
     stale.value = false
     loaded.value = true
     return true
   } catch (value) {
-    if (generation !== loadGeneration || controller.signal.aborted) return false
+    if (disposed || generation !== loadGeneration || controller.signal.aborted) return false
     stale.value = loaded.value
     const reason = message(value, loaded.value ? 'Agent memory could not be refreshed.' : 'Agent memory could not be loaded.')
     error.value = loaded.value
@@ -305,11 +307,15 @@ const load = async (committedMessage?: string): Promise<boolean> => {
       : reason
     return false
   } finally {
-    if (generation === loadGeneration) {
+    if (!disposed && generation === loadGeneration) {
       loading.value = false
       if (loadController === controller) loadController = null
     }
   }
+}
+const requestClose = (): void => {
+  if (actionBusy.value) return
+  open.value = false
 }
 const cancelEdit = (): void => {
   editing.value = null
@@ -360,12 +366,15 @@ const save = async (): Promise<void> => {
     if (current.id) await updateAgentMemory(window.fetch.bind(window), csrfToken, current.id, { expectedVersion: current.version, target: draftTarget.value, content })
     else await createAgentMemory(window.fetch.bind(window), csrfToken, { target: draftTarget.value, content })
   } catch (value) {
+    if (disposed) return
     error.value = message(value, 'Memory could not be saved.')
     saving.value = false; actionBusy.value = ''
     return
   }
+  if (disposed) return
   cancelEdit()
   await load('Memory was saved')
+  if (disposed) return
   saving.value = false; actionBusy.value = ''
 }
 const remove = async (): Promise<void> => {
@@ -374,6 +383,7 @@ const remove = async (): Promise<void> => {
   saving.value = true; actionBusy.value = 'remove'; dialogError.value = ''
   try {
     const mutation = await removeAgentMemory(window.fetch.bind(window), csrfToken, entry.id, entry.version)
+    if (disposed) return
     const store = memories.value[entry.target]
     memories.value = {
       ...memories.value,
@@ -385,14 +395,17 @@ const remove = async (): Promise<void> => {
       }
     }
   } catch (value) {
+    if (disposed) return
     dialogError.value = message(value, 'Memory could not be removed.')
     saving.value = false; actionBusy.value = ''
     return
   }
+  if (disposed) return
   if (editing.value?.id === entry.id) cancelEdit()
-  destructiveRestoreTarget.value = componentElement(memoryCloseButton.value)
+  destructiveRestoreTarget.value = componentElement(memoryHeading.value)
   removing.value = null
   await load('Memory was removed')
+  if (disposed) return
   saving.value = false; actionBusy.value = ''
 }
 const clear = async (): Promise<void> => {
@@ -401,34 +414,43 @@ const clear = async (): Promise<void> => {
   try {
     await clearAgentMemories(window.fetch.bind(window), csrfToken)
   } catch (value) {
+    if (disposed) return
     clearError.value = message(value, 'Agent memory could not be cleared.')
     saving.value = false; actionBusy.value = ''
     return
   }
+  if (disposed) return
   memories.value = {
     agent: emptyStore(memories.value.agent.limit),
     user: emptyStore(memories.value.user.limit)
   }
-  destructiveRestoreTarget.value = componentElement(memoryCloseButton.value)
+  destructiveRestoreTarget.value = componentElement(memoryHeading.value)
   clearing.value = false
   cancelEdit()
   await load('Agent memory was cleared')
+  if (disposed) return
   saving.value = false; actionBusy.value = ''
 }
 
-watch([removing, clearing], async ([entry, clearOpen], _previous, onCleanup) => {
+watch([open, removing, clearing], async ([managerOpen, entry, clearOpen], _previous, onCleanup) => {
   let cancelled = false
   onCleanup(() => { cancelled = true })
+  if (!managerOpen) {
+    destructiveFocusScope?.deactivate({ restoreFocus: false })
+    destructiveFocusScope = null
+    if (!entry && !clearOpen) destructiveRestoreTarget.value = null
+    return
+  }
   if (!entry && !clearOpen) {
     await nextTick()
-    if (cancelled) return
+    if (disposed || cancelled) return
     destructiveFocusScope?.deactivate({ restoreFocus: true })
     destructiveFocusScope = null
     destructiveRestoreTarget.value = null
     return
   }
   await nextTick()
-  if (cancelled) return
+  if (disposed || cancelled) return
   const root = componentElement(entry ? removeDialogCard.value : clearDialogCard.value)
   if (!root) return
   destructiveFocusScope?.deactivate({ restoreFocus: false })
@@ -436,13 +458,14 @@ watch([removing, clearing], async ([entry, clearOpen], _previous, onCleanup) => 
     root,
     restoreTarget: () => destructiveRestoreTarget.value,
     onEscape: () => {
-      if (actionBusy.value) return
+      if (!open.value || actionBusy.value) return
       if (removing.value) cancelRemove()
       else cancelClear()
     }
   })
 })
 watch(open, value => { if (value) void load() }, { immediate: true })
+watch(actionBusy, busy => emit('update:busy', Boolean(busy)), { immediate: true, flush: 'sync' })
 onBeforeUnmount(() => {
   disposed = true
   loadGeneration += 1

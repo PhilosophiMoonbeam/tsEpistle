@@ -46,8 +46,23 @@
               v-card.animated.fadeInUp
                 v-toolbar(color='primary', density="compact", flat, height='56')
                   v-toolbar-title.text-body-large {{$t('admin:navigation.mode')}}
-                v-list(nav, lines="two", role='radiogroup', :aria-label='$t(`admin:navigation.mode`)')
-                  v-list-item(value='TREE', role='radio', :aria-checked='config.mode === `TREE`', :active='config.mode === `TREE`', @click='config.mode = `TREE`')
+                v-list(
+                  nav
+                  lines='two'
+                  role='radiogroup'
+                  aria-orientation='vertical'
+                  :aria-label='$t(`admin:navigation.mode`)'
+                )
+                  v-list-item(
+                    ref='navigationModeTree'
+                    value='TREE'
+                    role='radio'
+                    :aria-checked='config.mode === `TREE`'
+                    :tabindex='config.mode === `TREE` ? 0 : -1'
+                    :active='config.mode === `TREE`'
+                    @click='selectNavigationMode(`TREE`, true)'
+                    @keydown='onNavigationModeKeydown($event, `TREE`)'
+                  )
                     template(v-slot:prepend)
                       v-avatar
                         img(src='/_assets/svg/icon-tree-structure-dotted.svg', alt='')
@@ -56,7 +71,16 @@
                     template(v-slot:append)
                       v-avatar
                         v-icon(:color='config.mode === `TREE` ? `primary` : undefined') mdi-check-circle
-                  v-list-item(value='STATIC', role='radio', :aria-checked='config.mode === `STATIC`', :active='config.mode === `STATIC`', @click='config.mode = `STATIC`')
+                  v-list-item(
+                    ref='navigationModeStatic'
+                    value='STATIC'
+                    role='radio'
+                    :aria-checked='config.mode === `STATIC`'
+                    :tabindex='config.mode === `STATIC` ? 0 : -1'
+                    :active='config.mode === `STATIC`'
+                    @click='selectNavigationMode(`STATIC`, true)'
+                    @keydown='onNavigationModeKeydown($event, `STATIC`)'
+                  )
                     template(v-slot:prepend)
                       v-avatar
                         img(src='/_assets/svg/icon-features-list.svg', alt='')
@@ -65,7 +89,16 @@
                     template(v-slot:append)
                       v-avatar
                         v-icon(:color='config.mode === `STATIC` ? `primary` : undefined') mdi-check-circle
-                  v-list-item(value='MIXED', role='radio', :aria-checked='config.mode === `MIXED`', :active='config.mode === `MIXED`', @click='config.mode = `MIXED`')
+                  v-list-item(
+                    ref='navigationModeMixed'
+                    value='MIXED'
+                    role='radio'
+                    :aria-checked='config.mode === `MIXED`'
+                    :tabindex='config.mode === `MIXED` ? 0 : -1'
+                    :active='config.mode === `MIXED`'
+                    @click='selectNavigationMode(`MIXED`, true)'
+                    @keydown='onNavigationModeKeydown($event, `MIXED`)'
+                  )
                     template(v-slot:prepend)
                       v-avatar
                         img(src='/_assets/svg/icon-user-menu-male-dotted.svg', alt='')
@@ -74,7 +107,16 @@
                     template(v-slot:append)
                       v-avatar
                         v-icon(:color='config.mode === `MIXED` ? `primary` : undefined') mdi-check-circle
-                  v-list-item(value='NONE', role='radio', :aria-checked='config.mode === `NONE`', :active='config.mode === `NONE`', @click='config.mode = `NONE`')
+                  v-list-item(
+                    ref='navigationModeNone'
+                    value='NONE'
+                    role='radio'
+                    :aria-checked='config.mode === `NONE`'
+                    :tabindex='config.mode === `NONE` ? 0 : -1'
+                    :active='config.mode === `NONE`'
+                    @click='selectNavigationMode(`NONE`, true)'
+                    @keydown='onNavigationModeKeydown($event, `NONE`)'
+                  )
                     template(v-slot:prepend)
                       v-avatar
                         img(src='/_assets/svg/icon-cancel-dotted.svg', alt='')
@@ -382,6 +424,16 @@ const normalizeNavigationTrees = (trees: NavigationTreeRow[]): NavigationTreeRow
     items: normalizeNavigationItems(tree.items)
   }))
 
+const NAVIGATION_MODES = ['TREE', 'STATIC', 'MIXED', 'NONE'] as const
+type NavigationMode = typeof NAVIGATION_MODES[number]
+
+const NAVIGATION_MODE_REFS: Record<NavigationMode, string> = {
+  TREE: 'navigationModeTree',
+  STATIC: 'navigationModeStatic',
+  MIXED: 'navigationModeMixed',
+  NONE: 'navigationModeNone'
+}
+
 export default {
   components: {
     draggable
@@ -480,6 +532,47 @@ export default {
         })
       }
       wikiStore.stopLoading('admin-navigation-groups')
+    },
+    selectNavigationMode (mode: NavigationMode, focus = false) {
+      this.config.mode = mode
+      if (focus) this.focusNavigationMode(mode)
+    },
+    focusNavigationMode (mode: NavigationMode) {
+      this.$nextTick(() => {
+        const control = this.$refs[NAVIGATION_MODE_REFS[mode]] as {
+          focus?: () => void
+          $el?: HTMLElement
+        } | undefined
+        if (control?.focus) control.focus()
+        else control?.$el?.focus()
+      })
+    },
+    onNavigationModeKeydown (event: KeyboardEvent, mode: NavigationMode) {
+      const currentIndex = NAVIGATION_MODES.indexOf(mode)
+      let targetIndex = currentIndex
+      switch (event.key) {
+        case 'ArrowDown':
+        case 'ArrowRight':
+          targetIndex = (currentIndex + 1) % NAVIGATION_MODES.length
+          break
+        case 'ArrowUp':
+        case 'ArrowLeft':
+          targetIndex = (currentIndex - 1 + NAVIGATION_MODES.length) % NAVIGATION_MODES.length
+          break
+        case 'Home':
+          targetIndex = 0
+          break
+        case 'End':
+          targetIndex = NAVIGATION_MODES.length - 1
+          break
+        case ' ':
+          break
+        default:
+          return
+      }
+      event.preventDefault()
+      const targetMode = NAVIGATION_MODES[targetIndex]
+      this.selectNavigationMode(targetMode, true)
     },
     addItem(kind: string) {
       let newItem: NavigationItem = {

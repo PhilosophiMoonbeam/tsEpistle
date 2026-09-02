@@ -493,6 +493,7 @@ export default defineComponent({
       this.search = ''
     },
     async focusSearchField(): Promise<void> {
+      if (this.hideSearch) return
       this.searchIsShown = true
       this.searchIsFocused = true
       await this.$nextTick()
@@ -505,7 +506,7 @@ export default defineComponent({
       else this.searchClose()
     },
     handleSearchShortcut(event: KeyboardEvent): void {
-      if (event.defaultPrevented || event.repeat || event.isComposing) return
+      if (this.hideSearch || event.defaultPrevented || event.repeat || event.isComposing) return
       if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'a') return
       if (!siteConfig.agentsEnabled || !this.isAuthenticated || !this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) return
       event.preventDefault()

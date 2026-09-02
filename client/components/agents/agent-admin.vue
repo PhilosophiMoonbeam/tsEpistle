@@ -1035,7 +1035,7 @@ onMounted(() => void load())
 }
 
 .agent-panel__eyebrow {
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .13em;
@@ -1132,7 +1132,7 @@ onMounted(() => void load())
   border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 18%, transparent);
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, var(--wiki-accent-warm) 9%, var(--wiki-surface-raised));
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
   box-shadow: var(--wiki-shadow-inset);
 }
 
@@ -1287,7 +1287,7 @@ onMounted(() => void load())
 .agent-section--active .agent-section__icon {
   border-color: color-mix(in srgb, var(--wiki-accent-warm) 22%, transparent);
   background: color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised));
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .agent-section__copy {
@@ -1307,6 +1307,7 @@ onMounted(() => void load())
 
 .agent-section__badge {
   justify-self: end;
+  color: var(--wiki-accent-ink);
 }
 
 .agent-section__arrow {
@@ -1314,7 +1315,7 @@ onMounted(() => void load())
 }
 
 .agent-section--active .agent-section__arrow {
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
   opacity: 1;
 }
 
@@ -1336,7 +1337,7 @@ onMounted(() => void load())
 
 .agent-sections__note .v-icon {
   flex: 0 0 auto;
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .agent-sections__note span {
@@ -1452,7 +1453,7 @@ onMounted(() => void load())
 }
 
 .section-heading > span {
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
   font-size: .72rem;
   font-weight: 700;
 }
@@ -1480,7 +1481,7 @@ onMounted(() => void load())
 
 .capability-item small {
   grid-column: 2;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .05em;
@@ -1545,7 +1546,7 @@ onMounted(() => void load())
   place-items: center;
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .policy-card h4,
@@ -1609,7 +1610,7 @@ onMounted(() => void load())
   place-items: center;
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, var(--wiki-accent-warm) 11%, transparent);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .metrics-note strong {
@@ -1660,7 +1661,7 @@ code {
 
 .provider-policy-strip .v-icon {
   grid-row: 1 / span 2;
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .provider-policy-strip strong {
@@ -1810,7 +1811,7 @@ code {
   padding: var(--wiki-space-1) var(--wiki-space-2);
   border-radius: var(--wiki-radius-pill);
   background: color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
   font-size: .58rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -1863,7 +1864,7 @@ code {
   border: 0;
   border-block-start: 1px solid var(--wiki-surface-border);
   background: transparent;
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
   cursor: pointer;
   font-size: .72rem;
   font-weight: 690;
@@ -1921,7 +1922,7 @@ code {
 
 .browser-boundary-note .v-icon {
   flex: 0 0 auto;
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .browser-boundary-note strong {
@@ -2064,7 +2065,7 @@ code {
 .profile-steps button.profile-step--active {
   border-color: color-mix(in srgb, var(--wiki-accent-warm) 24%, var(--wiki-surface-border));
   background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .profile-step__index {
@@ -2226,7 +2227,7 @@ code {
   place-items: center;
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .protocol-summary {
@@ -2296,7 +2297,7 @@ code {
   place-items: center;
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, var(--wiki-accent-warm) 9%, transparent);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .access-choice__item > span:nth-of-type(2) {
@@ -2314,7 +2315,7 @@ code {
 }
 
 .access-choice__check {
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .limit-group h4 {
@@ -2357,7 +2358,7 @@ code {
 }
 
 .profile-editor__save-state .v-icon {
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .compact-dialog {
@@ -2412,7 +2413,7 @@ code {
 }
 
 .compact-dialog__audit .v-icon {
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 .browser-confirm-url {
   overflow-wrap: anywhere;
@@ -2504,6 +2505,14 @@ code {
   }
 }
 
+@media (max-width: 839.98px) {
+  .profile-editor {
+    border: 0;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+}
+
 @media (max-width: 760px) {
   .agent-hero__facts {
     display: grid;
@@ -2562,10 +2571,6 @@ code {
     grid-column: auto;
   }
 
-  .profile-editor {
-    border: 0;
-    border-radius: 0 !important;
-  }
 
   .profile-editor__header {
     min-height: calc(var(--wiki-control-height) + var(--wiki-space-6));

@@ -7,13 +7,14 @@
     )
       template(v-slot:status)
         v-chip(v-if='hasChanges', color='warning', variant='tonal', size='small') Unsaved changes
+        v-chip(v-else-if='loadError', color='error', variant='tonal', size='small') Configuration unavailable
       template(v-slot:actions)
         v-btn.animated.fadeInRight(
           color='success'
           variant='flat'
           size='large'
           :loading='saving'
-          :disabled='loading || saving || !hasChanges'
+          :disabled='!loaded || loading || saving || !hasChanges'
           @click='save'
         )
           v-icon(start) mdi-check
@@ -25,31 +26,47 @@
             v-icon.ml-4 mdi-pencil-ruler
             v-toolbar-title.text-body-large Available for new pages
             v-chip.mr-3(
+              v-if='loaded'
               color='white'
               variant='outlined'
               size='small'
             ) {{ selectionSummary }}
           v-card-text
-            .d-flex.flex-wrap.align-center.ga-2.mb-5
-              .text-body-medium.text-medium-emphasis.flex-grow-1
-                | Hidden editors disappear from the new-page chooser. Existing pages keep their current editor and remain editable.
-              v-btn(
-                size='small'
-                variant='text'
-                prepend-icon='mdi-select-all'
-                :disabled='loading || allEditorsAvailable'
-                @click='makeAllAvailable'
-              ) Select all
-              v-btn(
-                size='small'
-                variant='text'
-                prepend-icon='mdi-undo-variant'
-                :disabled='loading || !hasChanges'
-                @click='restoreSaved'
-              ) Restore saved
+            template(v-if='loaded')
+              .d-flex.flex-wrap.align-center.ga-2.mb-5
+                .text-body-medium.text-medium-emphasis.flex-grow-1
+                  | Hidden editors disappear from the new-page chooser. Existing pages keep their current editor and remain editable.
+                v-btn(
+                  size='small'
+                  variant='text'
+                  prepend-icon='mdi-select-all'
+                  :disabled='allEditorsAvailable'
+                  @click='makeAllAvailable'
+                ) Select all
+                v-btn(
+                  size='small'
+                  variant='text'
+                  prepend-icon='mdi-undo-variant'
+                  :disabled='!hasChanges'
+                  @click='restoreSaved'
+                ) Restore saved
 
             v-skeleton-loader(v-if='loading', type='list-item-avatar-three-line@3')
-            .editor-grid(v-else)
+            v-alert(
+              v-else-if='loadError'
+              type='error'
+              variant='tonal'
+              icon='mdi-alert-circle-outline'
+            )
+              .text-body-medium Editor configuration could not be loaded.
+              .text-body-small.mt-1 {{ loadError }}
+              v-btn.mt-3(
+                variant='outlined'
+                size='small'
+                prepend-icon='mdi-refresh'
+                @click='loadConfig'
+              ) Retry
+            .editor-grid(v-else-if='loaded')
               v-card.editor-choice(
                 v-for='editor in editors'
                 :key='editor.key'
@@ -122,14 +139,16 @@ import { computed, onMounted, ref, shallowRef } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { PAGE_EDITOR_DEFINITIONS } from '../../helpers/page-editors.ts'
 import { fetchSiteConfig, saveSiteConfig } from '../../helpers/site-api.ts'
-import { loadingStart, loadingStop, pushGraphError, showNotification } from '../../helpers/root-ui-store.ts'
-import { defaultAvailableEditors, normalizeAvailableEditors, type PageEditorKey } from '../../../shared/page-editors.ts'
+import { getErrorMessage, loadingStart, loadingStop, pushGraphError, showNotification } from '../../helpers/root-ui-store.ts'
+import { normalizeAvailableEditors, type PageEditorKey } from '../../../shared/page-editors.ts'
 
 const editors = PAGE_EDITOR_DEFINITIONS
-const availableEditors = shallowRef<PageEditorKey[]>(defaultAvailableEditors())
-const persistedEditors = shallowRef<PageEditorKey[]>(defaultAvailableEditors())
+const availableEditors = shallowRef<PageEditorKey[]>([])
+const persistedEditors = shallowRef<PageEditorKey[]>([])
 const loading = ref(true)
+const loadError = ref('')
 const saving = ref(false)
+const loaded = computed(() => !loading.value && !loadError.value)
 
 const hasChanges = computed(() => {
   return availableEditors.value.length !== persistedEditors.value.length ||
@@ -161,6 +180,8 @@ const restoreSaved = (): void => {
 }
 
 const loadConfig = async (): Promise<void> => {
+  loading.value = true
+  loadError.value = ''
   loadingStart(wikiStore, 'admin-editors-refresh')
   try {
     const config = await fetchSiteConfig(window.fetch.bind(window), 'Editor configuration response is invalid')
@@ -168,6 +189,9 @@ const loadConfig = async (): Promise<void> => {
     availableEditors.value = selected
     persistedEditors.value = [...selected]
   } catch (error) {
+    availableEditors.value = []
+    persistedEditors.value = []
+    loadError.value = getErrorMessage(error)
     pushGraphError(wikiStore, error)
   } finally {
     loading.value = false
@@ -176,7 +200,7 @@ const loadConfig = async (): Promise<void> => {
 }
 
 const save = async (): Promise<void> => {
-  if (loading.value || saving.value || !hasChanges.value) return
+  if (!loaded.value || saving.value || !hasChanges.value) return
   saving.value = true
   loadingStart(wikiStore, 'admin-editors-save')
   try {

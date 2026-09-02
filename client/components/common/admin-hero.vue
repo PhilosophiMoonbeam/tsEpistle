@@ -77,7 +77,7 @@ const usesMdiIcon = computed(() => props.icon?.startsWith('mdi-') ?? false)
   border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, var(--wiki-surface-raised));
   box-shadow: var(--wiki-shadow-inset);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
 }
 
 .admin-hero__mark > img {
@@ -97,7 +97,7 @@ const usesMdiIcon = computed(() => props.icon?.startsWith('mdi-') ?? false)
 
 .admin-hero__eyebrow {
   margin-block-end: var(--wiki-space-1);
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .1em;

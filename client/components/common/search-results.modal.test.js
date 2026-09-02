@@ -38,10 +38,22 @@ describe('Ask modal accessibility contract', () => {
     )
     expect(search).toMatch(/this\.activateSearchModal\(searchOpener\)/)
     expect(search).toMatch(/active !== document\.body[\s\S]*active\.tabIndex >= 0/)
-    expect(focusScope).toMatch(/new MutationObserverConstructor\(\(\) => reconcileBackgrounds\(document\)\)/)
-    expect(focusScope).toMatch(
-      /nextAdditionalRoots = stack\.map\(state => state\.additionalRoots\(\)\)[\s\S]*restoreBackground\(stack\[index\]!\.background\)[\s\S]*hideBackground\(state\.root, state\.observedAdditionalRoots\)/
+    const backgroundIsolation = focusScope.match(/const hideBackground = ([\s\S]*?)(?=\nconst restoreBackground)/)?.[1] ?? ''
+    expect(backgroundIsolation).toMatch(/for \(const protectedRoot of \[root, \.\.\.additionalRoots\]\)[\s\S]*protectedElements\.add\(current\)/)
+    expect(backgroundIsolation).toMatch(
+      /element\.classList\.contains\('v-overlay-container'\)[\s\S]*for \(const overlay of element\.children\)[\s\S]*protectedElements\.has\(overlay as HTMLElement\)[\s\S]*hideElement\(overlay as HTMLElement\)/
     )
+    expect(backgroundIsolation).toMatch(/element\.inert = true[\s\S]*element\.setAttribute\('aria-hidden', 'true'\)/)
+    const backgroundReconciliation = focusScope.match(/const reconcileBackgrounds = ([\s\S]*?)(?=\nconst restoreTargetElement)/)?.[1] ?? ''
+    expect(backgroundReconciliation).toMatch(/stack\.map\(state => state\.additionalRoots\(\)\)/)
+    expect(backgroundReconciliation).toMatch(/state\.observedAdditionalRoots = nextAdditionalRoots\[index\]!/)
+    expect(backgroundReconciliation).toMatch(
+      /restoreBackground\(stack\[index\]!\.background\)[\s\S]*nestedState\.root,[\s\S]*nextAdditionalRoots\[[\s\S]*state\.background = hideBackground\(state\.root, \[\.\.\.state\.observedAdditionalRoots, \.\.\.nestedRoots\]\)/
+    )
+    const overlayObserver = focusScope.match(/const backgroundObserver = ([\s\S]*?)(?=\n\s*const modalAdditionalRoots)/)?.[1] ?? ''
+    expect(overlayObserver).toMatch(/new MutationObserverConstructor\([\s\S]*reconcileBackgrounds\(document, true\)/)
+    expect(overlayObserver).toMatch(/observe\(document\.body, \{ childList: true, subtree: true \}\)/)
+    expect(focusScope).not.toMatch(/querySelectorAll[\s\S]{0,120}v-overlay--active/)
     expect(search).toMatch(
       /closeSearch\(\):\s*void\s*\{[\s\S]*this\.finishSearchFocus\(\)[\s\S]*this\.searchIsFocused\s*=\s*false[\s\S]*this\.searchMode\s*=\s*['"]search['"]/
     )

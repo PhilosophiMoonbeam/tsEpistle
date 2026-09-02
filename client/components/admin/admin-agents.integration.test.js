@@ -71,7 +71,16 @@ describe('ordinary Wiki agent administration integration', () => {
       /label="(?:Parallel functions|Agent mode|Generation-only mode|Capability revision|Pricing revision|Structured output|Usage reporting)"/
     )
     expect(sessionSettings).not.toMatch(/generation-only|Text generation|How this session uses the model/)
-    expect(sessionSettings).toMatch(/v-if="profiles\.length > 1"/)
+    expect(sessionSettings).toMatch(
+      /providerControlsAvailable\s*=\s*computed\(\(\)\s*=>\s*props\.profiles\.length > 0 \|\| props\.session\.providerProfileId !== null\)/
+    )
+    expect(sessionSettings).toMatch(
+      /title:\s*defaultProfile\.value \? `Default · \$\{defaultProfile\.value\.name\} · \$\{defaultProfile\.value\.model\}` : 'Default · resolved when available',\s*value:\s*null/
+    )
+    expect(sessionSettings).toMatch(
+      /props\.profiles\.map\(profile => \(\{ title: `Explicit · \$\{profile\.name\} · \$\{profile\.model\}`, value: profile\.id \}\)\)/
+    )
+    expect(sessionSettings).not.toMatch(/profiles\.length > 1/)
     expect(agentAdmin).toMatch(/runtime\?\.providerEnabled !== true/)
     expect(agentAdmin).toMatch(/Provider administration is unavailable while provider inference is disabled/)
     expect(agentAdmin).toMatch(/profileError/)

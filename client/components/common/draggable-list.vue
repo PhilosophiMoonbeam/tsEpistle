@@ -3,6 +3,7 @@
     :is="tag"
     ref="root"
     class="draggable-list"
+    role="list"
     @pointerdown.capture="handlePointerDown"
     @pointermove="handlePointerMove"
     @pointerup="handlePointerUp"
@@ -14,11 +15,14 @@
     @dragend="resetDrag"
   >
     <slot />
+    <span :id="instructionsId" class="draggable-list__instructions" data-draggable-instructions>
+      Press Space or Enter to pick up. Use Arrow Up and Arrow Down to move. Press Space or Enter to drop, or Escape to cancel.
+    </span>
     <span class="draggable-list__announcement" data-draggable-announcement aria-live="polite" aria-atomic="true">{{ liveMessage }}</span>
   </component>
 </template>
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, onUpdated, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, onUpdated, ref, useId } from 'vue'
 
 const props = withDefaults(defineProps<{
   modelValue: unknown[]
@@ -34,6 +38,7 @@ const emit = defineEmits<{
 }>()
 
 const root = ref<HTMLElement | null>(null)
+const instructionsId = useId()
 let sourceIndex = -1
 let dropTargetIndex = -1
 const liveMessage = ref('')
@@ -50,9 +55,25 @@ let refreshPending = false
 function itemChildren (): HTMLElement[] {
   const children: HTMLElement[] = []
   for (const child of root.value?.children ?? []) {
-    if (child instanceof HTMLElement && !child.hasAttribute('data-draggable-announcement')) children.push(child)
+    if (
+      child instanceof HTMLElement &&
+      !child.hasAttribute('data-draggable-announcement') &&
+      !child.hasAttribute('data-draggable-instructions')
+    ) children.push(child)
   }
   return children
+}
+
+function addInstructionReference (element: HTMLElement): void {
+  const references = new Set((element.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean))
+  references.add(instructionsId)
+  element.setAttribute('aria-describedby', [...references].join(' '))
+}
+
+function removeInstructionReference (element: HTMLElement): void {
+  const references = (element.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(reference => reference && reference !== instructionsId)
+  if (references.length > 0) element.setAttribute('aria-describedby', references.join(' '))
+  else element.removeAttribute('aria-describedby')
 }
 
 function refreshChildren (): void {
@@ -61,15 +82,17 @@ function refreshChildren (): void {
   for (const handle of root.value?.querySelectorAll<HTMLElement>('[data-draggable-handle="true"]') ?? []) {
     if (props.handle && handle.matches(props.handle)) continue
     handle.removeAttribute('aria-pressed')
+    removeInstructionReference(handle)
     handle.removeAttribute('data-draggable-handle')
   }
   for (const [index, child] of children.entries()) {
     child.draggable = true
+    child.setAttribute('role', 'listitem')
     child.classList.toggle('is-dragging', sourceIndex === index)
     child.classList.toggle('is-drop-target', dropTargetIndex === index && sourceIndex !== index)
     child.setAttribute('aria-posinset', String(index + 1))
     child.setAttribute('aria-setsize', String(itemCount))
-    child.setAttribute('aria-grabbed', String(sourceIndex === index))
+    child.removeAttribute('aria-grabbed')
     if (props.handle) {
       for (const handle of child.querySelectorAll(props.handle)) {
         if (!(handle instanceof HTMLElement)) continue
@@ -81,9 +104,12 @@ function refreshChildren (): void {
         }
         handle.setAttribute('aria-pressed', String(sourceIndex === index))
         handle.setAttribute('data-draggable-handle', 'true')
+        addInstructionReference(handle)
       }
     } else {
       child.tabIndex = 0
+      child.setAttribute('aria-roledescription', 'sortable item')
+      addInstructionReference(child)
     }
   }
 }
@@ -101,7 +127,11 @@ function directChildIndex (target: EventTarget | null): number {
   if (!(target instanceof Node) || !root.value) return -1
   let index = 0
   for (const child of root.value.children) {
-    if (!(child instanceof HTMLElement) || child.hasAttribute('data-draggable-announcement')) continue
+    if (
+      !(child instanceof HTMLElement) ||
+      child.hasAttribute('data-draggable-announcement') ||
+      child.hasAttribute('data-draggable-instructions')
+    ) continue
     if (child === target || child.contains(target)) return index
     index += 1
   }
@@ -281,6 +311,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.draggable-list__instructions,
 .draggable-list__announcement {
   position: absolute;
   width: 1px;

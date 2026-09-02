@@ -2,11 +2,12 @@
   v-dialog(
     v-model='isShown'
     max-width='550'
-    persistent
+    :persistent='loading'
     scrim='red-darken-4'
     opacity='.7'
     aria-labelledby='page-delete-dialog-title'
     aria-describedby='page-delete-dialog-description'
+    @after-enter='focusCancel'
     )
     v-card
       .dialog-header.is-short.is-red
@@ -21,7 +22,7 @@
             .text-body-small.text-red-darken-2 {{pageLocale.toUpperCase()}}
           v-chip.page-delete__path(label, color="red-lighten-5", size="small", :title='`/${pagePath}`', :aria-label='`/${pagePath}`')
             span.text-red-darken-2 /{{pagePath}}
-      v-card-chin
+      v-card-chin(ref='dialogActions')
         v-spacer
         v-btn(variant="text", @click='discard', :disabled='loading') {{$t('common:actions.cancel')}}
         v-btn.px-4(color="red-darken-2", @click='deletePage', :loading='loading', :disabled='loading').text-white {{$t('common:actions.delete')}}
@@ -86,6 +87,10 @@ export default defineComponent({
     }
   },
   methods: {
+    focusCancel(): void {
+      const actions = this.$refs.dialogActions as { $el?: Element } | undefined
+      actions?.$el?.querySelector<HTMLElement>('button')?.focus()
+    },
     discard(): void {
       document.body.classList.remove('page-deleted-pending')
       this.isShown = false

@@ -39,7 +39,7 @@
           Configuration is locked while this session has an active run or an open durable goal. Finish or cancel that work before changing providers.
         </v-alert>
 
-        <template v-if="profiles.length > 1">
+        <template v-if="providerControlsAvailable">
           <section class="agent-session-settings__provider" aria-labelledby="agent-session-provider-title">
             <header class="agent-session-settings__provider-header">
               <div>
@@ -66,8 +66,8 @@
             <div class="agent-session-settings__route" :class="{ 'agent-session-settings__route--pending': profileChanged }">
               <div class="agent-session-settings__route-heading">
                 <span>{{ profileChanged ? 'Pending route' : 'Route in use' }}</span>
-                <v-chip v-if="profileId === null" size="x-small" variant="outlined">Follows default</v-chip>
-                <v-chip v-else size="x-small" variant="outlined">Selected for session</v-chip>
+                <v-chip v-if="profileId === null" size="x-small" variant="outlined">Default route</v-chip>
+                <v-chip v-else size="x-small" variant="outlined">Explicit profile</v-chip>
               </div>
               <dl>
                 <div>
@@ -122,7 +122,7 @@ type ProviderProfileApplyResult =
 
 const props = defineProps<{
   session: AgentSessionView
-  profiles: AgentProviderProfileView[]
+  profiles: readonly AgentProviderProfileView[]
   disabled: boolean
   applyProviderProfile: (profileId: string | null) => Promise<ProviderProfileApplyResult>
 }>()
@@ -146,26 +146,38 @@ watch(profileId, () => {
 })
 
 const defaultProfile = computed(() => props.profiles.find(profile => profile.isGlobalDefault) ?? props.profiles[0])
-const effectiveProfile = computed(() => profileId.value
+const explicitProfile = computed(() => profileId.value
   ? props.profiles.find(profile => profile.id === profileId.value)
-  : defaultProfile.value)
-const profileSummary = computed(() => effectiveProfile.value
-  ? `${effectiveProfile.value.name} · ${effectiveProfile.value.model}`
-  : profileId.value ? 'Selected profile unavailable' : 'Current default')
+  : undefined)
+const effectiveProfile = computed(() => profileId.value ? explicitProfile.value : defaultProfile.value)
+const profileSummary = computed(() => {
+  if (profileId.value === null) {
+    return defaultProfile.value
+      ? `Default · ${defaultProfile.value.name} · ${defaultProfile.value.model}`
+      : 'Default route'
+  }
+  return explicitProfile.value
+    ? `Explicit · ${explicitProfile.value.name} · ${explicitProfile.value.model}`
+    : 'Explicit profile unavailable'
+})
 const profileItems = computed(() => [
   {
-    title: defaultProfile.value ? `Default · ${defaultProfile.value.name} · ${defaultProfile.value.model}` : 'Use current workspace default',
+    title: defaultProfile.value ? `Default · ${defaultProfile.value.name} · ${defaultProfile.value.model}` : 'Default · resolved when available',
     value: null
   },
-  ...props.profiles
-    .filter(profile => !profile.isGlobalDefault)
-    .map(profile => ({ title: `${profile.name} · ${profile.model}`, value: profile.id }))
+  ...props.profiles.map(profile => ({ title: `Explicit · ${profile.name} · ${profile.model}`, value: profile.id })),
+  ...(props.session.providerProfileId && !props.profiles.some(profile => profile.id === props.session.providerProfileId)
+    ? [{ title: 'Explicit · unavailable profile', value: props.session.providerProfileId }]
+    : [])
 ])
+const providerControlsAvailable = computed(() => props.profiles.length > 0 || props.session.providerProfileId !== null)
 const profileChanged = computed(() => profileId.value !== props.session.providerProfileId)
 const profileBehavior = computed(() => profileId.value === null
-  ? 'Uses the workspace default available to you whenever a new run begins.'
-  : 'Routes future runs in this conversation through this profile until you change it.')
-const routeProfileName = computed(() => effectiveProfile.value?.name ?? (profileId.value ? 'Selected profile unavailable' : 'Current workspace default'))
+  ? 'Default follows the workspace profile available to you whenever a new run begins.'
+  : 'Explicit keeps future runs in this conversation pinned to this profile until you change it.')
+const routeProfileName = computed(() => effectiveProfile.value
+  ? `${profileId.value === null ? 'Default' : 'Explicit'} · ${effectiveProfile.value.name}`
+  : profileId.value ? 'Explicit profile unavailable' : 'Default profile unavailable')
 const routeModel = computed(() => effectiveProfile.value?.model ?? (profileId.value ? 'Unavailable' : 'Resolved when the next run starts'))
 const routeDestination = computed(() => effectiveProfile.value?.destinationHost ?? (profileId.value ? 'Unavailable' : 'Managed by the current default'))
 const retentionIcon = computed(() => props.session.folderId

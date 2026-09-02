@@ -43,8 +43,20 @@ export default {
     }
   },
   methods: {
-    goBack () {
-      window.history.back()
+    goBack (): void {
+      let hasSameOriginHistory = false
+      if (window.history.length > 1 && document.referrer) {
+        try {
+          hasSameOriginHistory = new URL(document.referrer, window.location.href).origin === window.location.origin
+        } catch {
+          hasSameOriginHistory = false
+        }
+      }
+      if (hasSameOriginHistory) {
+        window.history.back()
+        return
+      }
+      window.location.assign(`/${encodeURIComponent(this.locale)}`)
     }
   }
 }

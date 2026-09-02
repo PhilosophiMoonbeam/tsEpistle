@@ -34,14 +34,22 @@
         v-btn.editor-save-action.animated.fadeInDown(
           :variant='mode === `create` || isDirty ? `flat` : `text`'
           color='primary'
-          @click.exact='save'
-          @click.ctrl.exact='saveAndClose'
+          @click='save'
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
           :aria-label='mode === `create` ? $t(`common:actions.create`) : (isDirty ? $t(`common:actions.save`) : $t(`editor:save.saved`))'
           )
           v-icon(:start='$vuetify.display.lgAndUp') mdi-check
           span.text-medium-emphasis(v-if='$vuetify.display.lgAndUp && mode !== `create` && !isDirty') {{ $t('editor:save.saved') }}
           span(v-else-if='$vuetify.display.lgAndUp') {{ mode === 'create' ? $t('common:actions.create') : $t('common:actions.save') }}
+        v-btn.editor-save-close-action.animated.fadeInDown.wait-p1s(
+          v-if='$vuetify.display.mdAndUp'
+          variant='tonal'
+          color='primary'
+          aria-label='Save and close'
+          @click='saveAndClose'
+        )
+          v-icon(start) mdi-content-save-move-outline
+          span Save and close
         v-btn.editor-page-action.animated.fadeInDown.wait-p1s(
           v-if='$vuetify.display.mdAndUp'
           variant="tonal"
@@ -65,10 +73,16 @@
         v-divider.editor-actions-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
     v-main
       component(:is='currentEditor', :save='save')
-      editor-modal-properties(v-model='dialogProps')
-      editor-modal-editorselect(v-model='dialogEditorSelector')
-      editor-modal-unsaved(v-model='dialogUnsaved', @discard='exitGo')
-      component(:is='activeModal')
+      editor-modal-properties(v-if='dialogProps', v-model='dialogProps')
+      editor-modal-editorselect(v-if='dialogEditorSelector', v-model='dialogEditorSelector')
+      editor-modal-unsaved(
+        v-if='dialogUnsaved'
+        v-model='dialogUnsaved'
+        :busy='isSaving'
+        @discard='exitGo'
+        @save='saveUnsavedAndClose'
+      )
+      component(v-if='activeModal', :is='activeModal')
 
     v-bottom-navigation.editor-mobile-actions(
       v-if='$vuetify.display.smAndDown'
@@ -114,6 +128,7 @@
 
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent, type PropType } from 'vue'
+import { useHotkey } from 'vuetify'
 import _ from 'lodash'
 import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, fetchPage, updatePage, validateOkfMetadataPayload, type OkfMetadataPayloadValidation } from '../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
@@ -156,13 +171,11 @@ export default defineComponent({
   i18nOptions: { namespaces: 'editor' },
   components: {
     StatusIndicator,
-    editorApi: defineAsyncComponent(() => import('./editor/editor-api.vue')),
     editorCode: defineAsyncComponent(() => import('./editor/editor-code.vue')),
     editorCkeditor: defineAsyncComponent(() => import('./editor/editor-ckeditor.vue')),
     editorVisualMarkdown: defineAsyncComponent(() => import('./editor/editor-visual-markdown.vue')),
     editorAsciidoc: defineAsyncComponent(() => import('./editor/editor-asciidoc.vue')),
     editorMarkdown: defineAsyncComponent(() => import('./editor/editor-markdown.vue')),
-    editorRedirect: defineAsyncComponent(() => import('./editor/editor-redirect.vue')),
     editorModalEditorselect: defineAsyncComponent(() => import('./editor/editor-modal-editorselect.vue')),
     editorModalProperties: defineAsyncComponent(() => import('./editor/editor-modal-properties.vue')),
     editorModalUnsaved: defineAsyncComponent(() => import('./editor/editor-modal-unsaved.vue')),
@@ -249,6 +262,18 @@ export default defineComponent({
       default: ''
     }
   },
+  setup () {
+    let saveHandler: (() => void) | null = null
+    useHotkey('cmd+s', event => {
+      event.preventDefault()
+      saveHandler?.()
+    })
+    return {
+      setSaveHotkeyHandler (handler: (() => void) | null) {
+        saveHandler = handler
+      }
+    }
+  },
   data() {
     return {
       isSaving: false,
@@ -330,6 +355,9 @@ export default defineComponent({
     }
   },
   created() {
+    this.setSaveHotkeyHandler(() => {
+      void this.save()
+    })
     wikiStore.page.id = this.pageId
     wikiStore.page.description = this.description
     wikiStore.page.isPublished = this.isPublished
@@ -386,6 +414,7 @@ export default defineComponent({
 
   },
   beforeUnmount() {
+    this.setSaveHotkeyHandler(null)
     offEditorConflictReset(this.handleEditorConflictReset)
     if (this.conflictTimer !== null) window.clearInterval(this.conflictTimer)
     if (this.customCssTimer !== null) window.clearTimeout(this.customCssTimer)
@@ -546,16 +575,23 @@ export default defineComponent({
       this.isSaving = false
       this.hideProgressDialog()
     },
-    async saveAndClose() {
+    async saveAndClose(): Promise<boolean> {
+      if (this.isSaving) return false
+      const wasCreate = wikiStore.editor.mode === 'create'
       try {
-        if (wikiStore.editor.mode === 'create') {
-          await this.save()
-        } else {
-          await this.save({ rethrow: true })
+        await this.save({ rethrow: true })
+        if (!wasCreate) {
           await this.exit()
         }
+        return true
       } catch (err) {
         // Error is already handled
+        return false
+      }
+    },
+    async saveUnsavedAndClose() {
+      if (await this.saveAndClose()) {
+        this.dialogUnsaved = false
       }
     },
     async exit() {
@@ -717,6 +753,7 @@ export default defineComponent({
 }
 
 .editor-save-action,
+.editor-save-close-action,
 .editor-page-action,
 .editor-close-action,
 .editor-conflict-action {

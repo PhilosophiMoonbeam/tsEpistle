@@ -87,7 +87,7 @@
 
   h1 {
     padding: 0;
-    color: rgb(var(--v-theme-primary));
+    color: var(--wiki-accent-ink);
     margin-top: 2rem;
     position: relative;
 
@@ -1205,6 +1205,12 @@
         outline: none;
         background-color: mc('grey', '100');
       }
+      &:focus-visible {
+        outline: .125rem solid var(--wiki-focus-color);
+        outline-offset: var(--wiki-focus-offset);
+        box-shadow: var(--wiki-focus-ring);
+      }
+
 
       > h1, h2, h3, h4, h5, h6 {
         width: 95%;
@@ -2162,7 +2168,7 @@
     .toc-anchor {
       inset: auto auto .08em calc(100% + .4em);
       display: inline-flex;
-      color: rgb(var(--v-theme-primary));
+      color: var(--wiki-accent-ink);
       font-size: .8em;
       opacity: 0;
       transition: opacity .14s ease;
@@ -2177,7 +2183,7 @@
 
 
   h1 {
-    color: var(--wiki-accent-warm);
+    color: var(--wiki-accent-ink);
     margin: 0 0 1.25rem;
     font-size: clamp(1.75rem, 3vw, 2.35rem);
     strong {
@@ -2210,7 +2216,7 @@
   }
 
   a {
-    color: color-mix(in srgb, rgb(var(--v-theme-primary)) 88%, rgb(var(--v-theme-on-surface)));
+    color: var(--wiki-accent-ink);
     font-weight: 560;
     text-decoration-color: color-mix(in srgb, currentColor 34%, transparent);
     text-decoration-thickness: .08em;
@@ -2219,7 +2225,7 @@
 
     &:hover,
     &:focus-visible {
-      color: rgb(var(--v-theme-primary));
+      color: var(--wiki-accent-ink);
       text-decoration-color: currentColor;
     }
 
@@ -2275,7 +2281,7 @@
     border: 1px solid rgba(var(--v-border-color), .11);
     border-radius: 6px;
     background: color-mix(in srgb, rgb(var(--v-theme-primary)) 6%, rgb(var(--v-theme-surface)));
-    color: color-mix(in srgb, rgb(var(--v-theme-primary)) 80%, rgb(var(--v-theme-on-surface)));
+    color: var(--wiki-accent-ink);
     font-size: .88em;
     box-shadow: none;
   }

@@ -64,7 +64,7 @@
                       v-chip.mr-2(label, size="x-small", color='warning', v-if="props.item.visibility === 'private'") {{ $t('profile:pages.private', { defaultValue: 'Private' }) }}
                       v-chip.mr-2(label, size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
                       span /{{ props.item.path }}
-                    .text-body-small.mt-2.text-medium-emphasis Updated {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
+                    .text-body-small.mt-2.text-medium-emphasis {{ $t('profile:pages.headerUpdatedAt') }} {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
               async-state(
                 v-if='loading'
@@ -141,6 +141,7 @@ export default {
           creatorId: userId,
           authorId: userId
         })
+        this.pagination = Math.min(this.pagination, Math.max(1, Math.ceil(this.pages.length / 15)))
         return true
       } catch (err) {
         this.errorMessage = getErrorMessage(err)

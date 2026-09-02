@@ -27,6 +27,7 @@
               select-strategy='single-independent'
               selectable
               nav
+              :disabled='isLoading'
               aria-labelledby='login-provider-title'
             )
               v-list-item(
@@ -54,6 +55,7 @@
               :type='isUsernameEmail ? `email` : `text`'
               :autocomplete='isUsernameEmail ? `email` : `username`'
               :error-messages='fieldErrors.username'
+              :disabled='isLoading'
               required
               )
             v-text-field.mt-2(
@@ -67,6 +69,7 @@
               :label='$t("auth:fields.password")'
               autocomplete='current-password'
               :error-messages='fieldErrors.password'
+              :disabled='isLoading'
               required
             )
               template(v-slot:append-inner)
@@ -75,7 +78,8 @@
                   type='button'
                   variant='text'
                   size='small'
-                  :aria-label='hidePassword ? `Show password` : `Hide password`'
+                  :aria-label='(hidePassword ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:fields.password`)'
+                  :disabled='isLoading'
                   @click='hidePassword = !hidePassword'
                   )
                   v-icon(:icon='hidePassword ? `mdi-eye-off` : `mdi-eye`')
@@ -85,12 +89,14 @@
               color="primary"
               type='submit'
               :loading='isLoading'
+              :disabled='isLoading'
               ) {{ $t('auth:actions.login') }}
             .text-center.mt-5
               v-btn.text-none(
                 variant="text"
                 rounded
                 color="primary"
+                :disabled='isLoading'
                 @click.stop.prevent='forgotPassword'
                 href='#forgot'
                 ): .text-body-small {{ $t('auth:forgotPasswordLink') }}
@@ -99,6 +105,7 @@
                 color="indigo-darken-2"
                 variant="text"
                 rounded
+                :disabled='isLoading'
                 href='/register'
                 ): .text-body-small {{ $t('auth:switchToRegister.link') }}
         template(v-if='screen === `forgot`')
@@ -117,6 +124,7 @@
               type='email'
               autocomplete='email'
               :error-messages='fieldErrors.username'
+              :disabled='isLoading'
               required
               )
             v-btn.mt-2.text-none(
@@ -125,12 +133,14 @@
               color="primary"
               type="submit"
               :loading='isLoading'
+              :disabled='isLoading'
               ) {{ $t('auth:sendResetPassword') }}
             .text-center.mt-5
               v-btn.text-none(
                 variant="text"
                 rounded
                 color="primary"
+                :disabled='isLoading'
                 @click.stop.prevent='screen = `login`'
                 href='#forgot'
                 ): .text-body-small {{ $t('auth:forgotPasswordCancel') }}
@@ -143,6 +153,7 @@
             size='large'
             color='primary'
             :loading='isLoading'
+            :disabled='isLoading'
             @click='confirmEmail'
             ) {{ $t('auth:verifyEmail.proceed') }}
         template(v-if='screen === `resetPwd`')
@@ -161,10 +172,11 @@
               :label='$t(`auth:changePwd.newPasswordPlaceholder`)'
               autocomplete='new-password'
               :error-messages='fieldErrors.newPassword'
+              :disabled='isLoading'
               required
               )
               template(v-slot:append-inner)
-                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
+                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hideNewPassword ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:changePwd.newPasswordPlaceholder`)' :disabled='isLoading' @click='hideNewPassword = !hideNewPassword')
                   v-icon(:icon='hideNewPassword ? `mdi-eye-off` : `mdi-eye`')
               template(v-slot:loader)
                 password-strength(:model-value='newPassword')
@@ -179,10 +191,11 @@
               :label='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
               autocomplete='new-password'
               :error-messages='fieldErrors.newPasswordVerify'
+              :disabled='isLoading'
               required
               )
               template(v-slot:append-inner)
-                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideNewPasswordVerify ? `Show password` : `Hide password`' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
+                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hideNewPasswordVerify ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:changePwd.newPasswordVerifyPlaceholder`)' :disabled='isLoading' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
                   v-icon(:icon='hideNewPasswordVerify ? `mdi-eye-off` : `mdi-eye`')
             v-btn.mt-2.text-none(
               width='100%'
@@ -190,6 +203,7 @@
               color='primary'
               type='submit'
               :loading='isLoading'
+              :disabled='isLoading'
               ) {{ $t('auth:resetPwd.proceed') }}
         template(v-if='screen === `changePwd`')
           .login-subtitle
@@ -206,10 +220,11 @@
               :label='$t(`auth:changePwd.newPasswordPlaceholder`)'
               autocomplete='new-password'
               :error-messages='fieldErrors.newPassword'
+              :disabled='isLoading'
               required
               )
               template(v-slot:append-inner)
-                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideNewPassword ? `Show password` : `Hide password`' @click='hideNewPassword = !hideNewPassword')
+                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hideNewPassword ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:changePwd.newPasswordPlaceholder`)' :disabled='isLoading' @click='hideNewPassword = !hideNewPassword')
                   v-icon(:icon='hideNewPassword ? `mdi-eye-off` : `mdi-eye`')
               template(v-slot:loader)
                 password-strength(:model-value='newPassword')
@@ -224,10 +239,11 @@
               :label='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
               autocomplete='new-password'
               :error-messages='fieldErrors.newPasswordVerify'
+              :disabled='isLoading'
               required
               )
               template(v-slot:append-inner)
-                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideNewPasswordVerify ? `Show password` : `Hide password`' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
+                v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hideNewPasswordVerify ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:changePwd.newPasswordVerifyPlaceholder`)' :disabled='isLoading' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
                   v-icon(:icon='hideNewPasswordVerify ? `mdi-eye-off` : `mdi-eye`')
             v-btn.mt-2.text-none(
               width='100%'
@@ -235,6 +251,7 @@
               color='primary'
               type='submit'
               :loading='isLoading'
+              :disabled='isLoading'
               ) {{ $t('auth:changePwd.proceed') }}
         template(v-if='screen === `success`')
           .login-success.text-center(role='status')
@@ -264,6 +281,7 @@
             inputmode='numeric'
             maxlength='6'
             required
+            :disabled='isLoading'
             @keyup.enter='verifySecurityCode(false)'
           )
           v-btn.mt-2.text-none(
@@ -272,6 +290,7 @@
             color="primary"
             @click='verifySecurityCode(false)'
             :loading='isLoading'
+            :disabled='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
     v-dialog(v-model='isTFASetupShown', max-width='600', persistent, aria-labelledby='login-tfa-setup-title')
       v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
@@ -296,6 +315,7 @@
             inputmode='numeric'
             maxlength='6'
             required
+            :disabled='isLoading'
             @keyup.enter='verifySecurityCode(true)'
           )
           v-btn.mt-2.text-none(
@@ -304,6 +324,7 @@
             color="primary"
             @click='verifySecurityCode(true)'
             :loading='isLoading'
+            :disabled='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
     loader(v-model='isLoading', :color='loaderColor', :title='loaderTitle', :subtitle='$t(`auth:pleaseWait`)')
     notify.login-notify
@@ -493,6 +514,7 @@ export default {
      * LOGIN
      */
     async login () {
+      if (this.isLoading) return
       this.clearError()
       if (this.username.length < 2) {
         this.errorMessage = this.$t('auth:invalidEmailUsername')
@@ -526,6 +548,7 @@ export default {
      * VERIFY TFA CODE
      */
     async verifySecurityCode (setup = false) {
+      if (this.isLoading) return
       if (this.securityCode.length !== 6) {
         wikiStore.showNotification({
           style: 'red',
@@ -579,6 +602,7 @@ export default {
      * CHANGE PASSWORD
      */
     async changePassword () {
+      if (this.isLoading) return
       this.clearError()
       if (!this.validatePasswordPair()) return
       this.loaderColor = 'grey-darken-4'
@@ -600,6 +624,7 @@ export default {
      * SWITCH TO FORGOT PASSWORD SCREEN
      */
     forgotPassword () {
+      if (this.isLoading) return
       this.clearError()
       this.screen = 'forgot'
       this.$nextTick(() => {
@@ -610,6 +635,7 @@ export default {
      * FORGOT PASSWORD SUBMIT
      */
     async forgotPasswordSubmit () {
+      if (this.isLoading) return
       this.clearError()
       this.loaderColor = 'grey-darken-4'
       this.loaderTitle = this.$t('auth:forgotPasswordLoading')
@@ -626,6 +652,7 @@ export default {
       this.isLoading = false
     },
     async confirmEmail () {
+      if (this.isLoading) return
       this.clearError()
       this.loaderColor = 'grey-darken-4'
       this.loaderTitle = this.$t('auth:verifyEmail.loading')
@@ -643,6 +670,7 @@ export default {
       this.isLoading = false
     },
     async resetPassword () {
+      if (this.isLoading) return
       this.clearError()
       if (!this.validatePasswordPair()) return
       this.loaderColor = 'grey-darken-4'

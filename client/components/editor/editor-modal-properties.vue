@@ -9,9 +9,13 @@
       v-icon(color='primary') mdi-tag-text-outline
       .text-body-large.ml-3 {{$t('editor:props.pageProperties')}}
       v-spacer
+      v-btn.mx-0.mr-2(
+        variant='text'
+        @click='cancel'
+        )
+        span {{ $t('common:actions.cancel') }}
       v-btn.mx-0(
         variant="outlined"
-        :disabled='!isPathValid'
         @click='close'
         )
         v-icon(start) mdi-check
@@ -331,6 +335,38 @@ const PATH_RULES = Object.freeze([
   (value: string) => filenamePattern.test(value) || 'Invalid path. Please ensure it does not contain special characters, or begin/end in a slash or hashtag string.'
 ])
 
+type PagePropertiesDraft = {
+  title: string
+  description: string
+  locale: string
+  tags: string[]
+  path: string
+  isPublished: boolean
+  visibility: 'public' | 'private'
+  publishStartDate: string
+  publishEndDate: string
+  scriptJs: string
+  scriptCss: string
+}
+
+type OkfState = typeof wikiStore.page.okf
+
+function createPropertiesDraft (): PagePropertiesDraft {
+  return {
+    title: wikiStore.page.title,
+    description: wikiStore.page.description,
+    locale: wikiStore.page.locale,
+    tags: [...wikiStore.page.tags],
+    path: wikiStore.page.path,
+    isPublished: wikiStore.page.isPublished,
+    visibility: wikiStore.page.visibility,
+    publishStartDate: wikiStore.page.publishStartDate,
+    publishEndDate: wikiStore.page.publishEndDate,
+    scriptJs: wikiStore.page.scriptJs,
+    scriptCss: wikiStore.page.scriptCss
+  }
+}
+
 function focusInput (ref: unknown): void {
   const componentRoot = (ref as { $el?: unknown } | null)?.$el
   const root = ref instanceof HTMLElement ? ref : componentRoot instanceof HTMLElement ? componentRoot : null
@@ -377,7 +413,9 @@ export default defineComponent({
       tagSearchRequest: 0,
       translationsRequest: 0,
       editorDisposed: false,
-      pathRules: PATH_RULES
+      pathRules: PATH_RULES,
+      draft: createPropertiesDraft(),
+      okfSnapshot: null as OkfState | null
     }
   },
   computed: {
@@ -388,103 +426,100 @@ export default defineComponent({
     mode() {
       return wikiStore.editor.mode
     },
-    isPathValid (): boolean {
-      return Boolean(this.path) && filenamePattern.test(this.path)
-    },
     title: {
       get() {
-        return wikiStore.page.title
+        return this.draft.title
       },
       set(value: string) {
-        wikiStore.page.title = value
+        this.draft.title = value
       }
     },
     description: {
       get() {
-        return wikiStore.page.description
+        return this.draft.description
       },
       set(value: string) {
-        wikiStore.page.description = value
+        this.draft.description = value
       }
     },
     locale: {
       get() {
-        return wikiStore.page.locale
+        return this.draft.locale
       },
       set(value: string) {
-        wikiStore.page.locale = value
+        this.draft.locale = value
       }
     },
     tags: {
       get() {
-        return wikiStore.page.tags
+        return this.draft.tags
       },
       set(value: string[]) {
-        wikiStore.page.tags = _.uniq(value.map(tag => _.trim(tag).toLowerCase()).filter(Boolean))
+        this.draft.tags = _.uniq(value.map(tag => _.trim(tag).toLowerCase()).filter(Boolean))
       }
     },
     path: {
       get() {
-        return wikiStore.page.path
+        return this.draft.path
       },
       set(value: string) {
-        wikiStore.page.path = value
+        this.draft.path = value
       }
     },
     isPublished: {
       get() {
-        return wikiStore.page.isPublished
+        return this.draft.isPublished
       },
       set(value: boolean) {
-        wikiStore.page.isPublished = value
+        this.draft.isPublished = value
       }
     },
     privatePage: {
       get() {
-        return wikiStore.page.visibility === 'private'
+        return this.draft.visibility === 'private'
       },
       set(value: boolean) {
         if (
           !value &&
           this.mode !== 'create' &&
-          wikiStore.page.visibility === 'private'
+          this.draft.visibility === 'private'
         ) {
           this.privatePageConfirm = true
           return
         }
-        wikiStore.page.visibility = value ? 'private' : 'public'
+        this.draft.visibility = value ? 'private' : 'public'
       }
     },
     publishStartDate: {
       get() {
-        return wikiStore.page.publishStartDate
+        return this.draft.publishStartDate
       },
       set(value: string | null) {
-        wikiStore.page.publishStartDate = value ?? ''
+        this.draft.publishStartDate = value ?? ''
       }
     },
     publishEndDate: {
       get() {
-        return wikiStore.page.publishEndDate
+        return this.draft.publishEndDate
       },
       set(value: string | null) {
-        wikiStore.page.publishEndDate = value ?? ''
+        this.draft.publishEndDate = value ?? ''
       }
     },
     scriptJs: {
       get() {
-        return wikiStore.page.scriptJs
+        return this.draft.scriptJs
       },
       set(value: string) {
-        wikiStore.page.scriptJs = value
+        this.draft.scriptJs = value
       }
     },
     scriptCss: {
       get() {
-        return wikiStore.page.scriptCss
+        return this.draft.scriptCss
       },
       set(value: string) {
-        wikiStore.page.scriptCss = value
+        this.draft.scriptCss = value
       }
     },
     hasScriptPermission() {
@@ -501,37 +536,42 @@ export default defineComponent({
     }
   },
   watch: {
-    modelValue (newValue: boolean) {
-      if (newValue) {
-        this.currentTab = 0
-        if (this.mode !== 'create') void this.loadTranslations()
-        this.$nextTick(() => {
-          if (!this.editorDisposed && this.modelValue) {
-            focusInput(this.$refs.iptTitle)
+    modelValue: {
+      immediate: true,
+      handler (newValue: boolean) {
+        if (newValue) {
+          this.beginEditing()
+          this.currentTab = 0
+          if (this.mode !== 'create') void this.loadTranslations()
+          this.$nextTick(() => {
+            if (!this.editorDisposed && this.modelValue) {
+              focusInput(this.$refs.iptTitle)
+            }
+          })
+        } else {
+          this.rollbackDraft()
+          this.isPublishStartShown = false
+          this.isPublishEndShown = false
+          this.pageSelectorShown = false
+          this.translationSelectorShown = false
+          this.privatePageConfirm = false
+          this.newTagSearch = ''
+          this.newTagSuggestions = []
+          if (this.tagSearchTimer !== null) {
+            window.clearTimeout(this.tagSearchTimer)
+            this.tagSearchTimer = null
           }
-        })
-      } else {
-        this.isPublishStartShown = false
-        this.isPublishEndShown = false
-        this.pageSelectorShown = false
-        this.translationSelectorShown = false
-        this.privatePageConfirm = false
-        this.newTagSearch = ''
-        this.newTagSuggestions = []
-        if (this.tagSearchTimer !== null) {
-          window.clearTimeout(this.tagSearchTimer)
-          this.tagSearchTimer = null
+          if (this.editorLoadTimer !== null) {
+            window.clearTimeout(this.editorLoadTimer)
+            this.editorLoadTimer = null
+          }
+          this.tagSearchRequest++
+          this.translationsRequest++
+          this.tagSearchLoading = false
+          this.translationsLoading = false
+          this.cm?.destroy()
+          this.cm = null
         }
-        if (this.editorLoadTimer !== null) {
-          window.clearTimeout(this.editorLoadTimer)
-          this.editorLoadTimer = null
-        }
-        this.tagSearchRequest++
-        this.translationsRequest++
-        this.tagSearchLoading = false
-        this.translationsLoading = false
-        this.cm?.destroy()
-        this.cm = null
       }
     },
     isPublishStartShown (newValue: boolean) {
@@ -582,6 +622,7 @@ export default defineComponent({
     }
   },
   beforeUnmount() {
+    this.rollbackDraft()
     this.editorDisposed = true
     this.tagSearchRequest++
     this.translationsRequest++
@@ -591,6 +632,34 @@ export default defineComponent({
     this.cm = null
   },
   methods: {
+    beginEditing () {
+      this.draft = createPropertiesDraft()
+      this.okfSnapshot = _.cloneDeep(wikiStore.page.okf)
+    },
+    rollbackDraft () {
+      if (this.okfSnapshot !== null) {
+        wikiStore.page.okf = this.okfSnapshot
+        this.okfSnapshot = null
+      }
+    },
+    commitDraft () {
+      wikiStore.page.title = this.draft.title
+      wikiStore.page.description = this.draft.description
+      wikiStore.page.locale = this.draft.locale
+      wikiStore.page.tags = [...this.draft.tags]
+      wikiStore.page.path = this.draft.path
+      wikiStore.page.isPublished = this.draft.isPublished
+      wikiStore.page.visibility = this.draft.visibility
+      wikiStore.page.publishStartDate = this.draft.publishStartDate
+      wikiStore.page.publishEndDate = this.draft.publishEndDate
+      wikiStore.page.scriptJs = this.draft.scriptJs
+      wikiStore.page.scriptCss = this.draft.scriptCss
+      this.okfSnapshot = null
+    },
+    cancel () {
+      this.rollbackDraft()
+      this.isShown = false
+    },
     async loadTranslations () {
       const request = ++this.translationsRequest
       this.translationsLoading = true
@@ -652,18 +721,22 @@ export default defineComponent({
       this.isPublishEndShown = false
     },
     async close() {
+      if (this.currentTab !== 0) {
+        this.currentTab = 0
+        await this.$nextTick()
+      }
       const form = this.$refs.propsForm as { validate?: () => Promise<{ valid: boolean }> } | undefined
       const result = await form?.validate?.()
-      if (result && !result.valid) {
-        this.currentTab = 0
+      if (!result?.valid) {
         await this.$nextTick()
         focusInput(this.$refs.iptPath)
         return
       }
+      this.commitDraft()
       this.isShown = false
     },
     confirmPublish() {
-      wikiStore.page.visibility = 'public'
+      this.draft.visibility = 'public'
       this.privatePageConfirm = false
     },
     showPathSelector() {

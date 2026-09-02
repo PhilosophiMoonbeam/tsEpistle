@@ -59,6 +59,10 @@ export const useAgentsStore = defineStore('agents', {
     folders: [] as AgentConversationFolderView[],
     thread: null as AgentThreadState | null,
     skills: [] as VisibleAgentSkill[],
+    skillsLoading: false,
+    skillsLoadError: '',
+    skillsPartial: false,
+    skillsLoadGeneration: 0,
     profiles: [] as AgentProviderProfileView[],
     launchPage: null as AgentCurrentPageHint | null,
     contextPage: null as AgentCurrentPageHint | null,
@@ -93,6 +97,9 @@ export const useAgentsStore = defineStore('agents', {
       this.cancelSessionTransition()
       this.closeStream()
       this.profiles = []
+      this.skills = []
+      this.skillsLoadError = ''
+      this.skillsPartial = true
       this.invalidateRefresh()
       this.invalidateFolderReload()
       const folderReloadGeneration = this.folderReloadGeneration
@@ -112,17 +119,16 @@ export const useAgentsStore = defineStore('agents', {
       this.loading = true
       this.error = ''
       this.listenForVisibility()
+      void this.reloadSkills()
       try {
         const pathMatch = this.routeSync ? /^\/sessions\/([0-9a-f-]{36})$/i.exec(window.location.pathname) : null
-        const [sessionPage, folders, profiles, skills] = await Promise.all([
+        const [sessionPage, folders, profiles] = await Promise.all([
           listAgentSessions(fetchFromWindow, csrfToken),
           listAgentConversationFolders(fetchFromWindow, csrfToken),
-          listAgentProfiles(fetchFromWindow, csrfToken),
-          listAgentSkills(fetchFromWindow, csrfToken).catch(() => [])
+          listAgentProfiles(fetchFromWindow, csrfToken)
         ])
         if (!this.isWorkspaceCurrent(workspaceVersion)) return
         this.profiles = markRaw(profiles)
-        this.skills = markRaw(skills)
         if (this.sessionListVersion === sessionListVersion) {
           this.sessions = markRaw(sessionPage.sessions)
           this.sessionsNextCursor = sessionPage.nextCursor
@@ -180,6 +186,11 @@ export const useAgentsStore = defineStore('agents', {
       this.workspaceVersion += 1
       this.workspaceDisposed = true
       this.profiles = []
+      this.skills = []
+      this.skillsLoading = false
+      this.skillsLoadError = ''
+      this.skillsPartial = false
+      this.skillsLoadGeneration += 1
       this.loading = false
       this.sending = false
       this.goalBusy = false
@@ -616,10 +627,27 @@ export const useAgentsStore = defineStore('agents', {
       const profiles = await listAgentProfiles(fetchFromWindow, this.csrfToken)
       if (this.isWorkspaceCurrent(workspaceVersion)) this.profiles = markRaw(profiles)
     },
-    async reloadSkills() {
+    async reloadSkills(): Promise<boolean> {
+      if (this.workspaceDisposed) return false
       const workspaceVersion = this.workspaceVersion
-      const skills = await listAgentSkills(fetchFromWindow, this.csrfToken)
-      if (this.isWorkspaceCurrent(workspaceVersion)) this.skills = markRaw(skills)
+      const generation = this.skillsLoadGeneration + 1
+      this.skillsLoadGeneration = generation
+      this.skillsLoading = true
+      this.skillsLoadError = ''
+      this.skillsPartial = true
+      try {
+        const skills = await listAgentSkills(fetchFromWindow, this.csrfToken)
+        if (!this.isWorkspaceCurrent(workspaceVersion) || this.skillsLoadGeneration !== generation) return false
+        this.skills = markRaw(skills)
+        this.skillsPartial = false
+        return true
+      } catch (error) {
+        if (!this.isWorkspaceCurrent(workspaceVersion) || this.skillsLoadGeneration !== generation) return false
+        this.skillsLoadError = (error instanceof Error ? error.message : 'The skill catalog could not be loaded.').slice(0, 512)
+        return false
+      } finally {
+        if (this.isWorkspaceCurrent(workspaceVersion) && this.skillsLoadGeneration === generation) this.skillsLoading = false
+      }
     },
     async removeSession(sessionId: string): Promise<boolean> {
       const workspaceVersion = this.workspaceVersion

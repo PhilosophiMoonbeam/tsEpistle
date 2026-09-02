@@ -57,25 +57,31 @@ const getFocusableElements = (root: HTMLElement): HTMLElement[] => {
   )
 }
 
-const getActiveOverlays = (root: HTMLElement): HTMLElement[] =>
-  Array.from(root.ownerDocument.querySelectorAll<HTMLElement>('.v-overlay-container .v-overlay--active')).filter(overlay => !root.contains(overlay))
-
 const containsTarget = (roots: readonly HTMLElement[], target: Node | null): boolean =>
   Boolean(target) && roots.some(candidate => candidate === target || candidate.contains(target))
 
 const isWithinModal = (root: HTMLElement, additionalRoots: readonly HTMLElement[], target: Node | null): boolean =>
-  containsTarget([root, ...additionalRoots], target) || getActiveOverlays(root).some(overlay => overlay.contains(target))
+  containsTarget([root, ...additionalRoots], target)
 
 const getModalFocusableElements = (root: HTMLElement, additionalRoots: readonly HTMLElement[]): HTMLElement[] =>
-  Array.from(
-    new Set([...additionalRoots.flatMap(getFocusableElements), ...getFocusableElements(root), ...getActiveOverlays(root).flatMap(getFocusableElements)])
-  )
+  Array.from(new Set([...additionalRoots.flatMap(getFocusableElements), ...getFocusableElements(root)]))
 
 const hideBackground = (root: HTMLElement, additionalRoots: readonly HTMLElement[]): BackgroundState[] => {
   const states: BackgroundState[] = []
   const HTMLElementConstructor = root.ownerDocument.defaultView?.HTMLElement
   const protectedElements = new Set<HTMLElement>()
   const hiddenElements = new Set<HTMLElement>()
+  const hideElement = (element: HTMLElement): void => {
+    hiddenElements.add(element)
+    states.push({
+      element,
+      inert: element.inert === true,
+      inertAttribute: element.getAttribute('inert'),
+      ariaHidden: element.getAttribute('aria-hidden')
+    })
+    element.inert = true
+    element.setAttribute('aria-hidden', 'true')
+  }
 
   for (const protectedRoot of [root, ...additionalRoots]) {
     let current: HTMLElement | null = protectedRoot
@@ -98,16 +104,15 @@ const hideBackground = (root: HTMLElement, additionalRoots: readonly HTMLElement
       )
         continue
       const element = sibling as HTMLElement
-      if (element.classList.contains('v-overlay-container')) continue
-      hiddenElements.add(element)
-      states.push({
-        element,
-        inert: element.inert === true,
-        inertAttribute: element.getAttribute('inert'),
-        ariaHidden: element.getAttribute('aria-hidden')
-      })
-      element.inert = true
-      element.setAttribute('aria-hidden', 'true')
+      if (element.classList.contains('v-overlay-container')) {
+        for (const overlay of element.children) {
+          if (protectedElements.has(overlay as HTMLElement) || hiddenElements.has(overlay as HTMLElement) || !(overlay instanceof HTMLElementConstructor))
+            continue
+          hideElement(overlay as HTMLElement)
+        }
+        continue
+      }
+      hideElement(element)
     }
   }
 
@@ -123,19 +128,21 @@ const restoreBackground = (states: readonly BackgroundState[]): void => {
     else element.setAttribute('aria-hidden', ariaHidden)
   }
 }
+
 const sameElements = (left: readonly HTMLElement[], right: readonly HTMLElement[]): boolean =>
   left.length === right.length && left.every((element, index) => element === right[index])
 
-const reconcileBackgrounds = (document: Document): void => {
+const reconcileBackgrounds = (document: Document, force = false): void => {
   const stack = scopeStacks.get(document)
   if (!stack?.length) return
   const nextAdditionalRoots = stack.map(state => state.additionalRoots())
-  if (stack.every((state, index) => sameElements(state.observedAdditionalRoots, nextAdditionalRoots[index]!))) return
+  if (!force && stack.every((state, index) => sameElements(state.observedAdditionalRoots, nextAdditionalRoots[index]!))) return
 
   for (let index = stack.length - 1; index >= 0; index -= 1) restoreBackground(stack[index]!.background)
   for (const [index, state] of stack.entries()) {
     state.observedAdditionalRoots = nextAdditionalRoots[index]!
-    state.background = hideBackground(state.root, state.observedAdditionalRoots)
+    const nestedRoots = stack.slice(index + 1).flatMap((nestedState, nestedIndex) => [nestedState.root, ...nextAdditionalRoots[index + nestedIndex + 1]!])
+    state.background = hideBackground(state.root, [...state.observedAdditionalRoots, ...nestedRoots])
   }
 }
 const restoreTargetElement = (target: RestoreTarget): HTMLElement | null => (typeof target === 'function' ? target() : target)
@@ -153,6 +160,7 @@ const finishInactiveScopes = (document: Document): void => {
   }
 
   if (stack.length === 0) scopeStacks.delete(document)
+  else reconcileBackgrounds(document, true)
 }
 
 export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, onEscape }: ModalFocusScopeOptions): ModalFocusScope => {
@@ -166,13 +174,14 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, on
     root,
     additionalRoots: currentAdditionalRoots,
     observedAdditionalRoots,
-    background: hideBackground(root, observedAdditionalRoots),
+    background: [],
     restoreFocus: true,
     restoreTarget
   }
   stack.push(state)
+  reconcileBackgrounds(document, true)
   const MutationObserverConstructor = document.defaultView?.MutationObserver
-  const backgroundObserver = MutationObserverConstructor ? new MutationObserverConstructor(() => reconcileBackgrounds(document)) : null
+  const backgroundObserver = MutationObserverConstructor ? new MutationObserverConstructor(() => reconcileBackgrounds(document, true)) : null
   if (document.body) backgroundObserver?.observe(document.body, { childList: true, subtree: true })
 
   const modalAdditionalRoots = (): readonly HTMLElement[] => {
@@ -195,7 +204,6 @@ export const createModalFocusScope = ({ root, restoreTarget, additionalRoots, on
 
   const handleKeydown = (event: KeyboardEvent): void => {
     if (!isTopScope() || event.defaultPrevented) return
-    if (getActiveOverlays(root).some(overlay => overlay.contains(event.target as Node))) return
     if (event.key === 'Escape' && containsTarget([root, ...modalAdditionalRoots()], event.target as Node)) {
       event.preventDefault()
       event.stopImmediatePropagation()

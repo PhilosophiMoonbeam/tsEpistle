@@ -136,6 +136,31 @@ describe('inline Ask mode contract', () => {
     )
   })
 
+  test('keeps memory work alive without trapping panel or workspace dismissal', () => {
+    const scrim = inline.match(/<button\s+v-if="panelMode === 'modal' && \(historyOpen \|\| memoryOpen\)"[\s\S]*?\/>/)?.[0] ?? ''
+    const mobileReturn = inline.match(/<v-btn class="inline-agent__mobile-return"[^>]*\/>/)?.[0] ?? ''
+    const mobileClose = inline.match(/<v-btn class="inline-agent__mobile-close"[^>]*\/>/)?.[0] ?? ''
+    const closeMemory = inline.match(/const closeMemory = \(\): void => \{[\s\S]*?\n\}/)?.[0] ?? ''
+    const closePanels = inline.match(/const closePanels = \(\): void => \{[\s\S]*?\n\}/)?.[0] ?? ''
+
+    expect(scrim).toContain('@click="closePanels"')
+    expect(scrim).not.toContain(':disabled')
+    expect(mobileReturn).toContain('@click="emit(\'return-search\')"')
+    expect(mobileReturn).not.toContain(':disabled')
+    expect(mobileClose).toContain('@click="emit(\'close\')"')
+    expect(mobileClose).not.toContain(':disabled')
+    expect(closeMemory).not.toContain('memoryMutationBusy')
+    expect(closePanels).not.toContain('memoryMutationBusy')
+    expect(inline).toMatch(/<aside\s+v-show="memoryOpen"[\s\S]*?<AgentMemoryManager/)
+    expect(inline).not.toMatch(/<aside\s+v-if="memoryOpen"/)
+    expect(inline).toMatch(/:disabled="memoryMutationBusy && !memoryOpen"[\s\S]*@click="toggleMemory"/)
+    expect(inline).toMatch(
+      /const toggleMemory = \(\): void => \{[\s\S]*if \(memoryOpen\.value\)[\s\S]*closeMemory\(\)[\s\S]*if \(memoryMutationBusy\.value\) return[\s\S]*memoryOpen\.value = true/
+    )
+    expect(memory).toMatch(/onBeforeUnmount\(\(\) => \{[\s\S]*disposed = true[\s\S]*loadGeneration \+= 1[\s\S]*loadController\?\.abort\(\)/)
+    expect(memory).toMatch(/catch \(value\) \{[\s\S]*if \(disposed\) return/)
+  })
+
   test('offers durable folders, explicit unfiling, and individual deletion in history', () => {
     expect(history).toMatch(/New folder/)
     expect(history).toMatch(/Filed conversations do not expire/)
@@ -192,7 +217,14 @@ describe('inline Ask mode contract', () => {
 
   test('keeps cross-conversation skill preferences in the composer and hides empty configuration', () => {
     expect(settings).not.toMatch(/Pinned skills/)
-    expect(inline).toMatch(/v-if="thread && profiles\.length > 1"/)
+    expect(inline).toMatch(/<AgentSessionSettings[^>]*v-if="thread"/)
+    expect(inline).not.toMatch(/<AgentSessionSettings[^>]*profiles\.length > 1/)
+    expect(settings).toMatch(
+      /providerControlsAvailable\s*=\s*computed\(\(\)\s*=>\s*props\.profiles\.length > 0 \|\| props\.session\.providerProfileId !== null\)/
+    )
+    expect(settings).toMatch(
+      /value:\s*null[\s\S]*props\.profiles\.map\(profile => \(\{ title: `Explicit · \$\{profile\.name\} · \$\{profile\.model\}`, value: profile\.id \}\)\)/
+    )
     expect(inline).toMatch(/@update-skill-preferences="agents\.setSkillPreferences"/)
     expect(composer).toMatch(/@click\.stop="togglePreference\(skill\.versionId\)"/)
     expect(composer).toMatch(/always load in conversations/)
@@ -225,10 +257,19 @@ describe('inline Ask mode contract', () => {
     expect(focusScope).toMatch(/scopeStacks\s*=\s*new WeakMap<Document,\s*ModalFocusScopeState\[\]>/)
     expect(focusScope).toMatch(/isTopScope\(\)/)
     expect(focusScope).toMatch(/while \(stack\.length > 0 && !stack\[stack\.length - 1\]!\.active\)/)
-    expect(focusScope).toMatch(/new MutationObserverConstructor\(\(\) => reconcileBackgrounds\(document\)\)/)
+    expect(focusScope).toMatch(/new MutationObserverConstructor\(\(\) => reconcileBackgrounds\(document,\s*true\)\)/)
+    expect(focusScope).toMatch(/backgroundObserver\?\.observe\(document\.body,\s*\{\s*childList:\s*true,\s*subtree:\s*true\s*\}\)/)
+    expect(focusScope).toMatch(/const nextAdditionalRoots = stack\.map\(state => state\.additionalRoots\(\)\)/)
     expect(focusScope).toMatch(
-      /for \(let index = stack\.length - 1; index >= 0; index -= 1\) restoreBackground\(stack\[index\]!\.background\)[\s\S]*state\.background = hideBackground\(state\.root, state\.observedAdditionalRoots\)/
+      /for \(const protectedRoot of \[root, \.\.\.additionalRoots\]\)[\s\S]*protectedElements\.add\(current\)[\s\S]*current = current\.parentElement/
     )
+    expect(focusScope).toMatch(
+      /element\.classList\.contains\('v-overlay-container'\)[\s\S]*for \(const overlay of element\.children\)[\s\S]*protectedElements\.has\(overlay as HTMLElement\)[\s\S]*continue[\s\S]*hideElement\(overlay as HTMLElement\)/
+    )
+    expect(focusScope).toMatch(
+      /restoreBackground\(stack\[index\]!\.background\)[\s\S]*state\.observedAdditionalRoots = nextAdditionalRoots\[index\]![\s\S]*nestedRoots = stack\.slice\(index \+ 1\)[\s\S]*state\.background = hideBackground\(state\.root, \[\.\.\.state\.observedAdditionalRoots, \.\.\.nestedRoots\]\)/
+    )
+    expect(focusScope).not.toMatch(/querySelectorAll(?:<HTMLElement>)?\(['"]\.v-overlay--active['"]\)/)
     expect(focusScope).toMatch(/target\.focus\(\{\s*preventScroll:\s*true\s*\}\)/)
     expect(focusScope).toMatch(/event\.stopImmediatePropagation\(\)/)
     expect(search).toMatch(/onEscape:\s*this\.returnToSearch/)

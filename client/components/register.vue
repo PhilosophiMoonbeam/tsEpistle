@@ -45,6 +45,7 @@
                       autocomplete='email'
                       :error-messages='fieldErrors.email'
                       color='primary'
+                      :disabled='isLoading'
                       required
                     )
                     v-text-field.mt-2(
@@ -58,13 +59,14 @@
                       :placeholder='$t("auth:fields.password")'
                       autocomplete='new-password'
                       :error-messages='fieldErrors.password'
+                      :disabled='isLoading'
                       color='primary'
                       loading
                       counter='255'
                       required
                     )
                       template(v-slot:append-inner)
-                        v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hidePassword ? `Show password` : `Hide password`' @click='hidePassword = !hidePassword')
+                        v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hidePassword ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:fields.password`)' :disabled='isLoading' @click='hidePassword = !hidePassword')
                           v-icon(:icon='hidePassword ? `mdi-eye-off` : `mdi-eye`')
                       template(v-slot:loader)
                         password-strength(:model-value='password')
@@ -79,11 +81,12 @@
                       :placeholder='$t("auth:fields.verifyPassword")'
                       autocomplete='new-password'
                       :error-messages='fieldErrors.verifyPassword'
+                      :disabled='isLoading'
                       color='primary'
                       required
                     )
                       template(v-slot:append-inner)
-                        v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='hideVerifyPassword ? `Show password` : `Hide password`' @click='hideVerifyPassword = !hideVerifyPassword')
+                        v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hideVerifyPassword ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:fields.verifyPassword`)' :disabled='isLoading' @click='hideVerifyPassword = !hideVerifyPassword')
                           v-icon(:icon='hideVerifyPassword ? `mdi-eye-off` : `mdi-eye`')
                     v-text-field.mt-2(
                       variant="outlined"
@@ -96,6 +99,7 @@
                       autocomplete='name'
                       :error-messages='fieldErrors.name'
                       color='primary'
+                      :disabled='isLoading'
                       counter='255'
                       required
                     )
@@ -106,11 +110,18 @@
                       color='primary'
                       type='submit'
                       :loading='isLoading'
+                      :disabled='isLoading'
                     ) {{ $t('auth:actions.register') }}
                 v-divider
                 v-card-actions.register-card-footer.py-3
                   i18next.text-body-small(path='auth:switchToLogin.text', tag='div')
-                    a.text-body-small(href='/login', place='link') {{ $t('auth:switchToLogin.link') }}
+                    a.text-body-small(
+                      href='/login'
+                      place='link'
+                      :aria-disabled='isLoading'
+                      :tabindex='isLoading ? -1 : undefined'
+                      @click='isLoading && $event.preventDefault()'
+                    ) {{ $t('auth:switchToLogin.link') }}
     loader(v-model='isLoading', :mode='loaderMode', :icon='loaderIcon', :color='loaderColor', :title='loaderTitle', :subtitle='loaderSubtitle')
     nav-footer
     notify.register-notify

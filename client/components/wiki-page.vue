@@ -6,7 +6,7 @@
   )
     template(v-slot:contents)
       slot(v-if='navigationKey === 0' name='contents')
-      component(v-else :is='contentComponent')
+      .wiki-page-rendered-contents(v-else v-html='contentHtml')
     template(v-slot:comments)
       slot(v-if='navigationKey === 0' name='comments')
       Comments(v-else-if='currentPage.props.commentsEnabled && !currentPage.props.commentsExternal')
@@ -14,7 +14,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, markRaw, nextTick, type Component } from 'vue'
+import { defineComponent, markRaw, nextTick } from 'vue'
 import Comments from './comments.vue'
 import Page from '../themes/default/components/page.vue'
 import { loadingStart, loadingStop } from '../helpers/root-ui-store'
@@ -34,6 +34,18 @@ interface NavigationOptions {
 const NAVIGATION_STATE_KEY = '__wikiPageNavigation'
 const NAVIGATION_LOADING_KEY = 'wiki-page-navigation'
 
+const hasAttachmentDisposition = (value: string | null): boolean =>
+  value !== null && /(?:^|,)\s*attachment\s*(?:;|,|$)/i.test(value)
+
+const isTrustedWikiPageResponse = (response: Response, responseUrl: URL): boolean => {
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
+  return response.ok &&
+    responseUrl.origin === window.location.origin &&
+    response.headers.get('X-Wiki-Page') === '1' &&
+    contentType === 'text/html' &&
+    !hasAttachmentDisposition(response.headers.get('content-disposition'))
+}
+
 export default defineComponent({
   name: 'WikiPage',
   components: { Comments, Page },
@@ -47,7 +59,7 @@ export default defineComponent({
     const currentPage = markRaw(decodeWikiPagePayload(this.payload))
     return {
       currentPage,
-      contentComponent: null as Component | null,
+      contentHtml: '',
       commentsHtml: '',
       navigationKey: 0,
       navigationPending: false,
@@ -142,15 +154,17 @@ export default defineComponent({
           signal: controller.signal
         })
         if (sequence !== this.navigationSequence) return
-        if (!response.ok || !response.headers.get('content-type')?.includes('text/html')) {
-          this.hardNavigate(destination, options.popState)
+
+        const responseUrl = new URL(response.url)
+        if (!isTrustedWikiPageResponse(response, responseUrl)) {
+          this.hardNavigate(responseUrl, options.popState)
           return
         }
 
-        const parsed = parseWikiNavigationDocument(await response.text(), response.url)
+        const parsed = parseWikiNavigationDocument(await response.text(), responseUrl)
         if (sequence !== this.navigationSequence) return
         if (!parsed || parsed.language !== document.documentElement.lang) {
-          this.hardNavigate(new URL(response.url), options.popState)
+          this.hardNavigate(responseUrl, options.popState)
           return
         }
 
@@ -159,10 +173,7 @@ export default defineComponent({
           window.history.pushState({ [NAVIGATION_STATE_KEY]: true, scrollY: 0 }, '', parsed.url)
         }
         this.currentPage = markRaw(parsed.payload)
-        this.contentComponent = markRaw(defineComponent({
-          name: 'WikiPageRouteContent',
-          template: parsed.contentHtml
-        }))
+        this.contentHtml = parsed.contentHtml
         this.commentsHtml = parsed.commentsHtml
         this.currentUrl = parsed.url.href
         this.navigationKey += 1

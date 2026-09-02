@@ -105,7 +105,7 @@ const createConflictHarness = ({
 }
 
 describe('editor conflict REST migration guard', () => {
-  test('Tiptap conflict owns cancellation independently of thrown error shape and names its dialogs', () => {
+  test('Tiptap conflict keeps fetch failures inline and retryable while guarding request generations and resolution', () => {
     const relativePath = 'client/components/editor/tiptap/conflict.vue'
     const source = fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8')
     const script = readScript(relativePath)
@@ -114,25 +114,43 @@ describe('editor conflict REST migration guard', () => {
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toContain("import { fetchPageConflictLatest, type PageConflictLatest } from '../../../helpers/pages-api'")
     expect(script).toMatch(
+      /requestController:\s*null\s+as\s+AbortController\s*\|\s*null[\s\S]*?loadState:\s*['"]loading['"]\s+as\s+['"]loading['"]\s*\|\s*['"]error['"]\s*\|\s*['"]success['"][\s\S]*?loadError:\s*['"]{2}[\s\S]*?requestGeneration:\s*0/
+    )
+    expect(script).toMatch(
       /const\s+requestController\s*=\s*markRaw\s*\(\s*new\s+AbortController\s*\(\s*\)\s*\)[\s\S]*?this\.requestController\s*=\s*requestController/
     )
     expect(script).toMatch(
       /fetchPageConflictLatest\s*\(\s*\(\s*url\s*,\s*init\s*\)\s*=>\s*window\.fetch\s*\(\s*url\s*,\s*\{\s*\.\.\.init\s*,\s*signal:\s*requestController\.signal\s*\}\s*\)\s*,\s*wikiStore\.page\.id\s*\)/
     )
     expect(script).toMatch(
-      /catch\s*\{[\s\S]*?if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return[\s\S]*?\}\s*if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return/
+      /catch\s*\{[\s\S]*?if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return[\s\S]*?\}\s*if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return[\s\S]*?if\s*\(\s*requestGeneration\s*!==\s*this\.requestGeneration\s*\)\s*return[\s\S]*?this\.requestController\s*=\s*null/
     )
     expect(script.match(/if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return/g)).toHaveLength(2)
     expect(script).not.toMatch(/AbortError|(?:error|err)\.name/)
     expect(script).toMatch(
-      /this\.requestController\s*=\s*null\s*[\s\S]*?if\s*\(\s*!resp\s*\)\s*\{\s*return\s+showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*?message:\s*['"]Failed to fetch latest version\.['"][\s\S]*?style:\s*['"]warning['"][\s\S]*?icon:\s*['"]warning['"][\s\S]*?\}\s*\)\s*\}[\s\S]*?this\.latest\s*=\s*resp/
+      /if\s*\(\s*this\.loadState\s*===\s*['"]loading['"]\s*&&\s*this\.requestController\s*\)\s*return[\s\S]*?this\.requestController\?\.abort\s*\(\s*\)[\s\S]*?const\s+requestGeneration\s*=\s*\+\+this\.requestGeneration[\s\S]*?this\.loadState\s*=\s*['"]loading['"][\s\S]*?this\.loadError\s*=\s*['"]{2}[\s\S]*?this\.hasLatestVersion\s*=\s*false/
     )
-    expect(script).toMatch(/beforeUnmount\s*\(\s*\)\s*\{\s*this\.requestController\?\.abort\s*\(\s*\)[\s\S]*?this\.requestController\s*=\s*null\s*\}/)
+    expect(script).toMatch(
+      /if\s*\(\s*!resp\s*\)\s*\{[\s\S]*?this\.loadError\s*=\s*['"]Failed to fetch latest version\.['"][\s\S]*?this\.loadState\s*=\s*['"]error['"][\s\S]*?await\s+this\.\$nextTick\s*\(\s*\)[\s\S]*?if\s*\(\s*requestGeneration\s*===\s*this\.requestGeneration\s*&&\s*this\.loadState\s*===\s*['"]error['"]\s*\)\s*\{[\s\S]*?this\.focusLoadError\s*\(\s*\)[\s\S]*?\}[\s\S]*?return\s*\}[\s\S]*?this\.latest\s*=\s*resp[\s\S]*?this\.hasLatestVersion\s*=\s*true[\s\S]*?this\.loadState\s*=\s*['"]success['"]/
+    )
+    expect(script).not.toMatch(/\bshowNotification\s*\(/)
+    expect(script).toMatch(
+      /beforeUnmount\s*\(\s*\)\s*\{[\s\S]*?this\.requestGeneration\s*\+=\s*1[\s\S]*?this\.requestController\?\.abort\s*\(\s*\)[\s\S]*?this\.requestController\s*=\s*null\s*\}/
+    )
     expect(script).not.toMatch(/graphql-tag|\$apollo/)
     expect(script).toMatch(
-      /useLocal\s*\(\s*\)\s*\{[\s\S]*wikiStore\.editor\.checkoutDateActive\s*=\s*this\.latest\.updatedAt[\s\S]*emitEditorConflictReset\s*\(\s*\)[\s\S]*this\.close\s*\(\s*\)/
+      /useLocal\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.hasLatestVersion\s*\)\s*return[\s\S]*?wikiStore\.editor\.checkoutDateActive\s*=\s*this\.latest\.updatedAt[\s\S]*?emitEditorConflictReset\s*\(\s*\)[\s\S]*?this\.close\s*\(\s*\)/
     )
-    expect(script).toMatch(/useRemote\s*\(\s*\)\s*\{[\s\S]*wikiStore\.editor\.content\s*=\s*this\.latest\.content[\s\S]*emitEditorConflictResolved\s*\(\s*\)/)
+    expect(script).toMatch(
+      /useRemote\s*\(\s*\)\s*\{\s*if\s*\(\s*!this\.hasLatestVersion\s*\)\s*return[\s\S]*?wikiStore\.editor\.content\s*=\s*this\.latest\.content[\s\S]*?emitEditorConflictResolved\s*\(\s*\)/
+    )
+    expect(source).toContain("v-card-text.pt-4(:aria-busy='loadState === `loading`')")
+    expect(source).toMatch(/\.d-flex\.align-center\.py-4\([\s\S]*?v-if='loadState === `loading`'[\s\S]*?role='status'[\s\S]*?aria-live='polite'[\s\S]*?\)/)
+    expect(source).toMatch(
+      /v-alert\([\s\S]*?v-else-if='loadState === `error`'[\s\S]*?ref='loadErrorAlert'[\s\S]*?role='alert'[\s\S]*?tabindex='-1'[\s\S]*?\)[\s\S]*?\{\{loadError\}\}[\s\S]*?v-btn\.mt-3\([\s\S]*?:disabled='loadState === `loading`'[\s\S]*?:loading='loadState === `loading`'[\s\S]*?@click='loadLatestVersion'[\s\S]*?\)\s*Retry/
+    )
+    expect(source).toContain("template(v-else-if='loadState === `success`')")
+    expect(source).toContain("template(v-if='loadState === `success` && hasLatestVersion')")
     expect(source).toContain("aria-labelledby='editor-conflict-title'")
     expect(source).toContain("span#editor-conflict-title {{$t('editor:conflict.title')}}")
     expect(source).toContain("aria-labelledby='editor-conflict-overwrite-title'")

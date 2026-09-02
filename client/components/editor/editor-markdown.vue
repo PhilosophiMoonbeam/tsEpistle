@@ -399,6 +399,7 @@ export default defineComponent({
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: this.mdAndUp,
       previewHTML: '',
+      previewDirty: true,
       helpShown: false,
       spellModeActive: false,
       insertLinkDialog: false,
@@ -455,6 +456,11 @@ export default defineComponent({
   watch: {
     previewShown (newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
+        this.debouncedProcessContent?.cancel()
+        if (this.previewDirty) {
+          this.processContent(requireEditor(this.cm).getValue())
+          return
+        }
         this.$nextTick(() => {
           if (this.editorDisposed) return
           const preview = this.$refs.editorPreview as HTMLElement | undefined
@@ -531,6 +537,7 @@ export default defineComponent({
       this.helpShown = false
     },
     onCmInput (newContent: string) {
+      this.previewDirty = true
       this.debouncedProcessContent?.(newContent)
     },
     onCmPaste (_ev: ClipboardEvent) {
@@ -538,10 +545,15 @@ export default defineComponent({
     },
     processContent (newContent: string) {
       const cm = requireEditor(this.cm)
-      const renderEnvironment: MarkdownRenderEnvironment = { sourceLines: [] }
       this.processMarkers(0, cm.lineCount)
+      if (!this.previewShown) {
+        this.previewDirty = true
+        return
+      }
+      const renderEnvironment: MarkdownRenderEnvironment = { sourceLines: [] }
       this.previewHTML = sanitizeWikiMarkdownHtml(md.render(newContent, renderEnvironment))
       sourceLinesByEditor.set(this, renderEnvironment.sourceLines)
+      this.previewDirty = false
       this.$nextTick(() => {
         if (this.editorDisposed || !this.previewShown) return
         const preview = this.$refs.editorPreview as HTMLElement | undefined

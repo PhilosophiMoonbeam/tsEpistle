@@ -36,6 +36,29 @@
               span {{$t('common:pageSelector.virtualFolders')}}
           div.page-selector__scroller(role='region' aria-labelledby='page-selector-folders')
             vue-scroll(:ops='scrollStyle')
+              .page-selector__folder-errors(
+                v-if='folderLoadFailureList.length > 0'
+                role='status'
+                aria-live='polite'
+                aria-atomic='false'
+              )
+                v-alert.page-selector__folder-error(
+                  v-for='failure in folderLoadFailureList'
+                  :key='failure.key'
+                  type='error'
+                  variant='tonal'
+                  density='compact'
+                  :title='`Could not load ${failure.item.title}`'
+                  :text='failure.message'
+                )
+                  template(v-slot:append)
+                    v-btn(
+                      variant='text'
+                      size='small'
+                      :aria-label='`Try loading ${failure.item.title} again`'
+                      :loading='isFolderRetrying(failure)'
+                      @click='retryFolderLoad(failure)'
+                    ) Try again
               v-treeview(
                 :key='`pageTree-` + treeViewCacheId'
                 v-model:activated='currentNode'
@@ -57,18 +80,10 @@
             h3#page-selector-pages.text-body-medium {{$t('common:pageSelector.pages')}}
           div.page-selector__scroller(role='region' aria-labelledby='page-selector-pages')
             async-state(
-              v-if='searchLoading'
+              v-if='currentFolderLoading && currentPages.length === 0'
               state='loading'
               title='Loading pages'
               message='Loading pages in the selected folder.'
-            )
-            async-state(
-              v-else-if='loadError'
-              state='error'
-              title='Pages could not be loaded'
-              :message='loadError'
-              retry-label='Try again'
-              @retry='reloadTree(currentLocale)'
             )
             v-list.py-0(
               v-else-if='currentPages.length > 0'
@@ -84,7 +99,7 @@
                   v-list-item-title {{page.title}}
                 v-divider(v-if='idx < currentPages.length - 1')
             async-state(
-              v-else
+              v-else-if='!currentFolderFailure'
               state='empty'
               :title='$t(`common:pageSelector.folderEmptyWarning`)'
               :message='$t(`common:pageSelector.pages`)'
@@ -137,6 +152,7 @@ type PageSelection = { locale: string, path: string, id: number }
 type OpenHandler = (selection: PageSelection) => boolean | void | Promise<boolean | void>
 type PageTreeItem = PageTreeRow & { treeId: number, children?: PageTreeItem[] }
 type PageEntry = PageTreeRow & { pageId: number }
+type FolderLoadFailure = { key: string, item: PageTreeItem, message: string, requestId: number }
 
 function createRootNode (locale: string, treeId: number): PageTreeItem {
   return {
@@ -182,7 +198,10 @@ export default defineComponent({
     return {
       treeViewCacheId: 0,
       pendingRequests: 0,
-      loadError: '',
+      folderLoadFailures: {} as Record<string, FolderLoadFailure>,
+      folderRequestIds: {} as Record<string, number>,
+      folderPendingRequestIds: {} as Record<string, number>,
+      folderRequestSequence: 0,
       submissionError: '',
       isSubmitting: false,
       currentLocale: siteConfig.lang,
@@ -207,6 +226,19 @@ export default defineComponent({
       set(val: boolean) { this.$emit('update:modelValue', val) }
     },
     searchLoading(): boolean { return this.pendingRequests > 0 },
+    folderLoadFailureList(): FolderLoadFailure[] {
+      return Object.values(this.folderLoadFailures)
+    },
+    currentFolderRequestKey(): string | null {
+      const nodeId = this.currentNode[0]
+      return nodeId === undefined ? null : `${this.treeViewCacheId}:${nodeId}`
+    },
+    currentFolderFailure(): FolderLoadFailure | null {
+      return this.currentFolderRequestKey ? this.folderLoadFailures[this.currentFolderRequestKey] ?? null : null
+    },
+    currentFolderLoading(): boolean {
+      return this.currentFolderRequestKey ? this.folderPendingRequestIds[this.currentFolderRequestKey] !== undefined : false
+    },
     currentPages (): PageEntry[] {
       return _.sortBy(_.filter(this.pages, ['parent', _.head(this.currentNode) ?? 0]), ['title', 'path'])
     },
@@ -302,7 +334,9 @@ export default defineComponent({
       this.treeViewCacheId += 1
       const root = createRootNode(locale, this.treeViewCacheId)
       this.pendingRequests = 0
-      this.loadError = ''
+      this.folderLoadFailures = {}
+      this.folderRequestIds = {}
+      this.folderPendingRequestIds = {}
       this.tree = [root]
       this.currentNode = [0]
       this.openNodes = [0]
@@ -311,6 +345,13 @@ export default defineComponent({
       this.all = []
       await this.fetchFolders(root)
     },
+    isFolderRetrying(failure: FolderLoadFailure): boolean {
+      return this.folderPendingRequestIds[failure.key] !== undefined
+    },
+    retryFolderLoad(failure: FolderLoadFailure): void {
+      if (failure.item.treeId !== this.treeViewCacheId || this.isFolderRetrying(failure)) return
+      void this.fetchFolders(failure.item)
+    },
     async fetchFolders (item: unknown): Promise<void> {
       if (!isPageTreeItem(item)) throw new TypeError('Invalid page tree item')
       const requestLocale = this.currentLocale
@@ -318,24 +359,45 @@ export default defineComponent({
       if (requestTreeId !== this.treeViewCacheId) return
       const controller = this.treeAbortController
       if (!controller || controller.signal.aborted) return
+      const requestKey = `${requestTreeId}:${item.id}`
+      const requestId = ++this.folderRequestSequence
+      this.folderRequestIds[requestKey] = requestId
+      this.folderPendingRequestIds[requestKey] = requestId
       this.pendingRequests += 1
       try {
         const items = await fetchPageTree(
           (url, init) => window.fetch(url, { ...init, signal: controller.signal }),
           { parent: item.id, mode: 'ALL', locale: requestLocale }
         )
-        if (requestTreeId !== this.treeViewCacheId || item.locale !== this.currentLocale || requestLocale !== this.currentLocale) return
+        if (
+          requestTreeId !== this.treeViewCacheId ||
+          item.locale !== this.currentLocale ||
+          requestLocale !== this.currentLocale ||
+          this.folderRequestIds[requestKey] !== requestId
+        ) return
         const itemFolders: PageTreeItem[] = items.filter(item => item.isFolder).map(folder => ({ ...folder, treeId: requestTreeId, children: [] }))
         const itemPages = items.filter(isPageEntry)
         item.children = itemFolders.length > 0 ? itemFolders : undefined
         this.pages = _.unionBy(this.pages, itemPages, 'id')
         this.all = _.unionBy(this.all, items, 'id')
-        this.loadError = ''
+        delete this.folderLoadFailures[requestKey]
       } catch (err) {
         if (controller.signal.aborted) return
-        if (requestTreeId === this.treeViewCacheId && requestLocale === this.currentLocale) this.loadError = getErrorMessage(err) || 'Pages could not be loaded.'
+        if (
+          requestTreeId === this.treeViewCacheId &&
+          requestLocale === this.currentLocale &&
+          this.folderRequestIds[requestKey] === requestId
+        ) {
+          this.folderLoadFailures[requestKey] = {
+            key: requestKey,
+            item,
+            message: getErrorMessage(err) || 'Pages could not be loaded.',
+            requestId
+          }
+        }
       } finally {
         if (requestTreeId === this.treeViewCacheId) this.pendingRequests = Math.max(0, this.pendingRequests - 1)
+        if (this.folderPendingRequestIds[requestKey] === requestId) delete this.folderPendingRequestIds[requestKey]
       }
     }
   }
@@ -362,6 +424,12 @@ export default defineComponent({
 
   &__folders-label {
     padding-inline-start: var(--wiki-space-3);
+  }
+
+  &__folder-errors {
+    display: grid;
+    gap: .5rem;
+    padding: .5rem;
   }
 
   &__scroller {

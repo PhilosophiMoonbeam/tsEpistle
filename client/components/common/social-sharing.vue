@@ -109,12 +109,14 @@ export default defineComponent({
       const top = window.screenY + Math.max(gutter, (availableHeight - height) / 2)
 
       const popupWindow = window.open(
-        url,
-        'sharer',
+        '',
+        '_blank',
         `status=no,height=${height},width=${width},resizable=yes,left=${left},top=${top},screenX=${left},screenY=${top},toolbar=no,menubar=no,scrollbars=no,location=no,directories=no`
       )
 
       if (popupWindow) {
+        popupWindow.opener = null
+        popupWindow.location.replace(url)
         popupWindow.focus()
       } else {
         wikiStore.showNotification({

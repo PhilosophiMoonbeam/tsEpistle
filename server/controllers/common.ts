@@ -329,6 +329,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
 
     let pageFilename = wiki.config.lang.namespacing ? `${pageArgs.locale}/${page.path}` : page.path
     pageFilename += page.contentType === 'markdown' ? '.md' : '.html'
+    res.set('X-Wiki-Page', '1')
     return res.render('page', {
       page,
       sidebar,

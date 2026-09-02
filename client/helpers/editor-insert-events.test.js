@@ -1,20 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { EDITOR_INSERT_EVENT,
-emitEditorInsert,
-onEditorInsert,
-offEditorInsert } from './editor-insert-events.ts'
+import { EDITOR_INSERT_EVENT, emitEditorInsert, onEditorInsert, offEditorInsert } from './editor-insert-events.ts'
 
 const repoRoot = path.resolve(import.meta.dirname, '../..')
-const guardedEmitterFiles = [
-  'client/components/editor/editor-modal-media.vue',
-  'client/components/editor/editor-modal-drawio.vue'
-]
+const guardedEmitterFiles = ['client/components/editor/editor-modal-media.vue', 'client/components/editor/editor-modal-drawio.vue']
 const guardedListenerFiles = [
   'client/components/admin/admin-general.vue',
   'client/components/admin/admin-security.vue',
-  'client/components/editor/editor-api.vue',
   'client/components/editor/editor-code.vue',
   'client/components/editor/editor-ckeditor.vue',
   'client/components/editor/tiptap/editor.vue',
@@ -22,19 +15,19 @@ const guardedListenerFiles = [
   'client/components/editor/editor-markdown.vue'
 ]
 
-function getLineNumber (content, index) {
+function getLineNumber(content, index) {
   return content.slice(0, index).split(/\r?\n/).length
 }
 
-function directEditorInsertEmitPattern () {
+function directEditorInsertEmitPattern() {
   return /\bthis\s*\.\s*\$root\s*\.\s*\$emit\s*\(\s*(['"`])editorInsert\1/g
 }
 
-function directEditorInsertListenerPattern () {
+function directEditorInsertListenerPattern() {
   return /\bthis\s*\.\s*\$root\s*\.\s*\$(?:on|off)\s*\(\s*(['"`])editorInsert\1/g
 }
 
-function helperRootCallPattern () {
+function helperRootCallPattern() {
   return /\b(?:emit|on|off)EditorInsert\s*\(\s*this\s*\.\s*\$root/g
 }
 

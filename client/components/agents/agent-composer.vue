@@ -53,9 +53,15 @@
             </div>
           </template>
         </v-list-item>
-        <v-list-item v-if="skillCommandResults.length === 0" role="option" aria-disabled="true" title="No matching skills" subtitle="Try another name or description." disabled />
-        <div class="agent-composer__command-status sr-only" role="status" aria-live="polite">{{ skillCommandResults.length ? `${skillCommandResults.length} matching skills` : 'No matching skills' }}</div>
+        <v-list-item v-if="skillCommandResults.length === 0 && skillsLoading" role="option" aria-disabled="true" title="Loading skill catalog" subtitle="Wait for the available skills to finish loading." disabled />
+        <v-list-item v-else-if="skillCommandResults.length === 0 && skillsPartial" role="option" aria-disabled="true" :title="skillLoadTitle" :subtitle="skillLoadMessage" disabled />
+        <v-list-item v-else-if="skillCommandResults.length === 0" role="option" aria-disabled="true" title="No matching skills" subtitle="Try another name or description." disabled />
+        <div class="agent-composer__command-status sr-only" role="status" aria-live="polite">{{ skillCommandStatus }}</div>
       </v-list>
+      <v-card-actions v-if="skillsLoadError" class="agent-composer__command-retry">
+        <span>{{ skills.length > 0 ? 'Showing the last-loaded catalog.' : 'No catalog entries are available.' }}</span>
+        <v-btn prepend-icon="mdi-refresh" size="small" variant="text" :loading="skillsLoading" @click="retrySkills">Retry catalog</v-btn>
+      </v-card-actions>
     </v-card>
 
     <div class="agent-composer__editor">
@@ -114,19 +120,37 @@
               v-bind="activatorProps"
               class="agent-composer__skill-button"
               variant="text"
-              prepend-icon="mdi-puzzle-outline"
+              :prepend-icon="skillsLoadError ? 'mdi-puzzle-remove-outline' : 'mdi-puzzle-outline'"
+              :color="skillsLoadError ? 'error' : undefined"
               :disabled="disabled || sendInProgress"
-              aria-label="Choose skills for the next message"
+              :aria-label="skillsLoadError ? `Choose skills; the skill catalog is ${skills.length > 0 ? 'incomplete' : 'unavailable'}` : 'Choose skills for the next message'"
               aria-haspopup="dialog"
               aria-controls="agent-composer-skills-menu"
               :aria-expanded="skillMenuOpen"
             >
-              <span class="d-none d-sm-inline">{{ selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : 'Skills' }}</span>
+              <span class="d-none d-sm-inline">{{ selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : skillsLoadError ? skills.length > 0 ? 'Skills incomplete' : 'Skills unavailable' : 'Skills' }}</span>
             </v-btn>
           </template>
           <v-card id="agent-composer-skills-menu" class="agent-composer__skill-menu" min-width="300" max-width="420" role="dialog" aria-labelledby="agent-composer-skills-title">
             <v-card-title id="agent-composer-skills-title" class="text-body-large">Skills</v-card-title>
             <v-card-subtitle>Select for the next message or always load in conversations.</v-card-subtitle>
+            <div
+              v-if="skillsPartial"
+              class="agent-composer__skill-load-state"
+              :class="{ 'agent-composer__skill-load-state--error': skillsLoadError }"
+              :role="skillsLoadError ? 'alert' : 'status'"
+              aria-live="polite"
+            >
+              <v-icon :icon="skillsLoadError ? 'mdi-cloud-alert-outline' : 'mdi-cloud-sync-outline'" size="20" aria-hidden="true" />
+              <div>
+                <strong>{{ skillLoadTitle }}</strong>
+                <span>{{ skillLoadMessage }}</span>
+              </div>
+              <v-btn v-if="skillsLoadError" prepend-icon="mdi-refresh" size="small" variant="tonal" :loading="skillsLoading" @click="retrySkills">
+                Retry
+              </v-btn>
+            </div>
+            <v-progress-linear v-if="skillsLoading" indeterminate color="primary" aria-label="Loading skill catalog" />
             <v-list v-if="skillMenuItems.length > 0" aria-label="Available skills" density="compact" max-height="320" class="overflow-y-auto">
               <v-list-item
                 v-for="skill in skillMenuItems"
@@ -165,7 +189,7 @@
                 </template>
               </v-list-item>
             </v-list>
-            <v-card-text v-else class="text-medium-emphasis">No skills are available yet.</v-card-text>
+            <v-card-text v-else-if="!skillsPartial" class="text-medium-emphasis">No skills are available yet.</v-card-text>
             <v-card-text v-if="invocationLimit === 0" class="pt-0 text-body-small text-medium-emphasis">You have the maximum 8 automatically loaded skills. Remove one to make room.</v-card-text>
             <v-divider />
             <v-card-actions>
@@ -241,12 +265,15 @@ const props = defineProps<{
   skillsEnabled: boolean
   goalsEnabled: boolean
   skills: readonly VisibleAgentSkill[]
+  skillsLoading: boolean
+  skillsLoadError: string
+  skillsPartial: boolean
   preferredSkills: readonly AgentSessionSkillView[]
   invocationLimit: number
   statusLabel: string
   statusTone: 'ready' | 'error' | 'busy'
 }>()
-const emit = defineEmits<{ send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; updateSkillPreferences: [skillIds: string[]] }>()
+const emit = defineEmits<{ send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const draft = ref('')
 const goalMode = ref(false)
 const skillMenuOpen = ref(false)
@@ -459,7 +486,22 @@ const skillCommandMatch = computed<SkillCommandMatch | null>(() => {
 const skillCommandQuery = computed<string | null>(() => skillCommandMatch.value?.query ?? null)
 const skillCommandOpen = computed(() => skillCommandQuery.value !== null)
 const skillCommandResults = computed(() => skillCommandQuery.value === null ? [] : filterSkillsForCommand(props.skills, skillCommandQuery.value))
+const skillLoadTitle = computed(() => props.skillsLoadError
+  ? props.skills.length > 0 ? 'Skill catalog incomplete' : 'Skill catalog unavailable'
+  : 'Loading skill catalog')
+const skillLoadMessage = computed(() => props.skillsLoadError
+  ? props.skills.length > 0
+    ? `Showing the last-loaded catalog. ${props.skillsLoadError}`
+    : props.skillsLoadError
+  : 'Available skills are still being loaded.')
 const activeCommandSkill = computed(() => skillCommandResults.value[activeCommandIndex.value] ?? null)
+const skillCommandStatus = computed(() => skillCommandResults.value.length
+  ? `${skillCommandResults.value.length} matching skills`
+  : props.skillsLoading
+    ? 'Loading skill catalog'
+    : props.skillsPartial
+      ? props.skills.length > 0 ? 'Skill catalog incomplete' : 'Skill catalog unavailable'
+      : 'No matching skills')
 const isCommandSkillDisabled = (versionId: string): boolean =>
   props.disabled || sendInProgress.value || isPreferred(versionId) || (!isSelected(versionId) && selectedSkillIds.value.length >= props.invocationLimit)
 const invokeCommandSkill = (skill: VisibleAgentSkill): void => {
@@ -553,6 +595,10 @@ const manageSkills = (): void => {
   if (props.disabled || sendInProgress.value) return
   skillMenuOpen.value = false
   emit('manageSkills')
+}
+const retrySkills = (): void => {
+  if (props.skillsLoading) return
+  emit('retrySkills')
 }
 const focusSkillsTrigger = async (): Promise<void> => {
   await nextTick()
@@ -768,6 +814,35 @@ onBeforeUnmount(() => {
 .agent-composer__pin--active {
   box-shadow: var(--wiki-shadow-inset);
 }
+.agent-composer__skill-load-state {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  margin: var(--wiki-space-3);
+  padding: var(--wiki-space-3);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 28%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, var(--wiki-surface-raised));
+}
+
+.agent-composer__skill-load-state--error {
+  border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 32%, var(--wiki-surface-border));
+  background: color-mix(in srgb, rgb(var(--v-theme-error)) 8%, var(--wiki-surface-raised));
+  color: rgb(var(--v-theme-error));
+}
+
+.agent-composer__skill-load-state > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.agent-composer__skill-load-state span {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  font-size: var(--wiki-label-size);
+  overflow-wrap: anywhere;
+}
 
 .agent-composer__state {
   display: inline-flex;
@@ -843,6 +918,13 @@ onBeforeUnmount(() => {
 }
 .agent-composer__command-menu :deep(.v-list) {
   max-height: min(20rem, 42dvh) !important;
+}
+.agent-composer__command-retry {
+  justify-content: space-between;
+  gap: var(--wiki-space-2);
+  border-top: 1px solid var(--wiki-surface-border);
+  color: rgb(var(--v-theme-error));
+  font-size: var(--wiki-label-size);
 }
 
 .agent-composer__command-heading {

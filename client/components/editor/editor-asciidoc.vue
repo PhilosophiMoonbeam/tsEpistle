@@ -226,6 +226,7 @@ export default defineComponent({
       previewShown: this.mdAndUp,
       insertLinkDialog: false,
       previewHTML: '',
+      previewDirty: true,
       previewLoading: false,
       previewError: '',
       previewRequestId: 0
@@ -250,6 +251,20 @@ export default defineComponent({
       },
       set(value: string) {
         wikiStore.editor.activeModal = value
+      }
+    }
+  },
+  watch: {
+    previewShown (newValue: boolean, oldValue: boolean) {
+      if (newValue && !oldValue) {
+        this.debouncedProcessContent?.cancel()
+        if (this.previewDirty) {
+          void this.processContent(this.editor().getValue())
+        }
+      } else if (!newValue && oldValue) {
+        if (this.previewLoading) this.previewDirty = true
+        this.previewRequestId += 1
+        this.previewLoading = false
       }
     }
   },
@@ -289,18 +304,22 @@ export default defineComponent({
       return this.cm
     },
     async processContent(newContent: string) {
+      const cm = this.editor()
+      this.processMarkers(0, cm.lineCount)
+      if (!this.previewShown) {
+        this.previewDirty = true
+        return
+      }
       const requestId = ++this.previewRequestId
       this.previewLoading = true
       this.previewError = ''
       try {
-        const cm = this.editor()
-        this.processMarkers(0, cm.lineCount)
         const html = await convert(newContent, {
           standalone: false,
           safe: 'safe',
           attributes: { showtitle: true, icons: 'font' }
         })
-        if (requestId !== this.previewRequestId) return
+        if (requestId !== this.previewRequestId || !this.previewShown) return
         const $ = cheerio.load(html, { decodeEntities: true })
         $('pre.highlight > code.language-diagram').each((_index: number, element: Element) => {
           const diagramContent = decodeBase64Text($(element).html() ?? '')
@@ -310,8 +329,9 @@ export default defineComponent({
           ADD_TAGS: ['foreignObject'],
           HTML_INTEGRATION_POINTS: { foreignobject: true }
         })
+        this.previewDirty = false
       } catch (err) {
-        if (requestId === this.previewRequestId) {
+        if (requestId === this.previewRequestId && this.previewShown) {
           this.previewError = err instanceof Error ? err.message : 'Preview could not be rendered.'
         }
       } finally {
@@ -447,6 +467,7 @@ export default defineComponent({
       ],
       onChange: value => {
         wikiStore.editor.content = value
+        this.previewDirty = true
         this.debouncedProcessContent?.(value)
       },
       onCursor: position => this.positionSync(position)

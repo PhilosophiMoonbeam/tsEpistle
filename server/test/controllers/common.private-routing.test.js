@@ -50,7 +50,7 @@ const request = user => ({
   i18n: { changeLanguage: vi.fn(), dir: vi.fn().mockReturnValue('ltr') }
 })
 
-describe('private page administration routes', () => {
+describe('common page routing', () => {
   beforeEach(() => {
     vi.resetModules()
     express.__router.get.mockClear()
@@ -66,7 +66,7 @@ describe('private page administration routes', () => {
       config: {
         seo: { robots: [] },
         metrics: { isEnabled: false },
-        lang: { namespacing: true },
+        lang: { code: 'en', namespacing: true },
         theming: { injectCSS: '', injectHead: '', injectBody: '' },
         pageExtensions: [],
         features: { featurePageComments: false },
@@ -102,7 +102,8 @@ describe('private page administration routes', () => {
     return {
       byId: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/i'))[1],
       admin: express.__router.get.mock.calls.find(([path]) => path === '/_admin/private/:id')[1],
-      editor: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/e'))[1]
+      editor: express.__router.get.mock.calls.find(([path]) => Array.isArray(path) && path.includes('/e'))[1],
+      view: express.__router.get.mock.calls.find(([path]) => path === '/{*pagePath}')[1]
     }
   }
 
@@ -141,6 +142,53 @@ describe('private page administration routes', () => {
       page: privatePage,
       effectivePermissions: expect.objectContaining({ pages: { read: true, write: true, manage: true } })
     }))
+  })
+
+  it('marks page HTML without marking same-origin HTML assets', async () => {
+    const { view } = await handlers()
+    const publicPage = {
+      ...privatePage,
+      path: 'guides/start',
+      visibility: 'public',
+      ownerId: null,
+      title: 'Public Guide',
+      extra: { css: '', js: '' },
+      toc: []
+    }
+    global.WIKI.auth.getEffectivePermissions.mockReturnValue({
+      pages: { read: true, write: false, manage: false },
+      history: { read: true },
+      source: { read: true }
+    })
+    global.WIKI.models.pages.getPage.mockResolvedValueOnce(publicPage)
+
+    const pageResponse = response()
+    await view({
+      i18n: { changeLanguage: vi.fn(), dir: vi.fn().mockReturnValue('ltr') },
+      originalUrl: '/en/guides/start',
+      path: '/en/guides/start',
+      query: {},
+      sessionID: 'page-session',
+      user: { id: 9, permissions: ['read:pages'] }
+    }, pageResponse, vi.fn())
+
+    expect(pageResponse.render).toHaveBeenCalledWith('page', expect.objectContaining({ page: publicPage }))
+    expect(pageResponse.set).toHaveBeenCalledWith('X-Wiki-Page', '1')
+
+    global.WIKI.models.assets.getAsset.mockImplementationOnce(async (_path, res) => {
+      res.set('Content-Type', 'text/html')
+    })
+    const assetResponse = response()
+    await view({
+      path: '/en/uploads/untrusted.html',
+      query: {},
+      sessionID: 'asset-session',
+      user: { id: 1, permissions: ['read:assets', 'manage:system'] }
+    }, assetResponse, vi.fn())
+
+    expect(global.WIKI.models.assets.getAsset).toHaveBeenCalledWith('uploads/untrusted.html', assetResponse)
+    expect(assetResponse.set).toHaveBeenCalledWith('Content-Type', 'text/html')
+    expect(assetResponse.set).not.toHaveBeenCalledWith('X-Wiki-Page', expect.anything())
   })
 
   it('copies protected templates only with a current requester session grant', async () => {

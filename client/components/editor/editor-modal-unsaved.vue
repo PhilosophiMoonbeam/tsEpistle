@@ -1,5 +1,5 @@
 <template lang="pug">
-  v-dialog(v-model='isShown', max-width='550', role='alertdialog', aria-labelledby='unsaved-dialog-title', aria-describedby='unsaved-dialog-description')
+  v-dialog(v-model='isShown', :persistent='busy', max-width='550', role='alertdialog', aria-labelledby='unsaved-dialog-title', aria-describedby='unsaved-dialog-description')
     v-card
       .dialog-header.is-short.is-red
         v-icon.mr-2(color='white', aria-hidden='true') mdi-alert
@@ -8,17 +8,27 @@
         .text-body-medium {{$t('editor:unsaved.body')}}
       v-card-chin
         v-spacer
-        v-btn(variant="text", @click='isShown = false') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color='red', @click='discard') {{$t('common:actions.discardChanges')}}
+        v-btn(variant="text", :disabled='busy', @click='isShown = false') {{$t('common:actions.cancel')}}
+        v-btn.px-4(color='red', variant='text', :disabled='busy', @click='discard') {{$t('common:actions.discardChanges')}}
+        v-btn.px-4(
+          color='primary'
+          :loading='busy'
+          :disabled='busy'
+          @click='save'
+        ) Save and close
 </template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
 
 export default defineComponent({
-  emits: ['discard', 'update:modelValue'],
+  emits: ['discard', 'save', 'update:modelValue'],
   props: {
     modelValue: {
+      type: Boolean,
+      default: false
+    },
+    busy: {
       type: Boolean,
       default: false
     }
@@ -33,6 +43,9 @@ export default defineComponent({
     discard() {
       this.isShown = false
       this.$emit('discard', true)
+    },
+    save() {
+      this.$emit('save')
     }
   }
 })

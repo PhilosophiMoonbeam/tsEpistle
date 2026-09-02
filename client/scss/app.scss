@@ -61,8 +61,8 @@
 }
 
 .v-application a:not(:where(.v-btn, .v-list-item, .v-tab, .v-chip)) {
-  color: rgb(var(--v-theme-primary));
-  text-decoration-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 42%, transparent);
+  color: var(--wiki-accent-ink);
+  text-decoration-color: color-mix(in srgb, var(--wiki-accent-ink) 42%, transparent);
   text-decoration-thickness: .08em;
   text-underline-offset: .2em;
   transition:
@@ -70,7 +70,7 @@
     text-decoration-color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
   &:hover {
-    color: color-mix(in srgb, rgb(var(--v-theme-primary)) 76%, rgb(var(--v-theme-on-surface)) 24%);
+    color: color-mix(in srgb, var(--wiki-accent-ink) 76%, rgb(var(--v-theme-on-surface)) 24%);
     text-decoration-color: currentColor;
   }
 }

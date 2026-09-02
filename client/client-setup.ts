@@ -1,8 +1,9 @@
-import { createApp, defineAsyncComponent } from 'vue'
+import { createApp } from 'vue'
 import { createVuetify } from 'vuetify'
 import boot from './modules/boot.ts'
+import { createAsyncComponent } from './components/common/async-component-state.vue'
 
-const Setup = defineAsyncComponent(() => import('./components/setup.vue'))
+const Setup = createAsyncComponent(() => import('./components/setup.vue'))
 const vuetify = createVuetify()
 
 window.WIKI = null

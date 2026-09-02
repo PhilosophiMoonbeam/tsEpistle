@@ -2,7 +2,7 @@
   v-dialog(
     v-model='isShown'
     max-width='550'
-    persistent
+    :persistent='loading'
     scrim='blue-grey-darken-4'
     style='--v-overlay-opacity: .7'
     aria-labelledby='page-convert-dialog-title'

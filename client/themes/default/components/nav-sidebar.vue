@@ -1,5 +1,5 @@
 <template lang="pug">
-  nav.nav-sidebar(:aria-label='currentMode === `browse` ? $t(`common:sidebar.browse`) : $t(`common:sidebar.mainMenu`)')
+  .nav-sidebar
     .nav-sidebar-switcher.d-flex(
       v-if='navMode === `MIXED` || navMode === `STATIC`'
       :class='{ "nav-sidebar-switcher--static": navMode === `STATIC` }'
@@ -34,7 +34,7 @@
       async-state(
         v-if='customItems.length === 0'
         state='empty'
-        title='No navigation items'
+        :title='$t(`common:sidebar.noNavigationItems`)'
       )
       template(v-else, v-for='(item, idx) of customItems', :key='item.k === `link` ? `link-${item.t}-${item.l}` : item.k === `header` ? `header-${item.l}-${idx}` : `divider-${idx}`')
         v-list-item(
@@ -66,7 +66,7 @@
         role='status'
         aria-live='polite'
         aria-atomic='true'
-      ) Loading navigation
+      ) {{$t('common:sidebar.loadingNavigation')}}
       template(v-if='navLoading && currentItems.length === 0')
         v-skeleton-loader.nav-sidebar-loading-row(
           v-for='index in 4'
@@ -79,20 +79,20 @@
         indeterminate
         color='primary'
         height='2'
-        aria-label='Loading navigation'
+        :aria-label='$t(`common:sidebar.loadingNavigation`)'
       )
       async-state(
         v-else-if='navError'
         state='error'
-        title='Navigation could not be loaded'
+        :title='$t(`common:sidebar.navigationLoadError`)'
         :message='navError'
-        retry-label='Try again'
+        :retry-label='$t(`common:page.tryAgain`)'
         @retry='retryBrowse'
       )
       async-state(
         v-else-if='currentItems.length === 0'
         state='empty'
-        title='No pages in this directory'
+        :title='$t(`common:sidebar.noPagesInDirectory`)'
       )
       template(v-if='currentParent.id > 0')
         v-list-item.nav-sidebar-ancestor(v-for='(item, idx) of parents', :key='`parent-` + item.id', @click='fetchBrowseItems(item)')
@@ -118,7 +118,7 @@
             icon
             size="small"
             :href='editPath(currentParent)'
-            :aria-label='`Edit parent page ${currentParent.title}`'
+            :aria-label='$t(`common:sidebar.editParentPage`, { title: currentParent.title })'
           )
             v-icon(size="small") mdi-pencil
         v-list-subheader.nav-sidebar-subheader.nav-sidebar-directory-label {{$t('common:sidebar.currentDirectory')}}
@@ -286,7 +286,7 @@ export default defineComponent({
         this.loadedCache = _.union(this.loadedCache, [item.id])
       } catch (error) {
         if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence) {
-          this.navError = error instanceof Error ? error.message : 'Navigation could not be loaded.'
+          this.navError = error instanceof Error ? error.message : this.$t('common:sidebar.navigationLoadError')
         }
       } finally {
         if (this.browseRequestController === requestController) this.browseRequestController = null
@@ -317,7 +317,7 @@ export default defineComponent({
         )
         if (requestSequence !== this.browseRequestSequence) return
         const curPage = _.find(items, ['pageId', pageId])
-        if (!curPage) throw new Error('Could not find the current page in navigation.')
+        if (!curPage) throw new Error(this.$t('common:sidebar.currentPageNotFound'))
         let curParentId = curPage.parent
         const invertedAncestors: PageTreeRow[] = []
         while (curParentId) {
@@ -332,7 +332,7 @@ export default defineComponent({
         this.currentItems = _.filter(items, ['parent', curPage.parent])
       } catch (error) {
         if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence) {
-          this.navError = error instanceof Error ? error.message : 'Navigation could not be loaded.'
+          this.navError = error instanceof Error ? error.message : this.$t('common:sidebar.navigationLoadError')
         }
       } finally {
         if (this.browseRequestController === requestController) this.browseRequestController = null
@@ -502,7 +502,7 @@ export default defineComponent({
           color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent),
           color-mix(in srgb, var(--wiki-accent-spectral) 7%, transparent)
         );
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-accent-ink);
       font-weight: 680;
       box-shadow: var(--wiki-shadow-xs);
 
@@ -589,7 +589,7 @@ export default defineComponent({
     &:hover {
       border-color: color-mix(in srgb, var(--wiki-accent-warm) 20%, transparent);
       background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-accent-ink);
     }
   }
 

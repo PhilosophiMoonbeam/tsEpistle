@@ -387,7 +387,7 @@ export default defineComponent({
   text-transform: uppercase;
 
   &__root {
-    color: var(--wiki-accent-warm);
+    color: var(--wiki-accent-ink);
   }
 
   &__separator {
@@ -431,13 +431,13 @@ export default defineComponent({
     border: 1px solid color-mix(in srgb, var(--wiki-ambient-accent) 28%, transparent);
     border-radius: var(--wiki-control-radius);
     background: color-mix(in srgb, var(--wiki-ambient-accent) 11%, var(--wiki-surface-raised));
-    color: var(--wiki-accent-warm);
+    color: var(--wiki-accent-ink);
     box-shadow: var(--wiki-shadow-sm), var(--wiki-shadow-inset);
   }
 
   &__eyebrow {
     margin-bottom: var(--wiki-space-1);
-    color: var(--wiki-accent-warm);
+    color: var(--wiki-accent-ink);
     font-size: var(--wiki-label-size);
     font-weight: var(--wiki-label-weight);
     letter-spacing: .1em;
@@ -578,11 +578,11 @@ export default defineComponent({
   .v-list-item--active {
     opacity: 1;
     background: color-mix(in srgb, var(--wiki-ambient-accent) 12%, transparent);
-    color: var(--wiki-accent-warm);
+    color: var(--wiki-accent-ink);
     box-shadow: inset .1875rem 0 0 var(--wiki-ambient-accent);
 
     .v-icon {
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-accent-ink);
       opacity: 1;
     }
   }
@@ -731,7 +731,7 @@ export default defineComponent({
     text-decoration: none;
 
     &:hover {
-      color: var(--wiki-accent-warm);
+      color: var(--wiki-accent-ink);
     }
   }
 
@@ -766,7 +766,7 @@ export default defineComponent({
 
 .admin-record-link,
 .admin-mobile-record-title {
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
   font-weight: 650;
   text-decoration: none;
 
@@ -829,7 +829,7 @@ export default defineComponent({
   font-family: var(--wiki-font-mono);
 }
 
-@media (max-width: 959px) {
+@media (max-width: 839.98px) {
   .admin-context--mobile {
     display: inline-flex;
     max-width: min(12rem, 48vw);

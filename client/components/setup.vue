@@ -52,6 +52,7 @@
                     type='email'
                     autocomplete='email'
                     :error-messages='fieldErrors.adminEmail'
+                    :disabled='loading'
                     ref='adminEmailInput'
                     prepend-inner-icon='mdi-email-outline'
                   )
@@ -68,10 +69,11 @@
                     persistent-hint
                     required
                     :error-messages='fieldErrors.adminPassword'
+                    :disabled='loading'
                     prepend-inner-icon='mdi-lock-outline'
                   )
                     template(v-slot:append-inner)
-                      v-btn(icon type='button' variant='text' size='small' :aria-label="pwdMode ? 'Show password' : 'Hide password'" @click='pwdMode = !pwdMode')
+                      v-btn(icon type='button' variant='text' size='small' :aria-label="pwdMode ? 'Show administrator password' : 'Hide administrator password'" :disabled='loading' @click='pwdMode = !pwdMode')
                         v-icon(:icon="pwdMode ? 'mdi-eye-off' : 'mdi-eye'")
                 v-col(cols='12', sm='6')
                   v-text-field(
@@ -86,10 +88,11 @@
                     persistent-hint
                     required
                     :error-messages='fieldErrors.adminPasswordConfirm'
+                    :disabled='loading'
                     prepend-inner-icon='mdi-lock-check-outline'
                   )
                     template(v-slot:append-inner)
-                      v-btn(icon type='button' variant='text' size='small' :aria-label="pwdConfirmMode ? 'Show password' : 'Hide password'" @click='pwdConfirmMode = !pwdConfirmMode')
+                      v-btn(icon type='button' variant='text' size='small' :aria-label="pwdConfirmMode ? 'Show password confirmation' : 'Hide password confirmation'" :disabled='loading' @click='pwdConfirmMode = !pwdConfirmMode')
                         v-icon(:icon="pwdConfirmMode ? 'mdi-eye-off' : 'mdi-eye'")
 
             section.setup-section
@@ -105,6 +108,7 @@
                 v-model='conf.siteUrl'
                 label='Site URL'
                 placeholder='https://wiki.example.com'
+                persistent-placeholder
                 hint='Full public URL without a trailing slash, for example https://wiki.example.com.'
                 persistent-hint
                 required
@@ -112,6 +116,7 @@
                 inputmode='url'
                 autocomplete='url'
                 :error-messages='fieldErrors.siteUrl'
+                :disabled='loading'
                 prepend-inner-icon='mdi-link-variant'
               )
 
@@ -127,12 +132,14 @@
                 color='primary'
                 v-model='conf.telemetry'
                 label='Allow anonymous telemetry'
+                :disabled='loading'
                 hide-details
               )
               a.setup-learn(href='https://docs.requarks.io/telemetry', target='_blank', rel='noopener noreferrer') Learn more about telemetry
 
           v-card-actions.setup-actions
             v-btn(
+              ref='installButton'
               color='primary'
               type='submit'
               form='setup-form'
@@ -146,8 +153,8 @@
               span Install {{ product.name }}
 
     v-dialog(v-model='loading', width='420', persistent, aria-labelledby='setup-progress-title')
-      v-card.setup-progress(variant='flat')
-        v-progress-linear(indeterminate color='primary' aria-hidden='true')
+      v-card.setup-progress(variant='flat' :aria-busy='!success')
+        v-progress-linear(v-if='!success' indeterminate color='primary' aria-hidden='true')
         v-card-text.text-center
           .setup-progress-spinner(v-if='!success')
             breeding-rhombus-spinner(
@@ -161,7 +168,13 @@
             .setup-progress-copy Just a moment
           template(v-else)
             .setup-progress-title#setup-progress-title(role='status' aria-live='polite') Installation complete!
-            .setup-progress-copy Redirecting...
+            .setup-progress-copy Taking you to sign in...
+            v-btn.mt-4(
+              color='primary'
+              variant='flat'
+              autofocus
+              @click='continueToLogin'
+            ) Continue to sign in
 </template>
 
 <script lang='ts'>
@@ -187,6 +200,8 @@ type FinalizeResponse = {
   ok: boolean
   error: string
 }
+
+const SUCCESS_REDIRECT_DELAY_MS = 1000
 
 function focusComponent (ref: unknown): void {
   if (!ref || typeof ref !== 'object') return
@@ -237,10 +252,7 @@ export default {
       pwdMode: true,
       pwdConfirmMode: true,
       focusTimer: null as number | null,
-      finalizeTimer: null as number | null,
-      celebrationTimer: null as number | null,
       redirectTimer: null as number | null,
-      finalizeController: null as AbortController | null,
       isDisposed: false
     }
   },
@@ -253,13 +265,10 @@ export default {
   beforeUnmount() {
     this.isDisposed = true
     if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
-    if (this.finalizeTimer !== null) window.clearTimeout(this.finalizeTimer)
-    if (this.celebrationTimer !== null) window.clearTimeout(this.celebrationTimer)
     if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
-    this.finalizeController?.abort()
   },
   methods: {
-    install () {
+    async install () {
       if (this.loading) return
       this.fieldErrors = {
         adminEmail: '',
@@ -320,57 +329,63 @@ export default {
       this.loading = true
       this.success = false
 
-      this.finalizeTimer = window.setTimeout(async () => {
-        this.finalizeTimer = null
-        if (this.isDisposed) return
-        const controller = new AbortController()
-        this.finalizeController = controller
-        try {
-          const response = await sameOriginJsonFetch(window.fetch.bind(window), '/finalize', {
-            method: 'POST',
-            cache: 'no-cache',
-            signal: controller.signal,
-            headers: {
-              Accept: 'application/json',
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(this.conf)
-          })
-          const resp = normalizeFinalizeResponse(await response.json())
-          this.finalizeController = null
+      // Finalization is non-idempotent. Let the server resolve it rather than
+      // creating an ambiguous retry state by aborting an in-flight request.
 
-          if (this.isDisposed) return
-          if (resp.ok === true) {
-            this.celebrationTimer = window.setTimeout(() => {
-              this.celebrationTimer = null
-              if (this.isDisposed) return
-              confetti({
-                particleCount: 100,
-                spread: 70,
-                zIndex: 100000
-              })
-              this.success = true
-              this.redirectTimer = window.setTimeout(() => {
-                this.redirectTimer = null
-                if (!this.isDisposed) window.location.assign('/login')
-              }, 3000)
-            }, 10000)
-          } else {
-            this.error = true
-            this.errorMessage = resp.error
-            this.loading = false
-            this.$nextTick(() => focusComponent(this.$refs.setupAlert))
-          }
-        } catch (err) {
-          this.finalizeController = null
-          if (this.isDisposed) return
-          console.error(err)
+      try {
+        const response = await sameOriginJsonFetch(window.fetch.bind(window), '/finalize', {
+          method: 'POST',
+          cache: 'no-cache',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(this.conf)
+        })
+        const resp = normalizeFinalizeResponse(await response.json())
+        if (this.isDisposed) return
+
+        if (!resp.ok) {
           this.error = true
-          this.errorMessage = getErrorMessage(err)
+          this.errorMessage = resp.error || 'Setup could not be completed. Please try again.'
           this.loading = false
-          this.$nextTick(() => focusComponent(this.$refs.setupAlert))
+          this.$nextTick(() => focusComponent(this.$refs.installButton))
+          return
         }
-      }, 1000)
+
+        this.success = true
+        try {
+          if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            confetti({
+              particleCount: 100,
+              spread: 70,
+              zIndex: 100000,
+              disableForReducedMotion: true,
+            })
+          }
+        } catch (celebrationError) {
+          console.error(celebrationError)
+        }
+        this.redirectTimer = window.setTimeout(() => {
+          this.redirectTimer = null
+          this.continueToLogin()
+        }, SUCCESS_REDIRECT_DELAY_MS)
+      } catch (err) {
+        if (this.isDisposed) return
+        console.error(err)
+        this.error = true
+        this.errorMessage = getErrorMessage(err)
+        this.loading = false
+        this.$nextTick(() => focusComponent(this.$refs.installButton))
+      }
+    },
+    continueToLogin () {
+      if (this.isDisposed) return
+      if (this.redirectTimer !== null) {
+        window.clearTimeout(this.redirectTimer)
+        this.redirectTimer = null
+      }
+      window.location.assign('/login')
     }
   }
 }

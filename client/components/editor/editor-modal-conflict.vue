@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-dialog.editor-modal-conflict-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='editor-conflict-title', @update:model-value='close')
+  v-dialog.editor-modal-conflict-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='editor-conflict-title', @update:model-value='onDialogModelUpdate')
     v-card.editor-modal-conflict.animated.fadeIn(flat, rounded='0')
       .editor-modal-conflict-header
         v-toolbar.radius-7(flat, color='indigo', style='border-bottom-left-radius: 0; border-bottom-right-radius: 0;')
@@ -7,7 +7,7 @@
           .text-body-large#editor-conflict-title {{$t('editor:conflict.title')}}
           v-spacer
           v-progress-circular(v-if='isLoading', indeterminate, size='20', width='2', color='white', aria-label='Loading latest version')
-          v-btn(variant="outlined", color="indigo-lighten-4", @click='close')
+          v-btn(variant="outlined", color="indigo-lighten-4", @click='requestClose')
             v-icon(start) mdi-close
             span {{$t('common:actions.cancel')}}
       template(v-if='isLoading')
@@ -16,7 +16,7 @@
       template(v-else-if='loadError')
         v-alert.ma-6(type='error', variant='tonal', role='alert') {{loadError}}
         .editor-modal-conflict-actions
-          v-btn(variant='text', @click='close') {{$t('common:actions.cancel')}}
+          v-btn(variant='text', @click='requestClose') {{$t('common:actions.cancel')}}
           v-btn(color='indigo', @click='loadConflict') Retry
       template(v-else)
         .editor-modal-conflict-legend
@@ -39,7 +39,7 @@
         .editor-modal-conflict-editor
           div(ref='cm')
         .editor-modal-conflict-actions
-          v-btn(variant="text", @click='close') {{$t('common:actions.cancel')}}
+          v-btn(variant="text", @click='requestClose') {{$t('common:actions.cancel')}}
           v-btn(variant="outlined", color='indigo', :disabled='!cm', @click='useLocal')
             v-icon(start) mdi-check
             span {{$t('editor:conflict.useLocal')}}
@@ -73,6 +73,24 @@
                 v-btn(@click='useRemote', color='indigo')
                   v-icon(start) mdi-check
                   span {{$t('common:actions.confirm')}}
+          v-dialog(
+            v-model='isDiscardConfirmDiagShown'
+            max-width='500'
+            role='alertdialog'
+            aria-labelledby='editor-conflict-discard-title'
+            aria-describedby='editor-conflict-discard-description'
+            @after-leave='restoreMergeFocus'
+          )
+            v-card
+              .dialog-header.is-short.is-red
+                v-icon.mr-3(color='white', aria-hidden='true') mdi-alert
+                span#editor-conflict-discard-title Discard merge edits?
+              v-card-text.pa-4#editor-conflict-discard-description
+                | Your editable merge has changed. Closing now will discard those edits.
+              div.v-card-chin
+                v-spacer
+                v-btn(variant='outlined', color='indigo', @click='keepEditing') Keep editing
+                v-btn(color='red', @click='discardMergeEdits') Discard merge edits
 </template>
 <script lang='ts'>
 import { defineComponent, markRaw } from 'vue'
@@ -105,6 +123,9 @@ export default defineComponent({
       isLoading: true,
       loadError: '',
       isRemoteConfirmDiagShown: false,
+      isDiscardConfirmDiagShown: false,
+      initialMergeValue: null as string | null,
+      mergeValue: '',
       requestController: null as AbortController | null
     }
   },
@@ -126,6 +147,9 @@ export default defineComponent({
     description() {
       return wikiStore.page.description
     },
+    isMergeDirty() {
+      return this.initialMergeValue !== null && this.mergeValue !== this.initialMergeValue
+    },
     checkoutDateActive: {
       get() {
         return wikiStore.editor.checkoutDateActive
@@ -136,17 +160,41 @@ export default defineComponent({
     }
   },
   methods: {
-    close () {
+    onDialogModelUpdate (isOpen: boolean) {
+      if (!isOpen) this.requestClose()
+    },
+    requestClose () {
+      if (this.isMergeDirty) {
+        this.isRemoteConfirmDiagShown = false
+        this.isDiscardConfirmDiagShown = true
+        return
+      }
+      this.finishClose()
+    },
+    keepEditing () {
+      this.isDiscardConfirmDiagShown = false
+    },
+    discardMergeEdits () {
+      this.isDiscardConfirmDiagShown = false
+      this.finishClose()
+    },
+    restoreMergeFocus () {
+      if (this.activeModal === 'editorModalConflict') {
+        this.$nextTick(() => this.cm?.focus())
+      }
+    },
+    finishClose () {
       this.requestController?.abort()
       this.requestController = null
       this.isRemoteConfirmDiagShown = false
+      this.isDiscardConfirmDiagShown = false
       this.activeModal = ''
     },
     overwriteAndClose() {
       if (!this.latestLoaded) return
       this.checkoutDateActive = this.latest.updatedAt
       emitEditorConflictResolved()
-      this.close()
+      this.finishClose()
     },
     useLocal () {
       if (!this.cm || !this.latestLoaded) return
@@ -167,6 +215,8 @@ export default defineComponent({
       this.latestLoaded = false
       this.cm?.destroy()
       this.cm = null
+      this.initialMergeValue = null
+      this.mergeValue = ''
       let resp: ConflictLatest | null = null
       try {
         resp = await fetchPageConflictLatest(
@@ -212,11 +262,17 @@ export default defineComponent({
         this.loadError = 'The conflict editor could not be initialized.'
         return
       }
+      const initialMergeValue = wikiStore.editor.content
+      this.initialMergeValue = initialMergeValue
+      this.mergeValue = initialMergeValue
       this.cm = markRaw(new TextEditor({
         parent: container,
-        value: wikiStore.editor.content,
+        value: initialMergeValue,
         language,
         direction: siteConfig.rtl ? 'rtl' : 'ltr',
+        onChange: value => {
+          this.mergeValue = value
+        },
         extensions: [
           unifiedMergeView({
             original: resp.content,

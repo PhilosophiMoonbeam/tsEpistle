@@ -1,57 +1,94 @@
 <template lang="pug">
   div
     v-dialog(v-model='isShown', max-width='650', persistent, aria-labelledby='api-key-create-title')
-      v-card.admin-dialog--scrollable
-        .dialog-header.is-short
-          v-icon.mr-3(color='white') mdi-plus
-          span#api-key-create-title {{$t('admin:api.newKeyTitle')}}
-        v-card-text.pt-5.admin-dialog--scrollable__body
-          v-text-field(
-            variant="outlined"
-            prepend-icon='mdi-format-title'
-            v-model='name'
-            :label='$t(`admin:api.newKeyName`)'
-            persistent-hint
-            ref='keyNameInput'
-            :hint='$t(`admin:api.newKeyNameHint`)'
-            counter='255'
+      v-form(ref='createForm', @submit.prevent='generate')
+        v-card.admin-dialog--scrollable
+          .dialog-header.is-short
+            v-icon.mr-3(color='white') mdi-plus
+            span#api-key-create-title {{$t('admin:api.newKeyTitle')}}
+          v-card-text.pt-5.admin-dialog--scrollable__body
+            v-text-field(
+              ref='keyNameInput'
+              v-model='name'
+              variant='outlined'
+              prepend-icon='mdi-format-title'
+              :label='$t(`admin:api.newKeyName`)'
+              :hint='$t(`admin:api.newKeyNameHint`)'
+              :rules='nameRules'
+              :disabled='loading'
+              persistent-hint
+              counter='255'
+              autocomplete='off'
             )
-          v-select.mt-3(
-            :items='expirations'
-            item-title='title'
-            item-value='value'
-            variant="outlined"
-            prepend-icon='mdi-clock'
-            v-model='expiration'
-            :label='$t(`admin:api.newKeyExpiration`)'
-            :hint='$t(`admin:api.newKeyExpirationHint`)'
-            persistent-hint
+            v-select.mt-3(
+              ref='expirationInput'
+              v-model='expiration'
+              :items='expirations'
+              item-title='title'
+              item-value='value'
+              variant='outlined'
+              prepend-icon='mdi-clock'
+              :label='$t(`admin:api.newKeyExpiration`)'
+              :hint='$t(`admin:api.newKeyExpirationHint`)'
+              :rules='[requiredRule]'
+              :disabled='loading'
+              persistent-hint
             )
-          v-divider.mt-4
-          v-list-subheader.pl-2: strong.text-indigo {{$t('admin:api.newKeyPermissionScopes')}}
-          v-radio-group.pl-4(v-model='scope', :rules='[scopeRule]')
-            v-radio(value='full', color='indigo', label='System administrator permissions', aria-describedby='api-key-full-scope-description')
-            #api-key-full-scope-description.text-body-small.text-medium-emphasis.ml-10.mb-3 Grants the key unrestricted system-administrator authority.
-            v-radio(value='group', color='indigo', label='Use a group’s permissions', aria-describedby='api-key-group-scope-description')
-            #api-key-group-scope-description.text-body-small.text-medium-emphasis.ml-10 The key is limited to the selected group’s permissions and page rules.
-          v-select.ml-8.mt-2(
-            v-if='scope === `group`'
-            :items='groups'
-            item-title='name'
-            item-value='id'
-            variant="outlined"
-            color='indigo'
-            v-model='group'
-            :label='$t(`admin:api.newKeyGroup`)'
-            :hint='$t(`admin:api.newKeyGroupHint`)'
-            persistent-hint
-          )
-        div.v-card-chin.admin-dialog-actions
-          v-spacer
-          v-btn(variant="text", @click='isShown = false', :disabled='loading') {{$t('common:actions.cancel')}}
-          v-btn.px-3(variant="flat", color='primary', @click='generate', :loading='loading')
-            v-icon(start) mdi-chevron-right
-            span {{$t('common:actions.generate')}}
+            v-divider.mt-4
+            v-list-subheader.pl-2: strong.text-indigo {{$t('admin:api.newKeyPermissionScopes')}}
+            v-radio-group.pl-4(
+              ref='scopeInput'
+              v-model='scope'
+              :rules='[scopeRule]'
+              :disabled='loading'
+            )
+              v-radio(value='full', color='indigo', label='System administrator permissions', aria-describedby='api-key-full-scope-description')
+              #api-key-full-scope-description.text-body-small.text-medium-emphasis.ml-10.mb-3 Grants the key unrestricted system-administrator authority.
+              v-radio(value='group', color='indigo', label='Use a group’s permissions', aria-describedby='api-key-group-scope-description')
+              #api-key-group-scope-description.text-body-small.text-medium-emphasis.ml-10 The key is limited to the selected group’s permissions and page rules.
+            v-alert.ml-8.mt-2(
+              v-if='scope === `group` && groupLoadState === `error`'
+              type='error'
+              variant='tonal'
+              density='compact'
+              icon='mdi-alert-circle-outline'
+            )
+              .text-body-small {{ groupLoadError }}
+              v-btn.mt-2(
+                type='button'
+                size='small'
+                variant='outlined'
+                prepend-icon='mdi-refresh'
+                @click='loadGroups'
+              ) Retry groups
+            v-select.ml-8.mt-2(
+              v-if='scope === `group`'
+              ref='groupInput'
+              v-model='group'
+              :items='groups'
+              item-title='name'
+              item-value='id'
+              variant='outlined'
+              color='indigo'
+              :label='$t(`admin:api.newKeyGroup`)'
+              :hint='$t(`admin:api.newKeyGroupHint`)'
+              :rules='groupRules'
+              :loading='groupLoadState === `loading`'
+              :disabled='loading || groupLoadState !== `success`'
+              persistent-hint
+            )
+          div.v-card-chin.admin-dialog-actions
+            v-spacer
+            v-btn(type='button', variant='text', @click='isShown = false', :disabled='loading') {{$t('common:actions.cancel')}}
+            v-btn.px-3(
+              type='submit'
+              variant='flat'
+              color='primary'
+              :loading='loading'
+              :disabled='loading || (scope === `group` && groupLoadState !== `success`)'
+            )
+              v-icon(start) mdi-chevron-right
+              span {{$t('common:actions.generate')}}
 
     v-dialog(
       v-model='isCopyKeyDialogShown'
@@ -114,6 +151,8 @@ export default {
       scope: null as 'full' | 'group' | null,
       groups: [] as GroupOption[],
       group: null as number | null,
+      groupLoadState: 'idle' as 'idle' | 'loading' | 'success' | 'error',
+      groupLoadError: '',
       isCopyKeyDialogShown: false,
       key: '',
       copied: false
@@ -133,8 +172,28 @@ export default {
         { value: '3y', title: this.$t('admin:api.expiration3y') }
       ]
     },
+    requiredRule (): (value: unknown) => true | string {
+      return (value: unknown) => Boolean(value) || 'This field is required.'
+    },
+    nameRules (): Array<(value: string) => true | string> {
+      return [
+        (value: string) => {
+          const length = value?.trim().length ?? 0
+          return (length >= 2 && length <= 255) || String(this.$t('admin:api.newKeyNameError'))
+        }
+      ]
+    },
     scopeRule (): (value: string | null) => true | string {
       return (value: string | null) => Boolean(value) || 'Choose a permission scope.'
+    },
+    groupRules (): Array<(value: number | null) => true | string> {
+      return [
+        (value: number | null) => {
+          if (this.scope !== 'group') return true
+          if (value === null) return String(this.$t('admin:api.newKeyGroupError'))
+          return value !== 2 || String(this.$t('admin:api.newKeyGuestGroupError'))
+        }
+      ]
     }
   },
   watch: {
@@ -142,13 +201,18 @@ export default {
       immediate: true,
       handler (newValue: boolean) {
         if (newValue) {
+          if (this.scope === 'group') void this.loadGroups()
           this.$nextTick(() => {
-            if (this.modelValue) {
-              ;(this.$refs.keyNameInput as { focus?: () => void } | undefined)?.focus?.()
-            }
+            if (this.modelValue) this.focusFormControl('keyNameInput')
           })
+        } else {
+          const form = this.$refs.createForm as { resetValidation?: () => void } | undefined
+          form?.resetValidation?.()
         }
       }
+    },
+    scope (newValue: 'full' | 'group' | null) {
+      if (newValue === 'group' && this.modelValue) void this.loadGroups()
     },
     isCopyKeyDialogShown (newValue: boolean) {
       if (newValue) this.copied = false
@@ -170,41 +234,51 @@ export default {
       this.copied = false
       this.key = ''
     },
+    focusFormControl (refName: string) {
+      const control = this.$refs[refName] as {
+        focus?: () => void
+        $el?: HTMLElement
+      } | undefined
+      if (control?.focus) {
+        control.focus()
+        return
+      }
+      control?.$el?.querySelector<HTMLElement>('input:not([disabled]), [tabindex]:not([tabindex="-1"])')?.focus()
+    },
     async loadGroups() {
+      if (!this.modelValue || this.scope !== 'group' || this.groupLoadState === 'loading' || this.groupLoadState === 'success') return
+      this.groupLoadState = 'loading'
+      this.groupLoadError = ''
       wikiStore.startLoading('admin-api-groups-refresh')
       try {
         this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+        this.groupLoadState = 'success'
       } catch (err) {
-        wikiStore.showNotification({
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        this.groups = []
+        this.groupLoadState = 'error'
+        this.groupLoadError = getErrorMessage(err)
       } finally {
         wikiStore.stopLoading('admin-api-groups-refresh')
       }
     },
     async generate () {
       if (this.loading) return
-      const normalizedName = this.name.trim()
-      try {
-        if (normalizedName.length < 2 || normalizedName.length > 255) {
-          throw new Error(this.$t('admin:api.newKeyNameError'))
-        } else if (!this.scope) {
-          throw new Error('Choose a permission scope.')
-        } else if (this.scope === 'group' && !this.group) {
-          throw new Error(this.$t('admin:api.newKeyGroupError'))
-        } else if (this.scope === 'group' && this.group === 2) {
-          throw new Error(this.$t('admin:api.newKeyGuestGroupError'))
+      const form = this.$refs.createForm as {
+        validate?: () => Promise<{ valid: boolean }>
+      } | undefined
+      const validation = await form?.validate?.()
+      if (!validation?.valid) {
+        const normalizedName = this.name.trim()
+        let firstInvalid = 'keyNameInput'
+        if (normalizedName.length >= 2 && normalizedName.length <= 255) {
+          if (!this.expiration) firstInvalid = 'expirationInput'
+          else if (!this.scope) firstInvalid = 'scopeInput'
+          else if (this.scope === 'group' && (this.group === null || this.group === 2)) firstInvalid = 'groupInput'
         }
-      } catch (err) {
-        return wikiStore.showNotification({
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        this.$nextTick(() => this.focusFormControl(firstInvalid))
+        return
       }
-      this.name = normalizedName
+      this.name = this.name.trim()
 
       this.loading = true
       wikiStore.startLoading('admin-api-create')
@@ -243,8 +317,5 @@ export default {
       }
     }
   },
-  created() {
-    this.loadGroups()
-  }
 }
 </script>
