@@ -1992,6 +1992,8 @@ export default defineComponent({
     display: flex;
     justify-content: flex-end;
     gap: var(--wiki-space-2);
+    align-self: end;
+    overflow: visible;
 
     .v-btn {
       min-height: calc(var(--wiki-control-height) * .85);
@@ -2047,7 +2049,6 @@ export default defineComponent({
       max-width: var(--page-header-action-reserve);
       grid-column: 2;
       justify-self: end;
-      overflow: hidden;
 
       .v-btn {
         min-width: 0;
