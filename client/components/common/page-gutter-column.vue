@@ -51,11 +51,13 @@
       focusable='false'
     )
       g.wiki-gutter-column__wash
+        path.wiki-gutter-column__base-neck(d='M61 480 H129 L131 493 H59 Z')
         path(d='M49 500 C49 484 141 484 141 500 C141 516 49 516 49 500 Z')
         path(d='M30 553 C30 532 160 532 160 553 C160 576 30 576 30 553 Z')
 
       g.wiki-gutter-column__line
         //- Attic base: torus, scotia, lower torus, and plinth
+        path.wiki-gutter-column__base-neck(d='M61 480 L59 493 M129 480 L131 493')
         path(d='M49 500 C49 484 141 484 141 500 C141 516 49 516 49 500 Z')
         path(d='M43 513 H147 C143 527 133 537 124 543 H66 C57 537 47 527 43 513 Z')
         path.wiki-gutter-column__fine(d='M49 520 H141 M58 536 H132')

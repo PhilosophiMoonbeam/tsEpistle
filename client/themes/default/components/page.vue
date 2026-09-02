@@ -1717,7 +1717,7 @@ export default defineComponent({
   --page-reader-shell-max: 132rem;
   --page-metadata-rail-width: clamp(18rem, 22.5vw, 21rem);
   --page-reader-column-gap: var(--wiki-space-6);
-  --page-reader-copy-max: 92ch;
+  --page-reader-copy-max: 101.2ch;
 
   font-family: var(--wiki-font-body);
 }
@@ -2417,7 +2417,7 @@ export default defineComponent({
   );
   height: min(
     calc(100% - var(--wiki-space-8)),
-    max(calc(var(--wiki-grid-size) * 7), 68%)
+    max(calc(var(--wiki-grid-size) * 7), 80%)
   );
   opacity: .58;
   transform: translateY(-50%);

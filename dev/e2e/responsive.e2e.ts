@@ -95,6 +95,19 @@ test.describe('responsive UI quality matrix', () => {
             await sidebar.evaluate(element => {
               element.scrollTop = 0
             })
+
+            if (viewport.width >= 2560) {
+              const articleSurface = page.locator('.page-col-content:not(.is-page-header) > .contents').first()
+              const gutterOrnament = articleSurface.locator('> .page-gutter-ornament--start')
+              await expect(gutterOrnament).toBeVisible()
+              const gutterCoverage = await gutterOrnament.evaluate(element => {
+                const article = element.parentElement
+                if (!article) throw new Error('Reading gutter article is missing')
+                return element.getBoundingClientRect().height / article.getBoundingClientRect().height
+              })
+              expect(gutterCoverage, 'Long-page reading gutters retain 80% article coverage').toBeGreaterThanOrEqual(.79)
+              expect(gutterCoverage, 'Long-page reading gutters retain 80% article coverage').toBeLessThanOrEqual(.81)
+            }
           }
         }
       }
@@ -326,8 +339,8 @@ test.describe('responsive UI quality matrix', () => {
         return width
       })
       const copyGrowth = markdownCopyBounds.width / legacyCopyWidth
-      expect(copyGrowth, 'Wide Markdown copy is approximately 20% wider than the legacy 76ch measure').toBeGreaterThanOrEqual(1.19)
-      expect(copyGrowth, 'Wide Markdown copy is approximately 20% wider than the legacy 76ch measure').toBeLessThanOrEqual(1.22)
+      expect(copyGrowth, 'Wide Markdown copy is approximately 33% wider than the legacy 76ch measure').toBeGreaterThanOrEqual(1.32)
+      expect(copyGrowth, 'Wide Markdown copy is approximately 33% wider than the legacy 76ch measure').toBeLessThanOrEqual(1.34)
     }
   })
 

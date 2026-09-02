@@ -163,6 +163,7 @@ describe('default page focused contracts', () => {
   const script = extractScript(read('client/themes/default/components/page.vue'))
   const template = extractBlock(read('client/themes/default/components/page.vue'), 'template')
   const style = extractBlock(read('client/themes/default/components/page.vue'), 'style')
+  const gutterColumn = read('client/components/common/page-gutter-column.vue')
 
   test('default page notifies page-ready through imported boot instead of window global', () => {
     expect(script).not.toBeNull()
@@ -189,7 +190,7 @@ describe('default page focused contracts', () => {
       '--page-reader-shell-max': '132rem',
       '--page-metadata-rail-width': 'clamp\\(18rem,\\s*22\\.5vw,\\s*21rem\\)',
       '--page-reader-column-gap': 'var\\(--wiki-space-6\\)',
-      '--page-reader-copy-max': '92ch'
+      '--page-reader-copy-max': '101\\.2ch'
     })
     expectDeclarations(pageHeader, {
       width: 'min\\(100%,\\s*var\\(--page-reader-shell-max\\)\\)'
@@ -216,8 +217,12 @@ describe('default page focused contracts', () => {
     })
     expectDeclarations(readerGutter, {
       width:
-        'clamp\\(\\s*calc\\(var\\(--wiki-grid-size\\) \\* 1\\.125\\),\\s*calc\\(\\(100% - var\\(--page-reader-copy-max\\)\\) / 2 - var\\(--wiki-space-4\\)\\),\\s*calc\\(var\\(--wiki-grid-size\\) \\* 3\\.75\\)\\s*\\)'
+        'clamp\\(\\s*calc\\(var\\(--wiki-grid-size\\) \\* 1\\.125\\),\\s*calc\\(\\(100% - var\\(--page-reader-copy-max\\)\\) / 2 - var\\(--wiki-space-4\\)\\),\\s*calc\\(var\\(--wiki-grid-size\\) \\* 3\\.75\\)\\s*\\)',
+      height:
+        'min\\(\\s*calc\\(100% - var\\(--wiki-space-8\\)\\),\\s*max\\(calc\\(var\\(--wiki-grid-size\\) \\* 7\\),\\s*80%\\)\\s*\\)'
     })
+    expect(gutterColumn).toContain("path.wiki-gutter-column__base-neck(d='M61 480 H129 L131 493 H59 Z')")
+    expect(gutterColumn).toContain("path.wiki-gutter-column__base-neck(d='M61 480 L59 493 M129 480 L131 493')")
     expect(template).not.toMatch(/:href='`#\$\{tocItem\.anchor\}`'/)
     expect(template).toMatch(/\.page-toc-empty\(v-else\)/)
     expect(template).not.toMatch(/page-return-top--docked|:style='upBtnPosition'|location='bottom start'/)
