@@ -316,7 +316,7 @@
                   template(v-slot:prepend)
                     v-icon.page-toc-item-marker(size="x-small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
                   v-list-item-title.page-toc-item-title(
-                    :class='{ "font-weight-bold": tocItem.depth === 0 }'
+                    :class='{ "font-weight-bold": tocItem.depth === 0, "font-italic": tocItem.depth === 2 }'
                     ) {{tocItem.title}}
               .page-toc-empty(v-else)
                 v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted

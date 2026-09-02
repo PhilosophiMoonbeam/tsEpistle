@@ -37,6 +37,13 @@ test.describe('responsive UI quality matrix', () => {
         for (const heading of await highestAvailableHeadings.all()) {
           await expect(heading).toHaveCSS('font-weight', '700')
         }
+        if (path === '/en/home') {
+          const thirdLevelHeadings = tocCard.locator('.page-toc-item-title.font-italic')
+          expect(await thirdLevelHeadings.count(), 'Page Contents exposes third-level hierarchy styling').toBeGreaterThan(0)
+          for (const heading of await thirdLevelHeadings.all()) {
+            await expect(heading).toHaveCSS('font-style', 'italic')
+          }
+        }
 
         if (viewport.width >= 1280) {
           const hero = page.locator('.page-hero').first()
