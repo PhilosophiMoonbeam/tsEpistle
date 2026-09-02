@@ -4,6 +4,8 @@ import { describe, expect, it } from '../../../server/test/bun-test.mts'
 
 const panelPath = path.join(process.cwd(), 'client/components/editor/editor-okf-panel.vue')
 const panelSource = fs.readFileSync(panelPath, 'utf8')
+const editorPath = path.join(process.cwd(), 'client/components/editor.vue')
+const editorSource = fs.readFileSync(editorPath, 'utf8')
 const script = panelSource.match(/<script lang=['"]ts['"]>\s*([\s\S]*?)\s*<\/script>/)?.[1] ?? ''
 type PanelMethod = (...args: unknown[]) => unknown
 type PanelDefinition = { methods: Record<string, PanelMethod> }
@@ -13,10 +15,10 @@ const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(
   script
     .replace(/^import .*$/gm, '')
     .replace('export function parseExtensionJson', 'function parseExtensionJson')
-    .replace('export default defineComponent', 'const panel = defineComponent')
-    + '\nreturn { panel, parseExtensionJson }'
+    .replace('export default defineComponent', 'const panel = defineComponent') + '\nreturn { panel, parseExtensionJson }'
 )
-const loadPanel = () => new Function('defineComponent', executableScript)((options: unknown) => options) as { panel: PanelDefinition; parseExtensionJson: ExtensionParser }
+const loadPanel = () =>
+  new Function('defineComponent', executableScript)((options: unknown) => options) as { panel: PanelDefinition; parseExtensionJson: ExtensionParser }
 const loadParser = () => loadPanel().parseExtensionJson
 
 describe('Knowledge / OKF editor panel', () => {
@@ -115,9 +117,62 @@ describe('Knowledge / OKF editor panel', () => {
     expect(panelSource).not.toContain('Reset to draft')
   })
 
+  it('retries failed authority loads once and restores focus for either outcome', async () => {
+    const retryLoad = loadPanel().panel.methods.retryLoad
+    let resolveRequest: (() => void) | undefined
+    let retryCalls = 0
+    let retryAvailable = true
+    const focusTargets: unknown[] = []
+    const retryButton = { name: 'retry' }
+    const authorityHeading = { name: 'authority' }
+    const context = {
+      okfError: 'Authority load failed',
+      okfLoading: false,
+      retryPending: false,
+      okfLoadRetry: {
+        isAvailable: () => retryAvailable,
+        run: () => {
+          retryCalls += 1
+          return new Promise<void>(resolve => {
+            resolveRequest = resolve
+          })
+        }
+      },
+      $nextTick: () => Promise.resolve(),
+      $refs: { retryButton, authorityHeading },
+      focusControl: (target: unknown) => focusTargets.push(target)
+    }
+
+    const failedRetry = retryLoad.call(context) as Promise<void>
+    const duplicateRetry = retryLoad.call(context) as Promise<void>
+    expect(retryCalls).toBe(1)
+    expect(context.retryPending).toBe(true)
+    resolveRequest?.()
+    await Promise.all([failedRetry, duplicateRetry])
+    expect(context.retryPending).toBe(false)
+    expect(focusTargets).toEqual([retryButton])
+
+    const successfulRetry = retryLoad.call(context) as Promise<void>
+    context.okfError = ''
+    retryAvailable = false
+    resolveRequest?.()
+    await successfulRetry
+    expect(retryCalls).toBe(2)
+    expect(focusTargets).toEqual([retryButton, authorityHeading])
+
+    expect(editorSource).toContain('isAvailable: () => this.canRetryOkfAuthorityLoad')
+    expect(editorSource).toContain('run: () => this.retryOkfAuthorityLoad()')
+    expect(editorSource).toContain("return this.mode !== 'create' && this.pageId > 0 && Boolean(wikiStore.page.okfError) && !wikiStore.page.okfLoading")
+    expect(panelSource).toContain("v-if='canRetry'")
+    expect(panelSource).toContain("v-if='!okfLoading && !okfError && !hasMetadata'")
+    expect(panelSource).toContain(":disabled='retryPending || okfLoading'")
+    expect(panelSource).toContain("role='alert'")
+    expect(panelSource).toContain("aria-label='Loading Knowledge / OKF data'")
+  })
+
   it('shows authority and projection status badges', () => {
-    expect(panelSource).toContain(':color=\'authorityStateColor\'')
-    expect(panelSource).toContain(':color=\'projectionStateColor\'')
+    expect(panelSource).toContain(":color='authorityStateColor'")
+    expect(panelSource).toContain(":color='projectionStateColor'")
     expect(panelSource).toContain('projectionComplete ? `success` : `warning`')
     expect(panelSource).toContain("{{ trust ? (trust.stale ? 'stale' : 'current') : '—' }}")
   })

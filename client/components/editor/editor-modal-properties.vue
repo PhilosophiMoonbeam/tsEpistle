@@ -2,12 +2,14 @@
   v-dialog(
     v-model='isShown'
     persistent
+    scrollable
     width='1000'
     :fullscreen='$vuetify.display.smAndDown'
+    aria-labelledby='editor-properties-title'
     )
     .dialog-header
       v-icon(color='primary') mdi-tag-text-outline
-      .text-body-large.ml-3 {{$t('editor:props.pageProperties')}}
+      .text-body-large.ml-3#editor-properties-title {{$t('editor:props.pageProperties')}}
       v-spacer
       v-btn.mx-0.mr-2(
         variant='text'
@@ -38,6 +40,7 @@
               variant="outlined"
               :label='$t(`editor:props.title`)'
               counter='255'
+              maxlength='255'
               v-model='title'
               )
             v-text-field(
@@ -45,10 +48,12 @@
               :label='$t(`editor:props.shortDescription`)'
               counter='255'
               v-model='description'
+              maxlength='255'
               persistent-hint
               :hint='$t(`editor:props.shortDescriptionHint`)'
               )
             v-switch(
+              ref='privatePageSwitch'
               label='Private page'
               v-model='privatePage'
               color='deep-orange'
@@ -121,6 +126,7 @@
                     v-model='isPublishStartShown'
                     width='460px'
                     :disabled='!isPublished'
+                    :aria-label='$t(`editor:props.publishStart`)'
                     )
                     template(v-slot:activator='{ props }')
                       v-text-field(
@@ -158,6 +164,7 @@
                     v-model='isPublishEndShown'
                     width='460px'
                     :disabled='!isPublished'
+                    :aria-label='$t(`editor:props.publishEnd`)'
                     )
                     template(v-slot:activator='{ props }')
                       v-text-field(
@@ -285,10 +292,17 @@
           editor-okf-panel
 
 
-    v-dialog(v-model='privatePageConfirm', max-width='480')
+    v-dialog(
+      v-model='privatePageConfirm'
+      max-width='480'
+      role='alertdialog'
+      aria-labelledby='editor-properties-private-title'
+      aria-describedby='editor-properties-private-description'
+      @after-leave='restorePrivatePageFocus'
+    )
       v-card
-        v-card-title Publish private page?
-        v-card-text Publish this private page? It will become available through normal page permissions.
+        v-card-title#editor-properties-private-title Publish private page?
+        v-card-text#editor-properties-private-description Publish this private page? It will become available through normal page permissions.
         v-card-actions
           v-spacer
           v-btn(variant='text', @click='privatePageConfirm = false') {{$t('common:actions.cancel')}}
@@ -415,7 +429,8 @@ export default defineComponent({
       editorDisposed: false,
       pathRules: PATH_RULES,
       draft: createPropertiesDraft(),
-      okfSnapshot: null as OkfState | null
+      okfSnapshot: null as OkfState | null,
+      returnFocus: null as HTMLElement | null
     }
   },
   computed: {
@@ -621,7 +636,16 @@ export default defineComponent({
       })
     }
   },
+  mounted () {
+    this.returnFocus = document.activeElement as HTMLElement | null
+  },
   beforeUnmount() {
+    const target = this.returnFocus
+    queueMicrotask(() => {
+      if (target?.isConnected && !target.matches(':disabled') && !target.closest('[inert], [aria-hidden="true"]')) {
+        target.focus({ preventScroll: true })
+      }
+    })
     this.rollbackDraft()
     this.editorDisposed = true
     this.tagSearchRequest++
@@ -734,6 +758,10 @@ export default defineComponent({
       }
       this.commitDraft()
       this.isShown = false
+    },
+    restorePrivatePageFocus () {
+      if (!this.modelValue) return
+      this.$nextTick(() => focusInput(this.$refs.privatePageSwitch))
     },
     confirmPublish() {
       this.draft.visibility = 'public'

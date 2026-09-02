@@ -10,6 +10,7 @@ props:
     type: String
     title: Token
     hint: Loggly Token
+    sensitive: true
   subdomain:
     type: String
     title: Subdomain

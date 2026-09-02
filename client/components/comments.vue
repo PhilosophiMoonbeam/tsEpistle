@@ -20,6 +20,7 @@
         bg-color='surface'
         :aria-label='$t(`common:comments.fieldContent`)'
         :disabled='isPosting'
+        required
       )
       v-row.comments-guest-fields.mt-2(density="compact", v-if='!isAuthenticated')
         v-col(cols='12', lg='6')
@@ -34,6 +35,7 @@
             v-model='guestName'
             :aria-label='$t(`common:comments.fieldName`)'
             :disabled='isPosting'
+            required
           )
         v-col(cols='12', lg='6')
           v-text-field(
@@ -48,6 +50,7 @@
             v-model='guestEmail'
             :aria-label='$t(`common:comments.fieldEmail`)'
             :disabled='isPosting'
+            required
           )
       .comments-actions.d-flex.align-center.pt-3
         .comments-format.d-flex.align-center
@@ -68,22 +71,22 @@
           v-icon(start) mdi-comment
           span.text-none {{$t('common:comments.postComment')}}
     async-state.comments-loading(
-      v-if='isLoading && !hasLoadedOnce'
+      v-if='isLoading && (!hasLoadedOnce || comments.length === 0)'
       state='loading'
       :title='$t(`common:comments.loading`)'
     )
     async-state(
       v-else-if='fetchError'
       state='error'
-      title='Comments could not be loaded'
+      :title='$t(`common:error.unexpected`)'
       :message='fetchError'
-      retry-label='Try again'
+      :retry-label='$t(`common:actions.refresh`)'
       @retry='fetch(false)'
     )
     v-timeline.comments-thread(
       density="compact"
       v-else-if='comments.length > 0'
-      aria-label='Comment thread'
+      :aria-label='$t(`common:comments.title`)'
     )
       v-timeline-item.comments-post(
         dot-color="primary"
@@ -93,7 +96,7 @@
         :id='`comment-post-id-` + cm.id'
         )
         template(v-slot:icon)
-          v-avatar(color='primary')
+          v-avatar(color='primary', aria-hidden='true')
             //- v-img(src='http://i.pravatar.cc/64')
             span.text-on-primary.text-headline-small {{cm.initials}}
         v-card.comments-post-card(
@@ -107,14 +110,14 @@
                 icon
                 size='small'
                 variant='text'
-                :aria-label='`Edit comment by ${cm.authorName}`'
+                :aria-label='$t(`common:comments.updateComment`) + `: ` + cm.authorName'
                 @click='editComment(cm)'
               ): v-icon(size="small") mdi-pencil
               v-btn(
                 icon
                 size='small'
                 variant='text'
-                :aria-label='`Delete comment by ${cm.authorName}`'
+                :aria-label='$t(`common:comments.deleteConfirmTitle`) + `: ` + cm.authorName'
                 @click='deleteCommentConfirm(cm)'
               ): v-icon(size="small") mdi-delete
             .comments-post-name.text-body-small(:id='`comment-author-${cm.id}`'): strong {{cm.authorName}}
@@ -133,6 +136,7 @@
                 color="primary"
                 bg-color='surface'
                 :aria-label='$t(`common:comments.fieldContent`)'
+                required
               )
               .d-flex.align-center.pt-3
                 v-spacer
@@ -303,9 +307,9 @@ export default defineComponent({
         )
         if (requestId !== this.fetchGeneration) return
         this.comments = comments.map(comment => {
-          const nameParts = comment.authorName.toUpperCase().split(' ')
-          const firstInitial = nameParts[0].charAt(0)
-          const lastInitial = nameParts.length > 1 ? nameParts[nameParts.length - 1].charAt(0) : ''
+          const nameParts = comment.authorName.trim().toUpperCase().split(/\s+/)
+          const firstInitial = nameParts[0]?.charAt(0) ?? ''
+          const lastInitial = nameParts.length > 1 ? nameParts[nameParts.length - 1]?.charAt(0) ?? '' : ''
           return {
             ...comment,
             initials: firstInitial + lastInitial
@@ -335,6 +339,7 @@ export default defineComponent({
      */
     async postComment () {
       if (this.isPosting) return
+      const pageId = this.pageId
       const rules: CommentValidationRules = {
         comment: {
           presence: {
@@ -380,7 +385,7 @@ export default defineComponent({
       this.isPosting = true
       try {
         const response = await createComment(window.fetch.bind(window), {
-          pageId: this.pageId,
+          pageId,
           replyTo: 0,
           content: this.newcomment,
           guestName: this.guestName,
@@ -391,10 +396,12 @@ export default defineComponent({
           message: this.$t('common:comments.postSuccess'),
           icon: 'check'
         })
+        if (pageId !== this.pageId) return
         this.newcomment = ''
         await this.fetch()
+        if (pageId !== this.pageId || !this.comments.some(comment => comment.id === response.id)) return
         this.$nextTick(() => {
-          this.goTo(`#comment-post-id-${response.id}`, this.scrollOpts)
+          void this.goTo(`#comment-post-id-${response.id}`, this.scrollOpts)
         })
       } catch (err) {
         wikiStore.showNotification({
@@ -410,13 +417,17 @@ export default defineComponent({
      * Show Comment Editing Form
      */
     async editComment (cm: CommentWithInitials) {
+      if (this.isBusy) return
+      const pageId = this.pageId
       wikiStore.startLoading('comments-edit')
       this.isBusy = true
       try {
         const comment = await fetchComment(window.fetch.bind(window), cm.id)
+        if (pageId !== this.pageId) return
         this.commentEditContent = comment.content
         this.commentEditId = cm.id
       } catch (err) {
+        if (pageId !== this.pageId) return
         console.warn(err)
         wikiStore.showNotification({
           style: 'red',
@@ -439,28 +450,32 @@ export default defineComponent({
      * Update Comment with new content
      */
     async updateComment () {
+      if (this.isBusy) return
+      const pageId = this.pageId
+      const commentId = this.commentEditId
       wikiStore.startLoading('comments-edit')
       this.isBusy = true
       try {
         const content = this.commentEditContent
-        if (content === null || content.length < 2) {
+        if (content === null || content.trim().length < 2) {
           throw new Error(this.$t('common:comments.contentMissingError'))
         }
         const response = await updateComment(
           window.fetch.bind(window),
-          this.commentEditId,
+          commentId,
           content
         )
+        if (pageId !== this.pageId || commentId !== this.commentEditId) return
         wikiStore.showNotification({
           style: 'success',
           message: this.$t('common:comments.updateSuccess'),
           icon: 'check'
         })
-
-        const cm = this.comments.find(comment => comment.id === this.commentEditId)
-        if (!cm) throw new Error('Updated comment is missing from the current comments.')
-        cm.render = response.render
-        cm.updatedAt = (new Date()).toISOString()
+        const cm = this.comments.find(comment => comment.id === commentId)
+        if (cm) {
+          cm.render = response.render
+          cm.updatedAt = (new Date()).toISOString()
+        }
         this.editCommentCancel()
       } catch (err) {
         console.warn(err)
@@ -469,9 +484,10 @@ export default defineComponent({
           message: getErrorMessage(err),
           icon: 'alert'
         })
+      } finally {
+        this.isBusy = false
+        wikiStore.stopLoading('comments-edit')
       }
-      this.isBusy = false
-      wikiStore.stopLoading('comments-edit')
     },
     /**
      * Show Delete Comment Confirmation Dialog
@@ -484,8 +500,10 @@ export default defineComponent({
      * Delete Comment
      */
     async deleteComment () {
+      if (this.isBusy) return
       const commentToDelete = this.commentToDelete
       if (!commentToDelete) return
+      const pageId = this.pageId
       wikiStore.startLoading('comments-delete')
       this.isBusy = true
       this.deleteCommentDialogShown = false
@@ -497,16 +515,20 @@ export default defineComponent({
           message: this.$t('common:comments.deleteSuccess'),
           icon: 'check'
         })
-        this.comments = this.comments.filter(comment => comment.id !== commentToDelete.id)
+        if (pageId === this.pageId) {
+          this.comments = this.comments.filter(comment => comment.id !== commentToDelete.id)
+        }
+        this.commentToDelete = null
       } catch (err) {
         wikiStore.showNotification({
           style: 'red',
           message: getErrorMessage(err),
           icon: 'alert'
         })
+      } finally {
+        this.isBusy = false
+        wikiStore.stopLoading('comments-delete')
       }
-      this.isBusy = false
-      wikiStore.stopLoading('comments-delete')
     }
   }
 })
@@ -624,7 +646,6 @@ export default defineComponent({
     border-radius: var(--wiki-control-radius);
     background: var(--wiki-surface-raised);
     box-shadow: var(--wiki-shadow-xs);
-    opacity: 0;
     transition: opacity var(--wiki-motion-fast) var(--wiki-motion-ease);
 
     .v-btn {
@@ -716,6 +737,12 @@ export default defineComponent({
   border-bottom: 1px solid color-mix(in srgb, rgb(var(--v-theme-error)) 22%, transparent);
   background: color-mix(in srgb, rgb(var(--v-theme-error)) 10%, var(--wiki-surface-raised));
   color: rgb(var(--v-theme-on-surface));
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .comments-post-actions {
+    opacity: 0;
+  }
 }
 
 @media (max-width: 599px) {

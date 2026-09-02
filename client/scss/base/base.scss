@@ -126,8 +126,7 @@ body {
   box-shadow: var(--wiki-focus-ring);
 }
 
-.v-field:focus-within,
-.v-field--focused {
+.v-field:has(:focus-visible) {
   outline: .125rem solid var(--wiki-focus-color);
   outline-offset: .125rem;
   box-shadow: var(--wiki-focus-ring);
@@ -207,7 +206,7 @@ body {
   border-radius: var(--wiki-hero-radius);
 }
 
-@media (max-width: 599px) {
+@media (max-width: 599.98px) {
   :root {
     --wiki-page-gutter: .875rem;
     --wiki-grid-size: 3rem;
@@ -219,8 +218,7 @@ body {
 
 @media (forced-colors: active) {
   :where(a, button, [role='button'], input, textarea, select, summary, [tabindex]):focus-visible,
-  .v-field:focus-within,
-  .v-field--focused {
+  .v-field:has(:focus-visible) {
     outline: .125rem solid Highlight;
     box-shadow: none;
   }

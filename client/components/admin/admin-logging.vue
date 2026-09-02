@@ -70,13 +70,13 @@
                     .logger-provider-copy
                       .text-title-medium {{logger.title}}
                       .text-body-small {{logger.description}}
-                      .text-body-small: a(:href='logger.website') {{logger.website}}
+                      .text-body-small: a(:href='logger.website', target='_blank', rel='noopener noreferrer', :aria-label='`${logger.title} website — opens in a new tab`') {{logger.website}}
                   v-divider.mt-3
                   .text-title-small.font-weight-medium.mt-3 Configuration
                   .text-body-large.ml-3(v-if='!logger.config || logger.config.length < 1') This logger has no configuration options you can modify.
                   template(v-else, v-for='cfg in logger.config', :key='cfg.key')
                     v-select(
-                      v-if='cfg.value.type === "string" && cfg.value.enum'
+                      v-if='cfg.value.type === "string" && cfg.value.enum && !cfg.value.sensitive'
                       variant="outlined"
                       :items='cfg.value.enum'
                       :label='cfg.value.title'
@@ -87,7 +87,7 @@
                       :disabled='saving'
                     )
                     v-switch(
-                      v-else-if='cfg.value.type === "boolean"'
+                      v-else-if='cfg.value.type === "boolean" && !cfg.value.sensitive'
                       :label='cfg.value.title'
                       v-model='cfg.value.value'
                       color='primary'
@@ -104,7 +104,21 @@
                       persistent-hint
                       :class='cfg.value.hint ? "mb-2" : ""'
                       :disabled='saving'
-                      )
+                      :type='cfg.value.sensitive && !isSecretVisible(logger.key, cfg.key) ? `password` : `text`'
+                      :autocomplete='cfg.value.sensitive ? `new-password` : undefined'
+                      @update:focused='selectStoredSecret($event, cfg.value)'
+                    )
+                      template(v-slot:append-inner)
+                        v-btn(
+                          v-if='cfg.value.sensitive'
+                          icon
+                          variant='text'
+                          size='small'
+                          :aria-label='`${isSecretVisible(logger.key, cfg.key) ? "Hide" : "Show"} ${cfg.value.title || cfg.key}`'
+                          :aria-pressed='isSecretVisible(logger.key, cfg.key)'
+                          @click='toggleSecretVisibility(logger.key, cfg.key)'
+                        )
+                          v-icon {{ isSecretVisible(logger.key, cfg.key) ? 'mdi-eye-off' : 'mdi-eye' }}
                   v-divider.mt-3
                   .text-title-small.font-weight-medium.mt-3 Log Level
                   .text-body-large.ml-3 Select the minimum error level that will be reported to this logger.
@@ -150,6 +164,7 @@ export default {
     return {
       tab: 'settings',
       showConsole: false,
+      visibleSecretFields: [] as string[],
       loggers: [] as Logger[],
       levels: [
         { title: 'Error', value: 'error' },
@@ -177,6 +192,9 @@ export default {
       if (this.tab !== 'settings' && !activeLoggers.some(logger => logger.key === this.tab)) {
         this.tab = 'settings'
       }
+    },
+    tab() {
+      this.visibleSecretFields = []
     }
   },
   created() {
@@ -188,6 +206,7 @@ export default {
       const controller = new AbortController()
       this.loadController = controller
       const selectedTab = this.tab
+      this.visibleSecretFields = []
       this.loading = true
       this.errorMessage = ''
       this.loggersLoaded = false
@@ -263,6 +282,7 @@ export default {
         if (controller.signal.aborted) {
           return
         }
+        this.visibleSecretFields = []
         const loaded = await this.loadLoggers({ notifyError: false })
         if (!loaded || controller.signal.aborted) {
           return
@@ -285,6 +305,27 @@ export default {
         }
         wikiStore.stopLoading('admin-logging-saveloggers')
       }
+    },
+    secretFieldKey(loggerKey: string, configKey: string): string {
+      return `${loggerKey}:${configKey}`
+    },
+    isSecretVisible(loggerKey: string, configKey: string): boolean {
+      return this.visibleSecretFields.includes(this.secretFieldKey(loggerKey, configKey))
+    },
+    toggleSecretVisibility(loggerKey: string, configKey: string) {
+      const key = this.secretFieldKey(loggerKey, configKey)
+      this.visibleSecretFields = this.visibleSecretFields.includes(key)
+        ? this.visibleSecretFields.filter(item => item !== key)
+        : [...this.visibleSecretFields, key]
+    },
+    selectStoredSecret(focused: boolean, config: Logger['config'][number]['value']) {
+      if (!focused || !config.sensitive || config.value !== '********') return
+      requestAnimationFrame(() => {
+        const input = document.activeElement
+        if (input instanceof HTMLInputElement) {
+          input.select()
+        }
+      })
     },
     toggleConsole() {
       this.showConsole = !this.showConsole

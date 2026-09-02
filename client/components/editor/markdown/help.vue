@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-markdown-help.animated.fadeInLeft(flat, rounded='0', role='region', aria-labelledby='markdown-help-title')
+  v-card.editor-markdown-help.animated.fadeInLeft(flat, rounded='0', role='region', aria-labelledby='markdown-help-title', tabindex='0')
     v-container.pa-3(fluid)
       v-row
         v-col(cols='12', lg='6', xl='4')
@@ -235,7 +235,7 @@
             v-card-text
               v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat)
                 v-icon.mr-3(color='teal') mdi-keyboard
-                .text-body-medium.text-teal Keyboard Shortcuts
+                h2.text-body-medium.text-teal.ma-0 Keyboard Shortcuts
               v-list.editor-markdown-help-kbd(lines="two", density="compact")
                 v-list-item
                   v-list-item-title.text-body-medium Bold
@@ -270,7 +270,13 @@
                 v-list-item
                   v-list-item-title.text-body-medium Redo
                   template(v-slot:append)
-                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd Y]
+                    span.editor-markdown-help-shortcut
+                      kbd {{ctrlKey}}
+                      |  +
+                      template(v-if='isApplePlatform')
+                        kbd Shift
+                        |  +
+                      kbd {{isApplePlatform ? 'Z' : 'Y'}}
                 v-divider
                 v-list-item
                   v-list-item-title.text-body-medium Distraction Free Mode
@@ -282,7 +288,7 @@
             v-card-text
               v-toolbar.radius-7(color="teal-lighten-5", density="compact", flat)
                 v-icon.mr-3(color='teal') mdi-mouse
-                .text-body-medium.text-teal Multi-Selection
+                h2.text-body-medium.text-teal.ma-0 Multi-Selection
               v-list.editor-markdown-help-kbd(lines="two", density="compact")
                 v-list-item
                   v-list-item-title.text-body-medium Multiple Cursors
@@ -307,6 +313,7 @@ const isApplePlatform = typeof navigator !== 'undefined' &&
 export default {
   data () {
     return {
+      isApplePlatform,
       ctrlKey: isApplePlatform ? 'Cmd' : 'Ctrl',
       altKey: isApplePlatform ? 'Option' : 'Alt'
     }
@@ -325,6 +332,7 @@ export default {
   background-color: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, transparent) !important;
   color: rgb(var(--v-theme-on-surface));
   overflow: auto;
+  overscroll-behavior: contain;
 
   &-source,
   &-result {
@@ -389,6 +397,8 @@ export default {
   &-shortcut {
     display: inline-flex;
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 
     kbd {
       display: inline-block;

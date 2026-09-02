@@ -87,3 +87,9 @@
     animation-delay: $i * .1s !important;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .animated {
+    animation: none !important;
+  }
+}

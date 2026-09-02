@@ -61,9 +61,7 @@ const visualHtmlBrowserFixture = `<h2>Visual HTML heading</h2>
 <figure class="image image-style-side"><img src="/_assets/svg/icon-image.svg" alt="Example image"><figcaption>Visual HTML caption</figcaption></figure>`
 
 async function waitForVisualEditor(page: Page): Promise<void> {
-  await page.waitForFunction(() =>
-    Boolean((document.querySelector('.editor-tiptap') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor)
-  )
+  await page.waitForFunction(() => Boolean((document.querySelector('.editor-tiptap') as HTMLElement & { __wikiEditor?: BrowserVisualEditor }).__wikiEditor))
 }
 
 async function getVisualEditorData(page: Page): Promise<string> {
@@ -96,7 +94,6 @@ async function getMarkdownSourceData(page: Page): Promise<string> {
   })
 }
 
-
 async function expectWelcomePage(page: Page) {
   await expect(page).toHaveURL('/')
   await expect(page).toHaveTitle('Welcome | tsFranki')
@@ -108,13 +105,17 @@ async function expectWelcomePage(page: Page) {
 }
 
 async function expectAuthenticatedAdmin(page: Page) {
-  await expect.poll(async () => page.evaluate(async () => {
-    const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
-    return response.json()
-  })).toMatchObject({
-    authenticated: true,
-    user: { email: adminEmail }
-  })
+  await expect
+    .poll(async () =>
+      page.evaluate(async () => {
+        const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
+        return response.json()
+      })
+    )
+    .toMatchObject({
+      authenticated: true,
+      user: { email: adminEmail }
+    })
 }
 
 async function openClientPage(page: Page, path: string, readySelector = '#root > *') {
@@ -131,8 +132,8 @@ async function openClientPage(page: Page, path: string, readySelector = '#root >
 
 async function loginAsAdmin(page: Page) {
   await openClientPage(page, '/login', '.login-form')
-  await page.getByPlaceholder('Email Address').fill(adminEmail)
-  await page.getByPlaceholder('Password').fill(adminPassword)
+  await page.getByLabel('Email Address', { exact: true }).fill(adminEmail)
+  await page.getByLabel('Password', { exact: true }).fill(adminPassword)
   await page.getByRole('button', { name: 'Log In' }).click()
   await expect(page).toHaveURL('/')
   await expectAuthenticatedAdmin(page)
@@ -147,23 +148,31 @@ async function authenticateAsAdmin(page: Page) {
     }
   })
   expect(response.ok()).toBe(true)
-  const payload = await response.json() as { jwt?: unknown }
+  const payload = (await response.json()) as { jwt?: unknown }
   if (typeof payload.jwt !== 'string') throw new Error('Administrator login did not return a JWT.')
   const baseUrl = test.info().project.use.baseURL
   if (typeof baseUrl !== 'string') throw new Error('Playwright base URL is unavailable.')
-  await page.context().addCookies([{
-    name: 'jwt',
-    value: payload.jwt,
-    url: new URL(response.url(), baseUrl).origin
-  }])
+  await page.context().addCookies([
+    {
+      name: 'jwt',
+      value: payload.jwt,
+      url: new URL(response.url(), baseUrl).origin
+    }
+  ])
   await openClientPage(page, '/')
   await expectAuthenticatedAdmin(page)
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
-  await expect.poll(() => page.evaluate(() => (
-    document.documentElement.scrollWidth - window.innerWidth
-  ))).toBeLessThanOrEqual(1)
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
+}
+async function openEditorForCurrentPage(page: Page): Promise<void> {
+  await page.locator('.page-edit-fab:visible').click()
+  if ((page.viewportSize()?.width ?? 1280) < 600) {
+    await page.locator('.v-overlay--active').getByText('Edit Page', { exact: true }).click()
+  } else {
+    await page.getByRole('button', { name: 'Edit Page', exact: true }).click()
+  }
 }
 
 test.describe('critical post-install workflows', () => {
@@ -189,8 +198,8 @@ test.describe('critical post-install workflows', () => {
     await expect(page.getByText('Installation complete!')).toBeVisible({ timeout: 30_000 })
     await expect(page).toHaveURL('/login', { timeout: 10_000 })
     await openClientPage(page, '/login', '.login-form')
-    await expect(page.getByPlaceholder('Email Address')).toBeVisible()
-    await expect(page.getByPlaceholder('Password')).toBeVisible()
+    await expect(page.getByLabel('Email Address', { exact: true })).toBeVisible()
+    await expect(page.getByLabel('Password', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Log In' })).toBeVisible()
   })
 
@@ -209,14 +218,18 @@ test.describe('critical post-install workflows', () => {
     await page.emulateMedia({ colorScheme: 'light' })
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
     await page.getByRole('button', { name: 'Account' }).click()
-    const accountMenu = page.locator('.nav-header-menu')
-    await expect(accountMenu.getByRole('button', { name: 'System', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    const appearanceSelector = page.locator('.v-overlay--active').getByRole('group', { name: 'Appearance' })
+    await expect(appearanceSelector.getByRole('button', { name: 'System', exact: true })).toHaveAttribute('aria-pressed', 'true')
 
-    await accountMenu.getByRole('button', { name: 'Light', exact: true }).click()
-    await expect.poll(async () => page.evaluate(async () => {
-      const response = await fetch('/_api/users/profile', { credentials: 'same-origin' })
-      return response.json()
-    })).toMatchObject({ appearance: 'light' })
+    await appearanceSelector.getByRole('button', { name: 'Light', exact: true }).click()
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const response = await fetch('/_api/users/profile', { credentials: 'same-origin' })
+          return response.json()
+        })
+      )
+      .toMatchObject({ appearance: 'light' })
     await openClientPage(page, '/a/')
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
     await page.emulateMedia({ colorScheme: 'dark' })
@@ -224,11 +237,15 @@ test.describe('critical post-install workflows', () => {
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
 
     await page.getByRole('button', { name: 'Account' }).click()
-    await accountMenu.getByRole('button', { name: 'System', exact: true }).click()
-    await expect.poll(async () => page.evaluate(async () => {
-      const response = await fetch('/_api/users/profile', { credentials: 'same-origin' })
-      return response.json()
-    })).toMatchObject({ appearance: 'system' })
+    await appearanceSelector.getByRole('button', { name: 'System', exact: true }).click()
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const response = await fetch('/_api/users/profile', { credentials: 'same-origin' })
+          return response.json()
+        })
+      )
+      .toMatchObject({ appearance: 'system' })
     await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
   })
 
@@ -236,8 +253,8 @@ test.describe('critical post-install workflows', () => {
     await authenticateAsAdmin(page)
 
     await page.getByRole('link', { name: 'Administration' }).click()
-    await expect(page).toHaveURL('/a/')
-    await expect(page.getByText('Workspace overview', { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect(page).toHaveURL('/a/dashboard')
+    await expect(page.locator('.admin-dashboard')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
     await expect(page.getByText('Recent Pages', { exact: true })).toBeVisible()
     await expect(page.getByText('Last Logins', { exact: true })).toBeVisible()
@@ -250,7 +267,7 @@ test.describe('critical post-install workflows', () => {
     await page.getByRole('link', { name: 'Create Home Page' }).click()
     await expect(page).toHaveURL('/e/en/home')
     await openClientPage(page, '/e/en/home', '.editor-select')
-    await page.getByRole('button', { name: /^Markdown editor\b/ }).click()
+    await page.getByRole('button', { name: /^Markdown Source editing with live preview/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Home')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Welcome home')
     await page.getByRole('button', { name: 'OK' }).click()
@@ -271,7 +288,7 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(90_000)
     await authenticateAsAdmin(page)
     await page.goto('/e/en/visual-markdown-browser')
-    await page.getByRole('button', { name: /^Visual Markdown editor\b/ }).click()
+    await page.getByRole('button', { name: /^Visual Markdown Rich text with Markdown output/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Visual Markdown Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Canonical Markdown from Tiptap')
     await page.getByRole('button', { name: 'OK' }).click()
@@ -282,7 +299,6 @@ test.describe('critical post-install workflows', () => {
     await expect(editor.getByRole('heading', { name: 'Heading 6' })).toBeVisible()
     await expect(editor.locator('table')).toBeVisible()
     await expect(editor.getByRole('checkbox')).toHaveCount(2)
-
 
     await expect(editor.getByRole('img', { name: 'Example image' })).toBeVisible()
     await expect(editor.getByRole('link', { name: 'document.pdf' })).toHaveAttribute('href', '/assets/document.pdf')
@@ -330,11 +346,11 @@ test.describe('critical post-install workflows', () => {
     await expect(editor).toContainText('Saved with the keyboard.')
 
     await setVisualEditorData(page, `${await getVisualEditorData(page)}\n\nUnsaved draft.`)
-    await page.getByRole('button', { name: 'Close' }).click()
+    await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Discard Changes' })).toBeVisible()
     await page.getByRole('button', { name: 'Cancel' }).click()
     await expect(page).toHaveURL('/e/en/visual-markdown-browser')
-    await page.getByRole('button', { name: 'Close' }).click()
+    await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
     await page.getByRole('button', { name: 'Discard Changes' }).click()
 
     await expect(page).toHaveURL('/en/visual-markdown-browser')
@@ -351,19 +367,19 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(90_000)
     await authenticateAsAdmin(page)
     const extensionKeys = ['qr', 'gallery', 'index', 'tabs', 'spoiler', 'infobox', 'pdf', 'media', 'youtube', 'diagram', 'kroki', 'plantuml', 'map']
-    const enableStatuses = await page.evaluate(async keys => Promise.all(keys.map(async key => {
-      const response = await fetch(`/_api/content-extensions/${key}`, {
-        method: 'PATCH',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isEnabled: true })
+    const enableResults: Array<{ key: string; isEnabled: boolean }> = []
+    for (const key of extensionKeys) {
+      const response = await page.request.patch(`/_api/content-extensions/${key}`, {
+        data: { isEnabled: true }
       })
-      return response.status
-    })), extensionKeys)
-    expect(enableStatuses).toEqual(extensionKeys.map(() => 200))
+      const body = await response.text()
+      expect(response.ok(), `${key}: HTTP ${response.status()} ${body}`).toBe(true)
+      enableResults.push(JSON.parse(body) as { key: string; isEnabled: boolean })
+    }
+    expect(enableResults).toEqual(extensionKeys.map(key => expect.objectContaining({ key, isEnabled: true })))
 
     await page.goto('/e/en/content-extensions-browser')
-    await page.getByRole('button', { name: /^Markdown editor\b/ }).click()
+    await page.getByRole('button', { name: /^Markdown Source editing with live preview/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Content Extensions Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Gallery and index browser workflow')
     await page.getByRole('button', { name: 'OK' }).click()
@@ -372,7 +388,7 @@ test.describe('critical post-install workflows', () => {
     await expect(editor).toBeVisible({ timeout: 30_000 })
     await page.getByRole('button', { name: 'Insert content extension' }).click()
     const extensionDialog = page.getByRole('dialog', { name: 'Insert content extension' })
-    await extensionDialog.locator('.v-select').first().click()
+    await extensionDialog.getByRole('combobox', { name: 'Extension type' }).press('ArrowDown')
     await page.getByRole('option', { name: 'Image gallery' }).click()
     await expect(extensionDialog).toBeVisible()
     const assetPaths = extensionDialog.getByRole('textbox', { name: 'Asset path' })
@@ -385,7 +401,7 @@ test.describe('critical post-install workflows', () => {
     await assetPaths.nth(1).fill('/_assets/svg/icon-table.svg')
     await alternativeTexts.nth(1).fill('Table icon')
     await captions.nth(1).fill('Second browser image')
-    await extensionDialog.getByText('Square tiles', { exact: true }).click()
+    await extensionDialog.getByRole('combobox', { name: 'Tile shape' }).press('ArrowDown')
     await page.getByRole('option', { name: 'Natural image ratio' }).click()
     await extensionDialog.getByRole('button', { name: 'Insert Image gallery' }).click()
 
@@ -393,17 +409,52 @@ test.describe('critical post-install workflows', () => {
     const galleryFence = await getMarkdownSourceData(page)
     const additionalFences = [
       { key: 'index', version: 1, props: { path: '', locale: 'en', depth: 1, columns: 2, showIcons: true, order: 'title', limit: 20 } },
-      { key: 'tabs', version: 1, props: { tabs: [{ label: 'Overview', content: 'First panel content.' }, { label: 'Details', content: 'Second panel content.' }], active: 0 } },
+      {
+        key: 'tabs',
+        version: 1,
+        props: {
+          tabs: [
+            { label: 'Overview', content: 'First panel content.' },
+            { label: 'Details', content: 'Second panel content.' }
+          ],
+          active: 0
+        }
+      },
       { key: 'spoiler', version: 1, props: { label: 'Reveal answer', hint: 'Show hidden content', content: 'The hidden answer is 42.' } },
-      { key: 'infobox', version: 1, props: { title: 'Smoke facts', caption: 'Structured facts', facts: [{ label: 'Status', value: 'Verified' }, { label: 'Safe', value: true }] } },
+      {
+        key: 'infobox',
+        version: 1,
+        props: {
+          title: 'Smoke facts',
+          caption: 'Structured facts',
+          facts: [
+            { label: 'Status', value: 'Verified' },
+            { label: 'Safe', value: true }
+          ]
+        }
+      },
       { key: 'pdf', version: 1, props: { src: '/document.pdf', title: 'Example PDF', page: 1, height: 360 } },
       { key: 'media', version: 1, props: { kind: 'audio', src: '/audio.mp3', title: 'Example audio', caption: 'Native media controls' } },
       { key: 'youtube', version: 1, props: { videoId: 'dQw4w9WgXcQ', title: 'Consent-gated video', start: 0, controls: true } },
-      { key: 'diagram', version: 1, props: { source: 'flowchart LR\n  A[Start] --> B[Verified]', caption: 'Local Mermaid', theme: 'default', align: 'center' } },
-      { key: 'kroki', version: 1, props: { type: 'plantuml', source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated Kroki', align: 'left' } },
-      { key: 'plantuml', version: 1, props: { source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated PlantUML', align: 'left' } },
+      {
+        key: 'diagram',
+        version: 1,
+        props: { source: 'flowchart LR\n  A[Start] --> B[Verified]', caption: 'Local Mermaid', theme: 'default', align: 'center' }
+      },
+      {
+        key: 'kroki',
+        version: 1,
+        props: { type: 'plantuml', source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated Kroki', align: 'left' }
+      },
+      {
+        key: 'plantuml',
+        version: 1,
+        props: { source: '@startuml\nAlice -> Bob: Hello\n@enduml', format: 'svg', caption: 'Consent-gated PlantUML', align: 'left' }
+      },
       { key: 'map', version: 1, props: { latitude: 40.7128, longitude: -74.006, zoom: 12, height: 320, label: 'New York City' } }
-    ].map(envelope => ['```wiki-extension', JSON.stringify(envelope), '```'].join('\n')).join('\n\n')
+    ]
+      .map(envelope => ['```wiki-extension', JSON.stringify(envelope), '```'].join('\n'))
+      .join('\n\n')
     const remoteRequests: string[] = []
     page.on('request', request => {
       if (['www.youtube-nocookie.com', 'kroki.io', 'www.plantuml.com', 'www.openstreetmap.org'].includes(new URL(request.url()).hostname)) {
@@ -470,11 +521,22 @@ test.describe('critical post-install workflows', () => {
     await expectNoHorizontalOverflow(page)
   })
 
+  test('exposes the full editor catalog through administration', async ({ page }) => {
+    await authenticateAsAdmin(page)
+    await page.goto('/a/editor')
+    await expect(page.getByRole('heading', { name: 'Editors', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Select all', exact: true }).click()
+    await expect(page.getByText('5 of 5 available', { exact: true })).toBeVisible()
+    const saveChanges = page.getByRole('button', { name: 'Save changes', exact: true })
+    await saveChanges.click()
+    await expect(saveChanges).toBeDisabled()
+  })
+
   test('retains the Visual HTML editor and HTML content type', async ({ page }) => {
     test.setTimeout(60_000)
     await authenticateAsAdmin(page)
     await page.goto('/e/en/visual-html-browser')
-    await page.getByRole('button', { name: /^Visual HTML editor\b/ }).click()
+    await page.getByRole('button', { name: /^Visual HTML Rich text with HTML output/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Visual HTML Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('HTML from Tiptap')
     await page.getByRole('button', { name: 'OK' }).click()
@@ -520,7 +582,7 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(60_000)
     await authenticateAsAdmin(page)
     await page.goto('/e/en/extended-markdown-browser')
-    await page.getByRole('button', { name: /^Markdown editor\b/ }).click()
+    await page.getByRole('button', { name: /^Markdown Source editing with live preview/ }).click()
     await page.getByRole('textbox', { name: 'Title' }).fill('Extended Markdown Browser')
     await page.getByRole('textbox', { name: 'Short Description' }).fill('Extended visual syntax')
     await page.getByRole('button', { name: 'OK' }).click()
@@ -563,18 +625,21 @@ test.describe('critical post-install workflows', () => {
     await authenticateAsAdmin(page)
 
     const convert = async (path: string, editor: string) => {
-      const result = await page.evaluate(async ({ path, editor }) => {
-        const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
-        const row = pages.find((candidate: { path: string }) => candidate.path === path)
-        const details = await fetch(`/_api/pages/${row.id}`, { credentials: 'same-origin' }).then(response => response.json())
-        const response = await fetch(`/_api/pages/${row.id}/convert`, {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ editor, expectedSourceRevision: String(details.sourceRevision) })
-        })
-        return { ok: response.ok, body: await response.json() }
-      }, { path, editor })
+      const result = await page.evaluate(
+        async ({ path, editor }) => {
+          const pages = await fetch('/_api/pages', { credentials: 'same-origin' }).then(response => response.json())
+          const row = pages.find((candidate: { path: string }) => candidate.path === path)
+          const details = await fetch(`/_api/pages/${row.id}`, { credentials: 'same-origin' }).then(response => response.json())
+          const response = await fetch(`/_api/pages/${row.id}/convert`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ editor, expectedSourceRevision: String(details.sourceRevision) })
+          })
+          return { ok: response.ok, body: await response.json() }
+        },
+        { path, editor }
+      )
       expect(result.ok || result.body?.error === 'Page is already using this editor. Nothing to convert.', JSON.stringify(result.body)).toBe(true)
     }
 
@@ -609,22 +674,19 @@ test.describe('critical post-install workflows', () => {
     await expect(page.locator('.editor-tiptap-sysbar')).toContainText('Visual Editor')
   })
 
-
-
-
   test('edits and renders the published home page', async ({ page }) => {
     test.setTimeout(60_000)
     await authenticateAsAdmin(page)
     await page.goto('/en/home')
 
-    await page.getByRole('button', { name: 'Edit Page' }).click()
+    await openEditorForCurrentPage(page)
     await expect(page).toHaveURL('/e/en/home')
     const editor = page.locator('.cm-content')
     await expect(editor).toBeVisible({ timeout: 30_000 })
     await editor.fill('# Browser Workflow Updated\n\nEdited and rendered through the modern editor.')
-    await page.getByRole('button', { name: 'Save' }).click()
+    await page.locator('#root').getByRole('button', { name: 'Save', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
-    await page.getByRole('button', { name: 'Close' }).click()
+    await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
 
     await expect(page).toHaveURL('/en/home')
     await expect(page.getByRole('heading', { name: 'Browser Workflow Updated' })).toBeVisible()
@@ -636,7 +698,7 @@ test.describe('critical post-install workflows', () => {
     await page.goto('/en/home')
 
     await page.getByRole('textbox', { name: 'Search...' }).fill('Home')
-    const result = page.locator('.search-results-items').getByText('Home', { exact: true })
+    const result = page.getByRole('option', { name: /^Home\b/ })
     await expect(result).toBeVisible()
     await result.click()
 
@@ -671,25 +733,33 @@ test.describe('critical post-install workflows', () => {
     await page.getByRole('button', { name: 'Account' }).click()
     await page.getByText('Logout', { exact: true }).click()
     await expect(page).toHaveURL('/')
-    await expect.poll(async () => page.evaluate(async () => {
-      const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
-      return response.json()
-    })).toMatchObject({ authenticated: false })
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
+          return response.json()
+        })
+      )
+      .toMatchObject({ authenticated: false })
     await page.goto('/login')
 
-    await page.getByPlaceholder('Email Address').fill(adminEmail)
-    await page.getByPlaceholder('Password').fill(adminPassword)
+    await page.getByLabel('Email Address', { exact: true }).fill(adminEmail)
+    await page.getByLabel('Password', { exact: true }).fill(adminPassword)
     await page.getByRole('button', { name: 'Log In' }).click()
     await expect(page).toHaveURL('/')
     await expect(page).toHaveTitle('Home | tsFranki')
     await expect(page.getByRole('heading', { name: 'Browser Workflow Updated' })).toBeVisible()
-    await expect.poll(async () => page.evaluate(async () => {
-      const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
-      return response.json()
-    })).toMatchObject({
-      authenticated: true,
-      user: { email: adminEmail }
-    })
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const response = await fetch('/_api/users/whoami', { credentials: 'same-origin' })
+          return response.json()
+        })
+      )
+      .toMatchObject({
+        authenticated: true,
+        user: { email: adminEmail }
+      })
     expect(consoleErrors).toEqual([])
     expect(failedRequests).toEqual([])
   })
@@ -699,15 +769,14 @@ test.describe('critical post-install workflows', () => {
     await authenticateAsAdmin(page)
     await page.goto('/a/dashboard')
 
-    await expect(page.getByText('Workspace overview', { exact: true })).toBeVisible()
+    await expect(page.locator('.admin-dashboard')).toBeVisible()
     await expect(page.locator('#admin-navigation')).toBeVisible()
     await page.getByRole('button', { name: 'Content & appearance', exact: true }).click()
     await expect(page.getByRole('link', { name: /^Pages\b/ })).toBeVisible()
 
     const sidebarLayout = await page.locator('#admin-navigation').evaluate(navigation => {
       const measure = (label: string) => {
-        const item = [...navigation.querySelectorAll<HTMLElement>('.v-list-item')]
-          .find(candidate => candidate.textContent?.trim().startsWith(label))
+        const item = [...navigation.querySelectorAll<HTMLElement>('.v-list-item')].find(candidate => candidate.textContent?.trim().startsWith(label))
         const icon = item?.querySelector<HTMLElement>('.v-icon')
         const title = item?.querySelector<HTMLElement>('.v-list-item-title')
         if (!item || !icon || !title) throw new Error(`Missing ${label} navigation item layout.`)
@@ -738,13 +807,12 @@ test.describe('critical post-install workflows', () => {
     await expectNoHorizontalOverflow(page)
 
     await page.goto('/a/navigation')
-    await expect(page.locator('.admin-header').getByText('Navigation', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Navigation', exact: true })).toBeVisible()
 
     const modeLayouts = await page.evaluate(() => {
       const labels = ['Site Tree', 'Static Navigation', 'Custom Navigation', 'None']
       return labels.map(label => {
-        const title = [...document.querySelectorAll<HTMLElement>('.v-main .v-list-item-title')]
-          .find(candidate => candidate.textContent?.trim() === label)
+        const title = [...document.querySelectorAll<HTMLElement>('.v-main .v-list-item-title')].find(candidate => candidate.textContent?.trim() === label)
         const item = title?.closest<HTMLElement>('.v-list-item')
         const icon = item?.querySelector<HTMLElement>('.v-list-item__prepend .v-avatar')
         const content = item?.querySelector<HTMLElement>('.v-list-item__content')
@@ -774,8 +842,8 @@ test.describe('critical post-install workflows', () => {
     await expectNoHorizontalOverflow(page)
 
     await page.goto('/a/pages')
-    await expect(page.locator('.admin-header').getByText('Pages', { exact: true })).toBeVisible()
-    await expect(page.locator('.admin-responsive-table')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Pages', exact: true })).toBeVisible()
+    await expect(page.locator('.admin-pages').getByRole('link', { name: 'Home', exact: true })).toBeVisible()
     await expectNoHorizontalOverflow(page)
   })
 
@@ -784,23 +852,26 @@ test.describe('critical post-install workflows', () => {
     await authenticateAsAdmin(page)
     await page.goto('/a/dashboard')
 
-    const navigationButton = page.getByRole('button', { name: 'Administration navigation', exact: true })
+    const navigationButton = page.getByRole('button', { name: 'Open administration navigation', exact: true })
     await expect(navigationButton).toBeVisible()
     await navigationButton.click()
     await expect(page.locator('#admin-navigation')).toBeVisible()
     await page.locator('#admin-navigation').getByRole('button', { name: 'Content & appearance', exact: true }).click()
-    await page.locator('#admin-navigation').getByRole('link', { name: /^Pages\b/ }).click()
+    await page
+      .locator('#admin-navigation')
+      .getByRole('link', { name: /^Pages\b/ })
+      .click()
 
     await expect(page).toHaveURL('/a/pages')
-    await expect(page.locator('.admin-mobile-table-row').first()).toBeVisible()
+    await expect(page.locator('.admin-pages').getByRole('link', { name: 'Home', exact: true })).toBeVisible()
     await expectNoHorizontalOverflow(page)
 
     await page.goto('/en/home')
-    await page.getByRole('button', { name: 'Edit Page' }).click()
+    await openEditorForCurrentPage(page)
     await expect(page).toHaveURL('/e/en/home')
-    await expect(page.getByRole('textbox', { name: 'Page title' })).toHaveValue('Home')
-    await expect(page.getByRole('button', { name: 'Save' })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Editor actions' })).toBeVisible()
+    await expect(page.getByRole('textbox', { name: 'Title', exact: true })).toHaveValue('Home')
+    await expect(page.locator('#root').getByRole('button', { name: 'Saved', exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'More editor actions', exact: true })).toBeVisible()
     await expectNoHorizontalOverflow(page)
 
     await page.getByRole('button', { name: 'Show preview' }).click()
@@ -809,8 +880,7 @@ test.describe('critical post-install workflows', () => {
     await page.getByRole('button', { name: 'Show editor' }).click()
     await expect(page.locator('.editor-markdown-editor')).toBeVisible()
 
-    await page.getByRole('button', { name: 'Editor actions' }).click()
-    await page.getByText('Page settings', { exact: true }).click()
+    await page.getByRole('button', { name: 'Page', exact: true }).click()
     await expect(page.getByText('Page Properties', { exact: true })).toBeVisible()
     await page.getByRole('tab', { name: 'Scheduling' }).click()
     await expect(page.getByRole('textbox', { name: 'Publish starting on...' })).toBeVisible()
@@ -818,8 +888,8 @@ test.describe('critical post-install workflows', () => {
     await expectNoHorizontalOverflow(page)
     await page.getByRole('button', { name: 'OK' }).click()
 
-    await page.getByRole('button', { name: 'Editor actions' }).click()
-    await page.getByText('Close editor', { exact: true }).click()
+    await page.getByRole('button', { name: 'More editor actions', exact: true }).click()
+    await page.getByText('Close', { exact: true }).click()
     await expect(page).toHaveURL('/en/home')
   })
 
@@ -880,8 +950,8 @@ test.describe('critical post-install workflows', () => {
     test.setTimeout(60_000)
     await authenticateAsAdmin(page)
     await page.goto('/en/home')
-    await page.getByRole('button', { name: 'Page Actions' }).click()
-    await page.locator('.v-overlay--active .v-list-item-title').getByText('History', { exact: true }).click()
+    await page.locator('.page-edit-fab:visible').click()
+    await page.getByRole('button', { name: 'History', exact: true }).click()
     await expect(page).toHaveURL('/h/en/home')
 
     const revisionActions = page.locator('button[aria-label^="Actions for revision "]:not([aria-label="Actions for revision live"])')
@@ -904,8 +974,8 @@ test.describe('critical post-install workflows', () => {
     await editor.click()
     await page.keyboard.press('Control+End')
 
-    await page.locator('button:has(.mdi-folder-multiple-image)').click()
-    const mediaDialog = page.locator('.editor-modal-media')
+    await page.getByRole('button', { name: 'Insert Assets', exact: true }).click()
+    const mediaDialog = page.getByRole('dialog', { name: 'Assets' })
     await expect(mediaDialog).toBeVisible()
     await mediaDialog.locator('input[type="file"]').setInputFiles({
       name: 'browser-upload.txt',
@@ -913,15 +983,15 @@ test.describe('critical post-install workflows', () => {
       buffer: Buffer.from('Uploaded through the browser file manager.')
     })
     await mediaDialog.getByRole('button', { name: 'Upload', exact: true }).click()
-    const uploadedAsset = mediaDialog.locator('tbody tr').filter({ hasText: 'browser-upload.txt' })
+    const uploadedAsset = mediaDialog.getByRole('row', { name: 'Select browser-upload.txt', exact: true })
     await expect(uploadedAsset).toBeVisible({ timeout: 30_000 })
     await uploadedAsset.click()
     await mediaDialog.getByRole('button', { name: 'Insert', exact: true }).click()
 
     expect(await getMarkdownSourceData(page)).toContain('[browser-upload.txt](')
-    await page.getByRole('button', { name: 'Save' }).click()
+    await page.locator('#root').getByRole('button', { name: 'Save', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible({ timeout: 30_000 })
-    await page.getByRole('button', { name: 'Close' }).click()
+    await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.getByRole('link', { name: 'browser-upload.txt' })).toBeVisible()
   })
 
@@ -943,17 +1013,17 @@ test.describe('critical post-install workflows', () => {
 
     await page.goto('/a/users')
     await page.getByRole('button', { name: 'New user' }).click()
-    await page.getByLabel('Email Address').fill(userEmail)
-    await page.getByLabel('Password', { exact: true }).fill('browser-password')
-    await page.getByLabel('Name', { exact: true }).fill('Browser Operator')
-    await page.getByRole('combobox', { name: 'Assign to Group(s)' }).locator('xpath=..').click()
-    await page.getByText(groupName, { exact: true }).last().click()
+    await page.getByRole('textbox', { name: 'Email Address *', exact: true }).fill(userEmail)
+    await page.getByRole('textbox', { name: 'Password *', exact: true }).fill('browser-password')
+    await page.getByRole('textbox', { name: 'Name *', exact: true }).fill('Browser Operator')
+    await page.getByRole('combobox', { name: 'Assign to Group(s)...', exact: true }).press('ArrowDown')
+    await page.getByRole('option', { name: groupName, exact: true }).click()
     await page.keyboard.press('Escape')
-    await page.getByRole('button', { name: 'Create and Close' }).click()
+    await page.getByRole('button', { name: 'Create', exact: true }).click()
 
-    const userRow = page.getByText(userEmail, { exact: true })
-    await expect(userRow).toBeVisible()
-    await userRow.click()
+    await expect(page.getByText(userEmail, { exact: true })).toBeVisible()
+    await page.getByRole('link', { name: 'Browser Operator', exact: true }).click()
+    await expect(page).toHaveURL(/\/a\/users\/\d+$/)
     await expect(page.getByText(groupName, { exact: true })).toBeVisible()
   })
 
@@ -962,28 +1032,23 @@ test.describe('critical post-install workflows', () => {
     await page.goto('/a/auth')
     const displayName = page.getByLabel('Display Name')
     await expect(displayName).toHaveValue('Local')
-    await displayName.fill('Local')
-    const saved = page.waitForResponse(response =>
-      response.url().endsWith('/_api/auth/strategies') && response.request().method() === 'POST'
-    )
+    await displayName.fill('Local Browser')
+    const saved = page.waitForResponse(response => response.url().endsWith('/_api/auth/strategies') && response.request().method() === 'POST')
     await page.getByRole('button', { name: 'Apply' }).click()
     expect((await saved).ok()).toBe(true)
+    await expect(displayName).toHaveValue('Local Browser')
   })
 
-  test('applies the basic search configuration and rebuilds its index', async ({ page }) => {
+  test('applies the PostgreSQL search configuration and rebuilds its index', async ({ page }) => {
     test.setTimeout(60_000)
     await authenticateAsAdmin(page)
     await page.goto('/a/search')
-    await page.getByRole('list').getByText('Database - Basic', { exact: true }).click()
-    const saved = page.waitForResponse(response =>
-      response.url().endsWith('/_api/search/engines') && response.request().method() === 'POST'
-    )
+    await expect(page.getByRole('radio', { name: /^Database - PostgreSQL\b/ })).toBeChecked()
+    const saved = page.waitForResponse(response => response.url().endsWith('/_api/search/engines') && response.request().method() === 'POST')
     await page.getByRole('button', { name: 'Apply' }).click()
     expect((await saved).ok()).toBe(true)
 
-    const rebuilt = page.waitForResponse(response =>
-      response.url().endsWith('/_api/search/rebuild-index') && response.request().method() === 'POST'
-    )
+    const rebuilt = page.waitForResponse(response => response.url().endsWith('/_api/search/rebuild-index') && response.request().method() === 'POST')
     await page.getByRole('button', { name: 'Rebuild Index' }).click()
     expect((await rebuilt).ok()).toBe(true)
   })
@@ -991,24 +1056,25 @@ test.describe('critical post-install workflows', () => {
   test('requires and recovers from two-factor authentication', async ({ page }) => {
     test.setTimeout(90_000)
     await authenticateAsAdmin(page)
-    const setEnforce2FA = (enabled: boolean) => page.evaluate(async value => {
-      const configResponse = await fetch('/_api/site/config', { credentials: 'same-origin' })
-      const config = await configResponse.json()
-      const response = await fetch('/_api/site/config', {
-        method: 'PUT',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...config, authEnforce2FA: value })
-      })
-      if (!response.ok) throw new Error(`2FA policy update failed: ${response.status}`)
-    }, enabled)
+    const setEnforce2FA = (enabled: boolean) =>
+      page.evaluate(async value => {
+        const configResponse = await fetch('/_api/site/config', { credentials: 'same-origin' })
+        const config = await configResponse.json()
+        const response = await fetch('/_api/site/config', {
+          method: 'PUT',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...config, authEnforce2FA: value })
+        })
+        if (!response.ok) throw new Error(`2FA policy update failed: ${response.status}`)
+      }, enabled)
     await setEnforce2FA(true)
 
     await page.getByRole('button', { name: 'Account' }).click()
     await page.getByText('Logout', { exact: true }).click()
     await page.goto('/login')
-    await page.getByPlaceholder('Email Address').fill(adminEmail)
-    await page.getByPlaceholder('Password').fill(adminPassword)
+    await page.getByLabel('Email Address', { exact: true }).fill(adminEmail)
+    await page.getByLabel('Password', { exact: true }).fill(adminPassword)
     await page.getByRole('button', { name: 'Log In' }).click()
 
     const manualSecret = page.locator('.login-tfa-secret')
@@ -1017,22 +1083,22 @@ test.describe('critical post-install workflows', () => {
     if (!secret) throw new Error('TFA setup did not provide a manual setup key.')
     const setupToken = tfa.generateToken(secret)?.token
     if (!setupToken) throw new Error('TFA setup token generation failed.')
-    const setupDialog = page.locator('.v-dialog').filter({ has: manualSecret })
-    await setupDialog.getByPlaceholder('XXXXXX').fill(setupToken)
+    const setupDialog = page.getByRole('dialog', { name: 'Your administrator has required Two-Factor Authentication (2FA) to be enabled on your account.' })
+    await setupDialog.getByLabel('XXXXXX', { exact: true }).fill(setupToken)
     await setupDialog.getByRole('button', { name: 'Verify' }).click()
     await expect(page).toHaveURL('/', { timeout: 30_000 })
 
     await page.getByRole('button', { name: 'Account' }).click()
     await page.getByText('Logout', { exact: true }).click()
     await page.goto('/login')
-    await page.getByPlaceholder('Email Address').fill(adminEmail)
-    await page.getByPlaceholder('Password').fill(adminPassword)
+    await page.getByLabel('Email Address', { exact: true }).fill(adminEmail)
+    await page.getByLabel('Password', { exact: true }).fill(adminPassword)
     await page.getByRole('button', { name: 'Log In' }).click()
-    const challengeDialog = page.locator('.v-dialog').filter({ has: page.locator('img[src*="icon-pin-pad"]') })
+    const challengeDialog = page.getByRole('dialog', { name: 'Enter the security code generated from your trusted device:' })
     await expect(challengeDialog).toBeVisible()
     const challengeToken = tfa.generateToken(secret)?.token
     if (!challengeToken) throw new Error('TFA challenge token generation failed.')
-    await challengeDialog.getByPlaceholder('XXXXXX').fill(challengeToken)
+    await challengeDialog.getByLabel('XXXXXX', { exact: true }).fill(challengeToken)
     await challengeDialog.getByRole('button', { name: 'Verify' }).click()
     await expect(page).toHaveURL('/', { timeout: 30_000 })
 
@@ -1074,9 +1140,7 @@ test.describe('critical post-install workflows', () => {
       await expect(protectedPage.getByText('Access denied', { exact: true })).toBeVisible()
       await protectedPage.getByLabel('Page password').fill(password)
       const [unlockResponse] = await Promise.all([
-        protectedPage.waitForResponse(response =>
-          response.url().endsWith(`/_unlock/${pageId}`) && response.request().method() === 'POST'
-        ),
+        protectedPage.waitForResponse(response => response.url().endsWith(`/_unlock/${pageId}`) && response.request().method() === 'POST'),
         protectedPage.waitForNavigation({ waitUntil: 'domcontentloaded' }),
         protectedPage.getByRole('button', { name: 'Unlock page' }).click()
       ])
@@ -1090,7 +1154,6 @@ test.describe('critical post-install workflows', () => {
     }
   })
 
-
   test('keeps the primary page within local Core Web Vitals budgets', async ({ page }) => {
     await authenticateAsAdmin(page)
     await page.addInitScript(() => {
@@ -1098,7 +1161,7 @@ test.describe('critical post-install workflows', () => {
       Object.defineProperty(window, '__wikiReleaseMetrics', { value: metrics })
       new PerformanceObserver(list => {
         for (const entry of list.getEntries()) {
-          const shift = entry as PerformanceEntry & { hadRecentInput?: boolean, value?: number }
+          const shift = entry as PerformanceEntry & { hadRecentInput?: boolean; value?: number }
           if (!shift.hadRecentInput) metrics.cls += shift.value ?? 0
         }
       }).observe({ type: 'layout-shift', buffered: true })
@@ -1110,15 +1173,18 @@ test.describe('critical post-install workflows', () => {
     await page.goto('/en/home', { waitUntil: 'networkidle' })
 
     const metrics = await page.evaluate(() => {
-      const releaseMetrics = (window as unknown as {
-        __wikiReleaseMetrics: { cls: number, lcp: number }
-      }).__wikiReleaseMetrics
+      const releaseMetrics = (
+        window as unknown as {
+          __wikiReleaseMetrics: { cls: number; lcp: number }
+        }
+      ).__wikiReleaseMetrics
       const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming
       return {
         cls: releaseMetrics.cls,
         domContentLoaded: navigation.domContentLoadedEventEnd,
         lcp: releaseMetrics.lcp,
-        transferredBytes: performance.getEntriesByType('resource')
+        transferredBytes: performance
+          .getEntriesByType('resource')
           .reduce((total, entry) => total + (entry as PerformanceResourceTiming).transferSize, navigation.transferSize)
       }
     })

@@ -223,7 +223,7 @@ describe('Agent history session selection', () => {
     expect(panel.emit).toHaveBeenCalledWith('close')
   })
 
-  it('only closes after the latest selection is committed', async () => {
+  it('serializes transitions and closes only after the subsequent selection is committed', async () => {
     let resolveFirst!: (value: boolean) => void
     let resolveSecond!: (value: boolean) => void
     const agents: PanelAgents = {
@@ -246,12 +246,21 @@ describe('Agent history session selection', () => {
     const panel = loadPanel(agents)
 
     const first = panel.openSession('00000000-0000-4000-8000-000000000002')
-    const second = panel.openSession('00000000-0000-4000-8000-000000000003')
+    const concurrentSelection = panel.openSession('00000000-0000-4000-8000-000000000003')
+
+    await concurrentSelection
+    expect(agents.openSession).toHaveBeenCalledTimes(1)
+    expect(agents.openSession).toHaveBeenLastCalledWith('00000000-0000-4000-8000-000000000002')
+    expect(panel.emit).not.toHaveBeenCalled()
+
     resolveFirst(false)
     await first
-    expect(panel.emit).not.toHaveBeenCalled()
+
+    const subsequentSelection = panel.openSession('00000000-0000-4000-8000-000000000003')
+    expect(agents.openSession).toHaveBeenCalledTimes(2)
+    expect(agents.openSession).toHaveBeenLastCalledWith('00000000-0000-4000-8000-000000000003')
     resolveSecond(true)
-    await second
+    await subsequentSelection
 
     expect(panel.emit).toHaveBeenCalledTimes(1)
     expect(panel.emit).toHaveBeenCalledWith('close')

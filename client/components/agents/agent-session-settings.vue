@@ -190,9 +190,11 @@ const retentionTitle = computed(() => {
 const retentionSummary = computed(() => {
   if (props.session.folderId) return 'Stored in a folder and kept until you remove it.'
   if (props.session.retention === 'temporary') {
-    return props.session.expiresAt
-      ? `Scheduled for removal ${dateFormatter.format(new Date(props.session.expiresAt))}.`
-      : 'Removed automatically under the workspace temporary-session policy.'
+    if (!props.session.expiresAt) return 'Removed automatically under the workspace temporary-session policy.'
+    const expiration = new Date(props.session.expiresAt)
+    return Number.isNaN(expiration.getTime())
+      ? 'Removed automatically under the workspace temporary-session policy.'
+      : `Scheduled for removal ${dateFormatter.format(expiration)}.`
   }
   return 'Removed after the workspace inactivity window unless you move it into a folder.'
 })
@@ -272,7 +274,7 @@ onBeforeUnmount(() => {
 
 .agent-session-settings__eyebrow {
   margin: 0;
-  color: var(--wiki-accent-warm);
+  color: var(--wiki-accent-ink);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .085em;

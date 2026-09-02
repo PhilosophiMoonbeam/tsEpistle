@@ -175,7 +175,7 @@
 
 <script lang='ts'>
 /* global siteLangs, siteConfig */
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import { useDisplay } from 'vuetify'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
@@ -453,7 +453,9 @@ export default defineComponent({
       void this.processContent(newContent)
     }, 600)
     const container = this.$refs.cm
-    if (!(container instanceof HTMLElement)) return
+    if (!(container instanceof HTMLElement)) {
+      throw new Error('AsciiDoc editor host is unavailable')
+    }
     const cm = new TextEditor({
       parent: container,
       value: wikiStore.editor.content,
@@ -472,7 +474,8 @@ export default defineComponent({
       },
       onCursor: position => this.positionSync(position)
     })
-    this.cm = cm
+    this.cm = markRaw(cm)
+    container.querySelector<HTMLElement>('.cm-content')?.setAttribute('aria-label', 'AsciiDoc source')
 
     // Render initial preview
     void this.processContent(wikiStore.editor.content)

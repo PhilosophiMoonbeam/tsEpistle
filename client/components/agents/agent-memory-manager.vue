@@ -73,8 +73,8 @@
               :disabled="saving"
               variant="outlined"
               @keydown.esc="saving ? undefined : cancelEdit()"
-              @keydown.meta.enter="save"
-              @keydown.ctrl.enter="save"
+              @keydown.meta.enter.prevent="save"
+              @keydown.ctrl.enter.prevent="save"
             />
             <p v-if="draftOverLimit" class="agent-memory__draft-limit" role="alert">{{ draftCapacityLabel }}</p>
             <div class="agent-memory__editor-actions">

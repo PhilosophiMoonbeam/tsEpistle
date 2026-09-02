@@ -1,6 +1,6 @@
 <template lang="pug">
   v-app.editor
-    nav-header(dense)
+    nav-header(dense, reserve-actions)
       template(v-slot:mobileBrand)
         v-text-field.editor-title-input.editor-title-input-mobile(
           variant="solo"
@@ -127,7 +127,7 @@
     notify</template>
 
 <script lang='ts'>
-import { defineAsyncComponent, defineComponent, type PropType } from 'vue'
+import { defineComponent, type PropType } from 'vue'
 import { useHotkey } from 'vuetify'
 import _ from 'lodash'
 import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, fetchPage, updatePage, validateOkfMetadataPayload, type OkfMetadataPayloadValidation } from '../helpers/pages-api'
@@ -139,6 +139,7 @@ import { getErrorMessage } from '../helpers/root-ui-store'
 import { decodeBase64Json } from '../helpers/base64'
 import { getEditorComponentName } from '../helpers/editor-key.ts'
 import { normalizeAvailableEditors } from '../../shared/page-editors.ts'
+import { createAsyncComponent } from './common/async-component-state.vue'
 
 const EDITOR_PAGE_CANVAS_SCOPE = '.editor-page-canvas'
 
@@ -171,18 +172,18 @@ export default defineComponent({
   i18nOptions: { namespaces: 'editor' },
   components: {
     StatusIndicator,
-    editorCode: defineAsyncComponent(() => import('./editor/editor-code.vue')),
-    editorCkeditor: defineAsyncComponent(() => import('./editor/editor-ckeditor.vue')),
-    editorVisualMarkdown: defineAsyncComponent(() => import('./editor/editor-visual-markdown.vue')),
-    editorAsciidoc: defineAsyncComponent(() => import('./editor/editor-asciidoc.vue')),
-    editorMarkdown: defineAsyncComponent(() => import('./editor/editor-markdown.vue')),
-    editorModalEditorselect: defineAsyncComponent(() => import('./editor/editor-modal-editorselect.vue')),
-    editorModalProperties: defineAsyncComponent(() => import('./editor/editor-modal-properties.vue')),
-    editorModalUnsaved: defineAsyncComponent(() => import('./editor/editor-modal-unsaved.vue')),
-    editorModalMedia: defineAsyncComponent(() => import('./editor/editor-modal-media.vue')),
-    editorModalBlocks: defineAsyncComponent(() => import('./editor/editor-modal-blocks.vue')),
-    editorModalConflict: defineAsyncComponent(() => import('./editor/editor-modal-conflict.vue')),
-    editorModalDrawio: defineAsyncComponent(() => import('./editor/editor-modal-drawio.vue'))
+    editorCode: createAsyncComponent(() => import('./editor/editor-code.vue')),
+    editorCkeditor: createAsyncComponent(() => import('./editor/editor-ckeditor.vue')),
+    editorVisualMarkdown: createAsyncComponent(() => import('./editor/editor-visual-markdown.vue')),
+    editorAsciidoc: createAsyncComponent(() => import('./editor/editor-asciidoc.vue')),
+    editorMarkdown: createAsyncComponent(() => import('./editor/editor-markdown.vue')),
+    editorModalEditorselect: createAsyncComponent(() => import('./editor/editor-modal-editorselect.vue')),
+    editorModalProperties: createAsyncComponent(() => import('./editor/editor-modal-properties.vue')),
+    editorModalUnsaved: createAsyncComponent(() => import('./editor/editor-modal-unsaved.vue')),
+    editorModalMedia: createAsyncComponent(() => import('./editor/editor-modal-media.vue')),
+    editorModalBlocks: createAsyncComponent(() => import('./editor/editor-modal-blocks.vue')),
+    editorModalConflict: createAsyncComponent(() => import('./editor/editor-modal-conflict.vue')),
+    editorModalDrawio: createAsyncComponent(() => import('./editor/editor-modal-drawio.vue'))
   },
   props: {
     locale: {
@@ -274,11 +275,20 @@ export default defineComponent({
       }
     }
   },
+  provide () {
+    return {
+      okfLoadRetry: {
+        isAvailable: () => this.canRetryOkfAuthorityLoad,
+        run: () => this.retryOkfAuthorityLoad()
+      }
+    }
+  },
   data() {
     return {
       isSaving: false,
       isConflict: false,
       conflictTimer: null as number | null,
+      conflictCheckPending: false,
       customCssTimer: null as number | null,
       modalTimer: null as number | null,
       navigationTimer: null as number | null,
@@ -312,6 +322,9 @@ export default defineComponent({
       set(value: string) { wikiStore.editor.activeModal = value }
     },
     mode(): string { return wikiStore.editor.mode },
+    canRetryOkfAuthorityLoad(): boolean {
+      return this.mode !== 'create' && this.pageId > 0 && Boolean(wikiStore.page.okfError) && !wikiStore.page.okfLoading
+    },
     welcomeMode() { return this.mode === `create` && this.path === `home` },
     currentPageTitle: {
       get(): string { return wikiStore.page.title },
@@ -442,6 +455,10 @@ export default defineComponent({
     handleEditorConflictReset() {
       this.isConflict = false
     },
+    async retryOkfAuthorityLoad () {
+      if (!this.canRetryOkfAuthorityLoad) return
+      await this.hydratePage()
+    },
     async hydratePage() {
       if (this.mode === 'create' || this.pageId <= 0 || wikiStore.page.okfLoading) return
       wikiStore.page.okfLoading = true
@@ -473,17 +490,21 @@ export default defineComponent({
       }
     },
     async refreshConflict() {
-      if (this.mode === 'create' || this.isSaving || !this.isDirty) return
+      if (this.mode === 'create' || this.isSaving || !this.isDirty || this.conflictCheckPending) return
+      this.conflictCheckPending = true
       try {
         this.isConflict = await checkPageConflict(window.fetch.bind(window), this.pageId, this.checkoutDateActive)
       } catch (err) {
         console.warn(err)
+      } finally {
+        this.conflictCheckPending = false
       }
     },
     openConflict() {
       emitEditorSaveConflict()
     },
     async save({ rethrow = false, overwrite = false }: { rethrow?: boolean, overwrite?: boolean } = {}) {
+      if (this.mode !== 'create' && !this.isDirty) return
       if (this.isSaving) return
       this.showProgressDialog()
       this.isSaving = true
@@ -514,7 +535,7 @@ export default defineComponent({
           // -> UPDATE EXISTING PAGE
           // --------------------------------------------
 
-          if (await checkPageConflict(window.fetch.bind(window), this.pageId, this.checkoutDateActive)) {
+          if (!overwrite && await checkPageConflict(window.fetch.bind(window), this.pageId, this.checkoutDateActive)) {
             emitEditorSaveConflict()
             throw new Error(this.$t('editor:conflict.warning'))
           }
@@ -650,16 +671,23 @@ export default defineComponent({
       }
     },
     injectCustomCss(css: string) {
-      if (this.customCssTimer !== null) window.clearTimeout(this.customCssTimer)
-      removeEditorPageCss()
-      if (_.isEmpty(css)) return
+      if (this.customCssTimer !== null) {
+        window.clearTimeout(this.customCssTimer)
+        this.customCssTimer = null
+      }
+      if (_.isEmpty(css)) {
+        removeEditorPageCss()
+        return
+      }
 
       this.customCssTimer = window.setTimeout(() => {
-        const styl = document.createElement('style')
-        styl.type = 'text/css'
-        styl.id = 'editor-script-css'
+        let styl = document.querySelector<HTMLStyleElement>('#editor-script-css')
+        if (!styl) {
+          styl = document.createElement('style')
+          styl.id = 'editor-script-css'
+          document.head.appendChild(styl)
+        }
         styl.textContent = scopeEditorPageCss(css)
-        document.head.appendChild(styl)
         this.customCssTimer = null
       }, 1000)
     }

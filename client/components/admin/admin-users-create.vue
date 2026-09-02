@@ -1,6 +1,13 @@
 <template lang="pug">
-  v-dialog(v-model='isShown', max-width='650', persistent, :fullscreen='$vuetify.display.smAndDown', aria-labelledby='admin-user-create-title')
-    v-card.admin-dialog--scrollable
+  v-dialog(
+    v-model='isShown'
+    max-width='650'
+    :persistent='submitting'
+    :fullscreen='$vuetify.display.smAndDown'
+    aria-labelledby='admin-user-create-title'
+    @after-enter='focusEmail'
+  )
+    v-card.admin-dialog--scrollable(tag='form', @submit.prevent='submitUser')
       .dialog-header.is-short
         v-icon.mr-3 mdi-plus
         span#admin-user-create-title New User
@@ -29,6 +36,7 @@
           variant="outlined"
           prepend-icon='mdi-at'
           v-model='email'
+          :rules='emailRules'
           type='email'
           required
           label='Email Address *'
@@ -42,6 +50,11 @@
           variant="outlined"
           prepend-icon='mdi-lock-outline'
           v-model='password'
+          ref='passwordInput'
+          type='password'
+          :rules='passwordRules'
+          minlength='6'
+          maxlength='255'
           autocomplete='new-password'
           required
           :label='mustChangePwd ? `Temporary Password *` : `Password *`'
@@ -60,6 +73,10 @@
           variant="outlined"
           prepend-icon='mdi-account-outline'
           v-model='name'
+          ref='nameInput'
+          :rules='nameRules'
+          minlength='2'
+          maxlength='255'
           required
           label='Name *'
           :hint='provider === `local` ? `Can be changed by the user.` : `May be overwritten by the provider during login.`'
@@ -67,6 +84,10 @@
           persistent-hint
           :disabled='!providersLoaded || submitting'
           )
+        v-alert.mb-3(v-if='groupsLoadError', type='warning', variant='tonal', density='compact')
+          span {{groupsLoadError}}
+          template(v-slot:append)
+            v-btn(type='button', variant='text', size='small', @click='loadGroups', :loading='groupsLoading', :disabled='submitting') Retry
         v-select.mt-2(
           :items='groups'
           item-title='name'
@@ -80,7 +101,8 @@
           persistent-hint
           clearable
           multiple
-          :disabled='!providersLoaded || submitting'
+          :loading='groupsLoading'
+          :disabled='!providersLoaded || submitting || groupsLoading'
           )
         v-divider
         v-checkbox(
@@ -100,20 +122,22 @@
         )
       div.v-card-chin.admin-dialog-actions
         v-spacer
-        v-btn(variant="text", @click='isShown = false', :disabled='submitting') Cancel
+        v-btn(type='button', variant="text", @click='isShown = false', :disabled='submitting') Cancel
         v-btn.px-3(
+          type='submit'
+          value='close'
           variant="flat"
           color='primary'
-          @click='newUser(true)'
           :disabled='!providersLoaded || availableProviders.length < 1 || submitting'
           :loading='submitting'
           )
           v-icon(start) mdi-check
           span Create
         v-btn.px-3(
+          type='submit'
+          value='another'
           variant="outlined"
           color='primary'
-          @click='newUser(false)'
           :disabled='!providersLoaded || availableProviders.length < 1 || submitting'
           :loading='submitting'
           )
@@ -134,6 +158,7 @@ type AuthProviderSummary = Pick<AdminAuthProviderSummary, 'key' | 'displayName' 
 
 type FocusableRef = {
   focus: () => void
+  resetValidation?: () => void
 }
 
 type UserFieldConstraint = {
@@ -151,6 +176,26 @@ type UserValidationSchema = {
   email: UserFieldConstraint
   name: UserFieldConstraint
   password?: UserFieldConstraint
+}
+
+const EMAIL_CONSTRAINT: UserFieldConstraint = {
+  presence: { allowEmpty: false },
+  email: true
+}
+
+const NAME_CONSTRAINT: UserFieldConstraint = {
+  presence: { allowEmpty: false },
+  length: { minimum: 2, maximum: 255 }
+}
+
+const PASSWORD_CONSTRAINT: UserFieldConstraint = {
+  presence: { allowEmpty: false },
+  length: { minimum: 6, maximum: 255 }
+}
+
+const validateField = (field: string, value: string, constraint: UserFieldConstraint): true | string => {
+  const results = validateValues({ [field]: value }, { [field]: constraint }, { format: 'flat' })
+  return results?.[0] ?? true
 }
 
 const PASSWORD_CHARS = 'abcdefghkmnpqrstuvwxyzABCDEFHJKLMNPQRSTUVWXYZ23456789_*=?#!()+'
@@ -195,6 +240,8 @@ export default {
       providersLoaded: false,
       providerLoading: false,
       providerLoadError: '',
+      groupsLoading: false,
+      groupsLoadError: '',
       submitting: false,
       isUnmounted: false
     }
@@ -202,6 +249,15 @@ export default {
   computed: {
     availableProviders() {
       return this.providers.filter(provider => provider.isEnabled === true)
+    },
+    emailRules() {
+      return [(value: string) => validateField('email', value, EMAIL_CONSTRAINT)]
+    },
+    passwordRules() {
+      return [(value: string) => validateField('password', value, PASSWORD_CONSTRAINT)]
+    },
+    nameRules() {
+      return [(value: string) => validateField('name', value, NAME_CONSTRAINT)]
     },
     isShown: {
       get() { return this.modelValue },
@@ -216,9 +272,8 @@ export default {
           if (!this.providersLoaded) {
             this.loadProviders()
           }
-          this.$nextTick(() => {
-            if (this.modelValue) this.focusEmail()
-          })
+        } else {
+          this.resetValidation()
         }
       }
     }
@@ -226,6 +281,22 @@ export default {
   methods: {
     focusEmail() {
       ;(this.$refs.emailInput as FocusableRef | undefined)?.focus()
+    },
+    resetValidation() {
+      for (const refName of ['emailInput', 'passwordInput', 'nameInput']) {
+        ;(this.$refs[refName] as FocusableRef | undefined)?.resetValidation?.()
+      }
+    },
+    focusFirstInvalidField() {
+      let refName = 'emailInput'
+      if (validateField('email', this.email, EMAIL_CONSTRAINT) === true) {
+        refName = this.provider === 'local' && validateField('password', this.password, PASSWORD_CONSTRAINT) !== true
+          ? 'passwordInput'
+          : 'nameInput'
+      }
+      this.$nextTick(() => {
+        ;(this.$refs[refName] as FocusableRef | undefined)?.focus()
+      })
     },
     async loadProviders() {
       if (this.providerLoading) return
@@ -268,7 +339,10 @@ export default {
       }
     },
     async loadGroups() {
+      if (this.groupsLoading) return
       const requestId = ++this.groupsLoadRequestId
+      this.groupsLoading = true
+      this.groupsLoadError = ''
       wikiStore.startLoading('admin-auth-groups-refresh')
       try {
         const groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
@@ -276,14 +350,22 @@ export default {
         this.groups = groups
       } catch (err) {
         if (requestId !== this.groupsLoadRequestId) return
+        this.groupsLoadError = getErrorMessage(err)
         wikiStore.showNotification({
           style: 'red',
-          message: getErrorMessage(err),
+          message: this.groupsLoadError,
           icon: 'alert'
         })
       } finally {
+        if (requestId === this.groupsLoadRequestId && !this.isUnmounted) {
+          this.groupsLoading = false
+        }
         wikiStore.stopLoading('admin-auth-groups-refresh')
       }
+    },
+    submitUser(event: SubmitEvent) {
+      const submitter = event.submitter
+      void this.newUser(!(submitter instanceof HTMLButtonElement) || submitter.value !== 'another')
     },
     async newUser(close = false) {
       if (this.submitting) return
@@ -296,33 +378,14 @@ export default {
         return
       }
 
+      this.email = this.email.trim()
+      this.name = this.name.trim()
       const rules: UserValidationSchema = {
-        email: {
-          presence: {
-            allowEmpty: false
-          },
-          email: true
-        },
-        name: {
-          presence: {
-            allowEmpty: false
-          },
-          length: {
-            minimum: 2,
-            maximum: 255
-          }
-        }
+        email: EMAIL_CONSTRAINT,
+        name: NAME_CONSTRAINT
       }
-      if (this.provider === `local`) {
-        rules.password = {
-          presence: {
-            allowEmpty: false
-          },
-          length: {
-            minimum: 6,
-            maximum: 255
-          }
-        }
+      if (this.provider === 'local') {
+        rules.password = PASSWORD_CONSTRAINT
       }
       const validationResults = validateValues({
         email: this.email,
@@ -336,6 +399,7 @@ export default {
           message: validationResults[0],
           icon: 'alert'
         })
+        this.focusFirstInvalidField()
         return
       }
 
@@ -384,9 +448,11 @@ export default {
 
         if (close) {
           this.isShown = false
-        } else {
-          this.focusEmail()
         }
+        this.$nextTick(() => {
+          this.resetValidation()
+          if (!close && this.modelValue) this.focusEmail()
+        })
       } catch (err) {
         if (!this.isUnmounted) {
           wikiStore.showNotification({

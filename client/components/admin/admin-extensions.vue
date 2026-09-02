@@ -23,9 +23,10 @@
                 v-expansion-panel(v-for='ext of extensions', :key='ext.key')
                   v-expansion-panel-title
                     span {{ext.title}}
-                    template(v-slot:actions)
+                    template(v-slot:actions='{ expanded, expandIcon, collapseIcon }')
                       v-chip(label, color='success', size="small", v-if='ext.isInstalled', prepend-icon='mdi-check-circle') Installed
                       v-chip(label, color='warning', size="small", v-else, prepend-icon='mdi-download-circle-outline') Not Installed
+                      v-icon.ml-2(:icon='expanded ? collapseIcon : expandIcon', aria-hidden='true')
                   v-expansion-panel-text.pa-0
                     v-card(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`', rounded='0')
                       v-card-text

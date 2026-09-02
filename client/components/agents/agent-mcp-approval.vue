@@ -1,12 +1,12 @@
 <template>
-  <section class="approval-surface" :class="`approval-surface--${statusKey}`" aria-labelledby="approval-title" :aria-busy="loading || Boolean(pendingDecision)">
+  <section class="approval-surface" :class="`approval-surface--${statusKey}`" :aria-labelledby="approvalTitleId" :aria-busy="loading || Boolean(pendingDecision)">
     <header class="approval-masthead">
       <span class="approval-masthead__mark" aria-hidden="true">
         <v-icon icon="mdi-lan-connect" size="24" />
       </span>
       <div>
         <p class="approval-masthead__eyebrow">MCP authorization checkpoint</p>
-        <h1 id="approval-title">Review external Wiki operation</h1>
+        <h1 :id="approvalTitleId">Review external Wiki operation</h1>
         <p>Verify the visible command, target, proposed diff, and hashes that make up this bounded review record before deciding.</p>
       </div>
       <v-chip
@@ -101,11 +101,11 @@
           </span>
         </div>
 
-        <section class="operation-section" aria-labelledby="request-record-title">
+        <section class="operation-section" :aria-labelledby="requestRecordTitleId">
           <div class="operation-section__heading">
             <span class="operation-section__number" aria-hidden="true">01</span>
             <div>
-              <h3 id="request-record-title">Request record</h3>
+              <h3 :id="requestRecordTitleId">Request record</h3>
               <p>Who asked, what will run, and when the authority expires.</p>
             </div>
           </div>
@@ -148,11 +148,11 @@
           </details>
         </section>
 
-        <section class="operation-section" aria-labelledby="proposal-output-title">
+        <section class="operation-section" :aria-labelledby="proposalOutputTitleId">
           <div class="operation-section__heading">
             <span class="operation-section__number" aria-hidden="true">02</span>
             <div>
-              <h3 id="proposal-output-title">Proposed output record</h3>
+              <h3 :id="proposalOutputTitleId">Proposed output record</h3>
               <p>The diff below is the proposed-output portion of this bounded review record.</p>
             </div>
           </div>
@@ -162,12 +162,14 @@
               <span class="proposal-output__deletion">Removed</span>
               <span>{{ diffLines.length }} {{ diffLines.length === 1 ? 'line' : 'lines' }}</span>
             </div>
-            <pre class="proposal-diff" tabindex="0" aria-label="Proposed output diff"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+            <pre :id="proposalDiffId" class="proposal-diff" tabindex="0" aria-label="Proposed output diff"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
             <v-btn
               v-if="diffLines.length > collapsedLineCount"
               class="proposal-output__expand"
               size="small"
               variant="text"
+              :aria-expanded="expanded"
+              :aria-controls="proposalDiffId"
               @click="expanded = !expanded"
             >{{ expanded ? 'Show fewer lines' : `Show all ${diffLines.length} lines` }}</v-btn>
           </div>
@@ -183,12 +185,12 @@
         <section
           v-if="proposal.approval.status === 'pending' && !locallyExpired"
           class="operation-section decision-zone"
-          aria-labelledby="decision-title"
+          :aria-labelledby="decisionTitleId"
         >
           <div class="operation-section__heading">
             <span class="operation-section__number" aria-hidden="true">03</span>
             <div>
-              <h3 id="decision-title">Authorization decision</h3>
+              <h3 :id="decisionTitleId">Authorization decision</h3>
               <p>Deny stops this proposal. {{ decisionReviewCopy }}</p>
             </div>
           </div>
@@ -246,11 +248,11 @@
           </div>
         </section>
 
-        <section v-else class="operation-section decision-receipt" aria-labelledby="decision-receipt-title">
+        <section v-else class="operation-section decision-receipt" :aria-labelledby="decisionReceiptTitleId">
           <div class="operation-section__heading">
             <span class="operation-section__number" aria-hidden="true">03</span>
             <div>
-              <h3 id="decision-receipt-title">Decision receipt</h3>
+              <h3 :id="decisionReceiptTitleId">Decision receipt</h3>
               <p>The authorization checkpoint is closed.</p>
             </div>
           </div>
@@ -273,10 +275,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, watch } from 'vue'
 import { decideAgentProposal, getMcpAgentProposal, type McpAgentProposal } from '../../helpers/agents-api.ts'
 
 const props = defineProps<{ csrfToken: string; proposalId: string }>()
+const instanceId = useId()
+const approvalTitleId = `${instanceId}-approval-title`
+const requestRecordTitleId = `${instanceId}-request-record-title`
+const proposalOutputTitleId = `${instanceId}-proposal-output-title`
+const proposalDiffId = `${instanceId}-proposal-diff`
+const decisionTitleId = `${instanceId}-decision-title`
+const decisionReceiptTitleId = `${instanceId}-decision-receipt-title`
 const collapsedLineCount = 80
 const loading = ref(true)
 const pendingDecision = ref<'approved' | 'denied' | null>(null)

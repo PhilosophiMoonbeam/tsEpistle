@@ -188,7 +188,7 @@ describe('default page focused contracts', () => {
     expect(style).toMatch(/--page-toc-empty-height:\s*calc\(var\(--wiki-grid-size\) \* 2\)/)
     const navigationDrawer = template.match(/v-navigation-drawer\(([\s\S]*?)\n {6}\)/)?.[1] ?? ''
     expect(navigationDrawer).not.toBe('')
-    expect(navigationDrawer).toContain("mobile-breakpoint='1280'")
+    expect(navigationDrawer).toContain(":mobile-breakpoint='1280'")
     expect(navigationDrawer).toContain(":width='$vuetify.display.width >= 1280 ? 281.6 : 256'")
     expect(navigationDrawer).toContain("v-model='navShown'")
     expect(navigationDrawer).toContain("@update:model-value='navigationVisibilityChanged'")
@@ -236,7 +236,7 @@ describe('default page focused contracts', () => {
     expect(style).toMatch(
       /@media\s*\(min-width:\s*1920px\)\s*\{[\s\S]*?--page-header-toc-column:\s*calc\(2\.2 \* \(100% \+ var\(--v-col-gap-x\)\) \/ 12 - var\(--v-col-gap-x\)\);/
     )
-    expect(style).toMatch(/--page-toc-desktop-lift:\s*calc\(var\(--page-toc-empty-height\) \/ 2 \+ var\(--wiki-space-12\)\)/)
+    expect(style).toMatch(/--page-toc-desktop-lift:\s*calc\(var\(--page-toc-empty-height\) \+ var\(--wiki-space-6\)\)/)
     expect(style).toMatch(/@media\s*\(max-width:\s*1279px\)\s*\{[\s\S]*?\.page-col-sd\s*\{[\s\S]*?margin-block-start:\s*0;/s)
     expect(style).toMatch(/\.v-main \.contents[\s\S]*?h1\s*\{[^}]*color:\s*var\(--wiki-accent-ink\);/s)
     expect(style).not.toContain(':has(')

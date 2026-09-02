@@ -1,10 +1,10 @@
 <template lang='pug'>
-  v-app().source
+  v-app.source
     nav-header
     v-main.source-main
       v-toolbar.source-toolbar(color='surface', flat)
         .source-toolbar-copy
-          .source-eyebrow Source view
+          .source-eyebrow {{$t('common:header.viewSource')}}
           i18next#source-title.source-toolbar-title(v-if='versionId > 0', path='common:page.viewingSourceVersion', tag='h1')
             strong(place='date', :title='$helpers.formatMoment(versionDate, `LLL`)') {{ $helpers.formatMoment(versionDate, 'lll') }}
             strong(place='path') /{{path}}
@@ -183,7 +183,7 @@ export default {
     background: transparent;
     box-shadow: none;
     color: rgb(var(--v-theme-on-surface));
-    font-family: 'Roboto Mono', monospace;
+    font-family: var(--wiki-font-mono);
     font-size: .875rem;
     font-weight: 400;
     line-height: 1.65;
@@ -197,7 +197,6 @@ export default {
 @media (max-width: 599px) {
   .source-toolbar {
     min-height: 76px !important;
-    padding-inline: 12px;
   }
 
   .source-toolbar-copy {
@@ -215,7 +214,7 @@ export default {
   }
 
   .source-shell {
-    padding: 12px 10px 36px !important;
+    padding: 12px var(--wiki-page-gutter) 36px !important;
   }
 
   .source-code-card {

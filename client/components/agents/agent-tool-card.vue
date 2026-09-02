@@ -107,6 +107,7 @@
         spellcheck="false"
         autocapitalize="none"
         autocorrect="off"
+        :disabled="!canDecide"
       />
     </div>
 
@@ -329,20 +330,16 @@ const expiryLabel = computed(() => {
 })
 const canDecide = computed(() => approvalPending.value && !locallyExpired.value && !props.busy && !decisionInFlight.value)
 const diffLines = computed(() => {
-  const occurrences = new Map<string, number>()
-  return props.proposal.diff?.split('\n').map(text => {
-    const occurrence = occurrences.get(text) ?? 0
-    occurrences.set(text, occurrence + 1)
-    return {
-      key: `${text.length}:${text}:${occurrence}`,
-      text,
-      kind: text.startsWith('+') && !text.startsWith('+++')
-        ? 'insert' as const
-        : text.startsWith('-') && !text.startsWith('---')
-          ? 'delete' as const
-          : 'context' as const
-    }
-  }) ?? []
+  if (!props.proposal.diff) return []
+  return props.proposal.diff.split('\n').map((text, index) => ({
+    key: index,
+    text,
+    kind: text.startsWith('+') && !text.startsWith('+++')
+      ? 'insert' as const
+      : text.startsWith('-') && !text.startsWith('---')
+        ? 'delete' as const
+        : 'context' as const
+  }))
 })
 const reviewAdequate = computed(() => Boolean(props.proposal.target?.path.trim() || props.proposal.diff?.trim()))
 const reviewDescription = computed(() => reviewAdequate.value
@@ -427,6 +424,13 @@ const decide = (decision: 'approved' | 'denied'): void => {
   decisionInFlight.value = decision
   decisionMessage.value = decision === 'approved' ? 'Submitting approval.' : 'Submitting denial.'
   emit('decision', props.proposal.id, approval.id, decision, props.proposal.risk === 'destructive-write' ? confirmationPath.value : undefined)
+  void nextTick(() => {
+    if (props.busy || !approvalPending.value || decisionInFlight.value !== decision) return
+    decisionMessage.value = 'The decision could not be completed. Review the request and try again.'
+    decisionInFlight.value = null
+    const target = decision === 'approved' ? approveButton.value : denyButton.value
+    void nextTick(() => elementForRef(target)?.focus())
+  })
 }
 </script>
 <style scoped>

@@ -73,7 +73,7 @@ describe('admin utilities telemetry REST and root UI facade migration guard', ()
   const directRootUiCommit =
     /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-utilities-telemetry.vue imports REST helpers and exposes truthful load and mutation state', () => {
+  test('admin-utilities-telemetry.vue exposes truthful load and exclusive mutation state behind reset confirmation', () => {
     expect(script).not.toBeNull()
     expect(script).toMatch(/import\s+\{\s*defineComponent\s*\}\s+from\s+['"]vue['"]/)
     expect(script).toMatch(
@@ -89,7 +89,10 @@ describe('admin utilities telemetry REST and root UI facade migration guard', ()
       "v-btn.px-3(type='submit', variant=\"flat\", color='primary', :loading='loading && activeMutation === `save`', :disabled='!loaded || loading')"
     )
     expect(source).toContain(
-      "v-btn.px-3(type='button', variant=\"outlined\", color='grey', @click='resetClientId', :loading='loading && activeMutation === `reset`', :disabled='!loaded || loading')"
+      "v-btn.px-3(type='button', variant=\"outlined\", color='warning', @click='resetDialog = true', :loading='loading && activeMutation === `reset`', :disabled='!loaded || loading')"
+    )
+    expect(source).toMatch(
+      /v-dialog\(v-model='resetDialog', max-width='500', persistent, aria-labelledby='telemetry-reset-dialog-title'\)[\s\S]*?Resetting breaks continuity with prior telemetry and cannot be undone\.[\s\S]*?@click='resetDialog = false'[\s\S]*?:loading='loading && activeMutation === `reset`'[\s\S]*?:disabled='loading'[\s\S]*?@click='resetClientId'/
     )
     expect(script).not.toMatch(/utilities-mutation-telemetry-(?:resetid|set)\.gql/)
     expect(script).not.toMatch(/\$apollo\.mutate/)
@@ -144,10 +147,11 @@ describe('admin utilities telemetry REST and root UI facade migration guard', ()
     expect(updateTelemetry).not.toMatch(directRootUiCommit)
   })
 
-  test('resetClientId uses REST helper with mutation-specific state, silent reload, success-only notification, and cleanup', () => {
+  test('resetClientId closes its confirmation, uses exclusive reset state, silently reloads, and cleans up', () => {
     expect(resetClientId).not.toBeNull()
     expect(resetClientId).toMatch(/if\s*\(\s*!this\.loaded\s*\|\|\s*this\.loading\s*\)\s*\{\s*return\s*\}/)
     expectInOrder(resetClientId, [
+      'this.resetDialog = false',
       'this.loading = true',
       "this.activeMutation = 'reset'",
       "wikiStore.startLoading('admin-utilities-telemetry-resetid')",

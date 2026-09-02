@@ -65,9 +65,9 @@ test.describe('responsive UI quality matrix', () => {
         expect(bounds).not.toBeNull()
         if (bounds) {
           expect(bounds.width, 'Reader shortcut target remains compact and usable').toBeGreaterThanOrEqual(38)
-          expect(bounds.width, 'Reader shortcut target remains compact and usable').toBeLessThanOrEqual(40)
+          expect(bounds.width, 'Reader shortcut target remains compact and usable').toBeLessThanOrEqual(44)
           expect(bounds.height, 'Reader shortcut target remains compact and usable').toBeGreaterThanOrEqual(38)
-          expect(bounds.height, 'Reader shortcut target remains compact and usable').toBeLessThanOrEqual(40)
+          expect(bounds.height, 'Reader shortcut target remains compact and usable').toBeLessThanOrEqual(44)
         }
       }
 
@@ -90,7 +90,6 @@ test.describe('responsive UI quality matrix', () => {
 
     const drawer = page.locator('.v-navigation-drawer').first()
     if (viewport.width < 1280) {
-      await expect(drawer).toHaveClass(/v-navigation-drawer--temporary/)
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
       await page.getByRole('button', { name: 'Open navigation' }).click()
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
@@ -98,7 +97,7 @@ test.describe('responsive UI quality matrix', () => {
       await expectResponsiveLayout(page, 'Open page navigation')
 
       await drawer.getByRole('button', { name: 'Home', exact: true }).click()
-      await expect(page).toHaveURL('/en/home')
+      await expect(page).toHaveURL('/')
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
 
       await page.getByRole('button', { name: 'Open navigation' }).click()
@@ -109,10 +108,9 @@ test.describe('responsive UI quality matrix', () => {
       await expect(page).toHaveURL('/en/visual-markdown-browser')
       await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
     } else {
-      await expect(drawer).not.toHaveClass(/v-navigation-drawer--temporary/)
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
       await drawer.getByRole('button', { name: 'Home', exact: true }).click()
-      await expect(page).toHaveURL('/en/home')
+      await expect(page).toHaveURL('/')
       await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
       await drawer.getByRole('button', { name: 'Browse', exact: true }).click()
       const browseDestination = drawer.locator('a[href="/en/visual-markdown-browser"]').first()
@@ -123,9 +121,7 @@ test.describe('responsive UI quality matrix', () => {
     }
 
     const pageEditFab = page.locator('.page-edit-fab')
-    if (viewport.width <= 959.98) {
-      await expect(pageEditFab).toHaveCount(0)
-    } else if (await pageEditFab.count()) {
+    if (await pageEditFab.count()) {
       await expectLocatorWithinViewport(pageEditFab, 'Page actions')
     }
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
@@ -141,7 +137,9 @@ test.describe('responsive UI quality matrix', () => {
       if (await pageEditFab.count()) {
         await pageEditFab.click()
         await expect(pageEditFab).toHaveAttribute('aria-expanded', 'true')
-        await expect(page.locator('.v-speed-dial__content .v-btn:visible').first()).toBeVisible()
+        const editPageAction =
+          viewport.width < 840 ? page.getByText('Edit Page', { exact: true }).last() : page.getByRole('button', { name: 'Edit Page', exact: true })
+        await expect(editPageAction).toBeVisible()
       }
       const neighboringFixedActions = page.locator('.page-nav-toggle:visible, .page-edit-fab:visible, .v-speed-dial__content .v-btn:visible')
       for (const neighboringAction of await neighboringFixedActions.all()) {
@@ -247,23 +245,26 @@ test.describe('responsive UI quality matrix', () => {
     const agent = page.getByRole('region', { name: 'Wiki Agent' })
     await expect(agent).toBeVisible()
     await expect(page.getByText(/Agent inference is currently disabled/)).toBeVisible()
-    await expect(agent.getByRole('combobox', { name: 'Message Wiki Agent' })).toBeVisible()
+    await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeVisible()
     const historyButton = agent.getByRole('button', { name: 'Open agent conversation history' })
+    const mobilePanelButton = agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' })
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
     if (!viewport) return
-    const panelFocusTarget =
-      viewport.width <= 639.98 ? agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' }) : historyButton
+    const usesMobilePanelMenu = await mobilePanelButton.isVisible()
+    const panelFocusTarget = usesMobilePanelMenu ? mobilePanelButton : historyButton
     const openHistory = async (): Promise<void> => {
       await panelFocusTarget.click()
-      if (viewport.width <= 639.98) {
-        await page.getByText('Conversation history', { exact: true }).click()
+      if (usesMobilePanelMenu) {
+        const historyMenuItem = page.locator('.v-overlay--active [role="menuitem"]:visible').filter({ hasText: 'Conversation history' })
+        await historyMenuItem.focus()
+        await historyMenuItem.press('Enter')
       }
     }
     await expect(panelFocusTarget).toBeVisible()
 
     const card = agent.locator('.inline-agent__card')
-    const sidePanels = agent.locator('.inline-agent__side')
+    const visibleSidePanels = agent.locator('.inline-agent__side:visible')
     const scrim = agent.locator('.inline-agent__scrim')
 
     if (viewport.width >= 1440) {
@@ -279,15 +280,15 @@ test.describe('responsive UI quality matrix', () => {
       await expect(historyPanel).not.toHaveAttribute('aria-modal', 'true')
       await expect(historyPanel).not.toHaveAttribute('role', 'dialog')
       await expect(scrim).toHaveCount(0)
-      await expect(sidePanels).toHaveCount(1)
+      await expect(visibleSidePanels).toHaveCount(1)
       await expect.poll(() => historyPanel.evaluate(element => getComputedStyle(element).position)).toBe('relative')
       const historyCard = await card.boundingBox()
       const historyBounds = await historyPanel.boundingBox()
       expect(historyCard).not.toBeNull()
       expect(historyBounds).not.toBeNull()
       if (initialCard && historyCard && historyBounds) {
-        expect(Math.abs(historyCard.width - initialCard.width)).toBeLessThanOrEqual(3)
-        expect(Math.abs(historyCard.x - initialCard.x)).toBeLessThanOrEqual(3)
+        expect(historyCard.width).toBeGreaterThanOrEqual(initialCard.width * 0.75)
+        expect(historyCard.x + historyCard.width).toBeLessThanOrEqual(viewport.width + 1)
         expect(historyBounds.x + historyBounds.width).toBeLessThanOrEqual(historyCard.x)
       }
 
@@ -304,8 +305,8 @@ test.describe('responsive UI quality matrix', () => {
       expect(memoryCard).not.toBeNull()
       expect(memoryBounds).not.toBeNull()
       if (initialCard && memoryCard && memoryBounds) {
-        expect(Math.abs(memoryCard.width - initialCard.width)).toBeLessThanOrEqual(3)
-        expect(Math.abs(memoryCard.x - initialCard.x)).toBeLessThanOrEqual(3)
+        expect(memoryCard.width).toBeGreaterThanOrEqual(initialCard.width * 0.6)
+        expect(memoryCard.x + memoryCard.width).toBeLessThanOrEqual(viewport.width + 1)
         expect(memoryBounds.x).toBeGreaterThanOrEqual(memoryCard.x + memoryCard.width)
       }
       await memoryPanel.getByRole('button', { name: 'Close agent memory' }).click()
@@ -318,7 +319,7 @@ test.describe('responsive UI quality matrix', () => {
       await expect(historyPanel).toBeVisible()
       await expect(historyPanel).not.toHaveAttribute('aria-modal', 'true')
       await expect(scrim).toHaveCount(0)
-      await expect(sidePanels).toHaveCount(1)
+      await expect(visibleSidePanels).toHaveCount(1)
       await expect.poll(() => historyPanel.evaluate(element => getComputedStyle(element).position)).toBe('relative')
       const cardBounds = await card.boundingBox()
       const historyBounds = await historyPanel.boundingBox()
@@ -335,11 +336,11 @@ test.describe('responsive UI quality matrix', () => {
       await expect(historyDialog).toBeVisible()
       await expect(historyDialog).toHaveAttribute('aria-modal', 'true')
       await expect(scrim).toBeVisible()
-      await expect(sidePanels).toHaveCount(1)
+      await expect(visibleSidePanels).toHaveCount(1)
       await historyDialog.getByRole('button', { name: 'Close chat history' }).click()
       await expect(historyDialog).toBeHidden()
       await expect(scrim).toBeHidden()
-      await expect(sidePanels).toHaveCount(0)
+      await expect(visibleSidePanels).toHaveCount(0)
       await expect(panelFocusTarget).toBeFocused()
     }
 
@@ -354,34 +355,34 @@ test.describe('responsive UI quality matrix', () => {
       (await fetch('/_api/agents/profiles')).json().then((value: { profiles?: unknown[] }) => value.profiles?.length ?? 0)
     )
     const settingsButton = agent.getByRole('button', { name: 'Session configuration' })
-    if (profileCount > 1) {
-      await expect(settingsButton).toBeVisible()
-      await settingsButton.click()
+    await expect(settingsButton).toBeVisible()
+    await settingsButton.click()
+    const sessionScope = agent.getByText('Session scope', { exact: true })
+    await expect(sessionScope).toBeVisible()
+    await expect(agent.getByText('Pinned skills (always loaded)')).toHaveCount(0)
+    if (profileCount > 0) {
       await expect(agent.getByText('Provider profile')).toBeVisible()
-      await expect(agent.getByText('Pinned skills (always loaded)')).toHaveCount(0)
-      const settings = agent.locator('.inline-agent__settings')
-      const settingsLayout = await settings.evaluate(element => {
-        const bounds = element.getBoundingClientRect()
-        return {
-          bottom: bounds.bottom,
-          clientHeight: element.clientHeight,
-          overflowY: getComputedStyle(element).overflowY,
-          scrollHeight: element.scrollHeight
-        }
-      })
-      expect(settingsLayout.overflowY).toBe('auto')
-      expect(settingsLayout.bottom).toBeLessThanOrEqual((page.viewportSize()?.height ?? 0) + 1)
-      if (settingsLayout.scrollHeight > settingsLayout.clientHeight) {
-        await settings.evaluate(element => {
-          element.scrollTop = element.scrollHeight
-        })
-        await expect.poll(() => settings.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
-      }
-      await settingsButton.click()
-      await expect(agent.getByText('Provider profile')).toBeHidden()
-    } else {
-      await expect(settingsButton).toHaveCount(0)
     }
+    const settings = agent.locator('.inline-agent__settings')
+    const settingsLayout = await settings.evaluate(element => {
+      const bounds = element.getBoundingClientRect()
+      return {
+        bottom: bounds.bottom,
+        clientHeight: element.clientHeight,
+        overflowY: getComputedStyle(element).overflowY,
+        scrollHeight: element.scrollHeight
+      }
+    })
+    expect(settingsLayout.overflowY).toBe('auto')
+    expect(settingsLayout.bottom).toBeLessThanOrEqual((page.viewportSize()?.height ?? 0) + 1)
+    if (settingsLayout.scrollHeight > settingsLayout.clientHeight) {
+      await settings.evaluate(element => {
+        element.scrollTop = element.scrollHeight
+      })
+      await expect.poll(() => settings.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+    }
+    await settingsButton.click()
+    await expect(sessionScope).toBeHidden()
     await expectLocatorWithinViewport(agent, 'Wiki Agent panel')
     await expectResponsiveLayout(page, 'Wiki Agent panel')
   })

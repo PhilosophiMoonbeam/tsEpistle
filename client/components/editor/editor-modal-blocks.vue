@@ -56,7 +56,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                   v-row.mt-2
                     v-col(cols='12', sm='6')
                       v-text-field(
-                        v-model.number='qr.size'
+                        :model-value='qr.size'
                         type='number'
                         min='128'
                         max='1024'
@@ -64,6 +64,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         label='Size (pixels)'
                         hint='128–1024'
                         persistent-hint
+                        @update:model-value='qr.size = parseNumber($event)'
                       )
                     v-col(cols='12', sm='6')
                       v-select(
@@ -76,7 +77,13 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                 template(v-else-if='selectedKey === `gallery`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
                     | Gallery images must be same-origin asset paths. Each image requires alternative text and remains available as a normal link without JavaScript.
-                  v-card.mb-4(v-for='(image, index) in gallery.images', :key='image.id', variant='outlined')
+                  v-card.mb-4(
+                    v-for='(image, index) in gallery.images'
+                    :key='image.id'
+                    variant='outlined'
+                    role='group'
+                    :aria-label='`Image ${index + 1}`'
+                  )
                     v-card-title.d-flex.align-center.text-body-large
                       span Image {{index + 1}}
                       v-spacer
@@ -108,7 +115,12 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         label='Caption (optional)'
                         counter='300'
                       )
-                  v-btn.mb-5(variant='outlined', :disabled='gallery.images.length >= 50', @click='addGalleryImage')
+                  v-btn.mb-5(
+                    ref='addGalleryButton'
+                    variant='outlined'
+                    :disabled='gallery.images.length >= 50'
+                    @click='addGalleryImage'
+                  )
                     v-icon(start) mdi-plus
                     | Add image
                   v-row
@@ -136,23 +148,25 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                   v-row.mt-2
                     v-col(cols='12', sm='4')
                       v-text-field(
-                        v-model.number='index.depth'
+                        :model-value='index.depth'
                         type='number'
                         min='0'
                         max='5'
                         step='1'
                         label='Nested depth'
+                        @update:model-value='index.depth = parseNumber($event)'
                       )
                     v-col(cols='12', sm='4')
                       v-select(v-model='index.columns', :items='indexColumns', label='Maximum columns')
                     v-col(cols='12', sm='4')
                       v-text-field(
-                        v-model.number='index.limit'
+                        :model-value='index.limit'
                         type='number'
                         min='1'
                         max='200'
                         step='1'
                         label='Maximum pages'
+                        @update:model-value='index.limit = parseNumber($event)'
                       )
                   v-row
                     v-col(cols='12', sm='6')
@@ -167,7 +181,13 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                 template(v-else-if='selectedKey === `tabs`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
                     | Every panel keeps a readable no-script and print fallback. Panel content is preserved as plain text in canonical page source.
-                  v-card.mb-4(v-for='(panel, panelIndex) in tabs.panels', :key='panel.id', variant='outlined')
+                  v-card.mb-4(
+                    v-for='(panel, panelIndex) in tabs.panels'
+                    :key='panel.id'
+                    variant='outlined'
+                    role='group'
+                    :aria-label='`Panel ${panelIndex + 1}`'
+                  )
                     v-card-title.d-flex.align-center.text-body-large
                       span Panel {{panelIndex + 1}}
                       v-spacer
@@ -190,7 +210,12 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                         clearable
                       )
                       v-textarea.mt-4.source-textarea(v-model='panel.content', label='Panel content', rows='4', auto-grow, counter='20000', required)
-                  v-btn.mb-5(variant='outlined', :disabled='tabs.panels.length >= 12', @click='addTabPanel')
+                  v-btn.mb-5(
+                    ref='addTabButton'
+                    variant='outlined'
+                    :disabled='tabs.panels.length >= 12'
+                    @click='addTabPanel'
+                  )
                     v-icon(start) mdi-plus
                     | Add panel
                   v-select(
@@ -215,7 +240,13 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                   )
                   v-text-field.mt-4(v-if='infobox.image', v-model='infobox.imageAlt', label='Image alternative text', counter='200', required)
                   v-text-field.mt-4(v-if='infobox.image', v-model='infobox.caption', label='Image caption (optional)', counter='300')
-                  v-card.mt-4.mb-4(v-for='(fact, factIndex) in infobox.facts', :key='fact.id', variant='outlined')
+                  v-card.mt-4.mb-4(
+                    v-for='(fact, factIndex) in infobox.facts'
+                    :key='fact.id'
+                    variant='outlined'
+                    role='group'
+                    :aria-label='`Fact ${factIndex + 1}`'
+                  )
                     v-card-title.d-flex.align-center.text-body-large
                       span Fact {{factIndex + 1}}
                       v-spacer
@@ -231,7 +262,12 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                       v-text-field(v-model='fact.label', label='Label', counter='100', required)
                       v-select.mt-4(v-model='fact.kind', :items='factKinds', label='Value type')
                       v-textarea.mt-4(v-if='fact.kind === `text`', v-model='fact.value', label='Value', rows='2', auto-grow, counter='1000')
-                  v-btn.mb-5(variant='outlined', :disabled='infobox.facts.length >= 50', @click='addInfoboxFact')
+                  v-btn.mb-5(
+                    ref='addFactButton'
+                    variant='outlined'
+                    :disabled='infobox.facts.length >= 50'
+                    @click='addInfoboxFact'
+                  )
                     v-icon(start) mdi-plus
                     | Add fact
                 template(v-else-if='selectedKey === `pdf`')
@@ -241,9 +277,23 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                   v-text-field.mt-4(v-model='pdf.title', label='Accessible title', counter='200')
                   v-row.mt-2
                     v-col(cols='12', sm='6')
-                      v-text-field(v-model.number='pdf.page', type='number', min='1', max='100000', label='Opening page')
+                      v-text-field(
+                        :model-value='pdf.page'
+                        type='number'
+                        min='1'
+                        max='100000'
+                        label='Opening page'
+                        @update:model-value='pdf.page = parseNumber($event)'
+                      )
                     v-col(cols='12', sm='6')
-                      v-text-field(v-model.number='pdf.height', type='number', min='320', max='1600', label='Viewer height')
+                      v-text-field(
+                        :model-value='pdf.height'
+                        type='number'
+                        min='320'
+                        max='1600'
+                        label='Viewer height'
+                        @update:model-value='pdf.height = parseNumber($event)'
+                      )
                 template(v-else-if='selectedKey === `media`')
                   v-alert.mb-5(type='info', variant='tonal', density='compact')
                     | Audio and video files must be same-origin assets and use native browser controls.
@@ -270,7 +320,14 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                   v-text-field.mt-4(v-model='youtube.title', label='Accessible title', counter='200')
                   v-row.mt-2
                     v-col(cols='12', sm='6')
-                      v-text-field(v-model.number='youtube.start', type='number', min='0', max='86400', label='Start time (seconds)')
+                      v-text-field(
+                        :model-value='youtube.start'
+                        type='number'
+                        min='0'
+                        max='86400'
+                        label='Start time (seconds)'
+                        @update:model-value='youtube.start = parseNumber($event)'
+                      )
                     v-col.d-flex.align-center(cols='12', sm='6')
                       v-switch(v-model='youtube.controls', label='Show player controls', hide-details)
                 template(v-else-if='selectedKey === `diagram`')
@@ -309,14 +366,46 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                     | Map data loads from OpenStreetMap only after the reader explicitly continues. Coordinates are bounded and no arbitrary embed URL is accepted.
                   v-row
                     v-col(cols='12', sm='6')
-                      v-text-field(v-model.number='map.latitude', type='number', min='-90', max='90', step='any', label='Latitude', required)
+                      v-text-field(
+                        :model-value='map.latitude'
+                        type='number'
+                        min='-90'
+                        max='90'
+                        step='any'
+                        label='Latitude'
+                        required
+                        @update:model-value='map.latitude = parseNumber($event)'
+                      )
                     v-col(cols='12', sm='6')
-                      v-text-field(v-model.number='map.longitude', type='number', min='-180', max='180', step='any', label='Longitude', required)
+                      v-text-field(
+                        :model-value='map.longitude'
+                        type='number'
+                        min='-180'
+                        max='180'
+                        step='any'
+                        label='Longitude'
+                        required
+                        @update:model-value='map.longitude = parseNumber($event)'
+                      )
                   v-row
                     v-col(cols='12', sm='6')
-                      v-text-field(v-model.number='map.zoom', type='number', min='1', max='19', label='Zoom')
+                      v-text-field(
+                        :model-value='map.zoom'
+                        type='number'
+                        min='1'
+                        max='19'
+                        label='Zoom'
+                        @update:model-value='map.zoom = parseNumber($event)'
+                      )
                     v-col(cols='12', sm='6')
-                      v-text-field(v-model.number='map.height', type='number', min='240', max='800', label='Map height')
+                      v-text-field(
+                        :model-value='map.height'
+                        type='number'
+                        min='240'
+                        max='800'
+                        label='Map height'
+                        @update:model-value='map.height = parseNumber($event)'
+                      )
                   v-text-field(v-model='map.label', label='Location label (optional)', counter='200')
                 v-alert.mt-4(v-if='submitError', type='error', variant='tonal', density='compact') {{submitError}}
                 .editor-modal-blocks-actions
@@ -417,6 +506,7 @@ export default defineComponent({
       loadError: '',
       submitError: '',
       loadRequestId: 0,
+      returnFocus: null as HTMLElement | null,
       qr: {
         value: '',
         label: '',
@@ -611,14 +701,29 @@ export default defineComponent({
     }
   },
   methods: {
+    parseNumber (value: unknown): number {
+      if (typeof value === 'number') return value
+      if (typeof value !== 'string' || value.trim() === '') return Number.NaN
+      return Number(value)
+    },
     close () {
       wikiStore.editor.activeModal = ''
+    },
+    focusControl (control: unknown): boolean {
+      const element = control instanceof HTMLElement
+        ? control
+        : (control as { $el?: unknown } | undefined)?.$el
+      if (!(element instanceof HTMLElement) || element.matches(':disabled')) return false
+      element.focus({ preventScroll: true })
+      return true
     },
     addGalleryImage () {
       if (this.gallery.images.length < 50) this.gallery.images.push(createGalleryImage())
     },
     removeGalleryImage (index: number) {
-      if (this.gallery.images.length > 1) this.gallery.images.splice(index, 1)
+      if (this.gallery.images.length <= 1) return
+      this.gallery.images.splice(index, 1)
+      this.$nextTick(() => this.focusControl(this.$refs.addGalleryButton))
     },
     addTabPanel () {
       if (this.tabs.panels.length < 12) this.tabs.panels.push(createTabPanel(`Panel ${this.tabs.panels.length + 1}`))
@@ -628,12 +733,15 @@ export default defineComponent({
       this.tabs.panels.splice(index, 1)
       if (index < this.tabs.active) this.tabs.active -= 1
       else if (this.tabs.active >= this.tabs.panels.length) this.tabs.active = this.tabs.panels.length - 1
+      this.$nextTick(() => this.focusControl(this.$refs.addTabButton))
     },
     addInfoboxFact () {
       if (this.infobox.facts.length < 50) this.infobox.facts.push(createInfoboxFact())
     },
     removeInfoboxFact (index: number) {
-      if (this.infobox.facts.length > 1) this.infobox.facts.splice(index, 1)
+      if (this.infobox.facts.length <= 1) return
+      this.infobox.facts.splice(index, 1)
+      this.$nextTick(() => this.focusControl(this.$refs.addFactButton))
     },
     extensionInput (): Record<string, unknown> {
       if (this.selectedKey === 'qr') {
@@ -835,10 +943,15 @@ export default defineComponent({
     }
   },
   mounted () {
+    this.returnFocus = document.activeElement as HTMLElement | null
     void this.loadExtensions()
   },
   beforeUnmount () {
     this.loadRequestId += 1
+    const returnFocus = this.returnFocus
+    this.$nextTick(() => {
+      if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true })
+    })
   }
 })
 </script>

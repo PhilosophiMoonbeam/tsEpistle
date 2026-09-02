@@ -49,12 +49,17 @@ describe('modern client Vuetify bootstrap contract', () => {
   test('renders recoverable loading and chunk-error states instead of a blank async surface', () => {
     expect(asyncStateSource).toMatch(/:role="error \? 'alert' : 'status'"/)
     expect(asyncStateSource).toContain("{{ error ? 'This section could not be loaded' : 'Loading this section' }}")
-    expect(asyncStateSource).toMatch(/v-btn ref="retryButton"[\s\S]*@click="\$emit\('retry'\)"[\s\S]*Try again/)
-    expect(asyncStateSource).toMatch(/v-btn[\s\S]*@click="reloadPage"[\s\S]*Reload page/)
+    expect(asyncStateSource).toMatch(
+      /<div v-if="error" class="async-component-state__actions">[\s\S]*?<v-btn[^>]*@click="\$emit\('retry'\)"[^>]*>[\s\S]*?Try again[\s\S]*?<\/v-btn>/
+    )
+    expect(asyncStateSource).toMatch(/<v-btn[^>]*@click="reloadPage"[^>]*>[\s\S]*?Reload page[\s\S]*?<\/v-btn>/)
     expect(asyncStateSource).toMatch(/const boundedLoader: AsyncComponentLoader[\s\S]*ASYNC_COMPONENT_TIMEOUT_MS/)
+    expect(asyncStateSource).toMatch(/return \(\) => h\(AsyncComponentState, \{[\s\S]*error: loadError\.value,[\s\S]*onRetry: retry/)
     expect(asyncStateSource).toMatch(
       /return defineAsyncComponent\(\{[\s\S]*loader: boundedLoader,[\s\S]*loadingComponent: LoadingAndErrorState,[\s\S]*suspensible: false,[\s\S]*onError\(error, retry\) \{[\s\S]*loadError\.value = error[\s\S]*retryLoad = retry/
     )
-    expect(asyncStateSource).toMatch(/loadError\.value = undefined\s*pendingRetry\(\)/)
+    expect(asyncStateSource).toMatch(
+      /const pendingRetry = retryLoad\s*if \(!pendingRetry\) return\s*retryLoad = undefined\s*loadError\.value = undefined\s*pendingRetry\(\)/
+    )
   })
 })

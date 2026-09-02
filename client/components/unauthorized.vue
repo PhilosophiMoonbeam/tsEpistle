@@ -24,7 +24,11 @@ export default {
   },
   methods: {
     goBack () {
-      window.history.back()
+      if (window.history.length > 1) {
+        window.history.back()
+        return
+      }
+      window.location.assign('/')
     }
   }
 }

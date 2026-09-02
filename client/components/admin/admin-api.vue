@@ -38,25 +38,26 @@
         v-card.mt-3.animated.fadeInUp
           v-card-title.d-flex.align-center.flex-wrap.ga-2
             v-icon.mr-2(color='primary') mdi-key-chain
-            span API keys
+            h2.text-body-large.ma-0 API keys
             v-spacer
-            v-chip(v-if='loadState === `success`', label, size="small", :color='keys.length ? `success` : `info`') {{ keys.length ? `${keys.length} active` : 'No keys' }}
+            v-chip(v-if='loadState === `success`', label, size="small", :color='activeKeyCount ? `success` : `info`') {{ activeKeyCount ? `${activeKeyCount} active` : 'No active keys' }}
           v-divider
           v-skeleton-loader(v-if='loadState === `loading`', type='table-tbody')
           v-alert.ma-4(v-else-if='loadState === `error`', type='error', variant="tonal", icon='mdi-alert')
             span Unable to load API keys.
             v-btn.ml-2(variant="text", size="small", @click='refresh') Retry
           template(v-else)
-            v-table.api-key-desktop(v-if='keys.length > 0')
+            v-table(v-if='$vuetify.display.mdAndUp && keys.length > 0')
               template(v-slot:default)
+                caption.api-key-caption API keys and their current status
                 thead
                   tr(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`')
-                    th {{$t('admin:api.headerName')}}
-                    th {{$t('admin:api.headerKeyEnding')}}
-                    th {{$t('admin:api.headerExpiration')}}
-                    th {{$t('admin:api.headerCreated')}}
-                    th {{$t('admin:api.headerLastUpdated')}}
-                    th(width='100') {{$t('admin:api.headerRevoke')}}
+                    th(scope='col') {{$t('admin:api.headerName')}}
+                    th(scope='col') {{$t('admin:api.headerKeyEnding')}}
+                    th(scope='col') {{$t('admin:api.headerExpiration')}}
+                    th(scope='col') {{$t('admin:api.headerCreated')}}
+                    th(scope='col') {{$t('admin:api.headerLastUpdated')}}
+                    th(scope='col', width='100') {{$t('admin:api.headerRevoke')}}
                 tbody
                   tr(v-for='key of keys', :key='`key-` + key.id')
                     td
@@ -69,14 +70,15 @@
                     td
                       v-btn(icon, @click='revoke(key)', :disabled='key.isRevoked || adminApiBusy', :aria-label='`Revoke ${key.name}`')
                         v-icon(color='error') mdi-cancel
-            div.api-key-mobile(v-if='keys.length > 0')
+            div(v-else-if='keys.length > 0')
               .admin-mobile-record(v-for='key of keys', :key='`mobile-key-` + key.id')
                 .d-flex.align-center
                   .admin-mobile-record-title(:class='key.isRevoked ? `text-red` : ``') {{ key.name }}
                   v-spacer
                   v-chip(label, size="x-small", :color='key.isRevoked ? `error` : `success`') {{ key.isRevoked ? 'Revoked' : 'Active' }}
-                .admin-mobile-record-meta {{ key.keyShort }}
+                .admin-mobile-record-meta Key ending {{ key.keyShort }}
                 .text-body-small.text-grey.mt-2 Expires {{ $helpers.formatMoment(key.expiration, 'LL') }}
+                .text-body-small.text-grey Created {{ $helpers.formatMoment(key.createdAt, 'calendar') }}
                 .text-body-small.text-grey Updated {{ $helpers.formatMoment(key.updatedAt, 'calendar') }}
                 v-btn.mt-2(v-if='!key.isRevoked', variant="outlined", size="small", color='error', @click='revoke(key)', :disabled='adminApiBusy', :aria-label='`Revoke ${key.name}`')
                   v-icon(start) mdi-cancel
@@ -86,7 +88,7 @@
         v-card.mt-3.animated.fadeInUp
           v-card-title.d-flex.align-center.flex-wrap.ga-2
             v-icon.mr-2(color='primary') mdi-book-open-variant
-            span Integration reference
+            h2.text-body-large.ma-0 Integration reference
             v-spacer
             v-chip(label, size="small", color='success') Stable compatibility surface
           v-divider
@@ -140,6 +142,7 @@
 </template>
 
 <script lang='ts'>
+import { markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 
 import CreateApiKey from './admin-api-create.vue'
@@ -161,12 +164,16 @@ export default {
       isRevokeConfirmDialogShown: false,
       disableDialog: false,
       revokeLoading: false,
-      current: null as AdminApiKey | null
+      current: null as AdminApiKey | null,
+      isDisposed: false
     }
   },
   computed: {
     adminApiBusy(): boolean {
       return this.loadState === 'loading' || this.isToggleLoading || this.revokeLoading
+    },
+    activeKeyCount(): number {
+      return this.keys.reduce((count, key) => count + (key.isRevoked ? 0 : 1), 0)
     },
     apiAccessContract() {
       return apiAccessContract
@@ -194,16 +201,19 @@ export default {
   },
   methods: {
     async loadApiBootstrap () {
+      if (this.isDisposed) return false
       this.loadState = 'loading'
       wikiStore.startLoading('admin-api-state-refresh')
       wikiStore.startLoading('admin-api-keys-refresh')
       try {
         const bootstrap = await fetchAdminApiBootstrap(window.fetch.bind(window), 'Admin API bootstrap response is invalid')
+        if (this.isDisposed) return false
         this.enabled = bootstrap.enabled
-        this.keys = bootstrap.keys
+        this.keys = markRaw(bootstrap.keys)
         this.loadState = 'success'
         return true
       } catch (err) {
+        if (this.isDisposed) return false
         this.loadState = 'error'
         wikiStore.showNotification({
           style: 'red',
@@ -217,7 +227,7 @@ export default {
       }
     },
     async refresh (notify = true) {
-      if (this.loadState === 'loading') return false
+      if (this.isDisposed || this.loadState === 'loading') return false
       const loaded = await this.loadApiBootstrap()
       if (notify && loaded) {
         wikiStore.showNotification({
@@ -229,12 +239,13 @@ export default {
       return loaded
     },
     async globalSwitch () {
-      if (this.isToggleLoading || this.revokeLoading || this.loadState !== 'success') return
+      if (this.isDisposed || this.isToggleLoading || this.revokeLoading || this.loadState !== 'success') return
       const wasEnabled = this.enabled
       this.isToggleLoading = true
       wikiStore.startLoading('admin-api-toggle')
       try {
         await setAdminApiState(window.fetch.bind(window), !this.enabled)
+        if (this.isDisposed) return
         const loaded = await this.refresh(false)
         if (loaded) {
           wikiStore.showNotification({
@@ -244,10 +255,10 @@ export default {
           })
         }
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.isDisposed) wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-api-toggle')
-        this.isToggleLoading = false
+        if (!this.isDisposed) this.isToggleLoading = false
       }
     },
     async disableApi () {
@@ -255,20 +266,21 @@ export default {
       await this.globalSwitch()
     },
     newKey () {
-      if (this.adminApiBusy) return
+      if (this.isDisposed || this.adminApiBusy) return
       this.isCreateDialogShown = true
     },
     revoke (key: AdminApiKey) {
-      if (this.adminApiBusy || key.isRevoked) return
+      if (this.isDisposed || this.adminApiBusy || key.isRevoked) return
       this.current = key
       this.isRevokeConfirmDialogShown = true
     },
     async revokeConfirm () {
-      if (this.revokeLoading || !this.current) return
+      if (this.isDisposed || this.revokeLoading || !this.current) return
       this.revokeLoading = true
       wikiStore.startLoading('admin-api-revoke')
       try {
         await revokeAdminApiKey(window.fetch.bind(window), this.current.id)
+        if (this.isDisposed) return
         const loaded = await this.refresh(false)
         if (loaded) {
           wikiStore.showNotification({
@@ -278,16 +290,21 @@ export default {
           })
         }
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.isDisposed) wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-api-revoke')
-        this.isRevokeConfirmDialogShown = false
-        this.revokeLoading = false
+        if (!this.isDisposed) {
+          this.isRevokeConfirmDialogShown = false
+          this.revokeLoading = false
+        }
       }
     }
   },
   created () {
     this.loadApiBootstrap()
+  },
+  beforeUnmount () {
+    this.isDisposed = true
   }
 }
 </script>
@@ -298,24 +315,23 @@ export default {
   overflow-wrap: anywhere;
 }
 
+.api-key-caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .api-contract-example {
   margin: 0;
   overflow-x: auto;
   padding: 1rem;
   white-space: pre;
 }
-.api-key-mobile {
-  display: none;
-}
 
 @media (max-width: 959px) {
-  .api-key-desktop {
-    display: none;
-  }
-
-  .api-key-mobile {
-    display: block;
-  }
 
   .admin-api-status,
   .admin-api-actions {

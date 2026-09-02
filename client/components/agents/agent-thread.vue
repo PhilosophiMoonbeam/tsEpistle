@@ -111,30 +111,30 @@
               <ol class="agent-sources__groups">
                 <li v-for="group in entry.citationGroups" :key="group.key" class="agent-sources__group">
                   <component
-                    :is="group.pageHref ? 'a' : 'div'"
+                    :is="safeNavigableHref(group.pageHref) ? 'a' : 'div'"
                     class="agent-sources__page"
-                    :href="group.pageHref || undefined"
-                    :target="group.pageHref ? '_blank' : undefined"
-                    :rel="group.pageHref ? 'noopener noreferrer' : undefined"
+                    :href="safeNavigableHref(group.pageHref)"
+                    :target="safeNavigableHref(group.pageHref) ? '_blank' : undefined"
+                    :rel="safeNavigableHref(group.pageHref) ? 'noopener noreferrer' : undefined"
                   >
                     <span v-if="group.pageCitation" class="agent-sources__number">{{ group.pageCitation.number }}</span>
                     <v-icon v-else icon="mdi-file-document-outline" size="18" aria-hidden="true" />
                     <strong>{{ group.pageLabel }}</strong>
-                    <v-icon v-if="group.pageHref" icon="mdi-open-in-new" size="15" aria-hidden="true" />
-                    <span v-if="group.pageHref" class="agent-sources__new-window"> (opens in a new tab)</span>
+                    <v-icon v-if="safeNavigableHref(group.pageHref)" icon="mdi-open-in-new" size="15" aria-hidden="true" />
+                    <span v-if="safeNavigableHref(group.pageHref)" class="agent-sources__new-window"> (opens in a new tab)</span>
                   </component>
                   <ol v-if="group.sections.length" class="agent-sources__sections">
                     <li v-for="citationEntry in group.sections" :key="citationEntry.citation.evidenceId">
                       <component
-                        :is="citationEntry.citation.href ? 'a' : 'span'"
-                        :href="citationEntry.citation.href || undefined"
-                        :target="citationEntry.citation.href ? '_blank' : undefined"
-                        :rel="citationEntry.citation.href ? 'noopener noreferrer' : undefined"
-                        :aria-label="`Citation ${citationEntry.number}: ${citationEntry.citation.label}${citationEntry.citation.href ? ' (opens in a new tab)' : ''}`"
+                        :is="safeNavigableHref(citationEntry.citation.href) ? 'a' : 'span'"
+                        :href="safeNavigableHref(citationEntry.citation.href)"
+                        :target="safeNavigableHref(citationEntry.citation.href) ? '_blank' : undefined"
+                        :rel="safeNavigableHref(citationEntry.citation.href) ? 'noopener noreferrer' : undefined"
+                        :aria-label="`Citation ${citationEntry.number}: ${citationEntry.citation.label}${safeNavigableHref(citationEntry.citation.href) ? ' (opens in a new tab)' : ''}`"
                       >
                         <span class="agent-sources__number">{{ citationEntry.number }}</span>
                         <span class="agent-sources__label">{{ citationEntry.sectionLabel }}</span>
-                        <v-icon v-if="citationEntry.citation.href" icon="mdi-open-in-new" size="14" aria-hidden="true" />
+                        <v-icon v-if="safeNavigableHref(citationEntry.citation.href)" icon="mdi-open-in-new" size="14" aria-hidden="true" />
                       </component>
                     </li>
                   </ol>
@@ -146,15 +146,16 @@
               class="agent-page-links mt-3"
               aria-label="Changed pages"
             >
-              <a
+              <component
+                :is="safeNavigableHref(link.href) ? 'a' : 'span'"
                 v-for="link in entry.run?.pageLinks"
                 :key="link.href"
-                :href="link.href"
-                :title="`Open ${link.label}`"
+                :href="safeNavigableHref(link.href)"
+                :title="safeNavigableHref(link.href) ? `Open ${link.label}` : undefined"
               >
                 <v-icon icon="mdi-file-link-outline" size="18" aria-hidden="true" />
                 <span>{{ link.label }}</span>
-              </a>
+              </component>
             </nav>
             <details
               v-if="entry.message.role === 'assistant' && entry.run?.activity.length"
@@ -183,7 +184,7 @@
           :key="proposalEntry.tool.id"
           :tool="proposalEntry.tool"
           :proposal="proposalEntry.proposal"
-          :busy="Boolean(decidingApprovalId && proposalEntry.proposal.approval?.id === decidingApprovalId)"
+          :busy="Boolean(decidingApprovalId)"
           @decision="forwardDecision"
         />
       </template>
@@ -253,6 +254,21 @@ interface MessageTemporalMetadata {
   readonly timestamp: string
 }
 const messageTemporalMetadata = new Map<string, MessageTemporalMetadata>()
+const navigableHrefCache = new Map<string, string | undefined>()
+const safeNavigableHref = (href: string | null): string | undefined => {
+  if (!href) return undefined
+  if (navigableHrefCache.has(href)) return navigableHrefCache.get(href)
+  let safeHref: string | undefined
+  try {
+    const url = new URL(href, 'https://wiki.invalid')
+    if (url.protocol === 'http:' || url.protocol === 'https:') safeHref = href
+  } catch {
+    navigableHrefCache.set(href, undefined)
+    return undefined
+  }
+  navigableHrefCache.set(href, safeHref)
+  return safeHref
+}
 const temporalMetadataFor = (createdAt: string): MessageTemporalMetadata => {
   const cached = messageTemporalMetadata.get(createdAt)
   if (cached) return cached
@@ -305,6 +321,7 @@ watch(
   ([sessionId, announcement], [previousSessionId, previousAnnouncement]) => {
     if (sessionId !== previousSessionId) {
       messageTemporalMetadata.clear()
+      navigableHrefCache.clear()
       liveSummary.value = ''
       return
     }
@@ -686,7 +703,7 @@ watch(
   overflow-wrap: anywhere;
 }
 
-.agent-sources__page:hover,
+.agent-sources a.agent-sources__page:hover,
 .agent-sources__sections a:hover {
   background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, transparent);
 }
@@ -760,7 +777,7 @@ watch(
   padding-block-start: var(--wiki-space-3);
 }
 
-.agent-page-links a {
+.agent-page-links > :is(a, span) {
   align-items: center;
   background: var(--wiki-surface-sunken);
   border: 1px solid var(--wiki-surface-border);
@@ -776,6 +793,10 @@ watch(
   transition:
     background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
     border-color var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+.agent-page-links > span {
+  color: rgb(var(--v-theme-on-surface));
 }
 
 .agent-page-links a:hover {

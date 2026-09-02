@@ -79,16 +79,20 @@
                   v-icon mdi-table-plus
                 v-list-item-title Insert table
               template(v-if='isActive(`table`)')
-                v-list-item(@click='editor?.chain().focus().addColumnAfter().run()') Add column
-                v-list-item(@click='editor?.chain().focus().addRowAfter().run()') Add row
-                v-list-item(@click='editor?.chain().focus().mergeOrSplit().run()') Merge or split cells
-                v-list-item(@click='editor?.chain().focus().deleteTable().run()') Delete table
+                v-list-item(@click='editor?.chain().focus().addColumnAfter().run()')
+                  v-list-item-title Add column
+                v-list-item(@click='editor?.chain().focus().addRowAfter().run()')
+                  v-list-item-title Add row
+                v-list-item(@click='editor?.chain().focus().mergeOrSplit().run()')
+                  v-list-item-title Merge or split cells
+                v-list-item(@click='editor?.chain().focus().deleteTable().run()')
+                  v-list-item-title Delete table
           template(v-if='format === `html`')
-            v-btn.editor-tiptap-tool(icon, size='small', title='Align left', aria-label='Align left', @click='editor?.chain().focus().setTextAlign(`left`).run()')
+            v-btn.editor-tiptap-tool(icon, size='small', title='Align left', aria-label='Align left', :aria-pressed='isTextAligned(`left`)', :color='isTextAligned(`left`) ? `primary` : undefined', @click='editor?.chain().focus().setTextAlign(`left`).run()')
               v-icon mdi-format-align-left
-            v-btn.editor-tiptap-tool(icon, size='small', title='Align center', aria-label='Align center', @click='editor?.chain().focus().setTextAlign(`center`).run()')
+            v-btn.editor-tiptap-tool(icon, size='small', title='Align center', aria-label='Align center', :aria-pressed='isTextAligned(`center`)', :color='isTextAligned(`center`) ? `primary` : undefined', @click='editor?.chain().focus().setTextAlign(`center`).run()')
               v-icon mdi-format-align-center
-            v-btn.editor-tiptap-tool(icon, size='small', title='Align right', aria-label='Align right', @click='editor?.chain().focus().setTextAlign(`right`).run()')
+            v-btn.editor-tiptap-tool(icon, size='small', title='Align right', aria-label='Align right', :aria-pressed='isTextAligned(`right`)', :color='isTextAligned(`right`) ? `primary` : undefined', @click='editor?.chain().focus().setTextAlign(`right`).run()')
               v-icon mdi-format-align-right
         v-btn.editor-tiptap-source-trigger(v-if='hasSourceSelection', color='warning', variant='tonal', size='small', title='Edit preserved source', aria-label='Edit preserved source', @click='openSourceDialog')
           v-icon(start) mdi-code-block-tags
@@ -138,6 +142,7 @@
               divided
               mandatory
               variant='outlined'
+              aria-label='Icon or emoji category'
             )
               v-btn(value='all') All
               v-btn(value='icon')
@@ -373,6 +378,10 @@ export default defineComponent({
     activeColor (name: string): string | undefined {
       return this.isActive(name) ? 'primary' : undefined
     },
+    isTextAligned (alignment: 'left' | 'center' | 'right'): boolean {
+      void this.toolbarVersion
+      return this.editor?.isActive({ textAlign: alignment }) ?? false
+    },
     setParagraph () {
       this.editor?.chain().focus().setParagraph().run()
     },
@@ -556,6 +565,11 @@ export default defineComponent({
       extensions: createTiptapExtensions(this.format),
       autofocus: false,
       editorProps: {
+        attributes: {
+          role: 'textbox',
+          'aria-label': `${this.definition.label} document editor`,
+          'aria-multiline': 'true'
+        },
         handleKeyDown: (_view, event) => {
           if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
             event.preventDefault()
@@ -779,7 +793,7 @@ export default defineComponent({
     min-height: 0;
     margin: 0 auto var(--wiki-space-5);
     padding: clamp(var(--wiki-space-6), 3vw, var(--wiki-space-12));
-    overflow-x: hidden;
+    overflow-x: auto;
     overflow-y: auto;
     border: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-hero-radius);

@@ -1,6 +1,6 @@
 <template lang="pug">
   v-dialog(v-model='isShown', :persistent='busy', max-width='550', role='alertdialog', aria-labelledby='unsaved-dialog-title', aria-describedby='unsaved-dialog-description')
-    v-card
+    v-card(:aria-busy='busy')
       .dialog-header.is-short.is-red
         v-icon.mr-2(color='white', aria-hidden='true') mdi-alert
         span#unsaved-dialog-title {{$t('editor:unsaved.title')}}
@@ -33,11 +33,27 @@ export default defineComponent({
       default: false
     }
   },
+  data () {
+    return {
+      returnFocus: null as HTMLElement | null
+    }
+  },
   computed: {
     isShown: {
       get() { return this.modelValue },
       set(val: boolean) { this.$emit('update:modelValue', val) }
     }
+  },
+  mounted () {
+    this.returnFocus = document.activeElement as HTMLElement | null
+  },
+  beforeUnmount () {
+    const target = this.returnFocus
+    queueMicrotask(() => {
+      if (target?.isConnected && !target.matches(':disabled') && !target.closest('[inert], [aria-hidden="true"]')) {
+        target.focus({ preventScroll: true })
+      }
+    })
   },
   methods: {
     discard() {

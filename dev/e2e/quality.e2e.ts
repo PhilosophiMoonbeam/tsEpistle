@@ -34,7 +34,7 @@ test.describe('release accessibility profiles', () => {
   test('meets WCAG gates on primary desktop surfaces', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-keyboard')
     await authenticateAsAdmin(page)
-    for (const surface of ['/', '/a/dashboard', '/a/pages', '/edit/en/home']) {
+    for (const surface of ['/', '/a/dashboard', '/a/pages', '/e/en/home']) {
       await page.goto(surface, { waitUntil: 'networkidle' })
       await expectNoBlockingAccessibilityViolations(page, surface)
     }
@@ -66,10 +66,12 @@ test.describe('release accessibility profiles', () => {
   test('meets contrast and accessibility gates in dark mode', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-dark')
     test.setTimeout(45_000)
-    await openAuthenticatedPage(page, '/a/theme', '.v-switch')
-    const darkMode = page.getByRole('checkbox', { name: 'Dark Mode' })
+    await openAuthenticatedPage(page, '/a/theme', '#theme-form')
+    const darkMode = page.getByRole('button', { name: 'Dark', exact: true })
     await expect(darkMode).toBeVisible()
-    if (!(await darkMode.isChecked())) await darkMode.click()
+    await expect(darkMode).toBeEnabled()
+    if ((await darkMode.getAttribute('aria-pressed')) !== 'true') await darkMode.click()
+    await expect(darkMode).toHaveAttribute('aria-pressed', 'true')
     await expect(page.locator('.v-theme--dark').first()).toBeVisible()
     await expectNoBlockingAccessibilityViolations(page, '/a/theme (dark)')
   })
@@ -88,14 +90,14 @@ test.describe('release accessibility profiles', () => {
     requireProject(testInfo, 'accessibility-keyboard')
     await openAuthenticatedPage(page, '/en/home', '.page-header-section')
 
-    const pageActions = page.getByRole('button', { name: 'Page Actions', exact: true })
+    const pageActions = page.locator('.nav-header button[aria-label="Page Actions"]')
     expect(await tabToControl(page, pageActions), 'Page actions must be reachable in the tab order').toBe(true)
     await page.keyboard.press('Enter')
     const editPage = page.getByRole('button', { name: 'Edit', exact: true })
     await expect(editPage, 'Edit must receive focus when page actions open').toBeFocused()
     await page.keyboard.press('Enter')
-    await expect(page).toHaveURL(/\/e(?:dit)?\/en\/home/)
-    const save = page.getByRole('button', { name: /save|saved/i })
+    await expect(page).toHaveURL('/e/en/home')
+    const save = page.getByRole('button', { name: /^(?:save|saved)$/i })
     await expect(save).toBeVisible()
     expect(await tabToControl(page, save), 'Save must be reachable in the editor tab order').toBe(true)
   })
@@ -104,7 +106,7 @@ test.describe('release accessibility profiles', () => {
     requireProject(testInfo, 'accessibility-keyboard')
     await authenticateAsAdmin(page)
     let requests = 0
-    await page.route('**/_api/pages/search?**', async route => {
+    await page.route(/\/_api\/pages\/search\?/, async route => {
       requests += 1
       if (requests === 1) {
         await route.fulfill({
@@ -121,12 +123,11 @@ test.describe('release accessibility profiles', () => {
       }
     })
     await page.goto('/', { waitUntil: 'networkidle' })
-    const search = page.getByRole('textbox', { name: /search/i })
-    await search.focus()
+    const search = await openSearch(page)
     await page.keyboard.type('unavailable-query')
     await expect(page.getByRole('alert')).toContainText('Search service is unavailable.')
     await page.getByRole('button', { name: 'Try again' }).click()
-    await expect(page.getByRole('status')).toContainText('try a different term or scope.')
+    await expect(page.getByRole('status').filter({ hasText: 'try a different term or scope.' })).toBeVisible()
   })
 
   test('keeps the inline agent keyboard-accessible at desktop and mobile widths', async ({ page }, testInfo) => {
@@ -147,19 +148,20 @@ test.describe('release accessibility profiles', () => {
   })
 
   test('contains Ask keyboard focus and restores the invoking search control', async ({ page }, testInfo) => {
+    test.setTimeout(60_000)
     requireProject(testInfo, 'accessibility-keyboard')
     await authenticateAsAdmin(page)
     await page.goto('/', { waitUntil: 'networkidle' })
-    const search = await openSearch(page)
-    const ask = page.getByRole('button', { name: /^ask$/i })
-    expect(await tabToControl(page, ask), 'Ask must be reachable from the search control').toBe(true)
-    await page.keyboard.press('Enter')
+    const search = page.locator('.nav-header-search-control input:visible').first()
+    await expect(search).toBeVisible()
+    await search.focus()
+    await page.keyboard.press('Control+Shift+A')
 
     const dialog = page.getByRole('dialog', { name: 'Wiki Agent workspace' })
     await expect(dialog).toBeVisible()
     await expect.poll(() => dialog.evaluate(root => root.contains(document.activeElement))).toBe(true)
     const backgroundState = await page
-      .locator('.v-main')
+      .locator('main')
       .first()
       .evaluate(element => {
         const isolatedAncestor = element.closest<HTMLElement>('[inert][aria-hidden="true"]')
@@ -207,17 +209,17 @@ test.describe('release accessibility profiles', () => {
       expect(await dialog.evaluate(root => root.contains(document.activeElement)), `Shift+Tab ${press + 1} left the Ask dialog`).toBe(true)
     }
 
-    const composer = dialog.getByRole('combobox', { name: 'Message Wiki Agent' })
-    const escapeSource = (await composer.isEnabled()) ? composer : dialog.locator('.inline-agent__transcript')
+    const escapeSource = dialog.getByRole('region', { name: 'Conversation transcript' })
     await escapeSource.focus()
     await expect(escapeSource).toBeFocused()
     await page.keyboard.press('Escape')
     await expect(dialog).not.toBeVisible()
     await expect(search).toBeFocused()
+    await page.keyboard.press('Escape')
     await expect
       .poll(() =>
         page
-          .locator('.v-main')
+          .locator('main')
           .first()
           .evaluate(element => ({
             ariaHidden: element.getAttribute('aria-hidden'),
@@ -235,9 +237,9 @@ test.describe('release accessibility profiles', () => {
     const drawer = page.locator('.v-navigation-drawer').first()
     await expect(drawer).toHaveClass(/v-navigation-drawer--temporary/)
     await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
-    await page.getByRole('button', { name: 'Toggle navigation' }).click()
+    await page.getByRole('button', { name: 'Open navigation' }).click()
     await expect(drawer).toHaveClass(/v-navigation-drawer--active/)
-    await page.locator('.v-navigation-drawer__scrim').click({ position: { x: 500, y: 250 } })
+    await page.getByRole('button', { name: 'Close navigation' }).click()
     await expect(drawer).not.toHaveClass(/v-navigation-drawer--active/)
 
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))

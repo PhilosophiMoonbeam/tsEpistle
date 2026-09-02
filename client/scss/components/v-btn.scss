@@ -151,3 +151,10 @@
     transform: none !important;
   }
 }
+
+@media (forced-colors: active) {
+  .v-btn:focus-visible {
+    outline: .125rem solid Highlight;
+    outline-offset: .125rem;
+  }
+}

@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-app-bar.nav-header(:height='dense ? 56 : 64', color='surface', flat, :class='{ "nav-header--dense": dense }', :extended='searchIsShown && $vuetify.display.smAndDown')
+  v-app-bar.nav-header(:height='dense ? 56 : 64', color='surface', flat, :class='{ "nav-header--dense": dense, "nav-header--reserved-actions": reserveActions }', :extended='searchIsShown && $vuetify.display.smAndDown')
     template(v-slot:extension)
       v-toolbar.nav-header-mobile-search(v-if='searchIsShown && $vuetify.display.smAndDown', id='nav-header-mobile-search', color='surface', flat)
         v-text-field.nav-header-search-control(
@@ -15,21 +15,21 @@
           hide-details
           :prepend-inner-icon='searchInputIcon'
           :loading='searchIsLoading'
-          @keyup.enter='searchEnter($event)'
-          @keyup.esc='searchClose'
+          @keydown.enter='searchEnter($event)'
+          @keydown.esc='searchEscape'
+          @keydown.tab='searchTab($event)'
           @focus='searchFocus'
-          @keyup.down='searchMove(`down`)'
-          @keyup.up='searchMove(`up`)'
+          @keydown.down.prevent='searchMove(`down`)'
+          @keydown.up.prevent='searchMove(`up`)'
           autocomplete='off'
         )
     v-row.nav-header-layout(gap='0')
       v-col.nav-header-brand-col(cols='5', md='4')
         .nav-header-inner.nav-header-brand
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')
-          button.nav-header-logo(
+          a.nav-header-logo(
             v-if='!$slots.mobileBrand || $vuetify.display.mdAndUp'
-            type='button'
-            @click='goHome'
+            :href='homePath'
             :aria-label='$t(`common:header.home`)'
             )
             img.org-logo(:src='logoUrl', :alt='title')
@@ -52,11 +52,12 @@
                 hide-details,
                 :prepend-inner-icon='searchInputIcon',
                 :loading='searchIsLoading',
-                @keyup.enter='searchEnter($event)'
-                @keyup.esc='searchClose'
+                @keydown.enter='searchEnter($event)'
+                @keydown.esc='searchClose'
+                @keydown.tab='searchTab($event)'
                 @focus='searchFocus'
-                @keyup.down='searchMove(`down`)'
-                @keyup.up='searchMove(`up`)'
+                @keydown.down.prevent='searchMove(`down`)'
+                @keydown.up.prevent='searchMove(`up`)'
                 autocomplete='off'
               )
             v-tooltip(location="bottom")
@@ -73,6 +74,7 @@
           //- (mobile) SEARCH TOGGLE
 
           v-btn.nav-header-search-toggle(
+            ref='searchToggle'
             v-if='!hideSearch && $vuetify.display.smAndDown'
             @click='searchToggle'
             icon
@@ -88,7 +90,7 @@
           //- LANGUAGES
 
           template(v-if='mode === `view` && locales.length > 0 && $vuetify.display.mdAndUp')
-            v-menu(location="bottom left", transition='slide-y-transition', max-height='320px', min-width='210px')
+            v-menu(location="bottom end", transition='slide-y-transition', max-height='320px', min-width='210px')
               template(v-slot:activator='{ props: menuProps }')
                 v-tooltip(location="bottom")
                   template(v-slot:activator='{ props: tooltipProps }')
@@ -104,7 +106,7 @@
                   span {{$t('common:header.language')}}
               v-list.nav-header-menu(nav)
                 template(v-for='lc of locales', :key='lc.code')
-                  v-list-item(role='button', @click='changeLocale(lc)')
+                  v-list-item(role='button', link, :aria-current='lc.code === locale ? `true` : undefined', @click='changeLocale(lc)')
                     template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : `grey`', size="small", label) {{lc.code.toUpperCase()}}
                     v-list-item-title {{lc.name}}
             v-divider(vertical)
@@ -112,7 +114,7 @@
           //- PAGE ACTIONS
 
           template(v-if='hasAnyPagePermissions && path && mode !== `edit` && $vuetify.display.mdAndUp')
-            v-menu(location="bottom left", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
+            v-menu(location="bottom end", transition='slide-y-transition', @update:model-value='pageActionsVisibilityChanged')
               template(v-slot:activator='{ props: menuProps }')
                 v-tooltip(location="bottom")
                   template(v-slot:activator='{ props: tooltipProps }')
@@ -127,35 +129,35 @@
                   span {{$t('common:header.pageActions')}}
               v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
                 .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
-                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageView', v-if='mode !== `view`')
+                v-list-item.pl-4(role='button', link, @click='pageView', v-if='mode !== `view`')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-file-document-outline
                   v-list-item-title.text-body-medium {{$t('common:header.view')}}
-                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
+                v-list-item.pl-4(role='button', link, @click='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-file-document-edit-outline
                   v-list-item-title.text-body-medium {{$t('common:header.edit')}}
-                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
+                v-list-item.pl-4(role='button', link, @click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-history
                   v-list-item-title.text-body-medium {{$t('common:header.history')}}
-                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
+                v-list-item.pl-4(role='button', link, @click='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-code-tags
                   v-list-item-title.text-body-medium {{$t('common:header.viewSource')}}
-                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageConvert', v-if='hasWritePagesPermission')
+                v-list-item.pl-4(role='button', link, @click='pageConvert', v-if='hasWritePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-lightning-bolt
                   v-list-item-title.text-body-medium {{$t('common:header.convert')}}
-                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageDuplicate', v-if='hasWritePagesPermission')
+                v-list-item.pl-4(role='button', link, @click='pageDuplicate', v-if='hasWritePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-content-duplicate
                   v-list-item-title.text-body-medium {{$t('common:header.duplicate')}}
-                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageMove', v-if='hasManagePagesPermission')
+                v-list-item.pl-4(role='button', link, @click='pageMove', v-if='hasManagePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-content-save-move-outline
                   v-list-item-title.text-body-medium {{$t('common:header.move')}}
-                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageDelete', v-if='hasDeletePagesPermission')
+                v-list-item.pl-4(role='button', link, @click='pageDelete', v-if='hasDeletePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='error') mdi-trash-can-outline
                   v-list-item-title.text-body-medium {{$t('common:header.delete')}}
@@ -192,24 +194,24 @@
                 v-icon mdi-dots-vertical
             v-list.nav-header-menu(nav)
               v-list-subheader Page actions
-              v-list-item(role='button', v-if='path && mode !== `view`', prepend-icon='mdi-file-document-outline', @click='pageView')
+              v-list-item(role='button', link, v-if='path && mode !== `view`', prepend-icon='mdi-file-document-outline', @click='pageView')
                 v-list-item-title {{$t('common:header.view')}}
-              v-list-item(role='button', v-if='path && hasWritePagesPermission && mode !== `edit`', prepend-icon='mdi-file-document-edit-outline', @click='pageEdit')
+              v-list-item(role='button', link, v-if='path && hasWritePagesPermission && mode !== `edit`', prepend-icon='mdi-file-document-edit-outline', @click='pageEdit')
                 v-list-item-title {{$t('common:header.edit')}}
-              v-list-item(role='button', v-if='path && hasReadHistoryPermission && mode !== `history`', prepend-icon='mdi-history', @click='pageHistory')
+              v-list-item(role='button', link, v-if='path && hasReadHistoryPermission && mode !== `history`', prepend-icon='mdi-history', @click='pageHistory')
                 v-list-item-title {{$t('common:header.history')}}
-              v-list-item(role='button', v-if='path && hasReadSourcePermission && mode !== `source`', prepend-icon='mdi-code-tags', @click='pageSource')
+              v-list-item(role='button', link, v-if='path && hasReadSourcePermission && mode !== `source`', prepend-icon='mdi-code-tags', @click='pageSource')
                 v-list-item-title {{$t('common:header.viewSource')}}
-              v-list-item(role='button', v-if='path && hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
+              v-list-item(role='button', link, v-if='path && hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
                 v-list-item-title {{$t('common:header.convert')}}
-              v-list-item(role='button', v-if='path && hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
+              v-list-item(role='button', link, v-if='path && hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
                 v-list-item-title {{$t('common:header.duplicate')}}
-              v-list-item(role='button', v-if='path && hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
+              v-list-item(role='button', link, v-if='path && hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
                 v-list-item-title {{$t('common:header.move')}}
-              v-list-item.nav-header-menu-danger(role='button', v-if='path && hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
+              v-list-item.nav-header-menu-danger(role='button', link, v-if='path && hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
                 v-list-item-title {{$t('common:header.delete')}}
               v-divider(v-if='hasNewPagePermission || (isAuthenticated && isAdmin)')
-              v-list-item(role='button', v-if='hasNewPagePermission && path && mode !== `edit`', prepend-icon='mdi-text-box-plus-outline', @click='pageNew')
+              v-list-item(role='button', link, v-if='hasNewPagePermission && path && mode !== `edit`', prepend-icon='mdi-text-box-plus-outline', @click='pageNew')
                 v-list-item-title {{$t('common:header.newPage')}}
               v-list-item(v-if='isAuthenticated && isAdmin && mode !== `admin`', prepend-icon='mdi-cog', href='/a')
                 v-list-item-title {{$t('common:header.admin')}}
@@ -218,13 +220,13 @@
               template(v-if='mode === `view` && locales.length > 0')
                 v-divider
                 v-list-subheader {{$t('common:header.language')}}
-                v-list-item(role='button', v-for='lc of locales', :key='`mobile-locale-${lc.code}`', prepend-icon='mdi-web', @click='changeLocale(lc)')
+                v-list-item(role='button', link, v-for='lc of locales', :key='`mobile-locale-${lc.code}`', :aria-current='lc.code === locale ? `true` : undefined', prepend-icon='mdi-web', @click='changeLocale(lc)')
                   v-list-item-title {{lc.name}}
           v-divider(vertical)
 
           //- ACCOUNT
 
-          v-menu(v-if='isAuthenticated', location="bottom left", min-width='300', transition='slide-y-transition')
+          v-menu(v-if='isAuthenticated', location="bottom end", min-width='300', transition='slide-y-transition')
             template(v-slot:activator='{ props: menuProps }')
               v-tooltip(location="bottom")
                 template(v-slot:activator='{ props: tooltipProps }')
@@ -257,7 +259,7 @@
               v-list-item.py-3
                 appearance-selector
               v-divider
-              v-list-item(role='button', @click='logout')
+              v-list-item(role='button', link, @click='logout')
                 template(v-slot:append): v-icon(color='error') mdi-logout
                 v-list-item-title.text-error {{$t('common:header.logout')}}
 
@@ -282,6 +284,7 @@
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent, markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
+import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 
 import {
   offPageConvert,
@@ -299,9 +302,7 @@ import {
   onPageMove,
   onPageSource
 } from '../../helpers/page-action-events'
-import { emitSearchEnter, emitSearchMove } from '../../helpers/search-navigation-events'
-import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
-import { navigateToWikiPage } from '../../helpers/wiki-navigation'
+import { emitSearchEnter, emitSearchExit, emitSearchMove } from '../../helpers/search-navigation-events'
 
 type PageLocation = { path: string, locale: string }
 type SiteLocale = { code: string, name: string }
@@ -338,6 +339,10 @@ export default defineComponent({
       default: false
     },
     mobileActions: {
+      type: Boolean,
+      default: false
+    },
+    reserveActions: {
       type: Boolean,
       default: false
     }
@@ -377,6 +382,7 @@ export default defineComponent({
     isLoading(): boolean { return wikiStore.isLoading },
     title(): string { return wikiStore.site.title },
     logoUrl(): string { return wikiStore.site.logoUrl },
+    homePath(): string { return this.locales.length > 0 ? `/${this.locale}/home` : '/' },
     path(): string { return wikiStore.page.path },
     mode(): string { return wikiStore.page.mode },
     locale(): string { return wikiStore.page.locale },
@@ -429,6 +435,29 @@ export default defineComponent({
   watch: {
     searchIsFocused(open: boolean): void {
       if (!open && this.$vuetify.display.smAndDown) this.searchIsShown = false
+    },
+    '$vuetify.display.smAndDown'(small: boolean): void {
+      if (small) {
+        if (!this.searchIsFocused) this.searchIsShown = false
+      } else {
+        const showSearch = !this.hideSearch && !this.dense
+        if (!showSearch && this.searchIsFocused) this.searchClose()
+        this.searchIsShown = showSearch
+      }
+    },
+    hideSearch(hidden: boolean): void {
+      if (hidden) {
+        this.searchClose()
+        this.searchIsShown = false
+      } else if (!this.dense && this.$vuetify.display.mdAndUp) {
+        this.searchIsShown = true
+      }
+    },
+    dense(dense: boolean): void {
+      if (this.$vuetify.display.mdAndUp) {
+        if (dense && this.searchIsFocused) this.searchClose()
+        this.searchIsShown = !dense && !this.hideSearch
+      }
     }
   },
   created () {
@@ -487,6 +516,15 @@ export default defineComponent({
     searchFocus () {
       this.searchIsFocused = true
     },
+    async searchTab (event: KeyboardEvent): Promise<void> {
+      if (!this.$vuetify.display.mdAndUp) return
+      event.preventDefault()
+      emitSearchExit(false)
+      this.searchClose()
+      await this.$nextTick()
+      const target = document.querySelector<HTMLElement>(event.shiftKey ? '.nav-header-logo' : '.nav-header-browse')
+      target?.focus({ preventScroll: true })
+    },
     searchClose () {
       this.searchIsFocused = false
       this.searchMode = 'search'
@@ -499,6 +537,16 @@ export default defineComponent({
       await this.$nextTick()
       const field = this.$vuetify.display.smAndDown ? this.$refs.searchFieldMobile : this.$refs.searchField
       ;(field as { focus?: () => void } | undefined)?.focus?.()
+    },
+    async searchEscape(): Promise<void> {
+      this.searchClose()
+      if (!this.$vuetify.display.smAndDown) return
+      await this.$nextTick()
+      const toggle = this.$refs.searchToggle
+      const element = toggle instanceof HTMLElement
+        ? toggle
+        : (toggle as { $el?: unknown } | undefined)?.$el
+      if (element instanceof HTMLElement) element.focus()
     },
     searchToggle () {
       this.searchIsShown = !this.searchIsShown
@@ -520,6 +568,7 @@ export default defineComponent({
       void this.focusSearchField()
     },
     searchEnter (event: KeyboardEvent) {
+      if (event.isComposing) return
       if ((event.ctrlKey || event.metaKey) && siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) {
         event.preventDefault()
         this.searchMode = 'ask'
@@ -606,9 +655,6 @@ export default defineComponent({
     },
     logout () {
       window.location.assign('/logout')
-    },
-    goHome () {
-      navigateToWikiPage(this.locales && this.locales.length > 0 ? `/${this.locale}/home` : '/')
     }
   }
 })
@@ -1042,6 +1088,30 @@ export default defineComponent({
       color-mix(in srgb, var(--wiki-accent-spectral) 6%, var(--wiki-surface-raised))
     ) !important;
   box-shadow: 0 var(--wiki-space-2) var(--wiki-space-8) color-mix(in srgb, rgb(var(--v-theme-background)) 54%, transparent) !important;
+}
+
+@media (min-width: 960px) {
+  .nav-header--reserved-actions {
+    .nav-header-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
+    }
+
+    .nav-header-brand-col,
+    .nav-header-search-col,
+    .nav-header-actions-col {
+      width: auto;
+      max-width: none;
+    }
+
+    .nav-header-actions {
+      width: max-content;
+    }
+
+    .nav-header-slot-actions {
+      flex: 0 0 auto;
+    }
+  }
 }
 
 @media (max-width: 1279px) {

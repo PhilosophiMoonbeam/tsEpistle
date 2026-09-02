@@ -15,6 +15,7 @@ import viteAssets from './helpers/vite-assets.ts'
 import system from './core/system.ts'
 
 import type { ProductMetadata } from '../shared/product.ts'
+import { BUILTIN_CONTENT_EXTENSIONS } from '../shared/content-extensions.ts'
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../shared/theme-colors.ts'
 import { DEFAULT_PAGE_GUTTER_STYLE } from '../shared/page-gutters.ts'
 const { collectEntry } = viteAssets
@@ -258,6 +259,15 @@ export default function startSetup(): Promise<void> {
       await wiki.models.locales.query().where('code', '!=', 'x').del()
       await wiki.models.navigation.query().truncate()
       await wiki.models.knex.raw('TRUNCATE groups, users CASCADE')
+      await wiki.models.knex('contentExtensions').insert(
+        BUILTIN_CONTENT_EXTENSIONS.map(extension => ({
+          key: extension.key,
+          isEnabled: false,
+          version: extension.version,
+          updatedAt: new Date(),
+          updatedBy: null
+        }))
+      )
 
       wiki.logger.info('Installing default locale...')
       const defaultLocaleStrings: unknown = await fs.readJson(path.join(wiki.SERVERPATH, 'locales', 'en.json'))

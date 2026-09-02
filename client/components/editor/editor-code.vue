@@ -1,5 +1,5 @@
 <template lang='pug'>
-  .editor-code
+  .editor-code(ref='root')
     .editor-code-main
       .editor-code-sidebar
         v-tooltip(location="right", color='teal')
@@ -153,9 +153,8 @@ export default defineComponent({
       this.cursorPos = position
     },
     toggleFullscreen () {
-      const root = this.$el
-      if (!(root instanceof HTMLElement)) return
-      return root.requestFullscreen?.()
+      const root = this.$refs.root
+      if (root instanceof HTMLElement) void root.requestFullscreen?.()
     }
   },
   mounted() {
@@ -179,6 +178,7 @@ export default defineComponent({
       onCursor: position => this.positionSync(position)
     })
     this.cm = markRaw(cm)
+    parent.querySelector<HTMLElement>('.cm-content')?.setAttribute('aria-label', 'HTML source')
 
     onEditorInsert(this.handleEditorInsert)
 

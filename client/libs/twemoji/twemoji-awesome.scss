@@ -2,10 +2,11 @@
   display: inline-block;
   height: 1em;
   width: 1em;
-  margin: 0 .05em 0 .1em;
+  margin-block: 0;
+  margin-inline: .1em .05em;
   vertical-align: -0.1em;
   background-repeat: no-repeat;
-  background-position: center center;
+  background-position: center;
   background-size: 1em 1em;
 }
 
@@ -21,7 +22,8 @@ $size-map: (
   .twa-#{$name} {
     height: 1em * $size;
     width: 1em * $size;
-    margin: 0 .05em * $size 0 .1em * $size;
+    margin-block: 0;
+    margin-inline: .1em * $size .05em * $size;
     vertical-align: -0.1em * $size;
     background-size: 1em * $size 1em * $size;
   }
@@ -1101,6 +1103,6 @@ $emoji-map: (
 
 @each $code, $name in $emoji-map {
   .twa-#{$name} {
-    background-image: url("https://twemoji.maxcdn.com/svg/#{$code}.svg");
+    background-image: url("/_assets/svg/twemoji/#{$code}.svg");
   }
 }

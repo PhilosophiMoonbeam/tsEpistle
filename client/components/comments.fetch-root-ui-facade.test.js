@@ -17,13 +17,17 @@ describe('comments REST migration guard', () => {
     expect(script).not.toMatch(/graphql-tag|\$apollo/)
   })
 
-  test('preserves silent fetch errors, initials, and intersection loading', () => {
+  test('preserves silent inline fetch errors, whitespace-safe initials, and intersection loading', () => {
     expect(script).toContain('async fetch (silent = false)')
-    expect(script).toContain("comment.authorName.toUpperCase().split(' ')")
-    expect(script).toContain('if (!silent) {')
-    expect(script).toContain('showNotification(wikiStore, {')
-    expect(script).toContain('onIntersect (isIntersecting: boolean, _entries: IntersectionObserverEntry[], _observer: IntersectionObserver): void')
-    expect(script).toContain('this.hasLoadedOnce = true')
-    expect(script).toContain('this.fetch(true)')
+    expect(script).toMatch(
+      /const nameParts = comment\.authorName\.trim\(\)\.toUpperCase\(\)\.split\(\/\\s\+\/\)\s*const firstInitial = nameParts\[0\]\?\.charAt\(0\) \?\? ''\s*const lastInitial = nameParts\.length > 1 \? nameParts\[nameParts\.length - 1\]\?\.charAt\(0\) \?\? '' : ''[\s\S]*initials: firstInitial \+ lastInitial/
+    )
+    expect(script).toMatch(/this\.fetchError = getErrorMessage\(err\)\s*if \(!silent\) \{\s*showNotification\(wikiStore, \{/)
+    expect(source).toContain("v-if='isLoading && (!hasLoadedOnce || comments.length === 0)'")
+    expect(source).toContain("v-else-if='fetchError'")
+    expect(script).toMatch(
+      /onIntersect \(isIntersecting: boolean, _entries: IntersectionObserverEntry\[\], _observer: IntersectionObserver\): void \{\s*if \(!isIntersecting\) return\s*this\.hasIntersected = true\s*void this\.fetch\(true\)/
+    )
+    expect(script).toMatch(/finally \{\s*if \(requestId === this\.fetchGeneration\) \{[\s\S]*this\.isLoading = false\s*this\.hasLoadedOnce = true/)
   })
 })

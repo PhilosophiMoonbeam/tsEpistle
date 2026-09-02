@@ -94,8 +94,8 @@
           :aria-selected="tab === section.value"
           :aria-controls="`agent-panel-${section.value}`"
           @click="tab = section.value"
-          @keydown.left.prevent="selectRelativeSection(index, -1, $event)"
-          @keydown.right.prevent="selectRelativeSection(index, 1, $event)"
+          @keydown.left="selectHorizontalSection(index, -1, $event)"
+          @keydown.right="selectHorizontalSection(index, 1, $event)"
           @keydown.up="selectVerticalSection(index, -1, $event)"
           @keydown.down="selectVerticalSection(index, 1, $event)"
           @keydown.home.prevent="selectSection(0, $event)"
@@ -313,13 +313,13 @@
               <v-icon size="17">mdi-chevron-right</v-icon>
             </button>
           </nav>
-          <v-form id="provider-profile-form" class="profile-editor__form" @submit.prevent="saveProfile">
+          <v-form id="provider-profile-form" class="profile-editor__form" @submit.prevent="submitProfileStep">
             <v-alert v-if="profileError" type="error" variant="tonal" density="compact" class="mb-5" closable role="alert" @click:close="profileError = ''">{{ profileError }}</v-alert>
 
             <section v-if="profileStep === 'identity'" class="profile-form-section">
               <div class="profile-form-section__intro"><span><v-icon size="21">mdi-card-account-details-outline</v-icon></span><div><h3>Name the connection</h3><p>Choose the API contract first; Wiki derives the safe behavior from it.</p></div></div>
               <div class="form-grid">
-                <v-text-field v-model="profileDraft.displayName" label="Display name" placeholder="Production Agent" maxlength="255" counter="255" required autofocus />
+                <v-text-field v-model="profileDraft.displayName" :rules="profileDisplayNameRules" label="Display name" placeholder="Production Agent" maxlength="255" counter="255" required autofocus />
                 <div class="protocol-field">
                   <v-select v-model="profileDraft.transportKind" :items="protocolOptions" item-title="title" item-value="value" label="API protocol" required @update:model-value="selectProtocol">
                     <template #item="{ props: itemProps, internalItem }">
@@ -336,7 +336,7 @@
             <section v-else-if="profileStep === 'models'" class="profile-form-section">
               <div class="profile-form-section__intro"><span><v-icon size="21">mdi-brain</v-icon></span><div><h3>Assign model roles</h3><p>Use one capable model for Agent work and, optionally, a faster model for bounded utility tasks.</p></div></div>
               <div class="form-grid">
-                <v-text-field v-model="profileDraft.model" label="Agent model" :hint="agentModelHint" maxlength="255" persistent-hint required />
+                <v-text-field v-model="profileDraft.model" :rules="profileModelRules" label="Agent model" :hint="agentModelHint" maxlength="255" persistent-hint required />
                 <v-text-field v-model="profileDraft.utilityModel" label="Utility model (optional)" hint="Titles, enrichment, classification, and routing. Leave blank to share the Agent model." maxlength="255" persistent-hint />
               </div>
               <div v-if="reasoningEffortOptions.length > 1" class="subsection-card">
@@ -357,7 +357,7 @@
               <div class="form-grid">
                 <v-text-field v-model="profileDraft.baseUrl" :rules="providerBaseUrlRules" label="Base URL" hint="Public HTTPS API root or base path; query strings, fragments, credentials, and local destinations are not allowed." persistent-hint autocomplete="url" spellcheck="false" required />
                 <v-select v-if="availableAuthModes.length > 1" v-model="profileDraft.authMode" :items="availableAuthModes" label="Authentication mode" />
-                <v-text-field class="secret-field" v-model="profileDraft.secretValue" label="API key" type="password" autocomplete="new-password" :hint="editingProfile && editingProfile.secretConfigured ? 'Leave blank to retain the current encrypted credential, or enter a replacement.' : 'Encrypted with the server-managed provider key and never returned by the API.'" persistent-hint :required="!editingProfile || !editingProfile.secretConfigured" prepend-inner-icon="mdi-key-outline" />
+                <v-text-field class="secret-field" v-model="profileDraft.secretValue" :rules="profileSecretRules" label="API key" type="password" autocomplete="new-password" :hint="editingProfile && editingProfile.secretConfigured ? 'Leave blank to retain the current encrypted credential, or enter a replacement.' : 'Encrypted with the server-managed provider key and never returned by the API.'" persistent-hint :required="!editingProfile || !editingProfile.secretConfigured" prepend-inner-icon="mdi-key-outline" />
               </div>
               <div class="protocol-behavior">
                 <div class="protocol-behavior__heading"><span><v-icon size="19">mdi-shield-check-outline</v-icon></span><div><h4>Protocol-derived behavior</h4><p>Wiki verifies the provider connection automatically after every save. A new profile is enabled only after that check succeeds.</p></div></div>
@@ -415,7 +415,7 @@
           <v-btn variant="text" :disabled="saving" @click="requestProfileClose">Cancel</v-btn>
           <v-btn variant="text" :disabled="saving || !profileDirty" prepend-icon="mdi-restore" @click="resetProfileDraft">Reset</v-btn>
           <v-btn v-if="profileStepIndex > 0" variant="outlined" prepend-icon="mdi-arrow-left" :disabled="saving" @click="previousProfileStep">Back</v-btn>
-          <v-btn v-if="profileStepIndex < profileSteps.length - 1" variant="tonal" color="primary" append-icon="mdi-arrow-right" :disabled="saving || !profileStepValid" @click="nextProfileStep">Continue</v-btn>
+          <v-btn v-if="profileStepIndex < profileSteps.length - 1" variant="tonal" color="primary" append-icon="mdi-arrow-right" :disabled="saving || !profileStepValid" form="provider-profile-form" type="submit">Continue</v-btn>
           <v-btn v-else color="primary" prepend-icon="mdi-check-decagram-outline" :loading="saving" :disabled="saving || !profileDraftValid || !profileDirty" form="provider-profile-form" type="submit">Save and verify</v-btn>
         </div>
       </v-card>
@@ -713,7 +713,9 @@ const selectSection = (requestedIndex: number, event: KeyboardEvent): void => {
   const navigation = (event.currentTarget as HTMLElement | null)?.closest('.agent-sections')
   queueMicrotask(() => navigation?.querySelectorAll<HTMLButtonElement>('.agent-section')[index]?.focus())
 }
-const selectRelativeSection = (currentIndex: number, direction: -1 | 1, event: KeyboardEvent): void => {
+const selectHorizontalSection = (currentIndex: number, direction: -1 | 1, event: KeyboardEvent): void => {
+  if (width.value > 960) return
+  event.preventDefault()
   const target = event.currentTarget as HTMLElement | null
   const rtlMultiplier = target && getComputedStyle(target).direction === 'rtl' ? -1 : 1
   selectSection(currentIndex + direction * rtlMultiplier, event)
@@ -735,6 +737,13 @@ const currentProfileStep = computed(() => profileSteps.value[profileStepIndex.va
 const profileProgress = computed(() => ((profileStepIndex.value + 1) / profileSteps.value.length) * 100)
 const integerInRange = (value: number, minimum: number, maximum: number): boolean => Number.isSafeInteger(value) && value >= minimum && value <= maximum
 const integerRule = (label: string, minimum: number, maximum: number) => (value: number): true | string => integerInRange(value, minimum, maximum) || `${label} must be a whole number from ${minimum.toLocaleString()} to ${maximum.toLocaleString()}.`
+const requiredTextRule = (label: string) => (value: unknown): true | string =>
+  (typeof value === 'string' && Boolean(value.trim())) || `${label} is required.`
+const profileDisplayNameRules = [requiredTextRule('Display name')]
+const profileModelRules = [requiredTextRule('Agent model')]
+const profileSecretRules = computed(() =>
+  editingProfile.value?.secretConfigured ? [] : [requiredTextRule('API key')]
+)
 const profileRules = {
   maxContextTokens: [integerRule('Maximum context tokens', 1024, 10_000_000)],
   maxOutputTokens: [integerRule('Maximum output tokens', 1, 1_000_000)],
@@ -786,7 +795,11 @@ const previousProfileStep = () => {
 const nextProfileStep = () => {
   if (!profileStepValid.value) { profileError.value = 'Complete the required fields in this step before continuing.'; return }
   const next = profileSteps.value[profileStepIndex.value + 1]
-  if (next) { maxProfileStepIndex.value = Math.max(maxProfileStepIndex.value, profileStepIndex.value + 1); profileStep.value = next.value }
+  if (next) {
+    profileError.value = ''
+    maxProfileStepIndex.value = Math.max(maxProfileStepIndex.value, profileStepIndex.value + 1)
+    profileStep.value = next.value
+  }
 }
 const resetProfileDraft = (): void => {
   if (saving.value || !profileBaseline.value) return
@@ -917,6 +930,13 @@ const saveProfile = async (): Promise<void> => {
   } finally {
     saving.value = false
   }
+}
+const submitProfileStep = (): void => {
+  if (profileStepIndex.value < profileSteps.value.length - 1) {
+    nextProfileStep()
+    return
+  }
+  void saveProfile()
 }
 const confirmRemove = (profile: Profile) => { removeError.value = ''; removingProfile.value = profile }
 const removeProfile = () => run(async () => { if (!removingProfile.value) return; await request(`/_api/agents/admin/profiles/${encodeURIComponent(removingProfile.value.id)}`, { method: 'DELETE' }); removingProfile.value = null; await load() }, 'remove', message => { removeError.value = message })

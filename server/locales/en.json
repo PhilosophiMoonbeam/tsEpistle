@@ -288,6 +288,8 @@
       "subtitle": "This page does not exist."
     },
     "password": {
+      "label": "Password strength",
+      "unset": "Not set",
       "weak": "Weak",
       "strong": "Strong",
       "average": "Average",
@@ -313,6 +315,7 @@
         "history": "You cannot view the page history.",
         "download": "You cannot download the page content.",
         "sourceVersion": "You cannot view the source of this version of the page.",
+        "template": "You cannot use this page as a template.",
         "downloadVersion": "You cannot download the content for this page version."
       },
       "goback": "Go Back"

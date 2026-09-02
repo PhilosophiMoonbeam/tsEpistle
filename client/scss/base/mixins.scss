@@ -54,13 +54,13 @@
 }
 
 @mixin until($device) {
-  @media screen and (max-width: $device - 1px) {
+  @media screen and (max-width: $device - .02px) {
     @content;
   }
 }
 
 @mixin mobile {
-  @media screen and (max-width: variables.$tablet - 1px) {
+  @media screen and (max-width: variables.$tablet - .02px) {
     @content;
   }
 }
@@ -72,13 +72,13 @@
 }
 
 @mixin tablet-only {
-  @media screen and (min-width: variables.$tablet) and (max-width: variables.$desktop - 1px) {
+  @media screen and (min-width: variables.$tablet) and (max-width: variables.$desktop - .02px) {
     @content;
   }
 }
 
 @mixin touch {
-  @media screen and (max-width: variables.$desktop - 1px) {
+  @media screen and (max-width: variables.$desktop - .02px) {
     @content;
   }
 }
@@ -90,7 +90,7 @@
 }
 
 @mixin desktop-only {
-  @media screen and (min-width: variables.$desktop) and (max-width: variables.$widescreen - 1px) {
+  @media screen and (min-width: variables.$desktop) and (max-width: variables.$widescreen - .02px) {
     @content;
   }
 }

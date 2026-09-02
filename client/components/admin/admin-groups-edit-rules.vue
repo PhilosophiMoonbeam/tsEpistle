@@ -15,26 +15,27 @@
           variant="outlined"
           icon='mdi-information'
           ) Enable the relevant global content permissions (under Permissions) before saving page rules.
-        v-btn.mx-2(variant="flat", color='primary', @click='addRule', :disabled='group.id <= 0')
+        v-btn.mx-2(ref='addRuleButton', variant="flat", color='primary', @click='addRule', :disabled='group.id <= 0')
           v-icon(start) mdi-plus
           | Add Rule
       v-card-text(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-white`')
         .rules
           .text-body-small(v-if='group.pageRules.length === 0')
             em(:class='$vuetify.theme.current.dark ? `text-grey` : `text-blue-grey`') This group has no page rules yet.
-          .rule(v-for='rule of group.pageRules', :key='rule.id')
+          .rule(v-for='(rule, ruleIndex) of group.pageRules', :key='rule.id')
             v-btn.ma-0.radius-4.rule-deny-btn(
               :color='rule.deny ? "red" : "green"'
               @click='updateRule(rule.id, { deny: !rule.deny })'
               :disabled='group.id <= 0'
               height='48'
-              :aria-label='rule.deny ? "Set rule to Allow" : "Set rule to Deny"'
-              :aria-pressed='String(rule.deny)'
+              :aria-label='`Deny matching pages for page rule ${ruleIndex + 1}`'
+              :aria-pressed='rule.deny'
               )
               v-icon(v-if='rule.deny') mdi-cancel
               v-icon(v-else) mdi-check-circle
               span.ml-1 {{rule.deny ? 'DENY' : 'ALLOW'}}
             v-select.rule-roles(
+              :ref='input => setRuleInputRef(rule.id, input)'
               variant="solo"
               :items='roles'
               item-title='text'
@@ -117,7 +118,7 @@
               hide-details
               :color='$vuetify.theme.current.dark ? `grey` : `blue-grey`'
               )
-            v-btn.rule-remove(icon, @click='removeRule(rule.id)', size="small", :aria-label='`Remove rule ${rule.id}`', :disabled='group.id <= 0')
+            v-btn.rule-remove(icon, @click='removeRule(rule.id)', size="small", :aria-label='`Remove page rule ${ruleIndex + 1}`', :disabled='group.id <= 0')
               v-icon(:color='$vuetify.theme.current.dark ? `grey` : `blue-grey`') mdi-close
 
         v-divider.mt-3
@@ -156,6 +157,10 @@ import { createEmptyGroupEditorState, type GroupEditorState, type GroupPageRule 
 
 const nanoid = customAlphabet('1234567890abcdef', 10)
 
+type FocusableInput = {
+  focus?: () => void
+}
+
 export default {
   emits: ['update:modelValue'],
   props: {
@@ -188,7 +193,8 @@ export default {
         { text: 'Path Ends With...', value: 'END', icon: '.../' },
         { text: 'Path Matches Regex...', value: 'REGEX', icon: '$.*' },
         { text: 'Tag Matches...', value: 'TAG', icon: 'T' }
-      ])
+      ]),
+      ruleInputRefs: markRaw(new Map<string, FocusableInput>())
     }
   },
   computed: {
@@ -201,12 +207,13 @@ export default {
   methods: {
     addRule() {
       if (this.group.id <= 0) return
+      const ruleId = nanoid()
       this.group = {
         ...this.group,
         pageRules: [
           ...this.group.pageRules,
           {
-            id: nanoid(),
+            id: ruleId,
             path: '',
             roles: [],
             match: 'START',
@@ -215,6 +222,23 @@ export default {
           }
         ]
       }
+      this.focusRuleInput(ruleId)
+    },
+    setRuleInputRef(ruleId: string, input: FocusableInput | null) {
+      if (input) {
+        this.ruleInputRefs.set(ruleId, input)
+      } else {
+        this.ruleInputRefs.delete(ruleId)
+      }
+    },
+    focusRuleInput(ruleId?: string) {
+      this.$nextTick(() => {
+        if (ruleId) {
+          this.ruleInputRefs.get(ruleId)?.focus?.()
+        } else {
+          ;(this.$refs.addRuleButton as FocusableInput | undefined)?.focus?.()
+        }
+      })
     },
     updateRule(ruleId: string, patch: Partial<Omit<GroupPageRule, 'id'>>) {
       this.group = {
@@ -224,10 +248,15 @@ export default {
     },
     removeRule(ruleId: string) {
       if (this.group.id <= 0) return
+      const removedIndex = this.group.pageRules.findIndex(rule => rule.id === ruleId)
+      if (removedIndex < 0) return
+      const pageRules = this.group.pageRules.filter(rule => rule.id !== ruleId)
+      const nextRuleId = pageRules[Math.min(removedIndex, pageRules.length - 1)]?.id
       this.group = {
         ...this.group,
-        pageRules: this.group.pageRules.filter(rule => rule.id !== ruleId)
+        pageRules
       }
+      this.focusRuleInput(nextRuleId)
     }
   }
 }

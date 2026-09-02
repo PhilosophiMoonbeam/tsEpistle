@@ -42,6 +42,8 @@
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'
+
+const MAX_CONSOLE_OUTPUT_LENGTH = 250_000
 export default {
   emits: ['update:modelValue'],
   data() {
@@ -118,7 +120,13 @@ export default {
       this.connectionState = 'closed'
     },
     appendOutput(message: string) {
-      this.output += `${this.output ? '\n' : ''}${message}`
+      const nextOutput = `${this.output}${this.output ? '\n' : ''}${message}`
+      if (nextOutput.length > MAX_CONSOLE_OUTPUT_LENGTH) {
+        const firstCompleteLine = nextOutput.indexOf('\n', nextOutput.length - MAX_CONSOLE_OUTPUT_LENGTH)
+        this.output = nextOutput.slice(firstCompleteLine >= 0 ? firstCompleteLine + 1 : -MAX_CONSOLE_OUTPUT_LENGTH)
+      } else {
+        this.output = nextOutput
+      }
       if (this.scrollPending) return
 
       this.scrollPending = true

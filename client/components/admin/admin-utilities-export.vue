@@ -179,9 +179,7 @@ type ExportState = {
   progress: number
   isDisposed: boolean
   requestGeneration: number
-  pollAnimationFrameHandle: number | null
   pollTimeoutHandle: number | null
-  startTimeoutHandle: number | null
 }
 
 type ExportVm = ExportState & {
@@ -211,8 +209,6 @@ export default defineComponent({
       progress: 0,
       isDisposed: false,
       requestGeneration: 0,
-      startTimeoutHandle: null as number | null,
-      pollAnimationFrameHandle: null as number | null,
       pollTimeoutHandle: null as number | null
     }
   },
@@ -243,14 +239,6 @@ export default defineComponent({
       await this.startExport()
     },
     clearScheduledWork () {
-      if (this.startTimeoutHandle !== null) {
-        window.clearTimeout(this.startTimeoutHandle)
-        this.startTimeoutHandle = null
-      }
-      if (this.pollAnimationFrameHandle !== null) {
-        window.cancelAnimationFrame(this.pollAnimationFrameHandle)
-        this.pollAnimationFrameHandle = null
-      }
       if (this.pollTimeoutHandle !== null) {
         window.clearTimeout(this.pollTimeoutHandle)
         this.pollTimeoutHandle = null
@@ -273,20 +261,13 @@ export default defineComponent({
           }
           case 'running': {
             this.progress = respStatusObj.progress || 0
-            this.pollAnimationFrameHandle = window.requestAnimationFrame(() => {
+            this.pollTimeoutHandle = window.setTimeout(() => {
               if (this.isDisposed || generation !== this.requestGeneration) {
                 return
               }
-              this.pollAnimationFrameHandle = null
-
-              this.pollTimeoutHandle = window.setTimeout(() => {
-                if (this.isDisposed || generation !== this.requestGeneration) {
-                  return
-                }
-                this.pollTimeoutHandle = null
-                void this.checkProgress(generation)
-              }, 5000)
-            })
+              this.pollTimeoutHandle = null
+              void this.checkProgress(generation)
+            }, 5000)
             break
           }
           case 'success': {
@@ -322,30 +303,23 @@ export default defineComponent({
       this.isLoading = true
       this.progress = 0
 
-      this.startTimeoutHandle = window.setTimeout(async () => {
+      try {
+        // -> Initiate export
+        await startSystemExport(window.fetch.bind(window), this.entities, this.filePath, 'Export failed')
         if (this.isDisposed || generation !== this.requestGeneration) {
           return
         }
-        this.startTimeoutHandle = null
 
-        try {
-          // -> Initiate export
-          await startSystemExport(window.fetch.bind(window), this.entities, this.filePath, 'Export failed')
-          if (this.isDisposed || generation !== this.requestGeneration) {
-            return
-          }
-
-          // -> Check for progress
-          void this.checkProgress(generation)
-        } catch (err) {
-          if (this.isDisposed || generation !== this.requestGeneration) {
-            return
-          }
-          this.errorMessage = getErrorMessage(err)
-          this.isFailed = true
-          this.isLoading = false
+        // -> Check for progress
+        void this.checkProgress(generation)
+      } catch (err) {
+        if (this.isDisposed || generation !== this.requestGeneration) {
+          return
         }
-      }, 1500)
+        this.errorMessage = getErrorMessage(err)
+        this.isFailed = true
+        this.isLoading = false
+      }
     }
   }
 })

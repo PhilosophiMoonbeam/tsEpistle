@@ -89,7 +89,7 @@
           </div>
         </dl>
 
-        <p class="agent-goal__summary" aria-live="polite">{{ progressLabel }}</p>
+        <p class="agent-goal__summary">{{ progressLabel }}</p>
 
         <aside
           v-if="blockerMessages.length"
@@ -110,7 +110,7 @@
         </aside>
 
         <p v-if="busy" class="agent-goal__pending" role="status" aria-live="polite">
-          <v-progress-circular color="primary" indeterminate size="15" width="2" />
+          <v-progress-circular color="primary" indeterminate size="15" width="2" aria-hidden="true" />
           {{ pendingActionLabel }}
         </p>
 

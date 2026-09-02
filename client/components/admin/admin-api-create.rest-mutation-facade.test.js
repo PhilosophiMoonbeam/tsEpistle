@@ -89,13 +89,16 @@ describe('admin-api-create REST mutation migration guard', () => {
       /this\.groups\s*=\s*await\s+fetchGroupOptions\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]Groups response is invalid['"]\s*\)[\s\S]*this\.groupLoadState\s*=\s*['"]success['"]/
     )
     expect(loadGroups).toMatch(
+      /async\s+loadGroups\s*\(\s*focusOnSuccess\s*=\s*false\s*\)[\s\S]*if\s*\(\s*focusOnSuccess\s*&&\s*this\.modelValue\s*&&\s*this\.scope\s*===\s*['"]group['"]\s*\)\s*\{[\s\S]*this\.\$nextTick\s*\(\s*\(\s*\)\s*=>\s*this\.focusFormControl\s*\(\s*['"]groupInput['"]\s*\)\s*\)/
+    )
+    expect(loadGroups).toMatch(
       /catch\s*\(\s*err\s*\)\s*\{[\s\S]*this\.groups\s*=\s*\[\][\s\S]*this\.groupLoadState\s*=\s*['"]error['"][\s\S]*this\.groupLoadError\s*=\s*getErrorMessage\s*\(\s*err\s*\)/
     )
     expect(loadGroups).toMatch(/finally\s*\{[\s\S]*wikiStore\.stopLoading\s*\(\s*['"]admin-api-groups-refresh['"]\s*\)/)
     expect(loadGroups).not.toMatch(/wikiStore\.(?:showError|showNotification)\s*\(/)
 
     expect(source).toMatch(
-      /v-alert[\s\S]*?v-if=['"]scope === `group` && groupLoadState === `error`['"][\s\S]*?\{\{\s*groupLoadError\s*\}\}[\s\S]*?@click=['"]loadGroups['"][\s\S]*?\)\s*Retry groups/
+      /v-alert[\s\S]*?v-if=['"]scope === `group` && groupLoadState === `error`['"][\s\S]*?\{\{\s*groupLoadError\s*\}\}[\s\S]*?@click=['"]loadGroups\(true\)['"][\s\S]*?\)\s*Retry groups/
     )
     expect(source).toMatch(
       /v-select[\s\S]*?v-if=['"]scope === `group`['"][\s\S]*?:loading=['"]groupLoadState === `loading`['"][\s\S]*?:disabled=['"]loading \|\| groupLoadState !== `success`['"]/

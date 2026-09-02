@@ -74,7 +74,6 @@
             :disabled='loading || locales.length < 2'
             :error-messages='migrationLocaleError'
           )
-      .text-body-medium.mt-2(v-if='migrationLocaleError') {{ migrationLocaleError }}
       v-btn(variant="outlined", color='error', @click='requestMigration', :disabled='loading || !isMigrationValid', :loading='loading && activeAction === "migrate"').ml-0.mt-3
         v-icon(start, aria-hidden='true') mdi-database-export
         span Review Migration
@@ -98,7 +97,7 @@
       v-btn(variant="outlined", color='error', @click='requestPurge', :disabled='loading || !purgeHistorySelection', :loading='loading && activeAction === `purge`').ml-0.mt-3
         v-icon(start, aria-hidden='true') mdi-delete-clock
         span Review Purge
-      v-dialog(v-model='isConfirmShown', persistent, max-width='520', aria-labelledby='content-confirm-title', @after-leave='pendingConfirmation = ""')
+      v-dialog(v-model='isConfirmShown', max-width='520', aria-labelledby='content-confirm-title', @after-leave='pendingConfirmation = ""')
         v-card
           v-card-title#content-confirm-title Confirm destructive operation
           v-card-text
@@ -107,7 +106,7 @@
             .text-body-medium.mt-3.text-error This action cannot be undone.
           v-card-actions
             v-spacer
-            v-btn(variant="text", @click='cancelConfirmation', :disabled='loading') Cancel
+            v-btn(autofocus, variant="text", @click='cancelConfirmation', :disabled='loading') Cancel
             v-btn(color='error', variant="flat", @click='confirmDestructiveAction', :loading='loading') {{ pendingConfirmation === `migrate` ? 'Migrate Pages' : 'Purge History' }}</template>
 
 
@@ -163,13 +162,9 @@ export default defineComponent({
       return Boolean(this.sourceLocale && this.targetLocale && this.sourceLocale !== this.targetLocale)
     },
     migrationLocaleError () {
-      if (!this.sourceLocale || !this.targetLocale) {
-        return 'Select both a source and target locale.'
-      }
-      if (this.sourceLocale === this.targetLocale) {
-        return 'Source and target locales must be different.'
-      }
-      return ''
+      return this.sourceLocale && this.sourceLocale === this.targetLocale
+        ? 'Source and target locales must be different.'
+        : ''
     },
     selectedPurgeTitle () {
       return this.purgeHistoryOptions.find(option => option.key === this.purgeHistorySelection)?.title || this.purgeHistorySelection

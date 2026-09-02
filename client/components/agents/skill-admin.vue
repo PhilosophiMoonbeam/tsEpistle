@@ -128,7 +128,7 @@
         <div class="skill-eyebrow">Organization library</div>
         <h3>Publish the first trusted skill</h3>
         <p>Map a page tree, review its immutable source, then make that expertise available to the right audience.</p>
-        <v-btn color="primary" prepend-icon="mdi-plus" @click="openCreate">Map organization skill</v-btn>
+        <v-btn color="primary" prepend-icon="mdi-plus" :disabled="loading || Boolean(actionBusyId)" @click="openCreate">Map organization skill</v-btn>
       </div>
     </div>
   </section>

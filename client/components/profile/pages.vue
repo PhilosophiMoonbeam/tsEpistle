@@ -41,6 +41,8 @@
             :sort-by="[{ key: 'updatedAt', order: 'desc' }]"
             hide-default-footer
           )
+            template(v-slot:caption)
+              span.profile-pages-table-caption {{ $t('profile:pages.title') }}
             template(v-slot:item='props')
               tr(v-if='$vuetify.display.mdAndUp')
                 td
@@ -158,6 +160,15 @@ export default {
 </script>
 
 <style lang='scss'>
+.profile-pages-table-caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .profile-page-link {
   color: rgb(var(--v-theme-primary));
   text-decoration: none;

@@ -54,10 +54,13 @@ describe('admin-security site REST facade migration guard', () => {
     expect(script).not.toContain('this.$apollo')
   })
 
-  test('save rejects unavailable or concurrent submissions and balances root loading state', () => {
+  test('save validates before persistence, focuses the first invalid field, and balances its locked loading state', () => {
     expect(save).not.toBeNull()
     expect(save).toMatch(
-      /async\s+save\s*\(\s*\)\s*\{[\s\S]*?if\s*\(\s*!this\.configLoaded\s*\|\|\s*this\.configSaving\s*\)\s*return[\s\S]*?this\.configSaving\s*=\s*true[\s\S]*?loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)/
+      /async\s+save\s*\(\s*\)\s*\{[\s\S]*?if\s*\(\s*!this\.configLoaded\s*\|\|\s*this\.configSaving\s*\)\s*return[\s\S]*?const\s+validation\s*=\s*await\s+form\?\.validate\?\.\(\s*\)[\s\S]*?if\s*\(\s*!validation\?\.valid\s*\)[\s\S]*?this\.\$nextTick\s*\([\s\S]*?return[\s\S]*?this\.configSaving\s*=\s*true[\s\S]*?loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)/
+    )
+    expect(save).toContain(
+      'form?.$el?.querySelector<HTMLElement>(\'.v-input--error input, .v-input--error textarea, .v-input--error [tabindex]:not([tabindex="-1"])\')?.focus()'
     )
     expect(save).toMatch(/await\s+saveSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*this\.siteConfigPayload\s*\(\s*\)\s*\)/)
     expect(save).toMatch(
@@ -89,10 +92,12 @@ describe('admin-security site REST facade migration guard', () => {
     expect(loadConfig.match(/\bsetLoading\s*\(/g) || []).toHaveLength(2)
   })
 
-  test('the form and apply action preserve guarded submit prevention', () => {
-    expect(source).toMatch(/v-form\.pt-3\((?=[^\n)]*\bv-else-if=['"]configLoaded['"])(?=[^\n)]*@submit\.prevent=['"]save['"])[^\n)]*\)/)
+  test('the form and apply action use one guarded, accessible submit path', () => {
     expect(source).toMatch(
-      /v-btn\((?=[^\n)]*@click=['"]save['"])(?=[^\n)]*:loading=['"]configSaving['"])(?=[^\n)]*:disabled=['"]!configLoaded \|\| configSaving['"])[^\n)]*\)/
+      /v-form#security-form\.pt-3\((?=[^)]*\bv-else-if=['"]configLoaded['"])(?=[^)]*\bref=['"]securityForm['"])(?=[^)]*:disabled=['"]configSaving['"])(?=[^)]*\bvalidate-on=['"]submit['"])(?=[^)]*@submit\.prevent=['"]save['"])[^)]*\)/
+    )
+    expect(source).toMatch(
+      /v-btn\((?=[^\n)]*\btype=['"]submit['"])(?=[^\n)]*\bform=['"]security-form['"])(?=[^\n)]*:loading=['"]configSaving['"])(?=[^\n)]*:disabled=['"]!configLoaded \|\| configSaving['"])[^\n)]*\)/
     )
   })
 

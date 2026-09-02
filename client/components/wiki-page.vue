@@ -162,6 +162,7 @@ export default defineComponent({
         }
 
         const parsed = parseWikiNavigationDocument(await response.text(), responseUrl)
+        if (parsed && destination.hash && !parsed.url.hash) parsed.url.hash = destination.hash
         if (sequence !== this.navigationSequence) return
         if (!parsed || parsed.language !== document.documentElement.lang) {
           this.hardNavigate(responseUrl, options.popState)

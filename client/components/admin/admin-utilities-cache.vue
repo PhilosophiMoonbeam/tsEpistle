@@ -22,10 +22,10 @@
       v-btn(variant="outlined", color='primary', @click='flushClientLocaleCache', :loading='activeOperation === "locale"', :disabled='loading && activeOperation !== "locale"').ml-0.mt-3
         v-icon(start) mdi-translate
         span Clear this browser's locale cache
-    v-dialog(v-model='confirmationDialog', max-width='520', persistent, aria-labelledby='temporary-uploads-confirmation-title')
+    v-dialog(v-model='confirmationDialog', max-width='520', persistent, aria-labelledby='temporary-uploads-confirmation-title', aria-describedby='temporary-uploads-confirmation-description')
       v-card
-        v-card-title#temporary-uploads-confirmation-title Delete temporary uploads?
-        v-card-text Deleting temporary files while an upload is in progress can cause that upload to fail. Continue only if no uploads are currently being processed.
+        v-card-title.text-wrap#temporary-uploads-confirmation-title Delete temporary uploads?
+        v-card-text#temporary-uploads-confirmation-description Deleting temporary files while an upload is in progress can cause that upload to fail. Continue only if no uploads are currently being processed.
         v-card-actions
           v-btn(variant="text", @click='confirmationDialog = false', :disabled='loading') Cancel
           v-spacer

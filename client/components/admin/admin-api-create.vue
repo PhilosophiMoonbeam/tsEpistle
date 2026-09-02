@@ -59,7 +59,7 @@
                 size='small'
                 variant='outlined'
                 prepend-icon='mdi-refresh'
-                @click='loadGroups'
+                @click='loadGroups(true)'
               ) Retry groups
             v-select.ml-8.mt-2(
               v-if='scope === `group`'
@@ -245,7 +245,7 @@ export default {
       }
       control?.$el?.querySelector<HTMLElement>('input:not([disabled]), [tabindex]:not([tabindex="-1"])')?.focus()
     },
-    async loadGroups() {
+    async loadGroups(focusOnSuccess = false) {
       if (!this.modelValue || this.scope !== 'group' || this.groupLoadState === 'loading' || this.groupLoadState === 'success') return
       this.groupLoadState = 'loading'
       this.groupLoadError = ''
@@ -253,6 +253,9 @@ export default {
       try {
         this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
         this.groupLoadState = 'success'
+        if (focusOnSuccess && this.modelValue && this.scope === 'group') {
+          this.$nextTick(() => this.focusFormControl('groupInput'))
+        }
       } catch (err) {
         this.groups = []
         this.groupLoadState = 'error'

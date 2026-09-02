@@ -21,7 +21,7 @@ describe('Ask modal accessibility contract', () => {
       /isAgentOpen\(open:\s*boolean\)\s*\{[\s\S]*if\s*\(open\)\s*\{[\s\S]*void this\.activateAgentModal\(\)[\s\S]*return[\s\S]*if \(this\.directPromptHandoffPending\) this\.directPromptHandoffId \+= 1[\s\S]*if\s*\(this\.searchIsFocused\)\s*void this\.reactivateSearchModal\(\)[\s\S]*else this\.deactivateAgentModal\(false\)/
     )
     expect(search).toMatch(
-      /searchIsFocused\(open:\s*boolean\)\s*\{[\s\S]*if\s*\(open\)\s*void this\.activateAgentModal\(\)[\s\S]*else this\.finishSearchFocus\(\)/
+      /searchIsFocused\(open:\s*boolean\)\s*\{[\s\S]*if\s*\(open\)\s*\{[\s\S]*void this\.activateAgentModal\(\)[\s\S]*return[\s\S]*const restoreFocus = this\.searchExitRestoreFocus[\s\S]*this\.finishSearchFocus\(restoreFocus\)/
     )
     expect(search).toMatch(
       /createModalFocusScope\(\{[\s\S]*root,[\s\S]*restoreTarget:\s*this\.restoreTargetFor\(agentOpener\),[\s\S]*onEscape:\s*this\.returnToSearch/
@@ -92,7 +92,10 @@ describe('Ask modal accessibility contract', () => {
     )
     expect(search).toMatch(/const agentOpener = this\.pendingAskRestoreTarget \?\? activeOpener \?\? this\.findSearchControl\(\)/)
     expect(search).toMatch(
-      /finishSearchFocus\(\): void[\s\S]*this\.deactivateModalLayers\(true\)[\s\S]*this\.isSearchControl\(active\)[\s\S]*active\.blur\(\)[\s\S]*this\.searchRestoreTarget = null/
+      /finishSearchFocus\(restoreFocus = true\): void[\s\S]*this\.deactivateModalLayers\(restoreFocus\)[\s\S]*this\.isSearchControl\(active\)[\s\S]*active\.blur\(\)[\s\S]*this\.searchRestoreTarget = null/
+    )
+    expect(header).toMatch(
+      /searchTab \(event: KeyboardEvent\)[\s\S]*event\.preventDefault\(\)[\s\S]*emitSearchExit\(false\)[\s\S]*this\.searchClose\(\)[\s\S]*nav-header-browse/
     )
     expect(header).toMatch(/searchIsFocused\(open: boolean\): void[\s\S]*!open && this\.\$vuetify\.display\.smAndDown[\s\S]*this\.searchIsShown = false/)
     expect(header).toMatch(/searchClose \(\)[\s\S]*this\.searchIsFocused = false[\s\S]*this\.searchMode = 'search'[\s\S]*this\.search = ''/)

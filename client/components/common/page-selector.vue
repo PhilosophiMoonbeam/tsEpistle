@@ -5,16 +5,16 @@
     :fullscreen='$vuetify.display.smAndDown'
     scrim='surface'
     style='--v-overlay-opacity: .7'
-    aria-labelledby='page-selector-title'
+    :aria-labelledby='titleId'
     :persistent='isSubmitting'
     @after-enter='focusPath'
   )
     v-card.page-selector
       .dialog-header
         v-icon.mr-3(color='primary' aria-hidden='true') mdi-page-next-outline
-        h2#page-selector-title.text-body-large(v-if='mode === `create`') {{$t('common:pageSelector.createTitle')}}
-        h2#page-selector-title.text-body-large(v-else-if='mode === `move`') {{$t('common:pageSelector.moveTitle')}}
-        h2#page-selector-title.text-body-large(v-else-if='mode === `select`') {{$t('common:pageSelector.selectTitle')}}
+        h2.text-body-large(v-if='mode === `create`' :id='titleId' ref='dialogTitle' tabindex='-1') {{$t('common:pageSelector.createTitle')}}
+        h2.text-body-large(v-else-if='mode === `move`' :id='titleId' ref='dialogTitle' tabindex='-1') {{$t('common:pageSelector.moveTitle')}}
+        h2.text-body-large(v-else-if='mode === `select`' :id='titleId' ref='dialogTitle' tabindex='-1') {{$t('common:pageSelector.selectTitle')}}
         v-spacer
         v-progress-circular(
           v-if='searchLoading'
@@ -27,14 +27,14 @@
       v-row.page-selector__panes(gap='0')
         v-col.page-selector__pane.page-selector__tree-pane(cols='12' md='5')
           v-toolbar(color='surface-variant' density='compact' flat)
-            h3#page-selector-folders.page-selector__folders-label.text-body-medium {{$t('common:pageSelector.virtualFolders')}}
+            h3.page-selector__folders-label.text-body-medium(:id='foldersId') {{$t('common:pageSelector.virtualFolders')}}
             v-spacer
             v-tooltip(location='top')
               template(v-slot:activator='{ props }')
                 v-btn(v-bind='props' icon rounded='0' href='https://docs.requarks.io/guide/pages#folders' target='_blank' rel='noopener noreferrer' aria-label='Open virtual folders help')
                   v-icon mdi-help-box-outline
               span {{$t('common:pageSelector.virtualFolders')}}
-          div.page-selector__scroller(role='region' aria-labelledby='page-selector-folders')
+          div.page-selector__scroller(role='region' :aria-labelledby='foldersId' :aria-busy='searchLoading ? `true` : undefined')
             vue-scroll(:ops='scrollStyle')
               .page-selector__folder-errors(
                 v-if='folderLoadFailureList.length > 0'
@@ -65,6 +65,7 @@
                 v-model:opened='openNodes'
                 :items='tree'
                 :load-children='fetchFolders'
+                :aria-labelledby='foldersId'
                 density='compact'
                 expand-icon='mdi-menu-down-outline'
                 item-value='id'
@@ -77,8 +78,8 @@
                   v-icon(aria-hidden='true') mdi-{{ isOpen ? 'folder-open' : 'folder' }}
         v-col.page-selector__pane.page-selector__pages-pane(cols='12' md='7')
           v-toolbar(color='surface-variant' density='compact' flat)
-            h3#page-selector-pages.text-body-medium {{$t('common:pageSelector.pages')}}
-          div.page-selector__scroller(role='region' aria-labelledby='page-selector-pages')
+            h3.text-body-medium(:id='pagesId') {{$t('common:pageSelector.pages')}}
+          div.page-selector__scroller(role='region' :aria-labelledby='pagesId' :aria-busy='currentFolderLoading && currentPages.length > 0 ? `true` : undefined')
             async-state(
               v-if='currentFolderLoading && currentPages.length === 0'
               state='loading'
@@ -90,7 +91,7 @@
               v-model:activated='currentPageIds'
               density='compact'
               activatable
-              aria-labelledby='page-selector-pages'
+              :aria-labelledby='pagesId'
               mandatory
             )
               template(v-for='(page, idx) of currentPages' :key='`page-` + page.id')
@@ -98,6 +99,15 @@
                   template(v-slot:prepend): v-icon aria-hidden='true' mdi-text-box-outline
                   v-list-item-title {{page.title}}
                 v-divider(v-if='idx < currentPages.length - 1')
+            async-state(
+              v-else-if='currentFolderFailure'
+              state='error'
+              :title='`Could not load ${currentFolderFailure.item.title}`'
+              :message='currentFolderFailure.message'
+              retry-label='Try again'
+              :announce='false'
+              @retry='retryCurrentFolderLoad'
+            )
             async-state(
               v-else-if='!currentFolderFailure'
               state='empty'
@@ -139,8 +149,7 @@
           span {{$t('common:actions.select')}}</template>
 
 <script lang='ts'>
-import { defineComponent, markRaw, type PropType } from 'vue'
-import _ from 'lodash'
+import { defineComponent, markRaw, type PropType, useId } from 'vue'
 import { fetchPageTree, type PageTreeRow } from '../../helpers/pages-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import AsyncState from './async-state.vue'
@@ -180,6 +189,21 @@ function isPageTreeItem (item: unknown): item is PageTreeItem {
     typeof (item as { treeId?: unknown }).treeId === 'number'
 }
 
+function comparePageEntries (left: PageEntry, right: PageEntry): number {
+  if (left.title !== right.title) return left.title < right.title ? -1 : 1
+  if (left.path === right.path) return 0
+  return left.path < right.path ? -1 : 1
+}
+
+function appendUniqueById<T extends { id: number }> (current: T[], additions: T[]): T[] {
+  const ids = new Set(current.map(item => item.id))
+  return current.concat(additions.filter(item => {
+    if (ids.has(item.id)) return false
+    ids.add(item.id)
+    return true
+  }))
+}
+
 /* global siteLangs, siteConfig */
 
 export default defineComponent({
@@ -193,6 +217,14 @@ export default defineComponent({
     openHandler: { type: Function as PropType<OpenHandler>, default: () => undefined },
     mustExist: { type: Boolean, default: false },
     allowLocaleChange: { type: Boolean, default: false }
+  },
+  setup() {
+    const id = useId()
+    return {
+      foldersId: `${id}-folders`,
+      pagesId: `${id}-pages`,
+      titleId: `${id}-title`
+    }
   },
   data() {
     return {
@@ -240,7 +272,8 @@ export default defineComponent({
       return this.currentFolderRequestKey ? this.folderPendingRequestIds[this.currentFolderRequestKey] !== undefined : false
     },
     currentPages (): PageEntry[] {
-      return _.sortBy(_.filter(this.pages, ['parent', _.head(this.currentNode) ?? 0]), ['title', 'path'])
+      const parentId = this.currentNode[0] ?? 0
+      return this.pages.filter(page => page.parent === parentId).sort(comparePageEntries)
     },
     currentPageIds: {
       get(): number[] { return this.currentPage ? [this.currentPage.id] : [] },
@@ -250,9 +283,9 @@ export default defineComponent({
     },
     isValidPath (): boolean {
       if (!this.currentPath || (this.mustExist && !this.currentPage)) return false
-      const firstSection = _.head(this.currentPath.split('/'))
+      const firstSection = this.currentPath.split('/')[0]
       if (!firstSection || firstSection.length <= 1 || localeSegmentRegex.test(firstSection)) return false
-      return !_.some(['login', 'logout', 'register', 'verify', 'favicons', 'fonts', 'img', 'js', 'svg'], p => p === firstSection)
+      return !['login', 'logout', 'register', 'verify', 'favicons', 'fonts', 'img', 'js', 'svg'].includes(firstSection)
     }
   },
   watch: {
@@ -279,13 +312,14 @@ export default defineComponent({
         void this.$nextTick(() => { this.currentNode = oldValue })
         return
       }
-      const current = _.find(this.all, ['id', nodeId])
+      const current = this.all.find(item => item.id === nodeId)
       const opened = new Set(this.openNodes)
       if (current) opened.add(current.parent)
       opened.add(nodeId)
       this.openNodes = [...opened]
       this.currentPage = null
-      this.currentPath = _.compact([current?.path ?? '', _.last(this.currentPath?.split('/') ?? [])]).join('/')
+      const pathParts = this.currentPath?.split('/') ?? []
+      this.currentPath = [current?.path ?? '', pathParts[pathParts.length - 1] ?? ''].filter(Boolean).join('/')
     },
     currentPage (newValue: PageEntry | null) {
       if (newValue) this.currentPath = newValue.path
@@ -303,7 +337,12 @@ export default defineComponent({
   methods: {
     focusPath(): void {
       const input = this.$refs.pathIpt as { focus?: () => void } | undefined
-      input?.focus?.()
+      if (input?.focus) {
+        input.focus()
+        return
+      }
+      const title = this.$refs.dialogTitle
+      if (title instanceof HTMLElement) title.focus()
     },
     close(): void {
       if (!this.isSubmitting) this.isShown = false
@@ -348,6 +387,9 @@ export default defineComponent({
     isFolderRetrying(failure: FolderLoadFailure): boolean {
       return this.folderPendingRequestIds[failure.key] !== undefined
     },
+    retryCurrentFolderLoad(): void {
+      if (this.currentFolderFailure) this.retryFolderLoad(this.currentFolderFailure)
+    },
     retryFolderLoad(failure: FolderLoadFailure): void {
       if (failure.item.treeId !== this.treeViewCacheId || this.isFolderRetrying(failure)) return
       void this.fetchFolders(failure.item)
@@ -378,8 +420,8 @@ export default defineComponent({
         const itemFolders: PageTreeItem[] = items.filter(item => item.isFolder).map(folder => ({ ...folder, treeId: requestTreeId, children: [] }))
         const itemPages = items.filter(isPageEntry)
         item.children = itemFolders.length > 0 ? itemFolders : undefined
-        this.pages = _.unionBy(this.pages, itemPages, 'id')
-        this.all = _.unionBy(this.all, items, 'id')
+        this.pages = appendUniqueById(this.pages, itemPages)
+        this.all = appendUniqueById(this.all, items)
         delete this.folderLoadFailures[requestKey]
       } catch (err) {
         if (controller.signal.aborted) return

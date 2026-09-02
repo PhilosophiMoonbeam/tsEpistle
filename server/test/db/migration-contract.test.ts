@@ -25,7 +25,7 @@ describe('database migration namespace contract', () => {
     const files = (await readdir(path.resolve('server/db/migrations'))).filter(file => file.endsWith('.ts'))
     const ordered = orderMigrationFiles(files)
 
-    expect(ordered.at(-1)).toBe('tsfranki-000007-okf-authority-backfill')
+    expect(ordered.at(-1)).toBe('tsfranki-000008-content-extension-registry')
     expect(ordered).toHaveLength(files.length)
   })
 

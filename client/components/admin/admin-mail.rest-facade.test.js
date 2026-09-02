@@ -84,10 +84,10 @@ describe('admin mail REST facade', () => {
       /const dkimPrivateKey\s*=\s*this\.dkimKeyMode === 'keep'[\s\S]*?this\.storedDkimPrivateKey[\s\S]*?this\.dkimKeyMode === 'replace' \? this\.config\.dkimPrivateKey : ''/
     )
     expect(scriptBlock()).toMatch(
-      /const authenticationValid\s*=\s*\(\s*\(!this\.config\.user\.trim\(\)\s*&&\s*!this\.smtpPasswordAvailable\)\s*\|\|\s*\(Boolean\(this\.config\.user\.trim\(\)\)\s*&&\s*this\.smtpPasswordAvailable\)\s*\)/
+      /const authenticationValid\s*=\s*hasValidMailTextLength\(this\.config\.user\)\s*&&\s*\(\s*\(!this\.config\.user\.trim\(\)\s*&&\s*!this\.smtpPasswordAvailable\)\s*\|\|\s*\(Boolean\(this\.config\.user\.trim\(\)\)\s*&&\s*this\.smtpPasswordAvailable\)\s*\)/
     )
     expect(scriptBlock()).toMatch(
-      /if\s*\(hasUser\s*===\s*this\.smtpPasswordAvailable\)\s*return true[\s\S]*return hasUser\s*\?\s*'Enter an SMTP password or clear the username\.'\s*:\s*'Enter a username for the stored password\.'/
+      /if\s*\(!hasValidMailTextLength\(value \|\| ''\)\)\s*return `Use \$\{MAIL_TEXT_LIMIT\} characters or fewer\.`[\s\S]*?if\s*\(hasUser === this\.smtpPasswordAvailable\)\s*return true[\s\S]*?return hasUser\s*\?\s*'Enter an SMTP password or clear the username\.'\s*:\s*'Enter a username for the stored password\.'/
     )
     expect(save).toContain('const controller = new AbortController()')
     expect(save).toContain('this.saveController = controller')

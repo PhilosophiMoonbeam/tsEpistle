@@ -4,6 +4,7 @@
     :class="`async-state--${state}`"
     :role="announce !== false ? (state === 'error' ? 'alert' : 'status') : undefined"
     :aria-live="announce !== false ? (state === 'error' ? 'assertive' : 'polite') : undefined"
+    :aria-atomic="announce !== false ? 'true' : undefined"
   >
     <v-progress-circular
       v-if="state === 'loading'"
@@ -37,13 +38,18 @@
 <script setup lang="ts">
 export type AsyncStateKind = 'loading' | 'empty' | 'error'
 
-defineProps<{
-  state: AsyncStateKind
-  title: string
-  message?: string
-  retryLabel?: string
-  announce?: boolean
-}>()
+withDefaults(
+  defineProps<{
+    state: AsyncStateKind
+    title: string
+    message?: string
+    retryLabel?: string
+    announce?: boolean
+  }>(),
+  {
+    announce: true
+  }
+)
 
 defineEmits<{
   retry: []
@@ -85,6 +91,14 @@ defineEmits<{
   .async-state {
     flex-direction: column;
     text-align: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .async-state__icon :deep(svg),
+  .async-state__icon :deep(.v-progress-circular__overlay) {
+    animation: none !important;
+    transition: none !important;
   }
 }
 

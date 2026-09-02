@@ -2,18 +2,21 @@
   v-dialog(
     v-model='isShown'
     max-width='550'
+    scrollable
     :persistent='loading'
     scrim='blue-grey-darken-4'
-    style='--v-overlay-opacity: .7'
+    opacity='.7'
     aria-labelledby='page-convert-dialog-title'
+    aria-describedby='page-convert-dialog-description'
     @after-enter='focusEditor'
+    @after-leave='restoreFocus'
     )
     v-card
       .dialog-header.is-short.is-dark
         v-icon.mr-2(color='white') mdi-lightning-bolt
         span#page-convert-dialog-title {{$t('common:page.convert')}}
       v-card-text.pt-5
-        i18next.text-body-medium(path='common:page.convertTitle', tag='div')
+        i18next#page-convert-dialog-description.text-body-medium(path='common:page.convertTitle', tag='div')
           span.text-blue-grey-darken-2(place='title') {{pageTitle}}
         v-select.mt-5(
           ref='editorSelect'
@@ -66,7 +69,8 @@ export default defineComponent({
       loading: false,
       newEditor: '',
       editorOptions,
-      convertAbortController: null as AbortController | null
+      convertAbortController: null as AbortController | null,
+      returnFocusTarget: null as HTMLElement | null
     }
   },
   computed: {
@@ -87,18 +91,42 @@ export default defineComponent({
     isShown: {
       immediate: true,
       handler(newValue: boolean) {
-        if (newValue) this.newEditor = this.pageEditor
+        if (newValue) {
+          const activeElement = document.activeElement
+          const overlayId = activeElement instanceof HTMLElement
+            ? activeElement.closest<HTMLElement>('.v-overlay__content')?.id
+            : undefined
+          let overlayActivator: HTMLElement | null = null
+          if (overlayId) {
+            for (const candidate of document.querySelectorAll<HTMLElement>('[aria-controls]')) {
+              if (candidate.getAttribute('aria-controls') === overlayId) {
+                overlayActivator = candidate
+                break
+              }
+            }
+          }
+          this.returnFocusTarget = overlayActivator ?? (activeElement instanceof HTMLElement ? activeElement : null)
+          this.newEditor = this.pageEditor
+        }
       }
     }
   },
   beforeUnmount() {
     this.convertAbortController?.abort()
     this.convertAbortController = null
+    this.returnFocusTarget = null
   },
   methods: {
     focusEditor(): void {
       const select = this.$refs.editorSelect as { focus?: () => void } | undefined
       select?.focus?.()
+    },
+    restoreFocus(): void {
+      const target = this.returnFocusTarget
+      this.returnFocusTarget = null
+      if (target?.isConnected && target.getClientRects().length > 0 && !target.matches(':disabled')) {
+        target.focus({ preventScroll: true })
+      }
     },
     discard(): void {
       this.isShown = false
@@ -118,6 +146,7 @@ export default defineComponent({
           this.pageSourceRevision
         )
         if (controller.signal.aborted || this.convertAbortController !== controller) return
+        this.returnFocusTarget = null
         this.isShown = false
         const scope = this.pageVisibility === 'private' ? '/_private' : ''
         window.location.assign(`/e${scope}/${this.pageLocale}/${this.pagePath}`)
@@ -130,6 +159,10 @@ export default defineComponent({
         if (this.convertAbortController === controller) {
           this.convertAbortController = null
           this.loading = false
+          if (this.isShown) {
+            await this.$nextTick()
+            this.focusEditor()
+          }
         }
       }
     }

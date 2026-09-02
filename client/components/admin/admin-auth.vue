@@ -14,7 +14,7 @@
           color='grey'
           href='https://docs.requarks.io/auth'
           target='_blank'
-          rel='noopener'
+          rel='noopener noreferrer'
           :aria-label='$t(`admin:auth.configReference`)'
           title='Open authentication documentation'
         )
@@ -93,7 +93,7 @@
                     )
                     template(v-slot:prepend)
                       v-avatar(size='48', rounded='0', style='height: 24px')
-                        v-img(:src='str.logo', width='48px', height='24px', :style='str.isDisabled ? `opacity: .25;` : ``')
+                        v-img(:src='str.logo', width='48px', height='24px', alt='', :style='str.isDisabled ? `opacity: .25;` : ``')
                     v-list-item-title {{str.title}}
                     v-list-item-subtitle: .text-body-small(:style='str.isDisabled ? `opacity: .4;` : ``') {{str.description}}
                   v-divider(v-if='idx < strategies.length - 1')
@@ -117,9 +117,12 @@
             v-row
               v-col(cols='12', sm='8')
                 v-text-field(
+                  ref='displayNameInput'
                   variant="outlined"
                   :label='$t(`admin:auth.displayName`)'
                   v-model='strategy.displayName'
+                  :rules='displayNameRules'
+                  maxlength='255'
                   prepend-icon='mdi-format-title'
                   :hint='$t(`admin:auth.displayNameHint`)'
                   persistent-hint
@@ -187,6 +190,7 @@
                     :label='cfg.value.title'
                     v-model='cfg.value.value'
                     :type='cfg.value.sensitive && !isSecretRevealed(cfg.key) ? "password" : "text"'
+                    :autocomplete='cfg.value.sensitive ? "new-password" : undefined'
                     :append-inner-icon='cfg.value.sensitive ? (isSecretRevealed(cfg.key) ? "mdi-eye-off" : "mdi-eye") : undefined'
                     @click:append-inner='cfg.value.sensitive && toggleSecret(cfg.key)'
                     prepend-icon='mdi-cog-box'
@@ -329,6 +333,11 @@ export default {
   computed: {
     dirty (): boolean {
       return !_.isEqual(this.activeStrategies, this.persistedStrategies)
+    },
+    displayNameRules (): Array<(value: string) => true | string> {
+      return [
+        (value: string) => Boolean(value?.trim()) || 'Display name is required.'
+      ]
     },
     strategy (): AdminActiveAuthStrategy {
       return _.find(this.activeStrategies, ['key', this.selectedStrategy]) || EMPTY_STRATEGY
@@ -528,6 +537,28 @@ export default {
     },
     async save() {
       if (!this.loaded || this.initialLoading || this.saving || !this.dirty || this.isUnmounted) return
+      const invalidStrategy = this.activeStrategies.find(str => !str.displayName.trim())
+      if (invalidStrategy) {
+        this.selectedStrategy = invalidStrategy.key
+        wikiStore.showNotification({
+          style: 'red',
+          message: 'Every authentication strategy must have a display name.',
+          icon: 'alert'
+        })
+        this.$nextTick(() => {
+          ;(this.$refs.displayNameInput as { focus?: () => void } | undefined)?.focus?.()
+        })
+        return
+      }
+      for (const strategy of this.activeStrategies) {
+        strategy.displayName = strategy.displayName.trim()
+        strategy.domainWhitelist = [...new Set(
+          strategy.domainWhitelist
+            .map(domain => domain.trim().toLowerCase())
+            .filter(Boolean)
+        )]
+      }
+      if (!this.dirty) return
       const controller = new AbortController()
       this.saveController = controller
       this.saving = true

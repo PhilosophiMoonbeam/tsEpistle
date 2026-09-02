@@ -88,10 +88,14 @@ describe('nav-header assets dead method cleanup guard', () => {
     expect(script).not.toMatch(/this\.\$store\.commit\s*\(\s*['"]showNotification['"]\s*,\s*\{[\s\S]*icon:\s*['"]ferry['"]/)
   })
 
-  test('desktop page actions delegate click, Enter, and Space once to Vuetify link handling', () => {
+  test('desktop page actions use one Vuetify list tab stop with keyboard-operable action items', () => {
     const actionMethods = ['pageView', 'pageEdit', 'pageHistory', 'pageSource', 'pageConvert', 'pageDuplicate', 'pageMove', 'pageDelete']
+    const actionLists = (activeTemplate && activeTemplate.match(/^\s*v-list\.nav-header-menu\.page-actions-menu\b[^\n]*$/gm)) || []
     const itemDeclarations = (desktopPageActions && desktopPageActions.match(/^\s*v-list-item\.pl-4\([^\n]*\)$/gm)) || []
 
+    expect(actionLists).toHaveLength(1)
+    expect(actionLists[0]).toMatch(/(?:\(|[,\s])nav(?:[,\s)]|$)/)
+    expect(actionLists[0]).not.toMatch(/tabindex=/)
     expect(itemDeclarations).toHaveLength(actionMethods.length)
 
     actionMethods.forEach(method => {
@@ -100,8 +104,8 @@ describe('nav-header assets dead method cleanup guard', () => {
       expect(declaration).toBeDefined()
       expect(declaration).toMatch(/(?:\(|,\s*)link(?:,|\))/)
       expect(declaration).toMatch(/role='button'/)
-      expect(declaration).toMatch(/tabindex='0'/)
-      expect(declaration.match(/@click=/g)).toHaveLength(1)
+      expect(declaration).not.toMatch(/tabindex=/)
+      expect(declaration?.match(/@click=/g)).toHaveLength(1)
       expect(declaration).not.toMatch(/@key/)
     })
   })

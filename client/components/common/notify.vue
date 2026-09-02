@@ -10,13 +10,14 @@
     :timer-color='notificationTimerColor'
   )
     template(v-slot:actions)
-      .nav-notify-content(
-        :role='notificationKind === "error" ? "alert" : "status"'
-        :aria-live='notificationKind === "error" ? "assertive" : "polite"'
-        aria-atomic='true'
-      )
-        v-icon.nav-notify-icon(:icon='notificationIcon' size='21' aria-hidden='true')
-        span.nav-notify-message {{ notification.message }}
+      .nav-notify-content
+        .nav-notify-announcement(
+          :role='notificationKind === "error" ? "alert" : "status"'
+          :aria-live='notificationKind === "error" ? "assertive" : "polite"'
+          aria-atomic='true'
+        )
+          v-icon.nav-notify-icon(:icon='notificationIcon' size='21' aria-hidden='true')
+          span.nav-notify-message {{ notification.message }}
         v-btn.nav-notify-close(
           icon='mdi-close'
           variant='text'
@@ -125,6 +126,14 @@ export default {
   line-height: 1.4;
 }
 
+.nav-notify-announcement {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 11px;
+}
+
 .nav-notify-icon {
   flex: 0 0 auto;
 }
@@ -145,7 +154,8 @@ export default {
     margin-inline: 12px;
   }
 
-  .nav-notify-content {
+  .nav-notify-content,
+  .nav-notify-announcement {
     align-items: flex-start;
   }
 }

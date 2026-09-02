@@ -30,18 +30,25 @@ describe('tags REST migration guard', () => {
     expect(source).toMatch(
       /function normalizeQueryValue \(value: unknown\): string \| undefined \{\s*const normalized = Array\.isArray\(value\) \? value\[0\] : value\s*return typeof normalized === 'string' && normalized\.length > 0 \? normalized : undefined\s*\}/
     )
-    expect(source).toContain('const lang = normalizeQueryValue(this.$route.query.lang)')
-    expect(source).toContain('const sort = normalizeQueryValue(this.$route.query.sort)')
-    expect(source).toContain('const direction = normalizeQueryValue(this.$route.query.dir)')
-    expect(source).toMatch(/this\.loadTags\(\)\s*this\.loadPages\(\)\s*this\.\$nextTick\(\(\) => \{\s*this\.routeSyncReady = true/)
+    expect(source).toMatch(
+      /syncRouteState \(\) \{\s*this\.selection = tagSelectionFromPath\(this\.\$route\.path\)\s*this\.locale = normalizeQueryValue\(this\.\$route\.query\.lang\) \?\? 'any'\s*this\.orderBy = normalizeSortKey\(this\.\$route\.query\.sort\)\s*this\.orderByDirection = normalizeQueryValue\(this\.\$route\.query\.dir\) === 'desc' \? 1 : 0[\s\S]*this\.pagination\.page = 1\s*\}/
+    )
+    expect(source).toMatch(
+      /mounted \(\) \{[\s\S]*this\.syncRouteState\(\)\s*this\.loadTags\(\)\s*this\.loadPages\(\)\s*this\.\$nextTick\(\(\) => \{\s*this\.routeSyncReady = true/
+    )
+    expect(source).toMatch(
+      /'\$route\.fullPath' \(\) \{\s*this\.routeSyncReady = false\s*this\.syncRouteState\(\)\s*this\.loadPages\(\)\s*this\.\$nextTick\(\(\) => \{\s*this\.routeSyncReady = true/
+    )
   })
 
-  test('preserves independent tag and page loading state', () => {
+  test('preserves independent tag and request-scoped page loading state', () => {
     expect(source).toContain("setLoading(wikiStore, 'tags-refresh', true)")
     expect(source).toContain("setLoading(wikiStore, 'tags-refresh', false)")
-    expect(source).toContain("setLoading(wikiStore, 'pages-refresh', true)")
-    expect(source).toContain("setLoading(wikiStore, 'pages-refresh', false)")
-    expect(source).toContain('this.isLoading = false')
+    expect(source).toContain('const sequence = ++this.pagesLoadSequence')
+    expect(source).toMatch(/const loadingKey = `pages-refresh-\$\{sequence\}`/)
+    expect(source).toContain('setLoading(wikiStore, loadingKey, true)')
+    expect(source).toContain('setLoading(wikiStore, loadingKey, false)')
+    expect(source).toContain('if (sequence === this.pagesLoadSequence) this.isLoading = false')
   })
 
   test('keeps filtering, pagination, and route selection wired to current state', () => {
@@ -60,10 +67,10 @@ describe('tags REST migration guard', () => {
     expect(source).not.toMatch(/verticalNativeBarPos|(?:vuescroll|rail|bar)\s*:/)
   })
 
-  test('renders native page links from Vuetify iterator raw values', () => {
-    expect(source).toContain("v-for='entry of props.items'")
-    expect(source).toContain('{{entry.raw.title}}')
-    expect(source).toMatch(/:href\s*=\s*['"]`\/\$\{entry\.raw\.locale\}\/\$\{entry\.raw\.path\}`['"]/)
+  test('renders accessible router page links from Vuetify iterator raw values', () => {
+    expect(source).toMatch(
+      /article\(v-for='entry of props\.items'[\s\S]*v-card\.tags-result-card\(\s*:to='`\/\$\{entry\.raw\.locale\}\/\$\{entry\.raw\.path\}`'[\s\S]*h2 \{\{entry\.raw\.title\}\}/
+    )
     expect(source).not.toMatch(/@click\s*=\s*['"]goTo\(entry\.raw\)['"]/)
   })
 })

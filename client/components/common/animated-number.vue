@@ -40,7 +40,14 @@ function commitTarget (target: number): void {
 function animateTo (target: number): void {
   cancelFrame()
   announcementValue.value = props.formatValue(target)
-  if (reducedMotionEnabled()) {
+  const duration = Number.isFinite(props.duration) ? Math.max(0, props.duration) : 0
+  if (
+    reducedMotionEnabled() ||
+    duration === 0 ||
+    target === renderedValue ||
+    !Number.isFinite(target) ||
+    !Number.isFinite(renderedValue)
+  ) {
     commitTarget(target)
     return
   }
@@ -53,9 +60,8 @@ function animateTo (target: number): void {
   }
   const from = renderedValue
   const startedAt = performance.now()
-  const duration = Number.isFinite(props.duration) ? Math.max(0, props.duration) : 0
   const render = (now: number): void => {
-    const progress = duration === 0 ? 1 : Math.min(1, (now - startedAt) / duration)
+    const progress = Math.min(1, (now - startedAt) / duration)
     const eased = 1 - Math.pow(1 - progress, 5)
     renderedValue = from + (target - from) * eased
     displayValue.value = props.formatValue(renderedValue)

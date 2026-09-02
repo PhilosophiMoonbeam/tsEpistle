@@ -202,6 +202,7 @@ type FinalizeResponse = {
 }
 
 const SUCCESS_REDIRECT_DELAY_MS = 1000
+const SETUP_FIELD_NAMES = ['adminEmail', 'adminPassword', 'adminPasswordConfirm', 'siteUrl'] as const
 
 function focusComponent (ref: unknown): void {
   if (!ref || typeof ref !== 'object') return
@@ -316,10 +317,13 @@ export default {
         fullMessages: false
       })
       if (validationResults) {
-        const firstField = Object.keys(validationResults)[0] as 'adminEmail' | 'adminPassword' | 'adminPasswordConfirm' | 'siteUrl'
+        for (const field of SETUP_FIELD_NAMES) {
+          this.fieldErrors[field] = validationResults[field]?.[0] ?? ''
+        }
+        const firstField = SETUP_FIELD_NAMES.find(field => this.fieldErrors[field])
+        if (!firstField) return
         this.error = true
-        this.errorMessage = validationResults[firstField][0]
-        this.fieldErrors[firstField] = this.errorMessage
+        this.errorMessage = this.fieldErrors[firstField]
         this.$nextTick(() => {
           focusComponent(this.$refs[firstField === 'adminEmail' ? 'adminEmailInput' : firstField === 'adminPassword' ? 'adminPassword' : firstField === 'adminPasswordConfirm' ? 'adminPasswordConfirm' : 'adminSiteUrl'])
         })

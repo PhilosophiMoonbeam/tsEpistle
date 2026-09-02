@@ -103,6 +103,16 @@ function parseDurationUnit (value: unknown): number | null {
   return Number.isSafeInteger(numericValue) && numericValue >= 0 ? numericValue : null
 }
 
+function readDurationUnits (duration: moment.Duration): Record<DurationUnit, string | number> {
+  return {
+    minutes: duration.minutes() || 0,
+    hours: duration.hours() || 0,
+    days: duration.days() || 0,
+    months: duration.months() || 0,
+    years: duration.years() || 0
+  }
+}
+
 export default defineComponent({
   emits: ['update:modelValue'],
   props: {
@@ -112,8 +122,10 @@ export default defineComponent({
     }
   },
   data() {
+    const duration = markRaw(moment.duration(this.modelValue))
     return {
-      duration: markRaw(moment.duration(this.modelValue)),
+      duration,
+      unitValues: readDurationUnits(duration),
       durationErrors: {
         minutes: '',
         hours: '',
@@ -125,31 +137,31 @@ export default defineComponent({
   },
   computed: {
     years: {
-      get() { return this.duration.years() || 0 },
+      get() { return this.unitValues.years },
       set(val: string | number) {
         this.updateUnit(val, 'years')
       }
     },
     months: {
-      get() { return this.duration.months() || 0 },
+      get() { return this.unitValues.months },
       set(val: string | number) {
         this.updateUnit(val, 'months')
       }
     },
     days: {
-      get() { return this.duration.days() || 0 },
+      get() { return this.unitValues.days },
       set(val: string | number) {
         this.updateUnit(val, 'days')
       }
     },
     hours: {
-      get() { return this.duration.hours() || 0 },
+      get() { return this.unitValues.hours },
       set(val: string | number) {
         this.updateUnit(val, 'hours')
       }
     },
     minutes: {
-      get() { return this.duration.minutes() || 0 },
+      get() { return this.unitValues.minutes },
       set(val: string | number) {
         this.updateUnit(val, 'minutes')
       }
@@ -158,11 +170,13 @@ export default defineComponent({
   watch: {
     modelValue(newValue: string) {
       this.duration = markRaw(moment.duration(newValue))
+      this.unitValues = readDurationUnits(this.duration)
       for (const unit of Object.keys(this.durationErrors) as DurationUnit[]) this.durationErrors[unit] = ''
     }
   },
   methods: {
     updateUnit(value: string | number, unit: DurationUnit): void {
+      this.unitValues[unit] = value
       const numericValue = parseDurationUnit(value)
       if (numericValue === null) {
         this.durationErrors[unit] = durationUnitError
@@ -182,6 +196,11 @@ export default defineComponent({
       }
       newDuration[unit] = val
       this.duration = markRaw(moment.duration(newDuration))
+      const normalizedValues = readDurationUnits(this.duration)
+      for (const pendingUnit of Object.keys(this.durationErrors) as DurationUnit[]) {
+        if (this.durationErrors[pendingUnit]) normalizedValues[pendingUnit] = this.unitValues[pendingUnit]
+      }
+      this.unitValues = normalizedValues
       this.$emit('update:modelValue', this.duration.toISOString())
     }
   }

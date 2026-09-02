@@ -1,19 +1,18 @@
 <template lang="pug">
-  .password-strength(
-    role="status"
-    aria-live="polite"
-    aria-atomic="true"
-  )
+  .password-strength
     v-progress-linear(
       :color='passwordStrengthColor'
       :model-value='passwordStrength'
       height='2'
-      role="progressbar"
-      aria-label="Password strength"
-      :aria-valuetext='passwordStrengthAnnouncement'
+      :aria-label='$t(`common:password.label`)'
+      :aria-valuetext='passwordStrengthValueText'
     )
     .text-body-small(v-if='!hideText', :class='`text-${passwordStrengthColor}`') {{passwordStrengthText}}
-    .password-strength__sr-only(v-else) {{passwordStrengthAnnouncement}}
+    .password-strength__sr-only(
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    ) {{passwordStrengthAnnouncement}}
 
 </template>
 
@@ -55,10 +54,13 @@ export default defineComponent({
       if (this.passwordStrength <= 80) return this.$t('common:password.strong')
       return this.$t('common:password.veryStrong')
     },
-    passwordStrengthAnnouncement(): string {
+    passwordStrengthValueText(): string {
       return this.passwordStrength === 0
-        ? 'Password strength not set'
+        ? this.$t('common:password.unset')
         : `${this.passwordStrengthText} (${this.passwordStrength}%)`
+    },
+    passwordStrengthAnnouncement(): string {
+      return `${this.$t('common:password.label')}: ${this.passwordStrengthValueText}`
     }
   },
   watch: {
@@ -108,4 +110,11 @@ export default defineComponent({
   border: 0;
 }
 
+
+@media (prefers-reduced-motion: reduce) {
+  .password-strength .v-progress-linear,
+  .password-strength .v-progress-linear__determinate {
+    transition: none;
+  }
+}
 </style>

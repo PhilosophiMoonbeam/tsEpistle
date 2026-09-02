@@ -32,7 +32,7 @@
           v-toolbar(flat, color='primary', density="compact")
             .text-body-large {{$t('admin:analytics.providers')}}
           async-state(v-if='loading', state='loading', title='Loading analytics providers', message='Fetching available analytics integrations.')
-          async-state(v-else-if='errorMessage', state='error', title='Analytics providers could not be loaded', :message='errorMessage', retry-label='Try again', @retry='loadProviders')
+          async-state(v-else-if='errorMessage', state='error', title='Analytics providers could not be loaded', :message='errorMessage', retry-label='Try again', @retry='retryLoad')
           async-state(v-else-if='providers.length < 1', state='empty', title='No analytics providers available', message='No analytics integration is configured.')
           template(v-else)
             v-list(lines="two", density="compact", aria-label='Analytics providers').py-0
@@ -71,7 +71,7 @@
           v-card-info(color='info')
             div
               div {{provider.description}}
-              span.text-body-small: a(:href='provider.website', style='overflow-wrap:anywhere') {{provider.website}}
+              span.text-body-small: a(:href='provider.website', target='_blank', rel='noopener noreferrer', :aria-label='`${provider.title} website — opens in a new tab`', style='overflow-wrap:anywhere') {{provider.website}}
             v-spacer
             .admin-providerlogo
               img(:src='provider.logo', :alt='provider.title')
@@ -189,7 +189,8 @@ export default {
         if (controller.signal.aborted) {
           return false
         }
-        const selected = providers.find(provider => provider.isAvailable && provider.isEnabled) ||
+        const selected = providers.find(provider => provider.key === this.selectedProvider && provider.isAvailable) ||
+          providers.find(provider => provider.isAvailable && provider.isEnabled) ||
           providers.find(provider => provider.isAvailable)
         this.providers = providers
         this.selectedProvider = selected?.key || ''
@@ -217,6 +218,9 @@ export default {
         }
         loadingStop(wikiStore, 'admin-analytics-refresh')
       }
+    },
+    async retryLoad() {
+      await this.loadProviders().catch(() => {})
     },
     async refresh() {
       if (this.refreshing || this.saving) return

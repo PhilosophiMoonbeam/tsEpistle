@@ -131,7 +131,7 @@
             )
           template(v-else)
             .search-results-summary(v-if='normalizedSearch.length >= 2')
-              div(aria-live='polite')
+              div(role='status' aria-live='polite' aria-atomic='true')
                 .search-results-eyebrow Direct matches
                 .search-results-count(v-if='results.length')
                   span {{$t('common:header.searchResultsCount', { total: response.totalHits })}}
@@ -158,9 +158,9 @@
                 aria-label='Search results'
                 lines='three'
               )
-                template(v-for='(item, idx) of results' :key='item.id')
+                template(v-for='(item, idx) of results' :key='resultKey(item)')
                   v-list-item.search-results-item(
-                    :id='`wiki-search-result-${item.id}`'
+                    :id='resultOptionId(idx)'
                     role='option'
                     :aria-selected='idx === cursor'
                     :href='pageHref(item)'
@@ -187,7 +187,7 @@
                       .search-results-item-meta
                         v-chip(size='x-small' label variant='outlined') {{ item.locale.toLocaleUpperCase() }}
                         v-icon.search-results-item-chevron(icon='mdi-chevron-right' size='19')
-                  v-divider(v-if='idx < results.length - 1')
+                  v-divider(v-if='idx < results.length - 1' aria-hidden='true')
               v-pagination.search-results-pagination(
                 v-if='paginationLength > 1'
                 v-model='pagination'
@@ -215,7 +215,7 @@
                     @click='setSearchTerm(term)'
                   )
                     v-list-item-title {{ term }}
-                  v-divider(v-if='idx < suggestions.length - 1')
+                  v-divider(v-if='idx < suggestions.length - 1' aria-hidden='true')
 </template>
 
 <script lang='ts'>
@@ -224,7 +224,7 @@ import AsyncState from '@/components/common/async-state.vue'
 import InlineAgentChat from '../agents/inline-agent-chat.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
-import { onSearchEnter, onSearchMove, offSearchEnter, offSearchMove } from '../../helpers/search-navigation-events'
+import { onSearchEnter, onSearchExit, onSearchMove, offSearchEnter, offSearchExit, offSearchMove } from '../../helpers/search-navigation-events'
 import { searchPages, type PageSearchResult, type PageSearchRow } from '../../helpers/pages-api'
 import { createModalFocusScope, type ModalFocusScope } from './modal-focus-scope'
 import { navigateToWikiPage } from '../../helpers/wiki-navigation'
@@ -262,6 +262,7 @@ export default defineComponent({
       searchModalFocusScope: null as ModalFocusScope | null,
       pendingAskRestoreTarget: null as HTMLElement | null,
       searchRestoreTarget: null as HTMLElement | null,
+      searchExitRestoreFocus: true,
       directPromptHandoffId: 0,
       directPromptHandoffPending: false,
       searchAbortController: null as AbortController | null
@@ -328,7 +329,7 @@ export default defineComponent({
     },
     activeDescendant(): string | undefined {
       if (!this.hasFreshResponse || this.cursor < 0 || this.cursor >= this.results.length + this.suggestions.length) return undefined
-      if (this.cursor < this.results.length) return `wiki-search-result-${this.results[this.cursor]?.id}`
+      if (this.cursor < this.results.length) return this.resultOptionId(this.cursor)
       return `wiki-search-suggestion-${this.cursor - this.results.length}`
     },
     searchListIds(): string {
@@ -345,7 +346,9 @@ export default defineComponent({
     search(newValue: string | null) {
       const query = newValue ?? ''
       if (this.searchMode === 'search' && query.trim().length >= 2) this.searchIsFocused = true
-      this.queueSearch(query)
+    },
+    searchRequestKey() {
+      this.queueSearch(this.search)
     },
     searchMode(mode: 'search' | 'ask') {
       if (mode === 'search') {
@@ -369,17 +372,16 @@ export default defineComponent({
       else this.deactivateAgentModal(false)
     },
     searchIsFocused(open: boolean) {
-      if (open) void this.activateAgentModal()
-      else this.finishSearchFocus()
+      if (open) {
+        void this.activateAgentModal()
+        return
+      }
+      const restoreFocus = this.searchExitRestoreFocus
+      this.searchExitRestoreFocus = true
+      this.finishSearchFocus(restoreFocus)
     },
     canAsk(allowed: boolean) {
       if (!allowed && this.searchMode === 'ask') this.searchMode = 'search'
-    },
-    searchRestrictLocale() {
-      this.queueSearch(this.search)
-    },
-    searchRestrictPath() {
-      this.queueSearch(this.search)
     },
     results() {
       this.cursor = 0
@@ -406,6 +408,7 @@ export default defineComponent({
     }
     onSearchMove(this.handleSearchMove)
     onSearchEnter(this.handleSearchEnter)
+    onSearchExit(this.handleSearchExit)
     void this.$nextTick(this.syncSearchInputA11y)
     document.addEventListener('focusin', this.captureSearchRestoreTarget, true)
     if (this.searchIsFocused) void this.activateAgentModal()
@@ -420,6 +423,7 @@ export default defineComponent({
     this.searchIsLoading = false
     offSearchMove(this.handleSearchMove)
     offSearchEnter(this.handleSearchEnter)
+    offSearchExit(this.handleSearchExit)
     document.removeEventListener('focusin', this.captureSearchRestoreTarget, true)
     this.deactivateModalLayers(false)
   },
@@ -475,11 +479,14 @@ export default defineComponent({
       this.searchModalFocusScope = null
       this.syncSearchInputA11y()
     },
-    finishSearchFocus(): void {
-      this.deactivateModalLayers(true)
+    finishSearchFocus(restoreFocus = true): void {
+      this.deactivateModalLayers(restoreFocus)
       const active = document.activeElement
       if (this.isSearchControl(active)) active.blur()
       this.searchRestoreTarget = null
+    },
+    handleSearchExit(restoreFocus: boolean): void {
+      this.searchExitRestoreFocus = restoreFocus
     },
     captureSearchRestoreTarget(event: FocusEvent): void {
       if (this.searchModalFocusScope || !this.isSearchControl(event.target)) return
@@ -675,12 +682,20 @@ export default defineComponent({
       this.search = term
       void this.$nextTick(() => this.findSearchControl()?.focus({ preventScroll: true }))
     },
+    resultKey(item: PageSearchRow): string {
+      return `${typeof item.id}:${item.id}`
+    },
+    resultOptionId(index: number): string {
+      return `wiki-search-result-${this.pagination}-${index}`
+    },
     pageHref(item: PageSearchRow): string {
       const visibilityScope = item.visibility === 'private' ? '/_private' : ''
       return `${visibilityScope}/${item.locale}/${item.path}`
     },
     navigateToPage(item: PageSearchRow): void {
-      navigateToWikiPage(this.pageHref(item))
+      const href = this.pageHref(item)
+      this.closeSearch()
+      navigateToWikiPage(href)
     },
     retrySearch(): void {
       const query = this.normalizedSearch

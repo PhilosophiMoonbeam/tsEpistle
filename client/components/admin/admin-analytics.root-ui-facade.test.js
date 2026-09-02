@@ -73,6 +73,7 @@ describe('admin-analytics root UI facade migration guard', () => {
   const computedStart = script ? script.search(/\bcomputed\s*:/) : -1
   const computedBlock = computedStart >= 0 ? extractBlock(script, computedStart) : null
   const loadProviders = script && extractMethod(script, 'loadProviders')
+  const retryLoad = script && extractMethod(script, 'retryLoad')
   const refresh = script && extractMethod(script, 'refresh')
   const save = script && extractMethod(script, 'save')
   const beforeUnmountStart = script ? script.search(/\bbeforeUnmount\s*\(/) : -1
@@ -80,7 +81,7 @@ describe('admin-analytics root UI facade migration guard', () => {
   const directRootUiCommit =
     /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
-  test('admin-analytics.vue keeps its REST/error facades, AsyncState rendering, action busy state, and provider selection', () => {
+  test('admin-analytics.vue keeps its REST/error facades, retry path, action busy state, and provider selection', () => {
     expect(script).not.toBeNull()
     expect(source).toContain("<script lang='ts'>")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
@@ -93,7 +94,7 @@ describe('admin-analytics root UI facade migration guard', () => {
       /import\s+\{(?=[^}]*\bfetchAnalyticsProviders\b)(?=[^}]*\bsaveAnalyticsProviders\b)(?=[^}]*\btype\s+AnalyticsProvider\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/analytics-api['"]/
     )
     expect(source).toMatch(/async-state\(v-if=['"]loading['"],?\s+state=['"]loading['"]/)
-    expect(source).toMatch(/async-state\(v-else-if=['"]errorMessage['"],?\s+state=['"]error['"]/)
+    expect(source).toMatch(/async-state\(v-else-if=['"]errorMessage['"],?\s+state=['"]error['"][^)]*@retry=['"]retryLoad['"]/)
     expect(source).toMatch(/:loading=['"]refreshing['"][\s\S]*?:disabled=['"]refreshing \|\| saving['"]/)
     expect(source).toMatch(/:loading=['"]saving['"][\s\S]*?:disabled=['"]!canSave['"]/)
     expect(script).toMatch(/canSave\s*\(\s*\)\s*:\s*boolean\s*\{[\s\S]*?!this\.loading\s*&&\s*!this\.refreshing\s*&&\s*!this\.saving/)
@@ -101,8 +102,9 @@ describe('admin-analytics root UI facade migration guard', () => {
       /provider\s*\(\s*\)\s*:\s*Partial<AnalyticsProvider>\s*\{\s*return\s+this\.providers\.find\s*\(\s*provider\s*=>\s*provider\.key\s*===\s*this\.selectedProvider\s*\)\s*\|\|\s*\{\s*\}\s*\}/
     )
     expect(loadProviders).toMatch(
-      /const\s+selected\s*=\s*providers\.find\s*\(\s*provider\s*=>\s*provider\.isAvailable\s*&&\s*provider\.isEnabled\s*\)\s*\|\|[\s\S]*?providers\.find\s*\(\s*provider\s*=>\s*provider\.isAvailable\s*\)[\s\S]*?this\.providers\s*=\s*providers[\s\S]*?this\.selectedProvider\s*=\s*selected\?\.key\s*\|\|\s*['"]['"]/
+      /const\s+selected\s*=\s*providers\.find\s*\(\s*provider\s*=>\s*provider\.key\s*===\s*this\.selectedProvider\s*&&\s*provider\.isAvailable\s*\)\s*\|\|[\s\S]*?providers\.find\s*\(\s*provider\s*=>\s*provider\.isAvailable\s*&&\s*provider\.isEnabled\s*\)\s*\|\|[\s\S]*?providers\.find\s*\(\s*provider\s*=>\s*provider\.isAvailable\s*\)[\s\S]*?this\.providers\s*=\s*providers[\s\S]*?this\.selectedProvider\s*=\s*selected\?\.key\s*\|\|\s*['"]['"]/
     )
+    expect(retryLoad).toMatch(/await\s+this\.loadProviders\s*\(\s*\)\.catch\s*\(\s*\(\s*\)\s*=>\s*\{\s*\}\s*\)/)
   })
 
   test('loadProviders owns truthful load/refresh/error state while preserving fetch, notification, rethrow, and cleanup', () => {

@@ -10,3 +10,4 @@ props:
     type: String
     title: Key
     hint: Bugsnag Project Notifier key
+    sensitive: true

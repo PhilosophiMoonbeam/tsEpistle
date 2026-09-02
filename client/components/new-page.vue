@@ -219,6 +219,11 @@ export default {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .newpage .animated {
+    animation: none !important;
+    transition: none !important;
+  }
+
   .newpage-action {
     transform: none !important;
   }

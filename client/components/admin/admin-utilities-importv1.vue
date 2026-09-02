@@ -112,8 +112,9 @@
                 )
                 .text-body-small.mt-2 This folder should be empty or not exist yet. #[strong.text-deep-orange-darken-2 DO NOT] point to your existing Wiki.js 1.x repository folder. In most cases, it should be left to the default value.
             v-alert(color='warning', variant="outlined", icon='mdi-alert', prominent)
-              .text-body-medium - Note that if you already configured the git storage module, its configuration will be replaced with the above.
-              .text-body-medium - Although both v1 and v2 installations can use the same remote git repository, you shouldn't make edits to the same pages simultaneously.
+              ul.text-body-medium.pl-4
+                li If you already configured the Git storage module, its configuration will be replaced with the values above.
+                li Although both v1 and v2 installations can use the same remote Git repository, you shouldn't edit the same pages simultaneously.
           v-divider
           v-radio.mt-3(
             value='disk'
@@ -253,11 +254,11 @@
           template(v-slot:default)
             thead
               tr
-                th Provider
-                th Email
-                th Error
+                th(scope='col') Provider
+                th(scope='col') Email
+                th(scope='col') Error
             tbody
-              tr(v-for='fusr in failedUsers', :key='`${fusr.provider}:${fusr.email}`')
+              tr(v-for='(fusr, index) in failedUsers', :key='`${fusr.provider}:${fusr.email}:${index}`')
                 td {{fusr.provider}}
                 td {{fusr.email}}
                 td {{fusr.error}}
@@ -265,7 +266,6 @@
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
-import _ from 'lodash'
 
 import { SemipolarSpinner } from 'epic-spinners'
 
@@ -358,7 +358,9 @@ function normalizeStorageTarget (target: unknown): StorageTarget {
     isEnabled: target.isEnabled,
     mode: target.mode,
     syncInterval: target.syncInterval,
-    config: _.sortBy(config, entry => entry.value.order)
+    config: config.sort((left, right) =>
+      (left.value.order ?? Number.POSITIVE_INFINITY) - (right.value.order ?? Number.POSITIVE_INFINITY)
+    )
   }
 }
 

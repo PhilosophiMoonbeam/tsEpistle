@@ -16,7 +16,7 @@
               href='https://docs.requarks.io/groups'
               target='_blank'
               rel='noopener'
-              aria-label='Group documentation'
+              aria-label='Group documentation — opens in a new tab'
             )
               v-icon mdi-help-circle
             v-btn(
@@ -39,14 +39,14 @@
                   h2#new-group-title New Group
                 v-card-text.pt-5
                   v-alert(v-if='createError' type='error' variant='tonal' class='mb-3') {{ createError }}
-                  v-text-field(variant="outlined" prepend-icon='mdi-account-group' v-model='newGroupName' label='Group Name' counter='255' @keyup.enter='createGroup' ref='groupNameIpt')
+                  v-text-field(variant="outlined" prepend-icon='mdi-account-group' v-model='newGroupName' label='Group Name' counter='255' maxlength='255' @keydown.enter.prevent='createGroup' @update:model-value='createError = ``' ref='groupNameIpt')
                 div.admin-dialog-actions.v-card-chin
                   v-spacer
                   v-btn(variant="text" @click='newGroupDialog = false' :disabled='creating') Cancel
                   v-btn(color='primary' @click='createGroup' :loading='creating' :disabled='creating') Create
         v-card.mt-3.animated.fadeInUp
           .admin-filter-bar.pa-2.d-flex.align-center
-            v-text-field(variant="solo" flat v-model='search' prepend-inner-icon='mdi-account-search-outline' label='Search groups' hide-details density="compact")
+            v-text-field(variant="solo" flat v-model='search' prepend-inner-icon='mdi-account-search-outline' label='Search groups' hide-details density="compact" @update:model-value='pagination = 1')
             v-spacer
             v-btn(v-if='hasActiveFilters' variant='text' size='small' color='primary' @click='clearFilters') Clear filters
           v-alert(v-if='errorMessage && groups.length' type='error' variant='tonal' class='ma-3')
@@ -65,6 +65,7 @@
             :loading='loading'
             must-sort
             hide-default-footer
+            aria-label='Groups'
           )
             template(v-slot:item='props')
               tr(v-if='$vuetify.display.mdAndUp')
@@ -93,8 +94,9 @@
               async-state(v-else-if='hasActiveFilters' state='empty' title='No groups match this search' message='Clear the search to see all groups.')
               async-state(v-else state='empty' title='No groups yet' message='Create a group to organize access.')
             template(v-slot:bottom='{ pageCount }')
-              .text-center.py-2(v-if='pageCount > 1')
-                v-pagination(v-model='pagination' :length='pageCount')
+              nav(v-if='pageCount > 1' aria-label='Groups pagination')
+                .text-center.py-2
+                  v-pagination(v-model='pagination' :length='pageCount')
 </template>
 
 <script lang='ts'>
@@ -150,6 +152,7 @@ export default {
   methods: {
     clearFilters() {
       this.search = ''
+      this.pagination = 1
     },
     async loadGroups() {
       if (this.isDisposed) return false
@@ -180,6 +183,7 @@ export default {
         this.createError = 'Enter a group name.'
         return
       }
+      this.newGroupName = this.newGroupName.trim()
       this.creating = true
       this.createError = ''
       wikiStore.startLoading('admin-groups-create')

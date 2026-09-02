@@ -15,19 +15,19 @@
       v-btn(variant="outlined", color='warning', @click='openConfirmation("guest")', :loading='activeOperation === "guest"', :disabled='loading && activeOperation !== "guest"').ml-0.mt-3
         v-icon(start) mdi-account-alert-outline
         span Reset guest user
-    v-dialog(v-model='confirmationDialog', max-width='520', persistent, aria-labelledby='authentication-confirmation-title')
+    v-dialog(v-model='confirmationDialog', max-width='520', persistent, aria-labelledby='authentication-confirmation-title', aria-describedby='authentication-confirmation-description')
       v-card
-        v-card-title#authentication-confirmation-title {{ confirmationTitle }}
+        v-card-title.text-wrap#authentication-confirmation-title {{ confirmationTitle }}
         v-card-text
-          .text-body-medium {{ confirmationText }}
+          .text-body-medium#authentication-confirmation-description {{ confirmationText }}
         v-card-actions
           v-btn(variant="text", @click='confirmationDialog = false', :disabled='loading') Cancel
           v-spacer
           v-btn(:color='confirmAction === "certificates" ? "error" : "warning"', @click='confirmAction === "certificates" ? regenCerts() : resetGuest()', :loading='loading') {{ confirmAction === "certificates" ? "Regenerate certificates" : "Reset guest user" }}
-    v-dialog(v-model='resultDialog', max-width='520', persistent, aria-labelledby='authentication-result-title')
+    v-dialog(v-model='resultDialog', max-width='520', persistent, aria-labelledby='authentication-result-title', aria-describedby='authentication-result-description')
       v-card
-        v-card-title.text-success#authentication-result-title Authentication certificates regenerated
-        v-card-text(aria-live='polite') {{ resultMessage }}
+        v-card-title.text-success.text-wrap#authentication-result-title Authentication certificates regenerated
+        v-card-text#authentication-result-description(aria-live='polite') {{ resultMessage }}
 
 </template>
 

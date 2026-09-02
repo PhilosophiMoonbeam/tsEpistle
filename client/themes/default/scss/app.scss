@@ -31,16 +31,17 @@
     }
 
     &.is-external-link {
-      padding-right: 3px;
+      padding-inline-end: 3px;
 
       &::after {
-        font-family: 'Material Design Icons', sans-serif;
-        font-size: 24px/1;
-        padding-left: 3px;
         display: inline-block;
-        content: '\F03CC';
+        padding-inline-start: 3px;
         color: mc('grey', '500');
+        font-family: 'Material Design Icons', sans-serif;
+        font-size: 24px;
+        line-height: 1;
         text-decoration: none;
+        content: '\F03CC';
       }
     }
 
@@ -713,6 +714,7 @@
       @at-root .is-rtl & {
         right: -1.1rem;
         content: '\25C3';
+        left: auto;
       }
     }
   }
@@ -1212,7 +1214,7 @@
       }
 
 
-      > h1, h2, h3, h4, h5, h6 {
+      > h1, > h2, > h3, > h4, > h5, > h6 {
         width: 95%;
         display: inline-block;
 
@@ -2166,7 +2168,9 @@
     }
 
     .toc-anchor {
-      inset: auto auto .08em calc(100% + .4em);
+      inset: auto;
+      inset-block-end: .08em;
+      inset-inline-start: calc(100% + .4em);
       display: inline-flex;
       color: var(--wiki-accent-ink);
       font-size: .8em;
@@ -2236,18 +2240,18 @@
     }
   }
 
-  ul,
-  ol {
+  ul:not(.tabset-tabs):not(.content-extension-gallery__list):not(.content-extension-index__list),
+  ol:not(.content-extension-index__list) {
     margin: .65rem 0 1.25rem;
     padding-inline-start: 1.5rem;
-  }
 
-  li {
-    margin: .3rem 0;
-    padding-inline-start: .2rem;
+    > li {
+      margin: .3rem 0;
+      padding-inline-start: .2rem;
 
-    &::marker {
-      color: rgb(var(--v-theme-primary));
+      &::marker {
+        color: rgb(var(--v-theme-primary));
+      }
     }
   }
 
@@ -2259,6 +2263,10 @@
     border-radius: 0 14px 14px 0;
     background: color-mix(in srgb, rgb(var(--v-theme-primary)) 7%, rgb(var(--v-theme-surface)));
     color: rgb(var(--v-theme-on-surface));
+
+    @at-root .is-rtl & {
+      border-radius: 14px 0 0 14px;
+    }
 
     &::before {
       display: none;

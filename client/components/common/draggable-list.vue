@@ -7,12 +7,13 @@
     @pointerdown.capture="handlePointerDown"
     @pointermove="handlePointerMove"
     @pointerup="handlePointerUp"
-    @pointercancel="handlePointerUp"
+    @pointercancel="handlePointerCancel"
     @keydown.capture="handleKeydown"
+    @focusout="handleFocusOut"
     @dragstart="handleDragStart"
     @dragover.prevent="handleDragOver"
     @drop.prevent="handleDrop"
-    @dragend="resetDrag"
+    @dragend="handleDragEnd"
   >
     <slot />
     <span :id="instructionsId" class="draggable-list__instructions" data-draggable-instructions>
@@ -48,6 +49,7 @@ let pointerStartIndex = -1
 let pointerStartX = 0
 let pointerStartY = 0
 let pointerDragging = false
+let pointerOriginal: unknown[] | null = null
 let keyboardIndex = -1
 let keyboardOriginal: unknown[] | null = null
 let refreshPending = false
@@ -169,6 +171,7 @@ function handlePointerDown (event: PointerEvent): void {
   pointerStartX = event.clientX
   pointerStartY = event.clientY
   pointerDragging = false
+  pointerOriginal = null
   root.value?.setPointerCapture?.(event.pointerId)
 }
 
@@ -178,6 +181,7 @@ function handlePointerMove (event: PointerEvent): void {
     const moved = Math.abs(event.clientX - pointerStartX) + Math.abs(event.clientY - pointerStartY)
     if (moved < 6) return
     pointerDragging = true
+    pointerOriginal = [...props.modelValue]
     sourceIndex = pointerStartIndex
     liveMessage.value = `Picked up item, ${positionMessage(pointerStartIndex)}`
   }
@@ -200,6 +204,19 @@ function handlePointerUp (event: PointerEvent): void {
   }
   if (pointerId !== event.pointerId) return
   if (pointerDragging) liveMessage.value = `Dropped item, ${positionMessage(sourceIndex)}`
+  if (root.value?.hasPointerCapture?.(event.pointerId)) root.value.releasePointerCapture(event.pointerId)
+  pointerId = null
+  pointerStartIndex = -1
+  pointerDragging = false
+  resetDrag()
+}
+
+function handlePointerCancel (event: PointerEvent): void {
+  if (pointerId !== event.pointerId) return
+  if (pointerDragging && pointerOriginal) {
+    emit('update:modelValue', pointerOriginal)
+    liveMessage.value = 'Cancelled reorder'
+  }
   if (root.value?.hasPointerCapture?.(event.pointerId)) root.value.releasePointerCapture(event.pointerId)
   pointerId = null
   pointerStartIndex = -1
@@ -255,6 +272,16 @@ function handleKeydown (event: KeyboardEvent): void {
   scheduleRefreshChildren()
 }
 
+function handleFocusOut (event: FocusEvent): void {
+  if (keyboardIndex < 0) return
+  if (itemIndexForKeyboardTarget(event.relatedTarget) === keyboardIndex) return
+  if (keyboardOriginal) emit('update:modelValue', keyboardOriginal)
+  liveMessage.value = 'Cancelled reorder'
+  keyboardIndex = -1
+  keyboardOriginal = null
+  resetDrag()
+}
+
 function handleDragStart (event: DragEvent): void {
   if (!handlePressed) {
     event.preventDefault()
@@ -285,10 +312,15 @@ function handleDragOver (event: DragEvent): void {
 function handleDrop (event: DragEvent): void {
   const targetIndex = directChildIndex(event.target)
   const from = sourceIndex
-  if (from >= 0 && targetIndex >= 0 && targetIndex !== from) {
-    emitReorder(from, targetIndex)
+  if (from >= 0 && targetIndex >= 0) {
+    if (targetIndex !== from) emitReorder(from, targetIndex)
     liveMessage.value = `Dropped item, ${positionMessage(targetIndex)}`
   }
+  resetDrag()
+}
+
+function handleDragEnd (): void {
+  if (sourceIndex >= 0) liveMessage.value = 'Cancelled reorder'
   resetDrag()
 }
 
@@ -296,6 +328,7 @@ function resetDrag (): void {
   sourceIndex = -1
   dropTargetIndex = -1
   handlePressed = false
+  pointerOriginal = null
   scheduleRefreshChildren()
 }
 

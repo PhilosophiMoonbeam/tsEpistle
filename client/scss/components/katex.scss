@@ -1,4 +1,4 @@
-.v-application .katex .accent {
-  background-color: inherit !important;
-  border-color: inherit !important;
+.v-application .katex-display {
+  max-inline-size: 100%;
+  overflow-x: auto;
 }

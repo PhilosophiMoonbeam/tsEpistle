@@ -56,8 +56,8 @@
         <v-list-item v-if="skillCommandResults.length === 0 && skillsLoading" role="option" aria-disabled="true" title="Loading skill catalog" subtitle="Wait for the available skills to finish loading." disabled />
         <v-list-item v-else-if="skillCommandResults.length === 0 && skillsPartial" role="option" aria-disabled="true" :title="skillLoadTitle" :subtitle="skillLoadMessage" disabled />
         <v-list-item v-else-if="skillCommandResults.length === 0" role="option" aria-disabled="true" title="No matching skills" subtitle="Try another name or description." disabled />
-        <div class="agent-composer__command-status sr-only" role="status" aria-live="polite">{{ skillCommandStatus }}</div>
       </v-list>
+      <div class="agent-composer__command-status sr-only" role="status" aria-live="polite">{{ skillCommandStatus }}</div>
       <v-card-actions v-if="skillsLoadError" class="agent-composer__command-retry">
         <span>{{ skills.length > 0 ? 'Showing the last-loaded catalog.' : 'No catalog entries are available.' }}</span>
         <v-btn prepend-icon="mdi-refresh" size="small" variant="text" :loading="skillsLoading" @click="retrySkills">Retry catalog</v-btn>
@@ -519,6 +519,7 @@ const invokeCommandSkill = (skill: VisibleAgentSkill): void => {
   })
 }
 const handleKeydown = (event: KeyboardEvent): void => {
+  if (event.isComposing) return
   if (skillCommandOpen.value) {
     if (event.key === 'Escape') {
       event.preventDefault()

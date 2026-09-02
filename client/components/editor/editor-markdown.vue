@@ -262,7 +262,7 @@
     page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')</template>
 
 <script lang='ts'>
-import { defineComponent, type PropType } from 'vue'
+import { defineComponent, markRaw, type PropType } from 'vue'
 import { useDisplay } from 'vuetify'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
@@ -403,10 +403,10 @@ export default defineComponent({
       helpShown: false,
       spellModeActive: false,
       insertLinkDialog: false,
-      markers: [] as AddMarkerOptions[],
       debouncedProcessContent: null as _.DebouncedFunc<(newContent: string) => void> | null,
       collaborationStatus: null as CollaborationStatus | null,
       editorDisposed: false,
+      collaborationAbortController: null as AbortController | null,
       debouncedScrollSync: null as _.DebouncedFunc<(cm: TextEditorHandle) => void> | null
     }
   },
@@ -726,7 +726,7 @@ export default defineComponent({
       const cm = requireEditor(this.cm)
       let found: MarkdownMarkerKind | null = null
       let foundStart = 0
-      this.markers = []
+      const markers: AddMarkerOptions[] = []
       for (let line = 0; line < cm.lineCount; line++) {
         const text = cm.getLine(line)
         if (text.startsWith('```diagram')) {
@@ -734,7 +734,7 @@ export default defineComponent({
           foundStart = line
         } else if (text === '```' && found === 'diagram') {
           if (line - foundStart === 2) {
-            this.addMarker({
+            markers.push({
               from: { line: foundStart, ch: 3 },
               to: { line: foundStart, ch: 10 },
               text: 'Edit Diagram',
@@ -761,10 +761,7 @@ export default defineComponent({
           found = null
         }
       }
-      cm.setMarkers(this.markers)
-    },
-    addMarker (marker: AddMarkerOptions) {
-      this.markers.push(marker)
+      cm.setMarkers(markers)
     }
   },
   async mounted() {
@@ -823,11 +820,13 @@ export default defineComponent({
       ])
     ]
     if (this.mode === 'update' && Number.isSafeInteger(wikiStore.page.id) && wikiStore.page.id > 0) {
+      const collaborationAbortController = markRaw(new AbortController())
+      this.collaborationAbortController = collaborationAbortController
       try {
         const collaboration = await createMarkdownCollaboration({
           pageId: wikiStore.page.id,
           expectedUpdatedAt: () => wikiStore.editor.checkoutDateActive,
-          fetchImpl: window.fetch,
+          fetchImpl: (input, init) => window.fetch(input, { ...init, signal: collaborationAbortController.signal }),
           onBaseUpdatedAt: updatedAt => { wikiStore.editor.checkoutDateActive = updatedAt },
           onStatus: status => {
             if (this.editorDisposed) return
@@ -850,6 +849,10 @@ export default defineComponent({
         wikiStore.editor.content = collaboration.content
         extensions.push(collaboration.extension)
       } catch {
+        collaborationAbortController.abort()
+        if (this.collaborationAbortController === collaborationAbortController) {
+          this.collaborationAbortController = null
+        }
         if (!this.editorDisposed) {
           wikiStore.showNotification({
             message: 'Live collaboration is unavailable. You can continue editing locally.',
@@ -864,7 +867,13 @@ export default defineComponent({
 
     const container = this.$refs.cm
     const root = this.$refs.root
-    if (!(container instanceof HTMLElement) || !(root instanceof HTMLElement)) return
+    if (!(container instanceof HTMLElement) || !(root instanceof HTMLElement)) {
+      collaborations.get(this)?.destroy()
+      collaborations.delete(this)
+      this.collaborationAbortController?.abort()
+      this.collaborationAbortController = null
+      throw new Error('Markdown editor hosts are unavailable')
+    }
     const cm = new TextEditor({
       parent: container,
       value: wikiStore.editor.content,
@@ -880,16 +889,14 @@ export default defineComponent({
         this.scrollSync(cm)
       }
     })
-    this.cm = cm
+    this.cm = markRaw(cm)
     Object.defineProperty(root as MarkdownEditorHost, '__wikiSourceEditor', {
       configurable: true,
       value: cm
     })
-    this.$nextTick(() => {
-      if (this.editorDisposed) return
-      const source = (this.$refs.cm as HTMLElement | undefined)?.querySelector<HTMLElement>('.cm-content')
-      source?.setAttribute('spellcheck', 'false')
-    })
+    const source = container.querySelector<HTMLElement>('.cm-content')
+    source?.setAttribute('aria-label', 'Markdown source')
+    source?.setAttribute('spellcheck', 'false')
 
     // Render initial preview
 
@@ -917,6 +924,8 @@ export default defineComponent({
     this.cm = null
     collaborations.get(this)?.destroy()
     collaborations.delete(this)
+    this.collaborationAbortController?.abort()
+    this.collaborationAbortController = null
     sourceLinesByEditor.delete(this)
   }
 })
@@ -1085,7 +1094,7 @@ export default defineComponent({
     &-locale {
       align-items: center;
       background: rgba(var(--v-theme-primary), .14);
-      color: rgb(var(--v-theme-primary));
+      color: var(--wiki-accent-ink);
       display: inline-flex;
       font-weight: 700;
       height: 24px;

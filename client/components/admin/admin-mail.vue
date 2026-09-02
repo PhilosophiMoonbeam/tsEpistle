@@ -9,9 +9,9 @@
           heading-id='admin-mail-heading'
         )
           template(v-slot:status)
-            .d-flex.align-center
+            .d-flex.align-center(role='status', aria-live='polite', aria-atomic='true')
               v-chip(v-if='loadState === `loading`', label, size='small', color='info')
-                v-icon(start, size='small') mdi-loading
+                v-icon.mdi-spin(start, size='small', aria-hidden='true') mdi-loading
                 span Loading
               v-chip(v-else-if='loadState === `error`', label, size='small', color='error')
                 v-icon(start, size='small') mdi-alert
@@ -61,6 +61,7 @@
                     v-model='config.senderName'
                     :label='$t(`admin:mail.senderName`)'
                     :counter='255'
+                    maxlength='255'
                     prepend-icon='mdi-mailbox'
                     :rules='[requiredRule]'
                   )
@@ -70,6 +71,7 @@
                     :label='$t(`admin:mail.senderEmail`)'
                     type='email'
                     :counter='255'
+                    maxlength='255'
                     prepend-icon='mdi-email-outline'
                     :rules='[emailRule]'
                   )
@@ -81,6 +83,7 @@
                     v-model='config.host'
                     :label='$t(`admin:mail.smtpHost`)'
                     :counter='255'
+                    maxlength='255'
                     prepend-icon='mdi-memory'
                     :rules='[requiredRule]'
                   )
@@ -102,6 +105,7 @@
                     v-model='config.name'
                     :label='$t(`admin:mail.smtpName`)'
                     :counter='255'
+                    maxlength='255'
                     prepend-icon='mdi-server'
                     persistent-hint
                     :hint='$t(`admin:mail.smtpNameHint`)'
@@ -134,6 +138,7 @@
                     v-model='config.user'
                     :label='$t(`admin:mail.smtpUser`)'
                     :counter='255'
+                    maxlength='255'
                     prepend-icon='mdi-shield-account-outline'
                     :rules='[smtpUserRule]'
                   )
@@ -187,6 +192,7 @@
                     v-model='config.dkimDomainName'
                     :label='$t(`admin:mail.dkimDomainName`)'
                     :counter='255'
+                    maxlength='255'
                     prepend-icon='mdi-key'
                     :disabled='!config.useDKIM'
                     :rules='[dkimTextRule]'
@@ -196,6 +202,7 @@
                     v-model='config.dkimKeySelector'
                     :label='$t(`admin:mail.dkimKeySelector`)'
                     :counter='255'
+                    maxlength='255'
                     prepend-icon='mdi-key'
                     :disabled='!config.useDKIM'
                     :rules='[dkimTextRule]'
@@ -261,6 +268,7 @@
                     :label='$t(`admin:mail.testRecipient`)'
                     type='email'
                     :counter='255'
+                    maxlength='255'
                     prepend-icon='mdi-email-outline'
                     :disabled='testLoading'
                     :rules='[emailRule]'
@@ -294,6 +302,12 @@ const createAbortableFetch = (signal: AbortSignal) => (
   input: RequestInfo | URL,
   init?: RequestInit
 ) => window.fetch(input, { ...init, signal })
+
+const MAIL_TEXT_LIMIT = 255
+
+function hasValidMailTextLength (value: string): boolean {
+  return value.length <= MAIL_TEXT_LIMIT
+}
 
 export default {
   data() {
@@ -358,20 +372,25 @@ export default {
     isConfigValid (): boolean {
       const baseValid = (
         this.config.senderName.trim().length > 0 &&
+        hasValidMailTextLength(this.config.senderName) &&
         this.isEmail(this.config.senderEmail) &&
         this.config.host.trim().length > 0 &&
+        hasValidMailTextLength(this.config.host) &&
         Number.isInteger(this.config.port) &&
         this.config.port >= 1 &&
         this.config.port <= 65535 &&
-        this.config.name.trim().length > 0
+        this.config.name.trim().length > 0 &&
+        hasValidMailTextLength(this.config.name)
       )
-      const authenticationValid = (
+      const authenticationValid = hasValidMailTextLength(this.config.user) && (
         (!this.config.user.trim() && !this.smtpPasswordAvailable) ||
         (Boolean(this.config.user.trim()) && this.smtpPasswordAvailable)
       )
       const dkimValid = !this.config.useDKIM || (
         this.config.dkimDomainName.trim().length > 0 &&
+        hasValidMailTextLength(this.config.dkimDomainName) &&
         this.config.dkimKeySelector.trim().length > 0 &&
+        hasValidMailTextLength(this.config.dkimKeySelector) &&
         this.dkimKeyAvailable
       )
       return baseValid && authenticationValid && dkimValid
@@ -384,16 +403,20 @@ export default {
         this.saveLoading || this.testLoading
     },
     requiredRule (): (value: string) => true | string {
-      return (value: string) => Boolean(value && value.trim()) || 'This field is required.'
+      return (value: string) => {
+        if (!value || !value.trim()) return 'This field is required.'
+        return hasValidMailTextLength(value) || `Use ${MAIL_TEXT_LIMIT} characters or fewer.`
+      }
     },
     emailRule (): (value: string) => true | string {
-      return (value: string) => this.isEmail(value) || 'Enter a valid email address.'
+      return (value: string) => this.isEmail(value) || `Enter a valid email address using ${MAIL_TEXT_LIMIT} characters or fewer.`
     },
     portRule (): (value: number) => true | string {
       return (value: number) => (Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 65535) || 'Enter a port from 1 to 65535.'
     },
     smtpUserRule (): (value: string) => true | string {
       return (value: string) => {
+        if (!hasValidMailTextLength(value || '')) return `Use ${MAIL_TEXT_LIMIT} characters or fewer.`
         const hasUser = Boolean(value && value.trim())
         if (hasUser === this.smtpPasswordAvailable) return true
         return hasUser ? 'Enter an SMTP password or clear the username.' : 'Enter a username for the stored password.'
@@ -403,7 +426,11 @@ export default {
       return () => (!this.config.user.trim() || this.smtpPasswordAvailable) || 'Enter an SMTP password or clear the username.'
     },
     dkimTextRule (): (value: string) => true | string {
-      return (value: string) => (!this.config.useDKIM || Boolean(value && value.trim())) || 'This DKIM field is required.'
+      return (value: string) => {
+        if (!this.config.useDKIM) return true
+        if (!value || !value.trim()) return 'This DKIM field is required.'
+        return hasValidMailTextLength(value) || `Use ${MAIL_TEXT_LIMIT} characters or fewer.`
+      }
     },
     dkimKeyRule (): () => true | string {
       return () => (!this.config.useDKIM || this.dkimKeyAvailable) || 'Enter a DKIM private key.'
@@ -411,7 +438,8 @@ export default {
   },
   methods: {
     isEmail (value: string): boolean {
-      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((value || '').trim())
+      const email = (value || '').trim()
+      return hasValidMailTextLength(email) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
     },
     updatePort (value: string | number) {
       this.config.port = value === '' ? 0 : Number(value)

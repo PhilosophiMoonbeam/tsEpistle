@@ -188,7 +188,7 @@
           div.v-card-info(color='info')
             div
               div {{target.description}}
-              span.text-body-small.provider-url: a(:href='target.website') {{target.website}}
+              span.text-body-small.provider-url: a(:href='target.website', target='_blank', rel='noopener noreferrer', :aria-label='`${target.title} website — opens in a new tab`') {{target.website}}
             v-spacer
             .admin-providerlogo
               img(:src='target.logo', :alt='target.title')
@@ -224,6 +224,27 @@
                   inset
                   )
                 v-textarea(
+                  v-else-if='cfg.value.type === "string" && cfg.value.multiline && cfg.value.sensitive && !isSecretVisible(cfg.key)'
+                  variant="outlined"
+                  :label='cfg.value.title'
+                  :model-value='cfg.value.value ? `********` : ``'
+                  prepend-icon='mdi-cog-box'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  :class='cfg.value.hint ? "mb-2" : ""'
+                  readonly
+                  autocomplete='new-password'
+                )
+                  template(v-slot:append-inner)
+                    v-btn(
+                      icon
+                      variant='text'
+                      size='small'
+                      :aria-label='`Show ${cfg.value.title || cfg.key}`'
+                      @click='toggleSecretVisibility(cfg.key)'
+                    )
+                      v-icon mdi-eye
+                v-textarea(
                   v-else-if='cfg.value.type === "string" && cfg.value.multiline'
                   variant="outlined"
                   :label='cfg.value.title'
@@ -232,8 +253,19 @@
                   :hint='cfg.value.hint ? cfg.value.hint : ""'
                   persistent-hint
                   :class='cfg.value.hint ? "mb-2" : ""'
+                  :autocomplete='cfg.value.sensitive ? `new-password` : undefined'
                   @update:focused='selectStoredSecret($event, cfg.value)'
-                  )
+                )
+                  template(v-slot:append-inner)
+                    v-btn(
+                      v-if='cfg.value.sensitive'
+                      icon
+                      variant='text'
+                      size='small'
+                      :aria-label='`Hide ${cfg.value.title || cfg.key}`'
+                      @click='toggleSecretVisibility(cfg.key)'
+                    )
+                      v-icon mdi-eye-off
                 v-text-field(
                   v-else
                   variant="outlined"
@@ -242,9 +274,21 @@
                   prepend-icon='mdi-cog-box'
                   :hint='cfg.value.hint ? cfg.value.hint : ""'
                   persistent-hint
+                  :type='cfg.value.sensitive && !isSecretVisible(cfg.key) ? `password` : `text`'
+                  :autocomplete='cfg.value.sensitive ? `new-password` : undefined'
                   :class='cfg.value.hint ? "mb-2" : ""'
                   @update:focused='selectStoredSecret($event, cfg.value)'
-                  )
+                )
+                  template(v-slot:append-inner)
+                    v-btn(
+                      v-if='cfg.value.sensitive'
+                      icon
+                      variant='text'
+                      size='small'
+                      :aria-label='`${isSecretVisible(cfg.key) ? "Hide" : "Show"} ${cfg.value.title || cfg.key}`'
+                      @click='toggleSecretVisibility(cfg.key)'
+                    )
+                      v-icon {{ isSecretVisible(cfg.key) ? 'mdi-eye-off' : 'mdi-eye' }}
               v-divider.mt-3
               .text-label-small.my-5 {{$t('admin:storage.syncDirection')}}
               .text-body-medium.ml-3 {{$t('admin:storage.syncDirectionSubtitle')}}
@@ -459,6 +503,7 @@ export default {
       saving: false,
       statusRefreshing: false,
       statusRefreshInterval: null as ReturnType<typeof setInterval> | null,
+      visibleSecretFields: [] as string[],
       targetsLoading: false
     }
   },
@@ -507,16 +552,26 @@ export default {
   watch: {
     selectedTarget(newValue: string) {
       this.target = this.targets.find(target => target.key === newValue) || makeDefaultStorageTarget()
+      this.visibleSecretFields = []
     },
-    targets() {
-      this.selectedTarget = this.targets.find(target => target.isEnabled)?.key || 'disk'
+    targets(targets: NormalizedStorageTarget[]) {
+      const nextTarget = targets.find(target => target.key === this.selectedTarget && target.isAvailable) ||
+        targets.find(target => target.isEnabled && target.isAvailable) ||
+        targets.find(target => target.isAvailable) ||
+        targets[0]
+      this.selectedTarget = nextTarget?.key || ''
+      this.target = nextTarget || makeDefaultStorageTarget()
+      this.visibleSecretFields = []
     }
   },
   mounted() {
     this.loadTargets()
     this.loadStatus()
+    document.addEventListener('visibilitychange', this.handleVisibilityChange)
     this.statusRefreshInterval = setInterval(() => {
-      this.loadStatus()
+      if (!document.hidden) {
+        this.loadStatus()
+      }
     }, 3000)
   },
   beforeUnmount() {
@@ -524,8 +579,26 @@ export default {
       clearInterval(this.statusRefreshInterval)
       this.statusRefreshInterval = null
     }
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange)
   },
   methods: {
+    handleVisibilityChange() {
+      if (!document.hidden) {
+        this.loadStatus()
+      }
+    },
+    secretFieldKey(configKey: string): string {
+      return `${this.target.key}:${configKey}`
+    },
+    isSecretVisible(configKey: string): boolean {
+      return this.visibleSecretFields.includes(this.secretFieldKey(configKey))
+    },
+    toggleSecretVisibility(configKey: string) {
+      const key = this.secretFieldKey(configKey)
+      this.visibleSecretFields = this.visibleSecretFields.includes(key)
+        ? this.visibleSecretFields.filter(item => item !== key)
+        : [...this.visibleSecretFields, key]
+    },
     setTargetEnabled(target: NormalizedStorageTarget, value: boolean) {
       if (target.key === 'local' && target.isEnabled && !value) return
       target.isEnabled = value
@@ -616,6 +689,7 @@ export default {
       loadingStart(wikiStore, 'admin-storage-savetargets')
       try {
         await saveStorageTargets(window.fetch.bind(window), this.storageTargetsPayload())
+        this.visibleSecretFields = []
         showNotification(wikiStore, {
           message: 'Storage configuration saved successfully.',
           style: 'success',

@@ -118,6 +118,7 @@ type AdminPagesVisualizeState = {
   radius: number
   pages: PageLinkRow[]
   pageLoadRequestId: number
+  pageLoadController: AbortController | null
   locales: LocaleOption[]
   currentLocale: string
   loading: boolean
@@ -137,6 +138,7 @@ export default defineComponent({
       radius: 400,
       pages: [],
       pageLoadRequestId: 0,
+      pageLoadController: null,
       locales: markRaw(siteLangs),
       currentLocale: siteConfig.lang,
       loading: false,
@@ -162,6 +164,9 @@ export default defineComponent({
   methods: {
     async loadPages (): Promise<void> {
       const requestId = ++this.pageLoadRequestId
+      this.pageLoadController?.abort()
+      const controller = new AbortController()
+      this.pageLoadController = controller
       const locale = this.currentLocale
 
       this.loading = true
@@ -169,25 +174,29 @@ export default defineComponent({
       this.pages = []
       wikiStore.startLoading('admin-pages-refresh')
       try {
+        const fetchImpl = window.fetch.bind(window)
         const pages = await fetchPageLinks(
-          window.fetch.bind(window),
+          (input, init) => fetchImpl(input, { ...init, signal: controller.signal }),
           locale,
           'Page links response is invalid'
         )
-        if (requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
+        if (controller.signal.aborted || requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
           return
         }
         this.pages = markRaw(pages)
       } catch (err) {
-        if (requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
+        if (controller.signal.aborted || requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
           return
         }
         this.errorMessage = getErrorMessage(err) || 'Unable to load pages.'
         wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-pages-refresh')
-        if (requestId === this.pageLoadRequestId && locale === this.currentLocale) {
-          this.loading = false
+        if (this.pageLoadController === controller) {
+          this.pageLoadController = null
+          if (requestId === this.pageLoadRequestId && locale === this.currentLocale) {
+            this.loading = false
+          }
         }
       }
     },
@@ -592,6 +601,8 @@ export default defineComponent({
   },
   beforeUnmount () {
     this.pageLoadRequestId++
+    this.pageLoadController?.abort()
+    this.pageLoadController = null
   }
 })
 </script>

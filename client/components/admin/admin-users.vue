@@ -229,7 +229,7 @@ export default {
         const result = await fetchAdminUsersList(window.fetch.bind(window), {
           page: this.pagination,
           pageSize: 15,
-          filter: this.search,
+          filter: this.search.trim(),
           providerKey: this.filterStrategy,
           orderBy: this.sortBy[0]?.key ?? 'name',
           orderByDirection: this.sortBy[0]?.order ?? 'asc'

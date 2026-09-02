@@ -1,7 +1,7 @@
-import type { RouteRecordRaw } from 'vue-router'
+import type { RouteLocationNormalized, RouteRecordRaw } from 'vue-router'
 import { createRouter, createWebHistory } from 'vue-router'
 import { wikiStore } from './store/index.ts'
-import { loadingStart, loadingStop, setLoading, showNotification } from './helpers/root-ui-store'
+import { loadingStart, loadingStop, showNotification } from './helpers/root-ui-store'
 
 const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')
 const isProfile = window.location.pathname === '/p' || window.location.pathname.startsWith('/p/')
@@ -49,6 +49,18 @@ const profileRoutes = (): RouteRecordRaw[] => [
 
 const profileLoadingKey = 'profile'
 let routeLoadRecoveryShown = false
+const profileLoadingOwners = new WeakSet<RouteLocationNormalized>()
+
+function startProfileRouteLoading(to: RouteLocationNormalized): void {
+  if (profileLoadingOwners.has(to)) return
+  profileLoadingOwners.add(to)
+  loadingStart(wikiStore, profileLoadingKey)
+}
+
+function stopProfileRouteLoading(to: RouteLocationNormalized): void {
+  if (!profileLoadingOwners.delete(to)) return
+  loadingStop(wikiStore, profileLoadingKey)
+}
 
 export const router = createRouter({
   history: createWebHistory(isAdmin ? '/a' : isProfile ? '/p' : '/'),
@@ -56,16 +68,21 @@ export const router = createRouter({
 })
 
 if (isProfile) {
-  router.beforeEach(() => {
-    loadingStart(wikiStore, profileLoadingKey)
+  router.beforeEach(to => {
+    startProfileRouteLoading(to)
   })
-  router.afterEach(() => {
-    loadingStop(wikiStore, profileLoadingKey)
+  router.afterEach((to, _from, failure) => {
+    stopProfileRouteLoading(to)
+    if (!failure) routeLoadRecoveryShown = false
+  })
+} else if (isAdmin) {
+  router.afterEach((_to, _from, failure) => {
+    if (!failure) routeLoadRecoveryShown = false
   })
 }
 
-router.onError?.(() => {
-  if (isProfile) setLoading(wikiStore, profileLoadingKey, false)
+router.onError((_error, to) => {
+  if (isProfile) stopProfileRouteLoading(to)
   if (routeLoadRecoveryShown) return
   routeLoadRecoveryShown = true
   const message = 'This section could not be loaded. Reload the page to try again.'

@@ -46,7 +46,7 @@
     line-height: 1.35;
   }
 
-  &:not(.v-input--error):focus-within .v-field {
+  &:not(.v-input--error).v-input--focused .v-field {
     outline: none;
     box-shadow:
       var(
@@ -56,16 +56,16 @@
       var(--wiki-shadow-inset, inset 0 1px 2px rgba(var(--v-theme-on-surface), .08));
   }
 
-  &:not(.v-input--error):focus-within .v-field-label {
+  &:not(.v-input--error).v-input--focused .v-field-label {
     color: rgb(var(--v-theme-primary));
   }
 
-  &.v-input--error {
+  &.v-input--error:not(.v-input--disabled) {
     .v-field {
       box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-error)) 58%, transparent);
     }
 
-    &:focus-within .v-field {
+    &.v-input--focused .v-field {
       outline: none;
       box-shadow:
         0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-error)) 30%, transparent),
@@ -78,12 +78,12 @@
     }
   }
 
-  &.is-success {
+  &.is-success:not(.v-input--error, .v-input--disabled) {
     .v-field {
       box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-success)) 52%, transparent);
     }
 
-    &:focus-within .v-field {
+    &.v-input--focused .v-field {
       outline: none;
       box-shadow:
         0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-success)) 28%, transparent),
@@ -128,5 +128,12 @@
   .v-field,
   .v-field__outline {
     transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .v-input.v-input--focused:not(.v-input--disabled) .v-field {
+    outline: .125rem solid Highlight;
+    outline-offset: .125rem;
   }
 }

@@ -35,7 +35,7 @@
     </div>
 
     <div v-if="error" class="async-component-state__actions">
-      <v-btn ref="retryButton" color="primary" size="small" variant="flat" @click="$emit('retry')">
+      <v-btn color="primary" size="small" variant="flat" @click="$emit('retry')">
         Try again
       </v-btn>
       <v-btn size="small" variant="text" @click="reloadPage">
@@ -50,12 +50,10 @@ import {
   defineAsyncComponent,
   defineComponent,
   h,
-  nextTick,
   shallowRef,
-  useId,
-  watch
+  useId
 } from 'vue'
-import type { AsyncComponentLoader, ComponentPublicInstance, PropType } from 'vue'
+import type { AsyncComponentLoader, PropType } from 'vue'
 
 const ASYNC_COMPONENT_DELAY_MS = 250
 const ASYNC_COMPONENT_TIMEOUT_MS = 20_000
@@ -71,25 +69,12 @@ const AsyncComponentState = defineComponent({
   emits: {
     retry: () => true
   },
-  setup(props) {
+  setup() {
     const id = useId()
-    const retryButton = shallowRef<ComponentPublicInstance | null>(null)
-
-    watch(
-      () => props.error,
-      async error => {
-        if (!error) return
-        await nextTick()
-        const button = retryButton.value?.$el
-        if (button instanceof HTMLElement) button.focus()
-      },
-      { flush: 'post', immediate: true }
-    )
 
     return {
       messageId: `${id}-message`,
       reloadPage: () => window.location.reload(),
-      retryButton,
       titleId: `${id}-title`
     }
   }
@@ -122,16 +107,21 @@ export function createAsyncComponent(loader: AsyncComponentLoader) {
       reject(new Error(`Async component timed out after ${ASYNC_COMPONENT_TIMEOUT_MS}ms.`))
     }, ASYNC_COMPONENT_TIMEOUT_MS)
 
-    loader().then(
-      component => {
-        window.clearTimeout(timeout)
-        resolve(component)
-      },
-      error => {
-        window.clearTimeout(timeout)
-        reject(error)
-      }
-    )
+    try {
+      loader().then(
+        component => {
+          window.clearTimeout(timeout)
+          resolve(component)
+        },
+        error => {
+          window.clearTimeout(timeout)
+          reject(error)
+        }
+      )
+    } catch (error) {
+      window.clearTimeout(timeout)
+      reject(error)
+    }
   })
 
   return defineAsyncComponent({

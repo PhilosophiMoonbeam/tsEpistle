@@ -7,7 +7,7 @@
       class='page-navigation'
       tag='nav'
       color='surface'
-      mobile-breakpoint='1280'
+      :mobile-breakpoint='1280'
       :width='$vuetify.display.width >= 1280 ? 281.6 : 256'
       v-model='navShown'
       :aria-label='$t(`common:sidebar.mainMenu`)'
@@ -66,7 +66,7 @@
                 size="small"
                 variant="text"
                 :aria-current='props.item.path === breadcrumbs[breadcrumbs.length - 1].path ? `page` : undefined'
-              ) {{props.item.name}}
+              ) {{props.item.title}}
           template(v-if='!isPublished')
             v-spacer
             .text-body-small.text-warning {{$t('common:page.unpublished')}}
@@ -83,7 +83,7 @@
             )
             .page-header-headings
               .page-title-row.d-flex.align-center
-                h1.page-title {{title}}
+                h1.page-title#page-title(ref='pageTitle') {{title}}
                 v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') {{$t('common:page.private')}}
               p.page-description(v-if='description') {{description}}
             .page-edit-shortcuts(
@@ -117,7 +117,7 @@
             )
             v-card.page-toc-card.mb-4(v-if='tocPosition !== `off`', tag='nav', :aria-label='$t(`common:page.toc`)')
               .text-label-small {{$t('common:page.toc')}}
-              v-list.py-2(v-if='tocFlattened.length', density="compact", nav)
+              v-list.py-2(v-if='tocFlattened.length', density="compact", nav, role='group', tabindex='-1')
                 v-list-item.page-toc-item(
                   v-for='tocItem in tocFlattened'
                   :key='tocItem.anchor'
@@ -544,7 +544,7 @@
             v-alert.mb-5(v-if='!isPublished', color='warning', variant="outlined", icon='mdi-minus-circle', density="compact")
               .text-body-small {{$t('common:page.unpublishedWarning')}}
             site-banner(:banner='siteBanner')
-            .contents(ref='container')
+            article.contents(ref='container', aria-labelledby='page-title')
               .wiki-gutter-art.page-gutter-ornament.page-gutter-ornament--start(
                 :class='`wiki-gutter-art--${gutterStyle}`'
                 :style='gutterOrnamentStyle'
@@ -780,7 +780,7 @@ import {
 
 type Breadcrumb = {
   path: string
-  name: string
+  title: string
 }
 
 type PageTag = {
@@ -985,9 +985,10 @@ export default defineComponent({
     }
   },
   data() {
+    const initialWidth = typeof window === 'undefined' ? 0 : window.innerWidth
     return {
       locales: siteLangs,
-      navShown: false,
+      navShown: initialWidth >= 1280,
       upBtnShown: false,
       pageEditFab: false,
       pageWatched: false,
@@ -1026,7 +1027,7 @@ export default defineComponent({
           scrollingX: false
         }
       }),
-      winWidth: 0,
+      winWidth: initialWidth,
       resizeHandler: null as (() => void) | null,
       loadHandler: null as (() => void) | null,
       afterPrintHandler: null as (() => void) | null,
@@ -1051,14 +1052,13 @@ export default defineComponent({
     },
     breadcrumbs(): Breadcrumb[] {
       const scope = this.visibility === 'private' ? '/_private' : ''
-      return [{ path: '/', name: this.$t('common:header.home') as string }].concat(
-        _.reduce<string, Breadcrumb[]>(this.path.split('/'), (result, value) => {
-          result.push({
-            path: (_.last(result)?.path || `${scope}${this.locales.length > 0 ? `/${this.locale}` : ''}`) + `/${value}`,
-            name: value
-          })
-          return result
-        }, []))
+      let currentPath = `${scope}${this.locales.length > 0 ? `/${this.locale}` : ''}`
+      const items: Breadcrumb[] = [{ path: '/', title: this.$t('common:header.home') as string }]
+      for (const segment of this.path.split('/').filter(Boolean)) {
+        currentPath += `/${segment}`
+        items.push({ path: currentPath, title: segment })
+      }
+      return items
     },
     pageUrl (): string {
       const scope = this.visibility === 'private' ? '/_private' : ''
@@ -1128,6 +1128,7 @@ export default defineComponent({
         await this.$nextTick()
         this.refreshPageContent()
         this.animatePageRoute()
+        this.focusPageTitle()
         if (this.isAuthenticated) {
           void this.loadPageWatchState()
           void this.loadPageWatchNotifications()
@@ -1622,13 +1623,14 @@ export default defineComponent({
     upBtnScroll () {
       this.upBtnShown = window.scrollY > window.innerHeight * 0.33
     },
+    focusPageTitle () {
+      const heading = this.$refs.pageTitle as HTMLElement | undefined
+      heading?.setAttribute('tabindex', '-1')
+      heading?.focus({ preventScroll: true })
+    },
     returnToTop () {
       void this.goTo(0, this.scrollOpts)
-      this.$nextTick(() => {
-        const heading = document.querySelector<HTMLElement>('.page-title')
-        heading?.setAttribute('tabindex', '-1')
-        heading?.focus({ preventScroll: true })
-      })
+      this.$nextTick(() => this.focusPageTitle())
     },
     navigationVisibilityChanged (shown: boolean) {
       if (shown) {
@@ -1711,7 +1713,7 @@ export default defineComponent({
 <style lang="scss">
 .wiki-page {
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
-  --page-toc-desktop-lift: calc(var(--page-toc-empty-height) / 2 + var(--wiki-space-12));
+  --page-toc-desktop-lift: calc(var(--page-toc-empty-height) + var(--wiki-space-6));
 
   font-family: var(--wiki-font-body);
 }

@@ -9,3 +9,4 @@ props:
   key:
     type: String
     title: Key
+    sensitive: true

@@ -12,14 +12,23 @@
           template(v-slot:status)
             .page-status-group
               .page-status
-                status-indicator(positive, pulse)
-                .text-body-small.text-green(v-if='page.isPublished') {{$t('common:page.published')}}
-                .text-body-small.text-red(v-else) {{$t('common:page.unpublished')}}
+                status-indicator(
+                  :positive='page.isPublished'
+                  :negative='!page.isPublished'
+                  :label='page.isPublished ? $t("common:page.published") : $t("common:page.unpublished")'
+                  pulse
+                )
+                .text-body-small.text-green(v-if='page.isPublished', aria-hidden='true') {{$t('common:page.published')}}
+                .text-body-small.text-red(v-else, aria-hidden='true') {{$t('common:page.unpublished')}}
               .page-status
-                status-indicator(intermediary, pulse, v-if="page.visibility === 'private'")
-                status-indicator(active, pulse, v-else)
-                .text-body-small.text-deep-orange(v-if="page.visibility === 'private'") {{$t('common:page.private')}}
-                .text-body-small.text-blue(v-else) {{$t('common:page.global')}}
+                status-indicator(
+                  :intermediary='page.visibility === "private"'
+                  :active='page.visibility !== "private"'
+                  :label='page.visibility === "private" ? $t("common:page.private") : $t("common:page.global")'
+                  pulse
+                )
+                .text-body-small.text-deep-orange(v-if="page.visibility === 'private'", aria-hidden='true') {{$t('common:page.private')}}
+                .text-body-small.text-blue(v-else, aria-hidden='true') {{$t('common:page.global')}}
           template(v-slot:actions)
             .page-action-group
               v-btn.animated.fadeInDown.wait-p3s(color='grey', icon, variant="outlined", to='/pages', aria-label='Back to pages')

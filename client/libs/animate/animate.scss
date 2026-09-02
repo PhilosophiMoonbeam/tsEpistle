@@ -3506,3 +3506,12 @@
   -webkit-animation-name: spin;
   animation-name: spin;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .animated {
+    -webkit-animation-duration: 1ms !important;
+    animation-duration: 1ms !important;
+    -webkit-animation-iteration-count: 1 !important;
+    animation-iteration-count: 1 !important;
+  }
+}

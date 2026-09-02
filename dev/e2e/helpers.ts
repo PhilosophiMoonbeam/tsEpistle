@@ -40,12 +40,9 @@ export async function openAuthenticatedPage(page: Page, path: string, readySelec
 }
 
 export async function openSearch(page: Page) {
-  const search = page.getByRole('combobox', { name: /search/i }).first()
+  const search = page.locator('.nav-header-search-control input:visible').first()
   if (!(await search.isVisible())) {
-    await page
-      .getByRole('button', { name: /search/i })
-      .first()
-      .click()
+    await page.getByRole('button', { name: /open search/i }).click()
   }
   await expect(search).toBeVisible()
   await search.focus()

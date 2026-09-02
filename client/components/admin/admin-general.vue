@@ -75,7 +75,7 @@
                       persistent-hint
                       append-icon='mdi-folder-image'
                       @click:append='browseLogo'
-                      @keyup.enter='refreshLogo'
+                      @keydown.enter.prevent='refreshLogo'
                     )
                   .text-label-small.text-grey.pa-4 {{$t('admin:general.footerCopyright')}}
                   .px-3.pb-3

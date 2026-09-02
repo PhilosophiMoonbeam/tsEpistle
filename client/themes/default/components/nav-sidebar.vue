@@ -30,7 +30,7 @@
         .text-body-medium.text-none {{$t('common:sidebar.mainMenu')}}
     v-divider.nav-sidebar-edge
     //-> Custom Navigation
-    v-list.nav-sidebar-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav)
+    v-list.nav-sidebar-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav, role='group', tabindex='-1')
       async-state(
         v-if='customItems.length === 0'
         state='empty'
@@ -60,6 +60,8 @@
       :class='color'
       nav
       :aria-busy='navLoading'
+      role='group'
+      tabindex='-1'
     )
       .nav-sidebar-loading-status(
         v-if='navLoading'

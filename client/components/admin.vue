@@ -23,7 +23,7 @@
           strong.admin-context__current {{ currentRouteLabel }}
     v-navigation-drawer#admin-navigation.pb-0.admin-sidebar(
       v-model='adminDrawerShown'
-      :location="$vuetify.locale.isRtl ? 'right' : undefined"
+      location='start'
       :permanent='$vuetify.display.mdAndUp'
       :temporary='$vuetify.display.smAndDown'
       :width='$vuetify.display.smAndDown ? 336 : 304'
@@ -580,6 +580,10 @@ export default defineComponent({
     background: color-mix(in srgb, var(--wiki-ambient-accent) 12%, transparent);
     color: var(--wiki-accent-ink);
     box-shadow: inset .1875rem 0 0 var(--wiki-ambient-accent);
+
+    .v-locale--is-rtl & {
+      box-shadow: inset -.1875rem 0 0 var(--wiki-ambient-accent);
+    }
 
     .v-icon {
       color: var(--wiki-accent-ink);

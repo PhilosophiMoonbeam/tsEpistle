@@ -21,6 +21,7 @@ export type LoggerConfigValue = {
   hint?: string
   enum?: Array<string | number>
   order?: number
+  sensitive?: boolean
   value: LoggerConfigScalar
 }
 

@@ -124,10 +124,10 @@
                   <div><h4 id="personal-skill-details-title">Details & enablement</h4><p>Name the skill and decide whether the Agent may discover it automatically.</p></div>
                 </div>
                 <div class="personal-editor-section__fields">
-                  <v-text-field ref="nameInput" v-model.trim="name" :rules="[nameRule]" label="Skill name" :disabled="Boolean(editingId) || saving || loading" hint="Lowercase letters, numbers, and single hyphens; the name cannot be changed later." persistent-hint maxlength="64" autocomplete="off" />
+                  <v-text-field ref="nameInput" v-model.trim="name" :rules="nameRules" label="Skill name" :disabled="Boolean(editingId) || saving || loading" hint="Lowercase letters, numbers, and single hyphens; the name cannot be changed later." persistent-hint maxlength="64" autocomplete="off" />
                   <div class="personal-discovery">
-                    <v-switch v-model="isAgentDiscoverable" label="Load automatically when relevant" color="primary" inset hide-details :disabled="saving || loading" />
-                    <p>{{ isAgentDiscoverable ? 'The Agent may select this skill when its description matches your request.' : 'Available only when you invoke it with / or the Skills menu.' }}</p>
+                    <v-switch v-model="isAgentDiscoverable" label="Load automatically when relevant" color="primary" inset hide-details :disabled="saving || loading" :aria-describedby="discoveryHelpId" />
+                    <p :id="discoveryHelpId">{{ isAgentDiscoverable ? 'The Agent may select this skill when its description matches your request.' : 'Available only when you invoke it with / or the Skills menu.' }}</p>
                   </div>
                 </div>
 
@@ -144,7 +144,7 @@
                   <div><h4 id="personal-skill-code-title">SKILL.md source</h4><p>YAML frontmatter declares provenance; the Markdown body contains the instructions.</p></div>
                   <v-chip size="x-small" variant="outlined">Plain text · 64 KiB</v-chip>
                 </div>
-                <v-textarea ref="markdownInput" v-model="skillMarkdown" label="Exact personal skill source" hint="Frontmatter must include this exact name and a description. Remote resources, active content, and likely secrets are rejected." persistent-hint rows="18" max-rows="30" counter="65536" maxlength="65536" class="personal-editor__code" :disabled="saving || loading" spellcheck="false" :rules="[markdownRule]" />
+                <v-textarea ref="markdownInput" v-model="skillMarkdown" label="Exact personal skill source" hint="Frontmatter must include this exact name and a description. Remote resources, active content, and likely secrets are rejected." persistent-hint rows="18" max-rows="30" counter="65536" maxlength="65536" class="personal-editor__code" :disabled="saving || loading" spellcheck="false" :rules="markdownRules" />
               </section>
             </v-form>
           </main>
@@ -181,7 +181,7 @@
   </v-dialog>
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import {
   createPersonalAgentSkill,
@@ -196,6 +196,7 @@ const props = defineProps<{ csrfToken: string }>()
 const emit = defineEmits<{ changed: [] }>()
 const open = defineModel<boolean>({ required: true })
 const { smAndDown } = useDisplay()
+const discoveryHelpId = useId()
 const skills = shallowRef<PersonalAgentSkill[]>([])
 const search = ref('')
 const editingId = ref<string | null>(null)
@@ -209,7 +210,7 @@ const error = ref('')
 const removing = ref<PersonalAgentSkill | null>(null)
 const discardOpen = ref(false)
 const pendingNavigation = ref<(() => void) | null>(null)
-const baseline = shallowRef({ name: '', skillMarkdown: '', isAgentDiscoverable: true })
+const baseline = shallowRef({ name: 'my-skill', skillMarkdown: '', isAgentDiscoverable: true })
 const refreshError = ref('')
 const removeError = ref('')
 type ComponentRoot = { $el?: unknown }
@@ -242,6 +243,8 @@ const isDirty = computed(() => name.value !== baseline.value.name || skillMarkdo
 const nameRule = (value: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.trim()) || 'Use lowercase letters, numbers, and single hyphens.'
 const markdownRule = (value: string) => value.length <= 65536 || 'SKILL.md must be 65,536 characters or fewer.'
 const formValid = computed(() => Boolean(name.value.trim() && skillMarkdown.value.trim()) && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name.value.trim()) && skillMarkdown.value.length <= 65536)
+const nameRules = [nameRule]
+const markdownRules = [markdownRule]
 const fetcher = window.fetch.bind(window)
 const updatedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' })
 const formatUpdated = (value: string): string => updatedAtFormatter.format(new Date(value))

@@ -34,7 +34,7 @@ html:lang(ar) {
   --wiki-font-body: 'Tajawal', sans-serif;
   --wiki-font-heading: 'Tajawal', sans-serif;
 
-  .v-application.v-locale--is-rtl :is(h1, h2, h3, h4, h5, h6) {
+  :is(h1, h2, h3, h4, h5, h6) {
     font-family: 'BalooBhaijaan', 'Tajawal', sans-serif;
     font-weight: 400;
   }

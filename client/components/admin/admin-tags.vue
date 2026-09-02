@@ -62,7 +62,7 @@
                       v-list-item-title {{tag.tag}}
             v-col.animated.fadeInUp.wait-p2s(cols='12', md='8', lg='9', style='min-width:0;')
               template(v-if='current.id')
-                v-card
+                v-card(tag='form', @submit.prevent='saveTag(current)')
                   v-toolbar(density="compact", color='teal', flat)
                     .text-body-large {{$t('admin:tags.edit')}}
                     v-spacer
@@ -80,7 +80,9 @@
                       :label='$t("admin:tags.tag")'
                       prepend-icon='mdi-tag'
                       v-model='current.tag'
-                      counter='255'
+                      :counter='255'
+                      maxlength='255'
+                      :rules='[tagRule]'
                     )
                     v-text-field(
                       variant="outlined"
@@ -95,9 +97,9 @@
                         strong(place='created') {{ $helpers.formatMoment(current.createdAt, 'from') }}
                         strong(place='updated') {{ $helpers.formatMoment(current.updatedAt, 'from') }}
                     .tag-footer-actions
-                      v-dialog(v-model='deleteTagDialog', max-width='500', aria-labelledby='delete-tag-dialog-title')
+                      v-dialog(v-model='deleteTagDialog', max-width='500', :persistent='deleting', aria-labelledby='delete-tag-dialog-title')
                         template(v-slot:activator='{ props }')
-                          v-btn(color='red', variant="outlined", v-bind='props', :disabled='deleting', aria-label='Delete tag')
+                          v-btn(type='button', color='red', variant="outlined", v-bind='props', :disabled='saving || deleting', aria-label='Delete tag')
                             v-icon(color='red') mdi-trash-can-outline
                         v-card
                           .dialog-header.is-red#delete-tag-dialog-title {{$t('admin:tags.deleteConfirm')}}
@@ -106,9 +108,9 @@
                               strong(place='tag') {{ current.tag }}
                           v-card-actions
                             v-spacer
-                            v-btn(variant="text", @click='deleteTagDialog = false', :disabled='deleting') {{$t('common:actions.cancel')}}
-                            v-btn(color='red', @click='deleteTag(current)', :loading='deleting', :disabled='deleting') {{$t('common:actions.delete')}}
-                      v-btn.px-5.mr-2(color='success', variant="flat", @click='saveTag(current)', :loading='saving', :disabled='saving || deleting || !tagValid')
+                            v-btn(type='button', variant="text", @click='deleteTagDialog = false', :disabled='deleting') {{$t('common:actions.cancel')}}
+                            v-btn(type='button', color='red', @click='deleteTag(current)', :loading='deleting', :disabled='deleting') {{$t('common:actions.delete')}}
+                      v-btn.px-5.mr-2(type='submit', color='success', variant="flat", :loading='saving', :disabled='saving || deleting || !tagValid')
                         v-icon(start) mdi-content-save
                         span {{$t('common:actions.save')}}
               v-card(v-else-if='!loading && !errorMessage && tags.length > 0')
@@ -163,15 +165,19 @@ export default {
       return this.tags
     },
     tagValid (): boolean {
-      return this.current.tag.trim().length > 0
+      return this.current.tag.trim().length > 0 && this.current.tag.length <= 255
     }
   },
   methods: {
+    tagRule (value: unknown): true | string {
+      if (typeof value !== 'string' || value.trim().length === 0) return 'Tag is required.'
+      return value.length <= 255 || 'Tag must be 255 characters or fewer.'
+    },
     selectTag(tag: EditablePageTagRow) {
       this.current = tag
     },
     async deleteTag(tag: EditablePageTagRow) {
-      if (this.deleting) return
+      if (this.deleting || this.saving) return
       this.deleting = true
       wikiStore.startLoading('admin-tags-delete')
       let deleted = false

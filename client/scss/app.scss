@@ -6,20 +6,9 @@
 @use "base/icons";
 @use "base/animation";
 
-@media (prefers-reduced-motion: reduce) {
-  .animated {
-    animation-duration: .001ms !important;
-    animation-iteration-count: 1 !important;
-    animation-delay: 0s !important;
-  }
 
-  [class*='wait-p'] {
-    animation-delay: 0s !important;
-  }
-}
-
-@import 'katex/dist/katex.min.css';
-@import 'diff2html/bundles/css/diff2html.min.css';
+@include meta.load-css('katex/dist/katex.min.css');
+@include meta.load-css('diff2html/bundles/css/diff2html.min.css');
 
 @include meta.load-css('components/katex');
 @include meta.load-css('components/v-btn');

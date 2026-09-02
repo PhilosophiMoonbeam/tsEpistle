@@ -1,6 +1,6 @@
 <template lang='pug'>
   v-dialog.editor-modal-conflict-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='editor-conflict-title', @update:model-value='onDialogModelUpdate')
-    v-card.editor-modal-conflict.animated.fadeIn(flat, rounded='0')
+    v-card.editor-modal-conflict.animated.fadeIn(flat, rounded='0', :aria-busy='isLoading')
       .editor-modal-conflict-header
         v-toolbar.radius-7(flat, color='indigo', style='border-bottom-left-radius: 0; border-bottom-right-radius: 0;')
           v-icon.mr-3 mdi-merge
@@ -40,13 +40,15 @@
           div(ref='cm')
         .editor-modal-conflict-actions
           v-btn(variant="text", @click='requestClose') {{$t('common:actions.cancel')}}
-          v-btn(variant="outlined", color='indigo', :disabled='!cm', @click='useLocal')
+          v-btn(variant="outlined", color='indigo', :disabled='!cm || !latestLoaded', @click='useLocal')
             v-icon(start) mdi-check
             span {{$t('editor:conflict.useLocal')}}
           v-dialog(
             v-model='isRemoteConfirmDiagShown'
             width='500'
             aria-labelledby='editor-conflict-overwrite-title'
+            role='alertdialog'
+            aria-describedby='editor-conflict-overwrite-description'
           )
             template(v-slot:activator='{ props }')
               v-btn(
@@ -62,7 +64,7 @@
               .dialog-header.is-short.is-indigo
                 v-icon.mr-3(color='white') mdi-alpha-r-box
                 span#editor-conflict-overwrite-title {{$t('editor:conflict.overwrite.title')}}
-              v-card-text.pa-4
+              v-card-text.pa-4#editor-conflict-overwrite-description
                 i18next.text-body-medium(tag='div', path='editor:conflict.overwrite.description')
                   strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
               div.v-card-chin
@@ -126,7 +128,8 @@ export default defineComponent({
       isDiscardConfirmDiagShown: false,
       initialMergeValue: null as string | null,
       mergeValue: '',
-      requestController: null as AbortController | null
+      requestController: null as AbortController | null,
+      returnFocus: null as HTMLElement | null
     }
   },
   computed: {
@@ -290,9 +293,16 @@ export default defineComponent({
     }
   },
   async mounted () {
+    this.returnFocus = document.activeElement as HTMLElement | null
     await this.loadConflict()
   },
   beforeUnmount () {
+    const target = this.returnFocus
+    queueMicrotask(() => {
+      if (target?.isConnected && !target.matches(':disabled') && !target.closest('[inert], [aria-hidden="true"]')) {
+        target.focus({ preventScroll: true })
+      }
+    })
     this.requestController?.abort()
     this.requestController = null
     this.cm?.destroy()

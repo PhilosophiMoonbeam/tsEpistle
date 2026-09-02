@@ -43,15 +43,17 @@ describe('modern editor shell interaction contract', () => {
     expect(shellTemplate).toMatch(/v-list-item\(@click='saveAndClose'\)[\s\S]*?v-list-item-title Save and close/)
   })
 
-  test('mounts heavyweight editor dialogs only while their owning state is active', () => {
+  test('mounts recoverable heavyweight editor dialogs only while their owning state is active', () => {
     expect(shellTemplate).toContain("editor-modal-properties(v-if='dialogProps', v-model='dialogProps')")
     expect(shellTemplate).toContain("editor-modal-editorselect(v-if='dialogEditorSelector', v-model='dialogEditorSelector')")
     expect(shellTemplate).toMatch(/editor-modal-unsaved\(\s*v-if='dialogUnsaved'[\s\S]*?v-model='dialogUnsaved'/)
     expect(shellTemplate).toContain("component(v-if='activeModal', :is='activeModal')")
 
+    expect(shellScript).toContain("import { createAsyncComponent } from './common/async-component-state.vue'")
     for (const component of ['editorModalProperties', 'editorModalEditorselect', 'editorModalUnsaved']) {
-      expect(shellRegistrations).toMatch(new RegExp(`${component}: defineAsyncComponent\\(\\(\\) => import\\(`))
+      expect(shellRegistrations).toMatch(new RegExp(`${component}: createAsyncComponent\\(\\(\\) => import\\(`))
     }
+    expect(shellRegistrations).not.toContain('defineAsyncComponent')
   })
 
   test('keeps page-property edits reversible until the user explicitly accepts the draft', () => {

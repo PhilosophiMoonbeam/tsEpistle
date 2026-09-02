@@ -11,13 +11,19 @@
                   v-spacer
                   v-btn.editor-media-icon-button(ref='refreshButton', variant="text", icon, aria-label='Refresh assets', @click='refresh')
                     v-icon(:color='$vuetify.theme.current.dark ? `white` : `teal`') mdi-refresh
-                v-dialog(v-model='newFolderDialog', max-width='550')
+                v-dialog(
+                  v-model='newFolderDialog'
+                  max-width='550'
+                  :persistent='newFolderLoading'
+                  content-class='editor-media-owned-overlay'
+                  aria-labelledby='editor-media-new-folder-title'
+                )
                   template(v-slot:activator='{ props }')
                     v-btn.ml-3.my-0.mr-0.radius-7(variant="outlined", size="large", color='teal', :icon='$vuetify.display.xsOnly', :class='{ "editor-media-icon-button": $vuetify.display.xsOnly }', aria-label='Create folder', v-bind='props')
                       v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
                       span.hidden-sm-and-down(:class='$vuetify.theme.current.dark ? `text-teal-lighten-3` : ``') {{$t('editor:assets.newFolder')}}
-                  v-card
-                    .dialog-header.is-short.text-body-large {{$t('editor:assets.newFolder')}}
+                  v-card(:aria-busy='newFolderLoading')
+                    .dialog-header.is-short.text-body-large#editor-media-new-folder-title {{$t('editor:assets.newFolder')}}
                     v-card-text.pt-5
                       v-text-field(
                         variant="outlined"
@@ -25,16 +31,17 @@
                         v-model='newFolderName'
                         :label='$t(`editor:assets.folderName`)'
                         counter='255'
+                        maxlength='255'
+                        :disabled='newFolderLoading'
                         @keyup.enter='createFolder'
-                        @keyup.esc='newFolderDialog = false'
                         ref='folderNameIpt'
                         )
                       i18next.text-body-small.text-grey-darken-1.pl-5(path='editor:assets.folderNameNamingRules', tag='div')
                         a(place='namingRules', href='https://docs-beta.requarks.io/guide/assets#naming-restrictions', target='_blank') {{$t('editor:assets.folderNameNamingRulesLink')}}
                     div.v-card-chin
                       v-spacer
-                      v-btn(variant="text", @click='newFolderDialog = false') {{$t('common:actions.cancel')}}
-                      v-btn.px-3(color='primary', @click='createFolder', :disabled='!isFolderNameValid', :loading='newFolderLoading') {{$t('common:actions.create')}}
+                      v-btn(variant="text", :disabled='newFolderLoading', @click='newFolderDialog = false') {{$t('common:actions.cancel')}}
+                      v-btn.px-3(color='primary', @click='createFolder', :disabled='newFolderLoading || !isFolderNameValid', :loading='newFolderLoading') {{$t('common:actions.create')}}
               v-toolbar(flat, density="compact", :color='$vuetify.theme.current.dark ? `grey-darken-3` : `white`')
                 template(v-if='folderTree.length > 0')
                   .text-body-medium
@@ -57,6 +64,7 @@
                   v-btn(variant='text', size='small', @click='refresh') Retry
               v-data-table(
                 :headers='headers'
+                :items='assets'
                 v-model:page='pagination'
                 :items-per-page='15'
                 :loading='loading'
@@ -70,7 +78,7 @@
                     :key='props.item.id'
                     tabindex='0'
                     :aria-selected='currentFileId === props.item.id'
-                    :aria-label='`Select ${props.item.filename}`'
+                    :aria-label='currentFileId === props.item.id ? `${props.item.filename}, selected` : `Select ${props.item.filename}`'
                     @keydown.enter.space.prevent='selectAsset(props.item.id)'
                     @click.left='selectAsset(props.item.id)'
                     @click.right.prevent=''
@@ -85,9 +93,14 @@
                     td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ prettyBytes(props.item.fileSize) }}
                     td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ $helpers.formatMoment(props.item.createdAt, 'from') }}
                     td(v-if='$vuetify.display.smAndUp')
-                      v-menu(min-width='200')
+                      v-menu(
+                        :model-value='actionMenuAssetId === props.item.id'
+                        min-width='200'
+                        content-class='editor-media-owned-overlay'
+                        @update:model-value='setActionMenu(props.item.id, $event)'
+                      )
                         template(v-slot:activator='{ props: menuProps }')
-                          v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='0', size="small", aria-label='Asset actions')
+                          v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='0', size="small", :aria-label='`Asset actions for ${props.item.filename}`', :data-editor-media-asset-actions='props.item.id')
                             v-icon(color="grey-darken-2") mdi-dots-horizontal
                         v-list(nav, style='border-top: 5px solid #444;')
                           //- v-list-item(@click='', disabled)
@@ -188,19 +201,28 @@
 
     //- RENAME DIALOG
 
-    v-dialog(v-model='renameDialog', max-width='550', persistent)
-      v-card
+    v-dialog(
+      v-model='renameDialog'
+      max-width='550'
+      :persistent='renameAssetLoading'
+      content-class='editor-media-owned-overlay'
+      aria-labelledby='editor-media-rename-title'
+      @after-leave='restoreMediaDialogFocus'
+    )
+      v-card(:aria-busy='renameAssetLoading')
         .dialog-header.is-short.is-orange
-          v-icon.mr-2(color='primary') mdi-keyboard
-          span {{$t('editor:assets.renameAsset')}}
+          v-icon.mr-2(color='primary', aria-hidden='true') mdi-keyboard
+          span#editor-media-rename-title {{$t('editor:assets.renameAsset')}}
         v-card-text.pt-5
           .text-body-medium {{$t('editor:assets.renameAssetSubtitle')}}
           v-text-field(
             variant="outlined"
             single-line
             :counter='255'
+            maxlength='255'
             v-model='renameAssetName'
             :label='$t(`common:actions.rename`)'
+            ref='renameAssetIpt'
             :rules='renameAssetRules'
             @keyup.enter='renameAsset'
             :disabled='renameAssetLoading'
@@ -208,23 +230,32 @@
         div.v-card-chin
           v-spacer
           v-btn(variant="text", @click='renameDialog = false', :disabled='renameAssetLoading') {{$t('common:actions.cancel')}}
-          v-btn.px-3(color="orange-darken-3", @click='renameAsset', :loading='renameAssetLoading', :disabled='!isRenameValid').text-white {{$t('common:actions.rename')}}
+          v-btn.px-3(color="orange-darken-3", @click='renameAsset', :loading='renameAssetLoading', :disabled='renameAssetLoading || !isRenameValid').text-white {{$t('common:actions.rename')}}
 
     //- DELETE DIALOG
 
-    v-dialog(v-model='deleteDialog', max-width='550', persistent)
-      v-card
+    v-dialog(
+      v-model='deleteDialog'
+      max-width='550'
+      :persistent='deleteAssetLoading'
+      content-class='editor-media-owned-overlay'
+      role='alertdialog'
+      aria-labelledby='editor-media-delete-title'
+      aria-describedby='editor-media-delete-description'
+      @after-leave='restoreMediaDialogFocus'
+    )
+      v-card(:aria-busy='deleteAssetLoading')
         .dialog-header.is-short.is-red
-          v-icon.mr-2(color='white') mdi-trash-can-outline
-          span {{$t('editor:assets.deleteAsset')}}
-        v-card-text.pt-5
+          v-icon.mr-2(color='white', aria-hidden='true') mdi-trash-can-outline
+          span#editor-media-delete-title {{$t('editor:assets.deleteAsset')}}
+        v-card-text.pt-5#editor-media-delete-description
           .text-body-medium {{$t('editor:assets.deleteAssetConfirm')}}
           .text-body-medium.text-red-darken-2 {{currentAsset?.filename}}?
           .text-body-small.mt-3 {{$t('editor:assets.deleteAssetWarn')}}
         div.v-card-chin
           v-spacer
-          v-btn(variant="text", @click='deleteDialog = false', :disabled='deleteAssetLoading') {{$t('common:actions.cancel')}}
-          v-btn.px-3(color="red-darken-2", @click='deleteAsset', :loading='deleteAssetLoading').text-white {{$t('common:actions.delete')}}</template>
+          v-btn(variant="text", ref='deleteCancelButton', @click='deleteDialog = false', :disabled='deleteAssetLoading') {{$t('common:actions.cancel')}}
+          v-btn.px-3(color="red-darken-2", @click='deleteAsset', :loading='deleteAssetLoading', :disabled='deleteAssetLoading').text-white {{$t('common:actions.delete')}}</template>
 
 <script lang='ts'>
 import { defineComponent, markRaw, type Component } from 'vue'
@@ -252,6 +283,7 @@ const IMAGE_ALIGNMENTS = markRaw([
 const MEDIA_SORT_BY = markRaw([{ key: 'id', order: 'desc' as const }])
 const RENAME_ASSET_RULES = markRaw([
   (value: unknown) => !!String(value || '').trim() || 'A filename is required.',
+  (value: unknown) => String(value || '').length <= 255 || 'Filename must be 255 characters or fewer.',
   (value: unknown) => (!String(value || '').includes('/') && !String(value || '').includes(String.fromCharCode(92))) || 'Filename cannot contain slashes.'
 ])
 
@@ -293,11 +325,13 @@ export default defineComponent({
       newFolderLoading: false,
       renameDialog: false,
       deleteDialog: false,
+      actionMenuAssetId: null as number | null,
       renameAssetName: '',
       renameAssetLoading: false,
       deleteAssetLoading: false,
       mediaLoadError: '',
       returnFocus: null as HTMLElement | null,
+      mediaDialogReturnFocus: null as HTMLElement | null,
       focusScope: null as ModalFocusScope | null,
       mediaRequest: 0,
       mediaLoadsInFlight: 0,
@@ -355,7 +389,7 @@ export default defineComponent({
       ])
     },
     isFolderNameValid() {
-      return this.newFolderName.length > 1 && !localeSegmentRegex.test(this.newFolderName) && !disallowedFolderChars.test(this.newFolderName)
+      return this.newFolderName.length > 1 && this.newFolderName.length <= 255 && !localeSegmentRegex.test(this.newFolderName) && !disallowedFolderChars.test(this.newFolderName)
     },
     currentAsset () {
       return _.find(this.assets, ['id', this.currentFileId])
@@ -363,7 +397,7 @@ export default defineComponent({
     isRenameValid (): boolean {
       const current = this.currentAsset
       const name = this.renameAssetName.trim()
-      return Boolean(current && name && name !== current.filename && !/[\/\\]/.test(name))
+      return Boolean(current && name && name.length <= 255 && name !== current.filename && !/[\/\\]/.test(name))
     },
     isPrivatePage(): boolean {
       return wikiStore.page.visibility === 'private'
@@ -388,9 +422,28 @@ export default defineComponent({
             focusInput(this.$refs.folderNameIpt)
           }
         })
+      } else if (!this.newFolderLoading) {
+        this.newFolderName = ''
       }
     },
+    renameDialog(newValue: boolean) {
+      if (!newValue) return
+      this.$nextTick(() => {
+        if (!this.disposed && this.renameDialog) {
+          focusInput(this.$refs.renameAssetIpt)
+        }
+      })
+    },
+    deleteDialog(newValue: boolean) {
+      if (!newValue) return
+      this.$nextTick(() => {
+        if (this.disposed || !this.deleteDialog) return
+        const button = this.$refs.deleteCancelButton as { $el?: unknown } | undefined
+        if (button?.$el instanceof HTMLElement) button.$el.focus()
+      })
+    },
     currentFolderId () {
+      this.actionMenuAssetId = null
       void this.loadMedia()
     }
   },
@@ -403,7 +456,8 @@ export default defineComponent({
       this.focusScope = markRaw(createModalFocusScope({
         root,
         restoreTarget: () => this.returnFocus,
-        onEscape: this.cancel
+        additionalRoots: this.mediaModalAdditionalRoots,
+        onEscape: this.handleMediaEscape
       }))
       const refreshButton = this.$refs.refreshButton as { $el?: unknown } | undefined
       if (refreshButton?.$el instanceof HTMLElement) refreshButton.$el.focus()
@@ -421,6 +475,48 @@ export default defineComponent({
     this.focusScope = null
   },
   methods: {
+    mediaModalAdditionalRoots (): HTMLElement[] {
+      return Array.from(document.querySelectorAll<HTMLElement>('.editor-media-owned-overlay'))
+    },
+    setActionMenu (assetId: number, isOpen: boolean) {
+      this.actionMenuAssetId = isOpen ? assetId : null
+    },
+    handleMediaEscape () {
+      if (this.actionMenuAssetId !== null) {
+        this.actionMenuAssetId = null
+        return
+      }
+      if (this.newFolderDialog) {
+        if (!this.newFolderLoading) this.newFolderDialog = false
+        return
+      }
+      if (this.renameDialog) {
+        if (!this.renameAssetLoading) this.renameDialog = false
+        return
+      }
+      if (this.deleteDialog) {
+        if (!this.deleteAssetLoading) this.deleteDialog = false
+        return
+      }
+      this.cancel()
+    },
+    rememberMediaDialogFocus (assetId: number) {
+      const root = this.$el instanceof HTMLElement ? this.$el : null
+      this.mediaDialogReturnFocus = root?.querySelector<HTMLElement>(`[data-editor-media-asset-actions="${assetId}"]`) ?? null
+    },
+    restoreMediaDialogFocus () {
+      const target = this.mediaDialogReturnFocus
+      this.mediaDialogReturnFocus = null
+      this.$nextTick(() => {
+        if (this.disposed || this.activeModal !== 'editorModalMedia') return
+        if (target?.isConnected && !target.matches(':disabled')) {
+          target.focus({ preventScroll: true })
+          return
+        }
+        const refreshButton = this.$refs.refreshButton as { $el?: unknown } | undefined
+        if (refreshButton?.$el instanceof HTMLElement) refreshButton.$el.focus({ preventScroll: true })
+      })
+    },
     selectAsset(id: number) {
       this.currentFileId = id
     },
@@ -486,6 +582,7 @@ export default defineComponent({
         })
       }
       await (this.$refs.pond as FilePondRef).processFiles()
+      await this.loadMedia()
     },
     async onFileProcessed (err: unknown, file: FilePondFile) {
       if (err) {
@@ -542,12 +639,16 @@ export default defineComponent({
       }
     },
     openRenameDialog(id: number) {
+      this.rememberMediaDialogFocus(id)
+      this.actionMenuAssetId = null
       this.currentFileId = id
       if (!this.currentAsset) throw new Error('No asset selected for renaming.')
       this.renameAssetName = this.currentAsset.filename
       this.renameDialog = true
     },
     openDeleteDialog(id: number) {
+      this.rememberMediaDialogFocus(id)
+      this.actionMenuAssetId = null
       this.currentFileId = id
       if (!this.currentAsset) throw new Error('No asset selected for deletion.')
       this.deleteDialog = true

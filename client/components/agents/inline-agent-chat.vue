@@ -53,8 +53,8 @@
     <v-card class="inline-agent__card" elevation="0">
       <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="header">
         <div class="inline-agent__mobile-navigation">
-          <v-btn class="inline-agent__mobile-return" icon="mdi-arrow-left" variant="text" aria-label="Return to Wiki Search" @click="emit('return-search')" />
-          <v-btn class="inline-agent__mobile-close" icon="mdi-close" variant="text" aria-label="Close Wiki Agent" @click="emit('close')" />
+          <v-btn class="inline-agent__mobile-return" icon="mdi-arrow-left" variant="text" aria-label="Return to Wiki Search" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('return-search')" />
+          <v-btn class="inline-agent__mobile-close" icon="mdi-close" variant="text" aria-label="Close Wiki Agent" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
         </div>
         <div class="inline-agent__identity">
           <v-avatar class="inline-agent__avatar" color="primary" size="38" variant="tonal">
@@ -91,16 +91,36 @@
             :aria-label="memoryOpen ? 'Close agent memory' : 'Manage agent memory'"
             :aria-expanded="memoryOpen"
             aria-controls="agent-memory-panel"
-            :disabled="memoryMutationBusy && !memoryOpen"
+            :disabled="memoryMutationBusy"
             @click="toggleMemory"
           />
-          <v-menu location="bottom end">
+          <v-menu location="bottom end" attach=".inline-agent">
             <template #activator="{ props: menuProps }">
               <v-btn v-bind="menuProps" class="inline-agent__mobile-panel-menu" icon="mdi-view-dashboard-outline" variant="text" size="small" aria-label="Open Agent panels: conversation history and memory" />
             </template>
-            <v-list density="compact">
-              <v-list-item title="Conversation history" prepend-icon="mdi-history" :disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'" @click="toggleHistory" />
-              <v-list-item title="Agent memory" prepend-icon="mdi-brain" :disabled="memoryMutationBusy && !memoryOpen" @click="toggleMemory" />
+            <v-list density="compact" role="menu">
+              <v-btn
+                class="inline-agent__panel-menu-item"
+                role="menuitem"
+                type="button"
+                block
+                variant="text"
+                size="small"
+                prepend-icon="mdi-history"
+                :disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'"
+                @click="toggleHistory"
+              >Conversation history</v-btn>
+              <v-btn
+                class="inline-agent__panel-menu-item"
+                role="menuitem"
+                type="button"
+                block
+                variant="text"
+                size="small"
+                prepend-icon="mdi-brain"
+                :disabled="memoryMutationBusy"
+                @click="toggleMemory"
+              >Agent memory</v-btn>
             </v-list>
           </v-menu>
           <v-btn
@@ -155,7 +175,8 @@
             <div
               ref="transcript"
               class="inline-agent__transcript"
-              tabindex="-1"
+              tabindex="0"
+              role="region"
               aria-label="Conversation transcript"
               @scroll.passive="handleTranscriptScroll"
             >
@@ -557,6 +578,7 @@ const closeHistory = (): void => {
   historyOpen.value = false
 }
 const closeMemory = (): void => {
+  if (memoryMutationBusy.value) return
   const closingKind = panelMode.value === 'modal' && memoryOpen.value ? 'memory' : null
   if (closingKind) preparePanelTriggerRestore(closingKind)
   memoryOpen.value = false
@@ -622,6 +644,7 @@ const reconcilePanelMode = (): void => {
   panelMode.value = nextMode
 }
 const closePanels = (): void => {
+  if (memoryOpen.value && memoryMutationBusy.value) return
   const closingKind = panelMode.value === 'modal'
     ? historyOpen.value ? 'history' : memoryOpen.value ? 'memory' : null
     : null
@@ -986,6 +1009,11 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 
 .inline-agent__mobile-panel-menu {
   display: none !important;
+}
+
+.inline-agent__panel-menu-item {
+  justify-content: flex-start;
+  text-transform: none;
 }
 
 .inline-agent__new-session {

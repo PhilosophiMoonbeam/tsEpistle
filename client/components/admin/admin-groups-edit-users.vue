@@ -23,6 +23,7 @@
       :items-per-page='15'
       must-sort
       hide-default-footer
+      aria-label='Users assigned to this group'
     )
       template(v-slot:item.actions='{ item }')
         v-menu(location="bottom end", min-width='200')
@@ -33,7 +34,7 @@
             v-list-item(:to='`/users/` + item.id')
               template(v-slot:append): v-icon(color='primary') mdi-account-outline
               v-list-item-title View User Profile
-            template(v-if='item.id !== 2')
+            template(v-if='item.id !== 2 && (group.id !== 1 || item.id !== 1)')
               v-list-item(@click='unassignUser(item.id)', :disabled='busyUserId !== 0')
                 template(v-slot:append): v-icon(color='orange') mdi-account-remove-outline
                 v-list-item-title Unassign {{busyUserId === item.id ? '(working...)' : ''}}
@@ -44,7 +45,7 @@
           v-btn.ml-2(v-if='search', variant="text", size="small", @click='search = ``') Clear search
       template(v-slot:bottom='{ pageCount }')
         .text-center.py-2(v-if='pageCount > 1')
-          v-pagination(v-model='pagination', :length='pageCount')
+          v-pagination(v-model='pagination', :length='pageCount', aria-label='Group users pagination')
 
     user-search(v-model='searchUserDialog', @select='assignUser')
 </template>
@@ -117,6 +118,7 @@ export default {
     },
     async unassignUser(id: number) {
       if (!this.groupReady || id <= 0 || id === 2 || this.busyUserId !== 0) return
+      if (this.group.id === 1 && id === 1) return
       this.busyUserId = id
       wikiStore.startLoading('admin-groups-unassign')
       try {

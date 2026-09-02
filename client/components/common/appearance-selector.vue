@@ -6,6 +6,7 @@ section.appearance-selector(:aria-busy='saving ? `true` : `false`')
   v-btn-toggle(
     :model-value='selectedAppearance'
     class='appearance-selector__options'
+    role='group'
     mandatory
     divided
     density='compact'
@@ -23,11 +24,23 @@ section.appearance-selector(:aria-busy='saving ? `true` : `false`')
     )
       v-icon(start, size='18') {{ option.icon }}
       span {{ option.label }}
-  v-progress-linear(v-if='saving', indeterminate, color='primary', height='2', class='appearance-selector__progress')
+  v-progress-linear(
+    v-if='saving'
+    indeterminate
+    color='primary'
+    height='2'
+    class='appearance-selector__progress'
+    aria-label='Saving appearance preference'
+  )
+  .appearance-selector__status(
+    role='status'
+    aria-live='polite'
+    aria-atomic='true'
+  ) {{ statusMessage }}
 </template>
 
 <script setup lang='ts'>
-import { computed, useId } from 'vue'
+import { computed, ref, useId } from 'vue'
 import Cookies from 'js-cookie'
 import { useTheme } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
@@ -56,6 +69,7 @@ const theme = useTheme()
 const selectedAppearance = computed<Appearance>(() => normalizeAppearance(wikiStore.user.appearance))
 const saving = computed(() => (wikiStore.loadingCounts['profile-appearance-save'] ?? 0) > 0)
 const descriptionId = useId()
+const statusMessage = ref('')
 const appearanceOptions: readonly AppearanceOption[] = [
   { value: 'system', label: 'System', icon: 'mdi-theme-light-dark' },
   { value: 'light', label: 'Light', icon: 'mdi-white-balance-sunny' },
@@ -67,7 +81,11 @@ function normalizeAppearance(value: string | null | undefined): Appearance {
 }
 
 async function selectAppearance (next: Appearance): Promise<void> {
-  if (saving.value || !appearanceOptions.some(option => option.value === next) || next === selectedAppearance.value) return
+  if (saving.value || next === selectedAppearance.value) return
+  const selectedOption = appearanceOptions.find(option => option.value === next)
+  if (!selectedOption) return
+
+  statusMessage.value = `Saving ${selectedOption.label.toLowerCase()} appearance.`
 
   const previousAppearance = selectedAppearance.value
   const previousStoreAppearance = wikiStore.user.appearance
@@ -85,9 +103,11 @@ async function selectAppearance (next: Appearance): Promise<void> {
     wikiStore.refreshAuth()
     const effectiveAppearance = normalizeAppearance(wikiStore.user.appearance)
     await theme.change(effectiveAppearance, false)
+    statusMessage.value = `${selectedOption.label} appearance saved.`
   } catch (error) {
     wikiStore.user.appearance = previousStoreAppearance
     await theme.change(resolveThemeName(previousAppearance, siteConfig.darkMode), false)
+    statusMessage.value = 'Appearance could not be saved. The previous setting was restored.'
     wikiStore.showError(error)
   } finally {
     wikiStore.stopLoading('profile-appearance-save')
@@ -115,6 +135,18 @@ async function selectAppearance (next: Appearance): Promise<void> {
       padding-inline: var(--wiki-space-2);
       text-transform: none;
     }
+  }
+
+  &__status {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   &__progress {

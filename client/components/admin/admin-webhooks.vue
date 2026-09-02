@@ -55,12 +55,12 @@
             v-alert(v-if='revealedSecret', type='warning', variant='tonal')
               strong One-time signing secret
               span.ml-1 Copy it now; it will not be shown again.
-              code.webhook-secret {{ revealedSecret }}
+              code.webhook-secret(tabindex='0', aria-label='Webhook signing secret', @focus='selectSecretText') {{ revealedSecret }}
               .d-flex.align-center.flex-wrap.ga-2.mt-3
-                v-btn(variant="outlined", color='warning', @click='copySecret')
+                v-btn(ref='copySecretButton', variant="outlined", color='warning', @click='copySecret')
                   v-icon(start) mdi-content-copy
                   span {{ secretCopied ? 'Copied' : 'Copy secret' }}
-                v-btn(color='warning', variant="flat", @click='finishSecret') I’ve saved this secret
+                v-btn(color='warning', variant="flat", @click='finishSecret', :disabled='saving || rotating') I’ve saved this secret
             v-form(ref='webhookForm', @submit.prevent='save')
               v-text-field(ref='webhookNameInput', v-model='draft.name', label='Name', maxlength='128', variant="outlined", :rules='[requiredRule]', :disabled='webhookBusy')
               v-text-field(ref='webhookUrlInput', v-model='draft.url', label='HTTPS endpoint URL', placeholder='https://hooks.example.com/wiki', type='url', variant="outlined", :rules='[httpsRule]', :disabled='webhookBusy')
@@ -77,7 +77,7 @@
               )
               v-switch(v-model='draft.isEnabled', color='success', label='Enabled', :disabled='webhookBusy')
               .d-flex.flex-wrap.ga-2.mt-3
-                v-btn(color='primary', variant="flat", type='submit', :loading='saving', :disabled='webhookBusy || !isWebhookValid')
+                v-btn(ref='webhookSaveButton', color='primary', variant="flat", type='submit', :loading='saving', :disabled='webhookBusy')
                   v-icon(start) mdi-content-save
                   span Save
                 v-btn(v-if='draft.id', variant='outlined', @click='rotateDialog = true', :loading='rotating', :disabled='webhookBusy || Boolean(revealedSecret)')
@@ -116,8 +116,8 @@
                   td {{ delivery.statusCode || '—' }}
                   td {{ $helpers.formatMoment(delivery.createdAt, 'calendar') }}
                   td
-                    v-btn(v-if='delivery.state === `failed`', variant='outlined', size='small', @click='changeDelivery(delivery.id, `retry`)', :loading='deliveryBusy === delivery.id', :disabled='Boolean(deliveryBusy)') Retry
-                    v-btn.ml-2(v-if='delivery.state === `pending` || delivery.state === `running`', variant='outlined', color='error', size='small', @click='requestDeliveryCancel(delivery.id)', :disabled='Boolean(deliveryBusy)') Cancel
+                    v-btn(v-if='delivery.state === `failed`', variant='outlined', size='small', @click='changeDelivery(delivery.id, `retry`)', :loading='deliveryBusy === delivery.id', :disabled='webhookBusy') Retry
+                    v-btn.ml-2(v-if='delivery.state === `pending` || delivery.state === `running`', variant='outlined', color='error', size='small', @click='requestDeliveryCancel(delivery.id)', :disabled='webhookBusy') Cancel
             div(v-else-if='deliveries.length')
               .admin-mobile-record(v-for='delivery in deliveries', :key='`mobile-delivery-` + delivery.id')
                 .d-flex.align-center
@@ -127,8 +127,8 @@
                 .admin-mobile-record-meta {{ delivery.attempts }} / {{ delivery.maxAttempts }} attempts · HTTP {{ delivery.statusCode || '—' }}
                 .text-body-small.text-grey.mt-2 {{ $helpers.formatMoment(delivery.createdAt, 'calendar') }}
                 .d-flex.flex-wrap.ga-2.mt-2
-                  v-btn(v-if='delivery.state === `failed`', variant='outlined', size='small', @click='changeDelivery(delivery.id, `retry`)', :loading='deliveryBusy === delivery.id', :disabled='Boolean(deliveryBusy)') Retry
-                  v-btn(v-if='delivery.state === `pending` || delivery.state === `running`', variant='outlined', color='error', size='small', @click='requestDeliveryCancel(delivery.id)', :disabled='Boolean(deliveryBusy)') Cancel
+                  v-btn(v-if='delivery.state === `failed`', variant='outlined', size='small', @click='changeDelivery(delivery.id, `retry`)', :loading='deliveryBusy === delivery.id', :disabled='webhookBusy') Retry
+                  v-btn(v-if='delivery.state === `pending` || delivery.state === `running`', variant='outlined', color='error', size='small', @click='requestDeliveryCancel(delivery.id)', :disabled='webhookBusy') Cancel
             v-card-text(v-if='!deliveries.length')
               .text-center.text-medium-emphasis No deliveries yet.
 
@@ -251,9 +251,26 @@ export default {
         wikiStore.showNotification({ style: 'red', message: 'Copy failed. Select the secret and copy it manually.', icon: 'alert' })
       }
     },
+    selectSecretText (event: FocusEvent) {
+      if (!(event.currentTarget instanceof HTMLElement)) return
+      const selection = window.getSelection()
+      if (!selection) return
+      const range = document.createRange()
+      range.selectNodeContents(event.currentTarget)
+      selection.removeAllRanges()
+      selection.addRange(range)
+    },
     finishSecret () {
       this.revealedSecret = ''
       this.secretCopied = false
+      this.$nextTick(() => {
+        ;(this.$refs.webhookSaveButton as { focus?: () => void })?.focus?.()
+      })
+    },
+    focusSecretAction () {
+      this.$nextTick(() => {
+        ;(this.$refs.copySecretButton as { focus?: () => void })?.focus?.()
+      })
     },
     async loadHooks (): Promise<boolean> {
       const token = ++this.hooksLoadToken
@@ -298,7 +315,7 @@ export default {
       this.loadDeliveries()
     },
     async save () {
-      if (this.saving) return
+      if (this.webhookBusy) return
       if (!this.isWebhookValid) {
         const form = this.$refs.webhookForm as { validate?: () => Promise<unknown> }
         await form.validate?.()
@@ -324,6 +341,7 @@ export default {
           this.draft.id = created.id
           this.revealedSecret = created.secret
           this.secretCopied = false
+          this.focusSecretAction()
         }
         this.draft.name = input.name
         this.draft.url = input.url
@@ -342,6 +360,7 @@ export default {
       try {
         this.revealedSecret = await rotateWebhookSecret(window.fetch.bind(window), this.draft.id)
         this.secretCopied = false
+        this.focusSecretAction()
       } catch (error) {
         wikiStore.showError(error)
       } finally {
@@ -396,7 +415,7 @@ export default {
       this.cancelDeliveryId = ''
     },
     async changeDelivery (id: string, action: 'retry' | 'cancel') {
-      if (this.deliveryBusy) return
+      if (this.webhookBusy) return
       this.deliveryBusy = id
       try {
         await changeWebhookDelivery(window.fetch.bind(window), id, action)

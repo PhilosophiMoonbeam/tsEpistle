@@ -5,7 +5,7 @@
       v-toolbar.history-toolbar(color='surface', flat)
         .history-toolbar-copy
           .history-eyebrow Revision history
-          h1.history-toolbar-title Viewing history of #[strong /{{path}}]
+          h1.history-toolbar-title Viewing history of #[strong.history-path-fragment /{{path}}]
           .history-toolbar-meta(v-if='$vuetify.display.mdAndUp')
             span {{total}} revisions
             span Page {{pageId}}
@@ -55,8 +55,9 @@
                 )
                   .history-revision-summary(
                     role='button'
-                    tabindex='0'
-                    :aria-label='`Compare revision from ${$helpers.formatMoment(ph.versionDate, `LLL`)}`'
+                    :tabindex='canSelectVersion(idx) ? 0 : -1'
+                    :aria-disabled='!canSelectVersion(idx)'
+                    :aria-label='canSelectVersion(idx) ? `Compare revision from ${$helpers.formatMoment(ph.versionDate, `LLL`)}` : `Revision from ${$helpers.formatMoment(ph.versionDate, `LLL`)} has no earlier comparison source`'
                     @click='selectVersion(idx)'
                     @keydown.enter.prevent='selectVersion(idx)'
                     @keydown.space.prevent='selectVersion(idx)'
@@ -71,7 +72,7 @@
                       .text-body-small.history-revision-description(
                         v-else-if='ph.actionType === `move`'
                         :title='`Moved from ${ph.valueBefore} to ${ph.valueAfter} by ${ph.authorName}`'
-                      ) Moved from #[strong {{ph.valueBefore}}] to #[strong {{ph.valueAfter}}] by #[strong {{ ph.authorName }}]
+                      ) Moved from #[strong.history-path-fragment {{ph.valueBefore}}] to #[strong.history-path-fragment {{ph.valueAfter}}] by #[strong {{ ph.authorName }}]
                       .text-body-small.history-revision-description(
                         v-else-if='ph.actionType === `initial`'
                         :title='`Created by ${ph.authorName}`'
@@ -85,7 +86,7 @@
                         :title='`Unknown Action by ${ph.authorName}`'
                       ) Unknown Action by #[strong {{ ph.authorName }}]
                   .history-revision-actions
-                    v-menu(location="left")
+                    v-menu(location="start")
                       template(v-slot:activator='{ props }')
                         v-btn(
                           v-bind='props'
@@ -191,8 +192,8 @@
                           span {{ target.editor || 'unknown editor' }} / {{ target.contentType || 'unknown format' }}
                           span {{ target.visibility }}{{ target.isPublished === false ? ' / unpublished' : '' }}
                           span(v-if='target.tags.length > 0') Tags: {{ target.tags.join(', ') }}
-                    v-col.history-comparison-controls.text-right.py-3(cols='auto')
-                      v-btn.history-view-toggle.mr-3(
+                    v-col.history-comparison-controls.text-end.py-3(cols='auto')
+                      v-btn.history-view-toggle.me-3(
                         color='primary'
                         size="small"
                         variant="outlined"
@@ -202,7 +203,7 @@
                       )
                         v-icon(start) mdi-eye
                         span.text-label-small View: {{viewMode === 'line-by-line' ? 'Line by line' : 'Side by side'}}
-                v-card.mt-3.history-diff(flat, aria-labelledby='history-comparison-heading')
+                v-card.mt-3.history-diff(flat dir='ltr' aria-labelledby='history-comparison-heading')
                   div(v-html='diffHTML')
 
     v-dialog(
@@ -406,6 +407,15 @@ export default {
     ) {
       if (newValue === this.source.versionId) return
 
+      if (newValue === -1) {
+        this.source = {
+          ...emptyPageVersion(-1),
+          path: this.path,
+          locale: this.locale
+        }
+        return
+      }
+
       let cancelled = false
       onCleanup(() => {
         cancelled = true
@@ -568,16 +578,35 @@ export default {
       const privatePrefix = this.visibility === 'private' ? '/_private' : ''
       window.location.assign(`${privatePrefix}/${this.locale}/${this.path}`)
     },
+    canSelectVersion (index: number) {
+      const target = this.fullTrail[index]
+      const source = this.fullTrail[index + 1]
+      return Boolean(
+        target && (
+          (source && source.versionId > 0) ||
+          (target.actionType === 'initial' && this.total <= this.trail.length)
+        )
+      )
+    },
     selectVersion (index: number) {
       const target = this.fullTrail[index]
       const source = this.fullTrail[index + 1]
       if (!target) return
+      if (source && source.versionId > 0) {
+        this.diffSource = source.versionId
+      } else if (target.actionType === 'initial' && this.total <= this.trail.length) {
+        this.diffSource = -1
+      } else {
+        return
+      }
       this.diffTarget = target.versionId
-      if (source && source.versionId > 0) this.diffSource = source.versionId
       if (this.$vuetify.display.smAndDown) {
         this.$nextTick(() => {
           const heading = this.$refs.comparisonHeading as HTMLElement | undefined
-          heading?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          heading?.scrollIntoView({
+            behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+            block: 'start'
+          })
           heading?.focus({ preventScroll: true })
         })
       }
@@ -715,6 +744,11 @@ export default {
   }
 }
 
+.history-path-fragment {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
 .history-toolbar-meta,
 .history-revision-meta {
   display: flex;
@@ -801,6 +835,11 @@ export default {
   min-width: 0;
   padding: var(--wiki-space-3);
   cursor: pointer;
+
+  &[aria-disabled='true'] {
+    cursor: default;
+    opacity: .62;
+  }
 
   &:focus-visible {
     outline: .125rem solid var(--wiki-focus-color);
@@ -920,6 +959,8 @@ export default {
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius) !important;
   background: var(--wiki-surface-raised);
+  direction: ltr;
+  text-align: left;
 
   .d2h-file-wrapper {
     border: 0;

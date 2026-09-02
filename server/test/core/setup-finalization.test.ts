@@ -195,14 +195,20 @@ describe('setup finalization', () => {
     expect(harness.server.listening).toBe(false)
   })
 
-  it('leaves built-in content-extension seeding to migrations during fresh setup', async () => {
+  it('restores the built-in content-extension registry after setup resets dependent tables', async () => {
     const harness = await startSetupHarness(true)
 
     const result = await finalize(harness.server)
     await harness.completion
 
     expect(result).toMatchObject({ ok: true, redirectPath: '/' })
-    expect(harness.extensionInsert).not.toHaveBeenCalled()
+    expect(harness.extensionInsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ key: 'qr', isEnabled: false, version: 1 }),
+        expect.objectContaining({ key: 'map', isEnabled: false, version: 1 })
+      ])
+    )
+    expect(harness.extensionInsert.mock.calls[0]?.[0]).toHaveLength(13)
     expect(harness.navigationInsert).toHaveBeenCalledWith({
       key: 'site',
       config: [{ locale: 'en', items: [] }]

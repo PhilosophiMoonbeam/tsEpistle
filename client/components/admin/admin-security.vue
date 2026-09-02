@@ -9,7 +9,7 @@
           heading-id='admin-security-heading'
         )
           template(v-slot:actions)
-            v-btn(color='success', variant='flat', @click='save', size='large', :loading='configSaving', :disabled='!configLoaded || configSaving')
+            v-btn(type='submit', form='security-form', color='success', variant='flat', size='large', :loading='configSaving', :disabled='!configLoaded || configSaving')
               v-icon(start) mdi-check
               span {{$t('common:actions.apply')}}
         v-alert.mt-3(v-if='configLoading', variant='outlined', color='info', role='status')
@@ -18,7 +18,13 @@
         v-alert.mt-3(v-else-if='configLoadError', variant='outlined', color='error', role='alert')
           span Security configuration could not be loaded.
           v-btn.ml-3(variant='outlined', color='primary', size='small', @click='loadConfig') Retry
-        v-form.pt-3(v-else-if='configLoaded' @submit.prevent='save')
+        v-form#security-form.pt-3(
+          v-else-if='configLoaded'
+          ref='securityForm'
+          :disabled='configSaving'
+          validate-on='submit'
+          @submit.prevent='save'
+        )
           v-row
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp
@@ -132,6 +138,10 @@
                     variant="outlined"
                     :label='$t(`admin:security.maxUploadSize`)'
                     required
+                    type='number'
+                    min='0'
+                    step='1'
+                    :rules='[nonNegativeIntegerRule]'
                     v-model.number='config.uploadMaxFileSize'
                     prepend-icon='mdi-progress-upload'
                     :hint='$t(`admin:security.maxUploadSizeHint`)'
@@ -143,6 +153,10 @@
                     variant="outlined"
                     :label='$t(`admin:security.maxUploadBatch`)'
                     required
+                    type='number'
+                    min='0'
+                    step='1'
+                    :rules='[nonNegativeIntegerRule]'
                     v-model.number='config.uploadMaxFiles'
                     prepend-icon='mdi-upload-lock'
                     :hint='$t(`admin:security.maxUploadBatchHint`)'
@@ -236,6 +250,7 @@
                     variant="outlined"
                     prepend-icon='mdi-clock-outline'
                     :label='$t(`admin:auth.tokenExpiration`)'
+                    :rules='[durationRule]'
                     :hint='$t(`admin:auth.tokenExpirationHint`)'
                     persistent-hint
                   )
@@ -244,6 +259,7 @@
                     variant="outlined"
                     prepend-icon='mdi-update'
                     :label='$t(`admin:auth.tokenRenewalPeriod`)'
+                    :rules='[durationRule]'
                     :hint='$t(`admin:auth.tokenRenewalPeriodHint`)'
                     persistent-hint
                   )
@@ -339,6 +355,16 @@ export default {
     }
   },
   methods: {
+    nonNegativeIntegerRule (value: unknown): true | string {
+      return (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) ||
+        'Enter a whole number of zero or greater.'
+    },
+    durationRule (value: unknown): true | string {
+      const duration = typeof value === 'string' ? value.trim() : ''
+      const match = /^((?:\d+)?\.?\d+)\s*(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(duration)
+      return (Boolean(match) && Number(match?.[1]) > 0) ||
+        'Enter a positive duration such as 30m, 12h, or 14d.'
+    },
     siteConfigPayload (): Record<string, unknown> {
       return {
         authAutoLogin: _.get(this.config, 'authAutoLogin', false),
@@ -385,6 +411,17 @@ export default {
     },
     async save () {
       if (!this.configLoaded || this.configSaving) return
+      const form = this.$refs.securityForm as {
+        validate?: () => Promise<{ valid: boolean }>
+        $el?: HTMLElement
+      } | undefined
+      const validation = await form?.validate?.()
+      if (!validation?.valid) {
+        this.$nextTick(() => {
+          form?.$el?.querySelector<HTMLElement>('.v-input--error input, .v-input--error textarea, .v-input--error [tabindex]:not([tabindex="-1"])')?.focus()
+        })
+        return
+      }
       this.configSaving = true
       loadingStart(wikiStore, 'admin-site-update')
       try {

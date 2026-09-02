@@ -183,7 +183,7 @@ export default {
     }
   },
   computed: {
-    canViewRecentPages() { return this.hasPermission(['manage:system', 'read:pages']) },
+    canViewRecentPages() { return this.hasPermission(['manage:system', 'write:pages', 'manage:pages', 'delete:pages']) },
     canViewLastLogins() { return this.hasPermission(['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users']) },
     info() { return wikiStore.admin.info },
     siteTitle() { return wikiStore.site.title?.trim() || 'tsFranki' },

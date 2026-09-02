@@ -1,6 +1,6 @@
 <template lang="pug">
   v-app
-    .login(:style='`background-image: url(` + bgUrl + `);`')
+    .login(:style='loginStyle')
       main.login-sd(:aria-busy='isLoading', aria-labelledby='login-site-title')
         .login-brand
           .login-logo
@@ -51,9 +51,10 @@
               color="primary"
               ref='iptEmail'
               v-model='username'
+              name='username'
               :label='isUsernameEmail ? $t(`auth:fields.email`) : $t(`auth:fields.username`)'
               :type='isUsernameEmail ? `email` : `text`'
-              :autocomplete='isUsernameEmail ? `email` : `username`'
+              autocomplete='username'
               :error-messages='fieldErrors.username'
               :disabled='isLoading'
               required
@@ -65,6 +66,7 @@
               color="primary"
               ref='iptPassword'
               v-model='password'
+              name='password'
               :type='hidePassword ? "password" : "text"'
               :label='$t("auth:fields.password")'
               autocomplete='current-password'
@@ -82,7 +84,7 @@
                   :disabled='isLoading'
                   @click='hidePassword = !hidePassword'
                   )
-                  v-icon(:icon='hidePassword ? `mdi-eye-off` : `mdi-eye`')
+                  v-icon(:icon='hidePassword ? `mdi-eye` : `mdi-eye-off`')
             v-btn.mt-2.text-none(
               width='100%'
               size="large"
@@ -93,12 +95,12 @@
               ) {{ $t('auth:actions.login') }}
             .text-center.mt-5
               v-btn.text-none(
+                type='button'
                 variant="text"
                 rounded
                 color="primary"
                 :disabled='isLoading'
-                @click.stop.prevent='forgotPassword'
-                href='#forgot'
+                @click='forgotPassword'
                 ): .text-body-small {{ $t('auth:forgotPasswordLink') }}
               v-btn.text-none(
                 v-if='selectedStrategyKey === `local` && selectedStrategy.selfRegistration'
@@ -120,6 +122,7 @@
               color="primary"
               ref='iptForgotPwdEmail'
               v-model='username'
+              name='email'
               :label='$t(`auth:fields.email`)'
               type='email'
               autocomplete='email'
@@ -137,12 +140,12 @@
               ) {{ $t('auth:sendResetPassword') }}
             .text-center.mt-5
               v-btn.text-none(
+                type='button'
                 variant="text"
                 rounded
                 color="primary"
                 :disabled='isLoading'
-                @click.stop.prevent='screen = `login`'
-                href='#forgot'
+                @click='screen = `login`'
                 ): .text-body-small {{ $t('auth:forgotPasswordCancel') }}
         template(v-if='screen === `verifyEmail`')
           .login-subtitle
@@ -168,6 +171,7 @@
               color='primary'
               ref='iptNewPassword'
               v-model='newPassword'
+              name='new-password'
               :type='hideNewPassword ? "password" : "text"'
               :label='$t(`auth:changePwd.newPasswordPlaceholder`)'
               autocomplete='new-password'
@@ -177,7 +181,7 @@
               )
               template(v-slot:append-inner)
                 v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hideNewPassword ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:changePwd.newPasswordPlaceholder`)' :disabled='isLoading' @click='hideNewPassword = !hideNewPassword')
-                  v-icon(:icon='hideNewPassword ? `mdi-eye-off` : `mdi-eye`')
+                  v-icon(:icon='hideNewPassword ? `mdi-eye` : `mdi-eye-off`')
               template(v-slot:loader)
                 password-strength(:model-value='newPassword')
             v-text-field.mt-2(
@@ -187,6 +191,7 @@
               color='primary'
               ref='iptNewPasswordVerify'
               v-model='newPasswordVerify'
+              name='new-password-confirmation'
               :type='hideNewPasswordVerify ? "password" : "text"'
               :label='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
               autocomplete='new-password'
@@ -196,7 +201,7 @@
               )
               template(v-slot:append-inner)
                 v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hideNewPasswordVerify ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:changePwd.newPasswordVerifyPlaceholder`)' :disabled='isLoading' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
-                  v-icon(:icon='hideNewPasswordVerify ? `mdi-eye-off` : `mdi-eye`')
+                  v-icon(:icon='hideNewPasswordVerify ? `mdi-eye` : `mdi-eye-off`')
             v-btn.mt-2.text-none(
               width='100%'
               size='large'
@@ -216,6 +221,7 @@
               color='primary'
               ref='iptNewPassword'
               v-model='newPassword'
+              name='new-password'
               :type='hideNewPassword ? "password" : "text"'
               :label='$t(`auth:changePwd.newPasswordPlaceholder`)'
               autocomplete='new-password'
@@ -225,7 +231,7 @@
               )
               template(v-slot:append-inner)
                 v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hideNewPassword ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:changePwd.newPasswordPlaceholder`)' :disabled='isLoading' @click='hideNewPassword = !hideNewPassword')
-                  v-icon(:icon='hideNewPassword ? `mdi-eye-off` : `mdi-eye`')
+                  v-icon(:icon='hideNewPassword ? `mdi-eye` : `mdi-eye-off`')
               template(v-slot:loader)
                 password-strength(:model-value='newPassword')
             v-text-field.mt-2(
@@ -235,6 +241,7 @@
               color='primary'
               ref='iptNewPasswordVerify'
               v-model='newPasswordVerify'
+              name='new-password-confirmation'
               :type='hideNewPasswordVerify ? "password" : "text"'
               :label='$t(`auth:changePwd.newPasswordVerifyPlaceholder`)'
               autocomplete='new-password'
@@ -244,7 +251,7 @@
               )
               template(v-slot:append-inner)
                 v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hideNewPasswordVerify ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:changePwd.newPasswordVerifyPlaceholder`)' :disabled='isLoading' @click='hideNewPasswordVerify = !hideNewPasswordVerify')
-                  v-icon(:icon='hideNewPasswordVerify ? `mdi-eye-off` : `mdi-eye`')
+                  v-icon(:icon='hideNewPasswordVerify ? `mdi-eye` : `mdi-eye-off`')
             v-btn.mt-2.text-none(
               width='100%'
               size='large'
@@ -266,7 +273,7 @@
             ) {{ $t('auth:switchToLogin.link') }}
     v-dialog(v-model='isTFAShown', max-width='500', persistent, aria-labelledby='login-tfa-title')
       v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
-        .login-tfa.text-center.pa-5
+        form.login-tfa.text-center.pa-5(novalidate, @submit.prevent='verifySecurityCode(false)')
           h2#login-tfa-title.text-label-large {{$t('auth:tfaFormTitle')}}
           img(src='_assets/svg/icon-pin-pad.svg', alt='')
           v-text-field.login-tfa-field.mt-2(
@@ -276,25 +283,27 @@
             color="primary"
             ref='iptTFA'
             v-model='securityCode'
+            name='security-code'
             :label='$t("auth:tfa.placeholder")'
             autocomplete='one-time-code'
             inputmode='numeric'
+            pattern='[0-9]{6}'
             maxlength='6'
             required
+            :error-messages='securityCodeError'
             :disabled='isLoading'
-            @keyup.enter='verifySecurityCode(false)'
           )
           v-btn.mt-2.text-none(
             width='100%'
+            type='submit'
             size="large"
             color="primary"
-            @click='verifySecurityCode(false)'
             :loading='isLoading'
             :disabled='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
     v-dialog(v-model='isTFASetupShown', max-width='600', persistent, aria-labelledby='login-tfa-setup-title')
       v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
-        .login-tfa.text-center.pa-5
+        form.login-tfa.text-center.pa-5(novalidate, @submit.prevent='verifySecurityCode(true)')
           h2#login-tfa-setup-title.text-body-large.text-primary {{$t('auth:tfaSetupTitle')}}
           v-divider.my-5
           .text-label-large {{$t('auth:tfaSetupInstrFirst')}}
@@ -310,19 +319,21 @@
             color="primary"
             ref='iptTFASetup'
             v-model='securityCode'
+            name='security-code'
             :label='$t("auth:tfa.placeholder")'
             autocomplete='one-time-code'
             inputmode='numeric'
+            pattern='[0-9]{6}'
             maxlength='6'
             required
+            :error-messages='securityCodeError'
             :disabled='isLoading'
-            @keyup.enter='verifySecurityCode(true)'
           )
           v-btn.mt-2.text-none(
             width='100%'
+            type='submit'
             size="large"
             color="primary"
-            @click='verifySecurityCode(true)'
             :loading='isLoading'
             :disabled='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
@@ -384,6 +395,7 @@ export default {
       hideNewPassword: true,
       hideNewPasswordVerify: true,
       securityCode: '',
+      securityCodeError: '',
       continuationToken: '',
       isLoading: false,
       loaderColor: 'grey-darken-4',
@@ -425,6 +437,9 @@ export default {
       return siteConfig.title
     },
     logoUrl () { return siteConfig.logoUrl },
+    loginStyle () {
+      return this.bgUrl ? { backgroundImage: `url(${this.bgUrl})` } : {}
+    },
     filteredStrategies () {
       const qParams = new URLSearchParams(window.location.search)
       if (this.hideLocal && !qParams.has('all')) {
@@ -549,35 +564,38 @@ export default {
      */
     async verifySecurityCode (setup = false) {
       if (this.isLoading) return
-      if (this.securityCode.length !== 6) {
-        wikiStore.showNotification({
-          style: 'red',
-          message: 'Enter a valid security code.',
-          icon: 'alert'
-        })
+      this.securityCodeError = ''
+      if (!/^\d{6}$/.test(this.securityCode)) {
+        this.securityCodeError = 'Enter a valid security code.'
         focusComponent(setup ? this.$refs.iptTFASetup : this.$refs.iptTFA)
-      } else {
-        this.loaderColor = 'grey-darken-4'
-        this.loaderTitle = this.$t('auth:signingIn')
-        this.isLoading = true
-        try {
-          const respObj = await submitAuthRequest(window.fetch.bind(window), '/_api/auth/login/tfa', {
-            continuationToken: this.continuationToken,
-            securityCode: this.securityCode,
-            setup
-          }, this.$t('auth:genericError'))
-          this.handleLoginResponse(respObj)
-        } catch (err) {
-          if (!setup) {
-            this.isTFAShown = false
-          }
-          console.error(err)
+        return
+      }
+
+      this.loaderColor = 'grey-darken-4'
+      this.loaderTitle = this.$t('auth:signingIn')
+      this.isLoading = true
+      try {
+        const respObj = await submitAuthRequest(window.fetch.bind(window), '/_api/auth/login/tfa', {
+          continuationToken: this.continuationToken,
+          securityCode: this.securityCode,
+          setup
+        }, this.$t('auth:genericError'))
+        this.handleLoginResponse(respObj)
+      } catch (err) {
+        console.error(err)
+        this.isLoading = false
+        if (setup) {
+          this.securityCodeError = getErrorMessage(err)
+          this.$nextTick(() => {
+            focusComponent(this.$refs.iptTFASetup)
+          })
+        } else {
+          this.isTFAShown = false
           wikiStore.showNotification({
             style: 'red',
             message: getErrorMessage(err),
             icon: 'alert'
           })
-          this.isLoading = false
         }
       }
     },
@@ -701,6 +719,7 @@ export default {
         this.isLoading = false
       } else if (respObj.mustProvideTFA === true) {
         this.securityCode = ''
+        this.securityCodeError = ''
         this.isTFAShown = true
         if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
         this.focusTimer = window.setTimeout(() => {
@@ -710,6 +729,7 @@ export default {
         this.isLoading = false
       } else if (respObj.mustSetupTFA === true) {
         this.securityCode = ''
+        this.securityCodeError = ''
         this.isTFASetupShown = true
         this.tfaQRImage = respObj.tfaQRImage || ''
         this.tfaSecret = respObj.tfaSecret || ''

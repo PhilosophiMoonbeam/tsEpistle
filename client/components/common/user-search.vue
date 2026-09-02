@@ -26,6 +26,14 @@
           color='primary'
           ref='searchIpt'
           hide-details
+          role='combobox'
+          aria-autocomplete='list'
+          :aria-controls='items.length > 0 ? resultsId : undefined'
+          :aria-expanded='items.length > 0'
+          :aria-busy='searchLoading'
+          autocomplete='off'
+          @keydown.down='focusResult($event, `first`)'
+          @keydown.up='focusResult($event, `last`)'
           )
         div.user-search__status(aria-live='polite', aria-atomic='true') {{searchStatus}}
         .user-search__instruction(v-if='search.trim().length < 2')
@@ -52,6 +60,8 @@
           message='Try a different name or email address.'
         )
         v-list.user-search__results.mt-3.py-0.radius-7(
+          ref='resultsList'
+          :id='resultsId'
           v-else-if='items.length > 0'
           :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`'
           lines="two"
@@ -98,7 +108,8 @@ export default defineComponent({
   },
   setup() {
     return {
-      dialogTitleId: useId()
+      dialogTitleId: useId(),
+      resultsId: useId()
     }
   },
   data() {
@@ -220,6 +231,12 @@ export default defineComponent({
       if (!this.modelValue) return
       const input = this.$refs.searchIpt as { focus?: () => void } | undefined
       input?.focus?.()
+    },
+    focusResult(event: KeyboardEvent, location: 'first' | 'last'): void {
+      if (this.items.length === 0) return
+      event.preventDefault()
+      const list = this.$refs.resultsList as { focus?: (target: 'first' | 'last') => void } | undefined
+      list?.focus?.(location)
     },
     retrySearch(): void {
       this.queueSearch()

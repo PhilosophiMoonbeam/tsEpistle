@@ -40,6 +40,21 @@
               v-icon(start) mdi-check
               span {{$t('common:actions.apply')}}
         v-alert(v-if='initialLoading', type='info', variant='tonal', role='status') Loading navigation settings…
+        v-alert(
+          v-else-if='loadError'
+          type='error'
+          variant='tonal'
+          icon='mdi-alert-circle-outline'
+        )
+          .text-body-medium Navigation settings could not be loaded.
+          .text-body-small.mt-1 {{ loadError }}
+          v-btn.mt-3(
+            type='button'
+            variant='outlined'
+            size='small'
+            prepend-icon='mdi-refresh'
+            @click='loadNavigation()'
+          ) Retry
         v-container.pa-0.mt-3(fluid, v-else-if='loaded')
           v-row(density="compact")
             v-col(cols='12', md='3')
@@ -155,7 +170,7 @@
                         )
                         v-tooltip(location="top")
                           template(v-slot:activator='{ props }')
-                            v-btn.ml-2(icon, variant='text', v-bind='props', :aria-label='$t(`admin:navigation.copyFromLocale`)', @click='openCopyFromLocaleDialog')
+                            v-btn.ml-2(icon, variant='text', v-bind='props', :aria-label='$t(`admin:navigation.copyFromLocale`)', :disabled='copyLocales.length < 1', @click='openCopyFromLocaleDialog')
                               v-icon mdi-arrange-send-backward
                           span {{$t('admin:navigation.copyFromLocale')}}
                       v-list.navigation-tree.py-2(density="compact", nav)
@@ -171,16 +186,13 @@
                             v-avatar(size='24'): v-icon(color="secondary") mdi-alert
                           em.text-body-small.text-medium-emphasis {{$t('admin:navigation.emptyList')}}
                         draggable(v-model='currentTree', handle='.nav-drag-handle')
-                          template(v-for='(navItem, idx) in currentTree', :key='navItem.id')
+                          template(v-for='navItem in currentTree', :key='navItem.id')
                             v-list-item(
                               v-if='navItem.kind === "link"'
-                              role='option'
-                              :aria-selected='navItem === current'
                               tabindex='0'
+                              :aria-label='itemSelectionLabel(navItem)'
                               :class='{ "is-selected": navItem === current }'
                               @click='selectItem(navItem)'
-                              @keydown.arrow-up.prevent='moveItem(idx, -1)'
-                              @keydown.arrow-down.prevent='moveItem(idx, 1)'
                             )
                               template(v-slot:prepend)
                                 v-btn.nav-drag-handle(icon, size='small', variant='text', :aria-label='`Reorder ${navItem.label}`', @click.stop='selectItem(navItem)')
@@ -191,30 +203,24 @@
                               v-list-item-title {{navItem.label}}
                             .py-2.clickable(
                               v-else-if='navItem.kind === "divider"'
-                              role='option'
-                              :aria-selected='navItem === current'
                               tabindex='0'
+                              :aria-label='itemSelectionLabel(navItem)'
                               :class='{ "is-selected": navItem === current }'
                               @click='selectItem(navItem)'
                               @keydown.enter.prevent='selectItem(navItem)'
                               @keydown.space.prevent='selectItem(navItem)'
-                              @keydown.arrow-up.prevent='moveItem(idx, -1)'
-                              @keydown.arrow-down.prevent='moveItem(idx, 1)'
                             )
                               v-btn.nav-drag-handle(icon, size='small', variant='text', :aria-label='`Reorder divider`', @click.stop='selectItem(navItem)')
                                 v-icon(size='18') mdi-drag-horizontal
                               v-divider
                             v-list-subheader.pl-4.clickable(
                               v-else-if='navItem.kind === "header"'
-                              role='option'
-                              :aria-selected='navItem === current'
                               tabindex='0'
+                              :aria-label='itemSelectionLabel(navItem)'
                               :class='{ "is-selected": navItem === current }'
                               @click='selectItem(navItem)'
                               @keydown.enter.prevent='selectItem(navItem)'
                               @keydown.space.prevent='selectItem(navItem)'
-                              @keydown.arrow-up.prevent='moveItem(idx, -1)'
-                              @keydown.arrow-down.prevent='moveItem(idx, 1)'
                             )
                               v-btn.nav-drag-handle(icon, size='small', variant='text', :aria-label='`Reorder ${navItem.label}`', @click.stop='selectItem(navItem)')
                                 v-icon(size='18') mdi-drag-horizontal
@@ -456,7 +462,8 @@ export default {
       loaded: false,
       saving: false,
       persistedConfig: null as NavigationConfig | null,
-      persistedTrees: [] as NavigationTreeRow[]
+      persistedTrees: [] as NavigationTreeRow[],
+      loadError: ''
     }
   },
   computed: {
@@ -606,13 +613,9 @@ export default {
     selectItem(item: NavigationItem) {
       this.current = item
     },
-    moveItem(index: number, offset: number) {
-      const target = index + offset
-      if (target < 0 || target >= this.currentTree.length) return
-      const next = [...this.currentTree]
-      const [moved] = next.splice(index, 1)
-      next.splice(target, 0, moved)
-      this.currentTree = next
+    itemSelectionLabel (item: NavigationItem) {
+      const label = item.kind === 'divider' ? 'Divider' : item.label || 'Untitled navigation item'
+      return item === this.current ? `${label}, selected` : label
     },
     selectPage() {
       this.selectPageModal = true
@@ -661,6 +664,7 @@ export default {
     async loadNavigation(notify = false) {
       this.initialLoading = true
       this.loaded = false
+      this.loadError = ''
       wikiStore.startLoading('admin-navigation-refresh')
       try {
         const navigation = await fetchNavigation(window.fetch.bind(window), 'Navigation response is invalid')
@@ -679,6 +683,7 @@ export default {
           })
         }
       } catch (err) {
+        this.loadError = getErrorMessage(err)
         wikiStore.showError(err)
       } finally {
         this.initialLoading = false

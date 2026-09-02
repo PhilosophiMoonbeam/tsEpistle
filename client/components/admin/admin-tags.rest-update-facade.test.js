@@ -205,7 +205,8 @@ describe('admin tags REST delete facade', () => {
     expect(source).toMatch(
       /v-dialog\(v-model=['"]deleteTagDialog['"][^)]*\)[\s\S]*?admin:tags\.deleteConfirmText[\s\S]*?@click=['"]deleteTag\(current\)['"][^)]*:loading=['"]deleting['"]/
     )
-    expect(deleteTagBody).toMatch(/if\s*\(\s*this\.deleting\s*\)\s*return/)
+    expect(deleteTagBody).toMatch(/if\s*\(\s*this\.deleting\s*\|\|\s*this\.saving\s*\)\s*return/)
+    expect(saveTagBody).toMatch(/if\s*\(\s*this\.saving\s*\|\|\s*this\.deleting\s*\|\|\s*!this\.tagValid\s*\)\s*return/)
     expect(deleteTagBody).toContain("wikiStore.startLoading('admin-tags-delete')")
     expect(deleteTagBody).toContain("wikiStore.stopLoading('admin-tags-delete')")
     expect(deleteTagBody).toContain("message: this.$t('admin:tags.deleteSuccess')")

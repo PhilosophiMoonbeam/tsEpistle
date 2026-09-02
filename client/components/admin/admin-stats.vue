@@ -3,8 +3,8 @@
     v-row
       v-col(cols='12')
         .admin-header-icon: v-icon(size='80', color='primary') mdi-chart-box-outline
-        .text-headline-medium.text-primary Statistics
-        .text-body-large.text-medium-emphasis Useful information about your wiki
+        h1.ma-0.text-headline-medium.text-primary Statistics
+        p.ma-0.text-body-large.text-medium-emphasis Useful information about your wiki
         async-state(
           state='empty'
           title='Statistics are not available'

@@ -39,6 +39,7 @@
                       bg-color='surface'
                       ref='iptEmail'
                       v-model='email'
+                      name='email'
                       :label='$t("auth:fields.email")'
                       :placeholder='$t("auth:fields.email")'
                       type='email'
@@ -54,6 +55,7 @@
                       bg-color='surface'
                       ref='iptPassword'
                       v-model='password'
+                      name='new-password'
                       :type='hidePassword ? "password" : "text"'
                       :label='$t("auth:fields.password")'
                       :placeholder='$t("auth:fields.password")'
@@ -67,7 +69,7 @@
                     )
                       template(v-slot:append-inner)
                         v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hidePassword ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:fields.password`)' :disabled='isLoading' @click='hidePassword = !hidePassword')
-                          v-icon(:icon='hidePassword ? `mdi-eye-off` : `mdi-eye`')
+                          v-icon(:icon='hidePassword ? `mdi-eye` : `mdi-eye-off`')
                       template(v-slot:loader)
                         password-strength(:model-value='password')
                     v-text-field.mt-2(
@@ -76,6 +78,7 @@
                       bg-color='surface'
                       ref='iptVerifyPassword'
                       v-model='verifyPassword'
+                      name='new-password-confirmation'
                       :type='hideVerifyPassword ? "password" : "text"'
                       :label='$t("auth:fields.verifyPassword")'
                       :placeholder='$t("auth:fields.verifyPassword")'
@@ -87,13 +90,14 @@
                     )
                       template(v-slot:append-inner)
                         v-btn.auth-password-toggle(icon type='button' variant='text' size='small' :aria-label='(hideVerifyPassword ? $t(`common:header.view`) : $t(`common:actions.close`)) + ` ` + $t(`auth:fields.verifyPassword`)' :disabled='isLoading' @click='hideVerifyPassword = !hideVerifyPassword')
-                          v-icon(:icon='hideVerifyPassword ? `mdi-eye-off` : `mdi-eye`')
+                          v-icon(:icon='hideVerifyPassword ? `mdi-eye` : `mdi-eye-off`')
                     v-text-field.mt-2(
                       variant="outlined"
                       prepend-inner-icon='mdi-account-outline'
                       bg-color='surface'
                       ref='iptName'
                       v-model='name'
+                      name='name'
                       :label='$t("auth:fields.name")'
                       :placeholder='$t("auth:fields.name")'
                       autocomplete='name'
@@ -185,9 +189,7 @@ export default {
       return siteConfig.logoUrl
     },
     registerStyle () {
-      return {
-        backgroundImage: `url(${this.bgUrl})`
-      }
+      return this.bgUrl ? { backgroundImage: `url(${this.bgUrl})` } : {}
     }
   },
   mounted () {

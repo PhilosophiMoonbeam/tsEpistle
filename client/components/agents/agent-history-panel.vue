@@ -3,7 +3,7 @@
     class="agent-history"
     elevation="0"
     rounded="xl"
-    :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || openingSessionIds.size > 0 || movingSessionIds.size > 0"
+    :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || openingSessionIds.size > 0 || movingSessionIds.size > 0"
   >
     <header class="agent-history__header">
       <div class="agent-history__mark" aria-hidden="true">
@@ -18,7 +18,7 @@
     </header>
 
     <div class="agent-history__actions">
-      <v-btn class="agent-history__new-folder" color="primary" prepend-icon="mdi-folder-plus-outline" variant="tonal" :disabled="loading || refreshingHistory || savingFolder || deleting" @click="beginCreateFolder">
+      <v-btn class="agent-history__new-folder" color="primary" prepend-icon="mdi-folder-plus-outline" variant="tonal" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting" @click="beginCreateFolder">
         New folder
       </v-btn>
       <v-btn
@@ -26,7 +26,7 @@
         icon="mdi-delete-sweep-outline"
         variant="text"
         aria-label="Reset all conversation history"
-        :disabled="sessions.length === 0 || loading || refreshingHistory || savingFolder || deleting"
+        :disabled="sessions.length === 0 || loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || openingSessionIds.size > 0 || movingSessionIds.size > 0"
         @click="emit('reset')"
       >
         <v-tooltip activator="parent" location="bottom">Reset all history</v-tooltip>
@@ -175,12 +175,12 @@
                 </v-expansion-panel-title>
                 <v-menu location="bottom end">
                   <template #activator="{ props: menuProps }">
-                    <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || savingFolder || deleting" />
+                    <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting" />
                   </template>
                   <v-list density="compact" :aria-label="`Folder actions for ${group.folder.name}`">
-                    <v-list-item link prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || savingFolder || deleting" @click="beginRenameFolder(group.folder)" />
+                    <v-list-item link prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting" @click="beginRenameFolder(group.folder)" />
                     <v-divider />
-                    <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || savingFolder || deleting" @click="beginRemoveFolder(group.folder)" />
+                    <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting" @click="beginRemoveFolder(group.folder)" />
                   </v-list>
                 </v-menu>
               </div>
@@ -250,6 +250,7 @@
           block
           prepend-icon="mdi-chevron-down"
           variant="tonal"
+          :disabled="refreshingHistory || sessionsReloading"
           @click="loadMoreSessions"
         >
           Load more
@@ -504,7 +505,7 @@ const clearProjectedFolder = (sessionId: string): void => {
   projectedFolderIds.value = next
 }
 const sessionBusy = (sessionId: string): boolean =>
-  refreshingHistory.value || openingSessionIds.value.has(sessionId) || movingSessionIds.value.has(sessionId)
+  loading.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0 || movingSessionIds.value.has(sessionId)
 const hasRenderedDropDestination = (session: AgentSessionSummary): boolean =>
   session.folderId !== null || visibleFolderGroups.value.length > 0
 const canDragSession = (session: AgentSessionSummary): boolean =>
@@ -574,6 +575,7 @@ const refreshHistory = async (): Promise<void> => {
   }
 }
 const loadMoreSessions = async (): Promise<void> => {
+  if (refreshingHistory.value || sessionsReloading.value || sessionsLoadingMore.value) return
   await agents.loadMoreSessions()
 }
 const componentElement = (component: ComponentRoot | null): HTMLElement | null => {
@@ -588,7 +590,7 @@ const closeHistory = (): void => {
 }
 
 const openSession = async (sessionId: string): Promise<void> => {
-  if (refreshingHistory.value) return
+  if (loading.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0) return
   if (sessionId === thread.value?.session.id) {
     agents.cancelSessionTransition()
     return
@@ -607,7 +609,7 @@ const openSession = async (sessionId: string): Promise<void> => {
 }
 
 const moveSession = async (session: AgentSessionSummary, folderId: string | null): Promise<boolean> => {
-  if (refreshingHistory.value || session.folderId === folderId || movingSessionIds.value.has(session.id)) return false
+  if (loading.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0 || session.folderId === folderId || movingSessionIds.value.has(session.id)) return false
   const title = session.title || 'New conversation'
   const destination = dropDestinationName(folderId)
   const originalLocation = sessionLocationName(session)

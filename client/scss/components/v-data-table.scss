@@ -93,7 +93,6 @@
   > .v-data-table-footer {
     min-height: 3.5rem;
     gap: var(--wiki-space-2, .5rem);
-    border-block-start: 1px solid var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
     background: var(
       --wiki-surface-sunken,
       color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface)))

@@ -41,7 +41,7 @@
       v-col(lg='3', cols='12')
         v-card.animated.fadeInUp
           v-toolbar(flat, color='primary', density="compact")
-            .text-body-large {{$t('admin:comments.provider')}}
+            h2.text-body-large.ma-0 {{$t('admin:comments.provider')}}
           async-state(v-if='loading', state='loading', title='Loading comment providers', message='Fetching available discussion providers.')
           async-state(v-else-if='errorMessage', state='error', title='Comment providers could not be loaded', :message='errorMessage', retry-label='Try again', @retry='loadProviders')
           async-state(v-else-if='providers.length < 1', state='empty', title='No comment providers available', message='No discussion provider is configured.')
@@ -78,16 +78,16 @@
       v-col(cols='12', lg='9')
         v-card.animated.fadeInUp.wait-p2s(v-if='!loading && !errorMessage && provider.key')
           v-toolbar(color='primary', density="compact", flat)
-            .text-body-large {{provider.title}}
+            h2.text-body-large.ma-0 {{provider.title}}
           v-card-info(color='info')
             div
               div {{provider.description}}
-              span.text-body-small: a(:href='provider.website', style='overflow-wrap:anywhere') {{provider.website}}
+              span.text-body-small: a(:href='provider.website', target='_blank', rel='noopener noreferrer', :aria-label='`${provider.title} website — opens in a new tab`', style='overflow-wrap:anywhere') {{provider.website}}
             v-spacer
             .admin-providerlogo
               img(:src='provider.logo', :alt='provider.title')
           v-card-text
-            .text-label-small.my-5 {{$t('admin:comments.providerConfig')}}
+            h3.text-label-small.my-5 {{$t('admin:comments.providerConfig')}}
             .text-body-medium.ml-3(v-if='!provider.config || provider.config.length < 1'): em {{$t('admin:comments.providerNoConfig')}}
             template(v-else, v-for='cfg in provider.config', :key='cfg.key')
               v-select.mb-3(
@@ -174,7 +174,7 @@ export default {
       return this.providers.find(provider => provider.key === this.selectedProvider) || {}
     },
     canSave (): boolean {
-      return !this.loading && !this.refreshing && !this.saving && this.providers.length > 0 &&
+      return !this.loading && !this.refreshing && !this.saving && !this.errorMessage && this.providers.length > 0 &&
         Boolean(this.providers.find(provider => provider.key === this.selectedProvider)?.isAvailable)
     }
   },

@@ -2,12 +2,14 @@
   v-dialog(
     v-model='isShown'
     max-width='550'
+    scrollable
     :persistent='loading'
     scrim='red-darken-4'
     opacity='.7'
     aria-labelledby='page-delete-dialog-title'
     aria-describedby='page-delete-dialog-description'
     @after-enter='focusCancel'
+    @after-leave='restoreFocus'
     )
     v-card
       .dialog-header.is-short.is-red
@@ -49,7 +51,8 @@ export default defineComponent({
       deleteTransitionTimer: undefined as number | undefined,
       redirectTimer: undefined as number | undefined,
       deleteRequestId: 0,
-      deleteAbortController: null as AbortController | null
+      deleteAbortController: null as AbortController | null,
+      returnFocusTarget: null as HTMLElement | null
     }
   },
   computed: {
@@ -72,6 +75,7 @@ export default defineComponent({
     this.deleteRequestId += 1
     this.deleteAbortController?.abort()
     this.deleteAbortController = null
+    this.returnFocusTarget = null
     window.clearTimeout(this.deleteTransitionTimer)
     window.clearTimeout(this.redirectTimer)
     document.body.classList.remove('page-deleted-pending', 'page-deleted')
@@ -79,6 +83,20 @@ export default defineComponent({
   watch: {
     isShown(newValue: boolean) {
       if (newValue) {
+        const activeElement = document.activeElement
+        const overlayId = activeElement instanceof HTMLElement
+          ? activeElement.closest<HTMLElement>('.v-overlay__content')?.id
+          : undefined
+        let overlayActivator: HTMLElement | null = null
+        if (overlayId) {
+          for (const candidate of document.querySelectorAll<HTMLElement>('[aria-controls]')) {
+            if (candidate.getAttribute('aria-controls') === overlayId) {
+              overlayActivator = candidate
+              break
+            }
+          }
+        }
+        this.returnFocusTarget = overlayActivator ?? (activeElement instanceof HTMLElement ? activeElement : null)
         this.retainPendingClass = false
         document.body.classList.add('page-deleted-pending')
       } else if (!this.retainPendingClass) {
@@ -90,6 +108,13 @@ export default defineComponent({
     focusCancel(): void {
       const actions = this.$refs.dialogActions as { $el?: Element } | undefined
       actions?.$el?.querySelector<HTMLElement>('button')?.focus()
+    },
+    restoreFocus(): void {
+      const target = this.returnFocusTarget
+      this.returnFocusTarget = null
+      if (target?.isConnected && target.getClientRects().length > 0 && !target.matches(':disabled')) {
+        target.focus({ preventScroll: true })
+      }
     },
     discard(): void {
       document.body.classList.remove('page-deleted-pending')
@@ -119,6 +144,7 @@ export default defineComponent({
           return
         }
         this.retainPendingClass = true
+        this.returnFocusTarget = null
         this.isShown = false
         this.deleteTransitionTimer = window.setTimeout(() => {
           this.deleteTransitionTimer = undefined
@@ -144,6 +170,10 @@ export default defineComponent({
         }
         if (requestId === this.deleteRequestId) {
           this.loading = false
+          if (this.isShown) {
+            await this.$nextTick()
+            this.focusCancel()
+          }
         }
       }
     }

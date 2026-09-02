@@ -3,6 +3,7 @@
     v-model='isShown'
     max-width='700'
     aria-labelledby='editor-conflict-title'
+    persistent
     )
     v-card
       .dialog-header.is-short.is-indigo

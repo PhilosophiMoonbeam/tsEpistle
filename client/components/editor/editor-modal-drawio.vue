@@ -60,22 +60,6 @@ type DrawioRequest =
       format: 'xmlsvg'
     }
 
-// const xmlTest = `<?xml version="1.0" encoding="UTF-8"?>
-// <mxfile version="13.4.2">
-//   <diagram id="SgbkCjxR32CZT1FvBvkp" name="Page-1">
-//     <mxGraphModel dx="2062" dy="1123" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
-//       <root>
-//         <mxCell id="0" />
-//         <mxCell id="1" parent="0" />
-//         <mxCell id="5gE3BTvRYS_8FoJnOusC-1" value="" style="whiteSpace=wrap;html=1;aspect=fixed;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
-//           <mxGeometry x="380" y="530" width="80" height="80" as="geometry" />
-//         </mxCell>
-//       </root>
-//     </mxGraphModel>
-//   </diagram>
-// </mxfile>
-// `
-
 export default {
   components: { AsyncState },
   data() {
@@ -83,6 +67,7 @@ export default {
       loading: true,
       loadError: '',
       frameVersion: 0,
+      diagramXml: null as string | null,
       loadTimer: null as ReturnType<typeof setTimeout> | null,
       returnFocus: null as HTMLElement | null,
       focusScope: null as ModalFocusScope | null,
@@ -108,15 +93,24 @@ export default {
       this.clearLoadTimer()
       this.loading = false
       this.loadError = message
+      this.$nextTick(() => {
+        if (!this.disposed) this.focusScope?.focusFirst()
+      })
     },
     retry () {
       this.loading = true
       this.loadError = ''
       this.frameVersion += 1
       this.startLoadTimer()
+      this.$nextTick(() => {
+        if (!this.disposed) this.focusScope?.focusFirst()
+      })
     },
     close () {
+      if (this.disposed) return
+      this.disposed = true
       this.clearLoadTimer()
+      window.removeEventListener('message', this.receive)
       wikiStore.editor.activeModal = ''
     },
     send (msg: DrawioRequest) {
@@ -145,10 +139,9 @@ export default {
               action: 'load',
               autosave: 0,
               modified: 'unsavedChanges',
-              xml: wikiStore.editor.activeModalData as string | null,
+              xml: this.diagramXml,
               title: wikiStore.page.title
             })
-            wikiStore.editor.activeModalData = null
             break
           }
           case 'save': {
@@ -190,6 +183,10 @@ export default {
     }
   },
   mounted () {
+    this.diagramXml = typeof wikiStore.editor.activeModalData === 'string'
+      ? wikiStore.editor.activeModalData
+      : null
+    wikiStore.editor.activeModalData = null
     this.returnFocus = document.activeElement as HTMLElement | null
     window.addEventListener('message', this.receive)
     this.startLoadTimer()
@@ -202,7 +199,8 @@ export default {
         restoreTarget: () => this.returnFocus,
         onEscape: this.close
       })
-      ;(this.$refs.closeButton as { focus?: () => void })?.focus?.()
+      const closeButton = this.$refs.closeButton as { $el?: unknown } | undefined
+      if (closeButton?.$el instanceof HTMLElement) closeButton.$el.focus()
     })
   },
   beforeUnmount () {
@@ -225,14 +223,14 @@ export default {
   height: 100vh;
   height: 100dvh;
   background-color: rgb(var(--v-theme-surface)) !important;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 
   &__toolbar {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
+    position: relative;
     z-index: 2;
+    flex: 0 0 auto;
     background-color: rgb(var(--v-theme-surface)) !important;
     color: rgb(var(--v-theme-on-surface));
   }
@@ -247,9 +245,9 @@ export default {
   }
 
   > iframe {
+    flex: 1 1 auto;
     width: 100%;
-    height: 100vh;
-    height: 100dvh;
+    min-height: 0;
     border: 0;
     padding: 0;
     background-color: #FFF;

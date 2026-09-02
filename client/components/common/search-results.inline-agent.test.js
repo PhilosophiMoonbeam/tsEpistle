@@ -136,7 +136,7 @@ describe('inline Ask mode contract', () => {
     )
   })
 
-  test('keeps memory work alive without trapping panel or workspace dismissal', () => {
+  test('keeps memory mutation mounted and blocks dismissal paths until it settles', () => {
     const scrim = inline.match(/<button\s+v-if="panelMode === 'modal' && \(historyOpen \|\| memoryOpen\)"[\s\S]*?\/>/)?.[0] ?? ''
     const mobileReturn = inline.match(/<v-btn class="inline-agent__mobile-return"[^>]*\/>/)?.[0] ?? ''
     const mobileClose = inline.match(/<v-btn class="inline-agent__mobile-close"[^>]*\/>/)?.[0] ?? ''
@@ -144,18 +144,31 @@ describe('inline Ask mode contract', () => {
     const closePanels = inline.match(/const closePanels = \(\): void => \{[\s\S]*?\n\}/)?.[0] ?? ''
 
     expect(scrim).toContain('@click="closePanels"')
-    expect(scrim).not.toContain(':disabled')
+    expect(mobileReturn).toContain(':disabled="memoryMutationBusy"')
+    expect(mobileReturn).toContain(':title="memoryMutationBusy ? \'Wait for the memory change to finish\' : undefined"')
     expect(mobileReturn).toContain('@click="emit(\'return-search\')"')
-    expect(mobileReturn).not.toContain(':disabled')
+    expect(mobileClose).toContain(':disabled="memoryMutationBusy"')
+    expect(mobileClose).toContain(':title="memoryMutationBusy ? \'Wait for the memory change to finish\' : undefined"')
     expect(mobileClose).toContain('@click="emit(\'close\')"')
-    expect(mobileClose).not.toContain(':disabled')
-    expect(closeMemory).not.toContain('memoryMutationBusy')
-    expect(closePanels).not.toContain('memoryMutationBusy')
-    expect(inline).toMatch(/<aside\s+v-show="memoryOpen"[\s\S]*?<AgentMemoryManager/)
+    expect(closeMemory).toMatch(/if \(memoryMutationBusy\.value\) return[\s\S]*memoryOpen\.value = false/)
+    expect(closePanels).toMatch(/if \(memoryOpen\.value && memoryMutationBusy\.value\) return[\s\S]*memoryOpen\.value = false/)
+    expect(inline).toMatch(/const updateMemoryOpen = \(open: boolean\): void => \{[\s\S]*else closeMemory\(\)/)
+    expect(inline).toMatch(/onEscape: kind === 'history' \? closeHistory : closeMemory/)
+    expect(inline).toMatch(/<aside\s+v-show="memoryOpen"[\s\S]*?<AgentMemoryManager[^>]*@update:busy="memoryMutationBusy = \$event"/)
     expect(inline).not.toMatch(/<aside\s+v-if="memoryOpen"/)
-    expect(inline).toMatch(/:disabled="memoryMutationBusy && !memoryOpen"[\s\S]*@click="toggleMemory"/)
+    expect(inline).toMatch(/aria-controls="agent-memory-panel"[\s\S]*?:disabled="memoryMutationBusy"[\s\S]*?@click="toggleMemory"/)
+    expect(inline).toMatch(/class="inline-agent__panel-menu-item"[\s\S]*?role="menuitem"[\s\S]*?:disabled="memoryMutationBusy"[\s\S]*?@click="toggleMemory"/)
+    expect(inline).toMatch(
+      /aria-controls="agent-history-panel"[\s\S]*?:disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'"[\s\S]*?@click="toggleHistory"/
+    )
     expect(inline).toMatch(
       /const toggleMemory = \(\): void => \{[\s\S]*if \(memoryOpen\.value\)[\s\S]*closeMemory\(\)[\s\S]*if \(memoryMutationBusy\.value\) return[\s\S]*memoryOpen\.value = true/
+    )
+    expect(inline).toMatch(
+      /const toggleHistory = \(\): void => \{[\s\S]*if \(memoryMutationBusy\.value && memoryOpen\.value && panelMode\.value !== 'wide'\) return/
+    )
+    expect(inline).toMatch(
+      /if \(panelMode\.value === 'wide' && nextMode !== 'wide' && historyOpen\.value && memoryOpen\.value\) \{[\s\S]*if \(memoryMutationBusy\.value\) \{[\s\S]*historyOpen\.value = false[\s\S]*panelMode\.value = nextMode[\s\S]*return/
     )
     expect(memory).toMatch(/onBeforeUnmount\(\(\) => \{[\s\S]*disposed = true[\s\S]*loadGeneration \+= 1[\s\S]*loadController\?\.abort\(\)/)
     expect(memory).toMatch(/catch \(value\) \{[\s\S]*if \(disposed\) return/)

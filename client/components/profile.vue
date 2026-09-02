@@ -9,9 +9,9 @@
             @click='profileDrawerShown = !profileDrawerShown'
             :aria-expanded='profileDrawerShown'
             aria-controls='profile-navigation'
-            aria-label='Profile navigation'
+            :aria-label='profileDrawerShown ? `Close profile navigation` : `Open profile navigation`'
           )
-            v-icon mdi-menu
+            v-icon {{ profileDrawerShown ? 'mdi-close' : 'mdi-menu' }}
           span {{ $t('profile:title') }}
     v-navigation-drawer#profile-navigation.pb-0.profile-sidebar(
       v-model='profileDrawerShown'
@@ -45,7 +45,7 @@
           v-list-item.profile-navigation-item(to='/pages' color='primary')
             template(v-slot:prepend): v-icon mdi-file-document-outline
             v-list-item-title {{$t('profile:pages.title')}}
-    v-main.profile-main
+    v-main.profile-main(ref='profileMain' tabindex='-1')
       router-view(v-slot='{ Component }')
         transition(name='profile-router')
           component(:is='Component')
@@ -74,6 +74,14 @@ export default defineComponent({
   },
   watch: {
     '$route.fullPath' () {
+      this.$nextTick(() => {
+        const main = ((this.$refs.profileMain as { $el?: HTMLElement })?.$el || this.$refs.profileMain) as HTMLElement | undefined
+        const heading = main?.querySelector('h1') as HTMLElement | null
+        if (heading) {
+          heading.setAttribute('tabindex', '-1')
+          heading.focus({ preventScroll: true })
+        }
+      })
       if (this.$vuetify.display.smAndDown) {
         this.profileDrawerShown = false
       }
@@ -227,6 +235,11 @@ export default defineComponent({
   background:
     radial-gradient(circle at 88% 0, color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent), transparent 34rem),
     rgb(var(--v-theme-background));
+
+  h1[tabindex='-1']:focus {
+    outline: none;
+    box-shadow: none;
+  }
 
   > .v-container {
     width: min(100%, var(--wiki-content-max));

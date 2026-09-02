@@ -102,6 +102,8 @@
           persistent
           max-width='450'
           width='calc(100vw - 2rem)'
+          aria-labelledby='renew-certificate-progress-title'
+          aria-describedby='renew-certificate-progress-description'
         )
           v-card
             v-card-text.pa-8.text-center
@@ -112,8 +114,8 @@
                 :width='4'
                 aria-label='Renewing certificate'
               )
-              .mt-5.text-body-large {{$t('admin:ssl.renewCertificateLoadingTitle')}}
-              .text-body-small.text-medium-emphasis.mt-4 {{$t('admin:ssl.renewCertificateLoadingSubtitle')}}</template>
+              .mt-5.text-body-large#renew-certificate-progress-title {{$t('admin:ssl.renewCertificateLoadingTitle')}}
+              .text-body-small.text-medium-emphasis.mt-4#renew-certificate-progress-description {{$t('admin:ssl.renewCertificateLoadingSubtitle')}}</template>
 
 <script lang='ts'>
 import AsyncState from '@/components/common/async-state.vue'
@@ -308,6 +310,19 @@ export default {
           message: this.$t('admin:ssl.renewCertificateSuccess'),
           icon: 'check'
         })
+        try {
+          const info = await fetchSystemSsl(
+            createAbortableFetch(controller.signal),
+            'SSL status response is invalid'
+          )
+          if (!controller.signal.aborted) {
+            this.info = info
+          }
+        } catch (err) {
+          if (!controller.signal.aborted) {
+            pushGraphError(wikiStore, err)
+          }
+        }
       } catch (err) {
         if (!controller.signal.aborted) {
           pushGraphError(wikiStore, err)

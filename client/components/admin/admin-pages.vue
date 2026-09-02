@@ -10,7 +10,7 @@
           template(v-slot:actions)
             v-btn.animated.fadeInDown.wait-p1s(icon color='grey' variant="outlined" @click='refresh' :loading='loading' :disabled='loading' aria-label='Refresh pages')
               v-icon.text-grey mdi-refresh
-            v-btn.animated.fadeInDown(color='primary' variant="flat" size="large" to='pages/visualize' :icon='$vuetify.display.smAndDown' aria-label='Visualize pages')
+            v-btn.animated.fadeInDown(color='primary' variant="flat" size="large" to='/pages/visualize' :icon='$vuetify.display.smAndDown' aria-label='Visualize pages')
               v-icon(:start='$vuetify.display.mdAndUp') mdi-graph
               span(v-if='$vuetify.display.mdAndUp') Visualize
         v-card.mt-3.animated.fadeInUp
@@ -29,7 +29,6 @@
             :items='filteredPages'
             :headers='responsiveHeaders'
             item-value='id'
-            :search='search'
             :hide-default-header='$vuetify.display.smAndDown'
             v-model:page='pagination'
             :items-per-page='15'
@@ -37,6 +36,7 @@
             must-sort
             :sort-by='sortBy'
             hide-default-footer
+            aria-label='Pages'
           )
             template(v-slot:item='props')
               tr(v-if='$vuetify.display.mdAndUp')
@@ -91,7 +91,7 @@ export default {
         { title: 'ID', value: 'id', width: 80, sortable: true },
         { title: 'Title', value: 'title' },
         { title: 'Path', value: 'path' },
-        { title: 'Status', value: 'status', sortable: false, width: 120 },
+        { title: 'Status', value: 'isPublished', sortable: false, width: 120 },
         { title: 'Created', value: 'createdAt', width: 250 },
         { title: 'Last Updated', value: 'updatedAt', width: 250 }
       ],
@@ -102,7 +102,7 @@ export default {
       states: [
         { text: 'All Publishing States', value: null },
         { text: 'Published', value: true },
-        { text: 'Not Published', value: false }
+        { text: 'Draft', value: false }
       ] as PageFilterOption<boolean | null>[],
       errorMessage: '',
       loading: false,
@@ -114,10 +114,21 @@ export default {
       return this.$vuetify.display.smAndDown ? this.headers.filter(header => header.value === 'title') : this.headers
     },
     filteredPages(): PageListRow[] {
-      return this.pages.filter(pg =>
-        (this.selectedLang === null || this.selectedLang === pg.locale) &&
-        (this.selectedState === null || this.selectedState === pg.isPublished)
-      )
+      const query = this.search.trim().toLocaleLowerCase()
+      return this.pages.filter(pg => {
+        if (this.selectedLang !== null && this.selectedLang !== pg.locale) return false
+        if (this.selectedState !== null && this.selectedState !== pg.isPublished) return false
+        if (!query) return true
+        return [
+          String(pg.id),
+          pg.title ?? '',
+          pg.description ?? '',
+          pg.locale,
+          `/${pg.path}`,
+          `${pg.locale}/${pg.path}`,
+          pg.isPublished ? 'published' : 'draft'
+        ].some(value => value.toLocaleLowerCase().includes(query))
+      })
     },
     hasActiveFilters() {
       return Boolean(this.search.trim() || this.selectedLang !== null || this.selectedState !== null)
@@ -125,7 +136,7 @@ export default {
     langs(): PageFilterOption<string | null>[] {
       const locales = new Set<string>()
       for (const page of this.pages) locales.add(page.locale)
-      return [{ text: 'All Locales', value: null }, ...Array.from(locales, locale => ({ text: locale, value: locale }))]
+      return [{ text: 'All Locales', value: null }, ...Array.from(locales).sort((a, b) => a.localeCompare(b)).map(locale => ({ text: locale, value: locale }))]
     }
   },
   methods: {

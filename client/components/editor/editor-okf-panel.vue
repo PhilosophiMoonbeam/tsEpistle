@@ -1,19 +1,29 @@
 <template lang='pug'>
-  .editor-okf-panel
+  .editor-okf-panel(:aria-busy='okfLoading')
     v-progress-linear(v-if='okfLoading', indeterminate, color='primary', aria-label='Loading Knowledge / OKF data')
     v-alert.mb-4(v-if='okfError', type='error', variant='tonal', role='alert')
-      .d-flex.align-center
+      .d-flex.align-center.flex-wrap.ga-2
         span {{ okfError }}
         v-spacer
         v-chip(size='small', color='error', variant='outlined') Load error
+        v-btn(
+          v-if='canRetry'
+          ref='retryButton'
+          size='small'
+          color='error'
+          variant='tonal'
+          :disabled='retryPending || okfLoading'
+          :loading='retryPending || okfLoading'
+          @click='retryLoad'
+        ) Retry
 
-    v-alert.mb-4(v-if='!hasMetadata', type='warning', variant='tonal', role='status')
+    v-alert.mb-4(v-if='!okfLoading && !okfError && !hasMetadata', type='warning', variant='tonal', role='status')
       .d-flex.align-center.flex-wrap.ga-2
         span {{ isInvalid ? 'The Knowledge / OKF authority record is invalid.' : 'No Knowledge / OKF authority metadata is available.' }}
         v-btn.ml-auto(size='small', color='primary', variant='outlined', @click='resetInvalid') Reset to stable reference
 
     v-card.mb-4(variant='outlined')
-      v-card-title.text-body-large Authority
+      v-card-title.text-body-large(ref='authorityHeading', tabindex='-1') Authority
       v-card-text
         v-row(density='compact')
           v-col(cols='12', sm='6', md='3')
@@ -65,11 +75,24 @@
         .d-flex.align-center.mt-2.mb-2
           .text-title-small Sources
           v-spacer
-          v-btn(size='small', variant='tonal', color='primary', :disabled='!hasMetadata', @click='addSource')
+          v-btn(
+            ref='addSourceButton'
+            size='small'
+            variant='tonal'
+            color='primary'
+            :disabled='!hasMetadata'
+            @click='addSource'
+          )
             v-icon(start) mdi-plus
             span Add source
         .text-body-small.text-medium-emphasis.mb-2(v-if='sources.length === 0') No sources recorded.
-        v-row.align-center(v-for='(source, index) of sources', :key='sourceKeys[index]', density='compact')
+        v-row.align-center(
+          v-for='(source, index) of sources'
+          :key='sourceKeys[index]'
+          density='compact'
+          role='group'
+          :aria-label='`Source ${index + 1}`'
+        )
           v-col(cols='12', md='4')
             v-text-field(:model-value='source.resource', label='Source resource', variant='outlined', density='compact', :disabled='!hasMetadata', @update:model-value='updateSource(index, { resource: $event })')
           v-col(cols='12', sm='6', md='3')
@@ -77,7 +100,15 @@
           v-col(cols='12', sm='6', md='4')
             v-text-field(:model-value='source.title', label='Source title', variant='outlined', density='compact', :disabled='!hasMetadata', @update:model-value='updateSource(index, { title: $event })')
           v-col(cols='12', md='1').d-flex.justify-end
-            v-btn(icon='mdi-delete-outline', variant='text', color='error', size='small', :disabled='!hasMetadata', :aria-label='`Remove source ${index + 1}`', @click='removeSource(index)')
+            v-btn(
+              icon='mdi-delete-outline'
+              variant='text'
+              color='error'
+              size='small'
+              :disabled='!hasMetadata'
+              :aria-label='`Remove source ${index + 1}`'
+              @click='removeSource(index)'
+            )
 
         .text-title-small.mt-4.mb-2 Extension JSON
         .text-body-small.text-medium-emphasis.mb-2 Non-core metadata keys are edited as a JSON object.
@@ -170,6 +201,10 @@ const CORE_METADATA_KEYS = new Set([
 const DANGEROUS_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
 
 type ExtensionParseResult = { value: Record<string, unknown>; error: null } | { value: null; error: string }
+type OkfLoadRetry = {
+  isAvailable: () => boolean
+  run: () => Promise<void>
+}
 
 export function parseExtensionJson (text: string): ExtensionParseResult {
   let parsed: unknown
@@ -192,10 +227,17 @@ export function parseExtensionJson (text: string): ExtensionParseResult {
 
 export default defineComponent({
   name: 'EditorOkfPanel',
+  inject: {
+    okfLoadRetry: {
+      from: 'okfLoadRetry',
+      default: null as OkfLoadRetry | null
+    }
+  },
   data () {
     return {
       extensionText: '{}',
       extensionError: '',
+      retryPending: false,
       extensionEditing: false,
       statusItems: ['draft', 'stable', 'deprecated'],
       okfStore: wikiStore,
@@ -212,6 +254,10 @@ export default defineComponent({
     },
     okfError () {
       return this.okfStore.page.okfError
+    },
+    canRetry () {
+      const retry = this.okfLoadRetry as OkfLoadRetry | null | undefined
+      return Boolean(this.okfError && retry?.isAvailable())
     },
     authority () {
       return this.okf.authority
@@ -323,6 +369,24 @@ export default defineComponent({
       else nextMetadata[field] = value
       this.replaceMetadata(nextMetadata)
     },
+    focusControl (control: unknown) {
+      const element = control instanceof HTMLElement
+        ? control
+        : (control as { $el?: unknown } | undefined)?.$el
+      if (element instanceof HTMLElement) element.focus({ preventScroll: true })
+    },
+    async retryLoad () {
+      const retry = this.okfLoadRetry as OkfLoadRetry | null | undefined
+      if (!retry?.isAvailable() || this.retryPending) return
+      this.retryPending = true
+      try {
+        await retry.run()
+      } finally {
+        this.retryPending = false
+        await this.$nextTick()
+        this.focusControl(this.okfError ? this.$refs.retryButton : this.$refs.authorityHeading)
+      }
+    },
     addSource () {
       if (!this.hasMetadata) return
       this.sourceKeys.push(this.nextSourceKey++)
@@ -337,6 +401,7 @@ export default defineComponent({
       if (!this.hasMetadata) return
       this.sourceKeys.splice(index, 1)
       this.updateMetadata({ sources: this.sources.filter((_source, sourceIndex) => sourceIndex !== index) })
+      this.$nextTick(() => this.focusControl(this.$refs.addSourceButton))
     },
     resetInvalid () {
       if (this.hasMetadata) return

@@ -50,11 +50,9 @@
 
   &::before,
   &::after {
-    inset-inline-start: 50%;
-    width: 34%;
+    inset-inline: 33%;
     height: 1px;
     background: var(--wiki-gutter-ink);
-    transform: translateX(-50%);
   }
 
   &::before {

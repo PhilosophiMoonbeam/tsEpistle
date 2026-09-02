@@ -115,12 +115,10 @@
                         template(v-slot:title) {{ item.name }}
                         template(v-slot:subtitle) {{ item.nativeName }}
                         template(v-slot:append)
-                          v-checkbox-btn(
-                            :model-value='namespaces.includes(item.code)'
-                            tabindex='-1'
+                          v-icon(
+                            :icon='namespaces.includes(item.code) ? `mdi-checkbox-marked` : `mdi-checkbox-blank-outline`'
+                            :color='namespaces.includes(item.code) ? `primary` : undefined'
                             aria-hidden='true'
-                            :ripple='false'
-                            @click='$event.preventDefault()'
                           )
             v-col(xl='6' lg='7' cols='12')
               v-card.animated.fadeInUp.wait-p4s

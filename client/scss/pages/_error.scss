@@ -7,6 +7,7 @@
   padding-block: 40px;
   padding-inline: 22px;
   place-items: center;
+  place-items: safe center;
   background:
     radial-gradient(circle at 18% 15%, rgba(var(--v-theme-primary), .25), transparent 28rem),
     radial-gradient(circle at 82% 85%, rgba(99, 102, 241, .18), transparent 32rem),
@@ -88,6 +89,7 @@
   margin: 0;
   color: rgba(255, 255, 255, .68);
   line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .app-error-home {
@@ -150,8 +152,12 @@
   .app-error-content {
     inline-size: 100%;
     min-block-size: 100dvh;
-    padding-block: 30px;
-    padding-inline: 22px;
+    padding-block:
+      max(30px, env(safe-area-inset-top))
+      max(30px, env(safe-area-inset-bottom));
+    padding-inline:
+      max(22px, env(safe-area-inset-left))
+      max(22px, env(safe-area-inset-right));
     border: 0;
     border-radius: 0;
     background: rgba(15, 23, 42, .72);

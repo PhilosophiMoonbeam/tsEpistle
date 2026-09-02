@@ -71,7 +71,7 @@
           div.v-card-info(v-if='engine.key')
             div
               div {{engine.description}}
-              span.text-body-small.provider-url: a(:href='engine.website') {{engine.website}}
+              span.text-body-small.provider-url: a(:href='engine.website' target='_blank' rel='noopener' :aria-label='`${engine.title} website — opens in a new tab`') {{engine.website}}
             v-spacer
             .admin-providerlogo
               img(:src='engine.logo', :alt='engine.title')

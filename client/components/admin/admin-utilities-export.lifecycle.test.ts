@@ -21,8 +21,6 @@ type ExportState = {
   progress: number
   isDisposed: boolean
   requestGeneration: number
-  startTimeoutHandle: number | null
-  pollAnimationFrameHandle: number | null
   pollTimeoutHandle: number | null
 }
 
@@ -96,9 +94,7 @@ const settlePromises = async (): Promise<void> => {
 class Scheduler {
   private nextHandle = 1
   readonly timeouts = new Map<number, () => void>()
-  readonly animationFrames = new Map<number, FrameRequestCallback>()
   readonly clearedTimeouts: number[] = []
-  readonly cancelledAnimationFrames: number[] = []
 
   readonly window = {
     fetch: (() => Promise.reject(new Error('Unexpected direct fetch'))) as typeof fetch,
@@ -111,16 +107,6 @@ class Scheduler {
     clearTimeout: (handle: number): void => {
       this.clearedTimeouts.push(handle)
       this.timeouts.delete(handle)
-    },
-    requestAnimationFrame: (callback: FrameRequestCallback): number => {
-      const handle = this.nextHandle
-      this.nextHandle += 1
-      this.animationFrames.set(handle, callback)
-      return handle
-    },
-    cancelAnimationFrame: (handle: number): void => {
-      this.cancelledAnimationFrames.push(handle)
-      this.animationFrames.delete(handle)
     }
   }
 
@@ -129,14 +115,6 @@ class Scheduler {
     if (!entry) throw new Error('Expected a scheduled timeout')
     this.timeouts.delete(entry[0])
     await entry[1]()
-    await settlePromises()
-  }
-
-  async runNextAnimationFrame(): Promise<void> {
-    const entry = this.animationFrames.entries().next().value as [number, FrameRequestCallback] | undefined
-    if (!entry) throw new Error('Expected a scheduled animation frame')
-    this.animationFrames.delete(entry[0])
-    entry[1](0)
     await settlePromises()
   }
 }
@@ -208,57 +186,65 @@ describe('admin utilities export lifecycle ownership', () => {
     expect(source).not.toMatch(/v-dialog\(\s*v-model=['"]isLoading['"]/)
   })
 
-  it('forwards the selected entities and trimmed path through a successful export lifecycle', async () => {
+  it('starts immediately, forwards normalized input, and balances loading across a successful export', async () => {
     const scheduler = new Scheduler()
+    const pendingStatus = deferred<ExportStatus>()
     const startExport = vi.fn(async () => undefined)
-    const fetchStatus = vi.fn(async (): Promise<ExportStatus> => ({ status: 'success' }))
+    const fetchStatus = vi.fn(() => pendingStatus.promise)
     const { vm } = createVm(scheduler, { startExport, fetchStatus })
 
     vm.entities = ['pages', 'users']
     vm.filePath = ' ./data/export '
     await vm.startExport()
-
-    expect(vm.isLoading).toBe(true)
-    expect(vm.filePath).toBe('./data/export')
-    expect(scheduler.timeouts.size).toBe(1)
-
-    await scheduler.runNextTimeout()
+    await settlePromises()
 
     expect(startExport).toHaveBeenCalledWith(expect.any(Function), ['pages', 'users'], './data/export', 'Export failed')
     expect(fetchStatus).toHaveBeenCalledTimes(1)
+    expect(vm.isLoading).toBe(true)
+    expect(vm.filePath).toBe('./data/export')
+    expect(scheduler.timeouts.size).toBe(0)
+
+    pendingStatus.resolve({ status: 'success' })
+    await settlePromises()
+
     expect(vm.isLoading).toBe(false)
     expect(vm.isSuccess).toBe(true)
     expect(vm.isFailed).toBe(false)
   })
 
-  it('prevents a confirmed delayed export request and subsequent state writes when unmounted before start', async () => {
+  it('starts a confirmed export immediately and ignores its completion after unmount', async () => {
     const scheduler = new Scheduler()
-    const startExport = vi.fn(async () => undefined)
+    const pendingStart = deferred<void>()
+    const startExport = vi.fn(() => pendingStart.promise)
     const fetchStatus = vi.fn(async (): Promise<ExportStatus> => ({ status: 'success' }))
     const { vm, unmount } = createVm(scheduler, { startExport, fetchStatus })
 
     selectValidExport(vm)
     vm.requestExport()
     expect(vm.isConfirming).toBe(true)
-    await vm.confirmExport()
+    const confirmation = vm.confirmExport()
+    await settlePromises()
+
     expect(vm.isConfirming).toBe(false)
+    expect(vm.isLoading).toBe(true)
+    expect(startExport).toHaveBeenCalledTimes(1)
+    expect(scheduler.timeouts.size).toBe(0)
     const stateAtUnmount = visibleState(vm)
-    expect(scheduler.timeouts.size).toBe(1)
 
     unmount()
+    pendingStart.resolve(undefined)
+    await confirmation
+    await settlePromises()
 
-    expect(scheduler.timeouts.size).toBe(0)
-    expect(scheduler.clearedTimeouts).toHaveLength(1)
-    expect(startExport).not.toHaveBeenCalled()
     expect(fetchStatus).not.toHaveBeenCalled()
     expect(visibleState(vm)).toEqual(stateAtUnmount)
 
     await vm.startExport()
-    expect(startExport).not.toHaveBeenCalled()
+    expect(startExport).toHaveBeenCalledTimes(1)
     expect(visibleState(vm)).toEqual(stateAtUnmount)
   })
 
-  it('cancels a running poll before it can issue another status request', async () => {
+  it('cancels an owned running-poll timer before it can request status again', async () => {
     const scheduler = new Scheduler()
     const fetchStatus = vi.fn(async (): Promise<ExportStatus> => ({ status: 'running', progress: 37 }))
     const { vm, unmount } = createVm(scheduler, {
@@ -268,33 +254,10 @@ describe('admin utilities export lifecycle ownership', () => {
 
     selectValidExport(vm)
     await vm.startExport()
-    await scheduler.runNextTimeout()
+    await settlePromises()
     expect(fetchStatus).toHaveBeenCalledTimes(1)
     expect(vm.progress).toBe(37)
-    expect(scheduler.animationFrames.size).toBe(1)
-    const stateAtUnmount = visibleState(vm)
-
-    unmount()
-
-    expect(scheduler.animationFrames.size).toBe(0)
-    expect(scheduler.cancelledAnimationFrames).toHaveLength(1)
-    expect(scheduler.timeouts.size).toBe(0)
-    expect(fetchStatus).toHaveBeenCalledTimes(1)
-    expect(visibleState(vm)).toEqual(stateAtUnmount)
-  })
-
-  it('clears the owned poll timeout after its animation frame has run', async () => {
-    const scheduler = new Scheduler()
-    const fetchStatus = vi.fn(async (): Promise<ExportStatus> => ({ status: 'running', progress: 41 }))
-    const { vm, unmount } = createVm(scheduler, {
-      startExport: vi.fn(async () => undefined),
-      fetchStatus
-    })
-
-    selectValidExport(vm)
-    await vm.startExport()
-    await scheduler.runNextTimeout()
-    await scheduler.runNextAnimationFrame()
+    expect(vm.isLoading).toBe(true)
     expect(scheduler.timeouts.size).toBe(1)
     const stateAtUnmount = visibleState(vm)
 
@@ -304,6 +267,35 @@ describe('admin utilities export lifecycle ownership', () => {
     expect(scheduler.clearedTimeouts).toHaveLength(1)
     expect(fetchStatus).toHaveBeenCalledTimes(1)
     expect(visibleState(vm)).toEqual(stateAtUnmount)
+  })
+
+  it('polls again directly from its owned timeout without an animation-frame stage', async () => {
+    const scheduler = new Scheduler()
+    let statusRequest = 0
+    const fetchStatus = vi.fn(async (): Promise<ExportStatus> => {
+      statusRequest += 1
+      return statusRequest === 1 ? { status: 'running', progress: 41 } : { status: 'success' }
+    })
+    const { vm } = createVm(scheduler, {
+      startExport: vi.fn(async () => undefined),
+      fetchStatus
+    })
+
+    selectValidExport(vm)
+    await vm.startExport()
+    await settlePromises()
+
+    expect(fetchStatus).toHaveBeenCalledTimes(1)
+    expect(vm.progress).toBe(41)
+    expect(vm.isLoading).toBe(true)
+    expect(scheduler.timeouts.size).toBe(1)
+
+    await scheduler.runNextTimeout()
+
+    expect(fetchStatus).toHaveBeenCalledTimes(2)
+    expect(scheduler.timeouts.size).toBe(0)
+    expect(vm.isLoading).toBe(false)
+    expect(vm.isSuccess).toBe(true)
   })
 
   it('ignores an in-flight polling response that settles after unmount', async () => {
@@ -322,8 +314,7 @@ describe('admin utilities export lifecycle ownership', () => {
 
     selectValidExport(vm)
     await vm.startExport()
-    await scheduler.runNextTimeout()
-    await scheduler.runNextAnimationFrame()
+    await settlePromises()
     expect(scheduler.timeouts.size).toBe(1)
     await scheduler.runNextTimeout()
     expect(fetchStatus).toHaveBeenCalledTimes(2)
@@ -334,16 +325,20 @@ describe('admin utilities export lifecycle ownership', () => {
     await settlePromises()
 
     expect(fetchStatus).toHaveBeenCalledTimes(2)
-    expect(scheduler.animationFrames.size).toBe(0)
     expect(scheduler.timeouts.size).toBe(0)
     expect(visibleState(vm)).toEqual(stateAtUnmount)
   })
 
   it('ignores status responses from a superseded request generation', async () => {
     const scheduler = new Scheduler()
-    const pendingStatus = deferred<ExportStatus>()
-    const fetchStatus = vi.fn(() => pendingStatus.promise)
-    const { vm, unmount } = createVm(scheduler, {
+    const staleStatus = deferred<ExportStatus>()
+    const currentStatus = deferred<ExportStatus>()
+    let statusRequest = 0
+    const fetchStatus = vi.fn(() => {
+      statusRequest += 1
+      return statusRequest === 1 ? staleStatus.promise : currentStatus.promise
+    })
+    const { vm } = createVm(scheduler, {
       startExport: vi.fn(async () => undefined),
       fetchStatus
     })
@@ -354,12 +349,20 @@ describe('admin utilities export lifecycle ownership', () => {
 
     selectValidExport(vm)
     await vm.startExport()
+    await settlePromises()
+    expect(fetchStatus).toHaveBeenCalledTimes(2)
     const currentState = visibleState(vm)
-    pendingStatus.resolve({ status: 'running', progress: 88 })
+
+    staleStatus.resolve({ status: 'running', progress: 88 })
     await staleRequest
+    await settlePromises()
 
     expect(visibleState(vm)).toEqual(currentState)
-    expect(scheduler.animationFrames.size).toBe(0)
-    unmount()
+    expect(scheduler.timeouts.size).toBe(0)
+
+    currentStatus.resolve({ status: 'success' })
+    await settlePromises()
+    expect(vm.isLoading).toBe(false)
+    expect(vm.isSuccess).toBe(true)
   })
 })

@@ -15,7 +15,7 @@
     v-navigation-drawer#tag-navigation.tags-sidebar(
       :model-value='$vuetify.display.mdAndUp || tagDrawerShown'
       @update:model-value='tagDrawerShown = $event'
-      :location="$vuetify.locale.isRtl ? 'right' : undefined"
+      location='start'
       :permanent='$vuetify.display.mdAndUp'
       :temporary='$vuetify.display.smAndDown'
       width='300'
@@ -61,7 +61,7 @@
           :aria-label='$t(`common:header.browseTags`)'
         )
           v-list(density='compact' nav role='presentation')
-            v-list-item.tags-home-link(href='/' color='primary')
+            v-list-item.tags-home-link(to='/' color='primary')
               template(v-slot:prepend): v-icon mdi-home-outline
               v-list-item-title {{$t('common:header.home')}}
             template(v-for='(tagGroup, groupName) in tagsGrouped', :key='`tagGroup-` + groupName')
@@ -211,7 +211,7 @@
               .tags-result-grid
                 article(v-for='entry of props.items' :key='`page-` + entry.raw.id')
                   v-card.tags-result-card(
-                    :href='`/${entry.raw.locale}/${entry.raw.path}`'
+                    :to='`/${entry.raw.locale}/${entry.raw.path}`'
                     variant='flat'
                   )
                     v-card-text
@@ -222,8 +222,8 @@
                       p {{entry.raw.description || 'No description available.'}}
                       .tags-result-path
                         v-icon(size='17') mdi-file-tree-outline
-                        span /{{entry.raw.path}}
-                        v-icon.tags-result-arrow(size='18') mdi-arrow-up-right
+                        bdi(dir='ltr') /{{entry.raw.path}}
+                        v-icon.tags-result-arrow(size='18') {{ $vuetify.locale.isRtl ? 'mdi-arrow-left' : 'mdi-arrow-right' }}
             template(v-slot:footer='{ pageCount }')
               .tags-pagination(v-if='pageCount > 1')
                 v-pagination(v-model='pagination.page' :length='pageCount')
@@ -249,6 +249,23 @@ type TagLocale = {
   code: string
 }
 
+type TagSortKey = 'createdAt' | 'id' | 'updatedAt' | 'path' | 'title'
+
+function normalizeSortKey (value: unknown): TagSortKey {
+  switch (normalizeQueryValue(value)?.toLocaleLowerCase()) {
+    case 'createdat':
+      return 'createdAt'
+    case 'id':
+      return 'id'
+    case 'updatedat':
+      return 'updatedAt'
+    case 'path':
+      return 'path'
+    default:
+      return 'title'
+  }
+}
+
 function normalizeQueryValue (value: unknown): string | undefined {
   const normalized = Array.isArray(value) ? value[0] : value
   return typeof normalized === 'string' && normalized.length > 0 ? normalized : undefined
@@ -268,7 +285,7 @@ export default {
       innerSearch: '',
       locale: 'any',
       locales: [] as TagLocale[],
-      orderBy: 'title',
+      orderBy: 'title' as TagSortKey,
       orderByDirection: 0,
       routeSyncReady: false,
       pagination: {
@@ -314,7 +331,7 @@ export default {
     locale () {
       if (this.routeSyncReady) this.rebuildURL()
     },
-    orderBy (newValue: string) {
+    orderBy (newValue: TagSortKey) {
       if (!this.routeSyncReady) return
       this.pagination.sortBy = [{ key: newValue, order: this.orderByDirection === 0 ? 'asc' : 'desc' }]
       this.rebuildURL()
@@ -327,10 +344,13 @@ export default {
     innerSearch () {
       this.pagination.page = 1
     },
-    $route () {
-      this.selection = tagSelectionFromPath(this.$route.path)
-      this.pagination.page = 1
+    '$route.fullPath' () {
+      this.routeSyncReady = false
+      this.syncRouteState()
       this.loadPages()
+      this.$nextTick(() => {
+        this.routeSyncReady = true
+      })
       if (this.$vuetify.display.smAndDown) {
         this.tagDrawerShown = false
       }
@@ -345,25 +365,7 @@ export default {
       { name: this.$t('tags:localeAny'), code: 'any' },
       ...siteLangs
     ]
-    const lang = normalizeQueryValue(this.$route.query.lang)
-    if (lang) {
-      this.locale = lang
-    }
-    const sort = normalizeQueryValue(this.$route.query.sort)
-    if (sort) {
-      this.orderBy = sort.toLowerCase()
-      switch (this.orderBy) {
-        case 'updatedat':
-          this.orderBy = 'updatedAt'
-          break
-      }
-      this.pagination.sortBy = [{ key: this.orderBy, order: this.orderByDirection === 0 ? 'asc' : 'desc' }]
-    }
-    const direction = normalizeQueryValue(this.$route.query.dir)
-    if (direction) {
-      this.orderByDirection = direction === 'asc' ? 0 : 1
-      this.pagination.sortBy = [{ key: this.orderBy, order: this.orderByDirection === 0 ? 'asc' : 'desc' }]
-    }
+    this.syncRouteState()
     this.loadTags()
     this.loadPages()
     this.$nextTick(() => {
@@ -371,6 +373,17 @@ export default {
     })
   },
   methods: {
+    syncRouteState () {
+      this.selection = tagSelectionFromPath(this.$route.path)
+      this.locale = normalizeQueryValue(this.$route.query.lang) ?? 'any'
+      this.orderBy = normalizeSortKey(this.$route.query.sort)
+      this.orderByDirection = normalizeQueryValue(this.$route.query.dir) === 'desc' ? 1 : 0
+      this.pagination.sortBy = [{
+        key: this.orderBy,
+        order: this.orderByDirection === 0 ? 'asc' : 'desc'
+      }]
+      this.pagination.page = 1
+    },
     toggleTag (tag: string) {
       this.selection = this.selection.includes(tag)
         ? this.selection.filter(selectedTag => selectedTag !== tag)
@@ -415,6 +428,7 @@ export default {
     },
     async loadPages () {
       const sequence = ++this.pagesLoadSequence
+      const loadingKey = `pages-refresh-${sequence}`
       this.pagesError = ''
       if (this.selection.length < 1) {
         this.pages = []
@@ -422,7 +436,7 @@ export default {
         return
       }
       this.isLoading = true
-      setLoading(wikiStore, 'pages-refresh', true)
+      setLoading(wikiStore, loadingKey, true)
       try {
         const pages = await fetchPages(window.fetch.bind(window), {
           locale: this.locale === 'any' ? undefined : this.locale,
@@ -435,7 +449,7 @@ export default {
         this.pagesError = err instanceof Error ? err.message : 'Unable to load tagged pages.'
       } finally {
         if (sequence === this.pagesLoadSequence) this.isLoading = false
-        setLoading(wikiStore, 'pages-refresh', false)
+        setLoading(wikiStore, loadingKey, false)
       }
     },
   }
@@ -758,7 +772,7 @@ export default {
   color: rgb(var(--v-theme-primary));
   font-size: .78rem;
 
-  span {
+  bdi {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

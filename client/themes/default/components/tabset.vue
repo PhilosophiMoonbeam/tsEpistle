@@ -33,6 +33,24 @@ export default defineComponent({
       const content = this.$refs.content as HTMLElement | undefined
       return content ? Array.from(content.children) as HTMLElement[] : []
     },
+    hashTarget (): HTMLElement | null {
+      if (window.location.hash.length <= 1) return null
+      const encodedId = window.location.hash.slice(1)
+      try {
+        return document.getElementById(decodeURIComponent(encodedId))
+      } catch {
+        return document.getElementById(encodedId)
+      }
+    },
+    activateHashTarget () {
+      const target = this.hashTarget()
+      if (!target) return
+      const foundIdx = this.panelElements().findIndex(node => node.contains(target))
+      if (foundIdx < 0) return
+
+      this.currentTab = foundIdx
+      this.$nextTick(() => target.scrollIntoView())
+    },
     revealActiveTab () {
       const tabs = this.$refs.tabs as HTMLUListElement | undefined
       if (!tabs) return
@@ -78,30 +96,17 @@ export default defineComponent({
   },
   mounted () {
     const panels = this.panelElements()
+    const controller = new AbortController()
+    this.listenersAbortController = controller
+    window.addEventListener('hashchange', this.activateHashTarget, { signal: controller.signal })
 
-    // Handle scroll to header on load within hidden tab content
-    if (window.location.hash.length > 1) {
-      const encodedId = window.location.hash.slice(1)
-      let targetId = encodedId
-      try {
-        targetId = decodeURIComponent(encodedId)
-      } catch {
-        // Keep the literal fragment when it is not valid percent-encoding.
-      }
-      const target = document.getElementById(targetId)
-      const foundIdx = target ? panels.findIndex(node => node.contains(target)) : -1
-      if (foundIdx >= 0) {
-        this.currentTab = foundIdx
-      }
-    }
-
+    // Reveal and scroll to fragments within initially hidden tab content.
+    this.activateHashTarget()
     this.setActiveTab()
 
     const tabRefId = nanoid()
     const tabs = this.tabElements()
     const isRtl = getComputedStyle(this.$refs.tabs as HTMLUListElement).direction === 'rtl'
-    const controller = new AbortController()
-    this.listenersAbortController = controller
 
     tabs.forEach((node, idx) => {
       node.setAttribute('id', `${tabRefId}-${idx}`)

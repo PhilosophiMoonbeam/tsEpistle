@@ -44,8 +44,25 @@
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
-import ClipboardJS from 'clipboard'
 import { wikiStore } from '@/store/index.ts'
+
+function copyWithLegacyFallback (text: string): boolean {
+  const activeElement = document.activeElement
+  const input = document.createElement('textarea')
+  input.value = text
+  input.readOnly = true
+  input.style.position = 'fixed'
+  input.style.opacity = '0'
+  input.style.pointerEvents = 'none'
+  document.body.append(input)
+  input.select()
+  try {
+    return document.execCommand('copy')
+  } finally {
+    input.remove()
+    if (activeElement instanceof HTMLElement) activeElement.focus({ preventScroll: true })
+  }
+}
 
 export default defineComponent({
   props: {
@@ -70,8 +87,8 @@ export default defineComponent({
 
       return {
         email: `mailto:?subject=${title}&body=${url}%0D%0A%0D%0A${description}`,
-        facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}&title=${title}&description=${description}`,
-        linkedin: `https://www.linkedin.com/shareArticle?mini=true&url=${url}&title=${title}&summary=${description}`,
+        facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}`,
+        linkedin: `https://www.linkedin.com/sharing/share-offsite/?url=${url}`,
         reddit: `https://www.reddit.com/submit?url=${url}&title=${title}`,
         telegram: `https://t.me/share/url?url=${url}&text=${title}`,
         x: `https://x.com/intent/post?url=${url}&text=${title}`,
@@ -82,9 +99,19 @@ export default defineComponent({
     }
   },
   methods: {
-    copyUrl (): void {
+    async copyUrl (): Promise<void> {
       try {
-        ClipboardJS.copy(this.url)
+        let copied = false
+        if (navigator.clipboard?.writeText) {
+          try {
+            await navigator.clipboard.writeText(this.url)
+            copied = true
+          } catch {
+            copied = false
+          }
+        }
+        if (!copied) copied = copyWithLegacyFallback(this.url)
+        if (!copied) throw new Error('Clipboard copy was rejected')
         wikiStore.showNotification({
           style: 'success',
           message: `URL copied successfully`,
@@ -111,7 +138,7 @@ export default defineComponent({
       const popupWindow = window.open(
         '',
         '_blank',
-        `status=no,height=${height},width=${width},resizable=yes,left=${left},top=${top},screenX=${left},screenY=${top},toolbar=no,menubar=no,scrollbars=no,location=no,directories=no`
+        `status=no,height=${height},width=${width},resizable=yes,left=${left},top=${top},screenX=${left},screenY=${top},toolbar=no,menubar=no,scrollbars=yes,location=no,directories=no`
       )
 
       if (popupWindow) {
