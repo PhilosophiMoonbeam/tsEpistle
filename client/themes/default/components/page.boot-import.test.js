@@ -205,7 +205,7 @@ describe('default page focused contracts', () => {
     expect(template).not.toContain('font-italic')
     expect(template).not.toContain('"font-weight-medium": tocItem.depth === 0')
     expectDeclarations(thirdLevelTocTitle, {
-      'font-size': 'calc\\(\\.8125rem - 2pt\\)'
+      'font-size': 'calc\\(\\.8125rem - 1pt\\)'
     })
     expect(template).toMatch(/v-card\.page-toc-card\.mb-4\(v-if='tocPosition !== `off`', tag='nav', :aria-label=/)
     expect(template).toContain(":href='tocItem.anchor'")

@@ -2294,7 +2294,7 @@ export default defineComponent({
 }
 
 .page-toc-item-title--third-level {
-  font-size: calc(.8125rem - 2pt);
+  font-size: calc(.8125rem - 1pt);
 }
 
 .page-tags-card,
