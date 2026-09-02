@@ -1,139 +1,373 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const extractScript = source => {
-  const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
-  return match && match[1]
-}
-
 const extractMethod = (script, name) => {
-  const methodStart = script.search(new RegExp('(?:^|\\n)\\s*(?:async\\s+)?' + name + '\\s*\\('))
-  if (methodStart === -1) {
-    return null
-  }
+  const declaration = new RegExp(`(?:^|\\n)\\s*(?:async\\s+)?${name}\\s*\\(`)
+  const found = declaration.exec(script)
+  if (!found) return null
 
+  const methodStart = found.index + (found[0][0] === '\n' ? 1 : 0)
   const bodyStart = script.indexOf('{', methodStart)
-  let bodyDepth = 0
+  let depth = 0
   for (let idx = bodyStart; idx < script.length; idx++) {
     if (script[idx] === '{') {
-      bodyDepth++
+      depth++
     } else if (script[idx] === '}') {
-      bodyDepth--
-      if (bodyDepth === 0) {
-        return script.slice(methodStart, idx + 1)
-      }
+      depth--
+      if (depth === 0) return script.slice(methodStart, idx + 1).trim()
     }
   }
-
   return null
+}
+
+const compileMethod = (method, dependencies) => {
+  const isAsync = method.startsWith('async ')
+  const executable = method.replace(/^(?:async\s+)?\w+\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*\{/, `${isAsync ? 'async ' : ''}function () {`)
+  return new Function(...Object.keys(dependencies), `return (${executable})`)(...Object.values(dependencies))
+}
+
+const deferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const cloneDeep = value => (value == null ? value : JSON.parse(JSON.stringify(value)))
+const lodash = {
+  cloneDeep,
+  get: (object, path, fallback) => {
+    const value = path.split('.').reduce((current, key) => current?.[key], object)
+    return value === undefined ? fallback : value
+  },
+  isEqual: (left, right) => JSON.stringify(left) === JSON.stringify(right)
+}
+
+const createConfig = () => ({
+  host: 'https://example.com',
+  title: 'Example',
+  description: 'Example site',
+  robots: ['index', 'follow'],
+  analyticsService: '',
+  analyticsId: '',
+  company: 'Example Inc.',
+  contentLicense: 'ccby',
+  footerOverride: '',
+  banner: {
+    isEnabled: true,
+    title: 'Notice',
+    content: 'Scheduled maintenance'
+  },
+  logoUrl: '/logo.svg',
+  pageExtensions: 'html',
+  featurePageRatings: false,
+  featurePageComments: true,
+  featurePersonalWikis: false,
+  featureTinyPNG: true,
+  editFab: true,
+  editMenuBar: true,
+  editMenuBtn: true,
+  editMenuExternalBtn: false,
+  editMenuExternalName: '',
+  editMenuExternalIcon: '',
+  editMenuExternalUrl: '',
+  serverOnlyRevision: 7
+})
+
+const createRootUi = () => {
+  const loadingEvents = []
+  const errors = []
+  const notifications = []
+  return {
+    loadingEvents,
+    errors,
+    notifications,
+    loadingStart: (_store, key) => loadingEvents.push(['start', key]),
+    loadingStop: (_store, key) => loadingEvents.push(['stop', key]),
+    setLoading: (_store, key, value) => loadingEvents.push(['set', key, value]),
+    pushGraphError: (_store, error) => errors.push(error),
+    showNotification: (_store, notification) => notifications.push(notification)
+  }
 }
 
 describe('admin-general site REST facade migration guard', () => {
   const componentPath = path.join(process.cwd(), 'client/components/admin/admin-general.vue')
   const source = fs.readFileSync(componentPath, 'utf8')
-  const script = extractScript(source)
-  const save = script && extractMethod(script, 'save')
-  const loadConfig = script && extractMethod(script, 'loadConfig')
-  const siteConfigPayload = script && extractMethod(script, 'siteConfigPayload')
+  const script = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)[1]
+  const loadConfigSource = extractMethod(script, 'loadConfig')
+  const saveSource = extractMethod(script, 'save')
+  const siteConfigPayload = compileMethod(extractMethod(script, 'siteConfigPayload'), { _: lodash })
+  const dirty = compileMethod(extractMethod(script, 'dirty'), { _: lodash })
+  const beforeUnmount = compileMethod(extractMethod(script, 'beforeUnmount'), {
+    offEditorInsert: jest.fn()
+  })
+  const windowStub = { fetch: jest.fn() }
 
-  test('admin-general imports typed site REST, root UI, and wiki store facades instead of Apollo', () => {
-    expect(script).not.toBeNull()
-    expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
-    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bfetchSiteConfig\b)(?=[^}]*\bsaveSiteConfig\b)(?=[^}]*\btype SiteConfig\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/site-api['"]/
-    )
-    expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)(?=[^}]*\bsetLoading\b)(?=[^}]*\bshowNotification\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
-    )
-    expect(script).not.toContain('graphql-tag')
-    expect(script).not.toContain('this.$apollo')
-    expect(script).not.toContain('apollo:')
+  const createWikiStore = () => ({
+    site: {
+      title: '',
+      company: '',
+      contentLicense: '',
+      footerOverride: '',
+      banner: {},
+      logoUrl: ''
+    },
+    editor: {}
   })
 
-  test('general route header uses AdminHero slots without changing the REST facade', () => {
-    expect(source).toMatch(
-      /admin-hero\([\s\S]*icon-categorize\.svg[\s\S]*:title='\$t\(`admin:general\.title`\)'[\s\S]*:description='\$t\(`admin:general\.subtitle`\)'/
-    )
-    expect(source).toContain('template(v-slot:status)')
-    expect(source).toContain('template(v-slot:actions)')
-    expect(source).not.toContain('.admin-header')
-  })
-
-  test('loadConfig fetches site config by REST with refresh loading and error facade', () => {
-    expect(loadConfig).not.toBeNull()
-    expect(loadConfig).toMatch(
-      /this\.initialLoading\s*=\s*true[\s\S]*this\.loaded\s*=\s*false[\s\S]*setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-site-refresh['"]\s*,\s*true\s*\)/
-    )
-    expect(loadConfig).toMatch(
-      /const\s+loaded\s*=\s*_\.cloneDeep\s*\(\s*await\s+fetchSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)\s*\)[\s\S]*this\.config\s*=\s*loaded[\s\S]*this\.persistedConfig\s*=\s*_\.cloneDeep\s*\(\s*loaded\s*\)[\s\S]*this\.loaded\s*=\s*true/
-    )
-    expect(loadConfig).toMatch(/pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
-    expect(loadConfig).toMatch(
-      /finally\s*\{[\s\S]*this\.initialLoading\s*=\s*false[\s\S]*setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-site-refresh['"]\s*,\s*false\s*\)[\s\S]*\}/
-    )
-  })
-
-  test('save preserves title validation, REST save payload, success notification, and root field updates', () => {
-    expect(save).not.toBeNull()
-    expect(save).toMatch(
-      /if\s*\(\s*!this\.loaded\s*\|\|\s*this\.initialLoading\s*\|\|\s*this\.saving\s*\|\|\s*!this\.dirty\s*\|\|\s*!this\.formValid\s*\)\s*return/
-    )
-    expect(save).toMatch(/titleRegex\.test\s*\(\s*title\s*\)/)
-    expect(save).toMatch(
-      /showNotification\s*\(\s*wikiStore\s*,\s*\{\s*style:\s*['"]error['"][\s\S]*admin:general\.siteTitleInvalidChars[\s\S]*icon:\s*['"]alert['"]\s*\}/
-    )
-    expect(save).toMatch(/loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)/)
-    expect(save).toMatch(
-      /const\s+payload\s*=\s*this\.siteConfigPayload\s*\(\s*\)[\s\S]*await\s+saveSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*payload\s*\)[\s\S]*this\.persistedConfig\s*=\s*_\.cloneDeep\s*\(\s*payload\s*\)/
-    )
-    expect(save).toMatch(
-      /showNotification\s*\(\s*wikiStore\s*,\s*\{\s*style:\s*['"]success['"][\s\S]*message:\s*this\.\$t\s*\(\s*['"]admin:general\.saveSuccess['"]\s*\)[\s\S]*icon:\s*['"]check['"]\s*\}/
-    )
-    expect(save).toMatch(/this\.siteTitle\s*=\s*this\.config\.title/)
-    expect(save).toMatch(/this\.company\s*=\s*this\.config\.company/)
-    expect(save).toMatch(/this\.contentLicense\s*=\s*this\.config\.contentLicense/)
-    expect(save).toMatch(/this\.footerOverride\s*=\s*this\.config\.footerOverride/)
-    expect(save).toMatch(/wikiStore\.site\.banner\s*=\s*_\.cloneDeep\s*\(\s*this\.config\.banner\s*\)/)
-    expect(save).toMatch(/this\.logoUrl\s*=\s*this\.config\.logoUrl/)
-    expect(save).toMatch(/pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/)
-    expect(save).toMatch(/finally\s*\{[\s\S]*this\.saving\s*=\s*false[\s\S]*loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-site-update['"]\s*\)[\s\S]*\}/)
-  })
-
-  test('general payload preserves the former site update config fields', () => {
-    expect(siteConfigPayload).not.toBeNull()
-    for (const field of [
-      'host',
-      'title',
-      'description',
-      'robots',
-      'analyticsService',
-      'analyticsId',
-      'company',
-      'contentLicense',
-      'footerOverride',
-      'banner',
-      'logoUrl',
-      'pageExtensions',
-      'featurePageRatings',
-      'featurePageComments',
-      'featurePersonalWikis',
-      'editFab',
-      'editMenuBar',
-      'editMenuBtn',
-      'editMenuExternalBtn',
-      'editMenuExternalName',
-      'editMenuExternalIcon',
-      'editMenuExternalUrl'
-    ]) {
-      expect(siteConfigPayload).toContain(field)
+  const createViewModel = overrides => {
+    const viewModel = {
+      config: createConfig(),
+      persistedConfig: null,
+      initialLoading: true,
+      loaded: false,
+      saving: false,
+      formValid: true,
+      loadRequestId: 0,
+      saveRequestId: 0,
+      siteTitle: '',
+      company: '',
+      contentLicense: '',
+      footerOverride: '',
+      logoUrl: '',
+      siteConfigPayload,
+      handleEditorInsert: jest.fn(),
+      $t: key => key,
+      ...overrides
     }
+    Object.defineProperty(viewModel, 'dirty', {
+      get: () => dirty.call(viewModel)
+    })
+    return viewModel
+  }
+
+  const compileLoadConfig = (rootUi, wikiStore, fetchSiteConfig) =>
+    compileMethod(loadConfigSource, {
+      _: lodash,
+      fetchSiteConfig,
+      setLoading: rootUi.setLoading,
+      pushGraphError: rootUi.pushGraphError,
+      wikiStore,
+      window: windowStub
+    })
+
+  const compileSave = (rootUi, wikiStore, saveSiteConfig) =>
+    compileMethod(saveSource, {
+      _: lodash,
+      titleRegex: /[<>"]/i,
+      saveSiteConfig,
+      loadingStart: rootUi.loadingStart,
+      loadingStop: rootUi.loadingStop,
+      pushGraphError: rootUi.pushGraphError,
+      showNotification: rootUi.showNotification,
+      wikiStore,
+      window: windowStub
+    })
+
+  test('uses typed site REST and root UI facades without restoring Apollo', () => {
+    expect(loadConfigSource).not.toBeNull()
+    expect(saveSource).not.toBeNull()
+    expect(script).toContain("import { fetchSiteConfig, saveSiteConfig, type SiteConfig } from '../../helpers/site-api'")
+    expect(script).toContain("import { loadingStart, loadingStop, pushGraphError, setLoading, showNotification } from '../../helpers/root-ui-store'")
+    expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
+    expect(script).not.toMatch(/graphql-tag|this\.\$apollo|apollo\s*:/)
   })
 
-  test('editor insert behavior stays unchanged', () => {
-    expect(script).toContain('this.loadConfig()')
-    expect(script).toContain('onEditorInsert(this.handleEditorInsert)')
-    expect(script).toContain('offEditorInsert(this.handleEditorInsert)')
-    expect(script).toContain('this.config.logoUrl = opts.path')
+  test('both apply controls submit the owned valid form', () => {
+    expect(source).toContain('v-form#general-form(')
+    expect(source).toContain("@submit.prevent='save'")
+    expect(source).toContain("v-model='formValid'")
+    expect(source.match(/type='submit'\s+form='general-form'/g) || []).toHaveLength(2)
+    expect(source).not.toContain("@click='save'")
+  })
+
+  test('loads a cloned response while snapshotting only the projected editable config', async () => {
+    const response = createConfig()
+    const rootUi = createRootUi()
+    const wikiStore = createWikiStore()
+    const fetchSiteConfig = jest.fn(async () => response)
+    const loadConfig = compileLoadConfig(rootUi, wikiStore, fetchSiteConfig)
+    const viewModel = createViewModel()
+
+    await loadConfig.call(viewModel)
+
+    expect(fetchSiteConfig).toHaveBeenCalledWith(expect.any(Function))
+    expect(viewModel.config).toEqual(response)
+    expect(viewModel.config).not.toBe(response)
+    expect(viewModel.config.banner).not.toBe(response.banner)
+    expect(viewModel.persistedConfig).toEqual(viewModel.siteConfigPayload())
+    expect(viewModel.persistedConfig).not.toHaveProperty('serverOnlyRevision')
+    expect(viewModel.persistedConfig).not.toHaveProperty('featureTinyPNG')
+    expect(viewModel.loaded).toBe(true)
+    expect(viewModel.initialLoading).toBe(false)
+    expect(viewModel.dirty).toBe(false)
+
+    viewModel.config.serverOnlyRevision++
+    expect(viewModel.dirty).toBe(false)
+    viewModel.config.host = 'https://changed.example.com'
+    expect(viewModel.dirty).toBe(true)
+    expect(rootUi.errors).toEqual([])
+    expect(rootUi.loadingEvents).toEqual([
+      ['set', 'admin-site-refresh', true],
+      ['set', 'admin-site-refresh', false]
+    ])
+  })
+
+  test('surfaces an active load error and releases initial loading', async () => {
+    const failure = new Error('site config failed')
+    const rootUi = createRootUi()
+    const wikiStore = createWikiStore()
+    const loadConfig = compileLoadConfig(rootUi, wikiStore, async () => {
+      throw failure
+    })
+    const viewModel = createViewModel()
+
+    await loadConfig.call(viewModel)
+
+    expect(viewModel.loaded).toBe(false)
+    expect(viewModel.initialLoading).toBe(false)
+    expect(viewModel.persistedConfig).toBeNull()
+    expect(rootUi.errors).toEqual([failure])
+    expect(rootUi.loadingEvents).toEqual([
+      ['set', 'admin-site-refresh', true],
+      ['set', 'admin-site-refresh', false]
+    ])
+  })
+
+  test('ignores a load response after unmount while balancing refresh loading', async () => {
+    const request = deferred()
+    const rootUi = createRootUi()
+    const wikiStore = createWikiStore()
+    const loadConfig = compileLoadConfig(rootUi, wikiStore, () => request.promise)
+    const viewModel = createViewModel()
+
+    const loading = loadConfig.call(viewModel)
+    beforeUnmount.call(viewModel)
+    request.resolve(createConfig())
+    await loading
+
+    expect(viewModel.loaded).toBe(false)
+    expect(viewModel.persistedConfig).toBeNull()
+    expect(viewModel.initialLoading).toBe(true)
+    expect(rootUi.errors).toEqual([])
+    expect(rootUi.loadingEvents).toEqual([
+      ['set', 'admin-site-refresh', true],
+      ['set', 'admin-site-refresh', false]
+    ])
+  })
+
+  test('saves the projected payload, clears dirty state, and updates the public site snapshot', async () => {
+    const rootUi = createRootUi()
+    const wikiStore = createWikiStore()
+    const saveSiteConfig = jest.fn(async () => undefined)
+    const save = compileSave(rootUi, wikiStore, saveSiteConfig)
+    const viewModel = createViewModel({
+      initialLoading: false,
+      loaded: true
+    })
+    viewModel.persistedConfig = cloneDeep(viewModel.siteConfigPayload())
+    viewModel.config.title = 'Changed title'
+    viewModel.config.company = 'Changed Inc.'
+    expect(viewModel.dirty).toBe(true)
+
+    await save.call(viewModel)
+
+    const payload = saveSiteConfig.mock.calls[0][1]
+    expect(payload).toEqual(viewModel.siteConfigPayload())
+    expect(payload).not.toHaveProperty('serverOnlyRevision')
+    expect(payload).not.toHaveProperty('featureTinyPNG')
+    expect(viewModel.persistedConfig).toEqual(payload)
+    expect(viewModel.persistedConfig).not.toBe(payload)
+    expect(viewModel.dirty).toBe(false)
+    expect(viewModel.saving).toBe(false)
+    expect(viewModel.siteTitle).toBe('Changed title')
+    expect(viewModel.company).toBe('Changed Inc.')
+    expect(viewModel.contentLicense).toBe(viewModel.config.contentLicense)
+    expect(viewModel.footerOverride).toBe(viewModel.config.footerOverride)
+    expect(viewModel.logoUrl).toBe(viewModel.config.logoUrl)
+    expect(wikiStore.site.banner).toEqual(viewModel.config.banner)
+    expect(wikiStore.site.banner).not.toBe(viewModel.config.banner)
+    expect(rootUi.notifications).toEqual([
+      {
+        style: 'success',
+        message: 'admin:general.saveSuccess',
+        icon: 'check'
+      }
+    ])
+    expect(rootUi.errors).toEqual([])
+    expect(rootUi.loadingEvents).toEqual([
+      ['start', 'admin-site-update'],
+      ['stop', 'admin-site-update']
+    ])
+  })
+
+  test('keeps dirty state and reports an active save error after releasing save loading', async () => {
+    const failure = new Error('save failed')
+    const rootUi = createRootUi()
+    const wikiStore = createWikiStore()
+    const save = compileSave(rootUi, wikiStore, async () => {
+      throw failure
+    })
+    const viewModel = createViewModel({
+      initialLoading: false,
+      loaded: true
+    })
+    viewModel.persistedConfig = cloneDeep(viewModel.siteConfigPayload())
+    viewModel.config.company = 'Unsaved Inc.'
+
+    await save.call(viewModel)
+
+    expect(viewModel.dirty).toBe(true)
+    expect(viewModel.saving).toBe(false)
+    expect(rootUi.errors).toEqual([failure])
+    expect(rootUi.notifications).toEqual([])
+    expect(rootUi.loadingEvents).toEqual([
+      ['start', 'admin-site-update'],
+      ['stop', 'admin-site-update']
+    ])
+  })
+
+  test('does not submit an invalid title or settle a save after unmount', async () => {
+    const rootUi = createRootUi()
+    const wikiStore = createWikiStore()
+    const request = deferred()
+    const saveSiteConfig = jest.fn(() => request.promise)
+    const save = compileSave(rootUi, wikiStore, saveSiteConfig)
+    const viewModel = createViewModel({
+      initialLoading: false,
+      loaded: true
+    })
+    viewModel.persistedConfig = cloneDeep(viewModel.siteConfigPayload())
+    viewModel.config.title = '<invalid>'
+
+    await save.call(viewModel)
+    expect(saveSiteConfig).not.toHaveBeenCalled()
+    expect(rootUi.notifications).toEqual([
+      {
+        style: 'error',
+        message: 'admin:general.siteTitleInvalidChars',
+        icon: 'alert'
+      }
+    ])
+    expect(rootUi.loadingEvents).toEqual([])
+
+    rootUi.notifications.length = 0
+    viewModel.config.title = 'Valid but stale'
+    const saving = save.call(viewModel)
+    beforeUnmount.call(viewModel)
+    request.resolve()
+    await saving
+
+    expect(viewModel.persistedConfig.title).toBe('Example')
+    expect(viewModel.siteTitle).toBe('')
+    expect(rootUi.notifications).toEqual([])
+    expect(rootUi.errors).toEqual([])
+    expect(rootUi.loadingEvents).toEqual([
+      ['start', 'admin-site-update'],
+      ['stop', 'admin-site-update']
+    ])
   })
 })

@@ -15,7 +15,7 @@
           span {{ $t('profile:title') }}
     v-navigation-drawer#profile-navigation.pb-0.profile-sidebar(
       v-model='profileDrawerShown'
-      :location="$vuetify.locale.isRtl ? 'right' : undefined"
+      location='start'
       :permanent='$vuetify.display.mdAndUp'
       :temporary='$vuetify.display.smAndDown'
       :width='$vuetify.display.smAndDown ? 320 : 256'

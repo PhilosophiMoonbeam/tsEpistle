@@ -14,11 +14,10 @@
               v-icon(:start='$vuetify.display.mdAndUp') mdi-graph
               span(v-if='$vuetify.display.mdAndUp') Visualize
         v-card.mt-3.animated.fadeInUp
-          .admin-filter-bar.pa-2.d-flex.align-center
+          .admin-filter-bar.admin-pages-filter-bar.pa-2
             v-text-field.admin-pages-filter-search(variant="solo" flat v-model='search' prepend-inner-icon='mdi-file-search-outline' label='Search pages' hide-details density="compact" @update:model-value='pagination = 1')
-            v-spacer
-            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Locale' :items='langs' item-title='text' v-model='selectedLang' @update:model-value='pagination = 1')
-            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Publish state' :items='states' item-title='text' v-model='selectedState' @update:model-value='pagination = 1')
+            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Locale' :items='langs' item-title='text' item-value='value' v-model='selectedLang' @update:model-value='pagination = 1')
+            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Publish state' :items='states' item-title='text' item-value='value' v-model='selectedState' @update:model-value='pagination = 1')
             v-btn.admin-pages-filter-clear(v-if='hasActiveFilters' variant='text' size='small' color='primary' @click='clearFilters') Clear filters
           v-alert(v-if='errorMessage && pages.length' type='error' variant='tonal' class='ma-3')
             .d-flex.align-center
@@ -29,6 +28,7 @@
           v-data-table.admin-responsive-table(
             :items='filteredPages'
             :headers='responsiveHeaders'
+            item-value='id'
             :search='search'
             :hide-default-header='$vuetify.display.smAndDown'
             v-model:page='pagination'
@@ -44,9 +44,10 @@
                 td
                   router-link.admin-record-link(:to='`/pages/${props.item.id}`') {{ props.item.title }}
                   .admin-pages-description {{ props.item.description }}
-                td.admin-pages-path
-                  v-chip(label size="small" color='primary' variant='tonal') {{ props.item.locale }}
-                  span.ms-2.text-medium-emphasis /{{ props.item.path }}
+                td
+                  .admin-pages-path
+                    v-chip(label size="small" color='primary' variant='tonal') {{ props.item.locale }}
+                    span.ms-2.text-medium-emphasis /{{ props.item.path }}
                 td
                   v-chip(size='small' :color='props.item.isPublished ? `success` : `warning`' variant='tonal') {{ props.item.isPublished ? 'Published' : 'Draft' }}
                 td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
@@ -73,7 +74,6 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import AsyncState from '@/components/common/async-state.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { fetchPageList, type PageListRow } from '../../helpers/pages-api'
@@ -123,7 +123,9 @@ export default {
       return Boolean(this.search.trim() || this.selectedLang !== null || this.selectedState !== null)
     },
     langs(): PageFilterOption<string | null>[] {
-      return [{ text: 'All Locales', value: null }, ..._.uniqBy(this.pages, 'locale').map(pg => ({ text: pg.locale, value: pg.locale }))]
+      const locales = new Set<string>()
+      for (const page of this.pages) locales.add(page.locale)
+      return [{ text: 'All Locales', value: null }, ...Array.from(locales, locale => ({ text: locale, value: locale }))]
     }
   },
   methods: {
@@ -178,16 +180,13 @@ export default {
   font-family: 'Roboto Mono', monospace;
 }
 
-.v-application.admin .admin-main > .v-container.admin-pages .admin-filter-bar {
-  display: grid !important;
+.admin-pages-filter-bar {
+  display: grid;
   grid-template-columns: minmax(14rem, 2fr) minmax(10rem, 1fr) minmax(10rem, 1fr) auto;
   align-items: center;
 
-  > .v-spacer {
-    display: none;
-  }
-
-  > .v-input {
+  > .admin-pages-filter-search,
+  > .admin-pages-filter-select {
     width: 100%;
     min-width: 0;
     max-width: none;
@@ -196,7 +195,7 @@ export default {
 }
 
 @media (min-width: 600px) and (max-width: 1199px) {
-  .v-application.admin .admin-main > .v-container.admin-pages .admin-filter-bar {
+  .admin-pages-filter-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
 
     > .admin-pages-filter-search,
@@ -211,11 +210,11 @@ export default {
 }
 
 @media (max-width: 599px) {
-  .v-application.admin .admin-main > .v-container.admin-pages .admin-filter-bar {
+  .admin-pages-filter-bar {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .v-application.admin .admin-main > .v-container.admin-pages .admin-pages-description {
+  .admin-pages .admin-pages-description {
     display: -webkit-box;
     overflow: hidden;
     -webkit-box-orient: vertical;

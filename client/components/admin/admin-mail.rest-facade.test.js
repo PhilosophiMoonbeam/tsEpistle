@@ -55,7 +55,7 @@ describe('admin mail REST facade', () => {
     expect(loadConfig).toContain('const controller = new AbortController()')
     expect(loadConfig).toContain('this.loadController = controller')
     expect(loadConfig).toContain("wikiStore.startLoading('admin-mail-refresh')")
-    expect(loadConfig).toContain('const loaded = _.cloneDeep(await fetchMailConfig(createAbortableFetch(controller.signal)))')
+    expect(loadConfig).toContain('const loaded = await fetchMailConfig(createAbortableFetch(controller.signal))')
     expect(loadConfig).toContain("this.smtpPasswordStored = loaded.pass === '********'")
     expect(loadConfig).toContain("this.smtpPasswordMode = this.smtpPasswordStored ? 'keep' : 'replace'")
     expect(loadConfig).toContain('this.storedDkimPrivateKey = loaded.dkimPrivateKey')
@@ -83,11 +83,17 @@ describe('admin mail REST facade', () => {
     expect(save).toMatch(
       /const dkimPrivateKey\s*=\s*this\.dkimKeyMode === 'keep'[\s\S]*?this\.storedDkimPrivateKey[\s\S]*?this\.dkimKeyMode === 'replace' \? this\.config\.dkimPrivateKey : ''/
     )
+    expect(scriptBlock()).toMatch(
+      /const authenticationValid\s*=\s*\(\s*\(!this\.config\.user\.trim\(\)\s*&&\s*!this\.smtpPasswordAvailable\)\s*\|\|\s*\(Boolean\(this\.config\.user\.trim\(\)\)\s*&&\s*this\.smtpPasswordAvailable\)\s*\)/
+    )
+    expect(scriptBlock()).toMatch(
+      /if\s*\(hasUser\s*===\s*this\.smtpPasswordAvailable\)\s*return true[\s\S]*return hasUser\s*\?\s*'Enter an SMTP password or clear the username\.'\s*:\s*'Enter a username for the stored password\.'/
+    )
     expect(save).toContain('const controller = new AbortController()')
     expect(save).toContain('this.saveController = controller')
     expect(save).toContain("wikiStore.startLoading('admin-mail-update')")
     expect(save).toMatch(
-      /await saveMailConfig\(createAbortableFetch\(controller\.signal\),\s*\{\s*senderName: this\.config\.senderName\.trim\(\),\s*senderEmail: this\.config\.senderEmail\.trim\(\),\s*host: this\.config\.host\.trim\(\),\s*port: _\.toSafeInteger\(this\.config\.port\),\s*name: this\.config\.name\.trim\(\),\s*secure: Boolean\(this\.config\.secure\),\s*verifySSL: Boolean\(this\.config\.verifySSL\),\s*user: this\.config\.user\.trim\(\),\s*pass,\s*useDKIM: Boolean\(this\.config\.useDKIM\),\s*dkimDomainName: this\.config\.dkimDomainName\.trim\(\),\s*dkimKeySelector: this\.config\.dkimKeySelector\.trim\(\),\s*dkimPrivateKey\s*\}, 'Mail configuration update failed'\)/
+      /await saveMailConfig\(createAbortableFetch\(controller\.signal\),\s*\{\s*senderName: this\.config\.senderName\.trim\(\),\s*senderEmail: this\.config\.senderEmail\.trim\(\),\s*host: this\.config\.host\.trim\(\),\s*port: this\.config\.port,\s*name: this\.config\.name\.trim\(\),\s*secure: Boolean\(this\.config\.secure\),\s*verifySSL: Boolean\(this\.config\.verifySSL\),\s*user: this\.config\.user\.trim\(\),\s*pass,\s*useDKIM: Boolean\(this\.config\.useDKIM\),\s*dkimDomainName: this\.config\.dkimDomainName\.trim\(\),\s*dkimKeySelector: this\.config\.dkimKeySelector\.trim\(\),\s*dkimPrivateKey\s*\}, 'Mail configuration update failed'\)/
     )
     expect(save).toMatch(
       /this\.smtpPasswordStored = Boolean\(pass\)[\s\S]*?this\.config\.pass = ''[\s\S]*?this\.storedDkimPrivateKey = dkimPrivateKey[\s\S]*?this\.config\.dkimPrivateKey = ''/
@@ -133,6 +139,7 @@ describe('admin mail REST facade', () => {
     const script = scriptBlock()
 
     expect(script).toMatch(/updatePort\s*\(value:\s*string \| number\)\s*\{\s*this\.config\.port = value === '' \? 0 : Number\(value\)\s*\}/)
-    expect(methodBlock(script, 'save')).toContain('port: _.toSafeInteger(this.config.port)')
+    expect(methodBlock(script, 'save')).toContain('port: this.config.port')
+    expect(script).not.toMatch(/\b_\.(?:cloneDeep|toSafeInteger)\b/)
   })
 })

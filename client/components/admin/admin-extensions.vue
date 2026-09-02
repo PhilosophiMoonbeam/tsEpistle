@@ -44,6 +44,7 @@
 </template>
 
 <script lang='ts'>
+import { markRaw } from 'vue'
 import { fetchSystemExtensions, type SystemExtension } from '../../helpers/system-api'
 import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
@@ -58,14 +59,16 @@ export default {
   },
   methods: {
     async loadExtensions () {
+      if (this.isUnmounted) return false
       this.loadState = 'loading'
       this.extensions = []
       loadingStart(wikiStore, 'admin-extensions-refresh')
       try {
-        this.extensions = await fetchSystemExtensions(window.fetch.bind(window), 'System extensions response is invalid')
+        const extensions = await fetchSystemExtensions(window.fetch.bind(window), 'System extensions response is invalid')
         if (this.isUnmounted) {
           return false
         }
+        this.extensions = markRaw(extensions)
         this.loadState = 'success'
         return true
       } catch (err) {

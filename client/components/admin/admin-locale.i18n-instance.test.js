@@ -14,7 +14,7 @@ describe('admin locale i18n instance usage', () => {
     expect(content).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(content).toContain('void this.$i18n.changeLanguage(this.selectedLocale)')
     expect(content).toContain('this.$moment.locale(this.selectedLocale)')
-    expect(content).toContain('this.$vuetify.locale.rtl[this.selectedLocale] = Boolean(curLocale && curLocale.isRTL)')
+    expect(content).toContain('this.$vuetify.locale.rtl[this.selectedLocale] = Boolean(curLocale?.isRTL)')
     expect(content).not.toContain('this.$i18n.i18next')
     expect(content).not.toContain('WIKI.$i18n')
     expect(content).not.toContain('/* global WIKI */')

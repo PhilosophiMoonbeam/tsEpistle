@@ -43,6 +43,8 @@ describe('admin-api-create REST mutation migration guard', () => {
 
   test('generate() preserves the scoped REST payload, refresh result, loading, and one-time key acknowledgement flow', () => {
     expect(generate).not.toBeNull()
+    expect(generate).toContain('const normalizedName = this.name.trim()')
+    expect(generate).toContain('this.name = normalizedName')
     expect(generate).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-api-create['"]\s*\)/)
     expect(generate).toMatch(
       /const\s+resp\s*=\s*await\s+createAdminApiKey\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*\{[\s\S]*?name:\s*this\.name[\s\S]*?expiration:\s*this\.expiration[\s\S]*?fullAccess:\s*this\.scope\s*===\s*['"]full['"][\s\S]*?group:\s*this\.scope\s*===\s*['"]group['"]\s*\?\s*this\.group\s*:\s*null[\s\S]*?\}\s*\)/
@@ -51,11 +53,15 @@ describe('admin-api-create REST mutation migration guard', () => {
       /const\s+refreshed\s*=\s*this\.refreshApiKeys\s*\?\s*await\s+\(\s*this\.refreshApiKeys\s+as\s+\(\s*notify:\s*boolean\s*\)\s*=>\s*Promise<boolean>\s*\)\s*\(\s*false\s*\)\s*:\s*true/
     )
 
+    const normalizeIndex = generate.indexOf('const normalizedName = this.name.trim()')
+    const normalizedAssignmentIndex = generate.indexOf('this.name = normalizedName')
     const createIndex = generate.indexOf('await createAdminApiKey(')
     const refreshIndex = generate.indexOf('await (this.refreshApiKeys')
     const keyIndex = generate.indexOf('this.key = resp.key')
     const dialogIndex = generate.indexOf('this.isCopyKeyDialogShown = true')
-    expect(createIndex).toBeGreaterThan(-1)
+    expect(normalizeIndex).toBeGreaterThan(-1)
+    expect(normalizedAssignmentIndex).toBeGreaterThan(normalizeIndex)
+    expect(createIndex).toBeGreaterThan(normalizedAssignmentIndex)
     expect(refreshIndex).toBeGreaterThan(createIndex)
     expect(keyIndex).toBeGreaterThan(refreshIndex)
     expect(dialogIndex).toBeGreaterThan(keyIndex)
@@ -70,7 +76,7 @@ describe('admin-api-create REST mutation migration guard', () => {
     expect(source).toMatch(/@click=['"]copyKey['"][\s\S]*?\{\{\s*copied\s*\?\s*['"]Copied['"]\s*:\s*['"]Copy key['"]\s*\}\}/)
     expect(source).toMatch(/@click=['"]finishCopyKey['"][^)]*\)\s*I’ve saved this key/)
     expect(script).toMatch(
-      /async\s+copyKey\s*\(\s*\)\s*\{[\s\S]*?await\s+navigator\.clipboard\.writeText\s*\(\s*this\.key\s*\)[\s\S]*?this\.copied\s*=\s*true[\s\S]*?catch\s*\{[\s\S]*?input\?\.select\s*\(\s*\)[\s\S]*?wikiStore\.showNotification/
+      /async\s+copyKey\s*\(\s*\)\s*\{[\s\S]*?await\s+navigator\.clipboard\.writeText\s*\(\s*this\.key\s*\)[\s\S]*?this\.copied\s*=\s*true[\s\S]*?catch\s*\{[\s\S]*?input\?\.select\?\.\(\s*\)[\s\S]*?wikiStore\.showNotification/
     )
     expect(script).toMatch(
       /finishCopyKey\s*\(\s*\)\s*\{[\s\S]*?this\.isCopyKeyDialogShown\s*=\s*false[\s\S]*?this\.copied\s*=\s*false[\s\S]*?this\.key\s*=\s*['"]['"]/

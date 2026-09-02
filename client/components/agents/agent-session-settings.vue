@@ -133,7 +133,7 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', 
 let applyGeneration = 0
 
 watch(
-  () => [props.session.id, props.session.providerProfileId] as const,
+  [() => props.session.id, () => props.session.providerProfileId],
   ([, providerProfileId]) => {
     applyGeneration++
     applying.value = false

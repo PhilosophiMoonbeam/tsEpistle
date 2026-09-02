@@ -6,6 +6,11 @@ import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-te
 type ExportStatus = { status: 'running'; progress: number } | { status: 'success' } | { status: 'error'; message: string }
 
 type ExportState = {
+  entityChoices: readonly {
+    key: string
+    label: string
+    hint: string
+  }[]
   entities: string[]
   filePath: string
   isConfirming: boolean
@@ -63,17 +68,25 @@ const loadComponent = (dependencies: ExportDependencies): ExportComponentOptions
   const evaluate = new Function(
     'defineComponent',
     'SelfBuildingSquareSpinner',
+    'markRaw',
     'fetchSystemExportStatus',
     'startSystemExport',
     `${executableScript}\nreturn exportComponent`
   ) as (
     defineComponent: (options: ExportComponentOptions) => ExportComponentOptions,
     spinner: object,
+    markRaw: <Value>(value: Value) => Value,
     fetchStatus: ExportDependencies['fetchStatus'],
     startExport: ExportDependencies['startExport']
   ) => ExportComponentOptions
 
-  return evaluate(options => options, {}, dependencies.fetchStatus, dependencies.startExport)
+  return evaluate(
+    options => options,
+    {},
+    value => value,
+    dependencies.fetchStatus,
+    dependencies.startExport
+  )
 }
 
 const settlePromises = async (): Promise<void> => {
@@ -174,6 +187,48 @@ afterEach(() => {
 describe('admin utilities export lifecycle ownership', () => {
   it('keeps the polling timer callback bound to the typed component instance', () => {
     expect(script).toMatch(/async\s+checkProgress\s*\(\s*this\s*:\s*ExportVm\s*,\s*generation\s*=\s*this\.requestGeneration\s*\)/)
+  })
+
+  it('keeps the static entity catalogue raw and exposes every supported selection', () => {
+    const options = loadComponent({
+      startExport: vi.fn(async () => undefined),
+      fetchStatus: vi.fn(async (): Promise<ExportStatus> => ({ status: 'success' }))
+    })
+
+    const firstState = options.data()
+    const secondState = options.data()
+
+    expect(firstState.entityChoices).toBe(secondState.entityChoices)
+    expect(firstState.entityChoices.map(choice => choice.key)).toEqual(['assets', 'comments', 'navigation', 'pages', 'history', 'settings', 'groups', 'users'])
+    expect(script).toMatch(/const\s+ENTITY_CHOICES\s*=\s*markRaw<readonly\s+ExportEntityChoice\[\]>\s*\(\s*\[/)
+  })
+
+  it('uses a one-way model for the operation-owned progress dialog', () => {
+    expect(source).toMatch(/v-dialog\(\s*:model-value=['"]isLoading['"][\s\S]*?aria-labelledby=['"]export-progress-title['"]/)
+    expect(source).not.toMatch(/v-dialog\(\s*v-model=['"]isLoading['"]/)
+  })
+
+  it('forwards the selected entities and trimmed path through a successful export lifecycle', async () => {
+    const scheduler = new Scheduler()
+    const startExport = vi.fn(async () => undefined)
+    const fetchStatus = vi.fn(async (): Promise<ExportStatus> => ({ status: 'success' }))
+    const { vm } = createVm(scheduler, { startExport, fetchStatus })
+
+    vm.entities = ['pages', 'users']
+    vm.filePath = ' ./data/export '
+    await vm.startExport()
+
+    expect(vm.isLoading).toBe(true)
+    expect(vm.filePath).toBe('./data/export')
+    expect(scheduler.timeouts.size).toBe(1)
+
+    await scheduler.runNextTimeout()
+
+    expect(startExport).toHaveBeenCalledWith(expect.any(Function), ['pages', 'users'], './data/export', 'Export failed')
+    expect(fetchStatus).toHaveBeenCalledTimes(1)
+    expect(vm.isLoading).toBe(false)
+    expect(vm.isSuccess).toBe(true)
+    expect(vm.isFailed).toBe(false)
   })
 
   it('prevents a confirmed delayed export request and subsequent state writes when unmounted before start', async () => {

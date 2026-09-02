@@ -234,7 +234,7 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
+import { markRaw } from 'vue'
 
 import { fetchPages, fetchPageTags, type PageListRow, type PageTagRow } from '../helpers/pages-api'
 import { setLoading } from '../helpers/root-ui-store'
@@ -270,6 +270,7 @@ export default {
       locales: [] as TagLocale[],
       orderBy: 'title',
       orderByDirection: 0,
+      routeSyncReady: false,
       pagination: {
         page: 1,
         itemsPerPage: 12,
@@ -290,10 +291,14 @@ export default {
   },
   computed: {
     tagsGrouped () {
-      return _.groupBy(this.tags, (tag: PageTagRow) => (tag.title ?? '').charAt(0).toUpperCase())
+      return this.tags.reduce<Record<string, PageTagRow[]>>((groups, tag) => {
+        const groupName = (tag.title ?? '').charAt(0).toUpperCase()
+        ;(groups[groupName] ??= []).push(tag)
+        return groups
+      }, {})
     },
     tagsSelected () {
-      return _.filter(this.tags, (tag: PageTagRow) => _.includes(this.selection, tag.tag))
+      return this.tags.filter((tag: PageTagRow) => this.selection.includes(tag.tag))
     },
     orderByItems () {
       return [
@@ -306,19 +311,25 @@ export default {
     }
   },
   watch: {
-    locale (newValue: string, _oldValue: string) {
-      this.rebuildURL()
+    locale () {
+      if (this.routeSyncReady) this.rebuildURL()
     },
-    orderBy (newValue: string, _oldValue: string) {
-      this.rebuildURL()
+    orderBy (newValue: string) {
+      if (!this.routeSyncReady) return
       this.pagination.sortBy = [{ key: newValue, order: this.orderByDirection === 0 ? 'asc' : 'desc' }]
-    },
-    orderByDirection (newValue: number, _oldValue: number) {
       this.rebuildURL()
+    },
+    orderByDirection (newValue: number) {
+      if (!this.routeSyncReady) return
       this.pagination.sortBy = [{ key: this.orderBy, order: newValue === 0 ? 'asc' : 'desc' }]
+      this.rebuildURL()
+    },
+    innerSearch () {
+      this.pagination.page = 1
     },
     $route () {
       this.selection = tagSelectionFromPath(this.$route.path)
+      this.pagination.page = 1
       this.loadPages()
       if (this.$vuetify.display.smAndDown) {
         this.tagDrawerShown = false
@@ -330,10 +341,10 @@ export default {
     this.selection = tagSelectionFromPath(this.$route.path)
   },
   mounted () {
-    this.locales = _.concat(
-      [{name: this.$t('tags:localeAny'), code: 'any'}],
-      (siteLangs.length > 0 ? siteLangs : [])
-    )
+    this.locales = [
+      { name: this.$t('tags:localeAny'), code: 'any' },
+      ...siteLangs
+    ]
     const lang = normalizeQueryValue(this.$route.query.lang)
     if (lang) {
       this.locale = lang
@@ -355,14 +366,15 @@ export default {
     }
     this.loadTags()
     this.loadPages()
+    this.$nextTick(() => {
+      this.routeSyncReady = true
+    })
   },
   methods: {
     toggleTag (tag: string) {
-      if (_.includes(this.selection, tag)) {
-        this.selection = _.without(this.selection, tag)
-      } else {
-        this.selection.push(tag)
-      }
+      this.selection = this.selection.includes(tag)
+        ? this.selection.filter(selectedTag => selectedTag !== tag)
+        : [...this.selection, tag]
       this.rebuildURL()
     },
     clearSelection () {
@@ -370,7 +382,7 @@ export default {
       this.rebuildURL()
     },
     isSelected (tag: string) {
-      return _.includes(this.selection, tag)
+      return this.selection.includes(tag)
     },
     rebuildURL () {
       const query: Record<string, string> = {}
@@ -381,7 +393,7 @@ export default {
         query.sort = this.orderBy.toLowerCase()
       }
       if (this.orderByDirection !== 0) {
-        query.dir = this.orderByDirection === 0 ? `asc` : `desc`
+        query.dir = `desc`
       }
       this.$router.push({
         path: pathFromTagSelection(this.selection),
@@ -393,7 +405,7 @@ export default {
       this.tagsError = ''
       setLoading(wikiStore, 'tags-refresh', true)
       try {
-        this.tags = await fetchPageTags(window.fetch.bind(window))
+        this.tags = markRaw(await fetchPageTags(window.fetch.bind(window)))
       } catch (err) {
         this.tagsError = err instanceof Error ? err.message : 'Unable to load tags.'
       } finally {
@@ -416,7 +428,7 @@ export default {
           locale: this.locale === 'any' ? undefined : this.locale,
           tags: this.selection
         })
-        if (sequence === this.pagesLoadSequence) this.pages = pages
+        if (sequence === this.pagesLoadSequence) this.pages = markRaw(pages)
       } catch (err) {
         if (sequence !== this.pagesLoadSequence) return
         this.pages = []

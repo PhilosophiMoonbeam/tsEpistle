@@ -78,7 +78,7 @@ describe('admin-security site REST facade migration guard', () => {
       /const\s+requestId\s*=\s*\+\+this\.configLoadRequestId[\s\S]*?this\.configLoading\s*=\s*true[\s\S]*?this\.configLoadError\s*=\s*false[\s\S]*?setLoading\s*\(\s*wikiStore\s*,\s*['"]admin-security-refresh['"]\s*,\s*true\s*\)/
     )
     expect(loadConfig).toMatch(
-      /const\s+config\s*=\s*await\s+fetchSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)[\s\S]*?if\s*\(\s*requestId\s*!==\s*this\.configLoadRequestId\s*\)\s*return[\s\S]*?this\.config\s*=\s*_\.cloneDeep\s*\(\s*config\s*\)\s+as\s+SecurityConfig[\s\S]*?this\.configLoaded\s*=\s*true/
+      /const\s+config\s*=\s*await\s+fetchSiteConfig\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*\)[\s\S]*?if\s*\(\s*requestId\s*!==\s*this\.configLoadRequestId\s*\)\s*return[\s\S]*?this\.config\s*=\s*_\.pick\s*\(\s*config\s*,\s*SECURITY_CONFIG_KEYS\s*\)\s+as\s+SecurityConfig[\s\S]*?this\.configLoaded\s*=\s*true/
     )
     expect(loadConfig).toMatch(
       /catch\s*\(\s*err\s*\)\s*\{[\s\S]*?if\s*\(\s*requestId\s*!==\s*this\.configLoadRequestId\s*\)\s*return[\s\S]*?this\.configLoaded\s*=\s*false[\s\S]*?this\.configLoadError\s*=\s*true[\s\S]*?pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/
@@ -94,6 +94,19 @@ describe('admin-security site REST facade migration guard', () => {
     expect(source).toMatch(
       /v-btn\((?=[^\n)]*@click=['"]save['"])(?=[^\n)]*:loading=['"]configSaving['"])(?=[^\n)]*:disabled=['"]!configLoaded \|\| configSaving['"])[^\n)]*\)/
     )
+  })
+
+  test('the form keeps scalar models numeric, HSTS values explicit, and the media modal conditional', () => {
+    expect(script).toMatch(
+      /const\s+SECURITY_CONFIG_KEYS\s*=\s*\[[\s\S]*?['"]uploadMaxFileSize['"][\s\S]*?['"]securityHSTSDuration['"][\s\S]*?['"]authJwtRenewablePeriod['"][\s\S]*?\]\s+as\s+const/
+    )
+    expect(script).toMatch(/type\s+SecurityConfig\s*=\s*Required<Pick<SiteConfig,\s*typeof\s+SECURITY_CONFIG_KEYS\[number\]>>/)
+    expect(source).toMatch(
+      /v-select\.mt-5\([\s\S]*?:items=['"]hstsDurations['"][\s\S]*?item-title=['"]text['"][\s\S]*?item-value=['"]value['"][\s\S]*?v-model=['"]config\.securityHSTSDuration['"][\s\S]*?\)/
+    )
+    expect(source).toMatch(/v-text-field\.mt-3\([\s\S]*?v-model\.number=['"]config\.uploadMaxFileSize['"][\s\S]*?\)/)
+    expect(source).toMatch(/v-text-field\.mt-3\([\s\S]*?v-model\.number=['"]config\.uploadMaxFiles['"][\s\S]*?\)/)
+    expect(source).toMatch(/component\(v-if=['"]activeModal['"],\s*:is=['"]activeModal['"]\)/)
   })
 
   test('security payload preserves its typed return, numeric coercion, and config fields', () => {

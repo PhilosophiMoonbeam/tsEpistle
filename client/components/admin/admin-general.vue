@@ -312,6 +312,7 @@
         .d-flex.flex-wrap.justify-end.ga-2.mt-5.sticky-action-row
           v-btn(
             type='submit'
+            form='general-form'
             color='success'
             variant='flat'
             size='large'
@@ -489,7 +490,7 @@ export default {
         const loaded = _.cloneDeep(await fetchSiteConfig(window.fetch.bind(window)))
         if (requestId !== this.loadRequestId) return
         this.config = loaded
-        this.persistedConfig = _.cloneDeep(loaded)
+        this.persistedConfig = _.cloneDeep(this.siteConfigPayload())
         this.loaded = true
       } catch (err) {
         if (requestId === this.loadRequestId) pushGraphError(wikiStore, err)

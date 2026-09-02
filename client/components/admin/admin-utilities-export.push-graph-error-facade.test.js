@@ -10,10 +10,18 @@ describe('admin utilities export REST facade migration guard', () => {
   test('admin-utilities-export.vue uses system REST helpers instead of inline Apollo export mutation or root-store state', () => {
     expect(script).not.toBeNull()
     expect(source).toMatch(/<script\s+lang=["']ts["']>/)
-    expect(script).toContain("import { defineComponent } from 'vue'")
+    expect(script).toContain("import { defineComponent, markRaw } from 'vue'")
     expect(script).toContain("import { fetchSystemExportStatus, startSystemExport } from '../../helpers/system-api'")
     expect(script).not.toMatch(/\bwikiStore\b|root-ui-store/)
     expect(script).not.toMatch(/graphql-tag|gql`|this\.\$apollo\.mutate|system\s*\{\s*export/)
+  })
+
+  test('keeps export entities raw and the progress dialog controlled by operation state', () => {
+    expect(script).not.toBeNull()
+    expect(script).toMatch(/const\s+ENTITY_CHOICES\s*=\s*markRaw<readonly\s+ExportEntityChoice\[\]>\s*\(\s*\[/)
+    expect(script).toMatch(/entityChoices:\s*ENTITY_CHOICES/)
+    expect(source).toMatch(/v-dialog\(\s*:model-value=['"]isLoading['"][\s\S]*?aria-labelledby=['"]export-progress-title['"]/)
+    expect(source).not.toMatch(/v-dialog\(\s*v-model=['"]isLoading['"]/)
   })
 
   test('confirmed exports validate before initiating REST work and preserve generation-bound progress polling', () => {

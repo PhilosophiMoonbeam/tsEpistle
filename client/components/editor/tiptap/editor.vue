@@ -202,10 +202,13 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
-import { Editor, type JSONContent } from '@tiptap/core'
-import { EditorContent } from '@tiptap/vue-3'
-import { defineComponent, markRaw, type PropType } from 'vue'
+import {
+  Editor,
+  EditorContent,
+  type EditorEvents,
+  type JSONContent
+} from '@tiptap/vue-3'
+import { defineComponent, markRaw, type PropType, type Raw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import EditorConflict from './conflict.vue'
 import {
@@ -246,6 +249,7 @@ type EditorSaveOptions = {
 }
 
 type EditorSaveHandler = (options?: EditorSaveOptions) => void | Promise<void>
+type EditorEventInstance = EditorEvents['update']['editor']
 type EditorHost = HTMLElement & { __wikiEditor?: Editor }
 type SourceNodeName = 'wikiSourceBlock' | 'wikiSourceInline'
 
@@ -255,7 +259,7 @@ type InsertLinkPayload = {
   path: string
 }
 
-const CODE_BLOCK_LANGUAGES = [
+const CODE_BLOCK_LANGUAGES = Object.freeze([
   { value: 'plaintext', label: 'Plain text' },
   { value: 'javascript', label: 'JavaScript' },
   { value: 'typescript', label: 'TypeScript' },
@@ -267,7 +271,8 @@ const CODE_BLOCK_LANGUAGES = [
   { value: 'plantuml', label: 'PlantUML diagram' },
   { value: 'kroki', label: 'Kroki diagram' },
   { value: 'wiki-extension', label: 'Wiki content extension' }
-] as const
+] as const)
+const ADMONITION_KIND_OPTIONS = Object.freeze([...ADMONITION_KINDS])
 const GLYPH_MENU_ACTIVATOR_PROPS = Object.freeze({ 'aria-haspopup': 'dialog' })
 const GLYPH_MENU_CONTENT_PROPS = Object.freeze({
   role: 'dialog',
@@ -292,8 +297,7 @@ export default defineComponent({
   },
   data () {
     return {
-      editor: null as Editor | null,
-      syncContent: null as _.DebouncedFunc<(editor: Editor) => void> | null,
+      editor: null as Raw<Editor> | null,
       stats: { characters: 0, words: 0 } as VisualEditorStats,
       toolbarVersion: 0,
       isConflict: false,
@@ -307,7 +311,7 @@ export default defineComponent({
       sourceNodeName: null as SourceNodeName | null,
       sourceKind: '',
       sourceValue: '',
-      admonitionKinds: ADMONITION_KINDS,
+      admonitionKinds: ADMONITION_KIND_OPTIONS,
       glyphs: VISUAL_MARKDOWN_GLYPHS,
       glyphMenuOpen: false,
       glyphQuery: '',
@@ -401,7 +405,7 @@ export default defineComponent({
       if (!this.editor || !this.isAdmonitionValid) return
       this.admonitionError = ''
       try {
-        insertVisualMarkdownAdmonition(this.editor as unknown as Editor, {
+        insertVisualMarkdownAdmonition(this.editor, {
           kind: this.admonitionKind,
           title: this.admonitionTitle,
           body: this.admonitionBody
@@ -414,12 +418,12 @@ export default defineComponent({
       }
     },
     insertDefinitionList () {
-      if (this.editor) insertVisualMarkdownDefinitionList(this.editor as unknown as Editor)
+      if (this.editor) insertVisualMarkdownDefinitionList(this.editor)
     },
     insertGlyph (glyph: VisualMarkdownGlyph) {
       if (!this.editor) return
       try {
-        insertVisualMarkdownGlyph(this.editor as unknown as Editor, glyph)
+        insertVisualMarkdownGlyph(this.editor, glyph)
         this.glyphMenuOpen = false
         this.glyphQuery = ''
       } catch (err) {
@@ -480,7 +484,7 @@ export default defineComponent({
         contentType: this.format,
         emitUpdate: false
       })
-      if (this.editor) this.syncFromEditor(this.editor as unknown as Editor)
+      if (this.editor) this.syncFromEditor(this.editor)
     },
     handleEditorLinkToPage () {
       this.insertLink()
@@ -536,7 +540,7 @@ export default defineComponent({
           break
       }
     },
-    syncFromEditor (editor: Editor) {
+    syncFromEditor (editor: EditorEventInstance) {
       wikiStore.editor.content = serializeVisualEditorData(this.format, editor)
       this.stats = getVisualEditorStats(editor)
       this.toolbarVersion += 1
@@ -545,9 +549,6 @@ export default defineComponent({
   mounted () {
     wikiStore.editor.editorKey = this.definition.editorKey
     const initialContent = this.preparedContent(wikiStore.editor.content)
-    if (this.format === 'html') {
-      this.syncContent = _.debounce((editor: Editor) => this.syncFromEditor(editor), 300)
-    }
 
     const editor = new Editor({
       content: initialContent,
@@ -568,18 +569,20 @@ export default defineComponent({
         this.stats = getVisualEditorStats(editor)
       },
       onUpdate: ({ editor }) => {
-        if (this.format === 'markdown') this.syncFromEditor(editor)
-        else this.syncContent?.(editor)
+        this.syncFromEditor(editor)
       },
       onSelectionUpdate: () => {
         this.toolbarVersion += 1
       }
     })
     this.editor = markRaw(editor)
-    Object.defineProperty(this.$refs.root as EditorHost, '__wikiEditor', {
-      configurable: true,
-      value: editor
-    })
+    const root = this.$refs.root
+    if (root instanceof HTMLElement) {
+      Object.defineProperty(root as EditorHost, '__wikiEditor', {
+        configurable: true,
+        value: editor
+      })
+    }
 
     onEditorInsert(this.handleEditorInsert)
     onEditorLinkToPage(this.handleEditorLinkToPage)
@@ -587,13 +590,12 @@ export default defineComponent({
     onEditorContentOverwrite(this.handleEditorContentOverwrite)
   },
   beforeUnmount () {
-    this.syncContent?.flush()
-    this.syncContent?.cancel()
     offEditorInsert(this.handleEditorInsert)
     offEditorLinkToPage(this.handleEditorLinkToPage)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
-    delete (this.$refs.root as EditorHost).__wikiEditor
+    const root = this.$refs.root
+    if (root instanceof HTMLElement) delete (root as EditorHost).__wikiEditor
     this.editor?.destroy()
     this.editor = null
   }

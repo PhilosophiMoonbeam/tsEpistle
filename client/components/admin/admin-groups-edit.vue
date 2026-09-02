@@ -190,45 +190,60 @@ export default {
     },
     async updateGroup() {
       if (!this.groupReady || this.groupAction !== '') return
+      const requestId = this.groupLoadRequestId
+      const groupId = this.group.id
       this.groupAction = 'update'
       wikiStore.startLoading('admin-groups-update')
       try {
-        await updateGroup(window.fetch.bind(window), this.group.id, {
+        await updateGroup(window.fetch.bind(window), groupId, {
           name: this.group.name,
           redirectOnLogin: this.group.redirectOnLogin,
           permissions: this.group.permissions,
           pageRules: this.group.pageRules
         })
+        if (requestId !== this.groupLoadRequestId || groupId !== this.group.id) return
         wikiStore.showNotification({
           style: 'success',
           message: `Group changes have been saved.`,
           icon: 'check'
         })
       } catch (err) {
-        wikiStore.showError(err)
+        if (requestId === this.groupLoadRequestId && groupId === this.group.id) {
+          wikiStore.showError(err)
+        }
       } finally {
         wikiStore.stopLoading('admin-groups-update')
-        this.groupAction = ''
+        if (requestId === this.groupLoadRequestId && groupId === this.group.id) {
+          this.groupAction = ''
+        }
       }
     },
     async deleteGroup() {
       if (!this.groupReady || this.groupAction !== '') return
+      const requestId = this.groupLoadRequestId
+      const groupId = this.group.id
+      const groupName = this.group.name
       this.groupAction = 'delete'
       this.deleteGroupDialog = false
       wikiStore.startLoading('admin-groups-delete')
       try {
-        await deleteGroup(window.fetch.bind(window), this.group.id)
+        await deleteGroup(window.fetch.bind(window), groupId)
+        if (requestId !== this.groupLoadRequestId || groupId !== this.group.id) return
         wikiStore.showNotification({
           style: 'success',
-          message: `Group ${this.group.name} has been deleted.`,
+          message: `Group ${groupName} has been deleted.`,
           icon: 'delete'
         })
         this.$router.replace('/groups')
       } catch (err) {
-        wikiStore.showError(err)
+        if (requestId === this.groupLoadRequestId && groupId === this.group.id) {
+          wikiStore.showError(err)
+        }
       } finally {
         wikiStore.stopLoading('admin-groups-delete')
-        this.groupAction = ''
+        if (requestId === this.groupLoadRequestId && groupId === this.group.id) {
+          this.groupAction = ''
+        }
       }
     },
     async refresh() {

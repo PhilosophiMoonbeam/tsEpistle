@@ -136,6 +136,12 @@ import type { AgentTaskKind, AgentTaskView } from '../../../shared/agents/contra
 const props = defineProps<{ tasks: readonly AgentTaskView[] }>()
 type DisplayTaskStatus = AgentTaskView['status'] | 'partial'
 type PlanState = 'idle' | 'running' | 'attention' | 'success'
+const planIcons: Readonly<Record<PlanState, string>> = {
+  idle: 'mdi-clipboard-text-outline',
+  running: 'mdi-source-branch',
+  attention: 'mdi-alert-circle-outline',
+  success: 'mdi-check-all'
+}
 
 const tick = ref(0)
 let durationTimer: number | null = null
@@ -173,12 +179,7 @@ const planState = computed<PlanState>(() => {
   if (runningCount.value || queuedCount.value) return attentionCount.value ? 'attention' : 'running'
   return attentionCount.value ? 'attention' : 'success'
 })
-const planIcon = computed(() => ({
-  idle: 'mdi-clipboard-text-outline',
-  running: 'mdi-source-branch',
-  attention: 'mdi-alert-circle-outline',
-  success: 'mdi-check-all'
-})[planState.value])
+const planIcon = computed(() => planIcons[planState.value])
 const planTitle = computed(() => allTerminal.value ? 'Research plan resolved' : 'Research plan')
 const progressLabel = computed(() => {
   if (!props.tasks.length) return 'No tasks recorded'

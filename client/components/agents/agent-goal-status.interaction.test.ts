@@ -57,6 +57,7 @@ const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
     'ref',
     'watch',
     'defineProps',
+    'defineModel',
     'defineEmits',
     `${executableScript}\nreturn { statusLabel, statusColor, budgetPercent, blockerMessages, toggleAriaLabel, toggleExpanded }`
   ) as (...dependencies: unknown[]) => Omit<GoalHarness, 'emit'>
@@ -69,6 +70,15 @@ const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
     <T>(value: T): Ref<T> => ({ value }),
     () => undefined,
     () => props,
+    () => ({
+      get value() {
+        return props.expanded
+      },
+      set value(value: boolean) {
+        props.expanded = value
+        emit('update:expanded', value)
+      }
+    }),
     () => emit
   )
   return { ...harness, emit }

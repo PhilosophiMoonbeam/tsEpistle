@@ -14,6 +14,7 @@
               color='grey'
               href='https://docs.requarks.io/locales'
               target='_blank'
+              rel='noopener noreferrer'
               aria-label='Open locale documentation'
               title='Open locale documentation'
             )
@@ -177,7 +178,7 @@
 
 </template>
 <script lang='ts'>
-import _ from 'lodash'
+import { markRaw } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
 
 import { fetchLocales, fetchLocaleConfig, saveLocaleConfig, downloadLocale, type LocaleRow } from '../../helpers/locales-api'
@@ -187,6 +188,11 @@ import { wikiStore } from '@/store/index.ts'
 type LocaleTableRow = LocaleRow & {
   isDownloading: boolean
 }
+
+const createAbortableFetch = (signal: AbortSignal) => (
+  input: RequestInfo | URL,
+  init?: RequestInit
+) => window.fetch(input, { ...init, signal })
 
 export default {
   components: { AsyncState },
@@ -199,19 +205,24 @@ export default {
       namespacing: false,
       namespaces: [] as string[],
       configLoaded: false,
-      configLoading: false,
       configError: '',
       localesLoaded: false,
       localesLoading: false,
-      localesError: ''
+      localesError: '',
+      loadController: null as AbortController | null,
+      saveController: null as AbortController | null,
+      downloadControllers: markRaw(new Map<string, AbortController>()),
+      reloadTimer: null as number | null,
+      isUnmounted: false
     }
   },
   computed: {
     installedLocales() {
-      return _.filter(this.locales, ['isInstalled', true])
+      return this.locales.filter(locale => locale.isInstalled)
     },
     canSave() {
-      return this.configLoaded && this.localesLoaded && Boolean(_.find(this.installedLocales, ['code', this.selectedLocale]))
+      return !this.loading && this.configLoaded && this.localesLoaded &&
+        this.installedLocales.some(locale => locale.code === this.selectedLocale)
     },
     headers() {
       return [
@@ -257,16 +268,19 @@ export default {
   },
   methods: {
     async loadBootstrap() {
-      this.configLoading = true
+      if (this.localesLoading) return
+      const controller = new AbortController()
+      this.loadController = controller
       this.localesLoading = true
       this.configError = ''
       this.localesError = ''
       wikiStore.startLoading('admin-locale-refresh')
       try {
         const [localesResult, configResult] = await Promise.allSettled([
-          fetchLocales(window.fetch.bind(window), 'Locales response is invalid'),
-          fetchLocaleConfig(window.fetch.bind(window), 'Locale config response is invalid')
+          fetchLocales(createAbortableFetch(controller.signal), 'Locales response is invalid'),
+          fetchLocaleConfig(createAbortableFetch(controller.signal), 'Locale config response is invalid')
         ])
+        if (controller.signal.aborted) return
 
         if (localesResult.status === 'fulfilled') {
           this.locales = localesResult.value.map(lc => ({ ...lc, isDownloading: false }))
@@ -297,18 +311,21 @@ export default {
           })
         }
       } finally {
-        this.configLoading = false
-        this.localesLoading = false
+        if (this.loadController === controller) {
+          this.loadController = null
+          if (!this.isUnmounted) this.localesLoading = false
+        }
         wikiStore.stopLoading('admin-locale-refresh')
       }
     },
     async download(lc: LocaleTableRow) {
-      if (lc.isDownloading) {
-        return
-      }
+      if (lc.isDownloading) return
+      const controller = new AbortController()
+      this.downloadControllers.set(lc.code, controller)
       lc.isDownloading = true
       try {
-        await downloadLocale(window.fetch.bind(window), lc.code, 'Locale download failed')
+        await downloadLocale(createAbortableFetch(controller.signal), lc.code, 'Locale download failed')
+        if (controller.signal.aborted) return
         lc.isInstalled = true
         lc.updatedAt = new Date().toISOString()
         lc.installDate = lc.updatedAt
@@ -318,36 +335,41 @@ export default {
           icon: 'get_app'
         })
       } catch (err) {
-        wikiStore.showNotification({
-          message: `Error: ${getErrorMessage(err)}`,
-          style: 'error',
-          icon: 'warning'
-        })
+        if (!controller.signal.aborted) {
+          wikiStore.showNotification({
+            message: `Error: ${getErrorMessage(err)}`,
+            style: 'error',
+            icon: 'warning'
+          })
+        }
       } finally {
-        lc.isDownloading = false
+        if (this.downloadControllers.get(lc.code) === controller) {
+          this.downloadControllers.delete(lc.code)
+          if (!this.isUnmounted) lc.isDownloading = false
+        }
       }
     },
     async save() {
-      if (!this.canSave) {
-        return
-      }
-
+      if (!this.canSave || this.loading) return
+      const controller = new AbortController()
+      this.saveController = controller
       this.loading = true
       try {
-        await saveLocaleConfig(window.fetch.bind(window), {
+        await saveLocaleConfig(createAbortableFetch(controller.signal), {
           locale: this.selectedLocale,
           autoUpdate: this.autoUpdate,
           namespacing: this.namespacing,
           namespaces: this.namespaces
         }, 'Locale settings update failed')
+        if (controller.signal.aborted) return
 
         // Change UI language
         void this.$i18n.changeLanguage(this.selectedLocale)
         this.$moment.locale(this.selectedLocale)
 
         // Check for RTL
-        const curLocale = _.find(this.locales, ['code', this.selectedLocale])
-        this.$vuetify.locale.rtl[this.selectedLocale] = Boolean(curLocale && curLocale.isRTL)
+        const curLocale = this.locales.find(locale => locale.code === this.selectedLocale)
+        this.$vuetify.locale.rtl[this.selectedLocale] = Boolean(curLocale?.isRTL)
 
         wikiStore.showNotification({
           message: 'Locale settings updated successfully.',
@@ -355,22 +377,36 @@ export default {
           icon: 'check'
         })
 
-        _.delay(() => {
+        this.reloadTimer = window.setTimeout(() => {
+          this.reloadTimer = null
           window.location.reload()
         }, 1000)
       } catch (err) {
-        wikiStore.showNotification({
-          message: `Error: ${getErrorMessage(err)}`,
-          style: 'error',
-          icon: 'warning'
-        })
+        if (!controller.signal.aborted) {
+          wikiStore.showNotification({
+            message: `Error: ${getErrorMessage(err)}`,
+            style: 'error',
+            icon: 'warning'
+          })
+        }
       } finally {
-        this.loading = false
+        if (this.saveController === controller) {
+          this.saveController = null
+          if (!this.isUnmounted) this.loading = false
+        }
       }
     }
   },
   created() {
     this.loadBootstrap()
+  },
+  beforeUnmount() {
+    this.isUnmounted = true
+    this.loadController?.abort()
+    this.saveController?.abort()
+    this.downloadControllers.forEach(controller => controller.abort())
+    this.downloadControllers.clear()
+    if (this.reloadTimer !== null) window.clearTimeout(this.reloadTimer)
   }
 }
 </script>

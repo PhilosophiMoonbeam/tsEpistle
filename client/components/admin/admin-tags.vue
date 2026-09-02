@@ -203,7 +203,7 @@ export default {
           style: 'success',
           icon: 'check'
         })
-        this.current.updatedAt = new Date()
+        tag.updatedAt = new Date()
       } catch (err) {
         wikiStore.showError(err)
       } finally {

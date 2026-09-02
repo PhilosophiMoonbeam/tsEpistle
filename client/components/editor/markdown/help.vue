@@ -239,36 +239,44 @@
               v-list.editor-markdown-help-kbd(lines="two", density="compact")
                 v-list-item
                   v-list-item-title.text-body-medium Bold
-                  template(v-slot:append) #[kbd {{ctrlKey}}] + #[kbd B]
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd B]
                 v-divider
                 v-list-item
                   v-list-item-title.text-body-medium Italic
-                  template(v-slot:append) #[kbd {{ctrlKey}}] + #[kbd I]
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd I]
                 v-divider
                 v-list-item
                   v-list-item-title.text-body-medium Increase Header Level
-                  template(v-slot:append) #[kbd {{ctrlKey}}] + #[kbd {{altKey}}] + #[kbd Right]
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd {{altKey}}] + #[kbd Right]
                 v-divider
                 v-list-item
                   v-list-item-title.text-body-medium Decrease Header Level
-                  template(v-slot:append) #[kbd {{ctrlKey}}] + #[kbd {{altKey}}] + #[kbd Left]
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd {{altKey}}] + #[kbd Left]
                 v-divider
                 v-list-item
                   v-list-item-title.text-body-medium Save
-                  template(v-slot:append) #[kbd {{ctrlKey}}] + #[kbd S]
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd S]
                 v-divider
                 v-list-item
                   v-list-item-title.text-body-medium Undo
-                  template(v-slot:append) #[kbd {{ctrlKey}}] + #[kbd Z]
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd Z]
                 v-divider
                 v-list-item
                   v-list-item-title.text-body-medium Redo
-                  template(v-slot:append) #[kbd {{ctrlKey}}] + #[kbd Y]
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd Y]
                 v-divider
                 v-list-item
                   v-list-item-title.text-body-medium Distraction Free Mode
                   v-list-item-subtitle Press <kbd>Esc</kbd> to exit.
-                  template(v-slot:append) #[kbd F11]
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd F11]
 
           v-card.radius-7.animated.fadeInUp.wait-p3s.mt-3
             v-card-text
@@ -278,21 +286,30 @@
               v-list.editor-markdown-help-kbd(lines="two", density="compact")
                 v-list-item
                   v-list-item-title.text-body-medium Multiple Cursors
-                  template(v-slot:append) #[kbd {{ctrlKey}}] + Left Click
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + Left Click
                 v-divider
                 v-list-item
                   v-list-item-title.text-body-medium Select Region
-                  template(v-slot:append) #[kbd {{ctrlKey}}] + #[kbd {{altKey}}] + Left Click
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd {{ctrlKey}}] + #[kbd {{altKey}}] + Left Click
                 v-divider
                 v-list-item
                   v-list-item-title.text-body-medium Deselect
-                  template(v-slot:append) #[kbd Esc]</template>
+                  template(v-slot:append)
+                    span.editor-markdown-help-shortcut #[kbd Esc]
+</template>
 
 <script lang='ts'>
+const isApplePlatform = typeof navigator !== 'undefined' &&
+  /\b(Mac|iPhone|iPad|iPod)\b/.test(navigator.userAgent)
+
 export default {
-  computed: {
-    ctrlKey() { return /Mac/.test(navigator.platform) ? 'Cmd' : 'Ctrl' },
-    altKey() { return /Mac/.test(navigator.platform) ? 'Option' : 'Alt' }
+  data () {
+    return {
+      ctrlKey: isApplePlatform ? 'Cmd' : 'Ctrl',
+      altKey: isApplePlatform ? 'Option' : 'Alt'
+    }
   }
 }
 </script>
@@ -369,22 +386,20 @@ export default {
     font-size: 12px;
   }
 
-  &-kbd {
-    .v-list-item__append {
-      flex-direction: row;
-      align-items: center;
+  &-shortcut {
+    display: inline-flex;
+    align-items: center;
 
-      kbd {
-        display: inline-block;
-        border: 1px solid rgba(var(--v-border-color), .45);
-        border-radius: 4px;
-        padding: 0.1em 0.5em;
-        margin: 0 0.2em;
-        box-shadow: 0 1px 0 rgba(var(--v-theme-on-surface), .2), 0 0 0 2px rgb(var(--v-theme-surface)) inset;
-        background-color: rgb(var(--v-theme-surface-variant));
-        color: rgb(var(--v-theme-on-surface));
-        font-size: 12px;
-      }
+    kbd {
+      display: inline-block;
+      border: 1px solid rgba(var(--v-border-color), .45);
+      border-radius: 4px;
+      padding: 0.1em 0.5em;
+      margin: 0 0.2em;
+      box-shadow: 0 1px 0 rgba(var(--v-theme-on-surface), .2), 0 0 0 2px rgb(var(--v-theme-surface)) inset;
+      background-color: rgb(var(--v-theme-surface-variant));
+      color: rgb(var(--v-theme-on-surface));
+      font-size: 12px;
     }
   }
 }

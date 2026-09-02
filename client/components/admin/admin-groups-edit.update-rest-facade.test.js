@@ -61,20 +61,29 @@ describe('admin-groups-edit update REST migration guard', () => {
     expect(script).not.toMatch(/graphql-tag/)
   })
 
-  test('updateGroup() guards readiness and action ownership while preserving the REST contract and cleanup', () => {
+  test('updateGroup() guards readiness and stale request ownership while preserving the REST payload and cleanup', () => {
     expect(updateGroup).not.toBeNull()
     expect(updateGroup).toMatch(/if\s*\(\s*!this\.groupReady\s*\|\|\s*this\.groupAction\s*!==\s*['"]['"]\s*\)\s*return/)
-    expect(updateGroup).toMatch(/this\.groupAction\s*=\s*['"]update['"]/)
+    expect(updateGroup).toMatch(
+      /const\s+requestId\s*=\s*this\.groupLoadRequestId\s*[\s\S]*const\s+groupId\s*=\s*this\.group\.id\s*[\s\S]*this\.groupAction\s*=\s*['"]update['"]/
+    )
     expect(updateGroup).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-groups-update['"]\s*\)/)
     expect(updateGroup).toMatch(
-      /await\s+updateGroup\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*this\.group\.id\s*,\s*\{[\s\S]*name:\s*this\.group\.name[\s\S]*redirectOnLogin:\s*this\.group\.redirectOnLogin[\s\S]*permissions:\s*this\.group\.permissions[\s\S]*pageRules:\s*this\.group\.pageRules[\s\S]*\}\s*\)/
+      /await\s+updateGroup\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*groupId\s*,\s*\{[\s\S]*name:\s*this\.group\.name[\s\S]*redirectOnLogin:\s*this\.group\.redirectOnLogin[\s\S]*permissions:\s*this\.group\.permissions[\s\S]*pageRules:\s*this\.group\.pageRules[\s\S]*\}\s*\)/
+    )
+    expect(updateGroup).toMatch(
+      /if\s*\(\s*requestId\s*!==\s*this\.groupLoadRequestId\s*\|\|\s*groupId\s*!==\s*this\.group\.id\s*\)\s*return\s*[\s\S]*wikiStore\.showNotification/
     )
     expect(updateGroup).not.toMatch(/this\.\$apollo\.mutate/)
     expect(updateGroup).not.toMatch(/groups\s*\{[\s\S]*update\s*\(/)
     expect(updateGroup).toMatch(
       /wikiStore\.showNotification\s*\(\s*\{\s*style:\s*['"]success['"]\s*,\s*message:\s*`Group changes have been saved\.`\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
     )
-    expect(updateGroup).toMatch(/wikiStore\.showError\s*\(\s*err\s*\)/)
-    expect(updateGroup).toMatch(/finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-groups-update['"]\s*\)\s*this\.groupAction\s*=\s*['"]['"]\s*\}/)
+    expect(updateGroup).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*requestId\s*===\s*this\.groupLoadRequestId\s*&&\s*groupId\s*===\s*this\.group\.id\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}\s*\}/
+    )
+    expect(updateGroup).toMatch(
+      /finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-groups-update['"]\s*\)\s*if\s*\(\s*requestId\s*===\s*this\.groupLoadRequestId\s*&&\s*groupId\s*===\s*this\.group\.id\s*\)\s*\{\s*this\.groupAction\s*=\s*['"]['"]\s*\}\s*\}/
+    )
   })
 })

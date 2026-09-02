@@ -1,6 +1,6 @@
 <template lang="pug">
   v-app
-    main.register(:style='`background-image: url(` + bgUrl + `);`', aria-labelledby='register-site-title')
+    main.register(:style='registerStyle', aria-labelledby='register-site-title')
       v-container
         v-row
           v-col(
@@ -172,6 +172,11 @@ export default {
     },
     logoUrl () {
       return siteConfig.logoUrl
+    },
+    registerStyle () {
+      return {
+        backgroundImage: `url(${this.bgUrl})`
+      }
     }
   },
   mounted () {

@@ -121,13 +121,13 @@ export const useAgentsStore = defineStore('agents', {
           listAgentSkills(fetchFromWindow, csrfToken).catch(() => [])
         ])
         if (!this.isWorkspaceCurrent(workspaceVersion)) return
-        this.profiles = profiles
-        this.skills = skills
+        this.profiles = markRaw(profiles)
+        this.skills = markRaw(skills)
         if (this.sessionListVersion === sessionListVersion) {
-          this.sessions = sessionPage.sessions
+          this.sessions = markRaw(sessionPage.sessions)
           this.sessionsNextCursor = sessionPage.nextCursor
         }
-        if (this.folderReloadGeneration === folderReloadGeneration) this.folders = folders
+        if (this.folderReloadGeneration === folderReloadGeneration) this.folders = markRaw(folders)
         if (pathMatch?.[1]) {
           await this.openSession(pathMatch[1])
         } else if (!this.routeSync && this.thread) {
@@ -230,7 +230,7 @@ export const useAgentsStore = defineStore('agents', {
       }
     },
     applyCreatedThread(created: CreatedAgentThread) {
-      this.thread = created
+      this.thread = markRaw(created)
       const launch = created.launchPage
       this.launchPage =
         launch?.pageId && launch.locale && launch.path && launch.observedUpdatedAt
@@ -247,7 +247,7 @@ export const useAgentsStore = defineStore('agents', {
         this.sessionTransitionController = null
         this.closeStream()
         this.invalidateRefresh()
-        this.thread = candidate
+        this.thread = markRaw(candidate)
         this.launchPage = null
         if (this.routeSync) window.history.replaceState(null, '', `/sessions/${sessionId}`)
         this.connectCurrentRun()
@@ -278,7 +278,7 @@ export const useAgentsStore = defineStore('agents', {
         const refreshed = await getAgentThread(fetchFromWindow, this.csrfToken, sessionId, controller.signal)
         if (!this.isSessionContextCurrent(workspaceVersion, sessionId) || this.refreshSessionId !== sessionId || this.refreshGeneration !== generation)
           return false
-        this.thread = refreshed
+        this.thread = markRaw(refreshed)
         return true
       } finally {
         if (this.refreshGeneration === generation) this.refreshController = null
@@ -296,7 +296,7 @@ export const useAgentsStore = defineStore('agents', {
       try {
         const page = await listAgentSessions(fetchFromWindow, this.csrfToken)
         if (this.isWorkspaceCurrent(workspaceVersion) && this.sessionListVersion === version) {
-          this.sessions = page.sessions
+          this.sessions = markRaw(page.sessions)
           this.sessionsNextCursor = page.nextCursor
         }
       } finally {
@@ -327,7 +327,7 @@ export const useAgentsStore = defineStore('agents', {
           knownIds.add(session.id)
           return true
         })
-        this.sessions = [...this.sessions, ...olderSessions]
+        this.sessions = markRaw([...this.sessions, ...olderSessions])
         this.sessionsNextCursor = page.nextCursor
         return true
       } catch (error) {
@@ -357,7 +357,7 @@ export const useAgentsStore = defineStore('agents', {
       try {
         const folders = await listAgentConversationFolders(fetchFromWindow, this.csrfToken, controller.signal)
         if (this.isWorkspaceCurrent(workspaceVersion) && this.folderReloadGeneration === generation && this.folderReloadController === controller)
-          this.folders = folders
+          this.folders = markRaw(folders)
       } catch (error) {
         if (!this.isWorkspaceCurrent(workspaceVersion) || this.folderReloadGeneration !== generation || this.folderReloadController !== controller) return
         throw error
@@ -372,7 +372,7 @@ export const useAgentsStore = defineStore('agents', {
       const created = await createAgentConversationFolder(fetchFromWindow, this.csrfToken, name)
       if (this.isWorkspaceCurrent(workspaceVersion)) {
         this.invalidateFolderReload()
-        this.folders = [...this.folders, created]
+        this.folders = markRaw([...this.folders, created])
       }
       return created
     },
@@ -383,7 +383,7 @@ export const useAgentsStore = defineStore('agents', {
       const renamed = await renameAgentConversationFolder(fetchFromWindow, this.csrfToken, folderId, expectedVersion, name)
       if (this.isWorkspaceCurrent(workspaceVersion)) {
         this.invalidateFolderReload()
-        this.folders = this.folders.map(folder => (folder.id === folderId ? renamed : folder))
+        this.folders = markRaw(this.folders.map(folder => (folder.id === folderId ? renamed : folder)))
       }
       return renamed
     },
@@ -396,7 +396,7 @@ export const useAgentsStore = defineStore('agents', {
       await deleteAgentConversationFolder(fetchFromWindow, this.csrfToken, folderId)
       if (!this.isWorkspaceCurrent(workspaceVersion)) return
       this.invalidateFolderReload()
-      this.folders = this.folders.filter(folder => folder.id !== folderId)
+      this.folders = markRaw(this.folders.filter(folder => folder.id !== folderId))
       const refreshes = [this.reloadSessions()]
       if (refreshCurrent && sessionId && this.isSessionContextCurrent(workspaceVersion, sessionId)) refreshes.push(this.refreshThread().then(() => undefined))
       const results = await Promise.allSettled(refreshes)
@@ -411,7 +411,7 @@ export const useAgentsStore = defineStore('agents', {
       const expectedSessionVersion = current?.version ?? summary?.version
       if (!expectedSessionVersion) throw new Error('The conversation changed. Refresh history and try again.')
       const projected = await moveAgentSessionToFolder(fetchFromWindow, this.csrfToken, sessionId, { expectedSessionVersion, folderId })
-      if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.thread = projected
+      if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.thread = markRaw(projected)
       if (!this.isWorkspaceCurrent(workspaceVersion)) return projected
       try {
         await this.reloadSessions()
@@ -587,7 +587,7 @@ export const useAgentsStore = defineStore('agents', {
           expectedSessionVersion: thread.session.version,
           providerProfileId
         })
-        if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.thread = projected
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.thread = markRaw(projected)
         return projected
       } catch (error) {
         if (!this.isSessionContextCurrent(workspaceVersion, sessionId)) return
@@ -614,12 +614,12 @@ export const useAgentsStore = defineStore('agents', {
     async reloadProfiles() {
       const workspaceVersion = this.workspaceVersion
       const profiles = await listAgentProfiles(fetchFromWindow, this.csrfToken)
-      if (this.isWorkspaceCurrent(workspaceVersion)) this.profiles = profiles
+      if (this.isWorkspaceCurrent(workspaceVersion)) this.profiles = markRaw(profiles)
     },
     async reloadSkills() {
       const workspaceVersion = this.workspaceVersion
       const skills = await listAgentSkills(fetchFromWindow, this.csrfToken)
-      if (this.isWorkspaceCurrent(workspaceVersion)) this.skills = skills
+      if (this.isWorkspaceCurrent(workspaceVersion)) this.skills = markRaw(skills)
     },
     async removeSession(sessionId: string): Promise<boolean> {
       const workspaceVersion = this.workspaceVersion

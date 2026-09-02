@@ -98,7 +98,7 @@
             span Unable to load deliveries.
             v-btn.ml-2(variant="text", size="small", @click='loadDeliveries', :disabled='deliveryLoading || Boolean(deliveryBusy)') Retry
           template(v-if='deliveries.length || (!deliveryLoading && !deliveryError)')
-            v-table.delivery-desktop(v-if='deliveries.length')
+            v-table(v-if='deliveries.length && $vuetify.display.mdAndUp')
               thead
                 tr
                   th(scope='col') Event
@@ -118,7 +118,7 @@
                   td
                     v-btn(v-if='delivery.state === `failed`', variant='outlined', size='small', @click='changeDelivery(delivery.id, `retry`)', :loading='deliveryBusy === delivery.id', :disabled='Boolean(deliveryBusy)') Retry
                     v-btn.ml-2(v-if='delivery.state === `pending` || delivery.state === `running`', variant='outlined', color='error', size='small', @click='requestDeliveryCancel(delivery.id)', :disabled='Boolean(deliveryBusy)') Cancel
-            div.delivery-mobile(v-if='deliveries.length')
+            div(v-else-if='deliveries.length')
               .admin-mobile-record(v-for='delivery in deliveries', :key='`mobile-delivery-` + delivery.id')
                 .d-flex.align-center
                   .admin-mobile-record-title {{ delivery.eventType }} v{{ delivery.eventVersion }}
@@ -433,19 +433,8 @@ export default {
   overflow-wrap: anywhere;
   user-select: all;
 }
-.delivery-mobile {
-  display: none;
-}
 
 @media (max-width: 959px) {
-  .delivery-desktop {
-    display: none;
-  }
-
-  .delivery-mobile {
-    display: block;
-  }
-
   .admin-webhook-actions {
     flex-basis: 100%;
   }

@@ -38,7 +38,7 @@
       v-col(lg='6' cols='12')
         v-card.animated.fadeInUp
           v-toolbar(color='blue-grey', density="compact", flat)
-            h2.v-toolbar-title.text-body-large {{$t('profile:myInfo')}}
+            v-toolbar-title.text-body-large(tag='h2') {{$t('profile:myInfo')}}
           v-list(lines="two", density="compact")
             v-list-item
               template(v-slot:prepend)
@@ -51,7 +51,7 @@
                   v-model='editPop.name'
                   :close-on-content-click='false'
                   min-width='min(350px, calc(100vw - 24px))'
-                  :location='$vuetify.locale.isRtl ? "right" : "left"'
+                  location='start'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptDisplayName`)')
@@ -81,7 +81,7 @@
                   v-model='editPop.location'
                   :close-on-content-click='false'
                   min-width='min(350px, calc(100vw - 24px))'
-                  :location='$vuetify.locale.isRtl ? "right" : "left"'
+                  location='start'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptLocation`)')
@@ -111,7 +111,7 @@
                   v-model='editPop.jobTitle'
                   :close-on-content-click='false'
                   min-width='min(350px, calc(100vw - 24px))'
-                  :location='$vuetify.locale.isRtl ? "right" : "left"'
+                  location='start'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptJobTitle`)')
@@ -132,8 +132,7 @@
 
         v-card.mt-3.animated.fadeInUp.wait-p2s
           v-toolbar(color='blue-grey', density="compact", flat)
-            h2.v-toolbar-title
-              .text-body-large {{$t('profile:auth.title')}}
+            v-toolbar-title.text-body-large(tag='h2') {{$t('profile:auth.title')}}
           v-card-text.pt-0
             v-list-subheader.pl-0: span.text-label-large {{$t('profile:auth.provider')}}
             v-toolbar.profile-auth-provider(
@@ -241,7 +240,7 @@
         //-     v-btn(variant='outlined', disabled) Remove Picture
         v-card.animated.fadeInUp.wait-p2s
           v-toolbar(color='blue-grey', density="compact", flat)
-            h2.v-toolbar-title.text-body-large {{$t('profile:preferences')}}
+            v-toolbar-title.text-body-large(tag='h2') {{$t('profile:preferences')}}
           v-list(lines="two", density="compact")
             v-list-item
               template(v-slot:prepend)
@@ -255,7 +254,7 @@
                   :close-on-content-click='false'
                   min-width='min(350px, calc(100vw - 24px))'
                   max-width='min(350px, calc(100vw - 24px))'
-                  :location='$vuetify.locale.isRtl ? "right" : "left"'
+                  location='start'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptTimezone`)')
@@ -300,7 +299,7 @@
                   :close-on-content-click='false'
                   min-width='min(350px, calc(100vw - 24px))'
                   max-width='min(350px, calc(100vw - 24px))'
-                  :location='$vuetify.locale.isRtl ? "right" : "left"'
+                  location='start'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptDateFormat`)')
@@ -345,7 +344,7 @@
                   :close-on-content-click='false'
                   min-width='min(350px, calc(100vw - 24px))'
                   max-width='min(350px, calc(100vw - 24px))'
-                  :location='$vuetify.locale.isRtl ? "right" : "left"'
+                  location='start'
                   )
                   template(v-slot:activator='{ props }')
                     v-btn(variant="text", color='grey', size="small", v-bind='props', @click='focusField(`iptAppearance`)')
@@ -380,8 +379,7 @@
 
         v-card.mt-3.animated.fadeInUp.wait-p3s
           v-toolbar(color='primary', density="compact", flat)
-            h2.v-toolbar-title
-              .text-body-large {{$t('profile:groups.title')}}
+            v-toolbar-title.text-body-large(tag='h2') {{$t('profile:groups.title')}}
           v-list(density="compact")
             template(v-if='user.groups.length')
               template(v-for='(grp, idx) of user.groups', :key='`grp-id-` + grp')
@@ -396,8 +394,7 @@
 
         v-card.mt-3.animated.fadeInUp.wait-p4s
           v-toolbar(color='teal', density="compact", flat)
-            h2.v-toolbar-title
-              .text-body-large {{$t('profile:activity.title')}}
+            v-toolbar-title.text-body-large(tag='h2') {{$t('profile:activity.title')}}
           v-card-text.text-grey-darken-2
             .text-body-small.text-grey {{$t('profile:activity.joinedOn')}}
             .text-body-medium: strong {{ $helpers.formatMoment(user.createdAt, 'LLLL') }}

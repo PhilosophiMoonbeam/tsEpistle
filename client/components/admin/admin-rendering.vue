@@ -215,11 +215,15 @@ export default {
       renderersLoading: false,
       saving: false,
       renderersLoaded: false,
-      renderersLoadError: false
+      renderersLoadError: false,
+      isDisposed: false
     }
   },
   created () {
     this.loadRenderers().catch(() => {})
+  },
+  beforeUnmount () {
+    this.isDisposed = true
   },
   methods: {
     buildRendererTree (flatRenderers: Renderer[]): RendererTree[] {
@@ -243,17 +247,21 @@ export default {
       return _.reverse(coreKeys).map(coreKey => _.find(rawCores, ['key', coreKey])!)
     },
     async loadRenderers ({ notifyError = true }: { notifyError?: boolean } = {}) {
+      if (this.isDisposed) return false
       this.renderersLoading = true
       this.renderersLoadError = false
       loadingStart(wikiStore, 'admin-rendering-refresh')
       try {
         const flatRenderers = await fetchRenderingRenderers(window.fetch.bind(window), 'Rendering renderers response is invalid')
+        if (this.isDisposed) return false
         this.renderers = this.buildRendererTree(flatRenderers)
         this.selectedCore = _.findIndex(this.renderers, ['key', 'markdownCore'])
         this.currentRenderer = createEmptyRenderer()
         if (this.selectedCore >= 0) this.selectRenderer('markdownCore')
         this.renderersLoaded = true
+        return true
       } catch (err) {
+        if (this.isDisposed) return false
         this.renderers = []
         this.selectedCore = -1
         this.currentRenderer = createEmptyRenderer()
@@ -268,7 +276,7 @@ export default {
         }
         throw err
       } finally {
-        this.renderersLoading = false
+        if (!this.isDisposed) this.renderersLoading = false
         loadingStop(wikiStore, 'admin-rendering-refresh')
       }
     },
@@ -276,20 +284,17 @@ export default {
       await this.loadRenderers().catch(() => {})
     },
     selectRenderer (key: string) {
-      this.renderers.forEach(rdr => {
-        const renderer = _.find(rdr.children, ['key', key])
+      for (const core of this.renderers) {
+        const renderer = core.children.find(renderer => renderer.key === key)
         if (renderer) {
           this.currentRenderer = renderer
+          return
         }
-      })
+      }
     },
     async refresh () {
       if (this.renderersLoading || this.saving) return
-      try {
-        await this.loadRenderers()
-      } catch {
-        return
-      }
+      if (!await this.loadRenderers().catch(() => false)) return
       showNotification(wikiStore, {
         message: 'Rendering active configuration has been reloaded.',
         style: 'success',
@@ -301,6 +306,7 @@ export default {
       this.saving = true
       loadingStart(wikiStore, 'admin-rendering-saverenderers')
       try {
+        if (this.isDisposed) return
         await saveRenderingRenderers(window.fetch.bind(window), this.renderers.reduce<unknown[]>((result, core) => {
           return result.concat(core.children.map(rd => ({
             key: rd.key,
@@ -308,16 +314,17 @@ export default {
             config: rd.config.map(cfg => ({ key: cfg.key, value: JSON.stringify({ v: cfg.value.value }) }))
           })))
         }, []), 'Rendering renderers update failed')
-        await this.loadRenderers({ notifyError: false })
+        if (!await this.loadRenderers({ notifyError: false })) return
         showNotification(wikiStore, {
           message: 'Rendering configuration saved successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
+        if (this.isDisposed) return
         pushGraphError(wikiStore, err)
       } finally {
-        this.saving = false
+        if (!this.isDisposed) this.saving = false
         loadingStop(wikiStore, 'admin-rendering-saverenderers')
       }
     }

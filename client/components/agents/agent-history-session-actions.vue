@@ -116,9 +116,6 @@ const canMove = computed(() => props.session.folderId !== null || availableFolde
   font-size: .68rem;
   line-height: 1.35;
 }
-@media (max-width: 600px), (pointer: coarse) {
-  .agent-history-session-actions__trigger { min-height: var(--wiki-control-height); min-width: var(--wiki-control-height); }
-}
 @media (forced-colors: active) {
   .agent-history-session-actions__trigger:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
 }

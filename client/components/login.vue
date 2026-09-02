@@ -532,11 +532,7 @@ export default {
           message: 'Enter a valid security code.',
           icon: 'alert'
         })
-        if (setup) {
-          ;(this.$refs.iptTFASetup as { focus: () => void }).focus()
-        } else {
-          ;(this.$refs.iptTFA as { focus: () => void }).focus()
-        }
+        focusComponent(setup ? this.$refs.iptTFASetup : this.$refs.iptTFA)
       } else {
         this.loaderColor = 'grey-darken-4'
         this.loaderTitle = this.$t('auth:signingIn')
@@ -607,7 +603,7 @@ export default {
       this.clearError()
       this.screen = 'forgot'
       this.$nextTick(() => {
-        ;(this.$refs.iptForgotPwdEmail as { focus: () => void }).focus()
+        focusComponent(this.$refs.iptForgotPwdEmail)
       })
     },
     /**
@@ -672,7 +668,7 @@ export default {
       if (respObj.mustChangePwd === true) {
         this.screen = 'changePwd'
         this.$nextTick(() => {
-          ;(this.$refs.iptNewPassword as { focus: () => void }).focus()
+          focusComponent(this.$refs.iptNewPassword)
         })
         this.isLoading = false
       } else if (respObj.mustProvideTFA === true) {

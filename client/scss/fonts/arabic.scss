@@ -1,58 +1,41 @@
 @font-face {
   font-family: 'Tajawal';
-  src: url('../../fonts/arabic/Tajawal-Bold.woff2') format('woff2'),
-      url('../../fonts/arabic/Tajawal-Bold.woff') format('woff');
-  font-weight: bold;
   font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../../fonts/arabic/Tajawal-Bold.woff2') format('woff2');
 }
 
 @font-face {
   font-family: 'Tajawal';
-  src: url('../../fonts/arabic/Tajawal-Regular.woff2') format('woff2'),
-      url('../../fonts/arabic/Tajawal-Regular.woff') format('woff');
-  font-weight: normal;
   font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../../fonts/arabic/Tajawal-Regular.woff2') format('woff2');
 }
 
 @font-face {
   font-family: 'Tajawal';
-  src: url('../../fonts/arabic/Tajawal-Medium.woff2') format('woff2'),
-      url('../../fonts/arabic/Tajawal-Medium.woff') format('woff');
+  font-style: normal;
   font-weight: 500;
-  font-style: normal;
+  font-display: swap;
+  src: url('../../fonts/arabic/Tajawal-Medium.woff2') format('woff2');
 }
 
 @font-face {
   font-family: 'BalooBhaijaan';
-  src: url('../../fonts/arabic/BalooBhaijaan-Regular.woff2') format('woff2'),
-      url('../../fonts/arabic/BalooBhaijaan-Regular.woff') format('woff');
-  font-weight: normal;
   font-style: normal;
-}
-
-@font-face {
-  font-family: 'Roboto Mono';
-  src: url('../../fonts/default/RobotoMono-Regular.woff2') format('woff2'),
-      url('../../fonts/default/RobotoMono-Regular.woff') format('woff');
-  font-weight: normal;
-  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../../fonts/arabic/BalooBhaijaan-Regular.woff2') format('woff2');
 }
 
 html:lang(ar) {
-  font-family: Tajawal, sans-serif;
+  --wiki-font-body: 'Tajawal', sans-serif;
+  --wiki-font-heading: 'Tajawal', sans-serif;
 
-  .v-application {
-    font-family: Tajawal, sans-serif;
-
-    & .text-headline-medium, & .text-headline-small {
-      font-family: Tajawal, sans-serif !important;
-    }
-
-    &.v-locale--is-rtl {
-      h1, h2, h3, h4, h5, h6 {
-        font-family: BalooBhaijaan, sans-serif;
-        font-weight: normal;
-      }
-    }
+  .v-application.v-locale--is-rtl :is(h1, h2, h3, h4, h5, h6) {
+    font-family: 'BalooBhaijaan', 'Tajawal', sans-serif;
+    font-weight: 400;
   }
 }

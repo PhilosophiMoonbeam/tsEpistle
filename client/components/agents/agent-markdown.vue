@@ -80,6 +80,25 @@ const renderMarkdown = (): string => renderSafeMarkdown(
       return `<a${attributes}${ariaLabel}>${content}<span class="agent-markdown__new-window"> (opens in a new tab)</span></a>`
     }
   )
+const snapshotCitations = (citations: readonly AgentCitation[]): readonly AgentCitation[] =>
+  citations.map(citation => ({
+    evidenceId: citation.evidenceId,
+    kind: citation.kind,
+    label: citation.label,
+    href: citation.href
+  }))
+const citationsMatch = (left: readonly AgentCitation[], right: readonly AgentCitation[]): boolean => {
+  if (left.length !== right.length) return false
+  return left.every((citation, index) => {
+    const candidate = right[index]
+    return candidate !== undefined &&
+      citation.evidenceId === candidate.evidenceId &&
+      citation.kind === candidate.kind &&
+      citation.label === candidate.label &&
+      citation.href === candidate.href
+  })
+}
+
 
 const focusableElements = (root: HTMLElement): readonly HTMLElement[] => [
   ...root.querySelectorAll<HTMLElement>('a[href], button, pre[tabindex], [role="region"][tabindex]')
@@ -144,11 +163,22 @@ const restoreRenderedDomState = (state: RenderedDomState | null): void => {
 }
 
 const rendered = ref(renderMarkdown())
+let renderedContent = props.content
+let renderedCitations = snapshotCitations(props.citations)
+let renderedStreaming = props.streaming
 let scheduledFrame: number | null = null
 let renderVersion = 0
 const commitRender = (): void => {
   scheduledFrame = null
+  if (
+    props.content === renderedContent &&
+    props.streaming === renderedStreaming &&
+    citationsMatch(props.citations, renderedCitations)
+  ) return
   const nextRendered = renderMarkdown()
+  renderedContent = props.content
+  renderedCitations = snapshotCitations(props.citations)
+  renderedStreaming = props.streaming
   if (nextRendered === rendered.value) return
   const domState = captureRenderedDomState()
   const version = ++renderVersion

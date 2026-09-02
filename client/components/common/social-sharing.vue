@@ -4,39 +4,39 @@
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-content-copy
       v-list-item-title.px-3 {{$t('common:actions.copy')}} URL
-    v-list-item(:href='`mailto:?subject=` + encodeURIComponent(title) + `&body=` + encodeURIComponent(url) + `%0D%0A%0D%0A` + encodeURIComponent(description)')
+    v-list-item(:href='shareUrls.email')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-email-outline
       v-list-item-title.px-3 Email
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(`https://www.facebook.com/sharer/sharer.php?u=` + encodeURIComponent(url) + `&title=` + encodeURIComponent(title) + `&description=` + encodeURIComponent(description))')
+    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.facebook)')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-facebook
       v-list-item-title.px-3 Facebook
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(`https://www.linkedin.com/shareArticle?mini=true&url=` + encodeURIComponent(url) + `&title=` + encodeURIComponent(title) + `&summary=` + encodeURIComponent(description))')
+    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.linkedin)')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-linkedin
       v-list-item-title.px-3 LinkedIn
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(`https://www.reddit.com/submit?url=` + encodeURIComponent(url) + `&title=` + encodeURIComponent(title))')
+    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.reddit)')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-reddit
       v-list-item-title.px-3 Reddit
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(`https://t.me/share/url?url=` + encodeURIComponent(url) + `&text=` + encodeURIComponent(title))')
+    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.telegram)')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-telegram
       v-list-item-title.px-3 Telegram
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(`https://x.com/intent/post?url=` + encodeURIComponent(url) + `&text=` + encodeURIComponent(title))')
+    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.x)')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-alpha-x-box-outline
       v-list-item-title.px-3 X
-    v-list-item(:href='`viber://forward?text=` + encodeURIComponent(url) + ` ` + encodeURIComponent(description)')
+    v-list-item(:href='shareUrls.viber')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-phone-in-talk
       v-list-item-title.px-3 Viber
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(`https://service.weibo.com/share/share.php?url=` + encodeURIComponent(url) + `&title=` + encodeURIComponent(title))')
+    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.weibo)')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-sina-weibo
       v-list-item-title.px-3 Weibo
-    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(`https://api.whatsapp.com/send?text=` + encodeURIComponent(title) + `%0D%0A` + encodeURIComponent(url))')
+    v-list-item(tag='button', type='button', role='button', @click='openSocialPop(shareUrls.whatsapp)')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-whatsapp
       v-list-item-title.px-3 WhatsApp
@@ -51,7 +51,7 @@ export default defineComponent({
   props: {
     url: {
       type: String,
-      default: () => window.location.href
+      default: () => typeof window === 'undefined' ? '' : window.location.href
     },
     title: {
       type: String,
@@ -60,6 +60,25 @@ export default defineComponent({
     description: {
       type: String,
       default: ''
+    }
+  },
+  computed: {
+    shareUrls() {
+      const url = encodeURIComponent(this.url)
+      const title = encodeURIComponent(this.title)
+      const description = encodeURIComponent(this.description)
+
+      return {
+        email: `mailto:?subject=${title}&body=${url}%0D%0A%0D%0A${description}`,
+        facebook: `https://www.facebook.com/sharer/sharer.php?u=${url}&title=${title}&description=${description}`,
+        linkedin: `https://www.linkedin.com/shareArticle?mini=true&url=${url}&title=${title}&summary=${description}`,
+        reddit: `https://www.reddit.com/submit?url=${url}&title=${title}`,
+        telegram: `https://t.me/share/url?url=${url}&text=${title}`,
+        x: `https://x.com/intent/post?url=${url}&text=${title}`,
+        viber: `viber://forward?text=${url} ${description}`,
+        weibo: `https://service.weibo.com/share/share.php?url=${url}&title=${title}`,
+        whatsapp: `https://api.whatsapp.com/send?text=${title}%0D%0A${url}`
+      }
     }
   },
   methods: {

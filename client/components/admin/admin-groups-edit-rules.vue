@@ -146,7 +146,7 @@
 </template>
 
 <script lang='ts'>
-import type { PropType } from 'vue'
+import { markRaw, type PropType } from 'vue'
 
 import { customAlphabet } from 'nanoid/non-secure'
 
@@ -166,7 +166,7 @@ export default {
   },
   data() {
     return {
-      roles: [
+      roles: markRaw([
         { text: 'Read Pages', value: 'read:pages', icon: 'mdi-file-eye-outline' },
         { text: 'Create + Edit Pages', value: 'write:pages', icon: 'mdi-file-plus-outline' },
         { text: 'Rename / Move Pages', value: 'manage:pages', icon: 'mdi-file-document-edit-outline' },
@@ -181,14 +181,14 @@ export default {
         { text: 'Read Comments', value: 'read:comments', icon: 'mdi-comment-search-outline' },
         { text: 'Create Comments', value: 'write:comments', icon: 'mdi-comment-plus-outline' },
         { text: 'Edit + Delete Comments', value: 'manage:comments', icon: 'mdi-comment-remove-outline' }
-      ],
-      matches: [
+      ]),
+      matches: markRaw([
         { text: 'Path Starts With...', value: 'START', icon: '/...' },
         { text: 'Path is Exactly...', value: 'EXACT', icon: '=' },
         { text: 'Path Ends With...', value: 'END', icon: '.../' },
         { text: 'Path Matches Regex...', value: 'REGEX', icon: '$.*' },
         { text: 'Tag Matches...', value: 'TAG', icon: 'T' }
-      ]
+      ])
     }
   },
   computed: {

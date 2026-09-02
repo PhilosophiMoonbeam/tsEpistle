@@ -26,7 +26,7 @@
         .text-body-small Ln {{cursorPos.line + 1}}, Col {{cursorPos.ch + 1}}</template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
@@ -54,7 +54,7 @@ export default defineComponent({
   data() {
     return {
       cm: null as TextEditorHandle | null,
-      cursorPos: { ch: 0, line: 1 } as TextPosition
+      cursorPos: { ch: 0, line: 0 } as TextPosition
     }
   },
   computed: {
@@ -111,9 +111,6 @@ export default defineComponent({
         }
       }
     },
-    closeAllModal() {
-      this.activeModal = ''
-    },
     editor(): TextEditorHandle {
       if (!this.cm) throw new Error('CodeMirror editor is not initialized')
       return this.cm
@@ -156,10 +153,9 @@ export default defineComponent({
       this.cursorPos = position
     },
     toggleFullscreen () {
-      return this.$el.requestFullscreen?.()
-    },
-    refresh() {
-      this.$nextTick(() => this.cm?.requestMeasure())
+      const root = this.$el
+      if (!(root instanceof HTMLElement)) return
+      return root.requestFullscreen?.()
     }
   },
   mounted() {
@@ -169,8 +165,12 @@ export default defineComponent({
       wikiStore.editor.content = '<h1>Title</h1>\n\n<p>Some text here</p>'
     }
 
+    const parent = this.$refs.cm
+    if (!(parent instanceof HTMLElement)) {
+      throw new Error('CodeMirror editor host is unavailable')
+    }
     const cm = new TextEditor({
-      parent: this.$refs.cm as HTMLElement,
+      parent,
       value: wikiStore.editor.content,
       language: html(),
       onChange: value => {
@@ -178,9 +178,7 @@ export default defineComponent({
       },
       onCursor: position => this.positionSync(position)
     })
-    this.cm = cm
-
-    // Render initial preview
+    this.cm = markRaw(cm)
 
     onEditorInsert(this.handleEditorInsert)
 

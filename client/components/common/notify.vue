@@ -6,7 +6,8 @@
     min-height='60'
     v-model='notificationState'
     :timeout='notificationTimeout'
-    :class='`nav-notify--${notificationKind}`'
+    :timer='notificationTimeout > 0 ? "bottom" : false'
+    :timer-color='notificationTimerColor'
   )
     .nav-notify-content
       v-icon.nav-notify-icon(:icon='notificationIcon' size='21' aria-hidden='true')
@@ -52,6 +53,9 @@ export default {
         default: return 'surface-variant'
       }
     },
+    notificationTimerColor(): string {
+      return this.notificationKind === 'success' ? 'on-success' : 'on-surface-variant'
+    },
     notificationIcon(): string {
       switch (this.notificationKind) {
         case 'success': return 'mdi-check-circle-outline'
@@ -87,24 +91,13 @@ export default {
     border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 18%, transparent);
     border-radius: var(--wiki-panel-radius, 14px);
     box-shadow: 0 18px 48px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 26%, transparent);
-
-    &::after {
-      position: absolute;
-      right: 0;
-      bottom: 0;
-      left: 0;
-      display: block;
-      height: 2px;
-      background-color: color-mix(in srgb, currentColor 46%, transparent);
-      animation: nav-notify-anim var(--nav-notify-duration, 6s) linear;
-      content: '';
-    }
   }
 
-  &--error .v-snackbar__wrapper::after,
-  &--progress .v-snackbar__wrapper::after {
-    display: none;
+  .v-snackbar__timer .v-progress-linear {
+    --v-progress-linear-height: 2px;
+    opacity: .46;
   }
+
 }
 
 .nav-notify-content {
@@ -130,10 +123,6 @@ export default {
   margin-inline-start: auto;
 }
 
-@keyframes nav-notify-anim {
-  from { transform: scaleX(1); transform-origin: right; }
-  to { transform: scaleX(0); transform-origin: right; }
-}
 
 @media (max-width: 599px) {
   .nav-notify {
@@ -146,7 +135,7 @@ export default {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .nav-notify .v-snackbar__wrapper::after {
+  .nav-notify .v-snackbar__timer {
     display: none;
   }
 }

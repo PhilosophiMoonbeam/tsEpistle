@@ -35,9 +35,10 @@
           density='compact'
           color='primary'
           :aria-label='$t(`common:header.searchModeLabel`)'
+          @update:model-value='setSearchMode'
         )
           v-btn(value='search' prepend-icon='mdi-magnify') {{$t('common:header.searchMode')}}
-          v-btn(value='ask' prepend-icon='mdi-auto-fix' data-modal-focus-key='search-ask-mode' @click='openAsk') {{$t('common:header.askMode')}}
+          v-btn(value='ask' prepend-icon='mdi-auto-fix' data-modal-focus-key='search-ask-mode') {{$t('common:header.askMode')}}
         .search-results-controls-title(v-else)
           v-icon(icon='mdi-magnify' size='19')
           span Search the Wiki
@@ -262,7 +263,8 @@ export default defineComponent({
       pendingAskRestoreTarget: null as HTMLElement | null,
       searchRestoreTarget: null as HTMLElement | null,
       directPromptHandoffId: 0,
-      directPromptHandoffPending: false
+      directPromptHandoffPending: false,
+      searchAbortController: null as AbortController | null
     }
   },
   computed: {
@@ -325,7 +327,7 @@ export default defineComponent({
       return this.responseKey === this.searchRequestKey && this.normalizedSearch.length >= 2
     },
     activeDescendant(): string | undefined {
-      if (!this.hasFreshResponse || this.cursor < 0) return undefined
+      if (!this.hasFreshResponse || this.cursor < 0 || this.cursor >= this.results.length + this.suggestions.length) return undefined
       if (this.cursor < this.results.length) return `wiki-search-result-${this.results[this.cursor]?.id}`
       return `wiki-search-suggestion-${this.cursor - this.results.length}`
     },
@@ -350,6 +352,8 @@ export default defineComponent({
         if (!this.hasFreshResponse) this.queueSearch(this.search)
         return
       }
+      this.searchAbortController?.abort()
+      this.searchAbortController = null
       this.searchRequestId += 1
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
@@ -410,6 +414,8 @@ export default defineComponent({
     this.searchRequestId += 1
     this.directPromptHandoffId += 1
     if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
+    this.searchAbortController?.abort()
+    this.searchAbortController = null
     this.searchTimer = null
     this.searchIsLoading = false
     offSearchMove(this.handleSearchMove)
@@ -541,6 +547,10 @@ export default defineComponent({
       return Array.from(document.querySelectorAll<HTMLElement>('.nav-header-search-control input, [data-search-modal-action]'))
         .filter(element => !element.matches(':disabled'))
     },
+    setSearchMode(mode: 'search' | 'ask'): void {
+      if (mode === 'ask') this.openAsk()
+      else this.searchMode = 'search'
+    },
     openAsk(): void {
       if (!this.canAsk) return
       this.directPromptHandoffId += 1
@@ -558,6 +568,8 @@ export default defineComponent({
       this.cursor = -1
       this.searchRequestId += 1
       const requestId = this.searchRequestId
+      this.searchAbortController?.abort()
+      this.searchAbortController = null
       const normalizedQuery = query.trim()
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
@@ -583,7 +595,10 @@ export default defineComponent({
       this.response = emptySearchResponse()
       this.pagination = 1
       this.searchIsLoading = true
-      this.searchTimer = window.setTimeout(() => this.runSearch(normalizedQuery, requestKey, requestId), 300)
+      this.searchTimer = window.setTimeout(() => {
+        this.searchTimer = null
+        void this.runSearch(normalizedQuery, requestKey, requestId)
+      }, 300)
     },
     handleSearchMove(dir: string): void {
       if (this.searchMode === 'ask' || this.searchIsLoading || !this.hasFreshResponse) return
@@ -671,6 +686,8 @@ export default defineComponent({
       const query = this.normalizedSearch
       if (query.length < 2) return
       this.searchRequestId += 1
+      this.searchAbortController?.abort()
+      this.searchAbortController = null
       this.searchError = ''
       this.responseKey = ''
       this.response = emptySearchResponse()
@@ -680,21 +697,30 @@ export default defineComponent({
       void this.runSearch(query, this.searchRequestKey, this.searchRequestId)
     },
     async runSearch(query: string, requestKey: string, requestId: number): Promise<void> {
+      if (requestId !== this.searchRequestId || this.searchMode !== 'search') return
+      const controller = new AbortController()
+      this.searchAbortController?.abort()
+      this.searchAbortController = controller
       try {
-        const response = await searchPages(window.fetch.bind(window), query, {
-          locale: this.searchRestrictLocale ? wikiStore.page.locale : undefined,
-          path: this.searchRestrictPath ? wikiStore.page.path : undefined
-        })
-        if (requestId !== this.searchRequestId) return
+        const response = await searchPages(
+          (url, init) => window.fetch(url, { ...init, signal: controller.signal }),
+          query,
+          {
+            locale: this.searchRestrictLocale ? wikiStore.page.locale : undefined,
+            path: this.searchRestrictPath ? wikiStore.page.path : undefined
+          }
+        )
+        if (requestId !== this.searchRequestId || controller.signal.aborted) return
         this.response = response
         this.responseKey = requestKey
         this.pagination = 1
       } catch (err) {
-        if (requestId !== this.searchRequestId) return
+        if (requestId !== this.searchRequestId || controller.signal.aborted) return
         this.searchError = getErrorMessage(err)
         this.responseKey = ''
         this.response = emptySearchResponse()
       } finally {
+        if (this.searchAbortController === controller) this.searchAbortController = null
         if (requestId === this.searchRequestId) this.searchIsLoading = false
       }
     }

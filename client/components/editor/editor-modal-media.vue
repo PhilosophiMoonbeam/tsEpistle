@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='`is-editor-` + editorKey', ref='mediaDialog', role='dialog', aria-modal='true', aria-labelledby='editor-media-title', tabindex='-1')
+  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='`is-editor-` + editorKey', role='dialog', aria-modal='true', aria-labelledby='editor-media-title', tabindex='-1')
     v-container.pa-3(fluid)
       v-row
         v-col(cols='12', lg='9')
@@ -9,11 +9,11 @@
                 v-toolbar.radius-7(:color='$vuetify.theme.current.dark ? `teal` : `teal-lighten-5`', density="compact", flat, height='44')
                   .text-body-medium#editor-media-title {{ $t('editor:assets.title') }}
                   v-spacer
-                  v-btn(ref='refreshButton', variant="text", icon, aria-label='Refresh assets', @click='refresh')
+                  v-btn.editor-media-icon-button(ref='refreshButton', variant="text", icon, aria-label='Refresh assets', @click='refresh')
                     v-icon(:color='$vuetify.theme.current.dark ? `white` : `teal`') mdi-refresh
                 v-dialog(v-model='newFolderDialog', max-width='550')
                   template(v-slot:activator='{ props }')
-                    v-btn.ml-3.my-0.mr-0.radius-7(variant="outlined", size="large", color='teal', :icon='$vuetify.display.xsOnly', aria-label='Create folder', v-bind='props')
+                    v-btn.ml-3.my-0.mr-0.radius-7(variant="outlined", size="large", color='teal', :icon='$vuetify.display.xsOnly', :class='{ "editor-media-icon-button": $vuetify.display.xsOnly }', aria-label='Create folder', v-bind='props')
                       v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
                       span.hidden-sm-and-down(:class='$vuetify.theme.current.dark ? `text-teal-lighten-3` : ``') {{$t('editor:assets.newFolder')}}
                   v-card
@@ -61,12 +61,13 @@
                 :items-per-page='15'
                 :loading='loading'
                 must-sort,
-                :sort-by="[{ key: 'id', order: 'desc' }]"
+                :sort-by='mediaSortBy'
                 hide-default-footer,
                 density="compact"
               )
                 template(v-slot:item='props')
                   tr.is-clickable(
+                    :key='props.item.id'
                     tabindex='0'
                     :aria-selected='currentFileId === props.item.id'
                     :aria-label='`Select ${props.item.filename}`'
@@ -86,7 +87,7 @@
                     td(v-if='$vuetify.display.smAndUp')
                       v-menu(min-width='200')
                         template(v-slot:activator='{ props: menuProps }')
-                          v-btn(icon, v-bind='menuProps', rounded='0', size="small", aria-label='Asset actions')
+                          v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='0', size="small", aria-label='Asset actions')
                             v-icon(color="grey-darken-2") mdi-dots-horizontal
                         v-list(nav, style='border-top: 5px solid #444;')
                           //- v-list-item(@click='', disabled)
@@ -164,7 +165,7 @@
               )
             v-divider(v-if='!isPrivatePage')
             v-card-actions.pa-3(v-if='!isPrivatePage')
-              .text-body-small.text-grey.text-darken-2 Max 10 files, 5 MB each
+              .text-body-small.text-grey-darken-2 Max 10 files, 5 MB each
               v-spacer
               v-btn.px-4(color='teal', @click='upload') {{$t('common:actions.upload')}}
 
@@ -200,7 +201,7 @@
             :counter='255'
             v-model='renameAssetName'
             :label='$t(`common:actions.rename`)'
-            :rules='[value => !!String(value || ``).trim() || `A filename is required.`, value => (!String(value || ``).includes(`/`) && !String(value || ``).includes(String.fromCharCode(92))) || `Filename cannot contain slashes.`]'
+            :rules='renameAssetRules'
             @keyup.enter='renameAsset'
             :disabled='renameAssetLoading'
           )
@@ -226,7 +227,7 @@
           v-btn.px-3(color="red-darken-2", @click='deleteAsset', :loading='deleteAssetLoading').text-white {{$t('common:actions.delete')}}</template>
 
 <script lang='ts'>
-import { defineComponent, type Component } from 'vue'
+import { defineComponent, markRaw, type Component } from 'vue'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import Cookies from 'js-cookie'
@@ -241,6 +242,18 @@ const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
 const disallowedFolderChars = /[A-Z()=.!@#$%?&*+`~<>,;:\\/[\]¬{| ]/
 const BYTE_UNITS = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
 const LOG_1000 = Math.log(1000)
+const IMAGE_ALIGNMENTS = markRaw([
+  { text: 'None', value: '' },
+  { text: 'Left', value: 'left' },
+  { text: 'Centered', value: 'center' },
+  { text: 'Right', value: 'right' },
+  { text: 'Absolute Top Right', value: 'abstopright' }
+])
+const MEDIA_SORT_BY = markRaw([{ key: 'id', order: 'desc' as const }])
+const RENAME_ASSET_RULES = markRaw([
+  (value: unknown) => !!String(value || '').trim() || 'A filename is required.',
+  (value: unknown) => (!String(value || '').includes('/') && !String(value || '').includes(String.fromCharCode(92))) || 'Filename cannot contain slashes.'
+])
 
 type FilePondFile = {
   id: string
@@ -254,30 +267,25 @@ type FilePondRef = {
   removeFile: (id: string) => void
 }
 
+function focusInput (ref: unknown): void {
+  const componentRoot = (ref as { $el?: unknown } | null)?.$el
+  const root = ref instanceof HTMLElement ? ref : componentRoot instanceof HTMLElement ? componentRoot : null
+  root?.querySelector<HTMLInputElement>('input')?.focus()
+}
+
 export default defineComponent({
-  emits: ['update:modelValue'],
   components: {
     FilePond
   },
-  props: {
-    modelValue: {
-      type: Boolean,
-      default: false
-    }
-  },
   data() {
     return {
-      folders: [] as AssetFolder[],
+      folders: markRaw([] as AssetFolder[]),
       files: [] as FilePondFile[],
-      assets: [] as Asset[],
+      assets: markRaw([] as Asset[]),
       pagination: 1,
-      imageAlignments: [
-        { text: 'None', value: '' },
-        { text: 'Left', value: 'left' },
-        { text: 'Centered', value: 'center' },
-        { text: 'Right', value: 'right' },
-        { text: 'Absolute Top Right', value: 'abstopright' }
-      ],
+      imageAlignments: IMAGE_ALIGNMENTS,
+      mediaSortBy: MEDIA_SORT_BY,
+      renameAssetRules: RENAME_ASSET_RULES,
       imageAlignment: '',
       loading: false,
       newFolderDialog: false,
@@ -293,15 +301,12 @@ export default defineComponent({
       focusScope: null as ModalFocusScope | null,
       mediaRequest: 0,
       mediaLoadsInFlight: 0,
+      mediaAbortController: null as AbortController | null,
       fileRemovalTimers: [] as number[],
       disposed: false
     }
   },
   computed: {
-    isShown: {
-      get() { return this.modelValue },
-      set(val: boolean) { this.$emit('update:modelValue', val) }
-    },
     editorKey() {
       return wikiStore.editor.editorKey
     },
@@ -380,7 +385,7 @@ export default defineComponent({
       if (newValue) {
         this.$nextTick(() => {
           if (!this.disposed && this.newFolderDialog) {
-            ;(this.$refs.folderNameIpt as { focus?: () => void })?.focus?.()
+            focusInput(this.$refs.folderNameIpt)
           }
         })
       }
@@ -393,20 +398,23 @@ export default defineComponent({
     this.returnFocus = document.activeElement as HTMLElement | null
     this.$nextTick(() => {
       if (this.disposed) return
-      const root = this.$refs.mediaDialog as HTMLElement | undefined
+      const root = this.$el instanceof HTMLElement ? this.$el : null
       if (!root) return
-      this.focusScope = createModalFocusScope({
+      this.focusScope = markRaw(createModalFocusScope({
         root,
         restoreTarget: () => this.returnFocus,
         onEscape: this.cancel
-      })
-      ;(this.$refs.refreshButton as { focus?: () => void })?.focus?.()
+      }))
+      const refreshButton = this.$refs.refreshButton as { $el?: unknown } | undefined
+      if (refreshButton?.$el instanceof HTMLElement) refreshButton.$el.focus()
     })
     void this.loadMedia()
   },
   beforeUnmount() {
     this.disposed = true
     this.mediaRequest++
+    this.mediaAbortController?.abort()
+    this.mediaAbortController = null
     for (const timer of this.fileRemovalTimers) window.clearTimeout(timer)
     this.fileRemovalTimers = []
     this.focusScope?.deactivate()
@@ -595,6 +603,9 @@ export default defineComponent({
     },
     async loadMedia (): Promise<boolean> {
       const request = ++this.mediaRequest
+      this.mediaAbortController?.abort()
+      const abortController = new AbortController()
+      this.mediaAbortController = abortController
       this.loading = true
       this.mediaLoadError = ''
       this.mediaLoadsInFlight++
@@ -604,13 +615,17 @@ export default defineComponent({
       }
       try {
         const folderId = this.currentFolderId
+        const fetchWithSignal = (url: string, init?: RequestInit) => window.fetch(url, {
+          ...init,
+          signal: abortController.signal
+        })
         const [folders, assets] = await Promise.all([
-          fetchAssetFolders(window.fetch.bind(window), folderId),
-          fetchAssets(window.fetch.bind(window), folderId)
+          fetchAssetFolders(fetchWithSignal, folderId),
+          fetchAssets(fetchWithSignal, folderId)
         ])
         if (this.disposed || request !== this.mediaRequest || folderId !== this.currentFolderId) return false
-        this.folders = folders
-        this.assets = assets
+        this.folders = markRaw(folders)
+        this.assets = markRaw(assets)
         if (this.currentFileId !== null && !assets.some(asset => asset.id === this.currentFileId)) {
           this.currentFileId = null
         }
@@ -621,6 +636,9 @@ export default defineComponent({
         wikiStore.showError(err)
         return false
       } finally {
+        if (this.mediaAbortController === abortController) {
+          this.mediaAbortController = null
+        }
         this.mediaLoadsInFlight--
         if (this.mediaLoadsInFlight === 0) {
           wikiStore.stopLoading('editor-media-list-refresh')
@@ -759,7 +777,7 @@ export default defineComponent({
     display: none;
   }
 
-  .v-btn--icon {
+  .editor-media-icon-button {
     padding: 0 20px;
   }
 }

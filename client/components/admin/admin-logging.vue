@@ -187,6 +187,7 @@ export default {
       this.loadController?.abort()
       const controller = new AbortController()
       this.loadController = controller
+      const selectedTab = this.tab
       this.loading = true
       this.errorMessage = ''
       this.loggersLoaded = false
@@ -201,6 +202,9 @@ export default {
           return false
         }
         this.loggers = loggers
+        if (selectedTab !== 'settings' && loggers.some(logger => logger.isEnabled && logger.key === selectedTab)) {
+          this.tab = selectedTab
+        }
         this.loggersLoaded = true
         return true
       } catch (err) {

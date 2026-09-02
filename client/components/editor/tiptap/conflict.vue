@@ -12,7 +12,7 @@
         i18next.text-body-medium(tag='div', path='editor:conflict.infoGeneric')
           strong(place='authorName') {{latest.authorName}}
           span(place='date', :title='$helpers.formatMoment(latest.updatedAt, `LLL`)') {{ $helpers.formatMoment(latest.updatedAt, 'from') }}.
-        v-btn.mt-2(variant="outlined", color='indigo', size="small", :href='`/` + latest.locale + `/` + latest.path', target='_blank', rel='noopener')
+        v-btn.mt-2(variant="outlined", color='indigo', size="small", :href='`/` + latest.locale + `/` + latest.path', target='_blank', rel='noopener', :loading='requestController !== null', :disabled='!hasLatestVersion')
           v-icon(start) mdi-open-in-new
           span {{$t('editor:conflict.viewLatestVersion')}}
         .text-body-medium.mt-5: strong {{$t('editor:conflict.whatToDo')}}
@@ -21,7 +21,7 @@
       div.v-card-chin
         v-spacer
         v-btn(variant="text", @click='close') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color='indigo', @click='useLocal', :title='$t(`editor:conflict.useLocalHint`)')
+        v-btn.px-4(color='indigo', @click='useLocal', :title='$t(`editor:conflict.useLocalHint`)', :disabled='!hasLatestVersion')
           v-icon(start) mdi-alpha-l-box
           span {{$t('editor:conflict.useLocal')}}
         v-dialog(
@@ -30,7 +30,7 @@
           aria-labelledby='editor-conflict-overwrite-title'
           )
           template(v-slot:activator='{ props }')
-            v-btn.ml-3(color='indigo', v-bind='props', :title='$t(`editor:conflict.useRemoteHint`)')
+            v-btn.ml-3(color='indigo', v-bind='props', :title='$t(`editor:conflict.useRemoteHint`)', :disabled='!hasLatestVersion')
               v-icon(start) mdi-alpha-r-box
               span {{$t('editor:conflict.useRemote')}}
           v-card
@@ -77,6 +77,7 @@ export default defineComponent({
         description: ''
       } as PageConflictLatest,
       isRemoteConfirmDiagShown: false,
+      hasLatestVersion: false,
       requestController: null as AbortController | null
     }
   },
@@ -91,11 +92,13 @@ export default defineComponent({
       this.isShown = false
     },
     useLocal () {
+      if (!this.hasLatestVersion) return
       wikiStore.editor.checkoutDateActive = this.latest.updatedAt
       emitEditorConflictReset()
       this.close()
     },
     useRemote () {
+      if (!this.hasLatestVersion) return
       wikiStore.editor.checkoutDateActive = this.latest.updatedAt
       wikiStore.editor.content = this.latest.content
       emitEditorConflictResolved()
@@ -126,6 +129,7 @@ export default defineComponent({
       })
     }
     this.latest = resp
+    this.hasLatestVersion = true
   },
   beforeUnmount () {
     this.requestController?.abort()

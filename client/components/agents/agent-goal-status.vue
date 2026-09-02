@@ -171,8 +171,9 @@
 import { computed, ref, watch } from 'vue'
 import type { AgentGoalView } from '../../../shared/agents/contracts.ts'
 
-const props = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean; expanded: boolean }>()
-const emit = defineEmits<{ 'update:expanded': [value: boolean]; pause: []; resume: []; cancel: [] }>()
+const props = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean }>()
+const expanded = defineModel<boolean>('expanded', { required: true })
+const emit = defineEmits<{ pause: []; resume: []; cancel: [] }>()
 const pendingAction = ref<'pause' | 'resume' | 'cancel' | null>(null)
 const cancelDialogOpen = ref(false)
 const goalTitleId = computed(() => `agent-goal-${props.goal.id}-title`)
@@ -182,8 +183,8 @@ const goalToggleId = computed(() => `agent-goal-${props.goal.id}-toggle`)
 const goalDetailsId = computed(() => `agent-goal-${props.goal.id}-details`)
 const goalBlockersTitleId = computed(() => `agent-goal-${props.goal.id}-blockers-title`)
 const cancelGoalTitleId = computed(() => `agent-goal-${props.goal.id}-cancel-title`)
-const toggleAriaLabel = computed(() => `${props.expanded ? 'Hide' : 'Show'} durable goal details: ${props.goal.objective}`)
-const toggleExpanded = (): void => emit('update:expanded', !props.expanded)
+const toggleAriaLabel = computed(() => `${expanded.value ? 'Hide' : 'Show'} durable goal details: ${props.goal.objective}`)
+const toggleExpanded = (): void => { expanded.value = !expanded.value }
 watch(() => props.busy, busy => { if (!busy) pendingAction.value = null })
 watch(() => props.goal.id, () => {
   pendingAction.value = null

@@ -33,7 +33,6 @@
 // Luminous Archive foundation: editorial type, mineral surfaces and a quiet
 // coordinate field shared by every application shell.
 .v-application {
-  background: rgb(var(--v-theme-background));
   color: rgb(var(--v-theme-on-surface));
 }
 
@@ -102,12 +101,12 @@
 
 .v-app-bar {
   border-block-end: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised) !important;
-  box-shadow: var(--wiki-shadow-xs) !important;
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs);
 }
 
 .v-navigation-drawer {
-  border-color: var(--wiki-surface-border) !important;
+  border-color: var(--wiki-surface-border);
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-xs);
 }
@@ -175,14 +174,10 @@
 }
 
 .v-data-table-rows-no-data > td {
-  padding-block: var(--wiki-space-10) !important;
+  padding-block: var(--wiki-space-10);
 }
 
 @media (max-width: 599.98px) {
-  .v-application__wrap {
-    background-size: auto, auto, var(--wiki-grid-size) var(--wiki-grid-size), var(--wiki-grid-size) var(--wiki-grid-size);
-  }
-
   .v-empty-state {
     margin: var(--wiki-space-2);
     padding: var(--wiki-space-6) var(--wiki-space-4);
@@ -277,9 +272,9 @@
 
   .text-headline-medium {
     color: rgb(var(--v-theme-on-surface));
-    font-size: clamp(2rem, 5vw, 3.3rem) !important;
+    font-size: clamp(2rem, 5vw, 3.3rem);
     font-weight: 760;
-    letter-spacing: -.055em !important;
+    letter-spacing: -.055em;
     line-height: 1.05;
     text-wrap: balance;
   }
@@ -294,7 +289,6 @@
   .v-btn {
     min-height: var(--wiki-control-height);
     font-weight: 670;
-    text-transform: none;
   }
 }
 
@@ -354,7 +348,7 @@
 
     .v-btn.mt-5 {
       width: min(100%, 320px);
-      margin-top: var(--wiki-space-3) !important;
+      margin-top: var(--wiki-space-3);
     }
   }
 
@@ -389,7 +383,7 @@
     }
 
     .text-headline-medium {
-      font-size: 2rem !important;
+      font-size: 2rem;
     }
 
     .text-body-large {
@@ -397,7 +391,7 @@
     }
 
     .v-btn.mt-5 {
-      margin-top: var(--wiki-space-2) !important;
+      margin-top: var(--wiki-space-2);
     }
   }
 }

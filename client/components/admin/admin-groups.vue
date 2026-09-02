@@ -15,6 +15,7 @@
               color='grey'
               href='https://docs.requarks.io/groups'
               target='_blank'
+              rel='noopener'
               aria-label='Group documentation'
             )
               v-icon mdi-help-circle
@@ -28,7 +29,7 @@
               aria-label='Refresh groups'
             )
               v-icon mdi-refresh
-            v-dialog(v-model='newGroupDialog' max-width='500' :fullscreen='$vuetify.display.smAndDown' aria-labelledby='new-group-title')
+            v-dialog(v-model='newGroupDialog' max-width='500' :fullscreen='$vuetify.display.smAndDown' :persistent='creating' aria-labelledby='new-group-title')
               template(v-slot:activator='{ props }')
                 v-btn(color='primary' variant="flat" v-bind='props' size="large" :icon='$vuetify.display.smAndDown' aria-label='New group')
                   v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
@@ -38,7 +39,7 @@
                   h2#new-group-title New Group
                 v-card-text.pt-5
                   v-alert(v-if='createError' type='error' variant='tonal' class='mb-3') {{ createError }}
-                  v-text-field(variant="outlined" prepend-icon='mdi-account-group' v-model='newGroupName' label='Group Name' counter='255' @keyup.enter='createGroup' @keyup.esc='newGroupDialog = false' ref='groupNameIpt')
+                  v-text-field(variant="outlined" prepend-icon='mdi-account-group' v-model='newGroupName' label='Group Name' counter='255' @keyup.enter='createGroup' ref='groupNameIpt')
                 div.admin-dialog-actions.v-card-chin
                   v-spacer
                   v-btn(variant="text" @click='newGroupDialog = false' :disabled='creating') Cancel
@@ -62,7 +63,6 @@
             v-model:page='pagination'
             :items-per-page='15'
             :loading='loading'
-            @page-count='pageCount = $event'
             must-sort
             hide-default-footer
           )
@@ -92,12 +92,13 @@
               async-state(v-else-if='errorMessage' state='error' title='Groups could not be loaded' :message='errorMessage' retry-label='Try again' @retry='loadGroups')
               async-state(v-else-if='hasActiveFilters' state='empty' title='No groups match this search' message='Clear the search to see all groups.')
               async-state(v-else state='empty' title='No groups yet' message='Create a group to organize access.')
-          .text-center.py-2(v-if='pageCount > 1')
-            v-pagination(v-model='pagination' :length='pageCount')
+            template(v-slot:bottom='{ pageCount }')
+              .text-center.py-2(v-if='pageCount > 1')
+                v-pagination(v-model='pagination' :length='pageCount')
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
+import { markRaw } from 'vue'
 import AsyncState from '@/components/common/async-state.vue'
 import { createGroup, fetchGroupsList, type GroupListRow } from '../../helpers/groups-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
@@ -110,16 +111,15 @@ export default {
       newGroupDialog: false,
       newGroupName: '',
       pagination: 1,
-      pageCount: 0,
       groups: [] as GroupListRow[],
-      headers: [
+      headers: markRaw([
         { title: 'ID', value: 'id', width: 80, sortable: true },
         { title: 'Name', value: 'name' },
         { title: 'Users', value: 'userCount', width: 200 },
         { title: 'Created', value: 'createdAt', width: 250 },
         { title: 'Last Updated', value: 'updatedAt', width: 250 },
         { title: 'Status', value: 'isSystem', width: 120, sortable: false }
-      ],
+      ]),
       search: '',
       loading: false,
       errorMessage: '',
@@ -140,7 +140,10 @@ export default {
     newGroupDialog(newValue: boolean) {
       if (newValue) {
         this.createError = ''
-        this.$nextTick(() => (this.$refs.groupNameIpt as { focus: () => void }).focus())
+        this.$nextTick(() => {
+          const input = this.$refs.groupNameIpt
+          if (typeof input === 'object' && input !== null && 'focus' in input && typeof input.focus === 'function') input.focus()
+        })
       }
     }
   },
@@ -154,8 +157,9 @@ export default {
       this.errorMessage = ''
       wikiStore.startLoading('admin-groups-refresh')
       try {
-        this.groups = await fetchGroupsList(window.fetch.bind(window), 'Groups list response is invalid')
+        const groups = await fetchGroupsList(window.fetch.bind(window), 'Groups list response is invalid')
         if (this.isDisposed) return false
+        this.groups = markRaw(groups)
         return true
       } catch (err) {
         if (this.isDisposed) return false
@@ -172,7 +176,7 @@ export default {
     },
     async createGroup() {
       if (this.creating || this.isDisposed) return
-      if (_.trim(this.newGroupName).length < 1) {
+      if (this.newGroupName.trim().length < 1) {
         this.createError = 'Enter a group name.'
         return
       }

@@ -165,8 +165,8 @@ export default {
       return this.providers.find(provider => provider.key === this.selectedProvider) || {}
     },
     canSave (): boolean {
-      return !this.loading && !this.refreshing && !this.saving && this.providers.length > 0 &&
-        Boolean(this.provider.isAvailable)
+      return !this.loading && !this.refreshing && !this.saving && !this.errorMessage &&
+        this.providers.length > 0 && Boolean(this.provider.isAvailable)
     }
   },
   created() {

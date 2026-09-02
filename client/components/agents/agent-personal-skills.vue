@@ -181,7 +181,7 @@
   </v-dialog>
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import {
   createPersonalAgentSkill,
@@ -196,7 +196,7 @@ const props = defineProps<{ csrfToken: string }>()
 const emit = defineEmits<{ changed: [] }>()
 const open = defineModel<boolean>({ required: true })
 const { smAndDown } = useDisplay()
-const skills = ref<PersonalAgentSkill[]>([])
+const skills = shallowRef<PersonalAgentSkill[]>([])
 const search = ref('')
 const editingId = ref<string | null>(null)
 const name = ref('my-skill')
@@ -209,10 +209,10 @@ const error = ref('')
 const removing = ref<PersonalAgentSkill | null>(null)
 const discardOpen = ref(false)
 const pendingNavigation = ref<(() => void) | null>(null)
-const baseline = ref({ name: '', skillMarkdown: '', isAgentDiscoverable: true })
+const baseline = shallowRef({ name: '', skillMarkdown: '', isAgentDiscoverable: true })
 const refreshError = ref('')
 const removeError = ref('')
-type ComponentRoot = { $el?: HTMLElement }
+type ComponentRoot = { $el?: unknown }
 const editorRoot = ref<HTMLElement | null>(null)
 const nameInput = ref<ComponentRoot | HTMLElement | null>(null)
 const markdownInput = ref<ComponentRoot | HTMLElement | null>(null)
@@ -261,8 +261,8 @@ const requestNavigation = (action: () => void): void => {
   if (isDirty.value) { pendingNavigation.value = action; discardOpen.value = true } else action()
 }
 const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLElement | null => {
-  if (!component) return null
-  return component instanceof HTMLElement ? component : component.$el ?? null
+  if (component instanceof HTMLElement) return component
+  return component?.$el instanceof HTMLElement ? component.$el : null
 }
 const revealEditor = async (): Promise<void> => {
   if (!smAndDown.value) return
@@ -381,13 +381,14 @@ const remove = async (): Promise<void> => {
 watch(removing, async skill => {
   if (!skill) {
     await nextTick()
+    if (disposed || removing.value) return
     destructiveFocusScope?.deactivate({ restoreFocus: true })
     destructiveFocusScope = null
     destructiveRestoreTarget.value = null
     return
   }
   await nextTick()
-  if (removing.value !== skill) return
+  if (disposed || removing.value !== skill) return
   const root = componentElement(removeDialogCard.value)
   if (!root) return
   destructiveFocusScope?.deactivate({ restoreFocus: false })
@@ -402,12 +403,13 @@ watch(removing, async skill => {
 watch(discardOpen, async isOpen => {
   if (!isOpen) {
     await nextTick()
+    if (disposed || discardOpen.value) return
     discardFocusScope?.deactivate({ restoreFocus: true })
     discardFocusScope = null
     return
   }
   await nextTick()
-  if (discardOpen.value !== isOpen) return
+  if (disposed || discardOpen.value !== isOpen) return
   const root = componentElement(discardDialogCard.value)
   if (!root) return
   discardFocusScope?.deactivate({ restoreFocus: false })

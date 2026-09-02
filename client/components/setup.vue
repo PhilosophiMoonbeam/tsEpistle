@@ -505,11 +505,7 @@ export default {
   margin: 0 var(--wiki-space-8) var(--wiki-space-4);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
-
-  &[class*='text-error'],
-  &.v-alert--variant-tonal {
-    box-shadow: none;
-  }
+  box-shadow: none;
 
   a {
     color: currentColor;
@@ -529,10 +525,6 @@ export default {
     border-top: 1px solid var(--wiki-surface-border);
   }
 
-
-  .v-input + .v-input {
-    margin-top: var(--wiki-space-2);
-  }
 }
 
 .setup-section-heading {

@@ -36,6 +36,7 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
     expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
     expect(source).toContain("import { getErrorMessage } from '../../helpers/root-ui-store'")
     expect(source).toContain("import { wikiStore } from '@/store/index.ts'")
+    expect(source).toContain("import { markRaw } from 'vue'")
   })
 
   test('loadAllLocales routes loading and error notification through the wiki store', () => {
@@ -60,9 +61,9 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
     expect(loadGroups).not.toContain("this.$store.commit('loadingStop', 'admin-navigation-groups')")
   })
 
-  test('preserves loader fetch behavior and error notification payloads', () => {
-    expect(loadAllLocales).toContain("this.allLocales = await fetchLocales(window.fetch.bind(window), 'Locales response is invalid')")
-    expect(loadGroups).toContain("this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')")
+  test('preserves loader fetch behavior while keeping read-only option rows raw', () => {
+    expect(loadAllLocales).toContain("this.allLocales = markRaw(await fetchLocales(window.fetch.bind(window), 'Locales response is invalid'))")
+    expect(loadGroups).toContain("this.groups = markRaw(await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid'))")
 
     for (const method of [loadAllLocales, loadGroups]) {
       expect(method).toContain("style: 'red'")
@@ -78,8 +79,8 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
     expect(loadNavigation).toContain('this.config = _.cloneDeep(navigation.config)')
     expect(loadNavigation).toContain('const normalizedTrees = normalizeNavigationTrees(navigation.tree)')
     expect(loadNavigation).toContain('this.trees = _.cloneDeep(normalizedTrees)')
-    expect(loadNavigation).toContain('this.persistedConfig = _.cloneDeep(this.config)')
-    expect(loadNavigation).toContain('this.persistedTrees = _.cloneDeep(normalizedTrees)')
+    expect(loadNavigation).toContain('this.persistedConfig = markRaw(_.cloneDeep(this.config))')
+    expect(loadNavigation).toContain('this.persistedTrees = markRaw(_.cloneDeep(normalizedTrees))')
     expect(loadNavigation).not.toContain('this.trees = _.cloneDeep(navigation.tree)')
     expect(loadNavigation).toContain('this.current = createEmptyNavigationItem()')
     expect(loadNavigation).toContain('this.loaded = true')
@@ -107,7 +108,9 @@ describe('admin-navigation root UI facade for read-only option loaders and refre
     expect(save).toMatch(
       /this\.saving\s*=\s*true[\s\S]*wikiStore\.startLoading\('admin-navigation-save'\)[\s\S]*const\s+normalizedTrees\s*=\s*normalizeNavigationTrees\(this\.trees\)[\s\S]*const\s+savedTrees\s*=\s*_\.cloneDeep\(normalizedTrees\)[\s\S]*const\s+savedConfig\s*=\s*_\.cloneDeep\(this\.config\)[\s\S]*this\.trees\s*=\s*normalizedTrees[\s\S]*await\s+saveNavigation\(window\.fetch\.bind\(window\),\s*savedTrees,\s*savedConfig\.mode,\s*savedConfig\.expandParent\)/
     )
-    expect(save).toMatch(/this\.persistedConfig\s*=\s*savedConfig[\s\S]*this\.persistedTrees\s*=\s*savedTrees[\s\S]*wikiStore\.showNotification\(/)
+    expect(save).toMatch(
+      /this\.persistedConfig\s*=\s*markRaw\(savedConfig\)[\s\S]*this\.persistedTrees\s*=\s*markRaw\(savedTrees\)[\s\S]*wikiStore\.showNotification\(/
+    )
     expect(save.indexOf('const savedTrees')).toBeLessThan(save.indexOf('await saveNavigation'))
     expect(save.indexOf('const savedConfig')).toBeLessThan(save.indexOf('await saveNavigation'))
     expect(save).not.toMatch(/saveNavigation\(window\.fetch\.bind\(window\),\s*this\.trees,/)

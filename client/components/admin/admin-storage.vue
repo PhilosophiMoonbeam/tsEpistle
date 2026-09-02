@@ -159,7 +159,7 @@
               v-divider.my-4
               .text-title-small.mb-2 Failures, conflicts, and diagnostics
               v-list.operations-ledger-issues(lines='three', density='compact')
-                v-list-item(v-for='(item, issueIndex) in operationIssues', :key='`${issueIndex}:${item.kind}:${item.path}:${item.outcome}`')
+                v-list-item(v-for='item in operationIssues', :key='`${item.kind}:${item.path}`')
                   v-list-item-title.operations-ledger-path {{ item.path }}
                   v-list-item-subtitle
                     .d-flex.flex-wrap.ga-2.my-1
@@ -168,7 +168,7 @@
                       v-chip(size='x-small', variant='outlined', label) {{ item.kind }}
                     .text-body-small(v-if='item.message') {{ item.message }}
                     ul.operations-ledger-diagnostics(v-if='item.diagnostics.length')
-                      li(v-for='(diagnostic, diagnosticIndex) in item.diagnostics', :key='`${diagnosticIndex}:${diagnostic}`') {{ diagnostic }}
+                      li(v-for='diagnostic in item.diagnostics', :key='diagnostic') {{ diagnostic }}
           v-card-text.text-medium-emphasis(v-else)
             .text-title-small No storage operation has been reported
             .text-body-medium.mt-1 Run a storage action or wait for status polling to report the latest terminal operation.
@@ -334,7 +334,6 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import moment from 'moment'
 import momentDurationFormatSetup from 'moment-duration-format'
 
@@ -507,10 +506,10 @@ export default {
   },
   watch: {
     selectedTarget(newValue: string) {
-      this.target = _.find(this.targets, ['key', newValue]) || makeDefaultStorageTarget()
+      this.target = this.targets.find(target => target.key === newValue) || makeDefaultStorageTarget()
     },
     targets() {
-      this.selectedTarget = _.get(_.find(this.targets, ['isEnabled', true]), 'key', 'disk')
+      this.selectedTarget = this.targets.find(target => target.isEnabled)?.key || 'disk'
     }
   },
   mounted() {
@@ -535,12 +534,14 @@ export default {
       return STORAGE_STATUS_LABELS[status] || 'Unknown'
     },
     normalizeTargets(targets: StorageTarget[]): NormalizedStorageTarget[] {
-      return _.cloneDeep(targets).map(target => ({
+      return targets.map(target => ({
         ...target,
-        config: _.sortBy(target.config.map(config => ({
-          ...config,
-          value: JSON.parse(config.value) as StorageConfigValue
-        })), [config => config.value.order])
+        config: target.config
+          .map(config => ({
+            ...config,
+            value: JSON.parse(config.value) as StorageConfigValue
+          }))
+          .sort((left, right) => (left.value.order ?? Number.POSITIVE_INFINITY) - (right.value.order ?? Number.POSITIVE_INFINITY))
       }))
     },
     storageTargetsPayload(): StorageTargetUpdate[] {

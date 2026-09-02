@@ -326,6 +326,7 @@ type AddMarkerOptions = {
 }
 
 type MarkdownItRenderRule = NonNullable<ReturnType<typeof createWikiMarkdownRenderer>['renderer']['rules'][string]>
+type MarkdownRenderEnvironment = { sourceLines: number[] }
 
 function requireEditor (editor: TextEditorHandle | null): TextEditorHandle {
   if (!editor) throw new Error('Markdown editor has not been initialized.')
@@ -343,14 +344,14 @@ const md = createWikiMarkdownRenderer()
 // ========================================
 
 // Stamp source lines into preview roots for caret-to-preview scroll synchronization.
-let linesMap: number[] = []
-const injectSourceLine: MarkdownItRenderRule = (tokens, idx, options, _env, renderer) => {
+const injectSourceLine: MarkdownItRenderRule = (tokens, idx, options, env, renderer) => {
   const token = tokens[idx]
   if (token.map && token.level === 0) {
     const line = token.map[0]
     token.attrJoin('class', 'line')
     token.attrSet('data-source-line', String(line))
-    linesMap.push(line)
+    const sourceLines = env?.sourceLines
+    if (Array.isArray(sourceLines)) sourceLines.push(line)
   }
   return renderer.renderToken(tokens, idx, options)
 }
@@ -364,11 +365,13 @@ md.renderer.rules.fence = (tokens, idx, options, env, renderer) => {
   const line = tokens[idx]?.map?.[0]
   const html = renderFence(tokens, idx, options, env, renderer)
   if (line === undefined) return html
-  linesMap.push(line)
+  const sourceLines = env?.sourceLines
+  if (Array.isArray(sourceLines)) sourceLines.push(line)
   return html.replace(/^<([a-z]+)/, `<$1 data-source-line="${line}"`)
 }
 
 const collaborations = new WeakMap<object, MarkdownCollaboration>()
+const sourceLinesByEditor = new WeakMap<object, number[]>()
 
 // ========================================
 // Vue Component
@@ -535,10 +538,10 @@ export default defineComponent({
     },
     processContent (newContent: string) {
       const cm = requireEditor(this.cm)
-      linesMap = []
-      // wikiStore.editor.content = newContent
+      const renderEnvironment: MarkdownRenderEnvironment = { sourceLines: [] }
       this.processMarkers(0, cm.lineCount)
-      this.previewHTML = sanitizeWikiMarkdownHtml(md.render(newContent))
+      this.previewHTML = sanitizeWikiMarkdownHtml(md.render(newContent, renderEnvironment))
+      sourceLinesByEditor.set(this, renderEnvironment.sourceLines)
       this.$nextTick(() => {
         if (this.editorDisposed || !this.previewShown) return
         const preview = this.$refs.editorPreview as HTMLElement | undefined
@@ -665,9 +668,10 @@ export default defineComponent({
     },
     performScrollSync (cm: TextEditorHandle) {
       if (!this.previewShown || cm.hasSelection()) return
+      const preview = this.$refs.editorPreview as HTMLElement | undefined
+      const previewContainer = this.$refs.editorPreviewContainer as HTMLElement | undefined
+      if (!preview || !previewContainer) return
       const currentLine = cm.cursor().line
-      const preview = this.$refs.editorPreview as HTMLElement
-      const previewContainer = this.$refs.editorPreviewContainer as HTMLElement
       const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180
       if (currentLine < 3) {
         Velocity(preview, 'stop', true)
@@ -675,7 +679,8 @@ export default defineComponent({
           Velocity(preview.firstElementChild, 'scroll', { offset: '-50', duration, container: previewContainer })
         }
       } else {
-        const closestLine = _.findLast(linesMap, line => line <= currentLine)
+        const closestLine = _.findLast(sourceLinesByEditor.get(this) ?? [], line => line <= currentLine)
+        if (closestLine === undefined) return
         const destination = preview.querySelector<HTMLElement>(`[data-source-line='${closestLine}']`)
         if (destination) {
           Velocity(preview, 'stop', true)
@@ -688,7 +693,8 @@ export default defineComponent({
       this.activeModal = ''
     },
     toggleFullscreen () {
-      this.$el.requestFullscreen?.()
+      const root = this.$refs.root
+      if (root instanceof HTMLElement) void root.requestFullscreen?.()
     },
     refresh() {
       this.$nextTick(() => {
@@ -844,8 +850,11 @@ export default defineComponent({
     if (this.editorDisposed) return
 
 
+    const container = this.$refs.cm
+    const root = this.$refs.root
+    if (!(container instanceof HTMLElement) || !(root instanceof HTMLElement)) return
     const cm = new TextEditor({
-      parent: this.$refs.cm as HTMLElement,
+      parent: container,
       value: wikiStore.editor.content,
       language: markdown(),
       direction: siteConfig.rtl ? 'rtl' : 'ltr',
@@ -860,7 +869,7 @@ export default defineComponent({
       }
     })
     this.cm = cm
-    Object.defineProperty(this.$refs.root as MarkdownEditorHost, '__wikiSourceEditor', {
+    Object.defineProperty(root as MarkdownEditorHost, '__wikiSourceEditor', {
       configurable: true,
       value: cm
     })
@@ -890,11 +899,13 @@ export default defineComponent({
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
-    delete (this.$refs.root as MarkdownEditorHost).__wikiSourceEditor
+    const root = this.$refs.root
+    if (root instanceof HTMLElement) delete (root as MarkdownEditorHost).__wikiSourceEditor
     this.cm?.destroy()
     this.cm = null
     collaborations.get(this)?.destroy()
     collaborations.delete(this)
+    sourceLinesByEditor.delete(this)
   }
 })
 </script>

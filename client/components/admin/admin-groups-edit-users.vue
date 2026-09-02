@@ -1,20 +1,22 @@
 <template lang="pug">
   v-card(flat)
     .group-users-toolbar(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`')
-      v-text-field(
+      v-text-field.group-users-search(
         variant="outlined"
         flat
         prepend-inner-icon='mdi-magnify'
         v-model='search'
+        @update:model-value='pagination = 1'
         label='Search Group Users...'
         hide-details
         density="compact"
         )
-      v-btn(color='primary', variant="flat", @click='searchUserDialog = true', :disabled='!groupReady || group.id === 2 || busyUserId !== 0')
+      v-btn.group-users-assign(color='primary', variant="flat", @click='searchUserDialog = true', :disabled='!groupReady || group.id === 2 || busyUserId !== 0')
         v-icon(start) mdi-clipboard-account
         | Assign User
     v-data-table(
       :items='group.users'
+      item-value='id'
       :headers='headers'
       :search='search'
       v-model:page='pagination'
@@ -23,7 +25,7 @@
       hide-default-footer
     )
       template(v-slot:item.actions='{ item }')
-        v-menu(location="bottom right", min-width='200')
+        v-menu(location="bottom end", min-width='200')
           template(v-slot:activator='{ props }')
             v-btn(icon, v-bind='props', size="small", :aria-label='`User actions for ${item.name}`')
               v-icon.text-grey-darken-1 mdi-dots-horizontal
@@ -148,7 +150,7 @@ export default {
   gap: .75rem;
   padding: 1rem;
 
-  .v-text-field {
+  .group-users-search {
     flex: 1 1 280px;
     min-width: 0;
   }
@@ -159,7 +161,7 @@ export default {
     align-items: stretch;
     flex-direction: column;
 
-    .v-btn {
+    .group-users-assign {
       width: 100%;
     }
   }

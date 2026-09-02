@@ -287,8 +287,6 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
-
 import { fetchMailConfig, saveMailConfig, sendMailTest } from '../../helpers/mail-api'
 import { wikiStore } from '@/store/index.ts'
 
@@ -395,7 +393,11 @@ export default {
       return (value: number) => (Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 65535) || 'Enter a port from 1 to 65535.'
     },
     smtpUserRule (): (value: string) => true | string {
-      return (value: string) => (!this.smtpPasswordAvailable || Boolean(value && value.trim())) || 'Enter a username for the stored password.'
+      return (value: string) => {
+        const hasUser = Boolean(value && value.trim())
+        if (hasUser === this.smtpPasswordAvailable) return true
+        return hasUser ? 'Enter an SMTP password or clear the username.' : 'Enter a username for the stored password.'
+      }
     },
     smtpPasswordRule (): () => true | string {
       return () => (!this.config.user.trim() || this.smtpPasswordAvailable) || 'Enter an SMTP password or clear the username.'
@@ -472,7 +474,7 @@ export default {
           senderName: this.config.senderName.trim(),
           senderEmail: this.config.senderEmail.trim(),
           host: this.config.host.trim(),
-          port: _.toSafeInteger(this.config.port),
+          port: this.config.port,
           name: this.config.name.trim(),
           secure: Boolean(this.config.secure),
           verifySSL: Boolean(this.config.verifySSL),
@@ -490,7 +492,6 @@ export default {
         this.config.senderName = this.config.senderName.trim()
         this.config.senderEmail = this.config.senderEmail.trim()
         this.config.host = this.config.host.trim()
-        this.config.port = _.toSafeInteger(this.config.port)
         this.config.name = this.config.name.trim()
         this.config.user = this.config.user.trim()
         this.config.dkimDomainName = this.config.dkimDomainName.trim()
@@ -535,7 +536,7 @@ export default {
       this.loadState = 'loading'
       wikiStore.startLoading('admin-mail-refresh')
       try {
-        const loaded = _.cloneDeep(await fetchMailConfig(createAbortableFetch(controller.signal)))
+        const loaded = await fetchMailConfig(createAbortableFetch(controller.signal))
         if (controller.signal.aborted) {
           return
         }

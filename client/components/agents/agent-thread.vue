@@ -177,14 +177,16 @@
           </div>
         </div>
       </article>
-      <AgentToolCard
-        v-for="proposalEntry in entry.message.role === 'assistant' ? entry.run?.proposals ?? [] : []"
-        :key="proposalEntry.tool.id"
-        :tool="proposalEntry.tool"
-        :proposal="proposalEntry.proposal"
-        :busy="Boolean(decidingApprovalId && proposalEntry.proposal.approval?.id === decidingApprovalId)"
-        @decision="forwardDecision"
-      />
+      <template v-if="entry.message.role === 'assistant' && entry.run">
+        <AgentToolCard
+          v-for="proposalEntry in entry.run.proposals"
+          :key="proposalEntry.tool.id"
+          :tool="proposalEntry.tool"
+          :proposal="proposalEntry.proposal"
+          :busy="Boolean(decidingApprovalId && proposalEntry.proposal.approval?.id === decidingApprovalId)"
+          @decision="forwardDecision"
+        />
+      </template>
     </template>
     <section v-if="thread.artifacts.length" class="artifact-grid mt-4" aria-label="Browser screenshots">
       <figure v-for="artifact in thread.artifacts" :key="artifact.id" class="artifact-card">
@@ -245,19 +247,23 @@ const forwardDecision = (
 
 const messageTimeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const messageTimestampFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-const messageTemporalMetadata = computed(() => {
-  const metadata = new Map<string, { time: string; timestamp: string }>()
-  for (const message of props.thread.messages) {
-    if (metadata.has(message.createdAt)) continue
-    const date = new Date(message.createdAt)
-    metadata.set(message.createdAt, Number.isNaN(date.valueOf())
-      ? { time: '', timestamp: message.createdAt }
-      : { time: messageTimeFormat.format(date), timestamp: messageTimestampFormat.format(date) })
-  }
+interface MessageTemporalMetadata {
+  readonly time: string
+  readonly timestamp: string
+}
+const messageTemporalMetadata = new Map<string, MessageTemporalMetadata>()
+const temporalMetadataFor = (createdAt: string): MessageTemporalMetadata => {
+  const cached = messageTemporalMetadata.get(createdAt)
+  if (cached) return cached
+  const date = new Date(createdAt)
+  const metadata = Number.isNaN(date.valueOf())
+    ? { time: '', timestamp: createdAt }
+    : { time: messageTimeFormat.format(date), timestamp: messageTimestampFormat.format(date) }
+  messageTemporalMetadata.set(createdAt, metadata)
   return metadata
-})
-const messageTime = (createdAt: string): string => messageTemporalMetadata.value.get(createdAt)?.time ?? ''
-const messageTimestamp = (createdAt: string): string => messageTemporalMetadata.value.get(createdAt)?.timestamp ?? createdAt
+}
+const messageTime = (createdAt: string): string => temporalMetadataFor(createdAt).time
+const messageTimestamp = (createdAt: string): string => temporalMetadataFor(createdAt).timestamp
 const threadPresentation = computed(() => buildAgentThreadPresentation(
   props.thread.messages,
   props.thread.tools,
@@ -285,6 +291,7 @@ watch(
   [() => props.thread.session.id, currentLiveAnnouncement],
   ([sessionId, announcement], [previousSessionId, previousAnnouncement]) => {
     if (sessionId !== previousSessionId) {
+      messageTemporalMetadata.clear()
       liveSummary.value = ''
       return
     }

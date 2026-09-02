@@ -152,6 +152,7 @@
         .text-body-small {{conditionalRules.length}} {{conditionalRules.length === 1 ? 'rule' : 'rules'}}</template>
 
 <script lang='ts'>
+import { markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
 import { getErrorMessage, setLoading } from '../../helpers/root-ui-store'
@@ -170,7 +171,7 @@ export default {
 
   data() {
     return {
-      groups: [] as GroupOption[],
+      groups: markRaw([] as GroupOption[]),
       groupsLoading: false,
       groupsError: '',
       groupsAbortController: null as AbortController | null,
@@ -216,11 +217,11 @@ export default {
           signal: abortController.signal
         }))
         if (this.groupsAbortController === abortController && !abortController.signal.aborted) {
-          this.groups = groups
+          this.groups = markRaw(groups)
         }
       } catch (error) {
         if (this.groupsAbortController === abortController && !abortController.signal.aborted) {
-          this.groups = []
+          this.groups = markRaw([] as GroupOption[])
           this.groupsError = getErrorMessage(error)
         }
       } finally {

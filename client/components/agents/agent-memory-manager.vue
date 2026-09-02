@@ -182,11 +182,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
 import { clearAgentMemories, createAgentMemory, getAgentMemories, removeAgentMemory, updateAgentMemory, type AgentMemoryEntry, type AgentMemoryTarget, type AgentMemoryView } from '../../helpers/agents-api.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
-const props = defineProps<{ csrfToken: string }>()
+const { csrfToken } = defineProps<{ csrfToken: string }>()
 const open = defineModel<boolean>({ required: true })
 const emptyStore = (limit: number) => ({ entries: [] as AgentMemoryEntry[], characters: 0, limit })
 const loading = ref(false)
@@ -197,17 +197,17 @@ const actionBusy = ref('')
 const error = ref('')
 const dialogError = ref('')
 const clearError = ref('')
-const memories = ref<AgentMemoryView>({ agent: emptyStore(2_200), user: emptyStore(1_375) })
-const editing = ref<{ id: string; version: number } | null>(null)
-const removing = ref<AgentMemoryEntry | null>(null)
+const memories = shallowRef<AgentMemoryView>({ agent: emptyStore(2_200), user: emptyStore(1_375) })
+const editing = shallowRef<{ id: string; version: number } | null>(null)
+const removing = shallowRef<AgentMemoryEntry | null>(null)
 const clearing = ref(false)
 const draftTarget = ref<AgentMemoryTarget>('user')
 const draftContent = ref('')
 type MemoryStore = AgentMemoryView[AgentMemoryTarget]
-type ComponentRoot = { $el?: HTMLElement }
-const memoryCloseButton = ref<ComponentRoot | HTMLElement | null>(null)
-const removeDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
-const clearDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
+type ComponentRoot = ComponentPublicInstance | HTMLElement
+const memoryCloseButton = useTemplateRef<ComponentRoot>('memoryCloseButton')
+const removeDialogCard = useTemplateRef<ComponentRoot>('removeDialogCard')
+const clearDialogCard = useTemplateRef<ComponentRoot>('clearDialogCard')
 const destructiveRestoreTarget = ref<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
 let loadController: AbortController | null = null
@@ -290,7 +290,7 @@ const load = async (committedMessage?: string): Promise<boolean> => {
   loading.value = true
   error.value = ''
   try {
-    const nextMemories = await getAgentMemories(window.fetch.bind(window), props.csrfToken, controller.signal)
+    const nextMemories = await getAgentMemories(window.fetch.bind(window), csrfToken, controller.signal)
     if (generation !== loadGeneration) return false
     memories.value = nextMemories
     stale.value = false
@@ -346,9 +346,10 @@ const cancelClear = (): void => {
   clearing.value = false
   clearError.value = ''
 }
-const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLElement | null => {
+const componentElement = (component: ComponentRoot | null): HTMLElement | null => {
   if (!component) return null
-  return component instanceof HTMLElement ? component : component.$el ?? null
+  if (component instanceof HTMLElement) return component
+  return component.$el instanceof HTMLElement ? component.$el : null
 }
 const save = async (): Promise<void> => {
   const current = editing.value
@@ -356,8 +357,8 @@ const save = async (): Promise<void> => {
   if (!current || !content || draftOverLimit.value || saving.value || actionBusy.value || stale.value || loading.value) return
   saving.value = true; actionBusy.value = 'save'; error.value = ''
   try {
-    if (current.id) await updateAgentMemory(window.fetch.bind(window), props.csrfToken, current.id, { expectedVersion: current.version, target: draftTarget.value, content })
-    else await createAgentMemory(window.fetch.bind(window), props.csrfToken, { target: draftTarget.value, content })
+    if (current.id) await updateAgentMemory(window.fetch.bind(window), csrfToken, current.id, { expectedVersion: current.version, target: draftTarget.value, content })
+    else await createAgentMemory(window.fetch.bind(window), csrfToken, { target: draftTarget.value, content })
   } catch (value) {
     error.value = message(value, 'Memory could not be saved.')
     saving.value = false; actionBusy.value = ''
@@ -372,7 +373,7 @@ const remove = async (): Promise<void> => {
   if (!entry || saving.value || actionBusy.value || stale.value || loading.value) return
   saving.value = true; actionBusy.value = 'remove'; dialogError.value = ''
   try {
-    const mutation = await removeAgentMemory(window.fetch.bind(window), props.csrfToken, entry.id, entry.version)
+    const mutation = await removeAgentMemory(window.fetch.bind(window), csrfToken, entry.id, entry.version)
     const store = memories.value[entry.target]
     memories.value = {
       ...memories.value,
@@ -398,7 +399,7 @@ const clear = async (): Promise<void> => {
   if (saving.value || actionBusy.value || stale.value || loading.value) return
   saving.value = true; actionBusy.value = 'clear'; clearError.value = ''
   try {
-    await clearAgentMemories(window.fetch.bind(window), props.csrfToken)
+    await clearAgentMemories(window.fetch.bind(window), csrfToken)
   } catch (value) {
     clearError.value = message(value, 'Agent memory could not be cleared.')
     saving.value = false; actionBusy.value = ''

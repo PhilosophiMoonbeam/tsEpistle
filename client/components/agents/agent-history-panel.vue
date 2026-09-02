@@ -318,7 +318,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
@@ -332,27 +332,27 @@ const openFolderIds = ref<string[]>([])
 const localError = ref('')
 const folderEditorOpen = ref(false)
 const folderName = ref('')
-const editingFolder = ref<AgentConversationFolderView | null>(null)
+const editingFolder = shallowRef<AgentConversationFolderView | null>(null)
 const savingFolder = ref(false)
-const deletingSession = ref<AgentSessionSummary | null>(null)
-const removingFolder = ref<AgentConversationFolderView | null>(null)
+const deletingSession = shallowRef<AgentSessionSummary | null>(null)
+const removingFolder = shallowRef<AgentConversationFolderView | null>(null)
 const dialogError = ref('')
 const deleting = ref(false)
 const searchQuery = ref<string | null>('')
-const openingSessionIds = ref(new Set<string>())
-const movingSessionIds = ref(new Set<string>())
-const committedDeletedSessionIds = ref(new Set<string>())
-const projectedFolderIds = ref(new Map<string, string | null>())
+const openingSessionIds = shallowRef(new Set<string>())
+const movingSessionIds = shallowRef(new Set<string>())
+const committedDeletedSessionIds = shallowRef(new Set<string>())
+const projectedFolderIds = shallowRef(new Map<string, string | null>())
 const refreshError = ref('')
 const refreshingHistory = ref(false)
 const draggedSessionId = ref<string | null>(null)
 const activeDropTarget = ref<string | null>(null)
 const dragStatus = ref('')
 const recentDropTarget = '__agent_history_recent__'
-type ComponentRoot = { $el?: HTMLElement }
-const historyCloseButton = ref<ComponentRoot | HTMLElement | null>(null)
-const deleteDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
-const removeFolderDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
+type ComponentRoot = ComponentPublicInstance | HTMLElement
+const historyCloseButton = useTemplateRef<ComponentRoot>('historyCloseButton')
+const deleteDialogCard = useTemplateRef<ComponentRoot>('deleteDialogCard')
+const removeFolderDialogCard = useTemplateRef<ComponentRoot>('removeFolderDialogCard')
 const folderEditorRestoreTarget = ref<HTMLElement | null>(null)
 const destructiveRestoreTarget = ref<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
@@ -491,9 +491,10 @@ const refreshHistory = async (): Promise<void> => {
 const loadMoreSessions = async (): Promise<void> => {
   await agents.loadMoreSessions()
 }
-const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLElement | null => {
+const componentElement = (component: ComponentRoot | null): HTMLElement | null => {
   if (!component) return null
-  return component instanceof HTMLElement ? component : component.$el ?? null
+  if (component instanceof HTMLElement) return component
+  return component.$el instanceof HTMLElement ? component.$el : null
 }
 
 const sessionTimeFormatter = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })

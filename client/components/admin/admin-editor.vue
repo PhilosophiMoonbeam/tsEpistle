@@ -118,7 +118,7 @@
 </template>
 
 <script setup lang='ts'>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, shallowRef } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { PAGE_EDITOR_DEFINITIONS } from '../../helpers/page-editors.ts'
 import { fetchSiteConfig, saveSiteConfig } from '../../helpers/site-api.ts'
@@ -126,12 +126,15 @@ import { loadingStart, loadingStop, pushGraphError, showNotification } from '../
 import { defaultAvailableEditors, normalizeAvailableEditors, type PageEditorKey } from '../../../shared/page-editors.ts'
 
 const editors = PAGE_EDITOR_DEFINITIONS
-const availableEditors = ref<PageEditorKey[]>(defaultAvailableEditors())
-const persistedEditors = ref<PageEditorKey[]>(defaultAvailableEditors())
+const availableEditors = shallowRef<PageEditorKey[]>(defaultAvailableEditors())
+const persistedEditors = shallowRef<PageEditorKey[]>(defaultAvailableEditors())
 const loading = ref(true)
 const saving = ref(false)
 
-const hasChanges = computed(() => availableEditors.value.join('|') !== persistedEditors.value.join('|'))
+const hasChanges = computed(() => {
+  return availableEditors.value.length !== persistedEditors.value.length ||
+    availableEditors.value.some((editor, index) => editor !== persistedEditors.value[index])
+})
 const allEditorsAvailable = computed(() => availableEditors.value.length === editors.length)
 const selectionSummary = computed(() => `${availableEditors.value.length} of ${editors.length} available`)
 

@@ -119,14 +119,13 @@
                     v-btn(
                       icon
                       v-bind='{ ...menuProps, ...tooltipProps }'
-                      :class='$vuetify.locale.isRtl ? `ml-3` : ``'
                       rounded='0'
                       height='64'
                       :aria-label='$t(`common:header.pageActions`)'
                       )
                       v-icon mdi-file-document-edit-outline
                   span {{$t('common:header.pageActions')}}
-              v-list.nav-header-menu.page-actions-menu(nav)
+              v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
                 .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
                 v-list-item.pl-4(role='button', tabindex='0', link, @click='pageView', v-if='mode !== `view`')
                   template(v-slot:prepend)
@@ -277,7 +276,7 @@
         .text-label-small This code base is NOT for production use!</template>
 
 <script lang='ts'>
-import { defineAsyncComponent, defineComponent } from 'vue'
+import { defineAsyncComponent, defineComponent, markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 
 import {
@@ -345,7 +344,7 @@ export default defineComponent({
       movePageModal: false,
       convertPageModal: false,
       deletePageModal: false,
-      locales: siteLangs,
+      locales: markRaw(siteLangs),
       isDevMode: false,
       pageActionsAreOpen: false,
       pageActionsFocusFrame: null as number | null,
@@ -470,8 +469,13 @@ export default defineComponent({
       if (!this.pageActionsAreOpen) return
       this.pageActionsFocusFrame = window.requestAnimationFrame(() => {
         this.pageActionsFocusFrame = null
-        if (this.pageActionsAreOpen) {
-          document.querySelector<HTMLElement>('.page-actions-menu .v-list-item')?.focus()
+        if (!this.pageActionsAreOpen) return
+        const menu = this.$refs.pageActionsMenu
+        const root = menu instanceof HTMLElement
+          ? menu
+          : (menu as { $el?: unknown } | undefined)?.$el
+        if (root instanceof HTMLElement) {
+          root.querySelector<HTMLElement>('[role="button"]')?.focus()
         }
       })
     },

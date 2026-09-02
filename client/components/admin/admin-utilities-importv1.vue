@@ -257,7 +257,7 @@
                 th Email
                 th Error
             tbody
-              tr(v-for='(fusr, idx) in failedUsers', :key='`fusr-` + idx')
+              tr(v-for='fusr in failedUsers', :key='`${fusr.provider}:${fusr.email}`')
                 td {{fusr.provider}}
                 td {{fusr.email}}
                 td {{fusr.error}}

@@ -8,7 +8,7 @@
     .duration-picker__every.text-body-medium {{$t('common:duration.every')}}
     .duration-picker__fields
       .duration-picker__field
-        v-text-field(
+        v-text-field.duration-picker__input(
           variant="solo"
           hide-details
           flat
@@ -22,7 +22,7 @@
           )
         .duration-picker__unit(aria-hidden="true") {{$t('common:duration.minutes')}}
       .duration-picker__field
-        v-text-field(
+        v-text-field.duration-picker__input(
           variant="solo"
           hide-details
           flat
@@ -36,7 +36,7 @@
           )
         .duration-picker__unit(aria-hidden="true") {{$t('common:duration.hours')}}
       .duration-picker__field
-        v-text-field(
+        v-text-field.duration-picker__input(
           variant="solo"
           hide-details
           flat
@@ -50,7 +50,7 @@
           )
         .duration-picker__unit(aria-hidden="true") {{$t('common:duration.days')}}
       .duration-picker__field
-        v-text-field(
+        v-text-field.duration-picker__input(
           variant="solo"
           hide-details
           flat
@@ -64,7 +64,7 @@
           )
         .duration-picker__unit(aria-hidden="true") {{$t('common:duration.months')}}
       .duration-picker__field
-        v-text-field(
+        v-text-field.duration-picker__input(
           variant="solo"
           hide-details
           flat
@@ -176,7 +176,6 @@ export default defineComponent({
   min-height: 64px;
   padding: 12px 16px;
   align-items: center;
-  background: rgb(var(--v-theme-surface-variant)) !important;
 }
 
 .duration-picker__every {
@@ -199,7 +198,7 @@ export default defineComponent({
   gap: 8px;
 }
 
-.duration-picker__field .v-input {
+.duration-picker__input {
   min-width: 0;
   flex: 1 1 auto;
 }
@@ -232,7 +231,7 @@ export default defineComponent({
     gap: 2px;
   }
 
-  .duration-picker__field .v-input {
+  .duration-picker__input {
     width: 100%;
   }
 }

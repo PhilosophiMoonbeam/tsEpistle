@@ -88,7 +88,6 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 
 import { createAdminApiKey } from '../../helpers/auth-api'
@@ -161,8 +160,8 @@ export default {
         await navigator.clipboard.writeText(this.key)
         this.copied = true
       } catch {
-        const input = this.$refs.keyContentsIpt as { select: () => void } | undefined
-        input?.select()
+        const input = this.$refs.keyContentsIpt as { select?: () => void } | undefined
+        input?.select?.()
         wikiStore.showNotification({ style: 'red', message: 'Copy failed. Select the key and copy it manually.', icon: 'alert' })
       }
     },
@@ -187,8 +186,9 @@ export default {
     },
     async generate () {
       if (this.loading) return
+      const normalizedName = this.name.trim()
       try {
-        if (_.trim(this.name).length < 2 || this.name.length > 255) {
+        if (normalizedName.length < 2 || normalizedName.length > 255) {
           throw new Error(this.$t('admin:api.newKeyNameError'))
         } else if (!this.scope) {
           throw new Error('Choose a permission scope.')
@@ -204,6 +204,7 @@ export default {
           icon: 'alert'
         })
       }
+      this.name = normalizedName
 
       this.loading = true
       wikiStore.startLoading('admin-api-create')

@@ -43,7 +43,9 @@ export default defineComponent({
   components: {
     AtomSpinner
   },
-  emits: ['update:modelValue'],
+  emits: {
+    'update:modelValue': (value: boolean) => typeof value === 'boolean'
+  },
   props: {
     modelValue: {
       type: Boolean,
@@ -63,7 +65,8 @@ export default defineComponent({
     },
     mode: {
       type: String as PropType<LoaderMode>,
-      default: 'loading'
+      default: 'loading',
+      validator: (value: string): value is LoaderMode => value === 'loading' || value === 'icon'
     },
     icon: {
       type: String,

@@ -41,32 +41,38 @@ describe('admin utilities content REST facades', () => {
   test('rebuildTree uses REST helper while preserving loading, notification, and error facades', () => {
     const rebuildTree = extractMethod(script, 'rebuildTree')
 
-    expect(rebuildTree).toMatch(/this\.loading\s*=\s*true/)
-    expect(rebuildTree).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-content-rebuildtree['"]\s*\)/)
+    expect(rebuildTree).toMatch(/if\s*\(\s*this\.loading\s*\|\|\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}/)
+    expect(rebuildTree).toMatch(
+      /this\.loading\s*=\s*true\s*this\.activeAction\s*=\s*['"]rebuild['"]\s*wikiStore\.startLoading\s*\(\s*['"]admin-utilities-content-rebuildtree['"]\s*\)/
+    )
     expect(rebuildTree).toMatch(/await\s+rebuildPageTree\s*\(\s*window\.fetch\.bind\(window\)\s*\)/)
     expect(rebuildTree).toMatch(
       /wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Page Tree rebuilt successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
     )
-    expect(rebuildTree).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)/)
-    expect(rebuildTree).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-rebuildtree['"]\s*\)/)
-    expect(rebuildTree).toMatch(/this\.loading\s*=\s*false/)
+    expect(rebuildTree).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*!this\.isDisposed\s*\)\s+wikiStore\.showError\s*\(\s*err\s*\)/)
+    expect(rebuildTree).toMatch(
+      /finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-rebuildtree['"]\s*\)\s*if\s*\(\s*!this\.isDisposed\s*\)\s*\{\s*this\.loading\s*=\s*false\s*this\.activeAction\s*=\s*['"]{2}\s*\}\s*\}/
+    )
+    expect(rebuildTree).toMatch(/await\s+rebuildPageTree[\s\S]*?if\s*\(\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}[\s\S]*?wikiStore\.showNotification/)
     expect(rebuildTree).not.toMatch(/this\.\$apollo\.mutate|utilityContentRebuildTreeMutation|\$store\.commit/)
   })
 
   test('rerenderPages fetches the page list through REST and renders each page through REST helper and facades', () => {
     const rerenderPages = extractMethod(script, 'rerenderPages')
 
-    expect(rerenderPages).toMatch(/this\.loading\s*=\s*true/)
-    expect(rerenderPages).toMatch(/this\.isRerendering\s*=\s*true/)
-    expect(rerenderPages).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-content-rerender['"]\s*\)/)
+    expect(rerenderPages).toMatch(/if\s*\(\s*this\.loading\s*\|\|\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}/)
+    expect(rerenderPages).toMatch(
+      /this\.loading\s*=\s*true\s*this\.activeAction\s*=\s*['"]rerender['"]\s*this\.isRerendering\s*=\s*true\s*wikiStore\.startLoading\s*\(\s*['"]admin-utilities-content-rerender['"]\s*\)/
+    )
     expect(rerenderPages).toMatch(/await\s+fetchPageList\s*\(\s*window\.fetch\.bind\(window\)\s*\)/)
     expect(rerenderPages).toMatch(/await\s+renderPage\s*\(\s*window\.fetch\.bind\(window\)\s*,\s*page\.id\s*\)/)
     expect(rerenderPages).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*failed\+\+/)
     expect(rerenderPages).toMatch(/wikiStore\.showNotification\s*\(\s*\{/)
-    expect(rerenderPages).toMatch(/wikiStore\.showError\s*\(\s*err\s*\)/)
-    expect(rerenderPages).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-rerender['"]\s*\)/)
-    expect(rerenderPages).toMatch(/this\.isRerendering\s*=\s*false/)
-    expect(rerenderPages).toMatch(/this\.loading\s*=\s*false/)
+    expect(rerenderPages).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*!this\.isDisposed\s*\)\s+wikiStore\.showError\s*\(\s*err\s*\)/)
+    expect(rerenderPages).toMatch(
+      /finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-rerender['"]\s*\)\s*if\s*\(\s*!this\.isDisposed\s*\)\s*\{\s*this\.isRerendering\s*=\s*false\s*this\.loading\s*=\s*false\s*this\.activeAction\s*=\s*['"]{2}\s*\}\s*\}/
+    )
+    expect(rerenderPages).toMatch(/if\s*\(\s*this\.isDisposed\s*\)\s*\{\s*break\s*\}/)
     expect(rerenderPages).not.toMatch(/this\.\$apollo|graphql-tag|gql`|pages\s*\{\s*list|pages\s*\{\s*render|\$store\.commit/)
   })
 
@@ -81,6 +87,7 @@ describe('admin utilities content REST facades', () => {
       /async\s+confirmDestructiveAction\s*\(\s*\)[\s\S]*?const\s+action\s*=\s*this\.pendingConfirmation[\s\S]*?else\s+if\s*\(\s*action\s*===\s*['"]purge['"]\s*\)\s*\{\s*await\s+this\.purgeHistory\s*\(\s*\)/
     )
     expect(purgeHistory).toMatch(/if\s*\(\s*!this\.purgeHistorySelection\s*\)\s*\{\s*return\s*\}/)
+    expect(purgeHistory).toMatch(/if\s*\(\s*this\.loading\s*\|\|\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}/)
     expect(purgeHistory).toMatch(
       /this\.loading\s*=\s*true\s*this\.activeAction\s*=\s*['"]purge['"]\s*wikiStore\.startLoading\s*\(\s*['"]admin-utilities-content-purgehistory['"]\s*\)/
     )
@@ -88,24 +95,29 @@ describe('admin utilities content REST facades', () => {
     expect(purgeHistory).toMatch(
       /wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Purged history successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
     )
-    expect(purgeHistory).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)/)
+    expect(purgeHistory).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*!this\.isDisposed\s*\)\s+wikiStore\.showError\s*\(\s*err\s*\)/)
     expect(purgeHistory).toMatch(
-      /finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-purgehistory['"]\s*\)\s*this\.loading\s*=\s*false\s*this\.activeAction\s*=\s*['"]{2}\s*\}/
+      /finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-purgehistory['"]\s*\)\s*if\s*\(\s*!this\.isDisposed\s*\)\s*\{\s*this\.loading\s*=\s*false\s*this\.activeAction\s*=\s*['"]{2}\s*\}\s*\}/
     )
+    expect(purgeHistory).toMatch(/await\s+purgePageHistory[\s\S]*?if\s*\(\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}[\s\S]*?wikiStore\.showNotification/)
     expect(purgeHistory).not.toMatch(/this\.\$apollo\.mutate|pages\.purgeHistory|\$store\.commit/)
   })
 
   test('migrateToLocale uses REST helper while preserving loading, notification, and error facades', () => {
     const migrateToLocale = extractMethod(script, 'migrateToLocale')
 
-    expect(migrateToLocale).toMatch(/this\.loading\s*=\s*true/)
-    expect(migrateToLocale).toMatch(/wikiStore\.startLoading\s*\(\s*['"]admin-utilities-content-migratelocale['"]\s*\)/)
+    expect(migrateToLocale).toMatch(/if\s*\(\s*this\.loading\s*\|\|\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}/)
+    expect(migrateToLocale).toMatch(
+      /this\.loading\s*=\s*true\s*this\.activeAction\s*=\s*['"]migrate['"]\s*wikiStore\.startLoading\s*\(\s*['"]admin-utilities-content-migratelocale['"]\s*\)/
+    )
     expect(migrateToLocale).toMatch(/await\s+migratePagesToLocale\s*\(\s*window\.fetch\.bind\(window\)\s*,\s*this\.sourceLocale\s*,\s*this\.targetLocale\s*\)/)
     expect(migrateToLocale).toMatch(/message:\s*`Migrated \$\{resp\.count\} page\(s\) to target locale successfully\.`/)
     expect(migrateToLocale).toMatch(/wikiStore\.showNotification\s*\(\s*\{/)
-    expect(migrateToLocale).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)/)
-    expect(migrateToLocale).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-migratelocale['"]\s*\)/)
-    expect(migrateToLocale).toMatch(/this\.loading\s*=\s*false/)
+    expect(migrateToLocale).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*!this\.isDisposed\s*\)\s+wikiStore\.showError\s*\(\s*err\s*\)/)
+    expect(migrateToLocale).toMatch(
+      /finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-content-migratelocale['"]\s*\)\s*if\s*\(\s*!this\.isDisposed\s*\)\s*\{\s*this\.loading\s*=\s*false\s*this\.activeAction\s*=\s*['"]{2}\s*\}\s*\}/
+    )
+    expect(migrateToLocale).toMatch(/await\s+migratePagesToLocale[\s\S]*?if\s*\(\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}[\s\S]*?wikiStore\.showNotification/)
     expect(migrateToLocale).not.toMatch(/this\.\$apollo\.mutate|utilityContentMigrateLocaleMutation|\$store\.commit/)
   })
 })

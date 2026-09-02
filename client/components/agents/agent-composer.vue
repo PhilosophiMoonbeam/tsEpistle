@@ -512,7 +512,7 @@ const toggleSkill = (versionId: string): void => {
   selectedSkillIds.value.push(versionId)
 }
 watch(
-  () => [props.skills.map(skill => skill.versionId).join(','), props.preferredSkills.map(skill => skill.versionId).join(','), props.invocationLimit],
+  [visibleSkillByVersionId, preferredSkillIds, () => props.invocationLimit],
   () => {
     selectedSkillIds.value = selectedSkillIds.value
       .filter(id => visibleSkillByVersionId.value.has(id) && !isPreferred(id))
@@ -530,7 +530,7 @@ watch(draft, value => {
   if (sendFailed.value) sendFailed.value = false
   void nextTick(resizeInput)
 })
-watch(skillCommandQuery, () => {
+watch(skillCommandResults, () => {
   activeCommandIndex.value = 0
 })
 watch(

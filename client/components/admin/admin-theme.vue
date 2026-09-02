@@ -107,7 +107,7 @@ v-container.admin-theme(fluid)
                 maxlength='80'
                 hide-details='auto'
               )
-              v-btn(
+              v-btn.theme-library__delete(
                 variant='outlined'
                 color='error'
                 prepend-icon='mdi-delete-outline'
@@ -778,7 +778,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, rgb(var(--v-theme-surface)));
 }
 
-.v-textarea.is-monospaced :deep(textarea) {
+.is-monospaced :deep(textarea) {
   font-family: 'Roboto Mono', 'Courier New', Courier, monospace;
   font-size: 13px;
   font-weight: 600;
@@ -803,7 +803,7 @@ onBeforeUnmount(() => {
   .theme-library {
     grid-template-columns: 1fr;
 
-    > .v-btn {
+    > .theme-library__delete {
       justify-self: stretch;
     }
   }

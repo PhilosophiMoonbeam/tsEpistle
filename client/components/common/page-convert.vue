@@ -6,6 +6,7 @@
     scrim='blue-grey-darken-4'
     style='--v-overlay-opacity: .7'
     aria-labelledby='page-convert-dialog-title'
+    @after-enter='focusEditor'
     )
     v-card
       .dialog-header.is-short.is-dark
@@ -15,6 +16,7 @@
         i18next.text-body-medium(path='common:page.convertTitle', tag='div')
           span.text-blue-grey-darken-2(place='title') {{pageTitle}}
         v-select.mt-5(
+          ref='editorSelect'
           :items='editorOptions'
           variant="outlined"
           density="compact"
@@ -94,6 +96,10 @@ export default defineComponent({
     this.convertAbortController = null
   },
   methods: {
+    focusEditor(): void {
+      const select = this.$refs.editorSelect as { focus?: () => void } | undefined
+      select?.focus?.()
+    },
     discard(): void {
       this.isShown = false
     },
@@ -130,7 +136,3 @@ export default defineComponent({
   }
 })
 </script>
-
-<style lang='scss'>
-
-</style>

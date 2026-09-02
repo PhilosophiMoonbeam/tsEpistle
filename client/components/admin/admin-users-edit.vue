@@ -45,7 +45,7 @@
                   template(v-slot:prepend)
                     v-icon(color='purple') mdi-account-key
                   v-list-item-title Activate
-                v-list-item(v-else @click='deactivateUser' :disabled='user.id == currentUserId || user.isSystem || actionLoading !== ``')
+                v-list-item(v-else @click='deactivateUser' :disabled='user.id === currentUserId || user.isSystem || actionLoading !== ``')
                   template(v-slot:prepend)
                     v-icon(color='purple') mdi-account-cancel
                   v-list-item-title Deactivate
@@ -53,7 +53,7 @@
                   template(v-slot:prepend)
                     v-icon(color='blue') mdi-account-check
                   v-list-item-title Set as Verified
-                v-list-item(@click='deleteUserConfirm' :disabled='user.id == currentUserId || user.isSystem || actionLoading !== ``')
+                v-list-item(@click='deleteUserConfirm' :disabled='user.id === currentUserId || user.isSystem || actionLoading !== ``')
                   template(v-slot:prepend)
                     v-icon(color='red') mdi-trash-can-outline
                   v-list-item-title Delete
@@ -229,7 +229,6 @@
           div.v-card-chin(v-if='!user.isSystem')
             v-spacer
             v-select(
-              ref='iptAssignGroup'
               :items='groups'
               v-model='newGroup'
               :label='$t(`admin:users.selectGroup`)'
@@ -239,7 +238,6 @@
               variant="solo"
               flat
               hide-details
-              @keydown.esc='editPop.assignGroup = false'
               style='max-width: 300px;'
               density="compact"
             )
@@ -383,7 +381,7 @@
         user-search(v-model='deleteSearchUserDialog', @select='assignDeleteUser')
 </template>
 <script lang='ts'>
-import { mergeProps } from 'vue'
+import { markRaw, mergeProps } from 'vue'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import StatusIndicator from '@/components/common/status-indicator.vue'
@@ -410,7 +408,7 @@ type EditableAdminUser = Omit<AdminUserDetail, 'createdAt' | 'updatedAt'> & {
   updatedAt: string | null
 }
 
-type UserEditorFieldRef = 'iptEmail' | 'iptDisplayName' | 'iptNewPassword' | 'iptAssignGroup' | 'iptLocation' | 'iptJobTitle' | 'iptTimezone'
+type UserEditorFieldRef = 'iptEmail' | 'iptDisplayName' | 'iptNewPassword' | 'iptLocation' | 'iptJobTitle' | 'iptTimezone'
 
 type FocusableRef = {
   focus: () => void
@@ -464,12 +462,10 @@ export default {
       editPop: {
         email: false,
         name: false,
-        pwd: false,
         location: false,
         jobTitle: false,
         timezone: false,
         newPassword: false,
-        assignGroup: false
       },
       newGroup: 0,
       groups: [] as GroupOption[],
@@ -773,12 +769,10 @@ export default {
       this.editPop = {
         email: false,
         name: false,
-        pwd: false,
         location: false,
         jobTitle: false,
         timezone: false,
         newPassword: false,
-        assignGroup: false
       }
     },
     async loadUser () {
@@ -819,7 +813,7 @@ export default {
       try {
         const groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
         if (requestId !== this.groupsLoadRequestId) return
-        this.groups = groups
+        this.groups = markRaw(groups)
       } catch (err) {
         if (requestId !== this.groupsLoadRequestId) return
         wikiStore.showNotification({

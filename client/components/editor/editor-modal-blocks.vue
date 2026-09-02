@@ -328,7 +328,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
 </template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
 import { fetchContentExtensions, type ContentExtensionStatus } from '../../helpers/content-extensions-api'
@@ -349,6 +349,44 @@ let nextFormItemId = 0
 const createGalleryImage = (): GalleryImageForm => ({ id: ++nextFormItemId, src: '', alt: '', caption: '' })
 const createTabPanel = (label: string, content = ''): TabPanelForm => ({ id: ++nextFormItemId, label, content, headingLevel: null })
 const createInfoboxFact = (): InfoboxFactForm => ({ id: ++nextFormItemId, label: '', value: '', kind: 'text' })
+const CORRECTION_LEVELS = markRaw([
+  { title: 'Low (L)', value: 'L' },
+  { title: 'Medium (M)', value: 'M' },
+  { title: 'Quartile (Q)', value: 'Q' },
+  { title: 'High (H)', value: 'H' }
+])
+const GALLERY_COLUMNS = markRaw([1, 2, 3, 4])
+const GALLERY_FITS = markRaw([
+  { title: 'Crop to fill', value: 'cover' },
+  { title: 'Show whole image', value: 'contain' }
+])
+const GALLERY_ASPECT_RATIOS = markRaw([
+  { title: 'Square tiles', value: 'square' },
+  { title: 'Natural image ratio', value: 'natural' }
+])
+const INDEX_COLUMNS = markRaw([1, 2, 3])
+const INDEX_ORDERS = markRaw([
+  { title: 'Path', value: 'path' },
+  { title: 'Title', value: 'title' },
+  { title: 'Recently updated', value: 'updated' }
+])
+const TAB_HEADING_LEVELS = markRaw([1, 2, 3, 4, 5, 6].map(level => ({
+  title: `Heading ${level}`,
+  value: level as TabHeadingLevel
+})))
+const FACT_KINDS = markRaw([
+  { title: 'Text', value: 'text' },
+  { title: 'Yes', value: 'yes' },
+  { title: 'No', value: 'no' }
+])
+const MEDIA_KINDS = markRaw([
+  { title: 'Video', value: 'video' },
+  { title: 'Audio', value: 'audio' }
+])
+const DIAGRAM_THEMES = markRaw(['auto', 'default', 'dark', 'neutral', 'forest'])
+const DIAGRAM_ALIGNMENTS = markRaw(['left', 'center'])
+const DIAGRAM_FORMATS = markRaw(['svg', 'png'])
+const KROKI_TYPES = markRaw([...KROKI_DIAGRAM_TYPES])
 
 const readYoutubeVideoId = (source: string): string | null => {
   const value = source.trim()
@@ -465,41 +503,19 @@ export default defineComponent({
         height: 400,
         label: ''
       },
-      correctionLevels: [
-        { title: 'Low (L)', value: 'L' },
-        { title: 'Medium (M)', value: 'M' },
-        { title: 'Quartile (Q)', value: 'Q' },
-        { title: 'High (H)', value: 'H' }
-      ],
-      galleryColumns: [1, 2, 3, 4],
-      galleryFits: [
-        { title: 'Crop to fill', value: 'cover' },
-        { title: 'Show whole image', value: 'contain' }
-      ],
-      galleryAspectRatios: [
-        { title: 'Square tiles', value: 'square' },
-        { title: 'Natural image ratio', value: 'natural' }
-      ],
-      indexColumns: [1, 2, 3],
-      indexOrders: [
-        { title: 'Path', value: 'path' },
-        { title: 'Title', value: 'title' },
-        { title: 'Recently updated', value: 'updated' }
-      ],
-      tabHeadingLevels: [1, 2, 3, 4, 5, 6].map(level => ({ title: `Heading ${level}`, value: level as TabHeadingLevel })),
-      factKinds: [
-        { title: 'Text', value: 'text' },
-        { title: 'Yes', value: 'yes' },
-        { title: 'No', value: 'no' }
-      ],
-      mediaKinds: [
-        { title: 'Video', value: 'video' },
-        { title: 'Audio', value: 'audio' }
-      ],
-      diagramThemes: ['auto', 'default', 'dark', 'neutral', 'forest'],
-      diagramAlignments: ['left', 'center'],
-      diagramFormats: ['svg', 'png'],
-      krokiTypes: [...KROKI_DIAGRAM_TYPES]
+      correctionLevels: CORRECTION_LEVELS,
+      galleryColumns: GALLERY_COLUMNS,
+      galleryFits: GALLERY_FITS,
+      galleryAspectRatios: GALLERY_ASPECT_RATIOS,
+      indexColumns: INDEX_COLUMNS,
+      indexOrders: INDEX_ORDERS,
+      tabHeadingLevels: TAB_HEADING_LEVELS,
+      factKinds: FACT_KINDS,
+      mediaKinds: MEDIA_KINDS,
+      diagramThemes: DIAGRAM_THEMES,
+      diagramAlignments: DIAGRAM_ALIGNMENTS,
+      diagramFormats: DIAGRAM_FORMATS,
+      krokiTypes: KROKI_TYPES
     }
   },
   computed: {

@@ -359,7 +359,7 @@ const { connection, decidingApprovalId, error, goalBusy, loading, profiles, send
 const inlineAgentRoot = ref<HTMLElement | null>(null)
 const transcript = ref<HTMLElement | null>(null)
 const composer = ref<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void> } | null>(null)
-type ComponentRoot = { $el?: HTMLElement }
+type ComponentRoot = { $el?: unknown }
 const historyTrigger = ref<ComponentRoot | HTMLElement | null>(null)
 const memoryTrigger = ref<ComponentRoot | HTMLElement | null>(null)
 const historyPanel = ref<HTMLElement | null>(null)
@@ -394,9 +394,12 @@ const currentPage = computed<AgentCurrentPageHint | null>(() => {
 })
 const activeRun = computed(() => {
   const run = thread.value?.session.currentRun
-  return run && ['queued', 'running', 'awaiting_approval'].includes(run.status) ? run : null
+  return run && (run.status === 'queued' || run.status === 'running' || run.status === 'awaiting_approval') ? run : null
 })
-const openGoal = computed(() => thread.value?.goal && ['active', 'paused', 'blocked'].includes(thread.value.goal.status) ? thread.value.goal : null)
+const openGoal = computed(() => {
+  const goal = thread.value?.goal
+  return goal && (goal.status === 'active' || goal.status === 'paused' || goal.status === 'blocked') ? goal : null
+})
 const hasConversation = computed(() => Boolean(thread.value && (thread.value.messages.length || thread.value.tools.length || thread.value.artifacts.length || thread.value.goal)))
 const followJumpVisible = computed(() => Boolean(hasConversation.value && !transcriptFollowing.value && !approvalJumpVisible.value))
 const pendingApprovalId = computed(() => thread.value?.proposals.find(proposal => proposal.status === 'pending' && proposal.approval?.status === 'pending')?.id ?? null)
@@ -528,8 +531,8 @@ const isVisibleTrigger = (element: HTMLElement | null): element is HTMLElement =
   return style.display !== 'none' && style.visibility !== 'hidden'
 }
 const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLElement | null => {
-  if (!component) return null
-  return component instanceof HTMLElement ? component : component.$el ?? null
+  if (component instanceof HTMLElement) return component
+  return component?.$el instanceof HTMLElement ? component.$el : null
 }
 const triggerForPanel = (kind: 'history' | 'memory'): HTMLElement | null => {
   const root = inlineAgentRoot.value

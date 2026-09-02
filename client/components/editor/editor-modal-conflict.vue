@@ -75,6 +75,7 @@
                   span {{$t('common:actions.confirm')}}
 </template>
 <script lang='ts'>
+import { defineComponent, markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { emitEditorConflictResolved } from '../../helpers/editor-conflict-events'
 import { fetchPageConflictLatest, type PageConflictLatest } from '../../helpers/pages-api'
@@ -89,7 +90,7 @@ import { TextEditor, type TextEditorHandle } from './common/text-editor'
 
 
 type ConflictLatest = Pick<PageConflictLatest, 'title' | 'description' | 'updatedAt' | 'authorName' | 'content'>
-export default {
+export default defineComponent({
   data() {
     return {
       cm: null as TextEditorHandle | null,
@@ -104,7 +105,7 @@ export default {
       isLoading: true,
       loadError: '',
       isRemoteConfirmDiagShown: false,
-      conflictRequestId: 0
+      requestController: null as AbortController | null
     }
   },
   computed: {
@@ -136,6 +137,8 @@ export default {
   },
   methods: {
     close () {
+      this.requestController?.abort()
+      this.requestController = null
       this.isRemoteConfirmDiagShown = false
       this.activeModal = ''
     },
@@ -156,7 +159,9 @@ export default {
       this.overwriteAndClose()
     },
     async loadConflict () {
-      const requestId = ++this.conflictRequestId
+      this.requestController?.abort()
+      const requestController = markRaw(new AbortController())
+      this.requestController = requestController
       this.isLoading = true
       this.loadError = ''
       this.latestLoaded = false
@@ -164,13 +169,22 @@ export default {
       this.cm = null
       let resp: ConflictLatest | null = null
       try {
-        resp = await fetchPageConflictLatest(window.fetch.bind(window), wikiStore.page.id)
+        resp = await fetchPageConflictLatest(
+          (url, init) => window.fetch(url, { ...init, signal: requestController.signal }),
+          wikiStore.page.id
+        )
       } catch {
-        resp = null
+        if (requestController.signal.aborted) {
+          if (this.requestController === requestController) this.requestController = null
+          return
+        }
       }
-      if (requestId !== this.conflictRequestId) return
-      if (this.activeModal !== 'editorModalConflict') return
+      if (requestController.signal.aborted || this.activeModal !== 'editorModalConflict') {
+        if (this.requestController === requestController) this.requestController = null
+        return
+      }
       if (!resp) {
+        if (this.requestController === requestController) this.requestController = null
         this.loadError = 'Failed to fetch the latest version. Retry to try again, or cancel to keep editing locally.'
         showNotification(wikiStore, {
           message: 'Failed to fetch latest version.',
@@ -183,7 +197,10 @@ export default {
       this.latest = resp
       this.isLoading = false
       await this.$nextTick()
-      if (requestId !== this.conflictRequestId || this.activeModal !== 'editorModalConflict') return
+      if (requestController.signal.aborted || this.activeModal !== 'editorModalConflict') {
+        if (this.requestController === requestController) this.requestController = null
+        return
+      }
       const language: Extension | undefined = this.editorKey === 'markdown'
         ? markdown()
         : this.editorKey === 'code' || this.editorKey === 'html'
@@ -191,10 +208,11 @@ export default {
           : undefined
       const container = this.$refs.cm
       if (!(container instanceof HTMLElement)) {
+        if (this.requestController === requestController) this.requestController = null
         this.loadError = 'The conflict editor could not be initialized.'
         return
       }
-      this.cm = new TextEditor({
+      this.cm = markRaw(new TextEditor({
         parent: container,
         value: wikiStore.editor.content,
         language,
@@ -209,7 +227,8 @@ export default {
             }
           })
         ]
-      })
+      }))
+      if (this.requestController === requestController) this.requestController = null
       this.latestLoaded = true
       this.isLoading = false
     }
@@ -218,11 +237,12 @@ export default {
     await this.loadConflict()
   },
   beforeUnmount () {
-    this.conflictRequestId += 1
+    this.requestController?.abort()
+    this.requestController = null
     this.cm?.destroy()
     this.cm = null
   }
-}
+})
 </script>
 
 <style lang='scss'>

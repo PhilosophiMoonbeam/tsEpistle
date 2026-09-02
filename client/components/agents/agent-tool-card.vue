@@ -397,15 +397,13 @@ watch(() => props.proposal.id, () => {
   decisionMessage.value = ''
 })
 watch(approvalPending, (pending, wasPending) => {
-  if (pending) startExpiryTimer()
-  else {
-    stopExpiryTimer()
-    if (wasPending) void nextTick(() => receiptSummary.value?.focus())
-  }
-}, { immediate: true })
-watch(statusKey, startExpiryTimer)
-watch(() => props.proposal.expiresAt, startExpiryTimer)
-watch(() => props.tool.completedAt, startExpiryTimer)
+  if (!pending && wasPending) void nextTick(() => receiptSummary.value?.focus())
+})
+watch(
+  [approvalPending, statusKey, () => props.proposal.expiresAt, () => props.tool.completedAt],
+  startExpiryTimer,
+  { immediate: true }
+)
 watch(() => props.busy, busy => {
   if (busy) return
   const target = decisionInFlight.value && approvalPending.value

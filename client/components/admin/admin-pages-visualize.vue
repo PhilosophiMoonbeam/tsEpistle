@@ -137,7 +137,7 @@ export default defineComponent({
       radius: 400,
       pages: [],
       pageLoadRequestId: 0,
-      locales: siteLangs,
+      locales: markRaw(siteLangs),
       currentLocale: siteConfig.lang,
       loading: false,
       errorMessage: ''
@@ -270,7 +270,7 @@ export default defineComponent({
     /**
      * Relational Radial
      */
-    drawRelations (): void {
+    drawRelations (container: HTMLDivElement): void {
       const data = this.hierarchy(this.pages)
 
       const line = d3.lineRadial<RelationPointNode>()
@@ -382,14 +382,13 @@ export default defineComponent({
 
       const svgNode = svg.node()
       if (svgNode) {
-        const container = this.$refs.svgContainer as HTMLDivElement
         container.appendChild(svgNode)
       }
     },
     /**
      * Hierarchical Tree
      */
-    drawTree (): void {
+    drawTree (container: HTMLDivElement): void {
       const data = this.hierarchy(this.pages)
 
       const treeRoot = d3.hierarchy<PageGraphNode>(data) as TreeHierarchyRoot
@@ -472,14 +471,13 @@ export default defineComponent({
 
       const svgNode = svg.node()
       if (svgNode) {
-        const container = this.$refs.svgContainer as HTMLDivElement
         container.appendChild(svgNode)
       }
     },
     /**
      * Hierarchical Radial
      */
-    drawRadialTree (): void {
+    drawRadialTree (container: HTMLDivElement): void {
       const data = this.hierarchy(this.pages)
 
       const tree = d3.tree<PageGraphNode>()
@@ -558,7 +556,6 @@ export default defineComponent({
 
       const svgNode = svg.node()
       if (svgNode) {
-        const container = this.$refs.svgContainer as HTMLDivElement
         container.appendChild(svgNode)
       }
 
@@ -578,13 +575,13 @@ export default defineComponent({
       if (this.pages.length > 0) {
         switch (this.graphMode) {
           case 'rradial':
-            this.drawRelations()
+            this.drawRelations(container)
             break
           case 'htree':
-            this.drawTree()
+            this.drawTree(container)
             break
           case 'hradial':
-            this.drawRadialTree()
+            this.drawRadialTree(container)
             break
         }
       }

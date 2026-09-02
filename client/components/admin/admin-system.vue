@@ -247,13 +247,10 @@ export default {
 
 <style lang='scss'>
 .admin-system {
-  .v-list-item-title,
-  .v-list-item-subtitle {
-    min-width: 0;
-    user-select: text;
-  }
+  user-select: text;
 
   .system-value {
+    min-width: 0;
     overflow-wrap: anywhere;
     white-space: normal;
   }

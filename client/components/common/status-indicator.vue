@@ -32,15 +32,17 @@ const status = computed<Status>(() => {
   return 'neutral'
 })
 
-const defaultStatusLabels: Record<Status, string> = {
-  neutral: 'Status unavailable',
-  active: 'Active',
-  positive: 'Positive',
-  intermediary: 'Pending',
-  negative: 'Error'
-}
+const statusLabel = computed(() => {
+  if (props.label) return props.label
 
-const statusLabel = computed(() => props.label || defaultStatusLabels[status.value])
+  switch (status.value) {
+    case 'active': return 'Active'
+    case 'positive': return 'Positive'
+    case 'intermediary': return 'Pending'
+    case 'negative': return 'Error'
+    default: return 'Status unavailable'
+  }
+})
 </script>
 
 <style scoped>

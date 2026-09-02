@@ -44,7 +44,7 @@ export default defineComponent({
     }
   },
   data() {
-    const currentPage = decodeWikiPagePayload(this.payload)
+    const currentPage = markRaw(decodeWikiPagePayload(this.payload))
     return {
       currentPage,
       contentComponent: null as Component | null,
@@ -158,7 +158,7 @@ export default defineComponent({
           this.saveCurrentHistoryScroll()
           window.history.pushState({ [NAVIGATION_STATE_KEY]: true, scrollY: 0 }, '', parsed.url)
         }
-        this.currentPage = parsed.payload
+        this.currentPage = markRaw(parsed.payload)
         this.contentComponent = markRaw(defineComponent({
           name: 'WikiPageRouteContent',
           template: parsed.contentHtml

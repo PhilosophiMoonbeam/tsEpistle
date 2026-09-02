@@ -223,11 +223,13 @@ export default defineComponent({
           icon: 'check'
         })
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.isDisposed) wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-utilities-content-rebuildtree')
-        this.loading = false
-        this.activeAction = ''
+        if (!this.isDisposed) {
+          this.loading = false
+          this.activeAction = ''
+        }
       }
     },
     async rerenderPages () {
@@ -282,12 +284,14 @@ export default defineComponent({
           })
         }
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.isDisposed) wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-utilities-content-rerender')
-        this.isRerendering = false
-        this.loading = false
-        this.activeAction = ''
+        if (!this.isDisposed) {
+          this.isRerendering = false
+          this.loading = false
+          this.activeAction = ''
+        }
       }
     },
     async migrateToLocale () {
@@ -311,11 +315,13 @@ export default defineComponent({
           icon: 'check'
         })
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.isDisposed) wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-utilities-content-migratelocale')
-        this.loading = false
-        this.activeAction = ''
+        if (!this.isDisposed) {
+          this.loading = false
+          this.activeAction = ''
+        }
       }
     },
     async purgeHistory () {
@@ -339,11 +345,13 @@ export default defineComponent({
           icon: 'check'
         })
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.isDisposed) wikiStore.showError(err)
       } finally {
         wikiStore.stopLoading('admin-utilities-content-purgehistory')
-        this.loading = false
-        this.activeAction = ''
+        if (!this.isDisposed) {
+          this.loading = false
+          this.activeAction = ''
+        }
       }
     }
   }

@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-dialog(v-model='isShown', width='calc(100vw - 2rem)', max-width='1200', aria-labelledby='logging-console-title')
+  v-dialog(v-model='isShown', width='calc(100vw - 2rem)', max-width='1200', aria-labelledby='logging-console-title', @after-enter='attach')
     v-card.logging-console
       .dialog-header
         #logging-console-title.text-title-large Live Console
@@ -49,7 +49,7 @@ export default {
       liveSource: null as EventSource | null,
       output: '',
       connectionState: 'closed' as 'closed' | 'connecting' | 'live' | 'error',
-      attachTimer: null as number | null
+      scrollPending: false
     }
   },
   props: {
@@ -95,13 +95,7 @@ export default {
         if (newValue) {
           this.disconnect()
           this.connectionState = 'connecting'
-          this.attachTimer = window.setTimeout(() => {
-            this.attachTimer = null
-            if (this.modelValue) {
-              this.output = 'Connecting to console output...'
-              this.attach()
-            }
-          }, 100)
+          this.output = 'Connecting to console output...'
         } else {
           this.disconnect()
         }
@@ -119,19 +113,21 @@ export default {
       this.isShown = false
     },
     disconnect() {
-      if (this.attachTimer !== null) {
-        window.clearTimeout(this.attachTimer)
-        this.attachTimer = null
-      }
       this.liveSource?.close()
       this.liveSource = null
       this.connectionState = 'closed'
     },
     appendOutput(message: string) {
       this.output += `${this.output ? '\n' : ''}${message}`
+      if (this.scrollPending) return
+
+      this.scrollPending = true
       this.$nextTick(() => {
-        const container = this.$refs.consoleContainer as HTMLElement | undefined
-        if (container) container.scrollTop = container.scrollHeight
+        this.scrollPending = false
+        const container = this.$refs.consoleContainer
+        if (container instanceof HTMLElement) {
+          container.scrollTop = container.scrollHeight
+        }
       })
     },
     attach() {

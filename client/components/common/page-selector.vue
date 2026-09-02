@@ -47,6 +47,7 @@
                 item-value='id'
                 item-title='title'
                 activatable
+                mandatory
                 hoverable
               )
                 template(v-slot:prepend='{ isOpen }')
@@ -123,7 +124,7 @@
           span {{$t('common:actions.select')}}</template>
 
 <script lang='ts'>
-import { defineComponent, type PropType } from 'vue'
+import { defineComponent, markRaw, type PropType } from 'vue'
 import _ from 'lodash'
 import { fetchPageTree, type PageTreeRow } from '../../helpers/pages-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
@@ -192,10 +193,10 @@ export default defineComponent({
       tree: [createRootNode(siteConfig.lang, 0)] as PageTreeItem[],
       pages: [] as PageEntry[],
       all: [] as PageTreeRow[],
-      namespaces: siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang],
-      scrollStyle: {
+      namespaces: markRaw(siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang]),
+      scrollStyle: markRaw({
         scrollPanel: { scrollingX: false }
-      },
+      }),
       treeAbortController: null as AbortController | null,
       submissionRequestId: 0
     }
@@ -241,17 +242,18 @@ export default defineComponent({
       }
     },
     currentNode (newValue: number[], oldValue: number[]) {
-      if (newValue.length < 1) {
-        this.$nextTick(() => { this.currentNode = oldValue })
-      } else {
-        const current = _.find(this.all, ['id', newValue[0]])
-        if (this.openNodes.indexOf(newValue[0]) < 0) {
-          if (current && this.openNodes.indexOf(current.parent) < 0) this.$nextTick(() => { this.openNodes.push(current.parent) })
-          this.$nextTick(() => { this.openNodes.push(newValue[0]) })
-        }
-        this.currentPage = null
-        this.currentPath = _.compact([current?.path ?? '', _.last(this.currentPath?.split('/') ?? [])]).join('/')
+      const nodeId = newValue[0]
+      if (nodeId === undefined) {
+        void this.$nextTick(() => { this.currentNode = oldValue })
+        return
       }
+      const current = _.find(this.all, ['id', nodeId])
+      const opened = new Set(this.openNodes)
+      if (current) opened.add(current.parent)
+      opened.add(nodeId)
+      this.openNodes = [...opened]
+      this.currentPage = null
+      this.currentPath = _.compact([current?.path ?? '', _.last(this.currentPath?.split('/') ?? [])]).join('/')
     },
     currentPage (newValue: PageEntry | null) {
       if (newValue) this.currentPath = newValue.path

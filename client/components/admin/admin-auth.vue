@@ -157,7 +157,8 @@
                   v-switch.mb-6(
                     v-else-if='cfg.value.type === "boolean"'
                     :label='cfg.value.title'
-                    v-model='cfg.value.value'
+                    :model-value='cfg.value.value === true'
+                    @update:model-value='cfg.value.value = $event === true'
                     color='primary'
                     prepend-icon='mdi-cog-box'
                     :hint='cfg.value.hint ? cfg.value.hint : ""'
@@ -238,7 +239,7 @@
                 chips
                 )
 
-        v-card.mt-4.wiki-form.animated.fadeInUp.wait-p4s(v-if='selectedStrategy !== `local`')
+        v-card.mt-4.wiki-form.animated.fadeInUp.wait-p4s(v-if='strategy.key && selectedStrategy !== `local`')
           v-toolbar(color='primary', density="compact", flat)
             .text-body-large {{$t('admin:auth.configReference')}}
           v-card-text
@@ -264,6 +265,8 @@
               .text-body-medium HTTP-POST</template>
 
 <script lang='ts'>
+import { markRaw } from 'vue'
+
 import _ from 'lodash'
 import { fetchAdminAuthActiveStrategies, fetchAdminAuthStrategies, updateAdminAuthStrategies, type AdminActiveAuthStrategy, type AdminAuthStrategy } from '../../helpers/auth-api'
 import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
@@ -272,6 +275,12 @@ import { fetchSystemHost } from '../../helpers/system-api'
 
 import draggable from '@/components/common/draggable-list.vue'
 import { wikiStore } from '@/store/index.ts'
+
+type FetchImpl = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
+const createAbortableFetch = (signal: AbortSignal): FetchImpl => (input, init) => (
+  window.fetch(input, { ...init, signal })
+)
 
 const createEmptyStrategy = (): AdminActiveAuthStrategy => ({
   key: '',
@@ -294,6 +303,8 @@ const createEmptyStrategy = (): AdminActiveAuthStrategy => ({
   autoEnrollGroups: []
 })
 
+const EMPTY_STRATEGY = markRaw(createEmptyStrategy())
+
 export default {
   components: {
     draggable
@@ -309,7 +320,10 @@ export default {
       loaded: false,
       saving: false,
       persistedStrategies: [] as AdminActiveAuthStrategy[],
-      revealedSecrets: {} as Record<string, boolean>
+      revealedSecrets: {} as Record<string, boolean>,
+      loadController: null as AbortController | null,
+      saveController: null as AbortController | null,
+      isUnmounted: false
     }
   },
   computed: {
@@ -317,7 +331,7 @@ export default {
       return !_.isEqual(this.activeStrategies, this.persistedStrategies)
     },
     strategy (): AdminActiveAuthStrategy {
-      return _.find(this.activeStrategies, ['key', this.selectedStrategy]) || createEmptyStrategy()
+      return _.find(this.activeStrategies, ['key', this.selectedStrategy]) || EMPTY_STRATEGY
     }
   },
   watch: {
@@ -326,28 +340,59 @@ export default {
     }
   },
   methods: {
-    async loadGroups() {
+    async loadGroups(fetchImpl: FetchImpl, signal: AbortSignal) {
       wikiStore.startLoading('admin-auth-groups-refresh')
       try {
-        this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+        const groups = await fetchGroupOptions(fetchImpl, 'Groups response is invalid')
+        if (!signal.aborted && !this.isUnmounted) {
+          this.groups = groups
+        }
       } catch (err) {
-        wikiStore.showNotification({
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        if (!signal.aborted && !this.isUnmounted) {
+          wikiStore.showNotification({
+            style: 'red',
+            message: getErrorMessage(err),
+            icon: 'alert'
+          })
+        }
+      } finally {
+        wikiStore.stopLoading('admin-auth-groups-refresh')
       }
-      wikiStore.stopLoading('admin-auth-groups-refresh')
     },
-    async loadHost({ notifyError = true }: { notifyError?: boolean } = {}) {
+    async loadHost(fetchImpl: FetchImpl, signal: AbortSignal, { notifyError = true }: { notifyError?: boolean } = {}) {
       wikiStore.startLoading('admin-auth-host-refresh')
       try {
-        const response = await fetchSystemHost(window.fetch.bind(window), 'Site host response is invalid')
+        const response = await fetchSystemHost(fetchImpl, 'Site host response is invalid')
+        if (signal.aborted || this.isUnmounted) {
+          return
+        }
         this.host = response.host
         return response
       } catch (err) {
-        this.host = ''
-        if (notifyError) {
+        if (!signal.aborted && !this.isUnmounted) {
+          this.host = ''
+          if (notifyError) {
+            wikiStore.showNotification({
+              style: 'red',
+              message: getErrorMessage(err),
+              icon: 'alert'
+            })
+          }
+        }
+        throw err
+      } finally {
+        wikiStore.stopLoading('admin-auth-host-refresh')
+      }
+    },
+    async loadStrategies(fetchImpl: FetchImpl, signal: AbortSignal) {
+      wikiStore.startLoading('admin-auth-strategies-refresh')
+      try {
+        const strategies = await fetchAdminAuthStrategies(fetchImpl, 'Authentication strategies response is invalid')
+        if (!signal.aborted && !this.isUnmounted) {
+          this.strategies = strategies
+        }
+      } catch (err) {
+        if (!signal.aborted && !this.isUnmounted) {
           wikiStore.showNotification({
             style: 'red',
             message: getErrorMessage(err),
@@ -356,64 +401,68 @@ export default {
         }
         throw err
       } finally {
-        wikiStore.stopLoading('admin-auth-host-refresh')
-      }
-    },
-    async loadStrategies() {
-      wikiStore.startLoading('admin-auth-strategies-refresh')
-      try {
-        this.strategies = await fetchAdminAuthStrategies(window.fetch.bind(window), 'Authentication strategies response is invalid')
-      } catch (err) {
-        wikiStore.showNotification({
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
-        throw err
-      } finally {
         wikiStore.stopLoading('admin-auth-strategies-refresh')
       }
     },
-    async loadActiveStrategies() {
+    async loadActiveStrategies(fetchImpl: FetchImpl, signal: AbortSignal) {
       wikiStore.startLoading('admin-auth-activestrategies-refresh')
       try {
-        this.activeStrategies = await fetchAdminAuthActiveStrategies(window.fetch.bind(window), 'Active authentication strategies response is invalid')
+        const activeStrategies = await fetchAdminAuthActiveStrategies(fetchImpl, 'Active authentication strategies response is invalid')
+        if (!signal.aborted && !this.isUnmounted) {
+          this.activeStrategies = activeStrategies
+        }
       } catch (err) {
-        wikiStore.showNotification({
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        if (!signal.aborted && !this.isUnmounted) {
+          wikiStore.showNotification({
+            style: 'red',
+            message: getErrorMessage(err),
+            icon: 'alert'
+          })
+        }
         throw err
       } finally {
         wikiStore.stopLoading('admin-auth-activestrategies-refresh')
       }
     },
     async loadInitial() {
+      if (this.isUnmounted) return
+      this.loadController?.abort()
+      const controller = new AbortController()
+      this.loadController = controller
+      const fetchImpl = createAbortableFetch(controller.signal)
       this.initialLoading = true
       this.revealedSecrets = {}
       this.loaded = false
       try {
         await Promise.all([
-          this.loadGroups(),
-          this.loadHost(),
-          this.loadStrategies(),
-          this.loadActiveStrategies()
+          this.loadGroups(fetchImpl, controller.signal),
+          this.loadHost(fetchImpl, controller.signal),
+          this.loadStrategies(fetchImpl, controller.signal),
+          this.loadActiveStrategies(fetchImpl, controller.signal)
         ])
+        if (controller.signal.aborted || this.isUnmounted) {
+          return
+        }
         this.persistedStrategies = _.cloneDeep(this.activeStrategies)
         this.selectedStrategy = this.activeStrategies.find(str => str.key === 'local')?.key || this.activeStrategies[0]?.key || ''
         this.loaded = true
       } catch {
+        controller.abort()
         return
       } finally {
-        this.initialLoading = false
+        if (this.loadController === controller) {
+          this.loadController = null
+          if (!this.isUnmounted) {
+            this.initialLoading = false
+          }
+        }
       }
     },
     async refresh() {
       if (this.initialLoading || this.saving) return
       if (this.dirty && !window.confirm('Discard unsaved authentication changes and refresh?')) return
       await this.loadInitial()
-      if (this.loaded) {
+      if (!this.isUnmounted && this.loaded) {
         wikiStore.showNotification({
           message: this.$t('admin:auth.refreshSuccess'),
           style: 'success',
@@ -471,17 +520,20 @@ export default {
     },
     selectStoredSecret(focused: boolean, config: { sensitive?: boolean, value?: unknown }) {
       if (!focused || !config.sensitive || config.value !== '********') return
+      const input = document.activeElement
+      if (!(input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement)) return
       requestAnimationFrame(() => {
-        const input = document.activeElement
-        if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) input.select()
+        if (document.activeElement === input) input.select()
       })
     },
     async save() {
-      if (!this.loaded || this.initialLoading || this.saving || !this.dirty) return
+      if (!this.loaded || this.initialLoading || this.saving || !this.dirty || this.isUnmounted) return
+      const controller = new AbortController()
+      this.saveController = controller
       this.saving = true
       wikiStore.startLoading('admin-auth-savestrategies')
       try {
-        await updateAdminAuthStrategies(window.fetch.bind(window), this.activeStrategies.map((str, idx) => ({
+        await updateAdminAuthStrategies(createAbortableFetch(controller.signal), this.activeStrategies.map((str, idx) => ({
           key: str.key,
           strategyKey: str.strategy.key,
           displayName: str.displayName,
@@ -492,6 +544,9 @@ export default {
           domainWhitelist: str.domainWhitelist,
           autoEnrollGroups: str.autoEnrollGroups
         })))
+        if (controller.signal.aborted || this.isUnmounted) {
+          return
+        }
         this.persistedStrategies = _.cloneDeep(this.activeStrategies)
         wikiStore.showNotification({
           message: this.$t('admin:auth.saveSuccess'),
@@ -499,16 +554,28 @@ export default {
           icon: 'check'
         })
       } catch (err) {
-        wikiStore.showError(err)
+        if (!controller.signal.aborted && !this.isUnmounted) {
+          wikiStore.showError(err)
+        }
       } finally {
-        this.saving = false
+        if (this.saveController === controller) {
+          this.saveController = null
+          if (!this.isUnmounted) {
+            this.saving = false
+          }
+        }
         wikiStore.stopLoading('admin-auth-savestrategies')
       }
     }
   },
   created() {
     void this.loadInitial()
-  }
+  },
+  beforeUnmount() {
+    this.isUnmounted = true
+    this.loadController?.abort()
+    this.saveController?.abort()
+  },
 
 }
 </script>

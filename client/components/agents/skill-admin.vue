@@ -209,11 +209,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue'
 import { useDisplay } from 'vuetify'
 import { z } from 'zod'
 import { sameOriginJsonFetch } from '../../helpers/json-transport.ts'
-const props = withDefaults(defineProps<{ csrfToken: string; embedded?: boolean }>(), { embedded: false })
+const { csrfToken, embedded = false } = defineProps<{ csrfToken: string; embedded?: boolean }>()
 const { smAndDown } = useDisplay()
 
 const SkillSchema = z.object({
@@ -247,9 +247,9 @@ const PreviewSchema = z.object({
 type Skill = z.infer<typeof SkillSchema>
 type Preview = z.infer<typeof PreviewSchema>
 
-const skills = ref<Skill[]>([])
-const groups = ref<z.infer<typeof GroupSchema>[]>([])
-const preview = ref<Preview | null>(null)
+const skills = shallowRef<Skill[]>([])
+const groups = shallowRef<z.infer<typeof GroupSchema>[]>([])
+const preview = shallowRef<Preview | null>(null)
 const search = ref('')
 const stateFilter = ref<'all' | 'enabled' | 'disabled' | 'review'>('all')
 const loading = ref(false)
@@ -266,7 +266,7 @@ const previewError = ref('')
 const createOpen = ref(false)
 const accessOpen = ref(false)
 const previewOpen = ref(false)
-const policySkill = ref<Skill | null>(null)
+const policySkill = shallowRef<Skill | null>(null)
 const policy = reactive({
   exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups',
   groupIds: [] as number[]
@@ -321,7 +321,7 @@ const request = async (url: string, init: RequestInit = {}, signal?: AbortSignal
     headers: {
       accept: 'application/json',
       ...(init.body ? { 'content-type': 'application/json' } : {}),
-      ...(init.method && init.method !== 'GET' ? { 'x-wiki-csrf': props.csrfToken } : {}),
+      ...(init.method && init.method !== 'GET' ? { 'x-wiki-csrf': csrfToken } : {}),
       ...init.headers
     }
   })

@@ -67,6 +67,9 @@ describe('admin utilities telemetry REST and root UI facade migration guard', ()
   const loadTelemetry = script && extractMethod(script, 'loadTelemetry')
   const updateTelemetry = script && extractMethod(script, 'updateTelemetry')
   const resetClientId = script && extractMethod(script, 'resetClientId')
+  const copyClientId = script && extractMethod(script, 'copyClientId')
+  const beforeUnmountStart = script ? script.search(/\bbeforeUnmount\s*\(/) : -1
+  const beforeUnmount = beforeUnmountStart >= 0 ? extractBlock(script, beforeUnmountStart) : null
   const directRootUiCommit =
     /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
@@ -81,6 +84,13 @@ describe('admin utilities telemetry REST and root UI facade migration guard', ()
     expect(source).toContain("v-if='loadError'")
     expect(source).toContain(":loading='loading && activeMutation === `save`'")
     expect(source).toContain(":loading='loading && activeMutation === `reset`'")
+    expect(source).toMatch(/v-btn\(\s*type=['"]button['"][\s\S]*?@click=['"]copyClientId['"][\s\S]*?aria-label=['"]Copy telemetry client ID['"]\s*\)/)
+    expect(source).toContain(
+      "v-btn.px-3(type='submit', variant=\"flat\", color='primary', :loading='loading && activeMutation === `save`', :disabled='!loaded || loading')"
+    )
+    expect(source).toContain(
+      "v-btn.px-3(type='button', variant=\"outlined\", color='grey', @click='resetClientId', :loading='loading && activeMutation === `reset`', :disabled='!loaded || loading')"
+    )
     expect(script).not.toMatch(/utilities-mutation-telemetry-(?:resetid|set)\.gql/)
     expect(script).not.toMatch(/\$apollo\.mutate/)
     expect(script).not.toMatch(/import\s+_\s+from\s+['"]lodash['"]/)
@@ -126,9 +136,9 @@ describe('admin utilities telemetry REST and root UI facade migration guard', ()
     expect(updateTelemetry).toMatch(
       /wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Telemetry updated successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
     )
-    expect(updateTelemetry).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}/)
+    expect(updateTelemetry).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*!this\.isDisposed\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}\s*\}/)
     expect(updateTelemetry).toMatch(
-      /finally\s*\{[\s\S]*?wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-telemetry-set['"]\s*\)[\s\S]*?this\.loading\s*=\s*false[\s\S]*?this\.activeMutation\s*=\s*['"]{2}\s*\}/
+      /finally\s*\{[\s\S]*?wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-telemetry-set['"]\s*\)[\s\S]*?if\s*\(\s*!this\.isDisposed\s*\)\s*\{[\s\S]*?this\.loading\s*=\s*false[\s\S]*?this\.activeMutation\s*=\s*['"]{2}\s*\}/
     )
     expect(updateTelemetry.match(/\bwikiStore\.showNotification\s*\(/g) || []).toHaveLength(1)
     expect(updateTelemetry).not.toMatch(directRootUiCommit)
@@ -152,11 +162,28 @@ describe('admin utilities telemetry REST and root UI facade migration guard', ()
     expect(resetClientId).toMatch(
       /wikiStore\.showNotification\s*\(\s*\{\s*message:\s*['"]Telemetry Client ID reset successfully\.['"]\s*,\s*style:\s*['"]success['"]\s*,\s*icon:\s*['"]check['"]\s*\}\s*\)/
     )
-    expect(resetClientId).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}/)
+    expect(resetClientId).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*!this\.isDisposed\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}\s*\}/)
     expect(resetClientId).toMatch(
-      /finally\s*\{[\s\S]*?wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-telemetry-resetid['"]\s*\)[\s\S]*?this\.loading\s*=\s*false[\s\S]*?this\.activeMutation\s*=\s*['"]{2}\s*\}/
+      /finally\s*\{[\s\S]*?wikiStore\.stopLoading\s*\(\s*['"]admin-utilities-telemetry-resetid['"]\s*\)[\s\S]*?if\s*\(\s*!this\.isDisposed\s*\)\s*\{[\s\S]*?this\.loading\s*=\s*false[\s\S]*?this\.activeMutation\s*=\s*['"]{2}\s*\}/
     )
     expect(resetClientId.match(/\bwikiStore\.showNotification\s*\(/g) || []).toHaveLength(1)
     expect(resetClientId).not.toMatch(directRootUiCommit)
+  })
+
+  test('teardown makes settled save, reset, and clipboard callbacks inert', () => {
+    expect(beforeUnmount).not.toBeNull()
+    expect(beforeUnmount).toMatch(/this\.isDisposed\s*=\s*true/)
+
+    expect(updateTelemetry).toMatch(
+      /await\s+updateSystemTelemetry\([\s\S]*?if\s*\(\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}[\s\S]*?wikiStore\.showNotification/
+    )
+    expect(resetClientId).toMatch(
+      /await\s+resetSystemTelemetryClientId\([\s\S]*?if\s*\(\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}[\s\S]*?await\s+this\.loadTelemetry\(\{\s*notifyError:\s*false\s*\}\)[\s\S]*?if\s*\(\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}[\s\S]*?wikiStore\.showNotification/
+    )
+    expect(copyClientId).not.toBeNull()
+    expect(copyClientId).toMatch(
+      /await\s+navigator\.clipboard\.writeText\(\s*this\.clientId\s*\)[\s\S]*?if\s*\(\s*this\.isDisposed\s*\)\s*\{\s*return\s*\}[\s\S]*?wikiStore\.showNotification/
+    )
+    expect(copyClientId).toMatch(/catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*!this\.isDisposed\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)\s*\}\s*\}/)
   })
 })

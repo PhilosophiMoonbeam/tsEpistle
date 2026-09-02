@@ -1,17 +1,18 @@
 .app-error {
   position: relative;
   display: grid;
-  min-height: 100vh;
-  min-height: 100dvh;
+  min-block-size: 100vh;
+  min-block-size: 100dvh;
   overflow: hidden auto;
-  padding: 40px 22px;
+  padding-block: 40px;
+  padding-inline: 22px;
   place-items: center;
   background:
     radial-gradient(circle at 18% 15%, rgba(var(--v-theme-primary), .25), transparent 28rem),
     radial-gradient(circle at 82% 85%, rgba(99, 102, 241, .18), transparent 32rem),
     linear-gradient(145deg, #0b1220, #172033 58%, #101827);
   color: #fff;
-  font-family: var(--wiki-font-body);
+  font-family: var(--v-font-body);
 
   &::before {
     position: absolute;
@@ -30,8 +31,8 @@
   position: relative;
   z-index: 1;
   display: flex;
-  width: min(100%, 620px);
-  min-height: 410px;
+  inline-size: min(100%, 620px);
+  min-block-size: 410px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -45,7 +46,8 @@
   text-align: center;
 
   h1 {
-    margin: 12px 0 8px;
+    margin-block: 12px 8px;
+    margin-inline: 0;
     font-size: clamp(2rem, 5vw, 3rem);
     font-weight: 760;
     letter-spacing: -.05em;
@@ -55,9 +57,9 @@
 
 .app-error-brand {
   display: grid;
-  width: 86px;
-  height: 86px;
-  margin-bottom: 22px;
+  inline-size: 86px;
+  block-size: 86px;
+  margin-block-end: 22px;
   padding: 16px;
   place-items: center;
   border: 1px solid rgba(255, 255, 255, .12);
@@ -66,8 +68,8 @@
 
   img {
     display: block;
-    width: 100%;
-    height: 100%;
+    inline-size: 100%;
+    block-size: 100%;
     filter: grayscale(100%) brightness(2.1);
     object-fit: contain;
   }
@@ -82,7 +84,7 @@
 }
 
 .app-error-message {
-  max-width: 470px;
+  max-inline-size: 470px;
   margin: 0;
   color: rgba(255, 255, 255, .68);
   line-height: 1.6;
@@ -90,11 +92,11 @@
 
 .app-error-home {
   display: inline-flex;
-  min-height: 44px;
+  min-block-size: 44px;
   align-items: center;
   justify-content: center;
-  margin-top: 24px;
-  padding: 0 20px;
+  margin-block-start: 24px;
+  padding-inline: 20px;
   border: 1px solid rgba(var(--v-theme-primary), .6);
   border-radius: 11px;
   background: rgba(var(--v-theme-primary), .12);
@@ -109,23 +111,24 @@
 }
 
 .app-error-details {
-  width: 100%;
-  margin-top: 24px;
-  border-top: 1px solid rgba(255, 255, 255, .1);
+  inline-size: 100%;
+  margin-block-start: 24px;
+  border-block-start: 1px solid rgba(255, 255, 255, .1);
   color: rgba(255, 255, 255, .6);
   font-size: .78rem;
   text-align: start;
 
   summary {
-    padding-top: 16px;
+    padding-block-start: 16px;
     cursor: pointer;
     text-align: center;
   }
 
   pre {
     overflow: auto;
-    max-height: 220px;
-    margin: 14px 0 0;
+    max-block-size: 220px;
+    margin-block: 14px 0;
+    margin-inline: 0;
     padding: 14px;
     border-radius: 10px;
     background: rgba(0, 0, 0, .26);
@@ -145,9 +148,10 @@
   }
 
   .app-error-content {
-    width: 100%;
-    min-height: 100dvh;
-    padding: 30px 22px;
+    inline-size: 100%;
+    min-block-size: 100dvh;
+    padding-block: 30px;
+    padding-inline: 22px;
     border: 0;
     border-radius: 0;
     background: rgba(15, 23, 42, .72);
@@ -155,13 +159,7 @@
   }
 
   .app-error-brand {
-    width: 74px;
-    height: 74px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .app-error * {
-    transition-duration: .01ms !important;
+    inline-size: 74px;
+    block-size: 74px;
   }
 }

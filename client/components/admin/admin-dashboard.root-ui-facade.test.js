@@ -78,6 +78,15 @@ describe('admin-dashboard recent pages / last logins root UI facade migration gu
     )
     expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchRecentPages\b)(?=[^}]*\btype RecentPageRow\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/pages-api['"]/)
     expect(script).toMatch(/import\s+\{(?=[^}]*\bfetchLastLogins\b)(?=[^}]*\btype LastLoginRow\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/users-api['"]/)
+    expect(script).toContain("import { markRaw } from 'vue'")
+    expect(script).toMatch(
+      /const\s+RECENT_PAGES_HEADERS\s*=\s*markRaw\s*\(\s*\[\s*\{\s*title:\s*['"]Title['"],\s*value:\s*['"]title['"]\s*\},\s*\{\s*title:\s*['"]Path['"],\s*value:\s*['"]path['"]\s*\},\s*\{\s*title:\s*['"]Last Updated['"],\s*value:\s*['"]updatedAt['"],\s*width:\s*250\s*\}\s*\]\s*\)/
+    )
+    expect(script).toMatch(
+      /const\s+LAST_LOGINS_HEADERS\s*=\s*markRaw\s*\(\s*\[\s*\{\s*title:\s*['"]User['"],\s*value:\s*['"]name['"]\s*\},\s*\{\s*title:\s*['"]Last Login['"],\s*value:\s*['"]lastLoginAt['"],\s*width:\s*250\s*\}\s*\]\s*\)/
+    )
+    expect(script).toMatch(/recentPagesHeaders:\s*RECENT_PAGES_HEADERS/)
+    expect(script).toMatch(/lastLoginsHeaders:\s*LAST_LOGINS_HEADERS/)
     expect(script).toMatch(/recentPages:\s*\[\]\s+as\s+RecentPageRow\[\]/)
     expect(script).toMatch(/lastLogins:\s*\[\]\s+as\s+LastLoginRow\[\]/)
   })
@@ -119,7 +128,7 @@ describe('admin-dashboard recent pages / last logins root UI facade migration gu
       "loadingStart(wikiStore, 'admin-dashboard-recentpages')",
       "const pages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')",
       'if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false',
-      'this.recentPages = pages',
+      'this.recentPages = markRaw(pages)',
       'return true',
       'if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false',
       'this.recentPagesError = getErrorMessage(err)',
@@ -151,7 +160,7 @@ describe('admin-dashboard recent pages / last logins root UI facade migration gu
       "loadingStart(wikiStore, 'admin-dashboard-lastlogins')",
       "const users = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')",
       'if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false',
-      'this.lastLogins = users',
+      'this.lastLogins = markRaw(users)',
       'return true',
       'if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false',
       'this.lastLoginsError = getErrorMessage(err)',

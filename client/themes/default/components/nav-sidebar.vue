@@ -36,7 +36,7 @@
         state='empty'
         title='No navigation items'
       )
-      template(v-else, v-for='(item, idx) of customItems', :key='`${item.k}-${item.id || item.t || item.l || idx}`')
+      template(v-else, v-for='(item, idx) of customItems', :key='item.k === `link` ? `link-${item.t}-${item.l}` : item.k === `header` ? `header-${item.l}-${idx}` : `divider-${idx}`')
         v-list-item(
           v-if='item.k === `link`'
           :href='item.t'
@@ -122,13 +122,13 @@
           )
             v-icon(size="small") mdi-pencil
         v-list-subheader.nav-sidebar-subheader.nav-sidebar-directory-label {{$t('common:sidebar.currentDirectory')}}
-      template(v-for='item of currentItems')
-        v-list-item.nav-sidebar-folder(v-if='item.isFolder', :key='`childfolder-` + item.id', @click='fetchBrowseItems(item)')
+      template(v-for='item of currentItems', :key='item.id')
+        v-list-item.nav-sidebar-folder(v-if='item.isFolder', @click='fetchBrowseItems(item)')
           template(v-slot:prepend)
             v-avatar(size='24', variant='text')
               v-icon mdi-folder
           v-list-item-title {{ item.title }}
-        v-list-item.nav-sidebar-page(v-else, :href='(item.visibility === `private` ? `/_private` : ``) + `/` + item.locale + `/` + item.path', :key='`childpage-` + item.id', :active='path === item.path', :aria-current='path === item.path ? `page` : undefined', @click='sidebarLinkClicked')
+        v-list-item.nav-sidebar-page(v-else, :href='(item.visibility === `private` ? `/_private` : ``) + `/` + item.locale + `/` + item.path', :active='path === item.path', :aria-current='path === item.path ? `page` : undefined', @click='sidebarLinkClicked')
           template(v-slot:prepend)
             v-avatar(size='24', variant='text')
               v-icon mdi-text-box
@@ -266,10 +266,11 @@ export default defineComponent({
         } else {
           const flushRightIndex = _.findIndex(this.parents, ['id', item.id])
           if (flushRightIndex >= 0) {
-            this.parents = _.take(this.parents, flushRightIndex)
+            this.parents = _.take(this.parents, flushRightIndex + 1)
+          } else {
+            if (this.parents.length < 1) this.parents.push(this.currentParent)
+            this.parents.push(item)
           }
-          if (this.parents.length < 1) this.parents.push(this.currentParent)
-          this.parents.push(item)
         }
         this.currentParent = item
         const items = await fetchPageTree(

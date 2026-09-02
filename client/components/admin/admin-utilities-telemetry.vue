@@ -79,6 +79,7 @@
         .d-flex.align-center.ga-2.mt-2
           code.telemetry-client-id {{ clientId }}
           v-btn(
+            type='button'
             size='small'
             variant='outlined'
             color='primary'
@@ -170,11 +171,15 @@ export default defineComponent({
           icon: 'check'
         })
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.isDisposed) {
+          wikiStore.showError(err)
+        }
       } finally {
         wikiStore.stopLoading('admin-utilities-telemetry-set')
-        this.loading = false
-        this.activeMutation = ''
+        if (!this.isDisposed) {
+          this.loading = false
+          this.activeMutation = ''
+        }
       }
     },
     async resetClientId() {
@@ -200,11 +205,15 @@ export default defineComponent({
           icon: 'check'
         })
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.isDisposed) {
+          wikiStore.showError(err)
+        }
       } finally {
         wikiStore.stopLoading('admin-utilities-telemetry-resetid')
-        this.loading = false
-        this.activeMutation = ''
+        if (!this.isDisposed) {
+          this.loading = false
+          this.activeMutation = ''
+        }
       }
     },
     async copyClientId() {
@@ -219,7 +228,9 @@ export default defineComponent({
           icon: 'content-copy'
         })
       } catch (err) {
-        wikiStore.showError(err)
+        if (!this.isDisposed) {
+          wikiStore.showError(err)
+        }
       }
     },
   },

@@ -65,23 +65,30 @@ import { fetchSystemFlags, updateSystemFlags, type SystemFlags } from '../../hel
 import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
 
+const makeDefaultFlags = (): SystemFlags => ({
+  ldapdebug: false,
+  sqllog: false
+})
+
 export default {
   components: {
     AsyncState
   },
   data() {
     return {
-      flags: {
-        sqllog: false
-      } as SystemFlags,
+      flags: makeDefaultFlags(),
       flagsLoaded: false,
       loading: false,
       saving: false,
-      errorMessage: ''
+      errorMessage: '',
+      isUnmounted: false
     }
   },
   mounted() {
-    this.loadFlags()
+    void this.loadFlags()
+  },
+  beforeUnmount() {
+    this.isUnmounted = true
   },
   methods: {
     async loadFlags() {
@@ -93,10 +100,17 @@ export default {
       this.flagsLoaded = false
       loadingStart(wikiStore, 'admin-dev-flags-refresh')
       try {
-        this.flags = await fetchSystemFlags(window.fetch.bind(window), 'System flags response is invalid')
+        const flags = await fetchSystemFlags(window.fetch.bind(window), 'System flags response is invalid')
+        if (this.isUnmounted) {
+          return false
+        }
+        this.flags = { ...makeDefaultFlags(), ...flags }
         this.flagsLoaded = true
         return true
       } catch (err) {
+        if (this.isUnmounted) {
+          return false
+        }
         this.errorMessage = getErrorMessage(err)
         showNotification(wikiStore, {
           style: 'red',
@@ -105,7 +119,9 @@ export default {
         })
         return false
       } finally {
-        this.loading = false
+        if (!this.isUnmounted) {
+          this.loading = false
+        }
         loadingStop(wikiStore, 'admin-dev-flags-refresh')
       }
     },
@@ -117,19 +133,26 @@ export default {
       loadingStart(wikiStore, 'admin-dev-flags-update')
       try {
         await updateSystemFlags(window.fetch.bind(window), this.flags, 'System flags update failed')
+        if (this.isUnmounted) {
+          return
+        }
         showNotification(wikiStore, {
           style: 'success',
           message: 'Flags applied successfully.',
           icon: 'check'
         })
       } catch (err) {
-        showNotification(wikiStore, {
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        if (!this.isUnmounted) {
+          showNotification(wikiStore, {
+            style: 'red',
+            message: getErrorMessage(err),
+            icon: 'alert'
+          })
+        }
       } finally {
-        this.saving = false
+        if (!this.isUnmounted) {
+          this.saving = false
+        }
         loadingStop(wikiStore, 'admin-dev-flags-update')
       }
     }

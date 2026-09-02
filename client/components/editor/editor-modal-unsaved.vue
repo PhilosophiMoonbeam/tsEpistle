@@ -13,7 +13,9 @@
 </template>
 
 <script lang='ts'>
-export default {
+import { defineComponent } from 'vue'
+
+export default defineComponent({
   emits: ['discard', 'update:modelValue'],
   props: {
     modelValue: {
@@ -33,5 +35,5 @@ export default {
       this.$emit('discard', true)
     }
   }
-}
+})
 </script>

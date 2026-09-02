@@ -122,7 +122,6 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import validateValues from '../../../shared/validation'
 
 import { fetchAdminAuthProviders, type AdminAuthProviderSummary } from '../../helpers/auth-api'
@@ -154,6 +153,24 @@ type UserValidationSchema = {
   password?: UserFieldConstraint
 }
 
+const PASSWORD_CHARS = 'abcdefghkmnpqrstuvwxyzABCDEFHJKLMNPQRSTUVWXYZ23456789_*=?#!()+'
+const PASSWORD_LENGTH = 12
+const MAX_UNBIASED_BYTE = Math.floor(256 / PASSWORD_CHARS.length) * PASSWORD_CHARS.length
+
+const generatePassword = (): string => {
+  const randomBytes = new Uint8Array(PASSWORD_LENGTH)
+  let password = ''
+  while (password.length < PASSWORD_LENGTH) {
+    window.crypto.getRandomValues(randomBytes)
+    for (const byte of randomBytes) {
+      if (byte >= MAX_UNBIASED_BYTE) continue
+      password += PASSWORD_CHARS[byte % PASSWORD_CHARS.length]
+      if (password.length === PASSWORD_LENGTH) break
+    }
+  }
+  return password
+}
+
 export default {
   emits: ['refresh', 'update:modelValue'],
   props: {
@@ -178,7 +195,8 @@ export default {
       providersLoaded: false,
       providerLoading: false,
       providerLoadError: '',
-      submitting: false
+      submitting: false,
+      isUnmounted: false
     }
   },
   computed: {
@@ -243,7 +261,9 @@ export default {
           icon: 'alert'
         })
       } finally {
-        this.providerLoading = false
+        if (requestId === this.providerLoadRequestId && !this.isUnmounted) {
+          this.providerLoading = false
+        }
         wikiStore.stopLoading('admin-users-strategies-refresh')
       }
     },
@@ -331,6 +351,7 @@ export default {
           mustChangePassword: this.provider === 'local' && this.mustChangePwd,
           sendWelcomeEmail: this.sendWelcomeEmail
         }, 'User create response is invalid')
+        if (this.isUnmounted) return
 
         if (!resp.succeeded) {
           wikiStore.showNotification({
@@ -367,19 +388,20 @@ export default {
           this.focusEmail()
         }
       } catch (err) {
-        wikiStore.showNotification({
-          style: 'red',
-          message: getErrorMessage(err),
-          icon: 'alert'
-        })
+        if (!this.isUnmounted) {
+          wikiStore.showNotification({
+            style: 'red',
+            message: getErrorMessage(err),
+            icon: 'alert'
+          })
+        }
       } finally {
-        this.submitting = false
+        if (!this.isUnmounted) this.submitting = false
         wikiStore.stopLoading('admin-users-create')
       }
     },
     generatePwd() {
-      const pwdChars = 'abcdefghkmnpqrstuvwxyzABCDEFHJKLMNPQRSTUVWXYZ23456789_*=?#!()+'
-      this.password = _.sampleSize(pwdChars, 12).join('')
+      this.password = generatePassword()
     }
   },
   created() {
@@ -387,6 +409,7 @@ export default {
     this.loadGroups()
   },
   beforeUnmount() {
+    this.isUnmounted = true
     this.providerLoadRequestId++
     this.groupsLoadRequestId++
   }

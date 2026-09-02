@@ -221,7 +221,7 @@
 
 </template>
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 
 type ApiServer = {
@@ -261,6 +261,68 @@ type ApiEndpointMethod = {
 function isRecord (value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
+const SERVER_TYPES = markRaw<Record<string, ApiServerType>>({
+  aws: {
+    color: 'orange',
+    icon: 'mdi-aws',
+    title: 'AWS'
+  },
+  azure: {
+    color: 'blue-darken-2',
+    icon: 'mdi-azure',
+    title: 'Azure'
+  },
+  digitalocean: {
+    color: 'blue',
+    icon: 'mdi-digital-ocean',
+    title: 'DigitalOcean'
+  },
+  docker: {
+    color: 'blue',
+    icon: 'mdi-docker',
+    title: 'Docker'
+  },
+  google: {
+    color: 'red',
+    icon: 'mdi-google',
+    title: 'Google'
+  },
+  kubernetes: {
+    color: 'blue-darken-2',
+    icon: 'mdi-kubernetes',
+    title: 'Kubernetes'
+  },
+  linux: {
+    color: 'grey-darken-3',
+    icon: 'mdi-linux',
+    title: 'Linux'
+  },
+  mac: {
+    color: 'grey-darken-2',
+    icon: 'mdi-apple',
+    title: 'Mac'
+  },
+  server: {
+    color: 'grey',
+    icon: 'mdi-server',
+    title: 'Server'
+  },
+  windows: {
+    color: 'blue-darken-2',
+    icon: 'mdi-windows',
+    title: 'Windows'
+  }
+})
+
+const ENDPOINT_METHODS = markRaw<ApiEndpointMethod[]>([
+  { key: 'GET', color: 'blue' },
+  { key: 'POST', color: 'green' },
+  { key: 'PUT', color: 'orange' },
+  { key: 'PATCH', color: 'cyan' },
+  { key: 'DELETE', color: 'red' },
+  { key: 'HEAD', color: 'deep-purple' },
+  { key: 'OPTIONS', color: 'blue-grey' }
+])
 
 function normalizeEditorServer (value: unknown, index: number): ApiServer | null {
   if (!isRecord(value)) return null
@@ -311,58 +373,7 @@ export default defineComponent({
       servers: [
         { name: 'Production', url: 'https://api.example.com/v1', icon: 'server', id: '123456' }
       ] as ApiServer[],
-      serverTypes: {
-        aws: {
-          color: 'orange',
-          icon: 'mdi-aws',
-          title: 'AWS'
-        },
-        azure: {
-          color: 'blue-darken-2',
-          icon: 'mdi-azure',
-          title: 'Azure'
-        },
-        digitalocean: {
-          color: 'blue',
-          icon: 'mdi-digital-ocean',
-          title: 'DigitalOcean'
-        },
-        docker: {
-          color: 'blue',
-          icon: 'mdi-docker',
-          title: 'Docker'
-        },
-        google: {
-          color: 'red',
-          icon: 'mdi-google',
-          title: 'Google'
-        },
-        kubernetes: {
-          color: 'blue-darken-2',
-          icon: 'mdi-kubernetes',
-          title: 'Kubernetes'
-        },
-        linux: {
-          color: 'grey-darken-3',
-          icon: 'mdi-linux',
-          title: 'Linux'
-        },
-        mac: {
-          color: 'grey-darken-2',
-          icon: 'mdi-apple',
-          title: 'Mac'
-        },
-        server: {
-          color: 'grey',
-          icon: 'mdi-server',
-          title: 'Server'
-        },
-        windows: {
-          color: 'blue-darken-2',
-          icon: 'mdi-windows',
-          title: 'Windows'
-        }
-      } as Record<string, ApiServerType>,
+      serverTypes: SERVER_TYPES,
       endpointGroups: [
         {
           id: '345678',
@@ -380,15 +391,7 @@ export default defineComponent({
           ]
         }
       ] as ApiEndpointGroup[],
-      endpointMethods: [
-        { key: 'GET', color: 'blue' },
-        { key: 'POST', color: 'green' },
-        { key: 'PUT', color: 'orange' },
-        { key: 'PATCH', color: 'cyan' },
-        { key: 'DELETE', color: 'red' },
-        { key: 'HEAD', color: 'deep-purple' },
-        { key: 'OPTIONS', color: 'blue-grey' }
-      ] as ApiEndpointMethod[]
+      endpointMethods: ENDPOINT_METHODS
     }
   },
   computed: {

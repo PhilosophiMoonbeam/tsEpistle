@@ -2,84 +2,168 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const extractMethod = (script, name) => {
-  const methodStart = script.search(new RegExp(`async\\s+${name}\\s*\\(\\s*\\)\\s*\\{`))
-
-  if (methodStart === -1) {
-    return null
-  }
+  const methodStart = script.search(new RegExp(`async\\s+${name}\\s*\\(`))
+  if (methodStart === -1) return null
 
   const bodyStart = script.indexOf('{', methodStart)
   let depth = 0
-
   for (let idx = bodyStart; idx < script.length; idx++) {
     if (script[idx] === '{') {
       depth++
     } else if (script[idx] === '}') {
       depth--
-
-      if (depth === 0) {
-        return script.slice(methodStart, idx + 1)
-      }
+      if (depth === 0) return script.slice(methodStart, idx + 1)
     }
   }
-
   return null
 }
+
+const compileMethod = (method, dependencies) => {
+  const executable = method.replace(/^async\s+\w+\s*\([^)]*\)\s*(?::\s*[^{]+)?\s*\{/, 'async function () {')
+  return new Function(...Object.keys(dependencies), `return (${executable})`)(...Object.values(dependencies))
+}
+
+const deferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const createRootUi = () => {
+  const loadingEvents = []
+  const errors = []
+  return {
+    loadingEvents,
+    errors,
+    loadingStart: (_store, key) => loadingEvents.push(['start', key]),
+    loadingStop: (_store, key) => loadingEvents.push(['stop', key]),
+    pushGraphError: (_store, error) => errors.push(error)
+  }
+}
+
+const createViewModel = loadExtensions => ({
+  extensions: [{ key: 'previous' }],
+  loadState: 'success',
+  isUnmounted: false,
+  loadExtensions
+})
 
 describe('admin-extensions root UI facade migration guard', () => {
   const componentPath = path.join(process.cwd(), 'client/components/admin/admin-extensions.vue')
   const source = fs.readFileSync(componentPath, 'utf8')
-  const scriptMatch = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
-  const script = scriptMatch && scriptMatch[1]
-  const loadExtensions = script && extractMethod(script, 'loadExtensions')
+  const script = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)[1]
+  const loadExtensionsSource = extractMethod(script, 'loadExtensions')
+  const wikiStore = {}
+  const windowStub = { fetch: jest.fn() }
 
-  test('admin-extensions.vue preserves refresh state while using grouped root-ui-store facades with the typed wiki store', () => {
-    expect(script).not.toBeNull()
-    expect(loadExtensions).not.toBeNull()
-
-    expect(source).toMatch(/<script\s+lang=['"]ts['"]>/)
-    expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bfetchSystemExtensions\b)(?=[^}]*\btype SystemExtension\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/system-api['"]/
-    )
-    expect(script).toMatch(
-      /import\s+\{(?=[^}]*\bloadingStart\b)(?=[^}]*\bloadingStop\b)(?=[^}]*\bpushGraphError\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/root-ui-store['"]/
-    )
+  test('uses typed REST and root UI facades with the current expansion-panel contract', () => {
+    expect(loadExtensionsSource).not.toBeNull()
+    expect(script).toContain("import { fetchSystemExtensions, type SystemExtension } from '../../helpers/system-api'")
+    expect(script).toContain("import { loadingStart, loadingStop, pushGraphError } from '../../helpers/root-ui-store'")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
-
-    expect(loadExtensions).toMatch(
-      /async\s+loadExtensions\s*\(\s*\)\s*\{[\s\S]*?this\.loadState\s*=\s*['"]loading['"][\s\S]*?this\.extensions\s*=\s*\[\s*\][\s\S]*?loadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-extensions-refresh['"]\s*\)[\s\S]*?try\s*\{[\s\S]*?this\.extensions\s*=\s*await\s+fetchSystemExtensions\s*\(\s*window\.fetch\.bind\(\s*window\s*\)\s*,\s*['"]System extensions response is invalid['"]\s*\)[\s\S]*?this\.loadState\s*=\s*['"]success['"][\s\S]*?return\s+true[\s\S]*?\}\s*catch\s*\(\s*err\s*\)\s*\{[\s\S]*?this\.loadState\s*=\s*['"]error['"][\s\S]*?pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)[\s\S]*?return\s+false[\s\S]*?\}\s*finally\s*\{[\s\S]*?loadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-extensions-refresh['"]\s*\)[\s\S]*?\}/
-    )
-    expect(script).toMatch(/created\s*\(\s*\)\s*\{[\s\S]*?this\.loadExtensions\s*\(\s*\)[\s\S]*?\}/)
-
-    expect(loadExtensions).not.toMatch(
-      /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
-    )
-
-    const loadingStartCalls = loadExtensions.match(/\bloadingStart\s*\(/g) || []
-    expect(loadingStartCalls).toHaveLength(1)
-
-    const pushGraphErrorCalls = loadExtensions.match(/\bpushGraphError\s*\(/g) || []
-    expect(pushGraphErrorCalls).toHaveLength(1)
-
-    const loadingStopCalls = loadExtensions.match(/\bloadingStop\s*\(/g) || []
-    expect(loadingStopCalls).toHaveLength(1)
-  })
-
-  test('admin-extensions.vue uses the current expansion-panel variant contract', () => {
+    expect(script).not.toMatch(/\$store\.commit|this\.\$apollo|mutation\s*:\s*gql`/)
     expect(source).toMatch(
       /v-expansion-panels\.admin-extensions-exp\((?=[^\n)]*\bv-else-if=['"]extensions\.length['"])(?=[^\n)]*\bvariant=["']popout["'])[^\n)]*\)/
     )
-    expect(source).not.toMatch(/v-expansion-panels[^\n]*(?:\bfocusable\b|\bpopout\b(?!["'])|\binset\b)/)
   })
 
-  test('admin-extensions.vue does not keep stale commented save/Apollo root UI code', () => {
-    expect(script).not.toMatch(/\basync\s+save\s*\(/)
-    expect(script).not.toMatch(/\bthis\.\$store\.commit\s*\(/)
-    expect(source).not.toMatch(/\bthis\.\$apollo\b/)
-    expect(source).not.toMatch(/\bmutation\s*:\s*gql`/)
-    expect(source).not.toMatch(/\bupdateConfig\s*\(/)
-    expect(source).not.toMatch(/\bwatchLoading\s*\(/)
-    expect(source).not.toMatch(/\bshowNotification\b/)
-    expect(source).not.toMatch(/\$store\.commit\(\s*['"]pushGraphError['"]\s*,/)
+  test('owns refresh loading and publishes the raw extension response only after it resolves', async () => {
+    const request = deferred()
+    const rootUi = createRootUi()
+    const response = [{ key: 'search', title: 'Search' }]
+    const markRaw = jest.fn(value => value)
+    const fetchSystemExtensions = jest.fn(() => request.promise)
+    const loadExtensions = compileMethod(loadExtensionsSource, {
+      fetchSystemExtensions,
+      loadingStart: rootUi.loadingStart,
+      loadingStop: rootUi.loadingStop,
+      pushGraphError: rootUi.pushGraphError,
+      markRaw,
+      wikiStore,
+      window: windowStub
+    })
+    const viewModel = createViewModel(loadExtensions)
+
+    const loading = loadExtensions.call(viewModel)
+    expect(viewModel.loadState).toBe('loading')
+    expect(viewModel.extensions).toEqual([])
+    expect(rootUi.loadingEvents).toEqual([['start', 'admin-extensions-refresh']])
+
+    request.resolve(response)
+    expect(await loading).toBe(true)
+    expect(viewModel.extensions).toBe(response)
+    expect(viewModel.loadState).toBe('success')
+    expect(markRaw).toHaveBeenCalledWith(response)
+    expect(fetchSystemExtensions).toHaveBeenCalledWith(expect.any(Function), 'System extensions response is invalid')
+    expect(rootUi.errors).toEqual([])
+    expect(rootUi.loadingEvents).toEqual([
+      ['start', 'admin-extensions-refresh'],
+      ['stop', 'admin-extensions-refresh']
+    ])
+  })
+
+  test('surfaces the active request error and always releases refresh loading', async () => {
+    const failure = new Error('extension request failed')
+    const rootUi = createRootUi()
+    const loadExtensions = compileMethod(loadExtensionsSource, {
+      fetchSystemExtensions: async () => {
+        throw failure
+      },
+      loadingStart: rootUi.loadingStart,
+      loadingStop: rootUi.loadingStop,
+      pushGraphError: rootUi.pushGraphError,
+      markRaw: value => value,
+      wikiStore,
+      window: windowStub
+    })
+    const viewModel = createViewModel(loadExtensions)
+
+    expect(await loadExtensions.call(viewModel)).toBe(false)
+    expect(viewModel.extensions).toEqual([])
+    expect(viewModel.loadState).toBe('error')
+    expect(rootUi.errors).toEqual([failure])
+    expect(rootUi.loadingEvents).toEqual([
+      ['start', 'admin-extensions-refresh'],
+      ['stop', 'admin-extensions-refresh']
+    ])
+  })
+
+  test('does not publish a response or error after unmount', async () => {
+    const request = deferred()
+    const rootUi = createRootUi()
+    const fetchSystemExtensions = jest.fn(() => request.promise)
+    const loadExtensions = compileMethod(loadExtensionsSource, {
+      fetchSystemExtensions,
+      loadingStart: rootUi.loadingStart,
+      loadingStop: rootUi.loadingStop,
+      pushGraphError: rootUi.pushGraphError,
+      markRaw: value => value,
+      wikiStore,
+      window: windowStub
+    })
+    const viewModel = createViewModel(loadExtensions)
+
+    const loading = loadExtensions.call(viewModel)
+    viewModel.isUnmounted = true
+    request.resolve([{ key: 'stale' }])
+
+    expect(await loading).toBe(false)
+    expect(viewModel.extensions).toEqual([])
+    expect(viewModel.loadState).toBe('loading')
+    expect(rootUi.errors).toEqual([])
+    expect(rootUi.loadingEvents).toEqual([
+      ['start', 'admin-extensions-refresh'],
+      ['stop', 'admin-extensions-refresh']
+    ])
+
+    const alreadyUnmounted = createViewModel(loadExtensions)
+    alreadyUnmounted.isUnmounted = true
+    expect(await loadExtensions.call(alreadyUnmounted)).toBe(false)
+    expect(fetchSystemExtensions).toHaveBeenCalledTimes(1)
+    expect(rootUi.loadingEvents).toHaveLength(2)
   })
 })

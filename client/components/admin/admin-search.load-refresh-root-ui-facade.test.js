@@ -82,16 +82,22 @@ describe('admin-search load/refresh/save/rebuild root UI facade migration guard'
     )
     expect(source).toMatch(/@click=['"]refresh['"][^)]*:loading=['"]enginesLoading['"][^)]*:disabled=['"]saving \|\| rebuilding['"]/)
     expect(source).toMatch(/@click=['"]rebuild['"][^)]*:loading=['"]rebuilding['"][^)]*:disabled=['"]saving \|\| enginesLoading['"]/)
+    expect(source).toMatch(
+      /@click=['"]selectedEngine = eng\.key['"][\s\S]*?:disabled=['"]!eng\.isAvailable \|\| saving['"][\s\S]*?:aria-disabled=['"]!eng\.isAvailable \|\| saving \? `true` : undefined['"][\s\S]*?role=['"]radio['"]/
+    )
     expect(source).toMatch(/v-icon\(start\)\s+mdi-cached/)
     expect(source).toMatch(/v-else-if=['"]eng\.key === selectedEngine['"]\)\s+mdi-radiobox-marked/)
     expect(source).toMatch(/v-icon\(color=['"]grey['"],\s*v-else\)\s+mdi-radiobox-blank/)
-    expect(source).toMatch(/@click=['"]save['"][^)]*:disabled=['"]!enginesLoaded \|\| enginesLoading \|\| rebuilding['"][^)]*:loading=['"]saving['"]/)
+    expect(source).toMatch(/@click=['"]save['"][^)]*:disabled=['"]!canSave['"][^)]*:loading=['"]saving['"]/)
     expect(script).not.toMatch(/search-mutation-(?:save-engines|rebuild-index)\.gql|engines(?:Save|Rebuild)Mutation/)
   })
 
-  test('selected engine configuration stays computed from the current engine list', () => {
+  test('selected engine configuration and Apply gating require an available current engine', () => {
     expect(script).toMatch(
       /engine\s*\(\s*\)\s*:\s*SearchEngine\s*\{[\s\S]*this\.engines\.find\s*\(\s*engine\s*=>\s*engine\.key\s*===\s*this\.selectedEngine\s*\)\s*\|\|\s*createEmptySearchEngine\s*\(\s*\)/
+    )
+    expect(script).toMatch(
+      /canSave\s*\(\s*\)\s*:\s*boolean\s*\{[\s\S]*?return\s+this\.enginesLoaded\s*&&[\s\S]*?!this\.enginesLoading\s*&&[\s\S]*?!this\.rebuilding\s*&&[\s\S]*?!this\.saving\s*&&[\s\S]*?this\.engines\.some\s*\(\s*engine\s*=>\s*engine\.key\s*===\s*this\.selectedEngine\s*&&\s*engine\.isAvailable\s*\)/
     )
   })
 
@@ -106,7 +112,7 @@ describe('admin-search load/refresh/save/rebuild root UI facade migration guard'
       /fetchSearchEngines\s*\(\s*createAbortableFetch\s*\(\s*controller\.signal\s*\)\s*,\s*['"]Search engines response is invalid['"]\s*\)/
     )
     expect(loadEngines).toMatch(
-      /if\s*\(\s*controller\.signal\.aborted\s*\)\s*\{\s*return\s+false\s*\}[\s\S]*?this\.engines\s*=\s*engines[\s\S]*?this\.selectedEngine\s*=\s*engines\.find\s*\(\s*engine\s*=>\s*engine\.isEnabled\s*\)\?\.key\s*\|\|\s*['"]postgres['"][\s\S]*?this\.enginesLoaded\s*=\s*true[\s\S]*?return\s+true/
+      /if\s*\(\s*controller\.signal\.aborted\s*\)\s*\{\s*return\s+false\s*\}[\s\S]*?this\.engines\s*=\s*engines[\s\S]*?const\s+selected\s*=\s*engines\.find\s*\(\s*engine\s*=>\s*engine\.isEnabled\s*&&\s*engine\.isAvailable\s*\)\s*\|\|\s*engines\.find\s*\(\s*engine\s*=>\s*engine\.key\s*===\s*['"]postgres['"]\s*&&\s*engine\.isAvailable\s*\)\s*\|\|\s*engines\.find\s*\(\s*engine\s*=>\s*engine\.isAvailable\s*\)[\s\S]*?this\.selectedEngine\s*=\s*selected\?\.key\s*\|\|\s*(?:''|"")[\s\S]*?this\.enginesLoaded\s*=\s*true[\s\S]*?return\s+true/
     )
     expect(loadEngines).toMatch(
       /catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*controller\.signal\.aborted\s*\)\s*\{\s*return\s+false\s*\}[\s\S]*?this\.engines\s*=\s*\[\][\s\S]*?this\.enginesLoaded\s*=\s*false[\s\S]*?this\.enginesLoadError\s*=\s*true[\s\S]*?if\s*\(\s*notifyError\s*\)[\s\S]*?throw\s+err/
@@ -136,7 +142,7 @@ describe('admin-search load/refresh/save/rebuild root UI facade migration guard'
 
   test('save sends the complete payload and gates success on its abortable silent reload', () => {
     expect(save).not.toBeNull()
-    expect(save).toMatch(/if\s*\(\s*this\.saving\s*\|\|\s*this\.rebuilding\s*\|\|\s*this\.enginesLoading\s*\)\s*return/)
+    expect(save).toMatch(/if\s*\(\s*!this\.canSave\s*\)\s*return/)
     expect(save).toMatch(/const\s+controller\s*=\s*new\s+AbortController\s*\(\s*\)[\s\S]*?this\.saveController\s*=\s*controller[\s\S]*?this\.saving\s*=\s*true/)
     expect(save).toMatch(/saveSearchEngines\s*\(\s*createAbortableFetch\s*\(\s*controller\.signal\s*\)\s*,/)
     expect(save).toMatch(

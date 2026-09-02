@@ -51,16 +51,24 @@ const loadPanel = (
   const emit = vi.fn()
   const unmountCallbacks: Array<() => void> = []
   const ref = <T>(value: T): Ref<T> => ({ value })
+  const useTemplateRef = <T>(_name: string): Ref<T | null> => ref<T | null>(null)
+  class HarnessElement {}
   const thread = ref({ session: { id: '00000000-0000-4000-8000-000000000001' } })
   const evaluate = new Function(
     'computed',
+    'nextTick',
     'onBeforeUnmount',
     'ref',
+    'shallowRef',
+    'useTemplateRef',
     'watch',
     'storeToRefs',
     'defineEmits',
     'useAgentsStore',
+    'createModalFocusScope',
     'window',
+    'document',
+    'HTMLElement',
     `${executableScript}\nreturn {
       activeDropTarget,
       beginSessionDrag,
@@ -82,8 +90,11 @@ const loadPanel = (
         return getter()
       }
     }),
+    () => Promise.resolve(),
     (callback: () => void) => unmountCallbacks.push(callback),
     ref,
+    ref,
+    useTemplateRef,
     (_source: unknown, callback: () => void, options?: { immediate?: boolean }) => {
       if (options?.immediate) callback()
     },
@@ -99,7 +110,10 @@ const loadPanel = (
     }),
     () => emit,
     () => agents,
-    { matchMedia: () => ({ matches: compact }) }
+    vi.fn(),
+    { matchMedia: () => ({ matches: compact }) },
+    { activeElement: null, querySelector: () => null },
+    HarnessElement
   )
   return {
     ...panel,

@@ -26,6 +26,54 @@ const selectTagStart = script.indexOf('selectTag(tag: EditablePageTagRow) {')
 const selectTagEnd = script.indexOf('    async deleteTag', selectTagStart)
 const selectTagBody = script.slice(selectTagStart, selectTagEnd)
 
+const compileAsyncMethod = (method, parameters, dependencies) => {
+  const bodyStart = method.indexOf('{')
+  let depth = 0
+  let bodyEnd = -1
+  for (let idx = bodyStart; idx < method.length; idx++) {
+    if (method[idx] === '{') {
+      depth++
+    } else if (method[idx] === '}') {
+      depth--
+      if (depth === 0) {
+        bodyEnd = idx + 1
+        break
+      }
+    }
+  }
+  const body = method.slice(bodyStart, bodyEnd)
+  return new Function(...Object.keys(dependencies), `return (async function (${parameters.join(', ')}) ${body})`)(...Object.values(dependencies))
+}
+
+const deferred = () => {
+  let resolve
+  let reject
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
+const createWikiStore = () => {
+  const loadingEvents = []
+  const notifications = []
+  const errors = []
+  return {
+    loadingEvents,
+    notifications,
+    errors,
+    store: {
+      startLoading: id => loadingEvents.push(['start', id]),
+      stopLoading: id => loadingEvents.push(['stop', id]),
+      showNotification: notification => notifications.push(notification),
+      showError: error => errors.push(error)
+    }
+  }
+}
+
+const windowStub = { fetch: () => {} }
+
 describe('admin tags REST update facade', () => {
   it('routes tag updates through the pages REST helper instead of the updateTag GraphQL mutation', () => {
     expect(source).toContain("<script lang='ts'>")
@@ -43,14 +91,102 @@ describe('admin tags REST update facade', () => {
     expect(saveTagBody).not.toContain('data.pages.updateTag')
   })
 
-  it('preserves tag update loading, notification, timestamp, and graph error behavior', () => {
-    expect(saveTagBody).toContain("wikiStore.startLoading('admin-tags-save')")
-    expect(saveTagBody).toContain("wikiStore.stopLoading('admin-tags-save')")
-    expect(saveTagBody).toContain("message: this.$t('admin:tags.saveSuccess')")
-    expect(saveTagBody).toContain("style: 'success'")
-    expect(saveTagBody).toContain("icon: 'check'")
-    expect(saveTagBody).toContain('this.current.updatedAt = new Date()')
-    expect(saveTagBody).toContain('wikiStore.showError(err)')
+  it('binds async completion, timestamp, notification, and loading cleanup to the record that was saved', async () => {
+    const request = deferred()
+    const wiki = createWikiStore()
+    const updateCalls = []
+    const saveTag = compileAsyncMethod(saveTagBody, ['tag'], {
+      updatePageTag: (_fetch, id, tag, title) => {
+        updateCalls.push({ id, tag, title })
+        return request.promise
+      },
+      wikiStore: wiki.store,
+      window: windowStub
+    })
+    const savedRecord = {
+      id: 11,
+      tag: 'saved-record',
+      title: 'Saved record',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z'
+    }
+    const newlySelectedRecord = {
+      id: 12,
+      tag: 'new-selection',
+      title: 'New selection',
+      createdAt: '2026-01-03T00:00:00.000Z',
+      updatedAt: '2026-01-04T00:00:00.000Z'
+    }
+    const viewModel = {
+      $t: key => key,
+      current: savedRecord,
+      deleting: false,
+      saving: false,
+      tagValid: true
+    }
+
+    const savePromise = saveTag.call(viewModel, savedRecord)
+    expect(viewModel.saving).toBe(true)
+    expect(updateCalls).toEqual([{ id: 11, tag: 'saved-record', title: 'Saved record' }])
+    expect(wiki.loadingEvents).toEqual([['start', 'admin-tags-save']])
+
+    viewModel.current = newlySelectedRecord
+    request.resolve()
+    await savePromise
+
+    expect(savedRecord.updatedAt).toBeInstanceOf(Date)
+    expect(newlySelectedRecord.updatedAt).toBe('2026-01-04T00:00:00.000Z')
+    expect(viewModel.current).toBe(newlySelectedRecord)
+    expect(viewModel.saving).toBe(false)
+    expect(wiki.notifications).toEqual([
+      {
+        message: 'admin:tags.saveSuccess',
+        style: 'success',
+        icon: 'check'
+      }
+    ])
+    expect(wiki.errors).toEqual([])
+    expect(wiki.loadingEvents).toEqual([
+      ['start', 'admin-tags-save'],
+      ['stop', 'admin-tags-save']
+    ])
+  })
+
+  it('leaves the saved timestamp unchanged and releases loading when the update fails', async () => {
+    const failure = new Error('tag update failed')
+    const wiki = createWikiStore()
+    const saveTag = compileAsyncMethod(saveTagBody, ['tag'], {
+      updatePageTag: async () => {
+        throw failure
+      },
+      wikiStore: wiki.store,
+      window: windowStub
+    })
+    const record = {
+      id: 13,
+      tag: 'unchanged',
+      title: null,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z'
+    }
+    const viewModel = {
+      $t: key => key,
+      current: record,
+      deleting: false,
+      saving: false,
+      tagValid: true
+    }
+
+    await saveTag.call(viewModel, record)
+
+    expect(record.updatedAt).toBe('2026-01-02T00:00:00.000Z')
+    expect(viewModel.saving).toBe(false)
+    expect(wiki.notifications).toEqual([])
+    expect(wiki.errors).toEqual([failure])
+    expect(wiki.loadingEvents).toEqual([
+      ['start', 'admin-tags-save'],
+      ['stop', 'admin-tags-save']
+    ])
   })
 })
 
@@ -108,6 +244,7 @@ describe('admin tags REST query facade', () => {
     expect(filteredTagsBody).not.toContain('_.filter')
     expect(selectTagBody).toContain('this.current = tag')
     expect(selectTagBody).not.toContain('cloneDeep')
+    expect(source).toContain(":key='tag.id'")
     expect(source).toContain("@keydown.enter.prevent='selectTag(tag)'")
     expect(source).toContain("@keydown.space.prevent='selectTag(tag)'")
   })

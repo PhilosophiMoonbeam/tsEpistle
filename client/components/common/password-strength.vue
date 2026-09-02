@@ -20,7 +20,7 @@
 <script lang='ts'>
 import { defineComponent } from 'vue'
 import zxcvbn from 'zxcvbn'
-import _ from 'lodash'
+import debounce from 'lodash/debounce.js'
 
 export default defineComponent({
   props: {
@@ -35,7 +35,7 @@ export default defineComponent({
   },
   data() {
     return {
-      debouncedCheckPasswordStrength: null as ReturnType<typeof _.debounce> | null,
+      debouncedCheckPasswordStrength: null as ReturnType<typeof debounce> | null,
       passwordStrength: 0
     }
   },
@@ -67,13 +67,12 @@ export default defineComponent({
     }
   },
   created() {
-    this.debouncedCheckPasswordStrength = _.debounce((password: string) => {
+    this.debouncedCheckPasswordStrength = debounce((password: string) => {
       this.updatePasswordStrength(password)
     }, 100)
     this.debouncedCheckPasswordStrength(this.modelValue)
   },
   methods: {
-
     updatePasswordStrength(pwd: string) {
       this.passwordStrength = pwd ? (zxcvbn(pwd).score + 1) * 20 : 0
     }

@@ -6,19 +6,23 @@
 </template>
 
 <script lang='ts'>
-export default {
+import { defineComponent, type PropType } from 'vue'
+
+type CardInfoColor = 'info' | 'error'
+
+export default defineComponent({
   props: {
     color: {
-      type: String,
+      type: String as PropType<CardInfoColor>,
       default: 'info',
-      validator: (value: string) => value === 'info' || value === 'error'
+      validator: (value: string): value is CardInfoColor => value === 'info' || value === 'error'
     },
     icon: {
       type: String,
       default: 'mdi-information-outline'
     }
-  },
-}
+  }
+})
 </script>
 
 <style lang="scss">

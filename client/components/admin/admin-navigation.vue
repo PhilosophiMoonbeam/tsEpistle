@@ -352,6 +352,7 @@
 
 <script lang='ts'>
 import _ from 'lodash'
+import { markRaw } from 'vue'
 
 import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
 import { fetchLocales, type LocaleRow } from '../../helpers/locales-api'
@@ -457,7 +458,7 @@ export default {
     async loadAllLocales() {
       wikiStore.startLoading('admin-navigation-locales')
       try {
-        this.allLocales = await fetchLocales(window.fetch.bind(window), 'Locales response is invalid')
+        this.allLocales = markRaw(await fetchLocales(window.fetch.bind(window), 'Locales response is invalid'))
       } catch (err) {
         wikiStore.showNotification({
           style: 'red',
@@ -470,7 +471,7 @@ export default {
     async loadGroups() {
       wikiStore.startLoading('admin-navigation-groups')
       try {
-        this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+        this.groups = markRaw(await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid'))
       } catch (err) {
         wikiStore.showNotification({
           style: 'red',
@@ -550,8 +551,8 @@ export default {
         const savedConfig = _.cloneDeep(this.config)
         this.trees = normalizedTrees
         await saveNavigation(window.fetch.bind(window), savedTrees, savedConfig.mode, savedConfig.expandParent)
-        this.persistedConfig = savedConfig
-        this.persistedTrees = savedTrees
+        this.persistedConfig = markRaw(savedConfig)
+        this.persistedTrees = markRaw(savedTrees)
         wikiStore.showNotification({
           message: this.$t('admin:navigation.saveSuccess'),
           style: 'success',
@@ -573,8 +574,8 @@ export default {
         const normalizedTrees = normalizeNavigationTrees(navigation.tree)
         this.config = _.cloneDeep(navigation.config)
         this.trees = _.cloneDeep(normalizedTrees)
-        this.persistedConfig = _.cloneDeep(this.config)
-        this.persistedTrees = _.cloneDeep(normalizedTrees)
+        this.persistedConfig = markRaw(_.cloneDeep(this.config))
+        this.persistedTrees = markRaw(_.cloneDeep(normalizedTrees))
         this.current = createEmptyNavigationItem()
         this.loaded = true
         if (notify) {

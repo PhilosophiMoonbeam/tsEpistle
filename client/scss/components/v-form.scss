@@ -2,7 +2,7 @@
   background-color: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
 
   .v-input + .v-input {
-    margin-top: var(--wiki-space-1, .25rem);
+    margin-block-start: var(--wiki-space-1, .25rem);
   }
 }
 
@@ -78,7 +78,7 @@
     }
   }
 
-  &:is(.v-input--success, .is-success) {
+  &.is-success {
     .v-field {
       box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-success)) 52%, transparent);
     }
@@ -120,7 +120,7 @@
 
 @media (pointer: coarse) {
   .v-field:not(.v-field--variant-plain) {
-    min-height: 2.75rem;
+    min-block-size: 2.75rem;
   }
 }
 

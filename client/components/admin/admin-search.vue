@@ -24,7 +24,7 @@
                 v-icon(start) mdi-cached
                 span {{$t('admin:search.rebuildIndex')}}
               .text-body-small.text-medium-emphasis Rebuilds the search index immediately.
-            v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large", :disabled='!enginesLoaded || enginesLoading || rebuilding', :loading='saving')
+            v-btn.animated.fadeInDown(color='success', @click='save', variant="flat", size="large", :disabled='!canSave', :loading='saving')
               v-icon(start) mdi-check
               span {{$t('common:actions.apply')}}
 
@@ -174,6 +174,13 @@ export default {
   computed: {
     engine(): SearchEngine {
       return this.engines.find(engine => engine.key === this.selectedEngine) || createEmptySearchEngine()
+    },
+    canSave(): boolean {
+      return this.enginesLoaded &&
+        !this.enginesLoading &&
+        !this.rebuilding &&
+        !this.saving &&
+        this.engines.some(engine => engine.key === this.selectedEngine && engine.isAvailable)
     }
   },
   created() {
@@ -196,7 +203,10 @@ export default {
           return false
         }
         this.engines = engines
-        this.selectedEngine = engines.find(engine => engine.isEnabled)?.key || 'postgres'
+        const selected = engines.find(engine => engine.isEnabled && engine.isAvailable) ||
+          engines.find(engine => engine.key === 'postgres' && engine.isAvailable) ||
+          engines.find(engine => engine.isAvailable)
+        this.selectedEngine = selected?.key || ''
         this.enginesLoaded = true
         return true
       } catch (err) {
@@ -243,7 +253,7 @@ export default {
       }
     },
     async save() {
-      if (this.saving || this.rebuilding || this.enginesLoading) return
+      if (!this.canSave) return
       const controller = new AbortController()
       this.saveController = controller
       this.saving = true

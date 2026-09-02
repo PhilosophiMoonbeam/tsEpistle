@@ -50,7 +50,7 @@
 </template>
 
 <script lang='ts'>
-import { defineAsyncComponent } from 'vue'
+import { defineAsyncComponent, markRaw } from 'vue'
 
 export default {
   components: {
@@ -64,7 +64,7 @@ export default {
   data() {
     return {
       selectedTool: 'UtilityAuth',
-      tools: [
+      tools: markRaw([
         {
           key: 'UtilityAuth',
           icon: 'mdi-lock-open-outline',
@@ -107,7 +107,7 @@ export default {
           i18nKey: 'telemetry',
           isAvailable: true
         }
-      ]
+      ])
     }
   },
   methods: {

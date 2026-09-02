@@ -8,11 +8,9 @@
       color='surface'
       mobile-breakpoint='1280'
       :width='$vuetify.display.width >= 1280 ? 281.6 : 256'
-      :temporary='$vuetify.display.width < 1280'
       v-model='navShown'
       :aria-label='$t(`common:sidebar.mainMenu`)'
       @update:model-value='navigationVisibilityChanged'
-      :location="$vuetify.locale.isRtl ? 'right' : undefined"
       )
       vue-scroll.page-nav-scroll(:ops='scrollStyle', style='scrollbar-gutter: auto;')
         nav-sidebar(
@@ -718,7 +716,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent, type PropType } from 'vue'
+import { defineComponent, markRaw, type PropType } from 'vue'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
 import PageGutterColumn from '@/components/common/page-gutter-column.vue'
@@ -808,6 +806,14 @@ type PageProtection = {
   version: number
   updatedBy: number | null
   updatedAt: string | null
+}
+
+function decodePageAnchor (anchor: string): string {
+  try {
+    return decodeURIComponent(anchor)
+  } catch {
+    return anchor
+  }
 }
 
 Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment) => {
@@ -983,33 +989,22 @@ export default defineComponent({
       pageProtectionPassword: '',
       gutterStyle: siteConfig.gutterStyle,
       gutterCustomCss: siteConfig.gutterCustomCss,
-      scrollOpts: {
+      scrollOpts: markRaw({
         duration: 1500,
         offset: 0,
         easing: 'easeInOutCubic'
-      },
-      scrollStyle: {
-        vuescroll: {},
+      }),
+      scrollStyle: markRaw({
         scrollPanel: {
-          initialScrollX: 0.01, // fix scrollbar not disappearing on load
-          scrollingX: false,
-          speed: 50
-        },
-        rail: {
-          gutterOfEnds: '2px'
-        },
-        bar: {
-          onlyShowBarOnScroll: false,
-          background: 'rgb(var(--v-theme-primary))',
-          hoverStyle: {
-            background: 'rgb(var(--v-theme-primary-darken-1))'
-          }
+          scrollingX: false
         }
-      },
+      }),
       winWidth: 0,
       resizeHandler: null as (() => void) | null,
       loadHandler: null as (() => void) | null,
-      contentExtensionCleanup: null as (() => void) | null
+      contentExtensionCleanup: null as (() => void) | null,
+      routeAnimationAbortController: null as AbortController | null,
+      scrollAnimationFrame: null as number | null
     }
   },
   computed: {
@@ -1140,12 +1135,12 @@ export default defineComponent({
     if (window.location.hash && window.location.hash.length > 1) {
       if (document.readyState === 'complete') {
         this.$nextTick(() => {
-          this.scrollToPageAnchor(decodeURIComponent(window.location.hash), false)
+          this.scrollToPageAnchor(window.location.hash, false)
         })
       } else {
         this.loadHandler = () => {
           this.loadHandler = null
-          this.scrollToPageAnchor(decodeURIComponent(window.location.hash), false)
+          this.scrollToPageAnchor(window.location.hash, false)
         }
         window.addEventListener('load', this.loadHandler, { once: true })
       }
@@ -1154,6 +1149,9 @@ export default defineComponent({
   beforeUnmount () {
     if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
+    this.routeAnimationAbortController?.abort()
+    this.routeAnimationAbortController = null
+    this.cancelScheduledScroll()
     this.contentExtensionCleanup?.()
     this.contentExtensionCleanup = null
   },
@@ -1178,6 +1176,7 @@ export default defineComponent({
       wikiStore.page.mode = 'view'
     },
     resetPageRouteState(): void {
+      this.cancelScheduledScroll()
       this.pageEditFab = false
       this.pageWatched = false
       this.pageWatchLoading = false
@@ -1217,7 +1216,7 @@ export default defineComponent({
         anchor.onclick = (event: MouseEvent) => {
           event.preventDefault()
           event.stopPropagation()
-          this.scrollToPageAnchor(decodeURIComponent(anchor.hash))
+          this.scrollToPageAnchor(anchor.hash)
         }
       })
       this.contentExtensionCleanup?.()
@@ -1225,6 +1224,8 @@ export default defineComponent({
       boot.notify('page-ready')
     },
     animatePageRoute(): void {
+      this.routeAnimationAbortController?.abort()
+      this.routeAnimationAbortController = null
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
       const contentRef = this.$refs.content as HTMLElement | { $el?: unknown }
       const element = contentRef instanceof HTMLElement
@@ -1233,12 +1234,17 @@ export default defineComponent({
           ? contentRef.$el
           : null
       if (!element) return
+      const controller = markRaw(new AbortController())
+      this.routeAnimationAbortController = controller
       element.classList.remove('page-main--route-enter')
       void element.offsetWidth
       element.classList.add('page-main--route-enter')
       element.addEventListener('animationend', () => {
         element.classList.remove('page-main--route-enter')
-      }, { once: true })
+        if (this.routeAnimationAbortController === controller) {
+          this.routeAnimationAbortController = null
+        }
+      }, { once: true, signal: controller.signal })
     },
     tocLinkClicked (event: MouseEvent, anchor: string) {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
@@ -1247,16 +1253,23 @@ export default defineComponent({
     },
     scrollToPageAnchor(anchor: string, focusDestination = true) {
       const container = this.$refs.container as HTMLElement
-      revealContentExtensionTarget(container, anchor)
-      requestAnimationFrame(() => {
-        this.goTo(anchor, this.scrollOpts)
+      const decodedAnchor = decodePageAnchor(anchor)
+      const destination = document.getElementById(decodedAnchor.replace(/^#/, ''))
+      revealContentExtensionTarget(container, decodedAnchor)
+      this.cancelScheduledScroll()
+      this.scrollAnimationFrame = requestAnimationFrame(() => {
+        this.scrollAnimationFrame = null
+        void this.goTo(destination ?? 0, this.scrollOpts)
         if (focusDestination) {
-          const id = anchor.replace(/^#/, '')
-          const destination = document.getElementById(id)
           destination?.setAttribute('tabindex', '-1')
           destination?.focus({ preventScroll: true })
         }
       })
+    },
+    cancelScheduledScroll () {
+      if (this.scrollAnimationFrame === null) return
+      cancelAnimationFrame(this.scrollAnimationFrame)
+      this.scrollAnimationFrame = null
     },
     async loadPageProtection () {
       const pageId = this.pageId
@@ -1571,11 +1584,10 @@ export default defineComponent({
       }
     },
     upBtnScroll () {
-      const scrollOffset = window.pageYOffset || document.documentElement.scrollTop
-      this.upBtnShown = scrollOffset > window.innerHeight * 0.33
+      this.upBtnShown = window.scrollY > window.innerHeight * 0.33
     },
     returnToTop () {
-      this.goTo(0, this.scrollOpts)
+      void this.goTo(0, this.scrollOpts)
       this.$nextTick(() => {
         const heading = document.querySelector<HTMLElement>('.page-title')
         heading?.setAttribute('tabindex', '-1')
@@ -1640,7 +1652,7 @@ export default defineComponent({
       }
     },
     goToComments (focusNewComment = false) {
-      this.goTo('#discussion', this.scrollOpts)
+      void this.goTo('#discussion', this.scrollOpts)
 
       if (focusNewComment) {
         document.querySelector<HTMLElement>('#discussion-new')?.focus()

@@ -43,7 +43,7 @@ const extractMethod = name => {
 }
 
 const compileMethod = (name, dependencies) => {
-  const method = extractMethod(name).replace(': { notifyError?: boolean }', '')
+  const method = extractMethod(name).replaceAll(': FetchImpl', '').replaceAll(': AbortSignal', '').replace(': { notifyError?: boolean }', '')
   return Function(...Object.keys(dependencies), `return ({ ${method} }).${name}`)(...Object.values(dependencies))
 }
 
@@ -54,11 +54,14 @@ describe('admin-auth strategies REST facade', () => {
   const refresh = extractMethod('refresh')
   const save = extractMethod('save')
 
-  test('imports REST auth helpers and removes Apollo query surface', () => {
+  test('imports REST auth helpers, uses raw fallback state, and removes Apollo query surface', () => {
     expect(script).toContain('fetchAdminAuthStrategies')
     expect(script).toContain('fetchAdminAuthActiveStrategies')
     expect(script).toContain('updateAdminAuthStrategies')
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
+    expect(script).toContain("import { markRaw } from 'vue'")
+    expect(script).toContain('const EMPTY_STRATEGY = markRaw(createEmptyStrategy())')
+    expect(script).toContain("return _.find(this.activeStrategies, ['key', this.selectedStrategy]) || EMPTY_STRATEGY")
     expect(script).not.toContain('graphql-tag')
     expect(script).not.toContain('apollo: {')
     expect(script).not.toContain('authentication {')
@@ -79,14 +82,21 @@ describe('admin-auth strategies REST facade', () => {
     expect(source).toContain("@click.stop='moveStrategy(idx, 1)'")
   })
 
-  test('loads strategy definitions and active strategies through REST helpers', () => {
+  test('uses strict boolean model updates for strategy configuration', () => {
+    expect(source).toContain(":model-value='cfg.value.value === true'")
+    expect(source).toContain("@update:model-value='cfg.value.value = $event === true'")
+  })
+
+  test('loads strategy definitions and active strategies through the owned abortable REST facade', () => {
     expect(loadStrategies).toContain("wikiStore.startLoading('admin-auth-strategies-refresh')")
-    expect(loadStrategies).toContain("fetchAdminAuthStrategies(window.fetch.bind(window), 'Authentication strategies response is invalid')")
+    expect(loadStrategies).toContain("fetchAdminAuthStrategies(fetchImpl, 'Authentication strategies response is invalid')")
+    expect(loadStrategies).toContain('if (!signal.aborted && !this.isUnmounted) {')
     expect(loadStrategies).toContain("wikiStore.stopLoading('admin-auth-strategies-refresh')")
     expect(loadStrategies).toContain('wikiStore.showNotification({')
 
     expect(loadActiveStrategies).toContain("wikiStore.startLoading('admin-auth-activestrategies-refresh')")
-    expect(loadActiveStrategies).toContain("fetchAdminAuthActiveStrategies(window.fetch.bind(window), 'Active authentication strategies response is invalid')")
+    expect(loadActiveStrategies).toContain("fetchAdminAuthActiveStrategies(fetchImpl, 'Active authentication strategies response is invalid')")
+    expect(loadActiveStrategies).toContain('if (!signal.aborted && !this.isUnmounted) {')
     expect(loadActiveStrategies).toContain("wikiStore.stopLoading('admin-auth-activestrategies-refresh')")
     expect(loadActiveStrategies).toContain('wikiStore.showNotification({')
   })
@@ -94,7 +104,7 @@ describe('admin-auth strategies REST facade', () => {
   test('refresh confirms dirty state and reloads the complete initial contract before notifying success', async () => {
     expect(refresh).toContain("if (this.dirty && !window.confirm('Discard unsaved authentication changes and refresh?')) return")
     expect(refresh).toContain('await this.loadInitial()')
-    expect(refresh).toContain('if (this.loaded) {')
+    expect(refresh).toContain('if (!this.isUnmounted && this.loaded) {')
     expect(refresh).toContain('wikiStore.showNotification({')
     expect(refresh).toContain("message: this.$t('admin:auth.refreshSuccess')")
 
@@ -108,6 +118,9 @@ describe('admin-auth strategies REST facade', () => {
     const context = {
       dirty: true,
       loaded: true,
+      initialLoading: false,
+      saving: false,
+      isUnmounted: false,
       loadInitial: async () => {
         loadCount++
       },
@@ -138,12 +151,14 @@ describe('admin-auth strategies REST facade', () => {
     const resourceOrder = ['groups', 'host', 'strategies', 'active strategies']
     const loadingKeys = ['admin-auth-groups-refresh', 'admin-auth-host-refresh', 'admin-auth-strategies-refresh', 'admin-auth-activestrategies-refresh']
     const calls = []
+    const resourceFetches = []
     const loadingStarts = []
     const loadingStops = []
     const notifications = []
     const failure = new Error(`${failingResource} failed`)
-    const fetchResource = (resource, result) => async () => {
+    const fetchResource = (resource, result) => async fetchImpl => {
       calls.push(resource)
+      resourceFetches.push(fetchImpl)
       if (resource === failingResource) {
         throw failure
       }
@@ -154,13 +169,21 @@ describe('admin-auth strategies REST facade', () => {
       stopLoading: key => loadingStops.push(key),
       showNotification: notification => notifications.push(notification)
     }
+    const fetchWindow = { fetch() {}, confirm: () => true }
+    let ownedSignal
+    let ownedFetch
+    const createAbortableFetch = signal => {
+      ownedSignal = signal
+      ownedFetch = (input, init) => fetchWindow.fetch(input, { ...init, signal })
+      return ownedFetch
+    }
     const dependencies = {
       wikiStore,
       fetchGroupOptions: fetchResource('groups', []),
       fetchSystemHost: fetchResource('host', { host: 'https://example.test' }),
       fetchAdminAuthStrategies: fetchResource('strategies', []),
       fetchAdminAuthActiveStrategies: fetchResource('active strategies', []),
-      window: { fetch() {}, confirm: () => true },
+      window: fetchWindow,
       getErrorMessage: err => err.message
     }
     const context = {
@@ -172,6 +195,8 @@ describe('admin-auth strategies REST facade', () => {
       host: '',
       initialLoading: false,
       loaded: true,
+      isUnmounted: false,
+      loadController: null,
       dirty: false,
       loadGroups: compileMethod('loadGroups', dependencies),
       loadHost: compileMethod('loadHost', dependencies),
@@ -180,18 +205,24 @@ describe('admin-auth strategies REST facade', () => {
       $t: key => key
     }
     context.loadInitial = compileMethod('loadInitial', {
-      _: { cloneDeep: value => structuredClone(value) }
+      _: { cloneDeep: value => structuredClone(value) },
+      AbortController,
+      createAbortableFetch
     })
     const refreshMethod = compileMethod('refresh', dependencies)
 
     await expect(refreshMethod.call(context)).resolves.toBeUndefined()
 
     expect(calls).toEqual(resourceOrder)
+    expect(resourceFetches).toHaveLength(resourceOrder.length)
+    expect(resourceFetches.every(fetchImpl => fetchImpl === ownedFetch)).toBe(true)
+    expect(ownedSignal.aborted).toBe(true)
     expect(loadingStarts).toEqual(loadingKeys)
     expect(loadingStops).toEqual(loadingKeys)
     expect(loadingStarts).toContain(failingLoadingKey)
     expect(context.loaded).toBe(false)
     expect(context.initialLoading).toBe(false)
+    expect(context.loadController).toBeNull()
     expect(notifications).toEqual([
       {
         style: 'red',
@@ -201,28 +232,41 @@ describe('admin-auth strategies REST facade', () => {
     ])
   })
 
-  test('created hook starts the complete REST load and snapshots a successfully loaded strategy state', () => {
+  test('created hook owns the complete abortable REST load and snapshots a successfully loaded strategy state', () => {
+    expect(loadInitial).toContain('this.loadController?.abort()')
+    expect(loadInitial).toContain('const controller = new AbortController()')
+    expect(loadInitial).toContain('this.loadController = controller')
+    expect(loadInitial).toContain('const fetchImpl = createAbortableFetch(controller.signal)')
     expect(loadInitial).toContain('this.loaded = false')
-    expect(loadInitial).toContain('this.loadGroups()')
-    expect(loadInitial).toContain('this.loadHost()')
-    expect(loadInitial).toContain('this.loadStrategies()')
-    expect(loadInitial).toContain('this.loadActiveStrategies()')
+    expect(loadInitial).toContain('this.loadGroups(fetchImpl, controller.signal)')
+    expect(loadInitial).toContain('this.loadHost(fetchImpl, controller.signal)')
+    expect(loadInitial).toContain('this.loadStrategies(fetchImpl, controller.signal)')
+    expect(loadInitial).toContain('this.loadActiveStrategies(fetchImpl, controller.signal)')
     expect(loadInitial).toContain('this.persistedStrategies = _.cloneDeep(this.activeStrategies)')
+    expect(loadInitial).toContain('if (this.loadController === controller) {')
     expect(loadInitial).toContain('this.loaded = true')
     expect(script).toMatch(/created\s*\(\s*\)\s*\{\s*void this\.loadInitial\(\)\s*\}/)
+    expect(script).toMatch(
+      /beforeUnmount\s*\(\s*\)\s*\{[\s\S]*?this\.isUnmounted\s*=\s*true[\s\S]*?this\.loadController\?\.abort\(\)[\s\S]*?this\.saveController\?\.abort\(\)/
+    )
   })
 
-  test('save uses REST helper and preserves payload mapping and UI behavior', () => {
+  test('save uses an owned abortable REST request and preserves payload mapping and UI behavior', () => {
     expect(save).toContain("wikiStore.startLoading('admin-auth-savestrategies')")
-    expect(save).toContain('await updateAdminAuthStrategies(window.fetch.bind(window), this.activeStrategies.map((str, idx) => ({')
+    expect(save).toContain('const controller = new AbortController()')
+    expect(save).toContain('this.saveController = controller')
+    expect(save).toContain('await updateAdminAuthStrategies(createAbortableFetch(controller.signal), this.activeStrategies.map((str, idx) => ({')
     expect(save).toContain('strategyKey: str.strategy.key')
     expect(save).toContain('order: idx')
     expect(save).toContain('config: str.config.map(cfg => ({ ...cfg, value: JSON.stringify({ v: cfg.value.value }) }))')
     expect(save).toContain('domainWhitelist: str.domainWhitelist')
     expect(save).toContain('autoEnrollGroups: str.autoEnrollGroups')
+    expect(save).toContain('if (controller.signal.aborted || this.isUnmounted) {')
     expect(save).toContain('wikiStore.showNotification({')
     expect(save).toContain("message: this.$t('admin:auth.saveSuccess')")
+    expect(save).toContain('if (!controller.signal.aborted && !this.isUnmounted) {')
     expect(save).toContain('wikiStore.showError(err)')
+    expect(save).toContain('if (this.saveController === controller) {')
     expect(save).toContain("wikiStore.stopLoading('admin-auth-savestrategies')")
     expect(save).not.toContain('this.$apollo.mutate')
     expect(save).not.toContain('updateStrategies')

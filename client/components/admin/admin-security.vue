@@ -89,6 +89,7 @@
                     label='HSTS Max Age'
                     :items='hstsDurations'
                     item-title='text'
+                    item-value='value'
                     v-model='config.securityHSTSDuration'
                     prepend-icon='mdi-subdirectory-arrow-right'
                     :disabled='!config.securityHSTS'
@@ -124,14 +125,14 @@
               v-card.animated.fadeInUp.wait-p2s
                 v-toolbar(color='primary', density="compact", flat)
                   v-toolbar-title.text-body-large {{ $t('admin:security.uploads') }}
-                div.v-card-info(color='info')
+                div.v-card-info
                   span {{$t('admin:security.uploadsInfo')}}
                 v-card-text
                   v-text-field.mt-3(
                     variant="outlined"
                     :label='$t(`admin:security.maxUploadSize`)'
                     required
-                    v-model='config.uploadMaxFileSize'
+                    v-model.number='config.uploadMaxFileSize'
                     prepend-icon='mdi-progress-upload'
                     :hint='$t(`admin:security.maxUploadSizeHint`)'
                     persistent-hint
@@ -142,7 +143,7 @@
                     variant="outlined"
                     :label='$t(`admin:security.maxUploadBatch`)'
                     required
-                    v-model='config.uploadMaxFiles'
+                    v-model.number='config.uploadMaxFiles'
                     prepend-icon='mdi-upload-lock'
                     :hint='$t(`admin:security.maxUploadBatchHint`)'
                     persistent-hint
@@ -170,7 +171,7 @@
 
               v-card.mt-3.animated.fadeInUp.wait-p2s
                 v-toolbar(flat, color='primary', density="compact")
-                  .text-body-large {{$t('admin:security.login')}}
+                  v-toolbar-title.text-body-large {{$t('admin:security.login')}}
                 //- v-card-info(color='blue')
                 //-   span {{$t('admin:security.loginInfo')}}
                 .text-label-small.text-grey.pa-4 {{$t('admin:security.loginScreen')}}
@@ -247,7 +248,7 @@
                     persistent-hint
                   )
 
-    component(:is='activeModal')</template>
+    component(v-if='activeModal', :is='activeModal')</template>
 
 <script lang='ts'>
 import { defineAsyncComponent } from 'vue'
@@ -257,28 +258,30 @@ import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../..
 import { fetchSiteConfig, saveSiteConfig, type SiteConfig } from '../../helpers/site-api'
 import { loadingStart, loadingStop, pushGraphError, setLoading, showNotification } from '../../helpers/root-ui-store'
 
-type SecurityConfig = Required<Pick<SiteConfig,
-  | 'uploadMaxFileSize'
-  | 'uploadMaxFiles'
-  | 'uploadScanSVG'
-  | 'uploadForceDownload'
-  | 'securityOpenRedirect'
-  | 'securityIframe'
-  | 'securityReferrerPolicy'
-  | 'securityTrustProxy'
-  | 'securitySRI'
-  | 'securityHSTS'
-  | 'securityHSTSDuration'
-  | 'securityCSP'
-  | 'securityCSPDirectives'
-  | 'authAutoLogin'
-  | 'authEnforce2FA'
-  | 'authHideLocal'
-  | 'authLoginBgUrl'
-  | 'authJwtAudience'
-  | 'authJwtExpiration'
-  | 'authJwtRenewablePeriod'
->>
+const SECURITY_CONFIG_KEYS = [
+  'uploadMaxFileSize',
+  'uploadMaxFiles',
+  'uploadScanSVG',
+  'uploadForceDownload',
+  'securityOpenRedirect',
+  'securityIframe',
+  'securityReferrerPolicy',
+  'securityTrustProxy',
+  'securitySRI',
+  'securityHSTS',
+  'securityHSTSDuration',
+  'securityCSP',
+  'securityCSPDirectives',
+  'authAutoLogin',
+  'authEnforce2FA',
+  'authHideLocal',
+  'authLoginBgUrl',
+  'authJwtAudience',
+  'authJwtExpiration',
+  'authJwtRenewablePeriod'
+] as const
+
+type SecurityConfig = Required<Pick<SiteConfig, typeof SECURITY_CONFIG_KEYS[number]>>
 
 
 export default {
@@ -368,7 +371,7 @@ export default {
       try {
         const config = await fetchSiteConfig(window.fetch.bind(window))
         if (requestId !== this.configLoadRequestId) return
-        this.config = _.cloneDeep(config) as SecurityConfig
+        this.config = _.pick(config, SECURITY_CONFIG_KEYS) as SecurityConfig
         this.configLoaded = true
       } catch (err) {
         if (requestId !== this.configLoadRequestId) return
@@ -418,7 +421,3 @@ export default {
   }
 }
 </script>
-
-<style lang='scss'>
-
-</style>

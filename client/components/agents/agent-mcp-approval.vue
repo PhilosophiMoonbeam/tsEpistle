@@ -162,7 +162,7 @@
               <span class="proposal-output__deletion">Removed</span>
               <span>{{ diffLines.length }} {{ diffLines.length === 1 ? 'line' : 'lines' }}</span>
             </div>
-            <pre class="proposal-diff" tabindex="0" aria-label="Proposed output diff"><template v-for="(line, index) in visibleDiff" :key="index"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
+            <pre class="proposal-diff" tabindex="0" aria-label="Proposed output diff"><template v-for="line in visibleDiff" :key="line.key"><ins v-if="line.kind === 'insert'">{{ line.text }}</ins><del v-else-if="line.kind === 'delete'">{{ line.text }}</del><span v-else>{{ line.text }}</span>{{ '\n' }}</template></pre>
             <v-btn
               v-if="diffLines.length > collapsedLineCount"
               class="proposal-output__expand"
@@ -273,7 +273,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { decideAgentProposal, getMcpAgentProposal, type McpAgentProposal } from '../../helpers/agents-api.ts'
 
 const props = defineProps<{ csrfToken: string; proposalId: string }>()
@@ -281,13 +281,14 @@ const collapsedLineCount = 80
 const loading = ref(true)
 const pendingDecision = ref<'approved' | 'denied' | null>(null)
 const error = ref('')
-const proposal = ref<McpAgentProposal | null>(null)
+const proposal = shallowRef<McpAgentProposal | null>(null)
 const expanded = ref(false)
 const decisionNote = ref('')
 const confirmationPath = ref('')
 const clockTick = ref(0)
-const settledReceipt = ref<{ $el: HTMLElement } | null>(null)
-const errorAlert = ref<{ $el: HTMLElement } | null>(null)
+type ComponentRoot = { $el?: unknown }
+const settledReceipt = ref<ComponentRoot | HTMLElement | null>(null)
+const errorAlert = ref<ComponentRoot | HTMLElement | null>(null)
 let clockTimer: number | null = null
 let expiryDeadlineTimer: number | null = null
 let loadController: AbortController | null = null
@@ -296,6 +297,27 @@ let decisionGeneration = 0
 let disposed = false
 
 type ApprovalSurfaceStatus = 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'cancelled' | 'expired' | 'idle'
+const statusIcons: Readonly<Record<ApprovalSurfaceStatus, string>> = {
+  idle: 'mdi-progress-clock',
+  pending: 'mdi-shield-key-outline',
+  running: 'mdi-progress-clock',
+  success: 'mdi-check-circle-outline',
+  failed: 'mdi-alert-octagon-outline',
+  denied: 'mdi-cancel',
+  cancelled: 'mdi-stop-circle-outline',
+  expired: 'mdi-timer-alert-outline'
+}
+const statusColors: Readonly<Record<ApprovalSurfaceStatus, string | undefined>> = {
+  idle: undefined,
+  pending: 'warning',
+  running: 'primary',
+  success: 'success',
+  failed: 'error',
+  denied: 'error',
+  cancelled: undefined,
+  expired: 'warning'
+}
+
 
 const actionLabels: Partial<Record<McpAgentProposal['actionName'], string>> = {
   'pages.prepareCreate': 'Create Wiki page',
@@ -344,26 +366,8 @@ const statusLabel = computed(() => {
   if (proposal.value.approval.status === 'approved' && proposal.value.status === 'pending') return 'Approved'
   return proposalStatusLabels[proposal.value.status]
 })
-const statusIcon = computed(() => ({
-  idle: 'mdi-progress-clock',
-  pending: 'mdi-shield-key-outline',
-  running: 'mdi-progress-clock',
-  success: 'mdi-check-circle-outline',
-  failed: 'mdi-alert-octagon-outline',
-  denied: 'mdi-cancel',
-  cancelled: 'mdi-stop-circle-outline',
-  expired: 'mdi-timer-alert-outline'
-})[statusKey.value])
-const statusColor = computed(() => ({
-  idle: undefined,
-  pending: 'warning',
-  running: 'primary',
-  success: 'success',
-  failed: 'error',
-  denied: 'error',
-  cancelled: undefined,
-  expired: 'warning'
-})[statusKey.value])
+const statusIcon = computed(() => statusIcons[statusKey.value])
+const statusColor = computed(() => statusColors[statusKey.value])
 const decisionStageLabel = computed(() => statusKey.value === 'pending' ? 'Awaiting you' : statusLabel.value)
 const decisionAlertType = computed<'success' | 'error' | 'warning' | 'info'>(() => {
   if (statusKey.value === 'success' || statusKey.value === 'running') return 'success'
@@ -384,7 +388,8 @@ const riskLabel = computed(() => proposal.value?.risk === 'destructive-write' ? 
 const riskDescription = computed(() => proposal.value?.risk === 'destructive-write'
   ? 'This approval permanently authorizes deletion of the named page. The change cannot be undone from this screen.'
   : 'This checkpoint grants one-time authority for this reviewed proposal. It does not grant the MCP client ongoing write access.')
-const diffLines = computed(() => (proposal.value?.diff ?? '').split('\n').map(text => ({
+const diffLines = computed(() => (proposal.value?.diff ?? '').split('\n').map((text, index) => ({
+  key: `${proposal.value?.id ?? 'proposal'}:${index}`,
   text,
   kind: text.startsWith('+') && !text.startsWith('+++')
     ? 'insert'
@@ -454,9 +459,13 @@ const syncExpiryDeadline = (): void => {
   }, remaining)
 }
 
+const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLElement | null => {
+  if (component instanceof HTMLElement) return component
+  return component?.$el instanceof HTMLElement ? component.$el : null
+}
 const focusError = async (): Promise<void> => {
   await nextTick()
-  errorAlert.value?.$el.focus()
+  componentElement(errorAlert.value)?.focus()
 }
 const load = async (): Promise<void> => {
   if (disposed) return
@@ -516,7 +525,7 @@ const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
     await load()
     if (!disposed && props.proposalId === proposalId && generation === decisionGeneration && proposal.value?.approval.status !== 'pending') {
       await nextTick()
-      settledReceipt.value?.$el.focus()
+      componentElement(settledReceipt.value)?.focus()
     }
   } catch (value) {
     if (disposed || props.proposalId !== proposalId || generation !== decisionGeneration) return

@@ -186,9 +186,14 @@ describe('default page focused contracts', () => {
     )
     expect(script).toMatch(/sidebarNavigationStarted\s*\(\)\s*\{\s*if \(this\.\$vuetify\.display\.width < 1280\) this\.navShown = false/)
     expect(style).toMatch(/--page-toc-empty-height:\s*calc\(var\(--wiki-grid-size\) \* 2\)/)
-    expect(template).toMatch(
-      /v-navigation-drawer\([\s\S]*?:width='\$vuetify\.display\.width >= 1280 \? 281\.6 : 256'[\s\S]*?:temporary='\$vuetify\.display\.width < 1280'/
-    )
+    const navigationDrawer = template.match(/v-navigation-drawer\(([\s\S]*?)\n {6}\)/)?.[1] ?? ''
+    expect(navigationDrawer).not.toBe('')
+    expect(navigationDrawer).toContain("mobile-breakpoint='1280'")
+    expect(navigationDrawer).toContain(":width='$vuetify.display.width >= 1280 ? 281.6 : 256'")
+    expect(navigationDrawer).toContain("v-model='navShown'")
+    expect(navigationDrawer).toContain("@update:model-value='navigationVisibilityChanged'")
+    expect(navigationDrawer).not.toMatch(/(?:^|\s):?temporary=/)
+    expect(navigationDrawer).not.toMatch(/(?:^|\s):?location=/)
     expect(template).toContain('page-col-sd--with-toc')
     expect(template).toContain('page-col-sd--toc-off')
     expect(template).toContain('page-col-content--with-toc')

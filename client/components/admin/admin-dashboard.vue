@@ -147,12 +147,24 @@
 </template>
 
 <script lang='ts'>
+import { markRaw } from 'vue'
 import AnimatedNumber from '@/components/common/animated-number.vue'
 import AsyncState from '@/components/common/async-state.vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchRecentPages, type RecentPageRow } from '../../helpers/pages-api'
 import { fetchLastLogins, type LastLoginRow } from '../../helpers/users-api'
 import { getErrorMessage, loadingStart, loadingStop, showNotification } from '../../helpers/root-ui-store'
+
+const RECENT_PAGES_HEADERS = markRaw([
+  { title: 'Title', value: 'title' },
+  { title: 'Path', value: 'path' },
+  { title: 'Last Updated', value: 'updatedAt', width: 250 }
+])
+
+const LAST_LOGINS_HEADERS = markRaw([
+  { title: 'User', value: 'name' },
+  { title: 'Last Login', value: 'lastLoginAt', width: 250 }
+])
 
 export default {
   components: { AnimatedNumber, AsyncState },
@@ -162,19 +174,12 @@ export default {
       recentPagesLoading: false,
       recentPagesError: '',
       recentPagesRequestId: 0,
-      recentPagesHeaders: [
-        { title: 'Title', value: 'title' },
-        { title: 'Path', value: 'path' },
-        { title: 'Last Updated', value: 'updatedAt', width: 250 }
-      ],
+      recentPagesHeaders: RECENT_PAGES_HEADERS,
       lastLogins: [] as LastLoginRow[],
       lastLoginsLoading: false,
       lastLoginsError: '',
       lastLoginsRequestId: 0,
-      lastLoginsHeaders: [
-        { title: 'User', value: 'displayName' },
-        { title: 'Last Login', value: 'lastLoginAt', width: 250 }
-      ]
+      lastLoginsHeaders: LAST_LOGINS_HEADERS
     }
   },
   computed: {
@@ -239,7 +244,7 @@ export default {
       try {
         const pages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')
         if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false
-        this.recentPages = pages
+        this.recentPages = markRaw(pages)
         return true
       } catch (err) {
         if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false
@@ -259,7 +264,7 @@ export default {
       try {
         const users = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')
         if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false
-        this.lastLogins = users
+        this.lastLogins = markRaw(users)
         return true
       } catch (err) {
         if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false

@@ -19,14 +19,12 @@ const displayValue = ref<string | number>(props.formatValue(0))
 const announcementValue = ref<string | number>(props.formatValue(props.value))
 let frame: number | null = null
 let renderedValue = 0
-let mediaQuery: MediaQueryList | null = null
+const mediaQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+  ? window.matchMedia('(prefers-reduced-motion: reduce)')
+  : null
 
 function reducedMotionEnabled (): boolean {
-  return mediaQuery?.matches ?? (
-    typeof window !== 'undefined' &&
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  )
+  return mediaQuery?.matches ?? false
 }
 
 function cancelFrame (): void {
@@ -86,10 +84,8 @@ function handleMotionPreferenceChange (event: MediaQueryListEvent): void {
 }
 
 onMounted(() => {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
-  mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
-  mediaQuery.addEventListener?.('change', handleMotionPreferenceChange)
-  if (mediaQuery.matches) commitTarget(props.value)
+  mediaQuery?.addEventListener?.('change', handleMotionPreferenceChange)
+  if (mediaQuery?.matches) commitTarget(props.value)
 })
 
 onBeforeUnmount(() => {

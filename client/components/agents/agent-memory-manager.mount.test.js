@@ -12,12 +12,15 @@ const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(scri
 
 const loadManager = view => {
   const ref = value => ({ value })
+  const useTemplateRef = _name => ref(null)
   const getAgentMemories = vi.fn().mockResolvedValue(view)
   const evaluate = new Function(
     'computed',
     'nextTick',
     'onBeforeUnmount',
     'ref',
+    'shallowRef',
+    'useTemplateRef',
     'watch',
     'defineProps',
     'defineModel',
@@ -40,6 +43,8 @@ const loadManager = view => {
     () => Promise.resolve(),
     () => undefined,
     ref,
+    ref,
+    useTemplateRef,
     (watched, callback, options) => {
       if (options?.immediate && !Array.isArray(watched)) callback(watched.value)
     },

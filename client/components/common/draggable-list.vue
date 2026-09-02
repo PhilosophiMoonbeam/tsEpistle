@@ -34,8 +34,8 @@ const emit = defineEmits<{
 }>()
 
 const root = ref<HTMLElement | null>(null)
-const sourceIndex = ref(-1)
-const dropTargetIndex = ref(-1)
+let sourceIndex = -1
+let dropTargetIndex = -1
 const liveMessage = ref('')
 let handlePressed = false
 let pointerId: number | null = null
@@ -58,21 +58,28 @@ function itemChildren (): HTMLElement[] {
 function refreshChildren (): void {
   const children = itemChildren()
   const itemCount = children.length
+  for (const handle of root.value?.querySelectorAll<HTMLElement>('[data-draggable-handle="true"]') ?? []) {
+    if (props.handle && handle.matches(props.handle)) continue
+    handle.removeAttribute('aria-pressed')
+    handle.removeAttribute('data-draggable-handle')
+  }
   for (const [index, child] of children.entries()) {
     child.draggable = true
-    child.classList.toggle('is-dragging', sourceIndex.value === index)
-    child.classList.toggle('is-drop-target', dropTargetIndex.value === index && sourceIndex.value !== index)
+    child.classList.toggle('is-dragging', sourceIndex === index)
+    child.classList.toggle('is-drop-target', dropTargetIndex === index && sourceIndex !== index)
     child.setAttribute('aria-posinset', String(index + 1))
     child.setAttribute('aria-setsize', String(itemCount))
-    child.setAttribute('aria-grabbed', String(sourceIndex.value === index))
+    child.setAttribute('aria-grabbed', String(sourceIndex === index))
     if (props.handle) {
       for (const handle of child.querySelectorAll(props.handle)) {
         if (!(handle instanceof HTMLElement)) continue
         handle.tabIndex = 0
         handle.setAttribute('role', 'button')
         handle.setAttribute('aria-roledescription', 'sortable item')
-        if (!handle.getAttribute('aria-label')) handle.setAttribute('aria-label', 'Reorder item')
-        handle.setAttribute('aria-pressed', String(sourceIndex.value === index))
+        if (!handle.hasAttribute('aria-label') && !handle.hasAttribute('aria-labelledby')) {
+          handle.setAttribute('aria-label', 'Reorder item')
+        }
+        handle.setAttribute('aria-pressed', String(sourceIndex === index))
         handle.setAttribute('data-draggable-handle', 'true')
       }
     } else {
@@ -102,9 +109,10 @@ function directChildIndex (target: EventTarget | null): number {
 }
 
 function itemIndexForKeyboardTarget (target: EventTarget | null): number {
-  if (props.handle && target instanceof Element) {
+  if (props.handle) {
+    if (!(target instanceof Element)) return -1
     const handle = target.closest(props.handle)
-    if (handle && root.value?.contains(handle)) return directChildIndex(handle)
+    return handle && root.value?.contains(handle) ? directChildIndex(handle) : -1
   }
   return directChildIndex(target)
 }
@@ -140,17 +148,17 @@ function handlePointerMove (event: PointerEvent): void {
     const moved = Math.abs(event.clientX - pointerStartX) + Math.abs(event.clientY - pointerStartY)
     if (moved < 6) return
     pointerDragging = true
-    sourceIndex.value = pointerStartIndex
+    sourceIndex = pointerStartIndex
     liveMessage.value = `Picked up item, ${positionMessage(pointerStartIndex)}`
   }
   event.preventDefault()
   const target = document.elementFromPoint(event.clientX, event.clientY)
   const targetIndex = directChildIndex(target)
-  if (targetIndex < 0 || targetIndex === sourceIndex.value) return
-  const previousIndex = sourceIndex.value
+  if (targetIndex < 0 || targetIndex === sourceIndex) return
+  const previousIndex = sourceIndex
   emitReorder(previousIndex, targetIndex)
-  sourceIndex.value = targetIndex
-  dropTargetIndex.value = targetIndex
+  sourceIndex = targetIndex
+  dropTargetIndex = targetIndex
   liveMessage.value = `Moved item, ${positionMessage(targetIndex)}`
   scheduleRefreshChildren()
 }
@@ -161,7 +169,7 @@ function handlePointerUp (event: PointerEvent): void {
     return
   }
   if (pointerId !== event.pointerId) return
-  if (pointerDragging) liveMessage.value = `Dropped item, ${positionMessage(sourceIndex.value)}`
+  if (pointerDragging) liveMessage.value = `Dropped item, ${positionMessage(sourceIndex)}`
   if (root.value?.hasPointerCapture?.(event.pointerId)) root.value.releasePointerCapture(event.pointerId)
   pointerId = null
   pointerStartIndex = -1
@@ -179,7 +187,7 @@ function handleKeydown (event: KeyboardEvent): void {
     event.stopPropagation()
     keyboardIndex = index
     keyboardOriginal = [...props.modelValue]
-    sourceIndex.value = index
+    sourceIndex = index
     liveMessage.value = `Picked up item, ${positionMessage(index)}`
     scheduleRefreshChildren()
     return
@@ -211,8 +219,8 @@ function handleKeydown (event: KeyboardEvent): void {
   if (targetIndex < 0 || targetIndex >= props.modelValue.length) return
   emitReorder(keyboardIndex, targetIndex)
   keyboardIndex = targetIndex
-  sourceIndex.value = targetIndex
-  dropTargetIndex.value = targetIndex
+  sourceIndex = targetIndex
+  dropTargetIndex = targetIndex
   liveMessage.value = `Moved item, ${positionMessage(targetIndex)}`
   scheduleRefreshChildren()
 }
@@ -227,7 +235,7 @@ function handleDragStart (event: DragEvent): void {
     event.preventDefault()
     return
   }
-  sourceIndex.value = index
+  sourceIndex = index
   event.dataTransfer?.setData('text/plain', String(index))
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
   liveMessage.value = `Picked up item, ${positionMessage(index)}`
@@ -235,18 +243,18 @@ function handleDragStart (event: DragEvent): void {
 }
 
 function handleDragOver (event: DragEvent): void {
-  if (sourceIndex.value < 0) return
+  if (sourceIndex < 0) return
   if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
   const targetIndex = directChildIndex(event.target)
   if (targetIndex >= 0) {
-    dropTargetIndex.value = targetIndex
+    dropTargetIndex = targetIndex
     scheduleRefreshChildren()
   }
 }
 
 function handleDrop (event: DragEvent): void {
   const targetIndex = directChildIndex(event.target)
-  const from = sourceIndex.value
+  const from = sourceIndex
   if (from >= 0 && targetIndex >= 0 && targetIndex !== from) {
     emitReorder(from, targetIndex)
     liveMessage.value = `Dropped item, ${positionMessage(targetIndex)}`
@@ -255,8 +263,8 @@ function handleDrop (event: DragEvent): void {
 }
 
 function resetDrag (): void {
-  sourceIndex.value = -1
-  dropTargetIndex.value = -1
+  sourceIndex = -1
+  dropTargetIndex = -1
   handlePressed = false
   scheduleRefreshChildren()
 }

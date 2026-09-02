@@ -6,10 +6,7 @@
 * @return     {string}  Placeholder attributes
 */
 @mixin placeholder {
-  &::-webkit-input-placeholder {@content;}
-  &::-moz-placeholder {@content;}
-  &:-ms-input-placeholder {@content;}
-  &:placeholder-shown {@content;}
+  &::placeholder {@content;}
 }
 
 /**
@@ -27,51 +24,25 @@
   height: $height;
   border-radius: 50%;
   box-shadow: 0 0 0 1px rgba(0,0,0,0.1), 2px 1px 0 $color;
-  @include prefix(animation, spin $dur linear infinite);
+  animation: spin $dur linear infinite;
   @include keyframes(spin) {
     100%{
-      @include prefix(transform, rotate(360deg));
+      transform: rotate(360deg);
     }
   }
 }
 
 /**
-* Prefixes for keyframes
+* Keyframes
 *
 * @param      {string}  $animation-name          - The animation name
-*
-* @return     {string}  Prefixed keyframes attributes
 */
 @mixin keyframes($animation-name) {
-  @-webkit-keyframes #{$animation-name} {
-    @content;
-  }
-  @-moz-keyframes #{$animation-name} {
-    @content;
-  }
-  @-o-keyframes #{$animation-name} {
-    @content;
-  }
   @keyframes #{$animation-name} {
     @content;
   }
 }
 
-/**
-* Prefix function for browser compatibility
-*
-* @param      {string}  $property          - Property name
-* @param      {any}     $value             - Property value
-*
-* @return     {string}  Prefixed attributes
-*/
-@mixin prefix($property, $value) {
-  -webkit-#{$property}: #{$value};
-  -moz-#{$property}: #{$value};
-  -ms-#{$property}: #{$value};
-  -o-#{$property}: #{$value};
-  #{$property}: #{$value};
-}
 
 /**
 * Layout Mixins
@@ -133,19 +104,9 @@
 // Nucleo Icons
 
 @mixin nc-rotate($degrees, $rotation) {
-  filter: progid:DXImageTransform.Microsoft.BasicImage(rotation=#{$rotation});
-  -webkit-transform: rotate($degrees);
-  -moz-transform: rotate($degrees);
-  -ms-transform: rotate($degrees);
-  -o-transform: rotate($degrees);
   transform: rotate($degrees);
 }
 
 @mixin nc-flip($horiz, $vert, $rotation) {
-  filter: progid:DXImageTransform.Microsoft.BasicImage(rotation=#{$rotation});
-  -webkit-transform: scale($horiz, $vert);
-  -moz-transform: scale($horiz, $vert);
-  -ms-transform: scale($horiz, $vert);
-  -o-transform: scale($horiz, $vert);
   transform: scale($horiz, $vert);
 }

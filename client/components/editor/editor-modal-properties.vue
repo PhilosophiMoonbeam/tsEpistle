@@ -25,7 +25,7 @@
         v-tab(:value='3', :disabled='!hasStylePermission') {{$t('editor:props.styles')}}
         v-tab(:value='4', :disabled='mode === `create`') {{$t('editor:props.translations')}}
         v-tab(:value='5') Knowledge / OKF
-      v-tabs-window(v-model='currentTab')
+      v-tabs-window.editor-properties-tabs-window(v-model='currentTab')
         v-tabs-window-item(:value='0', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text.pt-5
             .text-label-small.pb-5 {{$t('editor:props.pageInfo')}}
@@ -77,7 +77,7 @@
                       :hint='$t(`editor:props.pathHint`)'
                       persistent-hint
                       @click:append='showPathSelector'
-                      :rules='[rules.required, rules.path]'
+                      :rules='pathRules'
                     )
           v-divider
           v-card-text.editor-properties-subsection.pt-5
@@ -133,7 +133,7 @@
                         )
                     v-date-picker(
                       v-model='publishStartDraft'
-                      :min='(new Date()).toISOString().substring(0, 10)'
+                      :min='publishMinDate'
                       color='primary'
                       :landscape='$vuetify.display.mdAndUp'
                       )
@@ -170,7 +170,7 @@
                         )
                     v-date-picker(
                       v-model='publishEndDraft'
-                      :min='(new Date()).toISOString().substring(0, 10)'
+                      :min='publishMinDate'
                       color='primary'
                       :landscape='$vuetify.display.mdAndUp'
                       )
@@ -187,7 +187,7 @@
                           @click='applyPublishEndDate'
                           ) {{$t('common:actions.ok')}}
 
-        v-tabs-window-item(:value='2', :transition='false', :reverse-transition='false')
+        v-tabs-window-item.editor-properties-code-tab(:value='2', :transition='false', :reverse-transition='false')
           .editor-props-codeeditor-title
             .text-label-small {{$t('editor:props.html')}}
           .editor-props-codeeditor
@@ -232,7 +232,7 @@
         //-       inset
         //-       )
 
-        v-tabs-window-item(:value='3', :transition='false', :reverse-transition='false')
+        v-tabs-window-item.editor-properties-code-tab(:value='3', :transition='false', :reverse-transition='false')
           .editor-props-codeeditor-title
             .text-label-small {{$t('editor:props.css')}}
           .editor-props-codeeditor
@@ -303,7 +303,8 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
+import { useDate } from 'vuetify'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import {
@@ -323,19 +324,19 @@ import EditorOkfPanel from './editor-okf-panel.vue'
 
 const filenamePattern = /^(?![\#\/\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s])(?!.*[\#\/\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s]$)[^\#\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s]*$/
 
-type DatePickerValue = Date | string | null
+type DatePickerValue = unknown
 
-function parseDatePickerValue (value: string): Date | null {
-  if (!value) return null
-  const parsed = new Date(value.length === 10 ? `${value}T00:00:00.000Z` : value)
-  return Number.isNaN(parsed.getTime()) ? null : parsed
+const PATH_RULES = Object.freeze([
+  (value: string) => !!value || 'This field is required.',
+  (value: string) => filenamePattern.test(value) || 'Invalid path. Please ensure it does not contain special characters, or begin/end in a slash or hashtag string.'
+])
+
+function focusInput (ref: unknown): void {
+  const componentRoot = (ref as { $el?: unknown } | null)?.$el
+  const root = ref instanceof HTMLElement ? ref : componentRoot instanceof HTMLElement ? componentRoot : null
+  root?.querySelector<HTMLInputElement>('input')?.focus()
 }
 
-function formatDatePickerValue (value: DatePickerValue): string {
-  if (!value) return ''
-  const parsed = value instanceof Date ? value : parseDatePickerValue(value)
-  return parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString().slice(0, 10) : ''
-}
 export default defineComponent({
   components: {
     EditorOkfPanel
@@ -347,18 +348,24 @@ export default defineComponent({
       default: false
     }
   },
+  setup() {
+    return {
+      dateAdapter: useDate()
+    }
+  },
   data () {
     return {
       isPublishStartShown: false,
       isPublishEndShown: false,
       publishStartDraft: null as DatePickerValue,
       publishEndDraft: null as DatePickerValue,
+      publishMinDate: new Date() as DatePickerValue,
       pageSelectorShown: false,
       translationSelectorShown: false,
-      translations: [] as PageLocaleRelation[],
+      translations: markRaw([] as PageLocaleRelation[]),
       translationsLoading: false,
       translationError: '',
-      namespaces: siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang],
+      namespaces: markRaw(siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang]),
       newTagSuggestions: [] as string[],
       newTagSearch: '',
       tagSearchTimer: null as number | null,
@@ -370,12 +377,7 @@ export default defineComponent({
       tagSearchRequest: 0,
       translationsRequest: 0,
       editorDisposed: false,
-      rules: {
-        required: (value: string) => !!value || 'This field is required.',
-        path: (value: string) => {
-          return filenamePattern.test(value) || 'Invalid path. Please ensure it does not contain special characters, or begin/end in a slash or hashtag string.'
-        }
-      }
+      pathRules: PATH_RULES
     }
   },
   computed: {
@@ -505,10 +507,17 @@ export default defineComponent({
         if (this.mode !== 'create') void this.loadTranslations()
         this.$nextTick(() => {
           if (!this.editorDisposed && this.modelValue) {
-            ;(this.$refs.iptTitle as { focus?: () => void })?.focus?.()
+            focusInput(this.$refs.iptTitle)
           }
         })
       } else {
+        this.isPublishStartShown = false
+        this.isPublishEndShown = false
+        this.pageSelectorShown = false
+        this.translationSelectorShown = false
+        this.privatePageConfirm = false
+        this.newTagSearch = ''
+        this.newTagSuggestions = []
         if (this.tagSearchTimer !== null) {
           window.clearTimeout(this.tagSearchTimer)
           this.tagSearchTimer = null
@@ -527,12 +536,14 @@ export default defineComponent({
     },
     isPublishStartShown (newValue: boolean) {
       if (newValue) {
-        this.publishStartDraft = parseDatePickerValue(this.publishStartDate)
+        this.publishMinDate = this.dateAdapter.startOfDay(this.dateAdapter.date())
+        this.publishStartDraft = this.publishStartDate ? this.dateAdapter.parseISO(this.publishStartDate) : null
       }
     },
     isPublishEndShown (newValue: boolean) {
       if (newValue) {
-        this.publishEndDraft = parseDatePickerValue(this.publishEndDate)
+        this.publishMinDate = this.dateAdapter.startOfDay(this.dateAdapter.date())
+        this.publishEndDraft = this.publishEndDate ? this.dateAdapter.parseISO(this.publishEndDate) : null
       }
     },
     newTagSearch (newValue: string) {
@@ -587,7 +598,7 @@ export default defineComponent({
       try {
         const translations = await fetchPageLocaleRelations(window.fetch.bind(window), wikiStore.page.id)
         if (this.editorDisposed || request !== this.translationsRequest) return
-        this.translations = translations
+        this.translations = markRaw(translations)
       } catch (err) {
         if (this.editorDisposed || request !== this.translationsRequest) return
         this.translationError = 'Unable to load translations. Try again.'
@@ -605,7 +616,7 @@ export default defineComponent({
         const translations = await linkPageLocaleRelation(window.fetch.bind(window), wikiStore.page.id, id)
         if (this.editorDisposed || request !== this.translationsRequest) return false
         this.translationError = ''
-        this.translations = translations
+        this.translations = markRaw(translations)
       } catch (err) {
         if (this.editorDisposed || request !== this.translationsRequest) return false
         wikiStore.showError(err)
@@ -622,7 +633,7 @@ export default defineComponent({
       try {
         const translations = await unlinkPageLocaleRelation(window.fetch.bind(window), wikiStore.page.id, translation.id)
         if (this.editorDisposed || request !== this.translationsRequest) return
-        this.translations = translations
+        this.translations = markRaw(translations)
       } catch (err) {
         if (this.editorDisposed || request !== this.translationsRequest) return
         wikiStore.showError(err)
@@ -633,11 +644,11 @@ export default defineComponent({
       }
     },
     applyPublishStartDate() {
-      this.publishStartDate = formatDatePickerValue(this.publishStartDraft)
+      this.publishStartDate = this.publishStartDraft ? this.dateAdapter.toISO(this.publishStartDraft) : ''
       this.isPublishStartShown = false
     },
     applyPublishEndDate() {
-      this.publishEndDate = formatDatePickerValue(this.publishEndDraft)
+      this.publishEndDate = this.publishEndDraft ? this.dateAdapter.toISO(this.publishEndDraft) : ''
       this.isPublishEndShown = false
     },
     async close() {
@@ -646,7 +657,7 @@ export default defineComponent({
       if (result && !result.valid) {
         this.currentTab = 0
         await this.$nextTick()
-        ;(this.$refs.iptPath as { focus?: () => void })?.focus?.()
+        focusInput(this.$refs.iptPath)
         return
       }
       this.isShown = false
@@ -692,7 +703,7 @@ export default defineComponent({
           }
         }
       })
-      this.cm = cm
+      this.cm = markRaw(cm)
       this.$nextTick(() => {
         if (this.editorDisposed || this.cm !== cm) return
         cm.requestMeasure()
@@ -710,22 +721,23 @@ export default defineComponent({
   background: rgb(var(--v-theme-surface));
   color: rgb(var(--v-theme-on-surface));
   display: flex;
+
   .editor-properties-subsection {
     background: rgba(var(--v-theme-on-surface), .035);
   }
+
   flex-direction: column;
   max-height: calc(100dvh - 32px);
   min-height: 0;
 
-  .v-tabs-window {
+  .editor-properties-tabs-window {
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
   }
 }
 
-
-.editor-properties-card .v-window-item:has(.editor-props-codeeditor) {
+.editor-properties-card .editor-properties-code-tab {
   display: flex;
   flex-direction: column;
   min-height: 0;

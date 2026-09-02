@@ -22,14 +22,15 @@
   .v-tab--selected {
     font-weight: 720;
 
-    .v-tab__overlay {
+    &:not(.v-btn--disabled) > .v-btn__overlay {
       opacity: .065;
     }
   }
 
-  .v-tab__slider {
+  &.v-tabs--horizontal:not(.v-tabs--inset) .v-tab__slider {
     height: .1875rem;
-    border-radius: var(--wiki-radius-pill, 999rem) var(--wiki-radius-pill, 999rem) 0 0;
+    border-start-start-radius: var(--wiki-radius-pill, 999rem);
+    border-start-end-radius: var(--wiki-radius-pill, 999rem);
     box-shadow: 0 -.125rem .5rem color-mix(in srgb, currentColor 18%, transparent);
   }
 
@@ -38,8 +39,9 @@
   }
 
   &.grad-tabs {
-    border-bottom: 1px solid var(--wiki-tab-edge);
-    border-radius: var(--wiki-control-radius, .75rem) var(--wiki-control-radius, .75rem) 0 0;
+    border-block-end: 1px solid var(--wiki-tab-edge);
+    border-start-start-radius: var(--wiki-control-radius, .75rem);
+    border-start-end-radius: var(--wiki-control-radius, .75rem);
     background:
       linear-gradient(
         to bottom,
@@ -74,7 +76,7 @@
 @media (prefers-reduced-motion: reduce) {
   .v-tabs .v-tab,
   .v-tabs .v-tab__slider,
-  .v-tabs .v-tab__overlay {
+  .v-tabs .v-btn__overlay {
     transition: none !important;
   }
 }

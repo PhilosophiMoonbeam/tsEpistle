@@ -13,12 +13,12 @@
       transparent;
   }
 
-  table {
+  > .v-table__wrapper > table {
     border-collapse: separate;
     border-spacing: 0;
   }
 
-  thead > tr > th {
+  > .v-table__wrapper > table > thead > tr > th {
     height: 2.75rem;
     padding-inline: var(--wiki-space-3, .75rem);
     border-bottom: 1px solid var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .22));
@@ -34,7 +34,7 @@
     text-transform: uppercase;
   }
 
-  tbody > tr {
+  > .v-table__wrapper > table > tbody > tr {
     transition: background-color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
 
     > td {
@@ -62,7 +62,7 @@
     }
   }
 
-  tbody > tr:focus-within:not([aria-selected='true']):not([aria-disabled='true']):not([disabled]) {
+  > .v-table__wrapper > table > tbody > tr:focus-within:not([aria-selected='true']):not([aria-disabled='true']):not([disabled]) {
     background: color-mix(
       in srgb,
       var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 6%,
@@ -71,32 +71,29 @@
   }
 
   .v-data-table-header__sort-icon {
-    opacity: .62;
-    transition:
-      opacity var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
-      transform var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease-out, cubic-bezier(.16, 1, .3, 1));
+    transition: opacity var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
   }
 
-  .v-data-table-header__content:focus-visible {
+  .v-data-table__th--sorted .v-data-table-header__sort-icon {
+    opacity: .62;
+  }
+
+  > .v-table__wrapper > table > thead > tr > .v-data-table__th--sortable:focus-visible {
     outline: .125rem solid var(--wiki-focus-color, rgb(var(--v-theme-focus)));
-    outline-offset: .125rem;
+    outline-offset: -.125rem;
     border-radius: var(--wiki-radius-xs, .375rem);
   }
 
-  .v-data-table__progress {
-    color: var(--wiki-accent-spectral, rgb(var(--v-theme-primary)));
-  }
-
-  .v-data-table-rows-no-data > td {
+  > .v-table__wrapper > table > tbody > .v-data-table-rows-no-data > td {
     height: 8rem;
     color: rgba(var(--v-theme-on-surface), .64);
     text-align: center;
   }
 
-  .v-data-table-footer {
+  > .v-data-table-footer {
     min-height: 3.5rem;
     gap: var(--wiki-space-2, .5rem);
-    border-top: 1px solid var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
+    border-block-start: 1px solid var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
     background: var(
       --wiki-surface-sunken,
       color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface)))
@@ -104,11 +101,7 @@
     color: rgba(var(--v-theme-on-surface), .72);
   }
 
-  &[aria-busy='true'] tbody {
-    opacity: .58;
-  }
-
-  .is-clickable {
+  > .v-table__wrapper > table > tbody > .is-clickable {
     cursor: pointer;
 
     > :is(td, th) {
@@ -145,7 +138,7 @@
 }
 
 @media (hover: hover) {
-  .v-data-table tbody > tr:hover:not([aria-selected='true']):not([aria-disabled='true']):not([disabled]) {
+  .v-data-table > .v-table__wrapper > table > tbody > tr:hover:not([aria-selected='true']):not([aria-disabled='true']):not([disabled]) {
     background: color-mix(
       in srgb,
       var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 5%,
@@ -153,7 +146,7 @@
     );
   }
 
-  .v-data-table .is-clickable:hover:not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
+  .v-data-table > .v-table__wrapper > table > tbody > .is-clickable:hover:not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
     background: color-mix(
       in srgb,
       var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 4%,
@@ -161,7 +154,7 @@
     );
   }
 
-  .v-data-table .is-clickable:active:not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
+  .v-data-table > .v-table__wrapper > table > tbody > .is-clickable:active:not([aria-disabled='true']):not([disabled]) > :is(td, th)::after {
     background: color-mix(
       in srgb,
       var(--wiki-accent-spectral, rgb(var(--v-theme-primary))) 9%,
@@ -172,12 +165,12 @@
 
 @media (max-width: 599px) {
   .v-data-table {
-    thead > tr > th,
-    tbody > tr > td {
+    > .v-table__wrapper > table > thead > tr > th,
+    > .v-table__wrapper > table > tbody > tr > td {
       padding-inline: var(--wiki-space-2, .5rem);
     }
 
-    .v-data-table-footer {
+    > .v-data-table-footer {
       min-height: 3rem;
       flex-wrap: wrap;
       padding: var(--wiki-space-2, .5rem);
@@ -186,13 +179,13 @@
 }
 
 @media (pointer: coarse) {
-  .v-data-table tbody > tr > td {
+  .v-data-table > .v-table__wrapper > table > tbody > tr > td {
     height: 3.25rem;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .v-data-table tbody > tr,
+  .v-data-table > .v-table__wrapper > table > tbody > tr,
   .v-data-table .v-data-table-header__sort-icon {
     transition: none !important;
   }

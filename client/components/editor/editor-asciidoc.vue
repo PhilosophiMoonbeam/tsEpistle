@@ -1,5 +1,5 @@
 <template lang='pug'>
-  .editor-asciidoc
+  .editor-asciidoc(ref='root')
     v-toolbar.editor-asciidoc-toolbar(density="compact", color='primary', flat, style='overflow-x: hidden;', role='toolbar', aria-label='Formatting tools')
       template(v-if='isModalShown')
         v-spacer
@@ -369,7 +369,8 @@ export default defineComponent({
       editor.replaceRange(content, { line, ch: 0 }, { line, ch: length })
     },
     toggleFullscreen() {
-      this.$el.requestFullscreen?.()
+      const root = this.$refs.root
+      if (root instanceof HTMLElement) void root.requestFullscreen?.()
     },
     refresh() {
       this.$nextTick(() => this.cm?.requestMeasure())
@@ -431,7 +432,8 @@ export default defineComponent({
     this.debouncedProcessContent = _.debounce((newContent: string) => {
       void this.processContent(newContent)
     }, 600)
-    const container = this.$refs.cm as HTMLElement
+    const container = this.$refs.cm
+    if (!(container instanceof HTMLElement)) return
     const cm = new TextEditor({
       parent: container,
       value: wikiStore.editor.content,

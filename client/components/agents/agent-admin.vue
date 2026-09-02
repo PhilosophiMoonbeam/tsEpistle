@@ -481,7 +481,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef } from 'vue'
 import { useDisplay } from 'vuetify'
 import {
   agentProviderReasoningEfforts,
@@ -544,9 +544,8 @@ interface BrowserTarget { id: string; canonicalUrl: string; enabled: boolean; po
 interface GroupOption { id: number; name: string; isSystem: boolean }
 interface ProfileDraft { displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
 
-const props = withDefaults(defineProps<{ csrfToken: string; embedded?: boolean }>(), { embedded: false })
+const { csrfToken, embedded = false } = defineProps<{ csrfToken: string; embedded?: boolean }>()
 const { smAndDown, width } = useDisplay()
-const embedded = computed(() => props.embedded)
 const tab = ref('runtime')
 type ProfileStep = 'identity' | 'models' | 'connection' | 'access' | 'limits'
 const profileStep = ref<ProfileStep>('identity')
@@ -562,19 +561,19 @@ const browserError = ref('')
 const removeError = ref('')
 const enableError = ref('')
 const browserEnableError = ref('')
-const runtime = ref<RuntimePolicy | null>(null)
-const profiles = ref<Profile[]>([])
-const groups = ref<GroupOption[]>([])
-const browserTargets = ref<BrowserTarget[]>([])
+const runtime = shallowRef<RuntimePolicy | null>(null)
+const profiles = shallowRef<Profile[]>([])
+const groups = shallowRef<GroupOption[]>([])
+const browserTargets = shallowRef<BrowserTarget[]>([])
 const profileDialog = ref(false)
 const grantsDialog = ref(false)
 const browserDialog = ref(false)
 const profileDiscardDialog = ref(false)
-const editingProfile = ref<Profile | null>(null)
-const removingProfile = ref<Profile | null>(null)
-const grantProfile = ref<Profile | null>(null)
-const enablingProfile = ref<Profile | null>(null)
-const browserEnableTarget = ref<BrowserTarget | null>(null)
+const editingProfile = shallowRef<Profile | null>(null)
+const removingProfile = shallowRef<Profile | null>(null)
+const grantProfile = shallowRef<Profile | null>(null)
+const enablingProfile = shallowRef<Profile | null>(null)
+const browserEnableTarget = shallowRef<BrowserTarget | null>(null)
 const browserUrl = ref('')
 const browserEnabled = ref(false)
 const grantDraft = reactive({ exposureMode: 'all_agent_users' as 'all_agent_users' | 'groups', groupIds: [] as number[] })
@@ -813,7 +812,7 @@ const discardProfileChanges = (): void => {
 }
 
 const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
-  const response = await sameOriginJsonFetch(window.fetch.bind(window), path, { credentials: 'same-origin', ...init, headers: { accept: 'application/json', ...(init.body ? { 'content-type': 'application/json' } : {}), ...(init.method && init.method !== 'GET' ? { 'x-wiki-csrf': props.csrfToken } : {}), ...init.headers } })
+  const response = await sameOriginJsonFetch(window.fetch.bind(window), path, { credentials: 'same-origin', ...init, headers: { accept: 'application/json', ...(init.body ? { 'content-type': 'application/json' } : {}), ...(init.method && init.method !== 'GET' ? { 'x-wiki-csrf': csrfToken } : {}), ...init.headers } })
   if (!response.ok) { const body = await response.json().catch(() => ({})) as { message?: string; error?: string }; throw new Error(body.message ?? body.error ?? `Request failed (${response.status})`) }
   return response.status === 204 ? undefined as T : await response.json() as T
 }

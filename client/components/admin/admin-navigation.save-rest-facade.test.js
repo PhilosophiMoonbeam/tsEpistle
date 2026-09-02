@@ -38,6 +38,7 @@ describe('admin-navigation save REST facade', () => {
     )
     expect(source).toContain("import { getErrorMessage } from '../../helpers/root-ui-store'")
     expect(source).toContain("import { wikiStore } from '@/store/index.ts'")
+    expect(source).toContain("import { markRaw } from 'vue'")
     expect(source).not.toContain("import gql from 'graphql-tag'")
     expect(source).not.toContain('apollo: {')
     expect(source).not.toContain('this.$apollo')
@@ -45,14 +46,14 @@ describe('admin-navigation save REST facade', () => {
     expect(source).not.toContain('config {')
   })
 
-  test('save uses a locked REST snapshot while preserving loading, success notification, and error facade', () => {
+  test('save uses a locked raw REST baseline while preserving loading, success notification, and error facade', () => {
     expect(save).toContain("wikiStore.startLoading('admin-navigation-save')")
     expect(save).toContain('const normalizedTrees = normalizeNavigationTrees(this.trees)')
     expect(save).toContain('const savedTrees = _.cloneDeep(normalizedTrees)')
     expect(save).toContain('const savedConfig = _.cloneDeep(this.config)')
     expect(save).toContain('await saveNavigation(window.fetch.bind(window), savedTrees, savedConfig.mode, savedConfig.expandParent)')
-    expect(save).toContain('this.persistedConfig = savedConfig')
-    expect(save).toContain('this.persistedTrees = savedTrees')
+    expect(save).toContain('this.persistedConfig = markRaw(savedConfig)')
+    expect(save).toContain('this.persistedTrees = markRaw(savedTrees)')
     expect(save.indexOf('const savedTrees')).toBeLessThan(save.indexOf('await saveNavigation'))
     expect(save.indexOf('const savedConfig')).toBeLessThan(save.indexOf('await saveNavigation'))
     expect(save).toContain('wikiStore.showNotification({')

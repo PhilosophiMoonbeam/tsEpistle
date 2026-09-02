@@ -99,6 +99,7 @@ export default defineComponent({
 
     const tabRefId = nanoid()
     const tabs = this.tabElements()
+    const isRtl = getComputedStyle(this.$refs.tabs as HTMLUListElement).direction === 'rtl'
     const controller = new AbortController()
     this.listenersAbortController = controller
 
@@ -117,11 +118,11 @@ export default defineComponent({
           ev.preventDefault()
         }
 
-        if (ev.key === 'ArrowLeft') {
-          this.currentTab = (idx - 1 + tabs.length) % tabs.length
-          tabs[this.currentTab]?.focus()
-        } else if (ev.key === 'ArrowRight') {
-          this.currentTab = (idx + 1) % tabs.length
+        if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+          const direction = ev.key === 'ArrowLeft'
+            ? (isRtl ? 1 : -1)
+            : (isRtl ? -1 : 1)
+          this.currentTab = (idx + direction + tabs.length) % tabs.length
           tabs[this.currentTab]?.focus()
         } else if (isActivationKey) {
           this.currentTab = idx

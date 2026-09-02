@@ -4,7 +4,7 @@
     max-width='550'
     persistent
     scrim='red-darken-4'
-    style='--v-overlay-opacity: .7'
+    opacity='.7'
     aria-labelledby='page-delete-dialog-title'
     aria-describedby='page-delete-dialog-description'
     )

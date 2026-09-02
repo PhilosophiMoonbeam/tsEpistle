@@ -13,8 +13,8 @@
               icon
               variant="outlined"
               color='grey'
-              :loading='loading'
-              :disabled='loading'
+              :loading='loading || strategiesLoading'
+              :disabled='loading || strategiesLoading'
               @click='refresh'
               aria-label='Refresh users'
             )
@@ -140,6 +140,7 @@ export default {
       filterStrategy: 'all',
       search: '',
       loading: false,
+      strategiesLoading: false,
       errorMessage: '',
       loadRequestId: 0,
       strategiesRequestId: 0,
@@ -201,6 +202,7 @@ export default {
     async loadStrategies() {
       if (this.isDisposed) return false
       const requestId = ++this.strategiesRequestId
+      this.strategiesLoading = true
       wikiStore.startLoading('admin-users-strategies-refresh')
       try {
         const providers = await fetchAdminAuthProviders(window.fetch.bind(window), 'Admin authentication providers response is invalid')
@@ -214,6 +216,7 @@ export default {
         return false
       } finally {
         wikiStore.stopLoading('admin-users-strategies-refresh')
+        if (requestId === this.strategiesRequestId) this.strategiesLoading = false
       }
     },
     async loadUsers() {

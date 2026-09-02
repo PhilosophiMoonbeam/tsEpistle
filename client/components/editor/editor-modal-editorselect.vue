@@ -49,12 +49,13 @@
 </template>
 
 <script lang='ts'>
+import { defineComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { getEditorComponentName } from '../../helpers/editor-key.ts'
 import { PAGE_EDITOR_DEFINITIONS } from '../../helpers/page-editors.ts'
 import { normalizeAvailableEditors, type PageEditorKey } from '../../../shared/page-editors.ts'
 
-export default {
+export default defineComponent({
   emits: ['update:modelValue'],
   props: {
     modelValue: {
@@ -102,7 +103,7 @@ export default {
       })
     }
   }
-}
+})
 </script>
 
 <style lang='scss' scoped>

@@ -1,21 +1,31 @@
 .v-btn {
-  --wiki-button-shadow: var(--wiki-shadow-xs, 0 1px 2px rgba(var(--v-theme-on-surface), .12));
-  --wiki-button-hover-shadow: var(--wiki-shadow-sm, 0 .25rem .75rem rgba(var(--v-theme-on-surface), .16));
+  --wiki-button-shadow: 0 0 0 0 transparent;
+  --wiki-button-hover-shadow: 0 0 0 0 transparent;
+  --wiki-button-active-shadow: 0 0 0 0 transparent;
 
   -webkit-tap-highlight-color: transparent;
   font-weight: 650;
   transition:
     transform var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease-out, cubic-bezier(.16, 1, .3, 1)),
     box-shadow var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
-    border-color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
+    border-color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
+    background-color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
+    color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
+    opacity var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
 
-  &:not(.v-btn--icon):not(.is-icon):not([class*='rounded']):not([class*='radius-']) {
+  &:not(.v-btn--icon):not(.is-icon):not(.rounded):not([class*='rounded-']):not([class*='radius-']) {
     border-radius: var(--wiki-control-radius, .75rem);
     letter-spacing: .012em;
     text-transform: none;
   }
 
-  &:is(.v-btn--variant-flat, .v-btn--variant-elevated) {
+  &.v-btn--variant-elevated {
+    --wiki-button-shadow: var(--wiki-shadow-xs, 0 1px 2px rgba(var(--v-theme-on-surface), .12));
+    --wiki-button-hover-shadow: var(--wiki-shadow-sm, 0 .25rem .75rem rgba(var(--v-theme-on-surface), .16));
+    --wiki-button-active-shadow:
+      var(--wiki-shadow-inset, inset 0 1px 2px rgba(var(--v-theme-on-surface), .18)),
+      var(--wiki-button-shadow);
+
     box-shadow: var(--wiki-button-shadow);
   }
 
@@ -37,11 +47,9 @@
       var(--wiki-button-shadow);
   }
 
-  &:active:not(.v-btn--disabled):not(.v-btn--loading):not([aria-disabled='true']):not(:focus-visible) {
+  &:active.v-btn--variant-elevated:not(.v-btn--disabled):not(.v-btn--loading):not([aria-disabled='true']):not(:focus-visible) {
     transform: translateY(0);
-    box-shadow:
-      var(--wiki-shadow-inset, inset 0 1px 2px rgba(var(--v-theme-on-surface), .18)),
-      var(--wiki-button-shadow);
+    box-shadow: var(--wiki-button-active-shadow);
   }
 
   &.v-btn--disabled,
@@ -78,33 +86,33 @@
   .btn-animate-edit,
   .btn-animate-wrench,
   .btn-animate-app
-) i {
+) .v-icon {
   transition: transform var(--wiki-motion-normal, 180ms) var(--wiki-motion-ease-out, cubic-bezier(.16, 1, .3, 1));
 }
 
 @media (hover: hover) {
-  .v-btn:hover:not(.v-btn--disabled):not(.v-btn--loading):not([aria-disabled='true']):not(:active):not(:focus-visible) {
+  .v-btn.v-btn--variant-elevated:hover:not(.v-btn--disabled):not(.v-btn--loading):not([aria-disabled='true']):not(:active):not(:focus-visible) {
     transform: translateY(-1px);
     box-shadow: var(--wiki-button-hover-shadow);
   }
 
-  .btn-animate-rotate:hover i {
+  .btn-animate-rotate:hover .v-icon {
     transform: rotate(180deg);
   }
 
-  .btn-animate-grow:hover i {
+  .btn-animate-grow:hover .v-icon {
     transform: scale(1.1);
   }
 
-  .btn-animate-edit:hover i {
+  .btn-animate-edit:hover .v-icon {
     transform: rotate(-12deg);
   }
 
-  .btn-animate-wrench:hover i {
+  .btn-animate-wrench:hover .v-icon {
     transform: rotate(14deg);
   }
 
-  .btn-animate-app:hover i {
+  .btn-animate-app:hover .v-icon {
     transform: scale(.88) rotateX(-90deg);
   }
 }
@@ -128,7 +136,7 @@
     .btn-animate-edit,
     .btn-animate-wrench,
     .btn-animate-app
-  ) i {
+  ) .v-icon {
     transition: none !important;
   }
 
@@ -139,7 +147,7 @@
     .btn-animate-edit,
     .btn-animate-wrench,
     .btn-animate-app
-  ) i {
+  ) .v-icon {
     transform: none !important;
   }
 }

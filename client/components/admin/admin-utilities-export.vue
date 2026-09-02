@@ -56,7 +56,7 @@
           v-btn(variant='text', @click='isConfirming = false', :disabled='isLoading') Cancel
           v-btn(color='primary', variant='flat', @click='confirmExport') Confirm Export
     v-dialog(
-      v-model='isLoading'
+      :model-value='isLoading'
       persistent
       max-width='350'
       aria-labelledby='export-progress-title'
@@ -112,7 +112,7 @@
           span {{errorMessage}}</template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import { SelfBuildingSquareSpinner } from 'epic-spinners'
 
 import { fetchSystemExportStatus, startSystemExport } from '../../helpers/system-api'
@@ -124,7 +124,51 @@ type ExportEntityChoice = {
   hint: string
 }
 
+const ENTITY_CHOICES = markRaw<readonly ExportEntityChoice[]>([
+  {
+    key: 'assets',
+    label: 'Assets',
+    hint: 'Media files such as images, documents, etc.'
+  },
+  {
+    key: 'comments',
+    label: 'Comments',
+    hint: 'Comments made using the default comment module only.'
+  },
+  {
+    key: 'navigation',
+    label: 'Navigation',
+    hint: 'Sidebar links when using Static or Custom Navigation.'
+  },
+  {
+    key: 'pages',
+    label: 'Pages',
+    hint: 'Page content, tags and related metadata.'
+  },
+  {
+    key: 'history',
+    label: 'Pages History',
+    hint: 'All previous versions of pages and their related metadata.'
+  },
+  {
+    key: 'settings',
+    label: 'Settings',
+    hint: 'Site configuration and modules settings.'
+  },
+  {
+    key: 'groups',
+    label: 'User Groups',
+    hint: 'Group permissions and page rules.'
+  },
+  {
+    key: 'users',
+    label: 'Users',
+    hint: 'Users metadata and their group memberships.'
+  }
+])
+
 type ExportState = {
+  entityChoices: typeof ENTITY_CHOICES
   entities: ExportEntity[]
   filePath: string
   isConfirming: boolean
@@ -156,6 +200,7 @@ export default defineComponent({
   },
   data(): ExportState {
     return {
+      entityChoices: ENTITY_CHOICES,
       entities: [] as ExportEntity[],
       filePath: './data/export',
       isConfirming: false,
@@ -178,50 +223,6 @@ export default defineComponent({
     filePathError (): string {
       return this.filePath.trim().length > 0 ? '' : 'Enter a target folder path.'
     },
-    entityChoices (): ExportEntityChoice[] {
-      return [
-        {
-          key: 'assets',
-          label: 'Assets',
-          hint: 'Media files such as images, documents, etc.'
-        },
-        {
-          key: 'comments',
-          label: 'Comments',
-          hint: 'Comments made using the default comment module only.'
-        },
-        {
-          key: 'navigation',
-          label: 'Navigation',
-          hint: 'Sidebar links when using Static or Custom Navigation.'
-        },
-        {
-          key: 'pages',
-          label: 'Pages',
-          hint: 'Page content, tags and related metadata.'
-        },
-        {
-          key: 'history',
-          label: 'Pages History',
-          hint: 'All previous versions of pages and their related metadata.'
-        },
-        {
-          key: 'settings',
-          label: 'Settings',
-          hint: 'Site configuration and modules settings.'
-        },
-        {
-          key: 'groups',
-          label: 'User Groups',
-          hint: 'Group permissions and page rules.'
-        },
-        {
-          key: 'users',
-          label: 'Users',
-          hint: 'Users metadata and their group memberships.'
-        }
-      ]
-    }
   },
   beforeUnmount() {
     this.isDisposed = true

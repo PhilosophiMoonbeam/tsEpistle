@@ -3,7 +3,10 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { wikiStore } from './store/index.ts'
 import { loadingStart, loadingStop } from './helpers/root-ui-store'
 
-const adminRoutes: RouteRecordRaw[] = [
+const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')
+const isProfile = window.location.pathname === '/p' || window.location.pathname.startsWith('/p/')
+
+const adminRoutes = (): RouteRecordRaw[] => [
   { path: '/', redirect: '/dashboard' },
   { path: '/dashboard', component: () => import('./components/admin/admin-dashboard.vue') },
   { path: '/general', component: () => import('./components/admin/admin-general.vue') },
@@ -38,19 +41,17 @@ const adminRoutes: RouteRecordRaw[] = [
   { path: '/dev-flags', component: () => import('./components/admin/admin-dev-flags.vue') }
 ]
 
-const profileRoutes: RouteRecordRaw[] = [
+const profileRoutes = (): RouteRecordRaw[] => [
   { path: '/', redirect: '/profile' },
   { path: '/profile', component: () => import('./components/profile/profile.vue') },
   { path: '/pages', component: () => import('./components/profile/pages.vue') }
 ]
 
-const isAdmin = window.location.pathname === '/a' || window.location.pathname.startsWith('/a/')
-const isProfile = window.location.pathname === '/p' || window.location.pathname.startsWith('/p/')
 const profileLoadingKey = 'profile'
 
 export const router = createRouter({
   history: createWebHistory(isAdmin ? '/a' : isProfile ? '/p' : '/'),
-  routes: isAdmin ? adminRoutes : isProfile ? profileRoutes : []
+  routes: isAdmin ? adminRoutes() : isProfile ? profileRoutes() : []
 })
 
 if (isProfile) {
