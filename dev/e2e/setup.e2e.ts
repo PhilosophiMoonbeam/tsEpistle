@@ -201,6 +201,36 @@ test.describe('critical post-install workflows', () => {
     await page.reload()
     await expectWelcomePage(page)
   })
+  test('persists the personal appearance selector independently of the device scheme', async ({ page }) => {
+    test.setTimeout(60_000)
+    await authenticateAsAdmin(page)
+    await openClientPage(page, '/a/theme', '.admin-theme')
+
+    await page.emulateMedia({ colorScheme: 'light' })
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+    await page.getByRole('button', { name: 'Account' }).click()
+    const accountMenu = page.locator('.nav-header-menu')
+    await expect(accountMenu.getByRole('button', { name: 'System', exact: true })).toHaveAttribute('aria-pressed', 'true')
+
+    await accountMenu.getByRole('button', { name: 'Light', exact: true }).click()
+    await expect.poll(async () => page.evaluate(async () => {
+      const response = await fetch('/_api/users/profile', { credentials: 'same-origin' })
+      return response.json()
+    })).toMatchObject({ appearance: 'light' })
+    await openClientPage(page, '/a/')
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.reload()
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+
+    await page.getByRole('button', { name: 'Account' }).click()
+    await accountMenu.getByRole('button', { name: 'System', exact: true }).click()
+    await expect.poll(async () => page.evaluate(async () => {
+      const response = await fetch('/_api/users/profile', { credentials: 'same-origin' })
+      return response.json()
+    })).toMatchObject({ appearance: 'system' })
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
+  })
 
   test('navigates from the homepage to the authenticated administration dashboard', async ({ page }) => {
     await authenticateAsAdmin(page)

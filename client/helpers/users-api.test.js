@@ -1,4 +1,4 @@
-import { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, sendAdminUserWelcomeEmail, updateAdminUser, deleteAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails } from './users-api.ts'
+import { searchUsers, fetchLastLogins, fetchAdminUsersList, createAdminUser, sendAdminUserWelcomeEmail, updateAdminUser, deleteAdminUser, setAdminUserActive, verifyAdminUser, setAdminUserTfa, fetchUserDetails, updateProfileAppearance } from './users-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -531,6 +531,28 @@ describe('users api helper', () => {
 
     await expect(Promise.resolve(fetchUserDetails(fetchImpl, 42, 'Bad user detail payload'))).rejects.toThrow('Bad user detail payload')
   })
+  test('updates profile appearance with the expected REST payload', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ token: 'replacement-jwt' }))
+
+    await expect(updateProfileAppearance(fetchImpl, 'dark')).resolves.toBe('replacement-jwt')
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/profile/appearance', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ appearance: 'dark' })
+    })
+  })
+
+  test('rejects profile appearance responses without a non-empty token', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ token: '' }))
+
+    await expect(updateProfileAppearance(fetchImpl, 'system', 'Bad appearance response')).rejects.toThrow('Bad appearance response')
+  })
+
 
   test('surfaces API error messages for failed searches', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({

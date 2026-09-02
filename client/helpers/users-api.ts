@@ -535,6 +535,7 @@ export type Profile = {
   groups: string[]
   pagesTotal: number
 }
+export type ProfileAppearance = 'system' | 'light' | 'dark'
 
 type ProfileUpdateInput = {
   name: string
@@ -620,6 +621,9 @@ async function sendProfileRequest(fetchImpl: FetchImpl, path: string, method: st
 
 export function updateProfile(fetchImpl: FetchImpl, input: ProfileUpdateInput, fallbackMessage = 'Profile update failed'): Promise<string> {
   return sendProfileRequest(fetchImpl, '', 'PATCH', input, fallbackMessage)
+}
+export function updateProfileAppearance(fetchImpl: FetchImpl, appearance: ProfileAppearance, fallbackMessage = 'Appearance update failed'): Promise<string> {
+  return sendProfileRequest(fetchImpl, '/appearance', 'PATCH', { appearance }, fallbackMessage)
 }
 
 export function changeProfilePassword(fetchImpl: FetchImpl, current: string, newPassword: string, fallbackMessage = 'Password change failed'): Promise<string> {

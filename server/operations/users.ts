@@ -387,6 +387,15 @@ const updateProfile = async ({ requester, input: value }: UserRequest): Promise<
   })
   return (await wiki.models.users.refreshToken(user.id)).token
 }
+const updateProfileAppearance = async ({ requester, input: value }: UserRequest): Promise<string> => {
+  const user = await requireProfileUser(requester)
+  if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
+  const appearance = stringValue(recordValue(value).appearance, 'appearance')
+  if (!['light', 'dark', 'system'].includes(appearance)) throw new wiki.Error.InputInvalid()
+  await wiki.models.users.updateUser({ id: user.id, appearance })
+  return (await wiki.models.users.refreshToken(user.id)).token
+}
+
 const changePassword = async (value: unknown): Promise<string> => {
   const input = recordValue(value)
   const user = await requireProfileUser(isRecord(input.requester) ? input.requester : undefined)
@@ -425,5 +434,6 @@ export default {
   setTfa,
   update,
   updateProfile,
+  updateProfileAppearance,
   verify
 }

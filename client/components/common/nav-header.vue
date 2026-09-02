@@ -253,6 +253,10 @@
               v-list-item(href='/p')
                 template(v-slot:append): v-icon(color='secondary') mdi-face-profile
                 v-list-item-title.text-secondary {{$t('common:header.profile')}}
+              v-divider
+              v-list-item.py-3
+                appearance-selector
+              v-divider
               v-list-item(role='button', @click='logout')
                 template(v-slot:append): v-icon(color='error') mdi-logout
                 v-list-item-title.text-error {{$t('common:header.logout')}}
@@ -320,6 +324,7 @@ const ADMIN_PERMISSION_NAMES = new Set([
 
 export default defineComponent({
   components: {
+    AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
     PageConvert: defineAsyncComponent(() => import('./page-convert.vue'))
   },

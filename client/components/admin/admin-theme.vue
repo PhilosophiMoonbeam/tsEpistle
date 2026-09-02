@@ -55,14 +55,7 @@ v-container.admin-theme(fluid)
               :hint='$t(`admin:theme.iconsetHint`)'
             )
             v-divider.my-4
-            v-switch.mt-0(
-              v-model='config.darkMode'
-              inset
-              color='primary'
-              :label='$t(`admin:theme.darkMode`)'
-              persistent-hint
-              :hint='$t(`admin:theme.defaultAppearanceHint`, { defaultValue: `Default appearance for visitors who have not chosen a personal preference.` })'
-            )
+            appearance-selector
             v-select.mt-3(
               v-model='config.tocPosition'
               :items='tocPositions'
@@ -320,11 +313,11 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useTheme } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
 import ThemeColorField from './theme-color-field.vue'
+import AppearanceSelector from '../common/appearance-selector.vue'
 import PageGutterColumn from '../common/page-gutter-column.vue'
 import { fetchThemeConfig, saveThemeConfig, type ThemeConfig } from '../../helpers/theming-api.ts'
 import { applyWikiThemeColors, resolveThemeName } from '../../helpers/theme.ts'
 import { loadingStart, loadingStop, pushGraphError, showNotification } from '../../helpers/root-ui-store.ts'
-
 import {
   PAGE_GUTTER_CUSTOM_CSS_MAX_LENGTH,
   PageGutterCustomCssSchema,
@@ -368,7 +361,7 @@ const createConfig = (): ThemeConfig => {
 const theme = useTheme()
 const config = reactive<ThemeConfig>(createConfig())
 const persistedConfig = ref<ThemeConfig>(createConfig())
-const previewMode = ref<PaletteMode>(config.darkMode ? 'dark' : 'light')
+const previewMode = ref<PaletteMode>(theme.current.value?.dark ? 'dark' : 'light')
 const initialLoading = ref(true)
 const loaded = ref(false)
 const saving = ref(false)
@@ -436,10 +429,6 @@ const assignConfig = (source: ThemeConfig): void => {
   Object.assign(config, copyConfig(source))
 }
 
-watch(() => config.darkMode, value => {
-  previewMode.value = value ? 'dark' : 'light'
-  void theme.change(value ? 'dark' : 'light', false)
-})
 
 const syncActivePalette = (): void => {
   const palette = config.palettes.find(item => item.id === config.activePaletteId)

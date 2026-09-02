@@ -116,6 +116,27 @@ describe('user authority revocation', () => {
     expect(revokeUserTokens).toHaveBeenCalledWith({ id: 10, kind: 'u' })
   })
 })
+describe('profile appearance operation', () => {
+  it('updates only the requester appearance and refreshes the JWT', async () => {
+    const { refreshToken, updateUser } = installWiki()
+    const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
+
+    await expect(operations.default.updateProfileAppearance({ requester, input: { appearance: 'dark', name: 'must not update' } })).resolves.toBe(
+      'replacement-jwt'
+    )
+
+    expect(updateUser).toHaveBeenCalledWith({ id: 10, appearance: 'dark' })
+    expect(refreshToken).toHaveBeenCalledWith(10)
+  })
+
+  it('rejects unsupported appearance values before persistence', async () => {
+    const { updateUser } = installWiki()
+    const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
+
+    await expect(operations.default.updateProfileAppearance({ requester, input: { appearance: 'sepia' } })).rejects.toBeInstanceOf(InputInvalid)
+    expect(updateUser).not.toHaveBeenCalled()
+  })
+})
 
 describe('account credential operation revocation', () => {
   it('revokes mandatory-change JWT authority after commit without leaking the internal user id', async () => {

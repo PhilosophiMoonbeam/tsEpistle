@@ -22,6 +22,12 @@ type ProfileInput = Record<(typeof profileFields)[number], string>
 
 const isProfileInput = (value: Record<string, unknown>): value is ProfileInput =>
   profileFields.every(field => typeof value[field] === 'string')
+const profileAppearances = ['system', 'light', 'dark'] as const
+type ProfileAppearance = (typeof profileAppearances)[number]
+
+const isProfileAppearance = (value: unknown): value is ProfileAppearance =>
+  typeof value === 'string' && profileAppearances.includes(value as ProfileAppearance)
+
 
 const requestBody = (req: Request): Record<string, unknown> => {
   const body: unknown = req.body
@@ -256,6 +262,19 @@ router.patch('/profile', async (req, res, next) => {
     next(err)
   }
 })
+router.patch('/profile/appearance', async (req, res, next) => {
+  const appearance = requestBody(req).appearance
+  if (!isProfileAppearance(appearance)) {
+    return res.status(400).json({ error: 'appearance must be one of system, light or dark' })
+  }
+  try {
+    const token = await userOperations.updateProfileAppearance({ requester: req.user, input: { appearance } })
+    return res.json({ token })
+  } catch (err) {
+    return next(err)
+  }
+})
+
 
 router.post('/profile/password', async (req, res, next) => {
   const current = _.get(req, 'body.current')
