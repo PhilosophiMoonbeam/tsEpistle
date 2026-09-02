@@ -27,7 +27,6 @@
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
-import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { onEditorSaveConflict, onEditorContentOverwrite, offEditorSaveConflict, offEditorContentOverwrite } from '../../helpers/editor-conflict-events'
 import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
@@ -142,7 +141,7 @@ export default defineComponent({
       const lines = editor.selectedLines()
       for (const line of [...lines].reverse()) {
         const lineContent = editor.getLine(line)
-        const replacement = _.startsWith(lineContent, content) ? lineContent.substring(content.length) : content + lineContent
+        const replacement = lineContent.startsWith(content) ? lineContent.substring(content.length) : content + lineContent
         editor.replaceRange(replacement, { line, ch: 0 }, { line, ch: lineContent.length })
       }
       if (after) {

@@ -10,10 +10,15 @@ const script = source.match(/<script(?:\s+lang=["']ts["'])?>([\s\S]*?)<\/script>
 const loadPagesStart = script.indexOf('async loadPages (): Promise<void> {')
 const loadPagesEnd = script.indexOf('    goToPage', loadPagesStart)
 const loadPagesBody = script.slice(loadPagesStart, loadPagesEnd)
+const goToPageStart = script.indexOf('goToPage (event: MouseEvent | KeyboardEvent')
+const goToPageEnd = script.indexOf('    bilink', goToPageStart)
+const goToPageBody = script.slice(goToPageStart, goToPageEnd)
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 const executeLoadPages = new AsyncFunction(
   'fetchPageLinks',
   'wikiStore',
+  'markRaw',
+  'getErrorMessage',
   'window',
   loadPagesBody.slice(loadPagesBody.indexOf('{') + 1, loadPagesBody.lastIndexOf('}'))
 )
@@ -21,8 +26,8 @@ const executeLoadPages = new AsyncFunction(
 describe('admin pages visualize REST facade', () => {
   it('loads page links through the pages REST helper instead of Apollo', () => {
     expect(source).toContain("<script lang='ts'>")
-    expect(script).toContain("import { defineComponent } from 'vue'")
-    expect(script).toContain("import { fetchPageLinks, type PageLinkRow } from '../../helpers/pages-api'")
+    expect(script).toContain("import { defineComponent, markRaw } from 'vue'")
+    expect(loadPagesBody).toContain('this.pages = markRaw(pages)')
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).not.toContain('graphql-tag')
     expect(script).not.toMatch(/apollo\s*:/)
@@ -33,37 +38,65 @@ describe('admin pages visualize REST facade', () => {
     expect(loadPagesBody).toContain('this.currentLocale')
   })
 
-  it('keeps the latest locale rendered when an older locale resolves afterward', async () => {
-    const pendingRequests = new Map()
+  it('keeps the newest request rendered when older requests for the same or another locale resolve afterward', async () => {
+    const pendingRequests = []
     const fetchPageLinks = (_fetch, locale) =>
       new Promise(resolve => {
-        pendingRequests.set(locale, resolve)
+        pendingRequests.push({ locale, resolve })
       })
     const wikiStore = {
       startLoading() {},
       stopLoading() {},
       showError() {}
     }
+    const markedDatasets = []
+    const markRaw = pages => {
+      markedDatasets.push(pages)
+      return pages
+    }
+    const getErrorMessage = err => err.message
     const browserWindow = { fetch() {} }
     const state = {
       currentLocale: 'A',
       pageLoadRequestId: 0,
-      pages: []
+      pages: [],
+      loading: false,
+      errorMessage: ''
     }
-    const localeAPages = [{ id: 1, path: 'a', title: 'Locale A', links: [] }]
-    const localeBPages = [{ id: 2, path: 'b', title: 'Locale B', links: [] }]
+    const staleLocaleAPages = [{ id: 1, path: 'a-old', title: 'Old Locale A', links: [] }]
+    const staleLocaleBPages = [{ id: 2, path: 'b', title: 'Locale B', links: [] }]
+    const latestLocaleAPages = [{ id: 3, path: 'a-new', title: 'New Locale A', links: [] }]
 
-    const localeARequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, browserWindow)
+    const staleLocaleARequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, markRaw, getErrorMessage, browserWindow)
     state.currentLocale = 'B'
-    const localeBRequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, browserWindow)
+    const staleLocaleBRequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, markRaw, getErrorMessage, browserWindow)
+    state.currentLocale = 'A'
+    const latestLocaleARequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, markRaw, getErrorMessage, browserWindow)
 
-    pendingRequests.get('B')(localeBPages)
-    await localeBRequest
-    expect(state.pages).toBe(localeBPages)
+    expect(pendingRequests.map(request => request.locale)).toEqual(['A', 'B', 'A'])
+    pendingRequests[2].resolve(latestLocaleAPages)
+    await latestLocaleARequest
+    expect(state.pages).toBe(latestLocaleAPages)
+    expect(markedDatasets).toHaveLength(1)
+    expect(markedDatasets[0]).toBe(latestLocaleAPages)
 
-    pendingRequests.get('A')(localeAPages)
-    await localeARequest
-    expect(state.pages).toBe(localeBPages)
+    pendingRequests[0].resolve(staleLocaleAPages)
+    await staleLocaleARequest
+    pendingRequests[1].resolve(staleLocaleBPages)
+    await staleLocaleBRequest
+    expect(state.pages).toBe(latestLocaleAPages)
+    expect(markedDatasets).toHaveLength(1)
+    expect(markedDatasets[0]).toBe(latestLocaleAPages)
+  })
+
+  it('preserves keyboard-accessible graph navigation semantics', () => {
+    expect(goToPageBody).toContain("event.key !== 'Enter' && event.key !== ' '")
+    expect(goToPageBody).toContain('event.preventDefault()')
+    expect(goToPageBody).toContain('event.ctrlKey || event.metaKey')
+    expect(goToPageBody).toContain("window.open(href, '_blank', 'noopener')")
+    expect(goToPageBody).toContain('this.$router.push(String(id))')
+    expect(script.match(/\.on\('keydown'/g)).toHaveLength(3)
+    expect(script.match(/\.on\('click'/g)).toHaveLength(3)
   })
 
   it('preserves loading and graph error behavior for page links loading', () => {

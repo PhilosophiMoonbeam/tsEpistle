@@ -78,7 +78,7 @@
                 .admin-mobile-record-meta {{ key.keyShort }}
                 .text-body-small.text-grey.mt-2 Expires {{ $helpers.formatMoment(key.expiration, 'LL') }}
                 .text-body-small.text-grey Updated {{ $helpers.formatMoment(key.updatedAt, 'calendar') }}
-                v-btn.mt-2(v-if='!key.isRevoked', variant="outlined", size="small", color='error', @click='revoke(key)', :disabled='adminApiBusy')
+                v-btn.mt-2(v-if='!key.isRevoked', variant="outlined", size="small", color='error', @click='revoke(key)', :disabled='adminApiBusy', :aria-label='`Revoke ${key.name}`')
                   v-icon(start) mdi-cancel
                   span {{$t('admin:api.revoke')}}
             v-card-text(v-if='!keys.length')

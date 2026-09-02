@@ -223,12 +223,11 @@ export default {
   },
   methods: {
     buildRendererTree (flatRenderers: Renderer[]): RendererTree[] {
-      const renderers = _.cloneDeep(flatRenderers)
       // Build tree
       const graph = new DepGraph({ circular: true })
-      const rawCores: RendererTree[] = _.filter(renderers, ['dependsOn', null]).map(core => ({
+      const rawCores: RendererTree[] = _.filter(flatRenderers, ['dependsOn', null]).map(core => ({
         ...core,
-        children: _.concat([_.cloneDeep(core)], _.filter(renderers, ['dependsOn', core.key]))
+        children: _.cloneDeep(_.concat([core], _.filter(flatRenderers, ['dependsOn', core.key])))
       }))
       // Build dependency graph
       rawCores.forEach(core => { graph.addNode(core.key) })

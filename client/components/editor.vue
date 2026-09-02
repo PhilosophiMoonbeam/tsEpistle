@@ -72,6 +72,8 @@
 
     v-bottom-navigation.editor-mobile-actions(
       v-if='$vuetify.display.smAndDown'
+      tag='nav'
+      aria-label='Editor actions'
       grow
       :elevation='0'
     )
@@ -115,7 +117,6 @@ import { defineAsyncComponent, defineComponent, type PropType } from 'vue'
 import _ from 'lodash'
 import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, fetchPage, updatePage, validateOkfMetadataPayload, type OkfMetadataPayloadValidation } from '../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
-import { AtomSpinner } from 'epic-spinners'
 import { Base64 } from 'js-base64'
 import StatusIndicator from '@/components/common/status-indicator.vue'
 import { emitEditorSaveConflict, onEditorConflictReset, offEditorConflictReset } from '../helpers/editor-conflict-events'
@@ -154,7 +155,6 @@ function removeEditorPageCss () {
 export default defineComponent({
   i18nOptions: { namespaces: 'editor' },
   components: {
-    AtomSpinner,
     StatusIndicator,
     editorApi: defineAsyncComponent(() => import('./editor/editor-api.vue')),
     editorCode: defineAsyncComponent(() => import('./editor/editor-code.vue')),
@@ -298,21 +298,21 @@ export default defineComponent({
     },
     currentStyling(): string { return wikiStore.page.scriptCss },
     isDirty () {
-      return _.some([
-        this.initContentParsed !== wikiStore.editor.content,
-        this.locale !== wikiStore.page.locale,
-        this.path !== wikiStore.page.path,
-        this.savedState.title !== wikiStore.page.title,
-        this.savedState.description !== wikiStore.page.description,
-        !_.isEqual(this.savedState.tags, wikiStore.page.tags),
-        this.savedState.isPublished !== wikiStore.page.isPublished,
-        this.savedState.visibility !== wikiStore.page.visibility,
-        this.savedState.publishStartDate !== wikiStore.page.publishStartDate,
-        this.savedState.publishEndDate !== wikiStore.page.publishEndDate,
-        this.savedState.css !== wikiStore.page.scriptCss,
-        this.savedState.js !== wikiStore.page.scriptJs,
+      return (
+        this.initContentParsed !== wikiStore.editor.content ||
+        this.locale !== wikiStore.page.locale ||
+        this.path !== wikiStore.page.path ||
+        this.savedState.title !== wikiStore.page.title ||
+        this.savedState.description !== wikiStore.page.description ||
+        !_.isEqual(this.savedState.tags, wikiStore.page.tags) ||
+        this.savedState.isPublished !== wikiStore.page.isPublished ||
+        this.savedState.visibility !== wikiStore.page.visibility ||
+        this.savedState.publishStartDate !== wikiStore.page.publishStartDate ||
+        this.savedState.publishEndDate !== wikiStore.page.publishEndDate ||
+        this.savedState.css !== wikiStore.page.scriptCss ||
+        this.savedState.js !== wikiStore.page.scriptJs ||
         !_.isEqual(this.savedState.okfMetadata, validateOkfMetadataPayload(wikiStore.page.okf.authority.metadata))
-      ], Boolean)
+      )
     }
   },
   watch: {

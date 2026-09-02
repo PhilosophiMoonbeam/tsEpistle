@@ -110,6 +110,7 @@
                   :aria-current="session.id === thread?.session.id ? 'page' : undefined"
                   :title="session.title || 'New conversation'"
                   :subtitle="session.id === thread?.session.id ? `${formatSessionDate(session.lastActivityAt)} · Current session` : formatSessionDate(session.lastActivityAt)"
+                  link
                   :disabled="sessionBusy(session.id)"
                   :draggable="canDragSession(session)"
                   aria-describedby="agent-history-drag-instructions"
@@ -177,9 +178,9 @@
                     <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || savingFolder || deleting" />
                   </template>
                   <v-list density="compact" :aria-label="`Folder actions for ${group.folder.name}`">
-                    <v-list-item prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || savingFolder || deleting" @click="beginRenameFolder(group.folder)" />
+                    <v-list-item link prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || savingFolder || deleting" @click="beginRenameFolder(group.folder)" />
                     <v-divider />
-                    <v-list-item class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || savingFolder || deleting" @click="beginRemoveFolder(group.folder)" />
+                    <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || savingFolder || deleting" @click="beginRemoveFolder(group.folder)" />
                   </v-list>
                 </v-menu>
               </div>
@@ -194,6 +195,7 @@
                     :class="{ 'agent-history__session--dragging': draggedSessionId === session.id }"
                     :title="session.title || 'New conversation'"
                     :subtitle="session.id === thread?.session.id ? `${formatSessionDate(session.lastActivityAt)} · Current session` : formatSessionDate(session.lastActivityAt)"
+                    link
                     :disabled="sessionBusy(session.id)"
                     :draggable="canDragSession(session)"
                     aria-describedby="agent-history-drag-instructions"
@@ -613,9 +615,12 @@ const saveFolder = async (): Promise<void> => {
   } catch (value) { dialogError.value = message(value, 'The folder could not be saved.') }
   finally { savingFolder.value = false }
 }
-watch(folderEditorOpen, async open => {
+watch(folderEditorOpen, async (open, _previous, onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
   if (open) return
   await nextTick()
+  if (cancelled) return
   const target = folderEditorRestoreTarget.value
   folderEditorRestoreTarget.value = null
   if (target?.isConnected && !target.closest('[inert], [aria-hidden="true"]')) target.focus()
@@ -662,15 +667,19 @@ const expandActiveFolder = (): void => {
   const activeSession = displaySessions.value.find(session => session.id === activeId)
   if (activeSession?.folderId && !openFolderIds.value.includes(activeSession.folderId)) openFolderIds.value.push(activeSession.folderId)
 }
-watch([deletingSession, removingFolder], async ([session, folder]) => {
+watch([deletingSession, removingFolder], async ([session, folder], _previous, onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
   if (!session && !folder) {
     await nextTick()
+    if (cancelled) return
     destructiveFocusScope?.deactivate({ restoreFocus: true })
     destructiveFocusScope = null
     destructiveRestoreTarget.value = null
     return
   }
   await nextTick()
+  if (cancelled) return
   const root = componentElement(session ? deleteDialogCard.value : removeFolderDialogCard.value)
   if (!root) return
   destructiveFocusScope?.deactivate({ restoreFocus: false })

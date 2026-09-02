@@ -32,6 +32,7 @@
               :active='draft.id === item.id'
               :aria-current='draft.id === item.id ? "true" : undefined'
               :disabled='webhookBusy || Boolean(revealedSecret)'
+              :aria-disabled='webhookBusy || Boolean(revealedSecret) ? `true` : undefined'
               @click='selectHook(item)'
             )
               template(v-slot:prepend)
@@ -100,12 +101,12 @@
             v-table.delivery-desktop(v-if='deliveries.length')
               thead
                 tr
-                  th Event
-                  th State
-                  th Attempts
-                  th HTTP
-                  th Created
-                  th Actions
+                  th(scope='col') Event
+                  th(scope='col') State
+                  th(scope='col') Attempts
+                  th(scope='col') HTTP
+                  th(scope='col') Created
+                  th(scope='col') Actions
               tbody
                 tr(v-for='delivery in deliveries', :key='delivery.id')
                   td {{ delivery.eventType }} v{{ delivery.eventVersion }}
@@ -222,8 +223,11 @@ export default {
     webhookBusy (): boolean {
       return this.saving || this.rotating || this.deleting || Boolean(this.deliveryBusy)
     },
+    subscribedEvents (): string[] {
+      return this.eventsText.split(/\r?\n/).map(event => event.trim()).filter(Boolean)
+    },
     isWebhookValid (): boolean {
-      return this.draft.name.trim().length > 0 && isHttpsEndpoint(this.draft.url) && this.events().length > 0
+      return this.draft.name.trim().length > 0 && isHttpsEndpoint(this.draft.url) && this.subscribedEvents.length > 0
     },
     requiredRule (): (value: string) => true | string {
       return (value: string) => value.trim().length > 0 || 'Name is required.'
@@ -232,16 +236,13 @@ export default {
       return (value: string) => isHttpsEndpoint(value) || 'Use an HTTPS endpoint URL.'
     },
     eventsRule (): (value: string) => true | string {
-      return () => this.events().length > 0 || 'Subscribe to at least one event.'
+      return () => this.subscribedEvents.length > 0 || 'Subscribe to at least one event.'
     },
     cancelDelivery (): WebhookDelivery | null {
       return this.deliveries.find(delivery => delivery.id === this.cancelDeliveryId) || null
     }
   },
   methods: {
-    events (): string[] {
-      return this.eventsText.split(/\r?\n/).map(event => event.trim()).filter(Boolean)
-    },
     async copySecret () {
       try {
         await navigator.clipboard.writeText(this.revealedSecret)
@@ -313,7 +314,7 @@ export default {
         const input = {
           name: this.draft.name.trim(),
           url: this.draft.url.trim(),
-          events: this.events(),
+          events: this.subscribedEvents,
           isEnabled: this.draft.isEnabled
         }
         if (this.draft.id) {
@@ -417,6 +418,10 @@ export default {
   },
   created () {
     this.loadHooks()
+  },
+  beforeUnmount () {
+    this.hooksLoadToken++
+    this.deliveryLoadToken++
   }
 }
 </script>

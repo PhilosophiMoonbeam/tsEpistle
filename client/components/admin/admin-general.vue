@@ -348,7 +348,9 @@ export default {
     initialLoading: boolean,
     loaded: boolean,
     saving: boolean,
-    formValid: boolean | null
+    formValid: boolean | null,
+    loadRequestId: number,
+    saveRequestId: number
   } {
     return {
       config: {
@@ -387,6 +389,8 @@ export default {
       loaded: false,
       saving: false,
       formValid: null,
+      loadRequestId: 0,
+      saveRequestId: 0,
       metaRobots: [
         { text: 'Index', value: 'index' },
         { text: 'Follow', value: 'follow' },
@@ -477,18 +481,20 @@ export default {
       }
     },
     async loadConfig () {
+      const requestId = ++this.loadRequestId
       this.initialLoading = true
       this.loaded = false
       setLoading(wikiStore, 'admin-site-refresh', true)
       try {
         const loaded = _.cloneDeep(await fetchSiteConfig(window.fetch.bind(window)))
+        if (requestId !== this.loadRequestId) return
         this.config = loaded
         this.persistedConfig = _.cloneDeep(loaded)
         this.loaded = true
       } catch (err) {
-        pushGraphError(wikiStore, err)
+        if (requestId === this.loadRequestId) pushGraphError(wikiStore, err)
       } finally {
-        this.initialLoading = false
+        if (requestId === this.loadRequestId) this.initialLoading = false
         setLoading(wikiStore, 'admin-site-refresh', false)
       }
     },
@@ -503,11 +509,13 @@ export default {
         })
         return
       }
+      const requestId = ++this.saveRequestId
       this.saving = true
       loadingStart(wikiStore, 'admin-site-update')
       try {
         const payload = this.siteConfigPayload()
         await saveSiteConfig(window.fetch.bind(window), payload)
+        if (requestId !== this.saveRequestId) return
         this.persistedConfig = _.cloneDeep(payload)
         showNotification(wikiStore, {
           style: 'success',
@@ -521,9 +529,9 @@ export default {
         wikiStore.site.banner = _.cloneDeep(this.config.banner)
         this.logoUrl = this.config.logoUrl ?? ''
       } catch (err) {
-        pushGraphError(wikiStore, err)
+        if (requestId === this.saveRequestId) pushGraphError(wikiStore, err)
       } finally {
-        this.saving = false
+        if (requestId === this.saveRequestId) this.saving = false
         loadingStop(wikiStore, 'admin-site-update')
       }
     },
@@ -545,6 +553,8 @@ export default {
     onEditorInsert(this.handleEditorInsert)
   },
   beforeUnmount() {
+    this.loadRequestId++
+    this.saveRequestId++
     offEditorInsert(this.handleEditorInsert)
   }
 }

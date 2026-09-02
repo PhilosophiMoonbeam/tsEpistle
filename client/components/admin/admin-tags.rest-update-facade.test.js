@@ -19,6 +19,12 @@ const deleteTagBody = script.slice(deleteTagStart, deleteTagEnd)
 const saveTagStart = script.indexOf('async saveTag(tag: EditablePageTagRow) {')
 const saveTagEnd = script.indexOf('    async refresh', saveTagStart)
 const saveTagBody = script.slice(saveTagStart, saveTagEnd)
+const filteredTagsStart = script.indexOf('filteredTags (): EditablePageTagRow[] {')
+const filteredTagsEnd = script.indexOf('    tagValid', filteredTagsStart)
+const filteredTagsBody = script.slice(filteredTagsStart, filteredTagsEnd)
+const selectTagStart = script.indexOf('selectTag(tag: EditablePageTagRow) {')
+const selectTagEnd = script.indexOf('    async deleteTag', selectTagStart)
+const selectTagBody = script.slice(selectTagStart, selectTagEnd)
 
 describe('admin tags REST update facade', () => {
   it('routes tag updates through the pages REST helper instead of the updateTag GraphQL mutation', () => {
@@ -89,9 +95,21 @@ describe('admin tags REST query facade', () => {
     expect(script).not.toContain("import gql from 'graphql-tag'")
     expect(script).not.toContain('apollo:')
     expect(script).not.toContain('this.$apollo.queries.tags.refetch')
-    expect(refreshBody).toContain('await fetchPageTags(window.fetch.bind(window))')
-    expect(refreshBody).toContain('this.tags = _.cloneDeep(')
+    expect(refreshBody).toContain('this.tags = await fetchPageTags(window.fetch.bind(window))')
+    expect(refreshBody).not.toContain('cloneDeep')
+    expect(script).not.toMatch(/import\s+_\s+from\s+['"]lodash['"]/)
     expect(mountedBody).toContain('this.refresh(false)')
+  })
+
+  it('uses native filtering and keeps the selected tag as the directly editable list row', () => {
+    expect(filteredTagsBody).toContain('this.tags.filter(t =>')
+    expect(filteredTagsBody).toContain('t.tag.toLocaleLowerCase().includes(query)')
+    expect(filteredTagsBody).toContain('t.title?.toLocaleLowerCase().includes(query)')
+    expect(filteredTagsBody).not.toContain('_.filter')
+    expect(selectTagBody).toContain('this.current = tag')
+    expect(selectTagBody).not.toContain('cloneDeep')
+    expect(source).toContain("@keydown.enter.prevent='selectTag(tag)'")
+    expect(source).toContain("@keydown.space.prevent='selectTag(tag)'")
   })
 
   it('preserves tag refresh loading, notification, selection reset, and graph error behavior', () => {

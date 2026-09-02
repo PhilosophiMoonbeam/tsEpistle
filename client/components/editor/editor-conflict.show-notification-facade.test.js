@@ -10,8 +10,10 @@ const readScript = relativePath => {
 }
 
 describe('editor conflict REST migration guard', () => {
-  test('Tiptap conflict fetches the latest page through the REST helper', () => {
-    const script = readScript('client/components/editor/tiptap/conflict.vue')
+  test('Tiptap conflict owns cancellation independently of thrown error shape and names its dialogs', () => {
+    const relativePath = 'client/components/editor/tiptap/conflict.vue'
+    const source = fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8')
+    const script = readScript(relativePath)
 
     expect(script).toMatch(/import\s*\{(?=[^}]*\bdefineComponent\b)(?=[^}]*\bmarkRaw\b)[^}]*\}\s*from\s*['"]vue['"]/)
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
@@ -23,18 +25,24 @@ describe('editor conflict REST migration guard', () => {
       /fetchPageConflictLatest\s*\(\s*\(\s*url\s*,\s*init\s*\)\s*=>\s*window\.fetch\s*\(\s*url\s*,\s*\{\s*\.\.\.init\s*,\s*signal:\s*requestController\.signal\s*\}\s*\)\s*,\s*wikiStore\.page\.id\s*\)/
     )
     expect(script).toMatch(
-      /catch\s*\(\s*err\s*\)\s*\{[\s\S]*?requestController\.signal\.aborted[\s\S]*?err\.name\s*===\s*['"]AbortError['"][\s\S]*?return[\s\S]*?\}/
+      /catch\s*\{[\s\S]*?if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return[\s\S]*?\}\s*if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return/
     )
+    expect(script.match(/if\s*\(\s*requestController\.signal\.aborted\s*\)\s*return/g)).toHaveLength(2)
+    expect(script).not.toMatch(/AbortError|(?:error|err)\.name/)
     expect(script).toMatch(
-      /if\s*\(\s*!resp\s*\)\s*\{\s*return\s+showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*?message:\s*['"]Failed to fetch latest version\.['"][\s\S]*?style:\s*['"]warning['"][\s\S]*?icon:\s*['"]warning['"]/
+      /this\.requestController\s*=\s*null\s*[\s\S]*?if\s*\(\s*!resp\s*\)\s*\{\s*return\s+showNotification\s*\(\s*wikiStore\s*,\s*\{[\s\S]*?message:\s*['"]Failed to fetch latest version\.['"][\s\S]*?style:\s*['"]warning['"][\s\S]*?icon:\s*['"]warning['"][\s\S]*?\}\s*\)\s*\}[\s\S]*?this\.latest\s*=\s*resp/
     )
     expect(script).toMatch(/beforeUnmount\s*\(\s*\)\s*\{\s*this\.requestController\?\.abort\s*\(\s*\)[\s\S]*?this\.requestController\s*=\s*null\s*\}/)
-    expect(script).toContain('this.latest = resp')
     expect(script).not.toMatch(/graphql-tag|\$apollo/)
     expect(script).toMatch(
       /useLocal\s*\(\s*\)\s*\{[\s\S]*wikiStore\.editor\.checkoutDateActive\s*=\s*this\.latest\.updatedAt[\s\S]*emitEditorConflictReset\s*\(\s*\)[\s\S]*this\.close\s*\(\s*\)/
     )
     expect(script).toMatch(/useRemote\s*\(\s*\)\s*\{[\s\S]*wikiStore\.editor\.content\s*=\s*this\.latest\.content[\s\S]*emitEditorConflictResolved\s*\(\s*\)/)
+    expect(source).toContain("aria-labelledby='editor-conflict-title'")
+    expect(source).toContain("span#editor-conflict-title {{$t('editor:conflict.title')}}")
+    expect(source).toContain("aria-labelledby='editor-conflict-overwrite-title'")
+    expect(source).toContain("span#editor-conflict-overwrite-title {{$t('editor:conflict.overwrite.title')}}")
+    expect(source).toMatch(/v-btn\.mt-2\([^)]*:href='`\/` \+ latest\.locale \+ `\/` \+ latest\.path'[^)]*target='_blank'[^)]*rel='noopener'/)
   })
 
   test('merge conflict modal fetches REST data and preserves typed merge setup', () => {

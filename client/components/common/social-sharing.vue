@@ -1,6 +1,6 @@
 <template lang="pug">
   v-list(nav, density="compact", :aria-label='$t(`common:page.share`)')
-    v-list-item(tag='button', @click='copyUrl')
+    v-list-item(tag='button', type='button', role='button', @click='copyUrl')
       template(v-slot:prepend)
         v-icon(color='grey', size="small") mdi-content-copy
       v-list-item-title.px-3 {{$t('common:actions.copy')}} URL

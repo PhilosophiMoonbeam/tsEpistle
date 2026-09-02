@@ -709,7 +709,7 @@
       v-btn.page-return-top(
         v-if='upBtnShown'
         icon
-        fixed
+        position='fixed'
         color='primary'
         @click='returnToTop'
         :aria-label='$t(`common:actions.returnToTop`)'
@@ -1562,7 +1562,13 @@ export default defineComponent({
       if (this.$vuetify.display.width < 1280) this.navShown = false
     },
     toggleNavigation () {
-      this.navShown = !this.navShown
+      const shown = !this.navShown
+      this.navShown = shown
+      if (shown) {
+        this.$nextTick(() => {
+          document.querySelector<HTMLElement>('#page-navigation-drawer .nav-sidebar button, #page-navigation-drawer .nav-sidebar a')?.focus()
+        })
+      }
     },
     upBtnScroll () {
       const scrollOffset = window.pageYOffset || document.documentElement.scrollTop
@@ -1583,7 +1589,13 @@ export default defineComponent({
         })
       } else {
         this.$nextTick(() => {
-          (this.$refs.navToggle as HTMLElement | undefined)?.focus?.()
+          const navToggle = this.$refs.navToggle as HTMLElement | { $el?: unknown } | undefined
+          const element = navToggle instanceof HTMLElement
+            ? navToggle
+            : navToggle?.$el instanceof HTMLElement
+              ? navToggle.$el
+              : null
+          element?.focus()
         })
       }
     },
@@ -3440,7 +3452,8 @@ export default defineComponent({
     transition-duration: .001ms !important;
   }
 
-  .page-main--route-enter > * {
+  .page-main--route-enter .page-header-headings,
+  .page-main--route-enter .page-body > .v-row {
     animation: none !important;
   }
 

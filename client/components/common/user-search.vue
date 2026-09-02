@@ -3,6 +3,7 @@
     v-model='dialogOpen'
     max-width='650'
     :aria-labelledby='dialogTitleId'
+    @after-enter='focusSearch'
     )
     v-card
       .dialog-header
@@ -55,9 +56,11 @@
           :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`'
           lines="two"
           density="compact"
+          activatable
+          :aria-label='$t(`common:user.search`)'
         )
           template(v-for='(usr, idx) in items', :key='usr.id')
-            v-list-item(tag='button', type='button', role='button', @click='setUser(usr)')
+            v-list-item(:value='usr.id', @click='setUser(usr)')
               template(v-slot:prepend)
                 v-avatar(size='40', color='primary', aria-hidden='true')
                   span.text-body-large.text-white(aria-hidden='true') {{ initials(usr.name) }}
@@ -111,7 +114,6 @@ export default defineComponent({
       searchAttempted: false,
       searchError: '',
       searchTimer: null as number | null,
-      focusTimer: null as number | null,
       searchAbortController: null as AbortController | null
     }
   },
@@ -136,13 +138,6 @@ export default defineComponent({
         this.searchAttempted = false
         this.searchError = ''
         this.searchLoading = false
-        if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
-        this.focusTimer = window.setTimeout(() => {
-          this.focusTimer = null
-          if (!this.modelValue) return
-          const input = this.$refs.searchIpt as { focus?: () => void } | undefined
-          input?.focus?.()
-        }, 100)
       } else if (!newValue && oldValue) {
         this.cancelSearch()
       }
@@ -163,9 +158,7 @@ export default defineComponent({
     },
     cancelSearch(): void {
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
-      if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
       this.searchTimer = null
-      this.focusTimer = null
       this.searchRequestId += 1
       this.searchAbortController?.abort()
       this.searchAbortController = null
@@ -226,6 +219,11 @@ export default defineComponent({
           this.searchLoading = false
         }
       }
+    },
+    focusSearch(): void {
+      if (!this.modelValue) return
+      const input = this.$refs.searchIpt as { focus?: () => void } | undefined
+      input?.focus?.()
     },
     retrySearch(): void {
       this.queueSearch()

@@ -147,7 +147,6 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import AnimatedNumber from '@/components/common/animated-number.vue'
 import AsyncState from '@/components/common/async-state.vue'
 import { wikiStore } from '@/store/index.ts'
@@ -230,7 +229,7 @@ export default {
   methods: {
     round(val: number) { return Math.round(val) },
     hasPermission(prm: string | string[]) {
-      return _.isArray(prm) ? _.some(prm, p => _.includes(this.permissions, p)) : _.includes(this.permissions, prm)
+      return Array.isArray(prm) ? prm.some(permission => this.permissions.includes(permission)) : this.permissions.includes(prm)
     },
     async loadRecentPages() {
       const requestId = ++this.recentPagesRequestId

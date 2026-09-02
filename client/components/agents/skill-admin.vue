@@ -145,13 +145,13 @@
         <v-form id="skill-create-form" @submit.prevent="createSkill">
           <section class="skill-form-section">
             <div class="skill-form-section__heading"><span><v-icon size="19">mdi-identifier</v-icon></span><div><h3>Skill identity</h3><p>Use a stable, command-friendly name.</p></div></div>
-            <v-text-field v-model="create.name" :rules="[() => createNameValid || 'Use lowercase letters, numbers, and single hyphens.']" label="Skill name" hint="Lowercase letters, numbers, and single hyphens" persistent-hint required autofocus />
+            <v-text-field v-model="create.name" :rules="createNameRules" label="Skill name" hint="Lowercase letters, numbers, and single hyphens" persistent-hint required autofocus />
           </section>
           <section class="skill-form-section">
             <div class="skill-form-section__heading"><span><v-icon size="19">mdi-file-tree-outline</v-icon></span><div><h3>Knowledge source</h3><p>The root page and optional asset folder bundled into the skill.</p></div></div>
             <div class="skill-form-grid">
-              <v-text-field v-model.number="create.rootPageId" label="Root page ID" type="number" min="1" :rules="[() => createRootPageValid || 'Enter a positive whole number.']" required />
-              <v-text-field v-model="create.assetFolderId" label="Asset folder ID (optional)" type="number" min="1" :rules="[() => createAssetFolderValid || 'Enter a positive whole number or leave this blank.']" />
+              <v-text-field v-model.number="create.rootPageId" label="Root page ID" type="number" min="1" :rules="createRootPageRules" required />
+              <v-text-field v-model="create.assetFolderId" label="Asset folder ID (optional)" type="number" min="1" :rules="createAssetFolderRules" />
               <v-text-field v-model="create.rootPath" class="skill-form-grid__wide" label="Root page path" placeholder="handbook/research" hint="The path must identify the selected root page tree." persistent-hint required />
             </div>
           </section>
@@ -170,11 +170,11 @@
     <v-card class="skill-dialog">
       <div class="skill-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><div class="skill-eyebrow">Audience policy</div><h2 id="skill-access-title">{{ policySkill ? `Access for ${policySkill.name}` : 'Skill access' }}</h2><p>Control who receives this organization-approved expertise.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close audience editor" :disabled="actionBusyId === 'access'" @click="accessOpen = false" /></div>
       <v-card-text class="skill-dialog__body"><v-alert v-if="accessError" class="skill-error" type="error" variant="tonal" density="compact">{{ accessError }}</v-alert><v-select v-model="policy.exposureMode" :items="exposureModes" item-title="title" item-value="value" label="Available to" /><v-autocomplete v-if="policy.exposureMode === 'groups'" v-model="policy.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this skill through any selected group." persistent-hint /></v-card-text>
-      <v-card-actions class="skill-dialog__actions"><v-spacer /><v-btn :disabled="actionBusyId === 'access'" @click="accessOpen = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyId === 'access'" :disabled="Boolean(actionBusyId) || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)" @click="saveAccess">Save audience policy</v-btn></v-card-actions>
+      <v-card-actions class="skill-dialog__actions"><v-spacer /><v-btn :disabled="actionBusyId === 'access'" @click="accessOpen = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyId === 'access'" :disabled="Boolean(actionBusyId) || !policyDirty || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)" @click="saveAccess">Save audience policy</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
 
-  <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="smAndDown" aria-labelledby="skill-preview-title" :persistent="actionBusyId === 'approve' || actionBusyId === 'reject'">
+  <v-dialog v-model="previewOpen" max-width="70rem" scrollable :fullscreen="smAndDown" aria-labelledby="skill-preview-title" :persistent="actionBusyId === 'approve' || actionBusyId === 'reject'" @after-leave="onPreviewAfterLeave">
     <v-card v-if="preview" class="skill-dialog skill-review">
       <div class="skill-dialog__header"><span><v-icon size="23">mdi-file-eye-outline</v-icon></span><div><div class="skill-eyebrow">Immutable organization source</div><h2 id="skill-preview-title">Review {{ preview.name }}</h2><p>Approve only the exact candidate revision shown below.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close skill review" :disabled="actionBusyId === 'approve' || actionBusyId === 'reject'" @click="previewOpen = false" /></div>
       <v-card-text class="skill-dialog__body">
@@ -192,7 +192,7 @@
         </v-alert>
         <div v-if="preview.previousSkillMarkdown !== null" class="review-diff" role="table" aria-label="Skill revision changes">
           <div class="review-diff__header" role="row"><span role="columnheader">Candidate revision</span><span role="columnheader">Previously approved</span></div>
-          <div v-for="(line, index) in reviewLines" :key="`${index}-${line.candidate}-${line.previous}`" class="review-diff__row" :class="`review-diff__row--${line.kind}`" role="row">
+          <div v-for="(line, index) in reviewLines" :key="index" class="review-diff__row" :class="`review-diff__row--${line.kind}`" role="row">
             <code role="cell">{{ line.candidate }}</code><code role="cell">{{ line.previous }}</code>
           </div>
         </div>
@@ -258,6 +258,8 @@ const actionBusyId = ref('')
 const error = ref('')
 let reloadController: AbortController | null = null
 let reloadGeneration = 0
+let disposed = false
+let previewController: AbortController | null = null
 const createError = ref('')
 const accessError = ref('')
 const previewError = ref('')
@@ -306,6 +308,9 @@ const stateFilters = [
 const createNameValid = computed(() => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(create.name.trim()))
 const createRootPageValid = computed(() => Number.isInteger(create.rootPageId) && create.rootPageId > 0)
 const createAssetFolderValid = computed(() => create.assetFolderId === '' || (Number.isInteger(Number(create.assetFolderId)) && Number(create.assetFolderId) > 0))
+const createNameRules = [(): true | string => createNameValid.value || 'Use lowercase letters, numbers, and single hyphens.']
+const createRootPageRules = [(): true | string => createRootPageValid.value || 'Enter a positive whole number.']
+const createAssetFolderRules = [(): true | string => createAssetFolderValid.value || 'Enter a positive whole number or leave this blank.']
 const createValid = computed(() => createNameValid.value && createRootPageValid.value && createAssetFolderValid.value && Boolean(create.rootPath.trim()) && (create.exposureMode !== 'groups' || create.groupIds.length > 0))
 
 const request = async (url: string, init: RequestInit = {}, signal?: AbortSignal): Promise<unknown> => {
@@ -328,6 +333,7 @@ const request = async (url: string, init: RequestInit = {}, signal?: AbortSignal
 }
 
 const reload = async (): Promise<void> => {
+  if (disposed) return
   reloadController?.abort()
   const controller = new AbortController()
   reloadController = controller
@@ -395,10 +401,16 @@ const clearFilters = (): void => {
   search.value = ''
   stateFilter.value = 'all'
 }
+const sameIdSet = (left: readonly number[], right: readonly number[]): boolean =>
+  left.length === right.length && left.every(id => right.includes(id))
+const policyDirty = computed(() => Boolean(policySkill.value) && (
+  policy.exposureMode !== policySkill.value?.exposureMode ||
+  !sameIdSet(policy.groupIds, policySkill.value?.groupIds ?? [])
+))
 const openAccess = (skill: Skill): void => { accessError.value = ''; policySkill.value = skill; policy.exposureMode = skill.exposureMode; policy.groupIds = [...skill.groupIds]; accessOpen.value = true }
 const saveAccess = async (): Promise<void> => {
   const skill = policySkill.value
-  if (!skill || actionBusyId.value || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)) return
+  if (!skill || actionBusyId.value || !policyDirty.value || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)) return
   actionBusyId.value = 'access'; accessError.value = ''
   try {
     await request(`/_api/agents/admin/skills/${skill.id}/policy`, { method: 'POST', body: JSON.stringify({ assetFolderId: skill.assetFolderId, exposureMode: policy.exposureMode, groupIds: policy.exposureMode === 'groups' ? policy.groupIds : [] }) })
@@ -409,12 +421,25 @@ const saveAccess = async (): Promise<void> => {
 const openPreview = async (skillId: string): Promise<void> => {
   if (actionBusyId.value) return
   actionBusyId.value = `preview:${skillId}`; previewError.value = ''
-  try { preview.value = PreviewSchema.parse(await request(`/_api/agents/admin/skills/${skillId}/preview`)); previewOpen.value = true }
+  const controller = new AbortController()
+  previewController = controller
+  try {
+    const result = await request(`/_api/agents/admin/skills/${skillId}/preview`, {}, controller.signal)
+    if (disposed) return
+    preview.value = PreviewSchema.parse(result)
+    previewOpen.value = true
+  }
   catch (requestError: unknown) {
+    if (disposed || controller.signal.aborted) return
     previewError.value = requestError instanceof Error ? requestError.message : 'Unable to preview skill'
     error.value = previewError.value
+  } finally {
+    if (previewController === controller) previewController = null
+    actionBusyId.value = ''
   }
-  finally { actionBusyId.value = '' }
+}
+const onPreviewAfterLeave = (): void => {
+  if (!previewOpen.value) preview.value = null
 }
 const review = async (approved: boolean): Promise<void> => {
   if (!preview.value || actionBusyId.value) return
@@ -434,7 +459,12 @@ const setEnabled = async (skillId: string, enabled: boolean): Promise<void> => {
 }
 
 onMounted(reload)
-onBeforeUnmount(() => reloadController?.abort())
+onBeforeUnmount(() => {
+  disposed = true
+  reloadGeneration++
+  previewController?.abort()
+  reloadController?.abort()
+})
 </script>
 
 <style scoped>

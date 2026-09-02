@@ -6,6 +6,8 @@
     scrim='surface'
     style='--v-overlay-opacity: .7'
     aria-labelledby='page-selector-title'
+    :persistent='isSubmitting'
+    @after-enter='focusPath'
   )
     v-card.page-selector
       .dialog-header
@@ -67,12 +69,16 @@
               retry-label='Try again'
               @retry='reloadTree(currentLocale)'
             )
-            v-list.py-0(v-else-if='currentPages.length > 0' density='compact')
+            v-list.py-0(
+              v-else-if='currentPages.length > 0'
+              v-model:activated='currentPageIds'
+              density='compact'
+              activatable
+              aria-labelledby='page-selector-pages'
+              mandatory
+            )
               template(v-for='(page, idx) of currentPages' :key='`page-` + page.id')
-                v-list-item(
-                  :active='currentPage?.id === page.id'
-                  @click='currentPage = page'
-                )
+                v-list-item(:value='page.id')
                   template(v-slot:prepend): v-icon aria-hidden='true' mdi-text-box-outline
                   v-list-item-title {{page.title}}
                 v-divider(v-if='idx < currentPages.length - 1')
@@ -189,7 +195,9 @@ export default defineComponent({
       namespaces: siteLangs.length ? siteLangs.map(ns => ns.code) : [siteConfig.lang],
       scrollStyle: {
         scrollPanel: { scrollingX: false }
-      }
+      },
+      treeAbortController: null as AbortController | null,
+      submissionRequestId: 0
     }
   },
   computed: {
@@ -200,6 +208,12 @@ export default defineComponent({
     searchLoading(): boolean { return this.pendingRequests > 0 },
     currentPages (): PageEntry[] {
       return _.sortBy(_.filter(this.pages, ['parent', _.head(this.currentNode) ?? 0]), ['title', 'path'])
+    },
+    currentPageIds: {
+      get(): number[] { return this.currentPage ? [this.currentPage.id] : [] },
+      set(value: number[]) {
+        this.currentPage = this.currentPages.find(page => page.id === value[0]) ?? null
+      }
     },
     isValidPath (): boolean {
       if (!this.currentPath || (this.mustExist && !this.currentPage)) return false
@@ -218,7 +232,11 @@ export default defineComponent({
           const localeChanged = this.currentLocale !== this.locale
           this.currentLocale = this.locale
           if (!localeChanged) void this.reloadTree(this.locale)
-          void this.$nextTick(() => (this.$refs.pathIpt as { focus?: () => void } | undefined)?.focus?.())
+        } else if (!newValue && oldValue) {
+          this.treeViewCacheId += 1
+          this.treeAbortController?.abort()
+          this.treeAbortController = null
+          this.pendingRequests = 0
         }
       }
     },
@@ -231,6 +249,7 @@ export default defineComponent({
           if (current && this.openNodes.indexOf(current.parent) < 0) this.$nextTick(() => { this.openNodes.push(current.parent) })
           this.$nextTick(() => { this.openNodes.push(newValue[0]) })
         }
+        this.currentPage = null
         this.currentPath = _.compact([current?.path ?? '', _.last(this.currentPath?.split('/') ?? [])]).join('/')
       }
     },
@@ -241,12 +260,23 @@ export default defineComponent({
       void this.reloadTree(newValue)
     }
   },
+  beforeUnmount() {
+    this.submissionRequestId += 1
+    this.treeViewCacheId += 1
+    this.treeAbortController?.abort()
+    this.treeAbortController = null
+  },
   methods: {
+    focusPath(): void {
+      const input = this.$refs.pathIpt as { focus?: () => void } | undefined
+      input?.focus?.()
+    },
     close(): void {
       if (!this.isSubmitting) this.isShown = false
     },
     async open(): Promise<void> {
       if (!this.currentPath || !this.isValidPath || this.isSubmitting) return
+      const requestId = ++this.submissionRequestId
       this.submissionError = ''
       this.isSubmitting = true
       try {
@@ -255,14 +285,18 @@ export default defineComponent({
           path: this.currentPath,
           id: (this.mustExist && this.currentPage) ? this.currentPage.pageId : 0
         })
-        if (exit !== false) this.isShown = false
+        if (requestId === this.submissionRequestId && exit !== false) this.isShown = false
       } catch (err) {
-        this.submissionError = getErrorMessage(err) || 'The page selection could not be completed.'
+        if (requestId === this.submissionRequestId) {
+          this.submissionError = getErrorMessage(err) || 'The page selection could not be completed.'
+        }
       } finally {
-        this.isSubmitting = false
+        if (requestId === this.submissionRequestId) this.isSubmitting = false
       }
     },
     async reloadTree (locale: string): Promise<void> {
+      this.treeAbortController?.abort()
+      this.treeAbortController = new AbortController()
       this.treeViewCacheId += 1
       const root = createRootNode(locale, this.treeViewCacheId)
       this.pendingRequests = 0
@@ -280,9 +314,14 @@ export default defineComponent({
       const requestLocale = this.currentLocale
       const requestTreeId = item.treeId
       if (requestTreeId !== this.treeViewCacheId) return
+      const controller = this.treeAbortController
+      if (!controller || controller.signal.aborted) return
       this.pendingRequests += 1
       try {
-        const items = await fetchPageTree(window.fetch.bind(window), { parent: item.id, mode: 'ALL', locale: requestLocale })
+        const items = await fetchPageTree(
+          (url, init) => window.fetch(url, { ...init, signal: controller.signal }),
+          { parent: item.id, mode: 'ALL', locale: requestLocale }
+        )
         if (requestTreeId !== this.treeViewCacheId || item.locale !== this.currentLocale || requestLocale !== this.currentLocale) return
         const itemFolders: PageTreeItem[] = items.filter(item => item.isFolder).map(folder => ({ ...folder, treeId: requestTreeId, children: [] }))
         const itemPages = items.filter(isPageEntry)
@@ -291,6 +330,7 @@ export default defineComponent({
         this.all = _.unionBy(this.all, items, 'id')
         this.loadError = ''
       } catch (err) {
+        if (controller.signal.aborted) return
         if (requestTreeId === this.treeViewCacheId && requestLocale === this.currentLocale) this.loadError = getErrorMessage(err) || 'Pages could not be loaded.'
       } finally {
         if (requestTreeId === this.treeViewCacheId) this.pendingRequests = Math.max(0, this.pendingRequests - 1)

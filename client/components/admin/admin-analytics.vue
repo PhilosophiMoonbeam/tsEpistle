@@ -35,9 +35,9 @@
           async-state(v-else-if='errorMessage', state='error', title='Analytics providers could not be loaded', :message='errorMessage', retry-label='Try again', @retry='loadProviders')
           async-state(v-else-if='providers.length < 1', state='empty', title='No analytics providers available', message='No analytics integration is configured.')
           template(v-else)
-            v-list(lines="two", density="compact", role='listbox', aria-label='Analytics providers').py-0
+            v-list(lines="two", density="compact", aria-label='Analytics providers').py-0
               template(v-for='(str, idx) in providers', :key='str.key')
-                v-list-item(link, role='option', @click='selectedProvider = str.key', :disabled='!str.isAvailable', :aria-selected='str.key === selectedProvider')
+                v-list-item(link, @click='selectedProvider = str.key', :disabled='!str.isAvailable', :aria-disabled='!str.isAvailable ? `true` : undefined', :aria-current='str.key === selectedProvider ? `true` : undefined')
                   template(v-slot:prepend)
                     v-checkbox-btn(
                       v-if='str.isAvailable'
@@ -134,10 +134,14 @@
 
 <script lang='ts'>
 import AsyncState from '@/components/common/async-state.vue'
-import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { fetchAnalyticsProviders, saveAnalyticsProviders, type AnalyticsProvider } from '../../helpers/analytics-api'
 import { getErrorMessage, loadingStart, loadingStop, showNotification, pushGraphError } from '../../helpers/root-ui-store'
+
+const createAbortableFetch = (signal: AbortSignal) => (
+  url: string,
+  options: Record<string, unknown>
+) => window.fetch(url, { ...options, signal } as RequestInit)
 
 export default {
   components: {
@@ -150,12 +154,15 @@ export default {
       loading: false,
       errorMessage: '',
       refreshing: false,
-      saving: false
+      saving: false,
+      loadController: null as AbortController | null,
+      saveController: null as AbortController | null,
+      isUnmounted: false
     }
   },
   computed: {
     provider (): Partial<AnalyticsProvider> {
-      return _.find(this.providers, ['key', this.selectedProvider]) || {}
+      return this.providers.find(provider => provider.key === this.selectedProvider) || {}
     },
     canSave (): boolean {
       return !this.loading && !this.refreshing && !this.saving && this.providers.length > 0 &&
@@ -167,17 +174,30 @@ export default {
   },
   methods: {
     async loadProviders({ notifyError = true }: { notifyError?: boolean } = {}) {
+      this.loadController?.abort()
+      const controller = new AbortController()
+      this.loadController = controller
       this.loading = true
       this.errorMessage = ''
       this.refreshing = notifyError
       loadingStart(wikiStore, 'admin-analytics-refresh')
       try {
-        this.providers = await fetchAnalyticsProviders(window.fetch.bind(window), 'Analytics providers response is invalid')
-        const selected = _.find(this.providers, provider => provider.isAvailable && provider.isEnabled) ||
-          _.find(this.providers, 'isAvailable')
+        const providers = await fetchAnalyticsProviders(
+          createAbortableFetch(controller.signal),
+          'Analytics providers response is invalid'
+        )
+        if (controller.signal.aborted) {
+          return false
+        }
+        const selected = providers.find(provider => provider.isAvailable && provider.isEnabled) ||
+          providers.find(provider => provider.isAvailable)
+        this.providers = providers
         this.selectedProvider = selected?.key || ''
         return true
       } catch (err) {
+        if (controller.signal.aborted) {
+          return false
+        }
         this.errorMessage = getErrorMessage(err) || this.$t('common:error.unexpected')
         if (notifyError) {
           showNotification(wikiStore, {
@@ -188,15 +208,21 @@ export default {
         }
         throw err
       } finally {
-        this.loading = false
-        this.refreshing = false
+        if (this.loadController === controller) {
+          this.loadController = null
+          if (!this.isUnmounted) {
+            this.loading = false
+            this.refreshing = false
+          }
+        }
         loadingStop(wikiStore, 'admin-analytics-refresh')
       }
     },
     async refresh() {
       if (this.refreshing || this.saving) return
       try {
-        await this.loadProviders()
+        const loaded = await this.loadProviders()
+        if (!loaded) return
       } catch {
         return
       }
@@ -208,27 +234,47 @@ export default {
     },
     async save() {
       if (!this.canSave) return
+      const controller = new AbortController()
+      this.saveController = controller
       this.saving = true
       loadingStart(wikiStore, 'admin-analytics-saveproviders')
       try {
-        await saveAnalyticsProviders(window.fetch.bind(window), this.providers.map(str => _.pick(str, [
-          'isEnabled',
-          'key',
-          'config'
-        ])).map(str => ({...str, config: str.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))})), 'Analytics providers save response is invalid')
+        await saveAnalyticsProviders(createAbortableFetch(controller.signal), this.providers.map(provider => ({
+          isEnabled: provider.isEnabled,
+          key: provider.key,
+          config: provider.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })}))
+        })), 'Analytics providers save response is invalid')
+        if (controller.signal.aborted) {
+          return
+        }
         await this.loadProviders({ notifyError: false })
+        if (controller.signal.aborted) {
+          return
+        }
         showNotification(wikiStore, {
           message: this.$t('admin:analytics.saveSuccess'),
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        pushGraphError(wikiStore, err)
+        if (!controller.signal.aborted) {
+          pushGraphError(wikiStore, err)
+        }
       } finally {
-        this.saving = false
+        if (this.saveController === controller) {
+          this.saveController = null
+          if (!this.isUnmounted) {
+            this.saving = false
+          }
+        }
         loadingStop(wikiStore, 'admin-analytics-saveproviders')
       }
     }
+  },
+  beforeUnmount () {
+    this.isUnmounted = true
+    this.loadController?.abort()
+    this.saveController?.abort()
   }
 }
 </script>

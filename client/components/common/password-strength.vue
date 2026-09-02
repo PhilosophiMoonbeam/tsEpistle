@@ -36,10 +36,29 @@ export default defineComponent({
   data() {
     return {
       debouncedCheckPasswordStrength: null as ReturnType<typeof _.debounce> | null,
-      passwordStrength: 0,
-      passwordStrengthColor: 'on-surface-variant',
-      passwordStrengthText: '',
-      passwordStrengthAnnouncement: 'Password strength not set'
+      passwordStrength: 0
+    }
+  },
+  computed: {
+    passwordStrengthColor(): string {
+      if (this.passwordStrength === 0) return 'on-surface-variant'
+      if (this.passwordStrength <= 20) return 'error'
+      if (this.passwordStrength <= 40) return 'warning'
+      if (this.passwordStrength <= 60) return 'info'
+      return 'success'
+    },
+    passwordStrengthText(): string {
+      if (this.passwordStrength === 0) return ''
+      if (this.passwordStrength <= 20) return this.$t('common:password.veryWeak')
+      if (this.passwordStrength <= 40) return this.$t('common:password.weak')
+      if (this.passwordStrength <= 60) return this.$t('common:password.average')
+      if (this.passwordStrength <= 80) return this.$t('common:password.strong')
+      return this.$t('common:password.veryStrong')
+    },
+    passwordStrengthAnnouncement(): string {
+      return this.passwordStrength === 0
+        ? 'Password strength not set'
+        : `${this.passwordStrengthText} (${this.passwordStrength}%)`
     }
   },
   watch: {
@@ -56,32 +75,7 @@ export default defineComponent({
   methods: {
 
     updatePasswordStrength(pwd: string) {
-      if (!pwd || pwd.length < 1) {
-        this.passwordStrength = 0
-        this.passwordStrengthColor = 'on-surface-variant'
-        this.passwordStrengthText = ''
-        this.passwordStrengthAnnouncement = 'Password strength not set'
-        return
-      }
-      const strength = zxcvbn(pwd)
-      this.passwordStrength = _.round((strength.score + 1) / 5 * 100)
-      if (this.passwordStrength <= 20) {
-        this.passwordStrengthColor = 'error'
-        this.passwordStrengthText = this.$t('common:password.veryWeak')
-      } else if (this.passwordStrength <= 40) {
-        this.passwordStrengthColor = 'warning'
-        this.passwordStrengthText = this.$t('common:password.weak')
-      } else if (this.passwordStrength <= 60) {
-        this.passwordStrengthColor = 'info'
-        this.passwordStrengthText = this.$t('common:password.average')
-      } else if (this.passwordStrength <= 80) {
-        this.passwordStrengthColor = 'success'
-        this.passwordStrengthText = this.$t('common:password.strong')
-      } else {
-        this.passwordStrengthColor = 'success'
-        this.passwordStrengthText = this.$t('common:password.veryStrong')
-      }
-      this.passwordStrengthAnnouncement = `${this.passwordStrengthText} (${this.passwordStrength}%)`
+      this.passwordStrength = pwd ? (zxcvbn(pwd).score + 1) * 20 : 0
     }
   },
   beforeUnmount() {

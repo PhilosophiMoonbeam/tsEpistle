@@ -137,7 +137,7 @@
 <script lang='ts'>
 import _ from 'lodash'
 import AsyncState from '@/components/common/async-state.vue'
-import { defineComponent, type PropType } from 'vue'
+import { defineComponent, markRaw, type PropType } from 'vue'
 import { fetchPageTree, type PageTreeRow } from '../../../helpers/pages-api'
 import { isWikiNavigationClick, navigateToWikiPage } from '../../../helpers/wiki-navigation'
 import { wikiStore } from '@/store/index.ts'
@@ -199,7 +199,8 @@ export default defineComponent({
       } as NavigationTreeItem,
       parents: [] as NavigationTreeItem[],
       loadedCache: [] as number[],
-      browseRequestSequence: 0
+      browseRequestSequence: 0,
+      browseRequestController: null as AbortController | null
     }
   },
   computed: {
@@ -251,6 +252,9 @@ export default defineComponent({
     },
     async fetchBrowseItems (requestedItem?: NavigationTreeItem) {
       const requestSequence = ++this.browseRequestSequence
+      this.browseRequestController?.abort()
+      const requestController = markRaw(new AbortController())
+      this.browseRequestController = requestController
       const locale = this.locale
       loadingStart(wikiStore, 'browse-load')
       this.navLoading = true
@@ -268,25 +272,32 @@ export default defineComponent({
           this.parents.push(item)
         }
         this.currentParent = item
-        const items = await fetchPageTree(window.fetch.bind(window), {
-          parent: item.id,
-          locale,
-          mode: 'ALL'
-        })
+        const items = await fetchPageTree(
+          (url, init) => window.fetch(url, { ...init, signal: requestController.signal }),
+          {
+            parent: item.id,
+            locale,
+            mode: 'ALL'
+          }
+        )
         if (requestSequence !== this.browseRequestSequence) return
         this.currentItems = items
         this.loadedCache = _.union(this.loadedCache, [item.id])
       } catch (error) {
-        if (requestSequence === this.browseRequestSequence) {
+        if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence) {
           this.navError = error instanceof Error ? error.message : 'Navigation could not be loaded.'
         }
       } finally {
+        if (this.browseRequestController === requestController) this.browseRequestController = null
         if (requestSequence === this.browseRequestSequence) this.navLoading = false
         loadingStop(wikiStore, 'browse-load')
       }
     },
     async loadFromCurrentPath() {
       const requestSequence = ++this.browseRequestSequence
+      this.browseRequestController?.abort()
+      const requestController = markRaw(new AbortController())
+      this.browseRequestController = requestController
       const locale = this.locale
       const path = this.path
       const pageId = wikiStore.page.id
@@ -294,12 +305,15 @@ export default defineComponent({
       this.navLoading = true
       this.navError = ''
       try {
-        const items = await fetchPageTree(window.fetch.bind(window), {
-          path,
-          locale,
-          mode: 'ALL',
-          includeAncestors: true
-        })
+        const items = await fetchPageTree(
+          (url, init) => window.fetch(url, { ...init, signal: requestController.signal }),
+          {
+            path,
+            locale,
+            mode: 'ALL',
+            includeAncestors: true
+          }
+        )
         if (requestSequence !== this.browseRequestSequence) return
         const curPage = _.find(items, ['pageId', pageId])
         if (!curPage) throw new Error('Could not find the current page in navigation.')
@@ -316,10 +330,11 @@ export default defineComponent({
         this.loadedCache = [curPage.parent]
         this.currentItems = _.filter(items, ['parent', curPage.parent])
       } catch (error) {
-        if (requestSequence === this.browseRequestSequence) {
+        if (!requestController.signal.aborted && requestSequence === this.browseRequestSequence) {
           this.navError = error instanceof Error ? error.message : 'Navigation could not be loaded.'
         }
       } finally {
+        if (this.browseRequestController === requestController) this.browseRequestController = null
         if (requestSequence === this.browseRequestSequence) this.navLoading = false
         loadingStop(wikiStore, 'browse-load')
       }
@@ -369,6 +384,8 @@ export default defineComponent({
   },
   beforeUnmount () {
     this.browseRequestSequence += 1
+    this.browseRequestController?.abort()
+    this.browseRequestController = null
   }
 })
 </script>

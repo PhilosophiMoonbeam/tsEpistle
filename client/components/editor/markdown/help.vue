@@ -125,7 +125,7 @@
                 v-col
                   v-card.editor-markdown-help-result(flat)
                     v-card-text
-                      .text-body-small: a(href='https://wiki.js.org', target='_blank') Link Text
+                      .text-body-small: a(href='https://wiki.js.org', target='_blank', rel='noopener') Link Text
               h3.text-body-medium.mt-3 Superscript
               v-row
                 v-col(cols='6')

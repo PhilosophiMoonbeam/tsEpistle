@@ -6,10 +6,6 @@
     min-height='60'
     v-model='notificationState'
     :timeout='notificationTimeout'
-    :role='notificationKind === `error` ? `alert` : `status`'
-    :aria-live='notificationKind === `error` ? `assertive` : `polite`'
-    aria-atomic='true'
-    :aria-busy='notificationKind === `progress`'
     :class='`nav-notify--${notificationKind}`'
   )
     .nav-notify-content
@@ -49,20 +45,20 @@ export default {
       return 'info'
     },
     notificationColor(): string {
-      return {
-        success: 'success',
-        error: 'error',
-        progress: 'primary',
-        info: 'surface-variant'
-      }[this.notificationKind]
+      switch (this.notificationKind) {
+        case 'success': return 'success'
+        case 'error': return 'error'
+        case 'progress': return 'primary'
+        default: return 'surface-variant'
+      }
     },
     notificationIcon(): string {
-      return {
-        success: 'mdi-check-circle-outline',
-        error: 'mdi-alert-circle-outline',
-        progress: 'mdi-progress-clock',
-        info: 'mdi-information-outline'
-      }[this.notificationKind]
+      switch (this.notificationKind) {
+        case 'success': return 'mdi-check-circle-outline'
+        case 'error': return 'mdi-alert-circle-outline'
+        case 'progress': return 'mdi-progress-clock'
+        default: return 'mdi-information-outline'
+      }
     },
     notificationTimeout(): number {
       return this.notificationKind === 'error' || this.notificationKind === 'progress' ? -1 : 6000

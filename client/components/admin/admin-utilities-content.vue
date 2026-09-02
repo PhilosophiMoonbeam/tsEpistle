@@ -98,7 +98,7 @@
       v-btn(variant="outlined", color='error', @click='requestPurge', :disabled='loading || !purgeHistorySelection', :loading='loading && activeAction === `purge`').ml-0.mt-3
         v-icon(start, aria-hidden='true') mdi-delete-clock
         span Review Purge
-      v-dialog(v-model='isConfirmShown', persistent, max-width='520', aria-labelledby='content-confirm-title')
+      v-dialog(v-model='isConfirmShown', persistent, max-width='520', aria-labelledby='content-confirm-title', @after-leave='pendingConfirmation = ""')
         v-card
           v-card-title#content-confirm-title Confirm destructive operation
           v-card-text
@@ -119,7 +119,7 @@ import { migratePagesToLocale, purgePageHistory, rebuildPageTree, renderPage } f
 
 import { SemipolarSpinner } from 'epic-spinners'
 
-/* global siteLangs, siteConfig */
+/* global siteLangs */
 
 export default defineComponent({
   components: {
@@ -156,9 +156,6 @@ export default defineComponent({
     this.isDisposed = true
   },
   computed: {
-    currentLocale () {
-      return siteConfig.lang
-    },
     locales () {
       return siteLangs
     },
@@ -194,7 +191,6 @@ export default defineComponent({
     cancelConfirmation () {
       if (!this.loading) {
         this.isConfirmShown = false
-        this.pendingConfirmation = ''
       }
     },
     async confirmDestructiveAction () {
@@ -203,7 +199,6 @@ export default defineComponent({
       }
       const action = this.pendingConfirmation
       this.isConfirmShown = false
-      this.pendingConfirmation = ''
       if (action === 'migrate') {
         await this.migrateToLocale()
       } else if (action === 'purge') {
@@ -355,6 +350,3 @@ export default defineComponent({
 
 })
 </script>
-<style lang='scss'>
-
-</style>

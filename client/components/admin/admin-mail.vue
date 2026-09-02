@@ -48,7 +48,7 @@
           v-btn.ml-2(variant='text', size='small', @click='loadConfig') Retry
         v-skeleton-loader.mt-3(v-if='loadState === `loading` && !hasLoaded', type='card, card')
 
-        v-form.pt-3(v-if='hasLoaded', ref='configForm', @submit.prevent='save')
+        v-form.pt-3(v-if='hasLoaded', ref='configForm', :disabled='saveLoading || loadState === `loading`', @submit.prevent='save')
           v-row
             v-col(lg='6' cols='12')
               v-card.animated.fadeInUp(:loading='saveLoading')
@@ -143,13 +143,13 @@
                       strong SMTP password
                       v-chip(label, size='small', color='success') Stored
                       v-spacer
-                      v-btn(variant='outlined', size='small', @click='replaceSmtpPassword') Replace
-                      v-btn(variant='text', size='small', color='error', @click='requestSecretClear(`smtp`)') Clear
+                      v-btn(variant='outlined', size='small', :disabled='saveLoading || loadState === `loading`', @click='replaceSmtpPassword') Replace
+                      v-btn(variant='text', size='small', color='error', :disabled='saveLoading || loadState === `loading`', @click='requestSecretClear(`smtp`)') Clear
                   template(v-else-if='smtpPasswordMode === `clear`')
                     v-alert.mb-4(type='warning', variant='tonal') The stored SMTP password will be cleared when changes are applied.
                     .d-flex.flex-wrap.ga-2.mb-4
-                      v-btn(variant='outlined', size='small', @click='replaceSmtpPassword') Use replacement instead
-                      v-btn(v-if='smtpPasswordStored', variant='text', size='small', @click='keepSmtpPassword') Keep stored password
+                      v-btn(variant='outlined', size='small', :disabled='saveLoading || loadState === `loading`', @click='replaceSmtpPassword') Use replacement instead
+                      v-btn(v-if='smtpPasswordStored', variant='text', size='small', :disabled='saveLoading || loadState === `loading`', @click='keepSmtpPassword') Keep stored password
                   v-text-field(
                     v-else
                     variant='outlined'
@@ -164,6 +164,7 @@
                     v-if='smtpPasswordMode === `replace` && smtpPasswordStored'
                     variant='text'
                     size='small'
+                    :disabled='saveLoading || loadState === `loading`'
                     @click='keepSmtpPassword'
                   ) Keep stored password
 
@@ -205,13 +206,13 @@
                       strong DKIM private key
                       v-chip(label, size='small', color='success') Stored
                       v-spacer
-                      v-btn(variant='outlined', size='small', :disabled='!config.useDKIM', @click='replaceDkimKey') Replace
-                      v-btn(variant='text', size='small', color='error', @click='requestSecretClear(`dkim`)') Clear
+                      v-btn(variant='outlined', size='small', :disabled='saveLoading || loadState === `loading` || !config.useDKIM', @click='replaceDkimKey') Replace
+                      v-btn(variant='text', size='small', color='error', :disabled='saveLoading || loadState === `loading`', @click='requestSecretClear(`dkim`)') Clear
                   template(v-else-if='dkimKeyMode === `clear`')
                     v-alert.mb-4(type='warning', variant='tonal') The stored DKIM private key will be cleared when changes are applied.
                     .d-flex.flex-wrap.ga-2.mb-4
-                      v-btn(variant='outlined', size='small', :disabled='!config.useDKIM', @click='replaceDkimKey') Use replacement instead
-                      v-btn(v-if='storedDkimPrivateKey', variant='text', size='small', @click='keepDkimKey') Keep stored key
+                      v-btn(variant='outlined', size='small', :disabled='saveLoading || loadState === `loading` || !config.useDKIM', @click='replaceDkimKey') Use replacement instead
+                      v-btn(v-if='storedDkimPrivateKey', variant='text', size='small', :disabled='saveLoading || loadState === `loading`', @click='keepDkimKey') Keep stored key
                   v-textarea(
                     v-else
                     variant='outlined'
@@ -228,6 +229,7 @@
                     v-if='dkimKeyMode === `replace` && storedDkimPrivateKey'
                     variant='text'
                     size='small'
+                    :disabled='saveLoading || loadState === `loading`'
                     @click='keepDkimKey'
                   ) Keep stored key
 
@@ -274,9 +276,9 @@
                     v-icon(start) mdi-send
                     span {{ $t('admin:mail.testSend') }}
 
-    v-dialog(v-model='secretClearDialog', max-width='500', persistent)
+    v-dialog(v-model='secretClearDialog', max-width='500', persistent, aria-labelledby='mail-secret-clear-title')
       v-card
-        .dialog-header.is-red Clear stored credential?
+        .dialog-header.is-red#mail-secret-clear-title Clear stored credential?
         v-card-text {{ secretClearTarget === 'smtp' ? 'Clearing the SMTP password can stop authenticated mail delivery.' : 'Clearing the DKIM private key will stop DKIM signing until a replacement is saved.' }}
         v-card-actions
           v-spacer

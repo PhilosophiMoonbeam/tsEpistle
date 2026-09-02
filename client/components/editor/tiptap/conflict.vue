@@ -2,16 +2,17 @@
   v-dialog(
     v-model='isShown'
     max-width='700'
+    aria-labelledby='editor-conflict-title'
     )
     v-card
       .dialog-header.is-short.is-indigo
         v-icon.mr-2(color='white') mdi-alert
-        span {{$t('editor:conflict.title')}}
+        span#editor-conflict-title {{$t('editor:conflict.title')}}
       v-card-text.pt-4
         i18next.text-body-medium(tag='div', path='editor:conflict.infoGeneric')
           strong(place='authorName') {{latest.authorName}}
           span(place='date', :title='$helpers.formatMoment(latest.updatedAt, `LLL`)') {{ $helpers.formatMoment(latest.updatedAt, 'from') }}.
-        v-btn.mt-2(variant="outlined", color='indigo', size="small", :href='`/` + latest.locale + `/` + latest.path', target='_blank')
+        v-btn.mt-2(variant="outlined", color='indigo', size="small", :href='`/` + latest.locale + `/` + latest.path', target='_blank', rel='noopener')
           v-icon(start) mdi-open-in-new
           span {{$t('editor:conflict.viewLatestVersion')}}
         .text-body-medium.mt-5: strong {{$t('editor:conflict.whatToDo')}}
@@ -26,6 +27,7 @@
         v-dialog(
           v-model='isRemoteConfirmDiagShown'
           width='500'
+          aria-labelledby='editor-conflict-overwrite-title'
           )
           template(v-slot:activator='{ props }')
             v-btn.ml-3(color='indigo', v-bind='props', :title='$t(`editor:conflict.useRemoteHint`)')
@@ -34,7 +36,7 @@
           v-card
             .dialog-header.is-short.is-indigo
               v-icon.mr-3(color='white') mdi-alpha-r-box
-              span {{$t('editor:conflict.overwrite.title')}}
+              span#editor-conflict-overwrite-title {{$t('editor:conflict.overwrite.title')}}
             v-card-text.pa-4
               i18next.text-body-medium(tag='div', path='editor:conflict.overwrite.description')
                 strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
@@ -109,12 +111,12 @@ export default defineComponent({
         (url, init) => window.fetch(url, { ...init, signal: requestController.signal }),
         wikiStore.page.id
       )
-    } catch (err) {
-      if (requestController.signal.aborted && err instanceof DOMException && err.name === 'AbortError') return
+    } catch {
+      if (requestController.signal.aborted) return
       // The warning below is the user-facing error state.
     }
 
-    if (requestController.signal.aborted && resp) return
+    if (requestController.signal.aborted) return
     this.requestController = null
     if (!resp) {
       return showNotification(wikiStore, {

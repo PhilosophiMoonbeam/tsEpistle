@@ -112,11 +112,6 @@ const usesMdiIcon = computed(() => props.icon?.startsWith('mdi-') ?? false)
   line-height: var(--wiki-leading-heading);
 }
 
-.admin-hero__title:focus {
-  outline: none;
-  box-shadow: none;
-}
-
 .admin-hero__description {
   max-width: 70ch;
   margin-block: var(--wiki-space-1) 0;

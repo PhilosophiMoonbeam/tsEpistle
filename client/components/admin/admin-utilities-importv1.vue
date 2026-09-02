@@ -2,7 +2,7 @@
   v-card
     v-toolbar(flat, color='primary', density="compact")
       .text-body-large {{ $t('admin:utilities.importv1Title') }}
-    v-form
+    v-form#import-v1-form(@submit.prevent='startImport')
       .text-center
         img.animated.fadeInUp.wait-p1s(src='/_assets/svg/icon-software.svg', alt='')
         .text-body-medium Import from Wiki.js 1.x
@@ -18,7 +18,7 @@
         template(v-slot:label)
           strong.text-deep-orange-darken-2 Content + Uploads
       .admin-import-option-indent(v-if='wantContent')
-        v-radio-group(v-model='contentMode', hide-details)
+        v-radio-group(v-model='contentMode', hide-details, aria-label='Content import source')
           v-radio(
             value='git'
             color='primary'
@@ -27,94 +27,93 @@
               div
                 span Import from Git Connection
                 .text-body-small: em #[strong.text-primary Recommended] | The Git storage module will also be configured for you.
-        .admin-import-option-indent.mt-5(v-if='needGit')
-          v-row
-            v-col(cols='12', md='8')
-              v-select(
-                label='Authentication Mode'
-                :items='gitAuthModes'
-                item-title='text'
-                item-value='value'
-                v-model='gitAuthMode'
-                variant="outlined"
-                hide-details
-              )
-            v-col(cols='12', md='4')
-              v-switch(
-                label='Verify SSL Certificate'
-                v-model='gitVerifySSL'
-                hide-details
-                color='primary'
-              )
-            v-col(cols='12', md='8')
-              v-text-field(
-                variant="outlined"
-                label='Repository URL'
-                :placeholder='(gitAuthMode === `ssh`) ? `e.g. git@github.com:orgname/repo.git` : `e.g. https://github.com/orgname/repo.git`'
-                :rules='[requiredRule, repositoryRule]'
-                v-model='gitRepoUrl'
-              )
-            v-col(cols='12', md='4')
-              v-text-field(
-                label='Branch'
-                placeholder='e.g. master'
-                :rules='[requiredRule]'
-                v-model='gitRepoBranch'
-                variant="outlined"
-              )
-            v-col(v-if='gitAuthMode === `ssh`', cols='12')
-              v-textarea(
-                variant="outlined"
-                label='Private Key Contents'
-                placeholder='[REDACTED PRIVATE KEY]'
-                :rules='[requiredRule]'
-                v-model='gitPrivKey'
-              )
-            template(v-else-if='gitAuthMode === `basic`')
+          .admin-import-option-indent.mt-5(v-if='needGit')
+            v-row
+              v-col(cols='12', md='8')
+                v-select(
+                  label='Authentication Mode'
+                  :items='gitAuthModes'
+                  item-title='text'
+                  item-value='value'
+                  v-model='gitAuthMode'
+                  variant="outlined"
+                  hide-details
+                )
+              v-col(cols='12', md='4')
+                v-switch(
+                  label='Verify SSL Certificate'
+                  v-model='gitVerifySSL'
+                  hide-details
+                  color='primary'
+                )
+              v-col(cols='12', md='8')
+                v-text-field(
+                  variant="outlined"
+                  label='Repository URL'
+                  :placeholder='(gitAuthMode === `ssh`) ? `e.g. git@github.com:orgname/repo.git` : `e.g. https://github.com/orgname/repo.git`'
+                  :rules='[requiredRule, repositoryRule]'
+                  v-model='gitRepoUrl'
+                )
+              v-col(cols='12', md='4')
+                v-text-field(
+                  label='Branch'
+                  placeholder='e.g. master'
+                  :rules='[requiredRule]'
+                  v-model='gitRepoBranch'
+                  variant="outlined"
+                )
+              v-col(v-if='gitAuthMode === `ssh`', cols='12')
+                v-textarea(
+                  variant="outlined"
+                  label='Private Key Contents'
+                  placeholder='[REDACTED PRIVATE KEY]'
+                  :rules='[requiredRule]'
+                  v-model='gitPrivKey'
+                )
+              template(v-else-if='gitAuthMode === `basic`')
+                v-col(cols='12', sm='6')
+                  v-text-field(
+                    label='Username'
+                    :rules='[requiredRule]'
+                    v-model='gitUsername'
+                    variant="outlined"
+                  )
+                v-col(cols='12', sm='6')
+                  v-text-field(
+                    type='password'
+                    label='Password / PAT'
+                    :rules='[requiredRule]'
+                    v-model='gitPassword'
+                    variant="outlined"
+                  )
               v-col(cols='12', sm='6')
                 v-text-field(
-                  label='Username'
-                  :rules='[requiredRule]'
-                  v-model='gitUsername'
+                  label='Default Author Email'
+                  placeholder='e.g. name@company.com'
+                  v-model='gitUserEmail'
                   variant="outlined"
+                  hide-details
                 )
               v-col(cols='12', sm='6')
                 v-text-field(
-                  type='password'
-                  label='Password / PAT'
-                  :rules='[requiredRule]'
-                  v-model='gitPassword'
+                  label='Default Author Name'
+                  placeholder='e.g. John Smith'
+                  v-model='gitUserName'
                   variant="outlined"
+                  hide-details
                 )
-            v-col(cols='12', sm='6')
-              v-text-field(
-                label='Default Author Email'
-                placeholder='e.g. name@company.com'
-                v-model='gitUserEmail'
-                variant="outlined"
-                hide-details
-              )
-            v-col(cols='12', sm='6')
-              v-text-field(
-                label='Default Author Name'
-                placeholder='e.g. John Smith'
-                v-model='gitUserName'
-                variant="outlined"
-                hide-details
-              )
-            v-col(cols='12')
-              v-text-field(
-                label='Local Repository Path'
-                placeholder='e.g. ./data/repo'
-                v-model='gitRepoPath'
-                variant="outlined"
-                hide-details
-              )
-              .text-body-small.mt-2 This folder should be empty or not exist yet. #[strong.text-deep-orange-darken-2 DO NOT] point to your existing Wiki.js 1.x repository folder. In most cases, it should be left to the default value.
-          v-alert(color='warning', variant="outlined", icon='mdi-alert', prominent)
-            .text-body-medium - Note that if you already configured the git storage module, its configuration will be replaced with the above.
-            .text-body-medium - Although both v1 and v2 installations can use the same remote git repository, you shouldn't make edits to the same pages simultaneously.
-        v-radio-group(v-model='contentMode', hide-details)
+              v-col(cols='12')
+                v-text-field(
+                  label='Local Repository Path'
+                  placeholder='e.g. ./data/repo'
+                  v-model='gitRepoPath'
+                  variant="outlined"
+                  hide-details
+                )
+                .text-body-small.mt-2 This folder should be empty or not exist yet. #[strong.text-deep-orange-darken-2 DO NOT] point to your existing Wiki.js 1.x repository folder. In most cases, it should be left to the default value.
+            v-alert(color='warning', variant="outlined", icon='mdi-alert', prominent)
+              .text-body-medium - Note that if you already configured the git storage module, its configuration will be replaced with the above.
+              .text-body-medium - Although both v1 and v2 installations can use the same remote git repository, you shouldn't make edits to the same pages simultaneously.
           v-divider
           v-radio.mt-3(
             value='disk'
@@ -124,15 +123,15 @@
               div
                 span Import from local folder
                 .text-body-small: em Choose this option only if you didn't have git configured in your Wiki.js 1.x installation.
-        .admin-import-option-indent.mt-5(v-if='needDisk')
-          v-text-field(
-            variant="outlined"
-            label='Content Repo Path'
-            hint='The absolute path to where the Wiki.js 1.x content is stored on disk.'
-            persistent-hint
-            :rules='[requiredRule]'
-            v-model='contentPath'
-          )
+          .admin-import-option-indent.mt-5(v-if='needDisk')
+            v-text-field(
+              variant="outlined"
+              label='Content Repo Path'
+              hint='The absolute path to where the Wiki.js 1.x content is stored on disk.'
+              persistent-hint
+              :rules='[requiredRule]'
+              v-model='contentPath'
+            )
 
       v-checkbox(
         label='Users'
@@ -152,7 +151,7 @@
           :rules='[mongoRule]'
           v-model='dbConnStr'
         )
-        v-radio-group(v-model='groupMode', hide-details, mandatory)
+        v-radio-group(v-model='groupMode', hide-details, mandatory, aria-label='Imported user group strategy')
           v-radio(
             value='MULTI'
             color='primary'
@@ -185,7 +184,7 @@
           .text-body-small.text-grey You must first delete from this installation any user you want to migrate over from the old installation.
 
     div.v-card-chin
-      v-btn.px-3(variant="flat", color='warning', :disabled='!canStartImport || isLoading', @click='startImport').ml-0
+      v-btn.px-3(type='submit', form='import-v1-form', variant="flat", color='warning', :disabled='!canStartImport || isLoading').ml-0
         v-icon(start, color='on-warning') mdi-database-import
         span.text-on-warning Start Import
     v-dialog(v-model='confirmImport', max-width='620', persistent, :fullscreen='$vuetify.display.smAndDown', aria-labelledby='import-confirmation-title')

@@ -75,6 +75,8 @@ describe('admin-comments root UI facade migration guard', () => {
   const loadProviders = script && extractMethod(script, 'loadProviders')
   const refresh = script && extractMethod(script, 'refresh')
   const save = script && extractMethod(script, 'save')
+  const beforeUnmountStart = script ? script.search(/\bbeforeUnmount\s*\(/) : -1
+  const beforeUnmount = beforeUnmountStart >= 0 ? extractBlock(script, beforeUnmountStart) : null
   const directRootUiCommit =
     /\$store\.commit\(\s*(?:`loading(?:Start|Stop)`|['"]loading(?:Start|Stop)['"]|`showNotification`|['"]showNotification['"]|`pushGraphError`|['"]pushGraphError['"])\s*,/
 
@@ -103,15 +105,23 @@ describe('admin-comments root UI facade migration guard', () => {
       /canSave\s*\(\s*\)\s*:\s*boolean\s*\{[\s\S]*?!this\.loading[\s\S]*?!this\.refreshing[\s\S]*?!this\.saving[\s\S]*?provider\.key\s*===\s*this\.selectedProvider\)\?\.isAvailable/
     )
     expect(script).not.toMatch(/\bwatch\s*:/)
-    expect(source).toMatch(/v-list\.py-0\([^)]*role=['"]radiogroup['"][^)]*aria-label=['"]Comment provider['"]/)
+    expect(source).toMatch(/v-list\.py-0\([^)]*role=['"]radiogroup['"][^)]*aria-label=['"]Comment provider['"][^)]*tabindex=['"]-1['"]/)
     expect(source).toMatch(
-      /v-list-item\([\s\S]*?role=['"]radio['"][\s\S]*?:aria-checked=['"]provider\.key === selectedProvider['"][\s\S]*?:tabindex=['"]provider\.isAvailable \? 0 : -1['"]/
+      /v-list-item\([\s\S]*?role=['"]radio['"][\s\S]*?:aria-checked=['"]provider\.key === selectedProvider['"][\s\S]*?:aria-disabled=['"]!provider\.isAvailable['"][\s\S]*?:tabindex=['"]provider\.isAvailable && provider\.key === selectedProvider \? 0 : -1['"][\s\S]*?:disabled=['"]!provider\.isAvailable['"]/
     )
     expect(source).toMatch(/@keydown\.enter\.prevent=['"]selectProvider\(provider\)['"]/)
     expect(source).toMatch(/@keydown\.space\.prevent=['"]selectProvider\(provider\)['"]/)
+    expect(source).toMatch(/@keydown\.right\.stop\.prevent=['"]selectAdjacentProvider\(provider, 1, \$event\)['"]/)
+    expect(source).toMatch(/@keydown\.down\.stop\.prevent=['"]selectAdjacentProvider\(provider, 1, \$event\)['"]/)
+    expect(source).toMatch(/@keydown\.left\.stop\.prevent=['"]selectAdjacentProvider\(provider, -1, \$event\)['"]/)
+    expect(source).toMatch(/@keydown\.up\.stop\.prevent=['"]selectAdjacentProvider\(provider, -1, \$event\)['"]/)
     expect(script).toMatch(
       /selectProvider\s*\(\s*provider\s*:\s*CommentProvider\s*\)\s*\{\s*if\s*\(\s*provider\.isAvailable\s*\)\s*\{\s*this\.selectedProvider\s*=\s*provider\.key/
     )
+    expect(script).toMatch(
+      /selectAdjacentProvider\s*\(\s*provider\s*:\s*CommentProvider\s*,\s*direction:\s*1\s*\|\s*-1\s*,\s*event:\s*KeyboardEvent\s*\)\s*\{[\s\S]*?this\.providers\.filter\s*\(\s*item\s*=>\s*item\.isAvailable\s*\)[\s\S]*?findIndex\s*\(\s*item\s*=>\s*item\.key\s*===\s*provider\.key\s*\)[\s\S]*?\(currentIndex \+ direction \+ availableProviders\.length\) % availableProviders\.length[\s\S]*?this\.selectedProvider\s*=\s*nextProvider\.key[\s\S]*?this\.\$nextTick/
+    )
+    expect(script).toContain('group?.querySelectorAll<HTMLElement>(\'[role="radio"][aria-disabled="false"]\')[nextIndex]?.focus()')
   })
 
   test('loadProviders uses abortable REST fetches and only lets the current generation settle state', () => {
@@ -225,5 +235,24 @@ describe('admin-comments root UI facade migration guard', () => {
     expect(save.match(/\bshowNotification\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bpushGraphError\s*\(/g) || []).toHaveLength(1)
     expect(save.match(/\bloadingStop\s*\(/g) || []).toHaveLength(1)
+  })
+
+  test('teardown cancels provider loading and saving before stale work can settle UI state', async () => {
+    expect(beforeUnmount).not.toBeNull()
+    expect(beforeUnmount).toMatch(/this\.isUnmounted\s*=\s*true[\s\S]*?this\.loadController\?\.abort\s*\(\s*\)[\s\S]*?this\.saveController\?\.abort\s*\(\s*\)/)
+
+    const loadController = { abort: jest.fn() }
+    const saveController = { abort: jest.fn() }
+    const context = {
+      isUnmounted: false,
+      loadController,
+      saveController
+    }
+
+    await executeMethodBody(beforeUnmount, context, {})
+
+    expect(context.isUnmounted).toBe(true)
+    expect(loadController.abort).toHaveBeenCalledTimes(1)
+    expect(saveController.abort).toHaveBeenCalledTimes(1)
   })
 })

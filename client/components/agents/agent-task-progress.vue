@@ -270,7 +270,7 @@ const syncDurationTimer = (): void => {
   stopDurationTimer()
   if (runningCount.value || queuedCount.value) durationTimer = window.setInterval(() => { tick.value++ }, 30_000)
 }
-watch(() => `${runningCount.value}:${queuedCount.value}`, syncDurationTimer)
+watch([runningCount, queuedCount], syncDurationTimer)
 onMounted(syncDurationTimer)
 onBeforeUnmount(stopDurationTimer)
 </script>

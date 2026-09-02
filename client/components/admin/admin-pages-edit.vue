@@ -46,14 +46,14 @@
                     template(v-slot:prepend)
                       v-icon(color='indigo') mdi-history
                     v-list-item-title View History
-                  v-dialog(v-model='deletePageDialog', max-width='500')
+                  v-dialog(v-model='deletePageDialog', max-width='500', aria-labelledby='delete-page-title')
                     template(v-slot:activator='{ props }')
                       v-list-item(v-bind='props')
                         template(v-slot:prepend)
                           v-icon(color='red') mdi-trash-can-outline
                         v-list-item-title Delete
                     v-card
-                      .dialog-header.is-short.is-red
+                      .dialog-header.is-short.is-red#delete-page-title
                         v-icon.mr-2(color='white') mdi-file-document-box-remove-outline
                         span {{$t('common:page.delete')}}
                       v-card-text.pt-5

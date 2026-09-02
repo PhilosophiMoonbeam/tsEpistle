@@ -87,7 +87,7 @@
                       .d-flex.flex-column.justify-space-between
                         v-menu(min-width='200')
                           template(v-slot:activator='{ props }')
-                            v-btn(variant="text", size="x-large", style='min-width: 0;', v-bind='props')
+                            v-btn(variant="text", size="x-large", style='min-width: 0;', v-bind='props', :aria-label='`Choose server type for ${srv.name || "unnamed server"}`')
                               v-icon(size="large", :color='iconColor(srv.icon)') {{iconKey(srv.icon)}}
                           v-list(nav, density="compact")
                             v-list-item(
@@ -692,6 +692,14 @@ $editor-height-mobile: calc(100dvh - 56px - 16px);
       width: 63px;
       justify-content: center;
       align-items: center;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    &,
+    & * {
+      animation: none !important;
+      transition: none !important;
     }
   }
 

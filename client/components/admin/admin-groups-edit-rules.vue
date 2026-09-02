@@ -51,9 +51,9 @@
               density="compact"
               :disabled='group.id <= 0'
               )
-              template(v-slot:chip='{ item, index }')
-                v-chip.text-white.ml-0(v-if='index <= 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.text }}
-                v-chip.text-white.ml-0(v-if='index === 2', size="small", label, :color='rule.deny ? `red-lighten-2` : `green-lighten-2`').text-body-small + {{ rule.roles.length - 2 }} more
+              template(v-slot:chip='{ item, index, props }')
+                v-chip.text-white.ml-0(v-if='index <= 1', v-bind='props', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.text }}
+                v-chip.text-white.ml-0(v-if='index === 2', :closable='false', size="small", label, :color='rule.deny ? `red-lighten-2` : `green-lighten-2`').text-body-small + {{ rule.roles.length - 2 }} more
 
             //- Match
             v-select.rule-match(
@@ -97,6 +97,7 @@
                       hide-details
                       color='primary'
                       readonly
+                      tabindex='-1'
                     )
                   template(v-slot:prepend)
                     v-icon.mr-2(:color='rule.deny ? `red` : `green`') mdi-earth

@@ -106,7 +106,7 @@
       v-btn.editor-tiptap-insert-button(variant='tonal', size='small', aria-label='Insert definition list', @click='insertDefinitionList')
         v-icon(start) mdi-format-list-group-plus
         | Definition list
-      v-menu(v-model='glyphMenuOpen', :close-on-content-click='false', location='bottom end', :offset='8')
+      v-menu(v-model='glyphMenuOpen', :close-on-content-click='false', location='bottom end', :offset='8', :activator-props='glyphMenuActivatorProps', :content-props='glyphMenuContentProps')
         template(v-slot:activator='{ props }')
           v-btn.editor-tiptap-insert-button(v-bind='props', variant='tonal', size='small', aria-label='Insert icon or emoji')
             v-icon(start) mdi-emoticon-outline
@@ -115,8 +115,8 @@
         v-card.editor-tiptap-glyph-menu(elevation='5', width='420')
           .editor-tiptap-glyph-header
             div
-              .text-body-large.font-weight-bold Icons & emoji
-              .text-caption Search by name, meaning, or a close spelling
+              #editor-tiptap-glyph-title.text-body-large.font-weight-bold Icons & emoji
+              .text-body-small Search by name, meaning, or a close spelling
             v-btn(icon, size='small', variant='text', aria-label='Close icon and emoji picker', @click='glyphMenuOpen = false')
               v-icon mdi-close
           v-card-text.editor-tiptap-glyph-body
@@ -160,13 +160,13 @@
             .editor-tiptap-glyph-empty(v-else)
               v-icon(size='32') mdi-emoticon-sad-outline
               .text-body-medium No matching icons or emoji
-              .text-caption Try a shorter word or another meaning.
+              .text-body-small Try a shorter word or another meaning.
           .editor-tiptap-glyph-footer
             span {{filteredGlyphs.length}} of {{glyphs.length}}
             span Fuzzy search
     .editor-tiptap-page-canvas.editor-page-canvas
       editor-content.contents(:editor='editor')
-    v-system-bar.editor-status-bar.editor-tiptap-sysbar(status)
+    v-system-bar.editor-status-bar.editor-tiptap-sysbar
       .text-body-small.editor-tiptap-sysbar-locale {{locale.toUpperCase()}}
       .text-body-small.editor-tiptap-sysbar-path.px-3(:title='`/${path}`') /{{path}}
       template(v-if='$vuetify.display.mdAndUp')
@@ -176,9 +176,9 @@
         .text-body-small {{$t('editor:ckeditor.stats', { chars: stats.characters, words: stats.words })}}
     editor-conflict(v-model='isConflict', v-if='isConflict')
     page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')
-    v-dialog(v-model='admonitionDialog', max-width='620', persistent)
+    v-dialog(v-model='admonitionDialog', max-width='620', persistent, aria-labelledby='editor-tiptap-admonition-title')
       v-card
-        v-card-title Insert admonition
+        v-card-title#editor-tiptap-admonition-title Insert admonition
         v-card-text
           v-form(@submit.prevent='insertAdmonition')
             v-select(v-model='admonitionKind', :items='admonitionKinds', label='Type')
@@ -189,9 +189,9 @@
           v-spacer
           v-btn(variant='text', @click='admonitionDialog = false') Cancel
           v-btn(color='teal', :disabled='!isAdmonitionValid', @click='insertAdmonition') Insert
-    v-dialog(v-model='sourceDialog', max-width='760', persistent)
+    v-dialog(v-model='sourceDialog', max-width='760', persistent, aria-labelledby='editor-tiptap-source-title')
       v-card
-        v-card-title Edit preserved {{sourceKind}} source
+        v-card-title#editor-tiptap-source-title Edit preserved {{sourceKind}} source
         v-card-text
           .text-body-small.mb-3 This construct is stored verbatim because it has no lossless rich-text representation.
           v-textarea(v-model='sourceValue', rows='12', auto-grow, spellcheck='false', label='Source')
@@ -268,6 +268,11 @@ const CODE_BLOCK_LANGUAGES = [
   { value: 'kroki', label: 'Kroki diagram' },
   { value: 'wiki-extension', label: 'Wiki content extension' }
 ] as const
+const GLYPH_MENU_ACTIVATOR_PROPS = Object.freeze({ 'aria-haspopup': 'dialog' })
+const GLYPH_MENU_CONTENT_PROPS = Object.freeze({
+  role: 'dialog',
+  'aria-labelledby': 'editor-tiptap-glyph-title'
+})
 
 
 export default defineComponent({
@@ -307,7 +312,9 @@ export default defineComponent({
       glyphMenuOpen: false,
       glyphQuery: '',
       glyphCategory: 'all' as VisualMarkdownGlyphFilter,
-      codeBlockLanguages: CODE_BLOCK_LANGUAGES
+      codeBlockLanguages: CODE_BLOCK_LANGUAGES,
+      glyphMenuActivatorProps: GLYPH_MENU_ACTIVATOR_PROPS,
+      glyphMenuContentProps: GLYPH_MENU_CONTENT_PROPS
     }
   },
   computed: {
@@ -937,7 +944,7 @@ export default defineComponent({
   justify-content: space-between;
   padding: 16px 18px 14px;
 
-  .text-caption {
+  .text-body-small {
     color: rgba(var(--v-theme-on-surface), .62);
     margin-top: 2px;
   }

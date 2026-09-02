@@ -195,6 +195,7 @@ export default {
      * REGISTER
      */
     async register () {
+      if (this.isLoading) return
       this.clearError()
       const validation = validateValues({
         email: this.email,

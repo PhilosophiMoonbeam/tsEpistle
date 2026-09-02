@@ -62,7 +62,7 @@
 
 </template>
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import _ from 'lodash'
 import * as d3 from 'd3'
 import AsyncState from '@/components/common/async-state.vue'
@@ -177,7 +177,7 @@ export default defineComponent({
         if (requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
           return
         }
-        this.pages = pages
+        this.pages = markRaw(pages)
       } catch (err) {
         if (requestId !== this.pageLoadRequestId || locale !== this.currentLocale) {
           return
@@ -204,7 +204,7 @@ export default defineComponent({
       }
       if (event.ctrlKey || event.metaKey) {
         const { href } = this.$router.resolve(String(id))
-        window.open(href, '_blank')
+        window.open(href, '_blank', 'noopener')
       } else {
         this.$router.push(String(id))
       }

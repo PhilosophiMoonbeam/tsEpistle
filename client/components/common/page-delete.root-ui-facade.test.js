@@ -51,7 +51,7 @@ const extractMethod = (script, name) => {
   return null
 }
 
-describe('page-delete root UI facade migration guard', () => {
+describe('page-delete root UI facade contract', () => {
   const componentPath = path.join(process.cwd(), 'client/components/common/page-delete.vue')
   const source = fs.readFileSync(componentPath, 'utf8')
   const script = extractScript(source)
@@ -59,56 +59,63 @@ describe('page-delete root UI facade migration guard', () => {
   const beforeUnmount = script && extractMethod(script, 'beforeUnmount')
   const discard = script && extractMethod(script, 'discard')
 
-  test('imports the typed component and store singleton used by deletePage', () => {
+  test('uses the typed component, store singleton, and REST facade', () => {
     expect(source).toContain("<script lang='ts'>")
-    expect(script).toContain("import { defineComponent } from 'vue'")
+    expect(script).toMatch(/import\s*\{\s*defineComponent\s*\}\s*from\s*['"]vue['"]/)
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toContain("import { deletePage as deletePageById } from '../../helpers/pages-api'")
-    expect(script).not.toContain('common-pages-mutation-delete.gql')
-    expect(script).not.toContain('deletePageMutation')
+    expect(script).not.toMatch(/common-pages-mutation-delete\.gql|deletePageMutation|\$apollo/)
   })
 
-  test('deletePage routes loading and current-request errors through the store singleton', () => {
+  test('guards reentry and sends the current page deletion payload with an abortable fetch', () => {
     expect(deletePage).not.toBeNull()
-    expect(deletePage).toMatch(/wikiStore\.startLoading\s*\(\s*['"]page-delete['"]\s*\)/)
-    expect(deletePage).toMatch(/if\s*\(\s*requestId\s*===\s*this\.deleteRequestId\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)/)
-    expect(deletePage).toMatch(/wikiStore\.stopLoading\s*\(\s*['"]page-delete['"]\s*\)/)
-    expect(deletePage).not.toMatch(/this\.\$store\.commit\([\s\S]{0,200}(?:['"]page-delete['"]|['"]pushGraphError['"])/)
-  })
-
-  test('deletePage preserves guarded REST deletion and redirect behavior', () => {
     expect(deletePage).toMatch(/if\s*\(\s*this\.loading\s*\)\s*\{\s*return\s*\}/)
-    expect(deletePage).toContain('const requestId = ++this.deleteRequestId')
-    expect(deletePage).toContain('this.loading = true')
-    expect(deletePage).toContain('await this.$nextTick()')
-    expect(deletePage).toContain('await deletePageById(')
-    expect(deletePage).toContain('window.fetch.bind(window)')
-    expect(deletePage).toContain('this.pageId')
-    expect(deletePage).toContain('this.pageSourceRevision')
-    expect(deletePage).toContain("this.$t('common:error.unexpected')")
-    expect(deletePage).not.toContain('this.$apollo.mutate')
-    expect(deletePage).not.toContain('data.pages.delete.responseResult')
-    expect(deletePage).toMatch(/if\s*\(\s*requestId\s*!==\s*this\.deleteRequestId\s*\)\s*\{\s*return\s*\}[\s\S]*this\.retainPendingClass\s*=\s*true/)
-    expect(deletePage).toContain('this.isShown = false')
-    expect(deletePage).toContain("document.body.classList.add('page-deleted')")
-    expect(deletePage).toMatch(/window\.setTimeout\([\s\S]*window\.location\.assign\(\s*['"]\/['"]\s*\)[\s\S]*1200[\s\S]*400/)
-    expect(deletePage).toMatch(/if\s*\(\s*requestId\s*===\s*this\.deleteRequestId\s*\)\s*\{\s*this\.loading\s*=\s*false/)
+    expect(deletePage).toMatch(
+      /const\s+requestId\s*=\s*\+\+this\.deleteRequestId[\s\S]*?const\s+controller\s*=\s*new\s+AbortController\s*\(\s*\)[\s\S]*?this\.deleteAbortController\s*=\s*controller[\s\S]*?this\.loading\s*=\s*true/
+    )
+    expect(deletePage).toMatch(
+      /await\s+deletePageById\s*\(\s*\(\s*url\s*,\s*init\s*\)\s*=>\s*window\.fetch\s*\(\s*url\s*,\s*\{\s*\.\.\.init\s*,\s*signal:\s*controller\.signal\s*\}\s*\)\s*,\s*this\.pageId\s*,\s*this\.pageSourceRevision\s*,\s*this\.\$t\s*\(\s*['"]common:error\.unexpected['"]\s*\)\s*\)/
+    )
   })
 
-  test('invalidates pending work and clears timers and body classes on unmount', () => {
+  test('balances global loading and limits errors and local completion to the current live request', () => {
+    expect(deletePage).toMatch(/wikiStore\.startLoading\s*\(\s*['"]page-delete['"]\s*\)/)
+    expect(deletePage).toMatch(
+      /catch\s*\(\s*err\s*\)\s*\{\s*if\s*\(\s*requestId\s*===\s*this\.deleteRequestId\s*&&\s*!controller\.signal\.aborted\s*\)\s*\{\s*wikiStore\.showError\s*\(\s*err\s*\)/
+    )
+    expect(deletePage).toMatch(
+      /finally\s*\{\s*wikiStore\.stopLoading\s*\(\s*['"]page-delete['"]\s*\)[\s\S]*?if\s*\(\s*this\.deleteAbortController\s*===\s*controller\s*\)\s*\{\s*this\.deleteAbortController\s*=\s*null[\s\S]*?if\s*\(\s*requestId\s*===\s*this\.deleteRequestId\s*\)\s*\{\s*this\.loading\s*=\s*false/
+    )
+    expect(deletePage.match(/wikiStore\.startLoading\s*\(/g)).toHaveLength(1)
+    expect(deletePage.match(/wikiStore\.stopLoading\s*\(/g)).toHaveLength(1)
+  })
+
+  test('only a successful current request closes the dialog and owns the redirect sequence', () => {
+    expect(deletePage).toContain('await this.$nextTick()')
+    expect(deletePage).toMatch(
+      /await\s+deletePageById\s*\([\s\S]*?if\s*\(\s*requestId\s*!==\s*this\.deleteRequestId\s*\)\s*\{\s*return\s*\}[\s\S]*?this\.retainPendingClass\s*=\s*true[\s\S]*?this\.isShown\s*=\s*false/
+    )
+    expect(deletePage).toMatch(
+      /this\.deleteTransitionTimer\s*=\s*window\.setTimeout\s*\(\s*\(\s*\)\s*=>\s*\{[\s\S]*?requestId\s*!==\s*this\.deleteRequestId[\s\S]*?document\.body\.classList\.add\s*\(\s*['"]page-deleted['"]\s*\)[\s\S]*?this\.redirectTimer\s*=\s*window\.setTimeout\s*\([\s\S]*?requestId\s*===\s*this\.deleteRequestId[\s\S]*?window\.location\.assign\s*\(\s*['"]\/['"]\s*\)[\s\S]*?1200\s*\)[\s\S]*?400\s*\)/
+    )
+  })
+
+  test('aborts and invalidates pending deletion work on unmount', () => {
     expect(beforeUnmount).not.toBeNull()
-    expect(beforeUnmount).toContain('this.deleteRequestId += 1')
+    expect(beforeUnmount).toMatch(
+      /this\.deleteRequestId\s*\+=\s*1[\s\S]*?this\.deleteAbortController\?\.abort\s*\(\s*\)[\s\S]*?this\.deleteAbortController\s*=\s*null/
+    )
     expect(beforeUnmount).toContain('window.clearTimeout(this.deleteTransitionTimer)')
     expect(beforeUnmount).toContain('window.clearTimeout(this.redirectTimer)')
+    expect(beforeUnmount).toContain("document.body.classList.remove('page-deleted-pending', 'page-deleted')")
+    expect(deletePage).toMatch(/this\.deleteTransitionTimer\s*=\s*undefined[\s\S]*?requestId\s*!==\s*this\.deleteRequestId/)
+    expect(deletePage).toMatch(/this\.redirectTimer\s*=\s*undefined[\s\S]*?requestId\s*===\s*this\.deleteRequestId/)
+  })
+
+  test('keeps cancel disabled during deletion and exposes typed page state', () => {
     expect(discard).not.toBeNull()
     expect(discard).toContain("document.body.classList.remove('page-deleted-pending')")
     expect(discard).toContain('this.isShown = false')
-    expect(beforeUnmount).toContain("document.body.classList.remove('page-deleted-pending', 'page-deleted')")
-    expect(deletePage).toMatch(/this\.deleteTransitionTimer\s*=\s*undefined[\s\S]*requestId\s*!==\s*this\.deleteRequestId/)
-    expect(deletePage).toMatch(/this\.redirectTimer\s*=\s*undefined[\s\S]*requestId\s*===\s*this\.deleteRequestId/)
-  })
-
-  test('keeps the dialog contract and typed page state getters out of this slice', () => {
     expect(source).toContain("v-btn(variant=\"text\", @click='discard', :disabled='loading')")
     expect(source).toContain("v-btn.px-4(color=\"red-darken-2\", @click='deletePage', :loading='loading', :disabled='loading').text-white")
     expect(script).toContain('pageTitle(): string { return wikiStore.page.title }')

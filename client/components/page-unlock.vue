@@ -6,7 +6,7 @@
           .page-unlock-brand
             .page-unlock-logo
               v-avatar(rounded='0', size='40')
-                img(:src='logoUrl', :alt='siteTitle')
+                img(:src='logoUrl', alt='')
             .page-unlock-brand-title
               .page-unlock-eyebrow Secure page access
               .text-title-large {{ siteTitle }}

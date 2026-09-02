@@ -104,7 +104,7 @@
                   span {{$t('common:header.language')}}
               v-list.nav-header-menu(nav)
                 template(v-for='lc of locales', :key='lc.code')
-                  v-list-item(@click='changeLocale(lc)')
+                  v-list-item(role='button', @click='changeLocale(lc)')
                     template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : `grey`', size="small", label) {{lc.code.toUpperCase()}}
                     v-list-item-title {{lc.name}}
             v-divider(vertical)
@@ -128,35 +128,35 @@
                   span {{$t('common:header.pageActions')}}
               v-list.nav-header-menu.page-actions-menu(nav)
                 .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
-                v-list-item.pl-4(role='button', tabindex='0', @click='pageView', @keydown.enter='pageView', @keydown.space.prevent='pageView', v-if='mode !== `view`')
+                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageView', v-if='mode !== `view`')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-file-document-outline
                   v-list-item-title.text-body-medium {{$t('common:header.view')}}
-                v-list-item.pl-4(role='button', tabindex='0', @click='pageEdit', @keydown.enter='pageEdit', @keydown.space.prevent='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
+                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-file-document-edit-outline
                   v-list-item-title.text-body-medium {{$t('common:header.edit')}}
-                v-list-item.pl-4(role='button', tabindex='0', @click='pageHistory', @keydown.enter='pageHistory', @keydown.space.prevent='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
+                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-history
                   v-list-item-title.text-body-medium {{$t('common:header.history')}}
-                v-list-item.pl-4(role='button', tabindex='0', @click='pageSource', @keydown.enter='pageSource', @keydown.space.prevent='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
+                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-code-tags
                   v-list-item-title.text-body-medium {{$t('common:header.viewSource')}}
-                v-list-item.pl-4(role='button', tabindex='0', @click='pageConvert', @keydown.enter='pageConvert', @keydown.space.prevent='pageConvert', v-if='hasWritePagesPermission')
+                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageConvert', v-if='hasWritePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-lightning-bolt
                   v-list-item-title.text-body-medium {{$t('common:header.convert')}}
-                v-list-item.pl-4(role='button', tabindex='0', @click='pageDuplicate', @keydown.enter='pageDuplicate', @keydown.space.prevent='pageDuplicate', v-if='hasWritePagesPermission')
+                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageDuplicate', v-if='hasWritePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-content-duplicate
                   v-list-item-title.text-body-medium {{$t('common:header.duplicate')}}
-                v-list-item.pl-4(role='button', tabindex='0', @click='pageMove', @keydown.enter='pageMove', @keydown.space.prevent='pageMove', v-if='hasManagePagesPermission')
+                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageMove', v-if='hasManagePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-content-save-move-outline
                   v-list-item-title.text-body-medium {{$t('common:header.move')}}
-                v-list-item.pl-4(role='button', tabindex='0', @click='pageDelete', @keydown.enter='pageDelete', @keydown.space.prevent='pageDelete', v-if='hasDeletePagesPermission')
+                v-list-item.pl-4(role='button', tabindex='0', link, @click='pageDelete', v-if='hasDeletePagesPermission')
                   template(v-slot:prepend)
                     v-avatar(size='24', rounded='0'): v-icon(color='error') mdi-trash-can-outline
                   v-list-item-title.text-body-medium {{$t('common:header.delete')}}
@@ -193,24 +193,24 @@
                 v-icon mdi-dots-vertical
             v-list.nav-header-menu(nav)
               v-list-subheader Page actions
-              v-list-item(v-if='path && mode !== `view`', prepend-icon='mdi-file-document-outline', @click='pageView')
+              v-list-item(role='button', v-if='path && mode !== `view`', prepend-icon='mdi-file-document-outline', @click='pageView')
                 v-list-item-title {{$t('common:header.view')}}
-              v-list-item(v-if='path && hasWritePagesPermission && mode !== `edit`', prepend-icon='mdi-file-document-edit-outline', @click='pageEdit')
+              v-list-item(role='button', v-if='path && hasWritePagesPermission && mode !== `edit`', prepend-icon='mdi-file-document-edit-outline', @click='pageEdit')
                 v-list-item-title {{$t('common:header.edit')}}
-              v-list-item(v-if='path && hasReadHistoryPermission && mode !== `history`', prepend-icon='mdi-history', @click='pageHistory')
+              v-list-item(role='button', v-if='path && hasReadHistoryPermission && mode !== `history`', prepend-icon='mdi-history', @click='pageHistory')
                 v-list-item-title {{$t('common:header.history')}}
-              v-list-item(v-if='path && hasReadSourcePermission && mode !== `source`', prepend-icon='mdi-code-tags', @click='pageSource')
+              v-list-item(role='button', v-if='path && hasReadSourcePermission && mode !== `source`', prepend-icon='mdi-code-tags', @click='pageSource')
                 v-list-item-title {{$t('common:header.viewSource')}}
-              v-list-item(v-if='path && hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
+              v-list-item(role='button', v-if='path && hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
                 v-list-item-title {{$t('common:header.convert')}}
-              v-list-item(v-if='path && hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
+              v-list-item(role='button', v-if='path && hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
                 v-list-item-title {{$t('common:header.duplicate')}}
-              v-list-item(v-if='path && hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
+              v-list-item(role='button', v-if='path && hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
                 v-list-item-title {{$t('common:header.move')}}
-              v-list-item.nav-header-menu-danger(v-if='path && hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
+              v-list-item.nav-header-menu-danger(role='button', v-if='path && hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
                 v-list-item-title {{$t('common:header.delete')}}
               v-divider(v-if='hasNewPagePermission || (isAuthenticated && isAdmin)')
-              v-list-item(v-if='hasNewPagePermission && path && mode !== `edit`', prepend-icon='mdi-text-box-plus-outline', @click='pageNew')
+              v-list-item(role='button', v-if='hasNewPagePermission && path && mode !== `edit`', prepend-icon='mdi-text-box-plus-outline', @click='pageNew')
                 v-list-item-title {{$t('common:header.newPage')}}
               v-list-item(v-if='isAuthenticated && isAdmin && mode !== `admin`', prepend-icon='mdi-cog', href='/a')
                 v-list-item-title {{$t('common:header.admin')}}
@@ -219,7 +219,7 @@
               template(v-if='mode === `view` && locales.length > 0')
                 v-divider
                 v-list-subheader {{$t('common:header.language')}}
-                v-list-item(v-for='lc of locales', :key='`mobile-locale-${lc.code}`', prepend-icon='mdi-web', @click='changeLocale(lc)')
+                v-list-item(role='button', v-for='lc of locales', :key='`mobile-locale-${lc.code}`', prepend-icon='mdi-web', @click='changeLocale(lc)')
                   v-list-item-title {{lc.name}}
           v-divider(vertical)
 
@@ -239,7 +239,7 @@
                     )
                     v-icon(v-if='picture.kind === `initials`') mdi-account-circle
                     v-avatar(v-else-if='picture.kind === `image`', :size='34')
-                      v-img(:src='picture.url')
+                      v-img(:src='picture.url', alt='')
                 span {{$t('common:header.account')}}
             v-list.nav-header-menu(nav)
               v-list-item.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`')
@@ -248,13 +248,13 @@
                     v-avatar.bg-primary(v-if='picture.kind === `initials`', :size='40')
                       span.text-on-primary.text-body-large {{picture.initials}}
                     v-avatar(v-else-if='picture.kind === `image`', :size='40')
-                      v-img(:src='picture.url')
+                      v-img(:src='picture.url', alt='')
                 v-list-item-title {{name}}
                 v-list-item-subtitle {{email}}
               v-list-item(href='/p')
                 template(v-slot:append): v-icon(color='secondary') mdi-face-profile
                 v-list-item-title.text-secondary {{$t('common:header.profile')}}
-              v-list-item(@click='logout')
+              v-list-item(role='button', @click='logout')
                 template(v-slot:append): v-icon(color='error') mdi-logout
                 v-list-item-title.text-error {{$t('common:header.logout')}}
 
@@ -279,7 +279,6 @@
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
-import _ from 'lodash'
 
 import {
   offPageConvert,
@@ -306,6 +305,17 @@ type SiteLocale = { code: string, name: string }
 type UserPicture =
   | { kind: 'image', url: string }
   | { kind: 'initials', initials: string }
+
+const ADMIN_PERMISSION_NAMES = new Set([
+  'manage:system',
+  'write:users',
+  'manage:users',
+  'write:groups',
+  'manage:groups',
+  'manage:navigation',
+  'manage:theme',
+  'manage:api'
+])
 
 /* global siteConfig, siteLangs */
 
@@ -337,6 +347,8 @@ export default defineComponent({
       deletePageModal: false,
       locales: siteLangs,
       isDevMode: false,
+      pageActionsAreOpen: false,
+      pageActionsFocusFrame: null as number | null,
       duplicateOpts: {
         locale: 'en',
         path: 'new-page',
@@ -382,11 +394,11 @@ export default defineComponent({
       if (nameParts.length > 1) initials += nameParts[nameParts.length - 1]?.charAt(0) ?? ''
       return { kind: 'initials', initials }
     },
-    isAdmin () {
-      return _.intersection(this.permissions, ['manage:system', 'write:users', 'manage:users', 'write:groups', 'manage:groups', 'manage:navigation', 'manage:theme', 'manage:api']).length > 0
+    isAdmin (): boolean {
+      return this.permissions.some(permission => ADMIN_PERMISSION_NAMES.has(permission))
     },
-    hasNewPagePermission () {
-      return this.hasAdminPermission || _.intersection(this.permissions, ['write:pages']).length > 0
+    hasNewPagePermission (): boolean {
+      return this.hasAdminPermission || this.permissions.includes('write:pages')
     },
     hasAdminPermission(): boolean { return wikiStore.page.effectivePermissions.system.manage },
     hasWritePagesPermission(): boolean { return wikiStore.page.effectivePermissions.pages.write },
@@ -440,13 +452,27 @@ export default defineComponent({
     offPageDuplicate(this.pageDuplicate)
     offPageDelete(this.pageDelete)
     window.removeEventListener('keydown', this.handleSearchShortcut)
+    this.pageActionsAreOpen = false
+    if (this.pageActionsFocusFrame !== null) {
+      window.cancelAnimationFrame(this.pageActionsFocusFrame)
+      this.pageActionsFocusFrame = null
+    }
   },
   methods: {
     async pageActionsVisibilityChanged(open: boolean): Promise<void> {
+      this.pageActionsAreOpen = open
+      if (this.pageActionsFocusFrame !== null) {
+        window.cancelAnimationFrame(this.pageActionsFocusFrame)
+        this.pageActionsFocusFrame = null
+      }
       if (!open) return
       await this.$nextTick()
-      window.requestAnimationFrame(() => {
-        document.querySelector<HTMLElement>('.page-actions-menu .v-list-item')?.focus()
+      if (!this.pageActionsAreOpen) return
+      this.pageActionsFocusFrame = window.requestAnimationFrame(() => {
+        this.pageActionsFocusFrame = null
+        if (this.pageActionsAreOpen) {
+          document.querySelector<HTMLElement>('.page-actions-menu .v-list-item')?.focus()
+        }
       })
     },
     searchFocus () {
@@ -519,7 +545,7 @@ export default defineComponent({
       const pathParts = this.path.split('/')
       this.duplicateOpts = {
         locale: this.locale,
-        path: (pathParts.length > 1) ? _.initial(pathParts).join('/') + `/new-page` : `new-page`,
+        path: (pathParts.length > 1) ? pathParts.slice(0, -1).join('/') + `/new-page` : `new-page`,
         modal: true
       }
     },

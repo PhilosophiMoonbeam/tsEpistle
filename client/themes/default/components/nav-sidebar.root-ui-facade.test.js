@@ -5,18 +5,23 @@ const source = fs.readFileSync(path.join(process.cwd(), 'client/themes/default/c
 const script = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)[1]
 
 describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
-  test('loads page trees through the REST helper and loading facades', () => {
+  test('loads both page-tree flows through AbortController-owned REST requests and balanced loading facades', () => {
     expect(source).toContain("<script lang='ts'>")
-    expect(script).toContain("import { defineComponent, type PropType } from 'vue'")
+    expect(script).toContain("import { defineComponent, markRaw, type PropType } from 'vue'")
     expect(script).toContain("import { fetchPageTree, type PageTreeRow } from '../../../helpers/pages-api'")
     expect(script).toContain("import { isWikiNavigationClick, navigateToWikiPage } from '../../../helpers/wiki-navigation'")
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).toContain("import { loadingStart, loadingStop } from '../../../helpers/root-ui-store'")
+    expect(script.match(/const requestSequence = \+\+this\.browseRequestSequence/g)).toHaveLength(2)
+    expect(script.match(/this\.browseRequestController\?\.abort\(\)/g)).toHaveLength(3)
+    expect(script.match(/const requestController = markRaw\(new AbortController\(\)\)/g)).toHaveLength(2)
+    expect(script.match(/this\.browseRequestController = requestController/g)).toHaveLength(2)
+    expect(script.match(/\(url, init\) => window\.fetch\(url, \{ \.\.\.init, signal: requestController\.signal \}\)/g)).toHaveLength(2)
     expect(script).toMatch(
-      /async fetchBrowseItems\s*\(\s*requestedItem\?\s*:\s*NavigationTreeItem\s*\)[\s\S]*?const requestSequence\s*=\s*\+\+this\.browseRequestSequence[\s\S]*?const locale\s*=\s*this\.locale[\s\S]*?const item\s*=\s*requestedItem\s*\|\|\s*this\.currentParent[\s\S]*?fetchPageTree\(window\.fetch\.bind\(window\),\s*\{[\s\S]*?parent: item\.id,\s*locale,\s*mode: 'ALL'/
+      /async fetchBrowseItems\s*\(\s*requestedItem\?\s*:\s*NavigationTreeItem\s*\)[\s\S]*?const locale\s*=\s*this\.locale[\s\S]*?const item\s*=\s*requestedItem\s*\|\|\s*this\.currentParent[\s\S]*?fetchPageTree\(\s*\(url, init\) => window\.fetch\(url, \{ \.\.\.init, signal: requestController\.signal \}\),\s*\{\s*parent: item\.id,\s*locale,\s*mode: 'ALL'/
     )
     expect(script).toMatch(
-      /async loadFromCurrentPath\s*\(\)[\s\S]*?const requestSequence\s*=\s*\+\+this\.browseRequestSequence[\s\S]*?const locale\s*=\s*this\.locale[\s\S]*?const path\s*=\s*this\.path[\s\S]*?const pageId\s*=\s*wikiStore\.page\.id[\s\S]*?fetchPageTree\(window\.fetch\.bind\(window\),\s*\{\s*path,\s*locale,\s*mode: 'ALL',\s*includeAncestors: true/
+      /async loadFromCurrentPath\s*\(\)[\s\S]*?const locale\s*=\s*this\.locale[\s\S]*?const path\s*=\s*this\.path[\s\S]*?const pageId\s*=\s*wikiStore\.page\.id[\s\S]*?fetchPageTree\(\s*\(url, init\) => window\.fetch\(url, \{ \.\.\.init, signal: requestController\.signal \}\),\s*\{\s*path,\s*locale,\s*mode: 'ALL',\s*includeAncestors: true/
     )
     expect(script.match(/loadingStart\(wikiStore,\s*'browse-load'\)/g)).toHaveLength(2)
     expect(script.match(/loadingStop\(wikiStore,\s*'browse-load'\)/g)).toHaveLength(2)
@@ -37,14 +42,34 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
     expect(script).toContain('else this.fetchBrowseItems()')
   })
 
-  test('lets only the latest page-tree response own browse state while balancing global loading', () => {
+  test('lets only the latest page-tree request mutate browse state and balances every started load', () => {
     expect(script).toContain('browseRequestSequence: 0')
-    expect(script.match(/const requestSequence = \+\+this\.browseRequestSequence/g)).toHaveLength(2)
+    expect(script).toContain('browseRequestController: null as AbortController | null')
     expect(script.match(/if \(requestSequence !== this\.browseRequestSequence\) return/g)).toHaveLength(2)
-    expect(script.match(/if \(requestSequence === this\.browseRequestSequence\) \{/g)).toHaveLength(2)
+    expect(script.match(/if \(!requestController\.signal\.aborted && requestSequence === this\.browseRequestSequence\) \{/g)).toHaveLength(2)
+    expect(script.match(/if \(this\.browseRequestController === requestController\) this\.browseRequestController = null/g)).toHaveLength(2)
     expect(script.match(/if \(requestSequence === this\.browseRequestSequence\) this\.navLoading = false/g)).toHaveLength(2)
-    expect(script.match(/loadingStop\(wikiStore, 'browse-load'\)/g)).toHaveLength(2)
-    expect(script).toMatch(/beforeUnmount\s*\(\)\s*\{\s*this\.browseRequestSequence \+= 1\s*\}/)
+    expect(
+      script.match(
+        /finally\s*\{\s*if \(this\.browseRequestController === requestController\) this\.browseRequestController = null\s*if \(requestSequence === this\.browseRequestSequence\) this\.navLoading = false\s*loadingStop\(wikiStore, 'browse-load'\)\s*\}/g
+      )
+    ).toHaveLength(2)
+    expect(script).toMatch(
+      /async fetchBrowseItems[\s\S]*?const items = await fetchPageTree[\s\S]*?if \(requestSequence !== this\.browseRequestSequence\) return\s*this\.currentItems = items[\s\S]*?catch \(error\) \{\s*if \(!requestController\.signal\.aborted && requestSequence === this\.browseRequestSequence\) \{\s*this\.navError =/
+    )
+    expect(script).toMatch(
+      /async loadFromCurrentPath[\s\S]*?const items = await fetchPageTree[\s\S]*?if \(requestSequence !== this\.browseRequestSequence\) return\s*const curPage[\s\S]*?this\.currentItems = _.filter\(items, \['parent', curPage\.parent\]\)[\s\S]*?catch \(error\) \{\s*if \(!requestController\.signal\.aborted && requestSequence === this\.browseRequestSequence\) \{\s*this\.navError =/
+    )
+    expect(script).toMatch(
+      /beforeUnmount\s*\(\)\s*\{\s*this\.browseRequestSequence \+= 1\s*this\.browseRequestController\?\.abort\(\)\s*this\.browseRequestController = null\s*\}/
+    )
+  })
+
+  test('retries the correct browse flow after a load error', () => {
+    expect(source).toContain("@retry='retryBrowse'")
+    expect(script).toMatch(
+      /retryBrowse\s*\(\)\s*\{\s*if \(this\.currentParent\.id === 0 && this\.expandParentByDefault && this\.loadedCache\.length < 1\) \{\s*void this\.loadFromCurrentPath\(\)\s*\} else \{\s*void this\.fetchBrowseItems\(this\.currentParent\)\s*\}\s*\}/
+    )
   })
 
   test('announces every SPA sidebar destination before navigation', () => {

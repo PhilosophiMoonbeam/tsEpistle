@@ -176,12 +176,12 @@
                       span {{ item.path }}
                     .search-results-tags(v-if='item.tags.length')
                       v-chip(
-                        v-for='tag of item.tags.slice(0, 3)'
-                        :key='tag'
+                        v-for='(tag, tagIndex) of item.tags.slice(0, 3)'
+                        :key='`${tagIndex}:${tag}`'
                         size='x-small'
                         variant='tonal'
                       ) {{ tag }}
-                      span.text-caption.text-medium-emphasis(v-if='item.tags.length > 3') +{{ item.tags.length - 3 }}
+                      span.text-body-small.text-medium-emphasis(v-if='item.tags.length > 3') +{{ item.tags.length - 3 }}
                     template(v-slot:append)
                       .search-results-item-meta
                         v-chip(size='x-small' label variant='outlined') {{ item.locale.toLocaleUpperCase() }}
@@ -204,7 +204,7 @@
                 aria-label='Search suggestions'
                 density='compact'
               )
-                template(v-for='(term, idx) of suggestions' :key='term')
+                template(v-for='(term, idx) of suggestions' :key='`${idx}:${term}`')
                   v-list-item(
                     :id='`wiki-search-suggestion-${idx}`'
                     role='option'
@@ -219,7 +219,6 @@
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
-import _ from 'lodash'
 import AsyncState from '@/components/common/async-state.vue'
 import InlineAgentChat from '../agents/inline-agent-chat.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'
@@ -293,13 +292,13 @@ export default defineComponent({
     },
     results(): PageSearchRow[] {
       const currentIndex = (this.pagination - 1) * this.perPage
-      return _.slice(this.response.results, currentIndex, currentIndex + this.perPage)
+      return this.response.results.slice(currentIndex, currentIndex + this.perPage)
     },
     normalizedSearch(): string {
       return this.search.trim()
     },
     suggestions(): string[] {
-      return this.response.suggestions ? this.response.suggestions : []
+      return this.response.suggestions
     },
     canAsk(): boolean {
       return siteConfig.agentsEnabled && wikiStore.user.authenticated && wikiStore.user.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')
@@ -606,10 +605,10 @@ export default defineComponent({
       }
       if (this.searchIsLoading || !this.hasFreshResponse) return
       if (this.cursor >= 0 && this.cursor < this.results.length) {
-        const result = _.nth(this.results, this.cursor)
+        const result = this.results[this.cursor]
         if (result) this.navigateToPage(result)
       } else if (this.cursor >= this.results.length && this.cursor < this.results.length + this.suggestions.length) {
-        this.setSearchTerm(_.nth(this.suggestions, this.cursor - this.results.length))
+        this.setSearchTerm(this.suggestions[this.cursor - this.results.length])
       }
     },
     async submitAskPrompt(): Promise<void> {

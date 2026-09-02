@@ -1,6 +1,6 @@
 <template lang='pug'>
   .editor-markdown(ref='root')
-    v-toolbar.editor-markdown-toolbar(density="compact", color='primary', flat)
+    v-toolbar.editor-markdown-toolbar(density="compact", color='primary', flat, role='toolbar', aria-label='Formatting tools')
       template(v-if='isModalShown')
         v-spacer
         v-btn.animated.fadeInRight(variant="text", @click='closeAllModal')
@@ -199,7 +199,7 @@
           span {{$t('editor:markup.insertAssets')}}
         v-tooltip(location="right", color='teal')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p2s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertDiagram`)', @click='toggleModal(`editorModalDrawio`)').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p2s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.insertDiagram`)', :aria-pressed='activeModal === `editorModalDrawio`', @click='toggleModal(`editorModalDrawio`)').mx-0
               v-icon mdi-chart-multiline
           span {{$t('editor:markup.insertDiagram')}}
         v-tooltip(location="right", color='teal')
@@ -841,6 +841,8 @@ export default defineComponent({
         }
       }
     }
+    if (this.editorDisposed) return
+
 
     const cm = new TextEditor({
       parent: this.$refs.cm as HTMLElement,
@@ -1095,8 +1097,8 @@ export default defineComponent({
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .editor-markdown,
-  .editor-markdown * {
+  &,
+  & * {
     animation: none !important;
     transition: none !important;
   }

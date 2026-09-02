@@ -72,7 +72,7 @@
           title='Telemetry settings could not be loaded'
           :message='loadError'
           retry-label='Try again'
-          @retry='loadTelemetry'
+          @retry='retryLoadTelemetry'
         )
         v-divider.my-4
         .text-label-large.mt-3 Client ID
@@ -147,6 +147,9 @@ export default defineComponent({
       } finally {
         wikiStore.stopLoading('admin-utilities-telemetry-refresh')
       }
+    },
+    retryLoadTelemetry () {
+      this.loadTelemetry().catch(() => {})
     },
     async updateTelemetry() {
       if (!this.loaded || this.loading) {

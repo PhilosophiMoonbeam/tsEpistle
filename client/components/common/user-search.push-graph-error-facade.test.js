@@ -8,7 +8,9 @@ describe('user-search pushGraphError facade migration guard', () => {
   const script = scriptMatch && scriptMatch[1]
   const cancelSearch = script.slice(script.indexOf('cancelSearch(): void'), script.indexOf('queueSearch(): void'))
   const queueSearch = script.slice(script.indexOf('queueSearch(): void'), script.indexOf('async loadUsers('))
-  const loadUsers = script.slice(script.indexOf('async loadUsers('), script.indexOf('retrySearch(): void'))
+  const loadUsers = script.slice(script.indexOf('async loadUsers('), script.indexOf('focusSearch(): void'))
+  const focusSearch = script.slice(script.indexOf('focusSearch(): void'), script.indexOf('retrySearch(): void'))
+  const results = source.slice(source.indexOf('v-list.user-search__results'), source.indexOf('v-card-chin'))
 
   test('reports only current-request failures through the root UI facade', () => {
     expect(script).not.toBeNull()
@@ -32,31 +34,55 @@ describe('user-search pushGraphError facade migration guard', () => {
     expect(showErrorCalls).toHaveLength(1)
   })
 
-  test('keeps each debounced search abortable and applies only the latest result', () => {
+  test('keeps the debounce and each request owned by the current search generation', () => {
+    expect(script).toContain('searchTimer: null as number | null')
     expect(script).toContain('searchAbortController: null as AbortController | null')
+    expect(queueSearch).toContain('window.clearTimeout(this.searchTimer)')
+    expect(queueSearch).toContain('this.searchTimer = null')
     expect(queueSearch).toContain('this.searchRequestId += 1')
     expect(queueSearch).toContain('this.searchAbortController?.abort()')
     expect(queueSearch).toContain('this.searchAbortController = null')
-    expect(queueSearch).toMatch(/if\s*\(\s*query\.trim\(\)\.length\s*<\s*2\s*\)[\s\S]*this\.searchLoading\s*=\s*false[\s\S]*return/)
+    expect(queueSearch).toMatch(
+      /if\s*\(\s*query\.trim\(\)\.length\s*<\s*2\s*\)[\s\S]*this\.searchAttempted\s*=\s*false[\s\S]*this\.searchLoading\s*=\s*false[\s\S]*return/
+    )
     expect(queueSearch).toContain('const requestId = this.searchRequestId')
-    expect(queueSearch).toMatch(/window\.setTimeout\(\(\)\s*=>\s*\{[\s\S]*void this\.loadUsers\(query,\s*requestId\)[\s\S]*\},\s*300\)/)
+    expect(queueSearch).toMatch(
+      /this\.searchTimer\s*=\s*window\.setTimeout\(\(\)\s*=>\s*\{\s*this\.searchTimer\s*=\s*null\s*void this\.loadUsers\(query,\s*requestId\)\s*\},\s*300\)/
+    )
+
     expect(loadUsers).toContain('const controller = new AbortController()')
+    expect(loadUsers).toContain('this.searchAbortController = controller')
     expect(loadUsers).toContain('(url, init) => window.fetch(url, { ...init, signal: controller.signal })')
     expect(loadUsers).toMatch(
       /if\s*\(\s*requestId\s*!==\s*this\.searchRequestId\s*\|\|\s*query\s*!==\s*this\.search\s*\)\s*\{\s*return\s+\[\][\s\S]*\}\s*this\.items\s*=\s*items/
     )
-  })
 
-  test('cancels pending search and focus work on close or unmount and preserves retry', () => {
     expect(cancelSearch).toContain('window.clearTimeout(this.searchTimer)')
-    expect(cancelSearch).toContain('window.clearTimeout(this.focusTimer)')
+    expect(cancelSearch).toContain('this.searchTimer = null')
     expect(cancelSearch).toContain('this.searchRequestId += 1')
     expect(cancelSearch).toContain('this.searchAbortController?.abort()')
+    expect(cancelSearch).toContain('this.searchAbortController = null')
     expect(cancelSearch).toContain('this.searchLoading = false')
+  })
+
+  test('focuses from the dialog transition lifecycle without separate focus work and preserves retry', () => {
+    expect(source).toContain("@after-enter='focusSearch'")
+    expect(focusSearch).toMatch(
+      /focusSearch\s*\(\s*\)\s*:\s*void\s*\{\s*if\s*\(\s*!this\.modelValue\s*\)\s*return\s*const input\s*=\s*this\.\$refs\.searchIpt[\s\S]*input\?\.focus\?\.\(\)\s*\}/
+    )
+    expect(focusSearch).not.toMatch(/setTimeout|clearTimeout/)
+    expect(script).not.toContain('focusTimer')
     expect(script).toMatch(/else\s+if\s*\(\s*!newValue\s*&&\s*oldValue\s*\)\s*\{\s*this\.cancelSearch\(\)/)
     expect(script).toMatch(/beforeUnmount\s*\(\s*\)\s*\{\s*this\.cancelSearch\(\)/)
-    expect(script).toContain('if (!this.modelValue) return')
     expect(source).toContain("@retry='retrySearch'")
     expect(script).toMatch(/retrySearch\s*\(\s*\)\s*:\s*void\s*\{\s*this\.queueSearch\s*\(\s*\)\s*\}/)
+  })
+
+  test('keeps Vuetify listbox options keyboard-selectable by stable user value', () => {
+    expect(results).toContain('activatable')
+    expect(results).toContain(":aria-label='$t(`common:user.search`)'")
+    expect(results).toContain("template(v-for='(usr, idx) in items', :key='usr.id')")
+    expect(results).toMatch(/v-list-item\(\s*:value=['"]usr\.id['"]\s*,\s*@click=['"]setUser\(usr\)['"]\s*\)/)
+    expect(script).toMatch(/setUser\s*\(\s*usr:\s*UserSearchRow\s*\)\s*:\s*void\s*\{\s*this\.\$emit\(\s*['"]select['"]\s*,\s*usr\s*\)\s*this\.close\(\)\s*\}/)
   })
 })

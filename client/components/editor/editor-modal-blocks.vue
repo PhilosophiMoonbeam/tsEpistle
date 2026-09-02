@@ -878,5 +878,13 @@ export default defineComponent({
       padding-left: 12px !important;
     }
   }
+  @media (prefers-reduced-motion: reduce) {
+    &,
+    & * {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+
 }
 </style>

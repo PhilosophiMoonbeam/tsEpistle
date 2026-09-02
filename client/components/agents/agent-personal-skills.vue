@@ -421,7 +421,7 @@ watch(name, (next, previous) => {
   if (editingId.value || next === previous) return
   skillMarkdown.value = skillMarkdown.value.replace(/^name:\s*.*$/m, `name: ${next}`)
 })
-watch(open, value => { if (value) void load() })
+watch(open, value => { if (value) void load() }, { immediate: true })
 onBeforeUnmount(() => {
   disposed = true
   loadGeneration++

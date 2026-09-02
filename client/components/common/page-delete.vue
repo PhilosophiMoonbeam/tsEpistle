@@ -47,7 +47,8 @@ export default defineComponent({
       retainPendingClass: false,
       deleteTransitionTimer: undefined as number | undefined,
       redirectTimer: undefined as number | undefined,
-      deleteRequestId: 0
+      deleteRequestId: 0,
+      deleteAbortController: null as AbortController | null
     }
   },
   computed: {
@@ -68,6 +69,8 @@ export default defineComponent({
   },
   beforeUnmount() {
     this.deleteRequestId += 1
+    this.deleteAbortController?.abort()
+    this.deleteAbortController = null
     window.clearTimeout(this.deleteTransitionTimer)
     window.clearTimeout(this.redirectTimer)
     document.body.classList.remove('page-deleted-pending', 'page-deleted')
@@ -92,6 +95,8 @@ export default defineComponent({
         return
       }
       const requestId = ++this.deleteRequestId
+      const controller = new AbortController()
+      this.deleteAbortController = controller
       this.loading = true
       wikiStore.startLoading('page-delete')
       try {
@@ -100,7 +105,7 @@ export default defineComponent({
           return
         }
         await deletePageById(
-          window.fetch.bind(window),
+          (url, init) => window.fetch(url, { ...init, signal: controller.signal }),
           this.pageId,
           this.pageSourceRevision,
           this.$t('common:error.unexpected')
@@ -124,11 +129,14 @@ export default defineComponent({
           }, 1200)
         }, 400)
       } catch (err) {
-        if (requestId === this.deleteRequestId) {
+        if (requestId === this.deleteRequestId && !controller.signal.aborted) {
           wikiStore.showError(err)
         }
       } finally {
         wikiStore.stopLoading('page-delete')
+        if (this.deleteAbortController === controller) {
+          this.deleteAbortController = null
+        }
         if (requestId === this.deleteRequestId) {
           this.loading = false
         }

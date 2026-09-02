@@ -13,7 +13,6 @@
       :color='color'
       role='status'
       aria-live='polite'
-      :aria-busy='mode === `loading`'
     )
       v-card-text.text-center
         atom-spinner.is-inline(
@@ -35,11 +34,10 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent, type PropType } from 'vue'
+import { defineComponent, useId, type PropType } from 'vue'
 import { AtomSpinner } from 'epic-spinners'
 
 type LoaderMode = 'loading' | 'icon'
-let loaderId = 0
 
 export default defineComponent({
   components: {
@@ -72,11 +70,11 @@ export default defineComponent({
       default: 'checkmark'
     }
   },
-  data() {
-    const id = ++loaderId
+  setup() {
+    const id = useId()
     return {
-      titleId: `loader-dialog-title-${id}`,
-      subtitleId: `loader-dialog-subtitle-${id}`
+      titleId: `${id}-title`,
+      subtitleId: `${id}-subtitle`
     }
   },
   methods: {

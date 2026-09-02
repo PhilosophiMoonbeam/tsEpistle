@@ -52,7 +52,8 @@ export default {
   data() {
     return {
       extensions: [] as SystemExtension[],
-      loadState: 'loading' as 'loading' | 'success' | 'error'
+      loadState: 'loading' as 'loading' | 'success' | 'error',
+      isUnmounted: false
     }
   },
   methods: {
@@ -62,9 +63,15 @@ export default {
       loadingStart(wikiStore, 'admin-extensions-refresh')
       try {
         this.extensions = await fetchSystemExtensions(window.fetch.bind(window), 'System extensions response is invalid')
+        if (this.isUnmounted) {
+          return false
+        }
         this.loadState = 'success'
         return true
       } catch (err) {
+        if (this.isUnmounted) {
+          return false
+        }
         this.loadState = 'error'
         pushGraphError(wikiStore, err)
         return false
@@ -75,6 +82,9 @@ export default {
   },
   created () {
     this.loadExtensions()
+  },
+  beforeUnmount () {
+    this.isUnmounted = true
   }
 }
 </script>

@@ -106,7 +106,7 @@
                 <div class="agent-memory__entry-meta">{{ memoryDateLabel(entry) }}</div>
                 <p>{{ entry.content }}</p>
               </div>
-              <div class="agent-memory__entry-actions" :aria-label="`Actions for memory ${index + 1}`">
+              <div class="agent-memory__entry-actions" role="group" :aria-label="`Actions for memory ${index + 1}`">
                 <v-btn prepend-icon="mdi-pencil-outline" size="small" variant="text" :aria-label="`Edit memory: ${entry.content}`" :disabled="Boolean(actionBusy) || stale || loading" @click="beginEdit(entry)">Edit</v-btn>
                 <v-btn prepend-icon="mdi-delete-outline" size="small" variant="text" color="error" :aria-label="`Remove memory: ${entry.content}`" :disabled="Boolean(actionBusy) || stale || loading" @click="beginRemove(entry, $event)">Remove</v-btn>
               </div>
@@ -217,14 +217,20 @@ let disposed = false
 const targetLimit = computed(() => memories.value[draftTarget.value].limit)
 const memoryCount = computed(() => memories.value.user.entries.length + memories.value.agent.entries.length)
 const memoryCountLabel = computed(() => `${memoryCount.value} saved ${memoryCount.value === 1 ? 'record' : 'records'}`)
+const memoryEntrySeparatorLength = '\n§\n'.length
 const projectedStoreCharacters = computed(() => {
   const currentId = editing.value?.id
-  const contents = memories.value[draftTarget.value].entries
-    .filter(entry => entry.id !== currentId)
-    .map(entry => entry.content)
+  let characters = 0
+  let entryCount = 0
+  for (const entry of memories.value[draftTarget.value].entries) {
+    if (entry.id === currentId) continue
+    if (entryCount > 0) characters += memoryEntrySeparatorLength
+    characters += entry.content.length
+    entryCount += 1
+  }
   const content = draftContent.value.trim()
-  if (content) contents.push(content)
-  return contents.length === 0 ? 0 : contents.join('\n§\n').length
+  if (content) characters += content.length + (entryCount > 0 ? memoryEntrySeparatorLength : 0)
+  return characters
 })
 const draftOverLimit = computed(() => projectedStoreCharacters.value > targetLimit.value)
 const draftCapacityLabel = computed(() => {

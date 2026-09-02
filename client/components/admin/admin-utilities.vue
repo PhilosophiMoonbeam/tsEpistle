@@ -24,13 +24,15 @@
             hide-details
             density='compact'
           )
-          v-list.d-none.d-lg-block(lines="two", density="compact").py-0
+          v-list.d-none.d-lg-block(lines="two", density="compact", role='listbox', aria-label='Utilities').py-0
             template(v-for='(tool, idx) in tools', :key='tool.key')
               v-list-item(
                 @click='selectedTool = tool.key'
                 :disabled='!tool.isAvailable'
                 :active='selectedTool === tool.key'
-                :aria-current='selectedTool === tool.key ? "page" : undefined'
+                link
+                role='option'
+                :aria-selected='selectedTool === tool.key'
               )
                 template(v-slot:prepend)
                   v-avatar

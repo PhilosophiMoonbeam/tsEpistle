@@ -68,6 +68,9 @@
               v-list-subheader {{groupName}}
               v-list-item.tags-nav-item(
                 v-for='tag of tagGroup'
+                link
+                role='button'
+                :aria-pressed='isSelected(tag.tag)'
                 @click='toggleTag(tag.tag)'
                 :key='`tag-` + tag.tag'
                 :active='isSelected(tag.tag)'
@@ -277,6 +280,7 @@ export default {
       tagsError: '',
       pagesError: '',
       isLoading: true,
+      pagesLoadSequence: 0,
       scrollStyle: {
         scrollPanel: {
           scrollingX: false
@@ -398,6 +402,7 @@ export default {
       }
     },
     async loadPages () {
+      const sequence = ++this.pagesLoadSequence
       this.pagesError = ''
       if (this.selection.length < 1) {
         this.pages = []
@@ -407,15 +412,17 @@ export default {
       this.isLoading = true
       setLoading(wikiStore, 'pages-refresh', true)
       try {
-        this.pages = await fetchPages(window.fetch.bind(window), {
+        const pages = await fetchPages(window.fetch.bind(window), {
           locale: this.locale === 'any' ? undefined : this.locale,
           tags: this.selection
         })
+        if (sequence === this.pagesLoadSequence) this.pages = pages
       } catch (err) {
+        if (sequence !== this.pagesLoadSequence) return
         this.pages = []
         this.pagesError = err instanceof Error ? err.message : 'Unable to load tagged pages.'
       } finally {
-        this.isLoading = false
+        if (sequence === this.pagesLoadSequence) this.isLoading = false
         setLoading(wikiStore, 'pages-refresh', false)
       }
     },

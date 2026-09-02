@@ -470,7 +470,7 @@ export default {
         dateFormat: false,
         appearance: false
       },
-      timezones: [
+      timezones: Object.freeze([
         { text: '(GMT-11:00) Niue', value: 'Pacific/Niue' },
         { text: '(GMT-11:00) Pago Pago', value: 'Pacific/Pago_Pago' },
         { text: '(GMT-10:00) Hawaii Time', value: 'Pacific/Honolulu' },
@@ -718,7 +718,7 @@ export default {
         { text: '(GMT+13:00) Tongatapu', value: 'Pacific/Tongatapu' },
         { text: '(GMT+14:00) Apia', value: 'Pacific/Apia' },
         { text: '(GMT+14:00) Kiritimati', value: 'Pacific/Kiritimati' }
-      ]
+      ])
     }
   },
   computed: {

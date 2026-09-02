@@ -142,8 +142,11 @@ export default {
       loading: false,
       errorMessage: '',
       loadRequestId: 0,
+      strategiesRequestId: 0,
       searchDebounce: null as ReturnType<typeof setTimeout> | null,
-      isCreateDialogShown: false
+      isCreateDialogShown: false,
+      isDisposed: false,
+      isClearingFilters: false
     }
   },
   computed: {
@@ -162,13 +165,16 @@ export default {
   },
   watch: {
     search() {
+      if (this.isClearingFilters) return
       if (this.searchDebounce !== null) clearTimeout(this.searchDebounce)
       this.searchDebounce = setTimeout(() => {
+        this.searchDebounce = null
         if (this.pagination !== 1) this.pagination = 1
         else this.loadUsers()
       }, 300)
     },
     filterStrategy() {
+      if (this.isClearingFilters) return
       if (this.pagination !== 1) this.pagination = 1
       else this.loadUsers()
     },
@@ -178,17 +184,32 @@ export default {
   methods: {
     createUser() { this.isCreateDialogShown = true },
     clearFilters() {
+      if (this.searchDebounce !== null) {
+        clearTimeout(this.searchDebounce)
+        this.searchDebounce = null
+      }
+      this.isClearingFilters = true
       this.search = ''
       this.filterStrategy = 'all'
+      this.$nextTick(() => {
+        if (this.isDisposed) return
+        this.isClearingFilters = false
+        if (this.pagination !== 1) this.pagination = 1
+        else this.loadUsers()
+      })
     },
     async loadStrategies() {
+      if (this.isDisposed) return false
+      const requestId = ++this.strategiesRequestId
       wikiStore.startLoading('admin-users-strategies-refresh')
       try {
         const providers = await fetchAdminAuthProviders(window.fetch.bind(window), 'Admin authentication providers response is invalid')
+        if (requestId !== this.strategiesRequestId) return false
         this.strategies = [{ key: 'all', displayName: 'All Providers' }, ...providers.map(provider => ({ key: provider.key, displayName: provider.displayName, isEnabled: provider.isEnabled }))]
         if (!this.strategies.some(strategy => strategy.key === this.filterStrategy)) this.filterStrategy = 'all'
         return true
       } catch (err) {
+        if (requestId !== this.strategiesRequestId) return false
         wikiStore.showNotification({ style: 'red', message: getErrorMessage(err), icon: 'alert' })
         return false
       } finally {
@@ -196,6 +217,7 @@ export default {
       }
     },
     async loadUsers() {
+      if (this.isDisposed) return false
       const requestId = ++this.loadRequestId
       this.loading = true
       this.errorMessage = ''
@@ -209,25 +231,28 @@ export default {
           orderBy: this.sortBy[0]?.key ?? 'name',
           orderByDirection: this.sortBy[0]?.order ?? 'asc'
         }, 'Users list response is invalid')
-        if (requestId !== this.loadRequestId) return
+        if (requestId !== this.loadRequestId) return false
         this.users = result.users
         this.totalUsers = result.total
         this.pageCount = Math.max(1, Math.ceil(result.total / 15))
+        return true
       } catch (err) {
-        if (requestId === this.loadRequestId) {
-          this.errorMessage = getErrorMessage(err)
-          this.pageCount = 0
-          wikiStore.showNotification({ message: this.errorMessage, style: 'error', icon: 'alert' })
-        }
+        if (requestId !== this.loadRequestId) return false
+        this.errorMessage = getErrorMessage(err)
+        this.pageCount = 0
+        wikiStore.showNotification({ message: this.errorMessage, style: 'error', icon: 'alert' })
+        return false
       } finally {
         wikiStore.stopLoading('admin-users-refresh')
         if (requestId === this.loadRequestId) this.loading = false
       }
     },
     async refresh(notify = true) {
+      if (this.isDisposed) return
       const strategiesLoaded = await this.loadStrategies()
-      await this.loadUsers()
-      if (notify && strategiesLoaded) wikiStore.showNotification({ message: 'Users list has been refreshed.', style: 'success', icon: 'cached' })
+      if (this.isDisposed) return
+      const usersLoaded = await this.loadUsers()
+      if (notify && strategiesLoaded && usersLoaded) wikiStore.showNotification({ message: 'Users list has been refreshed.', style: 'success', icon: 'cached' })
     },
     getStrategyName(key: string) {
       return this.strategies.find(strategy => strategy.key === key)?.displayName || key
@@ -238,6 +263,9 @@ export default {
     this.loadUsers()
   },
   beforeUnmount() {
+    this.isDisposed = true
+    this.loadRequestId++
+    this.strategiesRequestId++
     if (this.searchDebounce !== null) clearTimeout(this.searchDebounce)
   }
 }

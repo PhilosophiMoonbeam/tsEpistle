@@ -22,12 +22,15 @@
           prepend-icon='mdi-domain'
           v-model='provider'
           label='Provider *'
+          required
           :disabled='!providersLoaded || submitting'
           )
         v-text-field(
           variant="outlined"
           prepend-icon='mdi-at'
           v-model='email'
+          type='email'
+          required
           label='Email Address *'
           key='newUserEmail'
           persistent-hint
@@ -39,6 +42,8 @@
           variant="outlined"
           prepend-icon='mdi-lock-outline'
           v-model='password'
+          autocomplete='new-password'
+          required
           :label='mustChangePwd ? `Temporary Password *` : `Password *`'
           counter='255'
           key='newUserPassword'
@@ -55,6 +60,7 @@
           variant="outlined"
           prepend-icon='mdi-account-outline'
           v-model='name'
+          required
           label='Name *'
           :hint='provider === `local` ? `Can be changed by the user.` : `May be overwritten by the provider during login.`'
           key='newUserName'
@@ -158,6 +164,8 @@ export default {
   },
   data() {
     return {
+      providerLoadRequestId: 0,
+      groupsLoadRequestId: 0,
       providers: [] as AuthProviderSummary[],
       provider: 'local',
       email: '',
@@ -203,15 +211,18 @@ export default {
     },
     async loadProviders() {
       if (this.providerLoading) return
+      const requestId = ++this.providerLoadRequestId
       this.providerLoading = true
       this.providerLoadError = ''
       wikiStore.startLoading('admin-users-strategies-refresh')
       try {
-        this.providers = (await fetchAdminAuthProviders(window.fetch.bind(window), 'Admin authentication providers response is invalid')).map(strategy => ({
+        const providers = (await fetchAdminAuthProviders(window.fetch.bind(window), 'Admin authentication providers response is invalid')).map(strategy => ({
           key: strategy.key,
           displayName: strategy.displayName,
           isEnabled: strategy.isEnabled
         }))
+        if (requestId !== this.providerLoadRequestId) return
+        this.providers = providers
 
         if (!this.availableProviders.some(strategy => strategy.key === this.provider) && this.availableProviders.length > 0) {
           this.provider = this.availableProviders[0].key
@@ -223,6 +234,7 @@ export default {
           })
         }
       } catch (err) {
+        if (requestId !== this.providerLoadRequestId) return
         this.providersLoaded = false
         this.providerLoadError = getErrorMessage(err)
         wikiStore.showNotification({
@@ -236,10 +248,14 @@ export default {
       }
     },
     async loadGroups() {
+      const requestId = ++this.groupsLoadRequestId
       wikiStore.startLoading('admin-auth-groups-refresh')
       try {
-        this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+        const groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+        if (requestId !== this.groupsLoadRequestId) return
+        this.groups = groups
       } catch (err) {
+        if (requestId !== this.groupsLoadRequestId) return
         wikiStore.showNotification({
           style: 'red',
           message: getErrorMessage(err),
@@ -369,6 +385,10 @@ export default {
   created() {
     this.loadProviders()
     this.loadGroups()
+  },
+  beforeUnmount() {
+    this.providerLoadRequestId++
+    this.groupsLoadRequestId++
   }
 }
 </script>

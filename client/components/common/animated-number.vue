@@ -73,6 +73,11 @@ function animateTo (target: number): void {
 
 watch(() => props.value, animateTo, { immediate: true })
 
+watch(() => props.formatValue, formatValue => {
+  displayValue.value = formatValue(renderedValue)
+  announcementValue.value = formatValue(props.value)
+})
+
 function handleMotionPreferenceChange (event: MediaQueryListEvent): void {
   if (event.matches) {
     cancelFrame()

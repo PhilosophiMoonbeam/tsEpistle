@@ -441,7 +441,14 @@ const ensureInitialized = (): Promise<void> => {
   if (initialization) return initialization
   const pending = agents.initialize(props.csrfToken, { routeSync: false, currentPage: currentPage.value, reuseLatest: true })
   initialization = pending
-  void pending.then(() => { if (!agents.thread) initialization = null })
+  void pending.then(
+    () => {
+      if (initialization === pending && !agents.thread) initialization = null
+    },
+    () => {
+      if (initialization === pending) initialization = null
+    }
+  )
   return pending
 }
 const focusComposer = async (): Promise<void> => {

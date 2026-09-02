@@ -54,7 +54,9 @@ describe('admin utilities import v1 wiki store error migration guard', () => {
       /import\s+\{(?=[^}]*\bexecuteStorageAction\b)(?=[^}]*\bfetchStorageStatus\b)(?=[^}]*\bfetchStorageTargets\b)(?=[^}]*\bsaveStorageTargets\b)[^}]*\}\s+from\s+['"]\.\.\/\.\.\/helpers\/storage-api['"]/
     )
     expect(script).toContain("import { importV1Users } from '../../helpers/system-api'")
-    expect(source).toContain("@click='startImport'")
+    expect(source).toContain("v-form#import-v1-form(@submit.prevent='startImport')")
+    expect(source).toContain("v-btn.px-3(type='submit', form='import-v1-form'")
+    expect(source).not.toContain("@click='startImport'")
     expect(source).toContain("v-dialog(v-model='confirmImport'")
     expect(source).toContain("@click='confirmImport = false; executeImport()'")
     expect(script).toMatch(
@@ -75,6 +77,19 @@ describe('admin utilities import v1 wiki store error migration guard', () => {
     )
     const showErrorCalls = executeImport.match(/\bwikiStore\.showError\s*\(\s*err\s*\)/g) || []
     expect(showErrorCalls).toHaveLength(2)
+  })
+
+  test('uses Vuetify form submission and radio-group model semantics for import choices', () => {
+    expect(source).toMatch(
+      /v-form#import-v1-form\s*\(\s*@submit\.prevent=['"]startImport['"]\s*\)[\s\S]*v-btn\.px-3\s*\(\s*type=['"]submit['"]\s*,\s*form=['"]import-v1-form['"][^)]*:disabled=['"]!canStartImport \|\| isLoading['"][^)]*\)/
+    )
+    expect(source).toMatch(
+      /v-radio-group\s*\(\s*v-model=['"]contentMode['"]\s*,\s*hide-details\s*,\s*aria-label=['"]Content import source['"]\s*\)[\s\S]*?v-radio\s*\(\s*value=['"]git['"][\s\S]*?v-radio\.mt-3\s*\(\s*value=['"]disk['"]/
+    )
+    expect(source).toMatch(
+      /v-radio-group\s*\(\s*v-model=['"]groupMode['"]\s*,\s*hide-details\s*,\s*mandatory\s*,\s*aria-label=['"]Imported user group strategy['"]\s*\)[\s\S]*?v-radio\s*\(\s*value=['"]MULTI['"][\s\S]*?v-radio\.mt-3\s*\(\s*value=['"]SINGLE['"][\s\S]*?v-radio\.mt-3\s*\(\s*value=['"]NONE['"]/
+    )
+    expect(source).not.toMatch(/v-radio(?:\.mt-3)?\s*\([^)]*\bv-model=/)
   })
 
   test('executeImport preserves v1 import, credential plumbing, typed storage save, and partial-result flow', () => {

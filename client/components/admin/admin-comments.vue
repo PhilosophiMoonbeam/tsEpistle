@@ -47,15 +47,20 @@
           async-state(v-else-if='providers.length < 1', state='empty', title='No comment providers available', message='No discussion provider is configured.')
           template(v-else)
             .text-body-small.text-medium-emphasis.pa-4.pb-2 Choose the provider to activate, then Apply.
-            v-list.py-0(lines="two", density="compact", role='radiogroup', aria-label='Comment provider')
+            v-list.py-0(lines="two", density="compact", role='radiogroup', aria-label='Comment provider', tabindex='-1')
               template(v-for='(provider, idx) in providers', :key='provider.key')
                 v-list-item(
                   role='radio'
                   :aria-checked='provider.key === selectedProvider'
-                  :tabindex='provider.isAvailable ? 0 : -1'
+                  :aria-disabled='!provider.isAvailable'
+                  :tabindex='provider.isAvailable && provider.key === selectedProvider ? 0 : -1'
                   @click='selectProvider(provider)'
                   @keydown.enter.prevent='selectProvider(provider)'
                   @keydown.space.prevent='selectProvider(provider)'
+                  @keydown.right.stop.prevent='selectAdjacentProvider(provider, 1, $event)'
+                  @keydown.down.stop.prevent='selectAdjacentProvider(provider, 1, $event)'
+                  @keydown.left.stop.prevent='selectAdjacentProvider(provider, -1, $event)'
+                  @keydown.up.stop.prevent='selectAdjacentProvider(provider, -1, $event)'
                   :disabled='!provider.isAvailable'
                 )
                   template(v-slot:prepend)
@@ -181,6 +186,19 @@ export default {
       if (provider.isAvailable) {
         this.selectedProvider = provider.key
       }
+    },
+    selectAdjacentProvider (provider: CommentProvider, direction: 1 | -1, event: KeyboardEvent) {
+      const availableProviders = this.providers.filter(item => item.isAvailable)
+      const currentIndex = availableProviders.findIndex(item => item.key === provider.key)
+      if (currentIndex < 0 || availableProviders.length < 2) return
+      const nextIndex = (currentIndex + direction + availableProviders.length) % availableProviders.length
+      const nextProvider = availableProviders[nextIndex]
+      if (!nextProvider) return
+      this.selectedProvider = nextProvider.key
+      const group = (event.currentTarget as HTMLElement | null)?.closest('[role="radiogroup"]')
+      this.$nextTick(() => {
+        group?.querySelectorAll<HTMLElement>('[role="radio"][aria-disabled="false"]')[nextIndex]?.focus()
+      })
     },
     async loadProviders({ notifyError = true }: { notifyError?: boolean } = {}) {
       this.loadController?.abort()

@@ -165,7 +165,11 @@
       :title='$t(`common:comments.none`)'
     )
 
-    v-dialog(v-model='deleteCommentDialogShown', max-width='500')
+    v-dialog(
+      v-model='deleteCommentDialogShown'
+      max-width='500'
+      :aria-label='$t(`common:comments.deleteConfirmTitle`)'
+    )
       v-card.comments-delete-dialog
         .dialog-header.comments-delete-header {{$t('common:comments.deleteConfirmTitle')}}
         v-card-text.pt-5

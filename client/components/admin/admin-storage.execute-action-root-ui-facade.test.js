@@ -90,10 +90,12 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
     expect(script).toContain("import { wikiStore } from '@/store/index.ts'")
     expect(script).not.toContain('gql/admin/storage/')
     expect(script).not.toContain('apollo:')
-    expect(executeAction).toMatch(/\bloadingStart\s*\(\s*wikiStore\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
-    expect(executeAction).toMatch(/partial:\s*\{\s*style:\s*['"]warning['"]\s*,\s*icon:\s*['"]alert['"]\s*\}/)
+    expect(script).toMatch(
+      /const\s+STORAGE_OUTCOME_PRESENTATION\s*=\s*\{\s*succeeded:\s*\{\s*label:\s*['"]Succeeded['"]\s*,\s*color:\s*['"]success['"]\s*,\s*icon:\s*['"]mdi-check-circle-outline['"]\s*,\s*notificationIcon:\s*['"]check['"]\s*\}\s*,\s*partial:\s*\{\s*label:\s*['"]Partial['"]\s*,\s*color:\s*['"]warning['"]\s*,\s*icon:\s*['"]mdi-alert-outline['"]\s*,\s*notificationIcon:\s*['"]alert['"]\s*\}\s*,\s*failed:\s*\{\s*label:\s*['"]Failed['"]\s*,\s*color:\s*['"]error['"]\s*,\s*icon:\s*['"]mdi-close-circle-outline['"]\s*,\s*notificationIcon:\s*['"]alert['"]\s*\}\s*\}\s*as\s+const\s+satisfies\s+Record<StorageActionOutcome/
+    )
+    expect(executeAction).toMatch(/\bconst\s+presentation\s*=\s*STORAGE_OUTCOME_PRESENTATION\s*\[\s*result\.outcome\s*\]/)
     expect(executeAction).toMatch(
-      /\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*result\.message\s*,\s*style:\s*presentation\.style\s*,\s*icon:\s*presentation\.icon\s*\}\s*\)/
+      /\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*result\.message\s*,\s*style:\s*presentation\.color\s*,\s*icon:\s*presentation\.notificationIcon\s*\}\s*\)/
     )
     expect(executeAction).not.toContain('Action completed.')
     expect(executeAction).toMatch(/\bloadingStop\s*\(\s*wikiStore\s*,\s*['"]admin-storage-executeaction['"]\s*\)/)
@@ -125,9 +127,10 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
       ['enter try block', /try\s*\{/],
       ['execute storage REST action', /await\s+executeStorageAction\s*\(\s*window\.fetch\.bind\s*\(\s*window\s*\)\s*,\s*targetKey\s*,\s*handler\s*\)/],
       ['store structured operation', /this\.lastOperation\s*=\s*result/],
+      ['look up the truthful outcome presentation', /const\s+presentation\s*=\s*STORAGE_OUTCOME_PRESENTATION\s*\[\s*result\.outcome\s*\]/],
       [
         'show outcome notification via facade',
-        /\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*result\.message\s*,\s*style:\s*presentation\.style\s*,\s*icon:\s*presentation\.icon\s*\}\s*\)/
+        /\bshowNotification\s*\(\s*wikiStore\s*,\s*\{\s*message:\s*result\.message\s*,\s*style:\s*presentation\.color\s*,\s*icon:\s*presentation\.notificationIcon\s*\}\s*\)/
       ],
       ['catch action errors', /\}\s*catch\s*\(\s*err\s*\)\s*\{/],
       ['surface caught error', /pushGraphError\s*\(\s*wikiStore\s*,\s*err\s*\)/],
@@ -225,8 +228,12 @@ describe('admin-storage executeAction root UI facade migration guard', () => {
     expect(source).toContain('Utility projection is optional and separate; storage actions never invoke it.')
     expect(source).toContain('Some items completed, but failed or conflicted items still require attention.')
     expect(source).toContain('Failures, conflicts, and diagnostics')
-    expect(script).toContain("partial: { style: 'warning', icon: 'alert' }")
-    expect(script).toContain("partial: 'warning' as const")
+    expect(script).toMatch(
+      /partial:\s*\{\s*label:\s*['"]Partial['"]\s*,\s*color:\s*['"]warning['"]\s*,\s*icon:\s*['"]mdi-alert-outline['"]\s*,\s*notificationIcon:\s*['"]alert['"]\s*\}/
+    )
+    expect(script).toMatch(
+      /operationOutcomeAlertType\s*\(\s*outcome:\s*StorageActionOutcome\s*\):\s*['"]success['"]\s*\|\s*['"]warning['"]\s*\|\s*['"]error['"]\s*\{[\s\S]*return\s+STORAGE_OUTCOME_PRESENTATION\s*\[\s*outcome\s*\]\.color/
+    )
     for (const label of ['OKF', 'Legacy v1', 'Legacy Wiki', 'Plain Markdown', 'Invalid']) {
       expect(source).toContain(label)
     }

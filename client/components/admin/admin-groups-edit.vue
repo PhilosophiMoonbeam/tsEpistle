@@ -237,6 +237,9 @@ export default {
   },
   created () {
     this.loadGroup()
+  },
+  beforeUnmount () {
+    this.groupLoadRequestId++
   }
 }
 </script>

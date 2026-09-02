@@ -15,12 +15,7 @@
         i18next.text-body-medium(path='common:page.convertTitle', tag='div')
           span.text-blue-grey-darken-2(place='title') {{pageTitle}}
         v-select.mt-5(
-          :items=`[
-            { value: 'markdown', title: 'Markdown' },
-            { value: 'visual-markdown', title: 'Visual Markdown' },
-            { value: 'ckeditor', title: 'Visual Editor (HTML)' },
-            { value: 'code', title: 'Raw HTML' }
-          ]`
+          :items='editorOptions'
           variant="outlined"
           density="compact"
           hide-details
@@ -45,9 +40,16 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { convertPage } from '../../helpers/pages-api'
+
+const editorOptions = markRaw([
+  { value: 'markdown', title: 'Markdown' },
+  { value: 'visual-markdown', title: 'Visual Markdown' },
+  { value: 'ckeditor', title: 'Visual Editor (HTML)' },
+  { value: 'code', title: 'Raw HTML' }
+])
 
 export default defineComponent({
   emits: ['update:modelValue'],
@@ -60,7 +62,9 @@ export default defineComponent({
   data() {
     return {
       loading: false,
-      newEditor: ''
+      newEditor: '',
+      editorOptions,
+      convertAbortController: null as AbortController | null
     }
   },
   computed: {
@@ -85,6 +89,10 @@ export default defineComponent({
       }
     }
   },
+  beforeUnmount() {
+    this.convertAbortController?.abort()
+    this.convertAbortController = null
+  },
   methods: {
     discard(): void {
       this.isShown = false
@@ -92,18 +100,31 @@ export default defineComponent({
     async convertPage(): Promise<void> {
       if (!this.canConvert || this.loading) return
 
+      const controller = new AbortController()
+      this.convertAbortController = controller
       this.loading = true
       wikiStore.startLoading('page-convert')
       try {
-        await convertPage(window.fetch.bind(window), this.pageId, this.newEditor, this.pageSourceRevision)
+        await convertPage(
+          (url, init) => window.fetch(url, { ...init, signal: controller.signal }),
+          this.pageId,
+          this.newEditor,
+          this.pageSourceRevision
+        )
+        if (controller.signal.aborted || this.convertAbortController !== controller) return
         this.isShown = false
         const scope = this.pageVisibility === 'private' ? '/_private' : ''
         window.location.assign(`/e${scope}/${this.pageLocale}/${this.pagePath}`)
       } catch (err) {
-        wikiStore.showError(err)
+        if (this.convertAbortController === controller && !controller.signal.aborted) {
+          wikiStore.showError(err)
+        }
       } finally {
         wikiStore.stopLoading('page-convert')
-        this.loading = false
+        if (this.convertAbortController === controller) {
+          this.convertAbortController = null
+          this.loading = false
+        }
       }
     }
   }

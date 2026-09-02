@@ -129,7 +129,6 @@
 </template>
 
 <script lang='ts'>
-import _ from 'lodash'
 import { defineComponent, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
@@ -354,10 +353,9 @@ export default defineComponent({
       }
     },
     hasPermission(prm: string | string[]) {
-      if (_.isArray(prm)) {
-        return _.some(prm, p => _.includes(this.permissions, p))
-      }
-      return _.includes(this.permissions, prm)
+      return Array.isArray(prm)
+        ? prm.some(permission => this.permissions.includes(permission))
+        : this.permissions.includes(prm)
     }
   }
 })

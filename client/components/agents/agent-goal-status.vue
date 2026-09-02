@@ -52,7 +52,7 @@
           <v-chip class="agent-goal__status" :color="statusColor" :prepend-icon="statusIcon" size="small" variant="tonal">{{ statusLabel }}</v-chip>
         </header>
 
-        <div class="agent-goal__continuity" aria-label="Goal continuity">
+        <div class="agent-goal__continuity" role="group" aria-label="Goal continuity">
           <span><v-icon icon="mdi-source-branch" size="15" /> Run {{ goal.continuationCount + 1 }} of {{ goal.maxContinuations + 1 }}</span>
           <span><v-icon icon="mdi-calendar-clock-outline" size="15" /> {{ timelinePrefix }} <time :datetime="timelineAt">{{ timelineLabel }}</time></span>
         </div>
@@ -114,7 +114,7 @@
           {{ pendingActionLabel }}
         </p>
 
-        <div v-if="canPause || canResume || canCancel" class="agent-goal__actions" aria-label="Goal actions">
+        <div v-if="canPause || canResume || canCancel" class="agent-goal__actions" role="group" aria-label="Goal actions">
           <v-btn
             v-if="canPause"
             size="small"

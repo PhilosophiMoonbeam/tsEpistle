@@ -113,7 +113,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { AgentProviderProfileView, AgentSessionView } from '../../../shared/agents/contracts.ts'
 
 type ProviderProfileApplyResult =
@@ -212,6 +212,9 @@ const applyProfile = async (): Promise<void> => {
     if (generation === applyGeneration) applying.value = false
   }
 }
+onBeforeUnmount(() => {
+  applyGeneration++
+})
 </script>
 <style scoped>
 .agent-session-settings {

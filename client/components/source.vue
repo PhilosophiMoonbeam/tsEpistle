@@ -21,10 +21,10 @@
             color='primary'
             size='small'
             @click='goHistory'
-            aria-label='View page history'
+            :aria-label='$t(`common:header.history`)'
           )
             v-icon(:start='$vuetify.display.mdAndUp') mdi-history
-            span(v-if='$vuetify.display.mdAndUp') History
+            span(v-if='$vuetify.display.mdAndUp') {{$t('common:header.history')}}
           v-btn(variant='tonal', color='primary', size='small', @click='goDownload', :aria-label='$t(`common:actions.download`)')
             v-icon(:start='$vuetify.display.mdAndUp') mdi-download
             span(v-if='$vuetify.display.mdAndUp') {{$t('common:actions.download')}}

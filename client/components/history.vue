@@ -114,7 +114,7 @@
                           v-list-item-title Download Version
                         v-list-item(@click.stop='restore(ph.versionId, ph.versionDate)', :disabled='ph.versionId === 0')
                           template(v-slot:prepend)
-                            v-avatar(size='24'): v-icon(:disabled='ph.versionId === 0') mdi-history
+                            v-avatar(size='24'): v-icon mdi-history
                           v-list-item-title Restore
                         v-list-item(@click.stop='branchOff(ph.versionId)')
                           template(v-slot:prepend)
@@ -205,7 +205,12 @@
                 v-card.mt-3.history-diff(flat, aria-labelledby='history-comparison-heading')
                   div(v-html='diffHTML')
 
-    v-dialog(v-model='isRestoreConfirmDialogShown', max-width='650', persistent)
+    v-dialog(
+      v-model='isRestoreConfirmDialogShown'
+      max-width='650'
+      persistent
+      :aria-label='$t(`history:restore.confirmTitle`)'
+    )
       v-card.history-restore-dialog
         .dialog-header.history-restore-header {{$t('history:restore.confirmTitle')}}
         v-card-text.pa-4
@@ -226,7 +231,6 @@
 import * as Diff2Html from 'diff2html'
 import { createPatch } from 'diff'
 import AsyncState from '@/components/common/async-state.vue'
-import _ from 'lodash'
 import { fetchPageHistory, fetchPageVersion, restorePageVersion, type PageHistoryTrailItem, type PageVersion } from '../helpers/pages-api'
 import { getPageDownloadPath, getPageSourcePath } from '../helpers/page-actions'
 import { getErrorMessage, loadingStart, loadingStop, setLoading, showNotification } from '../helpers/root-ui-store'
@@ -365,7 +369,7 @@ export default {
         versionDate: this.updatedAt
       }
       // -> Check for move between latest and live
-      const prevPage = _.find(this.cache, ['versionId', _.get(this.trail, '[0].versionId', -1)])
+      const prevPage = this.cache.find(page => page.versionId === (this.trail[0]?.versionId ?? -1))
       if (prevPage && this.path !== prevPage.path) {
         liveTrailItem.actionType = 'move'
         liveTrailItem.valueBefore = prevPage.path
@@ -406,7 +410,7 @@ export default {
       onCleanup(() => {
         cancelled = true
       })
-      const page = _.find(this.cache, { versionId: newValue }) ?? await this.loadVersion(newValue)
+      const page = this.cache.find(page => page.versionId === newValue) ?? await this.loadVersion(newValue)
       if (!cancelled && this.diffSource === newValue) {
         this.source = page
       }
@@ -422,7 +426,7 @@ export default {
       onCleanup(() => {
         cancelled = true
       })
-      const page = _.find(this.cache, { versionId: newValue }) ?? await this.loadVersion(newValue)
+      const page = this.cache.find(page => page.versionId === newValue) ?? await this.loadVersion(newValue)
       if (!cancelled && this.diffTarget === newValue) {
         this.target = page
       }
@@ -550,7 +554,7 @@ export default {
       this.branchOffOpts = {
         versionId: versionId,
         locale: this.locale,
-        path: (pathParts.length > 1) ? _.initial(pathParts).join('/') + `/new-page` : `new-page`,
+        path: (pathParts.length > 1) ? pathParts.slice(0, -1).join('/') + `/new-page` : `new-page`,
         modal: true
       }
     },

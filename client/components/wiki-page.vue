@@ -52,6 +52,7 @@ export default defineComponent({
       navigationKey: 0,
       navigationPending: false,
       currentUrl: window.location.href,
+      previousScrollRestoration: null as History['scrollRestoration'] | null,
       navigationSequence: 0,
       navigationAbortController: null as AbortController | null,
       removeNavigationHandler: null as (() => void) | null
@@ -63,7 +64,10 @@ export default defineComponent({
     this.removeNavigationHandler = installWikiNavigationHandler(this.navigate)
     document.addEventListener('click', this.handleDocumentClick)
     window.addEventListener('popstate', this.handlePopState)
-    if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'
+    if ('scrollRestoration' in window.history) {
+      this.previousScrollRestoration = window.history.scrollRestoration
+      window.history.scrollRestoration = 'manual'
+    }
     this.saveCurrentHistoryScroll()
   },
   beforeUnmount() {
@@ -71,6 +75,9 @@ export default defineComponent({
     this.removeNavigationHandler?.()
     document.removeEventListener('click', this.handleDocumentClick)
     window.removeEventListener('popstate', this.handlePopState)
+    if (this.previousScrollRestoration !== null && 'scrollRestoration' in window.history) {
+      window.history.scrollRestoration = this.previousScrollRestoration
+    }
   },
   methods: {
     saveCurrentHistoryScroll(): void {

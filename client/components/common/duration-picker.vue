@@ -81,7 +81,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import moment from 'moment'
 
 type DurationUnit = 'minutes' | 'hours' | 'days' | 'months' | 'years'
@@ -102,7 +102,7 @@ export default defineComponent({
   },
   data() {
     return {
-      duration: moment.duration(this.modelValue)
+      duration: markRaw(moment.duration(this.modelValue))
     }
   },
   computed: {
@@ -149,7 +149,7 @@ export default defineComponent({
   },
   watch: {
     modelValue(newValue: string) {
-      this.duration = moment.duration(newValue)
+      this.duration = markRaw(moment.duration(newValue))
     }
   },
   methods: {
@@ -163,7 +163,7 @@ export default defineComponent({
         years: this.duration.years()
       }
       newDuration[unit] = val
-      this.duration = moment.duration(newDuration)
+      this.duration = markRaw(moment.duration(newDuration))
       this.$emit('update:modelValue', this.duration.toISOString())
     }
   }

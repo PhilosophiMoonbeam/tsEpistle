@@ -292,6 +292,7 @@ let clockTimer: number | null = null
 let expiryDeadlineTimer: number | null = null
 let loadController: AbortController | null = null
 let loadGeneration = 0
+let decisionGeneration = 0
 let disposed = false
 
 type ApprovalSurfaceStatus = 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'cancelled' | 'expired' | 'idle'
@@ -504,30 +505,33 @@ const decide = async (decision: 'approved' | 'denied'): Promise<void> => {
   pendingDecision.value = decision
   error.value = ''
   const proposalId = props.proposalId
+  const generation = ++decisionGeneration
   try {
     await decideAgentProposal(window.fetch.bind(window), props.csrfToken, current.id, current.approval.id, {
       decision,
       ...(decisionNote.value.trim() ? { decisionNote: decisionNote.value.trim() } : {}),
       ...(decision === 'approved' && current.confirmationPath ? { confirmationPath: confirmationPath.value } : {})
     })
-    if (disposed || props.proposalId !== proposalId) return
+    if (disposed || props.proposalId !== proposalId || generation !== decisionGeneration) return
     await load()
-    if (!disposed && props.proposalId === proposalId && proposal.value?.approval.status !== 'pending') {
+    if (!disposed && props.proposalId === proposalId && generation === decisionGeneration && proposal.value?.approval.status !== 'pending') {
       await nextTick()
       settledReceipt.value?.$el.focus()
     }
   } catch (value) {
-    if (disposed || props.proposalId !== proposalId) return
+    if (disposed || props.proposalId !== proposalId || generation !== decisionGeneration) return
     error.value = value instanceof Error ? value.message : 'Proposal decision failed.'
     await focusError()
   } finally {
-    pendingDecision.value = null
+    if (generation === decisionGeneration) pendingDecision.value = null
   }
 }
 
 watch(
   () => [props.proposalId, props.csrfToken] as const,
   () => {
+    decisionGeneration++
+    pendingDecision.value = null
     stopClockTimer()
     clearExpiryDeadline()
     proposal.value = null
@@ -541,6 +545,7 @@ watch(
 onBeforeUnmount(() => {
   disposed = true
   loadGeneration++
+  decisionGeneration++
   loadController?.abort()
   stopClockTimer()
   clearExpiryDeadline()

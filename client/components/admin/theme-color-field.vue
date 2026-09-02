@@ -1,6 +1,6 @@
 <template lang="pug">
 .theme-color-field
-  label.theme-color-field__label(:for='textFieldId') {{ label }}
+  label.theme-color-field__label(:id='textFieldLabelId', :for='textFieldId') {{ label }}
   .theme-color-field__controls
     input.theme-color-field__swatch(
       :id='swatchId'
@@ -16,7 +16,6 @@
       hide-details='auto'
       maxlength='7'
       spellcheck='false'
-      :aria-label='`${label} hex color`'
       :rules='colorRules'
       @blur='normalizeColor'
     )
@@ -31,6 +30,7 @@ const model = defineModel<string>({ required: true })
 const id = useId()
 const swatchId = `${id}-swatch`
 const textFieldId = `${id}-hex`
+const textFieldLabelId = `${textFieldId}-label`
 const colorRules = [(value: string) => isHexThemeColor(value) || 'Use a six-digit hex color, for example #1867C0.']
 const swatchColor = computed({
   get: () => isHexThemeColor(model.value) ? model.value : '#000000',

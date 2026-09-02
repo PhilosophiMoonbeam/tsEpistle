@@ -206,6 +206,7 @@ v-container.admin-theme(fluid)
                 type='button'
                 :aria-pressed='config.gutterStyle === option.value'
                 :class='{ "is-selected": config.gutterStyle === option.value }'
+                :disabled='initialLoading || !loaded || saving'
                 @click='config.gutterStyle = option.value'
               )
                 .gutter-style-option__canvas
@@ -340,6 +341,11 @@ import {
 } from '../../../shared/theme-palettes.ts'
 type PaletteMode = 'light' | 'dark'
 
+const createAbortableFetch = (signal: AbortSignal) => (
+  input: RequestInfo | URL,
+  init?: RequestInit
+) => window.fetch(input, { ...init, signal })
+
 const createConfig = (): ThemeConfig => {
   const colors = normalizeThemeColors(siteConfig.themeColors)
   const palettes = normalizeThemePalettes(undefined, colors)
@@ -367,6 +373,9 @@ const initialLoading = ref(true)
 const loaded = ref(false)
 const saving = ref(false)
 const deletePaletteDialog = ref(false)
+let loadController: AbortController | null = null
+let saveController: AbortController | null = null
+let isUnmounted = false
 const activePalette = computed<ThemePalette>(() =>
   config.palettes.find(palette => palette.id === config.activePaletteId) ?? createDefaultThemePalette(config.colors)
 )
@@ -442,18 +451,32 @@ const syncActivePalette = (): void => {
 watch([() => config.activePaletteId, () => activePalette.value.colors], syncActivePalette, { deep: true })
 
 const loadConfig = async (): Promise<void> => {
+  loadController?.abort()
+  const controller = new AbortController()
+  loadController = controller
   initialLoading.value = true
   loaded.value = false
   loadingStart(wikiStore, 'admin-theme-refresh')
   try {
-    const loadedConfig = await fetchThemeConfig(window.fetch.bind(window), 'Theme config response is invalid')
+    const loadedConfig = await fetchThemeConfig(
+      createAbortableFetch(controller.signal),
+      'Theme config response is invalid'
+    )
+    if (controller.signal.aborted) return
     persistedConfig.value = copyConfig(loadedConfig)
     assignConfig(loadedConfig)
     loaded.value = true
   } catch (error) {
-    pushGraphError(wikiStore, error)
+    if (!controller.signal.aborted) {
+      pushGraphError(wikiStore, error)
+    }
   } finally {
-    initialLoading.value = false
+    if (loadController === controller) {
+      loadController = null
+      if (!isUnmounted) {
+        initialLoading.value = false
+      }
+    }
     loadingStop(wikiStore, 'admin-theme-refresh')
   }
 }
@@ -497,12 +520,19 @@ const deleteActivePalette = (): void => {
 
 const save = async (): Promise<void> => {
   if (!loaded.value || initialLoading.value || saving.value || !dirty.value || !configValid.value) return
+  const controller = new AbortController()
+  saveController = controller
   saving.value = true
   loadingStart(wikiStore, 'admin-theme-save')
   try {
     const payload = copyConfig(config)
     payload.colors = cloneThemeColors(activePalette.value.colors)
-    await saveThemeConfig(window.fetch.bind(window), payload, 'Theme config update failed')
+    await saveThemeConfig(
+      createAbortableFetch(controller.signal),
+      payload,
+      'Theme config update failed'
+    )
+    if (controller.signal.aborted) return
     persistedConfig.value = payload
     siteConfig.darkMode = payload.darkMode
     siteConfig.themeColors = cloneThemeColors(payload.colors)
@@ -515,16 +545,26 @@ const save = async (): Promise<void> => {
       icon: 'check'
     })
   } catch (error) {
-    pushGraphError(wikiStore, error)
+    if (!controller.signal.aborted) {
+      pushGraphError(wikiStore, error)
+    }
   } finally {
+    if (saveController === controller) {
+      saveController = null
+      if (!isUnmounted) {
+        saving.value = false
+      }
+    }
     loadingStop(wikiStore, 'admin-theme-save')
-    saving.value = false
   }
 }
 
 onMounted(() => { void loadConfig() })
 
 onBeforeUnmount(() => {
+  isUnmounted = true
+  loadController?.abort()
+  saveController?.abort()
   applyWikiThemeColors(theme, persistedConfig.value.colors)
   void theme.change(resolveThemeName(wikiStore.user.appearance, persistedConfig.value.darkMode), false)
 })
@@ -635,10 +675,15 @@ onBeforeUnmount(() => {
   text-align: start;
   transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
 
-  &:hover {
+  &:not(:disabled):hover {
     border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 42%, transparent);
     box-shadow: 0 12px 28px rgba(15, 23, 42, .08);
     transform: translateY(-2px);
+  }
+
+  &:disabled {
+    cursor: default;
+    opacity: .6;
   }
 
   &:focus-visible {

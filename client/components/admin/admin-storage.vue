@@ -37,7 +37,7 @@
                 template(v-slot:prepend)
                   v-checkbox-btn(
                     :model-value='tgt.isEnabled'
-                    :disabled='!tgt.isAvailable || (tgt.key === `local` && tgt.isEnabled)'
+                    :disabled='saving || targetsLoading || !tgt.isAvailable || (tgt.key === `local` && tgt.isEnabled)'
                     :aria-label='`${tgt.isEnabled ? "Disable" : "Enable"} ${tgt.title}`'
                     @click.stop
                     @update:model-value='setTargetEnabled(tgt, $event)'
@@ -181,6 +181,7 @@
               color="blue-lighten-5"
               label='Active'
               v-model='target.isEnabled'
+              :disabled='saving || targetsLoading || !target.isAvailable || (target.key === `local` && target.isEnabled)'
               hide-details
               inset
               )
@@ -192,7 +193,7 @@
             .admin-providerlogo
               img(:src='target.logo', :alt='target.title')
           v-card-text
-            v-form
+            v-form(:disabled='saving || targetsLoading')
               i18next.text-body-medium(path='admin:storage.targetState', tag='div', v-if='target.isEnabled')
                 v-chip(color='success', size="small", label, place='state') {{$t('admin:storage.targetStateActive')}}
               i18next.text-body-medium(path='admin:storage.targetState', tag='div', v-else)
@@ -382,6 +383,47 @@ type PendingStorageAction = Pick<StorageAction, 'handler' | 'hint' | 'label'> & 
   targetKey: string
 }
 
+const STORAGE_STATUS_LABELS: Readonly<Record<string, string>> = {
+  pending: 'Synchronizing',
+  operational: 'Operational',
+  warning: 'Warning',
+  error: 'Error'
+}
+
+const STORAGE_FORMAT_LABELS = {
+  okf: 'OKF',
+  legacyV1: 'Legacy v1',
+  legacyWiki: 'Legacy Wiki',
+  plain: 'Plain Markdown',
+  invalid: 'Invalid'
+} satisfies Record<StorageActionFormat, string>
+
+const STORAGE_OUTCOME_PRESENTATION = {
+  succeeded: {
+    label: 'Succeeded',
+    color: 'success',
+    icon: 'mdi-check-circle-outline',
+    notificationIcon: 'check'
+  },
+  partial: {
+    label: 'Partial',
+    color: 'warning',
+    icon: 'mdi-alert-outline',
+    notificationIcon: 'alert'
+  },
+  failed: {
+    label: 'Failed',
+    color: 'error',
+    icon: 'mdi-close-circle-outline',
+    notificationIcon: 'alert'
+  }
+} as const satisfies Record<StorageActionOutcome, {
+  label: string
+  color: 'success' | 'warning' | 'error'
+  icon: string
+  notificationIcon: string
+}>
+
 const makeDefaultStorageTarget = (): NormalizedStorageTarget => ({
   actions: [],
   config: [],
@@ -490,12 +532,7 @@ export default {
       target.isEnabled = value
     },
     statusLabel(status: string) {
-      return {
-        pending: 'Synchronizing',
-        operational: 'Operational',
-        warning: 'Warning',
-        error: 'Error'
-      }[status] || 'Unknown'
+      return STORAGE_STATUS_LABELS[status] || 'Unknown'
     },
     normalizeTargets(targets: StorageTarget[]): NormalizedStorageTarget[] {
       return _.cloneDeep(targets).map(target => ({
@@ -602,40 +639,22 @@ export default {
       return words ? words.replace(/\b\w/gu, letter => letter.toUpperCase()) : 'Unknown'
     },
     formatLabel(format: StorageActionFormat): string {
-      return {
-        okf: 'OKF',
-        legacyV1: 'Legacy v1',
-        legacyWiki: 'Legacy Wiki',
-        plain: 'Plain Markdown',
-        invalid: 'Invalid'
-      }[format]
+      return STORAGE_FORMAT_LABELS[format]
     },
     formatOperationTime(value: string): string {
       return moment.utc(value).format('YYYY-MM-DD HH:mm:ss [UTC]')
     },
     operationOutcomeLabel(outcome: StorageActionOutcome): string {
-      return {
-        succeeded: 'Succeeded',
-        partial: 'Partial',
-        failed: 'Failed'
-      }[outcome]
+      return STORAGE_OUTCOME_PRESENTATION[outcome].label
     },
     operationOutcomeColor(outcome: StorageActionOutcome): 'success' | 'warning' | 'error' {
-      return {
-        succeeded: 'success' as const,
-        partial: 'warning' as const,
-        failed: 'error' as const
-      }[outcome]
+      return STORAGE_OUTCOME_PRESENTATION[outcome].color
     },
     operationOutcomeAlertType(outcome: StorageActionOutcome): 'success' | 'warning' | 'error' {
-      return this.operationOutcomeColor(outcome)
+      return STORAGE_OUTCOME_PRESENTATION[outcome].color
     },
     operationOutcomeIcon(outcome: StorageActionOutcome): string {
-      return {
-        succeeded: 'mdi-check-circle-outline',
-        partial: 'mdi-alert-outline',
-        failed: 'mdi-close-circle-outline'
-      }[outcome]
+      return STORAGE_OUTCOME_PRESENTATION[outcome].icon
     },
     isIngressAction(handler: string): boolean {
       return /import|restore|ingress/iu.test(handler)
@@ -675,15 +694,11 @@ export default {
       try {
         const result = await executeStorageAction(window.fetch.bind(window), targetKey, handler)
         this.lastOperation = result
-        const presentation = {
-          succeeded: { style: 'success', icon: 'check' },
-          partial: { style: 'warning', icon: 'alert' },
-          failed: { style: 'error', icon: 'alert' }
-        }[result.outcome]
+        const presentation = STORAGE_OUTCOME_PRESENTATION[result.outcome]
         showNotification(wikiStore, {
           message: result.message,
-          style: presentation.style,
-          icon: presentation.icon
+          style: presentation.color,
+          icon: presentation.notificationIcon
         })
       } catch (err) {
         pushGraphError(wikiStore, err)

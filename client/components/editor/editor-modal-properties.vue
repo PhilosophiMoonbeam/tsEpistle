@@ -540,8 +540,8 @@ export default defineComponent({
         window.clearTimeout(this.tagSearchTimer)
         this.tagSearchTimer = null
       }
+      this.tagSearchRequest++
       if (!this.modelValue || _.isEmpty(newValue)) {
-        this.tagSearchRequest++
         this.tagSearchLoading = false
         this.newTagSuggestions = []
         return
@@ -604,6 +604,7 @@ export default defineComponent({
       try {
         const translations = await linkPageLocaleRelation(window.fetch.bind(window), wikiStore.page.id, id)
         if (this.editorDisposed || request !== this.translationsRequest) return false
+        this.translationError = ''
         this.translations = translations
       } catch (err) {
         if (this.editorDisposed || request !== this.translationsRequest) return false

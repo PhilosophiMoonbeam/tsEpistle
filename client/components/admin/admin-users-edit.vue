@@ -86,6 +86,8 @@
                     v-text-field(
                       ref='iptEmail'
                       v-model='user.email'
+                      type='email'
+                      autocomplete='email'
                       :label='$t(`admin:users.email`)'
                       variant="solo"
                       hide-details
@@ -154,7 +156,7 @@
                     template(v-slot:activator='{ props: menuProps }')
                       v-tooltip(location="top")
                         template(v-slot:activator='{ props: tooltipProps }')
-                          v-btn(icon, color='grey', size="x-small", v-bind='{ ...menuProps, ...tooltipProps }', @click='focusField(`iptNewPassword`)', aria-label='Change password')
+                          v-btn(icon, color='grey', size="x-small", v-bind='mergeActivatorProps(menuProps, tooltipProps)', @click='focusField(`iptNewPassword`)', aria-label='Change password')
                             v-icon mdi-pencil
                         span {{$t('admin:users.changePassword')}}
                     v-card
@@ -166,6 +168,7 @@
                         hide-details
                         append-icon='mdi-check'
                         type='password'
+                        autocomplete='new-password'
                         @click:append='editPop.newPassword = false'
                         @keydown.enter='editPop.newPassword = false'
                         @keydown.esc='editPop.newPassword = false'
@@ -380,6 +383,7 @@
         user-search(v-model='deleteSearchUserDialog', @select='assignDeleteUser')
 </template>
 <script lang='ts'>
+import { mergeProps } from 'vue'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import StatusIndicator from '@/components/common/status-indicator.vue'
@@ -446,6 +450,7 @@ export default {
   data () {
     return {
       userLoadRequestId: 0,
+      groupsLoadRequestId: 0,
       userLoadState: 'loading' as 'loading' | 'ready' | 'error',
       actionLoading: '',
       userSnapshot: '',
@@ -471,7 +476,7 @@ export default {
       newPassword: '',
       welcomeEmailLoading: false,
       user: createEmptyUser(),
-      timezones: [
+      timezones: Object.freeze([
         { text: '(GMT-11:00) Niue', value: 'Pacific/Niue' },
         { text: '(GMT-11:00) Pago Pago', value: 'Pacific/Pago_Pago' },
         { text: '(GMT-10:00) Hawaii Time', value: 'Pacific/Honolulu' },
@@ -722,7 +727,7 @@ export default {
         { text: '(GMT+13:00) Tongatapu', value: 'Pacific/Tongatapu' },
         { text: '(GMT+14:00) Apia', value: 'Pacific/Apia' },
         { text: '(GMT+14:00) Kiritimati', value: 'Pacific/Kiritimati' }
-      ]
+      ])
     }
   },
   computed: {
@@ -809,17 +814,22 @@ export default {
       }
     },
     async loadGroups() {
+      const requestId = ++this.groupsLoadRequestId
       wikiStore.startLoading('admin-groups-refresh')
       try {
-        this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+        const groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
+        if (requestId !== this.groupsLoadRequestId) return
+        this.groups = groups
       } catch (err) {
+        if (requestId !== this.groupsLoadRequestId) return
         wikiStore.showNotification({
           style: 'red',
           message: getErrorMessage(err),
           icon: 'alert'
         })
+      } finally {
+        wikiStore.stopLoading('admin-groups-refresh')
       }
-      wikiStore.stopLoading('admin-groups-refresh')
     },
     /**
      * Activate a user (if previously deactivated)
@@ -972,6 +982,9 @@ export default {
         }, 200)
       })
     },
+    mergeActivatorProps(menuProps: Parameters<typeof mergeProps>[number], tooltipProps: Parameters<typeof mergeProps>[number]) {
+      return mergeProps(menuProps, tooltipProps)
+    },
     /**
      * Assign group to user
      */
@@ -1078,6 +1091,10 @@ export default {
   created() {
     this.loadGroups()
     this.loadUser()
+  },
+  beforeUnmount() {
+    this.groupsLoadRequestId++
+    this.userLoadRequestId++
   }
 }
 </script>

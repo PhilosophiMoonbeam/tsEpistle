@@ -15,7 +15,8 @@
               variant="outlined"
               href='https://docs.requarks.io/navigation'
               target='_blank'
-              :aria-label='$t(`admin:navigation.title`)'
+              rel='noopener'
+              aria-label='Open navigation documentation in a new tab'
               title='Open navigation documentation'
             )
               v-icon mdi-help-circle
@@ -220,11 +221,11 @@
                           )
                           .text-body-small.pt-3.pl-5 The default icon set is #[strong Material Design Icons]. In order to use another icon set, you must first select it in the Theme administration section.
                           .text-body-small.pt-3.pl-5: strong Material Design Icons
-                          .text-body-small.pl-5 Refer to the #[a(href='https://materialdesignicons.com/', target='_blank') Material Design Icons Reference] for the list of all possible values. You must prefix all values with #[code mdi-], e.g. #[code mdi-home]
+                          .text-body-small.pl-5 Refer to the #[a(href='https://materialdesignicons.com/', target='_blank', rel='noopener') Material Design Icons Reference] for the list of all possible values. You must prefix all values with #[code mdi-], e.g. #[code mdi-home]
                           .text-body-small.pt-3.pl-5: strong Font Awesome 5
-                          .text-body-small.pl-5 Refer to the #[a(href='https://fontawesome.com/icons?d=gallery&m=free', target='_blank') Font Awesome 5 Reference] for the list of all possible values. You must prefix all values with #[code fas fa-], e.g. #[code fas fa-home]. Note that some icons use different prefixes (e.g. #[code fab], #[code fad], #[code fal], #[code far]).
+                          .text-body-small.pl-5 Refer to the #[a(href='https://fontawesome.com/icons?d=gallery&m=free', target='_blank', rel='noopener') Font Awesome 5 Reference] for the list of all possible values. You must prefix all values with #[code fas fa-], e.g. #[code fas fa-home]. Note that some icons use different prefixes (e.g. #[code fab], #[code fad], #[code fal], #[code far]).
                           .text-body-small.pt-3.pl-5: strong Font Awesome 4
-                          .text-body-small.pl-5 Refer to the #[a(href='https://fontawesome.com/v4.7.0/icons/', target='_blank') Font Awesome 4 Reference] for the list of all possible values. You must prefix all values with #[code fa fa-], e.g. #[code fa fa-home]
+                          .text-body-small.pl-5 Refer to the #[a(href='https://fontawesome.com/v4.7.0/icons/', target='_blank', rel='noopener') Font Awesome 4 Reference] for the list of all possible values. You must prefix all values with #[code fa fa-], e.g. #[code fa fa-home]
                         v-divider
                         v-card-text
                           v-select(
@@ -322,11 +323,11 @@
           )
             v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
-    v-dialog(v-model='copyFromLocaleDialogIsShown', max-width='650', persistent)
+    v-dialog(v-model='copyFromLocaleDialogIsShown', max-width='650', persistent, aria-labelledby='copy-navigation-dialog-title')
       v-card
         .dialog-header.is-short.is-primary
           v-icon.mr-3(color='white') mdi-arrange-send-backward
-          span {{$t('admin:navigation.copyFromLocale')}}
+          span#copy-navigation-dialog-title {{$t('admin:navigation.copyFromLocale')}}
         v-card-text.pt-5
           .text-body-medium {{$t('admin:navigation.copyFromLocaleInfoText')}}
           v-select.mt-3(

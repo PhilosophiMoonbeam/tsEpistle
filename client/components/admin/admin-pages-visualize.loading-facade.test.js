@@ -12,6 +12,8 @@ describe('admin-pages-visualize loading facade migration guard', () => {
   const executeLoadPages = new AsyncFunction(
     'fetchPageLinks',
     'wikiStore',
+    'markRaw',
+    'getErrorMessage',
     'window',
     loadPagesBody.slice(loadPagesBody.indexOf('{') + 1, loadPagesBody.lastIndexOf('}'))
   )
@@ -39,6 +41,12 @@ describe('admin-pages-visualize loading facade migration guard', () => {
       })
     const loadingEvents = []
     const errors = []
+    const markedDatasets = []
+    const markRaw = pages => {
+      markedDatasets.push(pages)
+      return pages
+    }
+    const getErrorMessage = err => err.message
     const wikiStore = {
       startLoading(key) {
         loadingEvents.push(['start', key])
@@ -54,28 +62,56 @@ describe('admin-pages-visualize loading facade migration guard', () => {
     const state = {
       currentLocale: 'A',
       pageLoadRequestId: 0,
-      pages: []
+      pages: [],
+      loading: false,
+      errorMessage: ''
     }
 
-    const localeARequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, browserWindow)
+    const localeARequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, markRaw, getErrorMessage, browserWindow)
     state.currentLocale = 'B'
-    const localeBRequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, browserWindow)
+    const localeBRequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, markRaw, getErrorMessage, browserWindow)
 
-    pendingRequests.get('B').resolve([{ id: 2, path: 'b', title: 'Locale B', links: [] }])
-    await localeBRequest
+    const staleError = new Error('stale locale A failure')
+    pendingRequests.get('A').reject(staleError)
+    await localeARequest
+    expect(errors).toEqual([])
+    expect(state.errorMessage).toBe('')
+    expect(state.loading).toBe(true)
+    expect(markedDatasets).toEqual([])
     expect(loadingEvents).toEqual([
       ['start', 'admin-pages-refresh'],
       ['start', 'admin-pages-refresh'],
       ['stop', 'admin-pages-refresh']
     ])
 
-    pendingRequests.get('A').reject(new Error('stale locale A failure'))
-    await localeARequest
-    expect(errors).toEqual([])
+    const localeBPages = [{ id: 2, path: 'b', title: 'Locale B', links: [] }]
+    pendingRequests.get('B').resolve(localeBPages)
+    await localeBRequest
+    expect(state.pages).toBe(localeBPages)
+    expect(markedDatasets).toHaveLength(1)
+    expect(markedDatasets[0]).toBe(localeBPages)
+    expect(state.loading).toBe(false)
     expect(loadingEvents).toEqual([
       ['start', 'admin-pages-refresh'],
       ['start', 'admin-pages-refresh'],
       ['stop', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh']
+    ])
+
+    state.currentLocale = 'C'
+    const localeCRequest = executeLoadPages.call(state, fetchPageLinks, wikiStore, markRaw, getErrorMessage, browserWindow)
+    const currentError = new Error('current locale C failure')
+    pendingRequests.get('C').reject(currentError)
+    await localeCRequest
+    expect(errors).toEqual([currentError])
+    expect(state.errorMessage).toBe('current locale C failure')
+    expect(state.loading).toBe(false)
+    expect(loadingEvents).toEqual([
+      ['start', 'admin-pages-refresh'],
+      ['start', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh'],
+      ['stop', 'admin-pages-refresh'],
+      ['start', 'admin-pages-refresh'],
       ['stop', 'admin-pages-refresh']
     ])
   })

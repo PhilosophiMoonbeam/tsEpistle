@@ -127,7 +127,7 @@
                             v-list-item-title {{$t('common:actions.delete')}}
                 template(v-slot:no-data)
                   v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
-              .text-center.py-2(v-if='this.pageTotal > 1')
+              .text-center.py-2(v-if='pageTotal > 1')
                 v-pagination(v-model='pagination', :length='pageTotal', color='teal')
               .d-flex.mt-3
                 v-toolbar.radius-7(flat, :color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-4`', density="compact", height='44')
@@ -239,6 +239,8 @@ import { createModalFocusScope, type ModalFocusScope } from '../common/modal-foc
 const FilePond = vueFilePond() as unknown as Component
 const localeSegmentRegex = /^[A-Z]{2}(-[A-Z]{2})?$/i
 const disallowedFolderChars = /[A-Z()=.!@#$%?&*+`~<>,;:\\/[\]¬{| ]/
+const BYTE_UNITS = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
+const LOG_1000 = Math.log(1000)
 
 type FilePondFile = {
   id: string
@@ -415,13 +417,12 @@ export default defineComponent({
       this.currentFileId = id
     },
     prettyBytes(num: number) {
-      if (typeof num !== 'number' || isNaN(num)) {
+      if (typeof num !== 'number' || Number.isNaN(num)) {
         throw new TypeError('Expected a number')
       }
 
-      const exponent = Math.min(Math.floor(Math.log(Math.abs(num)) / Math.log(1000)), 8)
+      const exponent = Math.min(Math.floor(Math.log(Math.abs(num)) / LOG_1000), BYTE_UNITS.length - 1)
       const neg = num < 0
-      const units = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
 
       if (neg) {
         num = -num
@@ -430,7 +431,7 @@ export default defineComponent({
         return (neg ? '-' : '') + num + ' B'
       }
       const scaled = Number((num / Math.pow(1000, exponent)).toFixed(2))
-      const unit = units[exponent]!
+      const unit = BYTE_UNITS[exponent]!
 
       return (neg ? '-' : '') + scaled + ' ' + unit
     },

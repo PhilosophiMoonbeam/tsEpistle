@@ -17,6 +17,7 @@
           color="primary"
           hide-details
           v-model='entities'
+          :aria-describedby='entities.length < 1 ? `export-entities-error` : undefined'
         )
           template(v-slot:label)
             div
@@ -30,7 +31,7 @@
           v-model='filePath'
           :error-messages='filePathError'
         )
-        .text-body-small.text-error.mt-1(v-if='entities.length < 1') Select at least one entity to export.
+        .text-body-small.text-error.mt-1#export-entities-error(v-if='entities.length < 1') Select at least one entity to export.
         v-alert.mt-3(color='warning', variant="outlined", icon='mdi-alert', prominent)
           .text-body-medium Depending on your selection, the archive could contain sensitive data such as site configuration keys and hashed user passwords. Ensure the exported archive is treated accordingly.
           .text-body-medium For example, you may want to encrypt the archive if stored for backup purposes.

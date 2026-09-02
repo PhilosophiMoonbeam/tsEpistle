@@ -178,7 +178,7 @@
   padding-block: var(--wiki-space-10) !important;
 }
 
-@media (max-width: 599px) {
+@media (max-width: 599.98px) {
   .v-application__wrap {
     background-size: auto, auto, var(--wiki-grid-size) var(--wiki-grid-size), var(--wiki-grid-size) var(--wiki-grid-size);
   }
@@ -331,7 +331,7 @@
   }
 }
 
-@media (max-width: 599px) {
+@media (max-width: 599.98px) {
   .onboarding,
   .notfound,
   .unauthorized,

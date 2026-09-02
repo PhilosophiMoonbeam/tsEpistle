@@ -80,7 +80,7 @@
     </section>
 
     <div class="agent-workspace">
-      <nav class="agent-sections" aria-label="Agent administration sections" role="tablist">
+      <nav class="agent-sections" aria-label="Agent administration sections" role="tablist" :aria-orientation="width > 960 ? 'vertical' : 'horizontal'">
         <div class="agent-sections__label"><span>Control index</span><small>4 sections</small></div>
         <button
           v-for="(section, index) in sectionItems"
@@ -96,6 +96,8 @@
           @click="tab = section.value"
           @keydown.left.prevent="selectRelativeSection(index, -1, $event)"
           @keydown.right.prevent="selectRelativeSection(index, 1, $event)"
+          @keydown.up="selectVerticalSection(index, -1, $event)"
+          @keydown.down="selectVerticalSection(index, 1, $event)"
           @keydown.home.prevent="selectSection(0, $event)"
           @keydown.end.prevent="selectSection(sectionItems.length - 1, $event)"
         >
@@ -205,7 +207,7 @@
                       <template #activator="{ props: menuProps }"><v-btn v-bind="menuProps" icon="mdi-dots-horizontal" variant="text" density="comfortable" :aria-label="`Actions for ${profile.displayName}`" :disabled="Boolean(actionBusyKey)" /></template>
                       <v-list density="comfortable">
                         <v-list-item prepend-icon="mdi-pencil-outline" title="Edit settings" subtitle="Updates this profile" :disabled="Boolean(actionBusyKey)" @click="openProfile(profile)" />
-                        <v-list-item prepend-icon="mdi-connection" :title="profile.status === 'disabled' ? 'Test and enable' : 'Test connection'" :subtitle="connectionActionSubtitle(profile)" :disabled="!profile.secretConfigured || Boolean(actionBusyKey)" :loading="actionBusyKey === `test:${profile.id}`" @click="testConnection(profile)" />
+                        <v-list-item prepend-icon="mdi-connection" :title="profile.status === 'disabled' ? 'Test and enable' : 'Test connection'" :subtitle="connectionActionSubtitle(profile)" :disabled="!profile.secretConfigured || Boolean(actionBusyKey)" @click="testConnection(profile)" />
                         <v-list-item prepend-icon="mdi-account-multiple-outline" title="Edit access grants" subtitle="Changes profile visibility" :disabled="Boolean(actionBusyKey)" @click="openGrants(profile)" />
                         <v-list-item v-if="profile.status === 'disabled'" prepend-icon="mdi-play-circle-outline" title="Enable provider" :subtitle="enableProfileSubtitle(profile)" :disabled="!profile.conformed || !profile.secretConfigured || Boolean(actionBusyKey)" @click="confirmEnableProfile(profile)" />
                         <v-list-item v-else prepend-icon="mdi-pause-circle-outline" title="Disable provider" :subtitle="profile.isGlobalDefault ? 'Clears the workspace default and stops new runs' : 'Stops new runs from using it'" :disabled="Boolean(actionBusyKey)" @click="setProfileEnabled(profile, false)" />
@@ -287,13 +289,13 @@
       </v-window>
     </div>
 
-    <v-dialog :model-value="profileDialog" max-width="76rem" scrollable :fullscreen="smAndDown" :persistent="saving" @update:model-value="onProfileDialogModelValue">
+    <v-dialog :model-value="profileDialog" max-width="76rem" scrollable :fullscreen="smAndDown" :persistent="saving" aria-labelledby="provider-profile-title" @update:model-value="onProfileDialogModelValue">
       <v-card class="profile-editor" :aria-busy="saving">
         <div class="profile-editor__header">
           <span class="profile-editor__mark"><v-icon size="24">mdi-creation-outline</v-icon></span>
           <div class="profile-editor__title">
             <div class="agent-panel__eyebrow">{{ editingProfile ? 'Provider configuration' : 'New inference connection' }}</div>
-            <h2>{{ editingProfile ? `Edit ${editingProfile.displayName}` : 'Add provider profile' }}</h2>
+            <h2 id="provider-profile-title">{{ editingProfile ? `Edit ${editingProfile.displayName}` : 'Add provider profile' }}</h2>
             <p>{{ editingProfile ? 'Update the connection, models, or operating limits. Saving runs a fresh verification.' : 'A guided setup for a secure, verified Agent provider.' }}</p>
           </div>
           <v-spacer />
@@ -353,7 +355,7 @@
             <section v-else-if="profileStep === 'connection'" class="profile-form-section">
               <div class="profile-form-section__intro"><span><v-icon size="21">mdi-connection</v-icon></span><div><h3>Secure the connection</h3><p>Credentials stay server-managed and every save performs a live capability check.</p></div></div>
               <div class="form-grid">
-                <v-text-field v-model="profileDraft.baseUrl" :rules="[providerBaseUrlRule]" label="Base URL" hint="Public HTTPS API root or base path; query strings, fragments, credentials, and local destinations are not allowed." persistent-hint autocomplete="url" spellcheck="false" required />
+                <v-text-field v-model="profileDraft.baseUrl" :rules="providerBaseUrlRules" label="Base URL" hint="Public HTTPS API root or base path; query strings, fragments, credentials, and local destinations are not allowed." persistent-hint autocomplete="url" spellcheck="false" required />
                 <v-select v-if="availableAuthModes.length > 1" v-model="profileDraft.authMode" :items="availableAuthModes" label="Authentication mode" />
                 <v-text-field class="secret-field" v-model="profileDraft.secretValue" label="API key" type="password" autocomplete="new-password" :hint="editingProfile && editingProfile.secretConfigured ? 'Leave blank to retain the current encrypted credential, or enter a replacement.' : 'Encrypted with the server-managed provider key and never returned by the API.'" persistent-hint :required="!editingProfile || !editingProfile.secretConfigured" prepend-inner-icon="mdi-key-outline" />
               </div>
@@ -383,19 +385,19 @@
               <v-alert type="info" variant="tonal" density="compact" class="mb-5">These safe defaults suit most deployments. Cost values are reservation ceilings enforced against this profile revision's immutable token pricing schedule.</v-alert>
               <div class="limit-group">
                 <h4>Model boundaries</h4>
-                <div class="form-grid"><v-text-field v-model.number="profileDraft.maxContextTokens" type="number" min="1024" max="10000000" step="1" :rules="[integerRule('Maximum context tokens', 1024, 10000000)]" label="Maximum context tokens" /><v-text-field v-model.number="profileDraft.maxOutputTokens" type="number" min="1" max="1000000" step="1" :rules="[integerRule('Maximum output tokens', 1, 1000000)]" label="Maximum output tokens" /></div>
+                <div class="form-grid"><v-text-field v-model.number="profileDraft.maxContextTokens" type="number" min="1024" max="10000000" step="1" :rules="profileRules.maxContextTokens" label="Maximum context tokens" /><v-text-field v-model.number="profileDraft.maxOutputTokens" type="number" min="1" max="1000000" step="1" :rules="profileRules.maxOutputTokens" label="Maximum output tokens" /></div>
               </div>
               <div class="limit-group">
                 <h4>Daily ceilings</h4>
-                <div class="form-grid"><v-text-field v-model.number="profileDraft.dailyTokens" type="number" min="1" max="1000000000" step="1" :rules="[integerRule('Daily token limit', 1, 1000000000)]" label="Daily token limit" /><v-text-field v-model.number="profileDraft.dailyCostMicros" type="number" min="1" step="1" :rules="[integerRule('Daily cost reservation', 1, Number.MAX_SAFE_INTEGER)]" label="Daily cost reservation (micros)" /></div>
+                <div class="form-grid"><v-text-field v-model.number="profileDraft.dailyTokens" type="number" min="1" max="1000000000" step="1" :rules="profileRules.dailyTokens" label="Daily token limit" /><v-text-field v-model.number="profileDraft.dailyCostMicros" type="number" min="1" step="1" :rules="profileRules.dailyCostMicros" label="Daily cost reservation (micros)" /></div>
               </div>
               <div class="limit-group">
                 <h4>Per-run reservations</h4>
-                <div class="form-grid"><v-text-field v-model.number="profileDraft.reservationTokens" type="number" min="1" max="10000000" step="1" :rules="[integerRule('Token reservation', 1, 10000000)]" label="Token reservation" /><v-text-field v-model.number="profileDraft.reservationCostMicros" type="number" min="1" step="1" :rules="[integerRule('Cost reservation', 1, Number.MAX_SAFE_INTEGER)]" label="Cost reservation (micros)" /></div>
+                <div class="form-grid"><v-text-field v-model.number="profileDraft.reservationTokens" type="number" min="1" max="10000000" step="1" :rules="profileRules.reservationTokens" label="Token reservation" /><v-text-field v-model.number="profileDraft.reservationCostMicros" type="number" min="1" step="1" :rules="profileRules.reservationCostMicros" label="Cost reservation (micros)" /></div>
               </div>
               <div class="limit-group">
                 <h4>Reliability</h4>
-                <div class="form-grid"><v-text-field v-model.number="profileDraft.timeoutMs" type="number" min="1000" max="300000" step="1" :rules="[integerRule('Request timeout', 1000, 300000)]" label="Request timeout (ms)" /><v-text-field v-model.number="profileDraft.maxAttempts" type="number" min="1" max="10" step="1" :rules="[integerRule('Maximum attempts', 1, 10)]" label="Maximum attempts" /></div>
+                <div class="form-grid"><v-text-field v-model.number="profileDraft.timeoutMs" type="number" min="1000" max="300000" step="1" :rules="profileRules.timeoutMs" label="Request timeout (ms)" /><v-text-field v-model.number="profileDraft.maxAttempts" type="number" min="1" max="10" step="1" :rules="profileRules.maxAttempts" label="Maximum attempts" /></div>
               </div>
             </section>
           </v-form>
@@ -418,57 +420,57 @@
         </div>
       </v-card>
     </v-dialog>
-    <v-dialog v-model="profileDiscardDialog" max-width="32rem">
+    <v-dialog v-model="profileDiscardDialog" max-width="32rem" aria-labelledby="provider-discard-title">
       <v-card class="compact-dialog">
-        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon size="23">mdi-alert-outline</v-icon></span><div><div class="agent-panel__eyebrow">Unsaved configuration</div><h2>Discard provider changes?</h2><p>Your edits have not been verified or saved.</p></div></div>
+        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon size="23">mdi-alert-outline</v-icon></span><div><div class="agent-panel__eyebrow">Unsaved configuration</div><h2 id="provider-discard-title">Discard provider changes?</h2><p>Your edits have not been verified or saved.</p></div></div>
         <v-card-text>Keep editing to review the draft, or discard every change made since this editor was opened.</v-card-text>
         <v-card-actions><v-spacer /><v-btn @click="profileDiscardDialog = false">Keep editing</v-btn><v-btn color="error" variant="tonal" @click="discardProfileChanges">Discard changes</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
-    <v-dialog :model-value="enablingProfile !== null" max-width="34rem" :persistent="Boolean(actionBusyKey)" @update:model-value="value => { if (!value && !actionBusyKey) enablingProfile = null }">
+    <v-dialog :model-value="enablingProfile !== null" max-width="34rem" :persistent="Boolean(actionBusyKey)" aria-labelledby="provider-enable-title" @update:model-value="value => { if (!value && !actionBusyKey) enablingProfile = null }">
       <v-card class="compact-dialog" :aria-busy="actionBusyKey.startsWith('enabled:')">
-        <div class="compact-dialog__header"><span><v-icon size="23">mdi-play-circle-outline</v-icon></span><div><div class="agent-panel__eyebrow">Enablement review</div><h2>Enable provider profile?</h2><p>New Agent runs will be able to use this connection.</p></div></div>
+        <div class="compact-dialog__header"><span><v-icon size="23">mdi-play-circle-outline</v-icon></span><div><div class="agent-panel__eyebrow">Enablement review</div><h2 id="provider-enable-title">Enable provider profile?</h2><p>New Agent runs will be able to use this connection.</p></div></div>
         <v-card-text><v-alert v-if="enableError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ enableError }}</v-alert><p><strong>{{ enablingProfile?.displayName }}</strong> has a verified connection and will become available to {{ enablingProfile?.exposureMode === 'all_agent_users' ? 'every Agent user' : groupNames(enablingProfile?.groupIds ?? []) }}.</p><v-alert v-if="enablingProfile && willBecomeDefault(enablingProfile)" type="warning" variant="tonal" density="compact">No global default exists. Enabling this profile will also make it the workspace default for every Agent user.</v-alert></v-card-text>
         <v-card-actions><v-spacer /><v-btn :disabled="Boolean(actionBusyKey)" @click="enablingProfile = null">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-play-circle-outline" :loading="actionBusyKey.startsWith('enabled:')" :disabled="Boolean(actionBusyKey)" @click="enableConfirmedProfile">Enable provider</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
-    <v-dialog :model-value="browserEnableTarget !== null" max-width="36rem" :persistent="Boolean(actionBusyKey)" @update:model-value="value => { if (!value && !actionBusyKey) browserEnableTarget = null }">
+    <v-dialog :model-value="browserEnableTarget !== null" max-width="36rem" :persistent="Boolean(actionBusyKey)" aria-labelledby="browser-enable-title" @update:model-value="value => { if (!value && !actionBusyKey) browserEnableTarget = null }">
       <v-card class="compact-dialog" :aria-busy="actionBusyKey.startsWith('browser:')">
-        <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon size="23">mdi-web-check</v-icon></span><div><div class="agent-panel__eyebrow">Network allowlist review</div><h2>Allow this browser target?</h2><p>The isolated browser will be permitted to request this exact destination.</p></div></div>
+        <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon size="23">mdi-web-check</v-icon></span><div><div class="agent-panel__eyebrow">Network allowlist review</div><h2 id="browser-enable-title">Allow this browser target?</h2><p>The isolated browser will be permitted to request this exact destination.</p></div></div>
         <v-card-text><v-alert v-if="browserEnableError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ browserEnableError }}</v-alert><p class="browser-confirm-url"><code>{{ browserEnableTarget?.canonicalUrl }}</code></p><p class="mb-0">Only this canonical URL is approved. The recorded policy hash remains unchanged.</p></v-card-text>
         <v-card-actions><v-spacer /><v-btn :disabled="Boolean(actionBusyKey)" @click="browserEnableTarget = null">Cancel</v-btn><v-btn color="primary" prepend-icon="mdi-shield-check-outline" :loading="actionBusyKey.startsWith('browser:')" :disabled="Boolean(actionBusyKey)" @click="allowConfirmedBrowserTarget">Allow target</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
 
-    <v-dialog :model-value="removingProfile !== null" max-width="34rem" :persistent="actionBusyKey === 'remove'" @update:model-value="value => { if (!value) removingProfile = null }">
+    <v-dialog :model-value="removingProfile !== null" max-width="34rem" :persistent="actionBusyKey === 'remove'" aria-labelledby="provider-remove-title" @update:model-value="value => { if (!value) removingProfile = null }">
       <v-card class="compact-dialog" :aria-busy="actionBusyKey === 'remove'">
-        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon size="23">mdi-delete-outline</v-icon></span><div><div class="agent-panel__eyebrow">Destructive operation</div><h2>Remove provider profile?</h2><p>This cannot be undone.</p></div></div>
+        <div class="compact-dialog__header compact-dialog__header--danger"><span><v-icon size="23">mdi-delete-outline</v-icon></span><div><div class="agent-panel__eyebrow">Destructive operation</div><h2 id="provider-remove-title">Remove provider profile?</h2><p>This cannot be undone.</p></div></div>
         <v-card-text><v-alert v-if="removeError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ removeError }}</v-alert><p><strong>{{ removingProfile?.displayName }}</strong> will no longer be available to sessions or new runs.</p><p class="mb-0">The configuration is removed from use and its server-managed API keys are permanently deleted. Audit records are retained.</p></v-card-text>
         <v-alert v-if="removingProfile?.isGlobalDefault" class="mx-6 mt-4 mb-0" type="warning" variant="tonal" density="compact">This is the global default. Removing it leaves new conversations without a default until another enabled provider is selected.</v-alert>
         <v-card-actions><v-spacer /><v-btn :disabled="Boolean(actionBusyKey)" @click="removingProfile = null">Cancel</v-btn><v-btn color="error" prepend-icon="mdi-delete-forever-outline" :loading="actionBusyKey === 'remove'" :disabled="Boolean(actionBusyKey)" @click="removeProfile">{{ removingProfile?.isGlobalDefault ? 'Remove default provider' : 'Remove provider' }}</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="grantsDialog" max-width="40rem" scrollable :persistent="actionBusyKey === 'grants'">
+    <v-dialog v-model="grantsDialog" max-width="40rem" scrollable :persistent="actionBusyKey === 'grants'" aria-labelledby="provider-grants-title">
       <v-card class="compact-dialog">
-        <div class="compact-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><h2>{{ grantProfile ? `Access for ${grantProfile.displayName}` : 'Provider access' }}</h2><p>Control who can discover and use this profile.</p></div></div>
+        <div class="compact-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><h2 id="provider-grants-title">{{ grantProfile ? `Access for ${grantProfile.displayName}` : 'Provider access' }}</h2><p>Control who can discover and use this profile.</p></div></div>
         <v-card-text><v-alert v-if="grantsError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ grantsError }}</v-alert><v-select v-model="grantDraft.exposureMode" :items="exposureModes" label="Available to" /><v-autocomplete v-if="grantDraft.exposureMode === 'groups'" v-model="grantDraft.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this provider through any selected group." persistent-hint /><v-alert class="mt-4" type="info" variant="tonal" density="compact">The global default is available to everyone. Group-assigned profiles augment that default and appear as a session choice only when a user has more than one available profile.</v-alert></v-card-text>
         <v-alert v-if="grantProfile?.isGlobalDefault && grantsDirty" class="mx-6 mt-4 mb-0" type="warning" variant="tonal" density="compact">Saving any access change clears this profile as the global default. Choose another global default before the next Agent conversation.</v-alert>
         <v-card-actions><span class="compact-dialog__audit"><v-icon size="16">mdi-text-box-check-outline</v-icon>Access changes are audited</span><v-spacer /><v-btn :disabled="actionBusyKey === 'grants'" @click="grantsDialog = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyKey === 'grants'" :disabled="Boolean(actionBusyKey) || !grantsDirty || (grantDraft.exposureMode === 'groups' && grantDraft.groupIds.length === 0)" @click="saveGrants">{{ grantProfile?.isGlobalDefault ? 'Save and clear default' : 'Save access' }}</v-btn></v-card-actions>
       </v-card>
     </v-dialog>
 
-    <v-dialog v-model="browserDialog" max-width="40rem" :persistent="actionBusyKey === 'browser-create'">
+    <v-dialog v-model="browserDialog" max-width="40rem" :persistent="actionBusyKey === 'browser-create'" aria-labelledby="browser-create-title">
       <v-card class="compact-dialog" :aria-busy="actionBusyKey === 'browser-create'">
-        <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon size="23">mdi-web-plus</v-icon></span><div><div class="agent-panel__eyebrow">Network policy entry</div><h2>Add browser target</h2><p>Approve one exact canonical HTTPS destination.</p></div></div>
+        <div class="compact-dialog__header compact-dialog__header--teal"><span><v-icon size="23">mdi-web-plus</v-icon></span><div><div class="agent-panel__eyebrow">Network policy entry</div><h2 id="browser-create-title">Add browser target</h2><p>Approve one exact canonical HTTPS destination.</p></div></div>
         <v-form id="browser-target-form" @submit.prevent="createBrowserTarget">
           <v-card-text>
             <v-alert v-if="browserError" class="mb-3" type="error" variant="tonal" density="compact" role="alert">{{ browserError }}</v-alert>
             <v-alert class="mb-4" type="warning" variant="tonal" density="compact">Approval is exact: paths and origins are not broadened automatically. Confirm the destination is trusted before enabling it.</v-alert>
-            <v-text-field v-model="browserUrl" :rules="[browserUrlRule]" label="Exact canonical HTTPS URL" placeholder="https://example.com/path" autofocus prepend-inner-icon="mdi-lock-outline" autocomplete="url" spellcheck="false" required />
+            <v-text-field v-model="browserUrl" :rules="browserUrlRules" label="Exact canonical HTTPS URL" placeholder="https://example.com/path" autofocus prepend-inner-icon="mdi-lock-outline" autocomplete="url" spellcheck="false" required />
             <v-checkbox v-model="browserEnabled" label="Enable immediately" hint="Leave off to stage the target in a paused state." persistent-hint />
           </v-card-text>
         </v-form>
@@ -543,7 +545,7 @@ interface GroupOption { id: number; name: string; isSystem: boolean }
 interface ProfileDraft { displayName: string; transportKind: AgentProviderTransport; model: string; utilityModel: string; agentReasoningEffort: AgentReasoningEffort | null; utilityReasoningEffort: AgentReasoningEffort | null; baseUrl: string; authMode: AgentProviderAuthMode; secretValue: string; exposureMode: 'all_agent_users' | 'groups'; groupIds: number[]; maxContextTokens: number; maxOutputTokens: number; dailyTokens: number; dailyCostMicros: number; reservationTokens: number; reservationCostMicros: number; reservationMilliseconds: number; timeoutMs: number; maxRetries: number; maxAttempts: number; promptVersion: number; additionalHeaders: Record<string, string>; structuredOutput: AgentProviderStructuredOutput; usage: AgentProviderUsageMode; streaming: boolean; toolCalling: AgentProviderToolCalling; parallelToolCalls: boolean; cancellation: boolean }
 
 const props = withDefaults(defineProps<{ csrfToken: string; embedded?: boolean }>(), { embedded: false })
-const { smAndDown } = useDisplay()
+const { smAndDown, width } = useDisplay()
 const embedded = computed(() => props.embedded)
 const tab = ref('runtime')
 type ProfileStep = 'identity' | 'models' | 'connection' | 'access' | 'limits'
@@ -717,6 +719,11 @@ const selectRelativeSection = (currentIndex: number, direction: -1 | 1, event: K
   const rtlMultiplier = target && getComputedStyle(target).direction === 'rtl' ? -1 : 1
   selectSection(currentIndex + direction * rtlMultiplier, event)
 }
+const selectVerticalSection = (currentIndex: number, direction: -1 | 1, event: KeyboardEvent): void => {
+  if (width.value <= 960) return
+  event.preventDefault()
+  selectSection(currentIndex + direction, event)
+}
 const profileSteps = computed<Array<{ value: ProfileStep; title: string; description: string }>>(() => [
   { value: 'identity', title: 'Setup', description: 'Name and protocol' },
   { value: 'models', title: 'Models', description: 'Roles and reasoning' },
@@ -729,6 +736,16 @@ const currentProfileStep = computed(() => profileSteps.value[profileStepIndex.va
 const profileProgress = computed(() => ((profileStepIndex.value + 1) / profileSteps.value.length) * 100)
 const integerInRange = (value: number, minimum: number, maximum: number): boolean => Number.isSafeInteger(value) && value >= minimum && value <= maximum
 const integerRule = (label: string, minimum: number, maximum: number) => (value: number): true | string => integerInRange(value, minimum, maximum) || `${label} must be a whole number from ${minimum.toLocaleString()} to ${maximum.toLocaleString()}.`
+const profileRules = {
+  maxContextTokens: [integerRule('Maximum context tokens', 1024, 10_000_000)],
+  maxOutputTokens: [integerRule('Maximum output tokens', 1, 1_000_000)],
+  dailyTokens: [integerRule('Daily token limit', 1, 1_000_000_000)],
+  dailyCostMicros: [integerRule('Daily cost reservation', 1, Number.MAX_SAFE_INTEGER)],
+  reservationTokens: [integerRule('Token reservation', 1, 10_000_000)],
+  reservationCostMicros: [integerRule('Cost reservation', 1, Number.MAX_SAFE_INTEGER)],
+  timeoutMs: [integerRule('Request timeout', 1_000, 300_000)],
+  maxAttempts: [integerRule('Maximum attempts', 1, 10)]
+}
 const providerBaseUrlError = computed(() => {
   const input = profileDraft.baseUrl.trim()
   if (!input) return 'Enter a provider base URL.'
@@ -744,6 +761,7 @@ const providerBaseUrlError = computed(() => {
   }
 })
 const providerBaseUrlRule = (): true | string => providerBaseUrlError.value || true
+const providerBaseUrlRules = [providerBaseUrlRule]
 const profileStepIsValid = (step: ProfileStep): boolean => {
   if (step === 'identity') return Boolean(profileDraft.displayName.trim() && profileDraft.transportKind)
   if (step === 'models') return Boolean(profileDraft.model.trim())
@@ -947,6 +965,7 @@ const browserUrlError = computed(() => {
 })
 const isBrowserUrlValid = computed(() => !browserUrlError.value)
 const browserUrlRule = (): true | string => browserUrlError.value || true
+const browserUrlRules = [browserUrlRule]
 const openBrowserDialog = (): void => { browserError.value = ''; browserUrl.value = ''; browserEnabled.value = false; browserDialog.value = true }
 const createBrowserTarget = () => run(async () => {
   if (!isBrowserUrlValid.value) { browserError.value = browserUrlError.value; return }

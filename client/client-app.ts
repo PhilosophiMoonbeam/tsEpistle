@@ -2,7 +2,6 @@ import { createApp, defineAsyncComponent, type AsyncComponentLoader } from 'vue'
 import { createVuetify } from 'vuetify'
 import Hammer from 'hammerjs'
 import moment from 'moment-timezone'
-import _ from 'lodash'
 import helpersPlugin from './helpers/index.ts'
 import boot from './modules/boot.ts'
 import localization from './modules/localization.ts'
@@ -132,9 +131,6 @@ app.use(router)
 app.use(vuetify)
 app.use(i18n)
 app.use(helpersPlugin)
-
-app.config.globalProperties.$lodash = _
-app.config.globalProperties.$moment = moment
 
 window.Hammer = Hammer
 window.WIKI = app

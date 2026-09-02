@@ -1,6 +1,6 @@
 <template lang="pug">
   .tabset
-    ul.tabset-tabs(ref='tabs', role='tablist')
+    ul.tabset-tabs(ref='tabs', role='tablist', aria-label='Content tabs')
       slot(name='tabs')
     .tabset-content(ref='content')
       slot(name='content')
@@ -118,20 +118,20 @@ export default defineComponent({
         }
 
         if (ev.key === 'ArrowLeft') {
-          this.currentTab = Math.max(0, idx - 1)
-          this.tabElements()[this.currentTab]?.focus()
+          this.currentTab = (idx - 1 + tabs.length) % tabs.length
+          tabs[this.currentTab]?.focus()
         } else if (ev.key === 'ArrowRight') {
-          this.currentTab = Math.min(tabs.length - 1, idx + 1)
-          this.tabElements()[this.currentTab]?.focus()
+          this.currentTab = (idx + 1) % tabs.length
+          tabs[this.currentTab]?.focus()
         } else if (isActivationKey) {
           this.currentTab = idx
           node.focus()
         } else if (ev.key === 'Home') {
           this.currentTab = 0
-          this.tabElements()[0]?.focus()
+          tabs[0]?.focus()
         } else if (ev.key === 'End') {
           this.currentTab = tabs.length - 1
-          this.tabElements()[tabs.length - 1]?.focus()
+          tabs[tabs.length - 1]?.focus()
         }
       }, { signal: controller.signal })
     })

@@ -40,7 +40,7 @@
                 async-state(v-else-if='errorMessage', state='error', title='Tags could not be loaded', :message='errorMessage', retry-label='Try again', @retry='refresh(false)')
                 async-state(v-else-if='tags.length < 1', state='empty', :title='$t(`admin:tags.emptyList`)', :message='$t(`admin:tags.noItemsText`)')
                 template(v-else)
-                  v-list.py-2(density="compact", nav)
+                  v-list.py-2(density="compact", nav, role='group', :aria-label='$t("admin:tags.title")')
                     v-list-item(v-if='filteredTags.length < 1')
                       .text-body-small.text-medium-emphasis No tags match “{{ filter }}”.
                       template(v-slot:append)
@@ -49,8 +49,13 @@
                       v-for='tag of filteredTags'
                       :key='tag.id'
                       :active='tag.id === current.id'
-                      active-color='primary'
+                      color='primary'
+                      role='button'
+                      tabindex='0'
+                      :aria-pressed='tag.id === current.id'
                       @click='selectTag(tag)'
+                      @keydown.enter.prevent='selectTag(tag)'
+                      @keydown.space.prevent='selectTag(tag)'
                     )
                       template(v-slot:prepend)
                         v-avatar(size='24', rounded='0'): v-icon(size="18", color='primary') mdi-tag
@@ -90,12 +95,12 @@
                         strong(place='created') {{ $helpers.formatMoment(current.createdAt, 'from') }}
                         strong(place='updated') {{ $helpers.formatMoment(current.updatedAt, 'from') }}
                     .tag-footer-actions
-                      v-dialog(v-model='deleteTagDialog', max-width='500')
+                      v-dialog(v-model='deleteTagDialog', max-width='500', aria-labelledby='delete-tag-dialog-title')
                         template(v-slot:activator='{ props }')
                           v-btn(color='red', variant="outlined", v-bind='props', :disabled='deleting', aria-label='Delete tag')
                             v-icon(color='red') mdi-trash-can-outline
                         v-card
-                          .dialog-header.is-red {{$t('admin:tags.deleteConfirm')}}
+                          .dialog-header.is-red#delete-tag-dialog-title {{$t('admin:tags.deleteConfirm')}}
                           v-card-text.pa-4
                             i18next(tag='span', path='admin:tags.deleteConfirmText')
                               strong(place='tag') {{ current.tag }}
@@ -112,7 +117,6 @@
 </template>
 <script lang='ts'>
 import AsyncState from '@/components/common/async-state.vue'
-import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { deletePageTag, fetchPageTags, updatePageTag } from '../../helpers/pages-api'
@@ -148,10 +152,10 @@ export default {
     }
   },
   computed: {
-    filteredTags () {
+    filteredTags (): EditablePageTagRow[] {
       const query = this.filter.trim().toLocaleLowerCase()
       if (query.length > 0) {
-        return _.filter(this.tags, t =>
+        return this.tags.filter(t =>
           t.tag.toLocaleLowerCase().includes(query) ||
           (t.title?.toLocaleLowerCase().includes(query) ?? false)
         )
@@ -214,7 +218,7 @@ export default {
       this.errorMessage = ''
       wikiStore.startLoading('admin-tags-refresh')
       try {
-        this.tags = _.cloneDeep(await fetchPageTags(window.fetch.bind(window)))
+        this.tags = await fetchPageTags(window.fetch.bind(window))
         this.current = makeEmptyTag()
         if (notify) {
           wikiStore.showNotification({

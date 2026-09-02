@@ -71,6 +71,7 @@
             variant="outlined"
             no-resize
             readonly
+            aria-label='Generated API key'
             :model-value='key'
             :rows='5'
             hide-details

@@ -48,8 +48,11 @@ let keyboardOriginal: unknown[] | null = null
 let refreshPending = false
 
 function itemChildren (): HTMLElement[] {
-  return Array.from(root.value?.children ?? [])
-    .filter((child): child is HTMLElement => child instanceof HTMLElement && !child.hasAttribute('data-draggable-announcement'))
+  const children: HTMLElement[] = []
+  for (const child of root.value?.children ?? []) {
+    if (child instanceof HTMLElement && !child.hasAttribute('data-draggable-announcement')) children.push(child)
+  }
+  return children
 }
 
 function refreshChildren (): void {
@@ -63,7 +66,7 @@ function refreshChildren (): void {
     child.setAttribute('aria-setsize', String(itemCount))
     child.setAttribute('aria-grabbed', String(sourceIndex.value === index))
     if (props.handle) {
-      for (const handle of Array.from(child.querySelectorAll(props.handle))) {
+      for (const handle of child.querySelectorAll(props.handle)) {
         if (!(handle instanceof HTMLElement)) continue
         handle.tabIndex = 0
         handle.setAttribute('role', 'button')
@@ -89,7 +92,13 @@ function scheduleRefreshChildren (): void {
 
 function directChildIndex (target: EventTarget | null): number {
   if (!(target instanceof Node) || !root.value) return -1
-  return itemChildren().findIndex(child => child === target || child.contains(target))
+  let index = 0
+  for (const child of root.value.children) {
+    if (!(child instanceof HTMLElement) || child.hasAttribute('data-draggable-announcement')) continue
+    if (child === target || child.contains(target)) return index
+    index += 1
+  }
+  return -1
 }
 
 function itemIndexForKeyboardTarget (target: EventTarget | null): number {
@@ -113,9 +122,8 @@ function emitReorder (from: number, to: number): void {
 }
 
 function handlePointerDown (event: PointerEvent): void {
-  const validHandle = !props.handle || (
-    event.target instanceof Element && Boolean(event.target.closest(props.handle))
-  )
+  const handle = props.handle && event.target instanceof Element ? event.target.closest(props.handle) : null
+  const validHandle = !props.handle || Boolean(handle && directChildIndex(handle) >= 0)
   handlePressed = validHandle
   if (!validHandle || event.pointerType === 'mouse') return
   pointerId = event.pointerId
@@ -154,7 +162,7 @@ function handlePointerUp (event: PointerEvent): void {
   }
   if (pointerId !== event.pointerId) return
   if (pointerDragging) liveMessage.value = `Dropped item, ${positionMessage(sourceIndex.value)}`
-  root.value?.releasePointerCapture?.(event.pointerId)
+  if (root.value?.hasPointerCapture?.(event.pointerId)) root.value.releasePointerCapture(event.pointerId)
   pointerId = null
   pointerStartIndex = -1
   pointerDragging = false

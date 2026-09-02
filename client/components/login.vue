@@ -22,16 +22,18 @@
           .login-subtitle
             h2#login-provider-title(tabindex='-1', ref='loginHeading').text-body-large {{$t('auth:selectAuthProvider')}}
           .login-list
-            v-list.elevation-1.radius-7(nav aria-labelledby='login-provider-title')
+            v-list.elevation-1.radius-7(
+              v-model:selected='selectedStrategyKeys'
+              select-strategy='single-independent'
+              selectable
+              nav
+              aria-labelledby='login-provider-title'
+            )
               v-list-item(
                 v-for='stg of filteredStrategies'
                 :key='stg.key'
                 :value='stg.key'
-                role='button'
                 :color='stg.strategy.color'
-                :active='selectedStrategyKey === stg.key'
-                :aria-pressed='selectedStrategyKey === stg.key'
-                @click='selectedStrategyKey = stg.key'
                 )
                 template(v-slot:prepend)
                   v-avatar.mr-3(rounded='0', size='24')
@@ -313,7 +315,6 @@
 
 // <span>Photo by <a href="https://unsplash.com/@isaacquesada?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Isaac Quesada</a> on <a href="/t/textures-patterns?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Unsplash</a></span>
 
-import _ from 'lodash'
 import Cookies from 'js-cookie'
 import { wikiStore } from '@/store/index.ts'
 import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthResponse, type AuthStrategy } from '../helpers/auth-api'
@@ -386,8 +387,18 @@ export default {
     }
   },
   computed: {
+    selectedStrategyKeys: {
+      get(): string[] {
+        return this.selectedStrategyKey === 'unselected' ? [] : [this.selectedStrategyKey]
+      },
+      set(keys: string[]) {
+        const [key] = keys
+        if (key) this.selectedStrategyKey = key
+      }
+    },
     selectedStrategy (): AuthStrategy {
-      return _.find(this.strategies, ['key', this.selectedStrategyKey]) || { key: 'unselected', displayName: '', order: 0, selfRegistration: false, strategy: { useForm: false, usernameType: 'email', color: '', icon: '' } } as AuthStrategy
+      return this.strategies.find(strategy => strategy.key === this.selectedStrategyKey) ||
+        { key: 'unselected', displayName: '', order: 0, selfRegistration: false, strategy: { useForm: false, usernameType: 'email', color: '', icon: '' } } as AuthStrategy
     },
     siteTitle () {
       return siteConfig.title
@@ -396,10 +407,9 @@ export default {
     filteredStrategies () {
       const qParams = new URLSearchParams(window.location.search)
       if (this.hideLocal && !qParams.has('all')) {
-        return _.reject(this.strategies, ['key', 'local'])
-      } else {
-        return this.strategies
+        return this.strategies.filter(strategy => strategy.key !== 'local')
       }
+      return this.strategies
     },
     isUsernameEmail () {
       return this.selectedStrategy.strategy.usernameType === `email`

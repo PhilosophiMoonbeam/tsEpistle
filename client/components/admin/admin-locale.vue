@@ -53,8 +53,8 @@
                       v-list-item(v-bind='props')
                         template(v-slot:prepend)
                           v-avatar.bg-blue.text-white(rounded='0', size='40') {{ item.code.toUpperCase() }}
-                        v-list-item-title {{ item.name }}
-                        v-list-item-subtitle {{ item.nativeName }}
+                        template(v-slot:title) {{ item.name }}
+                        template(v-slot:subtitle) {{ item.nativeName }}
                   v-alert.mt-3(v-if='configError || localesError', variant='outlined', color='error', icon='mdi-alert')
                     span(v-if='configError') Locale configuration could not be loaded.
                     span(v-else) Installed locales could not be loaded.
@@ -111,10 +111,16 @@
                       v-list-item(v-bind='props')
                         template(v-slot:prepend)
                           v-avatar.bg-blue.text-white(rounded='0', size='40') {{ item.code.toUpperCase() }}
-                        v-list-item-title {{ item.name }}
-                        v-list-item-subtitle {{ item.nativeName }}
+                        template(v-slot:title) {{ item.name }}
+                        template(v-slot:subtitle) {{ item.nativeName }}
                         template(v-slot:append)
-                          v-checkbox-btn(:model-value='namespaces.includes(item.code)', tabindex='-1')
+                          v-checkbox-btn(
+                            :model-value='namespaces.includes(item.code)'
+                            tabindex='-1'
+                            aria-hidden='true'
+                            :ripple='false'
+                            @click='$event.preventDefault()'
+                          )
             v-col(xl='6' lg='7' cols='12')
               v-card.animated.fadeInUp.wait-p4s
                 v-toolbar(color='teal', density="compact", flat)
@@ -211,18 +217,18 @@ export default {
       return [
         {
           title: this.$t('admin:locale.code'),
-          align: 'left',
+          align: 'start',
           value: 'code',
           width: 90
         },
         {
           title: this.$t('admin:locale.name'),
-          align: 'left',
+          align: 'start',
           value: 'name'
         },
         {
           title: this.$t('admin:locale.nativeName'),
-          align: 'left',
+          align: 'start',
           value: 'nativeName'
         },
         {

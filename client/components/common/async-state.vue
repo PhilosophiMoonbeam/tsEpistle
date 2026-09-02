@@ -4,7 +4,6 @@
     :class="`async-state--${state}`"
     :role="announce !== false ? (state === 'error' ? 'alert' : 'status') : undefined"
     :aria-live="announce !== false ? (state === 'error' ? 'assertive' : 'polite') : undefined"
-    :aria-busy="state === 'loading'"
   >
     <v-progress-circular
       v-if="state === 'loading'"

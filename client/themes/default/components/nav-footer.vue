@@ -13,6 +13,7 @@
 </template>
 
 <script lang='ts'>
+import { defineComponent } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import MarkdownIt from 'markdown-it'
 
@@ -22,7 +23,7 @@ const md = new MarkdownIt({
   linkify: true
 })
 
-export default {
+export default defineComponent({
   props: {
     color: {
       type: String,
@@ -63,7 +64,7 @@ export default {
       }
     }
   }
-}
+})
 </script>
 
 <style lang="scss">

@@ -19,7 +19,7 @@
                   :id='permissionId(pm.permission)'
                   style='justify-content: space-between;'
                   :label='pm.permission'
-                  :hint='permissionHint(pm)'
+                  :hint='pm.hint'
                   persistent-hint
                   color='primary'
                   :model-value='isPermissionEnabled(pm.permission)'
@@ -31,7 +31,7 @@
                 v-divider.mt-3(v-if='idx < pmGroup.items.length - 1')</template>
 
 <script lang='ts'>
-import type { PropType } from 'vue'
+import { markRaw, type PropType } from 'vue'
 
 import { createEmptyGroupEditorState, type GroupEditorState } from '../../helpers/groups-api'
 
@@ -45,7 +45,7 @@ export default {
   },
   data() {
     return {
-      permissions: [
+      permissions: markRaw([
         {
           category: 'Content',
           items: [
@@ -242,7 +242,7 @@ export default {
             }
           ]
         }
-      ]
+      ])
     }
   },
   computed: {
@@ -264,11 +264,6 @@ export default {
     },
     riskId (permission: string): string {
       return `permission-risk-${permission.replace(/[^a-z0-9]+/g, '-')}`
-    },
-    permissionHint (permission: { hint: string; warning: boolean; disabled: boolean }): string {
-      if (permission.disabled) return `${permission.hint}. Reserved for root administrators.`
-      if (permission.warning) return `${permission.hint}. High-impact permission; review before granting.`
-      return permission.hint
     },
     isPermissionEnabled (permission: string): boolean {
       return this.group.permissions.includes(permission)

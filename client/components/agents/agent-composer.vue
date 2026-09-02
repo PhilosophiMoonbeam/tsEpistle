@@ -77,7 +77,6 @@
         :aria-expanded="skillsEnabled ? skillCommandOpen : undefined"
         :aria-controls="skillsEnabled && skillCommandOpen ? 'agent-skill-command-results' : undefined"
         :aria-activedescendant="skillsEnabled && skillCommandOpen && activeCommandSkill ? `agent-skill-command-${activeCommandSkill.versionId}` : undefined"
-        @input="handleInput"
         @select="handleSelectionChange"
         @keydown="handleKeydown"
       />
@@ -411,9 +410,6 @@ const resizeInput = (): void => {
   if (!overflowing) textarea.scrollTop = 0
   else keepCaretVisible(textarea)
 }
-const handleInput = (): void => {
-  void nextTick(resizeInput)
-}
 const handleSelectionChange = (): void => {
   void nextTick(() => {
     const textarea = getTextarea()
@@ -532,11 +528,7 @@ watch(draft, value => {
     value.slice(0, dismissed.start) !== dismissed.prefix
   )) dismissedCommandToken.value = null
   if (sendFailed.value) sendFailed.value = false
-  void nextTick(() => {
-    resizeInput()
-    const textarea = getTextarea()
-    if (textarea) keepCaretVisible(textarea)
-  })
+  void nextTick(resizeInput)
 })
 watch(skillCommandQuery, () => {
   activeCommandIndex.value = 0

@@ -21,7 +21,7 @@
         v-card.mt-3
           v-tabs(v-model='tab', color='primary', show-arrows)
             v-tab(value='settings')
-              v-icon(start) settings
+              v-icon(start) mdi-cog
               span Settings
             v-tab(v-for='logger in activeLoggers', :key='logger.key', :value='logger.key') {{ logger.title }}
 
@@ -57,6 +57,7 @@
                     :key='logger.key'
                     :label='logger.title'
                     color='primary'
+                    :disabled='saving'
                     hide-details
                   )
 
@@ -83,6 +84,7 @@
                       :hint='cfg.value.hint ? cfg.value.hint : ""'
                       persistent-hint
                       :class='cfg.value.hint ? "mb-2" : ""'
+                      :disabled='saving'
                     )
                     v-switch(
                       v-else-if='cfg.value.type === "boolean"'
@@ -91,6 +93,7 @@
                       color='primary'
                       :hint='cfg.value.hint ? cfg.value.hint : ""'
                       persistent-hint
+                      :disabled='saving'
                       )
                     v-text-field(
                       v-else
@@ -100,6 +103,7 @@
                       :hint='cfg.value.hint ? cfg.value.hint : ""'
                       persistent-hint
                       :class='cfg.value.hint ? "mb-2" : ""'
+                      :disabled='saving'
                       )
                   v-divider.mt-3
                   .text-title-small.font-weight-medium.mt-3 Log Level
@@ -117,6 +121,7 @@
                           v-model='logger.level'
                           hint='Default: warn'
                           persistent-hint
+                          :disabled='saving'
                         )
     logging-console(v-model='showConsole')
 </template>
@@ -130,6 +135,11 @@ import LoggingConsole from './admin-logging-console.vue'
 import { fetchLoggingLoggers, saveLoggingLoggers, type Logger } from '../../helpers/logging-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { wikiStore } from '@/store/index.ts'
+
+const createAbortableFetch = (signal: AbortSignal) => (
+  url: string,
+  options: Record<string, unknown>
+) => window.fetch(url, { ...options, signal } as RequestInit)
 
 export default {
   components: {
@@ -151,7 +161,10 @@ export default {
       loading: false,
       saving: false,
       loggersLoaded: false,
-      errorMessage: ''
+      errorMessage: '',
+      loadController: null as AbortController | null,
+      saveController: null as AbortController | null,
+      isUnmounted: false
     }
   },
   computed: {
@@ -171,16 +184,29 @@ export default {
   },
   methods: {
     async loadLoggers({ notifyError = true }: { notifyError?: boolean } = {}) {
+      this.loadController?.abort()
+      const controller = new AbortController()
+      this.loadController = controller
       this.loading = true
       this.errorMessage = ''
       this.loggersLoaded = false
       this.loggers = []
       wikiStore.startLoading('admin-logging-refresh')
       try {
-        this.loggers = await fetchLoggingLoggers(window.fetch.bind(window), 'Logging loggers response is invalid')
+        const loggers = await fetchLoggingLoggers(
+          createAbortableFetch(controller.signal),
+          'Logging loggers response is invalid'
+        )
+        if (controller.signal.aborted) {
+          return false
+        }
+        this.loggers = loggers
         this.loggersLoaded = true
         return true
       } catch (err) {
+        if (controller.signal.aborted) {
+          return false
+        }
         this.errorMessage = getErrorMessage(err)
         if (notifyError) {
           wikiStore.showNotification({
@@ -191,7 +217,12 @@ export default {
         }
         throw err
       } finally {
-        this.loading = false
+        if (this.loadController === controller) {
+          this.loadController = null
+          if (!this.isUnmounted) {
+            this.loading = false
+          }
+        }
         wikiStore.stopLoading('admin-logging-refresh')
       }
     },
@@ -201,7 +232,8 @@ export default {
     async refresh() {
       if (this.loading || this.saving) return
       try {
-        await this.loadLoggers()
+        const loaded = await this.loadLoggers()
+        if (!loaded) return
         wikiStore.showNotification({
           message: 'List of loggers has been refreshed.',
           style: 'success',
@@ -213,31 +245,51 @@ export default {
     },
     async save() {
       if (this.saving || this.loading || !this.loggersLoaded) return
+      const controller = new AbortController()
+      this.saveController = controller
       this.saving = true
       wikiStore.startLoading('admin-logging-saveloggers')
       try {
-        await saveLoggingLoggers(window.fetch.bind(window), this.loggers.map(tgt => ({
+        await saveLoggingLoggers(createAbortableFetch(controller.signal), this.loggers.map(tgt => ({
           isEnabled: tgt.isEnabled,
           key: tgt.key,
           config: tgt.config.map(cfg => ({...cfg, value: JSON.stringify({ v: cfg.value.value })})),
           level: tgt.level
         })), 'Logging loggers update failed')
-        await this.loadLoggers({ notifyError: false })
+        if (controller.signal.aborted) {
+          return
+        }
+        const loaded = await this.loadLoggers({ notifyError: false })
+        if (!loaded || controller.signal.aborted) {
+          return
+        }
         wikiStore.showNotification({
           message: 'Logging configuration saved successfully.',
           style: 'success',
           icon: 'check'
         })
       } catch (err) {
-        wikiStore.showError(err)
+        if (!controller.signal.aborted) {
+          wikiStore.showError(err)
+        }
       } finally {
-        this.saving = false
+        if (this.saveController === controller) {
+          this.saveController = null
+          if (!this.isUnmounted) {
+            this.saving = false
+          }
+        }
         wikiStore.stopLoading('admin-logging-saveloggers')
       }
     },
     toggleConsole() {
       this.showConsole = !this.showConsole
     }
+  },
+  beforeUnmount () {
+    this.isUnmounted = true
+    this.loadController?.abort()
+    this.saveController?.abort()
   }
 }
 </script>

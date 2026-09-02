@@ -11,7 +11,7 @@ export default {
     color: {
       type: String,
       default: 'info',
-      validator: (value: string) => ['info', 'error'].includes(value)
+      validator: (value: string) => value === 'info' || value === 'error'
     },
     icon: {
       type: String,

@@ -124,7 +124,8 @@ export default {
       loading: false,
       errorMessage: '',
       creating: false,
-      createError: ''
+      createError: '',
+      isDisposed: false
     }
   },
   computed: {
@@ -148,18 +149,21 @@ export default {
       this.search = ''
     },
     async loadGroups() {
+      if (this.isDisposed) return false
       this.loading = true
       this.errorMessage = ''
       wikiStore.startLoading('admin-groups-refresh')
       try {
         this.groups = await fetchGroupsList(window.fetch.bind(window), 'Groups list response is invalid')
+        if (this.isDisposed) return false
         return true
       } catch (err) {
+        if (this.isDisposed) return false
         this.errorMessage = getErrorMessage(err)
         wikiStore.showNotification({ style: 'red', message: this.errorMessage, icon: 'alert' })
         return false
       } finally {
-        this.loading = false
+        if (!this.isDisposed) this.loading = false
         wikiStore.stopLoading('admin-groups-refresh')
       }
     },
@@ -167,7 +171,7 @@ export default {
       if (await this.loadGroups()) wikiStore.showNotification({ message: 'Groups have been refreshed.', style: 'success', icon: 'cached' })
     },
     async createGroup() {
-      if (this.creating) return
+      if (this.creating || this.isDisposed) return
       if (_.trim(this.newGroupName).length < 1) {
         this.createError = 'Enter a group name.'
         return
@@ -177,21 +181,26 @@ export default {
       wikiStore.startLoading('admin-groups-create')
       try {
         const data = await createGroup(window.fetch.bind(window), this.newGroupName)
+        if (this.isDisposed) return
         if (data.succeeded !== true) throw new Error(data.message || 'An unexpected error occurred.')
         this.newGroupName = ''
         this.newGroupDialog = false
         if (await this.loadGroups()) wikiStore.showNotification({ style: 'success', message: 'Group has been created successfully.', icon: 'check' })
       } catch (err) {
+        if (this.isDisposed) return
         this.createError = getErrorMessage(err)
         wikiStore.showError(err)
       } finally {
-        this.creating = false
+        if (!this.isDisposed) this.creating = false
         wikiStore.stopLoading('admin-groups-create')
       }
     }
   },
   created() {
     this.loadGroups()
+  },
+  beforeUnmount() {
+    this.isDisposed = true
   }
 }
 </script>
