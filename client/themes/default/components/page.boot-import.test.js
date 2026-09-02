@@ -183,7 +183,7 @@ describe('default page focused contracts', () => {
 
     expectDeclarations(pageRoot, {
       '--page-reader-shell-max': '132rem',
-      '--page-metadata-rail-width': 'clamp\\(14rem,\\s*18vw,\\s*16rem\\)',
+      '--page-metadata-rail-width': 'clamp\\(18rem,\\s*22\\.5vw,\\s*21rem\\)',
       '--page-reader-column-gap': 'var\\(--wiki-space-6\\)'
     })
     expectDeclarations(pageHeader, {
@@ -223,6 +223,12 @@ describe('default page focused contracts', () => {
     expectDeclarations(extractCssRule(desktopBody, '.page-col-content--with-toc'), {
       flex: '0 0 calc\\(100% - var\\(--page-metadata-rail-width\\) - var\\(--v-col-gap-x\\)\\)',
       'max-width': 'calc\\(100% - var\\(--page-metadata-rail-width\\) - var\\(--v-col-gap-x\\)\\)'
+    })
+    expectDeclarations(extractCssRule(style, '.page-col-content:not(.is-page-header)'), {
+      'padding-inline': 'var\\(--wiki-space-4\\) 0'
+    })
+    expectDeclarations(extractCssRule(style, '.page-col-content--toc-right:not(.is-page-header)'), {
+      'padding-inline': '0 var\\(--wiki-space-4\\)'
     })
     expect(style).toMatch(/\.page-col-sd--toc-off,\s*\.page-col-content--toc-off\s*\{[^}]*flex:\s*0 0 100%;[^}]*max-width:\s*100%;/s)
     expect(template).toMatch(
@@ -362,6 +368,20 @@ describe('default page focused contracts', () => {
     expectDeclarations(extractCssRule(mobileContents, 'h3'), { 'font-size': '1\\.25rem' })
 
     const print = extractCssRule(style, '@media print')
+    const printHiddenRail = extractCssRules(print).find(({ selector }) =>
+      selector.split(',').some(part => part.trim() === '.page-col-sd')
+    )?.block ?? null
+    expectDeclarations(printHiddenRail, {
+      display: 'none !important'
+    })
+    expectDeclarations(extractCssRule(print, '.page-body, .page-col-content > .contents'), {
+      width: '100%',
+      padding: '0 !important'
+    })
+    expectDeclarations(extractCssRule(print, '.page-col-content'), {
+      'max-width': '100% !important',
+      'flex-basis': '100% !important'
+    })
     const printContents = extractCssRule(print, '.wiki-page .v-main .contents')
     expectDeclarations(printContents, {
       'font-family': 'var\\(--wiki-font-reader\\)',

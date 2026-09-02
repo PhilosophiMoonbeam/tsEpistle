@@ -188,11 +188,14 @@ test.describe('responsive UI quality matrix', () => {
         const styles = getComputedStyle(parent)
         return parent.clientWidth - (Number.parseFloat(styles.paddingLeft) || 0) - (Number.parseFloat(styles.paddingRight) || 0)
       }
+      const bodyRow = document.querySelector<HTMLElement>('.page-body > .v-row')
+      if (!bodyRow) throw new Error('Reader body row is missing')
 
       return {
         rootFontSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
         headerAvailableWidth: containingBlockWidth('.page-header-section'),
-        bodyAvailableWidth: containingBlockWidth('.page-body')
+        bodyAvailableWidth: containingBlockWidth('.page-body'),
+        columnGap: Number.parseFloat(getComputedStyle(bodyRow).getPropertyValue('--v-col-gap-x'))
       }
     })
 
@@ -234,6 +237,9 @@ test.describe('responsive UI quality matrix', () => {
           `${name} fills the available reader width up to its maximum`
         ).toBeLessThanOrEqual(2)
       }
+      if (viewport.width >= 2560) {
+        expect(Math.abs(bounds.width - readerShellMax), `${name} remains exactly 132rem on the wide project`).toBeLessThanOrEqual(2)
+      }
     }
 
     expect(Math.abs(titleBounds.x - articleBounds.x), 'Page title aligns with the article card outer edge').toBeLessThanOrEqual(2)
@@ -244,9 +250,306 @@ test.describe('responsive UI quality matrix', () => {
         expect(Math.abs(descriptionBounds.x - articleBounds.x), 'Page description aligns with the article card outer edge').toBeLessThanOrEqual(2)
       }
     }
-    expect(metadataBounds.width, 'Reader metadata rail stays within 16rem').toBeLessThanOrEqual(16 * shellSizing.rootFontSize + 1)
+    expect(metadataBounds.width, 'Reader metadata rail is at least 18rem').toBeGreaterThanOrEqual(18 * shellSizing.rootFontSize - 1)
+    expect(metadataBounds.width, 'Reader metadata rail stays within 21rem').toBeLessThanOrEqual(21 * shellSizing.rootFontSize + 1)
     expect(metadataBounds.x, 'Reader metadata rail remains before the primary article').toBeLessThan(articleBounds.x)
-    expect(metadataBounds.x + metadataBounds.width, 'Reader metadata rail must not overlap the primary article').toBeLessThanOrEqual(articleBounds.x)
+    expect(metadataBounds.x + metadataBounds.width, 'Reader metadata rail must not overlap the primary article').toBeLessThanOrEqual(
+      articleBounds.x + 1
+    )
+
+    if (viewport.width >= 2560) {
+      expect(shellSizing.columnGap, 'Reader row exposes the rendered column gap').toBeGreaterThan(0)
+      const legacyRowWidth = 106 * shellSizing.rootFontSize
+      const legacyRailWidth = (2.2 * (legacyRowWidth + shellSizing.columnGap)) / 12 - shellSizing.columnGap
+      const legacyArticleWidth = (9.8 * (legacyRowWidth + shellSizing.columnGap)) / 12 - shellSizing.columnGap
+      const railGrowth = metadataBounds.width / legacyRailWidth
+      expect(railGrowth, 'Wide metadata rail is approximately 15% wider than the legacy capped rail').toBeGreaterThanOrEqual(1.14)
+      expect(railGrowth, 'Wide metadata rail is approximately 15% wider than the legacy capped rail').toBeLessThanOrEqual(1.16)
+      expect(articleBounds.width, 'Wide article is observably wider than its legacy article width').toBeGreaterThan(
+        legacyArticleWidth + shellSizing.rootFontSize
+      )
+    }
+  })
+
+  test('keeps right-side TOC geometry ordered and aligned', async ({ page }) => {
+    const viewport = page.viewportSize()
+    expect(viewport).not.toBeNull()
+    if (!viewport || viewport.width < 1280) return
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+
+    const originalClasses = await page.evaluate(() => {
+      const get = (selector: string): HTMLElement => {
+        const element = document.querySelector<HTMLElement>(selector)
+        if (!element) throw new Error(`Missing reader element: ${selector}`)
+        return element
+      }
+      return {
+        header: get('.page-header-section > .is-page-header').className,
+        rail: get('.page-col-sd').className,
+        article: get('.page-col-content:not(.is-page-header)').className
+      }
+    })
+    try {
+      await page.evaluate(() => {
+        document.querySelector('.page-header--toc-left')?.classList.replace('page-header--toc-left', 'page-header--toc-right')
+        document.querySelector('.page-col-sd--toc-left')?.classList.replace('page-col-sd--toc-left', 'page-col-sd--toc-right')
+        document
+          .querySelector('.page-col-content--toc-left:not(.is-page-header)')
+          ?.classList.replace('page-col-content--toc-left', 'page-col-content--toc-right')
+      })
+      const headerShell = page.locator('.page-header-section').first()
+      const bodyShell = page.locator('.page-body').first()
+      const title = page.locator('.page-header--toc-right .page-title').first()
+      const rail = page.locator('.page-col-sd--toc-right').first()
+      const article = page.locator('.page-col-content--toc-right:not(.is-page-header) > .contents').first()
+      const rootFontSize = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).fontSize))
+      const [headerBounds, bodyBounds, titleBounds, railBounds, articleBounds] = await Promise.all([
+        headerShell.boundingBox(),
+        bodyShell.boundingBox(),
+        title.boundingBox(),
+        rail.boundingBox(),
+        article.boundingBox()
+      ])
+      expect(headerBounds).not.toBeNull()
+      expect(bodyBounds).not.toBeNull()
+      expect(titleBounds).not.toBeNull()
+      expect(railBounds).not.toBeNull()
+      expect(articleBounds).not.toBeNull()
+      if (!headerBounds || !bodyBounds || !titleBounds || !railBounds || !articleBounds) return
+      expect(Math.abs(headerBounds.x - bodyBounds.x)).toBeLessThanOrEqual(2)
+      expect(Math.abs(headerBounds.width - bodyBounds.width)).toBeLessThanOrEqual(2)
+      expect(railBounds.width, 'Right metadata rail is at least 18rem').toBeGreaterThanOrEqual(18 * rootFontSize - 1)
+      expect(railBounds.width, 'Right metadata rail stays within 21rem').toBeLessThanOrEqual(21 * rootFontSize + 1)
+      expect(articleBounds.x + articleBounds.width, 'Article remains before and clear of the right rail').toBeLessThan(railBounds.x)
+      expect(Math.abs(titleBounds.x - articleBounds.x), 'Right-mode title aligns with the article').toBeLessThanOrEqual(2)
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+        'Right TOC has no horizontal overflow'
+      ).toBeLessThanOrEqual(1)
+    } finally {
+      await page.evaluate(classes => {
+        const header = document.querySelector<HTMLElement>('.page-header-section > .is-page-header')
+        const rail = document.querySelector<HTMLElement>('.page-col-sd')
+        const article = document.querySelector<HTMLElement>('.page-col-content:not(.is-page-header)')
+        if (header) header.className = classes.header
+        if (rail) rail.className = classes.rail
+        if (article) article.className = classes.article
+      }, originalClasses)
+    }
+  })
+
+  test('keeps TOC-off columns full width and in reading order', async ({ page }) => {
+    const viewport = page.viewportSize()
+    expect(viewport).not.toBeNull()
+    if (!viewport || viewport.width < 1280) return
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+
+    const originalClasses = await page.evaluate(() => {
+      const get = (selector: string): HTMLElement => {
+        const element = document.querySelector<HTMLElement>(selector)
+        if (!element) throw new Error(`Missing reader element: ${selector}`)
+        return element
+      }
+      return {
+        header: get('.page-header-section > .is-page-header').className,
+        rail: get('.page-col-sd').className,
+        article: get('.page-col-content:not(.is-page-header)').className
+      }
+    })
+    try {
+      await page.evaluate(() => {
+        document.querySelector('.page-header--toc-left')?.classList.replace('page-header--toc-left', 'page-header--toc-off')
+        const rail = document.querySelector('.page-col-sd')
+        rail?.classList.remove('page-col-sd--with-toc')
+        rail?.classList.add('page-col-sd--toc-off')
+        const article = document.querySelector('.page-col-content:not(.is-page-header)')
+        article?.classList.remove('page-col-content--with-toc')
+        article?.classList.add('page-col-content--toc-off')
+        const toc = document.querySelector<HTMLElement>('.page-toc-card')
+        if (toc) toc.hidden = true
+      })
+      const headerShell = page.locator('.page-header-section').first()
+      const header = page.locator('.page-header--toc-off').first()
+      const row = page.locator('.page-body > .v-row').first()
+      const rail = page.locator('.page-col-sd--toc-off').first()
+      const articleColumn = page.locator('.page-col-content--toc-off:not(.is-page-header)').first()
+      const article = articleColumn.locator('> .contents')
+      const [headerShellBounds, headerBounds, rowBounds, railBounds, articleColumnBounds, articleBounds] = await Promise.all([
+        headerShell.boundingBox(),
+        header.boundingBox(),
+        row.boundingBox(),
+        rail.boundingBox(),
+        articleColumn.boundingBox(),
+        article.boundingBox()
+      ])
+      expect(headerShellBounds).not.toBeNull()
+      expect(headerBounds).not.toBeNull()
+      expect(rowBounds).not.toBeNull()
+      expect(railBounds).not.toBeNull()
+      expect(articleColumnBounds).not.toBeNull()
+      expect(articleBounds).not.toBeNull()
+      if (!headerShellBounds || !headerBounds || !rowBounds || !railBounds || !articleColumnBounds || !articleBounds) return
+      expect(Math.abs(headerBounds.width - headerShellBounds.width), 'TOC-off header uses its full shell').toBeLessThanOrEqual(2)
+      expect(Math.abs(articleColumnBounds.width - rowBounds.width), 'TOC-off article uses the full row').toBeLessThanOrEqual(2)
+      expect(Math.abs(railBounds.width - rowBounds.width), 'TOC-off metadata uses the full row').toBeLessThanOrEqual(2)
+      expect(articleBounds.width, 'TOC-off article does not retain a collapsed rail').toBeGreaterThan(rowBounds.width * 0.9)
+      expect(Math.abs(articleColumnBounds.x - railBounds.x), 'TOC-off columns share a row edge').toBeLessThanOrEqual(2)
+      expect(articleColumnBounds.y + articleColumnBounds.height, 'TOC-off article precedes metadata').toBeLessThanOrEqual(railBounds.y + 1)
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+        'TOC-off has no horizontal overflow'
+      ).toBeLessThanOrEqual(1)
+    } finally {
+      await page.evaluate(classes => {
+        const header = document.querySelector<HTMLElement>('.page-header-section > .is-page-header')
+        const rail = document.querySelector<HTMLElement>('.page-col-sd')
+        const article = document.querySelector<HTMLElement>('.page-col-content:not(.is-page-header)')
+        if (header) header.className = classes.header
+        if (rail) rail.className = classes.rail
+        if (article) article.className = classes.article
+        const toc = document.querySelector<HTMLElement>('.page-toc-card')
+        if (toc) toc.hidden = false
+      }, originalClasses)
+    }
+  })
+
+  test('aligns RTL reader content on the logical inline edge', async ({ page }) => {
+    const viewport = page.viewportSize()
+    expect(viewport).not.toBeNull()
+    if (!viewport || viewport.width < 1280) return
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+
+    const originalState = await page.evaluate(() => {
+      const get = (selector: string): HTMLElement => {
+        const element = document.querySelector<HTMLElement>(selector)
+        if (!element) throw new Error(`Missing reader element: ${selector}`)
+        return element
+      }
+      const reader = get('.wiki-page')
+      return {
+        documentDirection: document.documentElement.getAttribute('dir'),
+        readerDirection: reader.getAttribute('dir'),
+        readerClass: reader.className,
+        headerClass: get('.page-header-section > .is-page-header').className,
+        railClass: get('.page-col-sd').className,
+        articleClass: get('.page-col-content:not(.is-page-header)').className
+      }
+    })
+    try {
+      await page.evaluate(() => {
+        const reader = document.querySelector<HTMLElement>('.wiki-page')
+        const header = document.querySelector<HTMLElement>('.page-header-section > .is-page-header')
+        const rail = document.querySelector<HTMLElement>('.page-col-sd')
+        const article = document.querySelector<HTMLElement>('.page-col-content:not(.is-page-header)')
+        if (!reader || !header || !rail || !article) throw new Error('Reader geometry is incomplete')
+
+        document.documentElement.setAttribute('dir', 'rtl')
+        reader.setAttribute('dir', 'rtl')
+        reader.classList.remove('is-ltr', 'v-locale--is-ltr')
+        reader.classList.add('is-rtl', 'v-locale--is-rtl')
+        header.classList.remove('page-header--toc-left', 'page-header--toc-off', 'pl-4')
+        header.classList.add('page-header--toc-right', 'pr-4')
+        rail.classList.remove('page-col-sd--toc-left', 'page-col-sd--toc-off')
+        rail.classList.add('page-col-sd--toc-right', 'page-col-sd--with-toc')
+        article.classList.remove('page-col-content--toc-left', 'page-col-content--toc-off')
+        article.classList.add('page-col-content--toc-right', 'page-col-content--with-toc')
+      })
+
+      const title = page.locator('.page-header--toc-right .page-title').first()
+      const rail = page.locator('.page-col-sd--toc-right').first()
+      const article = page.locator('.page-col-content--toc-right:not(.is-page-header) > .contents').first()
+      await expect(title).toBeVisible()
+      await expect(rail).toBeVisible()
+      await expect(article).toBeVisible()
+
+      const [titleBounds, railBounds, articleBounds] = await Promise.all([
+        title.boundingBox(),
+        rail.boundingBox(),
+        article.boundingBox()
+      ])
+      expect(titleBounds).not.toBeNull()
+      expect(railBounds).not.toBeNull()
+      expect(articleBounds).not.toBeNull()
+      if (!titleBounds || !railBounds || !articleBounds) return
+
+      const titleInlineStart = titleBounds.x + titleBounds.width
+      const articleInlineStart = articleBounds.x + articleBounds.width
+      expect(Math.abs(titleInlineStart - articleInlineStart), 'RTL title and article share their logical inline-start edge').toBeLessThanOrEqual(2)
+      expect(railBounds.x, 'RTL end rail is placed after the article in logical reading order').toBeLessThan(articleBounds.x)
+      expect(railBounds.x + railBounds.width, 'RTL metadata rail remains clear of the article').toBeLessThanOrEqual(articleBounds.x + 1)
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+        'RTL reader has no horizontal overflow'
+      ).toBeLessThanOrEqual(1)
+    } finally {
+      await page.evaluate(state => {
+        const reader = document.querySelector<HTMLElement>('.wiki-page')
+        const header = document.querySelector<HTMLElement>('.page-header-section > .is-page-header')
+        const rail = document.querySelector<HTMLElement>('.page-col-sd')
+        const article = document.querySelector<HTMLElement>('.page-col-content:not(.is-page-header)')
+        if (state.documentDirection === null) document.documentElement.removeAttribute('dir')
+        else document.documentElement.setAttribute('dir', state.documentDirection)
+        if (reader) {
+          reader.className = state.readerClass
+          if (state.readerDirection === null) reader.removeAttribute('dir')
+          else reader.setAttribute('dir', state.readerDirection)
+        }
+        if (header) header.className = state.headerClass
+        if (rail) rail.className = state.railClass
+        if (article) article.className = state.articleClass
+      }, originalState)
+    }
+  })
+
+  test('uses the full printable reader width without the metadata rail', async ({ page }) => {
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+
+    try {
+      await page.emulateMedia({ media: 'print' })
+
+      const headerShell = page.locator('.page-header-section').first()
+      const header = headerShell.locator('> .is-page-header').first()
+      const headings = header.locator('.page-header-headings').first()
+      const bodyRow = page.locator('.page-body > .v-row').first()
+      const rail = page.locator('.page-col-sd').first()
+      const articleColumn = page.locator('.page-col-content:not(.is-page-header)').first()
+      const article = articleColumn.locator('> .contents').first()
+
+      await expect(rail).toBeHidden()
+      await expect(header).toBeVisible()
+      await expect(headings).toBeVisible()
+      await expect(article).toBeVisible()
+
+      const [headerShellBounds, headerBounds, headingsBounds, rowBounds, articleColumnBounds, articleBounds] = await Promise.all([
+        headerShell.boundingBox(),
+        header.boundingBox(),
+        headings.boundingBox(),
+        bodyRow.boundingBox(),
+        articleColumn.boundingBox(),
+        article.boundingBox()
+      ])
+      expect(headerShellBounds).not.toBeNull()
+      expect(headerBounds).not.toBeNull()
+      expect(headingsBounds).not.toBeNull()
+      expect(rowBounds).not.toBeNull()
+      expect(articleColumnBounds).not.toBeNull()
+      expect(articleBounds).not.toBeNull()
+      if (!headerShellBounds || !headerBounds || !headingsBounds || !rowBounds || !articleColumnBounds || !articleBounds) return
+
+      expect(Math.abs(headerBounds.x - headerShellBounds.x), 'Print header starts at the printable shell edge').toBeLessThanOrEqual(2)
+      expect(Math.abs(headerBounds.width - headerShellBounds.width), 'Print header fills the printable shell').toBeLessThanOrEqual(2)
+      expect(Math.abs(headingsBounds.x - headerBounds.x), 'Print headings do not retain a metadata-rail offset').toBeLessThanOrEqual(2)
+      expect(Math.abs(headingsBounds.width - headerBounds.width), 'Print headings do not retain a metadata-rail width reservation').toBeLessThanOrEqual(2)
+      expect(Math.abs(articleColumnBounds.x - rowBounds.x), 'Print article starts at the printable row edge').toBeLessThanOrEqual(2)
+      expect(Math.abs(articleColumnBounds.width - rowBounds.width), 'Print article fills the printable row').toBeLessThanOrEqual(2)
+      expect(articleBounds.width, 'Print article does not retain a hidden metadata-rail reservation').toBeGreaterThan(rowBounds.width * 0.9)
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+        'Print reader has no horizontal overflow'
+      ).toBeLessThanOrEqual(1)
+    } finally {
+      await page.emulateMedia({ media: 'screen' })
+    }
   })
 
   test('keeps search interaction and results inside every viewport', async ({ page }) => {

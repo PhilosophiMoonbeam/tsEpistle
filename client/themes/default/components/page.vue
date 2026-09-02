@@ -1715,7 +1715,7 @@ export default defineComponent({
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
   --page-toc-desktop-lift: calc(var(--page-toc-empty-height) + var(--wiki-space-6));
   --page-reader-shell-max: 132rem;
-  --page-metadata-rail-width: clamp(14rem, 18vw, 16rem);
+  --page-metadata-rail-width: clamp(18rem, 22.5vw, 21rem);
   --page-reader-column-gap: var(--wiki-space-6);
 
   font-family: var(--wiki-font-body);
