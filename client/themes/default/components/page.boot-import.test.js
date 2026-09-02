@@ -185,6 +185,7 @@ describe('default page focused contracts', () => {
     const readerSurface = extractCssRule(style, '.page-col-content > .contents')
     const readerCopy = extractCssRule(readerSurface, '> div:not(.page-gutter-ornament)')
     const readerGutter = extractCssRule(style, '.page-gutter-ornament')
+    const thirdLevelTocTitle = extractCssRule(style, '.page-toc-item-title--third-level')
 
     expectDeclarations(pageRoot, {
       '--page-reader-shell-max': '132rem',
@@ -199,9 +200,13 @@ describe('default page focused contracts', () => {
       width: 'min\\(100%,\\s*var\\(--page-reader-shell-max\\)\\)'
     })
     expect(template).toContain(
-      ':class=\'{ "font-weight-bold": tocItem.depth === 0, "font-italic": tocItem.depth === 2 }\''
+      ':class=\'{ "font-weight-bold": tocItem.depth === 0, "page-toc-item-title--third-level": tocItem.depth === 2 }\''
     )
+    expect(template).not.toContain('font-italic')
     expect(template).not.toContain('"font-weight-medium": tocItem.depth === 0')
+    expectDeclarations(thirdLevelTocTitle, {
+      'font-size': 'calc\\(\\.8125rem - 2pt\\)'
+    })
     expect(template).toMatch(/v-card\.page-toc-card\.mb-4\(v-if='tocPosition !== `off`', tag='nav', :aria-label=/)
     expect(template).toContain(":href='tocItem.anchor'")
     expect(template).toContain("@click='tocLinkClicked($event, tocItem.anchor)'")

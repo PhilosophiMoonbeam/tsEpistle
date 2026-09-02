@@ -316,7 +316,7 @@
                   template(v-slot:prepend)
                     v-icon.page-toc-item-marker(size="x-small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
                   v-list-item-title.page-toc-item-title(
-                    :class='{ "font-weight-bold": tocItem.depth === 0, "font-italic": tocItem.depth === 2 }'
+                    :class='{ "font-weight-bold": tocItem.depth === 0, "page-toc-item-title--third-level": tocItem.depth === 2 }'
                     ) {{tocItem.title}}
               .page-toc-empty(v-else)
                 v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
@@ -2290,6 +2290,10 @@ export default defineComponent({
   line-height: 1.4;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+
+.page-toc-item-title--third-level {
+  font-size: calc(.8125rem - 2pt);
 }
 
 .page-tags-card,
