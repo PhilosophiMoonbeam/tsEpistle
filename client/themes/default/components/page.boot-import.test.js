@@ -219,7 +219,7 @@ describe('default page focused contracts', () => {
       width:
         'clamp\\(\\s*calc\\(var\\(--wiki-grid-size\\) \\* 1\\.125\\),\\s*calc\\(\\(100% - var\\(--page-reader-copy-max\\)\\) / 2 - var\\(--wiki-space-4\\)\\),\\s*calc\\(var\\(--wiki-grid-size\\) \\* 3\\.75\\)\\s*\\)',
       height:
-        'min\\(\\s*calc\\(100% - var\\(--wiki-space-8\\)\\),\\s*max\\(calc\\(var\\(--wiki-grid-size\\) \\* 7\\),\\s*80%\\)\\s*\\)'
+        'min\\(\\s*calc\\(100% - var\\(--wiki-space-8\\)\\),\\s*max\\(calc\\(var\\(--wiki-grid-size\\) \\* 7\\),\\s*95%\\)\\s*\\)'
     })
     expect(gutterColumn).toContain("path.wiki-gutter-column__base-neck(d='M61 480 H129 L131 493 H59 Z')")
     expect(gutterColumn).toContain("path.wiki-gutter-column__base-neck(d='M61 480 L59 493 M129 480 L131 493')")

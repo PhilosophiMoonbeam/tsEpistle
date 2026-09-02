@@ -2417,7 +2417,7 @@ export default defineComponent({
   );
   height: min(
     calc(100% - var(--wiki-space-8)),
-    max(calc(var(--wiki-grid-size) * 7), 80%)
+    max(calc(var(--wiki-grid-size) * 7), 95%)
   );
   opacity: .58;
   transform: translateY(-50%);

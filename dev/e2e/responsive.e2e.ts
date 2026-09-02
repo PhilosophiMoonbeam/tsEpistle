@@ -105,8 +105,8 @@ test.describe('responsive UI quality matrix', () => {
                 if (!article) throw new Error('Reading gutter article is missing')
                 return element.getBoundingClientRect().height / article.getBoundingClientRect().height
               })
-              expect(gutterCoverage, 'Long-page reading gutters retain 80% article coverage').toBeGreaterThanOrEqual(.79)
-              expect(gutterCoverage, 'Long-page reading gutters retain 80% article coverage').toBeLessThanOrEqual(.81)
+              expect(gutterCoverage, 'Long-page reading gutters retain 95% article coverage').toBeGreaterThanOrEqual(.949)
+              expect(gutterCoverage, 'Long-page reading gutters retain 95% article coverage').toBeLessThanOrEqual(.951)
             }
           }
         }
