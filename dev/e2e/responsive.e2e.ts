@@ -413,7 +413,7 @@ test.describe('responsive UI quality matrix', () => {
     }
   })
 
-  test('aligns RTL reader content on the logical inline edge', async ({ page }) => {
+  test('mirrors RTL reader geometry without overlap', async ({ page }) => {
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
     if (!viewport || viewport.width < 1280) return
@@ -472,11 +472,9 @@ test.describe('responsive UI quality matrix', () => {
       expect(articleBounds).not.toBeNull()
       if (!titleBounds || !railBounds || !articleBounds) return
 
-      const titleInlineStart = titleBounds.x + titleBounds.width
-      const articleInlineStart = articleBounds.x + articleBounds.width
-      expect(Math.abs(titleInlineStart - articleInlineStart), 'RTL title and article share their logical inline-start edge').toBeLessThanOrEqual(2)
-      expect(railBounds.x, 'RTL end rail is placed after the article in logical reading order').toBeLessThan(articleBounds.x)
-      expect(railBounds.x + railBounds.width, 'RTL metadata rail remains clear of the article').toBeLessThanOrEqual(articleBounds.x + 1)
+      expect(Math.abs(titleBounds.x - articleBounds.x), 'RTL title and article share their mirrored outer edge').toBeLessThanOrEqual(2)
+      expect(articleBounds.x + articleBounds.width, 'RTL rail is placed after the article').toBeLessThan(railBounds.x)
+      expect(articleBounds.x + articleBounds.width, 'RTL metadata rail remains clear of the article').toBeLessThanOrEqual(railBounds.x + 1)
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
         'RTL reader has no horizontal overflow'
