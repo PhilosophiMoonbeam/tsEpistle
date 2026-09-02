@@ -545,13 +545,7 @@
               .text-body-small {{$t('common:page.unpublishedWarning')}}
             site-banner(:banner='siteBanner')
             article.contents(ref='container', aria-labelledby='page-title')
-              .wiki-gutter-art.page-gutter-ornament.page-gutter-ornament--start(
-                :class='`wiki-gutter-art--${gutterStyle}`'
-                :style='gutterOrnamentStyle'
-                aria-hidden='true'
-              )
-                page-gutter-column(v-if='gutterStyle === `columns`')
-              .wiki-gutter-art.page-gutter-ornament.page-gutter-ornament--end(
+              .wiki-gutter-art.page-gutter-ornament.page-gutter-ornament--right(
                 :class='`wiki-gutter-art--${gutterStyle}`'
                 :style='gutterOrnamentStyle'
                 aria-hidden='true'
@@ -2390,9 +2384,11 @@ export default defineComponent({
 
 .page-col-content > .contents {
   position: relative;
+  --page-reader-surface-padding: clamp(var(--wiki-space-6), 3vw, var(--wiki-space-12));
+
   isolation: isolate;
   min-height: calc(var(--wiki-grid-size) * 3);
-  padding: clamp(var(--wiki-space-6), 3vw, var(--wiki-space-12));
+  padding: var(--page-reader-surface-padding);
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-hero-radius);
   background: rgb(var(--v-theme-surface));
@@ -2406,7 +2402,7 @@ export default defineComponent({
     position: relative;
     z-index: 1;
     width: min(100%, var(--page-reader-copy-max));
-    margin-inline: auto;
+    margin: 0 auto 0 0;
   }
 }
 
@@ -2415,10 +2411,12 @@ export default defineComponent({
   inset-block-start: 50%;
   z-index: 0;
   display: none;
-  width: clamp(
+  width: max(
     calc(var(--wiki-grid-size) * 1.125),
-    calc((100% - var(--page-reader-copy-max)) / 2 - var(--wiki-space-4)),
-    calc(var(--wiki-grid-size) * 3.75)
+    calc(
+      100% - var(--page-reader-copy-max) - var(--page-reader-surface-padding) -
+        var(--wiki-space-4) - var(--wiki-space-1)
+    )
   );
   height: min(
     calc(100% - var(--wiki-space-8)),
@@ -2428,12 +2426,8 @@ export default defineComponent({
   transform: translateY(-50%);
   container-type: size;
 
-  &--start {
-    inset-inline-start: var(--wiki-space-1);
-  }
-
-  &--end {
-    inset-inline-end: var(--wiki-space-1);
+  &--right {
+    right: var(--wiki-space-1);
     transform: translateY(-50%) scaleX(-1);
   }
 }

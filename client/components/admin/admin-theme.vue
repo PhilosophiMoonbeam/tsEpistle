@@ -190,7 +190,7 @@ v-container.admin-theme(fluid)
               div
                 .text-title-medium Marginalia for the reading surface
                 .text-body-medium.text-medium-emphasis.mt-1
-                  | Choose a restrained ornament for the open space beside article text. Decorations recede automatically when the reading gutter narrows.
+                  | Choose a restrained ornament for the open space to the right of article text. Decorations recede automatically when the reading gutter narrows.
               v-chip(size='small', variant='outlined', color='primary') Article pages only
             .gutter-style-grid.mt-5(role='group', aria-label='Reading gutter ornament')
               button.gutter-style-option(
@@ -203,18 +203,12 @@ v-container.admin-theme(fluid)
                 @click='config.gutterStyle = option.value'
               )
                 .gutter-style-option__canvas
-                  .wiki-gutter-art.gutter-style-option__art.gutter-style-option__art--start(
-                    :class='`wiki-gutter-art--${option.value}`'
-                    :style='gutterPreviewStyle(option.value)'
-                    aria-hidden='true'
-                  )
-                    page-gutter-column(v-if='option.value === `columns`')
                   .gutter-style-option__paper
                     span
                     span
                     span
                     span
-                  .wiki-gutter-art.gutter-style-option__art.gutter-style-option__art--end(
+                  .wiki-gutter-art.gutter-style-option__art.gutter-style-option__art--right(
                     :class='`wiki-gutter-art--${option.value}`'
                     :style='gutterPreviewStyle(option.value)'
                     aria-hidden='true'
@@ -232,7 +226,7 @@ v-container.admin-theme(fluid)
                   variant='outlined'
                   color='primary'
                   persistent-hint
-                  hint='Applied only to each gutter ornament. Enter declarations without a selector, braces, or @-rules.'
+                  hint='Applied only to the right gutter ornament. Enter declarations without a selector, braces, or @-rules.'
                   placeholder='background: radial-gradient(circle, rgba(99, 102, 241, .16), transparent 68%); opacity: .7;'
                   :maxlength='PAGE_GUTTER_CUSTOM_CSS_MAX_LENGTH'
                   :counter='PAGE_GUTTER_CUSTOM_CSS_MAX_LENGTH'
@@ -396,7 +390,7 @@ const gutterStyles: Array<{ value: PageGutterStyle; title: string; description: 
   { value: 'laurel', title: 'Laurel cadence', description: 'A spare botanical rhythm drawn along a central stem.' },
   { value: 'aurora', title: 'Aurora wash', description: 'Soft color fields for a warmer, contemporary margin.' },
   { value: 'none', title: 'Unadorned', description: 'Preserve the open reading space without ornament.' },
-  { value: 'custom', title: 'Custom study', description: 'Apply your own declaration block to both gutter regions.' }
+  { value: 'custom', title: 'Custom study', description: 'Apply your own declaration block to the right gutter region.' }
 ]
 const gutterCustomCssRules = [
   (value: string): true | string => value.length <= PAGE_GUTTER_CUSTOM_CSS_MAX_LENGTH || `Use no more than ${PAGE_GUTTER_CUSTOM_CSS_MAX_LENGTH} characters.`,
@@ -701,22 +695,18 @@ onBeforeUnmount(() => {
   &__art {
     position: absolute;
     inset-block: 8px;
-    width: 23%;
+    width: 44%;
 
-    &--start {
-      inset-inline-start: 2%;
-    }
-
-    &--end {
-      inset-inline-end: 2%;
+    &--right {
+      right: 2%;
       transform: scaleX(-1);
     }
   }
 
   &__paper {
     position: absolute;
-    inset: 10px 27%;
-    display: flex;
+    inset: 10px auto 10px 4%;
+    width: 48%;
     flex-direction: column;
     gap: 8px;
     padding: 16px 12px;

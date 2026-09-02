@@ -164,6 +164,7 @@ describe('default page focused contracts', () => {
   const template = extractBlock(read('client/themes/default/components/page.vue'), 'template')
   const style = extractBlock(read('client/themes/default/components/page.vue'), 'style')
   const gutterColumn = read('client/components/common/page-gutter-column.vue')
+  const adminTheme = read('client/components/admin/admin-theme.vue')
 
   test('default page notifies page-ready through imported boot instead of window global', () => {
     expect(script).not.toBeNull()
@@ -199,9 +200,7 @@ describe('default page focused contracts', () => {
     expectDeclarations(pageBody, {
       width: 'min\\(100%,\\s*var\\(--page-reader-shell-max\\)\\)'
     })
-    expect(template).toContain(
-      ':class=\'{ "font-weight-bold": tocItem.depth === 0, "page-toc-item-title--third-level": tocItem.depth === 2 }\''
-    )
+    expect(template).toContain(':class=\'{ "font-weight-bold": tocItem.depth === 0, "page-toc-item-title--third-level": tocItem.depth === 2 }\'')
     expect(template).not.toContain('font-italic')
     expect(template).not.toContain('"font-weight-medium": tocItem.depth === 0')
     expectDeclarations(thirdLevelTocTitle, {
@@ -213,6 +212,19 @@ describe('default page focused contracts', () => {
     expectDeclarations(readerCopy, {
       width: 'min\\(100%,\\s*var\\(--page-reader-copy-max\\)\\)'
     })
+    expectDeclarations(readerSurface, {
+      '--page-reader-surface-padding':
+        'clamp\\(var\\(--wiki-space-6\\),\\s*3vw,\\s*var\\(--wiki-space-12\\)\\)',
+      padding: 'var\\(--page-reader-surface-padding\\)'
+    })
+    expectDeclarations(readerCopy, {
+      margin: '0 auto 0 0'
+    })
+    expect(template).not.toContain('page-gutter-ornament--start')
+    expect(template).toContain('page-gutter-ornament--right')
+    expect(adminTheme).not.toContain('gutter-style-option__art--start')
+    expect(adminTheme).toContain('gutter-style-option__art--right')
+    expect(adminTheme).toContain('open space to the right of article text')
     const shortcutCardIndex = template.indexOf('v-card.page-shortcuts-card.mb-4')
     const tocCardIndex = template.indexOf('v-card.page-toc-card.mb-4')
     expect(shortcutCardIndex).toBeGreaterThan(-1)
@@ -225,10 +237,8 @@ describe('default page focused contracts', () => {
       'overscroll-behavior': 'contain'
     })
     expectDeclarations(readerGutter, {
-      width:
-        'clamp\\(\\s*calc\\(var\\(--wiki-grid-size\\) \\* 1\\.125\\),\\s*calc\\(\\(100% - var\\(--page-reader-copy-max\\)\\) / 2 - var\\(--wiki-space-4\\)\\),\\s*calc\\(var\\(--wiki-grid-size\\) \\* 3\\.75\\)\\s*\\)',
-      height:
-        'min\\(\\s*calc\\(100% - var\\(--wiki-space-8\\)\\),\\s*max\\(calc\\(var\\(--wiki-grid-size\\) \\* 7\\),\\s*95%\\)\\s*\\)'
+      width: 'max\\(\\s*calc\\(var\\(--wiki-grid-size\\) \\* 1\\.125\\),\\s*calc\\(\\s*100% - var\\(--page-reader-copy-max\\) - var\\(--page-reader-surface-padding\\) -\\s*var\\(--wiki-space-4\\) - var\\(--wiki-space-1\\)\\s*\\)\\s*\\)',
+      height: 'min\\(\\s*calc\\(100% - var\\(--wiki-space-8\\)\\),\\s*max\\(calc\\(var\\(--wiki-grid-size\\) \\* 7\\),\\s*95%\\)\\s*\\)'
     })
     expect(gutterColumn).toContain("path.wiki-gutter-column__base-neck(d='M61 480 H129 L131 493 H59 Z')")
     expect(gutterColumn).toContain("path.wiki-gutter-column__base-neck(d='M61 480 L59 493 M129 480 L131 493')")
@@ -409,9 +419,7 @@ describe('default page focused contracts', () => {
     expectDeclarations(extractCssRule(mobileContents, 'h3'), { 'font-size': '1\\.25rem' })
 
     const print = extractCssRule(style, '@media print')
-    const printHiddenRail = extractCssRules(print).find(({ selector }) =>
-      selector.split(',').some(part => part.trim() === '.page-col-sd')
-    )?.block ?? null
+    const printHiddenRail = extractCssRules(print).find(({ selector }) => selector.split(',').some(part => part.trim() === '.page-col-sd'))?.block ?? null
     expectDeclarations(printHiddenRail, {
       display: 'none !important'
     })
