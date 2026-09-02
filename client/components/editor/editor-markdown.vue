@@ -1083,6 +1083,9 @@ export default defineComponent({
   }
 
   &-sysbar {
+    align-items: center;
+    display: flex;
+    justify-content: flex-end;
     background: color-mix(in srgb, rgb(var(--v-theme-surface)) 90%, rgb(var(--v-theme-on-surface)) 10%) !important;
     border-top: 1px solid rgba(var(--v-theme-on-surface), .12);
     color: rgba(var(--v-theme-on-surface), .62);

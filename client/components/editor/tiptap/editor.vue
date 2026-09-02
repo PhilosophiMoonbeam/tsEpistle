@@ -758,6 +758,9 @@ export default defineComponent({
   }
 
   &-sysbar {
+    align-items: center;
+    display: flex;
+    justify-content: flex-end;
     background: color-mix(in srgb, var(--editor-surface) 90%, rgb(var(--v-theme-on-surface)) 10%) !important;
     border-top: 1px solid var(--editor-border);
     color: var(--editor-muted);

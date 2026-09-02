@@ -54,6 +54,8 @@ describe('Markdown editor layout', () => {
     expect(visualEditorSource).toContain('.v-system-bar.editor-status-bar.editor-tiptap-sysbar')
     expect(template).not.toMatch(/^\s*v-system-bar\.editor-status-bar\.editor-markdown-sysbar/m)
     expect(visualEditorSource).not.toMatch(/^\s*v-system-bar\.editor-status-bar\.editor-tiptap-sysbar/m)
+    expect(style).toMatch(/&-sysbar\s*\{[\s\S]*?display: flex;/)
+    expect(visualEditorSource).toMatch(/&-sysbar\s*\{[\s\S]*?display: flex;/)
   })
 
   it('preserves pane controls and collaboration accessibility metadata', () => {
