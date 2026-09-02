@@ -173,12 +173,14 @@ test.describe('responsive UI quality matrix', () => {
     const description = page.locator('.page-header--toc-left .page-description').first()
     const metadataRail = page.locator('.page-col-sd.page-col-sd--toc-left').first()
     const article = page.locator('.page-col-content.page-col-content--toc-left:not(.is-page-header) > .contents').first()
+    const markdownCopy = article.locator('> div:not(.page-gutter-ornament)').first()
 
     await expect(headerShell).toBeVisible()
     await expect(bodyShell).toBeVisible()
     await expect(title).toBeVisible()
     await expect(metadataRail).toBeVisible()
     await expect(article).toBeVisible()
+    await expect(markdownCopy).toBeVisible()
 
     const shellSizing = await page.evaluate(() => {
       const containingBlockWidth = (selector: string): number => {
@@ -199,19 +201,21 @@ test.describe('responsive UI quality matrix', () => {
       }
     })
 
-    const [headerShellBounds, bodyShellBounds, titleBounds, metadataBounds, articleBounds] = await Promise.all([
+    const [headerShellBounds, bodyShellBounds, titleBounds, metadataBounds, articleBounds, markdownCopyBounds] = await Promise.all([
       headerShell.boundingBox(),
       bodyShell.boundingBox(),
       title.boundingBox(),
       metadataRail.boundingBox(),
-      article.boundingBox()
+      article.boundingBox(),
+      markdownCopy.boundingBox()
     ])
     expect(headerShellBounds).not.toBeNull()
     expect(bodyShellBounds).not.toBeNull()
     expect(titleBounds).not.toBeNull()
     expect(metadataBounds).not.toBeNull()
     expect(articleBounds).not.toBeNull()
-    if (!headerShellBounds || !bodyShellBounds || !titleBounds || !metadataBounds || !articleBounds) return
+    expect(markdownCopyBounds).not.toBeNull()
+    if (!headerShellBounds || !bodyShellBounds || !titleBounds || !metadataBounds || !articleBounds || !markdownCopyBounds) return
 
     for (const [name, bounds] of [
       ['Page header shell', headerShellBounds],
@@ -268,6 +272,22 @@ test.describe('responsive UI quality matrix', () => {
       expect(articleBounds.width, 'Wide article is observably wider than its legacy article width').toBeGreaterThan(
         legacyArticleWidth + shellSizing.rootFontSize
       )
+      const legacyCopyWidth = await markdownCopy.evaluate(element => {
+        const probe = document.createElement('span')
+        probe.style.position = 'absolute'
+        probe.style.display = 'block'
+        probe.style.visibility = 'hidden'
+        probe.style.width = '76ch'
+        probe.style.padding = '0'
+        probe.style.border = '0'
+        element.append(probe)
+        const width = probe.getBoundingClientRect().width
+        probe.remove()
+        return width
+      })
+      const copyGrowth = markdownCopyBounds.width / legacyCopyWidth
+      expect(copyGrowth, 'Wide Markdown copy is approximately 20% wider than the legacy 76ch measure').toBeGreaterThanOrEqual(1.19)
+      expect(copyGrowth, 'Wide Markdown copy is approximately 20% wider than the legacy 76ch measure').toBeLessThanOrEqual(1.22)
     }
   })
 

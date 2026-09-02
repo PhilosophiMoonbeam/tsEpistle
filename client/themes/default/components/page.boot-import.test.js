@@ -180,11 +180,15 @@ describe('default page focused contracts', () => {
     const desktopRules = extractCssRules(style).filter(({ selector }) => selector === '@media (min-width: 1280px)')
     const desktopHeader = desktopRules.find(({ block }) => block.includes('.page-header-section'))?.block ?? null
     const desktopBody = desktopRules.find(({ block }) => block.includes('.page-col-sd--with-toc'))?.block ?? null
+    const readerSurface = extractCssRule(style, '.page-col-content > .contents')
+    const readerCopy = extractCssRule(readerSurface, '> div:not(.page-gutter-ornament)')
+    const readerGutter = extractCssRule(style, '.page-gutter-ornament')
 
     expectDeclarations(pageRoot, {
       '--page-reader-shell-max': '132rem',
       '--page-metadata-rail-width': 'clamp\\(18rem,\\s*22\\.5vw,\\s*21rem\\)',
-      '--page-reader-column-gap': 'var\\(--wiki-space-6\\)'
+      '--page-reader-column-gap': 'var\\(--wiki-space-6\\)',
+      '--page-reader-copy-max': '92ch'
     })
     expectDeclarations(pageHeader, {
       width: 'min\\(100%,\\s*var\\(--page-reader-shell-max\\)\\)'
@@ -195,6 +199,13 @@ describe('default page focused contracts', () => {
     expect(template).toMatch(/v-card\.page-toc-card\.mb-4\(v-if='tocPosition !== `off`', tag='nav', :aria-label=/)
     expect(template).toContain(":href='tocItem.anchor'")
     expect(template).toContain("@click='tocLinkClicked($event, tocItem.anchor)'")
+    expectDeclarations(readerCopy, {
+      width: 'min\\(100%,\\s*var\\(--page-reader-copy-max\\)\\)'
+    })
+    expectDeclarations(readerGutter, {
+      width:
+        'clamp\\(\\s*calc\\(var\\(--wiki-grid-size\\) \\* 1\\.125\\),\\s*calc\\(\\(100% - var\\(--page-reader-copy-max\\)\\) / 2 - var\\(--wiki-space-4\\)\\),\\s*calc\\(var\\(--wiki-grid-size\\) \\* 3\\.75\\)\\s*\\)'
+    })
     expect(template).not.toMatch(/:href='`#\$\{tocItem\.anchor\}`'/)
     expect(template).toMatch(/\.page-toc-empty\(v-else\)/)
     expect(template).not.toMatch(/page-return-top--docked|:style='upBtnPosition'|location='bottom start'/)
