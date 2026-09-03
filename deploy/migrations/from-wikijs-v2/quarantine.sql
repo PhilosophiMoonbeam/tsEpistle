@@ -26,7 +26,21 @@ WHERE key = 'mail';
 UPDATE storage SET "isEnabled" = false;
 UPDATE analytics SET "isEnabled" = false;
 UPDATE loggers SET "isEnabled" = false;
-UPDATE "commentProviders" SET "isEnabled" = false;
+UPDATE "commentProviders"
+SET "isEnabled" = (key = 'default'),
+    config = CASE
+      WHEN key = 'default' THEN jsonb_set(config::jsonb, '{akismet}', '""'::jsonb, true)::json
+      ELSE config
+    END;
+
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM "commentProviders" WHERE "isEnabled") <> 1
+     OR NOT EXISTS (SELECT 1 FROM "commentProviders" WHERE key = 'default' AND "isEnabled") THEN
+    RAISE EXCEPTION 'The built-in default comment provider is required after quarantine';
+  END IF;
+END $$;
+
 UPDATE authentication SET "isEnabled" = (key = 'local');
 UPDATE "apiKeys" SET "isRevoked" = true;
 

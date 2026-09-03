@@ -142,11 +142,12 @@ docker compose --env-file "$tsepistle_env" -f deploy/compose/compose.yml \
 The transaction:
 
 - changes the clone's site URL;
-- disables copied storage, analytics, logging, comment, external-authentication, API, telemetry, and mail-delivery configuration;
+- disables copied storage, analytics, logging, external comment providers, external authentication, API, telemetry, and mail-delivery configuration;
+- preserves the built-in local comment renderer while clearing its Akismet key;
 - ensures local authentication is enabled; and
 - revokes copied API keys.
 
-These controls prevent a clone from writing to production storage, sending production mail, accepting old API credentials, emitting duplicate analytics or comment-provider traffic, or redirecting authentication through production callbacks. Re-enable each integration only after reviewing its destination and credentials for the target environment.
+These controls prevent a clone from writing to production storage, sending production mail, accepting old API credentials, emitting duplicate analytics or external comment-provider traffic, or redirecting authentication through production callbacks. Wiki.js expects one comment renderer even when page comments are disabled, so the built-in `default` provider must remain enabled. Re-enable each external integration only after reviewing its destination and credentials for the target environment.
 
 ## Phase 5: Start tsEpistle and allow migrations to finish
 
@@ -198,7 +199,7 @@ External authentication remains disabled after quarantine. Before enabling a pro
 
 - Confirm source Wiki.js and source PostgreSQL containers retained their start times and health.
 - Confirm the target resolves only its own database hostname and volume.
-- Confirm storage, analytics, loggers, comments, external auth, telemetry, and mail remain inactive.
+- Confirm storage, analytics, loggers, external comment providers, external auth, telemetry, and mail remain inactive, while the built-in `default` comment provider remains enabled.
 - Confirm the post-migration webhook registry is empty or that every webhook is disabled.
 - Confirm copied API keys are revoked.
 - Confirm the target hostname serves the expected TLS certificate and static assets.

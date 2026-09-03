@@ -49,7 +49,7 @@ docker compose --env-file "$tsepistle_env" -f deploy/compose/compose.yml exec -T
 docker compose --env-file "$tsepistle_env" -f deploy/compose/compose.yml up -d app
 ```
 
-The quarantine transaction changes only the clone. It disables copied storage, analytics, logging, comments, external authentication, API access, telemetry, and mail delivery; enables local authentication; and revokes copied API keys. Re-enable integrations individually only after validating their destination and credentials. MCP requires API access to be re-enabled and a newly generated, narrowly scoped API key.
+The quarantine transaction changes only the clone. It disables copied storage, analytics, logging, external comment providers, external authentication, API access, telemetry, and mail delivery; preserves the built-in local comment renderer with its Akismet key cleared; enables local authentication; and revokes copied API keys. Wiki.js expects one comment renderer even when page comments are disabled, so do not disable every row in `commentProviders`. Re-enable integrations individually only after validating their destination and credentials. MCP requires API access to be re-enabled and a newly generated, narrowly scoped API key.
 
 ## Validate and cut over
 
