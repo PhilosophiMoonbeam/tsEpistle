@@ -359,8 +359,7 @@ const installAggregateDatabase = (database: AggregateDatabase): void => {
     config: {
       lang: { code: 'en' },
       title: 'Test Wiki',
-      host: 'https://example.test',
-      theming: { gutterStyle: 'laurel' }
+      host: 'https://example.test'
     },
     data: { authentication: [] },
     logger: { debug: () => {}, error: () => {}, warn: () => {} },
@@ -466,20 +465,18 @@ describe('User aggregate transactions', () => {
         name: 'Unchanged',
         providerKey: 'local',
         appearance: 'system',
-        fontFamily: 'newsreader',
-        readingGutter: 'columns'
+        fontFamily: 'newsreader'
       }
     ])
     installAggregateDatabase(database)
 
-    await expect(User.updateUser({ id: 10, fontFamily: 'roboto-flex', readingGutter: 'aurora' })).resolves.toBe(false)
+    await expect(User.updateUser({ id: 10, appearance: 'dark', fontFamily: 'roboto-flex' })).resolves.toBe(false)
 
-    expect(database.userPatches).toEqual([{ fontFamily: 'roboto-flex', readingGutter: 'aurora' }])
+    expect(database.userPatches).toEqual([{ appearance: 'dark', fontFamily: 'roboto-flex' }])
     expect(database.state.users[0]).toMatchObject({
       name: 'Unchanged',
-      appearance: 'system',
-      fontFamily: 'roboto-flex',
-      readingGutter: 'aurora'
+      appearance: 'dark',
+      fontFamily: 'roboto-flex'
     })
   })
 
@@ -572,8 +569,7 @@ describe('User aggregate transactions', () => {
     expect(database.state.memberships.map(membership => membership.groupId)).toEqual(expectedGroups)
     expect(database.commits).toBe(1)
     expect(database.state.users[0]).toMatchObject({
-      fontFamily: 'roboto-flex',
-      readingGutter: 'laurel'
+      fontFamily: 'roboto-flex'
     })
   })
 
@@ -619,7 +615,7 @@ describe('User aggregate transactions', () => {
 })
 
 describe('User.refreshToken', () => {
-  test('issues font-family and reading-gutter JWT claims', async () => {
+  test('issues the font-family JWT claim without a removed gutter claim', async () => {
     const updateLastLogin = mock(async () => 1)
     const knex = (_table: string) => ({
       where: (_column: string, _id: number) => ({ update: updateLastLogin })
@@ -642,19 +638,19 @@ describe('User.refreshToken', () => {
       dateFormat: 'YYYY-MM-DD',
       appearance: 'system',
       fontFamily: 'roboto-flex',
-      readingGutter: 'orbits',
       groups: []
     })
     const callIndex = signJwt.mock.calls.length
 
     await expect(User.refreshToken(user)).resolves.toMatchObject({ token: 'signed-jwt', user })
 
-    expect(signJwt.mock.calls[callIndex]?.[0]).toMatchObject({
+    const claims = signJwt.mock.calls[callIndex]?.[0]
+    expect(claims).toMatchObject({
       id: 10,
       ap: 'system',
-      ff: 'roboto-flex',
-      rg: 'orbits'
+      ff: 'roboto-flex'
     })
+    expect(claims).not.toHaveProperty('rg')
     expect(updateLastLogin).toHaveBeenCalledTimes(1)
   })
 })

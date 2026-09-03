@@ -47,7 +47,7 @@ describe('authenticated presentation preferences contract', () => {
     expect(logoutIndex).toBeGreaterThan(presentationIndex)
   })
 
-  test('offers full-card fixed typeface previews and only concrete reading-gutter choices', () => {
+  test('offers full-card fixed typeface previews without reading-gutter choices', () => {
     expect(script).toContain("{ value: 'newsreader', label: 'Newsreader'")
     expect(script).toContain("{ value: 'roboto-flex', label: 'Roboto Flex'")
     expect(template).toMatch(/:class='`presentation-selector__card--\$\{option\.value\}`'/)
@@ -59,47 +59,26 @@ describe('authenticated presentation preferences contract', () => {
 }`)
     expect(style).not.toContain('font-family: var(--wiki-font-reader)')
     expect(style).not.toContain('font-family: var(--wiki-font-body)')
-
-    const gutterLabels = {
-      columns: 'Attic columns',
-      orbits: 'Celestial orbits',
-      laurel: 'Laurel cadence',
-      aurora: 'Aurora wash',
-      none: 'Unadorned',
-      custom: 'Custom study'
-    } as const
-    for (const [value, label] of Object.entries(gutterLabels)) {
-      expect(script).toContain(`value: '${value}', label: '${label}'`)
-    }
-    expect(script).not.toContain("value: 'site'")
-    expect(script).not.toContain('Site default')
+    expect(template).not.toMatch(/reading gutter|wiki-reading-gutter/i)
+    expect(script).not.toMatch(/gutter|UserReadingGutter/i)
+    expect(style).not.toContain('presentation-selector__gutters')
   })
 
-  test('gates Custom study through the canonical normalized availability helper', () => {
-    expect(script).toContain('isAdminCustomGutterAvailable')
-    expect(script).toContain('isAdminCustomGutterAvailable(wikiStore.site.gutterCustomCss)')
-    expect(script).toContain("option.value !== 'custom' || customGutterAvailable.value")
-    expect(script).toMatch(
-      /selected === 'custom' && !customGutterAvailable\.value\s*\?\s*normalizePageGutterStyle\(wikiStore\.site\.gutterStyle\)\s*:\s*selected/
-    )
-    expect(script).not.toMatch(/customCss\s*:/)
-    expect(template).not.toMatch(/textarea|contenteditable/)
-  })
-
-  test('serializes independent optimistic saves and restores each store field on failure', () => {
+  test('strictly saves known font-family choices and restores the previous choice on failure', () => {
     expect(script).toContain("const PREFERENCE_LOADING_KEY = 'profile-preferences-save'")
-    expect(script).toContain('updateProfilePreferences(')
-    expect(script).toContain('savePreference({ fontFamily: next })')
-    expect(script).toContain('savePreference({ readingGutter: next })')
+    expect(script).toContain('async function selectFontFamily (next: UserFontFamily)')
+    expect(script).toContain('const option = fontOptions.find(candidate => candidate.value === next)')
+    expect(script).toContain('if (!option) return')
+    expect(script).toContain('{ fontFamily: next },')
+    expect(script).not.toContain('savePreference')
     expect(script).toContain('wikiStore.user.fontFamily = next')
     expect(script).toContain('wikiStore.user.fontFamily = previousFontFamily')
-    expect(script).toContain('wikiStore.user.readingGutter = next')
-    expect(script).toContain('wikiStore.user.readingGutter = previousReadingGutter')
     expect(script).toContain("Cookies.set('jwt', token")
     expect(script).toContain('wikiStore.refreshAuth()')
     expect(script).toContain('wikiStore.showError(error)')
     expect(script).toContain('wikiStore.startLoading(PREFERENCE_LOADING_KEY)')
     expect(script).toContain('wikiStore.stopLoading(PREFERENCE_LOADING_KEY)')
+    expect(script).not.toContain('readingGutter')
 
     expect(appearanceScript).toContain('updateProfilePreferences(')
     expect(appearanceScript).toContain('{ appearance: next }')
@@ -109,16 +88,18 @@ describe('authenticated presentation preferences contract', () => {
     expect(appearanceScript).not.toContain('profile-appearance-save')
   })
 
-  test('uses native labelled radios, explicit selection styling, and polite announcements', () => {
-    expect(template.match(/fieldset\.presentation-selector__group/g)?.length).toBe(2)
+  test('uses one accessible native Typeface radio group with polite save announcements', () => {
+    expect(template.match(/fieldset\.presentation-selector__group/g)?.length).toBe(1)
     expect(template).toContain('legend.presentation-selector__legend Typeface')
-    expect(template).toContain('legend.presentation-selector__legend Reading gutter')
-    expect(template.match(/type='radio'/g)?.length).toBe(2)
+    expect(template).not.toContain('Reading gutter')
+    expect(template.match(/type='radio'/g)?.length).toBe(1)
+    expect(template).toContain("name='wiki-font-family'")
+    expect(template).toContain(":aria-describedby='fontDescriptionId'")
     expect(template).toContain(":checked='selectedFontFamily === option.value'")
-    expect(template).toContain(":checked='selectedReadingGutter === option.value'")
     expect(template).toContain(":for='fontOptionId(option.value)'")
-    expect(template).toContain(":for='gutterOptionId(option.value)'")
+    expect(template).not.toContain('gutterOptionId')
     expect(template).toContain("role='status' aria-live='polite' aria-atomic='true'")
+    expect(template).toContain("aria-label='Saving typeface preference'")
     expect(template).toContain(":aria-busy='saving ? `true` : `false`'")
     expect(style).toContain('.presentation-selector__radio:checked + .presentation-selector__card')
     expect(style).toContain('.presentation-selector__radio:focus-visible + .presentation-selector__card')

@@ -11,7 +11,6 @@ import type { ProductMetadata } from '../shared/product.ts'
 import type { SiteBannerConfig } from '../shared/site-banner.ts'
 import type { PageEditorKey } from '../shared/page-editors.ts'
 import type { ThemeColors } from '../shared/theme-colors.ts'
-import type { PageGutterStyle } from '../shared/page-gutters.ts'
 
 export type SiteConfig = {
   title: string
@@ -19,8 +18,6 @@ export type SiteConfig = {
   darkMode: boolean
   themeColors: ThemeColors
   tocPosition: string
-  gutterStyle: PageGutterStyle
-  gutterCustomCss: string
   lang: string
   rtl: boolean
   company: string

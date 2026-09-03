@@ -1,11 +1,6 @@
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { cloneThemeColors, ThemeColorsSchema, type ThemeColors } from '../../shared/theme-colors.ts'
-import { PageGutterCustomCssSchema, PageGutterStyleSchema, type PageGutterStyle } from '../../shared/page-gutters.ts'
-import {
-  normalizeThemePalettes,
-  resolveThemePaletteId,
-  type ThemePalette
-} from '../../shared/theme-palettes.ts'
+import { normalizeThemePalettes, resolveThemePaletteId, type ThemePalette } from '../../shared/theme-palettes.ts'
 
 type JsonHeaders = {
   get: (name: string) => string | null
@@ -38,8 +33,6 @@ export type ThemeConfig = {
   palettes: ThemePalette[]
   activePaletteId: string
   tocPosition: string
-  gutterStyle: PageGutterStyle
-  gutterCustomCss: string
   injectCSS: string
   injectHead: string
   injectBody: string
@@ -93,14 +86,7 @@ function normalizeThemeConfigPayload(payload: unknown, fallbackMessage: string):
   }
 
   const themePayload = payload as Partial<ThemeConfig>
-  const requiredStringFields = [
-    'theme',
-    'iconset',
-    'tocPosition',
-    'injectCSS',
-    'injectHead',
-    'injectBody'
-  ] as const
+  const requiredStringFields = ['theme', 'iconset', 'tocPosition', 'injectCSS', 'injectHead', 'injectBody'] as const
   if (requiredStringFields.some(field => typeof themePayload[field] !== 'string')) {
     throw new Error(fallbackMessage)
   }
@@ -109,11 +95,6 @@ function normalizeThemeConfigPayload(payload: unknown, fallbackMessage: string):
   }
   const colors = ThemeColorsSchema.safeParse(themePayload.colors)
   if (!colors.success) {
-    throw new Error(fallbackMessage)
-  }
-  const gutterStyle = PageGutterStyleSchema.safeParse(themePayload.gutterStyle)
-  const gutterCustomCss = PageGutterCustomCssSchema.safeParse(themePayload.gutterCustomCss)
-  if (!gutterStyle.success || !gutterCustomCss.success) {
     throw new Error(fallbackMessage)
   }
   const palettes = normalizeThemePalettes(themePayload.palettes, colors.data)
@@ -128,8 +109,6 @@ function normalizeThemeConfigPayload(payload: unknown, fallbackMessage: string):
     palettes,
     activePaletteId,
     tocPosition: themePayload.tocPosition!,
-    gutterStyle: gutterStyle.data,
-    gutterCustomCss: gutterCustomCss.data,
     injectCSS: themePayload.injectCSS!,
     injectHead: themePayload.injectHead!,
     injectBody: themePayload.injectBody!

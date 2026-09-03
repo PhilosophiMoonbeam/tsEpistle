@@ -504,10 +504,9 @@ describe('controllers/api users endpoints', () => {
   it.each([
     [{ appearance: 'dark' }, { id: 42, appearance: 'dark' }],
     [{ fontFamily: 'roboto-flex' }, { id: 42, fontFamily: 'roboto-flex' }],
-    [{ readingGutter: 'orbits' }, { id: 42, readingGutter: 'orbits' }],
     [
-      { appearance: 'light', fontFamily: 'newsreader', readingGutter: 'aurora' },
-      { id: 42, appearance: 'light', fontFamily: 'newsreader', readingGutter: 'aurora' }
+      { appearance: 'light', fontFamily: 'newsreader' },
+      { id: 42, appearance: 'light', fontFamily: 'newsreader' }
     ]
   ])('persists profile preferences and returns a refreshed token for %o', async (body, expectedUpdate) => {
     const { preferences } = await loadHandler()
@@ -522,15 +521,14 @@ describe('controllers/api users endpoints', () => {
   })
 
   it.each([
-    [{}],
-    [{ appearance: 'sepia' }],
-    [{ fontFamily: 'comic-sans' }],
-    [{ readingGutter: 'unknown' }],
-    [{ readingGutter: 'site' }],
-    [{ appearance: 'dark', extra: true }],
-    [null],
-    [[]]
-  ])('rejects invalid profile preferences before calling operations: %o', async body => {
+    ['an empty patch', {}],
+    ['an invalid appearance', { appearance: 'sepia' }],
+    ['an invalid font family', { fontFamily: 'comic-sans' }],
+    ['the removed readingGutter field as an unknown payload key', { readingGutter: 'orbits' }],
+    ['an unknown key', { appearance: 'dark', extra: true }],
+    ['a null payload', null],
+    ['an array payload', []]
+  ])('rejects invalid profile preferences (%s) before calling operations', async (_label, body) => {
     const { preferences } = await loadHandler()
     const req = { user: { id: 42 }, body }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }

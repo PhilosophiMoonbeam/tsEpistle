@@ -17,7 +17,6 @@ import system from './core/system.ts'
 import type { ProductMetadata } from '../shared/product.ts'
 import { BUILTIN_CONTENT_EXTENSIONS } from '../shared/content-extensions.ts'
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../shared/theme-colors.ts'
-import { DEFAULT_PAGE_GUTTER_STYLE } from '../shared/page-gutters.ts'
 const { collectEntry } = viteAssets
 const randomBytesAsync = promisify(randomBytes)
 const { pem2jwk } = pemJwk
@@ -204,8 +203,6 @@ export default function startSetup(): Promise<void> {
         colors: cloneThemeColors(DEFAULT_THEME_COLORS),
         iconset: 'mdi',
         tocPosition: 'left',
-        gutterStyle: DEFAULT_PAGE_GUTTER_STYLE,
-        gutterCustomCss: '',
         injectCSS: '',
         injectHead: '',
         injectBody: ''

@@ -545,12 +545,6 @@
               .text-body-small {{$t('common:page.unpublishedWarning')}}
             site-banner(:banner='siteBanner')
             article.contents(ref='container', aria-labelledby='page-title')
-              .wiki-gutter-art.page-gutter-ornament.page-gutter-ornament--right(
-                :class='`wiki-gutter-art--${gutterStyle}`'
-                :style='gutterOrnamentStyle'
-                aria-hidden='true'
-              )
-                page-gutter-column(v-if='gutterStyle === `columns`')
               template(v-if='$slots.contents')
                 slot(name='contents')
               async-state(
@@ -740,7 +734,6 @@ import { defineComponent, markRaw, type PropType } from 'vue'
 import i18next from 'i18next'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
-import PageGutterColumn from '@/components/common/page-gutter-column.vue'
 import StatusIndicator from '@/components/common/status-indicator.vue'
 import SiteBanner from '@/components/common/site-banner.vue'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
@@ -763,8 +756,6 @@ import {
 import { decodeBase64Json } from '../../../helpers/base64'
 import { hydrateContentExtensions, revealContentExtensionTarget } from '../../../helpers/content-extension-runtime'
 import { getErrorMessage, pushGraphError, showNotification } from '../../../helpers/root-ui-store'
-import { normalizePageGutterCustomCss } from '../../../../shared/page-gutters.ts'
-import { resolveUserReadingGutter } from '../../../../shared/user-presentation.ts'
 import { navigateToWikiPage } from '../../../helpers/wiki-navigation'
 import {
   flattenTableOfContents,
@@ -868,7 +859,6 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
 export default defineComponent({
   components: {
     AsyncState,
-    PageGutterColumn,
     NavSidebar,
     StatusIndicator,
     SiteBanner,
@@ -1032,18 +1022,6 @@ export default defineComponent({
     }
   },
   computed: {
-    gutterStyle () {
-      return resolveUserReadingGutter(
-        wikiStore.user.authenticated ? wikiStore.user.readingGutter : undefined,
-        wikiStore.site.gutterStyle,
-        wikiStore.site.gutterCustomCss
-      )
-    },
-    gutterOrnamentStyle (): string | undefined {
-      return this.gutterStyle === 'custom'
-        ? normalizePageGutterCustomCss(wikiStore.site.gutterCustomCss)
-        : undefined
-    },
     isAuthenticated () {
       return wikiStore.user.authenticated
     },
@@ -2392,10 +2370,8 @@ export default defineComponent({
 }
 
 .page-col-content > .contents {
-  position: relative;
   --page-reader-surface-padding: clamp(var(--wiki-space-6), 3vw, var(--wiki-space-12));
 
-  isolation: isolate;
   min-height: calc(var(--wiki-grid-size) * 3);
   padding: var(--page-reader-surface-padding);
   border: 1px solid var(--wiki-surface-border);
@@ -2404,46 +2380,10 @@ export default defineComponent({
   box-shadow:
     var(--wiki-shadow-inset),
     var(--wiki-shadow-sm);
-  container-name: reading-surface;
-  container-type: inline-size;
 
-  > div:not(.page-gutter-ornament) {
-    position: relative;
-    z-index: 1;
+  > div {
     width: min(100%, var(--page-reader-copy-max));
     margin: 0 auto 0 0;
-  }
-}
-
-.page-gutter-ornament {
-  position: absolute;
-  inset-block-start: 50%;
-  z-index: 0;
-  display: none;
-  width: max(
-    calc(var(--wiki-grid-size) * 1.125),
-    calc(
-      100% - var(--page-reader-copy-max) - var(--page-reader-surface-padding) -
-        var(--wiki-space-4) - var(--wiki-space-1)
-    )
-  );
-  height: min(
-    calc(100% - var(--wiki-space-8)),
-    max(calc(var(--wiki-grid-size) * 7), 95%)
-  );
-  opacity: .58;
-  transform: translateY(-50%);
-  container-type: size;
-
-  &--right {
-    right: var(--wiki-space-1);
-    transform: translateY(-50%) scaleX(-1);
-  }
-}
-
-@container reading-surface (min-width: 70rem) {
-  .page-gutter-ornament {
-    display: block;
   }
 }
 
@@ -2456,11 +2396,11 @@ export default defineComponent({
   font-synthesis: none;
   text-wrap: pretty;
 
-  > div:not(.page-gutter-ornament) > :first-child {
+  > div > :first-child {
     margin-block-start: 0;
   }
 
-  > div:not(.page-gutter-ornament) > :last-child {
+  > div > :last-child {
     margin-block-end: 0;
   }
 
@@ -3378,8 +3318,7 @@ export default defineComponent({
   .page-edit-fab,
   .page-return-top,
   .page-col-sd,
-  .comments-container,
-  .page-gutter-ornament {
+  .comments-container {
     display: none !important;
   }
 
@@ -3440,7 +3379,7 @@ export default defineComponent({
     font-size: 11pt;
     line-height: 1.5;
 
-    > div:not(.page-gutter-ornament) {
+    > div {
       width: 100%;
       max-width: none;
     }

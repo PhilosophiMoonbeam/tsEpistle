@@ -2146,7 +2146,7 @@
   line-height: 1.75;
   font-synthesis: none;
 
-  > div:not(.page-gutter-ornament) {
+  > div {
     width: min(100%, 920px);
     margin-inline: auto;
   }

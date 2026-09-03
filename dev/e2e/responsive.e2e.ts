@@ -70,9 +70,7 @@ test.describe('responsive UI quality matrix', () => {
               const metadataBounds = await firstMetadataCard.boundingBox()
               expect(metadataBounds).not.toBeNull()
               if (metadataBounds) {
-                expect(metadataBounds.y, 'Reader metadata follows the empty Page Contents card').toBeGreaterThanOrEqual(
-                  tocBounds.y + tocBounds.height
-                )
+                expect(metadataBounds.y, 'Reader metadata follows the empty Page Contents card').toBeGreaterThanOrEqual(tocBounds.y + tocBounds.height)
                 expect(
                   metadataBounds.y - (tocBounds.y + tocBounds.height),
                   'Reader metadata follows the empty Page Contents card without dead space'
@@ -97,9 +95,7 @@ test.describe('responsive UI quality matrix', () => {
             expect(lastMetadataBounds).not.toBeNull()
             expect(pageScrollAfterSidebar, 'Metadata scrolling does not move the Markdown page').toBe(initialPageScroll)
             if (sidebarBounds && lastMetadataBounds) {
-              expect(sidebarBounds.y + sidebarBounds.height, 'Metadata scrollbar remains inside the viewport').toBeLessThanOrEqual(
-                viewport.height
-              )
+              expect(sidebarBounds.y + sidebarBounds.height, 'Metadata scrollbar remains inside the viewport').toBeLessThanOrEqual(viewport.height)
               expect(lastMetadataBounds.y + lastMetadataBounds.height, 'The final metadata card is reachable inside its own scroller').toBeLessThanOrEqual(
                 sidebarBounds.y + sidebarBounds.height + 1
               )
@@ -107,19 +103,6 @@ test.describe('responsive UI quality matrix', () => {
             await sidebar.evaluate(element => {
               element.scrollTop = 0
             })
-
-            if (viewport.width >= 2560) {
-              const articleSurface = page.locator('.page-col-content:not(.is-page-header) > .contents').first()
-              const gutterOrnament = articleSurface.locator('> .page-gutter-ornament--start')
-              await expect(gutterOrnament).toBeVisible()
-              const gutterCoverage = await gutterOrnament.evaluate(element => {
-                const article = element.parentElement
-                if (!article) throw new Error('Reading gutter article is missing')
-                return element.getBoundingClientRect().height / article.getBoundingClientRect().height
-              })
-              expect(gutterCoverage, 'Long-page reading gutters retain 95% article coverage').toBeGreaterThanOrEqual(.949)
-              expect(gutterCoverage, 'Long-page reading gutters retain 95% article coverage').toBeLessThanOrEqual(.951)
-            }
           }
         }
       }
@@ -238,7 +221,7 @@ test.describe('responsive UI quality matrix', () => {
     const description = page.locator('.page-header--toc-left .page-description').first()
     const metadataRail = page.locator('.page-col-sd.page-col-sd--toc-left').first()
     const article = page.locator('.page-col-content.page-col-content--toc-left:not(.is-page-header) > .contents').first()
-    const markdownCopy = article.locator('> div:not(.page-gutter-ornament)').first()
+    const markdownCopy = article.locator('> div').first()
 
     await expect(headerShell).toBeVisible()
     await expect(bodyShell).toBeVisible()
@@ -322,9 +305,7 @@ test.describe('responsive UI quality matrix', () => {
     expect(metadataBounds.width, 'Reader metadata rail is at least 18rem').toBeGreaterThanOrEqual(18 * shellSizing.rootFontSize - 1)
     expect(metadataBounds.width, 'Reader metadata rail stays within 21rem').toBeLessThanOrEqual(21 * shellSizing.rootFontSize + 1)
     expect(metadataBounds.x, 'Reader metadata rail remains before the primary article').toBeLessThan(articleBounds.x)
-    expect(metadataBounds.x + metadataBounds.width, 'Reader metadata rail must not overlap the primary article').toBeLessThanOrEqual(
-      articleBounds.x + 1
-    )
+    expect(metadataBounds.x + metadataBounds.width, 'Reader metadata rail must not overlap the primary article').toBeLessThanOrEqual(articleBounds.x + 1)
 
     if (viewport.width >= 2560) {
       expect(shellSizing.columnGap, 'Reader row exposes the rendered column gap').toBeGreaterThan(0)
@@ -547,11 +528,7 @@ test.describe('responsive UI quality matrix', () => {
       await expect(rail).toBeVisible()
       await expect(article).toBeVisible()
 
-      const [titleBounds, railBounds, articleBounds] = await Promise.all([
-        title.boundingBox(),
-        rail.boundingBox(),
-        article.boundingBox()
-      ])
+      const [titleBounds, railBounds, articleBounds] = await Promise.all([title.boundingBox(), rail.boundingBox(), article.boundingBox()])
       expect(titleBounds).not.toBeNull()
       expect(railBounds).not.toBeNull()
       expect(articleBounds).not.toBeNull()

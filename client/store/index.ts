@@ -4,8 +4,7 @@ import { decodeJwtPayload } from '../helpers/jwt.ts'
 import { registerJsonPrincipalRefresh } from '../helpers/json-transport.ts'
 import type { PageOkfView } from '../helpers/pages-api.ts'
 import type { SystemSummary } from '../helpers/system-api.ts'
-import { normalizePageGutterStyle } from '../../shared/page-gutters.ts'
-import { isUserReadingGutter, normalizeUserFontFamily } from '../../shared/user-presentation.ts'
+import { normalizeUserFontFamily } from '../../shared/user-presentation.ts'
 
 export type Notification = {
   message: string
@@ -25,8 +24,6 @@ const defaultUser = () => ({
   dateFormat: '',
   appearance: '',
   fontFamily: normalizeUserFontFamily(undefined),
-  readingGutter: normalizePageGutterStyle(window.siteConfig.gutterStyle),
-  readingGutterNeedsMigration: false,
   permissions: [] as string[],
   iat: 0,
   exp: 0,
@@ -127,8 +124,6 @@ export const useWikiStore = defineStore('wiki', {
       banner: window.siteConfig.banner,
       dark: window.siteConfig.darkMode,
       tocPosition: window.siteConfig.tocPosition,
-      gutterStyle: window.siteConfig.gutterStyle,
-      gutterCustomCss: window.siteConfig.gutterCustomCss,
       mascot: true,
       title: window.siteConfig.title,
       logoUrl: window.siteConfig.logoUrl,
@@ -204,9 +199,6 @@ export const useWikiStore = defineStore('wiki', {
           ? payload.permissions.filter((permission): permission is string => typeof permission === 'string')
           : []
         this.user.fontFamily = normalizeUserFontFamily(payload.ff)
-        const readingGutter = isUserReadingGutter(payload.rg) ? payload.rg : undefined
-        this.user.readingGutter = readingGutter ?? normalizePageGutterStyle(window.siteConfig.gutterStyle)
-        this.user.readingGutterNeedsMigration = readingGutter === undefined
         this.user.iat = typeof payload.iat === 'number' ? payload.iat : 0
         this.user.exp = payload.exp
         this.user.authenticated = true

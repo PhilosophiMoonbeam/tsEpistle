@@ -147,8 +147,6 @@ defaults:
           warning: '#E4A24B'
           error: '#D97A83'
       tocPosition: 'left'
-      gutterStyle: 'columns'
-      gutterCustomCss: ''
     auth:
       autoLogin: false
       enforce2FA: false

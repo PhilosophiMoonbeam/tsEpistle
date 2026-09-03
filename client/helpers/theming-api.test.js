@@ -2,7 +2,7 @@ import { fetchThemeConfig, saveThemeConfig } from './theming-api.ts'
 import { cloneThemeColors, DEFAULT_THEME_COLORS } from '../../shared/theme-colors.ts'
 import { createDefaultThemePalette } from '../../shared/theme-palettes.ts'
 
-function createJsonResponse (payload, ok = true) {
+function createJsonResponse(payload, ok = true) {
   return {
     ok,
     headers: {
@@ -12,7 +12,7 @@ function createJsonResponse (payload, ok = true) {
   }
 }
 
-function validConfig (overrides = {}) {
+function validConfig(overrides = {}) {
   const colors = cloneThemeColors(DEFAULT_THEME_COLORS)
   return {
     theme: 'default',
@@ -22,8 +22,6 @@ function validConfig (overrides = {}) {
     palettes: [createDefaultThemePalette(colors)],
     activePaletteId: 'luminous-archive',
     tocPosition: 'left',
-    gutterStyle: 'columns',
-    gutterCustomCss: '',
     injectCSS: '.contents { color: red; }',
     injectHead: '<meta name="test" content="head">',
     injectBody: '<div>body</div>',
@@ -46,38 +44,50 @@ describe('theming api helper', () => {
   })
 
   test('validates and sanitizes a valid config payload', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(validConfig({
-      theme: 'custom',
-      iconset: 'fa',
-      darkMode: true,
-      tocPosition: 'right',
-      gutterStyle: 'custom',
-      gutterCustomCss: 'background: linear-gradient(red, transparent); opacity: .4;',
-      injectCSS: '',
-      injectHead: '',
-      injectBody: ''
-    })))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse(
+        validConfig({
+          theme: 'custom',
+          iconset: 'fa',
+          darkMode: true,
+          tocPosition: 'right',
+          injectCSS: '',
+          injectHead: '',
+          injectBody: ''
+        })
+      )
+    )
 
-    expect(await fetchThemeConfig(fetchImpl)).toEqual(validConfig({
-      theme: 'custom',
-      iconset: 'fa',
-      darkMode: true,
-      tocPosition: 'right',
-      gutterStyle: 'custom',
-      gutterCustomCss: 'background: linear-gradient(red, transparent); opacity: .4;',
-      injectCSS: '',
-      injectHead: '',
-      injectBody: ''
-    }))
+    expect(await fetchThemeConfig(fetchImpl)).toEqual(
+      validConfig({
+        theme: 'custom',
+        iconset: 'fa',
+        darkMode: true,
+        tocPosition: 'right',
+        injectCSS: '',
+        injectHead: '',
+        injectBody: ''
+      })
+    )
   })
 
-  test('strips extra fields', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(validConfig({
-      privateField: 'must-not-return',
-      nested: { raw: true }
-    })))
+  test('strips extra and removed gutter fields', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse(
+        validConfig({
+          privateField: 'must-not-return',
+          nested: { raw: true },
+          gutterStyle: 'columns',
+          gutterCustomCss: 'opacity: .4;'
+        })
+      )
+    )
 
-    expect(await fetchThemeConfig(fetchImpl)).toEqual(validConfig())
+    const result = await fetchThemeConfig(fetchImpl)
+
+    expect(result).toEqual(validConfig())
+    expect(result).not.toHaveProperty('gutterStyle')
+    expect(result).not.toHaveProperty('gutterCustomCss')
   })
 
   test('migrates legacy color-only payloads into a manageable default theme', async () => {
@@ -107,8 +117,6 @@ describe('theming api helper', () => {
       validConfig({ colors: { light: {}, dark: {} } }),
       validConfig({ colors: { ...cloneThemeColors(DEFAULT_THEME_COLORS), dark: { ...DEFAULT_THEME_COLORS.dark, primary: 'blue' } } }),
       validConfig({ tocPosition: null }),
-      validConfig({ gutterStyle: 'marble' }),
-      validConfig({ gutterCustomCss: '.contents { display: none; }' }),
       validConfig({ injectCSS: null }),
       validConfig({ injectHead: false }),
       validConfig({ injectBody: {} })

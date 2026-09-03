@@ -41,8 +41,6 @@ describe('controllers/api theming endpoints', () => {
           darkMode: false,
           colors: cloneThemeColors(DEFAULT_THEME_COLORS),
           tocPosition: 'right',
-          gutterStyle: 'laurel',
-          gutterCustomCss: 'opacity: .4;',
           injectCSS: '.contents{color:red}',
           injectHead: '<meta name="test" content="head">',
           injectBody: '<div>body</div>',
@@ -183,29 +181,6 @@ describe('controllers/api theming endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Invalid theme color configuration' })
     expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
   })
-  it('rejects page gutter selectors before persisting', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = await loadSaveHandler()
-    const req = {
-      user: {},
-      body: {
-        theme: 'default',
-        iconset: 'mdi',
-        darkMode: false,
-        gutterStyle: 'custom',
-        gutterCustomCss: '.contents { display: none; }'
-      }
-    }
-    const res = { sendStatus: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
-
-    await handler(req, res, vi.fn())
-
-    expect(res.status).toHaveBeenCalledWith(400)
-    expect(res.json).toHaveBeenCalledWith({
-      error: 'Custom page gutter CSS must contain no more than 4000 characters of declarations without selectors or at-rules'
-    })
-    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
-  })
 
   it('returns exactly the expected config fields for authorized requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValue(true)
@@ -224,8 +199,6 @@ describe('controllers/api theming endpoints', () => {
       palettes: [createDefaultThemePalette(DEFAULT_THEME_COLORS)],
       activePaletteId: 'luminous-archive',
       tocPosition: 'right',
-      gutterStyle: 'laurel',
-      gutterCustomCss: 'opacity: .4;',
       injectCSS: expect.any(String),
       injectHead: '<meta name="test" content="head">',
       injectBody: '<div>body</div>'
@@ -234,8 +207,6 @@ describe('controllers/api theming endpoints', () => {
       'activePaletteId',
       'colors',
       'darkMode',
-      'gutterCustomCss',
-      'gutterStyle',
       'iconset',
       'injectBody',
       'injectCSS',
@@ -267,21 +238,6 @@ describe('controllers/api theming endpoints', () => {
     handler({ user: {} }, res, vi.fn())
 
     expect(res.json.mock.calls[0][0].tocPosition).toBe('left')
-  })
-
-  it('defaults absent legacy page gutter settings to classical columns', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    delete global.WIKI.config.theming.gutterStyle
-    delete global.WIKI.config.theming.gutterCustomCss
-    const handler = await loadConfigHandler()
-    const res = { sendStatus: vi.fn(), json: vi.fn(), set: vi.fn() }
-
-    handler({ user: {} }, res, vi.fn())
-
-    expect(res.json.mock.calls[0][0]).toMatchObject({
-      gutterStyle: 'columns',
-      gutterCustomCss: ''
-    })
   })
 
   it('beautifies injectCSS using the GraphQL read behavior', async () => {
@@ -325,8 +281,6 @@ describe('controllers/api theming endpoints', () => {
           dark: { ...DEFAULT_THEME_COLORS.dark, primary: '#ABCDEF' }
         },
         tocPosition: '',
-        gutterStyle: 'custom',
-        gutterCustomCss: ' background: linear-gradient(red, transparent); opacity: .45; ',
         injectCSS: '.contents{color:red}',
         injectHead: '<meta name="saved" content="head">',
         injectBody: '<div>saved body</div>'
@@ -344,8 +298,6 @@ describe('controllers/api theming endpoints', () => {
         dark: expect.objectContaining({ primary: '#ABCDEF' })
       }),
       tocPosition: 'left',
-      gutterStyle: 'custom',
-      gutterCustomCss: 'background: linear-gradient(red, transparent); opacity: .45;',
       injectHead: '<meta name="saved" content="head">',
       injectBody: '<div>saved body</div>',
       privateSetting: 'do-not-return'
@@ -375,8 +327,6 @@ describe('controllers/api theming endpoints', () => {
         palettes,
         activePaletteId: 'custom-theme-2',
         tocPosition: 'right',
-        gutterStyle: 'columns',
-        gutterCustomCss: '',
         injectCSS: '',
         injectHead: '',
         injectBody: ''

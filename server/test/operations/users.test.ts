@@ -48,7 +48,7 @@ const installWiki = (overrides: Record<string, unknown> = {}) => {
       checkAssignUserToGroupAccess: vi.fn(async () => true),
       revokeUserTokens
     },
-    config: { metrics: { isEnabled: false }, theming: { gutterCustomCss: '' } },
+    config: { metrics: { isEnabled: false } },
     configSvc: { saveToDb: vi.fn() },
     data: { authentication: [] },
     events: { outbound: { emit } },
@@ -119,8 +119,7 @@ describe('user authority revocation', () => {
 describe('profile preferences operation', () => {
   it.each([
     ['appearance', { appearance: 'dark' }],
-    ['font family', { fontFamily: 'roboto-flex' }],
-    ['reading gutter', { readingGutter: 'orbits' }]
+    ['font family', { fontFamily: 'roboto-flex' }]
   ])('updates an independent %s preference and refreshes the JWT by user id', async (_label, input) => {
     const { refreshToken, updateUser } = installWiki()
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
@@ -134,7 +133,7 @@ describe('profile preferences operation', () => {
   it('updates a combined preference patch exactly', async () => {
     const { refreshToken, updateUser } = installWiki()
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
-    const input = { appearance: 'light', fontFamily: 'newsreader', readingGutter: 'laurel' }
+    const input = { appearance: 'light', fontFamily: 'newsreader' }
 
     await expect(operations.default.updateProfilePreferences({ requester, input })).resolves.toBe('replacement-jwt')
 
@@ -147,8 +146,7 @@ describe('profile preferences operation', () => {
     ['an empty patch', {}],
     ['an invalid appearance', { appearance: 'sepia' }],
     ['an invalid font family', { fontFamily: 'serif' }],
-    ['an invalid reading gutter', { readingGutter: 'marble' }],
-    ['the removed site-default gutter', { readingGutter: 'site' }]
+    ['the removed readingGutter field as an unknown payload key', { readingGutter: 'orbits' }]
   ])('rejects %s before persistence', async (_label, input) => {
     const { refreshToken, updateUser } = installWiki()
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
@@ -157,28 +155,6 @@ describe('profile preferences operation', () => {
 
     expect(updateUser).not.toHaveBeenCalled()
     expect(refreshToken).not.toHaveBeenCalled()
-  })
-
-  it.each(['   ', '.contents { display: none; }'])('rejects custom gutters when normalized server CSS is unavailable', async gutterCustomCss => {
-    const { refreshToken, updateUser } = installWiki({ config: { metrics: { isEnabled: false }, theming: { gutterCustomCss } } })
-    const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
-
-    await expect(operations.default.updateProfilePreferences({ requester, input: { readingGutter: 'custom' } })).rejects.toBeInstanceOf(InputInvalid)
-
-    expect(updateUser).not.toHaveBeenCalled()
-    expect(refreshToken).not.toHaveBeenCalled()
-  })
-
-  it('accepts custom gutters when normalized server CSS is configured', async () => {
-    const { refreshToken, updateUser } = installWiki({
-      config: { metrics: { isEnabled: false }, theming: { gutterCustomCss: '  background: linear-gradient(red, transparent);  ' } }
-    })
-    const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)
-
-    await expect(operations.default.updateProfilePreferences({ requester, input: { readingGutter: 'custom' } })).resolves.toBe('replacement-jwt')
-
-    expect(updateUser).toHaveBeenCalledWith({ id: 10, readingGutter: 'custom' })
-    expect(refreshToken).toHaveBeenCalledWith(10)
   })
 })
 

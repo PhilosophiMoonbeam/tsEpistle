@@ -603,26 +603,24 @@ describe('users api helper', () => {
 
     await expect(Promise.resolve(fetchUserDetails(fetchImpl, 42, 'Bad user detail payload'))).rejects.toThrow('Bad user detail payload')
   })
-  test.each([
-    { appearance: 'dark' },
-    { fontFamily: 'roboto-flex' },
-    { readingGutter: 'laurel' },
-    { appearance: 'system', fontFamily: 'newsreader', readingGutter: 'aurora' }
-  ])('updates profile preferences with the exact REST payload: %o', async input => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ token: 'replacement-jwt' }))
+  test.each([{ appearance: 'dark' }, { fontFamily: 'roboto-flex' }, { appearance: 'system', fontFamily: 'newsreader' }])(
+    'updates profile preferences with the exact REST payload: %o',
+    async input => {
+      const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ token: 'replacement-jwt' }))
 
-    await expect(updateProfilePreferences(fetchImpl, input)).resolves.toBe('replacement-jwt')
+      await expect(updateProfilePreferences(fetchImpl, input)).resolves.toBe('replacement-jwt')
 
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/users/profile/preferences', {
-      method: 'PATCH',
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(input)
-    })
-  })
+      expect(fetchImpl).toHaveBeenCalledWith('/_api/users/profile/preferences', {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(input)
+      })
+    }
+  )
 
   test('rejects malformed profile preference responses with the provided fallback', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ token: '' }))
@@ -633,7 +631,7 @@ describe('users api helper', () => {
   test('surfaces API errors from profile preference updates', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Profile preferences could not be saved' }, false))
 
-    await expect(updateProfilePreferences(fetchImpl, { readingGutter: 'aurora' })).rejects.toThrow('Profile preferences could not be saved')
+    await expect(updateProfilePreferences(fetchImpl, { fontFamily: 'newsreader' })).rejects.toThrow('Profile preferences could not be saved')
   })
 
   test('surfaces API error messages for failed searches', async () => {

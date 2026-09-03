@@ -176,67 +176,6 @@ v-container.admin-theme(fluid)
       v-col(cols='12')
         v-card.animated.fadeInUp.wait-p2s
           v-toolbar(color='primary', density='compact')
-            v-icon.ml-4 mdi-pillar
-            v-toolbar-title.text-body-large Reading gutters
-            v-chip.mr-3(size='small', color='secondary', variant='tonal') Wide screens
-          v-card-text
-            .gutter-section-heading
-              div
-                .text-title-medium Marginalia for the reading surface
-                .text-body-medium.text-medium-emphasis.mt-1
-                  | Choose a restrained ornament for the open space to the right of article text. Decorations recede automatically when the reading gutter narrows.
-              v-chip(size='small', variant='outlined', color='primary') Article pages only
-            .gutter-style-grid.mt-5(role='group', aria-label='Reading gutter ornament')
-              button.gutter-style-option(
-                v-for='option in gutterStyles'
-                :key='option.value'
-                type='button'
-                :aria-pressed='config.gutterStyle === option.value'
-                :class='{ "is-selected": config.gutterStyle === option.value }'
-                :disabled='initialLoading || !loaded || saving'
-                @click='config.gutterStyle = option.value'
-              )
-                .gutter-style-option__canvas
-                  .gutter-style-option__paper
-                    span
-                    span
-                    span
-                    span
-                  .wiki-gutter-art.gutter-style-option__art.gutter-style-option__art--right(
-                    :class='`wiki-gutter-art--${option.value}`'
-                    :style='gutterPreviewStyle(option.value)'
-                    aria-hidden='true'
-                  )
-                    page-gutter-column(v-if='option.value === `columns`')
-                .gutter-style-option__label
-                  span.text-label-large {{ option.title }}
-                  v-icon(v-if='config.gutterStyle === option.value', color='primary', size='18') mdi-check-circle
-                .text-body-small.text-medium-emphasis {{ option.description }}
-            v-expand-transition
-              .gutter-custom-editor.mt-5(v-if='config.gutterStyle === `custom`')
-                v-textarea.is-monospaced(
-                  v-model='config.gutterCustomCss'
-                  label='Custom gutter CSS declarations'
-                  variant='outlined'
-                  color='primary'
-                  persistent-hint
-                  hint='Applied only to the right gutter ornament. Enter declarations without a selector, braces, or @-rules.'
-                  placeholder='background: radial-gradient(circle, rgba(99, 102, 241, .16), transparent 68%); opacity: .7;'
-                  :maxlength='PAGE_GUTTER_CUSTOM_CSS_MAX_LENGTH'
-                  :counter='PAGE_GUTTER_CUSTOM_CSS_MAX_LENGTH'
-                  :rules='gutterCustomCssRules'
-                  auto-grow
-                  rows='3'
-                )
-                .d-flex.flex-wrap.ga-2.mt-2
-                  v-chip(size='small', variant='tonal') background
-                  v-chip(size='small', variant='tonal') border
-                  v-chip(size='small', variant='tonal') opacity
-                  v-chip(size='small', variant='tonal') filter
-
-      v-col(cols='12')
-        v-card.animated.fadeInUp.wait-p2s
-          v-toolbar(color='primary', density='compact')
             v-icon.ml-4 mdi-code-tags
             v-toolbar-title.text-body-large {{ $t('admin:theme.codeInjection') }}
           v-card-text
@@ -302,15 +241,9 @@ import { useTheme } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
 import ThemeColorField from './theme-color-field.vue'
 import AppearanceSelector from '../common/appearance-selector.vue'
-import PageGutterColumn from '../common/page-gutter-column.vue'
 import { fetchThemeConfig, saveThemeConfig, type ThemeConfig } from '../../helpers/theming-api.ts'
 import { applyWikiThemeColors, resolveThemeName } from '../../helpers/theme.ts'
 import { loadingStart, loadingStop, pushGraphError, showNotification } from '../../helpers/root-ui-store.ts'
-import {
-  PAGE_GUTTER_CUSTOM_CSS_MAX_LENGTH,
-  PageGutterCustomCssSchema,
-  type PageGutterStyle
-} from '../../../shared/page-gutters.ts'
 import { cloneThemeColors, DEFAULT_THEME_COLORS, isThemeColors, normalizeThemeColors, type ThemeColorKey } from '../../../shared/theme-colors.ts'
 import {
   cloneThemePalettes,
@@ -338,8 +271,6 @@ const createConfig = (): ThemeConfig => {
     palettes,
     activePaletteId: palettes[0]?.id ?? 'luminous-archive',
     tocPosition: siteConfig.tocPosition,
-    gutterStyle: siteConfig.gutterStyle,
-    gutterCustomCss: siteConfig.gutterCustomCss,
     injectCSS: '',
     injectHead: '',
     injectBody: ''
@@ -365,8 +296,7 @@ const dirty = computed(() => JSON.stringify(config) !== JSON.stringify(persisted
 const configValid = computed(() =>
   isThemeColors(config.colors) &&
   ThemePalettesSchema.safeParse(config.palettes).success &&
-  config.palettes.some(palette => palette.id === config.activePaletteId) &&
-  PageGutterCustomCssSchema.safeParse(config.gutterCustomCss).success
+  config.palettes.some(palette => palette.id === config.activePaletteId)
 )
 const iconsets = [
   { title: 'Material Design Icons (default)', value: 'mdi' },
@@ -378,23 +308,10 @@ const tocPositions = [
   { title: 'Right', value: 'right' },
   { title: 'Hidden', value: 'off' }
 ]
-const gutterStyles: Array<{ value: PageGutterStyle; title: string; description: string }> = [
-  { value: 'columns', title: 'Attic columns', description: 'Fine fluting and measured capitals; the classical default.' },
-  { value: 'orbits', title: 'Celestial orbits', description: 'Quiet circles and axes echo the geometry of the page title.' },
-  { value: 'laurel', title: 'Laurel cadence', description: 'A spare botanical rhythm drawn along a central stem.' },
-  { value: 'aurora', title: 'Aurora wash', description: 'Soft color fields for a warmer, contemporary margin.' },
-  { value: 'none', title: 'Unadorned', description: 'Preserve the open reading space without ornament.' },
-  { value: 'custom', title: 'Custom study', description: 'Apply your own declaration block to the right gutter region.' }
-]
-const gutterCustomCssRules = [
-  (value: string): true | string => value.length <= PAGE_GUTTER_CUSTOM_CSS_MAX_LENGTH || `Use no more than ${PAGE_GUTTER_CUSTOM_CSS_MAX_LENGTH} characters.`,
-  (value: string): true | string => !/[{}@]/.test(value) || 'Enter declarations only; selectors, braces, and @-rules are not allowed.'
-]
 const paletteNameRules = [
   (value: string): true | string => value.trim().length > 0 || 'Enter a theme name.',
   (value: string): true | string => value.trim().length <= 80 || 'Use no more than 80 characters.'
 ]
-const gutterPreviewStyle = (style: PageGutterStyle): string | undefined => style === 'custom' ? config.gutterCustomCss : undefined
 const paletteFields: Array<{ key: ThemeColorKey; label: string }> = [
   { key: 'background', label: 'Page background' },
   { key: 'surface', label: 'Cards and surfaces' },
@@ -416,7 +333,6 @@ const copyConfig = (source: ThemeConfig): ThemeConfig => ({
 const assignConfig = (source: ThemeConfig): void => {
   Object.assign(config, copyConfig(source))
 }
-
 
 const syncActivePalette = (): void => {
   const palette = config.palettes.find(item => item.id === config.activePaletteId)
@@ -513,10 +429,6 @@ const save = async (): Promise<void> => {
     persistedConfig.value = payload
     siteConfig.darkMode = payload.darkMode
     siteConfig.themeColors = cloneThemeColors(payload.colors)
-    siteConfig.gutterStyle = payload.gutterStyle
-    siteConfig.gutterCustomCss = payload.gutterCustomCss
-    wikiStore.site.gutterStyle = payload.gutterStyle
-    wikiStore.site.gutterCustomCss = payload.gutterCustomCss
     wikiStore.site.dark = payload.darkMode
     showNotification(wikiStore, {
       message: 'Theme settings updated successfully.',
@@ -627,132 +539,6 @@ onBeforeUnmount(() => {
   }
 }
 
-.gutter-section-heading {
-  display: flex;
-  gap: 24px;
-  align-items: flex-start;
-  justify-content: space-between;
-}
-
-.gutter-style-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.gutter-style-option {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  padding: 10px 10px 14px;
-  border: 1px solid rgba(var(--v-border-color), .14);
-  border-radius: 16px;
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-background)));
-  color: rgb(var(--v-theme-on-surface));
-  cursor: pointer;
-  font: inherit;
-  text-align: start;
-  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
-
-  &:not(:disabled):hover {
-    border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 42%, transparent);
-    box-shadow: 0 12px 28px rgba(15, 23, 42, .08);
-    transform: translateY(-2px);
-  }
-
-  &:disabled {
-    cursor: default;
-    opacity: .6;
-  }
-
-  &:focus-visible {
-    outline: 3px solid rgba(var(--v-theme-primary), .2);
-    outline-offset: 3px;
-  }
-
-  &.is-selected {
-    border-color: rgb(var(--v-theme-primary));
-    box-shadow:
-      0 0 0 1px rgb(var(--v-theme-primary)),
-      0 14px 30px rgba(15, 23, 42, .09);
-  }
-
-  &__canvas {
-    position: relative;
-    overflow: hidden;
-    height: 116px;
-    border: 1px solid rgba(var(--v-border-color), .09);
-    border-radius: 11px;
-    background:
-      radial-gradient(circle at 82% 12%, rgba(var(--v-theme-primary), .09), transparent 45%),
-      rgb(var(--v-theme-background));
-  }
-
-  &__art {
-    position: absolute;
-    inset-block: 8px;
-    width: 44%;
-
-    &--right {
-      right: 2%;
-      transform: scaleX(-1);
-    }
-  }
-
-  &__paper {
-    position: absolute;
-    inset: 10px auto 10px 4%;
-    width: 48%;
-    flex-direction: column;
-    gap: 8px;
-    padding: 16px 12px;
-    border: 1px solid rgba(var(--v-border-color), .1);
-    border-radius: 8px;
-    background: rgb(var(--v-theme-surface));
-    box-shadow: 0 5px 16px rgba(15, 23, 42, .05);
-
-    span {
-      width: 100%;
-      height: 3px;
-      border-radius: 999px;
-      background: rgba(var(--v-theme-on-surface), .13);
-
-      &:nth-child(2) {
-        width: 82%;
-      }
-
-      &:nth-child(3) {
-        width: 92%;
-      }
-
-      &:nth-child(4) {
-        width: 64%;
-      }
-    }
-  }
-
-  &__label {
-    display: flex;
-    gap: 8px;
-    align-items: center;
-    justify-content: space-between;
-    margin: 12px 3px 3px;
-  }
-
-  > .text-body-small {
-    min-height: 2.5rem;
-    margin-inline: 3px;
-    line-height: 1.35;
-  }
-}
-
-.gutter-custom-editor {
-  padding: 18px 18px 14px;
-  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 24%, transparent);
-  border-radius: 14px;
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 4%, rgb(var(--v-theme-surface)));
-}
-
 .is-monospaced :deep(textarea) {
   font-family: 'Roboto Mono', 'Courier New', Courier, monospace;
   font-size: 13px;
@@ -762,10 +548,6 @@ onBeforeUnmount(() => {
 
 @include until($desktop) {
   .theme-palette-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .gutter-style-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -787,16 +569,6 @@ onBeforeUnmount(() => {
     align-items: stretch;
     flex-direction: column;
   }
-
-  .gutter-section-heading {
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .gutter-style-grid {
-    grid-template-columns: 1fr;
-  }
-
 
   .theme-preview {
     padding: 16px;

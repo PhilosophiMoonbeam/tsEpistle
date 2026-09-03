@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { resolveUserReadingGutter } from '../../../../shared/user-presentation.ts'
 
 const read = relativePath => fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8')
 const extractBlock = (source, tag) => {
@@ -164,8 +163,7 @@ describe('default page focused contracts', () => {
   const script = extractScript(read('client/themes/default/components/page.vue'))
   const template = extractBlock(read('client/themes/default/components/page.vue'), 'template')
   const style = extractBlock(read('client/themes/default/components/page.vue'), 'style')
-  const gutterColumn = read('client/components/common/page-gutter-column.vue')
-  const adminTheme = read('client/components/admin/admin-theme.vue')
+  const appStyle = read('client/themes/default/scss/app.scss')
 
   test('default page notifies page-ready through imported boot instead of window global', () => {
     expect(script).not.toBeNull()
@@ -174,47 +172,17 @@ describe('default page focused contracts', () => {
     expect(script).not.toMatch(/window\.boot\.notify\s*\(/)
   })
 
-  test('keeps authenticated gutters concrete while guests follow reactive site settings', () => {
-    expect(script).toMatch(
-      /resolveUserReadingGutter\(\s*wikiStore\.user\.authenticated \? wikiStore\.user\.readingGutter : undefined,\s*wikiStore\.site\.gutterStyle,\s*wikiStore\.site\.gutterCustomCss\s*\)/
+  test('renders a plain reading surface without gutter code', () => {
+    expect(template).toMatch(
+      /article\.contents\(ref='container', aria-labelledby='page-title'\)\s+template\(v-if='\$slots\.contents'\)\s+slot\(name='contents'\)\s+async-state\(/
     )
-    expect(script).not.toMatch(/gutterStyle:\s*siteConfig\.gutterStyle|gutterCustomCss:\s*siteConfig\.gutterCustomCss/)
-    expect(script).toMatch(
-      /gutterOrnamentStyle\s*\(\): string \| undefined\s*\{[\s\S]*?this\.gutterStyle === 'custom'[\s\S]*?normalizePageGutterCustomCss\(wikiStore\.site\.gutterCustomCss\)[\s\S]*?: undefined/
+    expect(template).not.toMatch(/page-gutter-(?:ornament|column)|wiki-gutter-art/)
+    expect(script).not.toMatch(
+      /PageGutterColumn|resolveUserReadingGutter|normalizePageGutterCustomCss|gutterStyle|gutterOrnamentStyle|readingGutter|gutterCustomCss/
     )
-
-    const presentation = {
-      user: { authenticated: true, readingGutter: 'laurel' },
-      site: { gutterStyle: 'laurel', gutterCustomCss: '' }
-    }
-    const effectiveGutter = () =>
-      resolveUserReadingGutter(
-        presentation.user.authenticated ? presentation.user.readingGutter : undefined,
-        presentation.site.gutterStyle,
-        presentation.site.gutterCustomCss
-      )
-
-    expect(effectiveGutter()).toBe('laurel')
-    presentation.site.gutterStyle = 'aurora'
-    expect(effectiveGutter()).toBe('laurel')
-    presentation.user.readingGutter = 'orbits'
-    expect(effectiveGutter()).toBe('orbits')
-    presentation.user.authenticated = false
-    expect(effectiveGutter()).toBe('aurora')
-    presentation.user.authenticated = true
-    presentation.user.readingGutter = 'custom'
-    presentation.site.gutterStyle = 'columns'
-    presentation.site.gutterCustomCss = '.page { display: none; }'
-    expect(effectiveGutter()).toBe('columns')
-
-    expect(template).not.toContain('page-gutter-ornament--start')
-    expect(template).toContain('page-gutter-ornament--right')
-    expect(adminTheme).not.toContain('gutter-style-option__art--start')
-    expect(adminTheme).toContain('gutter-style-option__art--right')
-    expect(adminTheme).toContain("{ value: 'custom', title: 'Custom study'")
-    expect(adminTheme).toMatch(
-      /siteConfig\.gutterStyle = payload\.gutterStyle[\s\S]*?siteConfig\.gutterCustomCss = payload\.gutterCustomCss[\s\S]*?wikiStore\.site\.gutterStyle = payload\.gutterStyle[\s\S]*?wikiStore\.site\.gutterCustomCss = payload\.gutterCustomCss/
-    )
+    expect(style).not.toContain('.page-gutter-ornament')
+    expect(style).not.toContain('@container reading-surface')
+    expect(appStyle).not.toContain('page-gutter-ornament')
   })
 
   test('keeps reader geometry compact, useful, and clear of mobile navigation', () => {
@@ -228,8 +196,7 @@ describe('default page focused contracts', () => {
     const desktopHeader = desktopRules.find(({ block }) => block.includes('.page-header-section'))?.block ?? null
     const desktopBody = desktopRules.find(({ block }) => block.includes('.page-col-sd--with-toc'))?.block ?? null
     const readerSurface = extractCssRule(style, '.page-col-content > .contents')
-    const readerCopy = extractCssRule(readerSurface, '> div:not(.page-gutter-ornament)')
-    const readerGutter = extractCssRule(style, '.page-gutter-ornament')
+    const readerCopy = extractCssRule(readerSurface, '> div')
     const thirdLevelTocTitle = extractCssRule(style, '.page-toc-item-title--third-level')
 
     expectDeclarations(pageRoot, {
@@ -263,11 +230,6 @@ describe('default page focused contracts', () => {
     expectDeclarations(readerCopy, {
       margin: '0 auto 0 0'
     })
-    expect(template).not.toContain('page-gutter-ornament--start')
-    expect(template).toContain('page-gutter-ornament--right')
-    expect(adminTheme).not.toContain('gutter-style-option__art--start')
-    expect(adminTheme).toContain('gutter-style-option__art--right')
-    expect(adminTheme).toContain('open space to the right of article text')
     const shortcutCardIndex = template.indexOf('v-card.page-shortcuts-card.mb-4')
     const tocCardIndex = template.indexOf('v-card.page-toc-card.mb-4')
     expect(shortcutCardIndex).toBeGreaterThan(-1)
@@ -279,13 +241,6 @@ describe('default page focused contracts', () => {
       'overflow-y': 'auto',
       'overscroll-behavior': 'contain'
     })
-    expectDeclarations(readerGutter, {
-      width:
-        'max\\(\\s*calc\\(var\\(--wiki-grid-size\\) \\* 1\\.125\\),\\s*calc\\(\\s*100% - var\\(--page-reader-copy-max\\) - var\\(--page-reader-surface-padding\\) -\\s*var\\(--wiki-space-4\\) - var\\(--wiki-space-1\\)\\s*\\)\\s*\\)',
-      height: 'min\\(\\s*calc\\(100% - var\\(--wiki-space-8\\)\\),\\s*max\\(calc\\(var\\(--wiki-grid-size\\) \\* 7\\),\\s*95%\\)\\s*\\)'
-    })
-    expect(gutterColumn).toContain("path.wiki-gutter-column__base-neck(d='M61 480 H129 L131 493 H59 Z')")
-    expect(gutterColumn).toContain("path.wiki-gutter-column__base-neck(d='M61 480 L59 493 M129 480 L131 493')")
     expect(template).not.toMatch(/:href='`#\$\{tocItem\.anchor\}`'/)
     expect(template).toMatch(/\.page-toc-empty\(v-else\)/)
     expect(template).not.toMatch(/page-return-top--docked|:style='upBtnPosition'|location='bottom start'/)

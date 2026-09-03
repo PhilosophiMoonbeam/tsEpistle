@@ -1,7 +1,7 @@
 import _ from 'lodash'
 
 import errors from './errors.ts'
-import { ProfilePreferencesInputSchema, isAdminCustomGutterAvailable } from '../../shared/user-presentation.ts'
+import { ProfilePreferencesInputSchema } from '../../shared/user-presentation.ts'
 
 const { ApplicationError } = errors
 
@@ -97,11 +97,6 @@ interface WikiUsers {
     strategies: Record<string, unknown>
     checkAssignUserToGroupAccess(requester: Express.User | undefined, groups: number[] | undefined): Promise<boolean>
     revokeUserTokens(input: { id: number; kind: 'u' }): void
-  }
-  config: {
-    theming?: {
-      gutterCustomCss?: unknown
-    }
   }
   data: { authentication: unknown }
   events: { outbound: { emit(event: 'addAuthRevoke', input: { id: number; kind: 'u' }): void } }
@@ -398,9 +393,6 @@ const updateProfilePreferences = async ({ requester, input: value }: UserRequest
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   const result = ProfilePreferencesInputSchema.safeParse(value)
   if (!result.success) throw new wiki.Error.InputInvalid()
-  if (result.data.readingGutter === 'custom' && !isAdminCustomGutterAvailable(wiki.config.theming?.gutterCustomCss)) {
-    throw new wiki.Error.InputInvalid()
-  }
   await wiki.models.users.updateUser({ id: user.id, ...result.data })
   return (await wiki.models.users.refreshToken(user.id)).token
 }

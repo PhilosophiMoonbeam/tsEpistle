@@ -14,30 +14,11 @@ section.presentation-selector(:aria-busy='saving ? `true` : `false`')
           :aria-describedby='fontDescriptionId'
           @change='selectFontFamily(option.value)'
         )
-        label.presentation-selector__card.presentation-selector__card--typeface(
+        label.presentation-selector__card(
           :class='`presentation-selector__card--${option.value}`'
           :for='fontOptionId(option.value)'
         )
           span.presentation-selector__specimen(aria-hidden='true') Ag
-          span.presentation-selector__copy
-            strong.presentation-selector__name {{ option.label }}
-            span.presentation-selector__note {{ option.description }}
-
-  fieldset.presentation-selector__group(:disabled='saving' :aria-describedby='gutterDescriptionId')
-    legend.presentation-selector__legend Reading gutter
-    p.presentation-selector__description.text-body-small.text-medium-emphasis(:id='gutterDescriptionId') Choose the study marks framing article pages.
-    .presentation-selector__gutters
-      .presentation-selector__option(v-for='option in gutterOptions' :key='option.value')
-        input.presentation-selector__radio(
-          type='radio'
-          name='wiki-reading-gutter'
-          :id='gutterOptionId(option.value)'
-          :value='option.value'
-          :checked='selectedReadingGutter === option.value'
-          :aria-describedby='gutterDescriptionId'
-          @change='selectReadingGutter(option.value)'
-        )
-        label.presentation-selector__card(:for='gutterOptionId(option.value)')
           span.presentation-selector__copy
             strong.presentation-selector__name {{ option.label }}
             span.presentation-selector__note {{ option.description }}
@@ -47,7 +28,7 @@ section.presentation-selector(:aria-busy='saving ? `true` : `false`')
     indeterminate
     color='primary'
     height='2'
-    aria-label='Saving presentation preference'
+    aria-label='Saving typeface preference'
   )
   .presentation-selector__status(role='status' aria-live='polite' aria-atomic='true') {{ statusMessage }}
 </template>
@@ -57,15 +38,7 @@ import { computed, ref, useId } from 'vue'
 import Cookies from 'js-cookie'
 import { wikiStore } from '@/store/index.ts'
 import { updateProfilePreferences } from '../../helpers/users-api.ts'
-import { normalizePageGutterStyle } from '../../../shared/page-gutters.ts'
-import {
-  isAdminCustomGutterAvailable,
-  normalizeUserFontFamily,
-  normalizeUserReadingGutter,
-  type ProfilePreferencesInput,
-  type UserFontFamily,
-  type UserReadingGutter
-} from '../../../shared/user-presentation.ts'
+import { normalizeUserFontFamily, type UserFontFamily } from '../../../shared/user-presentation.ts'
 
 type FontOption = {
   value: UserFontFamily
@@ -73,17 +46,9 @@ type FontOption = {
   description: string
 }
 
-type GutterOption = {
-  value: UserReadingGutter
-  label: string
-  description: string
-}
-
 const PREFERENCE_LOADING_KEY = 'profile-preferences-save'
 const fontDescriptionId = useId()
-const gutterDescriptionId = useId()
 const fontGroupId = useId()
-const gutterGroupId = useId()
 const statusMessage = ref('')
 
 const fontOptions: readonly FontOption[] = [
@@ -91,42 +56,14 @@ const fontOptions: readonly FontOption[] = [
   { value: 'roboto-flex', label: 'Roboto Flex', description: 'A precise sans serif with an open rhythm.' }
 ]
 
-const presetGutterOptions: readonly GutterOption[] = [
-  { value: 'columns', label: 'Attic columns', description: 'Measured editorial rules.' },
-  { value: 'orbits', label: 'Celestial orbits', description: 'Concentric study marks.' },
-  { value: 'laurel', label: 'Laurel cadence', description: 'A restrained botanical frame.' },
-  { value: 'aurora', label: 'Aurora wash', description: 'Soft bands at the page edge.' },
-  { value: 'none', label: 'Unadorned', description: 'An unadorned reading canvas.' },
-  { value: 'custom', label: 'Custom study', description: 'The study composed by this site.' }
-]
-
 const saving = computed(() => (wikiStore.loadingCounts[PREFERENCE_LOADING_KEY] ?? 0) > 0)
 const selectedFontFamily = computed<UserFontFamily>(() => normalizeUserFontFamily(wikiStore.user.fontFamily))
-const customGutterAvailable = computed(() => isAdminCustomGutterAvailable(wikiStore.site.gutterCustomCss))
-const selectedReadingGutter = computed<UserReadingGutter>(() => {
-  const selected = normalizeUserReadingGutter(wikiStore.user.readingGutter)
-  return selected === 'custom' && !customGutterAvailable.value
-    ? normalizePageGutterStyle(wikiStore.site.gutterStyle)
-    : selected
-})
-const gutterOptions = computed<readonly GutterOption[]>(() =>
-  presetGutterOptions.filter(option => option.value !== 'custom' || customGutterAvailable.value)
-)
 
 const fontOptionId = (value: UserFontFamily): string => `${fontGroupId}-${value}`
-const gutterOptionId = (value: UserReadingGutter): string => `${gutterGroupId}-${value}`
 
 function replaceSessionToken (token: string): void {
   Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
   wikiStore.refreshAuth()
-}
-
-async function savePreference (input: ProfilePreferencesInput): Promise<string> {
-  return updateProfilePreferences(
-    window.fetch.bind(window),
-    input,
-    'Presentation preference update failed'
-  )
 }
 
 async function selectFontFamily (next: UserFontFamily): Promise<void> {
@@ -140,33 +77,16 @@ async function selectFontFamily (next: UserFontFamily): Promise<void> {
 
   try {
     wikiStore.user.fontFamily = next
-    replaceSessionToken(await savePreference({ fontFamily: next }))
+    const token = await updateProfilePreferences(
+      window.fetch.bind(window),
+      { fontFamily: next },
+      'Typeface preference update failed'
+    )
+    replaceSessionToken(token)
     statusMessage.value = `${option.label} typeface saved.`
   } catch (error) {
     wikiStore.user.fontFamily = previousFontFamily
     statusMessage.value = 'Typeface could not be saved. The previous setting was restored.'
-    wikiStore.showError(error)
-  } finally {
-    wikiStore.stopLoading(PREFERENCE_LOADING_KEY)
-  }
-}
-
-async function selectReadingGutter (next: UserReadingGutter): Promise<void> {
-  if (saving.value || next === selectedReadingGutter.value) return
-  const option = gutterOptions.value.find(candidate => candidate.value === next)
-  if (!option) return
-
-  const previousReadingGutter = wikiStore.user.readingGutter
-  statusMessage.value = `Saving ${option.label.toLowerCase()} reading gutter.`
-  wikiStore.startLoading(PREFERENCE_LOADING_KEY)
-
-  try {
-    wikiStore.user.readingGutter = next
-    replaceSessionToken(await savePreference({ readingGutter: next }))
-    statusMessage.value = `${option.label} reading gutter saved.`
-  } catch (error) {
-    wikiStore.user.readingGutter = previousReadingGutter
-    statusMessage.value = 'Reading gutter could not be saved. The previous setting was restored.'
     wikiStore.showError(error)
   } finally {
     wikiStore.stopLoading(PREFERENCE_LOADING_KEY)
@@ -202,8 +122,7 @@ async function selectReadingGutter (next: UserReadingGutter): Promise<void> {
   line-height: 1.45;
 }
 
-.presentation-selector__typefaces,
-.presentation-selector__gutters {
+.presentation-selector__typefaces {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--wiki-space-2);
@@ -228,7 +147,7 @@ async function selectReadingGutter (next: UserReadingGutter): Promise<void> {
 .presentation-selector__card {
   display: flex;
   min-height: var(--wiki-space-12);
-  align-items: flex-start;
+  align-items: center;
   gap: var(--wiki-space-2);
   padding: var(--wiki-space-2) var(--wiki-space-3);
   border: 1px solid var(--wiki-surface-border);
@@ -240,10 +159,6 @@ async function selectReadingGutter (next: UserReadingGutter): Promise<void> {
     border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
     background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
     box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
-}
-
-.presentation-selector__card--typeface {
-  align-items: center;
 }
 
 .presentation-selector__specimen {
@@ -290,7 +205,6 @@ async function selectReadingGutter (next: UserReadingGutter): Promise<void> {
   line-height: 1.35;
 }
 
-
 .presentation-selector__radio:hover + .presentation-selector__card {
   border-color: color-mix(in srgb, var(--wiki-ambient-accent) 32%, var(--wiki-surface-border));
   background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised));
@@ -332,8 +246,7 @@ async function selectReadingGutter (next: UserReadingGutter): Promise<void> {
 }
 
 @media (max-width: 399.98px) {
-  .presentation-selector__typefaces,
-  .presentation-selector__gutters {
+  .presentation-selector__typefaces {
     grid-template-columns: minmax(0, 1fr);
   }
 }

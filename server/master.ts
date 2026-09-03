@@ -30,7 +30,6 @@ import { isExternalRestPath, isInternalRestPath } from '../shared/api-access.ts'
 import { siteBannerOrDefault } from '../shared/site-banner.ts'
 import { normalizeAvailableEditors } from '../shared/page-editors.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
-import { normalizePageGutterCustomCss, normalizePageGutterStyle } from '../shared/page-gutters.ts'
 import pageHelper from './helpers/page.ts'
 
 import { AgentProviderRegistry, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
@@ -92,8 +91,6 @@ interface MasterConfig extends Record<string, unknown> {
     darkMode: boolean
     theme: string
     tocPosition?: string
-    gutterStyle?: unknown
-    gutterCustomCss?: unknown
   }
 }
 
@@ -490,8 +487,6 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       darkMode: wiki.config.theming.darkMode,
       themeColors: normalizeThemeColors(wiki.config.theming.colors),
       tocPosition: wiki.config.theming.tocPosition || 'left',
-      gutterStyle: normalizePageGutterStyle(wiki.config.theming.gutterStyle),
-      gutterCustomCss: normalizePageGutterCustomCss(wiki.config.theming.gutterCustomCss),
       lang: wiki.config.lang.code,
       rtl: wiki.config.lang.rtl,
       company: wiki.config.company,
