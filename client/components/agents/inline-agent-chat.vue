@@ -1472,8 +1472,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     z-index: 5;
     inset-block: 0;
     max-width: none;
-    grid-column: 1;
-    grid-row: 1;
     box-sizing: border-box;
     filter: drop-shadow(var(--wiki-shadow-md));
   }

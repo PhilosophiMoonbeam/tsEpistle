@@ -709,7 +709,10 @@ describe('inline Ask mode contract', () => {
     const dockedLayout = inline.match(/@media \(min-width:\s*1024px\) and \(max-width:\s*1759\.98px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
     expect(dockedLayout).toMatch(/\.inline-agent\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*68rem\)[\s\S]*?justify-content:\s*center/)
     expect(dockedLayout).toMatch(/\.inline-agent__card\s*\{[\s\S]*?grid-column:\s*1;[\s\S]*?grid-row:\s*1/)
-    expect(dockedLayout).toMatch(/\.inline-agent__side\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?grid-column:\s*1;[\s\S]*?grid-row:\s*1/)
+    const dockedSideStyle = dockedLayout.match(/\.inline-agent__side\s*\{([\s\S]*?)\n\s*\}/)?.[1] ?? ''
+    expect(dockedSideStyle).toMatch(/position:\s*absolute/)
+    expect(dockedSideStyle).toMatch(/inset-block:\s*0/)
+    expect(dockedSideStyle).not.toMatch(/grid-(?:column|row):/)
     expect(dockedLayout).toMatch(/\.inline-agent__side--history\s*\{[\s\S]*?inset-inline-start:\s*0;[\s\S]*?width:\s*19rem/)
     expect(dockedLayout).toMatch(/\.inline-agent__side--memory\s*\{[\s\S]*?inset-inline-end:\s*0;[\s\S]*?width:\s*21rem/)
   })

@@ -590,12 +590,18 @@ describe('Inline Agent fixed desktop layout', () => {
     expect(componentStyles).not.toMatch(/\.inline-agent\.inline-agent--(?:history|memory|panels)-open\s*\{[^}]*grid-template-columns/s)
   })
 
-  it('keeps one centered chat track and overlays fixed panels from 1024 through 1759 pixels', () => {
-    expect(componentStyles).toContain('@media (min-width: 1024px) and (max-width: 1759.98px)')
-    expect(componentStyles).toContain('grid-template-columns: minmax(0, 68rem);')
-    expect(componentStyles).toMatch(/@media \(min-width: 1024px\) and \(max-width: 1759\.98px\)[\s\S]*?\.inline-agent__side \{[\s\S]*?position: absolute;/)
-    expect(componentStyles).toContain('width: 19rem;')
-    expect(componentStyles).toContain('width: 21rem;')
+  it('keeps one centered chat track and anchors overlay panels to workspace edges from 1024 through 1759 pixels', () => {
+    const dockedLayout = componentStyles.match(
+      /@media \(min-width:\s*1024px\) and \(max-width:\s*1759\.98px\)([\s\S]*?)(?=@media|$)/
+    )?.[1] ?? ''
+
+    expect(dockedLayout).toContain('grid-template-columns: minmax(0, 68rem);')
+    expect(dockedLayout).toMatch(/\.inline-agent__side \{[\s\S]*?position: absolute;/)
+    expect(dockedLayout).not.toMatch(/\.inline-agent__side \{[^}]*grid-(?:column|row):/)
+    expect(dockedLayout).toContain('inset-inline-start: 0;')
+    expect(dockedLayout).toContain('inset-inline-end: 0;')
+    expect(dockedLayout).toContain('width: 19rem;')
+    expect(dockedLayout).toContain('width: 21rem;')
     expect(componentStyles).toMatch(/\.inline-agent__side \{[\s\S]*?overflow: hidden;[\s\S]*?border-radius: var\(--wiki-panel-radius\);[\s\S]*?background: transparent;/)
   })
 })

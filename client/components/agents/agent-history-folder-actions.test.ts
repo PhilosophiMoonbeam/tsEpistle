@@ -192,6 +192,7 @@ describe('Agent history folder actions', () => {
     expect(panelSource).toContain('overflow: hidden;\n  padding: 0 var(--wiki-space-3) var(--wiki-space-4);')
     expect(panelSource).toContain('.agent-history__recent-scroll {')
     expect(panelSource).toContain('.agent-history__folders-scroll {')
+    expect(panelSource).toContain('.agent-history__folders {\n  display: flex;\n  flex: 0 0 auto;')
     expect(panelSource).toContain('max-height: calc(')
     expect(panelSource.match(/overflow-y: auto;/g)).toHaveLength(2)
     expect(panelTemplate).toContain('v-model="searchQuery"')

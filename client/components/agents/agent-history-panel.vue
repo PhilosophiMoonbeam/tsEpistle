@@ -1013,7 +1013,7 @@ onBeforeUnmount(() => {
 }
 .agent-history__folders {
   display: flex;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
