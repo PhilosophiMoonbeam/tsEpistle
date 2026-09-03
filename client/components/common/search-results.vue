@@ -43,6 +43,7 @@
           v-icon(icon='mdi-magnify' size='19')
           span Search the Wiki
         v-chip.search-results-shortcut(
+          v-if='canAsk'
           variant='text'
           size='small'
           prepend-icon='mdi-keyboard-outline'
@@ -142,7 +143,7 @@
               @retry='retrySearch'
             )
           template(v-else)
-            .search-results-summary(v-if='normalizedSearch.length >= 2')
+            .search-results-summary(v-if='hasFreshResponse')
               div(role='status' aria-live='polite' aria-atomic='true')
                 .search-results-eyebrow Direct matches
                 .search-results-count(v-if='results.length')
@@ -156,7 +157,7 @@
                 @click='askCurrentQuery'
                 data-modal-focus-key='search-ask-query'
               ) Ask Wiki
-            .search-results-none(v-if='normalizedSearch.length >= 2 && results.length < 1')
+            .search-results-none(v-if='hasFreshResponse && results.length < 1')
               async-state(
                 state='empty'
                 :title='$t(`common:header.searchNoResult`)'
@@ -168,6 +169,7 @@
                   variant='tonal'
                   prepend-icon='mdi-auto-fix'
                   @click='askCurrentQuery'
+                  data-modal-focus-key='search-ask-empty'
                 ) Ask Wiki about "{{ normalizedSearch }}"
             template(v-if='results.length > 0')
               v-list.search-results-items(
@@ -638,7 +640,8 @@ export default defineComponent({
         this.cursor = -1
         return
       }
-      this.cursor = Math.min(Math.max(this.cursor + (dir === 'up' ? -1 : 1), -1), lastIndex)
+      if (this.cursor < 0) this.cursor = dir === 'up' ? lastIndex : 0
+      else this.cursor = Math.min(Math.max(this.cursor + (dir === 'up' ? -1 : 1), -1), lastIndex)
       void this.$nextTick(() => {
         const root = this.$el as HTMLElement | undefined
         root?.querySelector<HTMLElement>('.highlighted')?.scrollIntoView({ block: 'nearest' })

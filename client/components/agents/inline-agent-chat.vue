@@ -292,7 +292,7 @@
               :can-stop="Boolean(activeRun?.canCancel)"
               :disabled="!canSubmit"
               :has-messages="hasConversation"
-              :aria-describedby="openGoal ? 'agent-composer-lock-reason' : undefined"
+              :external-description-id="openGoal ? 'agent-composer-lock-reason' : undefined"
               :skills-enabled="skillsEnabled"
               :goals-enabled="goalsEnabled"
               :skills="skills"

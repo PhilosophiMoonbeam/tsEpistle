@@ -111,7 +111,7 @@
               <ol class="agent-sources__groups">
                 <li
                   v-for="group in entry.citationGroups"
-                  :id="group.pageCitation ? `agent-source-${group.pageCitation.citation.evidenceId}` : undefined"
+                  :id="sourceDomId(entry.message.id, group.key, 'page')"
                   :key="group.key"
                   class="agent-sources__group"
                 >
@@ -131,7 +131,7 @@
                   <ol v-if="group.sections.length" class="agent-sources__sections">
                     <li
                       v-for="citationEntry in group.sections"
-                      :id="`agent-source-${citationEntry.citation.evidenceId}`"
+                      :id="sourceDomId(entry.message.id, citationEntry.citation.evidenceId, 'section')"
                       :key="citationEntry.citation.evidenceId"
                     >
                       <component
@@ -279,6 +279,10 @@ const safeNavigableHref = (href: string | null): string | undefined => {
   navigableHrefCache.set(href, safeHref)
   return safeHref
 }
+const normalizeSourceIdSegment = (segment: string): string =>
+  encodeURIComponent(segment.normalize('NFC').replace(/[\uD800-\uDFFF]/gu, '\uFFFD'))
+const sourceDomId = (messageId: string, evidenceId: string, sourceKind: 'page' | 'section'): string =>
+  `agent-source-${sourceKind}-${normalizeSourceIdSegment(messageId)}-${normalizeSourceIdSegment(evidenceId)}`
 const temporalMetadataFor = (createdAt: string): MessageTemporalMetadata => {
   const cached = messageTemporalMetadata.get(createdAt)
   if (cached) return cached
@@ -650,8 +654,8 @@ watch(
 
 .agent-sources__heading::after {
   content: '›';
+  flex: 0 0 auto;
   font-size: 1.25rem;
-  margin-inline-start: auto;
   transform: rotate(90deg);
   transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
 }

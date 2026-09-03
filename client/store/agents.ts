@@ -433,40 +433,46 @@ export const useAgentsStore = defineStore('agents', {
       }
       return projected
     },
+    projectCommittedSessionMutation(workspaceVersion: number, sessionId: string, projected: AgentThreadState) {
+      const projectedExecutionMode = projected.session.executionMode
+      if (projectedExecutionMode !== 'agent') throw new Error('The server returned an invalid conversation execution mode.')
+      if (!this.isWorkspaceCurrent(workspaceVersion)) return
+      if (this.thread?.session.id === sessionId) {
+        this.invalidateRefresh()
+        if (this.thread.session.version <= projected.session.version) this.thread = markRaw(projected)
+      }
+      this.sessions = markRaw(
+        this.sessions.map(session => {
+          if (session.id !== sessionId) return session
+          if (session.version > projected.session.version) return session
+          const updated: AgentSessionSummary = {
+            id: projected.session.id,
+            title: projected.session.title,
+            retention: projected.session.retention,
+            folderId: projected.session.folderId,
+            executionMode: projectedExecutionMode,
+            version: projected.session.version,
+            providerProfileId: projected.session.providerProfileId,
+            createdAt: projected.session.createdAt,
+            updatedAt: projected.session.updatedAt,
+            lastActivityAt: projected.session.lastActivityAt,
+            expiresAt: projected.session.expiresAt,
+            deletedAt: session.deletedAt
+          }
+          return updated
+        })
+      )
+    },
     async renameSession(sessionId: string, title: string) {
       const trimmed = title.trim().slice(0, 255)
       if (!trimmed) throw new Error('A session title is required.')
       const workspaceVersion = this.workspaceVersion
       const current = this.thread?.session.id === sessionId ? this.thread.session : null
       const summary = this.sessions.find(session => session.id === sessionId)
-      const expectedSessionVersion = current?.version ?? summary?.version
+      const expectedSessionVersion = Math.max(current?.version ?? 0, summary?.version ?? 0)
       if (!expectedSessionVersion) throw new Error('The conversation changed. Refresh history and try again.')
       const projected = await updateAgentSession(fetchFromWindow, this.csrfToken, sessionId, { expectedSessionVersion, title: trimmed })
-      const projectedExecutionMode = projected.session.executionMode
-      if (projectedExecutionMode !== 'agent') throw new Error('The server returned an invalid conversation execution mode.')
-      if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.thread = markRaw(projected)
-      if (this.isWorkspaceCurrent(workspaceVersion)) {
-        this.sessions = markRaw(
-          this.sessions.map(session => {
-            if (session.id !== sessionId) return session
-            const renamed: AgentSessionSummary = {
-              id: projected.session.id,
-              title: projected.session.title,
-              retention: projected.session.retention,
-              folderId: projected.session.folderId,
-              executionMode: projectedExecutionMode,
-              version: projected.session.version,
-              providerProfileId: projected.session.providerProfileId,
-              createdAt: projected.session.createdAt,
-              updatedAt: projected.session.updatedAt,
-              lastActivityAt: projected.session.lastActivityAt,
-              expiresAt: projected.session.expiresAt,
-              deletedAt: session.deletedAt
-            }
-            return renamed
-          })
-        )
-      }
+      this.projectCommittedSessionMutation(workspaceVersion, sessionId, projected)
       if (!this.isWorkspaceCurrent(workspaceVersion)) return projected
       try {
         await this.reloadSessions()
@@ -480,10 +486,10 @@ export const useAgentsStore = defineStore('agents', {
       const workspaceVersion = this.workspaceVersion
       const current = this.thread?.session.id === sessionId ? this.thread.session : null
       const summary = this.sessions.find(session => session.id === sessionId)
-      const expectedSessionVersion = current?.version ?? summary?.version
+      const expectedSessionVersion = Math.max(current?.version ?? 0, summary?.version ?? 0)
       if (!expectedSessionVersion) throw new Error('The conversation changed. Refresh history and try again.')
       const projected = await updateAgentSession(fetchFromWindow, this.csrfToken, sessionId, { expectedSessionVersion, retention })
-      if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.thread = markRaw(projected)
+      this.projectCommittedSessionMutation(workspaceVersion, sessionId, projected)
       if (!this.isWorkspaceCurrent(workspaceVersion)) return projected
       try {
         await this.reloadSessions()

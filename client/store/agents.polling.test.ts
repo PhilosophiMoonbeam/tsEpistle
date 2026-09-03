@@ -527,6 +527,133 @@ describe('Agent store initialization', () => {
 describe('Agent session mutations', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    setVisibility('visible')
+  })
+
+  it('fences a stale in-flight thread refresh before installing a committed rename', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    setVisibility('visible')
+    const base = activeThread()
+    const current: AgentThreadState = { ...base, session: { ...base.session, title: 'Original title' } }
+    const renamed: AgentThreadState = {
+      ...current,
+      session: {
+        ...current.session,
+        title: 'Server canonical title',
+        version: 2,
+        updatedAt: '2026-08-23T00:01:00.000Z'
+      }
+    }
+    const staleRefreshResponse = deferred<Response>()
+    const historyResponse = deferred<Response>()
+    const refreshSignals: AbortSignal[] = []
+    store.thread = current
+    store.sessions = [summaryForThread(current)]
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${current.session.id}` && method === 'GET') {
+        refreshSignals.push(init?.signal as AbortSignal)
+        return staleRefreshResponse.promise
+      }
+      if (path === `/_api/agents/sessions/${current.session.id}` && method === 'PATCH') return Promise.resolve(Response.json(renamed))
+      if (path === '/_api/agents/sessions' && method === 'GET') return historyResponse.promise
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    const staleRefresh = store.refreshThread()
+    const renaming = store.renameSession(current.session.id, 'Requested title')
+    await flushMicrotasks()
+
+    expect(refreshSignals[0]?.aborted).toBe(true)
+    expect(store.thread).toEqual(renamed)
+    expect(store.sessions).toEqual([summaryForThread(renamed)])
+
+    staleRefreshResponse.resolve(Response.json(current))
+    await expect(staleRefresh).resolves.toBe(false)
+    expect(store.thread).toEqual(renamed)
+
+    historyResponse.resolve(Response.json({ sessions: [summaryForThread(renamed)], nextCursor: null }))
+    await expect(renaming).resolves.toEqual(renamed)
+  })
+
+  it('retains newer refresh projections when an older rename completes and uses the newest version for retention', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    setVisibility('visible')
+    const base = activeThread()
+    const initial: AgentThreadState = { ...base, session: { ...base.session, title: 'Original title', version: 2 } }
+    const staleRename: AgentThreadState = {
+      ...initial,
+      session: { ...initial.session, title: 'Stale rename', version: 6, updatedAt: '2026-08-23T00:01:00.000Z' }
+    }
+    const refreshed: AgentThreadState = {
+      ...staleRename,
+      session: { ...staleRename.session, title: 'Refreshed title', version: 8, updatedAt: '2026-08-23T00:02:00.000Z' }
+    }
+    const listed: AgentThreadState = {
+      ...refreshed,
+      session: { ...refreshed.session, title: 'Listed title', version: 9, updatedAt: '2026-08-23T00:03:00.000Z' }
+    }
+    const retained: AgentThreadState = {
+      ...listed,
+      session: {
+        ...listed.session,
+        retention: 'temporary',
+        version: 10,
+        updatedAt: '2026-08-23T00:04:00.000Z',
+        expiresAt: '2026-08-24T00:04:00.000Z'
+      }
+    }
+    store.thread = initial
+    store.sessions = [summaryForThread(initial)]
+    const staleRenameResponse = deferred<Response>()
+    const renameHistoryResponse = deferred<Response>()
+    const patchBodies: unknown[] = []
+    let patchCount = 0
+    let listCount = 0
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${initial.session.id}` && method === 'PATCH') {
+        patchBodies.push(JSON.parse(String(init?.body)))
+        patchCount += 1
+        return patchCount === 1 ? staleRenameResponse.promise : Promise.resolve(Response.json(retained))
+      }
+      if (path === `/_api/agents/sessions/${initial.session.id}` && method === 'GET') return Promise.resolve(Response.json(refreshed))
+      if (path === '/_api/agents/sessions' && method === 'GET') {
+        listCount += 1
+        if (listCount === 1) return Promise.resolve(Response.json({ sessions: [summaryForThread(listed)], nextCursor: null }))
+        if (listCount === 2) return renameHistoryResponse.promise
+        return Promise.resolve(Response.json({ sessions: [summaryForThread(retained)], nextCursor: null }))
+      }
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    const renaming = store.renameSession(initial.session.id, 'Requested title')
+    await flushMicrotasks()
+    await Promise.all([store.refreshThread(), store.reloadSessions()])
+    expect(store.thread).toEqual(refreshed)
+    expect(store.sessions).toEqual([summaryForThread(listed)])
+
+    staleRenameResponse.resolve(Response.json(staleRename))
+    await flushMicrotasks()
+    expect(store.thread).toEqual(refreshed)
+    expect(store.sessions).toEqual([summaryForThread(listed)])
+
+    renameHistoryResponse.resolve(Response.json({ sessions: [summaryForThread(listed)], nextCursor: null }))
+    await expect(renaming).resolves.toEqual(staleRename)
+    await store.setSessionRetention(initial.session.id, 'temporary')
+
+    expect(patchBodies).toEqual([
+      { expectedSessionVersion: 2, title: 'Requested title' },
+      { expectedSessionVersion: 9, retention: 'temporary' }
+    ])
+    expect(store.thread).toEqual(retained)
+    expect(store.sessions).toEqual([summaryForThread(retained)])
   })
 
   it('keeps a committed rename in history and the active thread when the subsequent refresh fails', async () => {
@@ -568,6 +695,47 @@ describe('Agent session mutations', () => {
     expect(store.thread).toEqual(renamed)
     expect(store.sessions).toEqual([summaryForThread(renamed)])
     expect(store.error).toBe('The conversation was renamed, but history could not be refreshed. History offline')
+  })
+
+  it('keeps a committed retention change in history and the active thread when the subsequent refresh fails', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    const current = activeThread()
+    const retained: AgentThreadState = {
+      ...current,
+      session: {
+        ...current.session,
+        title: 'Server-updated title',
+        retention: 'temporary',
+        version: 2,
+        updatedAt: '2026-08-23T00:01:00.000Z',
+        expiresAt: '2026-08-24T00:01:00.000Z'
+      }
+    }
+    store.thread = current
+    store.sessions = [summaryForThread(current)]
+    const refresh = deferred<Response>()
+    vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${current.session.id}` && method === 'PATCH') return Promise.resolve(Response.json(retained))
+      if (path === '/_api/agents/sessions' && method === 'GET') return refresh.promise
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    const updating = store.setSessionRetention(current.session.id, 'temporary')
+    await flushMicrotasks()
+
+    expect(store.thread).toEqual(retained)
+    expect(store.sessions).toEqual([summaryForThread(retained)])
+
+    refresh.reject(new TypeError('History offline'))
+    await expect(updating).resolves.toEqual(retained)
+
+    expect(store.thread).toEqual(retained)
+    expect(store.sessions).toEqual([summaryForThread(retained)])
+    expect(store.error).toBe('The retention setting was updated, but history could not be refreshed. History offline')
   })
 })
 

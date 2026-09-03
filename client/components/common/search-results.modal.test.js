@@ -1,5 +1,34 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import * as ts from 'typescript'
+
+const compileSearchMethods = (source, names) => {
+  const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
+  if (!script) throw new Error('Search component script was not found.')
+
+  const sourceFile = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  let methods
+  const visit = node => {
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === 'methods' && ts.isObjectLiteralExpression(node.initializer)) {
+      methods = node.initializer
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  if (!methods) throw new Error('Search component methods were not found.')
+
+  const selected = new Set(names)
+  const declarations = methods.properties.filter(node => ts.isMethodDeclaration(node) && selected.has(node.name.getText(sourceFile)))
+  if (declarations.length !== selected.size) throw new Error('A requested search method was not found.')
+
+  const compiled = ts.transpileModule(`const methods = ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.None
+    }
+  }).outputText
+  return new Function(`${compiled}\nreturn methods`)()
+}
 
 describe('Ask modal accessibility contract', () => {
   const search = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
@@ -99,6 +128,70 @@ describe('Ask modal accessibility contract', () => {
     )
     expect(header).toMatch(/searchIsFocused\(open: boolean\): void[\s\S]*!open && this\.\$vuetify\.display\.smAndDown[\s\S]*this\.searchIsShown = false/)
     expect(header).toMatch(/searchClose \(\)[\s\S]*this\.searchIsFocused = false[\s\S]*this\.searchMode = 'search'[\s\S]*this\.search = ''/)
+  })
+
+  test('restores focus to the remounted zero-result Ask action instead of the global trigger', () => {
+    const emptyAsk = search.match(/v-btn\.search-results-empty-ask\(([\s\S]*?)\n\s+\) Ask Wiki about/)?.[1] ?? ''
+    const focusKey = emptyAsk.match(/data-modal-focus-key=['"]([^'"]+)['"]/)?.[1]
+    expect(focusKey).toBe('search-ask-empty')
+
+    const methods = compileSearchMethods(search, ['restoreTargetFor'])
+    const originalHTMLElement = Object.getOwnPropertyDescriptor(globalThis, 'HTMLElement')
+    const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
+    class TestElement {
+      constructor(key = '') {
+        this.dataset = key ? { modalFocusKey: key } : {}
+        this.isConnected = true
+        this.tabIndex = 0
+      }
+
+      matches(_selector) {
+        return false
+      }
+    }
+    const opener = new TestElement(focusKey)
+    opener.isConnected = false
+    const remountedAsk = new TestElement(focusKey)
+    const globalTrigger = new TestElement()
+    let requestedSelector = ''
+    let triggerLookups = 0
+
+    Object.defineProperty(globalThis, 'HTMLElement', {
+      configurable: true,
+      writable: true,
+      value: TestElement
+    })
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      writable: true,
+      value: {
+        querySelector: selector => {
+          requestedSelector = selector
+          return remountedAsk
+        }
+      }
+    })
+
+    try {
+      const resolveTarget = methods.restoreTargetFor.call(
+        {
+          findSearchTrigger: () => {
+            triggerLookups += 1
+            return globalTrigger
+          }
+        },
+        opener
+      )
+
+      expect(resolveTarget()).toBe(remountedAsk)
+      expect(requestedSelector).toBe('[data-modal-focus-key="search-ask-empty"]')
+      expect(triggerLookups).toBe(0)
+    } finally {
+      if (originalHTMLElement) Object.defineProperty(globalThis, 'HTMLElement', originalHTMLElement)
+      else delete globalThis.HTMLElement
+      if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument)
+      else delete globalThis.document
+    }
   })
 
   test('bounds result descriptions and keeps scope actions touch-sized throughout the mobile layout', () => {

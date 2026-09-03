@@ -70,7 +70,7 @@
         v-model="draft"
         class="agent-composer__input"
         :aria-label="composerInputLabel"
-        aria-describedby="agent-composer-status agent-composer-keyboard-hint"
+        :aria-describedby="composerInputDescriptionIds"
         :role="skillsEnabled ? 'combobox' : undefined"
         :aria-autocomplete="skillsEnabled ? 'list' : undefined"
         :aria-haspopup="skillsEnabled ? 'listbox' : undefined"
@@ -274,6 +274,7 @@ const props = defineProps<{
   statusLabel: string
   statusTone: 'ready' | 'error' | 'busy'
   hasMessages?: boolean
+  externalDescriptionId?: string
 }>()
 const emit = defineEmits<{ send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const draft = ref('')
@@ -319,6 +320,11 @@ const composerInputLabel = computed(() =>
       ? 'Follow up with Wiki Agent'
       : 'Message Wiki Agent'
 )
+const composerInputDescriptionIds = computed(() => [
+  props.externalDescriptionId?.trim(),
+  'agent-composer-status',
+  'agent-composer-keyboard-hint'
+].filter(Boolean).join(' '))
 const composerInputPlaceholder = computed(() => {
   if (goalMode.value) return 'Describe a bounded outcome for Wiki Agent'
   if (props.skillsEnabled) {

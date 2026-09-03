@@ -4,11 +4,18 @@ import path from 'node:path'
 import { compileTemplate, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
 import { afterEach, describe, expect, it, vi } from '../../../server/test/bun-test.mts'
+import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
+import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/inline-agent-chat.vue')
 const componentSource = fs.readFileSync(componentPath, 'utf8')
 const descriptor = parse(componentSource, { filename: componentPath }).descriptor
 if (!descriptor.template || !descriptor.scriptSetup) throw new Error('inline-agent-chat.vue template and setup script are required')
+
+const composerComponentPath = path.join(process.cwd(), 'client/components/agents/agent-composer.vue')
+const composerComponentSource = fs.readFileSync(composerComponentPath, 'utf8')
+const composerDescriptor = parse(composerComponentSource, { filename: composerComponentPath }).descriptor
+if (!composerDescriptor.template || !composerDescriptor.scriptSetup) throw new Error('agent-composer.vue template and setup script are required')
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
@@ -93,6 +100,14 @@ const compiledTemplate = compileTemplate({
 })
 if (compiledTemplate.errors.length > 0) throw compiledTemplate.errors[0]
 const renderInlineAgent = new Function('Vue', compiledTemplate.code)(Vue) as () => unknown
+const compiledComposerTemplate = compileTemplate({
+  source: composerDescriptor.template.content,
+  filename: composerComponentPath,
+  id: 'agent-composer-interaction-test',
+  compilerOptions: { mode: 'function' }
+})
+if (compiledComposerTemplate.errors.length > 0) throw compiledComposerTemplate.errors[0]
+const renderAgentComposer = new Function('Vue', compiledComposerTemplate.code)(Vue) as () => unknown
 
 interface ValueRef<T> {
   value: T
@@ -108,6 +123,27 @@ interface LockState {
 }
 
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
+const composerScript = composerDescriptor.scriptSetup.content
+const executableComposerScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(composerScript.replace(/^import .*$/gm, ''))
+const composerBindingNames = Array.from(composerScript.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
+const evaluateComposer = new Function(
+  'computed',
+  'nextTick',
+  'onBeforeUnmount',
+  'onMounted',
+  'ref',
+  'watch',
+  'defineProps',
+  'defineEmits',
+  'defineExpose',
+  'filterPreferredBuiltInSkills',
+  'filterSkillsForCommand',
+  'filterUserSelectableSkills',
+  'caretBoundsFromMirror',
+  'calculateComposerSizing',
+  'scrollTopForCaret',
+  `${executableComposerScript}\nreturn { ${composerBindingNames.join(', ')} }`
+) as (...dependencies: unknown[]) => Record<string, unknown>
 
 const loadGoalLockState = (status: 'active' | 'paused'): LockState => {
   const ref = <T>(value: T): ValueRef<T> => ({ value })
@@ -306,17 +342,46 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
       return () => Vue.h('div', attrs)
     }
   })
-  const composerStub = Vue.defineComponent({
-    inheritAttrs: false,
-    props: { disabled: Boolean },
-    setup(props, { attrs }) {
-      return () =>
-        Vue.h('form', {
-          ...attrs,
-          'aria-disabled': String(props.disabled),
-          class: 'agent-composer-stub'
-        })
-    }
+  const composerComponent = Vue.defineComponent({
+    name: 'AgentComposerInteractionHarness',
+    props: {
+      disabled: Boolean,
+      sending: Boolean,
+      canStop: Boolean,
+      skillsEnabled: Boolean,
+      goalsEnabled: Boolean,
+      skills: Array,
+      skillsLoading: Boolean,
+      skillsLoadError: String,
+      skillsPartial: Boolean,
+      preferredSkills: Array,
+      invocationLimit: Number,
+      statusLabel: String,
+      statusTone: String,
+      hasMessages: Boolean,
+      externalDescriptionId: String
+    },
+    emits: ['send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences'],
+    setup(props, { emit, expose }) {
+      return evaluateComposer(
+        Vue.computed,
+        Vue.nextTick,
+        Vue.onBeforeUnmount,
+        Vue.onMounted,
+        Vue.ref,
+        Vue.watch,
+        () => props,
+        () => emit,
+        expose,
+        filterPreferredBuiltInSkills,
+        filterSkillsForCommand,
+        filterUserSelectableSkills,
+        caretBoundsFromMirror,
+        calculateComposerSizing,
+        scrollTopForCaret
+      )
+    },
+    render: renderAgentComposer
   })
   const inlineHarness = Vue.defineComponent({
     name: 'InlineAgentInteractionHarness',
@@ -335,7 +400,7 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     'AgentThread'
   ])
     app.component(name, componentStub)
-  app.component('AgentComposer', composerStub)
+  app.component('AgentComposer', composerComponent)
   app.mount(host)
 
   const root = host.querySelector<HTMLElement>('.inline-agent')
@@ -409,21 +474,33 @@ describe('Inline Agent mobile panel controls', () => {
 })
 
 describe('Inline Agent goal submission lock', () => {
+  it('keeps a fresh unlocked composer associated only with its internal descriptions', () => {
+    const mounted = mountInlineAgent()
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+
+    expect(mounted.root.querySelector('#agent-composer-lock-reason')).toBeNull()
+    expect(textarea?.getAttribute('aria-label')).toBe('Message Wiki Agent')
+    expect(textarea?.getAttribute('aria-describedby')).toBe('agent-composer-status agent-composer-keyboard-hint')
+  })
+
   it.each([
     ['paused', 'Resume or cancel the current goal before sending a message'],
     ['active', 'Finish or cancel the current goal before sending a message']
-  ] as const)('renders the truthful %s goal reason on the disabled composer path', (status, expectedReason) => {
+  ] as const)('renders the truthful %s goal reason on the disabled composer textarea', (status, expectedReason) => {
     const lockState = loadGoalLockState(status)
     expect(lockState.canSubmit.value).toBe(false)
     expect(lockState.goalSubmitUnavailableReason.value).toBe(expectedReason)
 
     const mounted = mountInlineAgent(lockState)
     const reason = mounted.root.querySelector<HTMLElement>('#agent-composer-lock-reason')
-    const composer = mounted.root.querySelector<HTMLElement>('.agent-composer-stub')
+    const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+    const sessionTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__session-title')
 
     expect(reason?.textContent?.trim()).toBe(expectedReason)
     expect(reason?.getAttribute('role')).toBe('status')
-    expect(composer?.getAttribute('aria-disabled')).toBe('true')
-    expect(composer?.getAttribute('aria-describedby')).toBe('agent-composer-lock-reason')
+    expect(sessionTitle?.textContent?.trim()).toBe('Release planning')
+    expect(textarea?.disabled).toBe(true)
+    expect(textarea?.getAttribute('aria-label')).toBe('Follow up with Wiki Agent')
+    expect(textarea?.getAttribute('aria-describedby')).toBe('agent-composer-lock-reason agent-composer-status agent-composer-keyboard-hint')
   })
 })

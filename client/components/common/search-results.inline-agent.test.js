@@ -32,6 +32,48 @@ const compileSearchMethods = (source, names, dependencies) => {
   return factory(dependencies.searchPages, dependencies.getErrorMessage, dependencies.wikiStore)
 }
 
+const compileSearchComputed = (source, names) => {
+  const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)?.[1]
+  if (!script) throw new Error('Search component script was not found.')
+
+  const sourceFile = ts.createSourceFile('search-results.ts', script, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  let computed
+  const visit = node => {
+    if (ts.isPropertyAssignment(node) && ts.isIdentifier(node.name) && node.name.text === 'computed' && ts.isObjectLiteralExpression(node.initializer)) {
+      computed = node.initializer
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  if (!computed) throw new Error('Search component computed properties were not found.')
+
+  const selected = new Set(names)
+  const declarations = computed.properties.filter(node => ts.isMethodDeclaration(node) && selected.has(node.name.getText(sourceFile)))
+  if (declarations.length !== selected.size) throw new Error('A requested search computed property was not found.')
+
+  const compiled = ts.transpileModule(`const computed = ({${declarations.map(node => node.getText(sourceFile)).join(',')}})`, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.None
+    }
+  }).outputText
+  return new Function(`${compiled}\nreturn computed`)()
+}
+
+const templateConditionFor = (template, marker) => {
+  const start = template.indexOf(marker)
+  if (start < 0) throw new Error(`Template marker was not found: ${marker}`)
+  const end = template.indexOf(')', start)
+  const condition = template.slice(start, end).match(/v-if='([^']+)'/)?.[1]
+  if (!condition) throw new Error(`Template marker does not have a v-if condition: ${marker}`)
+  return condition
+}
+
+const evaluateTemplateCondition = (condition, state) => {
+  const names = Object.keys(state)
+  return new Function(...names, `"use strict"; return Boolean(${condition})`)(...names.map(name => state[name]))
+}
+
 const deferred = () => {
   let resolve
   const promise = new Promise(done => {
@@ -486,6 +528,53 @@ describe('inline Ask mode contract', () => {
     }
   })
 
+  test('withholds zero-result Ask actions until the displayed query has a fresh response', () => {
+    const computed = compileSearchComputed(search, ['hasFreshResponse'])
+    const responseState = {
+      normalizedSearch: 'replacement',
+      responseKey: 'retained-key',
+      searchRequestKey: 'replacement-key'
+    }
+    const summaryCondition = templateConditionFor(template, '.search-results-summary')
+    const emptyCondition = templateConditionFor(template, '.search-results-none(v-if=')
+    const askCondition = templateConditionFor(template, '.search-results-empty-actions')
+    const renderedState = () => {
+      const hasFreshResponse = computed.hasFreshResponse.call(responseState)
+      const templateState = {
+        canAsk: true,
+        hasFreshResponse,
+        results: []
+      }
+      return {
+        summary: evaluateTemplateCondition(summaryCondition, templateState),
+        empty: evaluateTemplateCondition(emptyCondition, templateState),
+        emptyAsk: evaluateTemplateCondition(emptyCondition, templateState) && evaluateTemplateCondition(askCondition, templateState)
+      }
+    }
+
+    expect(renderedState()).toEqual({ summary: false, empty: false, emptyAsk: false })
+    responseState.responseKey = 'replacement-key'
+    expect(renderedState()).toEqual({ summary: true, empty: true, emptyAsk: true })
+  })
+
+  test('does not render or advertise the Search and Ask shortcut without Ask permission', () => {
+    const shortcutCondition = templateConditionFor(template, 'v-chip.search-results-shortcut')
+    const shortcutOpening = template.slice(template.indexOf('v-chip.search-results-shortcut'), template.indexOf(') Ctrl/⌘ + Shift + A'))
+    const renderedShortcut = canAsk =>
+      evaluateTemplateCondition(shortcutCondition, { canAsk })
+        ? {
+            title: shortcutOpening.match(/title='([^']+)'/)?.[1],
+            ariaLabel: shortcutOpening.match(/aria-label='([^']+)'/)?.[1]
+          }
+        : null
+
+    expect(renderedShortcut(false)).toBeNull()
+    expect(renderedShortcut(true)).toEqual({
+      title: 'Shortcut to switch between Search and Ask mode',
+      ariaLabel: 'Shortcut to switch between Search and Ask mode: Control or Command plus Shift plus A'
+    })
+  })
+
   test('restores retained-response keyboard navigation without treating raw Enter as selection', async () => {
     const scheduler = useSearchScheduler()
     try {
@@ -545,6 +634,34 @@ describe('inline Ask mode contract', () => {
     } finally {
       scheduler.restore()
     }
+  })
+
+  test('selects the last result on initial ArrowUp while initial ArrowDown selects the first', () => {
+    const methods = compileSearchMethods(search, ['handleSearchMove'], {
+      searchPages: () => Promise.reject(new Error('Search execution was not expected.')),
+      getErrorMessage: value => String(value),
+      wikiStore: { page: { locale: 'en', path: 'guide' } }
+    })
+    const state = {
+      $el: { querySelector: () => null },
+      $nextTick: callback => {
+        callback?.()
+        return Promise.resolve()
+      },
+      cursor: -1,
+      hasFreshResponse: true,
+      results: [{ id: 1 }, { id: 2 }, { id: 3 }],
+      searchIsLoading: false,
+      searchMode: 'search',
+      suggestions: []
+    }
+
+    methods.handleSearchMove.call(state, 'up')
+    expect(state.cursor).toBe(2)
+
+    state.cursor = -1
+    methods.handleSearchMove.call(state, 'down')
+    expect(state.cursor).toBe(0)
   })
 
   test('keeps empty Search useful and combobox ownership accurate', () => {
