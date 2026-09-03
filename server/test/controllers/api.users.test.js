@@ -506,8 +506,8 @@ describe('controllers/api users endpoints', () => {
     [{ fontFamily: 'roboto-flex' }, { id: 42, fontFamily: 'roboto-flex' }],
     [{ readingGutter: 'orbits' }, { id: 42, readingGutter: 'orbits' }],
     [
-      { appearance: 'light', fontFamily: 'newsreader', readingGutter: 'site' },
-      { id: 42, appearance: 'light', fontFamily: 'newsreader', readingGutter: 'site' }
+      { appearance: 'light', fontFamily: 'newsreader', readingGutter: 'aurora' },
+      { id: 42, appearance: 'light', fontFamily: 'newsreader', readingGutter: 'aurora' }
     ]
   ])('persists profile preferences and returns a refreshed token for %o', async (body, expectedUpdate) => {
     const { preferences } = await loadHandler()
@@ -526,6 +526,7 @@ describe('controllers/api users endpoints', () => {
     [{ appearance: 'sepia' }],
     [{ fontFamily: 'comic-sans' }],
     [{ readingGutter: 'unknown' }],
+    [{ readingGutter: 'site' }],
     [{ appearance: 'dark', extra: true }],
     [null],
     [[]]

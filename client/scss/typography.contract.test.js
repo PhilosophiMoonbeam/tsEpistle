@@ -87,31 +87,37 @@ describe('self-hosted typography contracts', () => {
   const fontFaces = extractBlocks(fontSource, '@font-face').map(declarations)
   const assetNames = fs.readdirSync(path.join(root, 'client/fonts/default'))
 
-  test('uses Newsreader for every proportional role by default and switches them together', () => {
+  test('uses Roboto Flex for every proportional role by default and switches them together', () => {
     const rootTokens = declarations(extractBlocks(base, ':root')[0])
-    const robotoFlexTokens = declarations(extractBlocks(base, "html[data-wiki-font='roboto-flex']")[0])
+    const newsreaderTokens = declarations(extractBlocks(base, "html[data-wiki-font='newsreader']")[0])
 
     expect(rootTokens['--wiki-font-newsreader']).toBe("'Newsreader', ui-serif, Georgia, Cambria, 'Times New Roman', serif")
     expect(rootTokens['--wiki-font-roboto-flex']).toBe("'Roboto Flex', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif")
-    expect(rootTokens['--wiki-font-selected']).toBe('var(--wiki-font-newsreader)')
+    expect(rootTokens['--wiki-font-selected']).toBe('var(--wiki-font-roboto-flex)')
     for (const token of ['--wiki-font-body', '--wiki-font-heading', '--wiki-font-reader']) {
       expect(rootTokens[token]).toBe('var(--wiki-font-selected)')
     }
     expect(rootTokens['--v-font-body']).toBe('var(--wiki-font-body)')
     expect(rootTokens['--v-font-heading']).toBe('var(--wiki-font-heading)')
-    expect(robotoFlexTokens['--wiki-font-selected']).toBe('var(--wiki-font-roboto-flex)')
+    expect(newsreaderTokens['--wiki-font-selected']).toBe('var(--wiki-font-newsreader)')
     expect(rootTokens['--wiki-font-mono']).toBe("'Roboto Mono', 'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace")
     expect(base).not.toMatch(/font-feature-settings\s*:/)
   })
 
-  test('hydrates normalized presentation claims and synchronizes the root font reactively at bootstrap', () => {
-    expect(wikiStoreSource).toMatch(/import\s+\{\s*normalizeUserFontFamily,\s*normalizeUserReadingGutter\s*\}\s+from\s+'..\/..\/shared\/user-presentation\.ts'/)
+  test('hydrates concrete presentation claims and materializes legacy gutter inheritance at bootstrap', () => {
+    expect(wikiStoreSource).toMatch(/import\s+\{\s*isUserReadingGutter,\s*normalizeUserFontFamily\s*\}\s+from\s+'..\/..\/shared\/user-presentation\.ts'/)
     expect(wikiStoreSource).toMatch(/fontFamily:\s*normalizeUserFontFamily\(undefined\)/)
-    expect(wikiStoreSource).toMatch(/readingGutter:\s*normalizeUserReadingGutter\(undefined\)/)
+    expect(wikiStoreSource).toMatch(/readingGutter:\s*normalizePageGutterStyle\(window\.siteConfig\.gutterStyle\)/)
+    expect(wikiStoreSource).toMatch(/readingGutterNeedsMigration:\s*false/)
     expect(wikiStoreSource).toMatch(/this\.user\.fontFamily\s*=\s*normalizeUserFontFamily\(payload\.ff\)/)
-    expect(wikiStoreSource).toMatch(/this\.user\.readingGutter\s*=\s*normalizeUserReadingGutter\(payload\.rg\)/)
+    expect(wikiStoreSource).toMatch(/const readingGutter\s*=\s*isUserReadingGutter\(payload\.rg\) \? payload\.rg : undefined/)
+    expect(wikiStoreSource).toMatch(/this\.user\.readingGutterNeedsMigration\s*=\s*readingGutter === undefined/)
     expect(wikiStoreSource).toMatch(/gutterStyle:\s*window\.siteConfig\.gutterStyle/)
     expect(wikiStoreSource).toMatch(/gutterCustomCss:\s*window\.siteConfig\.gutterCustomCss/)
+    expect(clientApp).toContain('const materializeLegacyReadingGutter = async')
+    expect(clientApp).toContain('{ readingGutter }')
+    expect(clientApp).toContain("Cookies.set('jwt', token")
+    expect(clientApp).toContain('void materializeLegacyReadingGutter()')
     expect(clientApp).toMatch(/import\s+\{\s*createApp,\s*watch\s*\}\s+from\s+'vue'/)
     expect(clientApp).toMatch(
       /watch\(\s*\(\)\s*=>\s*wikiStore\.user\.fontFamily,\s*fontFamily\s*=>\s*\{\s*document\.documentElement\.dataset\.wikiFont\s*=\s*fontFamily\s*\},\s*\{\s*immediate:\s*true\s*\}\s*\)/s

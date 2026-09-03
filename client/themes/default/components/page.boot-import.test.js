@@ -174,9 +174,9 @@ describe('default page focused contracts', () => {
     expect(script).not.toMatch(/window\.boot\.notify\s*\(/)
   })
 
-  test('resolves reactive user and site gutters and synchronizes admin saves', () => {
+  test('keeps authenticated gutters concrete while guests follow reactive site settings', () => {
     expect(script).toMatch(
-      /resolveUserReadingGutter\(\s*wikiStore\.user\.readingGutter,\s*wikiStore\.site\.gutterStyle,\s*wikiStore\.site\.gutterCustomCss\s*\)/
+      /resolveUserReadingGutter\(\s*wikiStore\.user\.authenticated \? wikiStore\.user\.readingGutter : undefined,\s*wikiStore\.site\.gutterStyle,\s*wikiStore\.site\.gutterCustomCss\s*\)/
     )
     expect(script).not.toMatch(/gutterStyle:\s*siteConfig\.gutterStyle|gutterCustomCss:\s*siteConfig\.gutterCustomCss/)
     expect(script).toMatch(
@@ -184,17 +184,24 @@ describe('default page focused contracts', () => {
     )
 
     const presentation = {
-      user: { readingGutter: 'site' },
+      user: { authenticated: true, readingGutter: 'laurel' },
       site: { gutterStyle: 'laurel', gutterCustomCss: '' }
     }
-    const effectiveGutter = () => resolveUserReadingGutter(presentation.user.readingGutter, presentation.site.gutterStyle, presentation.site.gutterCustomCss)
+    const effectiveGutter = () =>
+      resolveUserReadingGutter(
+        presentation.user.authenticated ? presentation.user.readingGutter : undefined,
+        presentation.site.gutterStyle,
+        presentation.site.gutterCustomCss
+      )
 
+    expect(effectiveGutter()).toBe('laurel')
+    presentation.site.gutterStyle = 'aurora'
     expect(effectiveGutter()).toBe('laurel')
     presentation.user.readingGutter = 'orbits'
     expect(effectiveGutter()).toBe('orbits')
-    presentation.user.readingGutter = 'site'
-    presentation.site.gutterStyle = 'aurora'
+    presentation.user.authenticated = false
     expect(effectiveGutter()).toBe('aurora')
+    presentation.user.authenticated = true
     presentation.user.readingGutter = 'custom'
     presentation.site.gutterStyle = 'columns'
     presentation.site.gutterCustomCss = '.page { display: none; }'

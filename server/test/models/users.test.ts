@@ -356,7 +356,12 @@ const installAggregateDatabase = (database: AggregateDatabase): void => {
         }
       }
     },
-    config: { lang: { code: 'en' }, title: 'Test Wiki', host: 'https://example.test' },
+    config: {
+      lang: { code: 'en' },
+      title: 'Test Wiki',
+      host: 'https://example.test',
+      theming: { gutterStyle: 'laurel' }
+    },
     data: { authentication: [] },
     logger: { debug: () => {}, error: () => {}, warn: () => {} },
     mail: { send: async () => {} }
@@ -462,7 +467,7 @@ describe('User aggregate transactions', () => {
         providerKey: 'local',
         appearance: 'system',
         fontFamily: 'newsreader',
-        readingGutter: 'site'
+        readingGutter: 'columns'
       }
     ])
     installAggregateDatabase(database)
@@ -566,6 +571,10 @@ describe('User aggregate transactions', () => {
     expect(database.state.users).toHaveLength(1)
     expect(database.state.memberships.map(membership => membership.groupId)).toEqual(expectedGroups)
     expect(database.commits).toBe(1)
+    expect(database.state.users[0]).toMatchObject({
+      fontFamily: 'roboto-flex',
+      readingGutter: 'laurel'
+    })
   })
 
   test.each([

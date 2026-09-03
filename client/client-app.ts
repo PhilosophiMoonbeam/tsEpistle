@@ -1,4 +1,5 @@
 import { createApp, watch } from 'vue'
+import Cookies from 'js-cookie'
 import type { AsyncComponentLoader } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as vuetifyLocaleMessages from 'vuetify/locale'
@@ -12,6 +13,7 @@ import { router } from './router'
 import { createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './helpers/theme.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
+import { updateProfilePreferences } from './helpers/users-api.ts'
 
 const asyncComponent = (name: string, loader: AsyncComponentLoader) => [name, createAsyncComponent(loader)] as const
 
@@ -45,6 +47,21 @@ const registrations = [
 ]
 
 wikiStore.refreshAuth()
+const materializeLegacyReadingGutter = async (): Promise<void> => {
+  if (!wikiStore.user.authenticated || !wikiStore.user.readingGutterNeedsMigration) return
+
+  const readingGutter = wikiStore.user.readingGutter
+  wikiStore.user.readingGutterNeedsMigration = false
+  try {
+    const token = await updateProfilePreferences(window.fetch.bind(window), { readingGutter }, 'Reading gutter migration failed')
+    Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
+    wikiStore.refreshAuth()
+  } catch {
+    wikiStore.user.readingGutterNeedsMigration = true
+  }
+}
+
+void materializeLegacyReadingGutter()
 watch(
   () => wikiStore.user.fontFamily,
   fontFamily => {

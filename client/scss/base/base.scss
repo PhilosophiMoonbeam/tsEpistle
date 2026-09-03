@@ -23,7 +23,7 @@
   --wiki-control-height: 2.75rem;
   --wiki-font-newsreader: 'Newsreader', ui-serif, Georgia, Cambria, 'Times New Roman', serif;
   --wiki-font-roboto-flex: 'Roboto Flex', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --wiki-font-selected: var(--wiki-font-newsreader);
+  --wiki-font-selected: var(--wiki-font-roboto-flex);
   --wiki-font-body: var(--wiki-font-selected);
   --wiki-font-heading: var(--wiki-font-selected);
   --wiki-font-reader: var(--wiki-font-selected);
@@ -59,8 +59,8 @@
   --v-font-heading: var(--wiki-font-heading);
 }
 
-html[data-wiki-font='roboto-flex'] {
-  --wiki-font-selected: var(--wiki-font-roboto-flex);
+html[data-wiki-font='newsreader'] {
+  --wiki-font-selected: var(--wiki-font-newsreader);
 }
 
 .v-theme--dark {

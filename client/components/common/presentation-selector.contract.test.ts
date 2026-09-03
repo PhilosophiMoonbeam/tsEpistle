@@ -35,26 +35,26 @@ describe('authenticated presentation preferences contract', () => {
     expect(navScript).toContain("AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue'))")
     expect(navScript).toContain("PresentationSelector: defineAsyncComponent(() => import('./presentation-selector.vue'))")
 
-    const profileIndex = navTemplate.indexOf("v-list-item(href='/p')")
+    const profileIndex = navTemplate.indexOf("href='/p'")
     const appearanceIndex = navTemplate.indexOf('appearance-selector', profileIndex)
     const presentationIndex = navTemplate.indexOf('presentation-selector', appearanceIndex)
     const logoutIndex = navTemplate.indexOf("v-list-item(role='button', link, @click='logout')", presentationIndex)
+    expect(navTemplate).not.toContain("v-list-item(href='/p')")
+    expect(navTemplate).toMatch(/:aria-label='`Open profile for \$\{name\}`'/)
     expect(profileIndex).toBeGreaterThan(-1)
     expect(appearanceIndex).toBeGreaterThan(profileIndex)
     expect(presentationIndex).toBeGreaterThan(appearanceIndex)
     expect(logoutIndex).toBeGreaterThan(presentationIndex)
   })
 
-  test('offers fixed typeface previews and every canonical reading-gutter choice', () => {
+  test('offers full-card fixed typeface previews and only concrete reading-gutter choices', () => {
     expect(script).toContain("{ value: 'newsreader', label: 'Newsreader'")
     expect(script).toContain("{ value: 'roboto-flex', label: 'Roboto Flex'")
-    expect(template).toContain('presentation-selector__specimen--${option.value}')
-    expect(style).toContain(`.presentation-selector__specimen--newsreader,
-.presentation-selector__name--newsreader {
+    expect(template).toMatch(/:class='`presentation-selector__card--\$\{option\.value\}`'/)
+    expect(style).toContain(`.presentation-selector__card--newsreader {
   font-family: var(--wiki-font-newsreader);
 }`)
-    expect(style).toContain(`.presentation-selector__specimen--roboto-flex,
-.presentation-selector__name--roboto-flex {
+    expect(style).toContain(`.presentation-selector__card--roboto-flex {
   font-family: var(--wiki-font-roboto-flex);
 }`)
     expect(style).not.toContain('font-family: var(--wiki-font-reader)')
@@ -70,18 +70,18 @@ describe('authenticated presentation preferences contract', () => {
     } as const
     for (const [value, label] of Object.entries(gutterLabels)) {
       expect(script).toContain(`value: '${value}', label: '${label}'`)
-      expect(script).toContain(`${value}: '${label}'`)
     }
-    expect(script).toContain("value: 'site'")
-    expect(script).toContain("label: 'Site default'")
-    expect(script).toContain('description: `Currently ${GUTTER_LABELS[siteGutter.value]}.`')
+    expect(script).not.toContain("value: 'site'")
+    expect(script).not.toContain('Site default')
   })
 
   test('gates Custom study through the canonical normalized availability helper', () => {
     expect(script).toContain('isAdminCustomGutterAvailable')
     expect(script).toContain('isAdminCustomGutterAvailable(wikiStore.site.gutterCustomCss)')
     expect(script).toContain("option.value !== 'custom' || customGutterAvailable.value")
-    expect(script).toContain("selected === 'custom' && !customGutterAvailable.value ? 'site' : selected")
+    expect(script).toMatch(
+      /selected === 'custom' && !customGutterAvailable\.value\s*\?\s*normalizePageGutterStyle\(wikiStore\.site\.gutterStyle\)\s*:\s*selected/
+    )
     expect(script).not.toMatch(/customCss\s*:/)
     expect(template).not.toMatch(/textarea|contenteditable/)
   })
@@ -122,6 +122,9 @@ describe('authenticated presentation preferences contract', () => {
     expect(template).toContain(":aria-busy='saving ? `true` : `false`'")
     expect(style).toContain('.presentation-selector__radio:checked + .presentation-selector__card')
     expect(style).toContain('.presentation-selector__radio:focus-visible + .presentation-selector__card')
+    expect(template).not.toContain('presentation-selector__selected')
+    expect(template).not.toContain('Selected')
+    expect(style).not.toContain('.presentation-selector__selected')
   })
 
   test('keeps the account menu wide, bounded, and scrollable on small screens', () => {

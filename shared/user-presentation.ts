@@ -1,12 +1,12 @@
 import { z } from 'zod'
-import { PAGE_GUTTER_STYLES, type PageGutterStyle, normalizePageGutterCustomCss, normalizePageGutterStyle } from './page-gutters.ts'
+import { DEFAULT_PAGE_GUTTER_STYLE, PAGE_GUTTER_STYLES, type PageGutterStyle, normalizePageGutterCustomCss, normalizePageGutterStyle } from './page-gutters.ts'
 
 export const PROFILE_APPEARANCE_VALUES = ['system', 'light', 'dark'] as const
 export const USER_FONT_FAMILY_VALUES = ['newsreader', 'roboto-flex'] as const
-export const USER_READING_GUTTER_VALUES = ['site', ...PAGE_GUTTER_STYLES] as const
+export const USER_READING_GUTTER_VALUES = PAGE_GUTTER_STYLES
 
-export const DEFAULT_USER_FONT_FAMILY = 'newsreader' as const
-export const DEFAULT_USER_READING_GUTTER = 'site' as const
+export const DEFAULT_USER_FONT_FAMILY = 'roboto-flex' as const
+export const DEFAULT_USER_READING_GUTTER = DEFAULT_PAGE_GUTTER_STYLE
 
 export const ProfileAppearanceSchema = z.enum(PROFILE_APPEARANCE_VALUES)
 export const UserFontFamilySchema = z.enum(USER_FONT_FAMILY_VALUES)
@@ -48,7 +48,7 @@ export const resolveUserReadingGutter = (userPreference: unknown, siteGutter: un
   const normalizedSiteGutter = normalizePageGutterStyle(siteGutter)
   const result = UserReadingGutterSchema.safeParse(userPreference)
 
-  if (!result.success || result.data === 'site') return normalizedSiteGutter
+  if (!result.success) return normalizedSiteGutter
   if (result.data === 'custom' && !isAdminCustomGutterAvailable(customCss)) return normalizedSiteGutter
   return result.data
 }

@@ -243,7 +243,11 @@
                       v-img(:src='picture.url', alt='')
                 span {{$t('common:header.account')}}
             v-list.nav-header-menu.account-menu(aria-label='Account menu')
-              v-list-item.py-3(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`')
+              v-list-item.py-3(
+                :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`'
+                href='/p'
+                :aria-label='`Open profile for ${name}`'
+              )
                 template(v-slot:prepend)
                   v-avatar
                     v-avatar.bg-primary(v-if='picture.kind === `initials`', :size='40')
@@ -252,9 +256,7 @@
                       v-img(:src='picture.url', alt='')
                 v-list-item-title {{name}}
                 v-list-item-subtitle {{email}}
-              v-list-item(href='/p')
                 template(v-slot:append): v-icon(color='secondary') mdi-face-profile
-                v-list-item-title.text-secondary {{$t('common:header.profile')}}
               v-divider
               section.account-menu__preferences(role='region' aria-labelledby='account-preferences-title')
                 h2#account-preferences-title.account-menu__preferences-title Presentation preferences

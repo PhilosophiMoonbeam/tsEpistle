@@ -14,12 +14,14 @@ section.presentation-selector(:aria-busy='saving ? `true` : `false`')
           :aria-describedby='fontDescriptionId'
           @change='selectFontFamily(option.value)'
         )
-        label.presentation-selector__card.presentation-selector__card--typeface(:for='fontOptionId(option.value)')
-          span.presentation-selector__specimen(:class='`presentation-selector__specimen--${option.value}`' aria-hidden='true') Ag
+        label.presentation-selector__card.presentation-selector__card--typeface(
+          :class='`presentation-selector__card--${option.value}`'
+          :for='fontOptionId(option.value)'
+        )
+          span.presentation-selector__specimen(aria-hidden='true') Ag
           span.presentation-selector__copy
-            strong.presentation-selector__name(:class='`presentation-selector__name--${option.value}`') {{ option.label }}
+            strong.presentation-selector__name {{ option.label }}
             span.presentation-selector__note {{ option.description }}
-          span.presentation-selector__selected(v-if='selectedFontFamily === option.value' aria-hidden='true') Selected
 
   fieldset.presentation-selector__group(:disabled='saving' :aria-describedby='gutterDescriptionId')
     legend.presentation-selector__legend Reading gutter
@@ -39,7 +41,6 @@ section.presentation-selector(:aria-busy='saving ? `true` : `false`')
           span.presentation-selector__copy
             strong.presentation-selector__name {{ option.label }}
             span.presentation-selector__note {{ option.description }}
-          span.presentation-selector__selected(v-if='selectedReadingGutter === option.value' aria-hidden='true') Selected
 
   v-progress-linear.presentation-selector__progress(
     v-if='saving'
@@ -56,7 +57,7 @@ import { computed, ref, useId } from 'vue'
 import Cookies from 'js-cookie'
 import { wikiStore } from '@/store/index.ts'
 import { updateProfilePreferences } from '../../helpers/users-api.ts'
-import { normalizePageGutterStyle, type PageGutterStyle } from '../../../shared/page-gutters.ts'
+import { normalizePageGutterStyle } from '../../../shared/page-gutters.ts'
 import {
   isAdminCustomGutterAvailable,
   normalizeUserFontFamily,
@@ -90,15 +91,6 @@ const fontOptions: readonly FontOption[] = [
   { value: 'roboto-flex', label: 'Roboto Flex', description: 'A precise sans serif with an open rhythm.' }
 ]
 
-const GUTTER_LABELS: Readonly<Record<PageGutterStyle, string>> = {
-  columns: 'Attic columns',
-  orbits: 'Celestial orbits',
-  laurel: 'Laurel cadence',
-  aurora: 'Aurora wash',
-  none: 'Unadorned',
-  custom: 'Custom study'
-}
-
 const presetGutterOptions: readonly GutterOption[] = [
   { value: 'columns', label: 'Attic columns', description: 'Measured editorial rules.' },
   { value: 'orbits', label: 'Celestial orbits', description: 'Concentric study marks.' },
@@ -111,19 +103,15 @@ const presetGutterOptions: readonly GutterOption[] = [
 const saving = computed(() => (wikiStore.loadingCounts[PREFERENCE_LOADING_KEY] ?? 0) > 0)
 const selectedFontFamily = computed<UserFontFamily>(() => normalizeUserFontFamily(wikiStore.user.fontFamily))
 const customGutterAvailable = computed(() => isAdminCustomGutterAvailable(wikiStore.site.gutterCustomCss))
-const siteGutter = computed<PageGutterStyle>(() => normalizePageGutterStyle(wikiStore.site.gutterStyle))
 const selectedReadingGutter = computed<UserReadingGutter>(() => {
   const selected = normalizeUserReadingGutter(wikiStore.user.readingGutter)
-  return selected === 'custom' && !customGutterAvailable.value ? 'site' : selected
+  return selected === 'custom' && !customGutterAvailable.value
+    ? normalizePageGutterStyle(wikiStore.site.gutterStyle)
+    : selected
 })
-const gutterOptions = computed<readonly GutterOption[]>(() => [
-  {
-    value: 'site',
-    label: 'Site default',
-    description: `Currently ${GUTTER_LABELS[siteGutter.value]}.`
-  },
-  ...presetGutterOptions.filter(option => option.value !== 'custom' || customGutterAvailable.value)
-])
+const gutterOptions = computed<readonly GutterOption[]>(() =>
+  presetGutterOptions.filter(option => option.value !== 'custom' || customGutterAvailable.value)
+)
 
 const fontOptionId = (value: UserFontFamily): string => `${fontGroupId}-${value}`
 const gutterOptionId = (value: UserReadingGutter): string => `${gutterGroupId}-${value}`
@@ -270,13 +258,11 @@ async function selectReadingGutter (next: UserReadingGutter): Promise<void> {
   line-height: 1;
 }
 
-.presentation-selector__specimen--newsreader,
-.presentation-selector__name--newsreader {
+.presentation-selector__card--newsreader {
   font-family: var(--wiki-font-newsreader);
 }
 
-.presentation-selector__specimen--roboto-flex,
-.presentation-selector__name--roboto-flex {
+.presentation-selector__card--roboto-flex {
   font-family: var(--wiki-font-roboto-flex);
 }
 
@@ -304,13 +290,6 @@ async function selectReadingGutter (next: UserReadingGutter): Promise<void> {
   line-height: 1.35;
 }
 
-.presentation-selector__selected {
-  align-self: flex-start;
-  color: var(--wiki-accent-ink);
-  font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
-  letter-spacing: .04em;
-}
 
 .presentation-selector__radio:hover + .presentation-selector__card {
   border-color: color-mix(in srgb, var(--wiki-ambient-accent) 32%, var(--wiki-surface-border));

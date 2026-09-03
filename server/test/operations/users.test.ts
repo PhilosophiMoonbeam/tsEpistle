@@ -147,7 +147,8 @@ describe('profile preferences operation', () => {
     ['an empty patch', {}],
     ['an invalid appearance', { appearance: 'sepia' }],
     ['an invalid font family', { fontFamily: 'serif' }],
-    ['an invalid reading gutter', { readingGutter: 'marble' }]
+    ['an invalid reading gutter', { readingGutter: 'marble' }],
+    ['the removed site-default gutter', { readingGutter: 'site' }]
   ])('rejects %s before persistence', async (_label, input) => {
     const { refreshToken, updateUser } = installWiki()
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)

@@ -17,8 +17,8 @@ import {
 
 describe('user presentation preferences', () => {
   it('defines stable defaults for new user preferences', () => {
-    expect(DEFAULT_USER_FONT_FAMILY).toBe('newsreader')
-    expect(DEFAULT_USER_READING_GUTTER).toBe('site')
+    expect(DEFAULT_USER_FONT_FAMILY).toBe('roboto-flex')
+    expect(DEFAULT_USER_READING_GUTTER).toBe('columns')
     expect(normalizeUserFontFamily(undefined)).toBe(DEFAULT_USER_FONT_FAMILY)
     expect(normalizeUserReadingGutter(undefined)).toBe(DEFAULT_USER_READING_GUTTER)
   })
@@ -55,7 +55,7 @@ describe('user presentation preferences', () => {
       ProfilePreferencesInputSchema.safeParse({
         appearance: 'system',
         fontFamily: 'newsreader',
-        readingGutter: 'site'
+        readingGutter: 'laurel'
       }).success
     ).toBe(true)
 
@@ -63,13 +63,14 @@ describe('user presentation preferences', () => {
     expect(ProfilePreferencesInputSchema.safeParse({ fontFamily: undefined }).success).toBe(false)
     expect(ProfilePreferencesInputSchema.safeParse({ appearance: 'sepia' }).success).toBe(false)
     expect(ProfilePreferencesInputSchema.safeParse({ fontFamily: 'newsreader', extra: true }).success).toBe(false)
+    expect(ProfilePreferencesInputSchema.safeParse({ readingGutter: 'site' }).success).toBe(false)
   })
 
   it('keeps an explicit none reading gutter effective', () => {
     expect(resolveUserReadingGutter('none', 'columns', '')).toBe('none')
   })
 
-  it('inherits the normalized site gutter for site, missing, and invalid preferences', () => {
+  it('uses the normalized site gutter for missing, invalid, and legacy preferences', () => {
     expect(resolveUserReadingGutter('site', 'aurora', '')).toBe('aurora')
     expect(resolveUserReadingGutter(undefined, 'laurel', '')).toBe('laurel')
     expect(resolveUserReadingGutter('marble', 'orbits', '')).toBe('orbits')

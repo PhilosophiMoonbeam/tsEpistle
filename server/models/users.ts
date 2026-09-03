@@ -17,7 +17,14 @@ import type Comment from './comments.ts'
 import type PageHistory from './pageHistory.ts'
 import type Page from './pages.ts'
 import type UserKey from './userKeys.ts'
-import { USER_FONT_FAMILY_VALUES, USER_READING_GUTTER_VALUES, type UserFontFamily, type UserReadingGutter } from '../../shared/user-presentation.ts'
+import { normalizePageGutterStyle } from '../../shared/page-gutters.ts'
+import {
+  DEFAULT_USER_FONT_FAMILY,
+  USER_FONT_FAMILY_VALUES,
+  USER_READING_GUTTER_VALUES,
+  type UserFontFamily,
+  type UserReadingGutter
+} from '../../shared/user-presentation.ts'
 
 interface AuthenticationInfo {
   key: string
@@ -105,6 +112,7 @@ interface UsersWikiContext extends Record<string, unknown> {
     host: string
     sessionSecret: string
     lang: { code: string }
+    theming: { gutterStyle?: unknown }
     certs: { private: string | Buffer }
     auth: {
       enforce2FA: boolean
@@ -233,6 +241,10 @@ interface AvatarRow {
 }
 
 const wiki = WIKI as UsersWikiContext
+const initialUserPresentation = () => ({
+  fontFamily: DEFAULT_USER_FONT_FAMILY,
+  readingGutter: normalizePageGutterStyle(wiki.config.theming.gutterStyle)
+})
 
 const errorMessage = (value: unknown): string => (value instanceof Error ? value.message : String(value))
 
@@ -552,6 +564,7 @@ export default class User extends Model {
           pictureUrl: pictureUrl,
           localeCode: wiki.config.lang.code,
           defaultEditor: 'markdown',
+          ...initialUserPresentation(),
           tfaIsActive: false,
           isSystem: false,
           isActive: true,
@@ -1052,6 +1065,7 @@ export default class User extends Model {
         name,
         locale: 'en',
         defaultEditor: 'markdown',
+        ...initialUserPresentation(),
         tfaIsActive: false,
         isSystem: false,
         isActive: true,
@@ -1273,6 +1287,7 @@ export default class User extends Model {
           password,
           locale: 'en',
           defaultEditor: 'markdown',
+          ...initialUserPresentation(),
           tfaIsActive: false,
           isSystem: false,
           isActive: true,

@@ -607,7 +607,7 @@ describe('users api helper', () => {
     { appearance: 'dark' },
     { fontFamily: 'roboto-flex' },
     { readingGutter: 'laurel' },
-    { appearance: 'system', fontFamily: 'newsreader', readingGutter: 'site' }
+    { appearance: 'system', fontFamily: 'newsreader', readingGutter: 'aurora' }
   ])('updates profile preferences with the exact REST payload: %o', async input => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ token: 'replacement-jwt' }))
 

@@ -1034,7 +1034,7 @@ export default defineComponent({
   computed: {
     gutterStyle () {
       return resolveUserReadingGutter(
-        wikiStore.user.readingGutter,
+        wikiStore.user.authenticated ? wikiStore.user.readingGutter : undefined,
         wikiStore.site.gutterStyle,
         wikiStore.site.gutterCustomCss
       )
