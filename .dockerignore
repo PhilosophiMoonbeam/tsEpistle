@@ -24,3 +24,13 @@ test-results
 .env.*
 !.env.example
 *.log
+
+# Operator-owned deployment state must never enter an image build context.
+deploy/**/.env
+deploy/**/.env.*
+deploy/**/*.local.yml
+deploy/**/*.local.yaml
+deploy/**/secrets
+deploy/**/data
+deploy/**/backups
+deploy/**/*.dump

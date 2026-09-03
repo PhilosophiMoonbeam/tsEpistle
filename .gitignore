@@ -31,6 +31,16 @@ npm-debug.log*
 
 /config.yml
 
+# Deployment-local configuration and state
+/deploy/**/.env
+/deploy/**/.env.*
+/deploy/**/*.local.yml
+/deploy/**/*.local.yaml
+/deploy/**/secrets/
+/deploy/**/data/
+/deploy/**/backups/
+/deploy/**/*.dump
+
 # Data directories
 /repo
 /data

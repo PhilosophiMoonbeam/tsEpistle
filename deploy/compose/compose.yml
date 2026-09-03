@@ -1,0 +1,87 @@
+name: ${TSEPISTLE_PROJECT_NAME:-tsepistle}
+
+services:
+  database:
+    image: postgres:16@sha256:4b7183ac05f8ef417db21fd72d71047a4238340c261d3cc3ddb6d579ab5071ae
+    environment:
+      POSTGRES_DB: wiki
+      POSTGRES_PASSWORD_FILE: /run/secrets/db-password
+      POSTGRES_USER: wiki
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wiki -d wiki"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    secrets:
+      - source: db-password-root
+        target: db-password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - database
+
+  app:
+    image: ${TSEPISTLE_IMAGE:?Set TSEPISTLE_IMAGE to an immutable tag or registry digest}
+    depends_on:
+      database:
+        condition: service_healthy
+    environment:
+      AGENT_PROFILE_RESOLUTION_KEYS_FILE: /run/secrets/agent-profile-resolution-keys
+      AGENT_PROVIDER_SECRET_KEYS_FILE: /run/secrets/agent-provider-secret-keys
+      AGENT_SNAPSHOT_SIGNING_SECRET_FILE: /run/secrets/agent-snapshot-signing-secret
+      CONFIG_FILE: /wiki/config.yml
+      DB_PASS_FILE: /run/secrets/db-password
+    env_file:
+      - ${TSEPISTLE_STATE_DIR:-/opt/tsepistle}/agent-runtime.env
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent --show-error http://127.0.0.1:3000/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s
+      retries: 5
+    restart: unless-stopped
+    secrets:
+      - source: db-password-app
+        target: db-password
+      - source: agent-profile-resolution-keys
+        target: agent-profile-resolution-keys
+      - source: agent-provider-secret-keys
+        target: agent-provider-secret-keys
+      - source: agent-snapshot-signing-secret
+        target: agent-snapshot-signing-secret
+    volumes:
+      - ./config.yml:/wiki/config.yml:ro
+      - ${TSEPISTLE_STATE_DIR:-/opt/tsepistle}/data:/wiki/data
+    expose:
+      - "3000"
+    networks:
+      database:
+      proxy:
+        aliases:
+          - ${TSEPISTLE_PROXY_ALIAS:-tsepistle}
+      egress:
+
+volumes:
+  postgres-data:
+    name: ${TSEPISTLE_POSTGRES_VOLUME:-tsepistle-postgres}
+
+networks:
+  database:
+    internal: true
+  proxy:
+    external: true
+    name: ${TSEPISTLE_PROXY_NETWORK:-tsepistle-proxy}
+  egress:
+
+secrets:
+  db-password-root:
+    file: ${TSEPISTLE_STATE_DIR:-/opt/tsepistle}/db-password
+  db-password-app:
+    file: ${TSEPISTLE_STATE_DIR:-/opt/tsepistle}/app-db-password
+  agent-profile-resolution-keys:
+    file: ${TSEPISTLE_STATE_DIR:-/opt/tsepistle}/agent-profile-resolution-keys.json
+  agent-provider-secret-keys:
+    file: ${TSEPISTLE_STATE_DIR:-/opt/tsepistle}/agent-provider-secret-keys.json
+  agent-snapshot-signing-secret:
+    file: ${TSEPISTLE_STATE_DIR:-/opt/tsepistle}/agent-snapshot-signing-secret

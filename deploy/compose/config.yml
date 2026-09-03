@@ -1,0 +1,81 @@
+port: 3000
+bindIP: 0.0.0.0
+
+db:
+  type: postgres
+  host: database
+  port: 5432
+  user: wiki
+  pass: ''
+  db: wiki
+  ssl: false
+  schema: public
+
+ssl:
+  enabled: false
+  port: 3443
+
+logLevel: info
+logFormat: default
+offline: true
+ha: false
+dataPath: /wiki/data
+
+# All Agent capabilities except the separately sandboxed browser worker are
+# enabled. Runtime permissions, provider conformance, proposal approval, and
+# API-key group permissions still apply independently.
+agents:
+  enabled: true
+  retention:
+    temporarySessionHours: 24
+    savedSessionDays: 90
+    mcpContentDays: 7
+    auditDays: 90
+    maintenanceBatchSize: 100
+  provider:
+    enabled: true
+    globalConcurrency: 4
+    perUserConcurrency: 1
+    pollingMilliseconds: 1000
+  orchestration:
+    enabled: true
+    maxConcurrentChildren: 3
+    maxChildren: 6
+    plannerTurns: 2
+    childTurns: 4
+    childToolCalls: 8
+    plannerTimeoutMilliseconds: 30000
+    childTimeoutMilliseconds: 120000
+    plannerMaxOutputTokens: 1024
+    childMaxOutputTokens: 2048
+    maxAggregateChildTokens: 12000
+    maxAggregateChildOutputCharacters: 96000
+  goals:
+    enabled: true
+    maxContinuations: 3
+    maxTokens: 48000
+    maxToolCalls: 96
+    maxDurationMilliseconds: 3600000
+  sse:
+    maximumConnectionsPerUser: 3
+  skills:
+    enabled: true
+    namespace: system/agent-skills
+  browser:
+    enabled: false
+  proposals:
+    enabled: true
+  writes:
+    enabled: true
+    create:
+      enabled: true
+    patch:
+      enabled: true
+    move:
+      enabled: true
+    restore:
+      enabled: true
+    delete:
+      enabled: true
+  mcp:
+    enabled: true
