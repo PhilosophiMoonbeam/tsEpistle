@@ -1,4 +1,4 @@
-import { buildOkfMetadataPayload, deletePage, deletePageTag, fetchPage, fetchPageHistory, fetchPageLinks, fetchPageList, fetchPageLocaleRelations, fetchPageTags, fetchPageTree, fetchPageVersion, fetchRecentPages, linkPageLocaleRelation, restorePageVersion, unlinkPageLocaleRelation, updatePage, updatePageTag, validateOkfMetadataPayload } from './pages-api.ts'
+import { buildOkfMetadataPayload, deletePage, deletePageTag, discardCollaborationDraft, fetchPage, fetchPageHistory, fetchPageLinks, fetchPageList, fetchPageLocaleRelations, fetchPageTags, fetchPageTree, fetchPageVersion, fetchRecentPages, linkPageLocaleRelation, restorePageVersion, unlinkPageLocaleRelation, updatePage, updatePageTag, validateOkfMetadataPayload } from './pages-api.ts'
 
 function createJsonResponse (payload, ok = true) {
   return {
@@ -313,12 +313,14 @@ describe('pages api helper', () => {
       tags: [],
       title: 'Alpha',
       okfMetadata: { type: 'Reference', status: 'stable' }
-    }, '8')
+    }, '8', 4)
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
       expectedSourceRevision: '8',
+      expectedCollaborationGeneration: 4,
       okfMetadata: { type: 'Reference', status: 'stable' }
     })
     await expect(updatePage(fetchImpl, 7, {}, '0')).rejects.toThrow('Page update failed')
+    await expect(updatePage(fetchImpl, 7, {}, '8', 0)).rejects.toThrow('Page update failed')
   })
 
   test('rejects malformed page detail payloads', async () => {
@@ -549,6 +551,32 @@ describe('pages api helper', () => {
       },
       body: JSON.stringify({ expectedSourceRevision: '8' })
     })
+  })
+
+  test('discards a collaboration draft with page timestamp and source-revision fences', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ discarded: true }))
+
+    await discardCollaborationDraft(fetchImpl, 7, '2026-08-15T00:00:00.000Z', '8')
+
+    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/7/collaboration/draft', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ expectedUpdatedAt: '2026-08-15T00:00:00.000Z', expectedSourceRevision: '8' })
+    })
+  })
+
+  test('surfaces collaboration discard conflicts instead of treating them as success', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      error: 'Another user is actively editing this page.'
+    }, false))
+
+    await expect(Promise.resolve(
+      discardCollaborationDraft(fetchImpl, 7, '2026-08-15T00:00:00.000Z', '8')
+    )).rejects.toThrow('Another user is actively editing this page.')
   })
 
   test('surfaces API error messages for failed page delete requests', async () => {

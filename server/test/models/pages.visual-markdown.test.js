@@ -276,6 +276,49 @@ describe('Visual Markdown page contracts', () => {
     expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
   })
 
+  it('rejects a same-user save after collaboration discard advances the room generation', async () => {
+    const page = { ...basePage, sourceRevision: '2' }
+    arrangeUpdate(page, 'markdown')
+    const lockedTables = []
+    global.WIKI.models.knex.mockImplementation(table => {
+      lockedTables.push(table)
+      if (table === 'pages') {
+        return {
+          where: vi.fn().mockReturnValue({
+            forUpdate: vi.fn().mockReturnValue({
+              first: vi.fn().mockResolvedValue({ sourceRevision: '2' })
+            })
+          })
+        }
+      }
+      if (table === 'pageCollaborationRooms') {
+        return {
+          where: vi.fn().mockReturnValue({
+            forUpdate: vi.fn().mockReturnValue({
+              first: vi.fn().mockResolvedValue({ pageId: page.id, generation: 3 })
+            })
+          })
+        }
+      }
+      throw new Error(`Unexpected table ${table}`)
+    })
+
+    await expect(Promise.resolve(Page.updatePage({
+      id: page.id,
+      user: requester,
+      content: '# Stale local content',
+      expectedSourceRevision: '2',
+      expectedCollaborationGeneration: 2
+    }))).rejects.toMatchObject({
+      name: 'CollaborationDraftDiscarded',
+      status: 409,
+      message: 'This collaboration draft was discarded. Reload the page before saving.'
+    })
+
+    expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
+    expect(lockedTables).toEqual(['pages', 'pageCollaborationRooms'])
+  })
+
   it('stops the transaction before tag mutation when the atomic timestamp guard loses a race', async () => {
     const pagePatch = {
       where: vi.fn(),

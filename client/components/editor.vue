@@ -35,6 +35,7 @@
           :variant='mode === `create` || isDirty ? `flat` : `text`'
           color='primary'
           @click='save'
+          :disabled='collaborationDiscarded'
           :class='{ "is-icon": $vuetify.display.mdAndDown }'
           :aria-label='mode === `create` ? $t(`common:actions.create`) : (isDirty ? $t(`common:actions.save`) : $t(`editor:save.saved`))'
           )
@@ -47,6 +48,7 @@
           color='primary'
           aria-label='Save and close'
           @click='saveAndClose'
+          :disabled='collaborationDiscarded'
         )
           v-icon(start) mdi-content-save-move-outline
           span Save and close
@@ -72,13 +74,14 @@
           span(v-if='$vuetify.display.lgAndUp') {{ $t('common:actions.close') }}
         v-divider.editor-actions-divider.ml-3(v-if='$vuetify.display.mdAndUp', vertical)
     v-main
-      component(:is='currentEditor', :save='save')
+      component(:is='currentEditor', :save='save', @collaboration-state='handleCollaborationState')
       editor-modal-properties(v-if='dialogProps', v-model='dialogProps')
       editor-modal-editorselect(v-if='dialogEditorSelector', v-model='dialogEditorSelector')
       editor-modal-unsaved(
         v-if='dialogUnsaved'
         v-model='dialogUnsaved'
         :busy='isSaving'
+        :discarding='discardPending'
         @discard='discardAndExit'
         @save='saveUnsavedAndClose'
       )
@@ -94,6 +97,7 @@
       v-btn(
         color='primary'
         @click.exact='save'
+        :disabled='collaborationDiscarded'
         :aria-label='mode === `create` ? $t(`common:actions.create`) : (isDirty ? $t(`common:actions.save`) : $t(`editor:save.saved`))'
       )
         v-icon mdi-check
@@ -115,7 +119,7 @@
             template(v-slot:prepend)
               v-icon(color='warning') mdi-alert-outline
             v-list-item-title Conflict
-          v-list-item(@click='saveAndClose')
+          v-list-item(:disabled='collaborationDiscarded', @click='saveAndClose')
             template(v-slot:prepend)
               v-icon(color='primary') mdi-content-save-move-outline
             v-list-item-title Save and close
@@ -130,7 +134,7 @@
 import { defineComponent, type PropType } from 'vue'
 import { useHotkey } from 'vuetify'
 import _ from 'lodash'
-import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, fetchPage, updatePage } from '../helpers/pages-api'
+import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, updatePage } from '../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
 import { Base64 } from 'js-base64'
 import StatusIndicator from '@/components/common/status-indicator.vue'
@@ -286,6 +290,10 @@ export default defineComponent({
   data() {
     return {
       isSaving: false,
+      discardPending: false,
+      collaborationActive: false,
+      collaborationGeneration: null as number | null,
+      collaborationDiscarded: false,
       isConflict: false,
       conflictTimer: null as number | null,
       conflictCheckPending: false,
@@ -437,6 +445,12 @@ export default defineComponent({
     removeEditorPageCss()
   },
   methods: {
+    handleCollaborationState(state: { active: boolean, discarded: boolean, generation: number | null }) {
+      if (this.collaborationDiscarded) return
+      this.collaborationActive = state.active
+      this.collaborationDiscarded = state.discarded
+      this.collaborationGeneration = state.generation
+    },
     handleBeforeUnload(event: BeforeUnloadEvent) {
       if (!this.exitConfirmed && this.isDirty) {
         event.preventDefault()
@@ -504,6 +518,16 @@ export default defineComponent({
       emitEditorSaveConflict()
     },
     async save({ rethrow = false, overwrite = false }: { rethrow?: boolean, overwrite?: boolean } = {}) {
+      if (this.collaborationDiscarded) {
+        const error = new Error('This collaboration draft was discarded. Reload the page before saving.')
+        wikiStore.showNotification({
+          message: error.message,
+          style: 'error',
+          icon: 'warning'
+        })
+        if (rethrow) throw error
+        return
+      }
       if (this.mode !== 'create' && !this.isDirty) return
       if (this.isSaving) return
       this.showProgressDialog()
@@ -544,7 +568,8 @@ export default defineComponent({
             window.fetch.bind(window),
             wikiStore.page.id,
             pageInput,
-            wikiStore.page.sourceRevision
+            wikiStore.page.sourceRevision,
+            this.collaborationActive ? this.collaborationGeneration ?? undefined : undefined
           )
           wikiStore.page.sourceRevision = page.sourceRevision
           if (this.savedState.visibility !== wikiStore.page.visibility) {
@@ -581,8 +606,12 @@ export default defineComponent({
 
         this.setCurrentSavedState()
       } catch (err) {
+        const message = getErrorMessage(err)
+        if (this.collaborationActive && message === 'This collaboration draft was discarded. Reload the page before saving.') {
+          this.handleCollaborationState({ active: false, discarded: true, generation: null })
+        }
         wikiStore.showNotification({
-          message: getErrorMessage(err),
+          message,
           style: 'error',
           icon: 'warning'
         })
@@ -621,10 +650,31 @@ export default defineComponent({
         this.exitGo()
       }
     },
-    discardAndExit() {
-      this.restoreCurrentSavedState()
-      this.dialogUnsaved = false
-      this.exitGo()
+    async discardAndExit() {
+      if (this.discardPending) return
+      this.discardPending = true
+      try {
+        if (wikiStore.editor.mode === 'update' && wikiStore.editor.editorKey === 'markdown' && this.collaborationActive) {
+          await discardCollaborationDraft(
+            window.fetch.bind(window),
+            wikiStore.page.id,
+            this.checkoutDateActive,
+            wikiStore.page.sourceRevision
+          )
+        }
+        this.restoreCurrentSavedState()
+        this.dialogUnsaved = false
+        this.exitGo()
+      } catch (error) {
+        this.dialogUnsaved = true
+        wikiStore.showNotification({
+          message: getErrorMessage(error),
+          style: 'error',
+          icon: 'warning'
+        })
+      } finally {
+        this.discardPending = false
+      }
     },
     exitGo() {
       if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)

@@ -28,9 +28,7 @@ describe('editor Knowledge / OKF save contract', () => {
 
     expect(getPageInput).toContain('buildOkfMetadataPayload(wikiStore.page.okf.authority.metadata)')
     expect(getPageInput).toContain('okfMetadata === undefined ? {} : { okfMetadata }')
-    expect(save).toContain('message: getErrorMessage(err)')
-    expect(save).toContain("style: 'error'")
-    expect(save).toContain("icon: 'warning'")
+    expect(save).toMatch(/const message = getErrorMessage\(err\)[\s\S]*?wikiStore\.showNotification\(\{\s*message,\s*style: 'error',\s*icon: 'warning'/)
   })
 
   it('keeps invalid drafts observable and restores a deep-cloned OKF baseline', () => {

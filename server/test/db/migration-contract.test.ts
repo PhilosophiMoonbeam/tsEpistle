@@ -25,7 +25,7 @@ describe('database migration namespace contract', () => {
     const files = (await readdir(path.resolve('server/db/migrations'))).filter(file => file.endsWith('.ts'))
     const ordered = orderMigrationFiles(files)
 
-    expect(ordered.at(-1)).toBe('tsfranki-000011-remove-reading-gutters')
+    expect(ordered.at(-1)).toBe('tsfranki-000012-collaboration-discard-fencing')
     expect(ordered).toHaveLength(files.length)
   })
 

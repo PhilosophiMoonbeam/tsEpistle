@@ -24,6 +24,7 @@ const router = express.Router()
 interface PagesApiRuntime {
   collaboration: {
     issueSession(input: { pageId: number; expectedUpdatedAt: string; requester: Express.User | undefined }): Promise<unknown>
+    discardDraft(input: { pageId: number; expectedUpdatedAt: string; expectedSourceRevision: string; requester: Express.User | undefined }): Promise<void>
   }
   models: { knex: Knex }
 }
@@ -116,6 +117,15 @@ const requiredSourceRevision = (req: Request, res: Response): string | null => {
   const value = requestBody(req).expectedSourceRevision
   if (typeof value !== 'string' || value.length > 64 || !/^[1-9][0-9]*$/u.test(value)) {
     res.status(400).json({ error: 'expectedSourceRevision must be a canonical positive decimal string' })
+    return null
+  }
+  return value
+}
+const optionalCollaborationGeneration = (req: Request, res: Response): number | undefined | null => {
+  const value = requestBody(req).expectedCollaborationGeneration
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    res.status(400).json({ error: 'expectedCollaborationGeneration must be a positive safe integer' })
     return null
   }
   return value
@@ -429,8 +439,18 @@ router.put('/:id', async (req, res, next) => {
   if (id === null) return
   const expectedSourceRevision = requiredSourceRevision(req, res)
   if (expectedSourceRevision === null) return
+  const expectedCollaborationGeneration = optionalCollaborationGeneration(req, res)
+  if (expectedCollaborationGeneration === null) return
   try {
-    const page = await pageOperations.update({ ...pageOperationContext(req), input: { ...requestBody(req), id, expectedSourceRevision } })
+    const page = await pageOperations.update({
+      ...pageOperationContext(req),
+      input: {
+        ...requestBody(req),
+        id,
+        expectedSourceRevision,
+        ...(expectedCollaborationGeneration === undefined ? {} : { expectedCollaborationGeneration })
+      }
+    })
     res.json({ page: pageResponse(req, page) })
   } catch (err) {
     sendOperationError(res, next, err, 'Page update failed')
@@ -761,6 +781,25 @@ router.post('/:id/collaboration/session', async (req, res, next) => {
     next(err)
   }
 })
+router.delete('/:id/collaboration/draft', async (req, res, next) => {
+  const pageId = parsePositiveIntegerParam(req, res)
+  if (pageId === null) return
+  if (!(await requireUnlockedPage(req, res, pageId))) return
+  const expectedUpdatedAt = requestBody(req).expectedUpdatedAt
+  if (typeof expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(expectedUpdatedAt))) {
+    return res.status(400).json({ error: 'expectedUpdatedAt must be a valid date' })
+  }
+  const expectedSourceRevision = requiredSourceRevision(req, res)
+  if (expectedSourceRevision === null) return
+  try {
+    const collaboration = getTransportRuntime<PagesApiRuntime>().collaboration
+    await collaboration.discardDraft({ pageId, expectedUpdatedAt, expectedSourceRevision, requester: req.user })
+    res.json({ discarded: true })
+  } catch (err) {
+    next(err)
+  }
+})
+
 
 router.get('/:id/history', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)

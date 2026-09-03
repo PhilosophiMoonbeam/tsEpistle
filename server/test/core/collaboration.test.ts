@@ -8,8 +8,9 @@ import { WebSocket } from 'ws'
 import * as Y from 'yjs'
 
 import collaboration from '../../core/collaboration.ts'
-import { CollaborationRoomStore } from '../../core/collaboration-store.ts'
+import { CollaborationRoomStore, collaborationStateContent } from '../../core/collaboration-store.ts'
 import { up as upCollaboration } from '../../db/migrations/2.5.136.ts'
+import { up as upDiscardFencing } from '../../db/migrations/tsfranki-000012-collaboration-discard-fencing.ts'
 import {
   COLLABORATION_TEXT_KEY,
   COLLABORATION_WEBSOCKET_PROTOCOL,
@@ -52,16 +53,21 @@ beforeEach(async () => {
     useNullAsDefault: true
   })
   await knex.schema.createTable('users', table => table.integer('id').primary())
-  await knex.schema.createTable('pages', table => table.integer('id').primary())
+  await knex.schema.createTable('pages', table => {
+    table.integer('id').primary()
+    table.string('sourceRevision').notNullable()
+  })
   await knex('users').insert({ id: 1 })
-  await knex('pages').insert({ id: 42 })
+  await knex('pages').insert({ id: 42, sourceRevision: '1' })
   await upCollaboration(knex)
+  await upDiscardFencing(knex)
 
   const page = {
     id: 42,
     content: '# Shared\n',
     editorKey: 'markdown',
     updatedAt: '2026-08-15T12:00:00.000Z',
+    sourceRevision: '1',
     path: 'shared',
     localeCode: 'en',
     visibility: 'public' as const,
@@ -137,7 +143,9 @@ describe('collaboration service multi-instance transport', () => {
     ], { headers: { Origin: `http://127.0.0.1:${address.port}` } })
     const initialSync = waitForMessage(socket, 'sync')
     await once(socket, 'open')
-    await initialSync
+    const initialMessage = await initialSync
+    if (initialMessage.type !== 'sync') throw new Error('Expected an initial collaboration sync message')
+    expect(initialMessage.baseSourceRevision).toBe('1')
 
     const peerStore = new CollaborationRoomStore(knex)
     const room = await peerStore.get(42)
@@ -148,15 +156,144 @@ describe('collaboration service multi-instance transport', () => {
     document.on('update', update => { peerUpdate = update })
     document.getText(COLLABORATION_TEXT_KEY).insert(document.getText(COLLABORATION_TEXT_KEY).length, 'peer')
     if (!peerUpdate) throw new Error('Expected a peer update')
-    await peerStore.apply(42, peerUpdate, 1)
+    await peerStore.admit(
+      42,
+      room.generation,
+      1,
+      'independent-instance',
+      new Date(Date.now() + 60_000),
+      room.baseUpdatedAt,
+      room.baseSourceRevision
+    )
+    await peerStore.apply(42, room.generation, 'independent-instance', peerUpdate, 1)
 
     const remoteSync = waitForMessage(socket, 'sync')
     const wiki = globalWithWiki.WIKI as { events: { inbound: { emit(event: string, value: unknown): void } } }
     wiki.events.inbound.emit('collaborationRoomUpdated', { pageId: 42, source: 'peer' })
     const message = await remoteSync
     if (message.type !== 'sync') throw new Error('Expected a collaboration sync message')
+    expect(message.baseSourceRevision).toBe(room.baseSourceRevision)
     const synchronized = new Y.Doc()
     Y.applyUpdate(synchronized, decodeCollaborationUpdate(message.update))
     expect(synchronized.getText(COLLABORATION_TEXT_KEY).toString()).toBe('# Shared\npeer')
+  })
+
+  it('resets an owned durable draft so a new session re-enters persisted content', async () => {
+    collaboration.init()
+    const session = await collaboration.issueSession({
+      pageId: 42,
+      expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
+      requester: { id: 1 } as Express.User
+    })
+    const document = new Y.Doc()
+    Y.applyUpdate(document, decodeCollaborationUpdate(session.state))
+    let update: Uint8Array | null = null
+    document.on('update', value => { update = value })
+    document.getText(COLLABORATION_TEXT_KEY).insert(document.getText(COLLABORATION_TEXT_KEY).length, '<!-- discarded -->')
+    if (!update) throw new Error('Expected a collaboration update')
+    const draftStore = new CollaborationRoomStore(knex)
+    await draftStore.admit(
+      42,
+      session.generation,
+      1,
+      'draft-author',
+      new Date(Date.now() + 60_000),
+      session.baseUpdatedAt,
+      session.baseSourceRevision
+    )
+    await draftStore.apply(42, session.generation, 'draft-author', update, 1)
+
+    await collaboration.discardDraft({
+      pageId: 42,
+      expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
+      expectedSourceRevision: '1',
+      requester: { id: 1 } as Express.User
+    })
+
+    const reopened = await collaboration.issueSession({
+      pageId: 42,
+      expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
+      requester: { id: 1 } as Express.User
+    })
+    expect(collaborationStateContent(reopened.state)).toBe('# Shared\n')
+  })
+
+  it('refuses to discard a durable draft contributed to by another user', async () => {
+    await knex('users').insert({ id: 2 })
+    collaboration.init()
+    const session = await collaboration.issueSession({
+      pageId: 42,
+      expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
+      requester: { id: 1 } as Express.User
+    })
+    const document = new Y.Doc()
+    Y.applyUpdate(document, decodeCollaborationUpdate(session.state))
+    let update: Uint8Array | null = null
+    document.on('update', value => { update = value })
+    document.getText(COLLABORATION_TEXT_KEY).insert(document.getText(COLLABORATION_TEXT_KEY).length, 'other user')
+    if (!update) throw new Error('Expected a collaboration update')
+    const roomStore = new CollaborationRoomStore(knex)
+    await roomStore.admit(
+      42,
+      session.generation,
+      2,
+      'other-author',
+      new Date(Date.now() + 60_000),
+      session.baseUpdatedAt,
+      session.baseSourceRevision
+    )
+    await roomStore.apply(42, session.generation, 'other-author', update, 2)
+    await roomStore.leave('other-author')
+
+    await expect(collaboration.discardDraft({
+      pageId: 42,
+      expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
+      expectedSourceRevision: '1',
+      requester: { id: 1 } as Express.User
+    })).rejects.toThrow('Another user changed this shared draft')
+    expect(collaborationStateContent((await roomStore.get(42))?.state ?? '')).toContain('other user')
+  })
+
+  it('refuses room-wide discard while another user has an active collaboration socket', async () => {
+    await knex('users').insert({ id: 2 })
+    collaboration.init()
+    collaboration.install(server)
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Expected an HTTP server address')
+    const firstSession = await collaboration.issueSession({
+      pageId: 42,
+      expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
+      requester: { id: 1 } as Express.User
+    })
+    const peerSession = await collaboration.issueSession({
+      pageId: 42,
+      expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
+      requester: { id: 2 } as Express.User
+    })
+    socket = new WebSocket(`ws://127.0.0.1:${address.port}/collaboration`, [
+      COLLABORATION_WEBSOCKET_PROTOCOL,
+      firstSession.token
+    ], { headers: { Origin: `http://127.0.0.1:${address.port}` } })
+    const peerSocket = new WebSocket(`ws://127.0.0.1:${address.port}/collaboration`, [
+      COLLABORATION_WEBSOCKET_PROTOCOL,
+      peerSession.token
+    ], { headers: { Origin: `http://127.0.0.1:${address.port}` } })
+    try {
+      const firstSync = waitForMessage(socket, 'sync')
+      const peerSync = waitForMessage(peerSocket, 'sync')
+      await Promise.all([once(socket, 'open'), once(peerSocket, 'open'), firstSync, peerSync])
+
+      await expect(collaboration.discardDraft({
+        pageId: 42,
+        expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
+        expectedSourceRevision: '1',
+        requester: { id: 1 } as Express.User
+      })).rejects.toThrow('Another user is actively editing this page')
+      expect(socket.readyState).toBe(WebSocket.OPEN)
+      expect(peerSocket.readyState).toBe(WebSocket.OPEN)
+    } finally {
+      peerSocket.terminate()
+    }
   })
 })

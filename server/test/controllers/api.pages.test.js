@@ -86,7 +86,8 @@ describe('controllers/api pages endpoints', () => {
         }
       },
       collaboration: {
-        issueSession: vi.fn()
+        issueSession: vi.fn(),
+        discardDraft: vi.fn()
       },
       models: {
         knex: knexWithProjection(),
@@ -201,6 +202,7 @@ describe('controllers/api pages endpoints', () => {
       restore: express.__router.post.mock.calls.find(([path]) => path === '/:id/history/:versionId/restore')[1],
       submitApproval: express.__router.post.mock.calls.find(([path]) => path === '/:id/approval')[1],
       collaborationSession: express.__router.post.mock.calls.find(([path]) => path === '/:id/collaboration/session')[1],
+      collaborationDiscard: express.__router.delete.mock.calls.find(([path]) => path === '/:id/collaboration/draft')[1],
       tree: express.__router.get.mock.calls.find(([path]) => path === '/tree')[1]
     }
   }
@@ -339,7 +341,7 @@ describe('controllers/api pages endpoints', () => {
       throw new Error(`Unexpected table ${table}`)
     })
     const requester = { id: 5, permissions: ['read:pages', 'write:pages'] }
-    const args = { id: 7, expectedSourceRevision: '8', title: 'Updated' }
+    const args = { id: 7, expectedSourceRevision: '8', expectedCollaborationGeneration: 4, title: 'Updated' }
     const context = { req: { user: requester, sessionID: 'current-session' } }
     const { updatePage } = await loadHandler()
     const { default: pageResolvers } = await vi.importFresh('../../graph/resolvers/page.ts', import.meta.url)
@@ -361,6 +363,9 @@ describe('controllers/api pages endpoints', () => {
     expect(grantedResponse.json).toHaveBeenCalledWith({ page: { id: 7 } })
     expect(grantedGraphResult.responseResult).toEqual(expect.objectContaining({ succeeded: true }))
     expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledTimes(2)
+    expect(global.WIKI.models.pages.updatePage).toHaveBeenLastCalledWith(expect.objectContaining({
+      expectedCollaborationGeneration: 4
+    }))
   })
 
   it.each([
@@ -387,6 +392,23 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a canonical positive decimal string' })
+    expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
+  })
+
+  it.each([0, -1, 1.5, '1', null])('rejects invalid collaboration generation fences: %s', async expectedCollaborationGeneration => {
+    const { updatePage } = await loadHandler()
+    const req = {
+      body: { expectedSourceRevision: '8', expectedCollaborationGeneration, title: 'Updated' },
+      params: { id: '7' },
+      sessionID: 'session-write',
+      user: { id: 5, permissions: ['write:pages'] }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await updatePage(req, res, vi.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'expectedCollaborationGeneration must be a positive safe integer' })
     expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
   })
 
@@ -541,6 +563,50 @@ describe('controllers/api pages endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(global.WIKI.collaboration.issueSession).not.toHaveBeenCalled()
+  })
+
+  it('requires and forwards page timestamp and source revision when discarding a collaboration draft', async () => {
+    const expectedUpdatedAt = '2026-08-15T00:00:00.000Z'
+    const expectedSourceRevision = '8'
+    const requester = { id: 7, permissions: ['write:pages'] }
+    global.WIKI.models.knex = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
+    })
+    const { collaborationDiscard } = await loadHandler()
+    const req = {
+      body: { expectedUpdatedAt, expectedSourceRevision },
+      params: { id: '7' },
+      user: requester
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await collaborationDiscard(req, res)
+
+    expect(global.WIKI.collaboration.discardDraft).toHaveBeenCalledWith({
+      pageId: 7,
+      expectedUpdatedAt,
+      expectedSourceRevision,
+      requester
+    })
+    expect(res.json).toHaveBeenCalledWith({ discarded: true })
+  })
+
+  it('rejects collaboration discard without a concurrency timestamp', async () => {
+    global.WIKI.models.knex = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
+    })
+    const { collaborationDiscard } = await loadHandler()
+    const req = {
+      body: {},
+      params: { id: '7' },
+      user: { id: 7, permissions: ['write:pages'] }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+
+    await collaborationDiscard(req, res)
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(global.WIKI.collaboration.discardDraft).not.toHaveBeenCalled()
   })
 
   it('lists root page tree entries when parent is zero', async () => {

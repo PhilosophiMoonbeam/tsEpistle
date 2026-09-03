@@ -735,6 +735,27 @@ export async function fetchCollaborationSession(
   return parseCollaborationSession(await parseJsonResponse(response, fallbackMessage))
 }
 
+export async function discardCollaborationDraft(
+  fetchImpl: FetchImpl,
+  pageId: number,
+  expectedUpdatedAt: string,
+  expectedSourceRevision: string,
+  fallbackMessage = 'Collaboration draft discard failed'
+): Promise<void> {
+  if (!/^[1-9][0-9]*$/u.test(expectedSourceRevision)) throw new Error(fallbackMessage)
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/${encodeURIComponent(pageId)}/collaboration/draft`, {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ expectedUpdatedAt, expectedSourceRevision })
+  })
+  const payload = await parseJsonResponse(response, fallbackMessage)
+  if (!isRecord(payload) || payload.discarded !== true) throw new Error(fallbackMessage)
+}
+
 export async function updatePageTag(
   fetchImpl: FetchImpl,
   id: number,
@@ -925,11 +946,18 @@ export async function updatePage(
   id: number,
   input: PageWriteInput,
   expectedSourceRevision: string,
+  expectedCollaborationGeneration?: number,
   fallbackMessage = 'Page update failed'
 ): Promise<WrittenPage> {
-  if (!/^[1-9][0-9]*$/u.test(expectedSourceRevision)) throw new Error(fallbackMessage)
+  if (!/^[1-9][0-9]*$/u.test(expectedSourceRevision) ||
+    (expectedCollaborationGeneration !== undefined &&
+      (!Number.isSafeInteger(expectedCollaborationGeneration) || expectedCollaborationGeneration < 1))) throw new Error(fallbackMessage)
   return normalizeWrittenPage(
-    await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}`, 'PUT', { ...input, expectedSourceRevision }, fallbackMessage),
+    await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}`, 'PUT', {
+      ...input,
+      expectedSourceRevision,
+      ...(expectedCollaborationGeneration === undefined ? {} : { expectedCollaborationGeneration })
+    }, fallbackMessage),
     fallbackMessage,
     false
   )

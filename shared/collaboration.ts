@@ -6,8 +6,9 @@ export const COLLABORATION_WEBSOCKET_PATH = '/collaboration' as const
 export const COLLABORATION_WEBSOCKET_PROTOCOL = 'wiki-collaboration-v1' as const
 export const COLLABORATION_MAX_UPDATE_BYTES = 256 * 1024
 export const COLLABORATION_MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
+export const COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE = 4410
 
-export type CollaborationConflictReason = 'disabled' | 'page-changed' | 'permission-revoked' | 'protocol-error'
+export type CollaborationConflictReason = 'disabled' | 'draft-discarded' | 'page-changed' | 'permission-revoked' | 'protocol-error'
 
 export interface CollaborationSession {
   token: string
@@ -15,7 +16,9 @@ export interface CollaborationSession {
   format: typeof COLLABORATION_FORMAT
   protocolVersion: typeof COLLABORATION_PROTOCOL_VERSION
   updateVersion: typeof COLLABORATION_UPDATE_VERSION
+  generation: number
   revision: number
+  baseSourceRevision: string
   baseUpdatedAt: string
   state: string
   websocketPath: typeof COLLABORATION_WEBSOCKET_PATH
@@ -24,6 +27,7 @@ export interface CollaborationSession {
 export interface CollaborationClientUpdate {
   type: 'update'
   protocolVersion: typeof COLLABORATION_PROTOCOL_VERSION
+  generation: number
   updateVersion: typeof COLLABORATION_UPDATE_VERSION
   update: string
 }
@@ -36,7 +40,9 @@ export type CollaborationServerMessage =
       protocolVersion: typeof COLLABORATION_PROTOCOL_VERSION
       updateVersion: typeof COLLABORATION_UPDATE_VERSION
       update: string
+      generation: number
       revision: number
+      baseSourceRevision: string
       baseUpdatedAt: string
       participants: number
     }
@@ -45,10 +51,11 @@ export type CollaborationServerMessage =
       protocolVersion: typeof COLLABORATION_PROTOCOL_VERSION
       updateVersion: typeof COLLABORATION_UPDATE_VERSION
       update: string
+      generation: number
       revision: number
     }
   | { type: 'presence', participants: number }
-  | { type: 'saved', baseUpdatedAt: string }
+  | { type: 'saved', baseUpdatedAt: string, baseSourceRevision: string }
   | { type: 'conflict', reason: CollaborationConflictReason }
 
 const base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
@@ -102,11 +109,12 @@ export const decodeCollaborationUpdate = (value: unknown, maxBytes = COLLABORATI
 
 export const parseCollaborationSession = (value: unknown): CollaborationSession => {
   if (!isRecord(value) || !hasExactKeys(value, [
-    'token', 'pageId', 'format', 'protocolVersion', 'updateVersion', 'revision', 'baseUpdatedAt', 'state', 'websocketPath'
+    'token', 'pageId', 'format', 'protocolVersion', 'updateVersion', 'generation', 'revision', 'baseSourceRevision', 'baseUpdatedAt', 'state', 'websocketPath'
   ])) throw new TypeError('Collaboration session is invalid')
   if (typeof value.token !== 'string' || value.token.length < 1 || !isPositiveInteger(value.pageId) ||
     value.format !== COLLABORATION_FORMAT || value.protocolVersion !== COLLABORATION_PROTOCOL_VERSION ||
-    value.updateVersion !== COLLABORATION_UPDATE_VERSION || !isNonNegativeInteger(value.revision) ||
+    value.updateVersion !== COLLABORATION_UPDATE_VERSION || !isPositiveInteger(value.generation) || !isNonNegativeInteger(value.revision) ||
+    typeof value.baseSourceRevision !== 'string' || !/^[1-9][0-9]*$/u.test(value.baseSourceRevision) ||
     !isDateString(value.baseUpdatedAt) || value.websocketPath !== COLLABORATION_WEBSOCKET_PATH) {
     throw new TypeError('Collaboration session is invalid')
   }
@@ -115,9 +123,9 @@ export const parseCollaborationSession = (value: unknown): CollaborationSession 
 }
 
 export const parseCollaborationClientMessage = (value: unknown): CollaborationClientMessage => {
-  if (!isRecord(value) || !hasExactKeys(value, ['type', 'protocolVersion', 'updateVersion', 'update']) ||
+  if (!isRecord(value) || !hasExactKeys(value, ['type', 'protocolVersion', 'updateVersion', 'generation', 'update']) ||
     value.type !== 'update' || value.protocolVersion !== COLLABORATION_PROTOCOL_VERSION ||
-    value.updateVersion !== COLLABORATION_UPDATE_VERSION) {
+    value.updateVersion !== COLLABORATION_UPDATE_VERSION || !isPositiveInteger(value.generation)) {
     throw new TypeError('Collaboration client message is invalid')
   }
   decodeCollaborationUpdate(value.update, COLLABORATION_MAX_UPDATE_BYTES)
@@ -127,27 +135,31 @@ export const parseCollaborationClientMessage = (value: unknown): CollaborationCl
 export const parseCollaborationServerMessage = (value: unknown): CollaborationServerMessage => {
   if (!isRecord(value) || typeof value.type !== 'string') throw new TypeError('Collaboration server message is invalid')
   if (value.type === 'sync') {
-    if (!hasExactKeys(value, ['type', 'protocolVersion', 'updateVersion', 'update', 'revision', 'baseUpdatedAt', 'participants']) ||
+    if (!hasExactKeys(value, ['type', 'protocolVersion', 'updateVersion', 'generation', 'update', 'revision', 'baseSourceRevision', 'baseUpdatedAt', 'participants']) ||
       value.protocolVersion !== COLLABORATION_PROTOCOL_VERSION || value.updateVersion !== COLLABORATION_UPDATE_VERSION ||
-      !isNonNegativeInteger(value.revision) || !isDateString(value.baseUpdatedAt) || !isNonNegativeInteger(value.participants)) {
+      !isPositiveInteger(value.generation) || !isNonNegativeInteger(value.revision) ||
+      typeof value.baseSourceRevision !== 'string' || !/^[1-9][0-9]*$/u.test(value.baseSourceRevision) ||
+      !isDateString(value.baseUpdatedAt) || !isNonNegativeInteger(value.participants)) {
       throw new TypeError('Collaboration sync message is invalid')
     }
     decodeCollaborationUpdate(value.update)
   } else if (value.type === 'update') {
-    if (!hasExactKeys(value, ['type', 'protocolVersion', 'updateVersion', 'update', 'revision']) ||
+    if (!hasExactKeys(value, ['type', 'protocolVersion', 'updateVersion', 'generation', 'update', 'revision']) ||
       value.protocolVersion !== COLLABORATION_PROTOCOL_VERSION || value.updateVersion !== COLLABORATION_UPDATE_VERSION ||
-      !isNonNegativeInteger(value.revision)) throw new TypeError('Collaboration update message is invalid')
+      !isPositiveInteger(value.generation) || !isNonNegativeInteger(value.revision)) throw new TypeError('Collaboration update message is invalid')
     decodeCollaborationUpdate(value.update, COLLABORATION_MAX_UPDATE_BYTES)
   } else if (value.type === 'presence') {
     if (!hasExactKeys(value, ['type', 'participants']) || !isNonNegativeInteger(value.participants)) {
       throw new TypeError('Collaboration presence message is invalid')
     }
   } else if (value.type === 'saved') {
-    if (!hasExactKeys(value, ['type', 'baseUpdatedAt']) || !isDateString(value.baseUpdatedAt)) {
+    if (!hasExactKeys(value, ['type', 'baseUpdatedAt', 'baseSourceRevision']) ||
+      typeof value.baseSourceRevision !== 'string' || !/^[1-9][0-9]*$/u.test(value.baseSourceRevision) ||
+      !isDateString(value.baseUpdatedAt)) {
       throw new TypeError('Collaboration saved message is invalid')
     }
   } else if (value.type === 'conflict') {
-    if (!hasExactKeys(value, ['type', 'reason']) || !['disabled', 'page-changed', 'permission-revoked', 'protocol-error'].includes(String(value.reason))) {
+    if (!hasExactKeys(value, ['type', 'reason']) || !['disabled', 'draft-discarded', 'page-changed', 'permission-revoked', 'protocol-error'].includes(String(value.reason))) {
       throw new TypeError('Collaboration conflict message is invalid')
     }
   } else {

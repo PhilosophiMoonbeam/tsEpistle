@@ -401,6 +401,7 @@ export default defineComponent({
   components: {
     markdownHelp
   },
+  emits: ['collaboration-state'],
   props: {
     save: {
       type: Function as PropType<() => void>,
@@ -844,14 +845,22 @@ export default defineComponent({
           pageId: wikiStore.page.id,
           expectedUpdatedAt: () => wikiStore.editor.checkoutDateActive,
           fetchImpl: (input, init) => window.fetch(input, { ...init, signal: collaborationAbortController.signal }),
-          onBaseUpdatedAt: updatedAt => { wikiStore.editor.checkoutDateActive = updatedAt },
+          onBaseline: baseline => {
+            wikiStore.editor.checkoutDateActive = baseline.updatedAt
+            wikiStore.page.sourceRevision = baseline.sourceRevision
+          },
           onStatus: status => {
             if (this.editorDisposed) return
             const firstConflict = status.state === 'conflict' && this.collaborationStatus?.state !== 'conflict'
             this.collaborationStatus = status
+            if (status.state === 'conflict' && status.conflict === 'draft-discarded') {
+              this.$emit('collaboration-state', { active: false, discarded: true, generation: null })
+            }
             if (firstConflict) {
               wikiStore.showNotification({
-                message: 'Live collaboration stopped because the page or your access changed. Your edits remain in this editor.',
+                message: status.conflict === 'draft-discarded'
+                  ? 'This collaboration draft was discarded. Reload the page before saving.'
+                  : 'Live collaboration stopped because the page or your access changed. Your edits remain in this editor.',
                 style: 'warning',
                 icon: 'warning'
               })
@@ -863,6 +872,7 @@ export default defineComponent({
           return
         }
         collaborations.set(this, collaboration)
+        this.$emit('collaboration-state', { active: true, discarded: false, generation: collaboration.generation })
         wikiStore.editor.content = collaboration.content
         extensions.push(collaboration.extension)
       } catch {
@@ -870,6 +880,7 @@ export default defineComponent({
         if (this.collaborationAbortController === collaborationAbortController) {
           this.collaborationAbortController = null
         }
+        this.$emit('collaboration-state', { active: false, discarded: false, generation: null })
         if (!this.editorDisposed) {
           wikiStore.showNotification({
             message: 'Live collaboration is unavailable. You can continue editing locally.',

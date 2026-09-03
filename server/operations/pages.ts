@@ -213,6 +213,13 @@ const expectedSourceRevision = (value: unknown): string | undefined => {
   if (!/^[1-9][0-9]*$/.test(revision)) throw new ApplicationError('expectedSourceRevision must be a canonical positive decimal', { code: 'INVALID_INPUT' })
   return revision
 }
+const expectedCollaborationGeneration = (value: unknown): number | undefined => {
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw new ApplicationError('expectedCollaborationGeneration must be a positive safe integer', { code: 'INVALID_INPUT' })
+  }
+  return value
+}
 const recordValue = (value: unknown, label: string): Record<string, unknown> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApplicationError(`${label} must be an object`, { code: 'INVALID_INPUT' })
   return value as Record<string, unknown>
@@ -1102,10 +1109,14 @@ const create = (input: OperationInput): unknown => {
 const update = async (input: OperationInput): Promise<unknown> => {
   const operationInput = recordValue(input.input, 'input')
   const replaceOkfMetadata = Object.hasOwn(operationInput, 'okfMetadata')
+  const collaborationGeneration = expectedCollaborationGeneration(operationInput.expectedCollaborationGeneration)
   const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS', ...(replaceOkfMetadata ? [] : ['okfMetadata'])])
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
   return wiki.models.pages.updatePage(
-    withRequester(replaceOkfMetadata ? { ...payload, replaceOkfMetadata: true } : payload, input.requester)
+    withRequester({
+      ...(replaceOkfMetadata ? { ...payload, replaceOkfMetadata: true } : payload),
+      ...(collaborationGeneration === undefined ? {} : { expectedCollaborationGeneration: collaborationGeneration })
+    }, input.requester)
   )
 }
 const convert = async (input: OperationInput): Promise<unknown> => {

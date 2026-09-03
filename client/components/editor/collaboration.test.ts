@@ -5,6 +5,7 @@ import * as Y from 'yjs'
 
 import { createMarkdownCollaboration, type CollaborationStatus } from './collaboration.ts'
 import {
+  COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE,
   COLLABORATION_FORMAT,
   COLLABORATION_PROTOCOL_VERSION,
   COLLABORATION_TEXT_KEY,
@@ -58,7 +59,7 @@ class FakeWebSocket {
   }
 }
 
-const sessionPayload = () => {
+const sessionPayload = (generation = 1) => {
   const document = new Y.Doc()
   document.getText(COLLABORATION_TEXT_KEY).insert(0, '# Shared\n')
   return {
@@ -67,7 +68,9 @@ const sessionPayload = () => {
     format: COLLABORATION_FORMAT,
     protocolVersion: COLLABORATION_PROTOCOL_VERSION,
     updateVersion: COLLABORATION_UPDATE_VERSION,
+    generation,
     revision: 0,
+    baseSourceRevision: '1',
     baseUpdatedAt: '2026-08-15T12:00:00.000Z',
     state: encodeCollaborationUpdate(Y.encodeStateAsUpdate(document)),
     websocketPath: COLLABORATION_WEBSOCKET_PATH
@@ -94,22 +97,33 @@ afterEach(() => {
 
 describe('Markdown collaboration connection', () => {
   it('uses an ephemeral subprotocol token and surfaces a server conflict without discarding content', async () => {
+    const onBaseline = vi.fn()
     const statuses: CollaborationStatus[] = []
     const collaboration = await createMarkdownCollaboration({
       pageId: 42,
       expectedUpdatedAt: () => '2026-08-15T12:00:00.000Z',
       fetchImpl: vi.fn(response) as unknown as typeof window.fetch,
-      onBaseUpdatedAt: vi.fn(),
+      onBaseline,
       onStatus: status => statuses.push(status)
     })
     const socket = FakeWebSocket.instances[0]
     expect(socket.protocols).toEqual([COLLABORATION_WEBSOCKET_PROTOCOL, 'signed.token.value'])
     expect(socket.url).toBe('wss://wiki.example.test/collaboration')
     expect(collaboration.content).toBe('# Shared\n')
+    expect(collaboration.generation).toBe(1)
 
     socket.open()
+    socket.message({
+      type: 'saved',
+      baseUpdatedAt: '2026-08-15T12:01:00.000Z',
+      baseSourceRevision: '2'
+    })
     socket.message({ type: 'presence', participants: 2 })
     socket.message({ type: 'conflict', reason: 'page-changed' })
+    expect(onBaseline).toHaveBeenCalledWith({
+      updatedAt: '2026-08-15T12:01:00.000Z',
+      sourceRevision: '2'
+    })
 
     expect(statuses.at(-1)).toEqual({ state: 'conflict', participants: 2, conflict: 'page-changed' })
     expect(collaboration.content).toBe('# Shared\n')
@@ -123,7 +137,7 @@ describe('Markdown collaboration connection', () => {
       pageId: 42,
       expectedUpdatedAt: () => '2026-08-15T12:00:00.000Z',
       fetchImpl,
-      onBaseUpdatedAt: vi.fn(),
+      onBaseline: vi.fn(),
       onStatus: status => statuses.push(status)
     })
     FakeWebSocket.instances[0].open()
@@ -144,7 +158,7 @@ describe('Markdown collaboration connection', () => {
       pageId: 42,
       expectedUpdatedAt: () => '2026-08-15T12:00:00.000Z',
       fetchImpl,
-      onBaseUpdatedAt: vi.fn(),
+      onBaseline: vi.fn(),
       onStatus: vi.fn()
     })
     const socket = FakeWebSocket.instances[0]
@@ -172,6 +186,66 @@ describe('Markdown collaboration connection', () => {
     expect(reconnected.sent).toEqual([interrupted])
 
     view.destroy()
+    collaboration.destroy()
+  })
+
+  it('reports a discarded terminal state and never reconnects or resends stale local updates', async () => {
+    const fetchImpl = vi.fn(response) as unknown as typeof window.fetch
+    const statuses: CollaborationStatus[] = []
+    const collaboration = await createMarkdownCollaboration({
+      pageId: 42,
+      expectedUpdatedAt: () => '2026-08-15T12:00:00.000Z',
+      fetchImpl,
+      onBaseline: vi.fn(),
+      onStatus: status => statuses.push(status)
+    })
+    const socket = FakeWebSocket.instances[0]
+    socket.open()
+    const view = new EditorView({
+      parent: document.body.appendChild(document.createElement('div')),
+      state: EditorState.create({
+        doc: collaboration.content,
+        extensions: [collaboration.extension]
+      })
+    })
+    view.dispatch({ changes: { from: view.state.doc.length, insert: '<!-- discarded -->' } })
+    expect(socket.sent).toHaveLength(1)
+
+    socket.close(COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE)
+    await vi.advanceTimersByTimeAsync(30_000)
+
+    expect(statuses.at(-1)).toEqual({ state: 'conflict', participants: 1, conflict: 'draft-discarded' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    view.destroy()
+    collaboration.destroy()
+  })
+
+  it('stops instead of merging a reset generation into a stale document on re-entry', async () => {
+    const fetchImpl = vi.fn()
+      .mockImplementationOnce(response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => sessionPayload(2)
+      }) as unknown as typeof window.fetch
+    const statuses: CollaborationStatus[] = []
+    const collaboration = await createMarkdownCollaboration({
+      pageId: 42,
+      expectedUpdatedAt: () => '2026-08-15T12:00:00.000Z',
+      fetchImpl,
+      onBaseline: vi.fn(),
+      onStatus: status => statuses.push(status)
+    })
+    FakeWebSocket.instances[0].open()
+    FakeWebSocket.instances[0].close(1006)
+
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(statuses.at(-1)).toEqual({ state: 'conflict', participants: 1, conflict: 'draft-discarded' })
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    expect(collaboration.content).toBe('# Shared\n')
     collaboration.destroy()
   })
 })

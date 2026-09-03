@@ -129,6 +129,7 @@ interface UpdatePageOptions {
   tags?: string[]
   expectedUpdatedAt?: string
   expectedSourceRevision?: string
+  expectedCollaborationGeneration?: number
   editor?: string
   contentType?: string
   action?: string
@@ -345,6 +346,11 @@ const notifyCollaboration = async (pageId: number, forceConflict = false): Promi
 const pageUpdateConflict = (): Error & { status: number } =>
   Object.assign(new Error('The page changed after history was opened. Reload history before restoring.'), {
     name: 'PageUpdateConflict',
+    status: 409
+  })
+const collaborationDraftDiscardedConflict = (): Error & { status: number } =>
+  Object.assign(new Error('This collaboration draft was discarded. Reload the page before saving.'), {
+    name: 'CollaborationDraftDiscarded',
     status: 409
   })
 const invalidateOkfVerification = (metadata: OkfMetadata): OkfMetadata => {
@@ -1117,6 +1123,18 @@ export default class Page extends Model {
       : ogPage.hash
     const pageEventType = opts.action === 'restored' ? 'page.restored' : willMove ? 'page.moved' : 'page.updated'
     await wiki.models.knex.transaction(async transaction => {
+      if (opts.expectedCollaborationGeneration !== undefined) {
+        const lockedPage = await transaction<{ id: number; sourceRevision: string | number }>('pages')
+          .where({ id: ogPage.id })
+          .forUpdate()
+          .first('sourceRevision')
+        if (!lockedPage || String(lockedPage.sourceRevision) !== String(ogPage.sourceRevision)) throw pageUpdateConflict()
+        const room = await transaction<{ pageId: number; generation: number }>('pageCollaborationRooms')
+          .where({ pageId: ogPage.id })
+          .forUpdate()
+          .first('generation')
+        if (!room || room.generation !== opts.expectedCollaborationGeneration) throw collaborationDraftDiscardedConflict()
+      }
       await wiki.models.pageHistory.addVersion({
         ...ogPage,
         isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,

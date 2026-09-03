@@ -56,6 +56,8 @@ export const KNOWN_APPLICATION_TABLES: Readonly<Record<string, true>> = {
   pageProtectedAssets: true,
   contentExtensions: true,
   pageCollaborationRooms: true,
+  pageCollaborationContributors: true,
+  pageCollaborationConnections: true,
   agentProviderProfiles: true,
   agentProviderProfileVersions: true,
   agentProviderConfiguration: true,

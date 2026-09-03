@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type http from 'node:http'
 import type https from 'node:https'
 import type { Socket } from 'node:net'
@@ -8,6 +9,7 @@ import { WebSocket, WebSocketServer, type RawData } from 'ws'
 import { canWritePage } from '../helpers/page-access.ts'
 import errors from '../operations/errors.ts'
 import {
+  COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE,
   COLLABORATION_FORMAT,
   COLLABORATION_MAX_UPDATE_BYTES,
   COLLABORATION_PROTOCOL_VERSION,
@@ -56,6 +58,8 @@ interface CollaborationClaims extends JwtPayload {
   format: typeof COLLABORATION_FORMAT
   protocolVersion: typeof COLLABORATION_PROTOCOL_VERSION
   updateVersion: typeof COLLABORATION_UPDATE_VERSION
+  generation: number
+  baseSourceRevision: string
   baseUpdatedAt: string
   exp: number
 }
@@ -65,8 +69,11 @@ interface CollaborationSocket {
   socket: WebSocket
   pageId: number
   userId: number
+  generation: number
+  connectionId: string
   queue: Promise<void>
   pendingMessages: number
+  acceptingUpdates: boolean
 }
 interface CollaborationMount {
   webSocketServer: WebSocketServer
@@ -112,6 +119,7 @@ interface CollaborationWiki {
 export interface CollaborationService {
   init(): CollaborationService
   issueSession(input: { pageId: number, expectedUpdatedAt: string, requester: Express.User | undefined }): Promise<CollaborationSession>
+  discardDraft(input: { pageId: number, expectedUpdatedAt: string, expectedSourceRevision: string, requester: Express.User | undefined }): Promise<void>
   install(server: NodeServer): void
   dispose(server?: NodeServer | null): Promise<void>
   pageChanged(pageId: number, forceConflict?: boolean): Promise<void>
@@ -128,7 +136,8 @@ const isPositiveInteger = (value: unknown): value is number => typeof value === 
 const isClaims = (value: string | JwtPayload): value is CollaborationClaims => typeof value !== 'string' &&
   value.kind === 'collaboration' && isPositiveInteger(value.userId) && isPositiveInteger(value.pageId) &&
   value.format === COLLABORATION_FORMAT && value.protocolVersion === COLLABORATION_PROTOCOL_VERSION &&
-  value.updateVersion === COLLABORATION_UPDATE_VERSION && isPositiveInteger(value.exp) &&
+  value.updateVersion === COLLABORATION_UPDATE_VERSION && isPositiveInteger(value.generation) && isPositiveInteger(value.exp) &&
+  typeof value.baseSourceRevision === 'string' && /^[1-9][0-9]*$/u.test(value.baseSourceRevision) &&
   typeof value.baseUpdatedAt === 'string' && !Number.isNaN(Date.parse(value.baseUpdatedAt))
 const send = (socket: WebSocket, message: CollaborationServerMessage): void => {
   if (socket.readyState !== WebSocket.OPEN) return
@@ -153,6 +162,20 @@ class CollaborationServiceImpl implements CollaborationService {
     }
   }
 
+  private readonly onRemoteDraftDiscarded = (value?: unknown): void => {
+    const pageId = value && typeof value === 'object' ? Reflect.get(value, 'pageId') : undefined
+    const generation = value && typeof value === 'object' ? Reflect.get(value, 'generation') : undefined
+    const source = value && typeof value === 'object' ? Reflect.get(value, 'source') : undefined
+    if (!isPositiveInteger(pageId) || source === getWiki().INSTANCE_ID) return
+    const roomClients = this.clients.get(pageId)
+    if (!roomClients) return
+    for (const client of roomClients) {
+      if (isPositiveInteger(generation) && client.generation >= generation) continue
+      client.acceptingUpdates = false
+      client.socket.close(COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE, 'Collaboration draft discarded')
+    }
+  }
+
   private readonly onAuthorizationChanged = (): void => {
     queueMicrotask(() => { void this.recheckAll().catch(error => getWiki().logger.warn(error)) })
   }
@@ -162,6 +185,7 @@ class CollaborationServiceImpl implements CollaborationService {
     const wiki = getWiki()
     this.store = new CollaborationRoomStore(wiki.models.knex)
     wiki.events.inbound.on('collaborationRoomUpdated', this.onRemoteRoomUpdated)
+    wiki.events.inbound.on('collaborationDraftDiscarded', this.onRemoteDraftDiscarded)
     for (const event of ['reloadGroups', 'addAuthRevoke', 'reloadConfig']) {
       wiki.events.inbound.on(event, this.onAuthorizationChanged)
       wiki.events.outbound.on(event, this.onAuthorizationChanged)
@@ -218,7 +242,7 @@ class CollaborationServiceImpl implements CollaborationService {
     if (pageUpdatedAt !== timestamp(expectedUpdatedAt)) {
       throw new ApplicationError('The page changed before collaboration started.', { code: 'COLLABORATION_CONFLICT', status: 409 })
     }
-    const room = await this.roomStore().open(authorization.page, userId)
+    const room = await this.roomStore().open(authorization.page)
     const wiki = getWiki()
     const token = jwt.sign({
       kind: 'collaboration',
@@ -226,7 +250,9 @@ class CollaborationServiceImpl implements CollaborationService {
       pageId,
       format: COLLABORATION_FORMAT,
       protocolVersion: COLLABORATION_PROTOCOL_VERSION,
+      generation: room.generation,
       updateVersion: COLLABORATION_UPDATE_VERSION,
+      baseSourceRevision: room.baseSourceRevision,
       baseUpdatedAt: room.baseUpdatedAt
     }, {
       key: wiki.config.certs.private,
@@ -242,8 +268,10 @@ class CollaborationServiceImpl implements CollaborationService {
       pageId,
       format: COLLABORATION_FORMAT,
       protocolVersion: COLLABORATION_PROTOCOL_VERSION,
+      generation: room.generation,
       updateVersion: COLLABORATION_UPDATE_VERSION,
       revision: room.revision,
+      baseSourceRevision: room.baseSourceRevision,
       baseUpdatedAt: room.baseUpdatedAt,
       state: room.state,
       websocketPath: COLLABORATION_WEBSOCKET_PATH
@@ -309,22 +337,42 @@ class CollaborationServiceImpl implements CollaborationService {
     const claims = this.verifyToken(rawToken)
     const authorization = await this.authorized(claims.pageId, claims.userId)
     if (!authorization) throw new Error('Collaboration permission was denied')
-    const room = await this.roomStore().open(authorization.page, claims.userId)
-    if (timestamp(room.baseUpdatedAt) !== timestamp(claims.baseUpdatedAt)) {
+    if (timestamp(authorization.page.updatedAt) !== timestamp(claims.baseUpdatedAt) ||
+      String(authorization.page.sourceRevision) !== claims.baseSourceRevision) {
       send(socket, { type: 'conflict', reason: 'page-changed' })
       socket.close(4409, 'Page changed')
       return
     }
+
     const client: CollaborationSocket = {
       socket,
       pageId: claims.pageId,
       userId: claims.userId,
+      generation: claims.generation,
+      connectionId: randomUUID(),
       queue: Promise.resolve(),
-      pendingMessages: 0
+      pendingMessages: 0,
+      acceptingUpdates: false
     }
     const roomClients = this.clients.get(claims.pageId) ?? new Set<CollaborationSocket>()
     roomClients.add(client)
     this.clients.set(claims.pageId, roomClients)
+    const admission = this.roomStore().admit(
+      claims.pageId,
+      claims.generation,
+      claims.userId,
+      client.connectionId,
+      new Date(claims.exp * 1_000),
+      claims.baseUpdatedAt,
+      claims.baseSourceRevision
+    ).then(room => {
+      client.acceptingUpdates = Boolean(room && socket.readyState === WebSocket.OPEN)
+      return room
+    })
+    const refreshTimer = setTimeout(() => socket.close(4408, 'Session refresh required'), Math.max(1, claims.exp * 1_000 - Date.now()))
+    socket.on('close', () => this.removeClient(client))
+    socket.on('error', error => getWiki().logger.warn(error))
+    socket.on('close', () => clearTimeout(refreshTimer))
     socket.on('message', raw => {
       if (client.pendingMessages >= MAX_PENDING_MESSAGES_PER_CLIENT) {
         this.conflict(client, 'protocol-error')
@@ -332,23 +380,35 @@ class CollaborationServiceImpl implements CollaborationService {
       }
       client.pendingMessages += 1
       client.queue = client.queue
-        .then(() => client.socket.readyState === WebSocket.OPEN ? this.receive(client, raw) : undefined)
+        .then(async () => {
+          await admission
+          return client.acceptingUpdates && client.socket.readyState === WebSocket.OPEN ? this.receive(client, raw) : undefined
+        })
         .catch(error => {
           getWiki().logger.warn(error)
           client.socket.close(1011, 'Collaboration temporarily unavailable')
         })
         .finally(() => { client.pendingMessages -= 1 })
     })
-    const refreshTimer = setTimeout(() => socket.close(4408, 'Session refresh required'), Math.max(1, claims.exp * 1_000 - Date.now()))
-    socket.on('close', () => this.removeClient(client))
-    socket.on('error', error => getWiki().logger.warn(error))
-    socket.on('close', () => clearTimeout(refreshTimer))
+
+    const room = await admission
+    if (!room) {
+      send(socket, { type: 'conflict', reason: 'draft-discarded' })
+      socket.close(COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE, 'Collaboration draft discarded')
+      return
+    }
+    if (socket.readyState !== WebSocket.OPEN) {
+      await this.roomStore().leave(client.connectionId)
+      return
+    }
     send(socket, {
       type: 'sync',
       protocolVersion: COLLABORATION_PROTOCOL_VERSION,
       updateVersion: COLLABORATION_UPDATE_VERSION,
+      generation: room.generation,
       update: room.state,
       revision: room.revision,
+      baseSourceRevision: room.baseSourceRevision,
       baseUpdatedAt: room.baseUpdatedAt,
       participants: roomClients.size
     })
@@ -371,6 +431,10 @@ class CollaborationServiceImpl implements CollaborationService {
       this.conflict(client, 'protocol-error')
       return
     }
+    if (message.generation !== client.generation) {
+      this.conflict(client, 'draft-discarded')
+      return
+    }
     try {
       const authorization = await this.authorized(client.pageId, client.userId)
       if (!authorization) {
@@ -378,19 +442,32 @@ class CollaborationServiceImpl implements CollaborationService {
         return
       }
       const room = await this.roomStore().get(client.pageId)
-      if (!room || timestamp(room.baseUpdatedAt) !== timestamp(authorization.page.updatedAt)) {
+      if (!room || timestamp(room.baseUpdatedAt) !== timestamp(authorization.page.updatedAt) ||
+        room.baseSourceRevision !== String(authorization.page.sourceRevision)) {
         await this.pageChanged(client.pageId)
         this.conflict(client, 'page-changed')
         return
       }
-      const result = await this.roomStore().apply(client.pageId, decodeCollaborationUpdate(message.update, COLLABORATION_MAX_UPDATE_BYTES), client.userId)
+      const result = await this.roomStore().apply(
+        client.pageId,
+        client.generation,
+        client.connectionId,
+        decodeCollaborationUpdate(message.update, COLLABORATION_MAX_UPDATE_BYTES),
+        client.userId
+      )
+      if (!result) {
+        this.conflict(client, 'draft-discarded')
+        return
+      }
       const roomClients = this.clients.get(client.pageId)
       if (roomClients) {
         for (const recipient of roomClients) {
+          if (recipient.generation !== result.generation) continue
           send(recipient.socket, {
             type: 'update',
             protocolVersion: COLLABORATION_PROTOCOL_VERSION,
             updateVersion: COLLABORATION_UPDATE_VERSION,
+            generation: result.generation,
             update: result.appliedUpdate,
             revision: result.revision
           })
@@ -399,6 +476,7 @@ class CollaborationServiceImpl implements CollaborationService {
       try {
         getWiki().events.outbound.emit('collaborationRoomUpdated', {
           pageId: client.pageId,
+          generation: result.generation,
           revision: result.revision,
           source: getWiki().INSTANCE_ID
         })
@@ -413,11 +491,14 @@ class CollaborationServiceImpl implements CollaborationService {
   }
 
   private conflict(client: CollaborationSocket, reason: CollaborationConflictReason): void {
+    client.acceptingUpdates = false
     send(client.socket, { type: 'conflict', reason })
-    client.socket.close(4409, reason)
+    client.socket.close(reason === 'draft-discarded' ? COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE : 4409, reason)
   }
 
   private removeClient(client: CollaborationSocket): void {
+    const store = this.store
+    if (store) void store.leave(client.connectionId).catch(error => getWiki().logger.warn(error))
     const roomClients = this.clients.get(client.pageId)
     if (!roomClients) return
     roomClients.delete(client)
@@ -436,15 +517,23 @@ class CollaborationServiceImpl implements CollaborationService {
     if (!roomClients || roomClients.size === 0) return
     const room = await this.roomStore().get(pageId)
     if (!room) return
-    for (const client of roomClients) send(client.socket, {
-      type: 'sync',
-      protocolVersion: COLLABORATION_PROTOCOL_VERSION,
-      updateVersion: COLLABORATION_UPDATE_VERSION,
-      update: room.state,
-      revision: room.revision,
-      baseUpdatedAt: room.baseUpdatedAt,
-      participants: roomClients.size
-    })
+    for (const client of [...roomClients]) {
+      if (client.generation !== room.generation) {
+        this.conflict(client, 'draft-discarded')
+        continue
+      }
+      send(client.socket, {
+        type: 'sync',
+        protocolVersion: COLLABORATION_PROTOCOL_VERSION,
+        updateVersion: COLLABORATION_UPDATE_VERSION,
+        generation: room.generation,
+        update: room.state,
+        revision: room.revision,
+        baseSourceRevision: room.baseSourceRevision,
+        baseUpdatedAt: room.baseUpdatedAt,
+        participants: roomClients.size
+      })
+    }
   }
 
   private async recheckPage(pageId: number): Promise<void> {
@@ -469,6 +558,93 @@ class CollaborationServiceImpl implements CollaborationService {
     for (const pageId of [...this.clients.keys()]) await this.recheckPage(pageId)
   }
 
+  async discardDraft({
+    pageId,
+    expectedUpdatedAt,
+    expectedSourceRevision,
+    requester
+  }: {
+    pageId: number
+    expectedUpdatedAt: string
+    expectedSourceRevision: string
+    requester: Express.User | undefined
+  }): Promise<void> {
+    if (!this.enabled()) throw new ApplicationError('Live collaboration is disabled.', { code: 'COLLABORATION_DISABLED', status: 409 })
+    if (!isPositiveInteger(pageId) || typeof expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(expectedUpdatedAt)) ||
+      typeof expectedSourceRevision !== 'string' || !/^[1-9][0-9]*$/u.test(expectedSourceRevision)) {
+      throw new ApplicationError('Collaboration discard input is invalid.', { code: 'INVALID_INPUT', status: 400 })
+    }
+    const userId = requester && isPositiveInteger(requester.id) ? requester.id : null
+    if (!userId) throw new ApplicationError('Authentication is required.', { code: 'AUTH_REQUIRED', status: 401 })
+    const authorization = await this.authorized(pageId, userId)
+    if (!authorization) throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+    if (timestamp(authorization.page.updatedAt) !== timestamp(expectedUpdatedAt) ||
+      String(authorization.page.sourceRevision) !== expectedSourceRevision) {
+      throw new ApplicationError('The page changed before the collaboration draft could be discarded.', {
+        code: 'COLLABORATION_CONFLICT',
+        status: 409
+      })
+    }
+
+    const room = await this.roomStore().get(pageId)
+    if (!room) return
+    const currentAuthorization = await this.authorized(pageId, userId)
+    if (!currentAuthorization) {
+      throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
+    }
+    if (timestamp(currentAuthorization.page.updatedAt) !== timestamp(expectedUpdatedAt) ||
+      String(currentAuthorization.page.sourceRevision) !== expectedSourceRevision) {
+      throw new ApplicationError('The page changed before the collaboration draft could be discarded.', {
+        code: 'COLLABORATION_CONFLICT',
+        status: 409
+      })
+    }
+
+    const reset = await this.roomStore().resetDraft(
+      currentAuthorization.page,
+      userId,
+      room.revision,
+      room.generation,
+      expectedSourceRevision
+    )
+    if (reset.kind === 'active-peer') {
+      throw new ApplicationError('Another user is actively editing this page. Their shared draft was not discarded.', {
+        code: 'COLLABORATION_ACTIVE_PEERS',
+        status: 409
+      })
+    }
+    if (reset.kind === 'other-contributors') {
+      throw new ApplicationError('Another user changed this shared draft. It was not discarded.', {
+        code: 'COLLABORATION_DRAFT_CONTRIBUTOR_CONFLICT',
+        status: 409
+      })
+    }
+    if (reset.kind !== 'reset') {
+      throw new ApplicationError('The shared draft or page changed while it was being discarded. Try again.', {
+        code: 'COLLABORATION_CONFLICT',
+        status: 409
+      })
+    }
+
+    try {
+      getWiki().events.outbound.emit('collaborationDraftDiscarded', {
+        pageId,
+        generation: reset.room.generation,
+        revision: reset.room.revision,
+        source: getWiki().INSTANCE_ID
+      })
+    } catch (error) {
+      getWiki().logger.warn(error)
+    }
+    const roomClients = this.clients.get(pageId)
+    if (!roomClients) return
+    for (const client of [...roomClients]) {
+      if (client.generation >= reset.room.generation) continue
+      client.acceptingUpdates = false
+      client.socket.close(COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE, 'Collaboration draft discarded')
+    }
+  }
+
   async pageChanged(pageId: number, forceConflict = false): Promise<void> {
     if (!isPositiveInteger(pageId)) return
     const page = await this.loadPage(pageId)
@@ -487,11 +663,18 @@ class CollaborationServiceImpl implements CollaborationService {
     if (forceConflict || result.kind === 'reset') {
       if (roomClients) for (const client of [...roomClients]) this.conflict(client, 'page-changed')
     } else if (result.kind === 'saved') {
-      if (roomClients) for (const client of roomClients) send(client.socket, { type: 'saved', baseUpdatedAt: result.room.baseUpdatedAt })
+      if (roomClients) {
+        for (const client of roomClients) send(client.socket, {
+          type: 'saved',
+          baseUpdatedAt: result.room.baseUpdatedAt,
+          baseSourceRevision: result.room.baseSourceRevision
+        })
+      }
     }
     if (result.kind !== 'missing') {
       getWiki().events.outbound.emit('collaborationRoomUpdated', {
         pageId,
+        generation: result.room.generation,
         revision: result.room.revision,
         source: getWiki().INSTANCE_ID
       })
@@ -512,6 +695,7 @@ class CollaborationServiceImpl implements CollaborationService {
     if (this.servers.size === 0 && this.initialized) {
       const wiki = getWiki()
       wiki.events.inbound.off('collaborationRoomUpdated', this.onRemoteRoomUpdated)
+      wiki.events.inbound.off('collaborationDraftDiscarded', this.onRemoteDraftDiscarded)
       for (const event of ['reloadGroups', 'addAuthRevoke', 'reloadConfig']) {
         wiki.events.inbound.off(event, this.onAuthorizationChanged)
         wiki.events.outbound.off(event, this.onAuthorizationChanged)

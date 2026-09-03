@@ -5,6 +5,7 @@ import * as Y from 'yjs'
 
 import { fetchCollaborationSession } from '../../helpers/pages-api'
 import {
+  COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE,
   COLLABORATION_MAX_UPDATE_BYTES,
   COLLABORATION_PROTOCOL_VERSION,
   COLLABORATION_TEXT_KEY,
@@ -33,12 +34,13 @@ interface MarkdownCollaborationOptions {
   expectedUpdatedAt: () => string
   fetchImpl: typeof window.fetch
   onStatus: (status: CollaborationStatus) => void
-  onBaseUpdatedAt: (updatedAt: string) => void
+  onBaseline: (baseline: { updatedAt: string, sourceRevision: string }) => void
 }
 
 export interface MarkdownCollaboration {
   readonly content: string
   readonly extension: Extension
+  readonly generation: number
   destroy(): void
 }
 
@@ -54,10 +56,13 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
   private destroyed = false
   private conflicted = false
   private participants = 1
+  readonly generation: number
 
   readonly extension: Extension
 
   private constructor (private readonly options: MarkdownCollaborationOptions, session: CollaborationSession) {
+    this.generation = session.generation
+    this.options.onBaseline({ updatedAt: session.baseUpdatedAt, sourceRevision: session.baseSourceRevision })
     Y.applyUpdate(this.document, sessionState(session), REMOTE_ORIGIN)
     this.extension = yCollab(this.text, this.awareness)
     this.document.on('update', this.handleDocumentUpdate)
@@ -108,6 +113,10 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
       if (this.socket !== socket || typeof event.data !== 'string') return
       try {
         const message = parseCollaborationServerMessage(JSON.parse(event.data))
+        if ((message.type === 'sync' || message.type === 'update') && message.generation !== this.generation) {
+          this.setConflict('draft-discarded')
+          return
+        }
         if (message.type === 'sync' || message.type === 'update') {
           Y.applyUpdate(this.document, sessionState(message), REMOTE_ORIGIN)
           if (message.type === 'update' && message.update === this.inFlight) {
@@ -117,12 +126,12 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
           }
           if (message.type === 'sync') {
             this.participants = message.participants
-            this.options.onBaseUpdatedAt(message.baseUpdatedAt)
+            this.options.onBaseline({ updatedAt: message.baseUpdatedAt, sourceRevision: message.baseSourceRevision })
           }
         } else if (message.type === 'presence') {
           this.participants = message.participants
         } else if (message.type === 'saved') {
-          this.options.onBaseUpdatedAt(message.baseUpdatedAt)
+          this.options.onBaseline({ updatedAt: message.baseUpdatedAt, sourceRevision: message.baseSourceRevision })
         } else {
           this.setConflict(message.reason)
           return
@@ -133,7 +142,15 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
       }
     })
     socket.addEventListener('close', event => {
-      if (this.socket !== socket || this.destroyed || this.conflicted) return
+      if (this.socket !== socket || this.destroyed) return
+      if (event.code === COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE) {
+        this.socket = null
+        this.inFlight = null
+        this.pending.length = 0
+        this.setConflict('draft-discarded')
+        return
+      }
+      if (this.conflicted) return
       this.socket = null
       this.inFlight = null
       if (event.code === 4409 || event.code === 4401) {
@@ -157,6 +174,7 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
       socket.send(JSON.stringify({
         type: 'update',
         protocolVersion: COLLABORATION_PROTOCOL_VERSION,
+        generation: this.generation,
         updateVersion: COLLABORATION_UPDATE_VERSION,
         update: this.inFlight
       }))
@@ -177,6 +195,11 @@ class MarkdownCollaborationImpl implements MarkdownCollaboration {
         this.options.pageId,
         this.options.expectedUpdatedAt()
       ).then(session => {
+        if (session.generation !== this.generation) {
+          this.setConflict('draft-discarded')
+          return
+        }
+        this.options.onBaseline({ updatedAt: session.baseUpdatedAt, sourceRevision: session.baseSourceRevision })
         Y.applyUpdate(this.document, sessionState(session), REMOTE_ORIGIN)
         this.connect(session)
       }).catch((error: unknown) => {

@@ -111,6 +111,9 @@ type ShellContext = {
   dialogProgress: boolean
   exitConfirmed: boolean
   isSaving: boolean
+  collaborationActive: boolean
+  collaborationGeneration: number | null
+  collaborationDiscarded: boolean
   isConflict: boolean
   pageId: number
   checkoutDateActive: string
@@ -122,8 +125,9 @@ type ShellContext = {
   $t: (key: string) => string
   setCurrentSavedState: () => void
   restoreCurrentSavedState: () => void
-  discardAndExit: () => void
+  discardAndExit: () => Promise<void>
   exitGo: () => void
+  handleCollaborationState: (state: { active: boolean, discarded: boolean, generation: number | null }) => void
   exit: () => Promise<void>
   handleBeforeUnload: (event: BeforeUnloadEvent) => void
   save: (options?: { rethrow?: boolean, overwrite?: boolean }) => Promise<void>
@@ -152,12 +156,14 @@ type ApiDependencies = {
   ) => Promise<{ sourceRevision: string }>
   checkPageConflict: (fetcher: typeof fetch, id: number, checkoutDate: string) => Promise<boolean>
   createPage: (fetcher: typeof fetch, input: PageInput) => Promise<{ id: number, updatedAt: string }>
+  discardCollaborationDraft: (fetcher: typeof fetch, pageId: number, expectedUpdatedAt: string, expectedSourceRevision: string) => Promise<void>
   fetchPage: (fetcher: typeof fetch, id: number, errorMessage: string) => Promise<{ okf: OkfState, sourceRevision: string }>
   updatePage: (
     fetcher: typeof fetch,
     id: number,
     input: PageInput,
-    sourceRevision: string
+    sourceRevision: string,
+    expectedCollaborationGeneration?: number
   ) => Promise<{ sourceRevision: string, updatedAt: string }>
 }
 
@@ -229,7 +235,7 @@ const createStore = (mode: 'create' | 'update' = 'update'): EditorStore => {
       title: 'Persisted title',
       scriptCss: '.persisted {}',
       scriptJs: 'window.persisted = true',
-      sourceRevision: 'revision-1',
+      sourceRevision: '1',
       okf: {
         authority: {
           state: 'valid',
@@ -289,6 +295,7 @@ const defaultDependencies = (store: EditorStore): ApiDependencies => ({
   changePageVisibility: async () => ({ sourceRevision: 'revision-3' }),
   checkPageConflict: async () => false,
   createPage: async () => ({ id: 91, updatedAt: '2026-09-03T12:00:00.000Z' }),
+  discardCollaborationDraft: async () => undefined,
   fetchPage: async () => ({ okf: _.cloneDeep(store.page.okf), sourceRevision: 'revision-4' }),
   updatePage: async () => ({ sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' })
 })
@@ -307,6 +314,7 @@ const loadShellBehavior = (
     'changePageVisibility',
     'checkPageConflict',
     'createPage',
+    'discardCollaborationDraft',
     'fetchPage',
     'updatePage',
     'emitEditorSaveConflict',
@@ -323,6 +331,7 @@ const loadShellBehavior = (
     dependencies.changePageVisibility,
     dependencies.checkPageConflict,
     dependencies.createPage,
+    dependencies.discardCollaborationDraft,
     dependencies.fetchPage,
     dependencies.updatePage,
     () => undefined,
@@ -345,6 +354,10 @@ const createShellHarness = (
     dialogProgress: false,
     exitConfirmed: false,
     isSaving: false,
+    discardPending: false,
+    collaborationActive: store.editor.mode === 'update' && store.editor.editorKey === 'markdown',
+    collaborationGeneration: store.editor.mode === 'update' && store.editor.editorKey === 'markdown' ? 1 : null,
+    collaborationDiscarded: false,
     isConflict: false,
     pageId: store.page.id,
     checkoutDateActive: '2026-09-03T11:00:00.000Z',
@@ -352,7 +365,7 @@ const createShellHarness = (
     progressShown: 0,
     progressHidden: 0,
     $t: (key: string) => key
-  } as ShellContext
+  } as unknown as ShellContext
 
   for (const [name, method] of Object.entries(behavior.methods)) {
     context[name] = method.bind(context)
@@ -435,7 +448,7 @@ describe('modern editor shell interaction contract', () => {
     expect(desktopSaveClose).toContain("@click='saveAndClose'")
     expect(desktopSaveClose).not.toMatch(/isDirty|mode ===/)
     expect(shellTemplate).toMatch(/v-btn\.editor-save-close-action[\s\S]*?span Save and close/)
-    expect(shellTemplate).toMatch(/v-list-item\(@click='saveAndClose'\)[\s\S]*?v-list-item-title Save and close/)
+    expect(shellTemplate).toMatch(/v-list-item\(:disabled='collaborationDiscarded', @click='saveAndClose'\)[\s\S]*?v-list-item-title Save and close/)
   })
 
   test('mounts recoverable heavyweight editor dialogs only while their owning state is active', () => {
@@ -476,9 +489,12 @@ describe('modern editor shell interaction contract', () => {
   test('offers Save and close from the unsaved dialog and closes only after save succeeds', () => {
     expect(unsavedSfc.errors).toEqual([])
     expect(shellTemplate).toMatch(/editor-modal-unsaved\([\s\S]*?:busy='isSaving'[\s\S]*?@discard='discardAndExit'[\s\S]*?@save='saveUnsavedAndClose'/)
+    expect(shellTemplate).toContain(":discarding='discardPending'")
+    expect(unsavedTemplate).toContain(":loading='busy'")
+    expect(unsavedTemplate).not.toContain(":loading='discarding'")
     expect(unsavedTemplate).toMatch(/v-btn\.px-4\([\s\S]*?:loading='busy'[\s\S]*?@click='save'[\s\S]*?\) Save and close/)
     expect(unsavedScript).toMatch(/emits: \['discard', 'save', 'update:modelValue'\]/)
-    expect(unsavedScript).toMatch(/discard\(\) \{\s*this\.isShown = false\s*this\.\$emit\('discard'\)\s*\}/)
+    expect(unsavedScript).toMatch(/discard\(\) \{\s*this\.\$emit\('discard'\)\s*\}/)
     expect(unsavedScript).not.toMatch(/\$emit\('discard',/)
     expect(unsavedScript).toMatch(/save\(\) \{\s*this\.\$emit\('save'\)\s*\}/)
     expect(shellScript).toMatch(/async saveUnsavedAndClose\(\) \{\s*if \(await this\.saveAndClose\(\)\) \{\s*this\.dialogUnsaved = false/)
@@ -520,11 +536,15 @@ describe('modern editor shell interaction contract', () => {
     expect(shellScript).toMatch(/await this\.refreshOkfAfterSave\(\)[\s\S]*?this\.setCurrentSavedState\(\)/)
   })
 
-  test('restores every public-page field before an immediate discard exit without save UI or aliases', () => {
+  test('resets the durable Markdown draft before restoring a public page and exiting', async () => {
     const store = createStore()
     const testWindow = createTestWindow()
     let persistenceCalls = 0
+    const discardedDrafts: Array<{ pageId: number, expectedUpdatedAt: string, expectedSourceRevision: string }> = []
     const context = createShellHarness(store, testWindow, {
+      discardCollaborationDraft: async (_fetcher, pageId, expectedUpdatedAt, expectedSourceRevision) => {
+        discardedDrafts.push({ pageId, expectedUpdatedAt, expectedSourceRevision })
+      },
       createPage: async () => {
         persistenceCalls++
         return { id: 0, updatedAt: '' }
@@ -543,7 +563,7 @@ describe('modern editor shell interaction contract', () => {
     context.dialogUnsaved = true
     context.navigationTimer = 77
 
-    context.discardAndExit()
+    await context.discardAndExit()
 
     expect(mutableSnapshot(store)).toEqual(expected)
     expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
@@ -558,6 +578,11 @@ describe('modern editor shell interaction contract', () => {
     expect(store.notifications).toEqual([])
     expect(store.loadingOwners).toEqual([])
     expect(persistenceCalls).toBe(0)
+    expect(discardedDrafts).toEqual([{
+      pageId: 12,
+      expectedUpdatedAt: '2026-09-03T11:00:00.000Z',
+      expectedSourceRevision: '1'
+    }])
     expect(store.page.tags).not.toBe(context.savedState.tags)
     expect(store.page.okf).not.toBe(context.savedState.okf)
     store.page.tags.push('new live tag')
@@ -566,7 +591,7 @@ describe('modern editor shell interaction contract', () => {
     expect(context.savedState.okf.authority.metadata).toEqual({ type: 'Reference', status: 'stable' })
   })
 
-  test('restores private and create baselines to their canonical destinations', () => {
+  test('restores private and create baselines to their canonical destinations', async () => {
     const privateStore = createStore()
     privateStore.page.visibility = 'private'
     privateStore.page.locale = 'de'
@@ -577,7 +602,7 @@ describe('modern editor shell interaction contract', () => {
     applyEveryEdit(privateStore)
     privateStore.page.visibility = 'public'
 
-    privateContext.discardAndExit()
+    await privateContext.discardAndExit()
 
     expect(mutableSnapshot(privateStore)).toEqual(expectedPrivate)
     expect(privateWindow.location.assigned).toEqual(['/_private/de/private-page'])
@@ -588,7 +613,7 @@ describe('modern editor shell interaction contract', () => {
     const expectedCreate = _.cloneDeep(createContext.savedState)
     applyEveryEdit(createStoreState)
 
-    createContext.discardAndExit()
+    await createContext.discardAndExit()
 
     expect(mutableSnapshot(createStoreState)).toEqual(expectedCreate)
     expect(createWindow.location.assigned).toEqual(['/'])
@@ -596,6 +621,131 @@ describe('modern editor shell interaction contract', () => {
     expect(createStoreState.loadingOwners).toEqual([])
   })
 
+
+  test('does not call collaboration reset for non-collaboration editors', async () => {
+    const store = createStore()
+    store.editor.editorKey = 'code'
+    store.editor.editor = 'editorCode'
+    const testWindow = createTestWindow()
+    let collaborationDiscardCalls = 0
+    const context = createShellHarness(store, testWindow, {
+      discardCollaborationDraft: async () => {
+        collaborationDiscardCalls++
+      }
+    })
+    applyEveryEdit(store)
+
+    await context.discardAndExit()
+
+    expect(collaborationDiscardCalls).toBe(0)
+    expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+    expect(context.isDirty).toBe(false)
+  })
+
+  test('discards locally when Markdown collaboration startup fell back or is disabled', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let collaborationDiscardCalls = 0
+    const context = createShellHarness(store, testWindow, {
+      discardCollaborationDraft: async () => {
+        collaborationDiscardCalls++
+      }
+    })
+    context.handleCollaborationState({ active: false, discarded: false, generation: null })
+    applyEveryEdit(store)
+
+    await context.discardAndExit()
+
+    expect(collaborationDiscardCalls).toBe(0)
+    expect(context.isDirty).toBe(false)
+    expect(testWindow.location.assigned).toEqual(['/en/persisted-path'])
+  })
+
+  test('keeps the dirty editor open when durable collaboration discard fails', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    const context = createShellHarness(store, testWindow, {
+      discardCollaborationDraft: async () => {
+        throw new Error('Another user is actively editing this page.')
+      }
+    })
+    applyEveryEdit(store)
+    const dirtyState = mutableSnapshot(store)
+    context.dialogUnsaved = true
+
+    await context.discardAndExit()
+
+    expect(mutableSnapshot(store)).toEqual(dirtyState)
+    expect(context.isDirty).toBe(true)
+    expect(context.dialogUnsaved).toBe(true)
+    expect(context.exitConfirmed).toBe(false)
+    expect(testWindow.location.assigned).toEqual([])
+    expect(context.progressShown).toBe(0)
+    expect(context.progressHidden).toBe(0)
+    expect(store.loadingOwners).toEqual([])
+    expect(store.notifications).toEqual([{
+      message: 'Another user is actively editing this page.',
+      style: 'error',
+      icon: 'warning'
+    }])
+  })
+
+  test('turns an unnotified stale peer terminal when its generation-fenced Save is rejected', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let updateCalls = 0
+    const context = createShellHarness(store, testWindow, {
+      updatePage: async () => {
+        updateCalls++
+        throw new Error('This collaboration draft was discarded. Reload the page before saving.')
+      }
+    })
+    applyEveryEdit(store)
+
+    await context.save()
+    await context.save()
+
+    expect(updateCalls).toBe(1)
+    expect(context.collaborationActive).toBe(false)
+    expect(context.collaborationGeneration).toBeNull()
+    expect(context.collaborationDiscarded).toBe(true)
+    expect(context.isDirty).toBe(true)
+    expect(testWindow.location.assigned).toEqual([])
+  })
+
+  test('blocks stale peer-tab save and save-and-close after terminal discard', async () => {
+    const store = createStore()
+    const testWindow = createTestWindow()
+    let updateCalls = 0
+    const context = createShellHarness(store, testWindow, {
+      updatePage: async () => {
+        updateCalls++
+        return { sourceRevision: '2', updatedAt: '2026-09-03T12:00:00.000Z' }
+      }
+    })
+    store.editor.content = 'discarded stale content'
+    context.handleCollaborationState({ active: false, discarded: true, generation: null })
+    context.handleCollaborationState({ active: false, discarded: false, generation: null })
+    await context.save()
+    expect(await context.saveAndClose()).toBe(false)
+
+    expect(updateCalls).toBe(0)
+    expect(testWindow.location.assigned).toEqual([])
+    expect(context.progressShown).toBe(0)
+    expect(context.progressHidden).toBe(0)
+    expect(store.notifications).toEqual([
+      {
+        message: 'This collaboration draft was discarded. Reload the page before saving.',
+        style: 'error',
+        icon: 'warning'
+      },
+      {
+        message: 'This collaboration draft was discarded. Reload the page before saving.',
+        style: 'error',
+        icon: 'warning'
+      }
+    ])
+  })
   test('opens the dirty modal but closes a clean editor immediately without save behavior', async () => {
     const cleanStore = createStore()
     const cleanWindow = createTestWindow()
@@ -630,10 +780,12 @@ describe('modern editor shell interaction contract', () => {
     const store = createStore()
     const testWindow = createTestWindow()
     let updateInput: PageInput | undefined
+    let updateFence: { sourceRevision: string, generation: number | undefined } | undefined
     let visibilityCalls = 0
     const context = createShellHarness(store, testWindow, {
-      updatePage: async (_fetcher, _id, input) => {
+      updatePage: async (_fetcher, _id, input, sourceRevision, generation) => {
         updateInput = _.cloneDeep(input)
+        updateFence = { sourceRevision, generation }
         return { sourceRevision: 'revision-2', updatedAt: '2026-09-03T12:00:00.000Z' }
       },
       changePageVisibility: async () => {
@@ -658,6 +810,7 @@ describe('modern editor shell interaction contract', () => {
       path: 'discarded-path',
       title: 'Discarded title'
     })
+    expect(updateFence).toEqual({ sourceRevision: '1', generation: 1 })
     expect(visibilityCalls).toBe(1)
     expect(context.savedState).toEqual(mutableSnapshot(store))
     expect(context.isDirty).toBe(false)

@@ -29,7 +29,9 @@ describe('collaboration protocol contract', () => {
       format: COLLABORATION_FORMAT,
       protocolVersion: COLLABORATION_PROTOCOL_VERSION,
       updateVersion: COLLABORATION_UPDATE_VERSION,
+      generation: 4,
       revision: 3,
+      baseSourceRevision: '9',
       baseUpdatedAt: '2026-08-15T12:00:00.000Z',
       state: encoded,
       websocketPath: COLLABORATION_WEBSOCKET_PATH
@@ -44,6 +46,7 @@ describe('collaboration protocol contract', () => {
     expect(() => parseCollaborationClientMessage({
       type: 'update',
       protocolVersion: 1,
+      generation: 4,
       updateVersion: 1,
       update: encoded,
       extra: true
@@ -51,6 +54,7 @@ describe('collaboration protocol contract', () => {
     expect(() => parseCollaborationClientMessage({
       type: 'update',
       protocolVersion: 2,
+      generation: 4,
       updateVersion: 1,
       update: encoded
     })).toThrow(/invalid/)
@@ -60,9 +64,14 @@ describe('collaboration protocol contract', () => {
 
   it('accepts each exact server message shape and rejects mixed variants', () => {
     expect(parseCollaborationServerMessage({ type: 'presence', participants: 2 })).toEqual({ type: 'presence', participants: 2 })
-    expect(parseCollaborationServerMessage({ type: 'saved', baseUpdatedAt: '2026-08-15T12:00:00.000Z' })).toEqual({
+    expect(parseCollaborationServerMessage({
       type: 'saved',
-      baseUpdatedAt: '2026-08-15T12:00:00.000Z'
+      baseUpdatedAt: '2026-08-15T12:00:00.000Z',
+      baseSourceRevision: '9'
+    })).toEqual({
+      type: 'saved',
+      baseUpdatedAt: '2026-08-15T12:00:00.000Z',
+      baseSourceRevision: '9'
     })
     expect(() => parseCollaborationServerMessage({ type: 'conflict', reason: 'unknown' })).toThrow(/invalid/)
     expect(() => parseCollaborationServerMessage({ type: 'presence', participants: 2, revision: 1 })).toThrow(/invalid/)
