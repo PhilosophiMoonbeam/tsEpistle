@@ -54,7 +54,7 @@ const requestImage = async (target: ResolvedWebhookUrl, signal: AbortSignal): Pr
       signal,
       headers: {
         accept: 'image/svg+xml,image/png,image/jpeg,image/gif,image/webp',
-        'user-agent': 'tsFranki-Diagram-Prefetch/1.0'
+        'user-agent': 'tsEpistle-Diagram-Prefetch/1.0'
       }
     },
     response => {

@@ -22,9 +22,10 @@ describe('setup handoff', () => {
         order.push('workers-drained')
       })
     }
-    const method = (name: string) => vi.fn(async () => {
-      order.push(name)
-    })
+    const method = (name: string) =>
+      vi.fn(async () => {
+        order.push(name)
+      })
     const models = {
       onReady: Promise.resolve(),
       analytics: { refreshProvidersFromDisk: method('analytics-ready') },
@@ -86,7 +87,7 @@ describe('setup handoff', () => {
       configSvc: { loadFromDb: method('config-load'), applyFlags: method('config-flags') },
       logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
       product: {
-        name: 'tsFranki',
+        name: 'tsEpistle',
         version: '1.0.0',
         upstreamBase: 'upstream',
         revision: 'revision',

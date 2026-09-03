@@ -26,7 +26,7 @@
         v-text-field.mt-7(
           variant="outlined"
           label='Target Folder Path'
-          hint='Use an absolute path or a path relative to the tsFranki installation folder. The target folder MUST be empty.'
+          hint='Use an absolute path or a path relative to the tsEpistle installation folder. The target folder MUST be empty.'
           persistent-hint
           v-model='filePath'
           :error-messages='filePathError'

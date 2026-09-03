@@ -1,8 +1,8 @@
 {
-  "name": "tsfranki",
+  "name": "tsepistle",
   "version": "0.1.0-alpha.1",
   "releaseDate": "2026-08-13T00:00:00.000Z",
-  "description": "tsFranki, an independent community fork of Wiki.js",
+  "description": "tsEpistle, an independent community fork of Wiki.js",
   "main": "server/index.ts",
   "type": "module",
   "packageManager": "bun@1.4.0",
@@ -53,14 +53,14 @@
     "guides",
     "knowledge base"
   ],
-  "author": "tsFranki contributors",
+  "author": "tsEpistle contributors",
   "license": "AGPL-3.0",
   "bugs": {
     "url": "https://github.com/PhilosophiMoonbeam/wiki/issues"
   },
   "homepage": "https://github.com/PhilosophiMoonbeam/wiki#readme",
   "product": {
-    "name": "tsFranki",
+    "name": "tsEpistle",
     "version": "0.1.0-alpha.1",
     "sourceRepository": "https://github.com/PhilosophiMoonbeam/wiki",
     "containerRepository": "ghcr.io/philosophimoonbeam/wiki",

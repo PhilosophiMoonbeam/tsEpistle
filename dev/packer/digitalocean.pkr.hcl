@@ -76,8 +76,8 @@ variable "docker_package_manifest_sha256" {
 }
 
 locals {
-  application_name = "tsFranki"
-  image_name       = "tsfranki-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  application_name = "tsEpistle"
+  image_name       = "tsepistle-${formatdate("YYYYMMDDhhmmss", timestamp())}"
 }
 
 source "digitalocean" "wiki" {

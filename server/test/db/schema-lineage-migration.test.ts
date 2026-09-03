@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from '../bun-test.mts'
 import { MIGRATION_LINEAGE_V1 } from '../../db/migration-contract.ts'
 import { down, up } from '../../db/migrations/tsfranki-000001-schema-lineage.ts'
 
-describe('tsFranki schema lineage migration', () => {
+describe('tsEpistle schema lineage migration', () => {
   const databases: Knex[] = []
 
   afterEach(async () => {
@@ -21,6 +21,8 @@ describe('tsFranki schema lineage migration', () => {
     databases.push(database)
 
     await up(database)
+    expect(MIGRATION_LINEAGE_V1.product).toBe('tsfranki')
+    expect(MIGRATION_LINEAGE_V1.namespacedStart).toBe('tsfranki-000001-schema-lineage.js')
 
     expect(await database(MIGRATION_LINEAGE_V1.tableName).where('product', MIGRATION_LINEAGE_V1.product).first()).toMatchObject({
       product: MIGRATION_LINEAGE_V1.product,

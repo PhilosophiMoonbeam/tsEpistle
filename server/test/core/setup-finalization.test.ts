@@ -78,13 +78,13 @@ const startSetupHarness = async (configSaved: boolean) => {
       port: 0,
       sessionSecret: 'setup-secret',
       setup: true,
-      site: { path: '', title: 'tsFranki' },
+      site: { path: '', title: 'tsEpistle' },
       telemetry: { isEnabled: false }
     },
     configSvc: { saveToDb },
     data: {},
     logger: { error: vi.fn(), info: vi.fn() },
-    product: { name: 'tsFranki' },
+    product: { name: 'tsEpistle' },
     models: {
       authentication: { query: vi.fn(() => ({ insert: authenticationInsert })) },
       editors: {

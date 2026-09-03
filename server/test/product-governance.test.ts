@@ -39,10 +39,10 @@ describe('active product governance contracts', () => {
     expect(upstreamSource).toBe('Wiki.js 2.5.314')
     expect(readme).toContain(packageJson.product.containerRepository)
     expect(security).toContain(packageJson.product.containerRepository)
-    expect(buildWorkflow).toContain('path: tsfranki-linux.tar.gz')
+    expect(buildWorkflow).toContain('path: tsepistle-linux.tar.gz')
     expect(buildWorkflow).toContain('platforms: linux/amd64')
     expect(buildWorkflow).toContain('platforms: linux/arm64')
-    expect(buildWorkflow).not.toMatch(/tsfranki-windows|windows\.(?:zip|tar)/i)
+    expect(buildWorkflow).not.toMatch(/tsepistle-windows|windows\.(?:zip|tar)/i)
 
     for (const publicContract of [readme, security]) {
       expect(publicContract).toContain(upgradePromise)

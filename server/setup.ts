@@ -376,7 +376,7 @@ export default function startSetup(): Promise<void> {
       wiki.logger.info('Stopping Setup...')
       wiki.shutdownSignal.removeEventListener('abort', abortSetup)
       wiki.server.destroy(() => {
-        wiki.logger.info('Setup stopped. Starting tsFranki...')
+        wiki.logger.info('Setup stopped. Starting tsEpistle...')
         completion.resolve()
       })
     })

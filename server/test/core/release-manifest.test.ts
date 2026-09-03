@@ -17,7 +17,7 @@ const releaseEnvironment = (): NodeJS.ProcessEnv => ({
   IMAGE_REPOSITORY: 'ghcr.io/philosophimoonbeam/wiki',
   WIKI_BUILD_DATE: '2026-08-15T00:00:00.000Z',
   WIKI_BUILD_REVISION: 'b'.repeat(40),
-  WIKI_PRODUCT_NAME: 'tsFranki',
+  WIKI_PRODUCT_NAME: 'tsEpistle',
   WIKI_PRODUCT_VERSION: '0.1.0-alpha.1',
   WIKI_SOURCE_REPOSITORY: 'https://github.com/PhilosophiMoonbeam/wiki',
   WIKI_UPSTREAM_BASE: 'Wiki.js 2.5.314'

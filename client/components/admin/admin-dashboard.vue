@@ -73,7 +73,7 @@
                 strong {{ info.usersTotal }} users · {{ info.groupsTotal }} groups
               .dashboard-overview__row
                 span Platform
-                strong tsFranki {{ info.product.version }}
+                strong tsEpistle {{ info.product.version }}
             v-btn.dashboard-overview__button(v-if='hasPermission(`manage:system`)' to='/system' variant='tonal' color='primary' block prepend-icon='mdi-monitor-dashboard' :append-icon='$vuetify.locale.isRtl ? `mdi-arrow-left` : `mdi-arrow-right`') Open system details
 
     .dashboard-section-heading(v-if='canViewRecentPages || canViewLastLogins')
@@ -186,7 +186,7 @@ export default {
     canViewRecentPages() { return this.hasPermission(['manage:system', 'write:pages', 'manage:pages', 'delete:pages']) },
     canViewLastLogins() { return this.hasPermission(['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users']) },
     info() { return wikiStore.admin.info },
-    siteTitle() { return wikiStore.site.title?.trim() || 'tsFranki' },
+    siteTitle() { return wikiStore.site.title?.trim() || 'tsEpistle' },
     permissions() { return wikiStore.user.permissions },
     dashboardStats() {
       return [

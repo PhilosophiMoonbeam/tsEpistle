@@ -5,7 +5,7 @@
         v-card.setup-card(:aria-busy='loading')
           header.setup-intro
             .setup-mark(aria-hidden='true')
-              img(src='/_assets/svg/icon-tsfranki.svg', alt='')
+              img(src='/_assets/svg/icon-tsepistle.svg', alt='tsEpistle')
             .setup-intro-copy
               .setup-eyebrow First-run setup
               h1#setup-title {{ product.name }}

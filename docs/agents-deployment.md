@@ -235,7 +235,7 @@ Install the following operational skill as the Markdown source page `system/agen
 ---
 name: wiki-authoring
 description: Create and edit Wiki pages while preserving Markdown, links, and human-editor compatibility.
-compatibility: tsFranki Visual Markdown and Markdown source editors
+compatibility: tsEpistle Visual Markdown and Markdown source editors
 metadata:
   owner: wiki-operations
 allowed-tools:

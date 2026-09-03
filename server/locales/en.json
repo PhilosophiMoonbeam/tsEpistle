@@ -578,7 +578,7 @@
       "dkimUse": "Use DKIM",
       "smtpPwd": "Password",
       "smtpTLS": "Secure (TLS)",
-      "dkimHint": "DKIM (DomainKeys Identified Mail) lets recipients verify the domain and integrity of email sent from tsFranki.",
+      "dkimHint": "DKIM (DomainKeys Identified Mail) lets recipients verify the domain and integrity of email sent from tsEpistle.",
       "smtpHost": "Host",
       "smtpName": "Client Identifying Hostname",
       "smtpPort": "Port",
@@ -876,7 +876,7 @@
       "loginBgUrl": "Login Background Image URL",
       "bypassLogin": "Bypass Login Screen",
       "loginScreen": "Login Screen",
-      "uploadsInfo": "These settings only affect tsFranki. If you're using a reverse proxy (e.g. nginx, Apache, Cloudflare), you must also change its settings to match.",
+      "uploadsInfo": "These settings only affect tsEpistle. If you're using a reverse proxy (e.g. nginx, Apache, Cloudflare), you must also change its settings to match.",
       "loginSecurity": "Security",
       "maxUploadSize": "Max Upload Size",
       "enforce2faHint": "Force all users to use Two-Factor Authentication when using an authentication provider with a user / password form.",
@@ -909,7 +909,7 @@
       "title": "Dashboard",
       "users": "Users",
       "groups": "Groups",
-      "subtitle": "tsFranki",
+      "subtitle": "tsEpistle",
       "lastLogins": "Last Logins",
       "versionNew": "A new version is available: {{version}}",
       "recentPages": "Recent Pages",
@@ -937,7 +937,7 @@
       "importv1Subtitle": "Migrate data from a previous 1.x installation",
       "telemetrySubtitle": "Enable/Disable telemetry or reset the client ID",
       "graphEndpointTitle": "GraphQL Endpoint",
-      "graphEndpointSubtitle": "Change the GraphQL endpoint used by tsFranki"
+      "graphEndpointSubtitle": "Change the GraphQL endpoint used by tsEpistle"
     },
     "extensions": {
       "title": "Extensions",

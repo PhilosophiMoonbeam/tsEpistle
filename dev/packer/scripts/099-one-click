@@ -6,12 +6,12 @@ myip=$(hostname -I | awk '{print$1}')
 cat <<EOF
 ********************************************************************************
 
-Welcome to the tsFranki 1-Click DigitalOcean Droplet.
+Welcome to the tsEpistle 1-Click DigitalOcean Droplet.
 
 To keep this Droplet secure, the UFW firewall is enabled.
 All ports are BLOCKED except 22 (SSH), 80 (Docker) and 443 (Docker).
 
-* tsFranki source and release notes are available at:
+* tsEpistle source and release notes are available at:
   https://github.com/PhilosophiMoonbeam/wiki
 
 * Docker is installed and configured per Docker's recommendations:

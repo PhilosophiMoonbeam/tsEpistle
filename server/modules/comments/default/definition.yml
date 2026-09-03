@@ -1,8 +1,8 @@
 key: default
 title: Default
 description: Built-in advanced comments tool.
-author: tsFranki contributors
-logo: /_assets/svg/icon-tsfranki.svg
+author: tsEpistle contributors
+logo: /_assets/svg/icon-tsepistle.svg
 website: https://github.com/PhilosophiMoonbeam/wiki
 codeTemplate: false
 isAvailable: true

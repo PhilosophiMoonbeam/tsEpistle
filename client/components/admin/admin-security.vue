@@ -67,7 +67,7 @@
                     color='warning'
                     v-model='config.securityTrustProxy'
                     persistent-hint
-                    hint='Enable when a reverse proxy such as nginx, Apache, or Cloudflare sits in front of tsFranki. Turn off otherwise.'
+                    hint='Enable when a reverse proxy such as nginx, Apache, or Cloudflare sits in front of tsEpistle. Turn off otherwise.'
                     )
 
                   //- v-divider.mt-3

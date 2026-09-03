@@ -82,27 +82,27 @@ interface CommentCountRow {
 }
 
 interface CommentByIdQuery<Row> extends PromiseLike<Row | undefined> {
-  patch (value: Pick<CommentRow, 'content' | 'render'>): PromiseLike<number>
-  delete (): PromiseLike<number>
+  patch(value: Pick<CommentRow, 'content' | 'render'>): PromiseLike<number>
+  delete(): PromiseLike<number>
 }
 
 interface CommentCountQuery {
-  where (column: 'pageId', value: number): CommentCountQuery
-  first (): PromiseLike<CommentCountRow>
+  where(column: 'pageId', value: number): CommentCountQuery
+  first(): PromiseLike<CommentCountRow>
 }
 
 interface CommentQuery<Row> {
-  select (column: 'pageId'): CommentQuery<CommentPageIdRow>
-  select (column: 'updatedAt'): CommentQuery<LastCommentRow>
-  orderBy (column: 'updatedAt', direction: 'desc'): CommentQuery<Row>
-  findOne (criteria: { authorId: number }): PromiseLike<Row | undefined>
-  findById (id: number): CommentByIdQuery<Row>
-  insert (value: NewCommentRow): PromiseLike<Pick<CommentRow, 'id'>>
-  count (expression: '* as total'): CommentCountQuery
+  select(column: 'pageId'): CommentQuery<CommentPageIdRow>
+  select(column: 'updatedAt'): CommentQuery<LastCommentRow>
+  orderBy(column: 'updatedAt', direction: 'desc'): CommentQuery<Row>
+  findOne(criteria: { authorId: number }): PromiseLike<Row | undefined>
+  findById(id: number): CommentByIdQuery<Row>
+  insert(value: NewCommentRow): PromiseLike<Pick<CommentRow, 'id'>>
+  count(expression: '* as total'): CommentCountQuery
 }
 
 interface CommentModel {
-  query (): CommentQuery<CommentRow>
+  query(): CommentQuery<CommentRow>
 }
 
 interface AkismetComment {
@@ -173,7 +173,7 @@ class AkismetClient {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'tsFranki'
+        'User-Agent': 'tsEpistle'
       },
       body: new URLSearchParams(fields)
     })
@@ -185,11 +185,8 @@ class AkismetClient {
   }
 }
 
-const isCommentModel = (value: unknown): value is CommentModel => (
-  (typeof value === 'object' || typeof value === 'function') &&
-  value !== null &&
-  typeof Reflect.get(value, 'query') === 'function'
-)
+const isCommentModel = (value: unknown): value is CommentModel =>
+  (typeof value === 'object' || typeof value === 'function') && value !== null && typeof Reflect.get(value, 'query') === 'function'
 
 const commentModelCandidate: unknown = wiki.models.comments
 if (!isCommentModel(commentModelCandidate)) {
@@ -218,7 +215,7 @@ const plugin = {
   /**
    * Init
    */
-  async init (_config?: { akismet: string, minDelay: number }) {
+  async init(_config?: { akismet: string; minDelay: number }) {
     void _config
     wiki.logger.info('(COMMENTS/DEFAULT) Initializing...')
     if (wiki.data.commentProvider.config.akismet && wiki.data.commentProvider.config.akismet.length > 2) {
@@ -248,7 +245,7 @@ const plugin = {
   /**
    * Create New Comment
    */
-  async create ({ page, replyTo, content, user }: CreateCommentInput) {
+  async create({ page, replyTo, content, user }: CreateCommentInput) {
     // -> Build New Comment
     const newComment = {
       content,
@@ -311,7 +308,7 @@ const plugin = {
   /**
    * Update an existing comment
    */
-  async update ({ id, content }: UpdateCommentInput) {
+  async update({ id, content }: UpdateCommentInput) {
     const renderedContent = DOMPurify.sanitize(mkdown.render(content))
     await comments.query().findById(id).patch({
       content,
@@ -322,26 +319,26 @@ const plugin = {
   /**
    * Delete an existing comment by ID
    */
-  async remove ({ id }: RemoveCommentInput) {
+  async remove({ id }: RemoveCommentInput) {
     return comments.query().findById(id).delete()
   },
   /**
    * Get the page ID from a comment ID
    */
-  async getPageIdFromCommentId (id: number) {
+  async getPageIdFromCommentId(id: number) {
     const result = await comments.query().select('pageId').findById(id)
-    return (result) ? result.pageId : false
+    return result ? result.pageId : false
   },
   /**
    * Get a comment by ID
    */
-  async getCommentById (id: number) {
+  async getCommentById(id: number) {
     return comments.query().findById(id)
   },
   /**
    * Get the total comments count for a page ID
    */
-  async count (pageId: number) {
+  async count(pageId: number) {
     const result = await comments.query().count('* as total').where('pageId', pageId).first()
     return _.toSafeInteger(result.total)
   }

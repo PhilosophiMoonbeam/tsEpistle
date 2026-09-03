@@ -72,7 +72,7 @@ jobs:
   quality:
     name: Quality
     if: github.event_name != 'pull_request'
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     permissions:
       contents: read
 
@@ -109,7 +109,7 @@ jobs:
 
   agent-postgres:
     name: Agent Ledger (PostgreSQL ${{ matrix.pgversion }})
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 15
     needs: [quality]
     permissions:
@@ -186,7 +186,7 @@ jobs:
 
   agent-browser-image:
     name: Agent Browser Multi-arch Image
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 20
     needs: [quality]
     permissions:
@@ -208,7 +208,7 @@ jobs:
         test -s /tmp/wiki-agent-browser.oci.tar
   page-index-benchmark:
     name: Page Index Benchmark (PostgreSQL ${{ matrix.pgversion }})
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 15
     needs: [quality]
     permissions:
@@ -245,7 +245,7 @@ jobs:
 
   build:
     name: Build Test Image and Linux Bundle
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 45
     needs: [quality]
     permissions:
@@ -296,10 +296,10 @@ jobs:
       if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
       run: |
         docker pull "$IMAGE_REPOSITORY@${{ steps.build-candidate.outputs.digest }}"
-        docker tag "$IMAGE_REPOSITORY@${{ steps.build-candidate.outputs.digest }}" "tsfranki:test-$WIKI_BUILD_REVISION"
+        docker tag "$IMAGE_REPOSITORY@${{ steps.build-candidate.outputs.digest }}" "tsepistle:test-$WIKI_BUILD_REVISION"
     - name: Tag Local Candidate
       if: github.event_name != 'push' || (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v'))
-      run: docker tag "$IMAGE_REPOSITORY:candidate-${{ github.run_id }}-${{ github.run_attempt }}" "tsfranki:test-$WIKI_BUILD_REVISION"
+      run: docker tag "$IMAGE_REPOSITORY:candidate-${{ github.run_id }}-${{ github.run_attempt }}" "tsepistle:test-$WIKI_BUILD_REVISION"
 
     - name: Export Tested AMD64 Candidate
       shell: bash
@@ -307,24 +307,24 @@ jobs:
         PUBLISH_CANDIDATE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
         TESTED_AMD64_DIGEST: ${{ steps.build-candidate.outputs.digest }}
       run: |
-        candidate="tsfranki:test-$WIKI_BUILD_REVISION"
+        candidate="tsepistle:test-$WIKI_BUILD_REVISION"
         if [ "$PUBLISH_CANDIDATE" = 'true' ]; then
           [[ "$TESTED_AMD64_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           printf '%s\n' "$TESTED_AMD64_DIGEST" > tested-amd64-digest.txt
         fi
         test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$candidate")" = 'linux/amd64'
-        test "$(docker image inspect --format '{{index .Config.Labels "io.tsfranki.image.architecture"}}' "$candidate")" = 'amd64'
+        test "$(docker image inspect --format '{{index .Config.Labels "io.tsepistle.image.architecture"}}' "$candidate")" = 'amd64'
         docker image inspect --format '{{.Id}}' "$candidate" > tested-amd64-image-id.txt
-        docker save "$candidate" | gzip -1 -n > tsfranki-test-image.tar.gz
+        docker save "$candidate" | gzip -1 -n > tsepistle-test-image.tar.gz
 
     - name: Create Reproducible Linux Bundle
-      run: dev/build/create-linux-bundle.sh "tsfranki:test-$WIKI_BUILD_REVISION" tsfranki-linux.tar.gz
+      run: dev/build/create-linux-bundle.sh "tsepistle:test-$WIKI_BUILD_REVISION" tsepistle-linux.tar.gz
 
     - name: Upload Linux Build
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
       with:
         name: drop
-        path: tsfranki-linux.tar.gz
+        path: tsepistle-linux.tar.gz
         if-no-files-found: error
 
     - name: Upload Test Image
@@ -332,7 +332,7 @@ jobs:
       with:
         name: test-image
         path: |
-          tsfranki-test-image.tar.gz
+          tsepistle-test-image.tar.gz
           tested-amd64-image-id.txt
           tested-amd64-digest.txt
         if-no-files-found: error
@@ -341,7 +341,7 @@ jobs:
 
   reproducibility:
     name: Rebuild Linux Bundle Reproducibly
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 45
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build]
@@ -382,24 +382,24 @@ jobs:
         load: true
         provenance: false
         sbom: false
-        tags: tsfranki:reproducibility-${{ env.WIKI_BUILD_REVISION }}
+        tags: tsepistle:reproducibility-${{ env.WIKI_BUILD_REVISION }}
 
     - name: Compare Independent Linux Bundle
       shell: bash
       run: |
         dev/build/create-linux-bundle.sh \
-          "tsfranki:reproducibility-$WIKI_BUILD_REVISION" \
-          tsfranki-linux.tar.gz
-        if ! cmp --silent reference/tsfranki-linux.tar.gz tsfranki-linux.tar.gz; then
-          sha256sum reference/tsfranki-linux.tar.gz tsfranki-linux.tar.gz
+          "tsepistle:reproducibility-$WIKI_BUILD_REVISION" \
+          tsepistle-linux.tar.gz
+        if ! cmp --silent reference/tsepistle-linux.tar.gz tsepistle-linux.tar.gz; then
+          sha256sum reference/tsepistle-linux.tar.gz tsepistle-linux.tar.gz
           echo 'Independent Linux bundle does not reproduce the release candidate.' >&2
           exit 1
         fi
-        sha256sum tsfranki-linux.tar.gz
+        sha256sum tsepistle-linux.tar.gz
 
   e2e:
     name: Playwright (PostgreSQL 18)
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 45
     needs: [build]
     permissions:
@@ -421,7 +421,7 @@ jobs:
         path: test-image
 
     - name: Load Test Image
-      run: gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
+      run: gzip -dc test-image/tsepistle-test-image.tar.gz | docker load
 
     - name: Set Test Metadata
       shell: bash
@@ -430,7 +430,7 @@ jobs:
     - name: Run Playwright Tests
       env:
         POSTGRES_TEST_IMAGE: postgres:18-alpine@sha256:a1d02e4bd40c94d3bf2bdd3678c137388e76d9efcd23c285e9429d336a834b44
-        WIKI_TEST_IMAGE: tsfranki:test-${{ env.WIKI_BUILD_REVISION }}
+        WIKI_TEST_IMAGE: tsepistle:test-${{ env.WIKI_BUILD_REVISION }}
         PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
         POSTGRES_MAJOR: 18
         RUNTIME_PERFORMANCE_FILE: runtime-performance-postgres-18.json
@@ -463,7 +463,7 @@ jobs:
 
   upgrade:
     name: Upgrade Wiki.js 2 (PostgreSQL ${{ matrix.pgversion }})
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 30
     needs: [build]
     permissions:
@@ -492,7 +492,7 @@ jobs:
         path: test-image
 
     - name: Load Test Image
-      run: gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
+      run: gzip -dc test-image/tsepistle-test-image.tar.gz | docker load
 
     - name: Set Test Metadata
       shell: bash
@@ -501,7 +501,7 @@ jobs:
     - name: Upgrade Supported Database
       env:
         POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
-        WIKI_TEST_IMAGE: tsfranki:test-${{ env.WIKI_BUILD_REVISION }}
+        WIKI_TEST_IMAGE: tsepistle:test-${{ env.WIKI_BUILD_REVISION }}
         MIGRATION_METRICS_FILE: migration-metrics-postgres-${{ matrix.pgversion }}.json
       run: dev/e2e/upgrade-smoke.sh
 
@@ -516,7 +516,7 @@ jobs:
 
   multi-instance:
     name: Multi-instance Recovery (PostgreSQL ${{ matrix.pgversion }})
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 20
     needs: [build]
     permissions:
@@ -541,7 +541,7 @@ jobs:
         path: test-image
 
     - name: Load Test Image
-      run: gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
+      run: gzip -dc test-image/tsepistle-test-image.tar.gz | docker load
 
     - name: Set Test Metadata
       shell: bash
@@ -550,12 +550,12 @@ jobs:
     - name: Exercise Instance Loss and Recovery
       env:
         POSTGRES_TEST_IMAGE: ${{ matrix.postgresImage }}
-        WIKI_TEST_IMAGE: tsfranki:test-${{ env.WIKI_BUILD_REVISION }}
+        WIKI_TEST_IMAGE: tsepistle:test-${{ env.WIKI_BUILD_REVISION }}
       run: dev/e2e/multi-instance-smoke.sh
 
   helm-lifecycle:
     name: Helm Install Upgrade Rollback
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 25
     needs: [build]
     permissions:
@@ -571,7 +571,7 @@ jobs:
         path: test-image
 
     - name: Load Test Image
-      run: gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
+      run: gzip -dc test-image/tsepistle-test-image.tar.gz | docker load
 
     - name: Set Test Metadata
       shell: bash
@@ -604,12 +604,12 @@ jobs:
         docker pull postgres@sha256:a2c20749c564b4eb73a77bfda626f8a3cde1bbfae020fb97c616a00cdc1a2181
         docker tag postgres@sha256:a2c20749c564b4eb73a77bfda626f8a3cde1bbfae020fb97c616a00cdc1a2181 wiki-postgres-test:15
         kind load docker-image --name wiki-lifecycle \
-          "tsfranki:test-${WIKI_BUILD_REVISION}" \
+          "tsepistle:test-${WIKI_BUILD_REVISION}" \
           wiki-postgres-test:15
 
     - name: Exercise Helm Lifecycle
       env:
-        WIKI_TEST_IMAGE_REPOSITORY: tsfranki
+        WIKI_TEST_IMAGE_REPOSITORY: tsepistle
         WIKI_TEST_IMAGE_TAG: test-${{ env.WIKI_BUILD_REVISION }}
         WIKI_TEST_PREVIOUS_IMAGE: ${{ env.WIKI_HELM_PREVIOUS_IMAGE }}
         POSTGRES_TEST_IMAGE_REPOSITORY: wiki-postgres-test
@@ -623,7 +623,7 @@ jobs:
 
   publish-amd64:
     name: Publish AMD64 Images
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [build, e2e, upgrade, multi-instance, helm-lifecycle, page-index-benchmark, agent-postgres, private-pages-postgres, agent-browser-image]
     permissions:
@@ -665,8 +665,8 @@ jobs:
     - name: Validate Tested AMD64 Candidate
       shell: bash
       run: |
-        gzip -dc test-image/tsfranki-test-image.tar.gz | docker load
-        candidate="tsfranki:test-$WIKI_BUILD_REVISION"
+        gzip -dc test-image/tsepistle-test-image.tar.gz | docker load
+        candidate="tsepistle:test-$WIKI_BUILD_REVISION"
         expected_image_id="$(cat test-image/tested-amd64-image-id.txt)"
         expected_amd64_digest="$(cat test-image/tested-amd64-digest.txt)"
         [[ "$expected_amd64_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
@@ -720,7 +720,7 @@ jobs:
 
   arm:
     name: ARM64 Cross-build
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     needs: [e2e, page-index-benchmark, agent-postgres, agent-browser-image]
     permissions:
@@ -763,7 +763,7 @@ jobs:
     - name: Extract Build
       run: |
         mkdir -p build
-        tar -xzf "$GITHUB_WORKSPACE/drop/tsfranki-linux.tar.gz" -C "$GITHUB_WORKSPACE/build" --exclude=node_modules
+        tar -xzf "$GITHUB_WORKSPACE/drop/tsepistle-linux.tar.gz" -C "$GITHUB_WORKSPACE/build" --exclude=node_modules
 
     - name: Build and Push ARM64 Candidate
       id: build-app-arm64
@@ -841,7 +841,7 @@ jobs:
 
   publish-canary:
     name: Promote Synchronized Canary Images
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [publish-amd64, arm]
     permissions:
@@ -943,13 +943,13 @@ jobs:
             --sbom=false \
             --push \
             --tag "$promotion_repository:$candidate_tag" \
-            --annotation "manifest:io.tsfranki.canary-promotion.schema-version=1" \
-            --annotation "manifest:io.tsfranki.canary-promotion.main-sha=$GITHUB_SHA" \
+            --annotation "manifest:io.tsepistle.canary-promotion.schema-version=1" \
+            --annotation "manifest:io.tsepistle.canary-promotion.main-sha=$GITHUB_SHA" \
             --annotation "manifest:org.opencontainers.image.revision=$GITHUB_SHA" \
-            --annotation "manifest:io.tsfranki.canary-promotion.application-amd64=$image_amd64" \
-            --annotation "manifest:io.tsfranki.canary-promotion.application-arm64=$image_arm64" \
-            --annotation "manifest:io.tsfranki.canary-promotion.agent-browser-amd64=$agent_browser_amd64" \
-            --annotation "manifest:io.tsfranki.canary-promotion.agent-browser-arm64=$agent_browser_arm64" \
+            --annotation "manifest:io.tsepistle.canary-promotion.application-amd64=$image_amd64" \
+            --annotation "manifest:io.tsepistle.canary-promotion.application-arm64=$image_arm64" \
+            --annotation "manifest:io.tsepistle.canary-promotion.agent-browser-amd64=$agent_browser_amd64" \
+            --annotation "manifest:io.tsepistle.canary-promotion.agent-browser-arm64=$agent_browser_arm64" \
             --metadata-file canary-promotion-metadata.json \
             .
           record_digest="$(jq --exit-status --raw-output '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' canary-promotion-metadata.json)"
@@ -964,13 +964,13 @@ jobs:
           --arg image_arm64 "$image_arm64" \
           --arg agent_browser_amd64 "$agent_browser_amd64" \
           --arg agent_browser_arm64 "$agent_browser_arm64" '
-            (.annotations["io.tsfranki.canary-promotion.schema-version"] == "1")
-            and (.annotations["io.tsfranki.canary-promotion.main-sha"] == $main_sha)
+            (.annotations["io.tsepistle.canary-promotion.schema-version"] == "1")
+            and (.annotations["io.tsepistle.canary-promotion.main-sha"] == $main_sha)
             and (.annotations["org.opencontainers.image.revision"] == $main_sha)
-            and (.annotations["io.tsfranki.canary-promotion.application-amd64"] == $image_amd64)
-            and (.annotations["io.tsfranki.canary-promotion.application-arm64"] == $image_arm64)
-            and (.annotations["io.tsfranki.canary-promotion.agent-browser-amd64"] == $agent_browser_amd64)
-            and (.annotations["io.tsfranki.canary-promotion.agent-browser-arm64"] == $agent_browser_arm64)
+            and (.annotations["io.tsepistle.canary-promotion.application-amd64"] == $image_amd64)
+            and (.annotations["io.tsepistle.canary-promotion.application-arm64"] == $image_arm64)
+            and (.annotations["io.tsepistle.canary-promotion.agent-browser-amd64"] == $agent_browser_amd64)
+            and (.annotations["io.tsepistle.canary-promotion.agent-browser-arm64"] == $agent_browser_arm64)
           ' canary-promotion-manifest.json
 
         freshness_fence
@@ -1032,7 +1032,7 @@ jobs:
 
   beta:
     name: Publish Preview Images
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [publish-amd64, arm]
     permissions:
@@ -1111,7 +1111,7 @@ jobs:
 
   release:
     name: Publish Release Images
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     if: startsWith(github.ref, 'refs/tags/v')
     environment: prod
     needs: [beta, reproducibility]
@@ -1215,7 +1215,7 @@ jobs:
       with:
         image: ${{ env.IMAGE_REPOSITORY }}@${{ env.IMAGE_DIGEST }}
         format: spdx-json
-        output-file: tsfranki.spdx.json
+        output-file: tsepistle.spdx.json
         upload-artifact: false
         upload-release-assets: false
 
@@ -1238,22 +1238,22 @@ jobs:
     - name: Stage Release Artifacts
       shell: bash
       run: |
-        cp drop/tsfranki-linux.tar.gz .
-        cp "dist/tsfranki-$REL_VERSION_STRICT.tgz" .
+        cp drop/tsepistle-linux.tar.gz .
+        cp "dist/tsepistle-$REL_VERSION_STRICT.tgz" .
         cp compliance/third-party-licenses.json .
 
     - name: Create Corresponding Source Archive
-      run: git archive --format=tar.gz --prefix="tsfranki-$REL_VERSION_STRICT/" --output=tsfranki-source.tar.gz "$WIKI_BUILD_REVISION"
+      run: git archive --format=tar.gz --prefix="tsepistle-$REL_VERSION_STRICT/" --output=tsepistle-source.tar.gz "$WIKI_BUILD_REVISION"
 
     - name: Generate Release Manifest and Checksums
       run: |
         bun server/scripts/generate-release-manifest.ts \
           release-manifest.json \
           SHA256SUMS \
-          tsfranki-linux.tar.gz \
-          tsfranki-source.tar.gz \
-          "tsfranki-$REL_VERSION_STRICT.tgz" \
-          tsfranki.spdx.json \
+          tsepistle-linux.tar.gz \
+          tsepistle-source.tar.gz \
+          "tsepistle-$REL_VERSION_STRICT.tgz" \
+          tsepistle.spdx.json \
           wiki-agent-browser.spdx.json \
           third-party-licenses.json
         sha256sum --check SHA256SUMS
@@ -1265,7 +1265,7 @@ jobs:
         subject-checksums: SHA256SUMS
 
     - name: Stage Offline Provenance Bundle
-      run: cp "${{ steps.attest-release.outputs.bundle-path }}" tsfranki-release.intoto.jsonl
+      run: cp "${{ steps.attest-release.outputs.bundle-path }}" tsepistle-release.intoto.jsonl
 
     - name: Attest Release Image Provenance
       uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
@@ -1279,7 +1279,7 @@ jobs:
       with:
         subject-name: ${{ env.IMAGE_REPOSITORY }}
         subject-digest: ${{ env.IMAGE_DIGEST }}
-        sbom-path: tsfranki.spdx.json
+        sbom-path: tsepistle.spdx.json
         push-to-registry: true
 
     - name: Attest Agent Browser Image Provenance
@@ -1314,7 +1314,7 @@ jobs:
         name: ${{ github.ref_name }}
         body: ${{ steps.changelog.outputs.changes }}
         token: ${{ github.token }}
-        artifacts: 'tsfranki-linux.tar.gz,tsfranki-source.tar.gz,tsfranki-*.tgz,tsfranki.spdx.json,wiki-agent-browser.spdx.json,third-party-licenses.json,release-manifest.json,SHA256SUMS,tsfranki-release.intoto.jsonl'
+        artifacts: 'tsepistle-linux.tar.gz,tsepistle-source.tar.gz,tsepistle-*.tgz,tsepistle.spdx.json,wiki-agent-browser.spdx.json,third-party-licenses.json,release-manifest.json,SHA256SUMS,tsepistle-release.intoto.jsonl'
 
     - name: Notify Telegram Channel
       uses: appleboy/telegram-action@221e6b684967abe813051ee4a37dd61770a83ad3 # v1.0.1
@@ -1324,11 +1324,11 @@ jobs:
         format: markdown
         disable_web_page_preview: true
         message: |
-          tsFranki *${{ github.ref_name }}* has been released!
+          tsEpistle *${{ github.ref_name }}* has been released!
           See [release notes](https://github.com/PhilosophiMoonbeam/wiki/releases) for details.
 
     - name: Notify Discord Channel
       uses: sebastianpopp/discord-action@4f2d5417bc61a79593304a62e71cd32427c17790 # v2.0
       with:
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
-        message: tsFranki ${{ github.ref_name }} has been released! See https://github.com/PhilosophiMoonbeam/wiki/releases for details.
+        message: tsEpistle ${{ github.ref_name }} has been released! See https://github.com/PhilosophiMoonbeam/wiki/releases for details.

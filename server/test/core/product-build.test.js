@@ -44,7 +44,7 @@ describe('product build and publication metadata', () => {
     for (const label of ['created', 'description', 'licenses', 'revision', 'source', 'title', 'version']) {
       expect(dockerfiles).toContain(`org.opencontainers.image.${label}`)
     }
-    expect(dockerfiles).toContain('io.tsfranki.upstream-base')
+    expect(dockerfiles).toContain('io.tsepistle.upstream-base')
   })
 
   test('keeps deployment defaults on fork-owned artifacts without an upstream updater', () => {
@@ -179,13 +179,13 @@ describe('product build and publication metadata', () => {
       schemaVersion: 2,
       mediaType: 'application/vnd.oci.image.manifest.v1+json',
       annotations: {
-        'io.tsfranki.canary-promotion.schema-version': '1',
-        'io.tsfranki.canary-promotion.main-sha': revision,
+        'io.tsepistle.canary-promotion.schema-version': '1',
+        'io.tsepistle.canary-promotion.main-sha': revision,
         'org.opencontainers.image.revision': revision,
-        'io.tsfranki.canary-promotion.application-amd64': applicationAmd64,
-        'io.tsfranki.canary-promotion.application-arm64': applicationArm64,
-        'io.tsfranki.canary-promotion.agent-browser-amd64': agentBrowserAmd64,
-        'io.tsfranki.canary-promotion.agent-browser-arm64': agentBrowserArm64
+        'io.tsepistle.canary-promotion.application-amd64': applicationAmd64,
+        'io.tsepistle.canary-promotion.application-arm64': applicationArm64,
+        'io.tsepistle.canary-promotion.agent-browser-amd64': agentBrowserAmd64,
+        'io.tsepistle.canary-promotion.agent-browser-arm64': agentBrowserArm64
       }
     })
 
@@ -248,7 +248,7 @@ fi
   test('release artifacts include complete revision-specific Corresponding Source', () => {
     const workflow = read('.github/workflows/build.yml')
     expect(workflow).toContain('git archive --format=tar.gz')
-    expect(workflow).toContain('tsfranki-source.tar.gz')
+    expect(workflow).toContain('tsepistle-source.tar.gz')
     expect(workflow).toContain('$WIKI_SOURCE_REPOSITORY/tree/$WIKI_BUILD_REVISION')
     for (const path of ['package.json', 'bun.lock', 'patches', 'dev/build/Dockerfile', 'dev/build-arm/Dockerfile', 'server/scripts/generate-build-metadata.ts']) {
       expect(() => execFileSync('git', ['ls-files', '--error-unmatch', path], { cwd: rootPath })).not.toThrow()

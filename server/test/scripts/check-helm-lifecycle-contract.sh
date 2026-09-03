@@ -24,12 +24,55 @@ if [[ "$rendered_deployment" != *$'strategy:\n    type: Recreate'* ]]; then
   exit 1
 fi
 
+assert_rendered_contains() {
+  local description=$1
+  local rendered=$2
+  local expected=$3
+  if [[ "$rendered" != *"$expected"* ]]; then
+    echo "Rendered chart is missing ${description}: ${expected}" >&2
+    exit 1
+  fi
+}
+
+rendered_fresh=$(helm template wiki dev/helm \
+  --set "$HELM_PASSWORD_VALUE")
+assert_rendered_contains 'fresh Deployment name' "$rendered_fresh" $'kind: Deployment\nmetadata:\n  name: wiki-tsepistle'
+assert_rendered_contains 'fresh Service name' "$rendered_fresh" $'kind: Service\nmetadata:\n  name: wiki-tsepistle'
+assert_rendered_contains 'fresh application data PVC name' "$rendered_fresh" $'kind: PersistentVolumeClaim\nmetadata:\n  name: wiki-tsepistle-data'
+assert_rendered_contains 'fresh PostgreSQL StatefulSet name' "$rendered_fresh" $'kind: StatefulSet\nmetadata:\n  name: wiki-tsepistle-postgresql'
+assert_rendered_contains 'fresh PostgreSQL Service name' "$rendered_fresh" $'kind: Service\nmetadata:\n  name: wiki-tsepistle-postgresql'
+assert_rendered_contains 'fresh PostgreSQL PVC name' "$rendered_fresh" $'kind: PersistentVolumeClaim\nmetadata:\n  name: wiki-tsepistle-postgresql'
+assert_rendered_contains 'fresh PostgreSQL Secret name' "$rendered_fresh" $'kind: Secret\nmetadata:\n  name: wiki-tsepistle-postgresql'
+assert_rendered_contains 'fresh service account name' "$rendered_fresh" $'kind: ServiceAccount\nmetadata:\n  name: wiki-tsepistle'
+assert_rendered_contains 'fresh Deployment service account reference' "$rendered_fresh" 'serviceAccountName: wiki-tsepistle'
+
+# Compatibility-only render: existing releases must retain their historical identity.
+
+rendered_compatibility=$(helm template wiki dev/helm \
+  --set "$HELM_PASSWORD_VALUE" \
+  --set nameOverride=tsfranki)
+assert_rendered_contains 'historical Deployment name' "$rendered_compatibility" $'kind: Deployment\nmetadata:\n  name: wiki-tsfranki'
+assert_rendered_contains 'historical Service name' "$rendered_compatibility" $'kind: Service\nmetadata:\n  name: wiki-tsfranki'
+assert_rendered_contains 'historical application data PVC name' "$rendered_compatibility" $'kind: PersistentVolumeClaim\nmetadata:\n  name: wiki-tsfranki-data'
+assert_rendered_contains 'historical PostgreSQL StatefulSet name' "$rendered_compatibility" $'kind: StatefulSet\nmetadata:\n  name: wiki-tsfranki-postgresql'
+assert_rendered_contains 'historical PostgreSQL Service name' "$rendered_compatibility" $'kind: Service\nmetadata:\n  name: wiki-tsfranki-postgresql'
+assert_rendered_contains 'historical PostgreSQL PVC name' "$rendered_compatibility" $'kind: PersistentVolumeClaim\nmetadata:\n  name: wiki-tsfranki-postgresql'
+assert_rendered_contains 'historical PostgreSQL Secret name' "$rendered_compatibility" $'kind: Secret\nmetadata:\n  name: wiki-tsfranki-postgresql'
+assert_rendered_contains 'historical service account name' "$rendered_compatibility" $'kind: ServiceAccount\nmetadata:\n  name: wiki-tsfranki'
+assert_rendered_contains 'historical Deployment service account reference' "$rendered_compatibility" 'serviceAccountName: wiki-tsfranki'
+assert_rendered_contains 'historical application selector' "$rendered_compatibility" $'matchLabels:\n      app.kubernetes.io/name: tsfranki\n      app.kubernetes.io/instance: wiki'
+assert_rendered_contains 'historical PostgreSQL selector' "$rendered_compatibility" $'matchLabels:\n      app.kubernetes.io/name: tsfranki-postgresql\n      app.kubernetes.io/instance: wiki'
+assert_rendered_contains 'historical application Service selector' "$rendered_compatibility" $'selector:\n    app.kubernetes.io/name: tsfranki\n    app.kubernetes.io/instance: wiki'
+assert_rendered_contains 'historical PostgreSQL Service selector' "$rendered_compatibility" $'selector:\n    app.kubernetes.io/name: tsfranki-postgresql\n    app.kubernetes.io/instance: wiki'
+assert_rendered_contains 'historical application data claim reference' "$rendered_compatibility" $'persistentVolumeClaim:\n            claimName: wiki-tsfranki-data'
+assert_rendered_contains 'historical PostgreSQL claim reference' "$rendered_compatibility" $'persistentVolumeClaim:\n            claimName: wiki-tsfranki-postgresql'
+
 rendered_release=$(helm install wiki dev/helm \
   --dry-run=client \
   --namespace wiki-access \
   --set ingress.enabled=false \
   --set "$HELM_PASSWORD_VALUE")
-expected_port_forward='kubectl --namespace wiki-access port-forward service/wiki-tsfranki 8080:80'
+expected_port_forward='kubectl --namespace wiki-access port-forward service/wiki-tsepistle 8080:80'
 rendered_port_forward=
 while IFS= read -r line; do
   line="${line#"${line%%[![:space:]]*}"}"

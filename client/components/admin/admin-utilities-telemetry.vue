@@ -14,7 +14,7 @@
           v-list-item
             template(v-slot:prepend)
               v-avatar: v-icon mdi-information-outline
-            v-list-item-title.text-body-medium Installed tsFranki version
+            v-list-item-title.text-body-medium Installed tsEpistle version
             v-list-item-subtitle.text-body-small: em e.g. v0.1.0
           v-list-item
             template(v-slot:prepend)
@@ -62,7 +62,7 @@
             v-model='telemetry',
             label='Enable Telemetry',
             color='primary',
-            hint='Allow tsFranki to transmit telemetry data to the configured GraphQL endpoint.',
+            hint='Allow tsEpistle to transmit telemetry data to the configured GraphQL endpoint.',
             persistent-hint
             :disabled='!loaded || loading'
           )

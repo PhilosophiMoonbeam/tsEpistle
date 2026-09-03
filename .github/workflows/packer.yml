@@ -15,7 +15,7 @@ on:
 jobs:
   build-do-image:
     name: Build DigitalOcean Image
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     permissions:
       attestations: read
       contents: read
@@ -58,10 +58,12 @@ jobs:
           and (.containerImage.reference == ("ghcr.io/philosophimoonbeam/wiki@" + .containerImage.digest))
         ' "$manifest" >/dev/null
 
-        echo "application_image=$(jq -er '.containerImage.reference' "$manifest")" >> "$GITHUB_OUTPUT"
-        echo "application_digest=$(jq -er '.containerImage.digest' "$manifest")" >> "$GITHUB_OUTPUT"
-        echo "source_revision=$(jq -er '.release.revision' "$manifest")" >> "$GITHUB_OUTPUT"
-        echo "release_version=$(jq -er '.product.version' "$manifest")" >> "$GITHUB_OUTPUT"
+        {
+          echo "application_image=$(jq -er '.containerImage.reference' "$manifest")"
+          echo "application_digest=$(jq -er '.containerImage.digest' "$manifest")"
+          echo "source_revision=$(jq -er '.release.revision' "$manifest")"
+          echo "release_version=$(jq -er '.product.version' "$manifest")"
+        } >> "$GITHUB_OUTPUT"
 
     - name: Resolve Immutable Runtime Inputs
       id: runtime

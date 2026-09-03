@@ -38,7 +38,7 @@ const wiki = WIKI as unknown as WikiContext
 const letsencrypt: LetsEncryptService = {
   apiDirectory: wiki.dev ? 'https://acme-staging-v02.api.letsencrypt.org/directory' : 'https://acme-v02.api.letsencrypt.org/directory',
   acme: null,
-  async init () {
+  async init() {
     if (!wiki.config.letsencrypt.payload) {
       await this.requestCertificate()
     } else if (wiki.config.letsencrypt.domain !== wiki.config.ssl.domain) {
@@ -61,12 +61,12 @@ const letsencrypt: LetsEncryptService = {
     wiki.config.ssl.passphrase = null
     wiki.config.ssl.dhparam = null
   },
-  async requestCertificate () {
+  async requestCertificate() {
     try {
       wiki.logger.info(`(LETSENCRYPT) Initializing Let's Encrypt client...`)
       const acme = ACME.create({
         maintainerEmail: wiki.config.maintainerEmail,
-        packageAgent: `tsfranki/${wiki.version}`,
+        packageAgent: `tsepistle/${wiki.version}`,
         notify: (ev, msg) => {
           if (_.includes(['warning', 'error'], ev)) {
             wiki.logger.warn(`${ev}: ${String(msg)}`)
@@ -135,18 +135,18 @@ const letsencrypt: LetsEncryptService = {
         domains,
         challenges: {
           'http-01': {
-            init () {},
-            set (data) {
+            init() {},
+            set(data) {
               wiki.logger.info(`(LETSENCRYPT) Setting HTTP challenge for ${data.challenge.hostname}: [ READY ]`)
               wiki.config.letsencrypt.challenge = data.challenge
               wiki.logger.info(`(LETSENCRYPT) Waiting for challenge to complete...`)
               return null // <- this is needed, cannot be undefined
             },
-            get (data) {
+            get(data) {
               void data
               return wiki.config.letsencrypt.challenge
             },
-            async remove (data) {
+            async remove(data) {
               void data
               wiki.logger.info(`(LETSENCRYPT) Removing HTTP challenge: [ OK ]`)
               wiki.config.letsencrypt.challenge = null

@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 
-const tokenSecretKey = Symbol.for('tsfranki.diagram-prefetch-token-secret')
+const tokenSecretKey = Symbol.for('tsepistle.diagram-prefetch-token-secret')
 const existingTokenSecret: unknown = Reflect.get(globalThis, tokenSecretKey)
 const tokenSecret = Buffer.isBuffer(existingTokenSecret) ? existingTokenSecret : randomBytes(32)
 if (!Buffer.isBuffer(existingTokenSecret)) Reflect.set(globalThis, tokenSecretKey, tokenSecret)

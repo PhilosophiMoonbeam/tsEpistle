@@ -1,6 +1,6 @@
-tsFranki
+tsEpistle
 
-tsFranki is an independent community fork derived from Wiki.js 2.5.314.
+tsEpistle is an independent community fork derived from Wiki.js 2.5.314.
 It is not an official Wiki.js release and is not produced or endorsed by
 Nicolas Giard or Requarks.
 
@@ -11,5 +11,5 @@ and its contributors; their notices and credits are preserved in this source
 repository.
 
 The complete work is licensed under the GNU Affero General Public License,
-version 3, as provided in LICENSE. A running tsFranki instance exposes
+version 3, as provided in LICENSE. A running tsEpistle instance exposes
 a revision-specific Source Code link for the exact deployed build.

@@ -1,6 +1,6 @@
 # External REST API versioning
 
-tsFranki exposes its supported external REST API under `/api/v1`. The live OpenAPI 3.1 contract is available without authentication at `/api/v1/openapi.json`.
+tsEpistle exposes its supported external REST API under `/api/v1`. The live OpenAPI 3.1 contract is available without authentication at `/api/v1/openapi.json`.
 
 ## Supported v1 surface
 

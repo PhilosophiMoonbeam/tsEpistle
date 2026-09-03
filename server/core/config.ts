@@ -84,9 +84,9 @@ function isAppConfig(value: unknown): value is AppConfig {
 function isAppData(value: unknown): value is AppData {
   return isRecord(value) && isRecord(value.defaults) && isAppConfig(value.defaults.config)
 }
-const LEGACY_PRODUCT_TITLES = new Set(['Wiki.js', 'Wiki.ts Preview'])
-const LEGACY_PRODUCT_LOGOS = new Set(['https://static.requarks.io/logo/wikijs-butterfly.svg', '/_assets/svg/logo-wikijs.svg'])
-const DEFAULT_PRODUCT_LOGO = '/_assets/svg/icon-tsfranki.svg'
+const LEGACY_PRODUCT_TITLES = new Set(['Wiki.js', 'Wiki.ts Preview', 'tsFranki'])
+const LEGACY_PRODUCT_LOGOS = new Set(['https://static.requarks.io/logo/wikijs-butterfly.svg', '/_assets/svg/logo-wikijs.svg', '/_assets/svg/icon-tsfranki.svg'])
+const DEFAULT_PRODUCT_LOGO = '/_assets/svg/icon-tsepistle.svg'
 
 export function normalizeLegacyProductDefaults(config: Record<string, unknown>, productName: string): string[] {
   const changed: string[] = []

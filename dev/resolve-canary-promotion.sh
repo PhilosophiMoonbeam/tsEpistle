@@ -24,11 +24,11 @@ done
 pointer_reference="${promotion_repository}:canary-set"
 
 pointer_manifest="$(docker buildx imagetools inspect "$pointer_reference" --raw)"
-revision="$(jq -er '.annotations["io.tsfranki.canary-promotion.main-sha"]' <<<"$pointer_manifest")"
-application_amd64="$(jq -er '.annotations["io.tsfranki.canary-promotion.application-amd64"]' <<<"$pointer_manifest")"
-application_arm64="$(jq -er '.annotations["io.tsfranki.canary-promotion.application-arm64"]' <<<"$pointer_manifest")"
-agent_browser_amd64="$(jq -er '.annotations["io.tsfranki.canary-promotion.agent-browser-amd64"]' <<<"$pointer_manifest")"
-agent_browser_arm64="$(jq -er '.annotations["io.tsfranki.canary-promotion.agent-browser-arm64"]' <<<"$pointer_manifest")"
+revision="$(jq -er '.annotations["io.tsepistle.canary-promotion.main-sha"]' <<<"$pointer_manifest")"
+application_amd64="$(jq -er '.annotations["io.tsepistle.canary-promotion.application-amd64"]' <<<"$pointer_manifest")"
+application_arm64="$(jq -er '.annotations["io.tsepistle.canary-promotion.application-arm64"]' <<<"$pointer_manifest")"
+agent_browser_amd64="$(jq -er '.annotations["io.tsepistle.canary-promotion.agent-browser-amd64"]' <<<"$pointer_manifest")"
+agent_browser_arm64="$(jq -er '.annotations["io.tsepistle.canary-promotion.agent-browser-arm64"]' <<<"$pointer_manifest")"
 
 jq -e \
   --arg revision "$revision" \
@@ -38,7 +38,7 @@ jq -e \
   --arg agent_browser_arm64 "$agent_browser_arm64" \
   --arg application_repository "$application_repository" \
   --arg agent_browser_repository "$agent_browser_repository" '
-    (.annotations["io.tsfranki.canary-promotion.schema-version"] == "1")
+    (.annotations["io.tsepistle.canary-promotion.schema-version"] == "1")
     and ($revision | test("^[0-9a-f]{40}$"))
     and (.annotations["org.opencontainers.image.revision"] == $revision)
     and ($application_amd64 | startswith($application_repository + "@sha256:"))

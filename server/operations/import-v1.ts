@@ -35,7 +35,9 @@ interface ReusableGroup {
   hash: string
 }
 
-interface GroupRecord { id: number }
+interface GroupRecord {
+  id: number
+}
 interface GroupQuery {
   insert(data: Record<string, unknown>): Promise<GroupRecord>
 }
@@ -43,7 +45,7 @@ interface GroupQuery {
 interface WikiImportOperations {
   version: string
   auth: { reloadGroups(): Promise<unknown> }
-  data: { groups: { defaultPermissions: unknown, defaultPageRules: unknown } }
+  data: { groups: { defaultPermissions: unknown; defaultPageRules: unknown } }
   events: { outbound: { emit(event: string): void } }
   logger: { warn(message: unknown): void }
   models: {
@@ -69,18 +71,34 @@ interface ImportUsersInput {
 
 const wiki = WIKI as unknown as WikiImportOperations
 
-const buildPageRules = (rights: readonly LegacyRight[]) => rights.map(rule => ({
-  id: nanoid(),
-  roles: rule.role === 'write' ?
-    ['read:pages', 'read:assets', 'read:comments', 'write:comments', 'write:pages', 'manage:pages', 'read:source', 'read:history', 'write:assets', 'manage:assets'] :
-    ['read:pages', 'read:assets', 'read:comments', 'write:comments'],
-  match: rule.exact ? 'EXACT' : 'START',
-  deny: rule.deny,
-  path: rule.path.indexOf('/') === 0 ? rule.path.substring(1) : rule.path,
-  locales: [] as string[]
-}))
+const buildPageRules = (rights: readonly LegacyRight[]) =>
+  rights.map(rule => ({
+    id: nanoid(),
+    roles:
+      rule.role === 'write'
+        ? [
+            'read:pages',
+            'read:assets',
+            'read:comments',
+            'write:comments',
+            'write:pages',
+            'manage:pages',
+            'read:source',
+            'read:history',
+            'write:assets',
+            'manage:assets'
+          ]
+        : ['read:pages', 'read:assets', 'read:comments', 'write:comments'],
+    match: rule.exact ? 'EXACT' : 'START',
+    deny: rule.deny,
+    path: rule.path.indexOf('/') === 0 ? rule.path.substring(1) : rule.path,
+    locales: [] as string[]
+  }))
 
-const importUsers = async ({ mongoDbConnString: connectionValue, groupMode: groupModeValue }: ImportUsersInput): Promise<{
+const importUsers = async ({
+  mongoDbConnString: connectionValue,
+  groupMode: groupModeValue
+}: ImportUsersInput): Promise<{
   usersCount: number
   groupsCount: number
   failed: ImportFailure[]
@@ -93,9 +111,12 @@ const importUsers = async ({ mongoDbConnString: connectionValue, groupMode: grou
   }
   const mongoDbConnString = connectionValue
   const groupMode = groupModeValue
-  const client = await MongoClient.connect(mongoDbConnString, { appName: `tsFranki Wiki.js 1.x Migration Tool ${wiki.version}` })
+  const client = await MongoClient.connect(mongoDbConnString, { appName: `tsEpistle Wiki.js 1.x Migration Tool ${wiki.version}` })
   try {
-    const cursor = client.db().collection<LegacyUser>('users').find({ email: { '$ne': 'guest' } })
+    const cursor = client
+      .db()
+      .collection<LegacyUser>('users')
+      .find({ email: { $ne: 'guest' } })
     const timestamp = new Date().toISOString()
     const failed: ImportFailure[] = []
     let usersCount = 0
@@ -121,7 +142,10 @@ const importUsers = async ({ mongoDbConnString: connectionValue, groupMode: grou
         if (_.some(user.rights, ['role', 'admin'])) {
           userGroups.push(1)
         } else {
-          const rights = _.sortBy(_.map(user.rights, rule => _.pick(rule, ['role', 'path', 'exact', 'deny'])), ['role', 'path', 'exact', 'deny'])
+          const rights = _.sortBy(
+            _.map(user.rights, rule => _.pick(rule, ['role', 'path', 'exact', 'deny'])),
+            ['role', 'path', 'exact', 'deny']
+          )
           const hash = crypto.createHash('sha1').update(JSON.stringify(rights)).digest('base64')
           const existing = _.find(reusableGroups, ['hash', hash])
           if (existing) {

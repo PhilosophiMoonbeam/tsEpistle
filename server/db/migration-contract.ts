@@ -1,6 +1,22 @@
 const SOURCE_EXTENSION = '.ts'
 const LEDGER_EXTENSION = '.js'
-const TSFRANKI_MIGRATION_PATTERN = /^tsfranki-(\d{6})-[a-z0-9]+(?:-[a-z0-9]+)*$/
+const DEPLOYED_NAMESPACE_PATTERN = /^tsfranki-(\d{6})-[a-z0-9]+(?:-[a-z0-9]+)*$/
+const CURRENT_NAMESPACE_PATTERN = /^tsepistle-(\d{6})-[a-z0-9]+(?:-[a-z0-9]+)*$/
+const DEPLOYED_NAMESPACE_END_SEQUENCE = 12
+const CURRENT_NAMESPACE_START_SEQUENCE = DEPLOYED_NAMESPACE_END_SEQUENCE + 1
+interface NamespacedMigration {
+  id: string
+  namespace: 'deployed' | 'current'
+  sequence: number
+}
+
+const parseNamespacedMigrationId = (id: string): NamespacedMigration | null => {
+  const deployedMatch = DEPLOYED_NAMESPACE_PATTERN.exec(id)
+  if (deployedMatch) return { id, namespace: 'deployed', sequence: Number(deployedMatch[1]) }
+  const currentMatch = CURRENT_NAMESPACE_PATTERN.exec(id)
+  if (currentMatch) return { id, namespace: 'current', sequence: Number(currentMatch[1]) }
+  return null
+}
 
 export const LEGACY_MIGRATION_IDS = Object.freeze([
   '2.0.0',
@@ -71,8 +87,15 @@ export const migrationLedgerName = (id: string): string => `${id}${LEDGER_EXTENS
 
 export const isLegacyForkMigrationName = (name: string): boolean => legacyForkMigrationNames[name] === true
 
-export const isTsfrankiMigrationName = (name: string): boolean =>
-  name.endsWith(LEDGER_EXTENSION) && TSFRANKI_MIGRATION_PATTERN.test(name.slice(0, -LEDGER_EXTENSION.length))
+export const isNamespacedMigrationName = (name: string): boolean => {
+  if (!name.endsWith(LEDGER_EXTENSION)) return false
+  const migration = parseNamespacedMigrationId(name.slice(0, -LEDGER_EXTENSION.length))
+  if (!migration) return false
+  if (migration.namespace === 'deployed') {
+    return migration.sequence >= 1 && migration.sequence <= DEPLOYED_NAMESPACE_END_SEQUENCE
+  }
+  return migration.sequence >= CURRENT_NAMESPACE_START_SEQUENCE
+}
 
 export const orderMigrationFiles = (files: readonly string[]): string[] => {
   const ids = files.map(file => {
@@ -87,26 +110,44 @@ export const orderMigrationFiles = (files: readonly string[]): string[] => {
     throw new Error(`Migration source is missing immutable legacy migrations: ${missingLegacy.join(', ')}`)
   }
 
-  const forkMigrations: Array<{ id: string; sequence: number }> = []
+  const namespacedMigrations: NamespacedMigration[] = []
+  const namespacedSequences = new Set<number>()
   for (const id of ids) {
     if (legacyMigrationIds[id] === true) continue
-    const match = TSFRANKI_MIGRATION_PATTERN.exec(id)
-    const sequence = match ? Number(match[1]) : null
-    if (sequence === null) {
-      throw new Error(`Unsupported migration identifier ${id}. Legacy migration history is frozen; new migrations must use tsfranki-NNNNNN-description.`)
+    const migration = parseNamespacedMigrationId(id)
+    if (!migration) {
+      throw new Error(
+        `Unsupported migration identifier ${id}. Legacy migration history is frozen; new migrations must use tsepistle-NNNNNN-description beginning at 000013.`
+      )
     }
-    forkMigrations.push({ id, sequence })
+
+    const { namespace: namespaceKind, sequence } = migration
+    if (namespaceKind === 'deployed' && sequence > DEPLOYED_NAMESPACE_END_SEQUENCE) {
+      throw new Error(
+        `Historical migration namespace tsfranki is closed after 000012; sequence ${String(sequence).padStart(6, '0')} must use tsepistle-NNNNNN-description.`
+      )
+    }
+    if (namespaceKind === 'current' && sequence < CURRENT_NAMESPACE_START_SEQUENCE) {
+      throw new Error(
+        `Current migration namespace tsepistle begins at 000013; sequence ${String(sequence).padStart(6, '0')} must retain its deployed tsfranki filename.`
+      )
+    }
+    if (namespacedSequences.has(sequence)) {
+      throw new Error(`Migration source contains duplicate namespaced sequence ${String(sequence).padStart(6, '0')}`)
+    }
+    namespacedSequences.add(sequence)
+    namespacedMigrations.push(migration)
   }
 
-  forkMigrations.sort((left, right) => left.sequence - right.sequence)
-  for (const [index, migration] of forkMigrations.entries()) {
+  namespacedMigrations.sort((left, right) => left.sequence - right.sequence)
+  for (const [index, migration] of namespacedMigrations.entries()) {
     const expected = index + 1
     if (migration.sequence !== expected) {
       throw new Error(
-        `tsFranki migration sequence must be contiguous from 000001; expected ${String(expected).padStart(6, '0')}, found ${String(migration.sequence).padStart(6, '0')}`
+        `tsEpistle migration sequence must be contiguous from 000001 across the historical tsfranki and current tsepistle namespaces; expected ${String(expected).padStart(6, '0')}, found ${String(migration.sequence).padStart(6, '0')}`
       )
     }
   }
 
-  return [...LEGACY_MIGRATION_IDS, ...forkMigrations.map(migration => migration.id)]
+  return [...LEGACY_MIGRATION_IDS, ...namespacedMigrations.map(migration => migration.id)]
 }

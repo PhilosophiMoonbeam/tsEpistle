@@ -1,8 +1,8 @@
 key: local
 title: Local Database
-description: Built-in authentication for tsFranki
-author: tsFranki contributors
-logo: /_assets/svg/icon-tsfranki.svg
+description: Built-in authentication for tsEpistle
+author: tsEpistle contributors
+logo: /_assets/svg/icon-tsepistle.svg
 color: primary
 website: https://github.com/PhilosophiMoonbeam/wiki
 isAvailable: true

@@ -54,8 +54,8 @@ LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
       org.opencontainers.image.source="${WIKI_SOURCE_REPOSITORY}" \
       org.opencontainers.image.title="${WIKI_PRODUCT_NAME}" \
       org.opencontainers.image.version="${WIKI_PRODUCT_VERSION}" \
-      io.tsfranki.image.architecture="${TARGETARCH}" \
-      io.tsfranki.upstream-base="${WIKI_UPSTREAM_BASE}"
+      io.tsepistle.image.architecture="${TARGETARCH}" \
+      io.tsepistle.upstream-base="${WIKI_UPSTREAM_BASE}"
 ENV NODE_ENV=production
 
 RUN apk add --no-cache bash curl git openssh gnupg && \

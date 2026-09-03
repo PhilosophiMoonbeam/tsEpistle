@@ -1,5 +1,5 @@
 #######################################################################
-# tsFranki configuration                                       #
+# tsEpistle configuration                                       #
 #######################################################################
 # Release and deployment guidance: https://github.com/PhilosophiMoonbeam/wiki#install-and-operate
 
@@ -51,7 +51,7 @@ db:
 # A reverse proxy is also the client-identity boundary for per-IP controls.
 # The Administration → Security "Trust X-Forwarded-* Proxy Headers" setting
 # is boolean: enabling it trusts exactly one direct proxy hop, not an arbitrary
-# proxy chain. Enable it only when every request reaches tsFranki through that
+# proxy chain. Enable it only when every request reaches tsEpistle through that
 # one proxy, the proxy replaces or sanitizes forwarded headers, and this
 # application port is not directly reachable. Leave it disabled for direct or
 # multi-proxy deployments.

@@ -1,8 +1,8 @@
 apiVersion: v2
-name: tsfranki
+name: tsepistle
 version: '0.1.0-alpha.1'
 appVersion: '0.1.0-alpha.1'
-description: tsFranki, an independent community fork of Wiki.js.
+description: tsEpistle, an independent community fork of Wiki.js.
 keywords:
   - wiki
   - documentation
@@ -12,6 +12,6 @@ keywords:
   - editor
 type: application
 home: https://github.com/PhilosophiMoonbeam/wiki
-icon: https://raw.githubusercontent.com/PhilosophiMoonbeam/wiki/main/client/static/svg/icon-tsfranki.svg
+icon: https://raw.githubusercontent.com/PhilosophiMoonbeam/wiki/main/client/static/svg/icon-tsepistle.svg
 sources:
   - https://github.com/PhilosophiMoonbeam/wiki

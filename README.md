@@ -1,6 +1,6 @@
 <div align="center">
 
-# tsFranki
+# tsEpistle
 
 [![Release](https://img.shields.io/github/v/release/PhilosophiMoonbeam/wiki?include_prereleases&label=preview)](https://github.com/PhilosophiMoonbeam/wiki/releases)
 [![License](https://img.shields.io/badge/license-AGPLv3-blue.svg)](LICENSE)
@@ -10,7 +10,7 @@
 
 </div>
 
-tsFranki is an experimental, long-lived community fork of [Wiki.js](https://github.com/Requarks/wiki). It is not an official Wiki.js release and is not produced or endorsed by Nicolas Giard or Requarks.
+tsEpistle is an experimental, long-lived community fork of [Wiki.js](https://github.com/Requarks/wiki). It is not an official Wiki.js release and is not produced or endorsed by Nicolas Giard or Requarks.
 
 - **Preview version:** `0.1.0-alpha.1`
 - **Upstream base:** Wiki.js `2.5.314`
@@ -21,27 +21,27 @@ The running application exposes its exact Git revision and a **Source Code** lin
 
 ## Release status
 
-No supported tsFranki release has been published yet. Do not treat `main`, a canary image, or a locally built image as a production release. The first external release is gated on the repository's full CI matrix, upgrade/restore canaries, and an independent security review.
+No supported tsEpistle release has been published yet. Do not treat `main`, a canary image, or a locally built image as a production release. The first external release is gated on the repository's full CI matrix, upgrade/restore canaries, and an independent security review.
 
 When a release is published:
 
 1. use an immutable version tag or image digest, never `main` or `canary`;
 2. verify the release attestation, then verify the attached archives, Helm chart, SBOM, production dependency license inventory, and `release-manifest.json` against `SHA256SUMS`;
-3. back up both the tsFranki data directory and database before every upgrade;
+3. back up both the tsEpistle data directory and database before every upgrade;
 4. test the upgrade against a restored copy of production data;
 5. roll back by restoring both the pre-upgrade database and data-directory snapshots—database migrations are not guaranteed to be reversible.
 
-tsFranki supports PostgreSQL 15, 16, 17, and 18 and requires a current minor release within one of those major lines. Startup rejects older and newer major versions before running application migrations. The only supported upstream database upgrade source is exactly Wiki.js 2.5.314. Release CI performs fresh-install and retained Wiki.js 2.5.314 PostgreSQL upgrade checks on every supported major. Other database engines are unsupported; no cross-engine converter is shipped. Older Wiki.js or tsFranki database sources are unsupported unless a later release explicitly adds a retained upgrade fixture. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
+tsEpistle supports PostgreSQL 15, 16, 17, and 18 and requires a current minor release within one of those major lines. Startup rejects older and newer major versions before running application migrations. The only supported upstream database upgrade source is exactly Wiki.js 2.5.314. Release CI performs fresh-install and retained Wiki.js 2.5.314 PostgreSQL upgrade checks on every supported major. Other database engines are unsupported; no cross-engine converter is shipped. Older Wiki.js or tsEpistle database sources are unsupported unless a later release explicitly adds a retained upgrade fixture. Deployment-specific identity providers, object storage, search engines, mail, proxies, and multi-instance topologies still require an operator canary. Kubernetes users should start with the [fork Helm chart](dev/helm/README.md).
 
 ### Verify release provenance
 
-Every published release includes `release-manifest.json`, `SHA256SUMS`, and `tsfranki-release.intoto.jsonl`. The manifest binds the exact source revision, immutable multi-platform image digest, and release artifact hashes. GitHub Actions signs the listed artifacts with keyless Sigstore attestations and pushes provenance plus the SPDX SBOM attestation for the image digest.
+Every published release includes `release-manifest.json`, `SHA256SUMS`, and `tsepistle-release.intoto.jsonl`. The manifest binds the exact source revision, immutable multi-platform image digest, and release artifact hashes. GitHub Actions signs the listed artifacts with keyless Sigstore attestations and pushes provenance plus the SPDX SBOM attestation for the image digest.
 
 ```console
-gh attestation verify tsfranki-linux.tar.gz \
+gh attestation verify tsepistle-linux.tar.gz \
   --repo PhilosophiMoonbeam/wiki \
   --signer-workflow PhilosophiMoonbeam/wiki/.github/workflows/build.yml \
-  --bundle tsfranki-release.intoto.jsonl
+  --bundle tsepistle-release.intoto.jsonl
 sha256sum --check SHA256SUMS
 gh attestation verify "oci://ghcr.io/philosophimoonbeam/wiki@IMAGE_DIGEST" \
   --repo PhilosophiMoonbeam/wiki \
@@ -69,7 +69,7 @@ Kubernetes installation, upgrade, backup, rollback, and restore procedures are i
 
 ### Backup and rollback contract
 
-Stop every tsFranki instance before restoring. Restore the database and `/wiki/data` from the same pre-upgrade point, then start the exact previous application image digest. Never run an older application against a database migrated by a newer release.
+Stop every tsEpistle instance before restoring. Restore the database and `/wiki/data` from the same pre-upgrade point, then start the exact previous application image digest. Never run an older application against a database migrated by a newer release.
 
 PostgreSQL backups use `pg_dump --format=custom`; restore by recreating the database and running `pg_restore`. The `upgrade` CI matrix verifies the retained Wiki.js 2.5.314 fixture checksum, upgrades it on PostgreSQL 15 through 18, writes post-upgrade database and volume sentinels, restores both pre-upgrade snapshots, boots the old image, authenticates the original administrator, and rejects retained post-upgrade state. Treat that matrix as a compatibility canary, not as a substitute for testing a restored copy of production data.
 
@@ -112,7 +112,7 @@ Vite startup provisions the same-origin static and lazy Prism assets used by the
 
 `bun run ci` is the local quality contract: dependency and license policy, Biome lint, all three TypeScript boundaries, OpenAPI and release-input checks, Bun's native test runner, and the production Vite build. `bun run format` applies the repository's Biome formatter. Biome owns JavaScript and TypeScript linting; Vue and Pug correctness remains covered by `vue-tsc`, Vite compilation, and browser tests.
 
-GitHub is the orchestration and reporting plane, not the compute plane. Every workflow targets one Linux x64 self-hosted runner carrying the custom `tsfranki-ci` label. The runner must provide the pinned Bun version, Git, Docker with Buildx/QEMU, and enough local capacity for the PostgreSQL, Playwright, upgrade, and Kubernetes jobs. GitHub receives the normal per-job checks, logs, artifacts, attestations, and release gates from that local runner.
+GitHub is the orchestration and reporting plane, not the compute plane. Every workflow targets one Linux x64 self-hosted runner carrying the custom `tsepistle-ci` label. The runner must provide the pinned Bun version, Git, Docker with Buildx/QEMU, and enough local capacity for the PostgreSQL, Playwright, upgrade, and Kubernetes jobs. GitHub receives the normal per-job checks, logs, artifacts, attestations, and release gates from that local runner.
 
 The full functional, accessibility, responsive, and performance browser suite runs once against PostgreSQL 18. Database migration and retained-upgrade jobs cover every supported PostgreSQL major independently; duplicating database-agnostic browser workflows across that matrix only increases local-runner contention and flake surface.
 
@@ -120,7 +120,7 @@ Because this repository is public, untrusted pull-request code is never executed
 
 ## Branch model
 
-- [`main`](https://github.com/PhilosophiMoonbeam/wiki/tree/main) is the authoritative tsFranki product branch. Releases and deployments originate from it.
+- [`main`](https://github.com/PhilosophiMoonbeam/wiki/tree/main) is the authoritative tsEpistle product branch. Releases and deployments originate from it.
 - [`upstream-main`](https://github.com/PhilosophiMoonbeam/wiki/tree/upstream-main) is a read-only mirror of `requarks/wiki:main`; fork-specific commits do not land there.
 - Upstream updates are merged into a short-lived integration branch, adapted and verified there, then submitted to `main`. Product history is not rebased onto upstream.
 
@@ -131,7 +131,7 @@ This fork was materially modified on 2026-08-13. The modification notice does no
 
 Wiki.js was created by Nicolas Giard and developed by Requarks and its contributors. Their copyright, contributor credits, trademarks, and historical notices are preserved. See the [upstream project](https://github.com/Requarks/wiki) for official Wiki.js releases and documentation.
 
-tsFranki remains licensed under the [GNU Affero General Public License version 3](LICENSE). Anyone interacting with a deployed modified version over a network must be offered the complete Corresponding Source for that exact version. Release source archives and the revision-specific source link include the build scripts, patches, lockfile, Dockerfiles, and other tracked build inputs.
+tsEpistle remains licensed under the [GNU Affero General Public License version 3](LICENSE). Anyone interacting with a deployed modified version over a network must be offered the complete Corresponding Source for that exact version. Release source archives and the revision-specific source link include the build scripts, patches, lockfile, Dockerfiles, and other tracked build inputs.
 
 ## Upstream project credits and funding
 

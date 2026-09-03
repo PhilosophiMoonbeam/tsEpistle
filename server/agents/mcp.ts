@@ -97,20 +97,22 @@ const permissionsFor = (principal: Express.User): readonly string[] => {
 const groupIdsFor = (principal: Express.User, fallback: number): readonly number[] => {
   const groups = Reflect.get(principal, 'groups')
   const values = Array.isArray(groups) ? groups : [fallback]
-  return [...new Set(values.flatMap(value => {
-    if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? [value] : []
-    if (typeof value === 'object' && value !== null) {
-      const id = Reflect.get(value, 'id')
-      return typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? [id] : []
-    }
-    return []
-  }))].sort((left, right) => left - right)
+  return [
+    ...new Set(
+      values.flatMap(value => {
+        if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? [value] : []
+        if (typeof value === 'object' && value !== null) {
+          const id = Reflect.get(value, 'id')
+          return typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? [id] : []
+        }
+        return []
+      })
+    )
+  ].sort((left, right) => left - right)
 }
 
 const textResult = (value: unknown): { content: [{ type: 'text'; text: string }]; structuredContent: Record<string, unknown> } => {
-  const structuredContent = typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : { result: value }
+  const structuredContent = typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : { result: value }
   const encoded = JSON.stringify(structuredContent)
   return {
     content: [{ type: 'text', text: encoded.length <= 64_000 ? encoded : `${encoded.slice(0, 63_980)}…[truncated]` }],
@@ -198,15 +200,28 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
     return dependencies.resolvePrincipal(authority.requester.apiKeyId, authority.requester.groupId)
   }
   const knowledge = new PageKnowledgeRepository(dependencies.knex)
-  registerPageReadActions(kernel, { operations: dependencies.operations, resolveRequester, snapshotSigningSecret: dependencies.config.snapshotSigningSecret, knowledge })
-  registerPageProposalActions(kernel, { knex: dependencies.knex, operations: dependencies.operations, resolveRequester, resolveApprover: dependencies.resolveUser, snapshotSigningSecret: dependencies.config.snapshotSigningSecret })
+  registerPageReadActions(kernel, {
+    operations: dependencies.operations,
+    resolveRequester,
+    snapshotSigningSecret: dependencies.config.snapshotSigningSecret,
+    knowledge
+  })
+  registerPageProposalActions(kernel, {
+    knex: dependencies.knex,
+    operations: dependencies.operations,
+    resolveRequester,
+    resolveApprover: dependencies.resolveUser,
+    snapshotSigningSecret: dependencies.config.snapshotSigningSecret
+  })
   registerSkillReadActions(kernel, skillRuntime)
 
-  const codecs = dependencies.config.requestStateKeys.map(key => createRequestStateCodec<McpApprovalState>({
-    key,
-    ttlSeconds: 600,
-    bind: context => `${context.mcpReq.method}\0${context.http?.authInfo?.clientId ?? ''}`
-  }))
+  const codecs = dependencies.config.requestStateKeys.map(key =>
+    createRequestStateCodec<McpApprovalState>({
+      key,
+      ttlSeconds: 600,
+      bind: context => `${context.mcpReq.method}\0${context.http?.authInfo?.clientId ?? ''}`
+    })
+  )
   const verifyState = async (state: string, context: ServerContext): Promise<McpApprovalState> => {
     let failure: unknown
     for (const codec of codecs) {
@@ -219,7 +234,9 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
     throw failure instanceof Error ? failure : new Error('mac')
   }
 
-  const admissionFor = async (authInfo: AuthInfo | undefined): Promise<{ auth: NonNullable<Express.Request['authContext']>; snapshot: ActionAdmissionSnapshot }> => {
+  const admissionFor = async (
+    authInfo: AuthInfo | undefined
+  ): Promise<{ auth: NonNullable<Express.Request['authContext']>; snapshot: ActionAdmissionSnapshot }> => {
     const identity = identityFrom(authInfo)
     const principal = await dependencies.resolvePrincipal(identity.apiKeyId, identity.groupId)
     const permissions = permissionsFor(principal)
@@ -239,192 +256,231 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
     }
   }
 
-  const handler = createMcpHandler(async requestContext => {
-    const initial = await admissionFor(requestContext.authInfo)
-    const offered = kernel.offer(initial.auth, initial.snapshot, randomUUID())
-    const offeredNames = new Set(offered.map(action => action.definition.descriptor.name))
-    const server = new McpServer({ name: 'tsFranki', version: '1.0.0' }, {
-      requestState: { verify: verifyState },
-      cacheHints: {
-        'tools/list': { ttlMs: 0, cacheScope: 'private' },
-        'resources/list': { ttlMs: 0, cacheScope: 'private' },
-        'resources/templates/list': { ttlMs: 0, cacheScope: 'private' },
-        'resources/read': { ttlMs: 0, cacheScope: 'private' }
-      }
-    })
+  const handler = createMcpHandler(
+    async requestContext => {
+      const initial = await admissionFor(requestContext.authInfo)
+      const offered = kernel.offer(initial.auth, initial.snapshot, randomUUID())
+      const offeredNames = new Set(offered.map(action => action.definition.descriptor.name))
+      const server = new McpServer(
+        { name: 'tsEpistle', version: '1.0.0' },
+        {
+          requestState: { verify: verifyState },
+          cacheHints: {
+            'tools/list': { ttlMs: 0, cacheScope: 'private' },
+            'resources/list': { ttlMs: 0, cacheScope: 'private' },
+            'resources/templates/list': { ttlMs: 0, cacheScope: 'private' },
+            'resources/read': { ttlMs: 0, cacheScope: 'private' }
+          }
+        }
+      )
 
-    for (const [actionNameValue] of Object.entries(AGENT_TOOL_NAMES)) {
-      const actionName = actionNameValue as AgentActionName
-      if (!offeredNames.has(actionName)) continue
-      if (requestContext.era === 'legacy' && actionName === 'pages.applyProposal') continue
-      const descriptor = toMcpAction(ACTION_CATALOG[actionName])
-      server.registerTool(descriptor.name, {
-        title: descriptor.title,
-        description: descriptor.description,
-        inputSchema: toolInputSchema(actionName),
-        annotations: descriptor.annotations
-      }, async (input: unknown, context: ServerContext) => {
-        try {
-          const identity = identityFrom(context.http?.authInfo)
-          if (actionName === 'pages.applyProposal') {
-            const applyInput = ACTION_CATALOG['pages.applyProposal'].input.parse(input)
-            const persisted = await getMcpProposal(dependencies.knex, identity.apiKeyId, applyInput.proposalId)
-            if (persisted.approval.id !== applyInput.approvalId) throw new ActionKernelError('APPROVAL_MISMATCH', 'Approval does not belong to the proposal', 409)
-            const state = context.mcpReq.requestState<McpApprovalState>()
-            if (state) {
-              if (state.proposalId !== persisted.proposal.id || state.inputHash !== persisted.proposal.inputHash || state.requesterApiKeyId !== identity.apiKeyId || state.expiresAt !== new Date(persisted.proposal.expiresAt).toISOString()) {
-                throw new ActionKernelError('INVALID_REQUEST_STATE', 'Approval request state no longer matches the proposal', 409)
-              }
-              const response = acceptedContent(context.mcpReq.inputResponses, 'approval', ApprovalResponseSchema)
-              if (response?.acknowledge === false) return textResult({ proposalId: persisted.proposal.id, status: 'declined', applied: false })
-            }
-            if (persisted.proposal.status === 'denied' || persisted.approval.status === 'denied') return textResult({ proposalId: persisted.proposal.id, status: 'denied', applied: false })
-            if (persisted.proposal.status === 'expired' || persisted.approval.status === 'expired') return textResult({ proposalId: persisted.proposal.id, status: 'expired', applied: false })
-            if (persisted.proposal.status !== 'approved' || persisted.approval.status !== 'approved') {
-              const requestState = await codecs[0]!.mint({
-                proposalId: persisted.proposal.id,
-                inputHash: persisted.proposal.inputHash,
-                requesterApiKeyId: identity.apiKeyId,
-                expiresAt: new Date(persisted.proposal.expiresAt).toISOString()
-              }, context)
-              const approvalUrl = new URL('/', dependencies.config.wikiPublicOrigin)
-              approvalUrl.searchParams.set('agentApproval', persisted.proposal.id)
-              return inputRequired({
-                requestState,
-                inputRequests: {
-                  approval: inputRequired.elicit({
-                    message: `Approve this immutable Wiki proposal at ${approvalUrl.href}, then acknowledge to retry.`,
-                    requestedSchema: ApprovalResponseSchema
+      for (const [actionNameValue] of Object.entries(AGENT_TOOL_NAMES)) {
+        const actionName = actionNameValue as AgentActionName
+        if (!offeredNames.has(actionName)) continue
+        if (requestContext.era === 'legacy' && actionName === 'pages.applyProposal') continue
+        const descriptor = toMcpAction(ACTION_CATALOG[actionName])
+        server.registerTool(
+          descriptor.name,
+          {
+            title: descriptor.title,
+            description: descriptor.description,
+            inputSchema: toolInputSchema(actionName),
+            annotations: descriptor.annotations
+          },
+          async (input: unknown, context: ServerContext) => {
+            try {
+              const identity = identityFrom(context.http?.authInfo)
+              if (actionName === 'pages.applyProposal') {
+                const applyInput = ACTION_CATALOG['pages.applyProposal'].input.parse(input)
+                const persisted = await getMcpProposal(dependencies.knex, identity.apiKeyId, applyInput.proposalId)
+                if (persisted.approval.id !== applyInput.approvalId)
+                  throw new ActionKernelError('APPROVAL_MISMATCH', 'Approval does not belong to the proposal', 409)
+                const state = context.mcpReq.requestState<McpApprovalState>()
+                if (state) {
+                  if (
+                    state.proposalId !== persisted.proposal.id ||
+                    state.inputHash !== persisted.proposal.inputHash ||
+                    state.requesterApiKeyId !== identity.apiKeyId ||
+                    state.expiresAt !== new Date(persisted.proposal.expiresAt).toISOString()
+                  ) {
+                    throw new ActionKernelError('INVALID_REQUEST_STATE', 'Approval request state no longer matches the proposal', 409)
+                  }
+                  const response = acceptedContent(context.mcpReq.inputResponses, 'approval', ApprovalResponseSchema)
+                  if (response?.acknowledge === false) return textResult({ proposalId: persisted.proposal.id, status: 'declined', applied: false })
+                }
+                if (persisted.proposal.status === 'denied' || persisted.approval.status === 'denied')
+                  return textResult({ proposalId: persisted.proposal.id, status: 'denied', applied: false })
+                if (persisted.proposal.status === 'expired' || persisted.approval.status === 'expired')
+                  return textResult({ proposalId: persisted.proposal.id, status: 'expired', applied: false })
+                if (persisted.proposal.status !== 'approved' || persisted.approval.status !== 'approved') {
+                  const requestState = await codecs[0]!.mint(
+                    {
+                      proposalId: persisted.proposal.id,
+                      inputHash: persisted.proposal.inputHash,
+                      requesterApiKeyId: identity.apiKeyId,
+                      expiresAt: new Date(persisted.proposal.expiresAt).toISOString()
+                    },
+                    context
+                  )
+                  const approvalUrl = new URL('/', dependencies.config.wikiPublicOrigin)
+                  approvalUrl.searchParams.set('agentApproval', persisted.proposal.id)
+                  return inputRequired({
+                    requestState,
+                    inputRequests: {
+                      approval: inputRequired.elicit({
+                        message: `Approve this immutable Wiki proposal at ${approvalUrl.href}, then acknowledge to retry.`,
+                        requestedSchema: ApprovalResponseSchema
+                      })
+                    }
                   })
                 }
+              }
+
+              const { requestId, actionInput } = requestIdInput(actionName, input)
+              const current = await admissionFor(context.http?.authInfo)
+              const authority = kernel
+                .offer(current.auth, current.snapshot, requestId)
+                .find(action => action.definition.descriptor.name === actionName)?.authority
+              if (!authority) throw new ActionKernelError('ACTION_NOT_OFFERED', 'Action is not currently permitted', 403)
+              const output = await kernel.execute({
+                authority,
+                actionCallId: String(context.mcpReq.id).slice(0, 128) || randomUUID(),
+                input: actionInput,
+                signal: context.mcpReq.signal,
+                refreshAdmission: async () => (await admissionFor(context.http?.authInfo)).snapshot
               })
+              return textResult(output)
+            } catch (error: unknown) {
+              return errorResult(error)
             }
           }
-
-          const { requestId, actionInput } = requestIdInput(actionName, input)
-          const current = await admissionFor(context.http?.authInfo)
-          const authority = kernel.offer(current.auth, current.snapshot, requestId)
-            .find(action => action.definition.descriptor.name === actionName)?.authority
-          if (!authority) throw new ActionKernelError('ACTION_NOT_OFFERED', 'Action is not currently permitted', 403)
-          const output = await kernel.execute({
-            authority,
-            actionCallId: String(context.mcpReq.id).slice(0, 128) || randomUUID(),
-            input: actionInput,
-            signal: context.mcpReq.signal,
-            refreshAdmission: async () => (await admissionFor(context.http?.authInfo)).snapshot
-          })
-          return textResult(output)
-        } catch (error: unknown) {
-          return errorResult(error)
-        }
-      })
-    }
-    if (offeredNames.has('pages.getOkf')) {
-      server.registerResource('okf-pages', new ResourceTemplate('wiki://pages/{pageId}/versions/{version}/revisions/{sourceRevision}/okf', {
-        list: undefined
-      }), {
-        title: 'Wiki pages as OKF concepts',
-        description: 'Immutable canonical Markdown page documents in Open Knowledge Format v0.2',
-        mimeType: 'text/markdown'
-      }, async (uri, variables, context) => {
-        const pageId = canonicalPositiveInteger(variables.pageId, 'pageId')
-        const version = canonicalVersion(variables.version)
-        const sourceRevision = canonicalPositiveRevision(variables.sourceRevision)
-        const input = version === 'current' ? { id: pageId } : { pageId, versionId: version }
-        const current = await admissionFor(context.http?.authInfo)
-        const authority = kernel.offer(current.auth, current.snapshot, randomUUID())
-          .find(action => action.definition.descriptor.name === 'pages.getOkf')?.authority
-        if (!authority) throw new ActionKernelError('ACTION_NOT_OFFERED', 'OKF page resources are not currently permitted', 403)
-        const output = await kernel.execute({
-          authority,
-          actionCallId: String(context.mcpReq.id).slice(0, 128) || randomUUID(),
-          input,
-          signal: context.mcpReq.signal,
-          refreshAdmission: async () => (await admissionFor(context.http?.authInfo)).snapshot
-        }) as {
-          readonly pageId: number
-          readonly versionId: number | null
-          readonly sourceRevision: string
-          readonly resourceUri: string
-          readonly mediaType: string
-          readonly document: string
-          readonly authority: unknown
-          readonly knowledge: unknown
-          readonly sha256: string
-        }
-        if (output.resourceUri !== uri.href || output.sourceRevision !== sourceRevision) {
-          throw new ActionKernelError('OKF_RESOURCE_IDENTITY_MISMATCH', 'OKF resource identity no longer matches the requested URI', 409)
-        }
-        return {
-          contents: [{
-            uri: uri.href,
-            mimeType: output.mediaType,
-            text: output.document,
-            _meta: {
-              authority: output.authority,
-              knowledge: output.knowledge,
-              sha256: output.sha256,
-              pageId: output.pageId,
-              versionId: output.versionId,
-              sourceRevision: output.sourceRevision,
-              cacheScope: 'private',
-              private: true,
-              noCache: true
+        )
+      }
+      if (offeredNames.has('pages.getOkf')) {
+        server.registerResource(
+          'okf-pages',
+          new ResourceTemplate('wiki://pages/{pageId}/versions/{version}/revisions/{sourceRevision}/okf', {
+            list: undefined
+          }),
+          {
+            title: 'Wiki pages as OKF concepts',
+            description: 'Immutable canonical Markdown page documents in Open Knowledge Format v0.2',
+            mimeType: 'text/markdown'
+          },
+          async (uri, variables, context) => {
+            const pageId = canonicalPositiveInteger(variables.pageId, 'pageId')
+            const version = canonicalVersion(variables.version)
+            const sourceRevision = canonicalPositiveRevision(variables.sourceRevision)
+            const input = version === 'current' ? { id: pageId } : { pageId, versionId: version }
+            const current = await admissionFor(context.http?.authInfo)
+            const authority = kernel
+              .offer(current.auth, current.snapshot, randomUUID())
+              .find(action => action.definition.descriptor.name === 'pages.getOkf')?.authority
+            if (!authority) throw new ActionKernelError('ACTION_NOT_OFFERED', 'OKF page resources are not currently permitted', 403)
+            const output = (await kernel.execute({
+              authority,
+              actionCallId: String(context.mcpReq.id).slice(0, 128) || randomUUID(),
+              input,
+              signal: context.mcpReq.signal,
+              refreshAdmission: async () => (await admissionFor(context.http?.authInfo)).snapshot
+            })) as {
+              readonly pageId: number
+              readonly versionId: number | null
+              readonly sourceRevision: string
+              readonly resourceUri: string
+              readonly mediaType: string
+              readonly document: string
+              readonly authority: unknown
+              readonly knowledge: unknown
+              readonly sha256: string
             }
-          }]
-        }
-      })
-    }
-
-
-    if (offeredNames.has('skills.list')) {
-      server.registerResource('approved-skills', new ResourceTemplate('wiki://skills/{name}/{version}/{+path}', {
-        list: async context => {
-          const identity = identityFrom(context.http?.authInfo)
-          const current = await admissionFor(context.http?.authInfo)
-          const skills = await skillRuntime.listVisibleForApiKey({
-            principal: { apiKeyId: identity.apiKeyId, groupIds: current.snapshot.groupIds },
-            transportRequestId: randomUUID()
-          })
-          return {
-            resources: skills.map(skill => ({
-              name: `${skill.name} SKILL.md`,
-              uri: `wiki://skills/${encodeURIComponent(skill.name)}/${skill.versionId}/SKILL.md`,
-              mimeType: 'text/markdown',
-              description: skill.description
-            }))
+            if (output.resourceUri !== uri.href || output.sourceRevision !== sourceRevision) {
+              throw new ActionKernelError('OKF_RESOURCE_IDENTITY_MISMATCH', 'OKF resource identity no longer matches the requested URI', 409)
+            }
+            return {
+              contents: [
+                {
+                  uri: uri.href,
+                  mimeType: output.mediaType,
+                  text: output.document,
+                  _meta: {
+                    authority: output.authority,
+                    knowledge: output.knowledge,
+                    sha256: output.sha256,
+                    pageId: output.pageId,
+                    versionId: output.versionId,
+                    sourceRevision: output.sourceRevision,
+                    cacheScope: 'private',
+                    private: true,
+                    noCache: true
+                  }
+                }
+              ]
+            }
           }
-        }
-      }), { title: 'Approved Wiki skills', description: 'Immutable approved skill resources' }, async (uri, variables, context) => {
-        const identity = identityFrom(context.http?.authInfo)
-        const current = await admissionFor(context.http?.authInfo)
-        const name = decodeTemplateValue(variables.name)
-        const versionId = UUIDSchema.parse(decodeTemplateValue(variables.version))
-        const path = validateSkillVirtualPath(decodeTemplateValue(variables.path))
-        const resource = await skillRuntime.readVisibleResourceForApiKey({
-          skillName: name,
-          versionId,
-          path,
-          principal: { apiKeyId: identity.apiKeyId, groupIds: current.snapshot.groupIds },
-          transportRequestId: randomUUID(),
-          ...(context.sessionId ? { externalSessionId: context.sessionId } : {})
-        })
-        const base = { uri: uri.href, mimeType: resource.mediaType, _meta: { contentHash: resource.contentHash, sourceId: resource.sourceId, sourceRevision: resource.sourceRevision } }
-        return {
-          contents: resource.mediaType.startsWith('text/') || resource.mediaType === 'application/json'
-            ? [{ ...base, text: resource.bytes.toString('utf8') }]
-            : [{ ...base, blob: resource.bytes.toString('base64') }]
-        }
-      })
+        )
+      }
+
+      if (offeredNames.has('skills.list')) {
+        server.registerResource(
+          'approved-skills',
+          new ResourceTemplate('wiki://skills/{name}/{version}/{+path}', {
+            list: async context => {
+              const identity = identityFrom(context.http?.authInfo)
+              const current = await admissionFor(context.http?.authInfo)
+              const skills = await skillRuntime.listVisibleForApiKey({
+                principal: { apiKeyId: identity.apiKeyId, groupIds: current.snapshot.groupIds },
+                transportRequestId: randomUUID()
+              })
+              return {
+                resources: skills.map(skill => ({
+                  name: `${skill.name} SKILL.md`,
+                  uri: `wiki://skills/${encodeURIComponent(skill.name)}/${skill.versionId}/SKILL.md`,
+                  mimeType: 'text/markdown',
+                  description: skill.description
+                }))
+              }
+            }
+          }),
+          { title: 'Approved Wiki skills', description: 'Immutable approved skill resources' },
+          async (uri, variables, context) => {
+            const identity = identityFrom(context.http?.authInfo)
+            const current = await admissionFor(context.http?.authInfo)
+            const name = decodeTemplateValue(variables.name)
+            const versionId = UUIDSchema.parse(decodeTemplateValue(variables.version))
+            const path = validateSkillVirtualPath(decodeTemplateValue(variables.path))
+            const resource = await skillRuntime.readVisibleResourceForApiKey({
+              skillName: name,
+              versionId,
+              path,
+              principal: { apiKeyId: identity.apiKeyId, groupIds: current.snapshot.groupIds },
+              transportRequestId: randomUUID(),
+              ...(context.sessionId ? { externalSessionId: context.sessionId } : {})
+            })
+            const base = {
+              uri: uri.href,
+              mimeType: resource.mediaType,
+              _meta: { contentHash: resource.contentHash, sourceId: resource.sourceId, sourceRevision: resource.sourceRevision }
+            }
+            return {
+              contents:
+                resource.mediaType.startsWith('text/') || resource.mediaType === 'application/json'
+                  ? [{ ...base, text: resource.bytes.toString('utf8') }]
+                  : [{ ...base, blob: resource.bytes.toString('base64') }]
+            }
+          }
+        )
+      }
+      return server
+    },
+    {
+      responseMode: 'auto',
+      legacy: 'stateless',
+      keepAliveMs: 15_000,
+      maxSubscriptions: 0,
+      onerror: error => dependencies.logger?.warn(error)
     }
-    return server
-  }, {
-    responseMode: 'auto',
-    legacy: 'stateless',
-    keepAliveMs: 15_000,
-    maxSubscriptions: 0,
-    onerror: error => dependencies.logger?.warn(error)
-  })
+  )
   const nodeHandler = toNodeHandler(handler, { onerror: error => dependencies.logger?.warn(error) })
 
   const router = express.Router()
@@ -440,7 +496,8 @@ export const createWikiMcpController = (dependencies: WikiMcpDependencies): expr
     if (!req.user?.permissions?.some(permission => permission === 'use:mcp' || permission === 'manage:system')) return res.sendStatus(403)
     const token = req.apiKeyAuth.bearerToken
     if (!token) return res.sendStatus(401)
-    if (req.apiKeyAuth.mcpResourceVersion !== 1 || req.apiKeyAuth.mcpResource === null) return res.status(401).json({ error: 'API key must be regenerated with an MCP resource claim' })
+    if (req.apiKeyAuth.mcpResourceVersion !== 1 || req.apiKeyAuth.mcpResource === null)
+      return res.status(401).json({ error: 'API key must be regenerated with an MCP resource claim' })
     let claimed: URL
     try {
       claimed = new URL(req.apiKeyAuth.mcpResource)

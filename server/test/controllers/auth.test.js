@@ -126,7 +126,7 @@ describe('HTML auth controller', () => {
     await login(req, res)
 
     expect(res.render).toHaveBeenCalledWith('login', {
-      bgUrl: '/_assets/img/splash/tsfranki-orbit.svg',
+      bgUrl: '/_assets/img/splash/tsepistle-orbit.svg',
       hideLocal: false,
       faviconUrl: '/_assets/favicon.ico'
     })
@@ -143,7 +143,7 @@ describe('HTML auth controller', () => {
 
     expect(global.WIKI.models.authentication.getStrategy).toHaveBeenCalledWith('local')
     expect(res.render).toHaveBeenCalledWith('register', {
-      bgUrl: '/_assets/img/splash/tsfranki-orbit.svg',
+      bgUrl: '/_assets/img/splash/tsepistle-orbit.svg',
       faviconUrl: '/_assets/favicon.ico'
     })
   })
@@ -186,7 +186,7 @@ describe('HTML auth controller', () => {
     await login({ query: {} }, res)
 
     expect(res.render).toHaveBeenCalledWith('login', {
-      bgUrl: '/_assets/img/splash/tsfranki-orbit.svg',
+      bgUrl: '/_assets/img/splash/tsepistle-orbit.svg',
       hideLocal: false,
       faviconUrl: '/uploads/site-logo.svg'
     })
@@ -208,7 +208,7 @@ describe('HTML auth controller', () => {
       skipDelete: true
     })
     expect(res.render).toHaveBeenCalledWith('login', {
-      bgUrl: '/_assets/img/splash/tsfranki-orbit.svg',
+      bgUrl: '/_assets/img/splash/tsepistle-orbit.svg',
       hideLocal: false,
       faviconUrl: '/_assets/favicon.ico',
       verificationToken: 'verify-token'
@@ -232,7 +232,7 @@ describe('HTML auth controller', () => {
       skipDelete: true
     })
     expect(res.render).toHaveBeenCalledWith('login', {
-      bgUrl: '/_assets/img/splash/tsfranki-orbit.svg',
+      bgUrl: '/_assets/img/splash/tsepistle-orbit.svg',
       hideLocal: false,
       faviconUrl: '/_assets/favicon.ico',
       resetPasswordToken: 'reset-token'

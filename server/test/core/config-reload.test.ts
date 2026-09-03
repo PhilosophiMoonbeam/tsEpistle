@@ -42,7 +42,7 @@ describe('distributed config reload', () => {
         knex: { client: { config: knexConfig } },
         settings: { getConfig, query: vi.fn() }
       },
-      product: { name: 'tsFranki' }
+      product: { name: 'tsEpistle' }
     } as typeof globalThis.WIKI
 
     const { default: configService } = await vi.importFresh<typeof ConfigModule>('../../core/config.ts', import.meta.url)

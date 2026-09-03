@@ -1,7 +1,7 @@
 import type { Knex } from 'knex'
 
 import { KNOWN_APPLICATION_TABLES } from './migrator-source.ts'
-import { isLegacyForkMigrationName, isTsfrankiMigrationName, MIGRATION_LINEAGE_V1 } from './migration-contract.ts'
+import { isLegacyForkMigrationName, isNamespacedMigrationName, MIGRATION_LINEAGE_V1 } from './migration-contract.ts'
 
 interface MigrationRecord {
   id: number
@@ -78,8 +78,8 @@ const assertLegacyForkSchemaSignature = async (knex: Knex): Promise<void> => {
   const retained = removedResults.filter(result => result.exists).map(result => `${result.table}.${result.column}`)
   if (missing.length > 0 || retained.length > 0) {
     const details = [
-      missing.length > 0 ? `missing tsFranki columns ${missing.join(', ')}` : '',
-      retained.length > 0 ? `retains pre-tsFranki columns ${retained.join(', ')}` : ''
+      missing.length > 0 ? `missing tsEpistle columns ${missing.join(', ')}` : '',
+      retained.length > 0 ? `retains pre-tsEpistle columns ${retained.join(', ')}` : ''
     ].filter(Boolean)
     throw lineageFailure(
       `the ledger contains ${MIGRATION_LINEAGE_V1.legacyForkStart} or a later legacy fork migration but the schema ${details.join(' and ')}.`
@@ -97,17 +97,17 @@ const assertSchemaLineageMarker = async (knex: Knex): Promise<void> => {
     marker.legacyForkMigrationEnd !== MIGRATION_LINEAGE_V1.legacyForkEnd ||
     marker.namespacedMigrationStart !== MIGRATION_LINEAGE_V1.namespacedStart
   ) {
-    throw lineageFailure(`the ${MIGRATION_LINEAGE_V1.tableName} marker is missing or does not match this tsFranki migration line.`)
+    throw lineageFailure(`the ${MIGRATION_LINEAGE_V1.tableName} marker is missing or does not match this tsEpistle migration lineage.`)
   }
 }
 
-const assertTsfrankiLineage = async (knex: Knex, applied: readonly string[]): Promise<void> => {
+const assertProductLineage = async (knex: Knex, applied: readonly string[]): Promise<void> => {
   const hasLegacyForkHistory = applied.some(isLegacyForkMigrationName)
-  const hasNamespacedHistory = applied.some(isTsfrankiMigrationName)
+  const hasNamespacedHistory = applied.some(isNamespacedMigrationName)
   const hasMarker = await knex.schema.hasTable(MIGRATION_LINEAGE_V1.tableName)
 
   if (hasNamespacedHistory) {
-    if (!hasMarker) throw lineageFailure(`namespaced tsFranki migrations exist without the ${MIGRATION_LINEAGE_V1.tableName} marker.`)
+    if (!hasMarker) throw lineageFailure(`namespaced tsEpistle migrations exist without the ${MIGRATION_LINEAGE_V1.tableName} marker.`)
     await assertSchemaLineageMarker(knex)
     return
   }
@@ -122,7 +122,7 @@ const assertMigrationLockIsClear = async (knex: Knex): Promise<void> => {
   const lock = await knex<MigrationLockRecord>('migrations_lock').first('is_locked')
   if (lock && (lock.is_locked === true || Number(lock.is_locked) === 1)) {
     throw new MigrationPreflightError(
-      'Database migrations are locked. Confirm that no other tsFranki instance is migrating, then clear a stale lock before retrying.'
+      'Database migrations are locked. Confirm that no other tsEpistle instance is migrating, then clear a stale lock before retrying.'
     )
   }
 }
@@ -185,7 +185,7 @@ export const preflightMigrations = async (
   const unknown = applied.filter(name => !available.includes(name))
   if (unknown.length > 0) {
     throw new MigrationPreflightError(
-      `Database was migrated by an unknown or newer build (${unknown.join(', ')}). Upgrade tsFranki instead of running this older migration set.`
+      `Database was migrated by an unknown or newer build (${unknown.join(', ')}). Upgrade tsEpistle instead of running this older migration set.`
     )
   }
 
@@ -200,7 +200,7 @@ export const preflightMigrations = async (
   if (applicationTableNames.length === 0) {
     throw new MigrationPreflightError('Database has applied migration records but none of the expected Wiki application tables. Refusing a partial schema.')
   }
-  await assertTsfrankiLineage(knex, applied)
+  await assertProductLineage(knex, applied)
 
   return { applied, available, state: 'ready' }
 }

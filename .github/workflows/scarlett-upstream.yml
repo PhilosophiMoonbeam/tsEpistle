@@ -11,7 +11,7 @@ permissions:
 jobs:
   compare:
     name: Compare recorded Scarlett revision
-    runs-on: [self-hosted, linux, x64, tsfranki-ci]
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
     timeout-minutes: 10
 
     steps:

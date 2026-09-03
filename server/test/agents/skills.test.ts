@@ -1,19 +1,12 @@
 import { describe, expect, it } from '../bun-test.mts'
 
-import {
-  buildApprovedSkillBundle,
-  intersectAllowedTools,
-  parseSkillMarkdown,
-  SkillValidationError
-} from '../../agents/skills/parser.ts'
-import {
-  decodeSkillResourcePathOnce,
-  mapSkillPagePath,
-  SkillPathError,
-  validateSkillVirtualPath
-} from '../../agents/skills/virtual-path.ts'
+import { buildApprovedSkillBundle, intersectAllowedTools, parseSkillMarkdown, SkillValidationError } from '../../agents/skills/parser.ts'
+import { decodeSkillResourcePathOnce, mapSkillPagePath, SkillPathError, validateSkillVirtualPath } from '../../agents/skills/virtual-path.ts'
 
-const skill = (body = 'Use [the API](references/API.md).\n') => Buffer.from(`---\nname: release-notes\ndescription: Prepare release notes\nlicense: MIT\ncompatibility: tsFranki\nmetadata:\n  owner: docs\nallowed-tools:\n  - wiki_search_pages\n  - wiki_get_page\nfuture-field: preserved\n---\n${body}`)
+const skill = (body = 'Use [the API](references/API.md).\n') =>
+  Buffer.from(
+    `---\nname: release-notes\ndescription: Prepare release notes\nlicense: MIT\ncompatibility: tsEpistle\nmetadata:\n  owner: docs\nallowed-tools:\n  - wiki_search_pages\n  - wiki_get_page\nfuture-field: preserved\n---\n${body}`
+  )
 
 describe('page-native Agent Skill parsing', () => {
   it('parses exact UTF-8 bytes, preserves unknown metadata, and discovers relative resources', () => {
@@ -44,14 +37,21 @@ describe('page-native Agent Skill parsing', () => {
 
   it('maps only extensionless pages beneath the selected skill root', () => {
     expect(mapSkillPagePath('system/agent-skills', 'system/agent-skills/release-notes', 'system/agent-skills/release-notes')).toBe('SKILL.md')
-    expect(mapSkillPagePath('system/agent-skills', 'system/agent-skills/release-notes', 'system/agent-skills/release-notes/references/API')).toBe('references/API.md')
+    expect(mapSkillPagePath('system/agent-skills', 'system/agent-skills/release-notes', 'system/agent-skills/release-notes/references/API')).toBe(
+      'references/API.md'
+    )
     expect(() => mapSkillPagePath('system/agent-skills', 'system/agent-skills/release-notes', 'system/agent-skills/other')).toThrow(SkillPathError)
-    expect(() => mapSkillPagePath('system/agent-skills', 'system/agent-skills/release-notes', 'system/agent-skills/release-notes/references/API.md')).toThrow('Dotted')
+    expect(() => mapSkillPagePath('system/agent-skills', 'system/agent-skills/release-notes', 'system/agent-skills/release-notes/references/API.md')).toThrow(
+      'Dotted'
+    )
   })
 
-  it.each(['../secret', '/absolute', 'references\\API.md', 'references/%2e%2e/secret', 'references//API.md', 'references/./API.md'])('rejects unsafe virtual path %s', path => {
-    expect(() => validateSkillVirtualPath(path)).toThrow(SkillPathError)
-  })
+  it.each(['../secret', '/absolute', 'references\\API.md', 'references/%2e%2e/secret', 'references//API.md', 'references/./API.md'])(
+    'rejects unsafe virtual path %s',
+    path => {
+      expect(() => validateSkillVirtualPath(path)).toThrow(SkillPathError)
+    }
+  )
 
   it('decodes a resource path exactly once', () => {
     expect(decodeSkillResourcePathOnce('references%2FAPI.md')).toBe('references/API.md')
@@ -94,12 +94,16 @@ describe('immutable skill bundles', () => {
     expect(() => buildApprovedSkillBundle(skill(), 'release-notes', [])).toThrow('missing')
     expect(() => buildApprovedSkillBundle(skill('No resources.\n'), 'release-notes', [reference])).toThrow('not explicitly referenced')
     expect(() => buildApprovedSkillBundle(skill(), 'release-notes', [{ ...reference, symbolicLink: true }])).toThrow('symbolic link')
-    expect(() => buildApprovedSkillBundle(skill('Use [HTML](references/page.html).'), 'release-notes', [{
-      ...reference,
-      path: 'references/page.html',
-      bytes: Buffer.from('<script>alert(1)</script>'),
-      mediaType: 'text/html'
-    }])).toThrow('blocked media type')
+    expect(() =>
+      buildApprovedSkillBundle(skill('Use [HTML](references/page.html).'), 'release-notes', [
+        {
+          ...reference,
+          path: 'references/page.html',
+          bytes: Buffer.from('<script>alert(1)</script>'),
+          mediaType: 'text/html'
+        }
+      ])
+    ).toThrow('blocked media type')
   })
 
   it('lets allowed-tools narrow but never grant a catalog capability', () => {

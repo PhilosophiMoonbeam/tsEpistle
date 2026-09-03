@@ -4,8 +4,28 @@ import _ from 'lodash'
 import fs from 'fs-extra'
 import path from 'node:path'
 
-interface MailOptions { template: string; to: string; subject: string; text?: string; messageId?: string; data?: Record<string, unknown> }
-interface MailConfig { host: string; port: number; name: string; secure: boolean; verifySSL?: boolean; user?: string; pass?: string; senderName: string; senderEmail: string; dkimDomainName?: string; dkimKeySelector?: string; dkimPrivateKey?: string }
+interface MailOptions {
+  template: string
+  to: string
+  subject: string
+  text?: string
+  messageId?: string
+  data?: Record<string, unknown>
+}
+interface MailConfig {
+  host: string
+  port: number
+  name: string
+  secure: boolean
+  verifySSL?: boolean
+  user?: string
+  pass?: string
+  senderName: string
+  senderEmail: string
+  dkimDomainName?: string
+  dkimKeySelector?: string
+  dkimPrivateKey?: string
+}
 interface WikiContext {
   SERVERPATH: string
   Error: { MailNotConfigured: new () => Error; MailTemplateFailed: new () => Error }
@@ -45,7 +65,7 @@ const mail = {
     }
     const template = await this.loadTemplate(opts.template)
     return transport.sendMail({
-      headers: { 'x-mailer': 'tsFranki' },
+      headers: { 'x-mailer': 'tsEpistle' },
       from: `"${wiki.config.mail.senderName}" <${wiki.config.mail.senderEmail}>`,
       to: opts.to,
       subject: `${opts.subject} - ${wiki.config.title}`,
@@ -54,7 +74,7 @@ const mail = {
       html: template({
         logo: (wiki.config.logoUrl.startsWith('http') ? '' : wiki.config.host) + wiki.config.logoUrl,
         siteTitle: wiki.config.title,
-        copyright: wiki.config.company.length > 0 ? wiki.config.company : 'Powered by tsFranki',
+        copyright: wiki.config.company.length > 0 ? wiki.config.company : 'Powered by tsEpistle',
         ...opts.data
       })
     })

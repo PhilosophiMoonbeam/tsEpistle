@@ -38,7 +38,7 @@ export interface AuthWiki {
   Error: { AuthRegistrationDisabled: new () => Error }
 }
 
-const DEFAULT_AUTH_BACKGROUND_URL = '/_assets/img/splash/tsfranki-orbit.svg'
+const DEFAULT_AUTH_BACKGROUND_URL = '/_assets/img/splash/tsepistle-orbit.svg'
 
 const normalizeAuthBackgroundUrl = (backgroundUrl: unknown): string => {
   if (typeof backgroundUrl !== 'string') return DEFAULT_AUTH_BACKGROUND_URL

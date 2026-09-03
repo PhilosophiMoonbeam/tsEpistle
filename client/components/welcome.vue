@@ -2,7 +2,7 @@
   v-app
     main.onboarding(aria-labelledby='welcome-title')
       .onboarding-content
-        img.onboarding-logo(src='/_assets/svg/logo-tsfranki.svg', alt='tsFranki')
+        img.onboarding-logo(src='/_assets/svg/logo-tsepistle.svg', alt='tsEpistle')
         h1#welcome-title.text-headline-medium {{ $t('welcome.title') }}
         p.onboarding-subtitle.text-body-large {{ $t('welcome.subtitle') }}
         .onboarding-actions

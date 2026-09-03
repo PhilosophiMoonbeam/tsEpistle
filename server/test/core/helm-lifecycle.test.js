@@ -22,8 +22,32 @@ describe('Helm application lifecycle contract', () => {
     expect(notes).toContain('http://127.0.0.1:8080/healthz')
     expect(notes).not.toContain('port-forward $POD_NAME 8080:80')
 
-    expect(readme).toContain('kubectl --namespace default port-forward service/wiki-tsfranki 8080:80')
+    expect(readme).toContain('kubectl --namespace default port-forward service/wiki-tsepistle 8080:80')
     expect(readme).toContain('curl --fail http://127.0.0.1:8080/healthz')
+    expect(readme).toContain('### Existing releases created with `tsfranki` (compatibility-only)')
+    expect(readme).toContain('nameOverride: tsfranki')
+    expect(readme).toContain('pass the equivalent override')
+    expect(readme).toContain('explicitly on every upgrade')
+    expect(readme).toContain('--set nameOverride=tsfranki')
+    expect(readme).toContain('Keep this compatibility-only override set for')
+    expect(readme).toContain('removing it can make Helm render new names and bind')
+    expect(readme).toContain('new empty claims instead of the existing data.')
+    expect(renderContract).toContain('# Compatibility-only render: existing releases must retain their historical identity.')
+    // Historical tsfranki identities below are compatibility-only expectations.
+    for (const expectedIdentity of [
+      'wiki-tsepistle',
+      'wiki-tsepistle-data',
+      'wiki-tsepistle-postgresql',
+      'wiki-tsfranki',
+      'wiki-tsfranki-data',
+      'wiki-tsfranki-postgresql',
+      'app.kubernetes.io/name: tsfranki',
+      'app.kubernetes.io/name: tsfranki-postgresql',
+      'claimName: wiki-tsfranki-data',
+      'claimName: wiki-tsfranki-postgresql'
+    ]) {
+      expect(renderContract).toContain(expectedIdentity)
+    }
     expect(renderContract).toContain('helm lint dev/helm')
     expect(renderContract).toContain('--show-only templates/deployment.yaml')
     expect(renderContract).toContain('helm install wiki dev/helm')

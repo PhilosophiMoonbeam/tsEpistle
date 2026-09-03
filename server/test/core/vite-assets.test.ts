@@ -12,7 +12,7 @@ const createProjectRoot = (): string => {
   temporaryDirectories.push(root)
   fs.mkdirSync(path.join(root, 'client/static/svg'), { recursive: true })
   fs.mkdirSync(path.join(root, 'node_modules/prismjs/components'), { recursive: true })
-  fs.writeFileSync(path.join(root, 'client/static/svg/icon-tsfranki.svg'), '<svg />')
+  fs.writeFileSync(path.join(root, 'client/static/svg/icon-tsepistle.svg'), '<svg />')
   fs.writeFileSync(path.join(root, 'node_modules/prismjs/components/prism-javascript.min.js'), 'Prism.languages.javascript={};')
   return root
 }
@@ -34,7 +34,7 @@ describe('Vite runtime asset lifecycle', () => {
     expect(plugin.closeBundle).toBeUndefined()
     await invokeHook(plugin.configureServer)
 
-    expect(fs.readFileSync(path.join(root, 'assets/svg/icon-tsfranki.svg'), 'utf8')).toBe('<svg />')
+    expect(fs.readFileSync(path.join(root, 'assets/svg/icon-tsepistle.svg'), 'utf8')).toBe('<svg />')
     expect(fs.readFileSync(path.join(root, 'assets/js/prism/prism-javascript.min.js'), 'utf8')).toBe('Prism.languages.javascript={};')
   })
 
@@ -46,6 +46,6 @@ describe('Vite runtime asset lifecycle', () => {
     await invokeHook(plugin.closeBundle)
 
     expect(fs.readFileSync(path.join(root, 'assets/js/prism/prism-javascript.min.js'), 'utf8')).toBe('Prism.languages.javascript={};')
-    expect(fs.existsSync(path.join(root, 'assets/svg/icon-tsfranki.svg'))).toBe(false)
+    expect(fs.existsSync(path.join(root, 'assets/svg/icon-tsepistle.svg'))).toBe(false)
   })
 })

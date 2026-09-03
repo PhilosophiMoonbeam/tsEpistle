@@ -1,4 +1,4 @@
-# Default values for tsFranki.
+# Default values for tsEpistle.
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
@@ -14,6 +14,7 @@ image:
   digest: ""
 
 imagePullSecrets: []
+# Compatibility-only for upgrades from the former tsfranki chart; leave empty for fresh tsepistle installs.
 nameOverride: ""
 fullnameOverride: ""
 

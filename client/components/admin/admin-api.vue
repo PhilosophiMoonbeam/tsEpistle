@@ -95,7 +95,7 @@
           v-row.ma-0
             v-col(cols='12', lg='7')
               v-card-text
-                p tsFranki supports API-key integrations through GraphQL and the versioned REST v1 API.
+                p tsEpistle supports API-key integrations through GraphQL and the versioned REST v1 API.
                 .text-label-small GraphQL endpoint
                 code.api-contract-code {{ graphqlEndpoint }}
                 .text-label-small.mt-4 Authentication

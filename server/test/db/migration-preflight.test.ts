@@ -73,7 +73,8 @@ const createLineageMarker = async (db: Knex, version = MIGRATION_LINEAGE_V1.vers
 
 describe('database migration preflight', () => {
   let db: Knex
-  const available = ['2.0.0.js', '2.5.128.js', '2.5.129.js', MIGRATION_LINEAGE_V1.namespacedStart]
+  const currentMigration = 'tsepistle-000013-product-rename.js'
+  const available = ['2.0.0.js', '2.5.128.js', '2.5.129.js', MIGRATION_LINEAGE_V1.namespacedStart, currentMigration]
 
   beforeEach(() => {
     db = createKnex({
@@ -190,7 +191,7 @@ describe('database migration preflight', () => {
     await createApplicationTable(db)
     await createLedger(db, ['2.0.0.js', '3.0.0.js'])
 
-    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('unknown or newer build (3.0.0.js)')
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('unknown or newer build (3.0.0.js). Upgrade tsEpistle')
   })
 
   it('refuses migration gaps and out-of-order history', async () => {
@@ -200,7 +201,7 @@ describe('database migration preflight', () => {
     await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('incomplete or out of order at 2.5.129.js')
   })
 
-  it('accepts an existing legacy tsFranki ledger only when its schema carries the fork signature', async () => {
+  it('accepts an existing deployed tsfranki ledger only when its schema carries the fork signature', async () => {
     await createLegacyForkSchemaSignature(db)
     await createLedger(db, available.slice(0, 3))
 
@@ -211,14 +212,27 @@ describe('database migration preflight', () => {
     })
   })
 
-  it('refuses a same-name upstream migration that lacks the legacy tsFranki schema signature', async () => {
+  it('refuses a same-name upstream migration that lacks the deployed tsfranki schema signature', async () => {
     await createApplicationTable(db)
     await createLedger(db, available.slice(0, 3))
 
     await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('Database migration lineage is ambiguous')
   })
 
-  it('accepts namespaced history only with the exact durable lineage marker', async () => {
+  it('accepts a deployed namespaced ledger without rewriting its historical names', async () => {
+    const deployedLedger = available.slice(0, -1)
+    await createApplicationTable(db)
+    await createLineageMarker(db)
+    await createLedger(db, deployedLedger)
+
+    expect(await preflightMigrations(db, migrationSource(available))).toEqual({
+      applied: deployedLedger,
+      available,
+      state: 'ready'
+    })
+  })
+
+  it('accepts current tsepistle history with the exact durable lineage marker', async () => {
     await createApplicationTable(db)
     await createLineageMarker(db)
     await createLedger(db, available)
@@ -234,7 +248,7 @@ describe('database migration preflight', () => {
     await createApplicationTable(db)
     await createLedger(db, available)
     await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow(
-      'namespaced tsFranki migrations exist without the schemaLineage marker'
+      'namespaced tsEpistle migrations exist without the schemaLineage marker'
     )
 
     await db('migrations').delete()
@@ -259,7 +273,9 @@ describe('database migration preflight', () => {
       }))
     )
     await db(MIGRATION_LINEAGE_V1.tableName).update({ lineageVersion: 99 })
-    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('schemaLineage marker is missing or does not match')
+    await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow(
+      'schemaLineage marker is missing or does not match this tsEpistle migration lineage'
+    )
   })
 
   it('refuses a locked migration ledger with actionable recovery guidance', async () => {
@@ -274,7 +290,7 @@ describe('database migration preflight', () => {
     await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toEqual(
       expect.objectContaining<Partial<MigrationPreflightError>>({
         code: 'MIGRATION_PREFLIGHT_FAILED',
-        message: expect.stringContaining('Confirm that no other tsFranki instance is migrating')
+        message: expect.stringContaining('Confirm that no other tsEpistle instance is migrating')
       })
     )
   })

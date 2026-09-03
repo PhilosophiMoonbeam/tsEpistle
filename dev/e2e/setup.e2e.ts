@@ -96,8 +96,8 @@ async function getMarkdownSourceData(page: Page): Promise<string> {
 
 async function expectWelcomePage(page: Page) {
   await expect(page).toHaveURL('/')
-  await expect(page).toHaveTitle('Welcome | tsFranki')
-  await expect(page.getByRole('img', { name: 'tsFranki' })).toBeVisible()
+  await expect(page).toHaveTitle('Welcome | tsEpistle')
+  await expect(page.getByRole('img', { name: 'tsEpistle' })).toBeVisible()
   await expect(page.getByText('Welcome to your wiki!', { exact: true })).toBeVisible()
   await expect(page.getByText("Let's get started and create the home page.", { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Create Home Page' })).toBeVisible()
@@ -178,12 +178,12 @@ async function openEditorForCurrentPage(page: Page): Promise<void> {
 test.describe('critical post-install workflows', () => {
   test.describe.configure({ mode: 'serial', retries: 0 })
 
-  test('installs tsFranki with telemetry disabled and opens the login screen', async ({ page }) => {
+  test('installs tsEpistle with telemetry disabled and opens the login screen', async ({ page }) => {
     test.setTimeout(90_000)
 
     await page.goto('/')
     await expect(page.getByText('First-run setup', { exact: true })).toBeVisible()
-    await expect(page.getByRole('heading', { name: 'tsFranki', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'tsEpistle', exact: true })).toBeVisible()
 
     const siteUrl = new URL(page.url()).origin
     await page.getByLabel('Administrator Email').fill(adminEmail)
@@ -194,7 +194,7 @@ test.describe('critical post-install workflows', () => {
     await telemetry.uncheck()
     await expect(telemetry).not.toBeChecked()
 
-    await page.getByRole('button', { name: 'Install tsFranki', exact: true }).click()
+    await page.getByRole('button', { name: 'Install tsEpistle', exact: true }).click()
     await expect(page.getByText('Installation complete!')).toBeVisible({ timeout: 30_000 })
     await expect(page).toHaveURL('/login', { timeout: 10_000 })
     await openClientPage(page, '/login', '.login-form')
@@ -747,7 +747,7 @@ test.describe('critical post-install workflows', () => {
     await page.getByLabel('Password', { exact: true }).fill(adminPassword)
     await page.getByRole('button', { name: 'Log In' }).click()
     await expect(page).toHaveURL('/')
-    await expect(page).toHaveTitle('Home | tsFranki')
+    await expect(page).toHaveTitle('Home | tsEpistle')
     await expect(page.getByRole('heading', { name: 'Browser Workflow Updated' })).toBeVisible()
     await expect
       .poll(async () =>
