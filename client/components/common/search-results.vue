@@ -198,8 +198,8 @@
                       span {{ item.path }}
                     .search-results-tags(v-if='item.tags.length || item.matchedFields?.includes("graph")')
                       v-chip(
-                        v-for='tag of item.tags.slice(0, 3)'
-                        :key='tag'
+                        v-for='(tag, tagIndex) of item.tags.slice(0, 3)'
+                        :key='occurrenceKey(item.tags, tag, tagIndex)'
                         size='x-small'
                         variant='tonal'
                       ) {{ tag }}
@@ -237,7 +237,7 @@
                 aria-label='Search suggestions'
                 density='compact'
               )
-                template(v-for='(term, idx) of suggestions' :key='term')
+                template(v-for='(term, idx) of suggestions' :key='occurrenceKey(suggestions, term, idx)')
                   v-list-item(
                     :id='`wiki-search-suggestion-${idx}`'
                     role='option'
@@ -711,6 +711,13 @@ export default defineComponent({
     },
     resultKey(item: PageSearchRow): string {
       return `${typeof item.id}:${item.id}`
+    },
+    occurrenceKey(values: readonly string[], value: string, index: number): string {
+      let occurrence = 0
+      for (let precedingIndex = 0; precedingIndex < index; precedingIndex += 1) {
+        if (values[precedingIndex] === value) occurrence += 1
+      }
+      return JSON.stringify([value, occurrence])
     },
     resultOptionId(index: number): string {
       return `wiki-search-result-${this.pagination}-${index}`

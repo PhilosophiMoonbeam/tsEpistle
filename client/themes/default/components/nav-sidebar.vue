@@ -35,6 +35,7 @@
         v-if='customItems.length === 0'
         state='empty'
         :title='$t(`common:sidebar.noNavigationItems`)'
+      )
       template(v-else)
         template(v-for='(item, idx) of customItems', :key='item.k === `link` ? `link-${item.t}-${item.l}` : item.k === `header` ? `header-${item.l}-${idx}` : `divider-${idx}`')
           v-list-item(

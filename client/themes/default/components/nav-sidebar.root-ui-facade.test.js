@@ -109,7 +109,7 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
     expect(structuralHomeIndex).toBeGreaterThan(-1)
     expect(optionsDividerIndex).toBeGreaterThan(structuralHomeIndex)
     expect(customOptionsIndex).toBeGreaterThan(optionsDividerIndex)
-    expect(source).toContain("template(v-for='(item, idx) of customItems'")
+    expect(source).toContain("      template(v-else)\n        template(v-for='(item, idx) of customItems'")
     expect(script).toContain("return this.items.filter(item => item.k !== 'link' || item.y !== 'home')")
   })
 

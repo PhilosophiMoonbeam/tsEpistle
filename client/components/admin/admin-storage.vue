@@ -229,6 +229,7 @@
                     variant="outlined"
                     :label='cfg.value.title'
                     :model-value='cfg.value.sensitive && !isSecretVisible(cfg.key) ? (cfg.value.value ? `********` : ``) : cfg.value.value'
+                    @update:model-value='cfg.value.value = $event'
                     prepend-icon='mdi-cog-box'
                     :hint='cfg.value.hint ? cfg.value.hint : ""'
                     persistent-hint

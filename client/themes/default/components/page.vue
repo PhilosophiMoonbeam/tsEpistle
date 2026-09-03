@@ -3145,7 +3145,7 @@ export default defineComponent({
     white-space: nowrap;
   }
 
-  .page-breadcrumb-bar .breadcrumbs-nav :is(.v-breadcrumbs, .v-breadcrumbs__list) {
+  .page-breadcrumb-bar .breadcrumbs-nav.v-breadcrumbs {
     flex-wrap: nowrap;
   }
 

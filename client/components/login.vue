@@ -1156,9 +1156,8 @@ export default {
         padding-block: var(--wiki-space-2);
       }
 
-      .v-input__details {
-        min-height: 0;
-        padding-inline: var(--wiki-space-2);
+      .v-input:not(.v-input--error) .v-input__details {
+        display: none;
       }
 
       > .text-center {

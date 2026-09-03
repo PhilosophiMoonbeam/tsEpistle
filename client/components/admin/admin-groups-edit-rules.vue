@@ -21,8 +21,7 @@
           .text-body-small(v-if='group.pageRules.length === 0')
             em.text-medium-emphasis This group has no page rules yet.
           .rule(v-for='(rule, ruleIndex) of group.pageRules', :key='rule.id')
-            v-btn.ma-0.rule-deny-btn(
-              rounded="lg"
+            v-btn.ma-0.radius-4.rule-deny-btn(
               :color='rule.deny ? "red" : "green"'
               @click='updateRule(rule.id, { deny: !rule.deny })'
               :disabled='group.id <= 0'
