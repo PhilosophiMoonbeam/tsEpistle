@@ -129,9 +129,10 @@ export default {
         })
       }
     },
-    pageHref(page: PageListRow): string {
-      const scope = page.visibility === 'private' ? '/_private' : ''
-      return `${scope}/${page.locale}/${page.path}`
+    pageHref(page: PageListRow | { raw: PageListRow }): string {
+      const item = ('raw' in page && page.raw) ? page.raw : (page as PageListRow)
+      const scope = item.visibility === 'private' ? '/_private' : ''
+      return `${scope}/${item.locale}/${item.path}`
     },
     async loadPages(): Promise<boolean> {
       this.errorMessage = ''

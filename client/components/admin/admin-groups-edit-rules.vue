@@ -68,7 +68,7 @@
               density="compact"
               )
               template(v-slot:selection='{ item }')
-                .text-body-medium {{item.text}}
+                .text-body-medium {{ (item.raw || item).text || (item.raw || item).title }}
             //- Locales
             v-select.rule-locales(
               bg-color="surface-variant"
@@ -86,7 +86,7 @@
               :disabled='group.id <= 0'
               )
               template(v-slot:selection='{ item, index }')
-                v-chip.text-white.ml-0(v-if='rule.locales.length === 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.code.toUpperCase() }}
+                v-chip.text-white.ml-0(v-if='rule.locales.length === 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ (item.raw || item).code?.toUpperCase() }}
                 v-chip.text-white.ml-0(v-else-if='index === 0', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ rule.locales.length }} locales
               template(v-slot:prepend-item)
                 v-list-item(@click='updateRule(rule.id, { locales: [] })')
