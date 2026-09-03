@@ -1,6 +1,20 @@
-import { fetchAuthStrategies, fetchAdminAuthActiveStrategies, fetchAdminAuthProviders, fetchAdminAuthStrategies, fetchAdminApiBootstrap, updateAdminAuthStrategies, setAdminApiState, revokeAdminApiKey, createAdminApiKey, submitAuthRequest, submitStatusRequest, regenerateAuthCertificates, resetGuestUser } from './auth-api.ts'
+import {
+  fetchAuthStrategies,
+  fetchAdminAuthActiveStrategies,
+  fetchAdminAuthProviders,
+  fetchAdminAuthStrategies,
+  fetchAdminApiBootstrap,
+  updateAdminAuthStrategies,
+  setAdminApiState,
+  revokeAdminApiKey,
+  createAdminApiKey,
+  submitAuthRequest,
+  submitStatusRequest,
+  regenerateAuthCertificates,
+  resetGuestUser
+} from './auth-api.ts'
 
-function createJsonResponse (payload, ok = true, status = ok ? 200 : 400) {
+function createJsonResponse(payload, ok = true, status = ok ? 200 : 400) {
   return {
     ok,
     status,
@@ -13,44 +27,46 @@ function createJsonResponse (payload, ok = true, status = ok ? 200 : 400) {
 
 describe('auth api helper', () => {
   test('fetches and sorts auth strategies by order', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      {
-        key: 'zeta',
-        displayName: 'Zeta',
-        order: 20,
-        selfRegistration: false,
-        strategy: {
-          useForm: false,
-          usernameType: 'email',
-          color: '#333333',
-          icon: 'mdi-login'
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          key: 'zeta',
+          displayName: 'Zeta',
+          order: 20,
+          selfRegistration: false,
+          strategy: {
+            useForm: false,
+            usernameType: 'email',
+            color: '#333333',
+            icon: 'mdi-login'
+          }
+        },
+        {
+          key: 'alpha',
+          displayName: 'Alpha',
+          order: 5,
+          selfRegistration: true,
+          strategy: {
+            useForm: true,
+            usernameType: 'email',
+            color: '#111111',
+            icon: 'mdi-account'
+          }
+        },
+        {
+          key: 'middle',
+          displayName: 'Middle',
+          order: 10,
+          selfRegistration: false,
+          strategy: {
+            useForm: true,
+            usernameType: 'username',
+            color: '#222222',
+            icon: 'mdi-account-key'
+          }
         }
-      },
-      {
-        key: 'alpha',
-        displayName: 'Alpha',
-        order: 5,
-        selfRegistration: true,
-        strategy: {
-          useForm: true,
-          usernameType: 'email',
-          color: '#111111',
-          icon: 'mdi-account'
-        }
-      },
-      {
-        key: 'middle',
-        displayName: 'Middle',
-        order: 10,
-        selfRegistration: false,
-        strategy: {
-          useForm: true,
-          usernameType: 'username',
-          color: '#222222',
-          icon: 'mdi-account-key'
-        }
-      }
-    ]))
+      ])
+    )
 
     expect(await fetchAuthStrategies(fetchImpl)).toEqual([
       {
@@ -100,26 +116,34 @@ describe('auth api helper', () => {
   })
 
   test('fetches and normalizes admin authentication strategies', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      {
-        key: 'github',
-        title: 'GitHub',
-        isAvailable: true,
-        props: [
-          { key: 'clientId', value: JSON.stringify({ type: 'string', order: 2, default: '' }) },
-          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', order: 1, default: '' }) }
-        ],
-        extra: 'ignored'
-      },
-      {
-        key: 'local',
-        title: 'Local',
-        isAvailable: true,
-        props: []
-      }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          key: 'github',
+          title: 'GitHub',
+          isAvailable: true,
+          props: [
+            { key: 'clientId', value: JSON.stringify({ type: 'string', order: 2, default: '' }) },
+            { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', order: 1, default: '' }) }
+          ],
+          setup: {
+            title: 'GitHub setup',
+            documentationUrl: 'https://docs.example.com/github',
+            steps: ['Create an app', 'Copy the client ID']
+          },
+          extra: 'ignored'
+        },
+        {
+          key: 'local',
+          title: 'Local',
+          isAvailable: true,
+          props: []
+        }
+      ])
+    )
 
-    expect(await fetchAdminAuthStrategies(fetchImpl)).toEqual([
+    const strategies = await fetchAdminAuthStrategies(fetchImpl)
+    expect(strategies).toEqual([
       expect.objectContaining({
         key: 'github',
         title: 'GitHub',
@@ -129,6 +153,11 @@ describe('auth api helper', () => {
           { key: 'clientSharedKey', type: 'string', order: 1, default: '' },
           { key: 'clientId', type: 'string', order: 2, default: '' }
         ],
+        setup: {
+          title: 'GitHub setup',
+          documentationUrl: 'https://docs.example.com/github',
+          steps: ['Create an app', 'Copy the client ID']
+        },
         extra: 'ignored'
       }),
       expect.objectContaining({
@@ -138,6 +167,7 @@ describe('auth api helper', () => {
         props: []
       })
     ])
+    expect(strategies[1]).not.toHaveProperty('setup')
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/admin/strategies', {
       credentials: 'same-origin',
@@ -152,6 +182,32 @@ describe('auth api helper', () => {
 
     await expect(Promise.resolve(fetchAdminAuthStrategies(fetchImpl, 'Bad strategies payload'))).rejects.toThrow('Bad strategies payload')
   })
+  test.each([
+    ['null metadata', null],
+    ['missing title', { documentationUrl: 'https://docs.example.com/setup', steps: ['Create an app'] }],
+    ['blank title', { title: '   ', documentationUrl: 'https://docs.example.com/setup', steps: ['Create an app'] }],
+    ['missing documentation URL', { title: 'Setup', steps: ['Create an app'] }],
+    ['non-HTTPS documentation URL', { title: 'Setup', documentationUrl: 'http://docs.example.com/setup', steps: ['Create an app'] }],
+    ['scheme-only documentation URL', { title: 'Setup', documentationUrl: 'https:docs.example.com/setup', steps: ['Create an app'] }],
+    ['relative documentation URL', { title: 'Setup', documentationUrl: '/setup', steps: ['Create an app'] }],
+    ['empty steps', { title: 'Setup', documentationUrl: 'https://docs.example.com/setup', steps: [] }],
+    ['blank step', { title: 'Setup', documentationUrl: 'https://docs.example.com/setup', steps: ['   '] }],
+    ['non-string step', { title: 'Setup', documentationUrl: 'https://docs.example.com/setup', steps: [42] }]
+  ])('rejects setup metadata with %s', async (_reason, setup) => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          key: 'dropbox',
+          title: 'Dropbox',
+          isAvailable: true,
+          props: [],
+          setup
+        }
+      ])
+    )
+
+    await expect(Promise.resolve(fetchAdminAuthStrategies(fetchImpl, 'Bad strategies payload'))).rejects.toThrow('Bad strategies payload')
+  })
 
   test('surfaces REST errors for admin authentication strategy definitions', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'manage:system is required' }, false))
@@ -160,33 +216,43 @@ describe('auth api helper', () => {
   })
 
   test('fetches and normalizes admin active authentication strategies', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      {
-        key: 'github',
-        strategy: { key: 'github', title: 'GitHub' },
-        config: [
-          { key: 'clientId', value: JSON.stringify({ type: 'string', order: 2, value: 'abc' }) },
-          { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', order: 1, sensitive: true, value: '********' }) }
-        ],
-        order: 2,
-        isEnabled: true,
-        displayName: 'GitHub Login',
-        selfRegistration: false,
-        domainWhitelist: [],
-        autoEnrollGroups: []
-      },
-      {
-        key: 'local',
-        strategy: { key: 'local', title: 'Local' },
-        config: [],
-        order: 1,
-        isEnabled: true,
-        displayName: 'Local Login',
-        selfRegistration: false,
-        domainWhitelist: [],
-        autoEnrollGroups: []
-      }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          key: 'github',
+          strategy: {
+            key: 'github',
+            title: 'GitHub',
+            setup: {
+              title: 'GitHub setup',
+              documentationUrl: 'https://docs.example.com/github',
+              steps: ['Create an app', 'Copy the client ID']
+            }
+          },
+          config: [
+            { key: 'clientId', value: JSON.stringify({ type: 'string', order: 2, value: 'abc' }) },
+            { key: 'clientSharedKey', value: JSON.stringify({ type: 'string', order: 1, sensitive: true, value: '********' }) }
+          ],
+          order: 2,
+          isEnabled: true,
+          displayName: 'GitHub Login',
+          selfRegistration: false,
+          domainWhitelist: [],
+          autoEnrollGroups: []
+        },
+        {
+          key: 'local',
+          strategy: { key: 'local', title: 'Local' },
+          config: [],
+          order: 1,
+          isEnabled: true,
+          displayName: 'Local Login',
+          selfRegistration: false,
+          domainWhitelist: [],
+          autoEnrollGroups: []
+        }
+      ])
+    )
 
     expect(await fetchAdminAuthActiveStrategies(fetchImpl)).toEqual([
       expect.objectContaining({
@@ -197,6 +263,13 @@ describe('auth api helper', () => {
       expect.objectContaining({
         key: 'github',
         order: 2,
+        strategy: expect.objectContaining({
+          setup: {
+            title: 'GitHub setup',
+            documentationUrl: 'https://docs.example.com/github',
+            steps: ['Create an app', 'Copy the client ID']
+          }
+        }),
         config: [
           { key: 'clientSharedKey', value: { type: 'string', order: 1, sensitive: true, value: '********' } },
           { key: 'clientId', value: { type: 'string', order: 2, value: 'abc' } }
@@ -211,9 +284,51 @@ describe('auth api helper', () => {
       }
     })
   })
+  test('rejects malformed setup metadata in active authentication strategies', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          key: 'github',
+          strategy: {
+            key: 'github',
+            setup: {
+              title: 'GitHub setup',
+              documentationUrl: 'http://docs.example.com/github',
+              steps: ['Create an app']
+            }
+          },
+          config: [],
+          order: 1,
+          isEnabled: true,
+          displayName: 'GitHub',
+          selfRegistration: false,
+          domainWhitelist: [],
+          autoEnrollGroups: []
+        }
+      ])
+    )
+
+    await expect(Promise.resolve(fetchAdminAuthActiveStrategies(fetchImpl, 'Bad active payload'))).rejects.toThrow('Bad active payload')
+  })
 
   test('rejects malformed admin active authentication strategy payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ key: 'github', strategy: { key: 'github' }, config: [{ key: 'clientId', value: '{' }], order: 1, isEnabled: true, displayName: 'GitHub', selfRegistration: false, domainWhitelist: [], autoEnrollGroups: [] }]))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(
+        createJsonResponse([
+          {
+            key: 'github',
+            strategy: { key: 'github' },
+            config: [{ key: 'clientId', value: '{' }],
+            order: 1,
+            isEnabled: true,
+            displayName: 'GitHub',
+            selfRegistration: false,
+            domainWhitelist: [],
+            autoEnrollGroups: []
+          }
+        ])
+      )
 
     await expect(Promise.resolve(fetchAdminAuthActiveStrategies(fetchImpl, 'Bad active payload'))).rejects.toThrow('Bad active payload')
   })
@@ -225,10 +340,12 @@ describe('auth api helper', () => {
   })
 
   test('fetches and sorts admin auth providers by order', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      { key: 'github', displayName: 'GitHub Login', order: 2, isEnabled: false },
-      { key: 'local', displayName: 'Local Login', order: 1, isEnabled: true }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        { key: 'github', displayName: 'GitHub Login', order: 2, isEnabled: false },
+        { key: 'local', displayName: 'Local Login', order: 1, isEnabled: true }
+      ])
+    )
 
     expect(await fetchAdminAuthProviders(fetchImpl)).toEqual([
       { key: 'local', displayName: 'Local Login', order: 1, isEnabled: true },
@@ -244,31 +361,31 @@ describe('auth api helper', () => {
   })
 
   test('rejects malformed admin auth providers payload', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      { key: 'local', displayName: 'Local Login', order: '1', isEnabled: true }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ key: 'local', displayName: 'Local Login', order: '1', isEnabled: true }]))
 
     await expect(Promise.resolve(fetchAdminAuthProviders(fetchImpl, 'Bad providers payload'))).rejects.toThrow('Bad providers payload')
   })
 
   test('fetches admin API bootstrap with sanitized key rows', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      enabled: true,
-      extraRoot: 'ignored',
-      keys: [
-        {
-          id: 7,
-          name: 'Deploy',
-          keyShort: '...12345678901234567890',
-          key: '[REDACTED]',
-          isRevoked: false,
-          expiration: '2026-01-01T00:00:00.000Z',
-          createdAt: '2025-01-01T00:00:00.000Z',
-          updatedAt: '2025-02-01T00:00:00.000Z',
-          extraSecret: 'ignored'
-        }
-      ]
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        enabled: true,
+        extraRoot: 'ignored',
+        keys: [
+          {
+            id: 7,
+            name: 'Deploy',
+            keyShort: '...12345678901234567890',
+            key: '[REDACTED]',
+            isRevoked: false,
+            expiration: '2026-01-01T00:00:00.000Z',
+            createdAt: '2025-01-01T00:00:00.000Z',
+            updatedAt: '2025-02-01T00:00:00.000Z',
+            extraSecret: 'ignored'
+          }
+        ]
+      })
+    )
 
     expect(await fetchAdminApiBootstrap(fetchImpl)).toEqual({
       enabled: true,
@@ -300,58 +417,64 @@ describe('auth api helper', () => {
   })
 
   test('rejects malformed admin API key rows', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      enabled: false,
-      keys: [
-        {
-          id: 7,
-          name: 'Deploy',
-          keyShort: '',
-          isRevoked: false,
-          expiration: '2026-01-01T00:00:00.000Z',
-          createdAt: '2025-01-01T00:00:00.000Z',
-          updatedAt: '2025-02-01T00:00:00.000Z'
-        }
-      ]
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        enabled: false,
+        keys: [
+          {
+            id: 7,
+            name: 'Deploy',
+            keyShort: '',
+            isRevoked: false,
+            expiration: '2026-01-01T00:00:00.000Z',
+            createdAt: '2025-01-01T00:00:00.000Z',
+            updatedAt: '2025-02-01T00:00:00.000Z'
+          }
+        ]
+      })
+    )
 
     await expect(Promise.resolve(fetchAdminApiBootstrap(fetchImpl, 'Bad API key row'))).rejects.toThrow('Bad API key row')
   })
 
   test('rejects admin API key rows with unredacted keyShort values', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      enabled: false,
-      keys: [
-        {
-          id: 7,
-          name: 'Deploy',
-          keyShort: 'visible-key-material',
-          isRevoked: false,
-          expiration: '2026-01-01T00:00:00.000Z',
-          createdAt: '2025-01-01T00:00:00.000Z',
-          updatedAt: '2025-02-01T00:00:00.000Z'
-        }
-      ]
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        enabled: false,
+        keys: [
+          {
+            id: 7,
+            name: 'Deploy',
+            keyShort: 'visible-key-material',
+            isRevoked: false,
+            expiration: '2026-01-01T00:00:00.000Z',
+            createdAt: '2025-01-01T00:00:00.000Z',
+            updatedAt: '2025-02-01T00:00:00.000Z'
+          }
+        ]
+      })
+    )
 
     await expect(Promise.resolve(fetchAdminApiBootstrap(fetchImpl, 'Bad API key row'))).rejects.toThrow('Bad API key row')
   })
 
   test('accepts intentionally redacted admin API key placeholders', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      enabled: false,
-      keys: [
-        {
-          id: 7,
-          name: 'Legacy',
-          keyShort: '...[redacted]',
-          isRevoked: false,
-          expiration: '2026-01-01T00:00:00.000Z',
-          createdAt: '2025-01-01T00:00:00.000Z',
-          updatedAt: '2025-02-01T00:00:00.000Z'
-        }
-      ]
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        enabled: false,
+        keys: [
+          {
+            id: 7,
+            name: 'Legacy',
+            keyShort: '...[redacted]',
+            isRevoked: false,
+            expiration: '2026-01-01T00:00:00.000Z',
+            createdAt: '2025-01-01T00:00:00.000Z',
+            updatedAt: '2025-02-01T00:00:00.000Z'
+          }
+        ]
+      })
+    )
 
     expect(await fetchAdminApiBootstrap(fetchImpl)).toEqual({
       enabled: false,
@@ -430,17 +553,21 @@ describe('auth api helper', () => {
   })
 
   test('creates admin API keys through REST and returns the generated key', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      key: 'generated-api-key',
-      message: 'API Key created successfully'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        key: 'generated-api-key',
+        message: 'API Key created successfully'
+      })
+    )
 
-    expect(await createAdminApiKey(fetchImpl, {
-      name: 'Deploy',
-      expiration: '1y',
-      fullAccess: false,
-      group: 7
-    })).toEqual({
+    expect(
+      await createAdminApiKey(fetchImpl, {
+        name: 'Deploy',
+        expiration: '1y',
+        fullAccess: false,
+        group: 7
+      })
+    ).toEqual({
       key: 'generated-api-key',
       message: 'API Key created successfully'
     })
@@ -463,33 +590,51 @@ describe('auth api helper', () => {
   test('rejects malformed admin API key creation success payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'API Key created successfully' }))
 
-    await expect(Promise.resolve(createAdminApiKey(fetchImpl, {
-      name: 'Deploy',
-      expiration: '1y',
-      fullAccess: true,
-      group: null
-    }, 'Bad key creation'))).rejects.toThrow('Bad key creation')
+    await expect(
+      Promise.resolve(
+        createAdminApiKey(
+          fetchImpl,
+          {
+            name: 'Deploy',
+            expiration: '1y',
+            fullAccess: true,
+            group: null
+          },
+          'Bad key creation'
+        )
+      )
+    ).rejects.toThrow('Bad key creation')
   })
 
   test('surfaces admin API key creation REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'name must be a non-empty string' }, false))
 
-    await expect(Promise.resolve(createAdminApiKey(fetchImpl, {
-      name: '',
-      expiration: '1y',
-      fullAccess: true,
-      group: null
-    }, 'Bad key creation'))).rejects.toThrow('name must be a non-empty string')
+    await expect(
+      Promise.resolve(
+        createAdminApiKey(
+          fetchImpl,
+          {
+            name: '',
+            expiration: '1y',
+            fullAccess: true,
+            group: null
+          },
+          'Bad key creation'
+        )
+      )
+    ).rejects.toThrow('name must be a non-empty string')
   })
 
   test('submits auth request as JSON and returns parsed body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ jwt: 'token', redirect: '/' }))
 
-    expect(await submitAuthRequest(fetchImpl, '/_api/auth/login', {
-      strategy: 'local',
-      username: 'alice@example.com',
-      password: 'secret'
-    })).toEqual({ jwt: 'token', redirect: '/' })
+    expect(
+      await submitAuthRequest(fetchImpl, '/_api/auth/login', {
+        strategy: 'local',
+        username: 'alice@example.com',
+        password: 'secret'
+      })
+    ).toEqual({ jwt: 'token', redirect: '/' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/login', {
       method: 'POST',
@@ -509,11 +654,15 @@ describe('auth api helper', () => {
   test('throws API JSON error messages for expected auth failures', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Invalid credentials' }, false, 401))
 
-    await expect(Promise.resolve(submitAuthRequest(fetchImpl, '/_api/auth/login', {
-      strategy: 'local',
-      username: 'alice@example.com',
-      password: 'wrong'
-    }))).rejects.toThrow('Invalid credentials')
+    await expect(
+      Promise.resolve(
+        submitAuthRequest(fetchImpl, '/_api/auth/login', {
+          strategy: 'local',
+          username: 'alice@example.com',
+          password: 'wrong'
+        })
+      )
+    ).rejects.toThrow('Invalid credentials')
   })
 
   test('falls back to generic error when non-ok response is not JSON', async () => {
@@ -525,36 +674,74 @@ describe('auth api helper', () => {
       }
     })
 
-    await expect(Promise.resolve(submitAuthRequest(fetchImpl, '/_api/auth/login', {
-      strategy: 'local'
-    }, 'Generic auth error'))).rejects.toThrow('Generic auth error')
+    await expect(
+      Promise.resolve(
+        submitAuthRequest(
+          fetchImpl,
+          '/_api/auth/login',
+          {
+            strategy: 'local'
+          },
+          'Generic auth error'
+        )
+      )
+    ).rejects.toThrow('Generic auth error')
   })
 
   test('rejects malformed successful auth payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ redirect: '/' }))
 
-    await expect(Promise.resolve(submitAuthRequest(fetchImpl, '/_api/auth/login', {
-      strategy: 'local'
-    }, 'Generic auth error'))).rejects.toThrow('Generic auth error')
+    await expect(
+      Promise.resolve(
+        submitAuthRequest(
+          fetchImpl,
+          '/_api/auth/login',
+          {
+            strategy: 'local'
+          },
+          'Generic auth error'
+        )
+      )
+    ).rejects.toThrow('Generic auth error')
   })
 
   test('rejects TFA continuation responses without a continuation token', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ mustProvideTFA: true }))
 
-    await expect(Promise.resolve(submitAuthRequest(fetchImpl, '/_api/auth/login', {
-      strategy: 'local'
-    }, 'Generic auth error'))).rejects.toThrow('Generic auth error')
+    await expect(
+      Promise.resolve(
+        submitAuthRequest(
+          fetchImpl,
+          '/_api/auth/login',
+          {
+            strategy: 'local'
+          },
+          'Generic auth error'
+        )
+      )
+    ).rejects.toThrow('Generic auth error')
   })
 
   test('rejects setup-TFA responses without required setup data', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      mustSetupTFA: true,
-      continuationToken: 'continuation-only'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        mustSetupTFA: true,
+        continuationToken: 'continuation-only'
+      })
+    )
 
-    await expect(Promise.resolve(submitAuthRequest(fetchImpl, '/_api/auth/login', {
-      strategy: 'local'
-    }, 'Generic auth error'))).rejects.toThrow('Generic auth error')
+    await expect(
+      Promise.resolve(
+        submitAuthRequest(
+          fetchImpl,
+          '/_api/auth/login',
+          {
+            strategy: 'local'
+          },
+          'Generic auth error'
+        )
+      )
+    ).rejects.toThrow('Generic auth error')
   })
 
   test('accepts setup-TFA responses with QR and manual setup data', async () => {
@@ -566,17 +753,31 @@ describe('auth api helper', () => {
     }
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
 
-    expect(await submitAuthRequest(fetchImpl, '/_api/auth/login', {
-      strategy: 'local'
-    }, 'Generic auth error')).toEqual(payload)
+    expect(
+      await submitAuthRequest(
+        fetchImpl,
+        '/_api/auth/login',
+        {
+          strategy: 'local'
+        },
+        'Generic auth error'
+      )
+    ).toEqual(payload)
   })
 
   test('submits status request as JSON and returns parsed body', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Password reset request processed.' }))
 
-    expect(await submitStatusRequest(fetchImpl, '/_api/auth/forgot-password', {
-      email: 'alice@example.com'
-    }, 'Generic status error')).toEqual({ message: 'Password reset request processed.' })
+    expect(
+      await submitStatusRequest(
+        fetchImpl,
+        '/_api/auth/forgot-password',
+        {
+          email: 'alice@example.com'
+        },
+        'Generic status error'
+      )
+    ).toEqual({ message: 'Password reset request processed.' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/forgot-password', {
       method: 'POST',
@@ -594,9 +795,18 @@ describe('auth api helper', () => {
   test('rejects malformed successful status payloads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ success: true }))
 
-    await expect(Promise.resolve(submitStatusRequest(fetchImpl, '/_api/auth/forgot-password', {
-      email: 'alice@example.com'
-    }, 'Generic status error'))).rejects.toThrow('Generic status error')
+    await expect(
+      Promise.resolve(
+        submitStatusRequest(
+          fetchImpl,
+          '/_api/auth/forgot-password',
+          {
+            email: 'alice@example.com'
+          },
+          'Generic status error'
+        )
+      )
+    ).rejects.toThrow('Generic status error')
   })
 
   test('regenerates auth certificates through REST', async () => {
@@ -643,7 +853,19 @@ describe('auth api helper', () => {
 
   test('updates admin authentication strategies with same-origin JSON POST options', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Strategies updated successfully' }))
-    const strategies = [{ key: 'local', strategyKey: 'local', config: [], displayName: 'Local', order: 0, isEnabled: true, selfRegistration: false, domainWhitelist: [], autoEnrollGroups: [] }]
+    const strategies = [
+      {
+        key: 'local',
+        strategyKey: 'local',
+        config: [],
+        displayName: 'Local',
+        order: 0,
+        isEnabled: true,
+        selfRegistration: false,
+        domainWhitelist: [],
+        autoEnrollGroups: []
+      }
+    ]
 
     expect(await updateAdminAuthStrategies(fetchImpl, strategies)).toEqual({ message: 'Strategies updated successfully' })
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/strategies', {
@@ -666,6 +888,8 @@ describe('auth api helper', () => {
   test('propagates admin authentication strategy REST JSON errors', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'Cannot delete Local as 1 or more users are still using it.' }, false))
 
-    await expect(Promise.resolve(updateAdminAuthStrategies(fetchImpl, [], 'Bad strategy update'))).rejects.toThrow('Cannot delete Local as 1 or more users are still using it.')
+    await expect(Promise.resolve(updateAdminAuthStrategies(fetchImpl, [], 'Bad strategy update'))).rejects.toThrow(
+      'Cannot delete Local as 1 or more users are still using it.'
+    )
   })
 })

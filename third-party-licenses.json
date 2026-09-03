@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "74c7f3ca38b8c0d06c199a42aa6f5c4e02d29cf3d4a7e5a86ca4400fe178b5bf",
+    "sha256": "42239374f6dcee6636b9143295cd95aec2560c0708032d0979f4251241cafb4b",
     "scope": "production",
     "policy": {
       "file": "license-policy.json",
@@ -3805,14 +3805,6 @@
         "1.4.5"
       ],
       "license": "MIT"
-    },
-    {
-      "name": "passport-dropbox-oauth2",
-      "versions": [
-        "1.1.0"
-      ],
-      "license": "MIT",
-      "author": "Florian Heinemann"
     },
     {
       "name": "passport-facebook",

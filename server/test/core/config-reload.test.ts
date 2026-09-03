@@ -9,25 +9,32 @@ describe('distributed config reload', () => {
     vi.restoreAllMocks()
   })
 
-  it('updates the canonical config object retained by app locals', async () => {
+  it.each([
+    ['enabled', true, 1],
+    ['disabled', false, false]
+  ] as const)('applies %s one-hop proxy trust while preserving canonical config identity', async (_label, securityTrustProxy, expectedTrustProxy) => {
     vi.resetModules()
     let reloadListener: (() => Promise<void>) | undefined
     const canonicalConfig = {
       db: { pass: 'initial-secret' },
       flags: { sqllog: false },
+      security: { securityTrustProxy: !securityTrustProxy },
       port: 3000,
       title: 'Before reload'
     }
     const appLocals = { config: canonicalConfig }
+    const setAppSetting = vi.fn()
     const knexConfig = { debug: false }
     const getConfig = vi.fn().mockResolvedValue({
       db: { pass: 'reloaded-secret' },
       flags: { sqllog: true },
+      security: { securityTrustProxy },
       port: 4000,
       title: 'After reload'
     })
 
     globalThis.WIKI = {
+      app: { locals: appLocals, set: setAppSetting },
       config: canonicalConfig,
       events: {
         inbound: {
@@ -57,9 +64,11 @@ describe('distributed config reload', () => {
     expect(appLocals.config).toMatchObject({
       db: { pass: 'reloaded-secret' },
       flags: { sqllog: true },
+      security: { securityTrustProxy },
       port: 4000,
       title: 'After reload'
     })
     expect(knexConfig.debug).toBe(true)
+    expect(setAppSetting.mock.calls).toEqual([['trust proxy', expectedTrustProxy]])
   })
 })

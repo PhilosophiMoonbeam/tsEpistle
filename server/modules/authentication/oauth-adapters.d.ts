@@ -10,13 +10,7 @@ declare namespace OAuthAdapterContracts {
     passReqToCallback: true
   }
 
-  type RequestVerify<Profile extends BaseProfile> = (
-    request: Request,
-    accessToken: string,
-    refreshToken: string,
-    profile: Profile,
-    done: VerifyDone
-  ) => void
+  type RequestVerify<Profile extends BaseProfile> = (request: Request, accessToken: string, refreshToken: string, profile: Profile, done: VerifyDone) => void
 }
 
 declare module 'passport-auth0' {
@@ -85,13 +79,7 @@ declare module 'passport-azure-ad' {
     readonly _raw: string
   }
 
-  type Verify = (
-    request: OAuthAdapterContracts.Request,
-    issuer: string,
-    subject: string,
-    profile: Profile,
-    done: OAuthAdapterContracts.VerifyDone
-  ) => void
+  type Verify = (request: OAuthAdapterContracts.Request, issuer: string, subject: string, profile: Profile, done: OAuthAdapterContracts.VerifyDone) => void
 
   export class OIDCStrategy {
     constructor(options: OIDCStrategyOptions, verify: Verify)
@@ -143,31 +131,6 @@ declare module 'discord-strategy' {
   }
 }
 
-declare module 'passport-dropbox-oauth2' {
-  interface StrategyOptions extends OAuthAdapterContracts.RequestOptions {
-    apiVersion: '1' | '2'
-  }
-
-  type Profile = OAuthAdapterContracts.BaseProfile & {
-    readonly _json: {
-      readonly profile_photo_url?: string
-      readonly [field: string]: unknown
-    }
-    readonly _raw: string
-  }
-
-  export class Strategy {
-    constructor(options: StrategyOptions, verify: OAuthAdapterContracts.RequestVerify<Profile>)
-  }
-
-  interface DropboxModule {
-    Strategy: typeof Strategy
-  }
-
-  const dropbox: DropboxModule
-  export default dropbox
-}
-
 declare module 'passport-facebook' {
   interface StrategyOptions extends OAuthAdapterContracts.RequestOptions {
     profileFields: string[]
@@ -213,12 +176,7 @@ declare module 'passport-github2' {
   }
 
   type Verify = OAuthAdapterContracts.RequestVerify<Profile>
-  type VerifyWithoutRequest = (
-    accessToken: string,
-    refreshToken: string,
-    profile: Profile,
-    done: OAuthAdapterContracts.VerifyDone
-  ) => void
+  type VerifyWithoutRequest = (accessToken: string, refreshToken: string, profile: Profile, done: OAuthAdapterContracts.VerifyDone) => void
 
   export class Strategy {
     constructor(options: StrategyOptions, verify: Verify)

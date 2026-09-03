@@ -6,7 +6,23 @@ import errors from './errors.ts'
 
 const { ApplicationError } = errors
 
-const saveKeys = ['host', 'title', 'company', 'contentLicense', 'footerOverride', 'banner', 'seo', 'logoUrl', 'pageExtensions', 'editors', 'auth', 'editShortcuts', 'features', 'security', 'uploads']
+const saveKeys = [
+  'host',
+  'title',
+  'company',
+  'contentLicense',
+  'footerOverride',
+  'banner',
+  'seo',
+  'logoUrl',
+  'pageExtensions',
+  'editors',
+  'auth',
+  'editShortcuts',
+  'features',
+  'security',
+  'uploads'
+]
 
 interface SiteConfig extends Record<string, unknown> {
   banner?: unknown
@@ -61,6 +77,15 @@ const updateConfig = async (input: unknown): Promise<void> => {
     throw new ApplicationError('Site configuration payload must be an object.', { code: 'INVALID_SITE_CONFIGURATION' })
   }
   const args = input as Record<string, unknown>
+  const requestedHost = Object.hasOwn(args, 'host') ? _.trim(args.host as string).replace(/\/$/, '') : null
+  const currentHostProtocol = URL.canParse(config.host) ? new URL(config.host).protocol : null
+  const requestedHostProtocol = requestedHost !== null && URL.canParse(requestedHost) ? new URL(requestedHost).protocol : null
+  if (requestedHost !== null && currentHostProtocol === 'https:' && requestedHostProtocol !== 'https:') {
+    throw new ApplicationError('Changing the site host from HTTPS to a non-HTTPS URL cannot be applied live; restart with the new host configuration.', {
+      code: 'SITE_HOST_PROTOCOL_CONFLICT',
+      status: 409
+    })
+  }
   const hasAvailableEditors = Object.hasOwn(args, 'availableEditors')
   const availableEditorsValidation = hasAvailableEditors ? validateAvailableEditors(args.availableEditors) : null
   if (availableEditorsValidation && !availableEditorsValidation.ok) {
@@ -81,8 +106,8 @@ const updateConfig = async (input: unknown): Promise<void> => {
       available: availableEditorsValidation.value
     }
   }
-  if (Object.hasOwn(args, 'host')) {
-    config.host = _.trim(args.host as string).replace(/\/$/, '')
+  if (requestedHost !== null) {
+    config.host = requestedHost
   }
   for (const field of ['title', 'company', 'logoUrl']) {
     if (Object.hasOwn(args, field)) config[field] = _.trim(args[field] as string)
@@ -91,7 +116,10 @@ const updateConfig = async (input: unknown): Promise<void> => {
     if (Object.hasOwn(args, field)) config[field] = args[field]
   }
   if (Object.hasOwn(args, 'pageExtensions')) {
-    config.pageExtensions = _.trim(args.pageExtensions as string).split(',').map((value: string) => value.trim().toLowerCase()).filter(Boolean)
+    config.pageExtensions = _.trim(args.pageExtensions as string)
+      .split(',')
+      .map((value: string) => value.trim().toLowerCase())
+      .filter(Boolean)
   }
   config.seo = {
     description: _.get(args, 'description', config.seo.description),
@@ -141,9 +169,8 @@ const updateConfig = async (input: unknown): Promise<void> => {
   }
 
   await configService.saveToDb(saveKeys)
-  const app = WIKI.app as { enable(setting: string): void, disable(setting: string): void }
-  if (config.security.securityTrustProxy) app.enable('trust proxy')
-  else app.disable('trust proxy')
+  const app = WIKI.app as { set(setting: string, value: number | false): void }
+  app.set('trust proxy', config.security.securityTrustProxy ? 1 : false)
 }
 
 export default { getConfig, updateConfig }

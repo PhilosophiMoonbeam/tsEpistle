@@ -15,6 +15,7 @@ import localization from './core/localization.ts'
 import mail from './core/mail.ts'
 import system from './core/system.ts'
 import viteAssets from './helpers/vite-assets.ts'
+import { sessionCookieOptions } from './helpers/session-cookie.ts'
 import securityMiddleware from './middlewares/security.ts'
 import seoMiddleware from './middlewares/seo.ts'
 import createAuthController, { normalizeFaviconUrl, type AuthWiki } from './controllers/auth.ts'
@@ -239,16 +240,33 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   app.use('/', createSslController(wiki))
 
   app.use(cookieParser())
+  const currentSessionCookieOptions = sessionCookieOptions(() => wiki.config.host)
   app.use(
     session({
       secret: wiki.config.sessionSecret,
       resave: false,
       saveUninitialized: false,
+      cookie: currentSessionCookieOptions,
       store: new ConnectSessionKnexStore({
         knex: wiki.models.knex
       })
     })
   )
+  app.use((req, _res, next) => {
+    if (!req.session) return next()
+
+    const cookieOptions = currentSessionCookieOptions()
+    if (Boolean(req.session.cookie.secure) === Boolean(cookieOptions.secure)) {
+      Object.assign(req.session.cookie, cookieOptions)
+      return next()
+    }
+
+    req.session.regenerate(error => {
+      if (error) return next(error)
+      Object.assign(req.session.cookie, currentSessionCookieOptions())
+      next()
+    })
+  })
   app.use(wiki.auth.passport.initialize())
   const actionSnapshotSigningSecret = snapshotSigningSecret(wiki.config.agents.provider.enabled || wiki.config.agents.mcp.enabled)
   const mcpController = wiki.config.agents.mcp.enabled

@@ -28,8 +28,7 @@ describe('controllers/api site endpoints', () => {
         checkAccess: vi.fn(() => true)
       },
       app: {
-        enable: vi.fn(),
-        disable: vi.fn()
+        set: vi.fn()
       },
       configSvc: {
         saveToDb: vi.fn().mockResolvedValue(undefined)
@@ -179,6 +178,64 @@ describe('controllers/api site endpoints', () => {
     }))
   })
 
+  it('rejects a live HTTPS-to-HTTP host downgrade before mutating or saving configuration', async () => {
+    const handler = await loadPutConfigHandler()
+    const originalConfig = structuredClone(global.WIKI.config)
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await handler({
+      user: {},
+      body: {
+        host: ' http://wiki.example.com/ ',
+        title: 'Must not be applied',
+        authJwtAudience: 'urn:stale-oauth-state',
+        securityTrustProxy: true
+      }
+    }, res)
+
+    expect(global.WIKI.config).toEqual(originalConfig)
+    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
+    expect(global.WIKI.app.set).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(409)
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'Changing the site host from HTTPS to a non-HTTPS URL cannot be applied live; restart with the new host configuration.'
+    })
+  })
+
+  it('allows replacing the legacy placeholder host with HTTPS', async () => {
+    const handler = await loadPutConfigHandler()
+    global.WIKI.config.host = 'http://'
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await handler({ user: {}, body: { host: ' https://wiki.example.com/ ' } }, res)
+
+    expect(global.WIKI.config.host).toBe('https://wiki.example.com')
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(expect.arrayContaining(['host']))
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: 'Site configuration updated successfully' })
+  })
+
+  it('keeps HTTP localhost host updates supported when configured in HTTP mode', async () => {
+    const handler = await loadPutConfigHandler()
+    global.WIKI.config.host = 'http://localhost:3000'
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+
+    await handler({
+      user: {},
+      body: {
+        host: ' http://localhost:8080/ ',
+        title: ' Local Wiki '
+      }
+    }, res)
+
+    expect(global.WIKI.config.host).toBe('http://localhost:8080')
+    expect(global.WIKI.config.title).toBe('Local Wiki')
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(expect.arrayContaining(['host', 'title']))
+    expect(global.WIKI.app.set).toHaveBeenCalledWith('trust proxy', false)
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({ message: 'Site configuration updated successfully' })
+  })
+
   it('updates site config with GraphQL-compatible normalization and save side effects', async () => {
     const handler = await loadPutConfigHandler()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
@@ -250,8 +307,7 @@ describe('controllers/api site endpoints', () => {
     expect(global.WIKI.config.uploads.maxFiles).toBe(20)
     expect(global.WIKI.config.uploads.forceDownload).toBe(true)
     expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['host', 'title', 'company', 'contentLicense', 'footerOverride', 'banner', 'seo', 'logoUrl', 'pageExtensions', 'editors', 'auth', 'editShortcuts', 'features', 'security', 'uploads'])
-    expect(global.WIKI.app.enable).toHaveBeenCalledWith('trust proxy')
-    expect(global.WIKI.app.disable).not.toHaveBeenCalled()
+    expect(global.WIKI.app.set.mock.calls).toEqual([['trust proxy', 1]])
     expect(res.status).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith({ message: 'Site configuration updated successfully' })
   })
@@ -268,27 +324,26 @@ describe('controllers/api site endpoints', () => {
     expect(res.status).not.toHaveBeenCalled()
   })
 
-  it('disables trust proxy when the saved config sets securityTrustProxy false', async () => {
+  it('clears trust proxy when the saved config sets securityTrustProxy false', async () => {
     const handler = await loadPutConfigHandler()
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { securityTrustProxy: false } }, res)
 
-    expect(global.WIKI.app.disable).toHaveBeenCalledWith('trust proxy')
+    expect(global.WIKI.app.set.mock.calls).toEqual([['trust proxy', false]])
   })
 
   it('uses the initialized application when it becomes available after import', async () => {
     const handler = await loadPutConfigHandler()
     const initializedApp = {
-      enable: vi.fn(),
-      disable: vi.fn()
+      set: vi.fn()
     }
     global.WIKI.app = initializedApp
     const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
 
     await handler({ user: {}, body: { securityTrustProxy: false } }, res)
 
-    expect(initializedApp.disable).toHaveBeenCalledWith('trust proxy')
+    expect(initializedApp.set.mock.calls).toEqual([['trust proxy', false]])
     expect(res.status).not.toHaveBeenCalled()
   })
 

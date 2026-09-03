@@ -111,7 +111,6 @@
         "openid-client": "6.8.5",
         "passport": "0.7.0",
         "passport-auth0": "1.4.5",
-        "passport-dropbox-oauth2": "1.1.0",
         "passport-facebook": "3.0.0",
         "passport-github2": "0.1.12",
         "passport-gitlab2": "5.0.0",
@@ -1780,8 +1779,6 @@
     "passport": ["passport@0.7.0", "", { "dependencies": { "passport-strategy": "1.x.x", "pause": "0.0.1", "utils-merge": "^1.0.1" } }, "sha512-cPLl+qZpSc+ireUvt+IzqbED1cHHkDoVYMo30jbJIdOOjQ1MQYZBPiNvmi8UM6lJuOpTPXJGZQk0DtC4y61MYQ=="],
 
     "passport-auth0": ["passport-auth0@1.4.5", "", { "dependencies": { "axios": "^1.7.4", "passport-oauth": "^1.0.0", "passport-oauth2": "^1.6.0" } }, "sha512-pfAvcAoR1HjKFygq0gGEHCy+9eqXr1CnfN3yD4kuUj1p4ek7P3s4bMn13+Q1FajqDNA8lD0Vvy6j8Od1oqF9Dg=="],
-
-    "passport-dropbox-oauth2": ["passport-dropbox-oauth2@1.1.0", "", { "dependencies": { "passport-oauth": "^1.0.0", "pkginfo": "^0.2.3" } }, "sha512-u79BoonqfrZDmV44s1y2FMK4cml66W/Hy9ExVY8abErMS+08YXAzOkOQGOHdfpGSaelKLwrgDL2cNWRUA+jh+A=="],
 
     "passport-facebook": ["passport-facebook@3.0.0", "", { "dependencies": { "passport-oauth2": "1.x.x" } }, "sha512-K/qNzuFsFISYAyC1Nma4qgY/12V3RSLFdFVsPKXiKZt434wOvthFW1p7zKa1iQihQMRhaWorVE1o3Vi1o+ZgeQ=="],
 

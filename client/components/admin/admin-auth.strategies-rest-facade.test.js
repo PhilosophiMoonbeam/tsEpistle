@@ -81,6 +81,18 @@ describe('admin-auth strategies REST facade', () => {
     expect(source).toMatch(/:aria-label=['"]`Move \$\{str\.displayName\} down`['"]/)
     expect(source).toContain("@click.stop='moveStrategy(idx, 1)'")
   })
+  test('renders conditional provider setup guidance with an accessible secure documentation link', () => {
+    const setupCard = source.indexOf("v-card.mt-3.mx-4(v-if='strategy.strategy.setup'")
+    const strategyConfiguration = source.indexOf("{{$t('admin:auth.strategyConfiguration')}}")
+
+    expect(setupCard).toBeGreaterThan(-1)
+    expect(setupCard).toBeLessThan(strategyConfiguration)
+    expect(source).toContain("v-for='step in strategy.strategy.setup.steps'")
+    expect(source).toContain(":href='strategy.strategy.setup.documentationUrl'")
+    expect(source).toContain("target='_blank'")
+    expect(source).toContain("rel='noopener noreferrer'")
+    expect(source).toContain(`:aria-label='\`Open \${strategy.strategy.setup.title} documentation — opens in a new tab\`'`)
+  })
 
   test('uses strict boolean model updates for strategy configuration', () => {
     expect(source).toContain(":model-value='cfg.value.value === true'")

@@ -102,6 +102,12 @@ export type AdminAuthProperty = Record<string, unknown> & {
   order?: number
 }
 
+export type AdminAuthSetup = {
+  title: string
+  documentationUrl: string
+  steps: string[]
+}
+
 export type AdminAuthStrategy = {
   key: string
   title: string
@@ -111,6 +117,44 @@ export type AdminAuthStrategy = {
   isAvailable: boolean
   isDisabled: boolean
   props: AdminAuthProperty[]
+  setup?: AdminAuthSetup
+}
+
+function normalizeAdminAuthSetup(value: unknown, fallbackMessage: string): AdminAuthSetup {
+  if (
+    !isRecord(value) ||
+    typeof value.title !== 'string' ||
+    !value.title.trim() ||
+    typeof value.documentationUrl !== 'string' ||
+    !value.documentationUrl.trim() ||
+    !Array.isArray(value.steps) ||
+    value.steps.length < 1
+  ) {
+    throw new Error(fallbackMessage)
+  }
+
+  try {
+    const documentationUrl = value.documentationUrl.trim()
+    const url = new URL(documentationUrl)
+    if (url.protocol !== 'https:' || !/^https:\/\//i.test(documentationUrl) || !url.hostname) {
+      throw new Error(fallbackMessage)
+    }
+  } catch {
+    throw new Error(fallbackMessage)
+  }
+
+  const steps = value.steps.map((step: unknown): string => {
+    if (typeof step !== 'string' || !step.trim()) {
+      throw new Error(fallbackMessage)
+    }
+    return step
+  })
+
+  return {
+    title: value.title,
+    documentationUrl: value.documentationUrl,
+    steps
+  }
 }
 
 export type AdminActiveAuthConfig = {
@@ -155,10 +199,13 @@ function normalizeAdminAuthStrategy(value: unknown, fallbackMessage: string): Ad
       return leftOrder - rightOrder
     })
 
+  const setup = value.setup === undefined ? undefined : normalizeAdminAuthSetup(value.setup, fallbackMessage)
+
   return {
     ...value,
     isDisabled: !value.isAvailable || value.key === 'local',
-    props
+    props,
+    ...(setup ? { setup } : {})
   } as AdminAuthStrategy
 }
 
@@ -179,6 +226,10 @@ function normalizeAdminActiveAuthStrategy(value: unknown, fallbackMessage: strin
   ) {
     throw new Error(fallbackMessage)
   }
+  const strategy = {
+    ...value.strategy,
+    ...(value.strategy.setup === undefined ? {} : { setup: normalizeAdminAuthSetup(value.strategy.setup, fallbackMessage) })
+  }
 
   const config = value.config
     .map((configValue: unknown): AdminActiveAuthConfig => {
@@ -198,6 +249,7 @@ function normalizeAdminActiveAuthStrategy(value: unknown, fallbackMessage: strin
 
   return {
     ...value,
+    strategy,
     config
   } as AdminActiveAuthStrategy
 }

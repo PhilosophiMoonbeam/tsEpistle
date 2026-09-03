@@ -113,6 +113,17 @@
             v-spacer
             .admin-providerlogo
               img(:src='strategy.strategy.logo', :alt='strategy.strategy.title')
+          v-card.mt-3.mx-4(v-if='strategy.strategy.setup', color='info', variant='tonal')
+            v-card-text.py-3
+              .text-body-medium.font-weight-medium {{strategy.strategy.setup.title}}
+              ol.pl-4.mb-0
+                li(v-for='step in strategy.strategy.setup.steps', :key='step') {{step}}
+              a.mt-2.d-inline-block(
+                :href='strategy.strategy.setup.documentationUrl'
+                target='_blank'
+                rel='noopener noreferrer'
+                :aria-label='`Open ${strategy.strategy.setup.title} documentation — opens in a new tab`'
+              ) Open documentation
           v-card-text
             v-row
               v-col(cols='12', sm='8')
@@ -610,3 +621,21 @@ export default {
 
 }
 </script>
+
+<style scoped>
+.admin-providerlogo {
+  display: flex;
+  flex: 0 0 96px;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 48px;
+  overflow: hidden;
+}
+
+.admin-providerlogo img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+</style>

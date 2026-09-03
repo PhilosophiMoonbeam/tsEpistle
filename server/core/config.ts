@@ -12,6 +12,7 @@ interface AppConfig {
   [key: string]: unknown
   db: { pass: string | number }
   flags: { sqllog: boolean }
+  security?: { securityTrustProxy?: boolean }
   port: number | string
   setup?: boolean
   title?: string
@@ -30,7 +31,12 @@ interface SettingsQuery {
   insert(value: { key: string; value: unknown }): Promise<unknown>
 }
 
+interface WikiApplication {
+  set(setting: 'trust proxy', value: 1 | false): void
+}
+
 interface WikiContext {
+  app?: WikiApplication
   ROOTPATH: string
   SERVERPATH: string
   config: AppConfig
@@ -205,6 +211,7 @@ const configService: ConfigService = {
     wiki.events.inbound.on('reloadConfig', async () => {
       await wiki.configSvc.loadFromDb()
       await wiki.configSvc.applyFlags()
+      wiki.app?.set('trust proxy', wiki.config.security?.securityTrustProxy === true ? 1 : false)
     })
   }
 }
