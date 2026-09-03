@@ -58,7 +58,7 @@ export default defineComponent({
   methods: {
     discard() {
       this.isShown = false
-      this.$emit('discard', true)
+      this.$emit('discard')
     },
     save() {
       this.$emit('save')

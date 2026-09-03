@@ -365,6 +365,24 @@ describe('Agent composer dense presentation', () => {
     expect(submitStyle).not.toMatch(/\*\s*2\.5/)
   })
 
+  it('keeps intrinsic end tracks adjacent while reserving a shrink-safe mobile context track', () => {
+    const actionRules = Array.from(source.matchAll(/\.agent-composer__actions\s*\{([^}]*)\}/g), match => match[1])
+    expect(actionRules).toHaveLength(2)
+    expect(actionRules[0]).toContain('grid-template-columns: minmax(0, 1fr) auto auto;')
+    expect(actionRules[0]).toContain('gap: var(--wiki-space-2);')
+    expect(actionRules[1]).toContain(
+      'grid-template-columns: minmax(var(--wiki-control-height), 1fr) minmax(0, auto) auto;'
+    )
+
+    const stateStyle = source.match(/\.agent-composer__state\s*\{([^}]*)\}/)?.[1] ?? ''
+    const stateLabelStyle = source.match(/\.agent-composer__state > span:last-child\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(stateStyle).toContain('min-width: 0;')
+    expect(stateStyle).toContain('white-space: nowrap;')
+    expect(stateLabelStyle).toContain('min-width: 0;')
+    expect(stateLabelStyle).toContain('overflow: hidden;')
+    expect(stateLabelStyle).toContain('text-overflow: ellipsis;')
+  })
+
   it('exposes visually distinct and pressed pin states in the manual picker', () => {
     const manualList = template.match(/<v-list v-if="skillMenuItems\.length > 0"[\s\S]*?<\/v-list>/)?.[0] ?? ''
     expect(source).toMatch(

@@ -105,6 +105,11 @@
           span {{$t('editor:markup.horizontalBar')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
+          v-tooltip(v-if='previewShown', location="bottom", color='primary')
+            template(v-slot:activator='{ props }')
+              v-btn.animated.fadeIn(icon, rounded='0', v-bind='props', aria-label='Align preview to cursor', @click='alignPreviewToCursor').mx-0
+                v-icon mdi-crosshairs-gps
+            span Align preview to cursor
           v-tooltip(location="bottom", color='primary', v-if='previewShown')
             template(v-slot:activator='{ props }')
               v-btn.animated.fadeIn.wait-p1s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.toggleSpellcheck`)', :aria-pressed='spellModeActive', @click='spellModeActive = !spellModeActive').mx-0
@@ -117,6 +122,11 @@
             span {{$t('editor:markup.togglePreviewPane')}}
         template(v-else)
           v-spacer
+          v-tooltip(v-if='previewShown', location="bottom", color='primary')
+            template(v-slot:activator='{ props }')
+              v-btn.mx-0(icon, rounded='0', v-bind='props', aria-label='Align preview to cursor', @click='alignPreviewToCursor')
+                v-icon mdi-crosshairs-gps
+            span Align preview to cursor
           v-tooltip(location="bottom", color='primary')
             template(v-slot:activator='{ props }')
               v-btn.mx-0(
@@ -343,7 +353,7 @@ const md = createWikiMarkdownRenderer()
 // HELPER FUNCTIONS
 // ========================================
 
-// Stamp source lines into preview roots for caret-to-preview scroll synchronization.
+// Stamp source lines into preview roots for explicit cursor-to-preview alignment.
 const injectSourceLine: MarkdownItRenderRule = (tokens, idx, options, env, renderer) => {
   const token = tokens[idx]
   if (token.map && token.level === 0) {
@@ -372,6 +382,14 @@ md.renderer.rules.fence = (tokens, idx, options, env, renderer) => {
 
 const collaborations = new WeakMap<object, MarkdownCollaboration>()
 const sourceLinesByEditor = new WeakMap<object, number[]>()
+const previewAlignmentTargets = new WeakMap<object, HTMLElement>()
+
+function stopPreviewAlignment (editor: object) {
+  const target = previewAlignmentTargets.get(editor)
+  if (target) Velocity(target, 'stop', true)
+  previewAlignmentTargets.delete(editor)
+}
+
 
 // ========================================
 // Vue Component
@@ -406,8 +424,7 @@ export default defineComponent({
       debouncedProcessContent: null as _.DebouncedFunc<(newContent: string) => void> | null,
       collaborationStatus: null as CollaborationStatus | null,
       editorDisposed: false,
-      collaborationAbortController: null as AbortController | null,
-      debouncedScrollSync: null as _.DebouncedFunc<(cm: TextEditorHandle) => void> | null
+      collaborationAbortController: null as AbortController | null
     }
   },
   computed: {
@@ -469,8 +486,7 @@ export default defineComponent({
           }
         })
       } else if (!newValue && oldValue) {
-        const preview = this.$refs.editorPreview as HTMLElement | undefined
-        if (preview) Velocity(preview, 'stop', true)
+        stopPreviewAlignment(this)
       }
     },
     spellModeActive (newValue: boolean) {
@@ -559,7 +575,6 @@ export default defineComponent({
         const preview = this.$refs.editorPreview as HTMLElement | undefined
         if (!preview) return
         enhanceWikiMarkdownPreview(preview, this.$vuetify.theme.current.dark)
-        this.scrollSync(cm)
       })
     },
     /**
@@ -673,32 +688,35 @@ export default defineComponent({
       )
     },
     /**
-     * Update scroll sync
+     * Align the independently scrollable preview to the current selection head.
      */
-    scrollSync (cm: TextEditorHandle) {
-      this.debouncedScrollSync?.(cm)
-    },
-    performScrollSync (cm: TextEditorHandle) {
-      if (!this.previewShown || cm.hasSelection()) return
+    alignPreviewToCursor () {
+      if (this.editorDisposed || !this.previewShown || !this.cm || this.previewHTML.trim().length === 0) return
       const preview = this.$refs.editorPreview as HTMLElement | undefined
       const previewContainer = this.$refs.editorPreviewContainer as HTMLElement | undefined
-      if (!preview || !previewContainer) return
-      const currentLine = cm.cursor().line
-      const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180
-      if (currentLine < 3) {
-        Velocity(preview, 'stop', true)
-        if (preview.firstElementChild) {
-          Velocity(preview.firstElementChild, 'scroll', { offset: '-50', duration, container: previewContainer })
-        }
-      } else {
-        const closestLine = _.findLast(sourceLinesByEditor.get(this) ?? [], line => line <= currentLine)
-        if (closestLine === undefined) return
-        const destination = preview.querySelector<HTMLElement>(`[data-source-line='${closestLine}']`)
-        if (destination) {
-          Velocity(preview, 'stop', true)
-          Velocity(destination, 'scroll', { offset: '-100', duration, container: previewContainer })
-        }
+      const firstPreviewElement = preview?.firstElementChild
+      if (!preview || !previewContainer || !(firstPreviewElement instanceof HTMLElement)) return
+
+      const currentLine = this.cm.cursor('head').line
+      const sourceLines = sourceLinesByEditor.get(this) ?? []
+      let markedDestination: HTMLElement | null = null
+      for (let index = sourceLines.length - 1; index >= 0; index--) {
+        const sourceLine = sourceLines[index]
+        if (sourceLine === undefined || sourceLine > currentLine) continue
+        markedDestination = preview.querySelector<HTMLElement>(`[data-source-line='${sourceLine}']`)
+        if (markedDestination) break
       }
+      const destination = markedDestination ?? firstPreviewElement
+      const offset = markedDestination ? '-100' : '-50'
+      const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180
+
+      stopPreviewAlignment(this)
+      previewAlignmentTargets.set(this, destination)
+      Velocity(destination, 'scroll', {
+        offset,
+        duration,
+        container: previewContainer
+      })
     },
     toggleHelp () {
       this.helpShown = !this.helpShown
@@ -773,7 +791,6 @@ export default defineComponent({
 
 
     this.debouncedProcessContent = _.debounce((newContent: string) => this.processContent(newContent), 600)
-    this.debouncedScrollSync = _.debounce((editor: TextEditorHandle) => this.performScrollSync(editor), 150)
     const completePageLink = async (context: CompletionContext) => {
       const prefix = context.matchBefore(/\[[^\]]+\]\($/)
       if (!prefix) return null
@@ -886,7 +903,6 @@ export default defineComponent({
       },
       onCursor: position => {
         this.positionSync(position)
-        this.scrollSync(cm)
       }
     })
     this.cm = markRaw(cm)
@@ -912,9 +928,7 @@ export default defineComponent({
   beforeUnmount() {
     this.editorDisposed = true
     this.debouncedProcessContent?.cancel()
-    this.debouncedScrollSync?.cancel()
-    const preview = this.$refs.editorPreview as HTMLElement | undefined
-    if (preview) Velocity(preview, 'stop', true)
+    stopPreviewAlignment(this)
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)
@@ -971,14 +985,15 @@ export default defineComponent({
 
   &-preview {
     background: rgb(var(--v-theme-surface));
+    display: flex;
     flex: 1 1 50%;
+    flex-flow: column nowrap;
     min-height: 0;
     overflow: hidden;
     padding: 1rem;
     position: relative;
 
     @include until($tablet) {
-      display: block;
       flex: 1 1 100%;
       max-width: 100%;
       padding: 12px;

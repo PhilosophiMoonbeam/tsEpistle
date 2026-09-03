@@ -790,7 +790,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: var(--wiki-control-height);
   flex: 0 0 auto;
-  grid-template-columns: minmax(0, auto) minmax(var(--wiki-space-12), 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: var(--wiki-space-2);
   padding: var(--wiki-space-2) 0 var(--wiki-space-1);
@@ -1007,6 +1007,10 @@ onBeforeUnmount(() => {
   .agent-composer {
     padding: var(--wiki-space-2);
     border-radius: var(--wiki-control-radius);
+  }
+
+  .agent-composer__actions {
+    grid-template-columns: minmax(var(--wiki-control-height), 1fr) minmax(0, auto) auto;
   }
 
   .agent-composer__context-controls {

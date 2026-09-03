@@ -281,6 +281,9 @@ const theme = useTheme()
 const config = reactive<ThemeConfig>(createConfig())
 const persistedConfig = ref<ThemeConfig>(createConfig())
 const previewMode = ref<PaletteMode>(theme.current.value?.dark ? 'dark' : 'light')
+watch(() => theme.current.value.dark, isDark => {
+  previewMode.value = isDark ? 'dark' : 'light'
+})
 const initialLoading = ref(true)
 const loaded = ref(false)
 const saving = ref(false)

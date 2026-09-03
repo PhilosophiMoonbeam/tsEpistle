@@ -118,6 +118,8 @@ interface ValueRef<T> {
 interface LockState {
   activeRun: ValueRef<{ canCancel: boolean; status: string } | null>
   canSubmit: ValueRef<boolean>
+  connectionLabel: ValueRef<string>
+  connectionTone: ValueRef<string>
   openGoal: ValueRef<{ status: string } | null>
   goalSubmitUnavailableReason: ValueRef<string>
   submitUnavailableReason: ValueRef<string>
@@ -162,14 +164,18 @@ const evaluateComposer = new Function(
   `${executableComposerScript}\nreturn { ${composerBindingNames.join(', ')} }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
-const loadGoalLockState = (status: 'active' | 'paused' | null, mutationBusy = false): LockState => {
+const loadGoalLockState = (
+  status: 'active' | 'paused' | null,
+  mutationBusy = false,
+  runStatus: 'running' | 'awaiting_approval' | null = status === 'active' ? 'running' : null
+): LockState => {
   const ref = <T>(value: T): ValueRef<T> => ({ value })
   const thread = ref({
     session: {
       id: 'session-1',
       title: 'Release planning',
       skills: [],
-      currentRun: status === 'active' ? { canCancel: true, status: 'running' } : null,
+      currentRun: runStatus ? { canCancel: true, status: runStatus } : null,
       folderId: null
     },
     messages: [],
@@ -226,7 +232,7 @@ const loadGoalLockState = (status: 'active' | 'paused' | null, mutationBusy = fa
     'isAgentApprovalOutsideViewport',
     'shouldFollowGoalExpansion',
     'defineExpose',
-    `${executableScript}\nreturn { activeRun, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, goalSubmitUnavailableReason, newSession, newTemporarySession, openClearUnfiledHistory, openGoal, recoverClearUnfiledHistory, sessionMutationBusy, submitUnavailableReason, thread }`
+    `${executableScript}\nreturn { activeRun, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, connectionLabel, connectionTone, goalSubmitUnavailableReason, newSession, newTemporarySession, openClearUnfiledHistory, openGoal, recoverClearUnfiledHistory, sessionMutationBusy, submitUnavailableReason, thread }`
   ) as (...dependencies: unknown[]) => LockState
 
   const state = evaluate(
@@ -324,8 +330,8 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     preferredSkillIds: [],
     invocationLimit: 8,
     sessionTitle: 'Release planning',
-    connectionLabel: 'Ready',
-    connectionTone: 'ready',
+    connectionLabel: lockState?.connectionLabel.value ?? 'Ready',
+    connectionTone: lockState?.connectionTone.value ?? 'ready',
     starters: [],
     emit: () => undefined,
     agents: {},
@@ -438,6 +444,28 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
   }
   mountedApps.push(unmount)
   return { activator, historyOpen, memoryOpen, root, unmount }
+}
+
+const expectComposerActionStructure = (mounted: MountedInlineAgent): { primary: HTMLElement; status: HTMLElement } => {
+  const actions = mounted.root.querySelector<HTMLElement>('.agent-composer__actions')
+  if (!actions) throw new Error('Agent composer actions did not render')
+
+  const children = Array.from(actions.children)
+  expect(children).toHaveLength(3)
+  const [context, status, primary] = children as [HTMLElement, HTMLElement, HTMLElement]
+  expect(context.matches('.agent-composer__context-controls')).toBe(true)
+  expect(context.getAttribute('role')).toBe('group')
+  expect(context.getAttribute('aria-label')).toBe('Conversation context controls')
+  expect(status.matches('#agent-composer-status.agent-composer__state')).toBe(true)
+  expect(status.getAttribute('role')).toBe('status')
+  expect(status.getAttribute('aria-live')).toBe('polite')
+  expect(status.getAttribute('aria-atomic')).toBe('true')
+  expect(primary.matches('.agent-composer__primary-actions')).toBe(true)
+  expect(primary.getAttribute('role')).toBe('group')
+  expect(primary.getAttribute('aria-label')).toBe('Message actions')
+  expect(status.nextElementSibling).toBe(primary)
+  expect(primary.previousElementSibling).toBe(status)
+  return { primary, status }
 }
 
 const openPanelMenu = async (mounted: MountedInlineAgent): Promise<HTMLElement[]> => {
@@ -610,6 +638,45 @@ describe('Inline Agent fixed desktop layout', () => {
     expect(dockedLayout).toContain('width: 19rem;')
     expect(dockedLayout).toContain('width: 21rem;')
     expect(componentStyles).toMatch(/\.inline-agent__side \{[\s\S]*?overflow: hidden;[\s\S]*?border-radius: var\(--wiki-panel-radius\);[\s\S]*?background: transparent;/)
+  })
+})
+
+describe('Agent composer action semantics', () => {
+  it('renders Ready immediately before the accessible Send action', () => {
+    const mounted = mountInlineAgent()
+    const { primary, status } = expectComposerActionStructure(mounted)
+    const submit = primary.querySelector<HTMLButtonElement>('.agent-composer__submit')
+
+    expect(status.textContent?.trim()).toBe('Ready')
+    expect(status.getAttribute('title')).toBe('Ready')
+    expect(primary.children).toHaveLength(1)
+    expect(submit?.tagName).toBe('BUTTON')
+    expect(submit?.textContent?.trim()).toBe('Send')
+    expect(primary.querySelector('.agent-composer__stop')).toBeNull()
+  })
+
+  it('keeps Working immediately before the accessible Stop action for cancellable runs', () => {
+    const mounted = mountInlineAgent(loadGoalLockState('active'))
+    const { primary, status } = expectComposerActionStructure(mounted)
+    const stop = primary.querySelector<HTMLButtonElement>('.agent-composer__stop')
+
+    expect(status.textContent?.trim()).toBe('Working')
+    expect(status.getAttribute('title')).toBe('Working')
+    expect(primary.children).toHaveLength(1)
+    expect(stop?.tagName).toBe('BUTTON')
+    expect(stop?.textContent?.trim()).toBe('Stop response')
+    expect(primary.querySelector('.agent-composer__submit')).toBeNull()
+  })
+
+  it('keeps Review needed immediately before Stop while awaiting approval', () => {
+    const mounted = mountInlineAgent(loadGoalLockState('active', false, 'awaiting_approval'))
+    const { primary, status } = expectComposerActionStructure(mounted)
+    const stop = primary.querySelector<HTMLButtonElement>('.agent-composer__stop')
+
+    expect(status.textContent?.trim()).toBe('Review needed')
+    expect(status.getAttribute('title')).toBe('Review needed')
+    expect(stop?.textContent?.trim()).toBe('Stop response')
+    expect(primary.querySelector('.agent-composer__submit')).toBeNull()
   })
 })
 

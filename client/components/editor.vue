@@ -79,7 +79,7 @@
         v-if='dialogUnsaved'
         v-model='dialogUnsaved'
         :busy='isSaving'
-        @discard='exitGo'
+        @discard='discardAndExit'
         @save='saveUnsavedAndClose'
       )
       component(v-if='activeModal', :is='activeModal')
@@ -130,7 +130,7 @@
 import { defineComponent, type PropType } from 'vue'
 import { useHotkey } from 'vuetify'
 import _ from 'lodash'
-import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, fetchPage, updatePage, validateOkfMetadataPayload, type OkfMetadataPayloadValidation } from '../helpers/pages-api'
+import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, fetchPage, updatePage } from '../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
 import { Base64 } from 'js-base64'
 import StatusIndicator from '@/components/common/status-indicator.vue'
@@ -297,18 +297,20 @@ export default defineComponent({
       dialogEditorSelector: false,
       dialogUnsaved: false,
       exitConfirmed: false,
-      initContentParsed: '',
       savedState: {
+        content: '',
         description: '',
         isPublished: false,
         visibility: 'public' as 'public' | 'private',
+        locale: 'en',
+        path: '',
         publishEndDate: '',
         publishStartDate: '',
         tags: [] as string[],
         title: '',
-        css: '',
-        js: '',
-        okfMetadata: { valid: true, payload: undefined } as OkfMetadataPayloadValidation
+        scriptCss: '',
+        scriptJs: '',
+        okf: _.cloneDeep(wikiStore.page.okf)
       }
     }
   },
@@ -337,9 +339,9 @@ export default defineComponent({
     currentStyling(): string { return wikiStore.page.scriptCss },
     isDirty () {
       return (
-        this.initContentParsed !== wikiStore.editor.content ||
-        this.locale !== wikiStore.page.locale ||
-        this.path !== wikiStore.page.path ||
+        this.savedState.content !== wikiStore.editor.content ||
+        this.savedState.locale !== wikiStore.page.locale ||
+        this.savedState.path !== wikiStore.page.path ||
         this.savedState.title !== wikiStore.page.title ||
         this.savedState.description !== wikiStore.page.description ||
         !_.isEqual(this.savedState.tags, wikiStore.page.tags) ||
@@ -347,9 +349,9 @@ export default defineComponent({
         this.savedState.visibility !== wikiStore.page.visibility ||
         this.savedState.publishStartDate !== wikiStore.page.publishStartDate ||
         this.savedState.publishEndDate !== wikiStore.page.publishEndDate ||
-        this.savedState.css !== wikiStore.page.scriptCss ||
-        this.savedState.js !== wikiStore.page.scriptJs ||
-        !_.isEqual(this.savedState.okfMetadata, validateOkfMetadataPayload(wikiStore.page.okf.authority.metadata))
+        this.savedState.scriptCss !== wikiStore.page.scriptCss ||
+        this.savedState.scriptJs !== wikiStore.page.scriptJs ||
+        !_.isEqual(this.savedState.okf, wikiStore.page.okf)
       )
     }
   },
@@ -388,8 +390,6 @@ export default defineComponent({
 
     wikiStore.page.mode = 'edit'
 
-    this.setCurrentSavedState()
-
     this.checkoutDateActive = this.checkoutDate
 
     if (this.effectivePermissions) {
@@ -399,8 +399,8 @@ export default defineComponent({
   mounted() {
     wikiStore.editor.mode = this.initMode || 'create'
 
-    this.initContentParsed = this.initContent ? Base64.decode(this.initContent) : ''
-    wikiStore.editor.content = this.initContentParsed
+    wikiStore.editor.content = this.initContent ? Base64.decode(this.initContent) : ''
+    this.setCurrentSavedState()
     if (this.mode === 'create' && !this.initEditor) {
       const availableEditors = normalizeAvailableEditors(siteConfig.availableEditors)
       if (availableEditors.length === 1) {
@@ -566,8 +566,8 @@ export default defineComponent({
             icon: 'check'
           })
           if (
-            this.locale !== wikiStore.page.locale ||
-            this.path !== wikiStore.page.path ||
+            this.savedState.locale !== wikiStore.page.locale ||
+            this.savedState.path !== wikiStore.page.path ||
             this.savedState.visibility !== wikiStore.page.visibility
           ) {
             if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
@@ -579,7 +579,6 @@ export default defineComponent({
           }
         }
 
-        this.initContentParsed = wikiStore.editor.content
         this.setCurrentSavedState()
       } catch (err) {
         wikiStore.showNotification({
@@ -622,20 +621,21 @@ export default defineComponent({
         this.exitGo()
       }
     },
+    discardAndExit() {
+      this.restoreCurrentSavedState()
+      this.dialogUnsaved = false
+      this.exitGo()
+    },
     exitGo() {
-      wikiStore.startLoading('editor-close')
-      this.currentEditor = ''
-      this.exitConfirmed = true
       if (this.navigationTimer !== null) window.clearTimeout(this.navigationTimer)
-      this.navigationTimer = window.setTimeout(() => {
-        if (wikiStore.editor.mode === 'create') {
-          window.location.assign(`/`)
-        } else {
-          const scope = wikiStore.page.visibility === 'private' ? '/_private' : ''
-          window.location.assign(`${scope}/${wikiStore.page.locale}/${wikiStore.page.path}`)
-        }
-        this.navigationTimer = null
-      }, 500)
+      this.navigationTimer = null
+      this.exitConfirmed = true
+      if (wikiStore.editor.mode === 'create') {
+        window.location.assign('/')
+      } else {
+        const scope = this.savedState.visibility === 'private' ? '/_private' : ''
+        window.location.assign(`${scope}/${this.savedState.locale}/${this.savedState.path}`)
+      }
     },
     getPageInput () {
       const okfMetadata = buildOkfMetadataPayload(wikiStore.page.okf.authority.metadata)
@@ -658,17 +658,35 @@ export default defineComponent({
     },
     setCurrentSavedState () {
       this.savedState = {
+        content: wikiStore.editor.content,
         description: wikiStore.page.description,
         isPublished: wikiStore.page.isPublished,
         visibility: wikiStore.page.visibility,
+        locale: wikiStore.page.locale,
+        path: wikiStore.page.path,
         publishEndDate: wikiStore.page.publishEndDate || '',
         publishStartDate: wikiStore.page.publishStartDate || '',
         tags: [...wikiStore.page.tags],
         title: wikiStore.page.title,
-        css: wikiStore.page.scriptCss,
-        js: wikiStore.page.scriptJs,
-        okfMetadata: _.cloneDeep(validateOkfMetadataPayload(wikiStore.page.okf.authority.metadata))
+        scriptCss: wikiStore.page.scriptCss,
+        scriptJs: wikiStore.page.scriptJs,
+        okf: _.cloneDeep(wikiStore.page.okf)
       }
+    },
+    restoreCurrentSavedState () {
+      wikiStore.editor.content = this.savedState.content
+      wikiStore.page.description = this.savedState.description
+      wikiStore.page.isPublished = this.savedState.isPublished
+      wikiStore.page.visibility = this.savedState.visibility
+      wikiStore.page.locale = this.savedState.locale
+      wikiStore.page.path = this.savedState.path
+      wikiStore.page.publishEndDate = this.savedState.publishEndDate
+      wikiStore.page.publishStartDate = this.savedState.publishStartDate
+      wikiStore.page.tags = [...this.savedState.tags]
+      wikiStore.page.title = this.savedState.title
+      wikiStore.page.scriptCss = this.savedState.scriptCss
+      wikiStore.page.scriptJs = this.savedState.scriptJs
+      wikiStore.page.okf = _.cloneDeep(this.savedState.okf)
     },
     injectCustomCss(css: string) {
       if (this.customCssTimer !== null) {

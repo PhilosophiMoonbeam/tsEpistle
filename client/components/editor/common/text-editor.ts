@@ -1,7 +1,8 @@
 import { basicSetup } from 'codemirror'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { StateEffect, StateField, type Extension } from '@codemirror/state'
-import { foldEffect } from '@codemirror/language'
+import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { tags } from '@lezer/highlight'
 
 export type TextPosition = {
   line: number
@@ -49,6 +50,10 @@ class ActionWidget extends WidgetType {
   }
 }
 
+const semanticHighlightStyle = HighlightStyle.define([
+  { tag: tags.url, color: 'var(--wiki-accent-ink)' }
+])
+
 const setMarkers = StateEffect.define<DecorationSet>()
 const markerField = StateField.define<DecorationSet>({
   create: () => Decoration.none,
@@ -81,6 +86,8 @@ export class TextEditor implements TextEditorHandle {
       doc: value,
       extensions: [
         basicSetup,
+        syntaxHighlighting(defaultHighlightStyle),
+        Prec.highest(syntaxHighlighting(semanticHighlightStyle)),
         EditorView.lineWrapping,
         EditorView.contentAttributes.of({ dir: direction }),
         EditorView.updateListener.of(update => {
