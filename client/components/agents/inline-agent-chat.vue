@@ -4,12 +4,6 @@
     class="inline-agent"
     aria-labelledby="inline-agent-title"
     :aria-busy="loading"
-    :class="{
-      'inline-agent--panel-open': historyOpen || memoryOpen,
-      'inline-agent--history-open': historyOpen,
-      'inline-agent--memory-open': memoryOpen,
-      'inline-agent--panels-open': historyOpen && memoryOpen
-    }"
   >
     <button
       v-if="panelMode === 'modal' && (historyOpen || memoryOpen)"
@@ -47,7 +41,7 @@
           </v-btn>
         </div>
       </v-card>
-      <AgentHistoryPanel v-else @close="closeHistory" @reset="openResetHistory" />
+      <AgentHistoryPanel v-else @close="closeHistory" @clear="openClearUnfiledHistory" />
     </aside>
 
     <v-card class="inline-agent__card" elevation="0">
@@ -68,8 +62,7 @@
 
         <v-spacer />
 
-
-        <div class="inline-agent__panel-actions" role="group" aria-label="Agent workspace panels">
+        <div class="inline-agent__panel-actions" role="group" aria-label="Agent workspace actions">
           <v-btn
             class="inline-agent__desktop-panel-btn"
             ref="historyTrigger"
@@ -120,13 +113,22 @@
             </v-list>
           </v-menu>
           <v-btn
-            class="inline-agent__new-session"
+            class="inline-agent__session-action inline-agent__temporary-session"
+            prepend-icon="mdi-clock-outline"
+            variant="text"
+            aria-label="Start a temporary agent conversation"
+            title="Temporary conversations are not saved"
+            :disabled="loading || sending || sessionMutationBusy"
+            @click="newTemporarySession"
+          ><span class="inline-agent__session-action-label">Temporary</span></v-btn>
+          <v-btn
+            class="inline-agent__session-action inline-agent__new-session"
             prepend-icon="mdi-plus"
             variant="tonal"
-            aria-label="Start a new agent conversation"
+            aria-label="Start a new saved agent conversation"
             :disabled="loading || sending || sessionMutationBusy"
             @click="newSession"
-          ><span class="inline-agent__new-session-label">New</span></v-btn>
+          ><span class="inline-agent__session-action-label">New</span></v-btn>
         </div>
       </v-toolbar>
 
@@ -157,15 +159,6 @@
             closable
             @click:close="agents.error = ''"
           >{{ error }}</v-alert>
-
-          <AgentSessionSettings
-            v-if="thread"
-            class="inline-agent__settings"
-            :session="thread.session"
-            :profiles="profiles"
-            :disabled="Boolean(activeRun) || Boolean(openGoal)"
-            :apply-provider-profile="applyProviderProfile"
-          />
 
           <div class="inline-agent__transcript-wrap">
             <div
@@ -330,27 +323,53 @@
 
   <AgentPersonalSkills v-if="skillsEnabled" v-model="skillManagerOpen" :csrf-token="csrfToken" @changed="reloadSkillCatalog" />
 
-  <v-dialog v-model="resetHistoryOpen" max-width="30rem" aria-labelledby="reset-history-title" :persistent="resetting || sessionMutationBusy">
+  <v-dialog
+    v-model="clearUnfiledHistoryOpen"
+    max-width="30rem"
+    aria-labelledby="clear-unfiled-history-title"
+    :persistent="clearingUnfiledHistory || sessionMutationBusy"
+  >
     <v-card rounded="xl">
       <v-card-title class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" aria-hidden="true" /></v-avatar>
-        <h2 id="reset-history-title" class="text-title-medium">{{ resetCommitted ? 'Conversation history reset' : 'Reset conversation history?' }}</h2>
+        <h2 id="clear-unfiled-history-title" class="text-title-medium">
+          {{ clearUnfiledCommitted ? 'Unfiled conversations cleared' : 'Clear unfiled conversations?' }}
+        </h2>
       </v-card-title>
       <v-card-text class="px-5">
-        <p v-if="resetCommitted">The archive was removed, but the clean conversation did not finish opening. Retry only the conversation load below.</p>
-        <p v-else>Every Agent conversation will be permanently removed and a clean conversation will open. Your curated Agent memory stays intact.</p>
-        <v-alert v-if="resetError" class="mt-4" density="compact" type="error" variant="tonal" role="alert">
-          {{ resetError }}
+        <p v-if="clearUnfiledCommitted">
+          Unfiled conversations were cleared, but a replacement conversation did not finish opening. Saved folders and their filed conversations remain unchanged. Retry only the conversation load below.
+        </p>
+        <p v-else>
+          Only conversations outside saved folders will be permanently removed. Saved folders and their filed conversations will remain. If the current conversation is unfiled, a new saved conversation will open. Your curated Agent memory stays intact.
+        </p>
+        <v-alert v-if="clearUnfiledError" class="mt-4" density="compact" type="error" variant="tonal" role="alert">
+          {{ clearUnfiledError }}
         </v-alert>
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="resetting || sessionMutationBusy" @click="closeResetHistory">{{ resetCommitted ? 'Close' : 'Cancel' }}</v-btn>
-        <v-btn v-if="resetCommitted" color="primary" prepend-icon="mdi-refresh" :loading="resetting" :disabled="resetting || sessionMutationBusy" @click="recoverResetHistory">
+        <v-btn variant="text" :disabled="clearingUnfiledHistory || sessionMutationBusy" @click="closeClearUnfiledHistory">
+          {{ clearUnfiledCommitted ? 'Close' : 'Cancel' }}
+        </v-btn>
+        <v-btn
+          v-if="clearUnfiledCommitted"
+          color="primary"
+          prepend-icon="mdi-refresh"
+          :loading="clearingUnfiledHistory"
+          :disabled="clearingUnfiledHistory || sessionMutationBusy"
+          @click="recoverClearUnfiledHistory"
+        >
           Retry opening conversation
         </v-btn>
-        <v-btn v-else color="error" :loading="resetting" :disabled="resetting || sessionMutationBusy" @click="resetHistory">
-          {{ resetError ? 'Retry reset' : 'Reset history' }}
+        <v-btn
+          v-else
+          color="error"
+          :loading="clearingUnfiledHistory"
+          :disabled="clearingUnfiledHistory || sessionMutationBusy"
+          @click="clearUnfiledHistory"
+        >
+          {{ clearUnfiledError ? 'Retry clear' : 'Clear unfiled' }}
         </v-btn>
       </v-card-actions>
     </v-card>
@@ -368,7 +387,6 @@ import AgentHistoryPanel from './agent-history-panel.vue'
 import AgentMemoryManager from './agent-memory-manager.vue'
 import AgentPersonalSkills from './agent-personal-skills.vue'
 import AgentMcpApproval from './agent-mcp-approval.vue'
-import AgentSessionSettings from './agent-session-settings.vue'
 import AgentGoalStatus from './agent-goal-status.vue'
 import AgentThread from './agent-thread.vue'
 import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
@@ -390,7 +408,7 @@ const emit = defineEmits<{
 }>()
 
 const agents = useAgentsStore()
-const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessionMutationBusy, sessions, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
+const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessionMutationBusy, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void> }>('composer')
@@ -403,10 +421,10 @@ const panelScrim = useTemplateRef<HTMLElement>('panelScrim')
 const goalExpanded = ref(false)
 const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
-const resetHistoryOpen = ref(false)
-const resetting = ref(false)
-const resetError = ref('')
-const resetCommitted = ref(false)
+const clearUnfiledHistoryOpen = ref(false)
+const clearingUnfiledHistory = ref(false)
+const clearUnfiledError = ref('')
+const clearUnfiledCommitted = ref(false)
 const historyOpen = ref(false)
 const historyLoadError = ref('')
 const historyLoading = ref(false)
@@ -538,41 +556,19 @@ const scrollToLatest = async (): Promise<void> => {
 const reloadSkillCatalog = async (): Promise<void> => {
   await agents.reloadSkills()
 }
-const applyProviderProfile = async (providerProfileId: string | null): Promise<
-  { readonly success: true } | { readonly success: false; readonly error: string }
-> => {
-  if (sessionMutationBusy.value) {
-    return { success: false, error: 'Wait for the current conversation update to finish.' }
-  }
-  const sessionId = thread.value?.session.id
-  if (!sessionId) return { success: false, error: 'The conversation is no longer available. Open it again and retry.' }
-  const sessionChanged = (): boolean => thread.value?.session.id !== sessionId
-  try {
-    const updated = await agents.setProfile(providerProfileId)
-    if (sessionChanged()) return { success: true }
-    if (updated) return { success: true }
-    return {
-      success: false,
-      error: error.value || 'The provider profile could not be applied. Refresh the conversation and retry.'
-    }
-  } catch (value) {
-    if (sessionChanged()) return { success: true }
-    return {
-      success: false,
-      error: value instanceof Error ? value.message : 'The provider profile could not be applied. Try again.'
-    }
-  }
-}
-const newSession = async (): Promise<void> => {
+const createSession = async (retention: 'saved' | 'temporary'): Promise<void> => {
   if (sessionMutationBusy.value) return
   try {
     await ensureInitialized()
     if (sessionMutationBusy.value) return
-    await agents.newSession('saved')
+    await agents.newSession(retention)
   } catch (value) {
-    agents.error = value instanceof Error ? value.message : 'A new conversation could not be created.'
+    const kind = retention === 'temporary' ? 'temporary conversation' : 'new saved conversation'
+    agents.error = value instanceof Error ? value.message : `A ${kind} could not be created.`
   }
 }
+const newTemporarySession = (): Promise<void> => createSession('temporary')
+const newSession = (): Promise<void> => createSession('saved')
 const isVisibleTrigger = (element: HTMLElement | null): element is HTMLElement => {
   if (!element || !element.isConnected || element.getClientRects().length === 0) return false
   const style = window.getComputedStyle(element)
@@ -643,7 +639,7 @@ const toggleMemory = (): void => {
   if (panelMode.value !== 'wide') historyOpen.value = false
 }
 const reconcilePanelMode = (): void => {
-  const nextMode = window.matchMedia('(min-width: 1440px)').matches
+  const nextMode = window.matchMedia('(min-width: 1760px)').matches
     ? 'wide'
     : window.matchMedia('(min-width: 1024px)').matches
       ? 'docked'
@@ -674,60 +670,57 @@ const closePanels = (): void => {
   historyOpen.value = false
   memoryOpen.value = false
 }
-const openResetHistory = (): void => {
+const openClearUnfiledHistory = (): void => {
   if (sessionMutationBusy.value) return
-  resetError.value = ''
-  resetCommitted.value = false
-  resetHistoryOpen.value = true
+  clearUnfiledError.value = ''
+  clearUnfiledCommitted.value = false
+  clearUnfiledHistoryOpen.value = true
 }
-const closeResetHistory = (): void => {
-  if (resetting.value || sessionMutationBusy.value) return
-  resetHistoryOpen.value = false
-  resetError.value = ''
-  resetCommitted.value = false
+const closeClearUnfiledHistory = (): void => {
+  if (clearingUnfiledHistory.value || sessionMutationBusy.value) return
+  clearUnfiledHistoryOpen.value = false
+  clearUnfiledError.value = ''
+  clearUnfiledCommitted.value = false
 }
-const resetHistory = async (): Promise<void> => {
-  if (resetting.value || sessionMutationBusy.value) return
+const clearUnfiledHistory = async (): Promise<void> => {
+  if (clearingUnfiledHistory.value || sessionMutationBusy.value) return
   const originalSessionId = thread.value?.session.id ?? null
-  const originalSessionCount = sessions.value.length
-  resetting.value = true
-  resetError.value = ''
-  resetCommitted.value = false
+  const clearingCurrentSession = thread.value?.session.folderId === null
+  clearingUnfiledHistory.value = true
+  clearUnfiledError.value = ''
+  clearUnfiledCommitted.value = false
   try {
-    await agents.resetHistory()
-    resetHistoryOpen.value = false
+    await agents.clearUnfiledHistory()
+    if (clearingCurrentSession && originalSessionId && !thread.value) {
+      clearUnfiledCommitted.value = true
+      clearUnfiledError.value = error.value
+        ? `${error.value} Saved folders and their filed conversations remain unchanged.`
+        : 'Unfiled conversations were cleared, but a replacement conversation could not be opened. Saved folders and their filed conversations remain unchanged.'
+      return
+    }
+    clearUnfiledHistoryOpen.value = false
   } catch (value) {
-    resetCommitted.value = originalSessionId !== null
-      ? thread.value?.session.id !== originalSessionId
-      : originalSessionCount > 0 && sessions.value.length === 0
-    const detail = value instanceof Error ? value.message : 'Conversation history could not be reset.'
-    resetError.value = resetCommitted.value
-      ? `History was reset, but a clean conversation could not be opened. ${detail}`
-      : detail
+    const detail = value instanceof Error ? value.message : 'Try again.'
+    clearUnfiledError.value = `Unfiled conversations could not be cleared. Saved folders and their filed conversations remain unchanged. ${detail}`
   } finally {
-    resetting.value = false
+    clearingUnfiledHistory.value = false
   }
 }
-const recoverResetHistory = async (): Promise<void> => {
-  if (resetting.value || sessionMutationBusy.value) return
-  resetting.value = true
+const recoverClearUnfiledHistory = async (): Promise<void> => {
+  if (clearingUnfiledHistory.value || sessionMutationBusy.value) return
+  clearingUnfiledHistory.value = true
   try {
     await agents.reloadSessions()
-    if (!thread.value && sessions.value[0]) {
-      const opened = await agents.openSession(sessions.value[0].id)
-      if (!opened) throw new Error('The clean conversation changed before it could be opened. Retry.')
-    } else if (!thread.value && profiles.value.length > 0) {
-      if (sessionMutationBusy.value) return
-      await agents.newSession('saved')
-    }
-    resetHistoryOpen.value = false
-    resetError.value = ''
-    resetCommitted.value = false
+    if (!thread.value && profiles.value.length > 0) await agents.newSession('saved')
+    if (!thread.value) throw new Error('No replacement conversation is available yet. Retry.')
+    clearUnfiledHistoryOpen.value = false
+    clearUnfiledError.value = ''
+    clearUnfiledCommitted.value = false
   } catch (value) {
-    const detail = value instanceof Error ? value.message : 'A clean conversation could not be opened.'
-    resetError.value = `History was reset, but a clean conversation still could not be opened. ${detail}`
+    const detail = value instanceof Error ? value.message : 'A replacement conversation could not be opened.'
+    clearUnfiledError.value = `Unfiled conversations were cleared, but a replacement conversation still could not be opened. Saved folders and their filed conversations remain unchanged. ${detail}`
   } finally {
-    resetting.value = false
+    clearingUnfiledHistory.value = false
   }
 }
 const updateApprovalJump = (): void => {
@@ -839,7 +832,7 @@ watch([historyOpen, memoryOpen], ([history, memory]) => {
 watch(() => thread.value?.session.id, (sessionId, previousSessionId) => {
   if (sessionId !== previousSessionId) goalExpanded.value = false
   if (!sessionId || !previousSessionId || sessionId === previousSessionId) return
-  const restoreWorkspaceFocus = !resetHistoryOpen.value
+  const restoreWorkspaceFocus = !clearUnfiledHistoryOpen.value
   if (historyOpen.value) {
     panelFocusScope?.deactivate({ restoreFocus: false })
     panelFocusScope = null
@@ -867,8 +860,8 @@ watch([thread, pendingApprovalId, connection], () => {
 }, { flush: 'post' })
 onMounted(() => {
   panelModeMedia = [
-    window.matchMedia('(min-width: 1440px)'),
-    window.matchMedia('(min-width: 1024px) and (max-width: 1439.98px)')
+    window.matchMedia('(min-width: 1760px)'),
+    window.matchMedia('(min-width: 1024px) and (max-width: 1759.98px)')
   ]
   panelModeMedia.forEach(media => media.addEventListener('change', reconcilePanelMode))
   reconcilePanelMode()
@@ -908,8 +901,9 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   min-height: 0;
   max-width: var(--wiki-shell-max);
   margin: 0 auto;
-  grid-template-columns: minmax(0, 1fr) minmax(36rem, 68rem) minmax(0, 1fr);
-  gap: var(--wiki-space-4);
+  grid-template-columns: minmax(0, 68rem);
+  justify-content: center;
+  gap: 0;
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-body);
   background: transparent;
@@ -944,7 +938,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   position: relative;
   display: flex;
   min-width: 0;
-  grid-column: 2;
+  grid-column: 1;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border-strong);
@@ -1045,10 +1039,19 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 }
 
 
+.inline-agent__session-action {
+  min-height: 2.25rem;
+  padding-inline: var(--wiki-space-3);
+  text-transform: none;
+}
+
+.inline-agent__temporary-session {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+}
+
 .inline-agent__new-session {
   margin-inline-start: var(--wiki-space-1);
 }
-
 .inline-agent__progress {
   position: absolute;
   z-index: 3;
@@ -1092,17 +1095,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   border-radius: var(--wiki-control-radius);
 }
 
-.inline-agent__settings {
-  max-height: 100%;
-  flex: 0 0 auto;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.inline-agent__settings:has(.v-expansion-panel-title[aria-expanded='true']) {
-  min-height: clamp(9rem, 45dvh, 18rem);
-  flex: 1 1 auto;
-}
 
 .inline-agent__transcript {
   min-height: 0;
@@ -1364,15 +1356,10 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 .inline-agent__side {
   position: relative;
   min-width: 0;
+  overflow: hidden;
+  border-radius: var(--wiki-panel-radius);
   outline: none;
-  background:
-    var(--inline-agent-workspace-gradient),
-    color-mix(in srgb, var(--wiki-surface-raised) 58%, transparent);
-}
-
-.inline-agent__side :deep(.agent-history),
-.inline-agent__side :deep(.agent-memory) {
-  background: color-mix(in srgb, var(--wiki-surface-raised) 72%, transparent);
+  background: transparent;
 }
 
 .inline-agent__side:focus-visible {
@@ -1448,63 +1435,31 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   }
 }
 
-@media (min-width: 1440px) {
-  .inline-agent.inline-agent--history-open {
-    grid-template-columns: minmax(16rem, 22rem) minmax(0, 68rem) minmax(0, 1fr);
+@media (min-width: 1760px) {
+  .inline-agent {
+    grid-template-columns: 19rem minmax(0, 68rem) 21rem;
+    gap: var(--wiki-space-4);
   }
 
-  .inline-agent.inline-agent--memory-open {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 68rem) minmax(16rem, 22rem);
-  }
-  .inline-agent.inline-agent--panels-open {
-    grid-template-columns: minmax(16rem, 19rem) minmax(0, 68rem) minmax(16rem, 21rem);
+  .inline-agent__card {
+    grid-column: 2;
   }
 
   .inline-agent__side {
     position: relative;
     z-index: auto;
-    filter: none;
-  }
-
-  .inline-agent--panel-open .inline-agent__side {
-    width: auto;
+    width: 100%;
     max-width: none;
+    grid-row: 1;
     justify-self: stretch;
+    filter: none;
   }
 }
 
-@media (min-width: 1024px) and (max-width: 1439.98px) {
+@media (min-width: 1024px) and (max-width: 1759.98px) {
   .inline-agent {
     grid-template-columns: minmax(0, 68rem);
     justify-content: center;
-  }
-
-  .inline-agent.inline-agent--history-open {
-    grid-template-columns: minmax(16rem, 22rem) minmax(0, 68rem);
-  }
-
-  .inline-agent.inline-agent--memory-open {
-    grid-template-columns: minmax(0, 68rem) minmax(16rem, 22rem);
-  }
-
-  .inline-agent__side {
-    position: relative;
-    z-index: auto;
-    width: auto;
-    max-width: none;
-    grid-row: 1;
-    box-sizing: border-box;
-    filter: none;
-  }
-
-  .inline-agent__side--history {
-    grid-column: 1;
-    justify-self: stretch;
-  }
-
-  .inline-agent__side--memory {
-    grid-column: 2;
-    justify-self: stretch;
   }
 
   .inline-agent__card {
@@ -1512,8 +1467,29 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     grid-row: 1;
   }
 
-  .inline-agent--history-open .inline-agent__card {
-    grid-column: 2;
+  .inline-agent__side {
+    position: absolute;
+    z-index: 5;
+    inset-block: 0;
+    max-width: none;
+    grid-column: 1;
+    grid-row: 1;
+    box-sizing: border-box;
+    filter: drop-shadow(var(--wiki-shadow-md));
+  }
+
+  .inline-agent__side--history {
+    inset-inline-start: 0;
+    inset-inline-end: auto;
+    width: 19rem;
+    justify-self: start;
+  }
+
+  .inline-agent__side--memory {
+    inset-inline-start: auto;
+    inset-inline-end: 0;
+    width: 21rem;
+    justify-self: end;
   }
 }
 
@@ -1594,6 +1570,20 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     gap: 0;
   }
 }
+@media (max-width: 1023.98px) {
+  .inline-agent__session-action {
+    min-width: var(--wiki-control-height);
+    padding-inline: var(--wiki-space-2);
+  }
+
+  .inline-agent__session-action-label {
+    display: none;
+  }
+
+  .inline-agent__session-action :deep(.v-btn__prepend) {
+    margin: 0;
+  }
+}
 @media (max-width: 639.98px) {
   .inline-agent {
     grid-template-columns: minmax(0, 1fr);
@@ -1672,18 +1662,6 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     gap: 0;
   }
 
-  .inline-agent__new-session {
-    min-width: var(--wiki-control-height);
-    padding-inline: var(--wiki-space-2);
-  }
-
-  .inline-agent__new-session-label {
-    display: none;
-  }
-
-  .inline-agent__new-session :deep(.v-btn__prepend) {
-    margin: 0;
-  }
 
   .inline-agent__toolbar :deep(.v-btn) {
     min-width: var(--wiki-control-height);

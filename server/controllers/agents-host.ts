@@ -16,7 +16,7 @@ import { ACTION_CATALOG } from '../agents/actions/catalog.ts'
 import { decideProposal } from '../agents/proposals/execution.ts'
 import { BrowserTargetRegistry } from '../agents/browser/registry.ts'
 import { getMcpProposalForApproval, type ProposalRecord } from '../agents/proposals/repository.ts'
-import { requestAgentHistoryReset, requestAgentSessionDeletion } from '../agents/maintenance.ts'
+import { requestAgentSessionDeletion, requestUnfiledAgentHistoryClear } from '../agents/maintenance.ts'
 import type { AgentOperationalLimits } from '../agents/config.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../agents/orchestration.ts'
 import { exportAgentSessionDiagnostics } from '../agents/diagnostics.ts'
@@ -429,7 +429,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
   router.delete(
     `${apiPrefix}/sessions`,
     asyncRoute(async (req, res) => {
-      await requestAgentHistoryReset(wiki.models.knex, requestSkillPrincipal(req).userId)
+      await requestUnfiledAgentHistoryClear(wiki.models.knex, requestSkillPrincipal(req).userId)
       return res.sendStatus(204)
     })
   )

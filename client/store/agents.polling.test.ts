@@ -821,8 +821,161 @@ describe('Agent session mutations', () => {
     }
   })
 
-  it('serializes session creation, removal, history reset, and folder deletion and always releases the shared lock', async () => {
-    const actionNames = ['newSession', 'removeSession', 'resetHistory', 'deleteFolder'] as const
+  it('restores an unfiled current conversation and its stream when clearing fails', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const current = activeThread()
+    const filedBase = threadForSession('00000000-0000-4000-8000-000000000095', '00000000-0000-4000-8000-000000000096')
+    const filed: AgentThreadState = {
+      ...filedBase,
+      session: { ...filedBase.session, folderId: '00000000-0000-4000-8000-000000000097' }
+    }
+    const previousSessions = [summaryForThread(current), summaryForThread(filed)]
+    store.csrfToken = 'csrf-token'
+    store.thread = current
+    store.sessions = previousSessions
+    store.sessionsNextCursor = 'older'
+    const sourceClose = vi.fn()
+    store.source = { close: sourceClose } as unknown as EventSource
+    const reconnect = vi.fn()
+    store.connectCurrentRun = reconnect
+    vi.spyOn(window, 'fetch').mockRejectedValue(new TypeError('History offline'))
+
+    await expect(store.clearUnfiledHistory()).rejects.toThrow('History offline')
+
+    expect(sourceClose).toHaveBeenCalledOnce()
+    expect(reconnect).toHaveBeenCalledOnce()
+    expect(store.thread).toEqual(current)
+    expect(store.sessions).toEqual(previousSessions)
+    expect(store.sessionsNextCursor).toBe('older')
+    expect(store.sessionMutationBusy).toBe(false)
+  })
+
+  it('preserves a filed current conversation, its stream, and loaded filed summaries while history reloads', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const folderId = '00000000-0000-4000-8000-000000000098'
+    const folder = folderForTest(folderId, 'Filed conversations')
+    const currentBase = activeThread()
+    const current: AgentThreadState = { ...currentBase, session: { ...currentBase.session, folderId } }
+    const olderFiledBase = threadForSession('00000000-0000-4000-8000-000000000099', '00000000-0000-4000-8000-000000000100')
+    const olderFiled: AgentThreadState = { ...olderFiledBase, session: { ...olderFiledBase.session, folderId } }
+    const unfiled = threadForSession('00000000-0000-4000-8000-000000000101', '00000000-0000-4000-8000-000000000102')
+    const filedSummaries = [summaryForThread(current), summaryForThread(olderFiled)]
+    const source = { close: vi.fn() } as unknown as EventSource
+    const loadMoreController = new AbortController()
+    store.csrfToken = 'csrf-token'
+    store.folders = [folder]
+    store.thread = current
+    store.sessions = [summaryForThread(unfiled), ...filedSummaries]
+    store.sessionsNextCursor = 'older'
+    store.sessionsLoadMoreController = loadMoreController
+    store.sessionsLoadingMore = true
+    store.sessionsLoadMoreError = 'Previous error'
+    store.source = source
+    const deleteResponse = deferred<Response>()
+    const reloadResponse = deferred<Response>()
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const method = init?.method ?? 'GET'
+      if (input === '/_api/agents/sessions' && method === 'DELETE') return deleteResponse.promise
+      if (input === '/_api/agents/sessions' && method === 'GET') return reloadResponse.promise
+      return Promise.reject(new Error(`Unexpected request: ${method} ${String(input)}`))
+    })
+
+    const clearing = store.clearUnfiledHistory()
+    expect(store.sessionMutationBusy).toBe(true)
+    expect(store.thread).toEqual(current)
+    expect(source.close).not.toHaveBeenCalled()
+
+    deleteResponse.resolve(new Response(null, { status: 204 }))
+    await flushMicrotasks()
+
+    expect(store.sessions).toEqual(filedSummaries)
+    expect(store.sessionsNextCursor).toBeNull()
+    expect(loadMoreController.signal.aborted).toBe(true)
+    expect(store.sessionsLoadMoreController).toBeNull()
+    expect(store.sessionsReloading).toBe(true)
+    expect(store.sessionsLoadingMore).toBe(false)
+    expect(store.sessionsLoadMoreError).toBe('')
+    expect(store.thread).toEqual(current)
+    expect(source.close).not.toHaveBeenCalled()
+
+    reloadResponse.resolve(Response.json({ sessions: [], nextCursor: null }))
+    await expect(clearing).resolves.toBeUndefined()
+
+    expect(fetcher.mock.calls.map(call => call[1]?.method ?? 'GET')).toEqual(['DELETE', 'GET'])
+    expect(store.sessions).toEqual(filedSummaries)
+    expect(store.folders).toEqual([folder])
+    expect(store.sessionsReloading).toBe(false)
+    expect(store.thread).toEqual(current)
+    expect(source.close).not.toHaveBeenCalled()
+    expect(store.sessionMutationBusy).toBe(false)
+  })
+
+  it('replaces an unfiled current conversation with one fresh saved conversation after clearing', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    const current = activeThread()
+    const filedBase = threadForSession('00000000-0000-4000-8000-000000000103', '00000000-0000-4000-8000-000000000104')
+    const filed: AgentThreadState = {
+      ...filedBase,
+      session: { ...filedBase.session, folderId: '00000000-0000-4000-8000-000000000105' }
+    }
+    const createdBase = threadForSession('00000000-0000-4000-8000-000000000106', '00000000-0000-4000-8000-000000000107')
+    const created: AgentThreadState = { ...createdBase, session: { ...createdBase.session, currentRun: null } }
+    store.csrfToken = 'csrf-token'
+    store.routeSync = false
+    store.thread = current
+    store.sessions = [summaryForThread(current), summaryForThread(filed)]
+    store.profiles = [
+      {
+        id: '00000000-0000-4000-8000-000000000108',
+        name: 'Default provider',
+        transport: 'openai-responses',
+        model: 'gpt-test',
+        utilityModel: null,
+        destinationHost: 'api.example.test',
+        capabilities: {
+          streaming: true,
+          toolCalling: 'native',
+          parallelToolCalls: false,
+          structuredOutput: 'native-json-schema',
+          usage: 'terminal',
+          cancellation: true,
+          maxContextTokens: 32_000,
+          maxOutputTokens: 4_000
+        },
+        capabilityRevision: 'test-v1',
+        policyVersion: 1,
+        isGlobalDefault: true
+      }
+    ]
+    store.connectCurrentRun = vi.fn()
+    const requestBodies: unknown[] = []
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const method = init?.method ?? 'GET'
+      if (input === '/_api/agents/sessions' && method === 'DELETE') return Promise.resolve(new Response(null, { status: 204 }))
+      if (input === '/_api/agents/sessions' && method === 'POST') {
+        requestBodies.push(JSON.parse(String(init?.body)))
+        return Promise.resolve(Response.json(created, { status: 201 }))
+      }
+      if (input === '/_api/agents/sessions' && method === 'GET')
+        return Promise.resolve(Response.json({ sessions: [summaryForThread(created)], nextCursor: null }))
+      return Promise.reject(new Error(`Unexpected request: ${method} ${String(input)}`))
+    })
+
+    await store.clearUnfiledHistory()
+
+    expect(fetcher.mock.calls.map(call => call[1]?.method ?? 'GET')).toEqual(['DELETE', 'POST', 'GET'])
+    expect(requestBodies).toEqual([{ retention: 'saved', providerProfileId: null }])
+    expect(store.thread).toEqual(created)
+    expect(store.sessions).toEqual([summaryForThread(created), summaryForThread(filed)])
+    expect(store.sessions.some(session => session.id === current.session.id)).toBe(false)
+    expect(store.sessionMutationBusy).toBe(false)
+  })
+
+  it('serializes session creation, removal, unfiled-history clearing, and folder deletion and always releases the shared lock', async () => {
+    const actionNames = ['newSession', 'removeSession', 'clearUnfiledHistory', 'deleteFolder'] as const
     const removedSessionId = '00000000-0000-4000-8000-000000000091'
     const folderId = '00000000-0000-4000-8000-000000000092'
     const createdBase = threadForSession('00000000-0000-4000-8000-000000000093', '00000000-0000-4000-8000-000000000094')
@@ -845,7 +998,7 @@ describe('Agent session mutations', () => {
 
         const request = deferred<Response>()
         const expectedPath =
-          actionName === 'newSession' || actionName === 'resetHistory'
+          actionName === 'newSession' || actionName === 'clearUnfiledHistory'
             ? '/_api/agents/sessions'
             : actionName === 'removeSession'
               ? `/_api/agents/sessions/${removedSessionId}`
@@ -860,14 +1013,16 @@ describe('Agent session mutations', () => {
             return request.promise
           }
           if (path === '/_api/agents/sessions' && method === 'GET')
-            return Promise.resolve(Response.json({ sessions: [summaryForThread(current)], nextCursor: null }))
+            return Promise.resolve(
+              Response.json({ sessions: actionName === 'clearUnfiledHistory' ? [] : [summaryForThread(current)], nextCursor: null })
+            )
           return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
         })
 
         let mutation: Promise<boolean | void>
         if (actionName === 'newSession') mutation = store.newSession('saved')
         else if (actionName === 'removeSession') mutation = store.removeSession(removedSessionId)
-        else if (actionName === 'resetHistory') mutation = store.resetHistory()
+        else if (actionName === 'clearUnfiledHistory') mutation = store.clearUnfiledHistory()
         else mutation = store.deleteFolder(folderId)
 
         expect(store.sessionMutationBusy).toBe(true)
@@ -1388,14 +1543,14 @@ describe('Agent empty conversation lifecycle', () => {
   })
 })
 
-describe('Agent history reset', () => {
+describe('Agent unfiled history clearing', () => {
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     FakeEventSource.instances = []
   })
 
-  it('completes without creating a replacement session when no provider profile is available', async () => {
+  it('clears and reloads history without creating a replacement session when no provider profile is available', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
@@ -1403,7 +1558,7 @@ describe('Agent history reset', () => {
     store.sessions = [
       {
         id: '00000000-0000-4000-8000-000000000001',
-        title: 'Reset verification',
+        title: 'Clear verification',
         retention: 'saved',
         folderId: null,
         executionMode: 'agent',
@@ -1417,27 +1572,30 @@ describe('Agent history reset', () => {
       }
     ]
     store.error = 'No default provider profile is configured for your groups.'
-    const fetcher = vi.spyOn(window, 'fetch').mockResolvedValue(new Response(null, { status: 204 }))
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((_input, init) =>
+      init?.method === 'DELETE'
+        ? Promise.resolve(new Response(null, { status: 204 }))
+        : Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+    )
 
-    expect(await store.resetHistory()).toBeUndefined()
+    expect(await store.clearUnfiledHistory()).toBeUndefined()
 
-    expect(fetcher).toHaveBeenCalledTimes(1)
-    expect(fetcher).toHaveBeenCalledWith('/_api/agents/sessions', expect.objectContaining({ method: 'DELETE' }))
+    expect(fetcher.mock.calls.map(call => call[1]?.method ?? 'GET')).toEqual(['DELETE', 'GET'])
     expect(store.thread).toBeNull()
     expect(store.sessions).toEqual([])
     expect(store.error).toBe('')
   })
 
-  it('reconnects the preserved authoritative run when reset fails', async () => {
+  it('reconnects the preserved authoritative unfiled run when clearing fails', async () => {
     vi.stubGlobal('EventSource', FakeEventSource)
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
     const thread = activeThread()
     store.thread = thread
-    vi.spyOn(window, 'fetch').mockResolvedValue(Response.json({ message: 'Reset unavailable' }, { status: 503 }))
+    vi.spyOn(window, 'fetch').mockResolvedValue(Response.json({ message: 'Clear unavailable' }, { status: 503 }))
 
-    await expect(store.resetHistory()).rejects.toThrow('Reset unavailable')
+    await expect(store.clearUnfiledHistory()).rejects.toThrow('Clear unavailable')
 
     expect(store.thread?.session.id).toBe(thread.session.id)
     expect(store.thread?.session.title).toBe(thread.session.title)

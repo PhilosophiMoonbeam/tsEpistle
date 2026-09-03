@@ -9,7 +9,6 @@ describe('ordinary Wiki agent administration integration', () => {
   const agentAdmin = read('client/components/agents/agent-admin.vue')
   const theme = read('client/components/admin/admin-theme.vue')
   const skillAdmin = read('client/components/agents/skill-admin.vue')
-  const sessionSettings = read('client/components/agents/agent-session-settings.vue')
   const vite = read('vite.config.mts')
   const master = read('server/master.ts')
 
@@ -70,17 +69,11 @@ describe('ordinary Wiki agent administration integration', () => {
     expect(agentAdmin).not.toMatch(
       /label="(?:Parallel functions|Agent mode|Generation-only mode|Capability revision|Pricing revision|Structured output|Usage reporting)"/
     )
-    expect(sessionSettings).not.toMatch(/generation-only|Text generation|How this session uses the model/)
-    expect(sessionSettings).toMatch(
-      /providerControlsAvailable\s*=\s*computed\(\(\)\s*=>\s*props\.profiles\.length > 0 \|\| props\.session\.providerProfileId !== null\)/
-    )
-    expect(sessionSettings).toMatch(
-      /title:\s*defaultProfile\.value \? `Default · \$\{defaultProfile\.value\.name\} · \$\{defaultProfile\.value\.model\}` : 'Default · resolved when available',\s*value:\s*null/
-    )
-    expect(sessionSettings).toMatch(
-      /props\.profiles\.map\(profile => \(\{ title: `Explicit · \$\{profile\.name\} · \$\{profile\.model\}`, value: profile\.id \}\)\)/
-    )
-    expect(sessionSettings).not.toMatch(/profiles\.length > 1/)
+    expect(agentAdmin).toMatch(/value="profiles"[^>]*>[\s\S]*Providers[\s\S]*Models and access/)
+    expect(agentAdmin).toMatch(/profileStep === 'models'[\s\S]*Assign model roles/)
+    expect(agentAdmin).toMatch(/v-model="profileDraft\.model"[^\n]*label="Agent model"/)
+    expect(agentAdmin).toMatch(/v-model="profileDraft\.utilityModel"[^\n]*label="Utility model \(optional\)"/)
+    expect(agentAdmin).toMatch(/title="Set global default"[^\n]*subtitle="Makes this the workspace fallback"/)
     expect(agentAdmin).toMatch(/runtime\?\.providerEnabled !== true/)
     expect(agentAdmin).toMatch(/Provider administration is unavailable while provider inference is disabled/)
     expect(agentAdmin).toMatch(/profileError/)

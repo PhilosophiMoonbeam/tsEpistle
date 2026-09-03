@@ -3,6 +3,7 @@ import type { DecideAgentApprovalRequest } from '../../shared/agents/contracts.t
 import {
   AgentApiError,
   cancelAgentRun,
+  clearUnfiledAgentHistory,
   createAgentGoal,
   createAgentMemory,
   createAgentThread,
@@ -15,7 +16,6 @@ import {
   listAgentSessions,
   listPersonalAgentSkills,
   removePersonalAgentSkill,
-  resetAgentHistory,
   subscribeAgentRun,
   submitAgentMessage,
   updateAgentSession,
@@ -46,9 +46,9 @@ describe('agents client boundary', () => {
     )
   })
 
-  it('resets all history through the CSRF-protected collection endpoint', async () => {
+  it('clears unfiled history through the CSRF-protected collection endpoint', async () => {
     const fetcher = vi.fn(async () => new Response(null, { status: 204 })) as unknown as typeof fetch
-    await resetAgentHistory(fetcher, 'csrf-token')
+    await clearUnfiledAgentHistory(fetcher, 'csrf-token')
     expect(fetcher).toHaveBeenCalledWith(
       '/_api/agents/sessions',
       expect.objectContaining({ method: 'DELETE', credentials: 'same-origin', headers: { 'x-wiki-csrf': 'csrf-token' } })

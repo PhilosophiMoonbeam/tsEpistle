@@ -22,14 +22,17 @@
         New folder
       </v-btn>
       <v-btn
+        class="agent-history__clear"
         color="error"
-        icon="mdi-delete-sweep-outline"
-        variant="text"
-        aria-label="Reset all conversation history"
-        :disabled="sessions.length === 0 || loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || sessionMutationBusy || openingSessionIds.size > 0 || movingSessionIds.size > 0"
-        @click="requestReset"
+        prepend-icon="mdi-delete-sweep-outline"
+        size="small"
+        variant="tonal"
+        aria-label="Clear Recent history; saved folders are preserved"
+        :disabled="clearHistoryDisabled"
+        @click="requestClear"
       >
-        <v-tooltip activator="parent" location="bottom">Reset all history</v-tooltip>
+        Clear history
+        <v-tooltip activator="parent" location="bottom">Clears only Recent, unfiled conversations. Saved folders and their conversations are preserved.</v-tooltip>
       </v-btn>
     </div>
 
@@ -98,6 +101,7 @@
             <span class="agent-history__count" :aria-label="`${filteredRecentSessions.length} recent conversations`">{{ filteredRecentSessions.length }}</span>
           </div>
 
+          <div class="agent-history__recent-scroll">
           <template v-if="recentSessionGroups.length">
             <div v-for="group in recentSessionGroups" :key="group.label" class="agent-history__time-group">
               <div class="agent-history__time-label">{{ group.label }}</div>
@@ -143,6 +147,34 @@
             <v-icon icon="mdi-message-outline" size="20" />
             <span>Your unfiled conversations appear here.</span>
           </div>
+
+            <div
+              v-if="sessionsNextCursor || sessionsLoadingMore || sessionsLoadMoreError"
+              class="agent-history__pagination"
+              aria-live="polite"
+            >
+              <div v-if="sessionsLoadingMore" class="agent-history__pagination-status" role="status">
+                <v-progress-circular color="primary" indeterminate size="18" width="2" />
+                <span>Loading older conversations…</span>
+              </div>
+              <v-alert v-else-if="sessionsLoadMoreError" density="compact" role="alert" type="warning" variant="tonal">
+                <div class="agent-history__refresh-error">
+                  <span>{{ sessionsLoadMoreError }}</span>
+                  <v-btn aria-label="Retry loading older conversations" size="small" variant="text" @click="loadMoreSessions">Retry</v-btn>
+                </div>
+              </v-alert>
+              <v-btn
+                v-else
+                block
+                prepend-icon="mdi-chevron-down"
+                variant="tonal"
+                :disabled="refreshingHistory || sessionsReloading"
+                @click="loadMoreSessions"
+              >
+                Load more
+              </v-btn>
+            </div>
+          </div>
         </section>
 
         <section class="agent-history__folders" aria-labelledby="agent-history-folders-title">
@@ -154,6 +186,7 @@
             <span class="agent-history__retained"><v-icon icon="mdi-archive-check-outline" size="14" /> Kept</span>
           </div>
 
+          <div class="agent-history__folders-scroll">
           <v-expansion-panels v-if="visibleFolderGroups.length" v-model="openFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
             <v-expansion-panel
               v-for="group in visibleFolderGroups"
@@ -232,35 +265,10 @@
             <v-icon icon="mdi-folder-heart-outline" size="22" />
             <span>Create a folder for conversations worth keeping.</span>
           </div>
+          </div>
         </section>
       </template>
 
-      <div
-        v-if="sessionsNextCursor || sessionsLoadingMore || sessionsLoadMoreError"
-        class="agent-history__pagination"
-        aria-live="polite"
-      >
-        <div v-if="sessionsLoadingMore" class="agent-history__pagination-status" role="status">
-          <v-progress-circular color="primary" indeterminate size="18" width="2" />
-          <span>Loading older conversations…</span>
-        </div>
-        <v-alert v-else-if="sessionsLoadMoreError" density="compact" role="alert" type="warning" variant="tonal">
-          <div class="agent-history__refresh-error">
-            <span>{{ sessionsLoadMoreError }}</span>
-            <v-btn aria-label="Retry loading older conversations" size="small" variant="text" @click="loadMoreSessions">Retry</v-btn>
-          </div>
-        </v-alert>
-        <v-btn
-          v-else
-          block
-          prepend-icon="mdi-chevron-down"
-          variant="tonal"
-          :disabled="refreshingHistory || sessionsReloading"
-          @click="loadMoreSessions"
-        >
-          Load more
-        </v-btn>
-      </div>
     </div>
   </v-card>
 
@@ -351,7 +359,7 @@ import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 import AgentHistorySessionActions from './agent-history-session-actions.vue'
-const emit = defineEmits<{ close: []; reset: [] }>()
+const emit = defineEmits<{ close: []; clear: [] }>()
 const agents = useAgentsStore()
 const { folders, loading, sessionMutationBusy, sessions, sessionsLoadMoreError, sessionsLoadingMore, sessionsNextCursor, sessionsReloading, thread } = storeToRefs(agents)
 const openFolderIds = ref<string[]>([])
@@ -507,6 +515,18 @@ const historyPartition = computed<HistoryPartition>(() => {
 })
 const displaySessions = computed(() => historyPartition.value.displaySessions)
 const filteredRecentSessions = computed(() => historyPartition.value.recentSessions)
+const hasUnfiledSessions = computed(() => displaySessions.value.some(session => session.folderId === null))
+const clearHistoryDisabled = computed(() =>
+  !hasUnfiledSessions.value ||
+  loading.value ||
+  refreshingHistory.value ||
+  sessionsReloading.value ||
+  sessionsLoadingMore.value ||
+  savingFolder.value ||
+  deleting.value ||
+  sessionMutationBusy.value ||
+  openingSessionIds.value.size > 0 ||
+  movingSessionIds.value.size > 0)
 const recentSessionGroups = computed(() => historyPartition.value.recentGroups)
 const visibleFolderGroups = computed(() => historyPartition.value.visibleFolderGroups)
 const draggedSession = computed(() =>
@@ -646,9 +666,9 @@ const closeHistory = (): void => {
   agents.cancelSessionTransition()
   emit('close')
 }
-const requestReset = (): void => {
-  if (sessionMutationBusy.value) return
-  emit('reset')
+const requestClear = (): void => {
+  if (clearHistoryDisabled.value) return
+  emit('clear')
 }
 
 const openSession = async (sessionId: string): Promise<void> => {
@@ -923,6 +943,10 @@ onBeforeUnmount(() => {
   padding: 0 var(--wiki-space-4) var(--wiki-space-3);
 }
 .agent-history__new-folder { flex: 1; }
+.agent-history__clear {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .agent-history__search { flex: 0 0 auto; padding: 0 var(--wiki-space-4) var(--wiki-space-3); position: relative; }
 .agent-history__search :deep(.v-field) { border-radius: var(--wiki-control-radius); }
 .agent-history__search-status {
@@ -952,12 +976,12 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 .agent-history__body {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
   padding: 0 var(--wiki-space-3) var(--wiki-space-4);
-  scrollbar-gutter: stable;
 }
 .agent-history__pagination {
   padding: var(--wiki-space-4) var(--wiki-space-1) 0;
@@ -974,9 +998,38 @@ onBeforeUnmount(() => {
 .agent-history__recent {
   border-bottom: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
-  padding-bottom: var(--wiki-space-3);
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
-.agent-history__folders { padding-top: var(--wiki-space-4); }
+.agent-history__recent-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: var(--wiki-space-3);
+  scrollbar-gutter: stable;
+}
+.agent-history__folders {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  padding-top: var(--wiki-space-4);
+}
+.agent-history__folders-scroll {
+  flex: 1 1 auto;
+  max-height: calc(
+    var(--wiki-control-height) + var(--wiki-control-height) + var(--wiki-control-height) +
+    var(--wiki-space-2) + var(--wiki-space-2) + 6px
+  );
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
 .agent-history__section-heading {
   align-items: center;
   display: flex;
@@ -984,6 +1037,8 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   padding: var(--wiki-space-2) var(--wiki-space-2) var(--wiki-space-3);
 }
+.agent-history__recent > .agent-history__section-heading,
+.agent-history__folders > .agent-history__section-heading { flex: 0 0 auto; }
 .agent-history__section-heading--folders { padding-top: 0; }
 .agent-history__section-title { font-size: .78rem; font-weight: 750; letter-spacing: .035em; margin: 0; }
 .agent-history__section-copy { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent); font-size: var(--wiki-type-micro, .75rem); margin-top: var(--wiki-space-1); }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
-import { requestAgentHistoryReset, runAgentMaintenance } from '../../agents/maintenance.ts'
+import { requestUnfiledAgentHistoryClear, runAgentMaintenance } from '../../agents/maintenance.ts'
 
 const now = new Date('2026-08-17T12:00:00.000Z')
 const old = new Date('2026-05-01T00:00:00.000Z')
@@ -17,6 +17,15 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.dateTime('updatedAt')
     table.dateTime('lastActivityAt')
     table.integer('version')
+  })
+  await knex.schema.createTable('agentConversationFolders', table => {
+    table.string('id').primary()
+    table.integer('ownerId')
+    table.string('name')
+    table.string('normalizedName')
+    table.integer('version')
+    table.dateTime('createdAt')
+    table.dateTime('updatedAt')
   })
   await knex.schema.createTable('agentMessages', table => {
     table.string('id').primary()
@@ -506,11 +515,31 @@ describe('agent retention maintenance', () => {
     expect(await knex('agentSessions').where({ id: 'saved-other-user' }).first()).toBeDefined()
   })
 
-  it('resets every owned conversation while preserving another user history', async () => {
+  it('clears only unfiled owned conversations while preserving folders and other user history', async () => {
+    await knex('agentConversationFolders').insert({
+      id: 'owned-folder',
+      ownerId: 7,
+      name: 'Filed work',
+      normalizedName: 'filed work',
+      version: 1,
+      createdAt: now,
+      updatedAt: now
+    })
     await knex('agentSessions').insert([
-      { id: 'owned-one', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
-      { id: 'owned-two', ownerId: 7, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
-      { id: 'other-one', ownerId: 8, retention: 'saved', expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 }
+      { id: 'owned-unfiled-one', ownerId: 7, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
+      { id: 'owned-unfiled-two', ownerId: 7, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 },
+      {
+        id: 'owned-filed',
+        ownerId: 7,
+        retention: 'saved',
+        folderId: 'owned-folder',
+        expiresAt: null,
+        deletedAt: null,
+        updatedAt: now,
+        lastActivityAt: now,
+        version: 1
+      },
+      { id: 'other-unfiled', ownerId: 8, retention: 'saved', folderId: null, expiresAt: null, deletedAt: null, updatedAt: now, lastActivityAt: now, version: 1 }
     ])
     const run = (id: string, sessionId: string, ownerId: number, status: string) => ({
       id,
@@ -535,43 +564,83 @@ describe('agent retention maintenance', () => {
       errorMessage: null
     })
     await knex('agentRuns').insert([
-      run('owned-queued', 'owned-one', 7, 'queued'),
-      run('owned-running', 'owned-two', 7, 'running'),
-      run('other-running', 'other-one', 8, 'running')
+      run('owned-queued', 'owned-unfiled-one', 7, 'queued'),
+      run('owned-running', 'owned-unfiled-two', 7, 'running'),
+      run('filed-queued', 'owned-filed', 7, 'queued'),
+      run('other-running', 'other-unfiled', 8, 'running')
     ])
-    await knex('agentMessages').insert({
-      id: 'assistant-owned-queued',
-      sessionId: 'owned-one',
-      runId: 'owned-queued',
-      ordinal: 1,
-      role: 'assistant',
-      status: 'pending',
-      content: '',
-      citations: null,
-      providerStateCiphertext: null,
-      providerStateSha256: null,
-      createdAt: now,
-      updatedAt: now
-    })
-    await knex('agentProposals').insert({
-      id: 'owned-proposal',
-      sourceKind: 'agent',
-      sessionId: 'owned-two',
-      status: 'pending',
-      expiresAt: now,
-      createdAt: now,
-      contentPurgedAt: null,
-      input: '{}',
-      patch: null,
-      diff: null,
-      applyResult: null
-    })
-    await knex('agentApprovals').insert({ id: 'owned-approval', proposalId: 'owned-proposal', status: 'pending', decidedAt: null, decisionNote: null })
+    await knex('agentMessages').insert([
+      {
+        id: 'assistant-owned-queued',
+        sessionId: 'owned-unfiled-one',
+        runId: 'owned-queued',
+        ordinal: 1,
+        role: 'assistant',
+        status: 'pending',
+        content: '',
+        citations: null,
+        providerStateCiphertext: null,
+        providerStateSha256: null,
+        createdAt: now,
+        updatedAt: now
+      },
+      {
+        id: 'assistant-filed-queued',
+        sessionId: 'owned-filed',
+        runId: 'filed-queued',
+        ordinal: 1,
+        role: 'assistant',
+        status: 'pending',
+        content: 'Preserved filed response',
+        citations: null,
+        providerStateCiphertext: null,
+        providerStateSha256: null,
+        createdAt: now,
+        updatedAt: now
+      }
+    ])
+    await knex('agentProposals').insert([
+      {
+        id: 'owned-proposal',
+        sourceKind: 'agent',
+        sessionId: 'owned-unfiled-two',
+        status: 'pending',
+        expiresAt: now,
+        createdAt: now,
+        contentPurgedAt: null,
+        input: '{}',
+        patch: null,
+        diff: null,
+        applyResult: null
+      },
+      {
+        id: 'filed-proposal',
+        sourceKind: 'agent',
+        sessionId: 'owned-filed',
+        status: 'pending',
+        expiresAt: now,
+        createdAt: now,
+        contentPurgedAt: null,
+        input: '{}',
+        patch: null,
+        diff: null,
+        applyResult: null
+      }
+    ])
+    await knex('agentApprovals').insert([
+      { id: 'owned-approval', proposalId: 'owned-proposal', status: 'pending', decidedAt: null, decisionNote: null },
+      { id: 'filed-approval', proposalId: 'filed-proposal', status: 'pending', decidedAt: null, decisionNote: null }
+    ])
 
-    expect(await requestAgentHistoryReset(knex, 7, now)).toBe(2)
+    expect(await requestUnfiledAgentHistoryClear(knex, 7, now)).toBe(2)
 
-    expect(await knex('agentSessions').where({ ownerId: 7 }).whereNull('deletedAt')).toHaveLength(0)
-    expect(await knex('agentSessions').where({ id: 'other-one' }).whereNull('deletedAt').first()).toBeDefined()
+    expect(await knex('agentSessions').whereIn('id', ['owned-unfiled-one', 'owned-unfiled-two']).whereNotNull('deletedAt')).toHaveLength(2)
+    expect(await knex('agentSessions').where({ id: 'owned-filed' }).first('folderId', 'deletedAt')).toMatchObject({
+      folderId: 'owned-folder',
+      deletedAt: null
+    })
+    expect(await knex('agentConversationFolders').where({ id: 'owned-folder' }).first('ownerId', 'name')).toEqual({ ownerId: 7, name: 'Filed work' })
+    expect(await knex('agentSessions').where({ id: 'other-unfiled' }).whereNull('deletedAt').first()).toBeDefined()
     expect(await knex('agentRuns').where({ id: 'owned-queued' }).first('status')).toMatchObject({ status: 'cancelled' })
     expect(await knex('agentMessages').where({ id: 'assistant-owned-queued' }).first('status')).toEqual({ status: 'cancelled' })
     expect(
@@ -593,7 +662,15 @@ describe('agent retention maintenance', () => {
       }
     ])
     expect((await knex('agentRuns').where({ id: 'owned-running' }).first('cancelRequestedAt'))?.cancelRequestedAt).not.toBeNull()
+    expect(await knex('agentRuns').where({ id: 'filed-queued' }).first('status', 'cancelRequestedAt')).toEqual({ status: 'queued', cancelRequestedAt: null })
+    expect(await knex('agentMessages').where({ id: 'assistant-filed-queued' }).first('status', 'content')).toEqual({
+      status: 'pending',
+      content: 'Preserved filed response'
+    })
     expect(await knex('agentRuns').where({ id: 'other-running' }).first('cancelRequestedAt')).toMatchObject({ cancelRequestedAt: null })
-    expect(await knex('agentApprovals').where({ id: 'owned-approval' }).first('status')).toMatchObject({ status: 'cancelled' })
+    expect(await knex('agentProposals').where({ id: 'owned-proposal' }).first('status')).toEqual({ status: 'cancelled' })
+    expect(await knex('agentApprovals').where({ id: 'owned-approval' }).first('status')).toEqual({ status: 'cancelled' })
+    expect(await knex('agentProposals').where({ id: 'filed-proposal' }).first('status')).toEqual({ status: 'pending' })
+    expect(await knex('agentApprovals').where({ id: 'filed-approval' }).first('status')).toEqual({ status: 'pending' })
   })
 })

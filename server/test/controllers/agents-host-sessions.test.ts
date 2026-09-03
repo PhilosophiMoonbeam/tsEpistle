@@ -5,6 +5,7 @@ import cookieParser from 'cookie-parser'
 import express from 'express'
 import session from 'express-session'
 import createKnex, { type Knex } from 'knex'
+import { z } from 'zod'
 import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
 import createAgentsHostController from '../../controllers/agents-host.ts'
 import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
@@ -1435,8 +1436,10 @@ describe('ordinary-origin agent session API', () => {
     })
   })
 
-  it('keeps personal memory owner-scoped and independent from history reset', async () => {
+  it('clears only unfiled history while preserving folders, owner isolation, and personal memory', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
+    const SessionResponseSchema = z.object({ session: z.object({ id: z.string(), version: z.number() }) })
+    const FolderResponseSchema = z.object({ folder: z.object({ id: z.string(), name: z.string() }) })
     const createdMemory = await fetch(`${baseUrl}/_api/agents/memories`, {
       method: 'POST',
       headers,
@@ -1445,28 +1448,77 @@ describe('ordinary-origin agent session API', () => {
     expect(createdMemory.status).toBe(201)
     expect(await createdMemory.json()).toMatchObject({ changed: true, target: 'user', entries: ['Prefers concise, evidence-first answers.'], limit: 1_375 })
 
-    ownerId = 8
-    expect(await (await fetch(`${baseUrl}/_api/agents/memories`, { headers: { cookie } })).json()).toMatchObject({
-      user: { entries: [] },
-      agent: { entries: [] }
-    })
-    ownerId = 7
-
-    const createdSession = (await (
-      await fetch(`${baseUrl}/_api/agents/sessions`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ retention: 'saved', providerProfileId: null })
-      })
-    ).json()) as { session: { id: string } }
-    expect(JSON.parse(String((await db('agentSessions').where({ id: createdSession.session.id }).first('memorySnapshot'))?.memorySnapshot))).toEqual({
+    const unfiledSession = SessionResponseSchema.parse(
+      await (
+        await fetch(`${baseUrl}/_api/agents/sessions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+        })
+      ).json()
+    )
+    expect(JSON.parse(String((await db('agentSessions').where({ id: unfiledSession.session.id }).first('memorySnapshot'))?.memorySnapshot))).toEqual({
       agent: [],
       user: ['Prefers concise, evidence-first answers.']
     })
 
-    expect((await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'DELETE', headers })).status).toBe(204)
-    expect(await db('agentSessions').where({ ownerId: 7 }).whereNull('deletedAt')).toHaveLength(0)
+    const filedSession = SessionResponseSchema.parse(
+      await (
+        await fetch(`${baseUrl}/_api/agents/sessions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+        })
+      ).json()
+    )
+    const folderResponse = await fetch(`${baseUrl}/_api/agents/conversation-folders`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: 'Preserved project' })
+    })
+    expect(folderResponse.status).toBe(201)
+    const folder = FolderResponseSchema.parse(await folderResponse.json()).folder
+    expect(
+      (
+        await fetch(`${baseUrl}/_api/agents/sessions/${filedSession.session.id}/folder`, {
+          method: 'PUT',
+          headers,
+          body: JSON.stringify({ expectedSessionVersion: filedSession.session.version, folderId: folder.id })
+        })
+      ).status
+    ).toBe(200)
+
+    ownerId = 8
+    const otherMemory = await fetch(`${baseUrl}/_api/agents/memories`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ target: 'user', content: 'Other owner memory.' })
+    })
+    expect(otherMemory.status).toBe(201)
+    const otherSession = SessionResponseSchema.parse(
+      await (
+        await fetch(`${baseUrl}/_api/agents/sessions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ retention: 'saved', providerProfileId: null })
+        })
+      ).json()
+    )
+    ownerId = 7
+
+    const cleared = await fetch(`${baseUrl}/_api/agents/sessions`, { method: 'DELETE', headers })
+
+    expect(cleared.status).toBe(204)
+    expect(await db('agentSessions').where({ id: unfiledSession.session.id }).first('deletedAt')).toEqual({ deletedAt: expect.anything() })
+    expect(await db('agentSessions').where({ id: filedSession.session.id }).first('folderId', 'retention', 'deletedAt')).toEqual({
+      folderId: folder.id,
+      retention: 'saved',
+      deletedAt: null
+    })
+    expect(await db('agentConversationFolders').where({ id: folder.id }).first('ownerId', 'name')).toEqual({ ownerId: 7, name: 'Preserved project' })
+    expect(await db('agentSessions').where({ id: otherSession.session.id }).first('ownerId', 'deletedAt')).toEqual({ ownerId: 8, deletedAt: null })
     expect((await db('agentMemories').where({ ownerId: 7 })).map(row => row.content)).toEqual(['Prefers concise, evidence-first answers.'])
+    expect((await db('agentMemories').where({ ownerId: 8 })).map(row => row.content)).toEqual(['Other owner memory.'])
   })
 })
 

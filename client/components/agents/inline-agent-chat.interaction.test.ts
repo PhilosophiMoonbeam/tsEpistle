@@ -16,6 +16,8 @@ const composerComponentPath = path.join(process.cwd(), 'client/components/agents
 const composerComponentSource = fs.readFileSync(composerComponentPath, 'utf8')
 const composerDescriptor = parse(composerComponentSource, { filename: composerComponentPath }).descriptor
 if (!composerDescriptor.template || !composerDescriptor.scriptSetup) throw new Error('agent-composer.vue template and setup script are required')
+const componentStyles = descriptor.styles.map(style => style.content).join('\n')
+const composerStyles = composerDescriptor.styles.map(style => style.content).join('\n')
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
@@ -121,15 +123,20 @@ interface LockState {
   submitUnavailableReason: ValueRef<string>
   sessionMutationBusy: ValueRef<boolean>
   agentCalls: {
+    clearUnfiledHistory: (...args: unknown[]) => unknown
+    initialize: (...args: unknown[]) => unknown
     newSession: (...args: unknown[]) => unknown
-    resetHistory: (...args: unknown[]) => unknown
+    reloadSessions: (...args: unknown[]) => unknown
   }
+  clearUnfiledCommitted: ValueRef<boolean>
+  clearUnfiledError: ValueRef<string>
+  clearUnfiledHistory: () => Promise<void>
+  clearUnfiledHistoryOpen: ValueRef<boolean>
   newSession: () => Promise<void>
-  openResetHistory: () => void
-  recoverResetHistory: () => Promise<void>
-  resetHistory: () => Promise<void>
-  resetHistoryOpen: ValueRef<boolean>
-  thread: ValueRef<Record<string, unknown>>
+  newTemporarySession: () => Promise<void>
+  openClearUnfiledHistory: () => void
+  recoverClearUnfiledHistory: () => Promise<void>
+  thread: ValueRef<Record<string, unknown> | null>
 }
 
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(descriptor.scriptSetup.content.replace(/^import .*$/gm, ''))
@@ -162,7 +169,8 @@ const loadGoalLockState = (status: 'active' | 'paused' | null, mutationBusy = fa
       id: 'session-1',
       title: 'Release planning',
       skills: [],
-      currentRun: status === 'active' ? { canCancel: true, status: 'running' } : null
+      currentRun: status === 'active' ? { canCancel: true, status: 'running' } : null,
+      folderId: null
     },
     messages: [],
     tools: [],
@@ -197,8 +205,10 @@ const loadGoalLockState = (status: 'active' | 'paused' | null, mutationBusy = fa
     pageUpdatedAt: ''
   }
   const agentCalls = {
-    newSession: vi.fn(),
-    resetHistory: vi.fn()
+    clearUnfiledHistory: vi.fn(() => Promise.resolve()),
+    initialize: vi.fn(() => Promise.resolve()),
+    newSession: vi.fn(() => Promise.resolve()),
+    reloadSessions: vi.fn(() => Promise.resolve())
   }
   const evaluate = new Function(
     'computed',
@@ -216,7 +226,7 @@ const loadGoalLockState = (status: 'active' | 'paused' | null, mutationBusy = fa
     'isAgentApprovalOutsideViewport',
     'shouldFollowGoalExpansion',
     'defineExpose',
-    `${executableScript}\nreturn { activeRun, canSubmit, goalSubmitUnavailableReason, newSession, openGoal, openResetHistory, recoverResetHistory, resetHistory, resetHistoryOpen, sessionMutationBusy, submitUnavailableReason, thread }`
+    `${executableScript}\nreturn { activeRun, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, goalSubmitUnavailableReason, newSession, newTemporarySession, openClearUnfiledHistory, openGoal, recoverClearUnfiledHistory, sessionMutationBusy, submitUnavailableReason, thread }`
   ) as (...dependencies: unknown[]) => LockState
 
   const state = evaluate(
@@ -233,8 +243,8 @@ const loadGoalLockState = (status: 'active' | 'paused' | null, mutationBusy = fa
     () => undefined,
     () => storeRefs,
     () => props,
-    () => agentCalls,
     () => ({}),
+    () => agentCalls,
     () => ({ deactivate: () => undefined }),
     () => false,
     () => false,
@@ -294,10 +304,10 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     memoryMutationBusy: false,
     historyLoadError: '',
     historyLoading: false,
-    resetHistoryOpen: false,
-    resetting: false,
-    resetCommitted: false,
-    resetError: '',
+    clearUnfiledHistoryOpen: false,
+    clearingUnfiledHistory: false,
+    clearUnfiledCommitted: false,
+    clearUnfiledError: '',
     goalExpanded: false,
     approvalJumpVisible: false,
     followJumpVisible: false,
@@ -336,17 +346,17 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     }
   }
   for (const method of [
-    'applyProviderProfile',
-    'closeResetHistory',
+    'clearUnfiledHistory',
+    'closeClearUnfiledHistory',
     'handleGoalExpanded',
     'handleTranscriptScroll',
     'jumpToApproval',
     'newSession',
-    'openResetHistory',
+    'newTemporarySession',
+    'openClearUnfiledHistory',
     'openSkillManager',
-    'recoverResetHistory',
+    'recoverClearUnfiledHistory',
     'reloadHistory',
-    'resetHistory',
     'scrollToLatest',
     'sendPrompt',
     'updateMemoryOpen'
@@ -413,7 +423,6 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     'AgentMcpApproval',
     'AgentMemoryManager',
     'AgentPersonalSkills',
-    'AgentSessionSettings',
     'AgentThread'
   ])
     app.component(name, componentStub)
@@ -490,6 +499,107 @@ describe('Inline Agent mobile panel controls', () => {
   })
 })
 
+describe('Inline Agent workspace actions', () => {
+  it('renders History, Memory, Temporary, and New in desktop order with explicit accessible names', () => {
+    const mounted = mountInlineAgent()
+    const actions = Array.from(mounted.root.querySelectorAll<HTMLElement>(
+      '.inline-agent__desktop-panel-btn, .inline-agent__session-action'
+    ))
+
+    expect(actions.map(action => action.getAttribute('aria-label'))).toEqual([
+      'Open agent conversation history',
+      'Manage agent memory',
+      'Start a temporary agent conversation',
+      'Start a new saved agent conversation'
+    ])
+    expect(actions[2]?.textContent?.trim()).toBe('Temporary')
+    expect(actions[3]?.textContent?.trim()).toBe('New')
+    expect(actions[2]?.getAttribute('title')).toBe('Temporary conversations are not saved')
+  })
+
+  it('creates temporary and saved conversations with distinct retention', async () => {
+    const lockState = loadGoalLockState(null)
+
+    await lockState.newTemporarySession()
+    await lockState.newSession()
+
+    expect(lockState.agentCalls.newSession).toHaveBeenNthCalledWith(1, 'temporary')
+    expect(lockState.agentCalls.newSession).toHaveBeenNthCalledWith(2, 'saved')
+  })
+
+  it('removes session configuration and the clipped composer focus ring', () => {
+    expect(componentSource).not.toContain('AgentSessionSettings')
+    expect(componentSource).not.toContain('applyProviderProfile')
+    expect(composerStyles).toContain('border: 1px solid var(--wiki-surface-border-strong);')
+    expect(composerStyles).not.toContain('.agent-composer:focus-within')
+    expect(composerStyles).not.toContain('var(--wiki-focus-ring)')
+  })
+})
+
+describe('Inline Agent clear-unfiled confirmation', () => {
+  it('consumes the clear event and invokes only the clear-unfiled store action', async () => {
+    const lockState = loadGoalLockState(null)
+
+    lockState.openClearUnfiledHistory()
+    expect(lockState.clearUnfiledHistoryOpen.value).toBe(true)
+    await lockState.clearUnfiledHistory()
+
+    expect(lockState.agentCalls.clearUnfiledHistory).toHaveBeenCalledTimes(1)
+    expect(lockState.clearUnfiledHistoryOpen.value).toBe(false)
+    expect(componentSource).toContain('@clear="openClearUnfiledHistory"')
+    expect(componentSource).not.toContain('@reset=')
+    expect(componentSource).not.toContain('resetHistory')
+  })
+
+  it('keeps recovery open and retries a new saved conversation after a committed clear', async () => {
+    const lockState = loadGoalLockState(null)
+    lockState.agentCalls.clearUnfiledHistory = vi.fn(() => {
+      lockState.thread.value = null
+      return Promise.resolve()
+    })
+
+    lockState.openClearUnfiledHistory()
+    await lockState.clearUnfiledHistory()
+
+    expect(lockState.clearUnfiledCommitted.value).toBe(true)
+    expect(lockState.clearUnfiledHistoryOpen.value).toBe(true)
+    expect(lockState.clearUnfiledError.value).toContain('Saved folders and their filed conversations remain unchanged.')
+
+    await lockState.recoverClearUnfiledHistory()
+
+    expect(lockState.agentCalls.reloadSessions).toHaveBeenCalledTimes(1)
+    expect(lockState.agentCalls.newSession).toHaveBeenLastCalledWith('saved')
+    expect(lockState.clearUnfiledHistoryOpen.value).toBe(true)
+  })
+
+  it('states that saved folders and filed conversations remain throughout confirmation and recovery', () => {
+    expect(componentSource).toContain('Only conversations outside saved folders will be permanently removed.')
+    expect(componentSource).toContain('Saved folders and their filed conversations will remain.')
+    expect(componentSource.match(/Saved folders and their filed conversations remain unchanged\./g)?.length).toBeGreaterThanOrEqual(3)
+    expect(componentSource).toContain('If the current conversation is unfiled, a new saved conversation will open.')
+    expect(componentSource).toContain('Clear unfiled conversations?')
+  })
+})
+
+describe('Inline Agent fixed desktop layout', () => {
+  it('reserves fixed wide columns only once every panel and gap fits', () => {
+    expect(componentStyles).toContain('@media (min-width: 1760px)')
+    expect(componentStyles).toContain('grid-template-columns: 19rem minmax(0, 68rem) 21rem;')
+    expect(componentStyles).toContain('gap: var(--wiki-space-4);')
+    expect(componentSource).toContain("window.matchMedia('(min-width: 1760px)')")
+    expect(componentStyles).not.toMatch(/\.inline-agent\.inline-agent--(?:history|memory|panels)-open\s*\{[^}]*grid-template-columns/s)
+  })
+
+  it('keeps one centered chat track and overlays fixed panels from 1024 through 1759 pixels', () => {
+    expect(componentStyles).toContain('@media (min-width: 1024px) and (max-width: 1759.98px)')
+    expect(componentStyles).toContain('grid-template-columns: minmax(0, 68rem);')
+    expect(componentStyles).toMatch(/@media \(min-width: 1024px\) and \(max-width: 1759\.98px\)[\s\S]*?\.inline-agent__side \{[\s\S]*?position: absolute;/)
+    expect(componentStyles).toContain('width: 19rem;')
+    expect(componentStyles).toContain('width: 21rem;')
+    expect(componentStyles).toMatch(/\.inline-agent__side \{[\s\S]*?overflow: hidden;[\s\S]*?border-radius: var\(--wiki-panel-radius\);[\s\S]*?background: transparent;/)
+  })
+})
+
 describe('Inline Agent goal submission lock', () => {
   it('keeps a fresh unlocked composer associated only with its internal descriptions', () => {
     const mounted = mountInlineAgent()
@@ -544,22 +654,25 @@ describe('Inline Agent goal submission lock', () => {
     expect(unlockedTextarea?.disabled).toBe(false)
   })
 
-  it('blocks new and reset conversation actions while another session mutation owns the lock', async () => {
+  it('blocks saved, temporary, and clear-unfiled actions while another session mutation owns the lock', async () => {
     const lockState = loadGoalLockState(null, true)
     const mounted = mountInlineAgent(lockState)
-    const newConversation = mounted.root.querySelector<HTMLButtonElement>('[aria-label="Start a new agent conversation"]')
+    const temporaryConversation = mounted.root.querySelector<HTMLButtonElement>('[aria-label="Start a temporary agent conversation"]')
+    const newConversation = mounted.root.querySelector<HTMLButtonElement>('[aria-label="Start a new saved agent conversation"]')
 
+    expect(temporaryConversation?.disabled).toBe(true)
     expect(newConversation?.disabled).toBe(true)
 
-    lockState.openResetHistory()
+    lockState.openClearUnfiledHistory()
+    await lockState.newTemporarySession()
     await lockState.newSession()
-    await lockState.resetHistory()
-    await lockState.recoverResetHistory()
+    await lockState.clearUnfiledHistory()
+    await lockState.recoverClearUnfiledHistory()
 
-    expect(lockState.resetHistoryOpen.value).toBe(false)
+    expect(lockState.clearUnfiledHistoryOpen.value).toBe(false)
     expect(lockState.agentCalls.newSession).not.toHaveBeenCalled()
-    expect(lockState.agentCalls.resetHistory).not.toHaveBeenCalled()
-    expect(componentSource).toContain(':persistent="resetting || sessionMutationBusy"')
-    expect(componentSource.match(/:disabled="resetting \|\| sessionMutationBusy"/g)).toHaveLength(3)
+    expect(lockState.agentCalls.clearUnfiledHistory).not.toHaveBeenCalled()
+    expect(componentSource).toContain(':persistent="clearingUnfiledHistory || sessionMutationBusy"')
+    expect(componentSource.match(/:disabled="clearingUnfiledHistory \|\| sessionMutationBusy"/g)).toHaveLength(3)
   })
 })

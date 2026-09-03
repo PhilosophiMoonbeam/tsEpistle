@@ -512,7 +512,7 @@ export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: strin
   })
   if (!response.ok) throw new AgentApiError(response.status, await errorMessage(response))
 }
-export const resetAgentHistory = async (fetcher: typeof fetch, csrfToken: string): Promise<void> => {
+export const clearUnfiledAgentHistory = async (fetcher: typeof fetch, csrfToken: string): Promise<void> => {
   const response = await sameOriginJsonFetch(fetcher, '/_api/agents/sessions', {
     method: 'DELETE',
     credentials: 'same-origin',

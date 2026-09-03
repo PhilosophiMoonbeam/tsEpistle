@@ -11,6 +11,7 @@ import {
   AgentApiError,
   cancelAgentGoal,
   cancelAgentRun,
+  clearUnfiledAgentHistory,
   createAgentConversationFolder,
   createAgentGoal,
   createAgentThread,
@@ -25,7 +26,6 @@ import {
   moveAgentSessionToFolder,
   pauseAgentGoal,
   renameAgentConversationFolder,
-  resetAgentHistory,
   resumeAgentGoal,
   submitAgentMessage,
   subscribeAgentRun,
@@ -799,31 +799,61 @@ export const useAgentsStore = defineStore('agents', {
         this.endSessionMutation()
       }
     },
-    async resetHistory() {
+    async clearUnfiledHistory() {
       if (!this.beginSessionMutation()) return
       try {
         const workspaceVersion = this.workspaceVersion
-        const sessionId = this.thread?.session.id
-        this.closeStream()
-        this.cancelSessionTransition()
+        const currentSessionId = this.thread?.session.id
+        const clearsCurrentSession = this.thread?.session.folderId === null
+        if (clearsCurrentSession) {
+          this.closeStream()
+          this.cancelSessionTransition()
+        }
         try {
-          await resetAgentHistory(fetchFromWindow, this.csrfToken)
+          await clearUnfiledAgentHistory(fetchFromWindow, this.csrfToken)
         } catch (error) {
-          if (sessionId && this.isSessionContextCurrent(workspaceVersion, sessionId)) this.connectCurrentRun()
+          if (clearsCurrentSession && currentSessionId && this.isSessionContextCurrent(workspaceVersion, currentSessionId)) this.connectCurrentRun()
           throw error
         }
         if (!this.isWorkspaceCurrent(workspaceVersion)) return
-        this.invalidateRefresh()
-        this.thread = null
-        this.sessions = []
-        this.sessionsNextCursor = null
+        const preservedFiledSessions = this.sessions.filter(session => session.folderId !== null)
+
+        this.sessionListVersion += 1
         this.sessionsLoadMoreController?.abort()
         this.sessionsLoadMoreController = null
         this.sessionsReloading = false
         this.sessionsLoadingMore = false
         this.sessionsLoadMoreError = ''
+        this.sessions = markRaw(preservedFiledSessions)
+        this.sessionsNextCursor = null
         this.error = ''
-        if (this.profiles.length > 0) await this.newSession('saved', sessionMutationAlreadyAcquired)
+
+        const replacingCurrentSession = this.thread?.session.folderId === null
+        try {
+          if (replacingCurrentSession) {
+            this.closeStream()
+            this.cancelSessionTransition()
+            this.invalidateRefresh()
+            this.thread = null
+            this.launchPage = null
+            if (this.profiles.length > 0) await this.newSession('saved', sessionMutationAlreadyAcquired)
+            else await this.reloadSessions()
+          } else {
+            await this.reloadSessions()
+          }
+        } catch (error) {
+          if (this.isWorkspaceCurrent(workspaceVersion))
+            this.error = `${
+              replacingCurrentSession && this.profiles.length > 0 && !this.thread
+                ? 'Unfiled conversations were cleared, but a new conversation could not be created.'
+                : 'Unfiled conversations were cleared, but history could not be refreshed.'
+            } ${error instanceof Error ? error.message : ''}`.trim()
+        }
+
+        if (!this.isWorkspaceCurrent(workspaceVersion)) return
+        const loadedIds = new Set(this.sessions.map(session => session.id))
+        const preservedMissingSessions = preservedFiledSessions.filter(session => !loadedIds.has(session.id))
+        if (preservedMissingSessions.length > 0) this.sessions = markRaw([...this.sessions, ...preservedMissingSessions])
       } finally {
         this.endSessionMutation()
       }

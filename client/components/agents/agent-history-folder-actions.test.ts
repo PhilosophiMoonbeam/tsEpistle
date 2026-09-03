@@ -156,13 +156,51 @@ describe('Agent history folder actions', () => {
     expect(panelSource).toContain('.agent-history__drop-target--active')
   })
 
-  it('keeps reset, retention, and folder-exemption copy truthful', () => {
-    expect(panelTemplate).toContain('aria-label="Reset all conversation history"')
-    expect(panelTemplate).toContain('@click="requestReset"')
+  it('keeps clear-history scope, retention, and folder-exemption copy truthful', () => {
+    expect(panelTemplate).toContain('aria-label="Clear Recent history; saved folders are preserved"')
+    expect(panelTemplate).toContain('Clear history')
+    expect(panelTemplate).toContain('@click="requestClear"')
+    expect(panelTemplate).toContain('Clears only Recent, unfiled conversations. Saved folders and their conversations are preserved.')
+    expect(panelTemplate).toContain(':disabled="clearHistoryDisabled"')
+    expect(panelTemplate).toContain('class="agent-history__clear"')
+    expect(panelTemplate).toContain('color="error"')
+    expect(panelTemplate).toContain('prepend-icon="mdi-delete-sweep-outline"')
+    expect(panelTemplate).toContain('size="small"')
+    expect(panelTemplate).toContain('variant="tonal"')
+    expect(panelTemplate.indexOf('class="agent-history__new-folder"')).toBeLessThan(
+      panelTemplate.indexOf('class="agent-history__clear"')
+    )
+    expect(panelScript).toContain("defineEmits<{ close: []; clear: [] }>()")
+    expect(panelScript).not.toContain('reset')
     expect(panelTemplate).toContain('Unfiled conversations · retained for 90 days')
     expect(panelTemplate).toContain('Filed conversations do not expire')
     expect(panelTemplate).toContain('Chats in a folder are exempt from the 90-day history window.')
     expect(panelTemplate).toContain('each starts a fresh 90-day timer. No conversations are deleted.')
+  })
+
+  it('keeps Recent and Saved folders in independently scrolling regions', () => {
+    expect(panelTemplate.indexOf('class="agent-history__section-heading"')).toBeLessThan(
+      panelTemplate.indexOf('class="agent-history__recent-scroll"')
+    )
+    expect(panelTemplate.indexOf('agent-history__section-heading--folders')).toBeLessThan(
+      panelTemplate.indexOf('class="agent-history__folders-scroll"')
+    )
+    expect(panelTemplate.indexOf('class="agent-history__pagination"')).toBeLessThan(
+      panelTemplate.indexOf('class="agent-history__folders"')
+    )
+    expect(panelSource).toContain('.agent-history__body {\n  display: flex;')
+    expect(panelSource).toContain('overflow: hidden;\n  padding: 0 var(--wiki-space-3) var(--wiki-space-4);')
+    expect(panelSource).toContain('.agent-history__recent-scroll {')
+    expect(panelSource).toContain('.agent-history__folders-scroll {')
+    expect(panelSource).toContain('max-height: calc(')
+    expect(panelSource.match(/overflow-y: auto;/g)).toHaveLength(2)
+    expect(panelTemplate).toContain('v-model="searchQuery"')
+    expect(panelTemplate.match(/@move="folderId => moveSession\(session, folderId\)"/g)).toHaveLength(2)
+    expect(panelTemplate.match(/@rename="restoreTarget => beginRenameSession\(session, restoreTarget\)"/g)).toHaveLength(2)
+    expect(panelTemplate.match(/@remove="restoreTarget => beginDeleteSession\(session, restoreTarget\)"/g)).toHaveLength(2)
+    expect(panelTemplate).toContain('@click="beginRenameFolder(group.folder)"')
+    expect(panelTemplate).toContain('@click="beginRemoveFolder(group.folder)"')
+    expect(panelTemplate).toContain('@click="loadMoreSessions"')
   })
 
   it('keeps destructive history controls disabled when the shared session mutation lock is occupied', () => {

@@ -123,14 +123,12 @@ describe('inline Ask mode contract', () => {
   const headerPath = path.join(process.cwd(), 'client/components/common/nav-header.vue')
   const composerPath = path.join(process.cwd(), 'client/components/agents/agent-composer.vue')
   const focusScopePath = path.join(process.cwd(), 'client/components/common/modal-focus-scope.ts')
-  const settingsPath = path.join(process.cwd(), 'client/components/agents/agent-session-settings.vue')
   const search = fs.readFileSync(searchPath, 'utf8')
   const inline = fs.readFileSync(inlinePath, 'utf8')
   const history = fs.readFileSync(historyPath, 'utf8')
   const historyActions = fs.readFileSync(historyActionsPath, 'utf8')
   const memory = fs.readFileSync(memoryPath, 'utf8')
   const composer = fs.readFileSync(composerPath, 'utf8')
-  const settings = fs.readFileSync(settingsPath, 'utf8')
   const focusScope = fs.readFileSync(focusScopePath, 'utf8')
   const header = fs.readFileSync(headerPath, 'utf8')
   const template = search.match(/<template[^>]*>\s*([\s\S]*?)\s*<\/template>/)?.[1] ?? ''
@@ -163,7 +161,14 @@ describe('inline Ask mode contract', () => {
     expect(inline).toMatch(
       /inline-agent__mobile-panel-menu" icon="mdi-view-dashboard-outline"[\s\S]*aria-label="Open Agent panels: conversation history and memory"/
     )
-    expect(inline).toMatch(/inline-agent__new-session"[\s\S]*aria-label="Start a new agent conversation"[\s\S]*inline-agent__new-session-label/)
+    expect(inline).toMatch(
+      /inline-agent__temporary-session"[\s\S]*aria-label="Start a temporary agent conversation"[\s\S]*title="Temporary conversations are not saved"[\s\S]*@click="newTemporarySession"[\s\S]*inline-agent__session-action-label">Temporary/
+    )
+    expect(inline).toMatch(
+      /inline-agent__new-session"[\s\S]*aria-label="Start a new saved agent conversation"[\s\S]*@click="newSession"[\s\S]*inline-agent__session-action-label">New/
+    )
+    expect(inline).toMatch(/newTemporarySession = \(\): Promise<void> => createSession\('temporary'\)/)
+    expect(inline).toMatch(/newSession = \(\): Promise<void> => createSession\('saved'\)/)
     expect(inline).not.toMatch(/font-size:\s*0/)
     expect(search).toMatch(/&-agent-nav\s*\{[\s\S]*padding-block-start:\s*max\(0px,\s*env\(safe-area-inset-top\)\)/)
     expect(inline).toMatch(/\.inline-agent__toolbar\s*\{[\s\S]*padding-block-start:\s*0/)
@@ -198,12 +203,16 @@ describe('inline Ask mode contract', () => {
     const cardStyle = inline.match(/\.inline-agent__card\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
     const toolbarStyle = inline.match(/\.inline-agent__toolbar\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
     const bodyStyle = inline.match(/\.inline-agent__body\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    const sideStyle = [...inline.matchAll(/\.inline-agent__side\s*\{([\s\S]*?)\n\}/g)]
+      .map(match => match[1])
+      .find(style => /background:\s*transparent/.test(style)) ?? ''
     expect(inline).toMatch(/--inline-agent-workspace-gradient:/)
     expect(cardStyle).toMatch(/background:\s*color-mix\([\s\S]*transparent\)/)
     expect(toolbarStyle).toMatch(/border-bottom:\s*1px solid var\(--wiki-surface-border\)/)
     expect(toolbarStyle).toMatch(/var\(--inline-agent-workspace-gradient\)/)
     expect(bodyStyle).toMatch(/color-mix\(in srgb, var\(--inline-agent-workspace-base\)[\s\S]*transparent\)/)
-    expect(inline).toMatch(/\.inline-agent__side :deep\(\.agent-history\),[\s\S]*\.agent-memory[\s\S]*background:\s*color-mix\([\s\S]*transparent\)/)
+    expect(sideStyle).toMatch(/overflow:\s*hidden/)
+    expect(sideStyle).toMatch(/background:\s*transparent/)
   })
 
   test('reuses authenticated sessions without changing the Wiki page route', () => {
@@ -222,9 +231,9 @@ describe('inline Ask mode contract', () => {
     expect(inline).toMatch(/panelMode = ref<'wide' \| 'docked' \| 'modal'>/)
     expect(inline).toMatch(/panelModeMedia\.forEach\(media => media\.addEventListener\(['"]change['"],\s*reconcilePanelMode\)\)/)
     expect(inline).toMatch(/panelModeMedia\.forEach\(media => media\.removeEventListener\(['"]change['"],\s*reconcilePanelMode\)\)/)
-    expect(inline).toMatch(/window\.matchMedia\(['"]\(min-width: 1440px\)['"]\)/)
-    expect(inline).toMatch(/window\.matchMedia\(['"]\(min-width: 1024px\)['"]\)/)
-    expect(inline).toMatch(/@media \(min-width: 1024px\) and \(max-width: 1439\.98px\)/)
+    expect(inline).toMatch(/window\.matchMedia\(['"]\(min-width: 1760px\)['"]\)/)
+    expect(inline).toMatch(/window\.matchMedia\(['"]\(min-width: 1024px\) and \(max-width: 1759\.98px\)['"]\)/)
+    expect(inline).toMatch(/@media \(min-width: 1024px\) and \(max-width: 1759\.98px\)/)
     expect(inline).toMatch(/@media \(max-width: 1023\.98px\)/)
     expect(inline).toMatch(/@media \(max-width: 1023\.98px\)\s*\{[\s\S]*\.inline-agent__card\s*\{[\s\S]*grid-column:\s*1;[\s\S]*grid-row:\s*1;/)
     expect(inline).toMatch(/\.inline-agent__side--history\s*\{[\s\S]*inset-inline-start:\s*0;[\s\S]*inset-inline-end:\s*auto;[\s\S]*justify-self:\s*start;/)
@@ -341,22 +350,15 @@ describe('inline Ask mode contract', () => {
     expect(composer).not.toMatch(/if \(!value\.startsWith\(['"]\/['"]\)\) commandDismissed/)
   })
 
-  test('keeps cross-conversation skill preferences in the composer and hides empty configuration', () => {
-    expect(settings).not.toMatch(/Pinned skills/)
-    expect(inline).toMatch(/<AgentSessionSettings[^>]*v-if="thread"/)
-    expect(inline).not.toMatch(/<AgentSessionSettings[^>]*profiles\.length > 1/)
-    expect(settings).toMatch(
-      /providerControlsAvailable\s*=\s*computed\(\(\)\s*=>\s*props\.profiles\.length > 0 \|\| props\.session\.providerProfileId !== null\)/
-    )
-    expect(settings).toMatch(
-      /value:\s*null[\s\S]*props\.profiles\.map\(profile => \(\{ title: `Explicit · \$\{profile\.name\} · \$\{profile\.model\}`, value: profile\.id \}\)\)/
-    )
+  test('keeps cross-conversation skill preferences in the composer', () => {
+    expect(inline).toMatch(/:preferred-skills="thread\?\.session\.skills \?\? \[\]"/)
     expect(inline).toMatch(/@update-skill-preferences="agents\.setSkillPreferences"/)
     expect(composer).toMatch(/@click\.stop="togglePreference\(skill\.versionId\)"/)
     expect(composer).toMatch(/always load in conversations/)
     expect(composer).toMatch(/visibleSkillByVersionId\s*=\s*computed\(\(\)\s*=>\s*new Map\([\s\S]*props\.skills\.map/)
     expect(composer).toMatch(/visibleSkillByVersionId\.value\.get\(versionId\)/)
     expect(composer).toMatch(/preferredSkillIds\.value\.has\(skillId\)/)
+    expect(composer).toMatch(/emit\('updateSkillPreferences', skillIds\)/)
     expect(composer).not.toMatch(/pin(?:ned)? to this session/i)
   })
 
@@ -677,16 +679,17 @@ describe('inline Ask mode contract', () => {
     expect(header).toMatch(/\.navHeaderLoading\(v-show=['"]isLoading['"]\)/)
   })
 
-  test('keeps profile and history failures on the surface that issued them', () => {
-    expect(inline.match(/if \(sessionChanged\(\)\) return \{ success: true \}/g)).toHaveLength(2)
+  test('keeps history reload failures on the history surface that issued them', () => {
+    const reloadHistory = inline.match(/const reloadHistory = async \(\): Promise<void> => \{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(inline).not.toMatch(/watch\(error,/)
-    expect(inline).toMatch(/const reloadHistory = async[\s\S]*historyLoadError\.value = ''[\s\S]*historyLoadError\.value = value instanceof Error/)
+    expect(reloadHistory).toMatch(/Promise\.allSettled\(\[agents\.reloadSessions\(\), agents\.reloadFolders\(\)\]\)/)
+    expect(reloadHistory).toMatch(/historyLoadError\.value = ''/)
+    expect(reloadHistory).toMatch(/historyLoadError\.value = value instanceof Error/)
+    expect(reloadHistory).not.toMatch(/agents\.error/)
   })
-  test('keeps docked rails conditional and conversation measures shared', () => {
-    expect(inline).toMatch(/['"]inline-agent--panel-open['"]\s*:\s*historyOpen\s*\|\|\s*memoryOpen/)
-    expect(inline).toMatch(/['"]inline-agent--history-open['"]\s*:\s*historyOpen/)
-    expect(inline).toMatch(/['"]inline-agent--memory-open['"]\s*:\s*memoryOpen/)
-    expect(inline).toMatch(/['"]inline-agent--panels-open['"]\s*:\s*historyOpen\s*&&\s*memoryOpen/)
+  test('keeps overlay rails conditional and conversation measures shared', () => {
+    expect(inline).toMatch(/class="inline-agent"/)
+    expect(inline).not.toMatch(/inline-agent--(?:panel|history|memory|panels)-open/)
     expect(inline).toMatch(/--agent-conversation-width:\s*56rem/)
     expect(inline).toMatch(/inline-agent__composer-inner/)
     expect(inline).toMatch(/inline-agent__composer-meta/)
@@ -694,18 +697,21 @@ describe('inline Ask mode contract', () => {
     expect(inline).toMatch(/\.inline-agent__composer-inner\s*\{[\s\S]*?width:\s*min\(100%,\s*var\(--agent-conversation-width\)\)/)
     expect(inline).toMatch(/scrollbar-gutter:\s*stable both-edges/)
 
-    const wideLayout = inline.match(/@media \(min-width:\s*1440px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
-    expect(wideLayout).toMatch(/\.inline-agent\.inline-agent--history-open\s*\{[\s\S]*?minmax\(16rem,\s*22rem\)[\s\S]*?minmax\(0,\s*68rem\)/)
-    expect(wideLayout).toMatch(/\.inline-agent\.inline-agent--memory-open\s*\{[\s\S]*?minmax\(0,\s*68rem\)[\s\S]*?minmax\(16rem,\s*22rem\)/)
-    expect(wideLayout).toMatch(
-      /\.inline-agent\.inline-agent--panels-open\s*\{[\s\S]*?minmax\(16rem,\s*19rem\)[\s\S]*?minmax\(0,\s*68rem\)[\s\S]*?minmax\(16rem,\s*21rem\)/
-    )
+    const baseLayout = inline.match(/\.inline-agent\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
+    expect(baseLayout).toMatch(/grid-template-columns:\s*minmax\(0,\s*68rem\)/)
+    expect(baseLayout).toMatch(/justify-content:\s*center/)
 
-    const dockedLayout = inline.match(/@media \(min-width:\s*1024px\) and \(max-width:\s*1439\.98px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    const wideLayout = inline.match(/@media \(min-width:\s*1760px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
+    expect(wideLayout).toMatch(/grid-template-columns:\s*19rem minmax\(0,\s*68rem\) 21rem/)
+    expect(wideLayout).toMatch(/\.inline-agent__card\s*\{[\s\S]*?grid-column:\s*2/)
+    expect(wideLayout).toMatch(/\.inline-agent__side\s*\{[\s\S]*?position:\s*relative/)
+
+    const dockedLayout = inline.match(/@media \(min-width:\s*1024px\) and \(max-width:\s*1759\.98px\)([\s\S]*?)(?=@media|<\/style>)/)?.[1] ?? ''
     expect(dockedLayout).toMatch(/\.inline-agent\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*68rem\)[\s\S]*?justify-content:\s*center/)
-    expect(dockedLayout).toMatch(/\.inline-agent\.inline-agent--history-open\s*\{[\s\S]*?grid-template-columns:/)
-    expect(dockedLayout).toMatch(/\.inline-agent\.inline-agent--memory-open\s*\{[\s\S]*?grid-template-columns:/)
-    expect(dockedLayout).toMatch(/\.inline-agent__side--memory\s*\{[\s\S]*?grid-column:\s*2/)
+    expect(dockedLayout).toMatch(/\.inline-agent__card\s*\{[\s\S]*?grid-column:\s*1;[\s\S]*?grid-row:\s*1/)
+    expect(dockedLayout).toMatch(/\.inline-agent__side\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?grid-column:\s*1;[\s\S]*?grid-row:\s*1/)
+    expect(dockedLayout).toMatch(/\.inline-agent__side--history\s*\{[\s\S]*?inset-inline-start:\s*0;[\s\S]*?width:\s*19rem/)
+    expect(dockedLayout).toMatch(/\.inline-agent__side--memory\s*\{[\s\S]*?inset-inline-end:\s*0;[\s\S]*?width:\s*21rem/)
   })
 
   test('keeps current-page locale and path identity available on narrow phones', () => {

@@ -97,10 +97,16 @@ export const requestAgentSessionDeletion = async (knex: Knex, ownerId: number, s
   })
 }
 
-export const requestAgentHistoryReset = async (knex: Knex, ownerId: number, now = new Date()): Promise<number> =>
+export const requestUnfiledAgentHistoryClear = async (knex: Knex, ownerId: number, now = new Date()): Promise<number> =>
   knex.transaction(async transaction => {
     await acquireAgentCoordinatorAdvisoryLocks(transaction, [ownerId])
-    const sessionIds = await transaction('agentSessions').where({ ownerId }).whereNull('deletedAt').orderBy('id').forUpdate().pluck<string>('id')
+    const sessionIds = await transaction('agentSessions')
+      .where({ ownerId })
+      .whereNull('folderId')
+      .whereNull('deletedAt')
+      .orderBy('id')
+      .forUpdate()
+      .pluck<string>('id')
     return tombstoneOwnedSessions(transaction, ownerId, sessionIds, now)
   })
 

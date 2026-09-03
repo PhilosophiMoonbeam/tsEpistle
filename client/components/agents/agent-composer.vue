@@ -698,11 +698,6 @@ onBeforeUnmount(() => {
     box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
 }
 
-.agent-composer:focus-within {
-  border-color: color-mix(in srgb, var(--wiki-focus-color) 58%, var(--wiki-surface-border));
-  box-shadow: var(--wiki-shadow-md), var(--wiki-focus-ring), var(--wiki-shadow-inset);
-}
-
 .agent-composer--sending {
   border-color: color-mix(in srgb, var(--wiki-accent-warm) 42%, var(--wiki-surface-border));
 }

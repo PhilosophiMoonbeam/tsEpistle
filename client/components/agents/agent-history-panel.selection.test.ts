@@ -19,7 +19,7 @@ interface PanelAgents {
   deleteFolder?: (folderId: string) => Promise<unknown>
 }
 
-type PanelEmit = (event: 'close' | 'reset') => void
+type PanelEmit = (event: 'close' | 'clear') => void
 
 interface PanelHarness {
   activeDropTarget: Ref<string | null>
@@ -28,6 +28,7 @@ interface PanelHarness {
   beginRemoveFolder: (folder: AgentConversationFolderView) => void
   beginSessionDrag: (event: DragEvent, session: AgentSessionSummary) => void
   canDropTo: (folderId: string | null) => boolean
+  clearHistoryDisabled: Ref<boolean>
   closeHistory: () => void
   dragStatus: Ref<string>
   draggedSessionId: Ref<string | null>
@@ -45,7 +46,7 @@ interface PanelHarness {
   sessionEditorOpen: Ref<boolean>
   sessionRenameTitle: Ref<string>
   removingFolder: Ref<AgentConversationFolderView | null>
-  requestReset: () => void
+  requestClear: () => void
   openSession: (sessionId: string) => Promise<void>
   setDropTarget: (event: DragEvent, folderId: string | null) => void
   unmount: () => void
@@ -149,6 +150,7 @@ const loadPanel = (
       beginRemoveFolder,
       beginSessionDrag,
       canDropTo,
+      clearHistoryDisabled,
       closeHistory,
       beginRenameSession,
       dragStatus,
@@ -167,7 +169,7 @@ const loadPanel = (
       sessionEditorOpen,
       sessionRenameTitle,
       removingFolder,
-      requestReset,
+      requestClear,
       setDropTarget
     }`
   ) as (...dependencies: unknown[]) => Omit<PanelHarness, 'emit' | 'unmount'>
@@ -369,7 +371,27 @@ describe('Agent history session selection', () => {
     expect(agents.cancelSessionTransition).toHaveBeenCalledTimes(1)
   })
 
-  it('guards remove, reset, and folder deletion entry points and already-open confirmations with the shared mutation lock', async () => {
+  it('clears only when at least one unfiled conversation is available', () => {
+    const agents: PanelAgents = {
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionTransition: vi.fn()
+    }
+    const folder = makeFolder()
+    const filedSession = makeSession({ folderId: folder.id, retention: 'saved' })
+    const filedPanel = loadPanel(agents, true, [filedSession], [folder])
+
+    expect(filedPanel.clearHistoryDisabled.value).toBe(true)
+    filedPanel.requestClear()
+    expect(filedPanel.emit).not.toHaveBeenCalled()
+
+    const recentPanel = loadPanel(agents, true, [makeSession()], [folder])
+
+    expect(recentPanel.clearHistoryDisabled.value).toBe(false)
+    recentPanel.requestClear()
+    expect(recentPanel.emit).toHaveBeenCalledWith('clear')
+  })
+
+  it('guards remove, clear, and folder deletion entry points and already-open confirmations with the shared mutation lock', async () => {
     const session = makeSession()
     const folder = makeFolder()
     const removeSession = vi.fn().mockResolvedValue(true)
@@ -386,7 +408,7 @@ describe('Agent history session selection', () => {
     lockedEntryPanel.sessionMutationBusy.value = true
     lockedEntryPanel.beginDeleteSession(session, null)
     lockedEntryPanel.beginRemoveFolder(folder)
-    lockedEntryPanel.requestReset()
+    lockedEntryPanel.requestClear()
 
     expect(lockedEntryPanel.deletingSession.value).toBeNull()
     expect(lockedEntryPanel.removingFolder.value).toBeNull()
