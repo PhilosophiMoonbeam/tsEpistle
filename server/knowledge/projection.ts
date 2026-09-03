@@ -165,7 +165,15 @@ export interface KnowledgePageSource {
 }
 
 const sha256 = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex')
-const clean = (value: string, maximum: number): string => [...value.replace(/\s+/gu, ' ').trim()].slice(0, maximum).join('')
+const clean = (value: string, maximum: number): string => {
+  const normalized = value.replace(/\s+/gu, ' ').trim()
+  let result = ''
+  for (const character of normalized) {
+    if (result.length + character.length > maximum) break
+    result += character
+  }
+  return result
+}
 const unique = (values: readonly string[], maximum: number): string[] =>
   [...new Map(values.map(value => [value.toLocaleLowerCase(), value] as const)).values()].slice(0, maximum)
 const tagValues = (values: readonly string[]): string[] => unique(values.map(value => clean(value, 255)).filter(Boolean), 100)

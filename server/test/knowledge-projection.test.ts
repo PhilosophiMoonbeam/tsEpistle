@@ -246,6 +246,16 @@ stale_after: 2026-08-20T00:00:00.000Z
     expect(new Set(ids).size).toBe(ids.length)
   })
 
+  it('bounds long headings by UTF-16 length without splitting astral characters', () => {
+    const projection = projectPageKnowledge({
+      ...source,
+      content: `# ${'a'.repeat(511)}🌙trailing`
+    })
+
+    expect(projection.concept.sections[0]?.title).toBe('a'.repeat(511))
+    expect(projection.concept.sections[0]?.title.length).toBeLessThanOrEqual(512)
+  })
+
   it('does not close Markdown fences with shorter or different delimiters', () => {
     const projection = projectPageKnowledge({
       ...source,
