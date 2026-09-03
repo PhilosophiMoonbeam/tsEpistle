@@ -64,6 +64,16 @@ describe('Markdown editor layout', () => {
     expect(style).not.toContain('padding-left: 64px;')
   })
 
+  it('constrains the editor to the Vuetify viewport content area', () => {
+    const rootDeclarations = directScssDeclarations(directScssBlock(style, '.editor-markdown'))
+    expect(rootDeclarations).toMatch(/(?:^|\n)\s*height:\s*calc\(100vh - var\(--v-layout-top, 0px\) - var\(--v-layout-bottom, 0px\)\);/)
+    expect(rootDeclarations).toMatch(/(?:^|\n)\s*height:\s*calc\(100dvh - var\(--v-layout-top, 0px\) - var\(--v-layout-bottom, 0px\)\);/)
+    expect(rootDeclarations).toMatch(/(?:^|\n)\s*max-height:\s*calc\(100dvh - var\(--v-layout-top, 0px\) - var\(--v-layout-bottom, 0px\)\);/)
+    expect(rootDeclarations).toMatch(/(?:^|\n)\s*min-height:\s*0;/)
+    expect(rootDeclarations).toMatch(/(?:^|\n)\s*overflow:\s*hidden;/)
+    expect(rootDeclarations).not.toMatch(/(?:^|\n)\s*height:\s*100%;/)
+  })
+
   it('switches mobile panes atomically while keeping the CodeMirror instance mounted', () => {
     expect(template).toContain('.editor-markdown-editor(:class=\'{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }\')')
     expect(template).toContain("transition(name='editor-markdown-preview', :css='$vuetify.display.mdAndUp')")

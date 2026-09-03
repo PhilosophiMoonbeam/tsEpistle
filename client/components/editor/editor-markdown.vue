@@ -954,8 +954,12 @@ export default defineComponent({
   display: flex;
   flex: 1 1 auto;
   flex-flow: column nowrap;
-  height: 100%;
+  height: calc(100vh - var(--v-layout-top, 0px) - var(--v-layout-bottom, 0px));
+  height: calc(100dvh - var(--v-layout-top, 0px) - var(--v-layout-bottom, 0px));
+  max-height: calc(100vh - var(--v-layout-top, 0px) - var(--v-layout-bottom, 0px));
+  max-height: calc(100dvh - var(--v-layout-top, 0px) - var(--v-layout-bottom, 0px));
   min-height: 0;
+  overflow: hidden;
 
   &-main {
     display: flex;
