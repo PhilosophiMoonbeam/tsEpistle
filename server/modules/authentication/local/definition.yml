@@ -4,7 +4,7 @@ description: Built-in authentication for tsEpistle
 author: tsEpistle contributors
 logo: /_assets/svg/icon-tsepistle.svg
 color: primary
-website: https://github.com/PhilosophiMoonbeam/wiki
+website: https://github.com/PhilosophiMoonbeam/tsEpistle
 isAvailable: true
 useForm: true
 usernameType: email

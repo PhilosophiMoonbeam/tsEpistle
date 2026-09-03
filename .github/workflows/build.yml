@@ -1325,10 +1325,10 @@ jobs:
         disable_web_page_preview: true
         message: |
           tsEpistle *${{ github.ref_name }}* has been released!
-          See [release notes](https://github.com/PhilosophiMoonbeam/wiki/releases) for details.
+          See [release notes](https://github.com/PhilosophiMoonbeam/tsEpistle/releases) for details.
 
     - name: Notify Discord Channel
       uses: sebastianpopp/discord-action@4f2d5417bc61a79593304a62e71cd32427c17790 # v2.0
       with:
         webhook: ${{ secrets.DISCORD_WEBHOOK }}
-        message: tsEpistle ${{ github.ref_name }} has been released! See https://github.com/PhilosophiMoonbeam/wiki/releases for details.
+        message: tsEpistle ${{ github.ref_name }} has been released! See https://github.com/PhilosophiMoonbeam/tsEpistle/releases for details.

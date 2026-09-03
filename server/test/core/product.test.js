@@ -14,7 +14,7 @@ describe('product metadata contract', () => {
       name: 'tsEpistle',
       version: '0.1.0-alpha.1',
       description: 'tsEpistle, an independent community fork of Wiki.js',
-      sourceRepository: 'https://github.com/PhilosophiMoonbeam/wiki',
+      sourceRepository: 'https://github.com/PhilosophiMoonbeam/tsEpistle',
       containerRepository: 'ghcr.io/philosophimoonbeam/wiki',
       upstreamName: 'Wiki.js',
       upstreamVersion: '2.5.314',
@@ -29,7 +29,7 @@ describe('product metadata contract', () => {
       revision,
       date,
       upstreamBase: 'Wiki.js 2.5.314',
-      sourceUrl: `https://github.com/PhilosophiMoonbeam/wiki/tree/${revision}`
+      sourceUrl: `https://github.com/PhilosophiMoonbeam/tsEpistle/tree/${revision}`
     })
   })
 

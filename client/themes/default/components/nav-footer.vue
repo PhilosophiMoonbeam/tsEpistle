@@ -9,7 +9,7 @@
       .footer-attribution__meta
         span.footer-attribution__product {{ product.name }} {{ product.version }}
         span.footer-attribution__separator(aria-hidden='true')
-        a(:href='product.sourceUrl', target='_blank', rel='noopener noreferrer') {{ $t('common:footer.sourceCode') }}
+        a(:href='product.sourceRepository', target='_blank', rel='noopener noreferrer') {{ $t('common:footer.sourceCode') }}
 </template>
 
 <script lang='ts'>

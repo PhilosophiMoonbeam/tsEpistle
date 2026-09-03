@@ -12,12 +12,12 @@ To keep this Droplet secure, the UFW firewall is enabled.
 All ports are BLOCKED except 22 (SSH), 80 (Docker) and 443 (Docker).
 
 * tsEpistle source and release notes are available at:
-  https://github.com/PhilosophiMoonbeam/wiki
+  https://github.com/PhilosophiMoonbeam/tsEpistle
 
 * Docker is installed and configured per Docker's recommendations:
   https://docs.docker.com/engine/install/ubuntu/
 
-For more information, visit https://github.com/PhilosophiMoonbeam/wiki
+For more information, visit https://github.com/PhilosophiMoonbeam/tsEpistle
 
 ********************************************************************************
 To delete this message of the day: rm -rf $(readlink -f ${0})

@@ -11,7 +11,7 @@ keywords:
   - reference
   - editor
 type: application
-home: https://github.com/PhilosophiMoonbeam/wiki
-icon: https://raw.githubusercontent.com/PhilosophiMoonbeam/wiki/main/client/static/svg/icon-tsepistle.svg
+home: https://github.com/PhilosophiMoonbeam/tsEpistle
+icon: https://raw.githubusercontent.com/PhilosophiMoonbeam/tsEpistle/main/client/static/svg/icon-tsepistle.svg
 sources:
-  - https://github.com/PhilosophiMoonbeam/wiki
+  - https://github.com/PhilosophiMoonbeam/tsEpistle

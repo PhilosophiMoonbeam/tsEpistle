@@ -19,7 +19,7 @@ const releaseEnvironment = (): NodeJS.ProcessEnv => ({
   WIKI_BUILD_REVISION: 'b'.repeat(40),
   WIKI_PRODUCT_NAME: 'tsEpistle',
   WIKI_PRODUCT_VERSION: '0.1.0-alpha.1',
-  WIKI_SOURCE_REPOSITORY: 'https://github.com/PhilosophiMoonbeam/wiki',
+  WIKI_SOURCE_REPOSITORY: 'https://github.com/PhilosophiMoonbeam/tsEpistle',
   WIKI_UPSTREAM_BASE: 'Wiki.js 2.5.314'
 })
 
@@ -88,7 +88,8 @@ describe('release manifest generation', () => {
     })
     expect(manifest.release).toMatchObject({
       revision: 'b'.repeat(40),
-      tag: 'v0.1.0-alpha.1'
+      tag: 'v0.1.0-alpha.1',
+      sourceRepository: 'https://github.com/PhilosophiMoonbeam/tsEpistle'
     })
     expect(manifest.artifacts).toEqual([
       { name: 'alpha.tar.gz', sha256: sha256('alpha\n'), bytes: 6 },

@@ -42,7 +42,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/PhilosophiMoonbeam/wiki.git"
+    "url": "git+https://github.com/PhilosophiMoonbeam/tsEpistle.git"
   },
   "keywords": [
     "wiki",
@@ -56,13 +56,13 @@
   "author": "tsEpistle contributors",
   "license": "AGPL-3.0",
   "bugs": {
-    "url": "https://github.com/PhilosophiMoonbeam/wiki/issues"
+    "url": "https://github.com/PhilosophiMoonbeam/tsEpistle/issues"
   },
-  "homepage": "https://github.com/PhilosophiMoonbeam/wiki#readme",
+  "homepage": "https://github.com/PhilosophiMoonbeam/tsEpistle#readme",
   "product": {
     "name": "tsEpistle",
     "version": "0.1.0-alpha.1",
-    "sourceRepository": "https://github.com/PhilosophiMoonbeam/wiki",
+    "sourceRepository": "https://github.com/PhilosophiMoonbeam/tsEpistle",
     "containerRepository": "ghcr.io/philosophimoonbeam/wiki",
     "upstreamName": "Wiki.js",
     "upstreamVersion": "2.5.314",

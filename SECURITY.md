@@ -23,7 +23,7 @@ Passing automated tests is not an independent security review. The first externa
 
 Do not create a public issue, discussion, or pull request for a suspected vulnerability.
 
-Submit a private report through [GitHub private vulnerability reporting](https://github.com/PhilosophiMoonbeam/wiki/security/advisories/new). Include:
+Submit a private report through [GitHub private vulnerability reporting](https://github.com/PhilosophiMoonbeam/tsEpistle/security/advisories/new). Include:
 
 - the affected tsEpistle version and exact Git revision;
 - reproduction steps and the expected security boundary;

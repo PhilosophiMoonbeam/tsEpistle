@@ -3,7 +3,7 @@ title: Default
 description: Built-in advanced comments tool.
 author: tsEpistle contributors
 logo: /_assets/svg/icon-tsepistle.svg
-website: https://github.com/PhilosophiMoonbeam/wiki
+website: https://github.com/PhilosophiMoonbeam/tsEpistle
 codeTemplate: false
 isAvailable: true
 props:

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="320" viewBox="0 0 1200 320" role="img" aria-labelledby="tsepistle-readme-title tsepistle-readme-desc">
+  <title id="tsepistle-readme-title">tsEpistle — durable knowledge for people and agents</title>
+  <desc id="tsepistle-readme-desc">An orange epistle page crossed by a blue knowledge graph, beside the tsEpistle wordmark.</desc>
+  <defs>
+    <linearGradient id="tsepistle-paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F9A134"/>
+      <stop offset="1" stop-color="#E4A24B"/>
+    </linearGradient>
+    <linearGradient id="tsepistle-link" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#73ADD3"/>
+      <stop offset="1" stop-color="#B8BABC"/>
+    </linearGradient>
+    <style>
+      .wordmark { fill: #181A1C; }
+      .descriptor { fill: #24272A; }
+      .rule { stroke: #73ADD3; }
+    </style>
+  </defs>
+  <rect x="24" y="20" width="1152" height="288" rx="40" fill="#F3F4F6"/>
+
+  <g id="tsepistle-mark" transform="translate(42 31)">
+    <!-- The page: a strong orange spine and a quiet folded corner. -->
+    <path d="M42 16h126l40 40v202H42z" fill="none" stroke="url(#tsepistle-paper)" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M168 17v39h39" fill="none" stroke="#F9A134" stroke-width="10" stroke-linejoin="round"/>
+    <path d="M72 74v148" stroke="#F9A134" stroke-width="6" stroke-linecap="round"/>
+    <path d="M94 94h72M94 119h50M94 197h78M94 222h53" fill="none" stroke="#B8BABC" stroke-width="7" stroke-linecap="round" opacity=".9"/>
+
+    <!-- A restrained graph intersects the authored page and continues beyond it. -->
+    <path d="M121 165 209 112l70 41 42-35M209 112l18 97 73 18M227 209l-74 31" fill="none" stroke="url(#tsepistle-link)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M279 153 306 198" fill="none" stroke="#73ADD3" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="121" cy="165" r="13" fill="#181A1C" stroke="#F9A134" stroke-width="7"/>
+    <circle cx="209" cy="112" r="16" fill="#73ADD3" stroke="#181A1C" stroke-width="7"/>
+    <circle cx="279" cy="153" r="13" fill="#F9A134" stroke="#181A1C" stroke-width="7"/>
+    <circle cx="321" cy="118" r="11" fill="#73ADD3"/>
+    <circle cx="297" cy="226" r="15" fill="#E4A24B" stroke="#181A1C" stroke-width="7"/>
+    <circle cx="153" cy="240" r="12" fill="#73ADD3" stroke="#181A1C" stroke-width="6"/>
+  </g>
+
+  <g id="tsepistle-wordmark" transform="translate(395 0)">
+    <text class="wordmark" x="0" y="164" font-family="Georgia, 'Times New Roman', serif" font-size="91" font-weight="700" letter-spacing="-3">tsEpistle</text>
+    <path class="rule" d="M5 190h557" stroke-width="4" stroke-linecap="round"/>
+    <text class="descriptor" x="3" y="228" font-family="Georgia, 'Times New Roman', serif" font-size="18" font-weight="700" letter-spacing="4">DURABLE KNOWLEDGE  ·  PEOPLE + AGENTS</text>
+    <path d="M6 252h112" stroke="#F9A134" stroke-width="8" stroke-linecap="round"/>
+    <path d="M130 252h56" stroke="#24272A" stroke-width="8" stroke-linecap="round" opacity=".72"/>
+  </g>
+</svg>

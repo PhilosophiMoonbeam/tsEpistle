@@ -2,10 +2,10 @@
 
 This chart deploys **tsEpistle 0.1.0-alpha.1**, an independent community fork derived from Wiki.js 2.5.314. It is not an official Wiki.js release.
 
-- Source: <https://github.com/PhilosophiMoonbeam/wiki>
+- Source: <https://github.com/PhilosophiMoonbeam/tsEpistle>
 - License: [AGPL-3.0](../../LICENSE)
 - Container: `ghcr.io/philosophimoonbeam/wiki:0.1.0-alpha.1`
-- Support: <https://github.com/PhilosophiMoonbeam/wiki/issues>
+- Support: <https://github.com/PhilosophiMoonbeam/tsEpistle/issues>
 
 The chart is preview software. Test upgrades and restores against a non-production copy before deployment.
 
