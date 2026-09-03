@@ -198,8 +198,8 @@
                       span {{ item.path }}
                     .search-results-tags(v-if='item.tags.length || item.matchedFields?.includes("graph")')
                       v-chip(
-                        v-for='(tag, tagIndex) of item.tags.slice(0, 3)'
-                        :key='`${tagIndex}:${tag}`'
+                        v-for='tag of item.tags.slice(0, 3)'
+                        :key='tag'
                         size='x-small'
                         variant='tonal'
                       ) {{ tag }}
@@ -237,7 +237,7 @@
                 aria-label='Search suggestions'
                 density='compact'
               )
-                template(v-for='(term, idx) of suggestions' :key='`${idx}:${term}`')
+                template(v-for='(term, idx) of suggestions' :key='term')
                   v-list-item(
                     :id='`wiki-search-suggestion-${idx}`'
                     role='option'

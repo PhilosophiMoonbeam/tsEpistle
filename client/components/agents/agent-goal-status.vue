@@ -361,7 +361,7 @@ const progressLabel = computed(() => {
 .agent-goal--blocked,
 .agent-goal--budget_limited { --goal-accent: rgb(var(--v-theme-warning)); }
 .agent-goal--failed { --goal-accent: rgb(var(--v-theme-error)); }
-.agent-goal--cancelled { --goal-accent: rgba(var(--v-theme-on-surface), .58); }
+.agent-goal--cancelled { --goal-accent: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent); }
 .agent-goal--expanded { max-block-size: var(--goal-transcript-available-block-size); }
 .agent-goal__summary-row {
   align-items: center;
@@ -402,7 +402,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__collapsed-meta {
   align-items: center;
-  color: rgba(var(--v-theme-on-surface), .66);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
   display: inline-flex;
   flex: 0 0 auto;
   font-size: var(--wiki-type-micro, .75rem);
@@ -475,7 +475,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__continuity {
   align-items: center;
-  color: rgba(var(--v-theme-on-surface), .62);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
   display: flex;
   flex-wrap: wrap;
   font-size: var(--wiki-type-micro, .75rem);
@@ -497,10 +497,10 @@ const progressLabel = computed(() => {
   justify-content: space-between;
   margin-bottom: var(--wiki-space-2);
 }
-.agent-goal__progress-heading span { color: rgba(var(--v-theme-on-surface), .62); font-weight: 650; }
+.agent-goal__progress-heading span { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-weight: 650; }
 .agent-goal__progress-heading strong { color: var(--goal-ink); font-variant-numeric: tabular-nums; }
 .agent-goal__meter {
-  background: rgba(var(--v-theme-on-surface), .1);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
   border-radius: var(--wiki-radius-pill);
   height: var(--wiki-space-1);
   overflow: hidden;
@@ -526,7 +526,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__budget:first-child { border-inline-start: 0; padding-inline-start: 0; }
 .agent-goal__budget dt {
-  color: rgba(var(--v-theme-on-surface), .68);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
   font-size: var(--wiki-type-micro, .75rem);
   font-weight: 650;
 }
@@ -539,13 +539,13 @@ const progressLabel = computed(() => {
 }
 .agent-goal__budget dd span { font-size: .78rem; font-variant-numeric: tabular-nums; font-weight: 700; }
 .agent-goal__budget dd small {
-  color: rgba(var(--v-theme-on-surface), .68);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
   font-size: var(--wiki-type-micro, .75rem);
   overflow-wrap: anywhere;
 }
 .agent-goal__budget-track {
   margin: 0;
-  background: rgba(var(--v-theme-on-surface), .08);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
   border-radius: var(--wiki-radius-pill);
   display: block;
   height: 2px;
@@ -553,7 +553,7 @@ const progressLabel = computed(() => {
 }
 .agent-goal__budget-track > span { background: var(--goal-accent); display: block; height: 100%; }
 .agent-goal__summary {
-  color: rgba(var(--v-theme-on-surface), .72);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
   font-size: .74rem;
   line-height: 1.5;
   margin: var(--wiki-space-3) 0 0;
@@ -575,7 +575,7 @@ const progressLabel = computed(() => {
 .agent-goal__blockers ul { margin: var(--wiki-space-2) 0 0; padding-inline-start: var(--wiki-space-5); }
 .agent-goal__blockers li { font-size: .74rem; line-height: 1.45; overflow-wrap: anywhere; padding-inline-start: var(--wiki-space-1); }
 .agent-goal__blockers li + li { margin-top: var(--wiki-space-2); }
-.agent-goal__issue-state { color: rgba(var(--v-theme-on-surface), .68); display: block; font-size: .65rem; margin-top: var(--wiki-space-1); }
+.agent-goal__issue-state { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent); display: block; font-size: .65rem; margin-top: var(--wiki-space-1); }
 .agent-goal__pending {
   align-items: center;
   color: rgb(var(--v-theme-primary));

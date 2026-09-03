@@ -9,8 +9,8 @@
   place-items: center;
   place-items: safe center;
   background:
-    radial-gradient(circle at 18% 15%, rgba(var(--v-theme-primary), .25), transparent 28rem),
-    radial-gradient(circle at 82% 85%, rgba(99, 102, 241, .18), transparent 32rem),
+    radial-gradient(circle at 18% 15%, color-mix(in srgb, rgb(var(--v-theme-primary)) 25%, transparent), transparent 28rem),
+    radial-gradient(circle at 82% 85%, color-mix(in srgb, #6366f1 18%, transparent), transparent 32rem),
     linear-gradient(145deg, #0b1220, #172033 58%, #101827);
   color: #fff;
   font-family: var(--v-font-body);
@@ -99,16 +99,16 @@
   justify-content: center;
   margin-block-start: 24px;
   padding-inline: 20px;
-  border: 1px solid rgba(var(--v-theme-primary), .6);
-  border-radius: 11px;
-  background: rgba(var(--v-theme-primary), .12);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 60%, transparent);
+  border-radius: var(--wiki-control-radius, 11px);
+  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, transparent);
   color: rgb(var(--v-theme-primary));
   font-weight: 700;
   text-decoration: none;
 
   &:hover,
   &:focus-visible {
-    background: rgba(var(--v-theme-primary), .2);
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 20%, transparent);
   }
 }
 

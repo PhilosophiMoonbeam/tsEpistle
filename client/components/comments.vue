@@ -9,7 +9,6 @@
     )
       v-textarea#discussion-new.comments-composer-field(
         variant="outlined"
-        flat
         :placeholder='$t(`common:comments.newPlaceholder`)'
         auto-grow
         density="compact"
@@ -126,7 +125,6 @@
             form.comments-post-editcontent.mt-3(v-else, novalidate, @submit.prevent='updateComment')
               v-textarea(
                 variant="outlined"
-                flat
                 auto-grow
                 density="compact"
                 rows='3'

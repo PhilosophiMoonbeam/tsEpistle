@@ -1824,7 +1824,7 @@ export default defineComponent({
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
   font-size: .8125rem;
 
-  .v-breadcrumbs__item {
+  :is(.v-breadcrumbs-item, .v-breadcrumbs__item) {
     min-width: 0;
   }
 
@@ -3145,7 +3145,7 @@ export default defineComponent({
     white-space: nowrap;
   }
 
-  .page-breadcrumb-bar .breadcrumbs-nav .v-breadcrumbs__list {
+  .page-breadcrumb-bar .breadcrumbs-nav :is(.v-breadcrumbs, .v-breadcrumbs__list) {
     flex-wrap: nowrap;
   }
 

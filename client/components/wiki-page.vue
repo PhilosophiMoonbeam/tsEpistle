@@ -140,7 +140,7 @@ export default defineComponent({
       const sequence = ++this.navigationSequence
       this.navigationAbortController?.abort()
       const controller = new AbortController()
-      this.navigationAbortController = controller
+      this.navigationAbortController = markRaw(controller)
       this.navigationPending = true
       loadingStart(wikiStore, NAVIGATION_LOADING_KEY)
 

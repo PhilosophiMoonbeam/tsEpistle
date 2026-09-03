@@ -21,7 +21,8 @@
           .text-body-small(v-if='group.pageRules.length === 0')
             em.text-medium-emphasis This group has no page rules yet.
           .rule(v-for='(rule, ruleIndex) of group.pageRules', :key='rule.id')
-            v-btn.ma-0.radius-4.rule-deny-btn(
+            v-btn.ma-0.rule-deny-btn(
+              rounded="lg"
               :color='rule.deny ? "red" : "green"'
               @click='updateRule(rule.id, { deny: !rule.deny })'
               :disabled='group.id <= 0'
@@ -68,7 +69,7 @@
               density="compact"
               )
               template(v-slot:selection='{ item }')
-                .text-body-medium {{ (item.raw || item).text || (item.raw || item).title }}
+                .text-body-medium {{ item.text || item.title }}
             //- Locales
             v-select.rule-locales(
               bg-color="surface-variant"
@@ -86,7 +87,7 @@
               :disabled='group.id <= 0'
               )
               template(v-slot:selection='{ item, index }')
-                v-chip.text-white.ml-0(v-if='rule.locales.length === 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ (item.raw || item).code?.toUpperCase() }}
+                v-chip.text-white.ml-0(v-if='rule.locales.length === 1', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.code?.toUpperCase() }}
                 v-chip.text-white.ml-0(v-else-if='index === 0', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ rule.locales.length }} locales
               template(v-slot:prepend-item)
                 v-list-item(@click='updateRule(rule.id, { locales: [] })')

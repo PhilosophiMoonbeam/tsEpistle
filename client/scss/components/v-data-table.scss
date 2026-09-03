@@ -1,15 +1,15 @@
 .v-data-table {
   overflow: hidden;
-  border: 1px solid var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
+  border: 1px solid var(--wiki-surface-border, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent));
   border-radius: var(--wiki-control-radius, .75rem);
   background: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
-  box-shadow: var(--wiki-shadow-xs, 0 1px 2px rgba(var(--v-theme-on-surface), .08));
+  box-shadow: var(--wiki-shadow-xs, 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent));
   color: rgb(var(--v-theme-on-surface));
   font-variant-numeric: tabular-nums;
 
   .v-table__wrapper {
     scrollbar-color:
-      var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .22))
+      var(--wiki-surface-border-strong, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent))
       transparent;
   }
 
@@ -21,12 +21,12 @@
   > .v-table__wrapper > table > thead > tr > th {
     height: 2.75rem;
     padding-inline: var(--wiki-space-3, .75rem);
-    border-bottom: 1px solid var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .22));
+    border-bottom: 1px solid var(--wiki-surface-border-strong, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent));
     background: var(
       --wiki-surface-sunken,
       color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, rgb(var(--v-theme-surface)))
     );
-    color: rgba(var(--v-theme-on-surface), .68);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
     font-size: var(--wiki-label-size, .6875rem);
     font-weight: 740;
     letter-spacing: .055em;
@@ -40,8 +40,8 @@
     > td {
       height: 2.875rem;
       padding-inline: var(--wiki-space-3, .75rem);
-      border-bottom: 1px solid var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
-      color: rgba(var(--v-theme-on-surface), .84);
+      border-bottom: 1px solid var(--wiki-surface-border, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent));
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 84%, transparent);
       line-height: 1.45;
     }
 
@@ -86,7 +86,7 @@
 
   > .v-table__wrapper > table > tbody > .v-data-table-rows-no-data > td {
     height: 8rem;
-    color: rgba(var(--v-theme-on-surface), .64);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
     text-align: center;
   }
 
@@ -97,7 +97,7 @@
       --wiki-surface-sunken,
       color-mix(in srgb, rgb(var(--v-theme-on-surface)) 3%, rgb(var(--v-theme-surface)))
     );
-    color: rgba(var(--v-theme-on-surface), .72);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
   }
 
   > .v-table__wrapper > table > tbody > .is-clickable {

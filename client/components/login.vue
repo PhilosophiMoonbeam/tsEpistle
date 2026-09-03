@@ -22,7 +22,9 @@
           .login-subtitle
             h2#login-provider-title(tabindex='-1', ref='loginHeading').text-body-large {{$t('auth:selectAuthProvider')}}
           .login-list
-            v-list.elevation-1.radius-7(
+            v-list(
+              elevation='1'
+              rounded='lg'
               v-model:selected='selectedStrategyKeys'
               select-strategy='single-independent'
               selectable
@@ -1154,8 +1156,9 @@ export default {
         padding-block: var(--wiki-space-2);
       }
 
-      .v-input:not(.v-input--error) .v-input__details {
-        display: none;
+      .v-input__details {
+        min-height: 0;
+        padding-inline: var(--wiki-space-2);
       }
 
       > .text-center {

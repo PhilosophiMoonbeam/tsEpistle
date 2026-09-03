@@ -3,7 +3,6 @@
     .group-users-toolbar.bg-surface-variant
       v-text-field.group-users-search(
         variant="outlined"
-        flat
         prepend-inner-icon='mdi-magnify'
         v-model='search'
         @update:model-value='pagination = 1'

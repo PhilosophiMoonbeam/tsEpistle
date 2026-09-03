@@ -20,10 +20,10 @@
   }
 
   &.v-btn--variant-elevated {
-    --wiki-button-shadow: var(--wiki-shadow-xs, 0 1px 2px rgba(var(--v-theme-on-surface), .12));
-    --wiki-button-hover-shadow: var(--wiki-shadow-sm, 0 .25rem .75rem rgba(var(--v-theme-on-surface), .16));
+    --wiki-button-shadow: var(--wiki-shadow-xs, 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent));
+    --wiki-button-hover-shadow: var(--wiki-shadow-sm, 0 .25rem .75rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 16%, transparent));
     --wiki-button-active-shadow:
-      var(--wiki-shadow-inset, inset 0 1px 2px rgba(var(--v-theme-on-surface), .18)),
+      var(--wiki-shadow-inset, inset 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 18%, transparent)),
       var(--wiki-button-shadow);
 
     box-shadow: var(--wiki-button-shadow);
@@ -33,7 +33,7 @@
     border-color: color-mix(
       in srgb,
       currentColor 42%,
-      var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14))
+      var(--wiki-surface-border, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent))
     );
   }
 

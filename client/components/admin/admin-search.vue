@@ -41,27 +41,28 @@
               v-btn.mt-2(variant='outlined', color='primary', size='small', @click='retryLoad') Retry
             v-list-item(v-else-if='enginesLoaded && engines.length < 1')
               em No search engines are installed.
-            template(v-else, v-for='(eng, idx) in engines', :key='eng.key')
-              v-list-item(
-                @click='selectedEngine = eng.key'
-                link
-                :disabled='!eng.isAvailable || saving'
-                :aria-disabled='!eng.isAvailable || saving ? `true` : undefined'
-                role='radio'
-                :aria-checked='selectedEngine === eng.key'
-                :active='selectedEngine === eng.key'
-              )
-                template(v-slot:prepend)
-                  v-avatar(size='24')
-                    v-icon(color='grey', v-if='!eng.isAvailable') mdi-minus-box-outline
-                    v-icon(color='primary', v-else-if='eng.key === selectedEngine') mdi-radiobox-marked
-                    v-icon(color='grey', v-else) mdi-radiobox-blank
-                v-list-item-title.text-body-medium(:class='!eng.isAvailable ? `text-grey` : (selectedEngine === eng.key ? `text-primary` : ``)') {{ eng.title }}
-                v-list-item-subtitle: .text-body-small(:class='!eng.isAvailable ? `text-grey-lighten-1` : (selectedEngine === eng.key ? `text-primary` : ``)') {{ eng.description }}
-                template(v-slot:append)
-                  v-avatar(v-if='selectedEngine === eng.key', size='24')
-                    v-icon.animated.fadeInLeft(color='primary', size="large") mdi-chevron-right
-              v-divider(v-if='idx < engines.length - 1')
+            template(v-else)
+              template(v-for='(eng, idx) in engines', :key='eng.key')
+                v-list-item(
+                  @click='selectedEngine = eng.key'
+                  link
+                  :disabled='!eng.isAvailable || saving'
+                  :aria-disabled='!eng.isAvailable || saving ? `true` : undefined'
+                  role='radio'
+                  :aria-checked='selectedEngine === eng.key'
+                  :active='selectedEngine === eng.key'
+                )
+                  template(v-slot:prepend)
+                    v-avatar(size='24')
+                      v-icon(color='grey', v-if='!eng.isAvailable') mdi-minus-box-outline
+                      v-icon(color='primary', v-else-if='eng.key === selectedEngine') mdi-radiobox-marked
+                      v-icon(color='grey', v-else) mdi-radiobox-blank
+                  v-list-item-title.text-body-medium(:class='!eng.isAvailable ? `text-grey` : (selectedEngine === eng.key ? `text-primary` : ``)') {{ eng.title }}
+                  v-list-item-subtitle: .text-body-small(:class='!eng.isAvailable ? `text-grey-lighten-1` : (selectedEngine === eng.key ? `text-primary` : ``)') {{ eng.description }}
+                  template(v-slot:append)
+                    v-avatar(v-if='selectedEngine === eng.key', size='24')
+                      v-icon.animated.fadeInLeft(color='primary', size="large") mdi-chevron-right
+                v-divider(v-if='idx < engines.length - 1')
 
       v-col(lg='9', cols='12')
         v-card.animated.fadeInUp.wait-p2s
@@ -86,52 +87,53 @@
           v-card-text(v-else)
             .text-label-small.mb-5 {{$t('admin:search.engineConfig')}}
             .text-body-medium.ml-3(v-if='!engine.config || engine.config.length < 1'): em {{$t('admin:search.engineNoConfig')}}
-            template(v-else, v-for='cfg in engine.config', :key='cfg.key')
-              v-select(
-                v-if='cfg.value.type === "string" && cfg.value.enum'
-                variant="outlined"
-                :items='cfg.value.enum'
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                prepend-icon='mdi-cog-box'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                :class='cfg.value.hint ? "mb-2" : ""'
-                :disabled='saving'
-              )
-              v-switch.mb-3(
-                v-else-if='cfg.value.type === "boolean"'
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                color='primary'
-                prepend-icon='mdi-cog-box'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                inset
-                :disabled='saving'
+            template(v-else)
+              template(v-for='cfg in engine.config', :key='cfg.key')
+                v-select(
+                  v-if='cfg.value.type === "string" && cfg.value.enum'
+                  variant="outlined"
+                  :items='cfg.value.enum'
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  prepend-icon='mdi-cog-box'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  :class='cfg.value.hint ? "mb-2" : ""'
+                  :disabled='saving'
                 )
-              v-textarea(
-                v-else-if='cfg.value.type === "string" && cfg.value.multiline'
-                variant="outlined"
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                prepend-icon='mdi-cog-box'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                :class='cfg.value.hint ? "mb-2" : ""'
-                :disabled='saving'
-                )
-              v-text-field(
-                v-else
-                variant="outlined"
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                prepend-icon='mdi-cog-box'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                :class='cfg.value.hint ? "mb-2" : ""'
-                :disabled='saving'
-                )</template>
+                v-switch.mb-3(
+                  v-else-if='cfg.value.type === "boolean"'
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  color='primary'
+                  prepend-icon='mdi-cog-box'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  inset
+                  :disabled='saving'
+                  )
+                v-textarea(
+                  v-else-if='cfg.value.type === "string" && cfg.value.multiline'
+                  variant="outlined"
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  prepend-icon='mdi-cog-box'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  :class='cfg.value.hint ? "mb-2" : ""'
+                  :disabled='saving'
+                  )
+                v-text-field(
+                  v-else
+                  variant="outlined"
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  prepend-icon='mdi-cog-box'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  :class='cfg.value.hint ? "mb-2" : ""'
+                  :disabled='saving'
+                  )</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'

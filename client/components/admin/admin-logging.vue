@@ -74,51 +74,52 @@
                   v-divider.mt-3
                   .text-title-small.font-weight-medium.mt-3 Configuration
                   .text-body-large.ml-3(v-if='!logger.config || logger.config.length < 1') This logger has no configuration options you can modify.
-                  template(v-else, v-for='cfg in logger.config', :key='cfg.key')
-                    v-select(
-                      v-if='cfg.value.type === "string" && cfg.value.enum && !cfg.value.sensitive'
-                      variant="outlined"
-                      :items='cfg.value.enum'
-                      :label='cfg.value.title'
-                      v-model='cfg.value.value'
-                      :hint='cfg.value.hint ? cfg.value.hint : ""'
-                      persistent-hint
-                      :class='cfg.value.hint ? "mb-2" : ""'
-                      :disabled='saving'
-                    )
-                    v-switch(
-                      v-else-if='cfg.value.type === "boolean" && !cfg.value.sensitive'
-                      :label='cfg.value.title'
-                      v-model='cfg.value.value'
-                      color='primary'
-                      :hint='cfg.value.hint ? cfg.value.hint : ""'
-                      persistent-hint
-                      :disabled='saving'
+                  template(v-else)
+                    template(v-for='cfg in logger.config', :key='cfg.key')
+                      v-select(
+                        v-if='cfg.value.type === "string" && cfg.value.enum && !cfg.value.sensitive'
+                        variant="outlined"
+                        :items='cfg.value.enum'
+                        :label='cfg.value.title'
+                        v-model='cfg.value.value'
+                        :hint='cfg.value.hint ? cfg.value.hint : ""'
+                        persistent-hint
+                        :class='cfg.value.hint ? "mb-2" : ""'
+                        :disabled='saving'
                       )
-                    v-text-field(
-                      v-else
-                      variant="outlined"
-                      :label='cfg.value.title'
-                      v-model='cfg.value.value'
-                      :hint='cfg.value.hint ? cfg.value.hint : ""'
-                      persistent-hint
-                      :class='cfg.value.hint ? "mb-2" : ""'
-                      :disabled='saving'
-                      :type='cfg.value.sensitive && !isSecretVisible(logger.key, cfg.key) ? `password` : `text`'
-                      :autocomplete='cfg.value.sensitive ? `new-password` : undefined'
-                      @update:focused='selectStoredSecret($event, cfg.value)'
-                    )
-                      template(v-slot:append-inner)
-                        v-btn(
-                          v-if='cfg.value.sensitive'
-                          icon
-                          variant='text'
-                          size='small'
-                          :aria-label='`${isSecretVisible(logger.key, cfg.key) ? "Hide" : "Show"} ${cfg.value.title || cfg.key}`'
-                          :aria-pressed='isSecretVisible(logger.key, cfg.key)'
-                          @click='toggleSecretVisibility(logger.key, cfg.key)'
+                      v-switch(
+                        v-else-if='cfg.value.type === "boolean" && !cfg.value.sensitive'
+                        :label='cfg.value.title'
+                        v-model='cfg.value.value'
+                        color='primary'
+                        :hint='cfg.value.hint ? cfg.value.hint : ""'
+                        persistent-hint
+                        :disabled='saving'
                         )
-                          v-icon {{ isSecretVisible(logger.key, cfg.key) ? 'mdi-eye-off' : 'mdi-eye' }}
+                      v-text-field(
+                        v-else
+                        variant="outlined"
+                        :label='cfg.value.title'
+                        v-model='cfg.value.value'
+                        :hint='cfg.value.hint ? cfg.value.hint : ""'
+                        persistent-hint
+                        :class='cfg.value.hint ? "mb-2" : ""'
+                        :disabled='saving'
+                        :type='cfg.value.sensitive && !isSecretVisible(logger.key, cfg.key) ? `password` : `text`'
+                        :autocomplete='cfg.value.sensitive ? `new-password` : undefined'
+                        @update:focused='selectStoredSecret($event, cfg.value)'
+                      )
+                        template(v-slot:append-inner)
+                          v-btn(
+                            v-if='cfg.value.sensitive'
+                            icon
+                            variant='text'
+                            size='small'
+                            :aria-label='`${isSecretVisible(logger.key, cfg.key) ? "Hide" : "Show"} ${cfg.value.title || cfg.key}`'
+                            :aria-pressed='isSecretVisible(logger.key, cfg.key)'
+                            @click='toggleSecretVisibility(logger.key, cfg.key)'
+                          )
+                            v-icon {{ isSecretVisible(logger.key, cfg.key) ? 'mdi-eye-off' : 'mdi-eye' }}
                   v-divider.mt-3
                   .text-title-small.font-weight-medium.mt-3 Log Level
                   .text-body-large.ml-3 Select the minimum error level that will be reported to this logger.

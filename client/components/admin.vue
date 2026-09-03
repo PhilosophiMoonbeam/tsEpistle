@@ -623,7 +623,7 @@ export default defineComponent({
 
   > .v-container:not(.admin-agents) {
 
-    .v-card:not(.v-card--flat) {
+    .v-card:not(.v-card--flat, .v-card--variant-flat) {
       border: 1px solid var(--wiki-surface-border);
       border-radius: var(--wiki-panel-radius);
       background: var(--wiki-surface-raised);

@@ -23,7 +23,7 @@
           @keydown.up.prevent='searchMove(`up`)'
           autocomplete='off'
         )
-    v-row.nav-header-layout(no-gutters)
+    v-row.nav-header-layout(:gap='0')
       v-col.nav-header-brand-col(cols='5', md='4')
         .nav-header-inner.nav-header-brand
           slot(name='mobileBrand', v-if='$slots.mobileBrand && $vuetify.display.smAndDown')

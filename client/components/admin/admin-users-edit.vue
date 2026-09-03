@@ -35,7 +35,7 @@
           template(v-slot:actions)
             v-btn(color='grey' icon variant="outlined" @click='navigateBack' aria-label='Back to users')
               v-icon mdi-arrow-left
-            v-menu(origin='top right')
+            v-menu(location='bottom end')
               template(v-slot:activator='{ props }')
                 v-btn(color='black' v-bind='props' variant="flat" :disabled='!recordReady || actionLoading !== ``')
                   span Actions

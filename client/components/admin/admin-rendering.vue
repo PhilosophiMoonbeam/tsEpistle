@@ -138,40 +138,41 @@
           v-card-text.pb-4.pl-4
             .text-label-small.mb-5 Rendering Module Configuration
             .text-body-medium.ml-3(v-if='!currentRenderer.config || currentRenderer.config.length < 1'): em This rendering module has no configuration options you can modify.
-            template(v-else, v-for='cfg in currentRenderer.config', :key='cfg.key')
-              v-select(
-                v-if='cfg.value.type === "string" && cfg.value.enum'
-                variant="outlined"
-                :items='cfg.value.enum'
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                :class='cfg.value.hint ? "mb-2" : ""'
-                color='primary'
-                :disabled='renderersLoading || saving'
-              )
-              v-switch(
-                v-else-if='cfg.value.type === "boolean"'
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                color='primary'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                inset
-                :disabled='renderersLoading || saving'
-              )
-              v-text-field(
-                v-else
-                variant="outlined"
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                :class='cfg.value.hint ? "mb-2" : ""'
-                color='primary'
-                :disabled='renderersLoading || saving'
-              )
+            template(v-else)
+              template(v-for='cfg in currentRenderer.config', :key='cfg.key')
+                v-select(
+                  v-if='cfg.value.type === "string" && cfg.value.enum'
+                  variant="outlined"
+                  :items='cfg.value.enum'
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  :class='cfg.value.hint ? "mb-2" : ""'
+                  color='primary'
+                  :disabled='renderersLoading || saving'
+                )
+                v-switch(
+                  v-else-if='cfg.value.type === "boolean"'
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  color='primary'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  inset
+                  :disabled='renderersLoading || saving'
+                )
+                v-text-field(
+                  v-else
+                  variant="outlined"
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  :class='cfg.value.hint ? "mb-2" : ""'
+                  color='primary'
+                  :disabled='renderersLoading || saving'
+                )
           div.v-card-chin
             v-spacer
             .text-body-small.pr-3.text-grey Module: {{ currentRenderer.key }}</template>

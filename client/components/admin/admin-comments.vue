@@ -89,55 +89,56 @@
           v-card-text
             h3.text-label-small.my-5 {{$t('admin:comments.providerConfig')}}
             .text-body-medium.ml-3(v-if='!provider.config || provider.config.length < 1'): em {{$t('admin:comments.providerNoConfig')}}
-            template(v-else, v-for='cfg in provider.config', :key='cfg.key')
-              v-select.mb-3(
-                v-if='cfg.value.type === "string" && cfg.value.enum'
-                variant="outlined"
-                :items='cfg.value.enum'
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                prepend-icon='mdi-cog-box'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                :class='cfg.value.hint ? "mb-2" : ""'
-                :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
-                :disabled='saving'
-              )
-              v-switch.mb-6(
-                v-else-if='cfg.value.type === "boolean"'
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                color='primary'
-                prepend-icon='mdi-cog-box'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                inset
-                :disabled='saving'
+            template(v-else)
+              template(v-for='cfg in provider.config', :key='cfg.key')
+                v-select.mb-3(
+                  v-if='cfg.value.type === "string" && cfg.value.enum'
+                  variant="outlined"
+                  :items='cfg.value.enum'
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  prepend-icon='mdi-cog-box'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  :class='cfg.value.hint ? "mb-2" : ""'
+                  :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
+                  :disabled='saving'
                 )
-              v-textarea.mb-3(
-                v-else-if='cfg.value.type === "string" && cfg.value.multiline'
-                variant="outlined"
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                prepend-icon='mdi-cog-box'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                :class='cfg.value.hint ? "mb-2" : ""'
-                :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
-                :disabled='saving'
-                )
-              v-text-field.mb-3(
-                v-else
-                variant="outlined"
-                :label='cfg.value.title'
-                v-model='cfg.value.value'
-                prepend-icon='mdi-cog-box'
-                :hint='cfg.value.hint ? cfg.value.hint : ""'
-                persistent-hint
-                :class='cfg.value.hint ? "mb-2" : ""'
-                :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
-                :disabled='saving'
-                )
+                v-switch.mb-6(
+                  v-else-if='cfg.value.type === "boolean"'
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  color='primary'
+                  prepend-icon='mdi-cog-box'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  inset
+                  :disabled='saving'
+                  )
+                v-textarea.mb-3(
+                  v-else-if='cfg.value.type === "string" && cfg.value.multiline'
+                  variant="outlined"
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  prepend-icon='mdi-cog-box'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  :class='cfg.value.hint ? "mb-2" : ""'
+                  :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
+                  :disabled='saving'
+                  )
+                v-text-field.mb-3(
+                  v-else
+                  variant="outlined"
+                  :label='cfg.value.title'
+                  v-model='cfg.value.value'
+                  prepend-icon='mdi-cog-box'
+                  :hint='cfg.value.hint ? cfg.value.hint : ""'
+                  persistent-hint
+                  :class='cfg.value.hint ? "mb-2" : ""'
+                  :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
+                  :disabled='saving'
+                  )
         async-state(v-else-if='!loading && !errorMessage && providers.length > 0', state='empty', title='Select a comment provider', message='Choose a provider to review its configuration.')
 
 </template>

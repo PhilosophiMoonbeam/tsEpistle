@@ -292,7 +292,7 @@ export default defineComponent({
     }
   }
 
-  .v-card:not(.v-card--flat) {
+  .v-card:not(.v-card--flat, .v-card--variant-flat) {
     overflow: hidden;
     border: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-panel-radius);
@@ -436,7 +436,7 @@ export default defineComponent({
       }
     }
 
-    .v-card:not(.v-card--flat) {
+    .v-card:not(.v-card--flat, .v-card--variant-flat) {
       border-radius: var(--wiki-control-radius);
     }
 
@@ -449,7 +449,7 @@ export default defineComponent({
 @media (forced-colors: active) {
   .profile-sidebar,
   .profile-sidebar-mark,
-  .profile-main .v-card:not(.v-card--flat) {
+  .profile-main .v-card:not(.v-card--flat, .v-card--variant-flat) {
     border-color: CanvasText !important;
   }
 }

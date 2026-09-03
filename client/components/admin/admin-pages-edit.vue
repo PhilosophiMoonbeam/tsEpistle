@@ -33,7 +33,7 @@
             .page-action-group
               v-btn.animated.fadeInDown.wait-p3s(color='grey', icon, variant="outlined", to='/pages', aria-label='Back to pages')
                 v-icon mdi-arrow-left
-              v-menu(origin='top right')
+              v-menu(location='bottom end')
                 template(v-slot:activator='{ props }')
                   v-btn.mx-3.animated.fadeInDown.wait-p2s(color='black', v-bind='props', variant="flat")
                     span Actions

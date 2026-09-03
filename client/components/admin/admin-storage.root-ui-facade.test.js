@@ -78,7 +78,7 @@ describe('admin-storage REST loading facade migration guard', () => {
 
     expect(source).toContain("template(v-for='(tgt, idx) in targets', :key='tgt.key')")
     expect(source).toContain("template(v-for='(tgt, n) in status', :key='tgt.key')")
-    expect(source).toContain("template(v-else, v-for='cfg in target.config', :key='cfg.key')")
+    expect(source).toContain("template(v-for='cfg in target.config', :key='cfg.key')")
     expect(source).toContain("v-col(cols='12', lg='6', xl='4', v-for='act of target.actions', :key='act.handler')")
     expect(source).not.toMatch(/(?:targets|status|target\.config|target\.actions)[^\n]*:key=['"](?:idx|n|index)['"]/)
   })

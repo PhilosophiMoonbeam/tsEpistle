@@ -9,7 +9,7 @@
 .v-field {
   border-radius: var(--wiki-control-radius, .75rem);
   background-color: var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
-  box-shadow: var(--wiki-shadow-inset, inset 0 1px 2px rgba(var(--v-theme-on-surface), .04));
+  box-shadow: var(--wiki-shadow-inset, inset 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, transparent));
   transition:
     background-color var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1)),
     box-shadow var(--wiki-motion-fast, 120ms) var(--wiki-motion-ease, cubic-bezier(.2, .8, .2, 1));
@@ -17,7 +17,7 @@
 
 .v-field--variant-outlined {
   .v-field__outline {
-    color: var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .22));
+    color: var(--wiki-surface-border-strong, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent));
     --v-field-border-opacity: 1;
   }
 
@@ -28,19 +28,19 @@
 
 .v-input {
   .v-field-label {
-    color: rgba(var(--v-theme-on-surface), .72);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
     opacity: 1;
     font-weight: 560;
     letter-spacing: .005em;
   }
 
   .v-field__input::placeholder {
-    color: rgba(var(--v-theme-on-surface), .5);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 50%, transparent);
     opacity: 1;
   }
 
   .v-messages {
-    color: rgba(var(--v-theme-on-surface), .68);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
     opacity: 1;
     font-size: var(--wiki-label-size, .6875rem);
     line-height: 1.35;
@@ -53,7 +53,7 @@
         --wiki-focus-ring,
         0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-focus)) 44%, transparent)
       ),
-      var(--wiki-shadow-inset, inset 0 1px 2px rgba(var(--v-theme-on-surface), .08));
+      var(--wiki-shadow-inset, inset 0 1px 2px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent));
   }
 
   &:not(.v-input--error).v-input--focused .v-field-label {
@@ -105,7 +105,7 @@
         color-mix(in srgb, rgb(var(--v-theme-on-surface)) 4%, rgb(var(--v-theme-surface)))
       );
       box-shadow: none;
-      color: rgba(var(--v-theme-on-surface), .52);
+      color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 52%, transparent);
     }
 
     :is(.v-field__outline, .v-field-label, .v-messages) {

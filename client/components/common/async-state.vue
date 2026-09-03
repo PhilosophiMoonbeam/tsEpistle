@@ -64,7 +64,7 @@ defineEmits<{
   justify-content: center;
   gap: .85rem;
   padding: 1.25rem;
-  border: 1px dashed color-mix(in srgb, rgb(var(--v-border-color)) 18%, transparent);
+  border: 1px dashed color-mix(in srgb, rgb(var(--v-theme-on-surface)) 18%, transparent);
   border-radius: var(--wiki-control-radius, .875rem);
   background: color-mix(in srgb, rgb(var(--v-theme-surface)) 84%, transparent);
   text-align: start;

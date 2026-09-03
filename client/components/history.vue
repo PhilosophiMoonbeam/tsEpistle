@@ -229,6 +229,7 @@
     search-results</template>
 
 <script lang='ts'>
+import { markRaw } from 'vue'
 import * as Diff2Html from 'diff2html'
 import { createPatch } from 'diff'
 import AsyncState from '@/components/common/async-state.vue'
@@ -355,7 +356,7 @@ export default {
       loadingMore: false,
       restoreLoading: false,
       restoreRedirectTimer: null as number | null,
-      requestsAbortController: new AbortController()
+      requestsAbortController: markRaw(new AbortController())
     }
   },
   computed: {

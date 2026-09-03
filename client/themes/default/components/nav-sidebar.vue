@@ -35,24 +35,24 @@
         v-if='customItems.length === 0'
         state='empty'
         :title='$t(`common:sidebar.noNavigationItems`)'
-      )
-      template(v-else, v-for='(item, idx) of customItems', :key='item.k === `link` ? `link-${item.t}-${item.l}` : item.k === `header` ? `header-${item.l}-${idx}` : `divider-${idx}`')
-        v-list-item(
-          v-if='item.k === `link`'
-          :href='item.t'
-          :target='item.y === `externalblank` ? `_blank` : `_self`'
-          :rel='item.y === `externalblank` ? `noopener` : ``'
-          :active='isCurrentCustomLink(item)'
-          :aria-current='isCurrentCustomLink(item) ? `page` : undefined'
-          @click='sidebarLinkClicked'
-        )
-          template(v-slot:prepend)
-            v-avatar(size='24', rounded='0', variant='text')
-              v-icon(v-if='item.c.match(/fa[a-z] fa-/)', size='19') {{ item.c }}
-              v-icon(v-else) {{ item.c }}
-          v-list-item-title {{ item.l }}
-        v-divider.nav-sidebar-section-divider.my-2(v-else-if='item.k === `divider`')
-        v-list-subheader.nav-sidebar-subheader(v-else-if='item.k === `header`') {{ item.l }}
+      template(v-else)
+        template(v-for='(item, idx) of customItems', :key='item.k === `link` ? `link-${item.t}-${item.l}` : item.k === `header` ? `header-${item.l}-${idx}` : `divider-${idx}`')
+          v-list-item(
+            v-if='item.k === `link`'
+            :href='item.t'
+            :target='item.y === `externalblank` ? `_blank` : `_self`'
+            :rel='item.y === `externalblank` ? `noopener` : ``'
+            :active='isCurrentCustomLink(item)'
+            :aria-current='isCurrentCustomLink(item) ? `page` : undefined'
+            @click='sidebarLinkClicked'
+          )
+            template(v-slot:prepend)
+              v-avatar(size='24', rounded='0', variant='text')
+                v-icon(v-if='item.c.match(/fa[a-z] fa-/)', size='19') {{ item.c }}
+                v-icon(v-else) {{ item.c }}
+            v-list-item-title {{ item.l }}
+          v-divider.nav-sidebar-section-divider.my-2(v-else-if='item.k === `divider`')
+          v-list-subheader.nav-sidebar-subheader(v-else-if='item.k === `header`') {{ item.l }}
     //-> Browse
     v-list.nav-sidebar-list.py-2(
       v-else-if='currentMode === `browse`'

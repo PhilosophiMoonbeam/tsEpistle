@@ -1,7 +1,7 @@
 .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content > :is(.v-card, .v-sheet),
 .v-dialog:not(.v-dialog--fullscreen) > .v-overlay__content > form > :is(.v-card, .v-sheet) {
   overflow: hidden;
-  border: 1px solid var(--wiki-surface-border-strong, rgba(var(--v-theme-on-surface), .22));
+  border: 1px solid var(--wiki-surface-border-strong, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 22%, transparent));
   border-radius: var(--wiki-panel-radius, 1rem);
   background:
     radial-gradient(
@@ -14,7 +14,7 @@
       transparent 18rem
     ),
     var(--wiki-surface-raised, rgb(var(--v-theme-surface)));
-  box-shadow: var(--wiki-shadow-lg, 0 1.75rem 5rem rgba(var(--v-theme-on-surface), .2));
+  box-shadow: var(--wiki-shadow-lg, 0 1.75rem 5rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 20%, transparent));
 }
 
 .v-dialog.v-dialog--fullscreen > .v-overlay__content > :is(.v-card, .v-sheet),
@@ -36,7 +36,7 @@
 
   > .v-card-text,
   > :is(form, .v-form) > .v-card-text {
-    color: rgba(var(--v-theme-on-surface), .82);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 82%, transparent);
     line-height: 1.6;
   }
 
@@ -46,7 +46,7 @@
     gap: var(--wiki-space-2, .5rem);
     padding-block: var(--wiki-space-3, .75rem);
     padding-inline: var(--wiki-space-4, 1rem);
-    border-block-start: 1px solid var(--wiki-surface-border, rgba(var(--v-theme-on-surface), .14));
+    border-block-start: 1px solid var(--wiki-surface-border, color-mix(in srgb, rgb(var(--v-theme-on-surface)) 14%, transparent));
     background: color-mix(
       in srgb,
       var(--wiki-surface-sunken, rgb(var(--v-theme-background))) 68%,

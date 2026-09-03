@@ -80,55 +80,56 @@
               .text-label-small.pb-5 {{$t('admin:analytics.providerConfiguration')}}
               .text-body-large.ml-3(v-if='!provider.isAvailable') Provider unavailable. Choose an available provider.
               .text-body-large.ml-3(v-else-if='!provider.config || provider.config.length < 1'): em {{$t('admin:analytics.providerNoConfiguration')}}
-              template(v-else, v-for='cfg in provider.config', :key='cfg.key')
-                v-select(
-                  v-if='cfg.value.type === "string" && cfg.value.enum'
-                  variant="outlined"
-                  :items='cfg.value.enum'
-                  :label='cfg.value.title'
-                  v-model='cfg.value.value'
-                  prepend-icon='mdi-cog-box'
-                  :hint='cfg.value.hint ? cfg.value.hint : ""'
-                  persistent-hint
-                  :class='cfg.value.hint ? "mb-2" : ""'
-                  :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
-                  :disabled='!provider.isAvailable || saving'
-                )
-                v-switch.mb-3(
-                  v-else-if='cfg.value.type === "boolean"'
-                  :label='cfg.value.title'
-                  v-model='cfg.value.value'
-                  color='primary'
-                  prepend-icon='mdi-cog-box'
-                  :hint='cfg.value.hint ? cfg.value.hint : ""'
-                  persistent-hint
-                  inset
-                  :disabled='!provider.isAvailable || saving'
-                )
-                v-textarea(
-                  v-else-if='cfg.value.type === "string" && cfg.value.multiline'
-                  variant="outlined"
-                  :label='cfg.value.title'
-                  v-model='cfg.value.value'
-                  prepend-icon='mdi-cog-box'
-                  :hint='cfg.value.hint ? cfg.value.hint : ""'
-                  persistent-hint
-                  :class='cfg.value.hint ? "mb-2" : ""'
-                  :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
-                  :disabled='!provider.isAvailable || saving'
-                )
-                v-text-field(
-                  v-else
-                  variant="outlined"
-                  :label='cfg.value.title'
-                  v-model='cfg.value.value'
-                  prepend-icon='mdi-cog-box'
-                  :hint='cfg.value.hint ? cfg.value.hint : ""'
-                  persistent-hint
-                  :class='cfg.value.hint ? "mb-2" : ""'
-                  :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
-                  :disabled='!provider.isAvailable || saving'
-                )
+              template(v-else)
+                template(v-for='cfg in provider.config', :key='cfg.key')
+                  v-select(
+                    v-if='cfg.value.type === "string" && cfg.value.enum'
+                    variant="outlined"
+                    :items='cfg.value.enum'
+                    :label='cfg.value.title'
+                    v-model='cfg.value.value'
+                    prepend-icon='mdi-cog-box'
+                    :hint='cfg.value.hint ? cfg.value.hint : ""'
+                    persistent-hint
+                    :class='cfg.value.hint ? "mb-2" : ""'
+                    :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
+                    :disabled='!provider.isAvailable || saving'
+                  )
+                  v-switch.mb-3(
+                    v-else-if='cfg.value.type === "boolean"'
+                    :label='cfg.value.title'
+                    v-model='cfg.value.value'
+                    color='primary'
+                    prepend-icon='mdi-cog-box'
+                    :hint='cfg.value.hint ? cfg.value.hint : ""'
+                    persistent-hint
+                    inset
+                    :disabled='!provider.isAvailable || saving'
+                  )
+                  v-textarea(
+                    v-else-if='cfg.value.type === "string" && cfg.value.multiline'
+                    variant="outlined"
+                    :label='cfg.value.title'
+                    v-model='cfg.value.value'
+                    prepend-icon='mdi-cog-box'
+                    :hint='cfg.value.hint ? cfg.value.hint : ""'
+                    persistent-hint
+                    :class='cfg.value.hint ? "mb-2" : ""'
+                    :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
+                    :disabled='!provider.isAvailable || saving'
+                  )
+                  v-text-field(
+                    v-else
+                    variant="outlined"
+                    :label='cfg.value.title'
+                    v-model='cfg.value.value'
+                    prepend-icon='mdi-cog-box'
+                    :hint='cfg.value.hint ? cfg.value.hint : ""'
+                    persistent-hint
+                    :class='cfg.value.hint ? "mb-2" : ""'
+                    :style='(cfg.value.maxWidth || 0) > 0 ? `max-width:` + cfg.value.maxWidth + `px;` : ``'
+                    :disabled='!provider.isAvailable || saving'
+                  )
         async-state(v-else-if='!loading && !errorMessage && providers.length > 0', state='empty', title='Select an analytics provider', message='Choose an available provider to review its configuration.')
 </template>
 
