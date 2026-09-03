@@ -87,7 +87,7 @@ bun run ci
 
 ## Deployment and recovery
 
-Use the [Helm guide](dev/helm/README.md) for Kubernetes installation and lifecycle details. PostgreSQL 15, 16, 17, and 18 are supported on current minor releases. The only supported Wiki.js migration source is exactly Wiki.js `2.5.314`; other upstream versions and other database engines are unsupported.
+Use the [Helm guide](dev/helm/README.md) for Kubernetes installation and lifecycle details. PostgreSQL 15, 16, 17, and 18 are supported on current minor releases. The only supported Wiki.js migration source is exactly Wiki.js `2.5.314`; other upstream versions and other database engines are unsupported. Follow the [Wiki.js migration guide](MIGRATION.md) for the validated clone, quarantine, verification, cutover, and rollback procedure.
 
 > **Backup contract:** Back up PostgreSQL and `/wiki/data` together before every upgrade. Stop all tsEpistle instances, restore both from the same pre-upgrade point, and only then roll back to the old image. Rolling back application or Helm resources without the matching database and data restore can run old code against a newer schema and is unsafe.
 
@@ -101,6 +101,7 @@ When a release is published, use the [release page](https://github.com/Philosoph
 | Issues and support | [GitHub Issues](https://github.com/PhilosophiMoonbeam/tsEpistle/issues) |
 | Releases (when published) | [GitHub Releases](https://github.com/PhilosophiMoonbeam/tsEpistle/releases) |
 | Helm deployment | [dev/helm/README.md](dev/helm/README.md) |
+| Wiki.js migration | [MIGRATION.md](MIGRATION.md) |
 | Agent deployment and operations | [docs/agents-deployment.md](docs/agents-deployment.md) |
 | Search architecture | [docs/search-architecture.md](docs/search-architecture.md) |
 | API versioning | [docs/api-versioning.md](docs/api-versioning.md) |

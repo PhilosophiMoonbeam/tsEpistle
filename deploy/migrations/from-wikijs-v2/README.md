@@ -2,6 +2,8 @@
 
 This procedure creates an isolated tsEpistle deployment from a Wiki.js v2 snapshot. The source application, database container, network, and volumes must remain separate and untouched.
 
+Read the repository-level [migration guide](../../../MIGRATION.md) for the authoritative safety rationale, preflight inventory, authentication and Agent caveats, acceptance checklist, final synchronization, and rollback contract. This file is the shorter command-oriented companion.
+
 Read the canonical [Compose deployment guide](../../compose/) first and prepare its `.env`, state directory, secrets, and proxy network. Use a temporary hostname only as routing configuration; do not use it as the durable project or volume identity.
 
 ## Safety boundaries
