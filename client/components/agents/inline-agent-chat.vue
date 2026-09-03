@@ -950,8 +950,8 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-hero-radius) !important;
   background: color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent);
-  backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
   box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
   text-align: start;
 }
@@ -1279,8 +1279,8 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
       transparent
     ),
     color-mix(in srgb, var(--wiki-surface-raised) 84%, transparent);
-  backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   box-shadow: 0 calc(var(--wiki-space-2) * -1) var(--wiki-space-6) color-mix(in srgb, var(--wiki-shadow-color) 32%, transparent);
 }
 .inline-agent__composer-inner {
