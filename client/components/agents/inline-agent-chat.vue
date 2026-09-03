@@ -1414,13 +1414,11 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 
 .inline-agent__side--history {
   width: min(19rem, 100%);
-  grid-column: 1;
   justify-self: end;
 }
 
 .inline-agent__side--memory {
   width: min(21rem, 100%);
-  grid-column: 3;
   justify-self: start;
 }
 
@@ -1453,6 +1451,14 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
     grid-row: 1;
     justify-self: stretch;
     filter: none;
+  }
+
+  .inline-agent__side--history {
+    grid-column: 1;
+  }
+
+  .inline-agent__side--memory {
+    grid-column: 3;
   }
 }
 
