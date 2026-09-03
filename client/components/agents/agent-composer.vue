@@ -824,7 +824,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__actions :deep(.v-btn) {
-  min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+  min-height: var(--wiki-control-height);
 }
 
 .agent-composer__skill-button,
@@ -1052,19 +1052,20 @@ onBeforeUnmount(() => {
   }
 }
 
-@media (max-width: 430px) {
-
+@media (max-width: 599.98px) {
   .agent-composer__skill-button,
   .agent-composer__goal-button {
     min-width: var(--wiki-control-height);
     padding-inline: var(--wiki-space-2);
   }
 
-
   .agent-composer__skill-button :deep(.v-btn__prepend),
   .agent-composer__goal-button :deep(.v-btn__prepend) {
     margin: 0;
   }
+}
+
+@media (max-width: 430px) {
 
   .agent-composer__primary-actions,
   .agent-composer__submit {
