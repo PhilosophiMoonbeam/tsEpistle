@@ -12,6 +12,7 @@ import { pinia, wikiStore } from './store/index.ts'
 import { router } from './router'
 import { createWikiThemes, resolveThemeName, WIKI_THEME_VARIATIONS } from './helpers/theme.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
+import { ProfileAppearanceSchema } from '../shared/user-presentation.ts'
 import { createAsyncComponent } from './components/common/async-component-state.vue'
 import { updateProfilePreferences } from './helpers/users-api.ts'
 
@@ -47,13 +48,17 @@ const registrations = [
 ]
 
 wikiStore.refreshAuth()
-const materializeLegacyReadingGutter = async (): Promise<void> => {
+const refreshLegacyReadingGutterToken = async (): Promise<void> => {
   if (!wikiStore.user.authenticated || !wikiStore.user.readingGutterNeedsMigration) return
 
-  const readingGutter = wikiStore.user.readingGutter
+  const appearance = ProfileAppearanceSchema.safeParse(wikiStore.user.appearance)
   wikiStore.user.readingGutterNeedsMigration = false
   try {
-    const token = await updateProfilePreferences(window.fetch.bind(window), { readingGutter }, 'Reading gutter migration failed')
+    const token = await updateProfilePreferences(
+      window.fetch.bind(window),
+      { appearance: appearance.success ? appearance.data : 'system' },
+      'Reading gutter migration failed'
+    )
     Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
     wikiStore.refreshAuth()
   } catch {
@@ -61,7 +66,7 @@ const materializeLegacyReadingGutter = async (): Promise<void> => {
   }
 }
 
-void materializeLegacyReadingGutter()
+void refreshLegacyReadingGutterToken()
 watch(
   () => wikiStore.user.fontFamily,
   fontFamily => {

@@ -104,7 +104,7 @@ describe('self-hosted typography contracts', () => {
     expect(base).not.toMatch(/font-feature-settings\s*:/)
   })
 
-  test('hydrates concrete presentation claims and materializes legacy gutter inheritance at bootstrap', () => {
+  test('hydrates concrete presentation claims and refreshes legacy gutter tokens from migrated server state', () => {
     expect(wikiStoreSource).toMatch(/import\s+\{\s*isUserReadingGutter,\s*normalizeUserFontFamily\s*\}\s+from\s+'..\/..\/shared\/user-presentation\.ts'/)
     expect(wikiStoreSource).toMatch(/fontFamily:\s*normalizeUserFontFamily\(undefined\)/)
     expect(wikiStoreSource).toMatch(/readingGutter:\s*normalizePageGutterStyle\(window\.siteConfig\.gutterStyle\)/)
@@ -114,10 +114,12 @@ describe('self-hosted typography contracts', () => {
     expect(wikiStoreSource).toMatch(/this\.user\.readingGutterNeedsMigration\s*=\s*readingGutter === undefined/)
     expect(wikiStoreSource).toMatch(/gutterStyle:\s*window\.siteConfig\.gutterStyle/)
     expect(wikiStoreSource).toMatch(/gutterCustomCss:\s*window\.siteConfig\.gutterCustomCss/)
-    expect(clientApp).toContain('const materializeLegacyReadingGutter = async')
-    expect(clientApp).toContain('{ readingGutter }')
+    expect(clientApp).toContain("import { ProfileAppearanceSchema } from '../shared/user-presentation.ts'")
+    expect(clientApp).toContain('const refreshLegacyReadingGutterToken = async')
+    expect(clientApp).toContain('ProfileAppearanceSchema.safeParse(wikiStore.user.appearance)')
+    expect(clientApp).toContain("{ appearance: appearance.success ? appearance.data : 'system' }")
     expect(clientApp).toContain("Cookies.set('jwt', token")
-    expect(clientApp).toContain('void materializeLegacyReadingGutter()')
+    expect(clientApp).toContain('void refreshLegacyReadingGutterToken()')
     expect(clientApp).toMatch(/import\s+\{\s*createApp,\s*watch\s*\}\s+from\s+'vue'/)
     expect(clientApp).toMatch(
       /watch\(\s*\(\)\s*=>\s*wikiStore\.user\.fontFamily,\s*fontFamily\s*=>\s*\{\s*document\.documentElement\.dataset\.wikiFont\s*=\s*fontFamily\s*\},\s*\{\s*immediate:\s*true\s*\}\s*\)/s
