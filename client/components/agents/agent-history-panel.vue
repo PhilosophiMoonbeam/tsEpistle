@@ -3,7 +3,7 @@
     class="agent-history"
     elevation="0"
     rounded="xl"
-    :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || openingSessionIds.size > 0 || movingSessionIds.size > 0"
+    :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || sessionMutationBusy || openingSessionIds.size > 0 || movingSessionIds.size > 0"
   >
     <header class="agent-history__header">
       <div class="agent-history__mark" aria-hidden="true">
@@ -26,8 +26,8 @@
         icon="mdi-delete-sweep-outline"
         variant="text"
         aria-label="Reset all conversation history"
-        :disabled="sessions.length === 0 || loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || openingSessionIds.size > 0 || movingSessionIds.size > 0"
-        @click="emit('reset')"
+        :disabled="sessions.length === 0 || loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || sessionMutationBusy || openingSessionIds.size > 0 || movingSessionIds.size > 0"
+        @click="requestReset"
       >
         <v-tooltip activator="parent" location="bottom">Reset all history</v-tooltip>
       </v-btn>
@@ -129,6 +129,7 @@
                       :session="session"
                       :folders="folders"
                       :busy="sessionBusy(session.id)"
+                      :disabled="sessionMutationBusy"
                       @move="folderId => moveSession(session, folderId)"
                       @rename="restoreTarget => beginRenameSession(session, restoreTarget)"
                       @remove="restoreTarget => beginDeleteSession(session, restoreTarget)"
@@ -177,12 +178,12 @@
                 </v-expansion-panel-title>
                 <v-menu location="bottom end">
                   <template #activator="{ props: menuProps }">
-                    <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting" />
+                    <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" />
                   </template>
                   <v-list density="compact" :aria-label="`Folder actions for ${group.folder.name}`">
-                    <v-list-item link prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting" @click="beginRenameFolder(group.folder)" />
+                    <v-list-item link prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" @click="beginRenameFolder(group.folder)" />
                     <v-divider />
-                    <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting" @click="beginRemoveFolder(group.folder)" />
+                    <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" @click="beginRemoveFolder(group.folder)" />
                   </v-list>
                 </v-menu>
               </div>
@@ -215,6 +216,7 @@
                         :session="session"
                         :folders="folders"
                         :busy="sessionBusy(session.id)"
+                        :disabled="sessionMutationBusy"
                         @move="folderId => moveSession(session, folderId)"
                         @rename="restoreTarget => beginRenameSession(session, restoreTarget)"
                         @remove="restoreTarget => beginDeleteSession(session, restoreTarget)"
@@ -291,19 +293,19 @@
       </v-card-title>
       <v-card-text class="px-5 pt-4">
         <v-alert v-if="sessionDialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ sessionDialogError }}</v-alert>
-        <v-text-field v-model="sessionRenameTitle" autofocus counter="255" label="Conversation title" maxlength="255" variant="outlined" :disabled="savingSessionTitle" @keydown.enter.prevent="saveSessionTitle" />
+        <v-text-field v-model="sessionRenameTitle" autofocus counter="255" label="Conversation title" maxlength="255" variant="outlined" :disabled="savingSessionTitle || sessionMutationBusy" @keydown.enter.prevent="saveSessionTitle" />
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
         <v-btn variant="text" :disabled="savingSessionTitle" @click="sessionEditorOpen = false">Cancel</v-btn>
-        <v-btn color="primary" variant="tonal" :disabled="loading || !sessionRenameTitle.trim() || savingSessionTitle" :loading="savingSessionTitle" @click="saveSessionTitle">
+        <v-btn color="primary" variant="tonal" :disabled="loading || !sessionRenameTitle.trim() || savingSessionTitle || sessionMutationBusy" :loading="savingSessionTitle" @click="saveSessionTitle">
           Save title
         </v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 
-  <v-dialog :model-value="Boolean(deletingSession)" max-width="29rem" aria-labelledby="agent-history-delete-title" :persistent="deleting" @update:model-value="value => { if (!value && !deleting) cancelDeleteSession() }">
+  <v-dialog :model-value="Boolean(deletingSession)" max-width="29rem" aria-labelledby="agent-history-delete-title" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelDeleteSession() }">
     <v-card ref="deleteDialogCard" rounded="xl">
       <v-card-title id="agent-history-delete-title" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-outline" aria-hidden="true" /></v-avatar>
@@ -315,13 +317,13 @@
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="deleting" @click="cancelDeleteSession">Cancel</v-btn>
-        <v-btn color="error" variant="tonal" :loading="deleting" :disabled="deleting" @click="deleteSession">Delete permanently</v-btn>
+        <v-btn variant="text" :disabled="deleting || sessionMutationBusy" @click="cancelDeleteSession">Cancel</v-btn>
+        <v-btn color="error" variant="tonal" :loading="deleting" :disabled="deleting || sessionMutationBusy" @click="deleteSession">Delete permanently</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
 
-  <v-dialog :model-value="Boolean(removingFolder)" max-width="30rem" aria-labelledby="agent-history-remove-folder-title" :persistent="deleting" @update:model-value="value => { if (!value && !deleting) cancelRemoveFolder() }">
+  <v-dialog :model-value="Boolean(removingFolder)" max-width="30rem" aria-labelledby="agent-history-remove-folder-title" :persistent="deleting || sessionMutationBusy" @update:model-value="value => { if (!value && !deleting && !sessionMutationBusy) cancelRemoveFolder() }">
     <v-card ref="removeFolderDialogCard" rounded="xl">
       <v-card-title id="agent-history-remove-folder-title" class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="warning" size="38" variant="tonal"><v-icon icon="mdi-folder-remove-outline" aria-hidden="true" /></v-avatar>
@@ -334,8 +336,8 @@
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="deleting" @click="cancelRemoveFolder">Cancel</v-btn>
-        <v-btn color="warning" variant="tonal" :loading="deleting" :disabled="loading || deleting" @click="deleteFolder">Remove folder</v-btn>
+        <v-btn variant="text" :disabled="deleting || sessionMutationBusy" @click="cancelRemoveFolder">Cancel</v-btn>
+        <v-btn color="warning" variant="tonal" :loading="deleting" :disabled="loading || deleting || sessionMutationBusy" @click="deleteFolder">Remove folder</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>
@@ -351,7 +353,7 @@ import { createModalFocusScope, type ModalFocusScope } from '../common/modal-foc
 import AgentHistorySessionActions from './agent-history-session-actions.vue'
 const emit = defineEmits<{ close: []; reset: [] }>()
 const agents = useAgentsStore()
-const { folders, loading, sessions, sessionsLoadMoreError, sessionsLoadingMore, sessionsNextCursor, sessionsReloading, thread } = storeToRefs(agents)
+const { folders, loading, sessionMutationBusy, sessions, sessionsLoadMoreError, sessionsLoadingMore, sessionsNextCursor, sessionsReloading, thread } = storeToRefs(agents)
 const openFolderIds = ref<string[]>([])
 const localError = ref('')
 const folderEditorOpen = ref(false)
@@ -539,13 +541,13 @@ const sessionBusy = (sessionId: string): boolean =>
 const hasRenderedDropDestination = (session: AgentSessionSummary): boolean =>
   session.folderId !== null || visibleFolderGroups.value.length > 0
 const canDragSession = (session: AgentSessionSummary): boolean =>
-  !sessionBusy(session.id) && hasRenderedDropDestination(session)
+  !sessionMutationBusy.value && !sessionBusy(session.id) && hasRenderedDropDestination(session)
 const dropTargetKey = (folderId: string | null): string => folderId ?? recentDropTarget
 const isActiveDropTarget = (folderId: string | null): boolean =>
   activeDropTarget.value === dropTargetKey(folderId)
 const canDropTo = (folderId: string | null): boolean => {
   const session = draggedSession.value
-  return Boolean(session && session.folderId !== folderId && !sessionBusy(session.id))
+  return Boolean(session && !sessionMutationBusy.value && session.folderId !== folderId && !sessionBusy(session.id))
 }
 const clearDragState = (): void => {
   draggedSessionId.value = null
@@ -644,6 +646,10 @@ const closeHistory = (): void => {
   agents.cancelSessionTransition()
   emit('close')
 }
+const requestReset = (): void => {
+  if (sessionMutationBusy.value) return
+  emit('reset')
+}
 
 const openSession = async (sessionId: string): Promise<void> => {
   if (loading.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0) return
@@ -665,7 +671,7 @@ const openSession = async (sessionId: string): Promise<void> => {
 }
 
 const moveSession = async (session: AgentSessionSummary, folderId: string | null): Promise<boolean> => {
-  if (loading.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0 || session.folderId === folderId || movingSessionIds.value.has(session.id)) return false
+  if (loading.value || sessionMutationBusy.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0 || session.folderId === folderId || movingSessionIds.value.has(session.id)) return false
   const title = session.title || 'New conversation'
   const destination = dropDestinationName(folderId)
   const originalLocation = sessionLocationName(session)
@@ -715,7 +721,7 @@ const beginRenameFolder = (folder: AgentConversationFolderView): void => {
   folderEditorOpen.value = true
 }
 const beginRenameSession = (session: AgentSessionSummary, restoreTarget: HTMLElement | null): void => {
-  if (loading.value) return
+  if (loading.value || sessionMutationBusy.value) return
   sessionDialogError.value = ''
   editingSession.value = session
   sessionRenameTitle.value = session.title || ''
@@ -725,7 +731,7 @@ const beginRenameSession = (session: AgentSessionSummary, restoreTarget: HTMLEle
 const saveSessionTitle = async (): Promise<void> => {
   const title = sessionRenameTitle.value.trim()
   const session = editingSession.value
-  if (!title || !session || savingSessionTitle.value || loading.value) return
+  if (!title || !session || savingSessionTitle.value || loading.value || sessionMutationBusy.value) return
   savingSessionTitle.value = true
   sessionDialogError.value = ''
   try {
@@ -746,23 +752,24 @@ watch(sessionEditorOpen, async (open, _previous, onCleanup) => {
   restoreSessionEditorFocus()
 })
 const beginDeleteSession = (session: AgentSessionSummary, restoreTarget: HTMLElement | null): void => {
+  if (loading.value || sessionMutationBusy.value) return
   dialogError.value = ''
   destructiveRestoreTarget.value = restoreTarget
   deletingSession.value = session
 }
 const beginRemoveFolder = (folder: AgentConversationFolderView): void => {
-  if (loading.value) return
+  if (loading.value || sessionMutationBusy.value) return
   dialogError.value = ''
   destructiveRestoreTarget.value = document.querySelector<HTMLElement>('.agent-history__folder-actions[aria-expanded="true"]')
   removingFolder.value = folder
 }
 const cancelDeleteSession = (): void => {
-  if (deleting.value) return
+  if (deleting.value || sessionMutationBusy.value) return
   deletingSession.value = null
   dialogError.value = ''
 }
 const cancelRemoveFolder = (): void => {
-  if (deleting.value) return
+  if (deleting.value || sessionMutationBusy.value) return
   removingFolder.value = null
   dialogError.value = ''
 }
@@ -789,7 +796,7 @@ watch(folderEditorOpen, async (open, _previous, onCleanup) => {
 })
 const deleteSession = async (): Promise<void> => {
   const session = deletingSession.value
-  if (!session || deleting.value || savingFolder.value) return
+  if (!session || deleting.value || savingFolder.value || sessionMutationBusy.value) return
   deleting.value = true; dialogError.value = ''; refreshError.value = ''; agents.error = ''
   try {
     const committed = await agents.removeSession(session.id)
@@ -806,7 +813,7 @@ const deleteSession = async (): Promise<void> => {
 }
 const deleteFolder = async (): Promise<void> => {
   const folder = removingFolder.value
-  if (!folder || loading.value || deleting.value || savingFolder.value) return
+  if (!folder || loading.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return
   const affectedSessionIds = displaySessions.value.filter(session => session.folderId === folder.id).map(session => session.id)
   deleting.value = true; dialogError.value = ''; refreshError.value = ''; agents.error = ''
   try {

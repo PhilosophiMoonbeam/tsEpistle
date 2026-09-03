@@ -41,7 +41,6 @@ export const up = async (knex: Knex): Promise<void> => {
   const configuredGutter = themingSettings?.gutterStyle
   const readingGutter = typeof configuredGutter === 'string' && PAGE_GUTTER_STYLES[configuredGutter] ? configuredGutter : DEFAULT_READING_GUTTER
 
-  await knex(USERS_TABLE).where({ fontFamily: 'newsreader' }).update({ fontFamily: 'roboto-flex' })
   await knex(USERS_TABLE).where({ readingGutter: 'site' }).update({ readingGutter })
 
   await knex.schema.alterTable(USERS_TABLE, table => {

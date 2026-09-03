@@ -83,7 +83,7 @@
             )
             .page-header-headings
               .page-title-row.d-flex.align-center
-                h1.page-title#page-title(ref='pageTitle') {{title}}
+                h1.page-title(ref='pageTitle', :id='pageTitleId') {{title}}
                 v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') {{$t('common:page.private')}}
               p.page-description(v-if='description') {{description}}
             .page-edit-shortcuts(
@@ -544,7 +544,7 @@
             v-alert.mb-5(v-if='!isPublished', color='warning', variant="outlined", icon='mdi-minus-circle', density="compact")
               .text-body-small {{$t('common:page.unpublishedWarning')}}
             site-banner(:banner='siteBanner')
-            article.contents(ref='container', aria-labelledby='page-title')
+            article.contents(ref='container', :aria-labelledby='pageTitleId')
               template(v-if='$slots.contents')
                 slot(name='contents')
               async-state(
@@ -1022,6 +1022,9 @@ export default defineComponent({
     }
   },
   computed: {
+    pageTitleId (): string {
+      return `wiki-page-shell-${this.pageId}-title`
+    },
     isAuthenticated () {
       return wikiStore.user.authenticated
     },

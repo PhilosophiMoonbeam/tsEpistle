@@ -41,6 +41,7 @@ const terminalEvents = new Set<AgentEventType>(['run.completed', 'run.partial', 
 const fetchFromWindow: typeof fetch = (input, init) => window.fetch(input, init)
 const SSE_INACTIVITY_MS = 15_000
 const SSE_RETRY_BASE_MS = 1_000
+const sessionMutationAlreadyAcquired = Symbol('sessionMutationAlreadyAcquired')
 const SSE_RETRY_MAX_MS = 30_000
 export interface AgentStoreInitializeOptions {
   readonly routeSync?: boolean
@@ -70,6 +71,7 @@ export const useAgentsStore = defineStore('agents', {
     routeSync: true,
     loading: false,
     sending: false,
+    sessionMutationBusy: false,
     error: '',
     connection: 'idle' as 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed',
     eventSequence: 0,
@@ -159,6 +161,14 @@ export const useAgentsStore = defineStore('agents', {
     isSessionContextCurrent(version: number, sessionId: string) {
       return this.isWorkspaceCurrent(version) && this.thread?.session.id === sessionId
     },
+    beginSessionMutation() {
+      if (this.sessionMutationBusy) return false
+      this.sessionMutationBusy = true
+      return true
+    },
+    endSessionMutation() {
+      this.sessionMutationBusy = false
+    },
     listenForVisibility() {
       if (this.visibilityListening) return
       document.addEventListener('visibilitychange', this.handleVisibilityChange)
@@ -208,37 +218,43 @@ export const useAgentsStore = defineStore('agents', {
       if (this.visibilityListening) document.removeEventListener('visibilitychange', this.handleVisibilityChange)
       this.visibilityListening = false
     },
-    async newSession(retention: 'temporary' | 'saved') {
-      const workspaceVersion = this.workspaceVersion
-      const version = this.beginSessionTransition()
-      const disposableSessionId = this.thread && this.thread.messages.length === 0 && !this.thread.session.currentRun ? this.thread.session.id : null
+    async newSession(retention: 'temporary' | 'saved', mutationOwner?: typeof sessionMutationAlreadyAcquired) {
+      const acquiredHere = mutationOwner !== sessionMutationAlreadyAcquired
+      if (acquiredHere && !this.beginSessionMutation()) return
       try {
-        if (disposableSessionId) {
-          await deleteAgentSession(fetchFromWindow, this.csrfToken, disposableSessionId)
-          if (!this.isWorkspaceCurrent(workspaceVersion)) return
-          if (!this.isSessionTransitionCurrent(version)) {
-            await this.reloadSessions()
-            return
-          }
-          if (this.thread?.session.id === disposableSessionId) {
-            this.closeStream()
-            this.thread = null
-            this.launchPage = null
-          }
-        }
-        const created = await createAgentThread(fetchFromWindow, this.csrfToken, { retention, providerProfileId: null })
-        if (this.isWorkspaceCurrent(workspaceVersion) && this.isSessionTransitionCurrent(version)) {
-          this.closeStream()
-          this.applyCreatedThread(created)
-          if (this.routeSync) window.history.replaceState(null, '', `/sessions/${created.session.id}`)
-        }
-        if (this.isWorkspaceCurrent(workspaceVersion)) await this.reloadSessions()
-      } catch (error) {
+        const workspaceVersion = this.workspaceVersion
+        const version = this.beginSessionTransition()
+        const disposableSessionId = this.thread && this.thread.messages.length === 0 && !this.thread.session.currentRun ? this.thread.session.id : null
         try {
+          if (disposableSessionId) {
+            await deleteAgentSession(fetchFromWindow, this.csrfToken, disposableSessionId)
+            if (!this.isWorkspaceCurrent(workspaceVersion)) return
+            if (!this.isSessionTransitionCurrent(version)) {
+              await this.reloadSessions()
+              return
+            }
+            if (this.thread?.session.id === disposableSessionId) {
+              this.closeStream()
+              this.thread = null
+              this.launchPage = null
+            }
+          }
+          const created = await createAgentThread(fetchFromWindow, this.csrfToken, { retention, providerProfileId: null })
+          if (this.isWorkspaceCurrent(workspaceVersion) && this.isSessionTransitionCurrent(version)) {
+            this.closeStream()
+            this.applyCreatedThread(created)
+            if (this.routeSync) window.history.replaceState(null, '', `/sessions/${created.session.id}`)
+          }
           if (this.isWorkspaceCurrent(workspaceVersion)) await this.reloadSessions()
-        } catch {}
-        if (!this.isWorkspaceCurrent(workspaceVersion) || !this.isSessionTransitionCurrent(version)) return
-        throw error
+        } catch (error) {
+          try {
+            if (this.isWorkspaceCurrent(workspaceVersion)) await this.reloadSessions()
+          } catch {}
+          if (!this.isWorkspaceCurrent(workspaceVersion) || !this.isSessionTransitionCurrent(version)) return
+          throw error
+        }
+      } finally {
+        if (acquiredHere) this.endSessionMutation()
       }
     },
     applyCreatedThread(created: CreatedAgentThread) {
@@ -401,20 +417,25 @@ export const useAgentsStore = defineStore('agents', {
     },
     async deleteFolder(folderId: string) {
       if (this.loading) throw new Error('Conversation folders are still loading. Please wait and try again.')
-      const workspaceVersion = this.workspaceVersion
-      this.invalidateFolderReload()
-      const sessionId = this.thread?.session.id
-      const refreshCurrent = this.thread?.session.folderId === folderId
-      await deleteAgentConversationFolder(fetchFromWindow, this.csrfToken, folderId)
-      if (!this.isWorkspaceCurrent(workspaceVersion)) return
-      this.invalidateFolderReload()
-      this.folders = markRaw(this.folders.filter(folder => folder.id !== folderId))
-      const refreshes = [this.reloadSessions()]
-      if (refreshCurrent && sessionId && this.isSessionContextCurrent(workspaceVersion, sessionId)) refreshes.push(this.refreshThread().then(() => undefined))
-      const results = await Promise.allSettled(refreshes)
-      const failed = results.find(result => result.status === 'rejected')
-      if (failed?.status === 'rejected' && this.isWorkspaceCurrent(workspaceVersion))
-        this.error = `The folder was deleted, but the workspace could not be refreshed. ${failed.reason instanceof Error ? failed.reason.message : ''}`.trim()
+      if (!this.beginSessionMutation()) return
+      try {
+        const workspaceVersion = this.workspaceVersion
+        this.invalidateFolderReload()
+        const sessionId = this.thread?.session.id
+        const refreshCurrent = this.thread?.session.folderId === folderId
+        await deleteAgentConversationFolder(fetchFromWindow, this.csrfToken, folderId)
+        if (!this.isWorkspaceCurrent(workspaceVersion)) return
+        this.invalidateFolderReload()
+        this.folders = markRaw(this.folders.filter(folder => folder.id !== folderId))
+        const refreshes = [this.reloadSessions()]
+        if (refreshCurrent && sessionId && this.isSessionContextCurrent(workspaceVersion, sessionId)) refreshes.push(this.refreshThread().then(() => undefined))
+        const results = await Promise.allSettled(refreshes)
+        const failed = results.find(result => result.status === 'rejected')
+        if (failed?.status === 'rejected' && this.isWorkspaceCurrent(workspaceVersion))
+          this.error = `The folder was deleted, but the workspace could not be refreshed. ${failed.reason instanceof Error ? failed.reason.message : ''}`.trim()
+      } finally {
+        this.endSessionMutation()
+      }
     },
     async moveSessionToFolder(sessionId: string, folderId: string | null) {
       const workspaceVersion = this.workspaceVersion
@@ -422,16 +443,21 @@ export const useAgentsStore = defineStore('agents', {
       const summary = this.sessions.find(session => session.id === sessionId)
       const expectedSessionVersion = current?.version ?? summary?.version
       if (!expectedSessionVersion) throw new Error('The conversation changed. Refresh history and try again.')
-      const projected = await moveAgentSessionToFolder(fetchFromWindow, this.csrfToken, sessionId, { expectedSessionVersion, folderId })
-      if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.thread = markRaw(projected)
-      if (!this.isWorkspaceCurrent(workspaceVersion)) return projected
+      if (!this.beginSessionMutation()) return
       try {
-        await this.reloadSessions()
-      } catch (error) {
-        if (this.isWorkspaceCurrent(workspaceVersion))
-          this.error = `The conversation was moved, but history could not be refreshed. ${error instanceof Error ? error.message : ''}`.trim()
+        const projected = await moveAgentSessionToFolder(fetchFromWindow, this.csrfToken, sessionId, { expectedSessionVersion, folderId })
+        if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.thread = markRaw(projected)
+        if (!this.isWorkspaceCurrent(workspaceVersion)) return projected
+        try {
+          await this.reloadSessions()
+        } catch (error) {
+          if (this.isWorkspaceCurrent(workspaceVersion))
+            this.error = `The conversation was moved, but history could not be refreshed. ${error instanceof Error ? error.message : ''}`.trim()
+        }
+        return projected
+      } finally {
+        this.endSessionMutation()
       }
-      return projected
     },
     projectCommittedSessionMutation(workspaceVersion: number, sessionId: string, projected: AgentThreadState) {
       const projectedExecutionMode = projected.session.executionMode
@@ -471,16 +497,21 @@ export const useAgentsStore = defineStore('agents', {
       const summary = this.sessions.find(session => session.id === sessionId)
       const expectedSessionVersion = Math.max(current?.version ?? 0, summary?.version ?? 0)
       if (!expectedSessionVersion) throw new Error('The conversation changed. Refresh history and try again.')
-      const projected = await updateAgentSession(fetchFromWindow, this.csrfToken, sessionId, { expectedSessionVersion, title: trimmed })
-      this.projectCommittedSessionMutation(workspaceVersion, sessionId, projected)
-      if (!this.isWorkspaceCurrent(workspaceVersion)) return projected
+      if (!this.beginSessionMutation()) return
       try {
-        await this.reloadSessions()
-      } catch (error) {
-        if (this.isWorkspaceCurrent(workspaceVersion))
-          this.error = `The conversation was renamed, but history could not be refreshed. ${error instanceof Error ? error.message : ''}`.trim()
+        const projected = await updateAgentSession(fetchFromWindow, this.csrfToken, sessionId, { expectedSessionVersion, title: trimmed })
+        this.projectCommittedSessionMutation(workspaceVersion, sessionId, projected)
+        if (!this.isWorkspaceCurrent(workspaceVersion)) return projected
+        try {
+          await this.reloadSessions()
+        } catch (error) {
+          if (this.isWorkspaceCurrent(workspaceVersion))
+            this.error = `The conversation was renamed, but history could not be refreshed. ${error instanceof Error ? error.message : ''}`.trim()
+        }
+        return projected
+      } finally {
+        this.endSessionMutation()
       }
-      return projected
     },
     async setSessionRetention(sessionId: string, retention: 'temporary' | 'saved') {
       const workspaceVersion = this.workspaceVersion
@@ -488,16 +519,21 @@ export const useAgentsStore = defineStore('agents', {
       const summary = this.sessions.find(session => session.id === sessionId)
       const expectedSessionVersion = Math.max(current?.version ?? 0, summary?.version ?? 0)
       if (!expectedSessionVersion) throw new Error('The conversation changed. Refresh history and try again.')
-      const projected = await updateAgentSession(fetchFromWindow, this.csrfToken, sessionId, { expectedSessionVersion, retention })
-      this.projectCommittedSessionMutation(workspaceVersion, sessionId, projected)
-      if (!this.isWorkspaceCurrent(workspaceVersion)) return projected
+      if (!this.beginSessionMutation()) return
       try {
-        await this.reloadSessions()
-      } catch (error) {
-        if (this.isWorkspaceCurrent(workspaceVersion))
-          this.error = `The retention setting was updated, but history could not be refreshed. ${error instanceof Error ? error.message : ''}`.trim()
+        const projected = await updateAgentSession(fetchFromWindow, this.csrfToken, sessionId, { expectedSessionVersion, retention })
+        this.projectCommittedSessionMutation(workspaceVersion, sessionId, projected)
+        if (!this.isWorkspaceCurrent(workspaceVersion)) return projected
+        try {
+          await this.reloadSessions()
+        } catch (error) {
+          if (this.isWorkspaceCurrent(workspaceVersion))
+            this.error = `The retention setting was updated, but history could not be refreshed. ${error instanceof Error ? error.message : ''}`.trim()
+        }
+        return projected
+      } finally {
+        this.endSessionMutation()
       }
-      return projected
     },
     async refreshCommittedMutation(workspaceVersion: number, sessionId: string, message: string): Promise<boolean> {
       if (!this.isSessionContextCurrent(workspaceVersion, sessionId)) return false
@@ -525,36 +561,40 @@ export const useAgentsStore = defineStore('agents', {
         return false
       const workspaceVersion = this.workspaceVersion
       const sessionId = thread.session.id
+      if (!this.beginSessionMutation()) return false
       this.sending = true
       this.error = ''
       try {
-        const request = {
-          clientRequestId: crypto.randomUUID(),
-          expectedSessionVersion: thread.session.version,
-          profileResolutionToken: thread.session.profileResolutionToken,
-          ...(invokedSkillVersionIds.length > 0 ? { invokedSkillVersionIds } : {}),
-          ...(currentPage ? { currentPage } : {})
+        try {
+          const request = {
+            clientRequestId: crypto.randomUUID(),
+            expectedSessionVersion: thread.session.version,
+            profileResolutionToken: thread.session.profileResolutionToken,
+            ...(invokedSkillVersionIds.length > 0 ? { invokedSkillVersionIds } : {}),
+            ...(currentPage ? { currentPage } : {})
+          }
+          if (mode === 'goal') {
+            await createAgentGoal(fetchFromWindow, this.csrfToken, sessionId, {
+              ...request,
+              goalId: crypto.randomUUID(),
+              objective: trimmed
+            })
+          } else {
+            await submitAgentMessage(fetchFromWindow, this.csrfToken, sessionId, {
+              ...request,
+              content: trimmed
+            })
+          }
+        } catch (error) {
+          if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.error = error instanceof Error ? error.message : 'Message could not be sent.'
+          return false
         }
-        if (mode === 'goal') {
-          await createAgentGoal(fetchFromWindow, this.csrfToken, sessionId, {
-            ...request,
-            goalId: crypto.randomUUID(),
-            objective: trimmed
-          })
-        } else {
-          await submitAgentMessage(fetchFromWindow, this.csrfToken, sessionId, {
-            ...request,
-            content: trimmed
-          })
-        }
-      } catch (error) {
-        if (this.isSessionContextCurrent(workspaceVersion, sessionId)) this.error = error instanceof Error ? error.message : 'Message could not be sent.'
+        await this.refreshCommittedMutation(workspaceVersion, sessionId, 'The message was sent, but the conversation could not be refreshed.')
+        return true
+      } finally {
         if (this.isWorkspaceCurrent(workspaceVersion)) this.sending = false
-        return false
+        this.endSessionMutation()
       }
-      await this.refreshCommittedMutation(workspaceVersion, sessionId, 'The message was sent, but the conversation could not be refreshed.')
-      if (this.isWorkspaceCurrent(workspaceVersion)) this.sending = false
-      return true
     },
     async stop() {
       const goal = this.thread?.goal
@@ -660,6 +700,7 @@ export const useAgentsStore = defineStore('agents', {
       if (!thread || thread.session.currentRun?.canCancel || (thread.goal && ['active', 'paused', 'blocked'].includes(thread.goal.status))) return
       const workspaceVersion = this.workspaceVersion
       const sessionId = thread.session.id
+      if (!this.beginSessionMutation()) return
       try {
         const projected = await updateAgentProfile(fetchFromWindow, this.csrfToken, sessionId, {
           expectedSessionVersion: thread.session.version,
@@ -672,6 +713,8 @@ export const useAgentsStore = defineStore('agents', {
         await Promise.allSettled([this.refreshThread(), this.reloadProfiles()])
         if (this.isSessionContextCurrent(workspaceVersion, sessionId))
           this.error = error instanceof Error ? error.message : 'Provider selection changed concurrently.'
+      } finally {
+        this.endSessionMutation()
       }
     },
     async setSkillPreferences(skillIds: readonly string[]) {
@@ -717,63 +760,73 @@ export const useAgentsStore = defineStore('agents', {
       }
     },
     async removeSession(sessionId: string): Promise<boolean> {
-      const workspaceVersion = this.workspaceVersion
-      const version = this.beginSessionTransition()
+      if (!this.beginSessionMutation()) return false
       try {
-        await deleteAgentSession(fetchFromWindow, this.csrfToken, sessionId)
-      } catch (error) {
+        const workspaceVersion = this.workspaceVersion
+        const version = this.beginSessionTransition()
         try {
-          if (this.isWorkspaceCurrent(workspaceVersion)) await this.reloadSessions()
-        } catch {}
-        if (!this.isWorkspaceCurrent(workspaceVersion) || !this.isSessionTransitionCurrent(version)) return false
-        throw error
-      }
-      if (!this.isWorkspaceCurrent(workspaceVersion)) return true
-      const removedDisplayedSession = this.thread?.session.id === sessionId
-      if (this.isSessionTransitionCurrent(version) && removedDisplayedSession) {
-        this.closeStream()
-        this.invalidateRefresh()
-        this.thread = null
-        this.launchPage = null
-        try {
-          await this.newSession('saved')
+          await deleteAgentSession(fetchFromWindow, this.csrfToken, sessionId)
         } catch (error) {
-          if (this.isWorkspaceCurrent(workspaceVersion))
-            this.error = `The conversation was deleted, but a new conversation could not be created. ${error instanceof Error ? error.message : ''}`.trim()
+          try {
+            if (this.isWorkspaceCurrent(workspaceVersion)) await this.reloadSessions()
+          } catch {}
+          if (!this.isWorkspaceCurrent(workspaceVersion) || !this.isSessionTransitionCurrent(version)) return false
+          throw error
+        }
+        if (!this.isWorkspaceCurrent(workspaceVersion)) return true
+        const removedDisplayedSession = this.thread?.session.id === sessionId
+        if (this.isSessionTransitionCurrent(version) && removedDisplayedSession) {
+          this.closeStream()
+          this.invalidateRefresh()
+          this.thread = null
+          this.launchPage = null
+          try {
+            await this.newSession('saved', sessionMutationAlreadyAcquired)
+          } catch (error) {
+            if (this.isWorkspaceCurrent(workspaceVersion))
+              this.error = `The conversation was deleted, but a new conversation could not be created. ${error instanceof Error ? error.message : ''}`.trim()
+          }
+          return true
+        }
+        try {
+          await this.reloadSessions()
+        } catch (error) {
+          if (this.isWorkspaceCurrent(workspaceVersion) && this.isSessionTransitionCurrent(version))
+            this.error = `The conversation was deleted, but history could not be refreshed. ${error instanceof Error ? error.message : ''}`.trim()
         }
         return true
+      } finally {
+        this.endSessionMutation()
       }
-      try {
-        await this.reloadSessions()
-      } catch (error) {
-        if (this.isWorkspaceCurrent(workspaceVersion) && this.isSessionTransitionCurrent(version))
-          this.error = `The conversation was deleted, but history could not be refreshed. ${error instanceof Error ? error.message : ''}`.trim()
-      }
-      return true
     },
     async resetHistory() {
-      const workspaceVersion = this.workspaceVersion
-      const sessionId = this.thread?.session.id
-      this.closeStream()
-      this.cancelSessionTransition()
+      if (!this.beginSessionMutation()) return
       try {
-        await resetAgentHistory(fetchFromWindow, this.csrfToken)
-      } catch (error) {
-        if (sessionId && this.isSessionContextCurrent(workspaceVersion, sessionId)) this.connectCurrentRun()
-        throw error
+        const workspaceVersion = this.workspaceVersion
+        const sessionId = this.thread?.session.id
+        this.closeStream()
+        this.cancelSessionTransition()
+        try {
+          await resetAgentHistory(fetchFromWindow, this.csrfToken)
+        } catch (error) {
+          if (sessionId && this.isSessionContextCurrent(workspaceVersion, sessionId)) this.connectCurrentRun()
+          throw error
+        }
+        if (!this.isWorkspaceCurrent(workspaceVersion)) return
+        this.invalidateRefresh()
+        this.thread = null
+        this.sessions = []
+        this.sessionsNextCursor = null
+        this.sessionsLoadMoreController?.abort()
+        this.sessionsLoadMoreController = null
+        this.sessionsReloading = false
+        this.sessionsLoadingMore = false
+        this.sessionsLoadMoreError = ''
+        this.error = ''
+        if (this.profiles.length > 0) await this.newSession('saved', sessionMutationAlreadyAcquired)
+      } finally {
+        this.endSessionMutation()
       }
-      if (!this.isWorkspaceCurrent(workspaceVersion)) return
-      this.invalidateRefresh()
-      this.thread = null
-      this.sessions = []
-      this.sessionsNextCursor = null
-      this.sessionsLoadMoreController?.abort()
-      this.sessionsLoadMoreController = null
-      this.sessionsReloading = false
-      this.sessionsLoadingMore = false
-      this.sessionsLoadMoreError = ''
-      this.error = ''
-      if (this.profiles.length > 0) await this.newSession('saved')
     },
     connectCurrentRun() {
       const run = this.thread?.session.currentRun

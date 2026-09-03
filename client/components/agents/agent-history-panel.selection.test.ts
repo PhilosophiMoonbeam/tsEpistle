@@ -15,6 +15,8 @@ interface PanelAgents {
   cancelSessionTransition: () => void
   moveSessionToFolder?: (sessionId: string, folderId: string | null) => Promise<unknown>
   renameSession?: (sessionId: string, title: string) => Promise<unknown>
+  removeSession?: (sessionId: string) => Promise<boolean>
+  deleteFolder?: (folderId: string) => Promise<unknown>
 }
 
 type PanelEmit = (event: 'close' | 'reset') => void
@@ -22,20 +24,28 @@ type PanelEmit = (event: 'close' | 'reset') => void
 interface PanelHarness {
   activeDropTarget: Ref<string | null>
   beginRenameSession: (session: AgentSessionSummary, restoreTarget: HTMLElement | null) => void
+  beginDeleteSession: (session: AgentSessionSummary, restoreTarget: HTMLElement | null) => void
+  beginRemoveFolder: (folder: AgentConversationFolderView) => void
   beginSessionDrag: (event: DragEvent, session: AgentSessionSummary) => void
   canDropTo: (folderId: string | null) => boolean
   closeHistory: () => void
   dragStatus: Ref<string>
   draggedSessionId: Ref<string | null>
   dropSession: (event: DragEvent, folderId: string | null) => Promise<void>
+  deleteFolder: () => Promise<void>
+  deleteSession: () => Promise<void>
+  deletingSession: Ref<AgentSessionSummary | null>
   emit: PanelEmit
   finishSessionDrag: () => void
   localError: Ref<string>
   moveSession: (session: AgentSessionSummary, folderId: string | null) => Promise<boolean>
+  sessionMutationBusy: Ref<boolean>
   saveSessionTitle: () => Promise<void>
   searchQuery: Ref<string | null>
   sessionEditorOpen: Ref<boolean>
   sessionRenameTitle: Ref<string>
+  removingFolder: Ref<AgentConversationFolderView | null>
+  requestReset: () => void
   openSession: (sessionId: string) => Promise<void>
   setDropTarget: (event: DragEvent, folderId: string | null) => void
   unmount: () => void
@@ -135,6 +145,8 @@ const loadPanel = (
     'HTMLElement',
     `${executableScript}\nreturn {
       activeDropTarget,
+      beginDeleteSession,
+      beginRemoveFolder,
       beginSessionDrag,
       canDropTo,
       closeHistory,
@@ -143,13 +155,19 @@ const loadPanel = (
       draggedSessionId,
       dropSession,
       finishSessionDrag,
+      deleteFolder,
+      deleteSession,
+      deletingSession,
       localError,
       moveSession,
       openSession,
+      sessionMutationBusy,
       saveSessionTitle,
       searchQuery,
       sessionEditorOpen,
       sessionRenameTitle,
+      removingFolder,
+      requestReset,
       setDropTarget
     }`
   ) as (...dependencies: unknown[]) => Omit<PanelHarness, 'emit' | 'unmount'>
@@ -173,6 +191,7 @@ const loadPanel = (
     () => ({
       folders: ref(folderFixtures),
       loading: ref(false),
+      sessionMutationBusy: ref(false),
       sessions: ref(sessionFixtures),
       sessionsLoadMoreError: ref(''),
       sessionsLoadingMore: ref(false),
@@ -350,6 +369,45 @@ describe('Agent history session selection', () => {
     expect(agents.cancelSessionTransition).toHaveBeenCalledTimes(1)
   })
 
+  it('guards remove, reset, and folder deletion entry points and already-open confirmations with the shared mutation lock', async () => {
+    const session = makeSession()
+    const folder = makeFolder()
+    const removeSession = vi.fn().mockResolvedValue(true)
+    const deleteFolder = vi.fn().mockResolvedValue(undefined)
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionTransition: vi.fn(),
+      removeSession,
+      deleteFolder
+    }
+
+    const lockedEntryPanel = loadPanel(agents, true, [session], [folder])
+    lockedEntryPanel.sessionMutationBusy.value = true
+    lockedEntryPanel.beginDeleteSession(session, null)
+    lockedEntryPanel.beginRemoveFolder(folder)
+    lockedEntryPanel.requestReset()
+
+    expect(lockedEntryPanel.deletingSession.value).toBeNull()
+    expect(lockedEntryPanel.removingFolder.value).toBeNull()
+    expect(lockedEntryPanel.emit).not.toHaveBeenCalled()
+
+    const openSessionConfirmation = loadPanel(agents, true, [session], [folder])
+    openSessionConfirmation.beginDeleteSession(session, null)
+    expect(openSessionConfirmation.deletingSession.value).toBe(session)
+    openSessionConfirmation.sessionMutationBusy.value = true
+    await openSessionConfirmation.deleteSession()
+
+    const openFolderConfirmation = loadPanel(agents, true, [session], [folder])
+    openFolderConfirmation.beginRemoveFolder(folder)
+    expect(openFolderConfirmation.removingFolder.value).toBe(folder)
+    openFolderConfirmation.sessionMutationBusy.value = true
+    await openFolderConfirmation.deleteFolder()
+
+    expect(removeSession).not.toHaveBeenCalled()
+    expect(deleteFolder).not.toHaveBeenCalled()
+  })
+
   it('restores focus to the conversation action trigger when rename is cancelled', async () => {
     const trigger = new HarnessElement()
     const searchRoot = new HarnessElement(false)
@@ -519,5 +577,44 @@ describe('Agent history session selection', () => {
     expect(panel.draggedSessionId.value).toBeNull()
     expect(panel.activeDropTarget.value).toBeNull()
     expect(panel.dragStatus.value).toBe('Conversation move cancelled.')
+  })
+
+  it('blocks rename and folder-move controls while the shared session mutation lock is held', async () => {
+    const session = makeSession()
+    const folder = makeFolder()
+    const renameSession = vi.fn().mockResolvedValue({})
+    const moveSessionToFolder = vi.fn().mockResolvedValue({})
+    const agents: PanelAgents = {
+      error: '',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionTransition: vi.fn(),
+      renameSession,
+      moveSessionToFolder
+    }
+    const panel = loadPanel(agents, true, [session], [folder])
+    panel.sessionMutationBusy.value = true
+    panel.beginRenameSession(session, null)
+    expect(panel.sessionEditorOpen.value).toBe(false)
+
+    panel.sessionMutationBusy.value = false
+    panel.beginRenameSession(session, null)
+    panel.sessionRenameTitle.value = 'Renamed after retention'
+    panel.sessionMutationBusy.value = true
+    const drag = makeDragEvent()
+
+    panel.beginSessionDrag(drag.event, session)
+    await Promise.all([panel.saveSessionTitle(), panel.moveSession(session, folder.id)])
+
+    expect(drag.preventDefault).toHaveBeenCalledTimes(1)
+    expect(panel.draggedSessionId.value).toBeNull()
+    expect(renameSession).not.toHaveBeenCalled()
+    expect(moveSessionToFolder).not.toHaveBeenCalled()
+
+    panel.sessionMutationBusy.value = false
+    await panel.saveSessionTitle()
+    await panel.moveSession(session, folder.id)
+
+    expect(renameSession).toHaveBeenCalledWith(session.id, 'Renamed after retention')
+    expect(moveSessionToFolder).toHaveBeenCalledWith(session.id, folder.id)
   })
 })

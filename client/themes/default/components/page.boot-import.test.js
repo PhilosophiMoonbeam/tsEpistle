@@ -172,9 +172,18 @@ describe('default page focused contracts', () => {
     expect(script).not.toMatch(/window\.boot\.notify\s*\(/)
   })
 
+  test('labels page content with a page-scoped shell title outside authored heading slugs', () => {
+    expect(template).toMatch(/h1\.page-title\(ref='pageTitle', :id='pageTitleId'\) \{\{title\}\}/)
+    expect(template).toMatch(/article\.contents\(ref='container', :aria-labelledby='pageTitleId'\)/)
+    expect(script).toMatch(/pageTitleId \(\): string \{\s+return `wiki-page-shell-\$\{this\.pageId\}-title`\s+\}/)
+    expect(script).not.toMatch(/wiki:page:\$\{this\.pageId\}:shell-title/)
+    expect(script).not.toMatch(/pageTitleId \(\): string \{\s+return ['"`]page-title['"`]\s+\}/)
+    expect(template).not.toMatch(/h1\.page-title#page-title|aria-labelledby='page-title'/)
+  })
+
   test('renders a plain reading surface without gutter code', () => {
     expect(template).toMatch(
-      /article\.contents\(ref='container', aria-labelledby='page-title'\)\s+template\(v-if='\$slots\.contents'\)\s+slot\(name='contents'\)\s+async-state\(/
+      /article\.contents\(ref='container', :aria-labelledby='pageTitleId'\)\s+template\(v-if='\$slots\.contents'\)\s+slot\(name='contents'\)\s+async-state\(/
     )
     expect(template).not.toMatch(/page-gutter-(?:ornament|column)|wiki-gutter-art/)
     expect(script).not.toMatch(

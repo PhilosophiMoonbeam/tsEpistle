@@ -37,7 +37,7 @@
                   variant="tonal"
                   :prepend-icon="session.retention === 'temporary' ? 'mdi-history' : 'mdi-clock-outline'"
                   :loading="updatingRetention"
-                  :disabled="disabled || updatingRetention"
+                  :disabled="disabled || updatingRetention || agents.sessionMutationBusy"
                   @click="toggleRetention"
                 >
                   {{ session.retention === 'temporary' ? 'Keep in Recent' : 'Make temporary' }}
@@ -78,7 +78,7 @@
               :hint="profileBehavior"
               persistent-hint
               variant="outlined"
-              :disabled="disabled || applying"
+              :disabled="disabled || applying || agents.sessionMutationBusy"
             />
 
             <div class="agent-session-settings__route" :class="{ 'agent-session-settings__route--pending': profileChanged }">
@@ -122,8 +122,8 @@
               <p v-else class="agent-session-settings__status">
                 The current route is ready for the next Agent run.
               </p>
-              <v-btn v-if="profileChanged" variant="text" :disabled="disabled || applying" @click="resetProfileSelection">Revert</v-btn>
-              <v-btn color="primary" variant="flat" :loading="applying" :disabled="disabled || applying || !profileChanged" @click="applyProfile">
+              <v-btn v-if="profileChanged" variant="text" :disabled="disabled || applying || agents.sessionMutationBusy" @click="resetProfileSelection">Revert</v-btn>
+              <v-btn color="primary" variant="flat" :loading="applying" :disabled="disabled || applying || agents.sessionMutationBusy || !profileChanged" @click="applyProfile">
                 {{ profileError ? 'Retry apply' : 'Apply to session' }}
               </v-btn>
             </div>
@@ -160,7 +160,7 @@ let applyGeneration = 0
 let retentionGeneration = 0
 
 const toggleRetention = async (): Promise<void> => {
-  if (props.disabled || updatingRetention.value || props.session.folderId) return
+  if (props.disabled || updatingRetention.value || agents.sessionMutationBusy || props.session.folderId) return
   const sessionId = props.session.id
   const generation = ++retentionGeneration
   const nextRetention = props.session.retention === 'temporary' ? 'saved' : 'temporary'
@@ -254,12 +254,12 @@ const retentionSummary = computed(() => {
 })
 
 const resetProfileSelection = (): void => {
-  if (applying.value) return
+  if (applying.value || agents.sessionMutationBusy) return
   profileId.value = props.session.providerProfileId
   profileError.value = ''
 }
 const applyProfile = async (): Promise<void> => {
-  if (props.disabled || applying.value || !profileChanged.value) return
+  if (props.disabled || applying.value || agents.sessionMutationBusy || !profileChanged.value) return
   const sessionId = props.session.id
   const selectedProfileId = profileId.value
   const generation = ++applyGeneration

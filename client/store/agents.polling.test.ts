@@ -737,6 +737,166 @@ describe('Agent session mutations', () => {
     expect(store.sessions).toEqual([summaryForThread(retained)])
     expect(store.error).toBe('The retention setting was updated, but history could not be refreshed. History offline')
   })
+  it('serializes versioned mutations behind retention and releases the lock after success and failure', async () => {
+    for (const outcome of ['success', 'failure'] as const) {
+      setActivePinia(createPinia())
+      const store = useAgentsStore()
+      store.csrfToken = 'csrf-token'
+      const base = activeThread()
+      const current: AgentThreadState = {
+        ...base,
+        session: { ...base.session, currentRun: null }
+      }
+      const retained: AgentThreadState = {
+        ...current,
+        session: {
+          ...current.session,
+          retention: 'temporary',
+          version: 2,
+          updatedAt: '2026-08-23T00:01:00.000Z',
+          expiresAt: '2026-08-24T00:01:00.000Z'
+        }
+      }
+      const retentionResponse = deferred<Response>()
+      const requestBodies: unknown[] = []
+      let latest = current
+      store.thread = current
+      store.sessions = [summaryForThread(current)]
+      const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+        const path = String(input)
+        const method = init?.method ?? 'GET'
+        if (path === `/_api/agents/sessions/${current.session.id}` && method === 'PATCH') {
+          const body = JSON.parse(String(init?.body))
+          requestBodies.push(body)
+          if ('retention' in body) return retentionResponse.promise
+          latest = {
+            ...latest,
+            session: {
+              ...latest.session,
+              title: body.title,
+              version: latest.session.version + 1,
+              updatedAt: '2026-08-23T00:02:00.000Z'
+            }
+          }
+          return Promise.resolve(Response.json(latest))
+        }
+        if (path === '/_api/agents/sessions' && method === 'GET') {
+          return Promise.resolve(Response.json({ sessions: [summaryForThread(latest)], nextCursor: null }))
+        }
+        return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+      })
+
+      const retention = store.setSessionRetention(current.session.id, 'temporary')
+      expect(store.sessionMutationBusy).toBe(true)
+      const blocked = await Promise.all([
+        store.setProfile(null),
+        store.send('Must wait for retention'),
+        store.moveSessionToFolder(current.session.id, '00000000-0000-4000-8000-000000000090'),
+        store.renameSession(current.session.id, 'Must also wait')
+      ])
+
+      expect(blocked).toEqual([undefined, false, undefined, undefined])
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      expect(requestBodies).toEqual([{ expectedSessionVersion: 1, retention: 'temporary' }])
+
+      if (outcome === 'success') {
+        latest = retained
+        retentionResponse.resolve(Response.json(retained))
+        await expect(retention).resolves.toEqual(retained)
+      } else {
+        retentionResponse.reject(new TypeError('Retention offline'))
+        await expect(retention).rejects.toThrow('Retention offline')
+      }
+
+      expect(store.sessionMutationBusy).toBe(false)
+      const unlockedRename = store.renameSession(current.session.id, 'Unlocked title')
+      expect(store.sessionMutationBusy).toBe(true)
+      await expect(unlockedRename).resolves.toEqual(latest)
+      expect(requestBodies.at(-1)).toEqual({
+        expectedSessionVersion: outcome === 'success' ? 2 : 1,
+        title: 'Unlocked title'
+      })
+      expect(store.sessionMutationBusy).toBe(false)
+      fetcher.mockRestore()
+    }
+  })
+
+  it('serializes session creation, removal, history reset, and folder deletion and always releases the shared lock', async () => {
+    const actionNames = ['newSession', 'removeSession', 'resetHistory', 'deleteFolder'] as const
+    const removedSessionId = '00000000-0000-4000-8000-000000000091'
+    const folderId = '00000000-0000-4000-8000-000000000092'
+    const createdBase = threadForSession('00000000-0000-4000-8000-000000000093', '00000000-0000-4000-8000-000000000094')
+    const created: AgentThreadState = {
+      ...createdBase,
+      session: { ...createdBase.session, currentRun: null }
+    }
+
+    for (const actionName of actionNames) {
+      for (const outcome of ['success', 'failure'] as const) {
+        setActivePinia(createPinia())
+        const store = useAgentsStore()
+        const current = activeThread()
+        store.csrfToken = 'csrf-token'
+        store.routeSync = false
+        store.thread = current
+        store.sessions = [summaryForThread(current)]
+        store.folders = [folderForTest(folderId, 'Folder')]
+        store.connectCurrentRun = vi.fn()
+
+        const request = deferred<Response>()
+        const expectedPath =
+          actionName === 'newSession' || actionName === 'resetHistory'
+            ? '/_api/agents/sessions'
+            : actionName === 'removeSession'
+              ? `/_api/agents/sessions/${removedSessionId}`
+              : `/_api/agents/conversation-folders/${folderId}`
+        const expectedMethod = actionName === 'newSession' ? 'POST' : 'DELETE'
+        let requestIssued = false
+        const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+          const path = String(input)
+          const method = init?.method ?? 'GET'
+          if (!requestIssued && path === expectedPath && method === expectedMethod) {
+            requestIssued = true
+            return request.promise
+          }
+          if (path === '/_api/agents/sessions' && method === 'GET')
+            return Promise.resolve(Response.json({ sessions: [summaryForThread(current)], nextCursor: null }))
+          return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+        })
+
+        let mutation: Promise<boolean | void>
+        if (actionName === 'newSession') mutation = store.newSession('saved')
+        else if (actionName === 'removeSession') mutation = store.removeSession(removedSessionId)
+        else if (actionName === 'resetHistory') mutation = store.resetHistory()
+        else mutation = store.deleteFolder(folderId)
+
+        expect(store.sessionMutationBusy).toBe(true)
+        expect(requestIssued).toBe(true)
+        const transitionVersion = store.sessionTransitionVersion
+        await expect(store.newSession('temporary')).resolves.toBeUndefined()
+        expect(store.sessionTransitionVersion).toBe(transitionVersion)
+        expect(fetcher).toHaveBeenCalledTimes(1)
+
+        if (outcome === 'success') {
+          if (actionName === 'newSession') request.resolve(Response.json(created, { status: 201 }))
+          else if (actionName === 'deleteFolder') request.resolve(Response.json({ deleted: true, movedSessions: 0 }))
+          else request.resolve(new Response(null, { status: 204 }))
+          if (actionName === 'removeSession') await expect(mutation).resolves.toBe(true)
+          else await expect(mutation).resolves.toBeUndefined()
+        } else {
+          request.reject(new TypeError(`${actionName} offline`))
+          await expect(mutation).rejects.toThrow(`${actionName} offline`)
+        }
+
+        expect(store.sessionMutationBusy).toBe(false)
+        expect(store.beginSessionMutation()).toBe(true)
+        expect(store.sessionMutationBusy).toBe(true)
+        store.endSessionMutation()
+        expect(store.sessionMutationBusy).toBe(false)
+        fetcher.mockRestore()
+      }
+    }
+  })
 })
 
 describe('Agent folder refresh ordering', () => {

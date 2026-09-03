@@ -266,6 +266,24 @@ const plugin = {
     }
 
     // --------------------------------
+    // Reserve published-page shell IDs
+    // --------------------------------
+
+    $('[id]').each((i, elm) => {
+      const id = $(elm).attr('id')
+      if (id?.startsWith('wiki-page-shell-')) {
+        $(elm).attr('id', `content-${id}`)
+      }
+    })
+
+    $('[href]').each((i, elm) => {
+      const href = $(elm).attr('href')
+      if (href?.startsWith('#wiki-page-shell-')) {
+        $(elm).attr('href', `#content-${href.slice(1)}`)
+      }
+    })
+
+    // --------------------------------
     // Add header handles
     // --------------------------------
 
@@ -276,6 +294,11 @@ const plugin = {
       const customId = $(elm).attr('id')
       if (customId) {
         headerSlug = customId
+      }
+
+      // -> Keep authored headings out of the published-page shell namespace
+      if (headerSlug.startsWith('wiki-page-shell-')) {
+        headerSlug = `content-${headerSlug}`
       }
 
       // -> Cannot start with a number (CSS selector limitation)
@@ -299,7 +322,9 @@ const plugin = {
 
       // -> Add anchor
       $(elm).attr('id', headerSlug).addClass('toc-header')
-      $(elm).prepend(`<a class="toc-anchor" href="#${headerSlug}">&#xB6;</a> `)
+      const anchor = $('<a>').attr('class', 'toc-anchor').attr('href', `#${headerSlug}`).text('¶')
+      $(elm).prepend(' ')
+      $(elm).prepend(anchor)
 
       headers.push(headerSlug)
     })

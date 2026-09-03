@@ -10,7 +10,7 @@
           size="small"
           variant="text"
           :aria-label="`Conversation actions for ${session.title || 'New conversation'}`"
-          :disabled="busy"
+          :disabled="busy || disabled"
           :loading="busy"
         />
       </template>
@@ -23,7 +23,7 @@
         <v-list-item
           prepend-icon="mdi-pencil-outline"
           title="Rename"
-          :disabled="busy"
+          :disabled="busy || disabled"
           @click="requestRename"
         />
         <v-divider class="agent-history-session-actions__divider" />
@@ -33,7 +33,7 @@
               v-bind="moveMenuProps"
               prepend-icon="mdi-folder-move-outline"
               title="Move"
-              :disabled="busy"
+              :disabled="busy || disabled"
             >
               <template #append>
                 <v-icon icon="mdi-chevron-right" size="18" />
@@ -51,7 +51,7 @@
               prepend-icon="mdi-history"
               title="Recent"
               subtitle="Returns to the 90-day history window"
-              :disabled="busy"
+              :disabled="busy || disabled"
               @click="emit('move', null)"
             />
             <v-list-item
@@ -59,7 +59,7 @@
               :key="folder.id"
               prepend-icon="mdi-folder-outline"
               :title="folder.name"
-              :disabled="busy"
+              :disabled="busy || disabled"
               @click="emit('move', folder.id)"
             />
           </v-list>
@@ -69,7 +69,7 @@
           class="agent-history-session-actions__delete text-error"
           prepend-icon="mdi-delete-outline"
           title="Delete"
-          :disabled="busy"
+          :disabled="busy || disabled"
           @click="requestRemove"
         />
       </v-list>
@@ -86,6 +86,7 @@ const props = defineProps<{
   session: AgentSessionSummary
   folders: readonly AgentConversationFolderView[]
   busy?: boolean
+  disabled?: boolean
 }>()
 const emit = defineEmits<{
   move: [folderId: string | null]

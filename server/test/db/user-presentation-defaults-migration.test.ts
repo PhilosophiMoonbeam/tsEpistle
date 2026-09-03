@@ -33,7 +33,7 @@ describe('concrete user presentation defaults migration', () => {
     return db
   }
 
-  it('materializes the current administrator gutter and changes the font default', async () => {
+  it('preserves existing fonts while materializing the current administrator gutter and changing defaults', async () => {
     const db = await createDatabase()
     await db('settings').insert({ key: 'theming', value: JSON.stringify({ gutterStyle: 'laurel' }) })
     await db('users').insert({ id: 1, email: 'default@example.com', displayName: 'Default User' })
@@ -47,8 +47,8 @@ describe('concrete user presentation defaults migration', () => {
       },
       {
         id: 3,
-        email: 'concrete@example.com',
-        displayName: 'Concrete User',
+        email: 'newsreader@example.com',
+        displayName: 'Newsreader User',
         fontFamily: 'newsreader',
         readingGutter: 'none'
       }
@@ -61,7 +61,7 @@ describe('concrete user presentation defaults migration', () => {
         id: 1,
         email: 'default@example.com',
         displayName: 'Default User',
-        fontFamily: 'roboto-flex',
+        fontFamily: 'newsreader',
         readingGutter: 'laurel'
       },
       {
@@ -73,9 +73,9 @@ describe('concrete user presentation defaults migration', () => {
       },
       {
         id: 3,
-        email: 'concrete@example.com',
-        displayName: 'Concrete User',
-        fontFamily: 'roboto-flex',
+        email: 'newsreader@example.com',
+        displayName: 'Newsreader User',
+        fontFamily: 'newsreader',
         readingGutter: 'none'
       }
     ])
@@ -93,7 +93,12 @@ describe('concrete user presentation defaults migration', () => {
   it('accepts wrapped settings and restores only schema defaults on rollback', async () => {
     const db = await createDatabase()
     await db('settings').insert({ key: 'theming', value: JSON.stringify({ v: { gutterStyle: 'aurora' } }) })
-    await db('users').insert({ id: 1, email: 'existing@example.com', displayName: 'Existing User' })
+    await db('users').insert({
+      id: 1,
+      email: 'existing@example.com',
+      displayName: 'Existing User',
+      fontFamily: 'roboto-flex'
+    })
 
     await up(db)
     await down(db)
@@ -117,7 +122,7 @@ describe('concrete user presentation defaults migration', () => {
     await up(db)
 
     expect(await db<UserRow>('users').where({ id: 1 }).first()).toMatchObject({
-      fontFamily: 'roboto-flex',
+      fontFamily: 'newsreader',
       readingGutter: 'columns'
     })
   })

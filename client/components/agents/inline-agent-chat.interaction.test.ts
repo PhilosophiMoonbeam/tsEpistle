@@ -119,6 +119,16 @@ interface LockState {
   openGoal: ValueRef<{ status: string } | null>
   goalSubmitUnavailableReason: ValueRef<string>
   submitUnavailableReason: ValueRef<string>
+  sessionMutationBusy: ValueRef<boolean>
+  agentCalls: {
+    newSession: (...args: unknown[]) => unknown
+    resetHistory: (...args: unknown[]) => unknown
+  }
+  newSession: () => Promise<void>
+  openResetHistory: () => void
+  recoverResetHistory: () => Promise<void>
+  resetHistory: () => Promise<void>
+  resetHistoryOpen: ValueRef<boolean>
   thread: ValueRef<Record<string, unknown>>
 }
 
@@ -145,7 +155,7 @@ const evaluateComposer = new Function(
   `${executableComposerScript}\nreturn { ${composerBindingNames.join(', ')} }`
 ) as (...dependencies: unknown[]) => Record<string, unknown>
 
-const loadGoalLockState = (status: 'active' | 'paused'): LockState => {
+const loadGoalLockState = (status: 'active' | 'paused' | null, mutationBusy = false): LockState => {
   const ref = <T>(value: T): ValueRef<T> => ({ value })
   const thread = ref({
     session: {
@@ -158,7 +168,7 @@ const loadGoalLockState = (status: 'active' | 'paused'): LockState => {
     tools: [],
     artifacts: [],
     proposals: [],
-    goal: { id: 'goal-1', status }
+    goal: status ? { id: 'goal-1', status } : null
   })
   const storeRefs = {
     connection: ref('connected'),
@@ -168,6 +178,7 @@ const loadGoalLockState = (status: 'active' | 'paused'): LockState => {
     loading: ref(false),
     profiles: ref([{ id: 'profile-1' }]),
     sending: ref(false),
+    sessionMutationBusy: ref(mutationBusy),
     sessions: ref([]),
     skills: ref([]),
     skillsLoadError: ref(''),
@@ -185,6 +196,10 @@ const loadGoalLockState = (status: 'active' | 'paused'): LockState => {
     pagePath: '',
     pageUpdatedAt: ''
   }
+  const agentCalls = {
+    newSession: vi.fn(),
+    resetHistory: vi.fn()
+  }
   const evaluate = new Function(
     'computed',
     'nextTick',
@@ -201,10 +216,10 @@ const loadGoalLockState = (status: 'active' | 'paused'): LockState => {
     'isAgentApprovalOutsideViewport',
     'shouldFollowGoalExpansion',
     'defineExpose',
-    `${executableScript}\nreturn { activeRun, canSubmit, goalSubmitUnavailableReason, openGoal, submitUnavailableReason, thread }`
+    `${executableScript}\nreturn { activeRun, canSubmit, goalSubmitUnavailableReason, newSession, openGoal, openResetHistory, recoverResetHistory, resetHistory, resetHistoryOpen, sessionMutationBusy, submitUnavailableReason, thread }`
   ) as (...dependencies: unknown[]) => LockState
 
-  return evaluate(
+  const state = evaluate(
     (getter: () => unknown) => ({
       get value() {
         return getter()
@@ -218,13 +233,14 @@ const loadGoalLockState = (status: 'active' | 'paused'): LockState => {
     () => undefined,
     () => storeRefs,
     () => props,
-    () => vi.fn(),
+    () => agentCalls,
     () => ({}),
     () => ({ deactivate: () => undefined }),
     () => false,
     () => false,
     () => undefined
-  )
+  ) as LockState
+  return { ...state, agentCalls }
 }
 
 interface MountedInlineAgent {
@@ -260,6 +276,7 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     pageUpdatedAt: '',
     loading: false,
     sending: false,
+    sessionMutationBusy: lockState?.sessionMutationBusy.value ?? false,
     error: '',
     connection: 'connected',
     decidingApprovalId: null,
@@ -502,5 +519,47 @@ describe('Inline Agent goal submission lock', () => {
     expect(textarea?.disabled).toBe(true)
     expect(textarea?.getAttribute('aria-label')).toBe('Follow up with Wiki Agent')
     expect(textarea?.getAttribute('aria-describedby')).toBe('agent-composer-lock-reason agent-composer-status agent-composer-keyboard-hint')
+  })
+
+  it('renders the shared mutation reason and disables the composer until the store lock clears', () => {
+    const lockState = loadGoalLockState(null, true)
+    expect(lockState.canSubmit.value).toBe(false)
+    expect(lockState.submitUnavailableReason.value).toBe('Wait for the current conversation update to finish')
+
+    const locked = mountInlineAgent(lockState)
+    const lockedReason = locked.root.querySelector<HTMLElement>('#agent-composer-lock-reason')
+    const lockedTextarea = locked.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+    expect(lockedReason?.textContent?.trim()).toBe('Wait for the current conversation update to finish')
+    expect(lockedTextarea?.disabled).toBe(true)
+    expect(lockedTextarea?.getAttribute('aria-describedby')).toContain('agent-composer-lock-reason')
+    locked.unmount()
+    mountedApps.pop()
+
+    lockState.sessionMutationBusy.value = false
+    expect(lockState.canSubmit.value).toBe(true)
+    expect(lockState.submitUnavailableReason.value).toBe('')
+    const unlocked = mountInlineAgent(lockState)
+    const unlockedTextarea = unlocked.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+    expect(unlocked.root.querySelector('#agent-composer-lock-reason')).toBeNull()
+    expect(unlockedTextarea?.disabled).toBe(false)
+  })
+
+  it('blocks new and reset conversation actions while another session mutation owns the lock', async () => {
+    const lockState = loadGoalLockState(null, true)
+    const mounted = mountInlineAgent(lockState)
+    const newConversation = mounted.root.querySelector<HTMLButtonElement>('[aria-label="Start a new agent conversation"]')
+
+    expect(newConversation?.disabled).toBe(true)
+
+    lockState.openResetHistory()
+    await lockState.newSession()
+    await lockState.resetHistory()
+    await lockState.recoverResetHistory()
+
+    expect(lockState.resetHistoryOpen.value).toBe(false)
+    expect(lockState.agentCalls.newSession).not.toHaveBeenCalled()
+    expect(lockState.agentCalls.resetHistory).not.toHaveBeenCalled()
+    expect(componentSource).toContain(':persistent="resetting || sessionMutationBusy"')
+    expect(componentSource.match(/:disabled="resetting \|\| sessionMutationBusy"/g)).toHaveLength(3)
   })
 })

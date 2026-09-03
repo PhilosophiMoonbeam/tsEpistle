@@ -33,9 +33,18 @@ interface Ref<T> {
 }
 
 interface SettingsHarness {
+  readonly agents: {
+    sessionMutationBusy: boolean
+  }
   readonly props: SettingsProps
   readonly setSessionRetention: Mock<(sessionId: string, retention: 'temporary' | 'saved') => Promise<void>>
   readonly state: Record<string, unknown> & {
+    agents: {
+      sessionMutationBusy: boolean
+    }
+    applying: Ref<boolean>
+    applyProfile: () => Promise<void>
+    profileId: Ref<string | null>
     profileError: Ref<string>
     retentionError: Ref<string>
     updatingRetention: Ref<boolean>
@@ -91,6 +100,7 @@ const evaluateSettings = new Function(
   'defineProps',
   'useAgentsStore',
   `${executableScript}\nreturn {
+    agents,
     profileId,
     applying,
     updatingRetention,
@@ -162,16 +172,17 @@ const loadSettings = (options: { session?: AgentSessionView; profiles?: readonly
     disabled: false,
     applyProviderProfile: vi.fn(async () => ({ success: true as const }))
   })
-  const setSessionRetention = vi.fn(async () => undefined)
+  const agents = reactive({ sessionMutationBusy: false, setSessionRetention: vi.fn(async () => undefined) })
+  const setSessionRetention = agents.setSessionRetention
   const state = evaluateSettings(
     computed,
     () => undefined,
     ref,
     watch,
     () => props,
-    () => ({ setSessionRetention })
+    () => agents
   )
-  return { props, setSessionRetention, state }
+  return { agents, props, setSessionRetention, state }
 }
 
 const slotContainer = defineComponent({
@@ -219,11 +230,53 @@ const renderSettings = async (harness: SettingsHarness): Promise<string> => {
   app.component('v-btn', buttonStub)
   app.component('v-icon', defineComponent({ setup: () => () => h('span') }))
   app.component('v-progress-circular', defineComponent({ setup: () => () => h('span') }))
-  app.component('v-select', defineComponent({ setup: () => () => h('select') }))
+  app.component(
+    'v-select',
+    defineComponent({
+      inheritAttrs: false,
+      setup:
+        (_props, { attrs }) =>
+        () =>
+          h('select', attrs)
+    })
+  )
   return renderToString(app)
 }
 
 describe('Agent session retention settings interaction', () => {
+  it('disables retention and provider changes while another session mutation owns the store lock', async () => {
+    const harness = loadSettings({ profiles: [profile] })
+    harness.state.profileId.value = profile.id
+    harness.agents.sessionMutationBusy = true
+
+    await Promise.all([harness.state.toggleRetention(), harness.state.applyProfile()])
+
+    expect(harness.setSessionRetention).not.toHaveBeenCalled()
+    expect(harness.props.applyProviderProfile).not.toHaveBeenCalled()
+    const locked = load(await renderSettings(harness))
+    expect(locked('.agent-session-settings__retention-action').attr('disabled')).toBeDefined()
+    expect(locked('select').attr('disabled')).toBeDefined()
+    expect(
+      locked('button')
+        .filter((_index, button) => locked(button).text().includes('Apply to session'))
+        .attr('disabled')
+    ).toBeDefined()
+
+    harness.agents.sessionMutationBusy = false
+    const unlocked = load(await renderSettings(harness))
+    expect(unlocked('.agent-session-settings__retention-action').attr('disabled')).toBeUndefined()
+    expect(unlocked('select').attr('disabled')).toBeUndefined()
+    expect(
+      unlocked('button')
+        .filter((_index, button) => unlocked(button).text().includes('Apply to session'))
+        .attr('disabled')
+    ).toBeUndefined()
+
+    await Promise.all([harness.state.toggleRetention(), harness.state.applyProfile()])
+    expect(harness.setSessionRetention).toHaveBeenCalledTimes(1)
+    expect(harness.props.applyProviderProfile).toHaveBeenCalledTimes(1)
+  })
+
   it('announces retention failures beside their retry action without changing provider state', async () => {
     for (const profiles of [[], [profile]] as const) {
       const harness = loadSettings({ profiles })

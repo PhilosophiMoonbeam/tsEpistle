@@ -75,13 +75,16 @@ const loadActions = (session: AgentSessionSummary, folders: AgentConversationFol
   )
 }
 
-const loadDragHelpers = (visibleFolderIds: readonly string[], busySessionIds: readonly string[] = []): DragHarness => {
+const loadDragHelpers = (visibleFolderIds: readonly string[], busySessionIds: readonly string[] = [], mutationBusy = false): DragHarness => {
   const evaluate = new Function(
     'visibleFolderGroups',
     'sessionBusy',
+    'sessionMutationBusy',
     `${executableDragHelpersScript}\nreturn { hasRenderedDropDestination, canDragSession }`
   ) as (...dependencies: unknown[]) => DragHarness
-  return evaluate({ value: visibleFolderIds.map(id => ({ folder: { id } })) }, (sessionId: string) => busySessionIds.includes(sessionId))
+  return evaluate({ value: visibleFolderIds.map(id => ({ folder: { id } })) }, (sessionId: string) => busySessionIds.includes(sessionId), {
+    value: mutationBusy
+  })
 }
 
 describe('Agent history folder actions', () => {
@@ -135,6 +138,7 @@ describe('Agent history folder actions', () => {
     expect(loadDragHelpers([]).canDragSession(recentSession)).toBe(false)
     expect(loadDragHelpers([folder.id]).canDragSession(recentSession)).toBe(true)
     expect(loadDragHelpers([folder.id], [recentSession.id]).canDragSession(recentSession)).toBe(false)
+    expect(loadDragHelpers([folder.id], [], true).canDragSession(recentSession)).toBe(false)
     expect(loadDragHelpers([folder.id]).canDragSession(makeSession({ folderId: folder.id, retention: 'saved' }))).toBe(true)
   })
 
@@ -154,10 +158,22 @@ describe('Agent history folder actions', () => {
 
   it('keeps reset, retention, and folder-exemption copy truthful', () => {
     expect(panelTemplate).toContain('aria-label="Reset all conversation history"')
-    expect(panelTemplate).toContain('@click="emit(\'reset\')"')
+    expect(panelTemplate).toContain('@click="requestReset"')
     expect(panelTemplate).toContain('Unfiled conversations · retained for 90 days')
     expect(panelTemplate).toContain('Filed conversations do not expire')
     expect(panelTemplate).toContain('Chats in a folder are exempt from the 90-day history window.')
     expect(panelTemplate).toContain('each starts a fresh 90-day timer. No conversations are deleted.')
+  })
+
+  it('keeps destructive history controls disabled when the shared session mutation lock is occupied', () => {
+    expect(panelTemplate).toContain(':persistent="deleting || sessionMutationBusy"')
+    expect(panelTemplate).toContain(':disabled="deleting || sessionMutationBusy" @click="deleteSession"')
+    expect(panelTemplate).toContain(':disabled="loading || deleting || sessionMutationBusy" @click="deleteFolder"')
+    expect(panelTemplate).toContain(
+      'title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy"'
+    )
+    expect(panelScript).toContain('if (loading.value || sessionMutationBusy.value) return')
+    expect(panelScript).toContain('if (!session || deleting.value || savingFolder.value || sessionMutationBusy.value) return')
+    expect(panelScript).toContain('if (!folder || loading.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return')
   })
 })

@@ -124,7 +124,7 @@
             prepend-icon="mdi-plus"
             variant="tonal"
             aria-label="Start a new agent conversation"
-            :disabled="loading || sending"
+            :disabled="loading || sending || sessionMutationBusy"
             @click="newSession"
           ><span class="inline-agent__new-session-label">New</span></v-btn>
         </div>
@@ -277,14 +277,14 @@
               </div>
             </div>
             <p
-              v-if="openGoal"
+              v-if="openGoal || sessionMutationBusy"
               id="agent-composer-lock-reason"
               class="inline-agent__composer-lock"
               role="status"
               aria-live="polite"
             >
               <v-icon icon="mdi-lock-outline" size="16" aria-hidden="true" />
-              <span>{{ goalSubmitUnavailableReason }}</span>
+              <span>{{ openGoal ? goalSubmitUnavailableReason : submitUnavailableReason }}</span>
             </p>
             <AgentComposer
               ref="composer"
@@ -292,7 +292,7 @@
               :can-stop="Boolean(activeRun?.canCancel)"
               :disabled="!canSubmit"
               :has-messages="hasConversation"
-              :external-description-id="openGoal ? 'agent-composer-lock-reason' : undefined"
+              :external-description-id="openGoal || sessionMutationBusy ? 'agent-composer-lock-reason' : undefined"
               :skills-enabled="skillsEnabled"
               :goals-enabled="goalsEnabled"
               :skills="skills"
@@ -330,7 +330,7 @@
 
   <AgentPersonalSkills v-if="skillsEnabled" v-model="skillManagerOpen" :csrf-token="csrfToken" @changed="reloadSkillCatalog" />
 
-  <v-dialog v-model="resetHistoryOpen" max-width="30rem" aria-labelledby="reset-history-title" :persistent="resetting">
+  <v-dialog v-model="resetHistoryOpen" max-width="30rem" aria-labelledby="reset-history-title" :persistent="resetting || sessionMutationBusy">
     <v-card rounded="xl">
       <v-card-title class="d-flex align-center ga-3 pt-5 px-5">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" aria-hidden="true" /></v-avatar>
@@ -345,11 +345,11 @@
       </v-card-text>
       <v-card-actions class="px-5 pb-4">
         <v-spacer />
-        <v-btn variant="text" :disabled="resetting" @click="closeResetHistory">{{ resetCommitted ? 'Close' : 'Cancel' }}</v-btn>
-        <v-btn v-if="resetCommitted" color="primary" prepend-icon="mdi-refresh" :loading="resetting" :disabled="resetting" @click="recoverResetHistory">
+        <v-btn variant="text" :disabled="resetting || sessionMutationBusy" @click="closeResetHistory">{{ resetCommitted ? 'Close' : 'Cancel' }}</v-btn>
+        <v-btn v-if="resetCommitted" color="primary" prepend-icon="mdi-refresh" :loading="resetting" :disabled="resetting || sessionMutationBusy" @click="recoverResetHistory">
           Retry opening conversation
         </v-btn>
-        <v-btn v-else color="error" :loading="resetting" :disabled="resetting" @click="resetHistory">
+        <v-btn v-else color="error" :loading="resetting" :disabled="resetting || sessionMutationBusy" @click="resetHistory">
           {{ resetError ? 'Retry reset' : 'Reset history' }}
         </v-btn>
       </v-card-actions>
@@ -390,7 +390,7 @@ const emit = defineEmits<{
 }>()
 
 const agents = useAgentsStore()
-const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessions, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
+const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessionMutationBusy, sessions, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
 const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
 const transcript = useTemplateRef<HTMLElement>('transcript')
 const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void> }>('composer')
@@ -443,13 +443,13 @@ const providerAvailable = computed(() => props.providerEnabled && profiles.value
 const providerUnavailableMessage = computed(() => props.providerEnabled
   ? 'No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.'
   : 'Agent inference is currently disabled. An administrator can configure it in Administration → Agents.')
-const canSubmit = computed(() => providerAvailable.value && !loading.value && !sending.value && Boolean(thread.value) && !activeRun.value && !openGoal.value)
+const canSubmit = computed(() => providerAvailable.value && !loading.value && !sending.value && !sessionMutationBusy.value && Boolean(thread.value) && !activeRun.value && !openGoal.value)
 const goalSubmitUnavailableReason = computed(() => !openGoal.value
   ? ''
   : openGoal.value.status === 'paused'
     ? 'Resume or cancel the current goal before sending a message'
     : 'Finish or cancel the current goal before sending a message')
-const submitUnavailableReason = computed(() => !providerAvailable.value ? providerUnavailableMessage.value : loading.value ? 'Opening conversation' : sending.value ? 'Sending your message' : activeRun.value ? 'Wait for the current response to finish' : openGoal.value ? goalSubmitUnavailableReason.value : '')
+const submitUnavailableReason = computed(() => !providerAvailable.value ? providerUnavailableMessage.value : loading.value ? 'Opening conversation' : sending.value ? 'Sending your message' : sessionMutationBusy.value ? 'Wait for the current conversation update to finish' : activeRun.value ? 'Wait for the current response to finish' : openGoal.value ? goalSubmitUnavailableReason.value : '')
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
 const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const sessionTitle = computed(() => thread.value?.session.title || 'New conversation')
@@ -507,6 +507,7 @@ const sendPrompt = async (
   completion?: (success: boolean) => void
 ): Promise<boolean> => {
   const prompt = content.trim()
+  if (sessionMutationBusy.value) { completion?.(false); return false }
   if (!prompt) { completion?.(false); return false }
   try {
     await ensureInitialized()
@@ -540,6 +541,9 @@ const reloadSkillCatalog = async (): Promise<void> => {
 const applyProviderProfile = async (providerProfileId: string | null): Promise<
   { readonly success: true } | { readonly success: false; readonly error: string }
 > => {
+  if (sessionMutationBusy.value) {
+    return { success: false, error: 'Wait for the current conversation update to finish.' }
+  }
   const sessionId = thread.value?.session.id
   if (!sessionId) return { success: false, error: 'The conversation is no longer available. Open it again and retry.' }
   const sessionChanged = (): boolean => thread.value?.session.id !== sessionId
@@ -560,7 +564,12 @@ const applyProviderProfile = async (providerProfileId: string | null): Promise<
   }
 }
 const newSession = async (): Promise<void> => {
-  try { await ensureInitialized(); await agents.newSession('saved') } catch (value) {
+  if (sessionMutationBusy.value) return
+  try {
+    await ensureInitialized()
+    if (sessionMutationBusy.value) return
+    await agents.newSession('saved')
+  } catch (value) {
     agents.error = value instanceof Error ? value.message : 'A new conversation could not be created.'
   }
 }
@@ -666,17 +675,19 @@ const closePanels = (): void => {
   memoryOpen.value = false
 }
 const openResetHistory = (): void => {
+  if (sessionMutationBusy.value) return
   resetError.value = ''
   resetCommitted.value = false
   resetHistoryOpen.value = true
 }
 const closeResetHistory = (): void => {
-  if (resetting.value) return
+  if (resetting.value || sessionMutationBusy.value) return
   resetHistoryOpen.value = false
   resetError.value = ''
   resetCommitted.value = false
 }
 const resetHistory = async (): Promise<void> => {
+  if (resetting.value || sessionMutationBusy.value) return
   const originalSessionId = thread.value?.session.id ?? null
   const originalSessionCount = sessions.value.length
   resetting.value = true
@@ -698,7 +709,7 @@ const resetHistory = async (): Promise<void> => {
   }
 }
 const recoverResetHistory = async (): Promise<void> => {
-  if (resetting.value) return
+  if (resetting.value || sessionMutationBusy.value) return
   resetting.value = true
   try {
     await agents.reloadSessions()
@@ -706,6 +717,7 @@ const recoverResetHistory = async (): Promise<void> => {
       const opened = await agents.openSession(sessions.value[0].id)
       if (!opened) throw new Error('The clean conversation changed before it could be opened. Retry.')
     } else if (!thread.value && profiles.value.length > 0) {
+      if (sessionMutationBusy.value) return
       await agents.newSession('saved')
     }
     resetHistoryOpen.value = false
