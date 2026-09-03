@@ -1,12 +1,9 @@
 <template lang='pug'>
-  v-card-actions.v-card-chin(:class='current.dark ? "bg-grey-darken-4" : "bg-grey-lighten-4"')
+  v-card-actions.v-card-chin.bg-surface-variant
     slot
 </template>
 
 <script setup lang='ts'>
-import { useTheme } from 'vuetify'
-
-const { current } = useTheme()
 </script>
 
 <style scoped>

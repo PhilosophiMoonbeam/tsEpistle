@@ -24,8 +24,6 @@
               ref='expirationInput'
               v-model='expiration'
               :items='expirations'
-              item-title='title'
-              item-value='value'
               variant='outlined'
               prepend-icon='mdi-clock'
               :label='$t(`admin:api.newKeyExpiration`)'

@@ -45,8 +45,15 @@ export default {
     confirmAction: '' as AuthAction,
     confirmationDialog: false,
     resultDialog: false,
-    resultMessage: ''
+    resultMessage: '',
+    redirectTimer: null as number | null
   }),
+  beforeUnmount () {
+    if (this.redirectTimer !== null) {
+      window.clearTimeout(this.redirectTimer)
+      this.redirectTimer = null
+    }
+  },
   computed: {
     confirmationTitle (): string {
       return this.confirmAction === 'certificates'
@@ -77,7 +84,7 @@ export default {
         this.confirmationDialog = false
         this.resultMessage = 'Certificates regenerated. Redirecting to sign-in.'
         this.resultDialog = true
-        window.setTimeout(() => window.location.assign('/login'), 1500)
+        this.redirectTimer = window.setTimeout(() => window.location.assign('/login'), 1500)
       } catch (err) {
         wikiStore.showError(err)
         this.confirmationDialog = false

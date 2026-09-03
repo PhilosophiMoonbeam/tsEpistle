@@ -1,6 +1,6 @@
 <template lang="pug">
   v-card(flat)
-    .group-users-toolbar(:class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`')
+    .group-users-toolbar.bg-surface-variant
       v-text-field.group-users-search(
         variant="outlined"
         flat
@@ -74,10 +74,10 @@ export default {
   data() {
     return {
       headers: [
-        { title: 'ID', value: 'id', width: 70 },
-        { title: 'Name', value: 'name' },
-        { title: 'Email', value: 'email' },
-        { title: 'Actions', value: 'actions', sortable: false, width: 50 }
+        { title: 'ID', key: 'id', value: 'id', width: 70 },
+        { title: 'Name', key: 'name', value: 'name' },
+        { title: 'Email', key: 'email', value: 'email' },
+        { title: 'Actions', key: 'actions', value: 'actions', sortable: false, width: 50 }
       ],
       searchUserDialog: false,
       pagination: 1,

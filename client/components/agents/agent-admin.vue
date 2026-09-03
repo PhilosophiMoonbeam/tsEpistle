@@ -321,7 +321,7 @@
               <div class="form-grid">
                 <v-text-field v-model="profileDraft.displayName" :rules="profileDisplayNameRules" label="Display name" placeholder="Production Agent" maxlength="255" counter="255" required autofocus />
                 <div class="protocol-field">
-                  <v-select v-model="profileDraft.transportKind" :items="protocolOptions" item-title="title" item-value="value" label="API protocol" required @update:model-value="selectProtocol">
+                  <v-select v-model="profileDraft.transportKind" :items="protocolOptions" label="API protocol" required @update:model-value="selectProtocol">
                     <template #item="{ props: itemProps, internalItem }">
                       <v-list-subheader v-if="internalItem.raw.startsGroup">{{ internalItem.raw.group }}</v-list-subheader>
                       <v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="internalItem.raw.description" />
@@ -348,7 +348,7 @@
               </div>
               <div class="subsection-card">
                 <div class="subsection-card__heading"><div><h4>Tool calling</h4><p>How this model invokes governed Wiki actions.</p></div><v-icon size="20">mdi-tools</v-icon></div>
-                <v-select v-model="profileDraft.toolCalling" :items="toolCallingOptions" item-title="title" item-value="value" label="Tool calling" :disabled="profileDraft.transportKind === 'legacy-completions'" hint="Native uses the API contract. Prompt-emulated supports models without native tools and is verified before enablement." persistent-hint @update:model-value="selectToolCalling" />
+                <v-select v-model="profileDraft.toolCalling" :items="toolCallingOptions" label="Tool calling" :disabled="profileDraft.transportKind === 'legacy-completions'" hint="Native uses the API contract. Prompt-emulated supports models without native tools and is verified before enablement." persistent-hint @update:model-value="selectToolCalling" />
               </div>
             </section>
 

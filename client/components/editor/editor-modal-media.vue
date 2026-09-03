@@ -6,11 +6,11 @@
           v-card.radius-7.animated.fadeInLeft.wait-p1s
             v-card-text
               .d-flex
-                v-toolbar.radius-7(:color='$vuetify.theme.current.dark ? `teal` : `teal-lighten-5`', density="compact", flat, height='44')
+                v-toolbar.radius-7(color="surface-variant", density="compact", flat, height='44')
                   .text-body-medium#editor-media-title {{ $t('editor:assets.title') }}
                   v-spacer
                   v-btn.editor-media-icon-button(ref='refreshButton', variant="text", icon, aria-label='Refresh assets', @click='refresh')
-                    v-icon(:color='$vuetify.theme.current.dark ? `white` : `teal`') mdi-refresh
+                    v-icon mdi-refresh
                 v-dialog(
                   v-model='newFolderDialog'
                   max-width='550'
@@ -19,9 +19,9 @@
                   aria-labelledby='editor-media-new-folder-title'
                 )
                   template(v-slot:activator='{ props }')
-                    v-btn.ml-3.my-0.mr-0.radius-7(variant="outlined", size="large", color='teal', :icon='$vuetify.display.xsOnly', :class='{ "editor-media-icon-button": $vuetify.display.xsOnly }', aria-label='Create folder', v-bind='props')
+                    v-btn.ml-3.my-0.mr-0.radius-7(variant="tonal", size="large", color='primary', :icon='$vuetify.display.xs', :class='{ "editor-media-icon-button": $vuetify.display.xs }', aria-label='Create folder', v-bind='props')
                       v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
-                      span.hidden-sm-and-down(:class='$vuetify.theme.current.dark ? `text-teal-lighten-3` : ``') {{$t('editor:assets.newFolder')}}
+                      span.hidden-sm-and-down {{$t('editor:assets.newFolder')}}
                   v-card(:aria-busy='newFolderLoading')
                     .dialog-header.is-short.text-body-large#editor-media-new-folder-title {{$t('editor:assets.newFolder')}}
                     v-card-text.pt-5
@@ -42,7 +42,7 @@
                       v-spacer
                       v-btn(variant="text", :disabled='newFolderLoading', @click='newFolderDialog = false') {{$t('common:actions.cancel')}}
                       v-btn.px-3(color='primary', @click='createFolder', :disabled='newFolderLoading || !isFolderNameValid', :loading='newFolderLoading') {{$t('common:actions.create')}}
-              v-toolbar(flat, density="compact", :color='$vuetify.theme.current.dark ? `grey-darken-3` : `white`')
+              v-toolbar(flat, density="compact", color="surface")
                 template(v-if='folderTree.length > 0')
                   .text-body-medium
                     span.mr-1 /
@@ -51,9 +51,9 @@
                       span.mx-1 /
                 .text-body-medium(v-else) / #[em root]
               template(v-if='folders.length > 0 || currentFolderId > 0')
-                v-btn.is-icon.mx-1(:color='$vuetify.theme.current.dark ? `grey-lighten-1` : `grey-darken-2`', variant="outlined", aria-label='Open parent folder', @click='upFolder()', :disabled='currentFolderId === 0')
+                v-btn.is-icon.mx-1(variant="outlined", aria-label='Open parent folder', @click='upFolder()', :disabled='currentFolderId === 0')
                   v-icon mdi-folder-upload
-                v-btn.btn-normalcase.mx-1(v-for='folder of folders', :key='folder.id', variant="flat",  color="grey-darken-2", @click='downFolder(folder)')
+                v-btn.btn-normalcase.mx-1(v-for='folder of folders', :key='folder.id', variant="tonal", color="primary", @click='downFolder(folder)')
                   v-icon(start) mdi-folder
                   span.text-body-small(style='text-transform: none;') {{ folder.name }}
                 v-divider.mt-2
@@ -85,10 +85,10 @@
                   )
                     td.text-body-small(v-if='$vuetify.display.smAndUp') {{ props.item.id }}
                     td
-                      .text-body-medium: strong(:class='currentFileId === props.item.id ? `text-teal` : ``') {{ props.item.filename }}
+                      .text-body-medium: strong(:class='currentFileId === props.item.id ? `text-primary` : ``') {{ props.item.filename }}
                       .text-body-small.text-grey {{ props.item.description }}
                     td.text-center(v-if='$vuetify.display.lgAndUp')
-                      v-chip.ma-0(size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`')
+                      v-chip.ma-0(size="x-small", variant="tonal")
                         .text-label-small {{props.item.ext.toUpperCase().substring(1)}}
                     td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ prettyBytes(props.item.fileSize) }}
                     td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ $helpers.formatMoment(props.item.createdAt, 'from') }}
@@ -102,7 +102,7 @@
                         template(v-slot:activator='{ props: menuProps }')
                           v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='0', size="small", :aria-label='`Asset actions for ${props.item.filename}`', :data-editor-media-asset-actions='props.item.id')
                             v-icon(color="grey-darken-2") mdi-dots-horizontal
-                        v-list(nav, style='border-top: 5px solid #444;')
+                        v-list(nav)
                           //- v-list-item(@click='', disabled)
                           //-   template(v-slot:prepend)
                           //-     v-avatar(size='24')
@@ -142,14 +142,14 @@
                 template(v-slot:no-data)
                   v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
               .text-center.py-2(v-if='pageTotal > 1')
-                v-pagination(v-model='pagination', :length='pageTotal', color='teal')
+                v-pagination(v-model='pagination', :length='pageTotal', color='primary')
               .d-flex.mt-3
-                v-toolbar.radius-7(flat, :color='$vuetify.theme.current.dark ? `grey-darken-2` : `grey-lighten-4`', density="compact", height='44')
-                  .text-body-medium(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-1`') {{$t('editor:assets.fileCount', { count: assets.length })}}
-                v-btn.ml-3.mr-0.my-0.radius-7(color="red-darken-2", size="large", @click='cancel')
+                v-toolbar.radius-7(flat, color="surface-variant", density="compact", height='44')
+                  .text-body-medium.text-medium-emphasis {{$t('editor:assets.fileCount', { count: assets.length })}}
+                v-btn.ml-3.mr-0.my-0.radius-7(variant="outlined", size="large", @click='cancel')
                   v-icon(start) mdi-close
                   span {{$t('common:actions.cancel')}}
-                v-btn.ml-3.mr-0.my-0.radius-7(color='teal', size="large", @click='insert', :disabled='!currentFileId')
+                v-btn.ml-3.mr-0.my-0.radius-7(color='primary', size="large", @click='insert', :disabled='!currentFileId')
                   v-icon(start) mdi-playlist-plus
                   span {{$t('common:actions.insert')}}
 
@@ -158,12 +158,12 @@
             v-alert.mb-0(v-if='isPrivatePage', type='info', variant="outlined", density="compact") Assets are site-wide and cannot be uploaded as private page content.
             v-card-text(v-if='!isPrivatePage')
               .d-flex
-                v-toolbar.radius-7(:color='$vuetify.theme.current.dark ? `teal` : `teal-lighten-5`', density="compact", flat, height='44')
-                  v-icon.mr-3(:color='$vuetify.theme.current.dark ? `white` : `teal`') mdi-cloud-upload
-                  .text-body-medium(:class='$vuetify.theme.current.dark ? `text-white` : `text-teal`') {{$t('editor:assets.uploadAssets')}}
-                v-btn.my-0.ml-3.mr-0.radius-7(variant="outlined", size="large", color='teal', aria-label='Browse files', @click='browse', v-if='$vuetify.display.mdAndUp')
+                v-toolbar.radius-7(color="surface-variant", density="compact", flat, height='44')
+                  v-icon.mr-3 mdi-cloud-upload
+                  .text-body-medium {{$t('editor:assets.uploadAssets')}}
+                v-btn.my-0.ml-3.mr-0.radius-7(variant="tonal", size="large", color='primary', aria-label='Browse files', @click='browse', v-if='$vuetify.display.mdAndUp')
                   v-icon(start) mdi-plus-box-multiple
-                  span(:class='$vuetify.theme.current.dark ? `text-teal-lighten-3` : ``') {{$t('common:actions.browse')}}
+                  span {{$t('common:actions.browse')}}
               file-pond.mt-3(
                 name='mediaUpload'
                 ref='pond'
@@ -178,24 +178,22 @@
               )
             v-divider(v-if='!isPrivatePage')
             v-card-actions.pa-3(v-if='!isPrivatePage')
-              .text-body-small.text-grey-darken-2 Max 10 files, 5 MB each
+              .text-body-small.text-medium-emphasis Max 10 files, 5 MB each
               v-spacer
-              v-btn.px-4(color='teal', @click='upload') {{$t('common:actions.upload')}}
+              v-btn.px-4(color='primary', @click='upload') {{$t('common:actions.upload')}}
 
 
           v-card.mt-3.radius-7.animated.fadeInRight.wait-p4s(v-if='currentAsset && currentAsset.kind === `IMAGE`')
             v-card-text.pb-0
-              v-toolbar.radius-7(:color='$vuetify.theme.current.dark ? `teal` : `teal-lighten-5`', density="compact", flat)
-                v-icon.mr-3(:color='$vuetify.theme.current.dark ? `white` : `teal`') mdi-format-align-top
-                .text-body-medium(:class='$vuetify.theme.current.dark ? `text-white` : `text-teal`') {{$t('editor:assets.imageAlign')}}
+              v-toolbar.radius-7(color="surface-variant", density="compact", flat)
+                v-icon.mr-3 mdi-format-align-top
+                .text-body-medium {{$t('editor:assets.imageAlign')}}
               v-select.mt-3(
                 v-model='imageAlignment'
                 :items='imageAlignments'
-                item-title='text'
-                item-value='value'
                 variant="outlined"
                 single-line
-                color='teal'
+                color='primary'
                 placeholder='None'
               )
 
@@ -274,11 +272,11 @@ const disallowedFolderChars = /[A-Z()=.!@#$%?&*+`~<>,;:\\/[\]¬{| ]/
 const BYTE_UNITS = ['B', 'kB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB']
 const LOG_1000 = Math.log(1000)
 const IMAGE_ALIGNMENTS = markRaw([
-  { text: 'None', value: '' },
-  { text: 'Left', value: 'left' },
-  { text: 'Centered', value: 'center' },
-  { text: 'Right', value: 'right' },
-  { text: 'Absolute Top Right', value: 'abstopright' }
+  { title: 'None', value: '' },
+  { title: 'Left', value: 'left' },
+  { title: 'Centered', value: 'center' },
+  { title: 'Right', value: 'right' },
+  { title: 'Absolute Top Right', value: 'abstopright' }
 ])
 const MEDIA_SORT_BY = markRaw([{ key: 'id', order: 'desc' as const }])
 const RENAME_ASSET_RULES = markRaw([
@@ -380,12 +378,12 @@ export default defineComponent({
     },
     headers() {
       return _.compact([
-        this.$vuetify.display.smAndUp && { title: this.$t('editor:assets.headerId'), value: 'id', width: 80 },
-        { title: this.$t('editor:assets.headerFilename'), value: 'filename' },
-        this.$vuetify.display.lgAndUp && { title: this.$t('editor:assets.headerType'), value: 'ext', width: 90 },
-        this.$vuetify.display.mdAndUp && { title: this.$t('editor:assets.headerFileSize'), value: 'fileSize', width: 110 },
-        this.$vuetify.display.mdAndUp && { title: this.$t('editor:assets.headerAdded'), value: 'createdAt', width: 175 },
-        this.$vuetify.display.smAndUp && { title: this.$t('editor:assets.headerActions'), value: '', width: 80, sortable: false, align: 'right' }
+        this.$vuetify.display.smAndUp && { title: this.$t('editor:assets.headerId'), key: 'id', value: 'id', width: 80 },
+        { title: this.$t('editor:assets.headerFilename'), key: 'filename', value: 'filename' },
+        this.$vuetify.display.lgAndUp && { title: this.$t('editor:assets.headerType'), key: 'ext', value: 'ext', width: 90 },
+        this.$vuetify.display.mdAndUp && { title: this.$t('editor:assets.headerFileSize'), key: 'fileSize', value: 'fileSize', width: 110 },
+        this.$vuetify.display.mdAndUp && { title: this.$t('editor:assets.headerAdded'), key: 'createdAt', value: 'createdAt', width: 175 },
+        this.$vuetify.display.smAndUp && { title: this.$t('editor:assets.headerActions'), key: 'actions', value: 'actions', width: 80, sortable: false, align: 'end' }
       ])
     },
     isFolderNameValid() {
@@ -705,7 +703,7 @@ export default defineComponent({
     async loadMedia (): Promise<boolean> {
       const request = ++this.mediaRequest
       this.mediaAbortController?.abort()
-      const abortController = new AbortController()
+      const abortController = markRaw(new AbortController())
       this.mediaAbortController = abortController
       this.loading = true
       this.mediaLoadError = ''

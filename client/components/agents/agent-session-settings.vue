@@ -54,8 +54,6 @@
             <v-select
               v-model="profileId"
               :items="profileItems"
-              item-title="title"
-              item-value="value"
               label="Provider profile"
               :hint="profileBehavior"
               persistent-hint

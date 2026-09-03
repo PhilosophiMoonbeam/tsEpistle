@@ -249,7 +249,7 @@
               v-icon(start) mdi-clipboard-account-outline
               span {{$t('admin:users.groupAssign')}}
           .text-body-small.text-orange.px-4.pb-2 Membership changes are staged until you select Update User.
-          v-system-bar(window, :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-3`')
+          v-system-bar(window, color="surface-variant")
             v-spacer
             .text-body-small {{$t('admin:users.groupAssignNotice')}}
 

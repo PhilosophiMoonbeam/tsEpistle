@@ -22,7 +22,7 @@
           v-row
             v-col(cols='12', md='4', lg='3', style='min-width:0;')
               v-card.animated.fadeInUp
-                v-toolbar(:color='$vuetify.theme.current.dark ? `grey-darken-3` : `grey-lighten-4`', flat)
+                v-toolbar(color="surface-variant", flat)
                   v-text-field(
                     v-model='filter'
                     :label='$t(`admin:tags.filter`)'
@@ -32,7 +32,7 @@
                     flat
                     density="compact"
                     color='primary'
-                    :bg-color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-2`'
+                    bg-color="surface"
                     prepend-inner-icon='mdi-magnify'
                   )
                 v-divider

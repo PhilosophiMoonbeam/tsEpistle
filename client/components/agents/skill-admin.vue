@@ -39,8 +39,6 @@
           v-model="stateFilter"
           class="skill-inventory-toolbar__filter"
           :items="stateFilters"
-          item-title="title"
-          item-value="value"
           label="Policy state"
           hide-details
           density="comfortable"
@@ -157,7 +155,7 @@
           </section>
           <section class="skill-form-section">
             <div class="skill-form-section__heading"><span><v-icon size="19">mdi-account-multiple-outline</v-icon></span><div><h3>Audience policy</h3><p>Skills complement—never replace—each user’s Wiki permissions.</p></div></div>
-            <v-select v-model="create.exposureMode" :items="exposureModes" item-title="title" item-value="value" label="Available to" />
+            <v-select v-model="create.exposureMode" :items="exposureModes" label="Available to" />
             <v-autocomplete v-if="create.exposureMode === 'groups'" v-model="create.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" hint="Select at least one group." persistent-hint multiple chips closable-chips />
           </section>
         </v-form>
@@ -169,7 +167,7 @@
   <v-dialog v-model="accessOpen" max-width="40rem" scrollable :fullscreen="smAndDown" aria-labelledby="skill-access-title" :persistent="actionBusyId === 'access'">
     <v-card class="skill-dialog">
       <div class="skill-dialog__header"><span><v-icon size="23">mdi-account-multiple-outline</v-icon></span><div><div class="skill-eyebrow">Audience policy</div><h2 id="skill-access-title">{{ policySkill ? `Access for ${policySkill.name}` : 'Skill access' }}</h2><p>Control who receives this organization-approved expertise.</p></div><v-spacer /><v-btn icon="mdi-close" variant="text" aria-label="Close audience editor" :disabled="actionBusyId === 'access'" @click="accessOpen = false" /></div>
-      <v-card-text class="skill-dialog__body"><v-alert v-if="accessError" class="skill-error" type="error" variant="tonal" density="compact">{{ accessError }}</v-alert><v-select v-model="policy.exposureMode" :items="exposureModes" item-title="title" item-value="value" label="Available to" /><v-autocomplete v-if="policy.exposureMode === 'groups'" v-model="policy.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this skill through any selected group." persistent-hint /></v-card-text>
+      <v-card-text class="skill-dialog__body"><v-alert v-if="accessError" class="skill-error" type="error" variant="tonal" density="compact">{{ accessError }}</v-alert><v-select v-model="policy.exposureMode" :items="exposureModes" label="Available to" /><v-autocomplete v-if="policy.exposureMode === 'groups'" v-model="policy.groupIds" :items="groups" item-title="name" item-value="id" label="Wiki groups" multiple chips closable-chips hint="Users receive this skill through any selected group." persistent-hint /></v-card-text>
       <v-card-actions class="skill-dialog__actions"><v-spacer /><v-btn :disabled="actionBusyId === 'access'" @click="accessOpen = false">Cancel</v-btn><v-btn color="primary" :loading="actionBusyId === 'access'" :disabled="Boolean(actionBusyId) || !policyDirty || (policy.exposureMode === 'groups' && policy.groupIds.length === 0)" @click="saveAccess">Save audience policy</v-btn></v-card-actions>
     </v-card>
   </v-dialog>
@@ -192,7 +190,7 @@
         </v-alert>
         <div v-if="preview.previousSkillMarkdown !== null" class="review-diff" role="table" aria-label="Skill revision changes">
           <div class="review-diff__header" role="row"><span role="columnheader">Candidate revision</span><span role="columnheader">Previously approved</span></div>
-          <div v-for="(line, index) in reviewLines" :key="index" class="review-diff__row" :class="`review-diff__row--${line.kind}`" role="row">
+          <div v-for="line in reviewLines" :key="line.key" class="review-diff__row" :class="`review-diff__row--${line.kind}`" role="row">
             <code role="cell">{{ line.candidate }}</code><code role="cell">{{ line.previous }}</code>
           </div>
         </div>
@@ -292,7 +290,8 @@ const reviewLines = computed(() => {
   return Array.from({ length }, (_, index) => {
     const candidateLine = candidate[index] ?? ''
     const previousLine = previous[index] ?? ''
-    return { candidate: candidateLine, previous: previousLine, kind: candidateLine === previousLine ? 'same' : !previousLine ? 'added' : !candidateLine ? 'removed' : 'changed' }
+    const kind = candidateLine === previousLine ? 'same' : !previousLine ? 'added' : !candidateLine ? 'removed' : 'changed'
+    return { key: `review-line-${index}-${kind}`, candidate: candidateLine, previous: previousLine, kind }
   })
 })
 const exposureModes = [

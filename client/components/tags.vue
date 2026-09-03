@@ -138,8 +138,6 @@
               :items='orderByItems'
               v-model='orderBy'
               :label='$t(`tags:orderBy`)'
-              item-title='text'
-              item-value='value'
               variant='outlined'
               hide-details
               density='comfortable'
@@ -319,11 +317,11 @@ export default {
     },
     orderByItems () {
       return [
-        { text: this.$t('tags:orderByField.creationDate'), value: 'createdAt' },
-        { text: this.$t('tags:orderByField.ID'), value: 'id' },
-        { text: this.$t('tags:orderByField.lastModified'), value: 'updatedAt' },
-        { text: this.$t('tags:orderByField.path'), value: 'path' },
-        { text: this.$t('tags:orderByField.title'), value: 'title' }
+        { title: this.$t('tags:orderByField.creationDate'), value: 'createdAt' },
+        { title: this.$t('tags:orderByField.ID'), value: 'id' },
+        { title: this.$t('tags:orderByField.lastModified'), value: 'updatedAt' },
+        { title: this.$t('tags:orderByField.path'), value: 'path' },
+        { title: this.$t('tags:orderByField.title'), value: 'title' }
       ]
     }
   },

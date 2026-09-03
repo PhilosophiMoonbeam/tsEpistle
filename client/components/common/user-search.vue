@@ -59,11 +59,10 @@
           title='No users found'
           message='Try a different name or email address.'
         )
-        v-list.user-search__results.mt-3.py-0.radius-7(
+        v-list.user-search__results.mt-3.py-0.radius-7.bg-surface-variant(
           ref='resultsList'
           :id='resultsId'
           v-else-if='items.length > 0'
-          :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`'
           lines="two"
           density="compact"
           activatable

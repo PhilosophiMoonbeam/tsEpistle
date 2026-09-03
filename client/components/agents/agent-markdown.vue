@@ -3,7 +3,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import type { AgentCitation } from '../../../shared/agents/contracts.ts'
 import { renderSafeMarkdown } from '../../helpers/safe-markdown.ts'
 import { formatAgentCitationMarkers } from './agent-citations.ts'
@@ -34,7 +34,7 @@ interface RenderedDomState {
   }[]
 }
 
-const markdownRoot = ref<HTMLElement | null>(null)
+const markdownRoot = useTemplateRef<HTMLElement>('markdownRoot')
 const resetTimers = new Map<HTMLButtonElement, CopyReset>()
 const resetCopyLabel = (button: HTMLButtonElement): void => {
   button.textContent = 'Copy'

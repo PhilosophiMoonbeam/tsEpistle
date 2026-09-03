@@ -227,22 +227,26 @@ export default {
         {
           title: this.$t('admin:locale.code'),
           align: 'start',
+          key: 'code',
           value: 'code',
           width: 90
         },
         {
           title: this.$t('admin:locale.name'),
           align: 'start',
+          key: 'name',
           value: 'name'
         },
         {
           title: this.$t('admin:locale.nativeName'),
           align: 'start',
+          key: 'nativeName',
           value: 'nativeName'
         },
         {
           title: this.$t('admin:locale.rtl'),
           align: 'center',
+          key: 'isRTL',
           value: 'isRTL',
           sortable: false,
           width: 10
@@ -250,6 +254,7 @@ export default {
         {
           title: this.$t('admin:locale.availability'),
           align: 'center',
+          key: 'availability',
           value: 'availability',
           sortable: false,
           width: 120
@@ -257,6 +262,7 @@ export default {
         {
           title: this.$t('admin:locale.download'),
           align: 'center',
+          key: 'isInstalled',
           value: 'isInstalled',
           sortable: false,
           width: 100

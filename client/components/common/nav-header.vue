@@ -243,8 +243,7 @@
                       v-img(:src='picture.url', alt='')
                 span {{$t('common:header.account')}}
             v-list.nav-header-menu.account-menu(aria-label='Account menu')
-              v-list-item.py-3(
-                :class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`'
+              v-list-item.py-3.bg-surface-variant(
                 href='/p'
                 :aria-label='`Open profile for ${name}`'
               )

@@ -2,26 +2,24 @@
   v-card(flat)
     v-card-text(v-if='group.id === 1')
       v-alert.radius-7.mb-0(
-        :class='$vuetify.theme.current.dark ? "bg-grey-darken-4" : "bg-orange-lighten-5"'
-        color="orange-darken-2"
-        variant="outlined"
+        type="warning"
+        variant="tonal"
         icon='mdi-lock-outline'
         ) This group has access to everything.
     template(v-else)
       .rules-toolbar
         v-alert.radius-7.text-body-small(
-          :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-4`'
-          color='grey'
-          variant="outlined"
+          type="info"
+          variant="tonal"
           icon='mdi-information'
           ) Enable the relevant global content permissions (under Permissions) before saving page rules.
         v-btn.mx-2(ref='addRuleButton', variant="flat", color='primary', @click='addRule', :disabled='group.id <= 0')
           v-icon(start) mdi-plus
           | Add Rule
-      v-card-text(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-white`')
+      v-card-text
         .rules
           .text-body-small(v-if='group.pageRules.length === 0')
-            em(:class='$vuetify.theme.current.dark ? `text-grey` : `text-blue-grey`') This group has no page rules yet.
+            em.text-medium-emphasis This group has no page rules yet.
           .rule(v-for='(rule, ruleIndex) of group.pageRules', :key='rule.id')
             v-btn.ma-0.radius-4.rule-deny-btn(
               :color='rule.deny ? "red" : "green"'
@@ -73,7 +71,7 @@
                 .text-body-medium {{item.text}}
             //- Locales
             v-select.rule-locales(
-              :bg-color='$vuetify.theme.current.dark ? `grey-darken-3` : `blue-grey-lighten-5`'
+              bg-color="surface-variant"
               variant="solo"
               :items='locales'
               :model-value='rule.locales'
@@ -116,10 +114,9 @@
               :placeholder='rule.match === `REGEX` ? `Regular Expression` : rule.match === `TAG` ? `Tag` : `Path`'
               :suffix='rule.match === `REGEX` ? `/` : null'
               hide-details
-              :color='$vuetify.theme.current.dark ? `grey` : `blue-grey`'
               )
             v-btn.rule-remove(icon, @click='removeRule(rule.id)', size="small", :aria-label='`Remove page rule ${ruleIndex + 1}`', :disabled='group.id <= 0')
-              v-icon(:color='$vuetify.theme.current.dark ? `grey` : `blue-grey`') mdi-close
+              v-icon mdi-close
 
         v-divider.mt-3
         .text-label-small.py-3 Rule precedence

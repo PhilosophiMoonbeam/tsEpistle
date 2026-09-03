@@ -4,14 +4,12 @@
       v-row
         v-col(cols='12', v-if='group.isSystem')
           v-alert.radius-7.mb-0(
-            color="orange-darken-2"
-            :class='$vuetify.theme.current.dark ? "bg-grey-darken-4" : "bg-orange-lighten-5"'
-            variant="outlined"
-            :model-value='true'
+            type="warning"
+            variant="tonal"
             icon='mdi-lock-outline'
             ) This is a system group. Some permissions cannot be modified.
         v-col(cols='12', lg='6', xl='4', v-for='pmGroup in permissions', :key='pmGroup.category')
-          v-card(flat, role='group', :aria-labelledby='categoryId(pmGroup.category)', :class='$vuetify.theme.current.dark ? "bg-grey-darken-3" : "bg-grey-lighten-5"')
+          v-card.bg-surface-variant(flat, role='group', :aria-labelledby='categoryId(pmGroup.category)')
             .text-label-small.px-5.pt-5.pb-3.text-medium-emphasis(:id='categoryId(pmGroup.category)') {{pmGroup.category}}
             v-card-text.pt-0
               template(v-for='(pm, idx) in pmGroup.items', :key='pm.permission')

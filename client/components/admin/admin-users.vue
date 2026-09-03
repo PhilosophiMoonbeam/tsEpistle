@@ -115,7 +115,7 @@ import { wikiStore } from '@/store/index.ts'
 type AuthStrategySummary = Pick<AdminAuthProviderSummary, 'key' | 'displayName'> & {
   isEnabled?: boolean
 }
-type UserTableHeader = { title: string, value: string, sortable: boolean, width?: number }
+type UserTableHeader = { title: string, key: string, value: string, sortable: boolean, width?: number }
 type UserTableSort = { key: string, order: 'asc' | 'desc' }
 
 export default {
@@ -128,13 +128,13 @@ export default {
       sortBy: [{ key: 'name', order: 'asc' }] as UserTableSort[],
       users: [] as AdminUserListRow[],
       headers: [
-        { title: 'ID', value: 'id', width: 80, sortable: true },
-        { title: 'Name', value: 'name', sortable: true },
-        { title: 'Email', value: 'email', sortable: true },
-        { title: 'Provider', value: 'providerKey', sortable: true },
-        { title: 'Created', value: 'createdAt', sortable: true },
-        { title: 'Last Login', value: 'lastLoginAt', sortable: true },
-        { title: 'Status', value: 'actions', sortable: false, width: 110 }
+        { title: 'ID', key: 'id', value: 'id', width: 80, sortable: true },
+        { title: 'Name', key: 'name', value: 'name', sortable: true },
+        { title: 'Email', key: 'email', value: 'email', sortable: true },
+        { title: 'Provider', key: 'providerKey', value: 'providerKey', sortable: true },
+        { title: 'Created', key: 'createdAt', value: 'createdAt', sortable: true },
+        { title: 'Last Login', key: 'lastLoginAt', value: 'lastLoginAt', sortable: true },
+        { title: 'Status', key: 'actions', value: 'actions', sortable: false, width: 110 }
       ] as UserTableHeader[],
       strategies: [] as AuthStrategySummary[],
       filterStrategy: 'all',
@@ -152,7 +152,7 @@ export default {
   },
   computed: {
     responsiveHeaders() {
-      return this.$vuetify.display.smAndDown ? this.headers.filter(header => header.value === 'name') : this.headers
+      return this.$vuetify.display.smAndDown ? this.headers.filter(header => (header.key ?? header.value) === 'name') : this.headers
     },
     strategyOptions() {
       return this.strategies.map(strategy => ({
@@ -179,7 +179,7 @@ export default {
       if (this.pagination !== 1) this.pagination = 1
       else this.loadUsers()
     },
-    sortBy: { handler() { this.loadUsers() }, deep: true },
+    sortBy() { this.loadUsers() },
     pagination() { this.loadUsers() }
   },
   methods: {

@@ -350,7 +350,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { useAgentsStore } from '../../store/agents.ts'
@@ -383,15 +383,15 @@ const emit = defineEmits<{
 
 const agents = useAgentsStore()
 const { connection, decidingApprovalId, error, goalBusy, loading, profiles, sending, sessions, skills, skillsLoadError, skillsLoading, skillsPartial, thread } = storeToRefs(agents)
-const inlineAgentRoot = ref<HTMLElement | null>(null)
-const transcript = ref<HTMLElement | null>(null)
-const composer = ref<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void> } | null>(null)
+const inlineAgentRoot = useTemplateRef<HTMLElement>('inlineAgentRoot')
+const transcript = useTemplateRef<HTMLElement>('transcript')
+const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTrigger: () => Promise<void> }>('composer')
 type ComponentRoot = { $el?: unknown }
-const historyTrigger = ref<ComponentRoot | HTMLElement | null>(null)
-const memoryTrigger = ref<ComponentRoot | HTMLElement | null>(null)
-const historyPanel = ref<HTMLElement | null>(null)
-const memoryPanel = ref<HTMLElement | null>(null)
-const panelScrim = ref<HTMLElement | null>(null)
+const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
+const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')
+const historyPanel = useTemplateRef<HTMLElement>('historyPanel')
+const memoryPanel = useTemplateRef<HTMLElement>('memoryPanel')
+const panelScrim = useTemplateRef<HTMLElement>('panelScrim')
 const goalExpanded = ref(false)
 const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)

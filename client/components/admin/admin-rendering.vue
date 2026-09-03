@@ -93,7 +93,6 @@
                     role='option'
                     :active='currentRenderer.key === rdr.key'
                     :aria-selected='currentRenderer.key === rdr.key'
-                    :class='currentRenderer.key === rdr.key ? ($vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-blue-lighten-5`) : ``'
                     )
                     template(v-slot:prepend)
                       v-avatar(size='24', rounded='0')

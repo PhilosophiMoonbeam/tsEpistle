@@ -28,7 +28,7 @@
                       v-chip(label, color='warning', size="small", v-else, prepend-icon='mdi-download-circle-outline') Not Installed
                       v-icon.ml-2(:icon='expanded ? collapseIcon : expandIcon', aria-hidden='true')
                   v-expansion-panel-text.pa-0
-                    v-card(flat, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-5`', rounded='0')
+                    v-card.bg-surface-variant(flat, rounded='0')
                       v-card-text
                         .text-body-medium {{ext.description}}
                         v-divider.my-4

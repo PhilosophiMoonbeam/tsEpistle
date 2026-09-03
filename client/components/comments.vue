@@ -187,6 +187,7 @@
 
 <script lang='ts'>
 import { defineComponent } from 'vue'
+import { markRaw } from 'vue'
 import { useGoTo } from 'vuetify'
 import { createComment, deleteComment, fetchComment, fetchComments, updateComment } from '../helpers/comments-api'
 import type { CommentRow } from '../helpers/comments-api'
@@ -295,7 +296,7 @@ export default defineComponent({
     },
     async fetch (silent = false) {
       this.fetchController?.abort()
-      const controller = new AbortController()
+      const controller = markRaw(new AbortController())
       this.fetchController = controller
       const requestId = ++this.fetchGeneration
       this.isLoading = true

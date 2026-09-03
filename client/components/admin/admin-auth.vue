@@ -252,7 +252,7 @@
               i18next(path='admin:auth.siteUrlNotSetup', tag='span')
                 strong(place='siteUrl') {{$t('admin:general.siteUrl')}}
                 strong(place='general') {{$t('admin:general.title')}}
-            .pa-3.mt-3.radius-7(v-else, :class='$vuetify.theme.current.dark ? `bg-grey-darken-3` : `bg-grey-lighten-3`')
+            .pa-3.mt-3.radius-7.bg-surface-variant(v-else)
               .text-body-medium: strong {{$t('admin:auth.allowedWebOrigins')}}
               .text-body-medium {{host}}
               v-divider.my-3

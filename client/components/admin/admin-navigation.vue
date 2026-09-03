@@ -281,7 +281,6 @@
                             :label='$t("admin:navigation.targetType")'
                             prepend-icon='mdi-near-me'
                             :items='navTypes'
-                            item-title='text'
                             v-model='current.targetType'
                             hide-details
                           )
@@ -475,10 +474,10 @@ export default {
     },
     navTypes () {
       return [
-        { text: this.$t('admin:navigation.navType.external'), value: 'external' },
-        { text: this.$t('admin:navigation.navType.externalblank'), value: 'externalblank' },
-        { text: this.$t('admin:navigation.navType.page'), value: 'page' }
-        // { text: this.$t('admin:navigation.navType.searchQuery'), value: 'search' }
+        { title: this.$t('admin:navigation.navType.external'), value: 'external' },
+        { title: this.$t('admin:navigation.navType.externalblank'), value: 'externalblank' },
+        { title: this.$t('admin:navigation.navType.page'), value: 'page' }
+        // { title: this.$t('admin:navigation.navType.searchQuery'), value: 'search' }
       ]
     },
     locales () {

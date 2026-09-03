@@ -46,8 +46,6 @@ v-container.admin-theme(fluid)
             v-select.mt-3(
               v-model='config.iconset'
               :items='iconsets'
-              item-title='text'
-              item-value='value'
               variant='outlined'
               prepend-inner-icon='mdi-shape-outline'
               :label='$t(`admin:theme.iconset`)'
@@ -59,8 +57,6 @@ v-container.admin-theme(fluid)
             v-select.mt-3(
               v-model='config.tocPosition'
               :items='tocPositions'
-              item-title='text'
-              item-value='value'
               variant='outlined'
               prepend-inner-icon='mdi-table-of-contents'
               label='Table of contents position'
@@ -86,8 +82,6 @@ v-container.admin-theme(fluid)
               v-select.theme-library__select(
                 v-model='config.activePaletteId'
                 :items='paletteOptions'
-                item-title='title'
-                item-value='value'
                 label='Active color theme'
                 prepend-inner-icon='mdi-palette-swatch-outline'
                 hide-details
@@ -375,14 +369,14 @@ const configValid = computed(() =>
   PageGutterCustomCssSchema.safeParse(config.gutterCustomCss).success
 )
 const iconsets = [
-  { text: 'Material Design Icons (default)', value: 'mdi' },
-  { text: 'Font Awesome 5', value: 'fa' },
-  { text: 'Font Awesome 4', value: 'fa4' }
+  { title: 'Material Design Icons (default)', value: 'mdi' },
+  { title: 'Font Awesome 5', value: 'fa' },
+  { title: 'Font Awesome 4', value: 'fa4' }
 ]
 const tocPositions = [
-  { text: 'Left (default)', value: 'left' },
-  { text: 'Right', value: 'right' },
-  { text: 'Hidden', value: 'off' }
+  { title: 'Left (default)', value: 'left' },
+  { title: 'Right', value: 'right' },
+  { title: 'Hidden', value: 'off' }
 ]
 const gutterStyles: Array<{ value: PageGutterStyle; title: string; description: string }> = [
   { value: 'columns', title: 'Attic columns', description: 'Fine fluting and measured capitals; the classical default.' },

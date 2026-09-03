@@ -7,7 +7,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent } from 'vue'
+import { defineComponent, markRaw } from 'vue'
 import { customAlphabet } from 'nanoid/non-secure'
 
 const nanoid = customAlphabet('1234567890abcdef', 10)
@@ -96,7 +96,7 @@ export default defineComponent({
   },
   mounted () {
     const panels = this.panelElements()
-    const controller = new AbortController()
+    const controller = markRaw(new AbortController())
     this.listenersAbortController = controller
     window.addEventListener('hashchange', this.activateHashTarget, { signal: controller.signal })
 

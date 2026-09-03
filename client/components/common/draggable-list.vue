@@ -23,7 +23,7 @@
   </component>
 </template>
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, onUpdated, ref, useId } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, onUpdated, ref, useId, useTemplateRef } from 'vue'
 
 const props = withDefaults(defineProps<{
   modelValue: unknown[]
@@ -38,7 +38,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: unknown[]]
 }>()
 
-const root = ref<HTMLElement | null>(null)
+const root = useTemplateRef<HTMLElement>('root')
 const instructionsId = useId()
 let sourceIndex = -1
 let dropTargetIndex = -1

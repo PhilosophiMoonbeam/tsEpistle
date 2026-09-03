@@ -33,8 +33,6 @@
                 v-select(
                   label='Authentication Mode'
                   :items='gitAuthModes'
-                  item-title='text'
-                  item-value='value'
                   v-model='gitAuthMode'
                   variant="outlined"
                   hide-details
@@ -398,8 +396,8 @@ export default defineComponent({
       isSuccess: false,
       gitAuthMode: 'ssh' as GitAuthMode,
       gitAuthModes: [
-        { text: 'SSH', value: 'ssh' },
-        { text: 'Basic', value: 'basic' }
+        { title: 'SSH', value: 'ssh' },
+        { title: 'Basic', value: 'basic' }
       ],
       gitVerifySSL: true,
       gitRepoUrl: '',

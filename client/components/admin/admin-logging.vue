@@ -129,8 +129,6 @@
                           single-line
                           variant="outlined"
                           :items='levels'
-                          item-title='title'
-                          item-value='value'
                           label='Level'
                           v-model='logger.level'
                           hint='Default: warn'

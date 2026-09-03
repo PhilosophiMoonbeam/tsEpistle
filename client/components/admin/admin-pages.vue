@@ -16,8 +16,8 @@
         v-card.mt-3.animated.fadeInUp
           .admin-filter-bar.admin-pages-filter-bar.pa-2
             v-text-field.admin-pages-filter-search(variant="solo" flat v-model='search' prepend-inner-icon='mdi-file-search-outline' label='Search pages' hide-details density="compact" @update:model-value='pagination = 1')
-            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Locale' :items='langs' item-title='text' item-value='value' v-model='selectedLang' @update:model-value='pagination = 1')
-            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Publish state' :items='states' item-title='text' item-value='value' v-model='selectedState' @update:model-value='pagination = 1')
+            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Locale' :items='langs' v-model='selectedLang' @update:model-value='pagination = 1')
+            v-select.admin-pages-filter-select(variant="solo" flat hide-details density="compact" label='Publish state' :items='states' v-model='selectedState' @update:model-value='pagination = 1')
             v-btn.admin-pages-filter-clear(v-if='hasActiveFilters' variant='text' size='small' color='primary' @click='clearFilters') Clear filters
           v-alert(v-if='errorMessage && pages.length' type='error' variant='tonal' class='ma-3')
             .d-flex.align-center
@@ -79,7 +79,7 @@ import { getErrorMessage } from '../../helpers/root-ui-store'
 import { fetchPageList, type PageListRow } from '../../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
 
-type PageFilterOption<T> = { text: string, value: T }
+type PageFilterOption<T> = { title: string, value: T }
 
 export default {
   components: { AsyncState },
@@ -88,21 +88,21 @@ export default {
       pagination: 1,
       pages: [] as PageListRow[],
       headers: [
-        { title: 'ID', value: 'id', width: 80, sortable: true },
-        { title: 'Title', value: 'title' },
-        { title: 'Path', value: 'path' },
-        { title: 'Status', value: 'isPublished', sortable: false, width: 120 },
-        { title: 'Created', value: 'createdAt', width: 250 },
-        { title: 'Last Updated', value: 'updatedAt', width: 250 }
+        { title: 'ID', key: 'id', value: 'id', width: 80, sortable: true },
+        { title: 'Title', key: 'title', value: 'title' },
+        { title: 'Path', key: 'path', value: 'path' },
+        { title: 'Status', key: 'isPublished', value: 'isPublished', sortable: false, width: 120 },
+        { title: 'Created', key: 'createdAt', value: 'createdAt', width: 250 },
+        { title: 'Last Updated', key: 'updatedAt', value: 'updatedAt', width: 250 }
       ],
       sortBy: [{ key: 'updatedAt', order: 'desc' as const }],
       search: '',
       selectedLang: null as string | null,
       selectedState: null as boolean | null,
       states: [
-        { text: 'All Publishing States', value: null },
-        { text: 'Published', value: true },
-        { text: 'Draft', value: false }
+        { title: 'All Publishing States', value: null },
+        { title: 'Published', value: true },
+        { title: 'Draft', value: false }
       ] as PageFilterOption<boolean | null>[],
       errorMessage: '',
       loading: false,
@@ -111,7 +111,7 @@ export default {
   },
   computed: {
     responsiveHeaders() {
-      return this.$vuetify.display.smAndDown ? this.headers.filter(header => header.value === 'title') : this.headers
+      return this.$vuetify.display.smAndDown ? this.headers.filter(header => (header.key ?? header.value) === 'title') : this.headers
     },
     filteredPages(): PageListRow[] {
       const query = this.search.trim().toLocaleLowerCase()
@@ -136,7 +136,7 @@ export default {
     langs(): PageFilterOption<string | null>[] {
       const locales = new Set<string>()
       for (const page of this.pages) locales.add(page.locale)
-      return [{ text: 'All Locales', value: null }, ...Array.from(locales).sort((a, b) => a.localeCompare(b)).map(locale => ({ text: locale, value: locale }))]
+      return [{ title: 'All Locales', value: null }, ...Array.from(locales).sort((a, b) => a.localeCompare(b)).map(locale => ({ title: locale, value: locale }))]
     }
   },
   methods: {

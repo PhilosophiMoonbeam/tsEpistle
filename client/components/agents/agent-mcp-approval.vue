@@ -275,7 +275,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { decideAgentProposal, getMcpAgentProposal, type McpAgentProposal } from '../../helpers/agents-api.ts'
 
 const props = defineProps<{ csrfToken: string; proposalId: string }>()
@@ -296,8 +296,8 @@ const decisionNote = ref('')
 const confirmationPath = ref('')
 const clockTick = ref(0)
 type ComponentRoot = { $el?: unknown }
-const settledReceipt = ref<ComponentRoot | HTMLElement | null>(null)
-const errorAlert = ref<ComponentRoot | HTMLElement | null>(null)
+const settledReceipt = useTemplateRef<ComponentRoot | HTMLElement>('settledReceipt')
+const errorAlert = useTemplateRef<ComponentRoot | HTMLElement>('errorAlert')
 let clockTimer: number | null = null
 let expiryDeadlineTimer: number | null = null
 let loadController: AbortController | null = null

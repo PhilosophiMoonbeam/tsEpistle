@@ -45,7 +45,7 @@
               v-icon(:start='$vuetify.display.mdAndUp') mdi-check
               span(v-if='$vuetify.display.mdAndUp') Update Group
         v-card.mt-3
-          v-tabs.grad-tabs(v-model='tab', :color='$vuetify.theme.current.dark ? `blue` : `primary`', fixed-tabs, show-arrows, stacked)
+          v-tabs.grad-tabs(v-model='tab', color='primary', fixed-tabs, show-arrows, stacked)
             v-tab(value='settings')
               span Settings
               v-icon mdi-cog-box
@@ -65,10 +65,8 @@
                 template(v-if='group.id <= 2')
                   v-card-text
                     v-alert.radius-7.mb-0(
-                      color="orange-darken-2"
-                      :class='$vuetify.theme.current.dark ? "bg-grey-darken-4" : "bg-orange-lighten-5"'
-                      variant="outlined"
-                      :model-value='true'
+                      type="warning"
+                      variant="tonal"
                       icon='mdi-lock-outline'
                       ) This is a system group and its settings cannot be modified.
                   v-divider

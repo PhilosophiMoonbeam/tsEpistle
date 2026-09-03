@@ -51,7 +51,7 @@
               template(v-slot:default)
                 caption.api-key-caption API keys and their current status
                 thead
-                  tr(:class='$vuetify.theme.current.dark ? `bg-grey-darken-4` : `bg-grey-lighten-5`')
+                  tr.bg-surface-variant
                     th(scope='col') {{$t('admin:api.headerName')}}
                     th(scope='col') {{$t('admin:api.headerKeyEnding')}}
                     th(scope='col') {{$t('admin:api.headerExpiration')}}

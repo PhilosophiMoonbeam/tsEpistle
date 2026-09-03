@@ -181,7 +181,7 @@
   </v-dialog>
 </template>
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useId, useTemplateRef, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import {
   createPersonalAgentSkill,
@@ -214,12 +214,12 @@ const baseline = shallowRef({ name: 'my-skill', skillMarkdown: '', isAgentDiscov
 const refreshError = ref('')
 const removeError = ref('')
 type ComponentRoot = { $el?: unknown }
-const editorRoot = ref<HTMLElement | null>(null)
-const nameInput = ref<ComponentRoot | HTMLElement | null>(null)
-const markdownInput = ref<ComponentRoot | HTMLElement | null>(null)
-const removeDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
-const discardDialogCard = ref<ComponentRoot | HTMLElement | null>(null)
-const destructiveRestoreTarget = ref<HTMLElement | null>(null)
+const editorRoot = useTemplateRef<HTMLElement>('editorRoot')
+const nameInput = useTemplateRef<ComponentRoot | HTMLElement>('nameInput')
+const markdownInput = useTemplateRef<ComponentRoot | HTMLElement>('markdownInput')
+const removeDialogCard = useTemplateRef<ComponentRoot | HTMLElement>('removeDialogCard')
+const discardDialogCard = useTemplateRef<ComponentRoot | HTMLElement>('discardDialogCard')
+const destructiveRestoreTarget = shallowRef<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
 let discardFocusScope: ModalFocusScope | null = null
 let loadController: AbortController | null = null

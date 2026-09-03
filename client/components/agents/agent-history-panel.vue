@@ -354,8 +354,8 @@ type ComponentRoot = ComponentPublicInstance | HTMLElement
 const historyCloseButton = useTemplateRef<ComponentRoot>('historyCloseButton')
 const deleteDialogCard = useTemplateRef<ComponentRoot>('deleteDialogCard')
 const removeFolderDialogCard = useTemplateRef<ComponentRoot>('removeFolderDialogCard')
-const folderEditorRestoreTarget = ref<HTMLElement | null>(null)
-const destructiveRestoreTarget = ref<HTMLElement | null>(null)
+const folderEditorRestoreTarget = shallowRef<HTMLElement | null>(null)
+const destructiveRestoreTarget = shallowRef<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
 
 const normalizedSearch = computed(() => (searchQuery.value ?? '').trim().toLocaleLowerCase())

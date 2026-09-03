@@ -92,7 +92,6 @@
                       variant="outlined"
                       :label='$t(`admin:general.contentLicense`)'
                       :items='contentLicenses'
-                      item-title='text'
                       v-model='config.contentLicense'
                       prepend-icon='mdi-creative-commons'
                       :return-object='false'
@@ -125,7 +124,6 @@
                       :label='$t(`admin:general.metaRobots`)'
                       multiple
                       :items='metaRobots'
-                      item-title='text'
                       v-model='config.robots'
                       prepend-icon='mdi-compass'
                       :return-object='false'
@@ -344,7 +342,7 @@ export default {
   data(): {
     config: SiteConfig,
     persistedConfig: SiteConfig | null,
-    metaRobots: Array<{ text: string, value: string }>,
+    metaRobots: Array<{ title: string, value: string }>,
     logoRefreshKey: number,
     initialLoading: boolean,
     loaded: boolean,
@@ -393,10 +391,10 @@ export default {
       loadRequestId: 0,
       saveRequestId: 0,
       metaRobots: [
-        { text: 'Index', value: 'index' },
-        { text: 'Follow', value: 'follow' },
-        { text: 'No Index', value: 'noindex' },
-        { text: 'No Follow', value: 'nofollow' }
+        { title: 'Index', value: 'index' },
+        { title: 'Follow', value: 'follow' },
+        { title: 'No Index', value: 'noindex' },
+        { title: 'No Follow', value: 'nofollow' }
       ]
     }
   },
@@ -442,15 +440,15 @@ export default {
     },
     contentLicenses () {
       return [
-        { value: '', text: this.$t('common:license.none') },
-        { value: 'alr', text: this.$t('common:license.alr') },
-        { value: 'cc0', text: this.$t('common:license.cc0') },
-        { value: 'ccby', text: this.$t('common:license.ccby') },
-        { value: 'ccbysa', text: this.$t('common:license.ccbysa') },
-        { value: 'ccbynd', text: this.$t('common:license.ccbynd') },
-        { value: 'ccbync', text: this.$t('common:license.ccbync') },
-        { value: 'ccbyncsa', text: this.$t('common:license.ccbyncsa') },
-        { value: 'ccbyncnd', text: this.$t('common:license.ccbyncnd') }
+        { value: '', title: this.$t('common:license.none') },
+        { value: 'alr', title: this.$t('common:license.alr') },
+        { value: 'cc0', title: this.$t('common:license.cc0') },
+        { value: 'ccby', title: this.$t('common:license.ccby') },
+        { value: 'ccbysa', title: this.$t('common:license.ccbysa') },
+        { value: 'ccbynd', title: this.$t('common:license.ccbynd') },
+        { value: 'ccbync', title: this.$t('common:license.ccbync') },
+        { value: 'ccbyncsa', title: this.$t('common:license.ccbyncsa') },
+        { value: 'ccbyncnd', title: this.$t('common:license.ccbyncnd') }
       ]
     }
   },

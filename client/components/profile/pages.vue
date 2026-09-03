@@ -52,8 +52,8 @@
                     v-chip.ml-2(v-if="props.item.visibility === 'private'", size="x-small", color='warning') {{ $t('profile:pages.private', { defaultValue: 'Private' }) }}
                   .text-body-small {{ props.item.description }}
                 td.profile-pages-path
-                  v-chip(label, size="small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
-                  span.ml-2(:class='$vuetify.theme.current.dark ? `text-grey-lighten-1` : `text-grey-darken-2`') / {{ props.item.path }}
+                  v-chip(label, size="small", variant="tonal") {{ props.item.locale }}
+                  span.ms-2.text-medium-emphasis / {{ props.item.path }}
                 td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
                 td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
               tr.profile-pages-mobile-row(v-else)
@@ -64,7 +64,7 @@
                     .text-body-small {{ props.item.description }}
                     .profile-pages-mobile-meta
                       v-chip.mr-2(label, size="x-small", color='warning', v-if="props.item.visibility === 'private'") {{ $t('profile:pages.private', { defaultValue: 'Private' }) }}
-                      v-chip.mr-2(label, size="x-small", :color='$vuetify.theme.current.dark ? `grey-darken-4` : `grey-lighten-4`') {{ props.item.locale }}
+                      v-chip.me-2(label, size="x-small", variant="tonal") {{ props.item.locale }}
                       span /{{ props.item.path }}
                     .text-body-small.mt-2.text-medium-emphasis {{ $t('profile:pages.headerUpdatedAt') }} {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
@@ -105,10 +105,10 @@ export default {
   computed: {
     headers () {
       return [
-        { title: this.$t('profile:pages.headerTitle'), value: 'title' },
-        { title: this.$t('profile:pages.headerPath'), value: 'path' },
-        { title: this.$t('profile:pages.headerCreatedAt'), value: 'createdAt', width: 250 },
-        { title: this.$t('profile:pages.headerUpdatedAt'), value: 'updatedAt', width: 250 }
+        { title: this.$t('profile:pages.headerTitle'), key: 'title', value: 'title' },
+        { title: this.$t('profile:pages.headerPath'), key: 'path', value: 'path' },
+        { title: this.$t('profile:pages.headerCreatedAt'), key: 'createdAt', value: 'createdAt', width: 250 },
+        { title: this.$t('profile:pages.headerUpdatedAt'), key: 'updatedAt', value: 'updatedAt', width: 250 }
       ]
     },
     pageTotal () {

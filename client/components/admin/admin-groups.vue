@@ -115,12 +115,12 @@ export default {
       pagination: 1,
       groups: [] as GroupListRow[],
       headers: markRaw([
-        { title: 'ID', value: 'id', width: 80, sortable: true },
-        { title: 'Name', value: 'name' },
-        { title: 'Users', value: 'userCount', width: 200 },
-        { title: 'Created', value: 'createdAt', width: 250 },
-        { title: 'Last Updated', value: 'updatedAt', width: 250 },
-        { title: 'Status', value: 'isSystem', width: 120, sortable: false }
+        { title: 'ID', key: 'id', value: 'id', width: 80, sortable: true },
+        { title: 'Name', key: 'name', value: 'name' },
+        { title: 'Users', key: 'userCount', value: 'userCount', width: 200 },
+        { title: 'Created', key: 'createdAt', value: 'createdAt', width: 250 },
+        { title: 'Last Updated', key: 'updatedAt', value: 'updatedAt', width: 250 },
+        { title: 'Status', key: 'isSystem', value: 'isSystem', width: 120, sortable: false }
       ]),
       search: '',
       loading: false,
@@ -132,7 +132,7 @@ export default {
   },
   computed: {
     responsiveHeaders() {
-      return this.$vuetify.display.smAndDown ? this.headers.filter(header => header.value === 'name') : this.headers
+      return this.$vuetify.display.smAndDown ? this.headers.filter(header => (header.key ?? header.value) === 'name') : this.headers
     },
     hasActiveFilters() {
       return Boolean(this.search.trim())

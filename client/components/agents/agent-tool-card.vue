@@ -229,7 +229,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import type { AgentProposalView, AgentToolCallView, AgentToolState } from '../../../shared/agents/contracts.ts'
 import { agentApprovalTitle, agentProposalReceiptLabel } from './agent-thread-presentation.ts'
 
@@ -241,9 +241,9 @@ const confirmationPath = ref('')
 const expiryTick = ref(0)
 const decisionInFlight = ref<'approved' | 'denied' | null>(null)
 const decisionMessage = ref('')
-const receiptSummary = ref<HTMLElement | null>(null)
-const approveButton = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
-const denyButton = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
+const receiptSummary = useTemplateRef<HTMLElement>('receiptSummary')
+const approveButton = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('approveButton')
+const denyButton = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('denyButton')
 let expiryTimer: number | null = null
 let expiryDeadlineTimer: number | null = null
 
