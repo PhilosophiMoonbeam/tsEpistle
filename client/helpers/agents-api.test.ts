@@ -18,6 +18,7 @@ import {
   resetAgentHistory,
   subscribeAgentRun,
   submitAgentMessage,
+  updateAgentSession,
   updateAgentSkillPreferences,
   updatePersonalAgentSkill
 } from './agents-api.ts'
@@ -498,6 +499,55 @@ describe('agents client boundary', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ decision: 'denied', decisionNote: 'Keep this page.' })
+      })
+    )
+  })
+
+  it('patches session title and retention through the session endpoint', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000088'
+    const threadResponse = {
+      session: {
+        id: sessionId,
+        title: 'Renamed topic',
+        retention: 'saved',
+        folderId: null,
+        status: 'active',
+        executionMode: 'agent',
+        version: 3,
+        providerProfileId: null,
+        profileResolutionToken: 'token',
+        skills: [],
+        currentRun: null,
+        createdAt: '2026-08-30T00:00:00.000Z',
+        updatedAt: '2026-08-30T00:00:00.000Z',
+        lastActivityAt: '2026-08-30T00:00:00.000Z',
+        expiresAt: null
+      },
+      messages: [],
+      proposals: [],
+      tools: [],
+      tasks: [],
+      artifacts: [],
+      goal: null,
+      historyWindow: { messageLimit: 100, hasOlderMessages: false, runLimit: 25, hasOlderRuns: false },
+      suggestions: []
+    }
+    const fetcher = vi.fn(
+      async () => new Response(JSON.stringify(threadResponse), { status: 200, headers: { 'content-type': 'application/json' } })
+    ) as unknown as typeof fetch
+    const updated = await updateAgentSession(fetcher, 'csrf-token', sessionId, {
+      expectedSessionVersion: 2,
+      title: 'Renamed topic',
+      retention: 'saved'
+    })
+    expect(updated.session.title).toBe('Renamed topic')
+    expect(fetcher).toHaveBeenCalledWith(
+      `/_api/agents/sessions/${sessionId}`,
+      expect.objectContaining({
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: { 'x-wiki-csrf': 'csrf-token', accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({ expectedSessionVersion: 2, title: 'Renamed topic', retention: 'saved' })
       })
     )
   })

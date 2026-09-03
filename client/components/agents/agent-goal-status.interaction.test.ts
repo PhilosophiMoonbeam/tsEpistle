@@ -1,6 +1,14 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
+import { JSDOM } from 'jsdom'
+import * as Vue from 'vue'
+import { createSSRApp, defineComponent } from 'vue'
+import type { RenderFunction } from 'vue'
+import { renderToString } from '@vue/server-renderer'
+import { createVuetify } from 'vuetify'
+import * as vuetifyComponents from 'vuetify/components'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import type { AgentCompletionIssue, AgentGoalView } from '../../../shared/agents/contracts.ts'
 
@@ -11,6 +19,7 @@ interface Ref<T> {
 type GoalEmit = (event: 'update:expanded', value: boolean) => void
 
 interface GoalHarness {
+  [key: string]: unknown
   statusLabel: Ref<string>
   statusColor: Ref<string>
   budgetPercent: Ref<number>
@@ -22,8 +31,36 @@ interface GoalHarness {
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/agent-goal-status.vue')
 const source = fs.readFileSync(componentPath, 'utf8')
-const script = source.match(/<script setup lang=["']ts["']>\s*([\s\S]*?)\s*<\/script>/)?.[1]
-if (!script) throw new Error('agent-goal-status.vue script block was not found')
+const descriptor = parse(source, { filename: componentPath }).descriptor
+const script = descriptor.scriptSetup?.content
+const template = descriptor.template?.content
+if (!script || !template) throw new Error('agent-goal-status.vue template or script block was not found')
+
+const componentStyleId = 'agent-goal-status-interaction'
+const componentScopeId = `data-v-${componentStyleId}`
+const componentStyles = descriptor.styles
+  .map(style => {
+    const compiled = compileStyle({
+      source: style.content,
+      filename: componentPath,
+      id: componentStyleId,
+      scoped: style.scoped
+    })
+    if (compiled.errors.length > 0) {
+      throw new Error(`Could not compile agent-goal-status.vue styles: ${compiled.errors.join(', ')}`)
+    }
+    return compiled.code
+  })
+  .join('\n')
+
+const compiledTemplate = compileTemplate({
+  source: template,
+  filename: componentPath,
+  id: componentStyleId,
+  compilerOptions: { mode: 'function' }
+})
+if (compiledTemplate.errors.length > 0) throw new Error(`Could not compile agent-goal-status.vue: ${compiledTemplate.errors.join(', ')}`)
+const renderGoalTemplate = new Function('Vue', compiledTemplate.code)(Vue) as RenderFunction
 
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
 
@@ -51,7 +88,7 @@ const makeGoal = (overrides: Partial<AgentGoalView> = {}): AgentGoalView => ({
 
 const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
   const emit = vi.fn()
-  const props = { goal, busy: false, runActive: false, expanded }
+  const props = Vue.reactive({ goal, busy: false, runActive: false, expanded })
   const evaluate = new Function(
     'computed',
     'ref',
@@ -59,29 +96,54 @@ const loadGoal = (goal: AgentGoalView, expanded: boolean): GoalHarness => {
     'defineProps',
     'defineModel',
     'defineEmits',
-    `${executableScript}\nreturn { statusLabel, statusColor, budgetPercent, blockerMessages, toggleAriaLabel, toggleExpanded }`
+    `${executableScript}\nreturn {
+      statusLabel,
+      statusColor,
+      statusIcon,
+      budgetPercent,
+      blockerMessages,
+      toggleAriaLabel,
+      goalToggleTargetStyle,
+      toggleExpanded,
+      expanded,
+      goalStatusId,
+      goalCollapsedObjectiveId,
+      goalToggleId,
+      goalDetailsId,
+      cancelDialogOpen,
+      cancelGoalTitleId
+    }`
   ) as (...dependencies: unknown[]) => Omit<GoalHarness, 'emit'>
   const harness = evaluate(
-    (getter: () => unknown) => ({
-      get value() {
-        return getter()
-      }
-    }),
-    <T>(value: T): Ref<T> => ({ value }),
+    Vue.computed,
+    Vue.ref,
     () => undefined,
     () => props,
-    () => ({
-      get value() {
-        return props.expanded
-      },
-      set value(value: boolean) {
-        props.expanded = value
-        emit('update:expanded', value)
-      }
-    }),
+    () =>
+      Vue.computed({
+        get: () => props.expanded,
+        set: (value: boolean) => {
+          props.expanded = value
+          emit('update:expanded', value)
+        }
+      }),
     () => emit
   )
   return { ...harness, emit }
+}
+
+const renderGoalStatus = async (goal: AgentGoalView): Promise<string> => {
+  const harness = loadGoal(goal, false)
+  const component = Object.assign(
+    defineComponent({
+      setup: () => ({ ...harness, goal, busy: false }),
+      render: renderGoalTemplate
+    }),
+    { __scopeId: componentScopeId }
+  )
+  const app = createSSRApp(component)
+  app.use(createVuetify({ components: vuetifyComponents }))
+  return renderToString(app)
 }
 
 describe('Agent goal status interaction', () => {
@@ -132,6 +194,19 @@ describe('Agent goal status interaction', () => {
     expect(loadGoal(makeGoal({ objective: 'Review the incident report' }), true).toggleAriaLabel.value).toBe(
       'Hide durable goal details: Review the incident report'
     )
+  })
+
+  it('renders both goal-toggle dimensions at least 44px with a compact control height', async () => {
+    const renderedHtml = (await renderGoalStatus(makeGoal())).replace(/var\(\s*--wiki-control-height(?:\s*,\s*[^)]+)?\)/g, '40px')
+    const dom = new JSDOM(
+      `<!doctype html><html><head><style>${componentStyles}</style></head><body><main style="--wiki-control-height: 40px">${renderedHtml}</main></body></html>`
+    )
+    const toggle = dom.window.document.querySelector<HTMLElement>('.agent-goal__toggle')
+    if (!toggle) throw new Error('Rendered goal toggle was not found')
+
+    const computed = dom.window.getComputedStyle(toggle)
+    expect(Number.parseFloat(computed.minWidth)).toBeGreaterThanOrEqual(44)
+    expect(Number.parseFloat(computed.minHeight)).toBeGreaterThanOrEqual(44)
   })
 
   it('emits the inverse expanded state when the goal toggle is activated', () => {

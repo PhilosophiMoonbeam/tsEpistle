@@ -31,6 +31,26 @@
               <span>Retention</span>
               <strong>{{ retentionTitle }}</strong>
               <p>{{ retentionSummary }}</p>
+              <div v-if="!session.folderId" class="agent-session-settings__retention-actions mt-2">
+                <v-btn
+                  class="agent-session-settings__retention-action"
+                  variant="tonal"
+                  :prepend-icon="session.retention === 'temporary' ? 'mdi-history' : 'mdi-clock-outline'"
+                  :loading="updatingRetention"
+                  :disabled="disabled || updatingRetention"
+                  @click="toggleRetention"
+                >
+                  {{ session.retention === 'temporary' ? 'Keep in Recent' : 'Make temporary' }}
+                </v-btn>
+                <p
+                  v-if="retentionError"
+                  class="agent-session-settings__retention-error"
+                  role="alert"
+                >
+                  <v-icon icon="mdi-alert-circle-outline" size="17" aria-hidden="true" />
+                  {{ retentionError }}
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -76,6 +96,10 @@
                   <dt>Model</dt>
                   <dd>{{ routeModel }}</dd>
                 </div>
+                <div v-if="routeUtilityModel">
+                  <dt>Utility model</dt>
+                  <dd>{{ routeUtilityModel }}</dd>
+                </div>
                 <div>
                   <dt>Destination</dt>
                   <dd>{{ routeDestination }}</dd>
@@ -113,6 +137,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import type { AgentProviderProfileView, AgentSessionView } from '../../../shared/agents/contracts.ts'
+import { useAgentsStore } from '../../store/agents.ts'
 
 type ProviderProfileApplyResult =
   | { readonly success: true }
@@ -124,11 +149,33 @@ const props = defineProps<{
   disabled: boolean
   applyProviderProfile: (profileId: string | null) => Promise<ProviderProfileApplyResult>
 }>()
+const agents = useAgentsStore()
 const profileId = ref<string | null>(props.session.providerProfileId)
 const applying = ref(false)
+const updatingRetention = ref(false)
 const profileError = ref('')
+const retentionError = ref('')
 const dateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 let applyGeneration = 0
+let retentionGeneration = 0
+
+const toggleRetention = async (): Promise<void> => {
+  if (props.disabled || updatingRetention.value || props.session.folderId) return
+  const sessionId = props.session.id
+  const generation = ++retentionGeneration
+  const nextRetention = props.session.retention === 'temporary' ? 'saved' : 'temporary'
+  updatingRetention.value = true
+  retentionError.value = ''
+  try {
+    await agents.setSessionRetention(sessionId, nextRetention)
+  } catch (value) {
+    if (generation !== retentionGeneration || props.session.id !== sessionId) return
+    const error = value instanceof Error && typeof value.message === 'string' ? value.message.trim() : ''
+    retentionError.value = error || 'Retention could not be updated. Try again.'
+  } finally {
+    if (generation === retentionGeneration && props.session.id === sessionId) updatingRetention.value = false
+  }
+}
 
 watch(
   [() => props.session.id, () => props.session.providerProfileId],
@@ -137,6 +184,14 @@ watch(
     applying.value = false
     profileId.value = providerProfileId
     profileError.value = ''
+  }
+)
+watch(
+  () => props.session.id,
+  () => {
+    retentionGeneration++
+    updatingRetention.value = false
+    retentionError.value = ''
   }
 )
 watch(profileId, () => {
@@ -177,6 +232,7 @@ const routeProfileName = computed(() => effectiveProfile.value
   ? `${profileId.value === null ? 'Default' : 'Explicit'} · ${effectiveProfile.value.name}`
   : profileId.value ? 'Explicit profile unavailable' : 'Default profile unavailable')
 const routeModel = computed(() => effectiveProfile.value?.model ?? (profileId.value ? 'Unavailable' : 'Resolved when the next run starts'))
+const routeUtilityModel = computed(() => effectiveProfile.value?.utilityModel ?? null)
 const routeDestination = computed(() => effectiveProfile.value?.destinationHost ?? (profileId.value ? 'Unavailable' : 'Managed by the current default'))
 const retentionIcon = computed(() => props.session.folderId
   ? 'mdi-folder-lock-outline'
@@ -226,6 +282,7 @@ const applyProfile = async (): Promise<void> => {
 }
 onBeforeUnmount(() => {
   applyGeneration++
+  retentionGeneration++
 })
 </script>
 <style scoped>
@@ -360,6 +417,25 @@ onBeforeUnmount(() => {
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 66%, transparent);
   font-size: .75rem;
   line-height: 1.5;
+}
+.agent-session-settings__retention-actions {
+  gap: var(--wiki-space-2);
+  justify-items: start;
+}
+
+.agent-session-settings__retention-action {
+  min-height: max(2.75rem, var(--wiki-control-height));
+  border-radius: var(--wiki-control-radius);
+  font-weight: 650;
+  text-transform: none;
+}
+
+.agent-session-settings__retention-error {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  color: rgb(var(--v-theme-error)) !important;
+  font-weight: 650;
 }
 
 .agent-session-settings__notice {

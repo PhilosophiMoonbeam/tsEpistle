@@ -99,28 +99,24 @@
               <v-btn v-bind="menuProps" class="inline-agent__mobile-panel-menu" icon="mdi-view-dashboard-outline" variant="text" size="small" aria-label="Open Agent panels: conversation history and memory" />
             </template>
             <v-list density="compact" role="menu">
-              <v-btn
+              <v-list-item
                 class="inline-agent__panel-menu-item"
                 role="menuitem"
-                type="button"
-                block
-                variant="text"
-                size="small"
+                link
                 prepend-icon="mdi-history"
+                title="Conversation history"
                 :disabled="memoryMutationBusy && memoryOpen && panelMode !== 'wide'"
                 @click="toggleHistory"
-              >Conversation history</v-btn>
-              <v-btn
+              />
+              <v-list-item
                 class="inline-agent__panel-menu-item"
                 role="menuitem"
-                type="button"
-                block
-                variant="text"
-                size="small"
+                link
                 prepend-icon="mdi-brain"
+                title="Agent memory"
                 :disabled="memoryMutationBusy"
                 @click="toggleMemory"
-              >Agent memory</v-btn>
+              />
             </v-list>
           </v-menu>
           <v-btn
@@ -280,11 +276,23 @@
                 <span>Permissions are enforced. Verify cited sources before relying on model output.</span>
               </div>
             </div>
+            <p
+              v-if="openGoal"
+              id="agent-composer-lock-reason"
+              class="inline-agent__composer-lock"
+              role="status"
+              aria-live="polite"
+            >
+              <v-icon icon="mdi-lock-outline" size="16" aria-hidden="true" />
+              <span>{{ goalSubmitUnavailableReason }}</span>
+            </p>
             <AgentComposer
               ref="composer"
               :sending="sending"
               :can-stop="Boolean(activeRun?.canCancel)"
               :disabled="!canSubmit"
+              :has-messages="hasConversation"
+              :aria-describedby="openGoal ? 'agent-composer-lock-reason' : undefined"
               :skills-enabled="skillsEnabled"
               :goals-enabled="goalsEnabled"
               :skills="skills"
@@ -436,7 +444,12 @@ const providerUnavailableMessage = computed(() => props.providerEnabled
   ? 'No enabled provider profile is available for your account. Ask an administrator to grant one in Administration → Agents.'
   : 'Agent inference is currently disabled. An administrator can configure it in Administration → Agents.')
 const canSubmit = computed(() => providerAvailable.value && !loading.value && !sending.value && Boolean(thread.value) && !activeRun.value && !openGoal.value)
-const submitUnavailableReason = computed(() => !providerAvailable.value ? providerUnavailableMessage.value : loading.value ? 'Opening conversation' : sending.value ? 'Sending your message' : activeRun.value ? 'Wait for the current response to finish' : openGoal.value ? 'Finish or pause the current goal before sending a message' : '')
+const goalSubmitUnavailableReason = computed(() => !openGoal.value
+  ? ''
+  : openGoal.value.status === 'paused'
+    ? 'Resume or cancel the current goal before sending a message'
+    : 'Finish or cancel the current goal before sending a message')
+const submitUnavailableReason = computed(() => !providerAvailable.value ? providerUnavailableMessage.value : loading.value ? 'Opening conversation' : sending.value ? 'Sending your message' : activeRun.value ? 'Wait for the current response to finish' : openGoal.value ? goalSubmitUnavailableReason.value : '')
 const preferredSkillIds = computed(() => thread.value?.session.skills.map(skill => skill.skillId) ?? [])
 const invocationLimit = computed(() => Math.max(0, 8 - preferredSkillIds.value.length))
 const sessionTitle = computed(() => thread.value?.session.title || 'New conversation')
@@ -1012,9 +1025,11 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 }
 
 .inline-agent__panel-menu-item {
+  min-block-size: 44px;
   justify-content: flex-start;
   text-transform: none;
 }
+
 
 .inline-agent__new-session {
   margin-inline-start: var(--wiki-space-1);
@@ -1255,6 +1270,16 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 .inline-agent__composer-inner {
   width: min(100%, var(--agent-conversation-width));
   margin-inline: auto;
+}
+
+.inline-agent__composer-lock {
+  display: flex;
+  align-items: center;
+  gap: var(--wiki-space-2);
+  margin: 0 0 var(--wiki-space-2);
+  color: rgb(var(--v-theme-warning));
+  font-size: var(--wiki-label-size);
+  line-height: 1.4;
 }
 
 .inline-agent__composer-meta {

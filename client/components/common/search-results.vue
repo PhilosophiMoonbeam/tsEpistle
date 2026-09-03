@@ -46,6 +46,8 @@
           variant='text'
           size='small'
           prepend-icon='mdi-keyboard-outline'
+          title='Shortcut to switch between Search and Ask mode'
+          aria-label='Shortcut to switch between Search and Ask mode: Control or Command plus Shift plus A'
         ) Ctrl/⌘ + Shift + A
         v-btn.search-results-close(
           icon='mdi-close'
@@ -115,6 +117,16 @@
               v-icon(icon='mdi-text-search' size='34')
             h2 Search your knowledge base
             p Type at least two characters to find pages by title, content, path, or tag.
+            .search-results-syntax-tips
+              span.search-results-syntax-tip
+                kbd "exact phrase"
+                | exact match
+              span.search-results-syntax-tip
+                kbd -word
+                | exclude
+              span.search-results-syntax-tip
+                kbd or
+                | either
           .search-results-loader(v-else-if='searchIsLoading')
             async-state(
               state='loading'
@@ -150,18 +162,25 @@
                 :title='$t(`common:header.searchNoResult`)'
                 :message='canAsk ? `Ask Wiki for a grounded answer, or try a different term or scope.` : `Try a different term or broader scope.`'
               )
+              .search-results-empty-actions(v-if='canAsk')
+                v-btn.search-results-empty-ask(
+                  color='primary'
+                  variant='tonal'
+                  prepend-icon='mdi-auto-fix'
+                  @click='askCurrentQuery'
+                ) Ask Wiki about "{{ normalizedSearch }}"
             template(v-if='results.length > 0')
               v-list.search-results-items(
                 id='wiki-search-results'
                 role='listbox'
                 :aria-busy='searchIsLoading'
                 aria-label='Search results'
-                lines='three'
               )
                 template(v-for='(item, idx) of results' :key='resultKey(item)')
                   v-list-item.search-results-item(
                     :id='resultOptionId(idx)'
                     role='option'
+                    lines='three'
                     :aria-selected='idx === cursor'
                     :href='pageHref(item)'
                     :class='idx === cursor ? `highlighted` : ``'
@@ -175,7 +194,7 @@
                     .search-results-path
                       v-icon(icon='mdi-source-branch' size='14')
                       span {{ item.path }}
-                    .search-results-tags(v-if='item.tags.length')
+                    .search-results-tags(v-if='item.tags.length || item.matchedFields?.includes("graph")')
                       v-chip(
                         v-for='(tag, tagIndex) of item.tags.slice(0, 3)'
                         :key='`${tagIndex}:${tag}`'
@@ -183,8 +202,19 @@
                         variant='tonal'
                       ) {{ tag }}
                       span.text-body-small.text-medium-emphasis(v-if='item.tags.length > 3') +{{ item.tags.length - 3 }}
+                      v-chip(
+                        v-if='item.matchedFields?.includes("graph")'
+                        size='x-small'
+                        variant='tonal'
+                        color='secondary'
+                      )
+                        v-icon(start icon='mdi-graph-outline' size='12')
+                        | Linked page
                     template(v-slot:append)
                       .search-results-item-meta
+                        v-chip(v-if='item.visibility === "private"' size='x-small' label color='warning' variant='tonal')
+                          v-icon(start icon='mdi-lock-outline' size='12')
+                          | Private
                         v-chip(size='x-small' label variant='outlined') {{ item.locale.toLocaleUpperCase() }}
                         v-icon.search-results-item-chevron(icon='mdi-chevron-right' size='19')
                   v-divider(v-if='idx < results.length - 1' aria-hidden='true')
@@ -249,7 +279,7 @@ export default defineComponent({
   },
   data() {
     return {
-      cursor: 0,
+      cursor: -1,
       approvalId: '',
       pagination: 1,
       perPage: 10,
@@ -384,7 +414,7 @@ export default defineComponent({
       if (!allowed && this.searchMode === 'ask') this.searchMode = 'search'
     },
     results() {
-      this.cursor = 0
+      this.cursor = -1
       void this.$nextTick(this.syncSearchInputA11y)
     },
     cursor() {
@@ -580,30 +610,24 @@ export default defineComponent({
       const normalizedQuery = query.trim()
       if (this.searchTimer !== null) window.clearTimeout(this.searchTimer)
       this.searchTimer = null
-      if (this.searchMode !== 'search') {
-        this.searchIsLoading = false
-        return
-      }
+      this.searchIsLoading = false
+      if (this.searchMode !== 'search') return
       if (normalizedQuery.length < 2) {
         this.searchError = ''
         this.responseKey = ''
         this.response = emptySearchResponse()
         this.pagination = 1
-        this.searchIsLoading = false
         return
       }
       const requestKey = this.searchRequestKey
       if (this.responseKey === requestKey && !this.searchError) {
-        this.searchIsLoading = false
+        this.cursor = -1
         return
       }
       this.searchError = ''
-      this.responseKey = ''
-      this.response = emptySearchResponse()
-      this.pagination = 1
-      this.searchIsLoading = true
       this.searchTimer = window.setTimeout(() => {
         this.searchTimer = null
+        this.searchIsLoading = true
         void this.runSearch(normalizedQuery, requestKey, requestId)
       }, 300)
     },
@@ -614,7 +638,7 @@ export default defineComponent({
         this.cursor = -1
         return
       }
-      this.cursor = Math.min(Math.max(this.cursor + (dir === 'up' ? -1 : 1), 0), lastIndex)
+      this.cursor = Math.min(Math.max(this.cursor + (dir === 'up' ? -1 : 1), -1), lastIndex)
       void this.$nextTick(() => {
         const root = this.$el as HTMLElement | undefined
         root?.querySelector<HTMLElement>('.highlighted')?.scrollIntoView({ block: 'nearest' })
@@ -793,7 +817,7 @@ export default defineComponent({
     box-sizing: border-box;
     margin: 0 auto;
     max-width: 68rem;
-    padding: 0 clamp(var(--wiki-space-3), 2vw, var(--wiki-space-6)) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8));
+    padding: 0 clamp(var(--wiki-space-3), 2vw, var(--wiki-space-6)) max(clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)), env(safe-area-inset-bottom, 0px));
     width: 100%;
 
     &--ask {
@@ -951,8 +975,8 @@ export default defineComponent({
   }
 
   &-eyebrow {
-    color: rgb(var(--v-theme-primary));
-    font-size: .68rem;
+    color: var(--wiki-accent-ink, rgb(var(--v-theme-primary)));
+    font-size: var(--wiki-type-micro, .75rem);
     font-weight: 750;
     letter-spacing: .11em;
     line-height: 1.3;
@@ -987,6 +1011,18 @@ export default defineComponent({
     font-weight: 450;
   }
   &-ask { min-height: var(--wiki-control-height); flex: 0 0 auto; letter-spacing: 0; text-transform: none; }
+  &-empty-actions {
+    display: flex;
+    justify-content: center;
+    margin-top: var(--wiki-space-4);
+    width: 100%;
+  }
+  &-empty-ask {
+    letter-spacing: 0;
+    max-width: min(100%, 36rem);
+    min-height: var(--wiki-control-height);
+    text-transform: none;
+  }
 
   &-help,
   &-loader,
@@ -1023,6 +1059,31 @@ export default defineComponent({
     line-height: 1.55;
     margin: 0;
     max-width: 32rem;
+  }
+
+  &-syntax-tips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-3);
+    justify-content: center;
+    margin-top: var(--wiki-space-4);
+  }
+
+  &-syntax-tip {
+    align-items: center;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+    display: inline-flex;
+    font-size: var(--wiki-type-micro, .75rem);
+    gap: var(--wiki-space-1);
+
+    kbd {
+      background: var(--wiki-surface-sunken);
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: var(--wiki-radius-xs);
+      font-family: var(--wiki-font-mono);
+      font-size: .75rem;
+      padding: 0.1rem 0.35rem;
+    }
   }
 
   &-items,
@@ -1156,6 +1217,7 @@ export default defineComponent({
     &-agent-nav { min-height: calc(var(--wiki-control-height) + var(--wiki-space-6) + max(0px, env(safe-area-inset-top))); padding-inline: var(--wiki-space-2); }
     &-scope { align-items: flex-start; flex-direction: column; gap: var(--wiki-space-3); }
     &-scope-actions { justify-content: flex-start; }
+    &-scope-actions .v-btn { min-height: 2.75rem; }
     &-content { padding: var(--wiki-space-3); }
   }
   @media (max-width: 639.98px) {

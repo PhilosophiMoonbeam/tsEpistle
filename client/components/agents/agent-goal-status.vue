@@ -29,6 +29,7 @@
         :aria-expanded="expanded"
         :aria-controls="goalDetailsId"
         :aria-label="toggleAriaLabel"
+        :style="goalToggleTargetStyle"
         @click="toggleExpanded"
       >
         <span class="agent-goal__toggle-label">{{ expanded ? 'Hide details' : 'Show details' }}</span>
@@ -36,14 +37,15 @@
       </button>
     </div>
 
-    <div
-      v-if="expanded"
-      :id="goalDetailsId"
-      class="agent-goal__details"
-      role="region"
-      :aria-labelledby="goalTitleId"
-    >
-      <div class="agent-goal__body">
+    <v-expand-transition>
+      <div
+        v-if="expanded"
+        :id="goalDetailsId"
+        class="agent-goal__details"
+        role="region"
+        :aria-labelledby="goalTitleId"
+      >
+        <div class="agent-goal__body">
         <header class="agent-goal__header">
           <div class="agent-goal__heading">
             <p class="agent-goal__eyebrow">Durable goal</p>
@@ -146,7 +148,8 @@
           >Cancel goal</v-btn>
         </div>
       </div>
-    </div>
+      </div>
+    </v-expand-transition>
 
     <v-dialog v-model="cancelDialogOpen" max-width="30rem" :aria-labelledby="cancelGoalTitleId">
       <v-card rounded="xl">
@@ -184,6 +187,10 @@ const goalDetailsId = computed(() => `agent-goal-${props.goal.id}-details`)
 const goalBlockersTitleId = computed(() => `agent-goal-${props.goal.id}-blockers-title`)
 const cancelGoalTitleId = computed(() => `agent-goal-${props.goal.id}-cancel-title`)
 const toggleAriaLabel = computed(() => `${expanded.value ? 'Hide' : 'Show'} durable goal details: ${props.goal.objective}`)
+const goalToggleTargetStyle = {
+  minHeight: 'max(44px, var(--wiki-control-height, 44px))',
+  minWidth: 'max(44px, var(--wiki-control-height, 44px))'
+} as const
 const toggleExpanded = (): void => { expanded.value = !expanded.value }
 watch(() => props.busy, busy => { if (!busy) pendingAction.value = null })
 watch(() => props.goal.id, () => {
@@ -398,7 +405,7 @@ const progressLabel = computed(() => {
   color: rgba(var(--v-theme-on-surface), .66);
   display: inline-flex;
   flex: 0 0 auto;
-  font-size: .66rem;
+  font-size: var(--wiki-type-micro, .75rem);
   font-variant-numeric: tabular-nums;
   gap: var(--wiki-space-1);
   white-space: nowrap;
@@ -415,8 +422,7 @@ const progressLabel = computed(() => {
   font: inherit;
   gap: var(--wiki-space-1);
   justify-content: center;
-  min-height: 1.75rem;
-  padding: 0 var(--wiki-space-1) 0 var(--wiki-space-2);
+  padding: 0 var(--wiki-space-2);
   white-space: nowrap;
 }
 .agent-goal__toggle:hover { background: color-mix(in srgb, var(--goal-accent) 10%, transparent); }
@@ -424,7 +430,7 @@ const progressLabel = computed(() => {
   outline: 2px solid rgb(var(--v-theme-primary));
   outline-offset: 2px;
 }
-.agent-goal__toggle-label { font-size: .68rem; font-weight: 675; }
+.agent-goal__toggle-label { font-size: var(--wiki-type-micro, .75rem); font-weight: 675; }
 .agent-goal__toggle-icon {
   transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease-out);
 }
@@ -472,7 +478,7 @@ const progressLabel = computed(() => {
   color: rgba(var(--v-theme-on-surface), .62);
   display: flex;
   flex-wrap: wrap;
-  font-size: .7rem;
+  font-size: var(--wiki-type-micro, .75rem);
   gap: var(--wiki-space-2) var(--wiki-space-4);
   margin-top: var(--wiki-space-2);
 }
@@ -487,7 +493,7 @@ const progressLabel = computed(() => {
 .agent-goal__progress-heading {
   align-items: center;
   display: flex;
-  font-size: .68rem;
+  font-size: var(--wiki-type-micro, .75rem);
   justify-content: space-between;
   margin-bottom: var(--wiki-space-2);
 }
@@ -521,7 +527,7 @@ const progressLabel = computed(() => {
 .agent-goal__budget:first-child { border-inline-start: 0; padding-inline-start: 0; }
 .agent-goal__budget dt {
   color: rgba(var(--v-theme-on-surface), .68);
-  font-size: .65rem;
+  font-size: var(--wiki-type-micro, .75rem);
   font-weight: 650;
 }
 .agent-goal__budget dd {
@@ -534,7 +540,7 @@ const progressLabel = computed(() => {
 .agent-goal__budget dd span { font-size: .78rem; font-variant-numeric: tabular-nums; font-weight: 700; }
 .agent-goal__budget dd small {
   color: rgba(var(--v-theme-on-surface), .68);
-  font-size: .62rem;
+  font-size: var(--wiki-type-micro, .75rem);
   overflow-wrap: anywhere;
 }
 .agent-goal__budget-track {

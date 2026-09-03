@@ -20,6 +20,13 @@
         min-width="12rem"
         :aria-label="`Actions for ${session.title || 'New conversation'}`"
       >
+        <v-list-item
+          prepend-icon="mdi-pencil-outline"
+          title="Rename"
+          :disabled="busy"
+          @click="requestRename"
+        />
+        <v-divider class="agent-history-session-actions__divider" />
         <v-menu v-if="canMove" location="end" submenu>
           <template #activator="{ props: moveMenuProps }">
             <v-list-item
@@ -82,6 +89,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   move: [folderId: string | null]
+  rename: [restoreTarget: HTMLElement | null]
   remove: [restoreTarget: HTMLElement | null]
 }>()
 type ComponentRoot = { $el?: HTMLElement }
@@ -91,6 +99,7 @@ const triggerElement = (): HTMLElement | null => {
   if (!value) return null
   return value instanceof HTMLElement ? value : value.$el ?? null
 }
+const requestRename = (): void => emit('rename', triggerElement())
 const requestRemove = (): void => emit('remove', triggerElement())
 const availableFolders = computed(() => props.folders.filter(folder => folder.id !== props.session.folderId))
 const canMove = computed(() => props.session.folderId !== null || availableFolders.value.length > 0)
@@ -113,7 +122,7 @@ const canMove = computed(() => props.session.folderId !== null || availableFolde
 .agent-history-session-actions__divider { margin-block: var(--wiki-space-1); }
 .agent-history-session-actions__delete { color: rgb(var(--v-theme-error)); }
 .agent-history-session-actions__menu :deep(.v-list-item-subtitle) {
-  font-size: .68rem;
+  font-size: var(--wiki-type-micro, .75rem);
   line-height: 1.35;
 }
 @media (forced-colors: active) {

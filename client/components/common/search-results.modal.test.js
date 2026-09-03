@@ -100,4 +100,21 @@ describe('Ask modal accessibility contract', () => {
     expect(header).toMatch(/searchIsFocused\(open: boolean\): void[\s\S]*!open && this\.\$vuetify\.display\.smAndDown[\s\S]*this\.searchIsShown = false/)
     expect(header).toMatch(/searchClose \(\)[\s\S]*this\.searchIsFocused = false[\s\S]*this\.searchMode = 'search'[\s\S]*this\.search = ''/)
   })
+
+  test('bounds result descriptions and keeps scope actions touch-sized throughout the mobile layout', () => {
+    const resultItemStart = search.indexOf('v-list-item.search-results-item(')
+    const resultItemEnd = search.indexOf('v-divider', resultItemStart)
+    const resultItem = search.slice(resultItemStart, resultItemEnd)
+    expect(resultItem).toContain("lines='three'")
+    expect(resultItem).toContain('v-list-item-subtitle {{ item.description }}')
+
+    const mobileStart = search.indexOf("@media #{map-get($display-breakpoints, 'sm-and-down')}")
+    const narrowPhoneStart = search.indexOf('@media (max-width: 639.98px)', mobileStart)
+    const mobileLayout = search.slice(mobileStart, narrowPhoneStart)
+    const scopeTargetHeight = mobileLayout.match(/&-scope-actions \.v-btn \{ min-height: ([\d.]+)rem;/)
+
+    expect(mobileStart).toBeGreaterThanOrEqual(0)
+    expect(narrowPhoneStart).toBeGreaterThan(mobileStart)
+    expect(Number(scopeTargetHeight?.[1]) * 16).toBeGreaterThanOrEqual(44)
+  })
 })

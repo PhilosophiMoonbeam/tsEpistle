@@ -35,6 +35,7 @@
 
     <div class="agent-history__search">
       <v-text-field
+        ref="historySearchField"
         v-model="searchQuery"
         aria-label="Search conversation history"
         clearable
@@ -129,6 +130,7 @@
                       :folders="folders"
                       :busy="sessionBusy(session.id)"
                       @move="folderId => moveSession(session, folderId)"
+                      @rename="restoreTarget => beginRenameSession(session, restoreTarget)"
                       @remove="restoreTarget => beginDeleteSession(session, restoreTarget)"
                     />
                   </template>
@@ -214,6 +216,7 @@
                         :folders="folders"
                         :busy="sessionBusy(session.id)"
                         @move="folderId => moveSession(session, folderId)"
+                        @rename="restoreTarget => beginRenameSession(session, restoreTarget)"
                         @remove="restoreTarget => beginDeleteSession(session, restoreTarget)"
                       />
                     </template>
@@ -280,6 +283,26 @@
     </v-card>
   </v-dialog>
 
+  <v-dialog v-model="sessionEditorOpen" max-width="28rem" aria-labelledby="agent-history-session-editor-title" :persistent="savingSessionTitle">
+    <v-card rounded="xl">
+      <v-card-title id="agent-history-session-editor-title" class="d-flex align-center ga-3 pt-5 px-5">
+        <v-avatar color="primary" size="38" variant="tonal"><v-icon icon="mdi-pencil-outline" aria-hidden="true" /></v-avatar>
+        Rename conversation
+      </v-card-title>
+      <v-card-text class="px-5 pt-4">
+        <v-alert v-if="sessionDialogError" class="mb-3" type="error" variant="tonal" density="compact">{{ sessionDialogError }}</v-alert>
+        <v-text-field v-model="sessionRenameTitle" autofocus counter="255" label="Conversation title" maxlength="255" variant="outlined" :disabled="savingSessionTitle" @keydown.enter.prevent="saveSessionTitle" />
+      </v-card-text>
+      <v-card-actions class="px-5 pb-4">
+        <v-spacer />
+        <v-btn variant="text" :disabled="savingSessionTitle" @click="sessionEditorOpen = false">Cancel</v-btn>
+        <v-btn color="primary" variant="tonal" :disabled="loading || !sessionRenameTitle.trim() || savingSessionTitle" :loading="savingSessionTitle" @click="saveSessionTitle">
+          Save title
+        </v-btn>
+      </v-card-actions>
+    </v-card>
+  </v-dialog>
+
   <v-dialog :model-value="Boolean(deletingSession)" max-width="29rem" aria-labelledby="agent-history-delete-title" :persistent="deleting" @update:model-value="value => { if (!value && !deleting) cancelDeleteSession() }">
     <v-card ref="deleteDialogCard" rounded="xl">
       <v-card-title id="agent-history-delete-title" class="d-flex align-center ga-3 pt-5 px-5">
@@ -335,6 +358,12 @@ const folderEditorOpen = ref(false)
 const folderName = ref('')
 const editingFolder = shallowRef<AgentConversationFolderView | null>(null)
 const savingFolder = ref(false)
+const sessionEditorOpen = ref(false)
+const editingSession = shallowRef<AgentSessionSummary | null>(null)
+const sessionRenameTitle = ref('')
+const sessionDialogError = ref('')
+const savingSessionTitle = ref(false)
+const sessionEditorRestoreTarget = shallowRef<HTMLElement | null>(null)
 const deletingSession = shallowRef<AgentSessionSummary | null>(null)
 const removingFolder = shallowRef<AgentConversationFolderView | null>(null)
 const dialogError = ref('')
@@ -352,6 +381,7 @@ const dragStatus = ref('')
 const recentDropTarget = '__agent_history_recent__'
 type ComponentRoot = ComponentPublicInstance | HTMLElement
 const historyCloseButton = useTemplateRef<ComponentRoot>('historyCloseButton')
+const historySearchField = useTemplateRef<ComponentRoot>('historySearchField')
 const deleteDialogCard = useTemplateRef<ComponentRoot>('deleteDialogCard')
 const removeFolderDialogCard = useTemplateRef<ComponentRoot>('removeFolderDialogCard')
 const folderEditorRestoreTarget = shallowRef<HTMLElement | null>(null)
@@ -583,6 +613,32 @@ const componentElement = (component: ComponentRoot | null): HTMLElement | null =
   if (component instanceof HTMLElement) return component
   return component.$el instanceof HTMLElement ? component.$el : null
 }
+const componentControl = (component: ComponentRoot | null): HTMLElement | null => {
+  const root = componentElement(component)
+  if (!root) return null
+  if (root.matches('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])')) return root
+  return root.querySelector<HTMLElement>(
+    'input:not([disabled]), button:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+  )
+}
+const isVisibleFocusTarget = (target: HTMLElement | null): target is HTMLElement =>
+  Boolean(
+    target?.isConnected &&
+    target.getClientRects().length > 0 &&
+    !target.matches(':disabled, [aria-disabled="true"]') &&
+    !target.closest('[inert], [aria-hidden="true"]')
+  )
+const restoreSessionEditorFocus = (): void => {
+  const originalTarget = sessionEditorRestoreTarget.value
+  sessionEditorRestoreTarget.value = null
+  const target = [
+    originalTarget,
+    componentControl(historySearchField.value),
+    componentControl(historyCloseButton.value)
+  ].find(isVisibleFocusTarget)
+  target?.focus()
+}
+
 
 const closeHistory = (): void => {
   agents.cancelSessionTransition()
@@ -658,6 +714,37 @@ const beginRenameFolder = (folder: AgentConversationFolderView): void => {
     (document.activeElement instanceof HTMLElement ? document.activeElement : null)
   folderEditorOpen.value = true
 }
+const beginRenameSession = (session: AgentSessionSummary, restoreTarget: HTMLElement | null): void => {
+  if (loading.value) return
+  sessionDialogError.value = ''
+  editingSession.value = session
+  sessionRenameTitle.value = session.title || ''
+  sessionEditorRestoreTarget.value = restoreTarget ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+  sessionEditorOpen.value = true
+}
+const saveSessionTitle = async (): Promise<void> => {
+  const title = sessionRenameTitle.value.trim()
+  const session = editingSession.value
+  if (!title || !session || savingSessionTitle.value || loading.value) return
+  savingSessionTitle.value = true
+  sessionDialogError.value = ''
+  try {
+    await agents.renameSession(session.id, title)
+    sessionEditorOpen.value = false
+  } catch (value) {
+    sessionDialogError.value = message(value, 'The conversation could not be renamed.')
+  } finally {
+    savingSessionTitle.value = false
+  }
+}
+watch(sessionEditorOpen, async (open, _previous, onCleanup) => {
+  let cancelled = false
+  onCleanup(() => { cancelled = true })
+  if (open) return
+  await nextTick()
+  if (cancelled) return
+  restoreSessionEditorFocus()
+})
 const beginDeleteSession = (session: AgentSessionSummary, restoreTarget: HTMLElement | null): void => {
   dialogError.value = ''
   destructiveRestoreTarget.value = restoreTarget
@@ -872,7 +959,7 @@ onBeforeUnmount(() => {
   align-items: center;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
   display: flex;
-  font-size: .72rem;
+  font-size: var(--wiki-type-micro, .75rem);
   gap: var(--wiki-space-2);
   justify-content: center;
   min-height: var(--wiki-control-height);
@@ -892,7 +979,7 @@ onBeforeUnmount(() => {
 }
 .agent-history__section-heading--folders { padding-top: 0; }
 .agent-history__section-title { font-size: .78rem; font-weight: 750; letter-spacing: .035em; margin: 0; }
-.agent-history__section-copy { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 56%, transparent); font-size: .67rem; margin-top: var(--wiki-space-1); }
+.agent-history__section-copy { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 70%, transparent); font-size: var(--wiki-type-micro, .75rem); margin-top: var(--wiki-space-1); }
 .agent-history__count,
 .agent-history__retained {
   align-items: center;
@@ -901,7 +988,7 @@ onBeforeUnmount(() => {
   border-radius: var(--wiki-radius-pill);
   color: rgb(var(--v-theme-primary));
   display: inline-flex;
-  font-size: .65rem;
+  font-size: var(--wiki-type-micro, .75rem);
   font-weight: 700;
   gap: var(--wiki-space-1);
   line-height: 1;
@@ -909,8 +996,8 @@ onBeforeUnmount(() => {
 }
 .agent-history__time-group + .agent-history__time-group { margin-top: var(--wiki-space-2); }
 .agent-history__time-label {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 50%, transparent);
-  font-size: .63rem;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+  font-size: var(--wiki-type-micro, .75rem);
   font-weight: 700;
   letter-spacing: .08em;
   padding: var(--wiki-space-1) var(--wiki-space-2);

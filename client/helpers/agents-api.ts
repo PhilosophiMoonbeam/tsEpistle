@@ -485,6 +485,24 @@ export const moveAgentSessionToFolder = (
   }) as Promise<AgentThreadState>
 }
 
+export const updateAgentSession = (
+  fetcher: typeof fetch,
+  csrfToken: string,
+  sessionId: string,
+  input: {
+    readonly expectedSessionVersion: number
+    readonly title?: string
+    readonly retention?: 'temporary' | 'saved'
+  }
+): Promise<AgentThreadState> => {
+  assertUuid(sessionId, 'Session ID')
+  assertPositiveVersion(input.expectedSessionVersion)
+  return requestJson(fetcher, csrfToken, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, Thread, {
+    method: 'PATCH',
+    body: JSON.stringify(input)
+  }) as Promise<AgentThreadState>
+}
+
 export const deleteAgentSession = async (fetcher: typeof fetch, csrfToken: string, sessionId: string): Promise<void> => {
   assertUuid(sessionId, 'Session ID')
   const response = await sameOriginJsonFetch(fetcher, `/_api/agents/sessions/${encodeURIComponent(sessionId)}`, {

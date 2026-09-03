@@ -109,7 +109,12 @@
                 <span class="agent-sources__count">{{ entry.message.citations.length }}</span>
               </summary>
               <ol class="agent-sources__groups">
-                <li v-for="group in entry.citationGroups" :key="group.key" class="agent-sources__group">
+                <li
+                  v-for="group in entry.citationGroups"
+                  :id="group.pageCitation ? `agent-source-${group.pageCitation.citation.evidenceId}` : undefined"
+                  :key="group.key"
+                  class="agent-sources__group"
+                >
                   <component
                     :is="safeNavigableHref(group.pageHref) ? 'a' : 'div'"
                     class="agent-sources__page"
@@ -124,7 +129,11 @@
                     <span v-if="safeNavigableHref(group.pageHref)" class="agent-sources__new-window"> (opens in a new tab)</span>
                   </component>
                   <ol v-if="group.sections.length" class="agent-sources__sections">
-                    <li v-for="citationEntry in group.sections" :key="citationEntry.citation.evidenceId">
+                    <li
+                      v-for="citationEntry in group.sections"
+                      :id="`agent-source-${citationEntry.citation.evidenceId}`"
+                      :key="citationEntry.citation.evidenceId"
+                    >
                       <component
                         :is="safeNavigableHref(citationEntry.citation.href) ? 'a' : 'span'"
                         :href="safeNavigableHref(citationEntry.citation.href)"
@@ -210,12 +219,13 @@
         </figcaption>
       </figure>
     </section>
-    <div v-if="thread.suggestions.length" class="agent-suggestions" aria-label="Follow-up suggestions">
+    <div v-if="thread.suggestions.length" class="agent-suggestions" role="group" aria-label="Follow-up suggestions">
       <v-btn
         v-for="suggestion in thread.suggestions"
         :key="suggestion.id"
         variant="tonal"
         size="small"
+        append-icon="mdi-arrow-top-right"
         :disabled="canSubmit === false"
         @click="emit('suggest', suggestion.prompt)"
       >{{ suggestion.label }}</v-btn>
@@ -641,7 +651,7 @@ watch(
 .agent-sources__heading::after {
   content: '›';
   font-size: 1.25rem;
-  margin-inline-start: var(--wiki-space-1);
+  margin-inline-start: auto;
   transform: rotate(90deg);
   transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
 }
@@ -908,6 +918,12 @@ watch(
   flex-wrap: wrap;
   gap: var(--wiki-space-2);
   margin-block-start: var(--wiki-space-5);
+}
+
+.agent-suggestions :deep(.v-btn) {
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 @keyframes agentStatusPulse {

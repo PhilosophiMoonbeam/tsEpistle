@@ -74,7 +74,7 @@
         :role="skillsEnabled ? 'combobox' : undefined"
         :aria-autocomplete="skillsEnabled ? 'list' : undefined"
         :aria-haspopup="skillsEnabled ? 'listbox' : undefined"
-        :placeholder="goalMode ? 'Describe a bounded outcome for Wiki Agent' : skillsEnabled ? 'Ask a follow-up · Type / for skills' : 'Ask a follow-up'"
+        :placeholder="composerInputPlaceholder"
         rows="3"
         variant="solo"
         flat
@@ -205,6 +205,7 @@
           prepend-icon="mdi-target"
           aria-label="Toggle goal mode"
           :aria-pressed="goalMode"
+          :title="goalMode ? 'Disable durable goal mode' : 'Enable durable goal mode for multi-step tasks'"
           :disabled="disabled || sendInProgress"
           @click="goalMode = !goalMode"
         >
@@ -272,6 +273,7 @@ const props = defineProps<{
   invocationLimit: number
   statusLabel: string
   statusTone: 'ready' | 'error' | 'busy'
+  hasMessages?: boolean
 }>()
 const emit = defineEmits<{ send: [content: string, invokedSkillVersionIds: readonly string[], mode: 'message' | 'goal', completion?: (success: boolean) => void]; stop: []; manageSkills: []; retrySkills: []; updateSkillPreferences: [skillIds: string[]] }>()
 const draft = ref('')
@@ -310,7 +312,22 @@ const isPreferred = (versionId: string): boolean => {
   const skillId = skillIdForVersion(versionId)
   return skillId !== undefined && preferredSkillIds.value.has(skillId)
 }
-const composerInputLabel = computed(() => goalMode.value ? 'Define an outcome for Wiki Agent' : 'Message Wiki Agent')
+const composerInputLabel = computed(() =>
+  goalMode.value
+    ? 'Define an outcome for Wiki Agent'
+    : props.hasMessages
+      ? 'Follow up with Wiki Agent'
+      : 'Message Wiki Agent'
+)
+const composerInputPlaceholder = computed(() => {
+  if (goalMode.value) return 'Describe a bounded outcome for Wiki Agent'
+  if (props.skillsEnabled) {
+    return props.hasMessages
+      ? 'Ask a follow-up · Type / for skills'
+      : 'Ask a question · Type / for skills'
+  }
+  return props.hasMessages ? 'Ask a follow-up' : 'Ask a question or search query'
+})
 const submitLabel = computed(() => sendFailed.value ? 'Retry' : goalMode.value ? 'Start goal' : 'Send')
 const isSelected = (versionId: string): boolean => selectedSkillIdSet.value.has(versionId)
 const getTextarea = (): HTMLTextAreaElement | null => {

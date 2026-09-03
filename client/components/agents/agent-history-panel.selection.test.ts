@@ -14,12 +14,14 @@ interface PanelAgents {
   openSession: (sessionId: string) => Promise<boolean>
   cancelSessionTransition: () => void
   moveSessionToFolder?: (sessionId: string, folderId: string | null) => Promise<unknown>
+  renameSession?: (sessionId: string, title: string) => Promise<unknown>
 }
 
 type PanelEmit = (event: 'close' | 'reset') => void
 
 interface PanelHarness {
   activeDropTarget: Ref<string | null>
+  beginRenameSession: (session: AgentSessionSummary, restoreTarget: HTMLElement | null) => void
   beginSessionDrag: (event: DragEvent, session: AgentSessionSummary) => void
   canDropTo: (folderId: string | null) => boolean
   closeHistory: () => void
@@ -30,9 +32,47 @@ interface PanelHarness {
   finishSessionDrag: () => void
   localError: Ref<string>
   moveSession: (session: AgentSessionSummary, folderId: string | null) => Promise<boolean>
+  saveSessionTitle: () => Promise<void>
+  searchQuery: Ref<string | null>
+  sessionEditorOpen: Ref<boolean>
+  sessionRenameTitle: Ref<string>
   openSession: (sessionId: string) => Promise<void>
   setDropTarget: (event: DragEvent, folderId: string | null) => void
   unmount: () => void
+}
+
+type WatchCleanup = () => void
+type WatchCallback = (value: unknown, previous: unknown, onCleanup: (cleanup: WatchCleanup) => void) => void
+
+interface ReactiveRef<T> extends Ref<T> {
+  subscribe: (callback: WatchCallback) => void
+}
+
+class HarnessElement {
+  constructor(readonly focusable = true) {}
+  isConnected = true
+  visible = true
+  disabled = false
+  ariaDisabled = false
+  hiddenByAncestor = false
+  focusTarget: HarnessElement | null = null
+  readonly focus = vi.fn()
+  getClientRects(): { length: number } {
+    return { length: this.visible ? 1 : 0 }
+  }
+
+  matches(selector: string): boolean {
+    if (selector === ':disabled, [aria-disabled="true"]') return this.disabled || this.ariaDisabled
+    return this.focusable
+  }
+
+  closest(): HarnessElement | null {
+    return this.hiddenByAncestor ? this : null
+  }
+
+  querySelector(): HarnessElement | null {
+    return this.focusTarget
+  }
 }
 
 const componentPath = path.join(process.cwd(), 'client/components/agents/agent-history-panel.vue')
@@ -46,13 +86,37 @@ const loadPanel = (
   agents: PanelAgents,
   compact = true,
   sessionFixtures: AgentSessionSummary[] = [],
-  folderFixtures: AgentConversationFolderView[] = []
+  folderFixtures: AgentConversationFolderView[] = [],
+  focusControls: { searchRoot?: HarnessElement; close?: HarnessElement } = {}
 ): PanelHarness => {
   const emit = vi.fn()
   const unmountCallbacks: Array<() => void> = []
-  const ref = <T>(value: T): Ref<T> => ({ value })
-  const useTemplateRef = <T>(_name: string): Ref<T | null> => ref<T | null>(null)
-  class HarnessElement {}
+  const ref = <T>(initialValue: T): ReactiveRef<T> => {
+    let value = initialValue
+    const watchers: Array<{ callback: WatchCallback; cleanup?: WatchCleanup }> = []
+    return {
+      get value() {
+        return value
+      },
+      set value(nextValue: T) {
+        const previous = value
+        value = nextValue
+        for (const watcher of watchers) {
+          watcher.cleanup?.()
+          watcher.cleanup = undefined
+          void watcher.callback(nextValue, previous, cleanup => {
+            watcher.cleanup = cleanup
+          })
+        }
+      },
+      subscribe: callback => watchers.push({ callback })
+    }
+  }
+  const templateRefs: Record<string, HarnessElement | null> = {
+    historyCloseButton: focusControls.close ?? null,
+    historySearchField: focusControls.searchRoot ?? null
+  }
+  const useTemplateRef = <T>(name: string): ReactiveRef<T | null> => ref((templateRefs[name] ?? null) as T | null)
   const thread = ref({ session: { id: '00000000-0000-4000-8000-000000000001' } })
   const evaluate = new Function(
     'computed',
@@ -74,6 +138,7 @@ const loadPanel = (
       beginSessionDrag,
       canDropTo,
       closeHistory,
+      beginRenameSession,
       dragStatus,
       draggedSessionId,
       dropSession,
@@ -81,6 +146,10 @@ const loadPanel = (
       localError,
       moveSession,
       openSession,
+      saveSessionTitle,
+      searchQuery,
+      sessionEditorOpen,
+      sessionRenameTitle,
       setDropTarget
     }`
   ) as (...dependencies: unknown[]) => Omit<PanelHarness, 'emit' | 'unmount'>
@@ -95,8 +164,11 @@ const loadPanel = (
     ref,
     ref,
     useTemplateRef,
-    (_source: unknown, callback: () => void, options?: { immediate?: boolean }) => {
-      if (options?.immediate) callback()
+    (source: unknown, callback: WatchCallback, options?: { immediate?: boolean }) => {
+      if (source && typeof (source as ReactiveRef<unknown>).subscribe === 'function') {
+        ;(source as ReactiveRef<unknown>).subscribe(callback)
+      }
+      if (options?.immediate) callback((source as Ref<unknown>)?.value, undefined, () => {})
     },
     () => ({
       folders: ref(folderFixtures),
@@ -276,6 +348,76 @@ describe('Agent history session selection', () => {
     panel.unmount()
 
     expect(agents.cancelSessionTransition).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores focus to the conversation action trigger when rename is cancelled', async () => {
+    const trigger = new HarnessElement()
+    const searchRoot = new HarnessElement(false)
+    const searchInput = new HarnessElement()
+    searchRoot.focusTarget = searchInput
+    const agents: PanelAgents = {
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionTransition: vi.fn()
+    }
+    const panel = loadPanel(agents, true, [makeSession()], [], { searchRoot })
+
+    panel.beginRenameSession(makeSession(), trigger as unknown as HTMLElement)
+    panel.sessionEditorOpen.value = false
+    await Promise.resolve()
+
+    expect(trigger.focus).toHaveBeenCalledTimes(1)
+    expect(searchInput.focus).not.toHaveBeenCalled()
+  })
+
+  it('focuses history search when a filtered rename removes the source row', async () => {
+    const trigger = new HarnessElement()
+    const searchRoot = new HarnessElement(false)
+    const searchInput = new HarnessElement()
+    const session = makeSession()
+    const sessions = [session]
+    searchRoot.focusTarget = searchInput
+    const renameSession = vi.fn().mockImplementation(async () => {
+      sessions.splice(0)
+      trigger.isConnected = false
+    })
+    const agents: PanelAgents = {
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionTransition: vi.fn(),
+      renameSession
+    }
+    const panel = loadPanel(agents, true, sessions, [], { searchRoot })
+    panel.searchQuery.value = session.title
+    panel.beginRenameSession(session, trigger as unknown as HTMLElement)
+    panel.sessionRenameTitle.value = 'Shipped roadmap'
+
+    await panel.saveSessionTitle()
+    await Promise.resolve()
+
+    expect(renameSession).toHaveBeenCalledWith(session.id, 'Shipped roadmap')
+    expect(trigger.focus).not.toHaveBeenCalled()
+    expect(searchInput.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('focuses the history close control when neither the source nor search is visible', async () => {
+    const trigger = new HarnessElement()
+    trigger.isConnected = false
+    const searchRoot = new HarnessElement(false)
+    const searchInput = new HarnessElement()
+    searchInput.visible = false
+    searchRoot.focusTarget = searchInput
+    const close = new HarnessElement()
+    const agents: PanelAgents = {
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionTransition: vi.fn()
+    }
+    const panel = loadPanel(agents, true, [makeSession()], [], { searchRoot, close })
+
+    panel.beginRenameSession(makeSession(), trigger as unknown as HTMLElement)
+    panel.sessionEditorOpen.value = false
+    await Promise.resolve()
+
+    expect(searchInput.focus).not.toHaveBeenCalled()
+    expect(close.focus).toHaveBeenCalledTimes(1)
   })
 
   it('moves a pointer-dragged recent conversation through the existing folder action', async () => {

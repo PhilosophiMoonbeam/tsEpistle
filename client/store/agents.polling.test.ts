@@ -524,6 +524,53 @@ describe('Agent store initialization', () => {
   })
 })
 
+describe('Agent session mutations', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('keeps a committed rename in history and the active thread when the subsequent refresh fails', async () => {
+    setActivePinia(createPinia())
+    const store = useAgentsStore()
+    store.csrfToken = 'csrf-token'
+    const base = activeThread()
+    const current: AgentThreadState = { ...base, session: { ...base.session, title: 'Original title' } }
+    const renamed: AgentThreadState = {
+      ...current,
+      session: {
+        ...current.session,
+        title: 'Renamed conversation',
+        version: 2,
+        updatedAt: '2026-08-23T00:01:00.000Z'
+      }
+    }
+    store.thread = current
+    store.sessions = [summaryForThread(current)]
+    const refresh = deferred<Response>()
+    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
+      const path = String(input)
+      const method = init?.method ?? 'GET'
+      if (path === `/_api/agents/sessions/${current.session.id}` && method === 'PATCH') return Promise.resolve(Response.json(renamed))
+      if (path === '/_api/agents/sessions' && method === 'GET') return refresh.promise
+      return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
+    })
+
+    const renaming = store.renameSession(current.session.id, '  Renamed conversation  ')
+    await flushMicrotasks()
+
+    expect(fetcher.mock.calls.map(call => call[1]?.method ?? 'GET')).toEqual(['PATCH', 'GET'])
+    expect(store.thread).toEqual(renamed)
+    expect(store.sessions).toEqual([summaryForThread(renamed)])
+
+    refresh.reject(new TypeError('History offline'))
+    await expect(renaming).resolves.toEqual(renamed)
+
+    expect(store.thread).toEqual(renamed)
+    expect(store.sessions).toEqual([summaryForThread(renamed)])
+    expect(store.error).toBe('The conversation was renamed, but history could not be refreshed. History offline')
+  })
+})
+
 describe('Agent folder refresh ordering', () => {
   let closeWorkspace: (() => void) | null = null
   const createStore = () => {

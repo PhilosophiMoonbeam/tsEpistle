@@ -3,9 +3,10 @@
   <details
     class="agent-tasks"
     :class="`agent-tasks--${planState}`"
-    :open="tasks.length > 0 && !cleanCompletion"
+    :open="detailsOpen"
+    @toggle="handleToggle"
   >
-    <summary class="agent-tasks__header">
+    <summary class="agent-tasks__header" @click="handleSummaryActivation">
       <span class="agent-tasks__mark" aria-hidden="true">
         <v-icon :icon="planIcon" size="19" />
       </span>
@@ -144,6 +145,17 @@ const planIcons: Readonly<Record<PlanState, string>> = {
 }
 
 const tick = ref(0)
+const userExpanded = ref<boolean | null>(null)
+let manualTogglePending = false
+const handleSummaryActivation = (): void => {
+  manualTogglePending = true
+}
+const handleToggle = (event: Event): void => {
+  const target = event.currentTarget as HTMLDetailsElement | null
+  if (!target || !manualTogglePending) return
+  manualTogglePending = false
+  userExpanded.value = target.open
+}
 let durationTimer: number | null = null
 const statusFor = (task: AgentTaskView): DisplayTaskStatus => task.status === 'completed' && task.outcome === 'partial' ? 'partial' : task.status
 const terminalStatuses: ReadonlySet<AgentTaskView['status']> = new Set(['blocked', 'completed', 'failed', 'cancelled'])
@@ -172,6 +184,7 @@ const queuedCount = computed(() => planCounts.value.queued)
 const attentionCount = computed(() => planCounts.value.attention)
 const allTerminal = computed(() => props.tasks.length > 0 && terminalCount.value === props.tasks.length)
 const cleanCompletion = computed(() => allTerminal.value && attentionCount.value === 0)
+const detailsOpen = computed(() => userExpanded.value ?? (props.tasks.length > 0 && !cleanCompletion.value))
 const successfulPercent = computed(() => props.tasks.length === 0 ? 0 : (successfulCount.value / props.tasks.length) * 100)
 const attentionPercent = computed(() => props.tasks.length === 0 ? 0 : (attentionCount.value / props.tasks.length) * 100)
 const planState = computed<PlanState>(() => {
@@ -334,7 +347,7 @@ onBeforeUnmount(stopDurationTimer)
 .agent-tasks__header:focus-visible,
 .agent-task-record summary:focus-visible {
   outline: 2px solid var(--wiki-focus-color);
-  outline-offset: calc(-1 * var(--wiki-focus-offset));
+  outline-offset: 2px;
 }
 
 .agent-tasks__mark,
@@ -697,7 +710,7 @@ onBeforeUnmount(stopDurationTimer)
   .agent-tasks__header:focus-visible,
   .agent-task-record summary:focus-visible {
     outline: var(--wiki-space-1) solid Highlight;
-    outline-offset: calc(-1 * var(--wiki-focus-offset));
+    outline-offset: 2px;
   }
 }
 </style>
