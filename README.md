@@ -87,11 +87,11 @@ bun run ci
 
 ## Deployment and recovery
 
-Use the [Helm guide](dev/helm/README.md) for Kubernetes installation and lifecycle details. PostgreSQL 15, 16, 17, and 18 are supported on current minor releases. The only supported Wiki.js migration source is exactly Wiki.js `2.5.314`; other upstream versions and other database engines are unsupported. Follow the [Wiki.js migration guide](MIGRATION.md) for the validated clone, quarantine, verification, cutover, and rollback procedure.
+Use the [Helm guide](dev/helm/README.md) for Kubernetes installation and lifecycle details. PostgreSQL 15, 16, 17, and 18 are supported on current minor releases. The only supported upstream database upgrade source is exactly Wiki.js 2.5.314. Other upstream versions and database engines are unsupported. Follow the [Wiki.js migration guide](MIGRATION.md) for the validated clone, quarantine, verification, cutover, and rollback procedure.
 
 > **Backup contract:** Back up PostgreSQL and `/wiki/data` together before every upgrade. Stop all tsEpistle instances, restore both from the same pre-upgrade point, and only then roll back to the old image. Rolling back application or Helm resources without the matching database and data restore can run old code against a newer schema and is unsafe.
 
-When a release is published, use the [release page](https://github.com/PhilosophiMoonbeam/tsEpistle/releases) for its immutable image/archive and verify its checksums and provenance before deployment. Those release-verification instructions apply **once published**; no official tsEpistle release artifacts are supported yet.
+When a release is published, use the [release page](https://github.com/PhilosophiMoonbeam/tsEpistle/releases) for its immutable image/archive and `ghcr.io/philosophimoonbeam/wiki` for its immutable container image; verify checksums and provenance before deployment. Official binary artifacts are the Linux archive and Linux container images; Windows archives are not published or supported. Those release-verification instructions apply **once published**; no official tsEpistle release artifacts are supported yet.
 
 ## Project links
 
