@@ -687,7 +687,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   overflow: visible;
   min-width: 0;
-  padding: var(--wiki-space-1);
+  padding: var(--wiki-space-3);
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
@@ -797,8 +797,9 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   grid-template-columns: minmax(0, auto) minmax(var(--wiki-space-12), 1fr) auto;
   align-items: center;
-  gap: var(--wiki-space-1);
-  padding: var(--wiki-space-1) 0 0;
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-2) 0 var(--wiki-space-1);
+  margin-top: var(--wiki-space-1);
   border-top: 1px solid var(--wiki-surface-border);
 }
 
@@ -807,7 +808,7 @@ onBeforeUnmount(() => {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: var(--wiki-space-1);
+  gap: var(--wiki-space-2);
 }
 
 .agent-composer__primary-actions {
@@ -823,7 +824,16 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__actions :deep(.v-btn) {
-  min-height: var(--wiki-control-height);
+  min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
+}
+
+.agent-composer__skill-button,
+.agent-composer__goal-button {
+  border-radius: var(--wiki-radius-pill);
+  padding-inline: var(--wiki-space-3);
+  font-weight: 500;
+  letter-spacing: .01em;
+  transition: background var(--wiki-motion-fast) var(--wiki-motion-ease), color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
 .agent-composer__skill-button {
@@ -872,11 +882,14 @@ onBeforeUnmount(() => {
   display: inline-flex;
   min-width: 0;
   align-items: center;
-  justify-content: flex-end;
-  gap: var(--wiki-space-1);
+  justify-content: center;
+  gap: var(--wiki-space-2);
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+  border-radius: var(--wiki-radius-pill);
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
   font-size: var(--wiki-label-size);
-  font-weight: var(--wiki-label-weight);
+  font-weight: 600;
+  letter-spacing: .02em;
   white-space: nowrap;
 }
 
@@ -910,11 +923,25 @@ onBeforeUnmount(() => {
 
 .agent-composer__submit {
   min-width: calc(var(--wiki-space-12) * 2);
+  border-radius: var(--wiki-control-radius);
   box-shadow: var(--wiki-shadow-xs);
+  font-weight: 600;
+  transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease), box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
+}
+
+.agent-composer__submit:hover:not(:disabled) {
+  box-shadow: var(--wiki-shadow-sm);
+  transform: translateY(-1px);
+}
+
+.agent-composer__submit:active:not(:disabled) {
+  transform: translateY(0);
 }
 
 .agent-composer__stop {
   min-width: calc(var(--wiki-space-12) * 1.6);
+  border-radius: var(--wiki-control-radius);
+  font-weight: 600;
 }
 
 .agent-composer__hint {
@@ -983,7 +1010,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 740px) {
   .agent-composer {
-    padding: var(--wiki-space-1);
+    padding: var(--wiki-space-2);
     border-radius: var(--wiki-control-radius);
   }
 

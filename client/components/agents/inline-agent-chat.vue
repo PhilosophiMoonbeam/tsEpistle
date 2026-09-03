@@ -912,7 +912,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   gap: var(--wiki-space-4);
   color: rgb(var(--v-theme-on-surface));
   font-family: var(--wiki-font-body);
-  background: var(--inline-agent-workspace-gradient), var(--inline-agent-workspace-base);
+  background: transparent;
   isolation: isolate;
   text-align: start;
 }
@@ -949,7 +949,9 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-hero-radius) !important;
-  background: color-mix(in srgb, var(--wiki-surface-raised) 28%, transparent);
+  background: color-mix(in srgb, var(--wiki-surface-raised) 88%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
   text-align: start;
 }
@@ -1268,16 +1270,18 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   position: relative;
   z-index: 1;
   flex: 0 0 auto;
-  padding: var(--wiki-space-3) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) max(var(--wiki-space-3), env(safe-area-inset-bottom));
+  padding: var(--wiki-space-4) clamp(var(--wiki-space-4), 3vw, var(--wiki-space-8)) max(var(--wiki-space-4), env(safe-area-inset-bottom));
   border-top: 1px solid var(--wiki-surface-border);
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--wiki-accent-warm) 3%, transparent),
+      color-mix(in srgb, var(--wiki-accent-warm) 4%, transparent),
       transparent
     ),
-    color-mix(in srgb, var(--wiki-surface-raised) 74%, transparent);
-  box-shadow: 0 calc(var(--wiki-space-2) * -1) var(--wiki-space-8) color-mix(in srgb, var(--wiki-shadow-color) 42%, transparent);
+    color-mix(in srgb, var(--wiki-surface-raised) 84%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 calc(var(--wiki-space-2) * -1) var(--wiki-space-6) color-mix(in srgb, var(--wiki-shadow-color) 32%, transparent);
 }
 .inline-agent__composer-inner {
   width: min(100%, var(--agent-conversation-width));
@@ -1285,12 +1289,17 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 }
 
 .inline-agent__composer-lock {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: var(--wiki-space-2);
-  margin: 0 0 var(--wiki-space-2);
-  color: rgb(var(--v-theme-warning));
+  margin: 0 0 var(--wiki-space-3);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 36%, var(--wiki-surface-border));
+  border-radius: var(--wiki-control-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 10%, var(--wiki-surface-raised));
+  color: rgb(var(--v-theme-on-surface));
   font-size: var(--wiki-label-size);
+  font-weight: 500;
   line-height: 1.4;
 }
 
@@ -1300,15 +1309,19 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   align-items: center;
   gap: var(--wiki-space-3);
   justify-content: space-between;
-  margin-bottom: var(--wiki-space-2);
+  margin-bottom: var(--wiki-space-3);
 }
 
 .inline-agent__page-context {
-  display: flex;
+  display: inline-flex;
   min-width: 0;
   align-items: center;
   gap: var(--wiki-space-2);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  padding: var(--wiki-space-1) var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-pill);
+  background: color-mix(in srgb, var(--wiki-surface-raised) 60%, transparent);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
 }
@@ -1330,11 +1343,15 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
 }
 
 .inline-agent__notice {
-  display: flex;
+  display: inline-flex;
   flex: 0 1 auto;
   align-items: center;
   gap: var(--wiki-space-1);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 52%, transparent);
+  padding: var(--wiki-space-1) var(--wiki-space-3);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-pill);
+  background: color-mix(in srgb, var(--wiki-surface-raised) 60%, transparent);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
   font-size: var(--wiki-label-size);
   line-height: 1.4;
   text-align: end;
