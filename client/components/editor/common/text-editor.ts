@@ -1,8 +1,8 @@
-import { basicSetup } from 'codemirror'
-import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { Compartment, Prec, StateEffect, StateField, type Extension } from '@codemirror/state'
 import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { Compartment, type Extension, Prec, StateEffect, StateField } from '@codemirror/state'
+import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
+import { basicSetup } from 'codemirror'
 
 export type TextPosition = {
   line: number
@@ -110,6 +110,7 @@ type TextEditorOptions = {
   spellcheck?: boolean
   onChange?: (value: string) => void
   onCursor?: (position: TextPosition) => void
+  onClick?: (position: TextPosition) => void
   extensions?: Extension[]
 }
 
@@ -118,7 +119,7 @@ export class TextEditor implements TextEditorHandle {
   private readonly spellcheck = new Compartment()
   private readonly darkTheme = new Compartment()
 
-  constructor({ parent, value, ariaLabel, dark, language, direction = 'ltr', spellcheck, onChange, onCursor, extensions = [] }: TextEditorOptions) {
+  constructor({ parent, value, ariaLabel, dark, language, direction = 'ltr', spellcheck, onChange, onCursor, onClick, extensions = [] }: TextEditorOptions) {
     this.view = new EditorView({
       parent,
       doc: value,
@@ -134,6 +135,17 @@ export class TextEditor implements TextEditorHandle {
           if (update.docChanged) onChange?.(update.state.doc.toString())
           if (update.selectionSet) onCursor?.(this.cursor())
         }),
+        ...(onClick
+          ? [
+              EditorView.domEventObservers({
+                click: (_event, view) => {
+                  const offset = view.state.selection.main.head
+                  const line = view.state.doc.lineAt(offset)
+                  onClick({ line: line.number - 1, ch: offset - line.from })
+                }
+              })
+            ]
+          : []),
         textEditorTheme,
         markerField,
         ...(language ? [language] : []),

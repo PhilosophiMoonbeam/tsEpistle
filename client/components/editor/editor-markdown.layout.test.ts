@@ -121,7 +121,7 @@ describe('Markdown editor layout', () => {
     expect(lockSource).toContain('"@lezer/highlight": ["@lezer/highlight@1.2.3"')
   })
 
-  it('offers explicit preview alignment without coupling cursor or render updates', () => {
+  it('aligns source clicks without coupling keyboard cursor or render updates', () => {
     const desktopToolbarStart = template.indexOf("template(v-if='$vuetify.display.mdAndUp')")
     const mobileToolbarStart = template.indexOf('template(v-else)', desktopToolbarStart)
     const desktopToolbar = template.slice(desktopToolbarStart, mobileToolbarStart)
@@ -129,7 +129,7 @@ describe('Markdown editor layout', () => {
     for (const toolbar of [desktopToolbar, mobileToolbar]) {
       expect(toolbar).toContain("aria-label='Align preview to cursor'")
       expect(toolbar).toContain("@click='alignPreviewToCursor'")
-      expect(toolbar.indexOf("@click='alignPreviewToCursor'")).toBeLessThan(toolbar.indexOf("previewShown = !previewShown"))
+      expect(toolbar.indexOf("@click='alignPreviewToCursor'")).toBeLessThan(toolbar.indexOf('previewShown = !previewShown'))
     }
     expect(template.match(/aria-label='Align preview to cursor'/g)).toHaveLength(2)
     expect(template.match(/@click='alignPreviewToCursor'/g)).toHaveLength(2)
@@ -139,8 +139,9 @@ describe('Markdown editor layout', () => {
     expect(script).not.toContain('debouncedScrollSync')
     expect(script).not.toContain('scrollSync')
     expect(script).not.toContain('performScrollSync')
-    expect(script.match(/alignPreviewToCursor/g)).toHaveLength(1)
+    expect(script.match(/alignPreviewToCursor/g)).toHaveLength(2)
     expect(script).toMatch(/onCursor: position => \{\s*this\.positionSync\(position\)\s*\}/)
+    expect(script).toMatch(/onClick: \(\) => \{\s*this\.alignPreviewToCursor\(\)\s*\}/)
 
     const processContentStart = script.indexOf('    processContent (newContent: string)')
     const positionSyncStart = script.indexOf('    positionSync(position: TextPosition)', processContentStart)

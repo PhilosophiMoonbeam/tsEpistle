@@ -917,6 +917,9 @@ export default defineComponent({
       },
       onCursor: position => {
         this.positionSync(position)
+      },
+      onClick: () => {
+        this.alignPreviewToCursor()
       }
     })
     this.cm = markRaw(cm)

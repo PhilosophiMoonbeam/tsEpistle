@@ -50,4 +50,21 @@ describe('TextEditor', () => {
     expect(editor.getValue()).toBe('# Heading')
     expect(changes).toEqual([])
   })
+
+  it('reports the pointer-selected position without coupling keyboard selection changes', () => {
+    const clicks: Array<{ line: number; ch: number }> = []
+    const { editor, parent } = createEditor({
+      value: 'first\nsecond',
+      onClick: position => clicks.push(position)
+    })
+    const content = parent.querySelector<HTMLElement>('.cm-content')
+
+    editor.setSelection({ line: 1, ch: 3 })
+    expect(clicks).toEqual([])
+
+    content?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    expect(clicks).toEqual([{ line: 1, ch: 3 }])
+    expect(editor.getValue()).toBe('first\nsecond')
+  })
 })
