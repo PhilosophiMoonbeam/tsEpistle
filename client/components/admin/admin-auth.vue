@@ -78,7 +78,7 @@
                   template(v-slot:append)
                     v-avatar(v-if='selectedStrategy === str.key', size='24')
                       v-icon.animated.fadeInLeft(color='teal', size="large") mdi-chevron-right
-          div.v-card-chin
+          v-card-chin
             v-menu(location="bottom", min-width='250px', max-width='550px', max-height='50vh', style='flex: 1 1;')
               template(v-slot:activator='{ props }')
                 v-btn(v-bind='props', color='primary', variant="flat", block, :disabled='saving')
@@ -277,7 +277,8 @@
               .text-body-medium {{host}}
               v-divider.my-3
               .text-body-medium: strong {{$t('admin:auth.tokenEndpointAuthMethod')}}
-              .text-body-medium HTTP-POST</template>
+              .text-body-medium HTTP-POST
+</template>
 
 <script lang='ts'>
 import { markRaw } from 'vue'

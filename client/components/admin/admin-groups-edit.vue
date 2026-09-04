@@ -109,11 +109,12 @@
             v-tabs-window-item(value='users', :transition='false', :reverse-transition='false')
               group-users(v-model='group', @refresh='refresh')
 
-          div.v-card-chin
+          v-card-chin
             v-spacer
             .text-body-small.text-grey.pr-2 Group ID #[strong {{group.id}}]
 
-    page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')</template>
+    page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')
+</template>
 
 <script lang='ts'>
 import { createEmptyGroupEditorState, deleteGroup, fetchGroupDetails, updateGroup } from '../../helpers/groups-api'

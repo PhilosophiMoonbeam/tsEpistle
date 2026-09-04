@@ -128,7 +128,8 @@
               v-icon(color='error') mdi-close
             v-list-item-title {{ $t('common:actions.close') }}
     loader(v-model='dialogProgress', :title='$t(`editor:save.processing`)', :subtitle='$t(`editor:save.pleaseWait`)')
-    notify</template>
+    notify
+</template>
 
 <script lang='ts'>
 import { defineComponent, type PropType } from 'vue'

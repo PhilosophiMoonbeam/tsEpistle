@@ -273,7 +273,7 @@
                     :disabled='testLoading'
                     :rules='[emailRule]'
                   )
-                div.v-card-chin
+                v-card-chin
                   v-spacer
                   v-btn.px-4(
                     color='teal'

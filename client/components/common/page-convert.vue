@@ -5,7 +5,7 @@
     scrollable
     :persistent='loading'
     scrim='blue-grey-darken-4'
-    opacity='.7'
+    :opacity='0.7'
     aria-labelledby='page-convert-dialog-title'
     aria-describedby='page-convert-dialog-description'
     @after-enter='focusEditor'
@@ -13,7 +13,7 @@
     )
     v-card
       .dialog-header.is-short.is-dark
-        v-icon.mr-2(color='white') mdi-lightning-bolt
+        v-icon.me-2(color='white') mdi-lightning-bolt
         span#page-convert-dialog-title {{$t('common:page.convert')}}
       v-card-text.pt-5
         i18next#page-convert-dialog-description.text-body-medium(path='common:page.convertTitle', tag='div')

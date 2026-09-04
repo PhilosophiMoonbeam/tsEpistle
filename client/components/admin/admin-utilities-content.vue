@@ -107,7 +107,8 @@
           v-card-actions
             v-spacer
             v-btn(autofocus, variant="text", @click='cancelConfirmation', :disabled='loading') Cancel
-            v-btn(color='error', variant="flat", @click='confirmDestructiveAction', :loading='loading') {{ pendingConfirmation === `migrate` ? 'Migrate Pages' : 'Purge History' }}</template>
+            v-btn(color='error', variant="flat", @click='confirmDestructiveAction', :loading='loading') {{ pendingConfirmation === `migrate` ? 'Migrate Pages' : 'Purge History' }}
+</template>
 
 
 <script lang='ts'>

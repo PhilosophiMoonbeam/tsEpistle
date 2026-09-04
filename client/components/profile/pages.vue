@@ -43,30 +43,30 @@
           )
             template(v-slot:caption)
               span.profile-pages-table-caption {{ $t('profile:pages.title') }}
-            template(v-slot:item='props')
+            template(v-slot:item='{ item }')
               tr(v-if='$vuetify.display.mdAndUp')
                 td
                   .text-body-medium
-                    a.profile-page-link(:href='pageHref(props.item)')
-                      strong {{ props.item.title }}
-                    v-chip.ml-2(v-if="props.item.visibility === 'private'", size="x-small", color='warning') {{ $t('profile:pages.private', { defaultValue: 'Private' }) }}
-                  .text-body-small {{ props.item.description }}
+                    a.profile-page-link(:href='pageHref(item)')
+                      strong {{ item.title }}
+                    v-chip.ms-2(v-if="item.visibility === 'private'", size="x-small", color='warning') {{ $t('profile:pages.private', { defaultValue: 'Private' }) }}
+                  .text-body-small {{ item.description }}
                 td.profile-pages-path
-                  v-chip(label, size="small", variant="tonal") {{ props.item.locale }}
-                  span.ms-2.text-medium-emphasis / {{ props.item.path }}
-                td {{ $helpers.formatMoment(props.item.createdAt, 'calendar') }}
-                td {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
+                  v-chip(label, size="small", variant="tonal") {{ item.locale }}
+                  span.ms-2.text-medium-emphasis / {{ item.path }}
+                td {{ $helpers.formatMoment(item.createdAt, 'calendar') }}
+                td {{ $helpers.formatMoment(item.updatedAt, 'calendar') }}
               tr.profile-pages-mobile-row(v-else)
                 td(:colspan='headers.length')
                   .profile-pages-mobile-record
-                    a.profile-page-link.profile-pages-mobile-title(:href='pageHref(props.item)')
-                      strong {{ props.item.title }}
-                    .text-body-small {{ props.item.description }}
+                    a.profile-page-link.profile-pages-mobile-title(:href='pageHref(item)')
+                      strong {{ item.title }}
+                    .text-body-small {{ item.description }}
                     .profile-pages-mobile-meta
-                      v-chip.mr-2(label, size="x-small", color='warning', v-if="props.item.visibility === 'private'") {{ $t('profile:pages.private', { defaultValue: 'Private' }) }}
-                      v-chip.me-2(label, size="x-small", variant="tonal") {{ props.item.locale }}
-                      span /{{ props.item.path }}
-                    .text-body-small.mt-2.text-medium-emphasis {{ $t('profile:pages.headerUpdatedAt') }} {{ $helpers.formatMoment(props.item.updatedAt, 'calendar') }}
+                      v-chip.me-2(label, size="x-small", color='warning', v-if="item.visibility === 'private'") {{ $t('profile:pages.private', { defaultValue: 'Private' }) }}
+                      v-chip.me-2(label, size="x-small", variant="tonal") {{ item.locale }}
+                      span /{{ item.path }}
+                    .text-body-small.mt-2.text-medium-emphasis {{ $t('profile:pages.headerUpdatedAt') }} {{ $helpers.formatMoment(item.updatedAt, 'calendar') }}
             template(v-slot:no-data)
               async-state(
                 v-if='loading'
@@ -129,8 +129,7 @@ export default {
         })
       }
     },
-    pageHref(page: PageListRow | { raw: PageListRow }): string {
-      const item = ('raw' in page && page.raw) ? page.raw : (page as PageListRow)
+    pageHref(item: PageListRow): string {
       const scope = item.visibility === 'private' ? '/_private' : ''
       return `${scope}/${item.locale}/${item.path}`
     },

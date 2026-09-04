@@ -36,8 +36,6 @@
               :ref='input => setRuleInputRef(rule.id, input)'
               variant="solo"
               :items='roles'
-              item-title='text'
-              item-value='value'
               :model-value='rule.roles'
               @update:model-value='updateRule(rule.id, { roles: $event })'
               label='Roles'
@@ -51,7 +49,7 @@
               :disabled='group.id <= 0'
               )
               template(v-slot:chip='{ item, index, props }')
-                v-chip.text-white.ml-0(v-if='index <= 1', v-bind='props', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.text }}
+                v-chip.text-white.ml-0(v-if='index <= 1', v-bind='props', size="small", label, :color='rule.deny ? `red` : `green`').text-body-small {{ item.title }}
                 v-chip.text-white.ml-0(v-if='index === 2', :closable='false', size="small", label, :color='rule.deny ? `red-lighten-2` : `green-lighten-2`').text-body-small + {{ rule.roles.length - 2 }} more
 
             //- Match
@@ -60,15 +58,13 @@
               :items='matches'
               :model-value='rule.match'
               @update:model-value='updateRule(rule.id, { match: $event })'
-              item-title='text'
-              item-value='value'
               label='Match'
               :disabled='group.id <= 0'
               hide-details
               density="compact"
               )
               template(v-slot:selection='{ item }')
-                .text-body-medium {{ item.text || item.title }}
+                .text-body-medium {{ item.title }}
             //- Locales
             v-select.rule-locales(
               bg-color="surface-variant"
@@ -169,27 +165,27 @@ export default {
   data() {
     return {
       roles: markRaw([
-        { text: 'Read Pages', value: 'read:pages', icon: 'mdi-file-eye-outline' },
-        { text: 'Create + Edit Pages', value: 'write:pages', icon: 'mdi-file-plus-outline' },
-        { text: 'Rename / Move Pages', value: 'manage:pages', icon: 'mdi-file-document-edit-outline' },
-        { text: 'Delete Pages', value: 'delete:pages', icon: 'mdi-file-remove-outline' },
-        { text: 'View Pages Source', value: 'read:source', icon: 'mdi-code-tags' },
-        { text: 'View Pages History', value: 'read:history', icon: 'mdi-history' },
-        { text: 'Read / Use Assets', value: 'read:assets', icon: 'mdi-image-search-outline' },
-        { text: 'Upload Assets', value: 'write:assets', icon: 'mdi-image-plus' },
-        { text: 'Edit + Delete Assets', value: 'manage:assets', icon: 'mdi-image-size-select-large' },
-        { text: 'Edit Scripts', value: 'write:scripts', icon: 'mdi-language-javascript' },
-        { text: 'Edit Styles', value: 'write:styles', icon: 'mdi-language-css3' },
-        { text: 'Read Comments', value: 'read:comments', icon: 'mdi-comment-search-outline' },
-        { text: 'Create Comments', value: 'write:comments', icon: 'mdi-comment-plus-outline' },
-        { text: 'Edit + Delete Comments', value: 'manage:comments', icon: 'mdi-comment-remove-outline' }
+        { title: 'Read Pages', value: 'read:pages' },
+        { title: 'Create + Edit Pages', value: 'write:pages' },
+        { title: 'Rename / Move Pages', value: 'manage:pages' },
+        { title: 'Delete Pages', value: 'delete:pages' },
+        { title: 'View Pages Source', value: 'read:source' },
+        { title: 'View Pages History', value: 'read:history' },
+        { title: 'Read / Use Assets', value: 'read:assets' },
+        { title: 'Upload Assets', value: 'write:assets' },
+        { title: 'Edit + Delete Assets', value: 'manage:assets' },
+        { title: 'Edit Scripts', value: 'write:scripts' },
+        { title: 'Edit Styles', value: 'write:styles' },
+        { title: 'Read Comments', value: 'read:comments' },
+        { title: 'Create Comments', value: 'write:comments' },
+        { title: 'Edit + Delete Comments', value: 'manage:comments' }
       ]),
       matches: markRaw([
-        { text: 'Path Starts With...', value: 'START', icon: '/...' },
-        { text: 'Path is Exactly...', value: 'EXACT', icon: '=' },
-        { text: 'Path Ends With...', value: 'END', icon: '.../' },
-        { text: 'Path Matches Regex...', value: 'REGEX', icon: '$.*' },
-        { text: 'Tag Matches...', value: 'TAG', icon: 'T' }
+        { title: 'Path Starts With...', value: 'START' },
+        { title: 'Path is Exactly...', value: 'EXACT' },
+        { title: 'Path Ends With...', value: 'END' },
+        { title: 'Path Matches Regex...', value: 'REGEX' },
+        { title: 'Tag Matches...', value: 'TAG' }
       ]),
       ruleInputRefs: markRaw(new Map<string, FocusableInput>())
     }

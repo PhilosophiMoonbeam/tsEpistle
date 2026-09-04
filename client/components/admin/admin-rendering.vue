@@ -173,9 +173,10 @@
                   color='primary'
                   :disabled='renderersLoading || saving'
                 )
-          div.v-card-chin
+          v-card-chin
             v-spacer
-            .text-body-small.pr-3.text-grey Module: {{ currentRenderer.key }}</template>
+            .text-body-small.pe-3.text-medium-emphasis Module: {{ currentRenderer.key }}
+</template>
 
 <script lang='ts'>
 import _ from 'lodash'

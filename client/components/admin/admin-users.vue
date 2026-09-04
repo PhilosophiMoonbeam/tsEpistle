@@ -97,7 +97,7 @@
               async-state(v-else-if='errorMessage' state='error' title='Users could not be loaded' :message='errorMessage' retry-label='Try again' @retry='loadUsers')
               async-state(v-else-if='hasActiveFilters' state='empty' title='No users match these filters' message='Clear the filters to see all users.')
               async-state(v-else state='empty' title='No users yet' message='Create a user to grant access.')
-          div.v-card-chin(v-if='pageCount > 1')
+          v-card-chin(v-if='pageCount > 1')
             v-spacer
             v-pagination(v-model='pagination' :length='pageCount')
             v-spacer

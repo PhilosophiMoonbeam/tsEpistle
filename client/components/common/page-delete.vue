@@ -5,7 +5,7 @@
     scrollable
     :persistent='loading'
     scrim='red-darken-4'
-    opacity='.7'
+    :opacity='0.7'
     aria-labelledby='page-delete-dialog-title'
     aria-describedby='page-delete-dialog-description'
     @after-enter='focusCancel'
@@ -13,7 +13,7 @@
     )
     v-card
       .dialog-header.is-short.is-red
-        v-icon.mr-2(color='white') mdi-file-document-box-remove-outline
+        v-icon.me-2(color='white') mdi-file-document-box-remove-outline
         span#page-delete-dialog-title {{$t('common:page.delete')}}
       v-card-text#page-delete-dialog-description.pt-5
         i18next.text-body-large(path='common:page.deleteTitle', tag='div')

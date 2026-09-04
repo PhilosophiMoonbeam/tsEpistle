@@ -182,7 +182,7 @@
           .text-body-medium Note that any user that already exists in this installation will not be imported. A list of skipped users will be displayed upon completion.
           .text-body-small.text-grey You must first delete from this installation any user you want to migrate over from the old installation.
 
-    div.v-card-chin
+    v-card-chin
       v-btn.px-3(type='submit', form='import-v1-form', variant="flat", color='warning', :disabled='!canStartImport || isLoading').ml-0
         v-icon(start, color='on-warning') mdi-database-import
         span.text-on-warning Start Import

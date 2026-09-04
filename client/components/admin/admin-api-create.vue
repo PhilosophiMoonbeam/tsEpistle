@@ -75,18 +75,17 @@
               :disabled='loading || groupLoadState !== `success`'
               persistent-hint
             )
-          div.v-card-chin.admin-dialog-actions
+          v-card-chin.admin-dialog-actions
             v-spacer
             v-btn(type='button', variant='text', @click='isShown = false', :disabled='loading') {{$t('common:actions.cancel')}}
             v-btn.px-3(
               type='submit'
               variant='flat'
               color='primary'
+              prepend-icon='mdi-chevron-right'
               :loading='loading'
               :disabled='loading || (scope === `group` && groupLoadState !== `success`)'
-            )
-              v-icon(start) mdi-chevron-right
-              span {{$t('common:actions.generate')}}
+            ) {{$t('common:actions.generate')}}
 
     v-dialog(
       v-model='isCopyKeyDialogShown'
@@ -95,7 +94,7 @@
       aria-labelledby='api-key-copy-title'
       )
       v-card
-        v-toolbar(density="compact", flat, color='primary')
+        v-toolbar(density="compact", :elevation='0', color='primary')
           v-toolbar-title#api-key-copy-title 2. Copy key
         v-card-text.pt-5
           .text-body-medium.text-center
@@ -113,11 +112,9 @@
             class='api-key-value'
           )
           .d-flex.align-center.flex-wrap.ga-2.mt-3
-            v-btn(variant="outlined", color='primary', @click='copyKey')
-              v-icon(start) mdi-content-copy
-              span {{ copied ? 'Copied' : 'Copy key' }}
+            v-btn(variant="outlined", color='primary', prepend-icon='mdi-content-copy', @click='copyKey') {{ copied ? 'Copied' : 'Copy key' }}
             span.text-body-small.text-medium-emphasis(v-if='copied', role='status', aria-live='polite') Key copied. Store it somewhere safe before continuing.
-        div.v-card-chin
+        v-card-chin
           v-spacer
           v-btn.px-3(variant="flat", color='primary', @click='finishCopyKey') I’ve saved this key
 </template>

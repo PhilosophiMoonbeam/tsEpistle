@@ -115,7 +115,8 @@
                 aria-label='Renewing certificate'
               )
               .mt-5.text-body-large#renew-certificate-progress-title {{$t('admin:ssl.renewCertificateLoadingTitle')}}
-              .text-body-small.text-medium-emphasis.mt-4#renew-certificate-progress-description {{$t('admin:ssl.renewCertificateLoadingSubtitle')}}</template>
+              .text-body-small.text-medium-emphasis.mt-4#renew-certificate-progress-description {{$t('admin:ssl.renewCertificateLoadingSubtitle')}}
+</template>
 
 <script lang='ts'>
 import AsyncState from '@/components/common/async-state.vue'

@@ -37,7 +37,8 @@
             slot
     nav-footer
     notify
-    search-results</template>
+    search-results
+</template>
 
 <script lang='ts'>
 import { defineComponent } from 'vue'

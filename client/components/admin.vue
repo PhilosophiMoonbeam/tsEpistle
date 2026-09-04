@@ -120,7 +120,7 @@
           v-icon(size='16') {{ currentRouteGroup.icon }}
           span {{ currentRouteGroup.label }}
       router-view(v-slot='{ Component }')
-        transition(name='admin-router')
+        transition(name='admin-router' mode='out-in')
           component(:is='Component')
 
     nav-footer

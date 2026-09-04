@@ -94,8 +94,6 @@
                     variant="outlined"
                     label='HSTS Max Age'
                     :items='hstsDurations'
-                    item-title='text'
-                    item-value='value'
                     v-model='config.securityHSTSDuration'
                     prepend-icon='mdi-subdirectory-arrow-right'
                     :disabled='!config.securityHSTS'
@@ -264,7 +262,8 @@
                     persistent-hint
                   )
 
-    component(v-if='activeModal', :is='activeModal')</template>
+    component(v-if='activeModal', :is='activeModal')
+</template>
 
 <script lang='ts'>
 import { defineAsyncComponent } from 'vue'
@@ -335,12 +334,12 @@ export default {
       configSaving: false,
       configLoadRequestId: 0,
       hstsDurations: [
-        { value: 300, text: '5 minutes' },
-        { value: 86400, text: '1 day' },
-        { value: 604800, text: '1 week' },
-        { value: 2592000, text: '1 month' },
-        { value: 31536000, text: '1 year' },
-        { value: 63072000, text: '2 years' }
+        { value: 300, title: '5 minutes' },
+        { value: 86400, title: '1 day' },
+        { value: 604800, title: '1 week' },
+        { value: 2592000, title: '1 month' },
+        { value: 31536000, title: '1 year' },
+        { value: 63072000, title: '2 years' }
       ]
     }
   },

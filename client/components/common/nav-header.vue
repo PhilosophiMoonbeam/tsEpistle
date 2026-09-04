@@ -96,7 +96,7 @@
                   template(v-slot:activator='{ props: tooltipProps }')
                     v-btn(
                       icon
-                      v-bind='{ ...menuProps, ...tooltipProps }'
+                      v-bind='mergeProps(menuProps, tooltipProps)'
                       :class='$vuetify.locale.isRtl ? `ml-3` : ``'
                       rounded='0'
                       height='64'
@@ -120,7 +120,7 @@
                   template(v-slot:activator='{ props: tooltipProps }')
                     v-btn(
                       icon
-                      v-bind='{ ...menuProps, ...tooltipProps }'
+                      v-bind='mergeProps(menuProps, tooltipProps)'
                       rounded='0'
                       height='64'
                       :aria-label='$t(`common:header.pageActions`)'
@@ -232,7 +232,7 @@
                 template(v-slot:activator='{ props: tooltipProps }')
                   v-btn(
                     icon
-                    v-bind='{ ...menuProps, ...tooltipProps }'
+                    v-bind='mergeProps(menuProps, tooltipProps)'
                     :class='$vuetify.locale.isRtl ? `ml-0` : ``'
                     rounded='0'
                     height='64'
@@ -282,10 +282,11 @@
       v-icon mdi-alert
       div
         .text-label-small DEVELOPMENT VERSION
-        .text-label-small This code base is NOT for production use!</template>
+        .text-label-small This code base is NOT for production use!
+</template>
 
 <script lang='ts'>
-import { defineAsyncComponent, defineComponent, markRaw } from 'vue'
+import { defineAsyncComponent, defineComponent, markRaw, mergeProps } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 
@@ -496,6 +497,7 @@ export default defineComponent({
     }
   },
   methods: {
+    mergeProps,
     async pageActionsVisibilityChanged(open: boolean): Promise<void> {
       this.pageActionsAreOpen = open
       if (this.pageActionsFocusFrame !== null) {

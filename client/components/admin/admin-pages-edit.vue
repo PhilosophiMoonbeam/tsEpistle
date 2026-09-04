@@ -73,7 +73,7 @@
                           .text-body-small.text-red-darken-2 {{page.locale.toUpperCase()}}
                         v-chip.mt-3.mx-0(label, color="red-lighten-5", size="small")
                           span.text-red-darken-2 /{{page.path}}
-                      div.v-card-chin
+                      v-card-chin
                         v-spacer
                         v-btn(variant="text", @click='deletePageDialog = false', :disabled='loading') {{$t('common:actions.cancel')}}
                         v-btn(color="red-darken-2", @click='deletePage', :loading='loading').text-white {{$t('common:actions.delete')}}

@@ -67,7 +67,7 @@
               v-card-text.pa-4#editor-conflict-overwrite-description
                 i18next.text-body-medium(tag='div', path='editor:conflict.overwrite.description')
                   strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
-              div.v-card-chin
+              v-card-chin
                 v-spacer
                 v-btn(variant="outlined", color='indigo', @click='isRemoteConfirmDiagShown = false')
                   v-icon(start) mdi-close
@@ -89,7 +89,7 @@
                 span#editor-conflict-discard-title Discard merge edits?
               v-card-text.pa-4#editor-conflict-discard-description
                 | Your editable merge has changed. Closing now will discard those edits.
-              div.v-card-chin
+              v-card-chin
                 v-spacer
                 v-btn(variant='outlined', color='indigo', @click='keepEditing') Keep editing
                 v-btn(color='red', @click='discardMergeEdits') Discard merge edits

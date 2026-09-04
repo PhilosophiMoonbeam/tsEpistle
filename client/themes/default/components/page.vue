@@ -126,7 +126,7 @@
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(location="bottom")
                       template(v-slot:activator='{ props: tooltipProps }')
-                        v-btn(icon, rounded='0', v-bind='{ ...menuProps, ...tooltipProps }', :aria-label='$t(`common:page.share`)'): v-icon(color='grey') mdi-share-variant
+                        v-btn(icon, rounded='0', v-bind='mergeProps(menuProps, tooltipProps)', :aria-label='$t(`common:page.share`)'): v-icon(color='grey') mdi-share-variant
                       span {{$t('common:page.share')}}
                   social-sharing(
                     :url='pageUrl'
@@ -145,7 +145,7 @@
                           v-btn(
                             icon
                             rounded='0'
-                            v-bind='{ ...menuProps, ...tooltipProps }'
+                            v-bind='mergeProps(menuProps, tooltipProps)'
                             @click='loadPageWatchNotifications'
                             :aria-label='$t(`common:page.pageNotifications`)'
                           )
@@ -201,7 +201,7 @@
                         v-btn(
                           icon
                           rounded='0'
-                          v-bind='{ ...menuProps, ...tooltipProps }'
+                          v-bind='mergeProps(menuProps, tooltipProps)'
                           :aria-label='$t(`common:page.watchSettings`)'
                         )
                           v-icon(color='grey') mdi-tune
@@ -239,7 +239,7 @@
                           v-btn(
                             icon
                             rounded='0'
-                            v-bind='{ ...menuProps, ...tooltipProps }'
+                            v-bind='mergeProps(menuProps, tooltipProps)'
                             @click='loadApprovalInbox'
                             :aria-label='$t(`common:page.approvalInbox`)'
                           )
@@ -730,7 +730,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent, markRaw, type PropType } from 'vue'
+import { defineComponent, markRaw, mergeProps, type PropType } from 'vue'
 import i18next from 'i18next'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
@@ -1175,6 +1175,7 @@ export default defineComponent({
     this.contentExtensionCleanup = null
   },
   methods: {
+    mergeProps,
     syncPageStore(): void {
       wikiStore.page.authorId = this.authorId
       wikiStore.page.authorName = this.authorName

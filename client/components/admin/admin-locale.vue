@@ -118,7 +118,7 @@
                           )
             v-col(xl='6' lg='7' cols='12')
               v-card.animated.fadeInUp.wait-p4s
-                v-toolbar(color='teal', density="compact", flat)
+                v-toolbar(color='teal', density="compact", :elevation='0')
                   v-toolbar-title.text-body-large {{ $t('admin:locale.downloadTitle') }}
                 v-data-table.admin-responsive-table(
                   :headers='headers'
@@ -127,7 +127,7 @@
                   :hide-default-header='$vuetify.display.smAndDown'
                   hide-default-footer
                   item-value='code'
-                  :items-per-page='1000'
+                  :items-per-page='-1'
                 )
                   template(v-slot:item='props')
                     tr(v-if='$vuetify.display.mdAndUp')

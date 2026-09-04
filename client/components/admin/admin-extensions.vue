@@ -37,7 +37,7 @@
                           v-chip.mr-2(v-if='ext.isCompatible', label, variant="outlined", size="small", color='success') compatible
                           v-chip.mr-2(v-else, label, size="small", color='error') not compatible
                           strong with your host.
-                      div.v-card-chin
+                      v-card-chin
                         v-spacer
                         v-btn(disabled)
                           v-icon(start) mdi-plus

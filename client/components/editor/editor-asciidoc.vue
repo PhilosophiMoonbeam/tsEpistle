@@ -171,7 +171,8 @@
         .text-body-small AsciiDoc
         v-spacer
         .text-body-small Ln {{cursorPos.line + 1}}, Col {{cursorPos.ch + 1}}
-    page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')</template>
+    page-selector(mode='select', v-model='insertLinkDialog', :open-handler='insertLinkHandler', :path='path', :locale='locale')
+</template>
 
 <script lang='ts'>
 /* global siteLangs, siteConfig */

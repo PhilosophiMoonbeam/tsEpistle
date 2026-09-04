@@ -133,7 +133,8 @@
                   persistent-hint
                   :class='cfg.value.hint ? "mb-2" : ""'
                   :disabled='saving'
-                  )</template>
+                  )
+</template>
 
 <script lang='ts'>
 import { wikiStore } from '@/store/index.ts'

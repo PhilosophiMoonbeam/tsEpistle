@@ -23,7 +23,8 @@
         v-spacer
         .text-body-small Code
         v-spacer
-        .text-body-small Ln {{cursorPos.line + 1}}, Col {{cursorPos.ch + 1}}</template>
+        .text-body-small Ln {{cursorPos.line + 1}}, Col {{cursorPos.ch + 1}}
+</template>
 
 <script lang='ts'>
 import { defineComponent, markRaw } from 'vue'

@@ -135,7 +135,8 @@
           template(v-slot:prepend)
             v-avatar(size='24', variant='text')
               v-icon mdi-text-box
-          v-list-item-title {{ item.title }}</template>
+          v-list-item-title {{ item.title }}
+</template>
 
 <script lang='ts'>
 import _ from 'lodash'

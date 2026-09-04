@@ -120,7 +120,7 @@
           v-model='sendWelcomeEmail'
           :disabled='submitting'
         )
-      div.v-card-chin.admin-dialog-actions
+      v-card-chin.admin-dialog-actions
         v-spacer
         v-btn(type='button', variant="text", @click='isShown = false', :disabled='submitting') Cancel
         v-btn.px-3(
@@ -128,11 +128,10 @@
           value='close'
           variant="flat"
           color='primary'
+          prepend-icon='mdi-check'
           :disabled='!providersLoaded || availableProviders.length < 1 || submitting'
           :loading='submitting'
-          )
-          v-icon(start) mdi-check
-          span Create
+          ) Create
         v-btn.px-3(
           type='submit'
           value='another'

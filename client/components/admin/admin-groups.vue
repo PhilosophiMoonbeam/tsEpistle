@@ -40,7 +40,7 @@
                 v-card-text.pt-5
                   v-alert(v-if='createError' type='error' variant='tonal' class='mb-3') {{ createError }}
                   v-text-field(variant="outlined" prepend-icon='mdi-account-group' v-model='newGroupName' label='Group Name' counter='255' maxlength='255' @keydown.enter.prevent='createGroup' @update:model-value='createError = ``' ref='groupNameIpt')
-                div.admin-dialog-actions.v-card-chin
+                v-card-chin.admin-dialog-actions
                   v-spacer
                   v-btn(variant="text" @click='newGroupDialog = false' :disabled='creating') Cancel
                   v-btn(color='primary' @click='createGroup' :loading='creating' :disabled='creating') Create

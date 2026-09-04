@@ -57,7 +57,8 @@
                   inset
                   hide-details='auto'
                 )
-                v-chip(size='small', variant='tonal', :color='flags.sqllog ? `warning` : `grey`') {{ flags.sqllog ? 'Enabled' : 'Off' }}</template>
+                v-chip(size='small', variant='tonal', :color='flags.sqllog ? `warning` : `grey`') {{ flags.sqllog ? 'Enabled' : 'Off' }}
+</template>
 
 <script lang='ts'>
 import AsyncState from '@/components/common/async-state.vue'

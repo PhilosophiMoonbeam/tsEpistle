@@ -388,14 +388,15 @@
             :hint='$t(`admin:navigation.sourceLocaleHint`)'
             persistent-hint
             )
-        div.v-card-chin
+        v-card-chin
           v-spacer
           v-btn(variant="text", @click='copyFromLocaleDialogIsShown = false') {{$t('common:actions.cancel')}}
           v-btn.px-3(variant="flat", color='primary', :disabled='!copySourceCount', @click='copyFromLocale')
             v-icon(start) mdi-chevron-right
             span {{$t('common:actions.copy')}} ({{copySourceCount}})
 
-    page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')</template>
+    page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')
+</template>
 
 <script lang='ts'>
 import _ from 'lodash'

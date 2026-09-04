@@ -99,8 +99,7 @@
                     template(v-slot:activator='{ props }')
                       v-tooltip(location='top')
                         template(v-slot:activator='{ props: tooltipProps }')
-                          v-btn(icon, v-bind='{ ...props, ...tooltipProps }', :aria-label='`View ${tgt.title} ${statusLabel(tgt.status).toLowerCase()} details`')
-                            v-icon(:color='tgt.status === `warning` ? `warning` : `error`') mdi-information
+                          v-btn(icon='mdi-information', :color='tgt.status === `warning` ? `warning` : `error`', v-bind='mergeProps(props, tooltipProps)', :aria-label='`View ${tgt.title} ${statusLabel(tgt.status).toLowerCase()} details`')
                         span View {{tgt.title}} {{statusLabel(tgt.status).toLowerCase()}} details
                     v-card(width='450', max-width='calc(100vw - 32px)')
                       v-toolbar(flat, :color='tgt.status === `warning` ? `warning` : `error`', density="compact") {{$t('admin:storage.errorMsg')}}
@@ -360,6 +359,7 @@
 </template>
 
 <script lang='ts'>
+import { mergeProps } from 'vue'
 import moment from 'moment'
 import momentDurationFormatSetup from 'moment-duration-format'
 
@@ -564,6 +564,7 @@ export default {
     document.removeEventListener('visibilitychange', this.handleVisibilityChange)
   },
   methods: {
+    mergeProps,
     handleVisibilityChange() {
       if (!document.hidden) {
         this.loadStatus()

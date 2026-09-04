@@ -140,13 +140,12 @@
           clearable
           :disabled='isSubmitting'
         )
-      div.v-card-chin.page-selector__chin
+      v-card-chin.page-selector__chin
         v-alert.page-selector__submission-error(v-if='submissionError' type='error' variant='tonal' density='compact' role='alert') {{ submissionError }}
         v-spacer
         v-btn(variant='text' :disabled='isSubmitting' @click='close') {{$t('common:actions.cancel')}}
-        v-btn.px-4(color='primary' :loading='isSubmitting' @click='open' :disabled='!isValidPath || isSubmitting')
-          v-icon(start) mdi-check
-          span {{$t('common:actions.select')}}</template>
+        v-btn.px-4(color='primary' prepend-icon='mdi-check' :loading='isSubmitting' @click='open' :disabled='!isValidPath || isSubmitting') {{$t('common:actions.select')}}
+</template>
 
 <script lang='ts'>
 import { defineComponent, markRaw, type PropType, useId } from 'vue'

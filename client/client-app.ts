@@ -83,10 +83,11 @@ const vuetify = createVuetify({
     VCard: {
       elevation: 0,
       rounded: 'lg',
-      variant: 'elevated'
+      variant: 'flat'
     },
     VBtn: {
-      elevation: 0
+      elevation: 0,
+      class: 'text-none'
     },
     VTextField: {
       baseColor: 'on-surface',

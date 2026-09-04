@@ -38,7 +38,7 @@
                         )
                       i18next.text-body-small.text-grey-darken-1.pl-5(path='editor:assets.folderNameNamingRules', tag='div')
                         a(place='namingRules', href='https://docs-beta.requarks.io/guide/assets#naming-restrictions', target='_blank') {{$t('editor:assets.folderNameNamingRulesLink')}}
-                    div.v-card-chin
+                    v-card-chin
                       v-spacer
                       v-btn(variant="text", :disabled='newFolderLoading', @click='newFolderDialog = false') {{$t('common:actions.cancel')}}
                       v-btn.px-3(color='primary', @click='createFolder', :disabled='newFolderLoading || !isFolderNameValid', :loading='newFolderLoading') {{$t('common:actions.create')}}
@@ -225,7 +225,7 @@
             @keyup.enter='renameAsset'
             :disabled='renameAssetLoading'
           )
-        div.v-card-chin
+        v-card-chin
           v-spacer
           v-btn(variant="text", @click='renameDialog = false', :disabled='renameAssetLoading') {{$t('common:actions.cancel')}}
           v-btn.px-3(color="orange-darken-3", @click='renameAsset', :loading='renameAssetLoading', :disabled='renameAssetLoading || !isRenameValid').text-white {{$t('common:actions.rename')}}
@@ -250,10 +250,11 @@
           .text-body-medium {{$t('editor:assets.deleteAssetConfirm')}}
           .text-body-medium.text-red-darken-2 {{currentAsset?.filename}}?
           .text-body-small.mt-3 {{$t('editor:assets.deleteAssetWarn')}}
-        div.v-card-chin
+        v-card-chin
           v-spacer
           v-btn(variant="text", ref='deleteCancelButton', @click='deleteDialog = false', :disabled='deleteAssetLoading') {{$t('common:actions.cancel')}}
-          v-btn.px-3(color="red-darken-2", @click='deleteAsset', :loading='deleteAssetLoading', :disabled='deleteAssetLoading').text-white {{$t('common:actions.delete')}}</template>
+          v-btn.px-3(color="red-darken-2", @click='deleteAsset', :loading='deleteAssetLoading', :disabled='deleteAssetLoading').text-white {{$t('common:actions.delete')}}
+</template>
 
 <script lang='ts'>
 import { defineComponent, markRaw, type Component } from 'vue'

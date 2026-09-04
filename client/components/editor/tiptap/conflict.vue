@@ -44,7 +44,7 @@
           .text-body-medium.mt-5: strong {{$t('editor:conflict.whatToDo')}}
           .text-body-medium.mt-1 #[v-icon(color='indigo') mdi-alpha-l-box] {{$t('editor:conflict.whatToDoLocal')}}
           .text-body-medium.mt-1 #[v-icon(color='indigo') mdi-alpha-r-box] {{$t('editor:conflict.whatToDoRemote')}}
-      div.v-card-chin
+      v-card-chin
         v-spacer
         v-btn(variant="text", @click='close') {{$t('common:actions.cancel')}}
         template(v-if='loadState === `success` && hasLatestVersion')
@@ -67,7 +67,7 @@
               v-card-text.pa-4
                 i18next.text-body-medium(tag='div', path='editor:conflict.overwrite.description')
                   strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
-              div.v-card-chin
+              v-card-chin
                 v-spacer
                 v-btn(variant="outlined", color='indigo', @click='isRemoteConfirmDiagShown = false')
                   v-icon(start) mdi-close

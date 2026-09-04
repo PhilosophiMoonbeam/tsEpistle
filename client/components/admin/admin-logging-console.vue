@@ -32,12 +32,8 @@
       ) {{output}}
       v-card-actions.logging-console-actions
         v-spacer
-        v-btn(variant="text", @click='clear')
-          v-icon(start) cancel_presentation
-          span Clear
-        v-btn(color='primary', variant="flat", @click='close')
-          v-icon(start) close
-          span Close
+        v-btn(variant="text", prepend-icon='mdi-close-box-outline', @click='clear') Clear
+        v-btn(color='primary', variant="flat", prepend-icon='mdi-close', @click='close') Close
 </template>
 
 <script lang='ts'>

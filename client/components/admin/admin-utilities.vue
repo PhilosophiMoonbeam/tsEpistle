@@ -45,7 +45,7 @@
               v-divider(v-if='idx < tools.length - 1')
 
       v-col.animated.fadeInUp.wait-p2s(cols='12', lg='9')
-        transition(name='admin-router')
+        transition(name='admin-router' mode='out-in')
           component(:is='selectedTool')
 </template>
 

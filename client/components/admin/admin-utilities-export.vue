@@ -109,7 +109,8 @@
           v-spacer
           v-btn.px-5(color='white', variant="text", @click='isFailed = false') Close
         v-card-text.pa-5.bg-red-darken-4.text-white(role='alert')
-          span {{errorMessage}}</template>
+          span {{errorMessage}}
+</template>
 
 <script lang='ts'>
 import { defineComponent, markRaw } from 'vue'

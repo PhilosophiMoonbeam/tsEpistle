@@ -177,7 +177,7 @@
         v-card-text.pt-5
           span {{$t('common:comments.deleteWarn')}}
           .text-body-small: strong {{$t('common:comments.deletePermanentWarn')}}
-        div.v-card-chin
+        v-card-actions
           v-spacer
           v-btn(variant="text", @click='deleteCommentDialogShown = false', :disabled='isBusy') {{$t('common:actions.cancel')}}
           v-btn(color='error', variant='flat', @click='deleteComment', :loading='isBusy', :disabled='isBusy') {{$t('common:actions.delete')}}

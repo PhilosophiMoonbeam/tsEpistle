@@ -26,7 +26,8 @@
                   :disabled='(group.isSystem && pm.restrictedForSystem) || group.id === 1 || pm.disabled'
                 )
                 .text-body-small.text-warning(v-if='pm.warning || pm.disabled', :id='riskId(pm.permission)') {{pm.disabled ? 'Reserved for root administrators.' : 'High-impact permission. Review before granting.'}}
-                v-divider.mt-3(v-if='idx < pmGroup.items.length - 1')</template>
+                v-divider.mt-3(v-if='idx < pmGroup.items.length - 1')
+</template>
 
 <script lang='ts'>
 import { markRaw, type PropType } from 'vue'

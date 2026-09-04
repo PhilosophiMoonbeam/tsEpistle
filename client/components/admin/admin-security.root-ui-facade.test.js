@@ -106,9 +106,11 @@ describe('admin-security site REST facade migration guard', () => {
       /const\s+SECURITY_CONFIG_KEYS\s*=\s*\[[\s\S]*?['"]uploadMaxFileSize['"][\s\S]*?['"]securityHSTSDuration['"][\s\S]*?['"]authJwtRenewablePeriod['"][\s\S]*?\]\s+as\s+const/
     )
     expect(script).toMatch(/type\s+SecurityConfig\s*=\s*Required<Pick<SiteConfig,\s*typeof\s+SECURITY_CONFIG_KEYS\[number\]>>/)
-    expect(source).toMatch(
-      /v-select\.mt-5\([\s\S]*?:items=['"]hstsDurations['"][\s\S]*?item-title=['"]text['"][\s\S]*?item-value=['"]value['"][\s\S]*?v-model=['"]config\.securityHSTSDuration['"][\s\S]*?\)/
+    const hstsSelect = source.match(
+      /v-select\.mt-5\((?=[^)]*:items=['"]hstsDurations['"])(?=[^)]*v-model=['"]config\.securityHSTSDuration['"])[^)]*\)/
     )
+    expect(hstsSelect).not.toBeNull()
+    expect(hstsSelect[0]).not.toMatch(/\bitem-title=['"]text['"]|\bitem-value=['"]value['"]/)
     expect(source).toMatch(/v-text-field\.mt-3\([\s\S]*?v-model\.number=['"]config\.uploadMaxFileSize['"][\s\S]*?\)/)
     expect(source).toMatch(/v-text-field\.mt-3\([\s\S]*?v-model\.number=['"]config\.uploadMaxFiles['"][\s\S]*?\)/)
     expect(source).toMatch(/component\(v-if=['"]activeModal['"],\s*:is=['"]activeModal['"]\)/)
