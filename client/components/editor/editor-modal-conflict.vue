@@ -333,16 +333,16 @@ export default defineComponent({
 
   &-legend-current,
   &-legend-remote {
-    padding: 12px 16px;
-    color: #fff;
+    padding: var(--wiki-space-3) var(--wiki-space-4);
+    color: rgb(var(--v-theme-on-primary));
   }
 
   &-legend-current {
-    background: mc('indigo', '800');
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 88%, black);
   }
 
   &-legend-remote {
-    background: mc('indigo', '900');
+    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 72%, black);
   }
 
   &-meta-local,

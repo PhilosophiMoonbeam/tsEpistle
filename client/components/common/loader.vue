@@ -95,12 +95,12 @@ export default defineComponent({
 .loader-dialog {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
-  border-radius: var(--wiki-panel-radius, 18px) !important;
-  box-shadow: 0 24px 72px rgb(0 0 0 / 28%);
-  transition: transform .22s ease, opacity .22s ease;
+  border-radius: var(--wiki-panel-radius) !important;
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
+  transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease), opacity var(--wiki-motion-normal) var(--wiki-motion-ease);
 
   .v-card-text {
-    padding: 30px 24px 28px !important;
+    padding: var(--wiki-space-8) var(--wiki-space-6) var(--wiki-space-6) !important;
   }
 
   .atom-spinner.is-inline {

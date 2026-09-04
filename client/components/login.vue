@@ -349,6 +349,8 @@
 
 // <span>Photo by <a href="https://unsplash.com/@isaacquesada?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Isaac Quesada</a> on <a href="/t/textures-patterns?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Unsplash</a></span>
 
+import { defineComponent } from 'vue'
+import DOMPurify from 'dompurify'
 import Cookies from 'js-cookie'
 import { wikiStore } from '@/store/index.ts'
 import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthResponse, type AuthStrategy } from '../helpers/auth-api'
@@ -362,7 +364,7 @@ function focusComponent (ref: unknown): void {
   if (typeof candidate.focus === 'function') candidate.focus()
 }
 
-export default {
+export default defineComponent({
   i18nOptions: { namespaces: 'auth' },
   props: {
     bgUrl: {
@@ -733,7 +735,7 @@ export default {
         this.securityCode = ''
         this.securityCodeError = ''
         this.isTFASetupShown = true
-        this.tfaQRImage = respObj.tfaQRImage || ''
+        this.tfaQRImage = DOMPurify.sanitize(respObj.tfaQRImage || '', { USE_PROFILES: { svg: true } })
         this.tfaSecret = respObj.tfaSecret || ''
         if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
         this.focusTimer = window.setTimeout(() => {
@@ -771,7 +773,7 @@ export default {
       }
     }
   }
-}
+})
 </script>
 
 <style lang="scss">

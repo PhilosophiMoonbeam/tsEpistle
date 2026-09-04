@@ -40,11 +40,12 @@
     search-results</template>
 
 <script lang='ts'>
+import { defineComponent } from 'vue'
 import { getPageDownloadPath } from '../helpers/page-actions'
 import { wikiStore } from '@/store/index.ts'
 import { decodeBase64Json } from '../helpers/base64'
 
-export default {
+export default defineComponent({
   props: {
     pageId: {
       type: Number,
@@ -100,7 +101,7 @@ export default {
       window.location.assign(`/h${scope}/${this.locale}/${this.path}`)
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>
@@ -142,35 +143,35 @@ export default {
 
 .source-toolbar-meta {
   display: flex;
-  gap: 12px;
+  gap: var(--wiki-space-3);
   margin-top: 3px;
   color: rgb(var(--v-theme-on-surface));
-  font-size: .72rem;
+  font-size: var(--wiki-type-micro);
   opacity: .56;
 }
 
 .source-toolbar-actions {
   display: flex;
   flex: 0 0 auto;
-  gap: 8px;
+  gap: var(--wiki-space-2);
 
   .v-btn {
-    border-radius: 10px;
+    border-radius: var(--wiki-control-radius);
   }
 }
 
 .source-shell {
   width: min(100%, var(--wiki-content-max));
   margin: 0 auto;
-  padding: 24px var(--wiki-page-gutter) 48px !important;
+  padding: var(--wiki-space-6) var(--wiki-page-gutter) var(--wiki-space-12) !important;
 }
 
 .source-code-card {
   overflow: hidden;
-  border: 1px solid rgba(var(--v-border-color), .12);
+  border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-panel-radius);
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-background)));
-  box-shadow: 0 10px 32px rgba(15, 23, 42, .055);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-md);
 
   pre {
     overflow: auto;

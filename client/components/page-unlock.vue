@@ -117,10 +117,10 @@ export default defineComponent({
 .page-unlock-card {
   width: min(100%, 480px);
   overflow: hidden;
-  border: 1px solid rgba(var(--v-border-color), .14);
-  border-radius: var(--wiki-panel-radius);
-  background: color-mix(in srgb, rgb(var(--v-theme-surface)) 96%, rgb(var(--v-theme-background)));
-  box-shadow: 0 18px 48px rgba(20, 28, 50, .1);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-hero-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
 }
 
 .page-unlock-content {
@@ -129,9 +129,9 @@ export default defineComponent({
 
 .page-unlock-brand {
   display: flex;
-  gap: 12px;
+  gap: var(--wiki-space-3);
   align-items: center;
-  margin-bottom: 26px;
+  margin-bottom: var(--wiki-space-6);
 }
 
 .page-unlock-logo {
@@ -152,9 +152,9 @@ export default defineComponent({
 
 .page-unlock-eyebrow {
   color: rgb(var(--v-theme-primary));
-  font-size: .66rem;
-  font-weight: 760;
-  letter-spacing: .12em;
+  font-size: var(--wiki-label-size);
+  font-weight: var(--wiki-label-weight);
+  letter-spacing: .08em;
   text-transform: uppercase;
 }
 

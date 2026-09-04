@@ -3,7 +3,7 @@
     :key='notificationRevision'
     :color='notificationColor'
     location='bottom center'
-    min-height='60'
+    min-height='68'
     v-model='notificationState'
     :timeout='notificationTimeout'
     :timer='notificationTimeout > 0 ? "bottom" : false'
@@ -28,11 +28,12 @@
 </template>
 
 <script lang='ts'>
+import { defineComponent } from 'vue'
 import { wikiStore, type Notification } from '@/store/index.ts'
 
 type NotificationKind = 'success' | 'error' | 'info' | 'progress'
 
-export default {
+export default defineComponent({
   data() {
     return {
       notificationRevision: 0
@@ -84,7 +85,7 @@ export default {
       this.notificationState = false
     }
   }
-}
+})
 </script>
 
 <style lang='scss'>
@@ -95,8 +96,8 @@ export default {
     position: relative;
     overflow: hidden;
     border: 1px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 18%, transparent);
-    border-radius: var(--wiki-panel-radius, 14px);
-    box-shadow: 0 18px 48px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 26%, transparent);
+    border-radius: var(--wiki-panel-radius);
+    box-shadow: var(--wiki-shadow-lg);
   }
 
   .v-snackbar__actions {

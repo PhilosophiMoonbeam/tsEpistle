@@ -244,7 +244,7 @@
                                 v-avatar(size='24'): v-icon mdi-minus
                               v-list-item-title {{$t('admin:navigation.divider')}}
                   v-col(cols='12', lg='7', xl='8')
-                    v-card(flat, style='border-radius: 0 4px 4px 0;')
+                    v-card(flat, style='border-radius: 0 var(--wiki-control-radius) var(--wiki-control-radius) 0;')
                       template(v-if='current.kind === "link"')
                         v-toolbar(height='56', color="surface-variant", flat)
                           .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.link') })}}

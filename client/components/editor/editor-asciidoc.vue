@@ -604,8 +604,8 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
         }
 
         &-header {
-          background-color: mc('teal', '500');
-          color: #FFF !important;
+          background-color: rgb(var(--v-theme-primary));
+          color: rgb(var(--v-theme-on-primary)) !important;
           padding: 5px 12px;
           font-size: 14px;
           font-weight: 500;
@@ -617,23 +617,19 @@ $editor-ascii-height-mobile: calc(100dvh - 112px - 16px);
         }
 
         &-content {
-          border-left: 5px solid mc('teal', '500');
-          background-color: mc('teal', '50');
+          border-left: 4px solid rgb(var(--v-theme-primary));
+          background-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 8%, transparent);
           padding: 0 15px 15px;
           overflow: hidden;
-
-          @at-root .v-theme--dark & {
-            background-color: rgba(mc('teal', '500'), .1);
-          }
         }
       }
     }
   }
 
   &-toolbar {
-    background-color: mc('blue', '700');
-    background-image: linear-gradient(to bottom, mc('blue', '700') 0%, mc('blue','800') 100%);
-    color: #FFF;
+    background: var(--wiki-surface-raised);
+    border-bottom: 1px solid var(--wiki-surface-border);
+    color: rgb(var(--v-theme-on-surface));
 
     .v-toolbar__content {
       padding-left: 64px;

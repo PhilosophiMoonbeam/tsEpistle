@@ -60,7 +60,9 @@ type DrawioRequest =
       format: 'xmlsvg'
     }
 
-export default {
+import { defineComponent } from 'vue'
+
+export default defineComponent({
   components: { AsyncState },
   data() {
     return {
@@ -210,7 +212,7 @@ export default {
     this.clearLoadTimer()
     window.removeEventListener('message', this.receive)
   }
-}
+})
 </script>
 
 <style lang='scss'>
@@ -250,7 +252,7 @@ export default {
     min-height: 0;
     border: 0;
     padding: 0;
-    background-color: #FFF;
+    background-color: rgb(var(--v-theme-surface));
   }
 }
 

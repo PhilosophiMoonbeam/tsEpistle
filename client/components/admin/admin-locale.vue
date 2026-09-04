@@ -51,11 +51,9 @@
                     :error-messages='configError || localesError'
                   )
                     template(v-slot:item='{ props, item }')
-                      v-list-item(v-bind='props')
+                      v-list-item(v-bind='props', :title='item.raw?.name || item.name', :subtitle='item.raw?.nativeName || item.nativeName')
                         template(v-slot:prepend)
-                          v-avatar.bg-blue.text-white(rounded='0', size='40') {{ item.code?.toUpperCase() }}
-                        template(v-slot:title) {{ item.name }}
-                        template(v-slot:subtitle) {{ item.nativeName }}
+                          v-avatar(color='primary', variant='tonal', rounded='sm', size='36') {{ (item.raw?.code || item.code)?.toUpperCase() }}
                   v-alert.mt-3(v-if='configError || localesError', variant='outlined', color='error', icon='mdi-alert')
                     span(v-if='configError') Locale configuration could not be loaded.
                     span(v-else) Installed locales could not be loaded.
@@ -109,15 +107,13 @@
                     :hint='$t("admin:locale.activeNamespaces.hint")'
                     )
                     template(v-slot:item='{ props, item }')
-                      v-list-item(v-bind='props')
+                      v-list-item(v-bind='props', :title='item.raw?.name || item.name', :subtitle='item.raw?.nativeName || item.nativeName')
                         template(v-slot:prepend)
-                          v-avatar.bg-blue.text-white(rounded='0', size='40') {{ item.code?.toUpperCase() }}
-                        template(v-slot:title) {{ item.name }}
-                        template(v-slot:subtitle) {{ item.nativeName }}
+                          v-avatar(color='primary', variant='tonal', rounded='sm', size='36') {{ (item.raw?.code || item.code)?.toUpperCase() }}
                         template(v-slot:append)
                           v-icon(
-                            :icon='namespaces.includes(item.code) ? `mdi-checkbox-marked` : `mdi-checkbox-blank-outline`'
-                            :color='namespaces.includes(item.code) ? `primary` : undefined'
+                            :icon='namespaces.includes(item.raw?.code || item.code) ? `mdi-checkbox-marked` : `mdi-checkbox-blank-outline`'
+                            :color='namespaces.includes(item.raw?.code || item.code) ? `primary` : undefined'
                             aria-hidden='true'
                           )
             v-col(xl='6' lg='7' cols='12')

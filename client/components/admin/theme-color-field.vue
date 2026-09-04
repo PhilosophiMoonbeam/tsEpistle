@@ -67,7 +67,7 @@ const normalizeColor = (): void => {
     height: 40px;
     padding: 3px;
     border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-    border-radius: 6px;
+    border-radius: var(--wiki-radius-xs);
     background: rgb(var(--v-theme-surface));
     cursor: pointer;
   }

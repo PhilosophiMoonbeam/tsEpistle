@@ -322,9 +322,9 @@
                 <v-text-field v-model="profileDraft.displayName" :rules="profileDisplayNameRules" label="Display name" placeholder="Production Agent" maxlength="255" counter="255" required autofocus />
                 <div class="protocol-field">
                   <v-select v-model="profileDraft.transportKind" :items="protocolOptions" label="API protocol" required @update:model-value="selectProtocol">
-                    <template #item="{ props: itemProps, item }">
+                    <template #item="{ props: itemProps, internalItem, item }">
                       <v-list-subheader v-if="item.startsGroup">{{ item.group }}</v-list-subheader>
-                      <v-list-item v-bind="itemProps" :title="item.title" :subtitle="item.description" />
+                      <v-list-item v-bind="itemProps" :title="internalItem.title" :subtitle="item.description" />
                     </template>
                   </v-select>
                   <div class="field-note"><v-icon size="16">mdi-information-outline</v-icon><span>{{ selectedProtocol.description }} Requests use <code>{{ selectedProtocol.endpoint }}</code>.</span></div>

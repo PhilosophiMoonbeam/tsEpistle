@@ -37,25 +37,25 @@
               v-icon mdi-arrow-left
             v-menu(location='bottom end')
               template(v-slot:activator='{ props }')
-                v-btn(color='black' v-bind='props' variant="flat" :disabled='!recordReady || actionLoading !== ``')
+                v-btn(color='primary' v-bind='props' variant="tonal" :disabled='!recordReady || actionLoading !== ``')
                   span Actions
                   v-icon(end) mdi-chevron-down
               v-list(density="compact" nav)
                 v-list-item(v-if='!user.isActive' @click='activateUser' :disabled='actionLoading !== ``')
                   template(v-slot:prepend)
-                    v-icon(color='purple') mdi-account-key
+                    v-icon(color='primary') mdi-account-key
                   v-list-item-title Activate
                 v-list-item(v-else @click='deactivateUser' :disabled='user.id === currentUserId || user.isSystem || actionLoading !== ``')
                   template(v-slot:prepend)
-                    v-icon(color='purple') mdi-account-cancel
+                    v-icon(color='primary') mdi-account-cancel
                   v-list-item-title Deactivate
                 v-list-item(@click='verifyUser' :disabled='user.isVerified || actionLoading !== ``')
                   template(v-slot:prepend)
-                    v-icon(color='blue') mdi-account-check
+                    v-icon(color='info') mdi-account-check
                   v-list-item-title Set as Verified
                 v-list-item(@click='deleteUserConfirm' :disabled='user.id === currentUserId || user.isSystem || actionLoading !== ``')
                   template(v-slot:prepend)
-                    v-icon(color='red') mdi-trash-can-outline
+                    v-icon(color='error') mdi-trash-can-outline
                   v-list-item-title Delete
             v-btn(color='primary' size="large" variant="flat" @click='updateUser' :disabled='!hasUnsavedChanges || actionLoading !== ``' :loading='actionLoading === `update`')
               v-icon(start) mdi-check

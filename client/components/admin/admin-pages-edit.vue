@@ -35,31 +35,31 @@
                 v-icon mdi-arrow-left
               v-menu(location='bottom end')
                 template(v-slot:activator='{ props }')
-                  v-btn.mx-3.animated.fadeInDown.wait-p2s(color='black', v-bind='props', variant="flat")
+                  v-btn.mx-3.animated.fadeInDown.wait-p2s(color='primary', v-bind='props', variant="tonal")
                     span Actions
                     v-icon(end) mdi-chevron-down
                 v-list(density="compact", nav)
                   v-list-item(:href='(page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
                     template(v-slot:prepend)
-                      v-icon(color='indigo') mdi-text-subject
+                      v-icon(color='primary') mdi-text-subject
                     v-list-item-title View
                   v-list-item(:href='`/e` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
                     template(v-slot:prepend)
-                      v-icon(color='indigo') mdi-pencil
+                      v-icon(color='primary') mdi-pencil
                     v-list-item-title Edit
                   v-list-item(:href='`/s` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
                     template(v-slot:prepend)
-                      v-icon(color='indigo') mdi-code-tags
+                      v-icon(color='primary') mdi-code-tags
                     v-list-item-title View Source
                   v-list-item(:href='`/h` + (page.visibility === `private` ? `/_private` : ``) + `/` + page.locale + `/` + page.path')
                     template(v-slot:prepend)
-                      v-icon(color='indigo') mdi-history
+                      v-icon(color='primary') mdi-history
                     v-list-item-title View History
                   v-dialog(v-model='deletePageDialog', max-width='500', aria-labelledby='delete-page-title')
                     template(v-slot:activator='{ props }')
                       v-list-item(v-bind='props')
                         template(v-slot:prepend)
-                          v-icon(color='red') mdi-trash-can-outline
+                          v-icon(color='error') mdi-trash-can-outline
                         v-list-item-title Delete
                     v-card
                       .dialog-header.is-short.is-red#delete-page-title

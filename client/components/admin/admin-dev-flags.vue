@@ -165,10 +165,10 @@ export default {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--wiki-space-4);
   min-width: 0;
-  padding: .25rem .5rem;
-  border-radius: .5rem;
+  padding: var(--wiki-space-1) var(--wiki-space-2);
+  border-radius: var(--wiki-control-radius);
 }
 
 .flag-row--enabled {

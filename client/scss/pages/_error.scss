@@ -1,29 +1,31 @@
 .app-error {
+  --wiki-state-accent: rgb(var(--v-theme-error, 239 68 68));
   position: relative;
   display: grid;
   min-block-size: 100vh;
   min-block-size: 100dvh;
   overflow: hidden auto;
-  padding-block: 40px;
-  padding-inline: 22px;
+  padding-block: var(--wiki-space-8, 32px);
+  padding-inline: var(--wiki-page-gutter, 24px);
   place-items: center;
   place-items: safe center;
   background:
-    radial-gradient(circle at 18% 15%, color-mix(in srgb, rgb(var(--v-theme-primary)) 25%, transparent), transparent 28rem),
-    radial-gradient(circle at 82% 85%, color-mix(in srgb, #6366f1 18%, transparent), transparent 32rem),
-    linear-gradient(145deg, #0b1220, #172033 58%, #101827);
-  color: #fff;
+    radial-gradient(circle at 18% 15%, color-mix(in srgb, var(--wiki-state-accent) 16%, transparent), transparent 28rem),
+    radial-gradient(circle at 82% 85%, color-mix(in srgb, rgb(var(--v-theme-primary, 99 102 241)) 14%, transparent), transparent 32rem),
+    linear-gradient(145deg, rgb(var(--v-theme-background, 15 23 42)), color-mix(in srgb, rgb(var(--v-theme-surface, 30 41 59)) 88%, var(--wiki-state-accent) 12%));
+  color: rgb(var(--v-theme-on-background, 255 255 255));
   font-family: var(--v-font-body);
 
   &::before {
     position: absolute;
     inset: 0;
     background-image:
-      linear-gradient(rgba(255, 255, 255, .025) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, .025) 1px, transparent 1px);
-    background-size: 44px 44px;
+      linear-gradient(color-mix(in srgb, rgb(var(--v-theme-on-background, 255 255 255)) 6%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, rgb(var(--v-theme-on-background, 255 255 255)) 6%, transparent) 1px, transparent 1px);
+    background-size: var(--wiki-grid-size, 32px) var(--wiki-grid-size, 32px);
     content: '';
-    mask-image: linear-gradient(to bottom, #000, transparent 88%);
+    mask-image: linear-gradient(to bottom, rgb(var(--v-theme-on-background, 255 255 255)), transparent 85%);
+    opacity: .64;
     pointer-events: none;
   }
 }
@@ -32,23 +34,25 @@
   position: relative;
   z-index: 1;
   display: flex;
-  inline-size: min(100%, 620px);
+  inline-size: min(100%, 640px);
   min-block-size: 410px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: clamp(34px, 6vw, 58px);
-  border: 1px solid rgba(255, 255, 255, .13);
-  border-radius: 26px;
-  background: rgba(15, 23, 42, .6);
-  box-shadow: 0 28px 80px rgba(0, 0, 0, .26);
+  padding: clamp(var(--wiki-space-8, 32px), 6vw, calc(var(--wiki-space-12, 48px) + var(--wiki-space-4, 16px)));
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-hero-radius);
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
   backdrop-filter: blur(18px) saturate(135%);
   -webkit-backdrop-filter: blur(18px) saturate(135%);
   text-align: center;
 
   h1 {
-    margin-block: 12px 8px;
+    margin-block: var(--wiki-space-3, 12px) var(--wiki-space-2, 8px);
     margin-inline: 0;
+    color: rgb(var(--v-theme-on-surface, 255 255 255));
+    font-family: var(--wiki-font-heading, var(--v-font-body));
     font-size: clamp(2rem, 5vw, 3rem);
     font-weight: 760;
     letter-spacing: -.05em;
@@ -60,12 +64,12 @@
   display: grid;
   inline-size: 86px;
   block-size: 86px;
-  margin-block-end: 22px;
-  padding: 16px;
+  margin-block-end: var(--wiki-space-5, 20px);
+  padding: var(--wiki-space-4, 16px);
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, .12);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, .055);
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-panel-radius);
+  background: color-mix(in srgb, rgb(var(--v-theme-surface, 255 255 255)) 60%, transparent);
 
   img {
     display: block;
@@ -77,8 +81,8 @@
 }
 
 .app-error-eyebrow {
-  color: rgb(var(--v-theme-primary));
-  font-size: .68rem;
+  color: var(--wiki-state-accent);
+  font-size: var(--wiki-type-micro, .68rem);
   font-weight: 760;
   letter-spacing: .13em;
   text-transform: uppercase;
@@ -87,24 +91,25 @@
 .app-error-message {
   max-inline-size: 470px;
   margin: 0;
-  color: rgba(255, 255, 255, .68);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface, 255 255 255)) 72%, transparent);
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
 
 .app-error-home {
   display: inline-flex;
-  min-block-size: 44px;
+  min-block-size: var(--wiki-control-height, 44px);
   align-items: center;
   justify-content: center;
-  margin-block-start: 24px;
-  padding-inline: 20px;
+  margin-block-start: var(--wiki-space-6, 24px);
+  padding-inline: var(--wiki-space-5, 20px);
   border: 1px solid color-mix(in srgb, rgb(var(--v-theme-primary)) 60%, transparent);
-  border-radius: var(--wiki-control-radius, 11px);
+  border-radius: var(--wiki-control-radius);
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 12%, transparent);
   color: rgb(var(--v-theme-primary));
   font-weight: 700;
   text-decoration: none;
+  transition: background var(--wiki-motion-fast, .15s) var(--wiki-motion-ease, ease);
 
   &:hover,
   &:focus-visible {
@@ -114,14 +119,14 @@
 
 .app-error-details {
   inline-size: 100%;
-  margin-block-start: 24px;
-  border-block-start: 1px solid rgba(255, 255, 255, .1);
-  color: rgba(255, 255, 255, .6);
-  font-size: .78rem;
+  margin-block-start: var(--wiki-space-6, 24px);
+  border-block-start: 1px solid var(--wiki-surface-border);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface, 255 255 255)) 64%, transparent);
+  font-size: var(--wiki-type-micro, .78rem);
   text-align: start;
 
   summary {
-    padding-block-start: 16px;
+    padding-block-start: var(--wiki-space-4, 16px);
     cursor: pointer;
     text-align: center;
   }
@@ -129,22 +134,23 @@
   pre {
     overflow: auto;
     max-block-size: 220px;
-    margin-block: 14px 0;
+    margin-block: var(--wiki-space-3, 12px) 0;
     margin-inline: 0;
-    padding: 14px;
-    border-radius: 10px;
-    background: rgba(0, 0, 0, .26);
+    padding: var(--wiki-space-3, 12px);
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-radius-sm);
+    background: var(--wiki-surface-sunken);
     white-space: pre-wrap;
   }
 
   code {
-    color: rgba(255, 255, 255, .68);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface, 255 255 255)) 82%, transparent);
     font-family: var(--wiki-font-mono);
     font-size: .72rem;
   }
 }
 
-@media (max-width: 599px) {
+@media (max-width: 599.98px) {
   .app-error {
     padding: 0;
   }
@@ -153,14 +159,13 @@
     inline-size: 100%;
     min-block-size: 100dvh;
     padding-block:
-      max(30px, env(safe-area-inset-top))
-      max(30px, env(safe-area-inset-bottom));
+      max(var(--wiki-space-6, 24px), env(safe-area-inset-top))
+      max(var(--wiki-space-6, 24px), env(safe-area-inset-bottom));
     padding-inline:
-      max(22px, env(safe-area-inset-left))
-      max(22px, env(safe-area-inset-right));
+      max(var(--wiki-space-4, 16px), env(safe-area-inset-left))
+      max(var(--wiki-space-4, 16px), env(safe-area-inset-right));
     border: 0;
     border-radius: 0;
-    background: rgba(15, 23, 42, .72);
     box-shadow: none;
   }
 
