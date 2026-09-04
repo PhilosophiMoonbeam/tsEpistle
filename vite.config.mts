@@ -1,8 +1,8 @@
 import { resolve } from 'node:path'
-import { defineConfig, type Plugin } from 'vite'
-import { copyPrismAssets, provisionDevelopmentAssets } from './server/helpers/vite-assets.ts'
 import vue from '@vitejs/plugin-vue'
+import { defineConfig, type Plugin } from 'vite'
 import vuetify from 'vite-plugin-vuetify'
+import { copyPrismAssets, provisionDevelopmentAssets } from './server/helpers/vite-assets.ts'
 
 const root = import.meta.dirname
 
@@ -31,7 +31,8 @@ export default defineConfig(({ command }) => ({
       '@': resolve(root, 'client'),
       // Server Pug views provide the root component template mounted by client-app.ts.
       vue: 'vue/dist/vue.esm-bundler.js'
-    }
+    },
+    dedupe: ['@codemirror/state', '@codemirror/view']
   },
   css: {
     preprocessorOptions: {
