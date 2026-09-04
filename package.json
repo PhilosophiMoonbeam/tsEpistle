@@ -330,7 +330,8 @@
     "markdown-it-multimd-table@4.2.3": "patches/markdown-it-multimd-table@4.2.3.patch",
     "undici@8.10.0": "patches/undici@8.10.0.patch",
     "better-sqlite3@13.0.3": "patches/better-sqlite3@13.0.3.patch",
-    "bson@7.3.2": "patches/bson@7.3.2.patch"
+    "bson@7.3.2": "patches/bson@7.3.2.patch",
+    "@tresjs/core@5.8.3": "patches/@tresjs__core@5.8.3.patch"
   },
   "trustedDependencies": [
     "@apollo/protobufjs",

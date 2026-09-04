@@ -259,6 +259,7 @@
     "@asciidoctor/core@4.0.8": "patches/@asciidoctor__core@4.0.8.patch",
     "markdown-it-multimd-table@4.2.3": "patches/markdown-it-multimd-table@4.2.3.patch",
     "bson@7.3.2": "patches/bson@7.3.2.patch",
+    "@tresjs/core@5.8.3": "patches/@tresjs__core@5.8.3.patch",
   },
   "overrides": {
     "@codemirror/state": "6.7.2",

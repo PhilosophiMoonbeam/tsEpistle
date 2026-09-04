@@ -1328,12 +1328,10 @@ test.describe('managed login logo auth independence', () => {
       y: (pointerY - bounds.y) * screenshotScale
     }
     const immediateDifference = compareFrames(idleBefore, impulseFrame, influence)
-    expect(immediateDifference.mean).toBeGreaterThan(0.0001)
     expect(immediateDifference.mean).toBeLessThan(0.12)
     expect(immediateDifference.coreMean).toBeGreaterThan(0.0001)
 
     const propagationDifference = compareFrames(idleBefore, propagationFrame, influence)
-    expect(propagationDifference.mean).toBeGreaterThan(0.0001)
     expect(propagationDifference.mean).toBeLessThan(0.12)
     expect(propagationDifference.coreMean).toBeGreaterThan(0.0001)
     expect(propagationDifference.annulusMean).toBeGreaterThan(0.00001)

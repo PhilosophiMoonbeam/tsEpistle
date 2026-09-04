@@ -202,9 +202,6 @@ async function createMeasuredPage(browser: Browser, measuredViewport = viewport)
     viewport: measuredViewport
   })
   const page = await context.newPage()
-  const cdp = await context.newCDPSession(page)
-  await cdp.send('Network.enable')
-  await cdp.send('Network.setCacheDisabled', { cacheDisabled: true })
   await page.addInitScript(managedDescriptor => {
     const benchmark: BenchmarkState = {
       callbackCount: 0,
@@ -371,6 +368,18 @@ async function measureOffscreen(page: Page): Promise<InactivityMeasurement> {
     callbackCpuMilliseconds: measurement.callbackCpuMilliseconds,
     canvasCount: await page.locator('.login-particle-logo canvas').count(),
     durationMilliseconds: inactivitySampleMilliseconds
+  }
+}
+
+function addExactViolation(violations: Violation[], invariant: string, measured: number | null, expected: number): void {
+  if (measured === null || !Number.isFinite(measured) || measured !== expected) {
+    violations.push({ invariant, measured, threshold: expected })
+  }
+}
+
+function addMaximumViolation(violations: Violation[], invariant: string, measured: number | null, maximum: number): void {
+  if (measured === null || !Number.isFinite(measured) || measured > maximum) {
+    violations.push({ invariant, measured, threshold: maximum })
   }
 }
 

@@ -1,0 +1,14 @@
+diff --git a/dist/tres.js b/dist/tres.js
+index ca514200cc5adc4889d19b56ca2fa7c193ac6801..e3fa42e05e690a0d33231771a2a7eb5b827d4542 100644
+--- a/dist/tres.js
++++ b/dist/tres.js
+@@ -795,8 +795,8 @@ const useCreateRafLoop = (cycleFn, { fpsLimit } = {}) => {
+ 		resume();
+ 	};
+ 	const stop = () => {
+-		timer.stop();
+ 		pause();
++		timer.stop();
+ 	};
+ 	return {
+ 		start,
