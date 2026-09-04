@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
-
 import { type ActiveBranding, resolveActiveBranding } from '../../helpers/site-logo-branding.ts'
+import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 const HEADER_BYTES = 56
 const BYTES_PER_PARTICLE = 12
@@ -104,6 +103,7 @@ describe('resolved site-logo branding', () => {
     await db.schema.createTable('siteLogoRevisions', table => {
       table.uuid('id').primary()
       table.string('status').notNullable()
+      table.integer('pipelineVersion').notNullable()
       table.string('logoPngKind').nullable()
       table.string('logoPngHash', 64).nullable()
       table.string('particleV1Kind').nullable()
@@ -137,6 +137,7 @@ describe('resolved site-logo branding', () => {
     count: number
     medianStroke: number
     auraColor?: string
+    pipelineVersion?: number
   }): Promise<Bundle> => {
     const logoBytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from(`logo-${input.variant}`)])
     const particles = particleObject(input.width, input.height, input.count, input.variant)
@@ -178,6 +179,7 @@ describe('resolved site-logo branding', () => {
     await db('siteLogoRevisions').insert({
       id: bundle.revisionId,
       status: 'ready',
+      pipelineVersion: input.pipelineVersion ?? 3,
       logoPngKind: 'logo-png',
       logoPngHash: bundle.logoHash,
       particleV1Kind: 'particle-v1',
@@ -215,10 +217,11 @@ describe('resolved site-logo branding', () => {
       height: 320,
       count: 2,
       medianStroke: 4,
-      auraColor: '#123abc'
+      auraColor: '#123abc',
+      pipelineVersion: 2
     })
     const replacementId = '00000000-0000-4000-8000-00000000000b'
-    await db('siteLogoRevisions').insert({ id: replacementId, status: 'pending' })
+    await db('siteLogoRevisions').insert({ id: replacementId, pipelineVersion: 3, status: 'pending' })
     await db('siteLogoState').where({ id: 1 }).update({ activeRevisionId: active.revisionId, desiredRevisionId: replacementId })
 
     for (const candidate of [
@@ -241,7 +244,8 @@ describe('resolved site-logo branding', () => {
       height: 320,
       count: 2,
       medianStroke: 4,
-      auraColor: '#123abc'
+      auraColor: '#123abc',
+      pipelineVersion: 2
     })
     const activeB = await insertReadyBundle({
       revisionId: '00000000-0000-4000-8000-00000000000b',

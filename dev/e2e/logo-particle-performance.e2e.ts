@@ -2,9 +2,8 @@ import { Buffer } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-
-import { errors, expect, test } from '@playwright/test'
 import type { Browser, BrowserContext, Page } from '@playwright/test'
+import { errors, expect, test } from '@playwright/test'
 
 const outputPath = process.env.LOGO_PARTICLE_PERFORMANCE_FILE ?? 'logo-particle-performance.json'
 const viewport = { width: 1440, height: 900 }
@@ -18,10 +17,19 @@ const thresholds = {
   animatedFrameP95Milliseconds: 20,
   animatedFrameP99Milliseconds: 34,
   callbackCpuP95Milliseconds: 2,
+  depthScaleMax: 1.18,
+  depthScaleMin: 0.82,
   firstFrameP95Milliseconds: 1_500,
   hardIneligibleCanvasCount: 0,
+  idleAmplitudeMaximumCss: 7,
+  idleAmplitudeMinimumCss: 2.5,
   inactiveCallbackCount: 0,
+  motionParticleCount: 16_000,
+  pointerMaximum: 1,
+  pointerMinimum: 0,
   retainedCanvasCount: 1,
+  sliceDisplacementMaximumCss: 24,
+  sliceDisplacementMinimumCss: 10,
   timeouts: 0
 } as const
 
@@ -39,8 +47,32 @@ const descriptor = {
   medianStroke: 24,
   auraColor: '#336699'
 }
+const logoFixture =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><rect x="64" y="64" width="896" height="896" rx="128" fill="#e8538a"/><circle cx="512" cy="512" r="300" fill="#36a3d9"/></svg>'
 const staticFixture =
   '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><circle cx="512" cy="512" r="448" fill="#336699"/><path d="M256 512h512M512 256v512" stroke="#fff" stroke-width="48"/></svg>'
+
+interface LogoMotionDiagnostics {
+  readonly elapsedSeconds: number
+  readonly particleCount: number
+  readonly pointerStrength: number
+  readonly pointerSpeed: number
+  readonly idleAmplitudeCss: number
+  readonly sliceDisplacementCss: number
+  readonly depthScaleMin: number
+  readonly depthScaleMax: number
+}
+
+const motionDiagnosticKeys = [
+  'depthScaleMax',
+  'depthScaleMin',
+  'elapsedSeconds',
+  'idleAmplitudeCss',
+  'particleCount',
+  'pointerSpeed',
+  'pointerStrength',
+  'sliceDisplacementCss'
+] as const
 
 interface BenchmarkState {
   callbackCount: number
@@ -48,6 +80,11 @@ interface BenchmarkState {
   frameIntervalsMilliseconds: number[]
   firstFrameMilliseconds: number | null
   lastFrameAt: number | null
+  lastMotion?: LogoMotionDiagnostics
+}
+
+interface BenchmarkMeasurement extends BenchmarkState {
+  readonly lastMotionKeys: string[] | null
 }
 
 interface BenchmarkWindow extends Window {
@@ -195,7 +232,7 @@ async function createMeasuredPage(browser: Browser, measuredViewport = viewport)
       }
     })
   }, descriptor)
-  await page.route(`**${logoUrl}`, route => route.fulfill({ status: 200, contentType: 'image/svg+xml', body: staticFixture }))
+  await page.route(`**${logoUrl}`, route => route.fulfill({ status: 200, contentType: 'image/svg+xml', body: logoFixture }))
   await page.route(`**${staticUrl}`, route => route.fulfill({ status: 200, contentType: 'image/svg+xml', body: staticFixture }))
   await page.route(`**${particleUrl}`, route => route.fulfill({ status: 200, contentType: 'application/octet-stream', body: particleFixture }))
   return { context, page }
@@ -228,7 +265,7 @@ async function resetMeasurements(page: Page): Promise<void> {
   })
 }
 
-async function readMeasurements(page: Page): Promise<BenchmarkState> {
+async function readMeasurements(page: Page): Promise<BenchmarkMeasurement> {
   return page.evaluate(() => {
     const benchmark = (window as BenchmarkWindow).__logoParticlePerformance
     return {
@@ -236,7 +273,9 @@ async function readMeasurements(page: Page): Promise<BenchmarkState> {
       callbackCpuMilliseconds: [...benchmark.callbackCpuMilliseconds],
       frameIntervalsMilliseconds: [...benchmark.frameIntervalsMilliseconds],
       firstFrameMilliseconds: benchmark.firstFrameMilliseconds,
-      lastFrameAt: benchmark.lastFrameAt
+      lastFrameAt: benchmark.lastFrameAt,
+      lastMotion: benchmark.lastMotion ? { ...benchmark.lastMotion } : undefined,
+      lastMotionKeys: benchmark.lastMotion ? Object.keys(benchmark.lastMotion).sort() : null
     }
   })
 }
@@ -289,6 +328,12 @@ function addExactViolation(violations: Violation[], invariant: string, measured:
   if (measured !== threshold) violations.push({ invariant, measured, threshold })
 }
 
+function addRangeViolation(violations: Violation[], invariant: string, measured: number | null, minimum: number, maximum: number): void {
+  if (measured === null || !Number.isFinite(measured) || measured < minimum || measured > maximum) {
+    violations.push({ invariant, measured, threshold: maximum })
+  }
+}
+
 test.describe.configure({ retries: 0 })
 
 test('enforces managed login particle runtime budgets', async ({ browser, browserName }, testInfo) => {
@@ -310,12 +355,13 @@ test('enforces managed login particle runtime budgets', async ({ browser, browse
   }
 
   const { context, page } = await createMeasuredPage(browser)
-  let animation: BenchmarkState = {
+  let animation: BenchmarkMeasurement = {
     callbackCount: 0,
     callbackCpuMilliseconds: [],
     frameIntervalsMilliseconds: [],
     firstFrameMilliseconds: null,
-    lastFrameAt: null
+    lastFrameAt: null,
+    lastMotionKeys: null
   }
   let animationSetupTimeouts = 0
   let hidden: InactivityMeasurement
@@ -375,6 +421,43 @@ test('enforces managed login particle runtime budgets', async ({ browser, browse
   addExactViolation(violations, 'environment.viewport.width === 1440', actualViewport.width, viewport.width)
   addExactViolation(violations, 'environment.viewport.height === 900', actualViewport.height, viewport.height)
   addExactViolation(violations, 'environment.deviceScaleFactor === 1.5', actualDeviceScaleFactor, deviceScaleFactor)
+  const motion = animation.lastMotion
+  addExactViolation(violations, 'animation.lastMotion is present', motion ? 1 : 0, 1)
+  addExactViolation(
+    violations,
+    'animation.lastMotion publishes only bounded aggregate keys',
+    JSON.stringify(animation.lastMotionKeys) === JSON.stringify(motionDiagnosticKeys) ? 1 : 0,
+    1
+  )
+  if (motion) {
+    addRangeViolation(violations, 'animation.lastMotion.elapsedSeconds is finite and nonnegative', motion.elapsedSeconds, 0, Number.MAX_SAFE_INTEGER)
+    addExactViolation(violations, 'animation.lastMotion.particleCount === 16000', motion.particleCount, thresholds.motionParticleCount)
+    addRangeViolation(
+      violations,
+      'animation.lastMotion.pointerStrength is within 0..1',
+      motion.pointerStrength,
+      thresholds.pointerMinimum,
+      thresholds.pointerMaximum
+    )
+    addRangeViolation(violations, 'animation.lastMotion.pointerSpeed is within 0..1', motion.pointerSpeed, thresholds.pointerMinimum, thresholds.pointerMaximum)
+    addRangeViolation(
+      violations,
+      'animation.lastMotion.idleAmplitudeCss is within 2.5..7',
+      motion.idleAmplitudeCss,
+      thresholds.idleAmplitudeMinimumCss,
+      thresholds.idleAmplitudeMaximumCss
+    )
+    addRangeViolation(
+      violations,
+      'animation.lastMotion.sliceDisplacementCss is within 10..24',
+      motion.sliceDisplacementCss,
+      thresholds.sliceDisplacementMinimumCss,
+      thresholds.sliceDisplacementMaximumCss
+    )
+    addExactViolation(violations, 'animation.lastMotion.depthScaleMin === 0.82', motion.depthScaleMin, thresholds.depthScaleMin)
+    addExactViolation(violations, 'animation.lastMotion.depthScaleMax === 1.18', motion.depthScaleMax, thresholds.depthScaleMax)
+    addExactViolation(violations, 'animation.lastMotion depth diagnostics are ordered', motion.depthScaleMin < motion.depthScaleMax ? 1 : 0, 1)
+  }
 
   const report = {
     schemaVersion: 1,
@@ -408,7 +491,8 @@ test('enforces managed login particle runtime budgets', async ({ browser, browse
       frameNearestRankP99Milliseconds: animatedFrameP99Milliseconds,
       callbackCount: animation.callbackCount,
       callbackCpuMilliseconds: animation.callbackCpuMilliseconds,
-      callbackCpuNearestRankP95Milliseconds: callbackCpuP95Milliseconds
+      callbackCpuNearestRankP95Milliseconds: callbackCpuP95Milliseconds,
+      lastMotion: motion
     },
     inactive: {
       hidden,

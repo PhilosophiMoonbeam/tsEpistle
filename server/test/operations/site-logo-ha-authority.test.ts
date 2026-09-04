@@ -1,18 +1,17 @@
 import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
-import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
-
 import { DurableJobStore } from '../../core/durable-jobs.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
-import { readSiteLogoObject, resolveActiveBranding } from '../../helpers/site-logo-branding.ts'
 import type { ActiveBranding, SiteLogoObjectKind } from '../../helpers/site-logo-branding.ts'
-import { encodeParticleV1 } from '../../helpers/site-logo-processing.ts'
+import { readSiteLogoObject, resolveActiveBranding } from '../../helpers/site-logo-branding.ts'
 import type { SiteLogoArtifacts } from '../../helpers/site-logo-processing.ts'
-import { createSiteLogoProcessHandler } from '../../jobs/site-logo-process.ts'
+import { encodeParticleV1 } from '../../helpers/site-logo-processing.ts'
 import type { SiteLogoProcessor } from '../../jobs/site-logo-process.ts'
-import { getSiteLogoStatus, uploadSiteLogoCandidate } from '../../operations/site-logo.ts'
+import { createSiteLogoProcessHandler } from '../../jobs/site-logo-process.ts'
 import type { SiteLogoMutationResult, SiteLogoStatusResponse } from '../../operations/site-logo.ts'
+import { getSiteLogoStatus, uploadSiteLogoCandidate } from '../../operations/site-logo.ts'
+import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 const sourceBytes = Buffer.concat([PNG_SIGNATURE, Buffer.from('ha-source-owned-by-database')])
@@ -285,7 +284,7 @@ describe('site logo HA database authority', () => {
     expect(revisionA).toEqual({
       id: revisionId,
       sourceHash: sha256(sourceBytes),
-      pipelineVersion: 2,
+      pipelineVersion: 3,
       status: 'ready',
       retrySequence: 0,
       logoPngHash: hashes.logo,

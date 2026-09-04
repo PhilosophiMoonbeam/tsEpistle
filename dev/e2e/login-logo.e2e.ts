@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer'
-import { expect } from '@playwright/test'
 import type { Locator, Page, Request, TestInfo } from '@playwright/test'
+import { expect } from '@playwright/test'
+import sharp from 'sharp'
 import { responsiveTest as test } from './helpers.ts'
 
 const LOGO_URL = `/_site-logo/${'a'.repeat(64)}/logo.png`
@@ -29,7 +30,7 @@ const squareEffect = {
   width: 8,
   height: 8,
   aspect: 1,
-  count: 2,
+  count: 2_000,
   medianStroke: 2,
   auraColor: '#336699'
 }
@@ -41,16 +42,97 @@ const wideEffect = {
   width: 1200,
   height: 100,
   aspect: 12,
-  count: 2,
+  count: 2_000,
   medianStroke: 12
 }
 
 type ManagedEffect = typeof squareEffect | typeof wideEffect
 
-const particleFixture = Buffer.from(
-  '545345500107380008000000080000000200000018000000cf8f46fd3800000040000000420000004a0000004c000000500000000000000025c94912db36b7eded4ddc283cc81e6edca05578d20431d4',
-  'hex'
-)
+const crcTable = (() => {
+  const table = new Uint32Array(256)
+  for (let index = 0; index < table.length; index += 1) {
+    let value = index
+    for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1
+    table[index] = value >>> 0
+  }
+  return table
+})()
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff
+  for (const value of bytes) crc = (crc >>> 8) ^ crcTable[(crc ^ value) & 0xff]!
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+function createParticleFixture(effect: ManagedEffect): Buffer {
+  const headerBytes = 56
+  const count = effect.count
+  const xyOffset = headerBytes
+  const depthOffset = xyOffset + 4 * count
+  const rgbaOffset = depthOffset + count
+  const sizeOffset = rgbaOffset + 4 * count
+  const seedOffset = sizeOffset + count
+  const fileLength = seedOffset + 2 * count
+  const bytes = Buffer.allocUnsafe(fileLength)
+
+  bytes.write('TSEP', 0, 'ascii')
+  bytes[4] = 1
+  bytes[5] = 0x07
+  bytes.writeUInt16LE(headerBytes, 6)
+  bytes.writeUInt32LE(effect.width, 8)
+  bytes.writeUInt32LE(effect.height, 12)
+  bytes.writeUInt32LE(count, 16)
+  bytes.writeUInt32LE(12 * count, 20)
+  bytes.writeUInt32LE(0, 24)
+  bytes.writeUInt32LE(xyOffset, 28)
+  bytes.writeUInt32LE(depthOffset, 32)
+  bytes.writeUInt32LE(rgbaOffset, 36)
+  bytes.writeUInt32LE(sizeOffset, 40)
+  bytes.writeUInt32LE(seedOffset, 44)
+  bytes.writeUInt32LE(fileLength, 48)
+  bytes.writeUInt32LE(0, 52)
+
+  const componentColors = [
+    [54, 163, 217, 238],
+    [16, 16, 16, 232],
+    [248, 248, 248, 244]
+  ] as const
+  for (let index = 0; index < count; index += 1) {
+    const component = index % 3
+    const sequence = Math.floor(index / 3)
+    const u = ((sequence * 73) % 997) / 996
+    const v = ((sequence * 193) % 991) / 990
+    let x: number
+    let y: number
+    if (component === 0) {
+      x = -0.8 + 0.5 * u
+      y = -0.6 + 1.2 * v
+    } else if (component === 1) {
+      const angle = 2 * Math.PI * v
+      const radius = 0.34 * Math.sqrt(u)
+      x = 0.04 + radius * Math.cos(angle)
+      y = radius * Math.sin(angle)
+    } else {
+      x = 0.42 + 0.38 * u
+      y = -0.5 + v
+    }
+    bytes.writeInt16LE(Math.round(x * 32_767), xyOffset + index * 4)
+    bytes.writeInt16LE(Math.round(y * 32_767), xyOffset + index * 4 + 2)
+    bytes.writeInt8([-96, 0, 96][sequence % 3]!, depthOffset + index)
+    const color = componentColors[component]!
+    bytes[rgbaOffset + index * 4] = color[0]
+    bytes[rgbaOffset + index * 4 + 1] = color[1]
+    bytes[rgbaOffset + index * 4 + 2] = color[2]
+    bytes[rgbaOffset + index * 4 + 3] = color[3]
+    bytes[sizeOffset + index] = 5 + (sequence % 8)
+    bytes.writeUInt16LE((index % 65_535) + 1, seedOffset + index * 2)
+  }
+  bytes.writeUInt32LE(crc32(bytes.subarray(headerBytes)), 24)
+  return bytes
+}
+
+const squareParticleFixture = createParticleFixture(squareEffect)
+const wideParticleFixture = createParticleFixture(wideEffect)
 
 interface ArtifactOptions {
   readonly logoBody?: string | Buffer
@@ -69,6 +151,46 @@ interface ArtifactRequests {
 interface ParticleFetchObservation {
   readonly credentials: RequestCredentials
   readonly url: string
+}
+
+interface LogoMotionDiagnostics {
+  readonly elapsedSeconds: number
+  readonly particleCount: number
+  readonly pointerStrength: number
+  readonly pointerSpeed: number
+  readonly idleAmplitudeCss: number
+  readonly sliceDisplacementCss: number
+  readonly depthScaleMin: number
+  readonly depthScaleMax: number
+}
+
+interface LogoPerformanceHook {
+  callbackCount: number
+  callbackCpuMilliseconds: number[]
+  frameIntervalsMilliseconds: number[]
+  firstFrameMilliseconds: number | null
+  lastFrameAt: number | null
+  lastMotion?: LogoMotionDiagnostics
+}
+
+interface LogoRenderedFrame {
+  readonly capturedAt: number
+  readonly dataUrl: string
+}
+
+interface LogoFrameCaptureHook {
+  request: (() => Promise<LogoRenderedFrame>) | null
+}
+
+interface CapturedCanvasPng {
+  readonly capturedAt: number
+  readonly impulseAt: number | null
+  readonly png: Buffer
+}
+
+interface LogoMotionObservation {
+  readonly diagnostics: LogoMotionDiagnostics
+  readonly keys: string[]
 }
 
 interface LogoResourceTrace {
@@ -97,8 +219,14 @@ interface ReducedMotionChangeReport {
   readonly trace: LogoResourceTrace
 }
 
-function svgFixture(width: number, height: number): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g><rect x="${width * 0.1}" y="${height * 0.2}" width="${width * 0.25}" height="${height * 0.6}" rx="${Math.min(width, height) * 0.08}" fill="#36a3d9"/><circle cx="${width * 0.52}" cy="${height * 0.5}" r="${Math.min(width, height) * 0.24}" fill="#101010"/><rect x="${width * 0.7}" y="${height * 0.25}" width="${width * 0.2}" height="${height * 0.5}" fill="#f8f8f8"/><circle cx="${width * 0.06}" cy="${height * 0.12}" r="${Math.min(width, height) * 0.035}" fill="#e8538a"/></g></svg>`
+function ordinarySvgFixture(width: number, height: number): string {
+  const shortAxis = Math.min(width, height)
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g><rect x="${width * 0.1}" y="${height * 0.2}" width="${width * 0.25}" height="${height * 0.6}" rx="${shortAxis * 0.08}" fill="#36a3d9"/><circle cx="${width * 0.52}" cy="${height * 0.5}" r="${shortAxis * 0.24}" fill="#101010"/><rect x="${width * 0.7}" y="${height * 0.25}" width="${width * 0.2}" height="${height * 0.5}" fill="#f8f8f8"/><circle cx="${width * 0.06}" cy="${height * 0.12}" r="${shortAxis * 0.055}" fill="#e8538a"/></g></svg>`
+}
+
+function staticSvgFixture(width: number, height: number): string {
+  const shortAxis = Math.min(width, height)
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g><rect x="${width * 0.12}" y="${height * 0.22}" width="${width * 0.21}" height="${height * 0.56}" rx="${shortAxis * 0.08}" fill="#36a3d9"/><circle cx="${width * 0.52}" cy="${height * 0.5}" r="${shortAxis * 0.21}" fill="#101010"/><rect x="${width * 0.72}" y="${height * 0.28}" width="${width * 0.16}" height="${height * 0.44}" fill="#f8f8f8"/><path d="M ${width * 0.42} ${height * 0.82} L ${width * 0.52} ${height * 0.7} L ${width * 0.62} ${height * 0.82} Z" fill="#ffd43b"/></g></svg>`
 }
 
 async function installManagedLogo(page: Page, effect: ManagedEffect, options: ArtifactOptions = {}): Promise<ArtifactRequests> {
@@ -118,14 +246,16 @@ async function installManagedLogo(page: Page, effect: ManagedEffect, options: Ar
     })
   }, effect)
 
-  const image = svgFixture(effect.width, effect.height)
+  const ordinaryImage = ordinarySvgFixture(effect.width, effect.height)
+  const staticImage = staticSvgFixture(effect.width, effect.height)
+  const particles = effect === squareEffect ? squareParticleFixture : wideParticleFixture
   const requests: ArtifactRequests = { logo: [], particle: [], static: [] }
   await page.route(`**${effect.logoUrl}`, route => {
     requests.logo.push(route.request())
     return route.fulfill({
       status: options.logoStatus ?? 200,
       contentType: 'image/svg+xml',
-      body: options.logoBody ?? image
+      body: options.logoBody ?? ordinaryImage
     })
   })
   await page.route(`**${effect.staticUrl}`, route => {
@@ -133,7 +263,7 @@ async function installManagedLogo(page: Page, effect: ManagedEffect, options: Ar
     return route.fulfill({
       status: options.staticStatus ?? 200,
       contentType: 'image/svg+xml',
-      body: options.staticBody ?? image
+      body: options.staticBody ?? staticImage
     })
   })
   await page.route(`**${effect.particleUrl}`, route => {
@@ -141,10 +271,19 @@ async function installManagedLogo(page: Page, effect: ManagedEffect, options: Ar
     return route.fulfill({
       status: options.particleStatus ?? 200,
       contentType: 'application/octet-stream',
-      body: options.particleBody ?? particleFixture
+      body: options.particleBody ?? particles
     })
   })
   return requests
+}
+
+async function installLogoFrameCapture(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const captureWindow = window as Window & {
+      __logoParticleFrameCapture: LogoFrameCaptureHook
+    }
+    captureWindow.__logoParticleFrameCapture = { request: null }
+  })
 }
 
 async function browserSupportsWebGL2(page: Page): Promise<boolean> {
@@ -198,13 +337,7 @@ async function installLogoResourceTrace(page: Page): Promise<void> {
     const activeRafs = new Set<number>()
     const logoCanvases = new WeakSet<HTMLCanvasElement>()
     const tracedWindow = window as Window & {
-      __logoParticlePerformance: {
-        callbackCount: number
-        callbackCpuMilliseconds: number[]
-        frameIntervalsMilliseconds: number[]
-        firstFrameMilliseconds: number | null
-        lastFrameAt: number | null
-      }
+      __logoParticlePerformance: LogoPerformanceHook
       __readLoginLogoTrace: () => LogoResourceTrace
     }
     tracedWindow.__logoParticlePerformance = {
@@ -333,6 +466,17 @@ async function installLogoResourceTrace(page: Page): Promise<void> {
 
 async function readLogoResourceTrace(page: Page): Promise<LogoResourceTrace> {
   return page.evaluate(() => (window as Window & { __readLoginLogoTrace: () => LogoResourceTrace }).__readLoginLogoTrace())
+}
+
+async function readLogoMotion(page: Page): Promise<LogoMotionObservation | null> {
+  return page.evaluate(() => {
+    const motion = (window as Window & { __logoParticlePerformance?: LogoPerformanceHook }).__logoParticlePerformance?.lastMotion
+    if (!motion) return null
+    return {
+      diagnostics: { ...motion },
+      keys: Object.keys(motion).sort()
+    }
+  })
 }
 
 async function installReducedMotionChangeProbe(page: Page): Promise<void> {
@@ -583,7 +727,7 @@ async function accessibleButtonNames(page: Page): Promise<string[]> {
   })
 }
 
-async function assertTransparentSourceIdentity(image: Locator): Promise<void> {
+async function assertTransparentSourceIdentity(image: Locator, effect: ManagedEffect, treatment: 'ordinary' | 'static'): Promise<void> {
   const sample = await image.evaluate(element => {
     if (!(element instanceof HTMLImageElement) || !element.complete || element.naturalWidth === 0) return null
     const canvas = document.createElement('canvas')
@@ -596,7 +740,9 @@ async function assertTransparentSourceIdentity(image: Locator): Promise<void> {
     let opaque = 0
     let nearBlack = 0
     let nearWhite = 0
+    let ordinaryPink = 0
     let sourceBlue = 0
+    let staticGold = 0
     for (let offset = 0; offset < pixels.length; offset += 4) {
       const red = pixels[offset] ?? 0
       const green = pixels[offset + 1] ?? 0
@@ -605,7 +751,9 @@ async function assertTransparentSourceIdentity(image: Locator): Promise<void> {
       if (alpha > 240) opaque += 1
       if (alpha > 240 && red < 32 && green < 32 && blue < 32) nearBlack += 1
       if (alpha > 240 && red > 235 && green > 235 && blue > 235) nearWhite += 1
+      if (alpha > 220 && red > 190 && green < 115 && blue > 105) ordinaryPink += 1
       if (alpha > 240 && blue > 170 && green > 120 && red < 90) sourceBlue += 1
+      if (alpha > 220 && red > 220 && green > 165 && blue < 100) staticGold += 1
     }
     const pixelCount = canvas.width * canvas.height
     return {
@@ -615,18 +763,167 @@ async function assertTransparentSourceIdentity(image: Locator): Promise<void> {
         pixels[(canvas.height - 1) * canvas.width * 4 + 3],
         pixels[(canvas.height * canvas.width - 1) * 4 + 3]
       ],
+      height: element.naturalHeight,
       nearBlackRatio: opaque === 0 ? 0 : nearBlack / opaque,
       nearWhiteRatio: opaque === 0 ? 0 : nearWhite / opaque,
       opaqueRatio: opaque / pixelCount,
-      sourceBlueRatio: opaque === 0 ? 0 : sourceBlue / opaque
+      ordinaryPinkRatio: opaque === 0 ? 0 : ordinaryPink / opaque,
+      sourceBlueRatio: opaque === 0 ? 0 : sourceBlue / opaque,
+      staticGoldRatio: opaque === 0 ? 0 : staticGold / opaque,
+      width: element.naturalWidth
     }
   })
   expect(sample).not.toBeNull()
+  expect(sample).toMatchObject({ height: effect.height, width: effect.width })
   expect(sample?.cornerAlpha.every(alpha => (alpha ?? 255) < 16)).toBe(true)
   expect(sample?.opaqueRatio).toBeGreaterThan(0.02)
   expect(sample?.nearBlackRatio).toBeGreaterThan(0.002)
   expect(sample?.nearWhiteRatio).toBeGreaterThan(0.01)
   expect(sample?.sourceBlueRatio).toBeGreaterThan(0.01)
+  if (treatment === 'ordinary') {
+    expect(sample?.ordinaryPinkRatio).toBeGreaterThan(0.0005)
+    expect(sample?.staticGoldRatio).toBeLessThan(0.0001)
+  } else {
+    expect(sample?.ordinaryPinkRatio).toBeLessThan(0.0001)
+    expect(sample?.staticGoldRatio).toBeGreaterThan(0.005)
+  }
+}
+
+interface RgbaFrame {
+  readonly data: Buffer
+  readonly height: number
+  readonly width: number
+}
+
+interface FrameAppearance {
+  readonly centroidX: number
+  readonly centroidY: number
+  readonly inkRatio: number
+}
+
+interface FrameDifference {
+  readonly corridorMean: number
+  readonly mean: number
+  readonly outsideMean: number
+}
+
+async function decodeScreenshot(image: Buffer): Promise<RgbaFrame> {
+  const decoded = await sharp(image).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  if (decoded.info.channels !== 4) throw new Error('Expected an RGBA screenshot.')
+  return { data: decoded.data, height: decoded.info.height, width: decoded.info.width }
+}
+const CANVAS_PNG_DATA_URL_PREFIX = 'data:image/png;base64,'
+
+async function captureLogoRenderedFrame(page: Page, pointerSample?: { readonly clientX: number; readonly clientY: number }): Promise<CapturedCanvasPng> {
+  const capture = await page.evaluate(
+    async ({ pointerSample }) => {
+      const field = document.querySelector('.login-particle-logo')
+      const canvas = field?.querySelector('canvas')
+      const hook = (
+        window as Window & {
+          __logoParticleFrameCapture?: LogoFrameCaptureHook
+        }
+      ).__logoParticleFrameCapture
+      if (!(field instanceof HTMLElement) || !(canvas instanceof HTMLCanvasElement)) {
+        throw new Error('The animated logo canvas is unavailable for in-page capture.')
+      }
+      const request = hook?.request
+      if (typeof request !== 'function') {
+        throw new Error('The animated logo after-render capture hook is unavailable.')
+      }
+      let impulseAt: number | null = null
+      if (pointerSample) {
+        field.dispatchEvent(
+          new PointerEvent('pointermove', {
+            bubbles: true,
+            clientX: pointerSample.clientX,
+            clientY: pointerSample.clientY,
+            isPrimary: true,
+            pointerType: 'mouse'
+          })
+        )
+        impulseAt = performance.now()
+      }
+      const renderedFrame = await request()
+      return { ...renderedFrame, impulseAt }
+    },
+    { pointerSample: pointerSample ?? null }
+  )
+  if (!capture.dataUrl.startsWith(CANVAS_PNG_DATA_URL_PREFIX)) throw new Error('Expected a PNG canvas data URL.')
+  if (!Number.isFinite(capture.capturedAt)) throw new Error('Expected a finite page capture timestamp.')
+  if (capture.impulseAt !== null && (!Number.isFinite(capture.impulseAt) || capture.capturedAt < capture.impulseAt)) {
+    throw new Error('Expected the rendered frame timestamp to follow its pointer impulse.')
+  }
+  return {
+    capturedAt: capture.capturedAt,
+    impulseAt: capture.impulseAt,
+    png: Buffer.from(capture.dataUrl.slice(CANVAS_PNG_DATA_URL_PREFIX.length), 'base64')
+  }
+}
+
+function analyzeFrame(frame: RgbaFrame): FrameAppearance {
+  const cornerPixels = [0, frame.width - 1, (frame.height - 1) * frame.width, frame.height * frame.width - 1]
+  const background = [0, 1, 2].map(channel => cornerPixels.reduce((sum, pixel) => sum + (frame.data[pixel * 4 + channel] ?? 0), 0) / cornerPixels.length)
+  let centroidWeight = 0
+  let centroidX = 0
+  let centroidY = 0
+  let inkPixels = 0
+  for (let y = 0; y < frame.height; y += 1) {
+    for (let x = 0; x < frame.width; x += 1) {
+      const offset = (y * frame.width + x) * 4
+      const weight =
+        Math.abs((frame.data[offset] ?? 0) - background[0]!) +
+        Math.abs((frame.data[offset + 1] ?? 0) - background[1]!) +
+        Math.abs((frame.data[offset + 2] ?? 0) - background[2]!)
+      if (weight > 36) inkPixels += 1
+      centroidWeight += weight
+      centroidX += x * weight
+      centroidY += y * weight
+    }
+  }
+  if (centroidWeight === 0) throw new Error('The particle frame contains no visible pixels.')
+  return {
+    centroidX: centroidX / centroidWeight,
+    centroidY: centroidY / centroidWeight,
+    inkRatio: inkPixels / (frame.width * frame.height)
+  }
+}
+
+function compareFrames(
+  before: RgbaFrame,
+  after: RgbaFrame,
+  corridor?: { readonly across: number; readonly along: number; readonly x: number; readonly y: number }
+): FrameDifference {
+  if (before.width !== after.width || before.height !== after.height) throw new Error('Particle screenshots changed dimensions.')
+  let corridorDifference = 0
+  let corridorSamples = 0
+  let outsideDifference = 0
+  let outsideSamples = 0
+  let totalDifference = 0
+  for (let y = 0; y < before.height; y += 1) {
+    for (let x = 0; x < before.width; x += 1) {
+      const offset = (y * before.width + x) * 4
+      const difference =
+        Math.abs((before.data[offset] ?? 0) - (after.data[offset] ?? 0)) +
+        Math.abs((before.data[offset + 1] ?? 0) - (after.data[offset + 1] ?? 0)) +
+        Math.abs((before.data[offset + 2] ?? 0) - (after.data[offset + 2] ?? 0))
+      totalDifference += difference
+      if (!corridor) continue
+      const distance = ((x - corridor.x) / corridor.along) ** 2 + ((y - corridor.y) / corridor.across) ** 2
+      if (distance <= 1) {
+        corridorDifference += difference
+        corridorSamples += 1
+      } else if (distance >= 2.25) {
+        outsideDifference += difference
+        outsideSamples += 1
+      }
+    }
+  }
+  return {
+    corridorMean: corridorSamples === 0 ? 0 : corridorDifference / (corridorSamples * 3 * 255),
+    mean: totalDifference / (before.width * before.height * 3 * 255),
+    outsideMean: outsideSamples === 0 ? 0 : outsideDifference / (outsideSamples * 3 * 255)
+  }
 }
 
 async function expectFieldGeometry(page: Page, effect: ManagedEffect): Promise<void> {
@@ -690,8 +987,8 @@ test.describe('managed login logo auth independence', () => {
           expect(
             await samplePage.locator('.login-particle-logo').evaluate(element => getComputedStyle(element).getPropertyValue('--login-logo-aura').trim())
           ).toBe(fixture.name === 'square' ? 'rgb(51 102 153 / 8%)' : 'transparent')
-          await assertTransparentSourceIdentity(ordinaryLogo)
-          await assertTransparentSourceIdentity(staticImage)
+          await assertTransparentSourceIdentity(ordinaryLogo, fixture.effect, 'ordinary')
+          await assertTransparentSourceIdentity(staticImage, fixture.effect, 'static')
           themeBackgrounds.push(await samplePage.locator('.login').evaluate(element => getComputedStyle(element).backgroundColor))
           await testInfo.attach(`${fixture.name}-${colorScheme}-${testInfo.project.name}`, {
             body: await samplePage.screenshot({ animations: 'disabled', fullPage: false }),
@@ -916,6 +1213,137 @@ test.describe('managed login logo auth independence', () => {
     await expectLoginValidation(page)
   })
 
+  test('shows a lower-density volumetric idle field, a local swept slice, and sub-240ms refill without telemetry', async ({ page }, testInfo) => {
+    requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const supportsWebGL2 = await browserSupportsWebGL2(page)
+    await installLogoResourceTrace(page)
+    await installLogoFrameCapture(page)
+    const requests: string[] = []
+    const sceneRequests: string[] = []
+    page.on('request', request => {
+      requests.push(request.url())
+      if (SCENE_REQUEST_PATTERN.test(request.url())) sceneRequests.push(request.url())
+    })
+    const artifacts = await installManagedLogo(page, squareEffect)
+
+    await page.goto('/login?logo-sample=motion')
+    await expectOrdinaryLogin(page)
+    const ordinaryLogo = page.locator('.login-brand .login-logo img')
+    await expect(ordinaryLogo).toHaveAttribute('src', squareEffect.logoUrl)
+    await assertTransparentSourceIdentity(ordinaryLogo, squareEffect, 'ordinary')
+    const field = page.locator('.login-particle-logo')
+    const canvas = field.locator('canvas')
+    if (!supportsWebGL2) {
+      testInfo.annotations.push({
+        type: 'WebGL2 unavailable',
+        description: 'Volumetric motion cannot render; faithful ordinary branding and the static treatment remain asserted.'
+      })
+      await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
+      return
+    }
+
+    await expect(canvas).toHaveCount(1)
+    await expect(field.locator('.login-particle-logo__image')).toHaveCSS('opacity', '0')
+    await expect.poll(async () => (await readLogoResourceTrace(page)).rafCallbacks).toBeGreaterThan(3)
+    await expect.poll(() => readLogoMotion(page)).not.toBeNull()
+    expect(artifacts.particle).toHaveLength(1)
+
+    const idleMotion = await readLogoMotion(page)
+    expect(idleMotion).not.toBeNull()
+    expect(idleMotion?.keys).toEqual([
+      'depthScaleMax',
+      'depthScaleMin',
+      'elapsedSeconds',
+      'idleAmplitudeCss',
+      'particleCount',
+      'pointerSpeed',
+      'pointerStrength',
+      'sliceDisplacementCss'
+    ])
+    expect(idleMotion?.diagnostics.particleCount).toBe(squareEffect.count)
+    expect(idleMotion?.diagnostics.particleCount).toBeLessThan(8_000)
+    expect(idleMotion?.diagnostics.pointerStrength).toBe(0)
+    expect(idleMotion?.diagnostics.pointerSpeed).toBe(0)
+    expect(idleMotion?.diagnostics.idleAmplitudeCss).toBeGreaterThanOrEqual(2.5)
+    expect(idleMotion?.diagnostics.idleAmplitudeCss).toBeLessThanOrEqual(7)
+    expect(idleMotion?.diagnostics.sliceDisplacementCss).toBeGreaterThanOrEqual(10)
+    expect(idleMotion?.diagnostics.sliceDisplacementCss).toBeLessThanOrEqual(24)
+    expect(idleMotion?.diagnostics.depthScaleMin).toBeGreaterThanOrEqual(0.82)
+    expect(idleMotion?.diagnostics.depthScaleMin).toBeLessThan(1)
+    expect(idleMotion?.diagnostics.depthScaleMax).toBeGreaterThan(1)
+    expect(idleMotion?.diagnostics.depthScaleMax).toBeLessThanOrEqual(1.18)
+    expect(idleMotion?.diagnostics.depthScaleMin).toBeLessThan(idleMotion?.diagnostics.depthScaleMax ?? 0)
+
+    await page.waitForTimeout(80)
+    const idleBefore = await decodeScreenshot((await captureLogoRenderedFrame(page)).png)
+    await page.waitForTimeout(120)
+    const idleAfter = await decodeScreenshot((await captureLogoRenderedFrame(page)).png)
+    const idleDifference = compareFrames(idleBefore, idleAfter)
+    const beforeAppearance = analyzeFrame(idleBefore)
+    const afterAppearance = analyzeFrame(idleAfter)
+    const centroidDrift = Math.hypot(afterAppearance.centroidX - beforeAppearance.centroidX, afterAppearance.centroidY - beforeAppearance.centroidY)
+    expect(idleDifference.mean).toBeGreaterThan(0.00001)
+    expect(idleDifference.mean).toBeLessThan(0.03)
+    expect(centroidDrift).toBeLessThan(Math.max(2, Math.min(idleAfter.width, idleAfter.height) * 0.01))
+    expect(afterAppearance.inkRatio).toBeGreaterThan(0.005)
+    expect(afterAppearance.inkRatio).toBeLessThan(0.48)
+
+    await page.waitForLoadState('networkidle')
+    const requestCountBeforeSlice = requests.length
+    const bounds = await canvas.boundingBox()
+    expect(bounds).not.toBeNull()
+    if (!bounds) throw new Error('The animated logo has no pointer-test bounds.')
+    const sliceY = bounds.y + bounds.height * 0.52
+    await page.mouse.move(bounds.x + bounds.width * 0.2, sliceY)
+    await page.waitForTimeout(16)
+    await page.mouse.move(bounds.x + bounds.width * 0.4, sliceY)
+    await page.waitForTimeout(8)
+    const slicedCapture = await captureLogoRenderedFrame(page, {
+      clientX: bounds.x + bounds.width * 0.65,
+      clientY: sliceY
+    })
+    if (slicedCapture.impulseAt === null) throw new Error('The pointer capture did not record its page-clock impulse.')
+    const slicedFrame = await decodeScreenshot(slicedCapture.png)
+    const sliceMotion = await readLogoMotion(page)
+    expect(sliceMotion).not.toBeNull()
+    expect(sliceMotion?.diagnostics.pointerSpeed).toBeGreaterThan(0.5)
+    expect(sliceMotion?.diagnostics.pointerSpeed).toBeLessThanOrEqual(1)
+    expect(sliceMotion?.diagnostics.pointerStrength).toBeGreaterThan(0.05)
+    expect(sliceMotion?.diagnostics.pointerStrength).toBeLessThanOrEqual(1)
+    expect(sliceMotion?.diagnostics.sliceDisplacementCss).toBeGreaterThan((sliceMotion?.diagnostics.idleAmplitudeCss ?? Number.POSITIVE_INFINITY) * 1.4)
+
+    const screenshotScale = slicedFrame.width / bounds.width
+    const renderedLongAxis = Math.min(bounds.width, bounds.height)
+    const acrossRadiusCss = Math.min(56, Math.max(28, 0.08 * renderedLongAxis))
+    const sliceCorridor = {
+      across: acrossRadiusCss * screenshotScale,
+      along: acrossRadiusCss * 1.8 * screenshotScale,
+      x: slicedFrame.width * 0.65,
+      y: slicedFrame.height * 0.52
+    }
+    const sliceDifference = compareFrames(idleAfter, slicedFrame, sliceCorridor)
+    expect(sliceDifference.mean).toBeGreaterThan(0.0001)
+    expect(sliceDifference.mean).toBeLessThan(0.12)
+    expect(sliceDifference.corridorMean).toBeGreaterThan(Math.max(0.0001, idleDifference.mean * 3))
+    expect(sliceDifference.corridorMean).toBeGreaterThan(sliceDifference.outsideMean * 2)
+    expect(requests).toHaveLength(requestCountBeforeSlice)
+
+    const recoveryDeadline = slicedCapture.impulseAt + 240
+    await page.waitForFunction(deadline => performance.now() >= deadline, recoveryDeadline)
+    const recoveredCapture = await captureLogoRenderedFrame(page)
+    expect(recoveredCapture.capturedAt).toBeGreaterThanOrEqual(recoveryDeadline)
+    const recoveredFrame = await decodeScreenshot(recoveredCapture.png)
+    const recoveredMotion = await readLogoMotion(page)
+    expect(recoveredMotion).not.toBeNull()
+    expect(recoveredMotion?.diagnostics.pointerStrength).toBeLessThan(0.01)
+    const recoveredDifference = compareFrames(idleAfter, recoveredFrame, sliceCorridor)
+    expect(recoveredDifference.mean).toBeLessThan(Math.max(0.0001, idleDifference.mean * 3))
+    expect(recoveredDifference.corridorMean).toBeLessThan(sliceDifference.corridorMean * 0.5)
+    expect(requests).toHaveLength(requestCountBeforeSlice)
+    await expectLoginValidation(page)
+  })
+
   for (const failure of ['import', 'fetch', 'decode'] as const) {
     test(`keeps the personalized static treatment and authentication usable after ${failure} failure`, async ({ page }, testInfo) => {
       requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
@@ -1126,6 +1554,8 @@ test.describe('managed login logo auth independence', () => {
     const submit = page.getByRole('button', { name: 'Register', exact: true })
     await expect(register).toBeVisible()
     await expect(register.locator('.register-logo img')).toBeVisible()
+    await expect(register.locator('.register-logo img')).toHaveAttribute('src', wideEffect.logoUrl)
+    await assertTransparentSourceIdentity(register.locator('.register-logo img'), wideEffect, 'ordinary')
     await expect(register.locator('#register-site-title')).toBeVisible()
     await expect(email).toBeFocused()
     await expect(password).toBeVisible()

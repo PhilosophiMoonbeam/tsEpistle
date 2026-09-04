@@ -214,7 +214,8 @@ const lockState = async (transaction: Knex.Transaction): Promise<StateRow> => {
 }
 
 const EXHAUSTED_SITE_LOGO_ERROR = 'Durable job lease expired after its final allowed attempt'
-const UPGRADABLE_SITE_LOGO_PIPELINE_VERSION = 1
+const UPGRADABLE_SITE_LOGO_PIPELINE_VERSIONS = [1, 2]
+const RECONCILABLE_SITE_LOGO_PIPELINE_VERSIONS = [1, 2, SITE_LOGO_PIPELINE_VERSION]
 
 export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): Promise<number> =>
   await knex.transaction(async transaction => {
@@ -223,7 +224,7 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
       .select('job.*', 'revision.id as revisionId', 'revision.retrySequence as revisionRetrySequence')
       .where('job.type', 'process-site-logo')
       .where('job.version', 1)
-      .whereIn('revision.pipelineVersion', [UPGRADABLE_SITE_LOGO_PIPELINE_VERSION, SITE_LOGO_PIPELINE_VERSION])
+      .whereIn('revision.pipelineVersion', RECONCILABLE_SITE_LOGO_PIPELINE_VERSIONS)
       .whereIn('revision.status', ['pending', 'running'])
       .whereRaw('?? >= ??', ['job.attempts', 'job.maxAttempts'])
       .andWhere(builder => {
@@ -275,7 +276,7 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
         .first()
       if (
         !revision ||
-        ![UPGRADABLE_SITE_LOGO_PIPELINE_VERSION, SITE_LOGO_PIPELINE_VERSION].includes(Number(revision.pipelineVersion)) ||
+        !RECONCILABLE_SITE_LOGO_PIPELINE_VERSIONS.includes(Number(revision.pipelineVersion)) ||
         !['pending', 'running'].includes(revision.status)
       ) {
         throw new Error(`Exhausted site logo revision ${payload.revisionId} lost its fence`)
@@ -287,7 +288,7 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
           jobId: job.id,
           retrySequence: payload.retrySequence
         })
-        .whereIn('pipelineVersion', [UPGRADABLE_SITE_LOGO_PIPELINE_VERSION, SITE_LOGO_PIPELINE_VERSION])
+        .whereIn('pipelineVersion', RECONCILABLE_SITE_LOGO_PIPELINE_VERSIONS)
         .whereIn('status', ['pending', 'running'])
         .update({
           status: 'failed',
@@ -312,7 +313,7 @@ const transitionToRunning = async (knex: Knex, job: DurableJob, payload: Process
     }
     if (revision.status === 'ready' || revision.status === 'failed') return null
     const storedPipelineVersion = Number(revision.pipelineVersion)
-    if (storedPipelineVersion === UPGRADABLE_SITE_LOGO_PIPELINE_VERSION && SITE_LOGO_PIPELINE_VERSION === 2) {
+    if (UPGRADABLE_SITE_LOGO_PIPELINE_VERSIONS.includes(storedPipelineVersion)) {
       await transaction<RevisionRow>('siteLogoRevisions').where({ id: revision.id }).update({
         pipelineVersion: SITE_LOGO_PIPELINE_VERSION,
         updatedAt: now

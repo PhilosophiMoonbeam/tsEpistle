@@ -24,7 +24,7 @@ const processingMocks = vi.hoisted(() => {
 })
 
 vi.mockModule('../../helpers/site-logo-processing.ts', import.meta.url, () => ({
-  SITE_LOGO_PIPELINE_VERSION: 2,
+  SITE_LOGO_PIPELINE_VERSION: 3,
   SITE_LOGO_SOURCE_BYTE_LIMIT: 5_242_880,
   SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT: 192_056,
   SITE_LOGO_PARTICLE_GZIP_BYTE_LIMIT: 176 * 1_024,
@@ -144,7 +144,7 @@ const insertRevision = async (input: {
     id,
     sourceKind: 'source',
     sourceHash: input.hash,
-    pipelineVersion: input.pipelineVersion ?? 2,
+    pipelineVersion: input.pipelineVersion ?? 3,
     status: input.status ?? 'pending',
     jobId: input.jobId ?? null,
     retrySequence: input.retrySequence ?? 0,
@@ -200,7 +200,7 @@ const insertDerivedObjects = async (output: SiteLogoArtifacts): Promise<void> =>
   ])
 }
 
-const enqueueCandidate = async (pipelineVersion = 2): Promise<{ revisionId: string; job: DurableJob }> => {
+const enqueueCandidate = async (pipelineVersion = 3): Promise<{ revisionId: string; job: DurableJob }> => {
   const hash = await insertSource()
   const revisionId = await insertRevision({ hash, pipelineVersion })
   const store = new DurableJobStore(knex)
@@ -250,6 +250,7 @@ describe('managed site logo durable processing', () => {
       { kind: 'particle-v1', sha256: digest(output.particleV1) }
     ])
     expect(await knex('siteLogoRevisions').where({ id: revisionId }).first()).toMatchObject({
+      pipelineVersion: 3,
       status: 'ready',
       logoPngKind: 'logo-png',
       logoPngHash: digest(output.logoPng),
@@ -273,15 +274,32 @@ describe('managed site logo durable processing', () => {
       value: JSON.stringify({ v: `/_site-logo/${digest(output.logoPng)}/logo.png` })
     })
   })
-  it.each(['pending', 'running'] as const)('adopts an in-flight pipeline-v1 %s candidate into pipeline v2 under its current lease', async status => {
-    const { revisionId, job } = await enqueueCandidate(1)
+  it.each([
+    [1, 'pending'],
+    [1, 'running'],
+    [2, 'pending'],
+    [2, 'running']
+  ] as const)('adopts an in-flight pipeline-v%s %s candidate into pipeline v3 under its current lease', async (pipelineVersion, status) => {
+    const { revisionId, job } = await enqueueCandidate(pipelineVersion)
     if (status === 'running') await knex('siteLogoRevisions').where({ id: revisionId }).update({ status, startedAt: new Date() })
-    const output = artifacts(`upgraded-${status}`)
+    const output = artifacts(`upgraded-v${pipelineVersion}-${status}`)
 
     await run(job, async () => output)
 
-    expect(await knex('siteLogoRevisions').where({ id: revisionId }).first('pipelineVersion', 'status', 'logoPngHash')).toEqual({
-      pipelineVersion: 2,
+    expect(await knex('durableJobs').where({ id: job.id }).first('state', 'leaseOwner', 'leaseToken')).toEqual({
+      state: 'running',
+      leaseOwner: job.leaseOwner,
+      leaseToken: job.leaseToken
+    })
+    expect(await knex('siteLogoState').where({ id: 1 }).first('activeRevisionId', 'desiredRevisionId', 'generation')).toEqual({
+      activeRevisionId: revisionId,
+      desiredRevisionId: revisionId,
+      generation: 1
+    })
+    expect(await knex('siteLogoRevisions').where({ id: revisionId }).first('jobId', 'retrySequence', 'pipelineVersion', 'status', 'logoPngHash')).toEqual({
+      jobId: job.id,
+      retrySequence: 0,
+      pipelineVersion: 3,
       status: 'ready',
       logoPngHash: digest(output.logoPng)
     })
@@ -443,66 +461,69 @@ describe('managed site logo durable processing', () => {
     expect((await knex('siteLogoRevisions').where({ id: revisionId }).first('status'))?.status).toBe('running')
   })
 
-  it.each([1, 2] as const)('atomically fails an exhausted pipeline-v%s pre-handler candidate and leaves its active logo retryable', async pipelineVersion => {
-    const activeOutput = artifacts('exhaustion-active')
-    const activeHash = await insertSource(Buffer.concat([PNG_SIGNATURE, Buffer.from('exhaustion-active-source')]))
-    await insertDerivedObjects(activeOutput)
-    const activeId = await insertRevision({ hash: activeHash, status: 'ready', outputs: activeOutput })
-    const activeUrl = `/_site-logo/${digest(activeOutput.logoPng)}/logo.png`
-    await knex('siteLogoState').where({ id: 1 }).update({ generation: 4, activeRevisionId: activeId, desiredRevisionId: activeId })
-    await knex('settings').insert({ key: 'logoUrl', value: JSON.stringify({ v: activeUrl }), updatedAt: new Date().toISOString() })
-    const { revisionId, job } = await enqueueCandidate(pipelineVersion)
-    const exhaustedAt = new Date('2026-09-04T12:00:00.000Z')
-    await knex('durableJobs')
-      .where({ id: job.id })
-      .update({ attempts: 5, leaseExpiresAt: new Date('2026-09-04T11:59:59.000Z') })
+  it.each([1, 2, 3] as const)(
+    'atomically fails an exhausted pipeline-v%s pre-handler candidate and leaves its active logo retryable',
+    async pipelineVersion => {
+      const activeOutput = artifacts('exhaustion-active')
+      const activeHash = await insertSource(Buffer.concat([PNG_SIGNATURE, Buffer.from('exhaustion-active-source')]))
+      await insertDerivedObjects(activeOutput)
+      const activeId = await insertRevision({ hash: activeHash, status: 'ready', outputs: activeOutput })
+      const activeUrl = `/_site-logo/${digest(activeOutput.logoPng)}/logo.png`
+      await knex('siteLogoState').where({ id: 1 }).update({ generation: 4, activeRevisionId: activeId, desiredRevisionId: activeId })
+      await knex('settings').insert({ key: 'logoUrl', value: JSON.stringify({ v: activeUrl }), updatedAt: new Date().toISOString() })
+      const { revisionId, job } = await enqueueCandidate(pipelineVersion)
+      const exhaustedAt = new Date('2026-09-04T12:00:00.000Z')
+      await knex('durableJobs')
+        .where({ id: job.id })
+        .update({ attempts: 5, leaseExpiresAt: new Date('2026-09-04T11:59:59.000Z') })
 
-    expect(await failExhaustedSiteLogoJobs(knex, exhaustedAt)).toBe(1)
-    const terminalJob = await knex('durableJobs').where({ id: job.id }).first('state', 'attempts', 'leaseOwner', 'leaseToken', 'lastError', 'completedAt')
-    expect(terminalJob).toMatchObject({
-      state: 'failed',
-      attempts: 5,
-      leaseOwner: null,
-      leaseToken: null,
-      lastError: 'Durable job lease expired after its final allowed attempt'
-    })
-    expect(new Date(terminalJob.completedAt).getTime()).toBe(exhaustedAt.getTime())
-    const terminalRevision = await knex('siteLogoRevisions').where({ id: revisionId }).first('status', 'errorCode', 'completedAt', 'retiredAt')
-    expect(terminalRevision).toMatchObject({
-      status: 'failed',
-      errorCode: 'PROCESSING_FAILED',
-      retiredAt: null
-    })
-    expect(new Date(terminalRevision.completedAt).getTime()).toBe(exhaustedAt.getTime())
-    expect(await knex('siteLogoState').where({ id: 1 }).first('activeRevisionId', 'desiredRevisionId', 'generation')).toEqual({
-      activeRevisionId: activeId,
-      desiredRevisionId: revisionId,
-      generation: 4
-    })
-    expect(await knex('settings').where({ key: 'logoUrl' }).first('value')).toEqual({ value: JSON.stringify({ v: activeUrl }) })
-
-    await retrySiteLogoCandidate(null, knex)
-    const retriedState = await knex('siteLogoState').where({ id: 1 }).first('activeRevisionId', 'desiredRevisionId')
-    const retried = await knex('siteLogoRevisions').where({ id: retriedState.desiredRevisionId }).first('status', 'jobId', 'retrySequence', 'pipelineVersion')
-    expect(retriedState.activeRevisionId).toBe(activeId)
-    expect(retried).toMatchObject({ status: 'pending', retrySequence: 1, pipelineVersion: 2 })
-    expect(retried.jobId).not.toBe(job.id)
-    expect((await knex('siteLogoRevisions').where({ id: revisionId }).first('retiredAt'))?.retiredAt).not.toBeNull()
-    expect(await failExhaustedSiteLogoJobs(knex, new Date('2026-09-04T12:00:01.000Z'))).toBe(0)
-
-    await expect(
-      run(job, async () => {
-        throw new processingMocks.ProcessingError('UNSUITABLE_LOGO')
+      expect(await failExhaustedSiteLogoJobs(knex, exhaustedAt)).toBe(1)
+      const terminalJob = await knex('durableJobs').where({ id: job.id }).first('state', 'attempts', 'leaseOwner', 'leaseToken', 'lastError', 'completedAt')
+      expect(terminalJob).toMatchObject({
+        state: 'failed',
+        attempts: 5,
+        leaseOwner: null,
+        leaseToken: null,
+        lastError: 'Durable job lease expired after its final allowed attempt'
       })
-    ).rejects.toThrow()
-    expect(await knex('siteLogoRevisions').where({ id: retriedState.desiredRevisionId }).first('status', 'errorCode')).toEqual({
-      status: 'pending',
-      errorCode: null
-    })
-    expect((await knex('siteLogoRevisions').where({ id: activeId }).first('status'))?.status).toBe('ready')
-  })
+      expect(new Date(terminalJob.completedAt).getTime()).toBe(exhaustedAt.getTime())
+      const terminalRevision = await knex('siteLogoRevisions').where({ id: revisionId }).first('status', 'errorCode', 'completedAt', 'retiredAt')
+      expect(terminalRevision).toMatchObject({
+        status: 'failed',
+        errorCode: 'PROCESSING_FAILED',
+        retiredAt: null
+      })
+      expect(new Date(terminalRevision.completedAt).getTime()).toBe(exhaustedAt.getTime())
+      expect(await knex('siteLogoState').where({ id: 1 }).first('activeRevisionId', 'desiredRevisionId', 'generation')).toEqual({
+        activeRevisionId: activeId,
+        desiredRevisionId: revisionId,
+        generation: 4
+      })
+      expect(await knex('settings').where({ key: 'logoUrl' }).first('value')).toEqual({ value: JSON.stringify({ v: activeUrl }) })
 
-  it.each([1, 2] as const)('reconciles a terminal pipeline-v%s handler failure and makes its candidate retryable', async pipelineVersion => {
+      await retrySiteLogoCandidate(null, knex)
+      const retriedState = await knex('siteLogoState').where({ id: 1 }).first('activeRevisionId', 'desiredRevisionId')
+      const retried = await knex('siteLogoRevisions').where({ id: retriedState.desiredRevisionId }).first('status', 'jobId', 'retrySequence', 'pipelineVersion')
+      expect(retriedState.activeRevisionId).toBe(activeId)
+      expect(retried).toMatchObject({ status: 'pending', retrySequence: 1, pipelineVersion: 3 })
+      expect(retried.jobId).not.toBe(job.id)
+      expect((await knex('siteLogoRevisions').where({ id: revisionId }).first('retiredAt'))?.retiredAt).not.toBeNull()
+      expect(await failExhaustedSiteLogoJobs(knex, new Date('2026-09-04T12:00:01.000Z'))).toBe(0)
+
+      await expect(
+        run(job, async () => {
+          throw new processingMocks.ProcessingError('UNSUITABLE_LOGO')
+        })
+      ).rejects.toThrow()
+      expect(await knex('siteLogoRevisions').where({ id: retriedState.desiredRevisionId }).first('status', 'errorCode')).toEqual({
+        status: 'pending',
+        errorCode: null
+      })
+      expect((await knex('siteLogoRevisions').where({ id: activeId }).first('status'))?.status).toBe('ready')
+    }
+  )
+
+  it.each([1, 2, 3] as const)('reconciles a terminal pipeline-v%s handler failure and makes its candidate retryable', async pipelineVersion => {
     const { revisionId, job } = await enqueueCandidate(pipelineVersion)
     const failedAt = new Date('2026-09-04T11:59:59.000Z')
     const reconciledAt = new Date('2026-09-04T12:00:00.000Z')
@@ -537,7 +558,7 @@ describe('managed site logo durable processing', () => {
     await retrySiteLogoCandidate(null, knex)
     const retriedState = await knex('siteLogoState').where({ id: 1 }).first('desiredRevisionId')
     const retried = await knex('siteLogoRevisions').where({ id: retriedState.desiredRevisionId }).first('status', 'retrySequence', 'pipelineVersion')
-    expect(retried).toEqual({ status: 'pending', retrySequence: 1, pipelineVersion: 2 })
+    expect(retried).toEqual({ status: 'pending', retrySequence: 1, pipelineVersion: 3 })
   })
 
   it('fails only the fenced older revision when a newer candidate is desired', async () => {

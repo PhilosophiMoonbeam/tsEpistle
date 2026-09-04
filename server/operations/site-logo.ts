@@ -4,7 +4,7 @@ import type { Knex } from 'knex'
 import { DurableJobStore } from '../core/durable-jobs.ts'
 
 export const SITE_LOGO_SOURCE_LIMIT = 5_242_880
-const SITE_LOGO_PIPELINE_VERSION = 2
+const SITE_LOGO_PIPELINE_VERSION = 3
 const STATUS_URL = '/_api/site/logo'
 const SHA256 = /^[a-f0-9]{64}$/
 

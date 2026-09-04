@@ -11,10 +11,13 @@ uniform vec3 uBackground;
 uniform float uDpr;
 uniform float uMedianStroke;
 uniform vec2 uPointer;
+uniform vec2 uPointerDirection;
 uniform float uPointerDisplacement;
-uniform float uPointerRadius;
+uniform float uPointerSpeed;
 uniform float uPointerStrength;
 uniform float uRenderedLongAxis;
+uniform float uSliceAlongRadius;
+uniform float uSliceAcrossRadius;
 uniform float uTime;
 uniform vec2 uViewport;
 
@@ -36,32 +39,58 @@ float contrastRatio(float first, float second) {
 }
 
 void main() {
-  float viewportAspect = uViewport.x / max(uViewport.y, 1.0);
+  vec2 safeViewport = max(uViewport, vec2(1.0));
+  float viewportAspect = safeViewport.x / safeViewport.y;
   vec2 fit = viewportAspect >= uAspect
     ? vec2(uAspect / viewportAspect, 1.0)
     : vec2(1.0, viewportAspect / uAspect);
-
-  float displayedStroke = uMedianStroke * uRenderedLongAxis / 1024.0;
-  float driftAmplitude = min(1.25, 0.08 * displayedStroke);
-  float phase = ((logoSeed * 65535.0 - 1.0) / 65534.0) * 6.28318530718;
-  vec2 drift = vec2(
-    sin(uTime * 0.43 + phase) + 0.35 * sin(uTime * 0.19 + phase * 2.17),
-    cos(uTime * 0.37 + phase * 1.31) + 0.35 * cos(uTime * 0.23 + phase * 2.73)
-  ) * (driftAmplitude / 1.35);
-
   vec2 basePosition = logoXY * fit;
-  vec2 pointerDeltaDevice = (basePosition - uPointer) * 0.5 * uViewport * uDpr;
-  float pointerDistanceDevice = length(pointerDeltaDevice);
-  float pointerRadiusDevice = uPointerRadius * uDpr;
-  float pointerFalloff = 1.0 - smoothstep(0.0, max(pointerRadiusDevice, 0.001), pointerDistanceDevice);
-  vec2 pointerDirection = pointerDistanceDevice > 0.001
-    ? pointerDeltaDevice / pointerDistanceDevice
-    : vec2(cos(phase), sin(phase));
-  float pointerDevicePixels = min(uPointerDisplacement * uDpr, 24.0 * uDpr)
-    * pointerFalloff
-    * clamp(uPointerStrength, 0.0, 1.0);
-  vec2 pointerCssDisplacement = pointerDirection * pointerDevicePixels / max(uDpr, 1.0);
-  vec2 position = basePosition + (2.0 * (drift + pointerCssDisplacement) / max(uViewport, vec2(1.0)));
+
+  float depth = clamp(logoDepth, -1.0, 1.0);
+  float depthScale = clamp(1.0 + 0.18 * depth, 0.82, 1.18);
+  float displayedStroke = uMedianStroke * uRenderedLongAxis / 1024.0;
+  float idleAmplitudeCss = clamp(0.35 * displayedStroke, 2.5, 7.0);
+  vec2 sourcePosition = vec2(logoXY.x * uAspect, logoXY.y);
+  vec2 spatialPhase = vec2(
+    dot(sourcePosition, vec2(2.15, 1.10)) + 1.35 * depth,
+    dot(sourcePosition, vec2(-1.25, 2.30)) - 1.10 * depth
+  );
+  vec2 coherentFlow = vec2(
+    sin(spatialPhase.x + 0.46 * uTime) + 0.34 * sin(0.71 * spatialPhase.y - 0.21 * uTime),
+    cos(spatialPhase.y + 0.39 * uTime) + 0.34 * cos(0.67 * spatialPhase.x + 0.18 * uTime)
+  ) / 1.34;
+  float coherentFlowMagnitude = length(coherentFlow);
+  coherentFlow /= max(coherentFlowMagnitude, 1.0);
+  float idleScaleCss = clamp(idleAmplitudeCss * depthScale, 2.5, 7.0);
+  vec2 idleCss = coherentFlow * idleScaleCss;
+
+  float directionLength = length(uPointerDirection);
+  vec2 bladeDirection = directionLength > 0.000001
+    ? uPointerDirection / directionLength
+    : vec2(1.0, 0.0);
+  vec2 bladeNormal = vec2(-bladeDirection.y, bladeDirection.x);
+  vec2 pointerDeltaCss = (basePosition - uPointer) * 0.5 * safeViewport;
+  float alongDistanceCss = dot(pointerDeltaCss, bladeDirection);
+  float acrossDistanceCss = dot(pointerDeltaCss, bladeNormal);
+  float alongFalloff = 1.0 - smoothstep(
+    0.0,
+    max(uSliceAlongRadius, 0.001),
+    abs(alongDistanceCss)
+  );
+  float acrossFalloff = 1.0 - smoothstep(
+    0.0,
+    max(uSliceAcrossRadius, 0.001),
+    abs(acrossDistanceCss)
+  );
+  float corridor = alongFalloff * acrossFalloff;
+  float centerSide = logoSeed < 0.5 ? -1.0 : 1.0;
+  float side = acrossDistanceCss == 0.0 ? centerSide : sign(acrossDistanceCss);
+  float sliceAmountCss = clamp(uPointerDisplacement, 10.0, 24.0)
+    * corridor
+    * clamp(uPointerStrength, 0.0, 1.0)
+    * smoothstep(0.0, 1.0, clamp(uPointerSpeed, 0.0, 1.0));
+  vec2 sliceCss = bladeNormal * side * sliceAmountCss;
+  vec2 position = basePosition + 2.0 * (idleCss + sliceCss) / safeViewport;
 
   vec3 linearColor = srgbToLinear(logoColor.rgb);
   vec3 compositedColor = mix(uBackground, linearColor, logoColor.a);
@@ -74,13 +103,13 @@ void main() {
   vRingColor = whiteContrast > blackContrast ? vec3(1.0) : vec3(0.0);
 
   float sizeNorm = (logoSize * 255.0 - 1.0) / 254.0;
-  float coreCssPixels = min((1.0 + 15.0 * sizeNorm) * uRenderedLongAxis / 1024.0, 24.0);
+  float coreCssPixels = min((1.0 + 15.0 * sizeNorm) * depthScale * uRenderedLongAxis / 1024.0, 24.0);
   float ringCssPixels = vUseRing * mix(1.25, 2.0, clamp((3.0 - directContrast) / 2.0, 0.0, 1.0));
   float coreDevicePixels = coreCssPixels * uDpr;
-  float totalDevicePixels = coreDevicePixels + 2.0 * ringCssPixels * uDpr;
+  float totalDevicePixels = (coreCssPixels + 2.0 * ringCssPixels) * uDpr;
   gl_PointSize = totalDevicePixels;
   vCoreRatio = coreDevicePixels / max(totalDevicePixels, 1.0);
   vColor = vec4(linearColor, logoColor.a);
 
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, logoDepth * 0.04, 1.0);
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, depth * 0.04, 1.0);
 }

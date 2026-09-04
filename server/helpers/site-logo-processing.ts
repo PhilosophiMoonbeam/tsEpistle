@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { deflateSync, gzipSync } from 'node:zlib'
 import sharp, { type Metadata } from 'sharp'
 
-export const SITE_LOGO_PIPELINE_VERSION = 2
+export const SITE_LOGO_PIPELINE_VERSION = 3
 
 export const SITE_LOGO_SOURCE_BYTE_LIMIT = 5_242_880
 export const SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT = 192_056
@@ -14,11 +14,17 @@ const MAX_INPUT_PIXELS = 16_777_216
 const MAX_INPUT_DIMENSION = 4096
 const MIN_INPUT_DIMENSION = 64
 const MAX_PARTICLES = 16_000
-const MIN_PARTICLES = 4_000
+const MAX_GENERATED_PARTICLES = 8_000
+const MIN_GENERATED_PARTICLES = 2_000
+const RESERVED_PARTICLES_PER_COMPONENT = 8
 const PARTICLE_HEADER_BYTES = 56
 const PARTICLE_BYTES = 12
+const MIN_RECONSTRUCTED_MASK_IOU = 0.9
 const PARTICLE_FLAGS = 0x07
 const PARTICLE_REFERENCE_LONG_AXIS = 1024
+const PARTICLE_PADDING_RATIO = 0.04
+const MAX_NORMALIZED_LONG_AXIS = PARTICLE_REFERENCE_LONG_AXIS + 2 * Math.round(PARTICLE_PADDING_RATIO * PARTICLE_REFERENCE_LONG_AXIS)
+const MAX_RASTERIZED_CORE_SCALE = MAX_NORMALIZED_LONG_AXIS / PARTICLE_REFERENCE_LONG_AXIS
 const TRANSPARENT = { r: 0, g: 0, b: 0, alpha: 0 } as const
 const SQRT_32 = Math.sqrt(32)
 const UINT64_SCALE = 2 ** 64
@@ -481,7 +487,7 @@ const findMeaningfulComponents = (raster: RgbaRaster): { components: readonly Co
       totalAlpha += alpha
     }
   }
-  if (eligibleValues.length < MIN_PARTICLES) fail('UNSUITABLE_LOGO')
+  if (eligibleValues.length < MIN_GENERATED_PARTICLES) fail('UNSUITABLE_LOGO')
 
   const queue = new Int32Array(count)
   const found: { indices: number[]; alphaMass: number }[] = []
@@ -509,7 +515,7 @@ const findMeaningfulComponents = (raster: RgbaRaster): { components: readonly Co
   }
 
   const meaningful = found.filter(component => component.alphaMass >= totalAlpha * 0.0025)
-  if (meaningful.length > Math.floor(MAX_PARTICLES / 12)) fail('UNSUITABLE_LOGO')
+  if (meaningful.length > Math.floor(MAX_GENERATED_PARTICLES / RESERVED_PARTICLES_PER_COMPONENT)) fail('UNSUITABLE_LOGO')
   const labelMap = new Int32Array(found.length)
   labelMap.fill(-1)
   meaningful.forEach((component, label) => {
@@ -599,7 +605,14 @@ export const sampleParticles = (raster: RgbaRaster, sourceHash: string): readonl
   let alphaSum = 0
   for (const index of eligible) alphaSum += raster.data[index * 4 + 3]! / 255
   const occupancy = alphaSum / (raster.width * raster.height)
-  const count = Math.min(MAX_PARTICLES, Math.max(MIN_PARTICLES, roundHalfAwayFromZero(MAX_PARTICLES * Math.sqrt(occupancy)), 12 * components.length))
+  const count = Math.min(
+    MAX_GENERATED_PARTICLES,
+    Math.max(
+      MIN_GENERATED_PARTICLES,
+      roundHalfAwayFromZero(MAX_GENERATED_PARTICLES * Math.sqrt(occupancy)),
+      RESERVED_PARTICLES_PER_COMPONENT * components.length
+    )
+  )
   if (eligible.length < count) fail('UNSUITABLE_LOGO')
 
   const reservedHeaps = components.map((): HeapEntry[] => [])
@@ -607,20 +620,71 @@ export const sampleParticles = (raster: RgbaRaster, sourceHash: string): readonl
     const label = labels[index]!
     if (label < 0) continue
     const alpha = raster.data[index * 4 + 3]! / 255
-    heapPushLowest(reservedHeaps[label]!, { priority: particlePriority(sourceHash, index, alpha * (1 + 3 * edge[index]!)), index }, 12)
+    heapPushLowest(
+      reservedHeaps[label]!,
+      { priority: particlePriority(sourceHash, index, alpha * (1 + 3 * edge[index]!)), index },
+      RESERVED_PARTICLES_PER_COMPONENT
+    )
   }
-  if (reservedHeaps.some(heap => heap.length !== 12)) fail('UNSUITABLE_LOGO')
+  if (reservedHeaps.some(heap => heap.length !== RESERVED_PARTICLES_PER_COMPONENT)) fail('UNSUITABLE_LOGO')
   const reserved = new Set<number>(reservedHeaps.flatMap(heap => heap.map(item => item.index)))
-  const global: HeapEntry[] = []
   const remaining = count - reserved.size
-  for (const index of eligible) {
-    if (reserved.has(index)) continue
-    const alpha = raster.data[index * 4 + 3]! / 255
-    heapPushLowest(global, { priority: particlePriority(sourceHash, index, alpha * (1 + 3 * edge[index]!)), index }, remaining)
-  }
-  if (global.length !== remaining) fail('UNSUITABLE_LOGO')
+  const selectedIndices: number[] = []
+  if (remaining > 0) {
+    const cellSize = Math.max(1, roundHalfAwayFromZero(Math.sqrt(eligible.length / count)))
+    const cellColumns = Math.ceil(raster.width / cellSize)
+    const primaryByCell = new Map<number, { distanceSquared: number; hash: bigint; index: number }>()
+    for (const index of eligible) {
+      const x = index % raster.width
+      const y = Math.floor(index / raster.width)
+      const cellX = Math.floor(x / cellSize)
+      const cellY = Math.floor(y / cellSize)
+      const cell = cellY * cellColumns + cellX
+      const centerX2 = cellX * cellSize + Math.min((cellX + 1) * cellSize, raster.width) - 1
+      const centerY2 = cellY * cellSize + Math.min((cellY + 1) * cellSize, raster.height) - 1
+      const dx2 = 2 * x - centerX2
+      const dy2 = 2 * y - centerY2
+      const distanceSquared = dx2 * dx2 + dy2 * dy2
+      const primary = primaryByCell.get(cell)
+      if (primary && distanceSquared > primary.distanceSquared) continue
+      const hash = domainDigest64('sample', sourceHash, index)
+      if (primary && distanceSquared === primary.distanceSquared && (hash > primary.hash || (hash === primary.hash && index >= primary.index))) continue
+      if (primary) {
+        primary.distanceSquared = distanceSquared
+        primary.hash = hash
+        primary.index = index
+      } else {
+        primaryByCell.set(cell, { distanceSquared, hash, index })
+      }
+    }
 
-  const selected = [...reserved, ...global.map(item => item.index)].sort((left, right) => left - right)
+    const primaryIndices = [...primaryByCell.values()].map(candidate => candidate.index).filter(index => !reserved.has(index))
+    if (primaryIndices.length >= remaining) {
+      const selectedEntries: HeapEntry[] = []
+      for (const index of primaryIndices) {
+        const alpha = raster.data[index * 4 + 3]! / 255
+        heapPushLowest(selectedEntries, { priority: particlePriority(sourceHash, index, alpha * (1 + 3 * edge[index]!)), index }, remaining)
+      }
+      selectedIndices.push(...selectedEntries.map(entry => entry.index))
+    } else {
+      selectedIndices.push(...primaryIndices)
+      const supplement: HeapEntry[] = []
+      const supplementCount = remaining - primaryIndices.length
+      for (const index of eligible) {
+        if (reserved.has(index)) continue
+        const x = index % raster.width
+        const y = Math.floor(index / raster.width)
+        const cell = Math.floor(y / cellSize) * cellColumns + Math.floor(x / cellSize)
+        if (primaryByCell.get(cell)?.index === index) continue
+        const alpha = raster.data[index * 4 + 3]! / 255
+        heapPushLowest(supplement, { priority: particlePriority(sourceHash, index, alpha * (1 + 3 * edge[index]!)), index }, supplementCount)
+      }
+      selectedIndices.push(...supplement.map(entry => entry.index))
+    }
+  }
+  if (selectedIndices.length !== remaining) fail('UNSUITABLE_LOGO')
+
+  const selected = [...reserved, ...selectedIndices].sort((left, right) => left - right)
   return selected.map(index => {
     const x = index % raster.width
     const y = Math.floor(index / raster.width)
@@ -872,7 +936,7 @@ export const rasterizeParticles = (
   records: readonly ParticleRecord[],
   coreScale = 1
 ): { rgba: Buffer; alpha: Float64Array; staticRgba: Buffer } => {
-  if (!Number.isFinite(coreScale) || coreScale <= 0 || coreScale > 1) fail('PROCESSING_FAILED')
+  if (!Number.isFinite(coreScale) || coreScale <= 0 || coreScale > MAX_RASTERIZED_CORE_SCALE) fail('PROCESSING_FAILED')
   const layers = rasterizeParticleLayers(width, height, records, true, coreScale)
   const staticRgba = layers.contrastRgba ?? fail('PROCESSING_FAILED')
   return { rgba: layers.rgba, alpha: layers.alpha, staticRgba }
@@ -994,168 +1058,6 @@ const particlesMeetContrastCoverage = (records: readonly ParticleRecord[]): bool
   return totalAlphaMass > 0 && lightCoveredMass / totalAlphaMass >= 0.95 && darkCoveredMass / totalAlphaMass >= 0.95
 }
 
-const sourceEdges = (raster: RgbaRaster): number[] => {
-  const edges: number[] = []
-  for (let index = 0; index < raster.width * raster.height; index += 1) {
-    if (raster.data[index * 4 + 3] === 0) continue
-    let isEdge = false
-    neighbors8(index, raster.width, raster.height, neighbor => {
-      if (raster.data[neighbor * 4 + 3] === 0) isEdge = true
-    })
-    const x = index % raster.width
-    const y = Math.floor(index / raster.width)
-    if (x === 0 || y === 0 || x === raster.width - 1 || y === raster.height - 1) isEdge = true
-    if (isEdge) edges.push(index)
-  }
-  return edges
-}
-
-const needsKeyline = (raster: RgbaRaster, edges: readonly number[]): boolean =>
-  edges.some(index => {
-    const offset = index * 4
-    const alpha = raster.data[offset + 3]! / 255
-    const luminance = relativeLuminance(raster.data[offset]!, raster.data[offset + 1]!, raster.data[offset + 2]!)
-    const onLight = alpha * luminance + 1 - alpha
-    const onDark = alpha * luminance
-    return contrast(onLight, 1) < 3 || contrast(onDark, 0) < 3
-  })
-
-const squaredDistanceToMask = (mask: Uint8Array, width: number, height: number): Float64Array => {
-  const infinity = 1e20
-  const horizontal = new Float64Array(width * height)
-  for (let y = 0; y < height; y += 1) {
-    const row = new Float64Array(width)
-    for (let x = 0; x < width; x += 1) row[x] = mask[y * width + x] ? 0 : infinity
-    horizontal.set(distanceTransform1d(row), y * width)
-  }
-  const distance = new Float64Array(width * height)
-  for (let x = 0; x < width; x += 1) {
-    const column = new Float64Array(height)
-    for (let y = 0; y < height; y += 1) column[y] = horizontal[y * width + x]!
-    const transformed = distanceTransform1d(column)
-    for (let y = 0; y < height; y += 1) distance[y * width + x] = transformed[y]!
-  }
-  return distance
-}
-
-const nearestEdgeAtDistance = (x: number, y: number, squaredDistance: number, edgeMask: Uint8Array, width: number, height: number): number => {
-  const distance = Math.round(squaredDistance)
-  const radius = Math.floor(Math.sqrt(distance))
-  let nearest = -1
-  for (let dy = -radius; dy <= radius; dy += 1) {
-    const dxSquared = distance - dy * dy
-    const dx = Math.round(Math.sqrt(dxSquared))
-    if (dx * dx !== dxSquared) continue
-    const candidateY = y + dy
-    if (candidateY < 0 || candidateY >= height) continue
-    const firstX = x - dx
-    const secondX = x + dx
-    if (firstX >= 0 && firstX < width) {
-      const candidate = candidateY * width + firstX
-      if (edgeMask[candidate] && (nearest < 0 || candidate < nearest)) nearest = candidate
-    }
-    if (secondX !== firstX && secondX >= 0 && secondX < width) {
-      const candidate = candidateY * width + secondX
-      if (edgeMask[candidate] && (nearest < 0 || candidate < nearest)) nearest = candidate
-    }
-  }
-  if (nearest < 0) fail('PROCESSING_FAILED')
-  return nearest
-}
-
-export const frameOrdinaryLogo = (working: RgbaRaster): { raster: RgbaRaster; keylineAdded: boolean } => {
-  const longAxis = Math.max(working.width, working.height)
-  const padding = roundHalfAwayFromZero(0.1 * longAxis)
-  const framed = padRaster(working, padding)
-  const edges = sourceEdges(working)
-  if (!needsKeyline(working, edges)) return { raster: framed, keylineAdded: false }
-  const radius = Math.max(1, roundHalfAwayFromZero(0.08 * longAxis))
-  const mask = new Uint8Array(framed.width * framed.height)
-  const edgeMask = new Uint8Array(framed.width * framed.height)
-  const sourceByFramedEdge = new Int32Array(framed.width * framed.height)
-  sourceByFramedEdge.fill(-1)
-  for (let y = 0; y < working.height; y += 1) {
-    for (let x = 0; x < working.width; x += 1) {
-      if (working.data[(y * working.width + x) * 4 + 3] !== 0) mask[(y + padding) * framed.width + x + padding] = 1
-    }
-  }
-  for (const sourceIndex of edges) {
-    const framedIndex = (Math.floor(sourceIndex / working.width) + padding) * framed.width + (sourceIndex % working.width) + padding
-    edgeMask[framedIndex] = 1
-    sourceByFramedEdge[framedIndex] = sourceIndex
-  }
-  const edgeDistances = squaredDistanceToMask(edgeMask, framed.width, framed.height)
-  let dilated = mask
-  for (let step = 0; step < radius; step += 1) {
-    const next = Uint8Array.from(dilated)
-    for (let index = 0; index < dilated.length; index += 1) {
-      if (!dilated[index]) continue
-      neighbors8(index, framed.width, framed.height, neighbor => {
-        next[neighbor] = 1
-      })
-    }
-    dilated = next
-  }
-  for (let index = 0; index < dilated.length; index += 1) {
-    if (!dilated[index] || mask[index]) continue
-    const nearest = nearestEdgeAtDistance(index % framed.width, Math.floor(index / framed.width), edgeDistances[index]!, edgeMask, framed.width, framed.height)
-    const sourceOffset = sourceByFramedEdge[nearest]! * 4
-    const luminance = relativeLuminance(working.data[sourceOffset]!, working.data[sourceOffset + 1]!, working.data[sourceOffset + 2]!)
-    const neutral = contrast(luminance, 0) >= contrast(luminance, 1) ? 0 : 255
-    const output = index * 4
-    framed.data[output] = neutral
-    framed.data[output + 1] = neutral
-    framed.data[output + 2] = neutral
-    framed.data[output + 3] = 255
-  }
-  return { raster: framed, keylineAdded: true }
-}
-
-const faviconSuitable = (framed: RgbaRaster, working: RgbaRaster, keylineAdded: boolean): boolean => {
-  const squareSize = Math.max(framed.width, framed.height)
-  const square = {
-    width: squareSize,
-    height: squareSize,
-    data: Buffer.alloc(squareSize * squareSize * 4)
-  }
-  const offsetX = Math.floor((squareSize - framed.width) / 2)
-  const offsetY = Math.floor((squareSize - framed.height) / 2)
-  for (let y = 0; y < framed.height; y += 1) {
-    framed.data.copy(square.data, ((y + offsetY) * squareSize + offsetX) * 4, y * framed.width * 4, (y + 1) * framed.width * 4)
-  }
-  const favicon = resizeLinearPremultiplied(square, 16, 16)
-  let left = 16
-  let right = -1
-  let top = 16
-  let bottom = -1
-  let visible = 0
-  for (let y = 0; y < 16; y += 1) {
-    for (let x = 0; x < 16; x += 1) {
-      if (favicon.data[(y * 16 + x) * 4 + 3]! < 64) continue
-      visible += 1
-      left = Math.min(left, x)
-      right = Math.max(right, x)
-      top = Math.min(top, y)
-      bottom = Math.max(bottom, y)
-    }
-  }
-  if (visible < 4 || right - left < 1 || bottom - top < 1) return false
-  if (keylineAdded) {
-    const edges = sourceEdges(working)
-    return edges.some(index => {
-      const offset = index * 4
-      const luminance = relativeLuminance(working.data[offset]!, working.data[offset + 1]!, working.data[offset + 2]!)
-      return Math.max(contrast(luminance, 0), contrast(luminance, 1)) >= 3
-    })
-  }
-  return sourceEdges(working).every(index => {
-    const offset = index * 4
-    const alpha = working.data[offset + 3]! / 255
-    const luminance = relativeLuminance(working.data[offset]!, working.data[offset + 1]!, working.data[offset + 2]!)
-    return contrast(alpha * luminance + 1 - alpha, 1) >= 3 && contrast(alpha * luminance, 0) >= 3
-  })
-}
-
 const distanceTransform1d = (values: Float64Array): Float64Array => {
   const length = values.length
   const result = new Float64Array(length)
@@ -1272,11 +1174,11 @@ const processUnlocked = async (sourceBytes: Buffer | Uint8Array, sourceHash: str
   if (!visible) fail('NO_VISIBLE_PIXELS')
   const withoutMatte = removeNeutralMatte(decoded.raster, decoded.hasNativeAlpha)
   const trimmed = trimTransparent(withoutMatte)
-  const scale = Math.min(1, 1024 / Math.max(trimmed.width, trimmed.height))
+  const scale = Math.min(1, PARTICLE_REFERENCE_LONG_AXIS / Math.max(trimmed.width, trimmed.height))
   const workingWidth = roundHalfAwayFromZero(scale * trimmed.width)
   const workingHeight = roundHalfAwayFromZero(scale * trimmed.height)
   const working = resizeLinearPremultiplied(trimmed, workingWidth, workingHeight)
-  const particlePadding = roundHalfAwayFromZero(0.04 * Math.max(working.width, working.height))
+  const particlePadding = roundHalfAwayFromZero(PARTICLE_PADDING_RATIO * Math.max(working.width, working.height))
   const normalized = padRaster(working, particlePadding)
   if (normalized.width > 4096 || normalized.height > 4096) fail('UNSUITABLE_LOGO')
 
@@ -1284,13 +1186,12 @@ const processUnlocked = async (sourceBytes: Buffer | Uint8Array, sourceHash: str
   const particleV1 = encodeParticleV1(normalized.width, normalized.height, records)
   const parsed = parseParticleV1(particleV1)
   if (!particlesMeetContrastCoverage(parsed.records)) fail('UNSUITABLE_LOGO')
-  const coreScale = Math.min(1, Math.max(parsed.width, parsed.height) / PARTICLE_REFERENCE_LONG_AXIS)
+  const coreScale = Math.max(parsed.width, parsed.height) / PARTICLE_REFERENCE_LONG_AXIS
   const reconstruction = rasterizeParticles(parsed.width, parsed.height, parsed.records, coreScale)
-  if (reconstructedMaskIou(normalized, reconstruction.alpha) < 0.9) fail('UNSUITABLE_LOGO')
+  if (reconstructedMaskIou(normalized, reconstruction.alpha) < MIN_RECONSTRUCTED_MASK_IOU) fail('UNSUITABLE_LOGO')
+  const logoPng = encodeRgbaPng(decoded.raster)
+  if (logoPng.length > SITE_LOGO_PNG_BYTE_LIMIT) fail('ARTIFACT_TOO_LARGE')
   const effectStaticPng = encodeRgbaPng({ width: normalized.width, height: normalized.height, data: reconstruction.staticRgba })
-  const framed = frameOrdinaryLogo(working)
-  if (!faviconSuitable(framed.raster, working, framed.keylineAdded)) fail('UNSUITABLE_LOGO')
-  const logoPng = encodeRgbaPng(framed.raster)
   const auraColor = deriveAuraColor(working)
   const artifacts: SiteLogoArtifacts = {
     logoPng,

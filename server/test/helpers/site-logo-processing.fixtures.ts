@@ -65,7 +65,15 @@ export const SQUARE_BADGE_VECTOR = {
   normalizedHeight: 1106,
   normalizedPixelCount: 1_223_236,
   occupancy: 1_048_576 / 1_223_236,
-  particleCount: 14_814
+  particleCount: 7_407
+} as const
+
+export const LOW_RESOLUTION_EMBLEM_VECTOR = {
+  sourceWidth: 481,
+  sourceHeight: 481,
+  normalizedWidth: 460,
+  normalizedHeight: 461,
+  particleCount: 4_704
 } as const
 
 export const rgbaImage = (width: number, height: number, pixel: readonly [number, number, number, number]): Buffer => {
@@ -155,12 +163,12 @@ export const lowResolutionDetailedEmblemFixture = async (): Promise<Buffer> => {
   const orange = [249, 161, 52, 255] as const
   const graphite = [75, 81, 93, 255] as const
   paintCircle(data, width, 270, 280, 175, orange)
-  paintCircle(data, width, 270, 280, 92, [0, 0, 0, 0])
+  paintCircle(data, width, 270, 280, 116, [0, 0, 0, 0])
   paintRectangle(data, width, 30, 65, 325, 115, graphite)
   paintCircle(data, width, 55, 90, 35, graphite)
   paintRectangle(data, width, 145, 105, 178, 435, graphite)
   paintCircle(data, width, 115, 155, 10, orange)
-  paintCircle(data, width, 235, 45, 8, orange)
+  paintCircle(data, width, 235, 45, 8, [249, 161, 52, 160])
   paintCircle(data, width, 105, 35, 6, graphite)
   return await encodeRgbaFixture(data, width, height, 'png-alpha')
 }
