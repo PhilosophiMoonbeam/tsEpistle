@@ -135,6 +135,8 @@ describe('Markdown editor layout', () => {
     expect(template.match(/@click='alignPreviewToCursor'/g)).toHaveLength(2)
 
     expect(script).toContain("token.attrSet('data-source-line', String(line))")
+    expect(script).toContain('md.renderer.rules.html_block')
+    expect(script).toContain('stampDetailsSourceLine(token.content, line)')
     expect(script).toContain('sourceLinesByEditor.set(this, renderEnvironment.sourceLines)')
     expect(script).not.toContain('debouncedScrollSync')
     expect(script).not.toContain('scrollSync')
@@ -159,7 +161,8 @@ describe('Markdown editor layout', () => {
     expect(alignMethod).toContain('if (sourceLine === undefined || sourceLine > currentLine) continue')
     expect(alignMethod).toContain(`preview.querySelector<HTMLElement>(\`[data-source-line='\${sourceLine}']\`)`)
     expect(alignMethod).toContain('if (markedDestination) break')
-    expect(alignMethod).toContain('const destination = markedDestination ?? firstPreviewElement')
+    expect(alignMethod).toContain('const mappedDestination = markedDestination ?? firstPreviewElement')
+    expect(alignMethod).toContain('const destination = resolveVisiblePreviewTarget(mappedDestination)')
     expect(alignMethod).toContain("const offset = markedDestination ? '-100' : '-50'")
     expect(alignMethod).toContain("window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180")
     expect(alignMethod.indexOf('stopPreviewAlignment(this)')).toBeLessThan(alignMethod.indexOf("Velocity(destination, 'scroll'"))

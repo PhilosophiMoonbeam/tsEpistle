@@ -303,6 +303,7 @@ import {
   enhanceWikiMarkdownPreview,
   sanitizeWikiMarkdownHtml
 } from './markdown/preview.ts'
+import { resolveVisiblePreviewTarget, stampDetailsSourceLine } from './markdown/preview-alignment'
 
 type MarkdownMarkerKind = 'diagram'
 
@@ -368,6 +369,17 @@ const injectSourceLine: MarkdownItRenderRule = (tokens, idx, options, env, rende
 md.renderer.rules.paragraph_open = injectSourceLine
 md.renderer.rules.heading_open = injectSourceLine
 md.renderer.rules.blockquote_open = injectSourceLine
+
+md.renderer.rules.html_block = (tokens, idx, _options, env) => {
+  const token = tokens[idx]
+  const line = token?.map?.[0]
+  if (!token || line === undefined) return token?.content ?? ''
+  const stampedHtml = stampDetailsSourceLine(token.content, line)
+  if (stampedHtml === null) return token.content
+  const sourceLines = env?.sourceLines
+  if (Array.isArray(sourceLines)) sourceLines.push(line)
+  return stampedHtml
+}
 
 const renderFence = md.renderer.rules.fence
 if (!renderFence) throw new TypeError('Markdown fence renderer is unavailable.')
@@ -707,7 +719,8 @@ export default defineComponent({
         markedDestination = preview.querySelector<HTMLElement>(`[data-source-line='${sourceLine}']`)
         if (markedDestination) break
       }
-      const destination = markedDestination ?? firstPreviewElement
+      const mappedDestination = markedDestination ?? firstPreviewElement
+      const destination = resolveVisiblePreviewTarget(mappedDestination)
       const offset = markedDestination ? '-100' : '-50'
       const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180
 
