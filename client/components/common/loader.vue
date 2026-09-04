@@ -122,7 +122,7 @@ export default defineComponent({
 
 .loader-dialog-subtitle {
   margin-top: 3px;
-  color: color-mix(in srgb, currentColor 72%, transparent);
+  color: currentColor;
   font-size: .82rem;
 }
 

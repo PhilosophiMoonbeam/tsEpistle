@@ -21,10 +21,10 @@
       template(v-else)
         .editor-modal-conflict-legend
           .editor-modal-conflict-legend-current
-            v-icon.mr-2(color='white') mdi-pencil-outline
+            v-icon.mr-2 mdi-pencil-outline
             span Current draft (editable)
           .editor-modal-conflict-legend-remote
-            v-icon.mr-2(color='white') mdi-source-branch
+            v-icon.mr-2 mdi-source-branch
             span Remote original (read-only inserted chunks)
         .editor-modal-conflict-meta
           .editor-modal-conflict-meta-local
@@ -334,15 +334,16 @@ export default defineComponent({
   &-legend-current,
   &-legend-remote {
     padding: var(--wiki-space-3) var(--wiki-space-4);
-    color: rgb(var(--v-theme-on-primary));
   }
 
   &-legend-current {
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 88%, black);
+    background: rgb(var(--v-theme-primary));
+    color: rgb(var(--v-theme-on-primary));
   }
 
   &-legend-remote {
-    background: color-mix(in srgb, rgb(var(--v-theme-primary)) 72%, black);
+    background: rgb(var(--v-theme-secondary));
+    color: rgb(var(--v-theme-on-secondary));
   }
 
   &-meta-local,

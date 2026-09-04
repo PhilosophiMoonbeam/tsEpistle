@@ -118,7 +118,7 @@ export default defineComponent({
   width: min(100%, 480px);
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-hero-radius);
+  border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
 }
@@ -151,7 +151,7 @@ export default defineComponent({
 }
 
 .page-unlock-eyebrow {
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-accent-ink);
   font-size: var(--wiki-label-size);
   font-weight: var(--wiki-label-weight);
   letter-spacing: .08em;
@@ -171,6 +171,7 @@ export default defineComponent({
 
 .page-unlock-return {
   margin-top: 12px;
+  color: var(--wiki-accent-ink) !important;
 }
 
 @media (max-width: 599px) {
@@ -188,7 +189,12 @@ export default defineComponent({
   }
 
   .page-unlock-content {
-    padding: 28px 20px;
+    padding-block:
+      calc(var(--wiki-space-6) + var(--wiki-space-1) + env(safe-area-inset-top))
+      calc(var(--wiki-space-6) + var(--wiki-space-1) + env(safe-area-inset-bottom));
+    padding-inline:
+      calc(var(--wiki-space-4) + var(--wiki-space-1) + env(safe-area-inset-left))
+      calc(var(--wiki-space-4) + var(--wiki-space-1) + env(safe-area-inset-right));
   }
 }
 

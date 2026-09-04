@@ -350,11 +350,11 @@
 // <span>Photo by <a href="https://unsplash.com/@isaacquesada?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Isaac Quesada</a> on <a href="/t/textures-patterns?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Unsplash</a></span>
 
 import { defineComponent } from 'vue'
-import DOMPurify from 'dompurify'
 import Cookies from 'js-cookie'
 import { wikiStore } from '@/store/index.ts'
 import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthResponse, type AuthStrategy } from '../helpers/auth-api'
 import { getErrorMessage } from '../helpers/root-ui-store'
+import { sanitizeTfaQrImage } from '../helpers/tfa-qr'
 
 type LoginScreen = 'login' | 'forgot' | 'verifyEmail' | 'resetPwd' | 'changePwd' | 'success'
 
@@ -363,6 +363,7 @@ function focusComponent (ref: unknown): void {
   const candidate = ref as { focus?: unknown }
   if (typeof candidate.focus === 'function') candidate.focus()
 }
+
 
 export default defineComponent({
   i18nOptions: { namespaces: 'auth' },
@@ -732,11 +733,19 @@ export default defineComponent({
         }, 500)
         this.isLoading = false
       } else if (respObj.mustSetupTFA === true) {
+        const tfaQRImage = sanitizeTfaQrImage(respObj.tfaQRImage || '')
+        if (!tfaQRImage) {
+          this.tfaQRImage = ''
+          this.tfaSecret = ''
+          this.isLoading = false
+          this.showError(this.$t('auth:genericError'))
+          return
+        }
         this.securityCode = ''
         this.securityCodeError = ''
-        this.isTFASetupShown = true
-        this.tfaQRImage = DOMPurify.sanitize(respObj.tfaQRImage || '', { USE_PROFILES: { svg: true } })
+        this.tfaQRImage = tfaQRImage
         this.tfaSecret = respObj.tfaSecret || ''
+        this.isTFASetupShown = true
         if (this.focusTimer !== null) window.clearTimeout(this.focusTimer)
         this.focusTimer = window.setTimeout(() => {
           focusComponent(this.$refs.iptTFASetup)
