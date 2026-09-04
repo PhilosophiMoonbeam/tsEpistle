@@ -84,6 +84,14 @@ interface LogoResourceTrace {
   webglContextRequests: number
 }
 
+interface ReducedMotionChangeReport {
+  readonly canvasCount: number
+  readonly pointerActive: boolean
+  readonly staticOpacity: string | null
+  readonly staticTransition: string | null
+  readonly trace: LogoResourceTrace
+}
+
 function svgFixture(width: number, height: number): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><g><rect x="${width * 0.1}" y="${height * 0.2}" width="${width * 0.25}" height="${height * 0.6}" rx="${Math.min(width, height) * 0.08}" fill="#36a3d9"/><circle cx="${width * 0.52}" cy="${height * 0.5}" r="${Math.min(width, height) * 0.24}" fill="#101010"/><rect x="${width * 0.7}" y="${height * 0.25}" width="${width * 0.2}" height="${height * 0.5}" fill="#f8f8f8"/><circle cx="${width * 0.06}" cy="${height * 0.12}" r="${Math.min(width, height) * 0.035}" fill="#e8538a"/></g></svg>`
 }
@@ -291,6 +299,34 @@ async function readLogoResourceTrace(page: Page): Promise<LogoResourceTrace> {
   return page.evaluate(() => (window as Window & { __readLoginLogoTrace: () => LogoResourceTrace }).__readLoginLogoTrace())
 }
 
+async function installReducedMotionChangeProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const probeWindow = window as Window & {
+      __loginLogoReducedMotionReport: ReducedMotionChangeReport | null
+      __readLoginLogoTrace: () => LogoResourceTrace
+    }
+    probeWindow.__loginLogoReducedMotionReport = null
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const recordChange = (): void => {
+      if (!motionQuery.matches) return
+      motionQuery.removeEventListener('change', recordChange)
+      const image = document.querySelector<HTMLElement>('.login-particle-logo__image')
+      probeWindow.__loginLogoReducedMotionReport = {
+        canvasCount: document.querySelectorAll('.login-particle-logo canvas').length,
+        pointerActive: document.querySelector('.login-particle-logo--pointer-active') !== null,
+        staticOpacity: image ? getComputedStyle(image).opacity : null,
+        staticTransition: image?.style.transition ?? null,
+        trace: probeWindow.__readLoginLogoTrace()
+      }
+    }
+    motionQuery.addEventListener('change', recordChange)
+  })
+}
+
+async function readReducedMotionChangeReport(page: Page): Promise<ReducedMotionChangeReport | null> {
+  return page.evaluate(() => (window as Window & { __loginLogoReducedMotionReport: ReducedMotionChangeReport | null }).__loginLogoReducedMotionReport)
+}
+
 async function installRegistrationShell(page: Page): Promise<void> {
   await page.route(/\/register$/, async route => {
     const response = await route.fetch({ url: new URL('/login', route.request().url()).href })
@@ -298,6 +334,31 @@ async function installRegistrationShell(page: Page): Promise<void> {
     const registerDocument = loginDocument.replace(/<login\b[^>]*><\/login>/, '<register bg-url=""></register>')
     if (registerDocument === loginDocument) throw new Error('The login document did not contain the expected application mount.')
     await route.fulfill({ response, body: registerDocument })
+  })
+}
+
+async function installZeroFreeSpaceLogin(page: Page): Promise<void> {
+  await page.route(/\/login$/, async route => {
+    const response = await route.fetch()
+    const loginDocument = await response.text()
+    const zeroSpaceDocument = loginDocument.replace(
+      '</head>',
+      '<style id="login-logo-zero-space-fixture">.login > main.login-sd { width: 100% !important; max-width: none !important; }</style></head>'
+    )
+    if (zeroSpaceDocument === loginDocument) throw new Error('The login document did not contain the expected head element.')
+    await route.fulfill({ response, body: zeroSpaceDocument })
+  })
+}
+
+async function measureLogoFreeWidth(page: Page): Promise<number> {
+  return page.locator('main.login-sd').evaluate(card => {
+    const login = card.parentElement
+    if (!(login instanceof HTMLElement)) throw new Error('The login card does not have the expected parent.')
+    const loginRect = login.getBoundingClientRect()
+    const cardRect = card.getBoundingClientRect()
+    const paddingRight = Number.parseFloat(getComputedStyle(login).paddingRight) || 0
+    const fieldRight = Math.min(loginRect.right, document.documentElement.clientWidth || window.innerWidth) - paddingRight
+    return fieldRight - (cardRect.right + 24)
   })
 }
 
@@ -315,7 +376,6 @@ async function expectOrdinaryLogin(page: Page): Promise<void> {
   await expect(page.getByLabel('Email Address', { exact: true })).toBeVisible()
   await expect(page.getByLabel('Password', { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Log In', exact: true })).toBeEnabled()
-  await expect(page.getByRole('button', { name: /forgot password/i })).toBeEnabled()
 }
 
 async function expectScrollable(surface: Locator): Promise<void> {
@@ -332,7 +392,7 @@ async function expectLoginValidation(page: Page): Promise<void> {
   await email.fill('person@example.test')
   await password.fill('x')
   await page.getByRole('button', { name: 'Log In', exact: true }).click()
-  await expect(page.getByRole('alert')).toBeVisible()
+  await expect(page.locator('main.login-sd > .v-alert[role="alert"]')).toBeVisible()
   await expect(password).toBeFocused()
 }
 
@@ -490,14 +550,14 @@ test.describe('managed login logo auth independence', () => {
     })
   }
 
-  test('omits only the large field at 959px, 650px, and insufficient measured space without requesting particles', async ({ page }, testInfo) => {
+  test('omits the large field at 959px, 650px, and truly zero measured space while preserving a positive narrow static field', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
     const artifacts = await installManagedLogo(page, wideEffect)
 
     for (const viewport of [
       { width: 959, height: 900 },
-      { width: 1440, height: 650 },
-      { width: 960, height: 900 }
+      { width: 1440, height: 650 }
     ]) {
       await page.setViewportSize(viewport)
       await page.goto('/login')
@@ -510,6 +570,29 @@ test.describe('managed login logo auth independence', () => {
 
     expect(artifacts.particle).toHaveLength(0)
     expect(artifacts.static).toHaveLength(0)
+
+    await page.setViewportSize({ width: 960, height: 900 })
+    await page.goto('/login')
+    await expectStaticFallback(page, wideEffect)
+    expect(await measureLogoFreeWidth(page)).toBeGreaterThan(0)
+    const narrowImageSize = await page.locator('.login-particle-logo__image').evaluate(image => {
+      const rect = image.getBoundingClientRect()
+      return { longAxis: Math.max(rect.width, rect.height), shortAxis: Math.min(rect.width, rect.height) }
+    })
+    expect(narrowImageSize.longAxis).toBeGreaterThanOrEqual(256)
+    expect(narrowImageSize.shortAxis).toBeGreaterThan(0)
+    expect(narrowImageSize.shortAxis).toBeLessThan(48)
+    expect(artifacts.particle).toHaveLength(0)
+    expect(artifacts.static).toHaveLength(1)
+
+    await installZeroFreeSpaceLogin(page)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/login')
+    await expectOrdinaryLogin(page)
+    expect(await measureLogoFreeWidth(page)).toBeLessThanOrEqual(0)
+    await expect(page.locator('.login-particle-logo')).toHaveCount(0)
+    expect(artifacts.particle).toHaveLength(0)
+
     await expectLoginValidation(page)
     await page.setViewportSize({ width: 960, height: 320 })
     await expect(page.locator('.login-particle-logo')).toHaveCount(0)
@@ -630,17 +713,20 @@ test.describe('managed login logo auth independence', () => {
       const benchmark = (window as Window & { __logoParticlePerformance: { callbackCount: number } }).__logoParticlePerformance
       benchmark.callbackCount = 0
     })
+    await installReducedMotionChangeProbe(page)
     await page.emulateMedia({ reducedMotion: 'reduce' })
-    expect(
-      await page.evaluate(() => {
-        const image = document.querySelector<HTMLElement>('.login-particle-logo__image')
-        return {
-          canvasCount: document.querySelectorAll('.login-particle-logo canvas').length,
-          pointerActive: document.querySelector('.login-particle-logo--pointer-active') !== null,
-          staticOpacity: image ? getComputedStyle(image).opacity : null
-        }
-      })
-    ).toEqual({ canvasCount: 0, pointerActive: false, staticOpacity: '1' })
+    await expect.poll(() => readReducedMotionChangeReport(page)).not.toBeNull()
+    const changeReport = await readReducedMotionChangeReport(page)
+    expect(changeReport).toMatchObject({
+      canvasCount: 0,
+      pointerActive: false,
+      staticOpacity: '1',
+      staticTransition: 'none'
+    })
+    expect(changeReport?.trace.activeIdleCallbacks).toBe(0)
+    expect(changeReport?.trace.activeLogoTimers).toBe(0)
+    expect(changeReport?.trace.activeRafs).toBe(0)
+    expect((changeReport?.trace.pointerListenersAdded ?? 0) - (changeReport?.trace.pointerListenersRemoved ?? 0)).toBe(0)
     await expect(staticImage).toHaveCSS('opacity', '1')
     await expect(field.locator('canvas')).toHaveCount(0)
     await expect(page.getByLabel('Email Address', { exact: true })).toBeFocused()

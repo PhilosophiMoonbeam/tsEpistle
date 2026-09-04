@@ -351,7 +351,11 @@ export default defineComponent({
       if (reducedMotionLatched || motionQuery?.matches !== true) return
       reducedMotionLatched = true
       sceneReady.value = false
-      if (staticImageElement.value) staticImageElement.value.style.opacity = '1'
+      const staticImage = staticImageElement.value
+      if (staticImage) {
+        staticImage.style.transition = 'none'
+        staticImage.style.opacity = '1'
+      }
       sceneInstance.value?.teardown()
       reducedMotion.value = true
       instance?.update()
@@ -494,7 +498,7 @@ export default defineComponent({
         position: 'relative',
         zIndex: '1',
         opacity: sceneReady.value ? '0' : '1',
-        transition: 'opacity 180ms ease-out'
+        transition: reducedMotion.value ? 'none' : 'opacity 180ms ease-out'
       }
     })
     const sceneStyle: Record<string, string> = {
