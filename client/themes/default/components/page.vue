@@ -111,10 +111,182 @@
       v-divider
       v-container.page-body(fluid)
         v-row
+          #page-mobile-tools.page-mobile-tools
+
           v-col.page-col-sd(
             cols='12'
             :class='[tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`, { "page-col-sd--with-toc": tocPosition !== `off`, "page-col-sd--toc-off": tocPosition === `off` }]'
             )
+            #page-desktop-rail.page-desktop-rail
+
+            //- v-card.mb-5
+            //-   .pa-5
+            //-     .text-label-small.pb-2(:class='$vuetify.theme.current.dark ? `text-yellow-darken-3` : `text-yellow-darken-4`') Rating
+            //-     .text-center
+            //-       v-rating(
+            //-         v-model='rating'
+            //-         color='yellow-darken-3'
+            //-         bg-color='grey-lighten-1'
+            //-         half-increments
+            //-         hover
+            //-         )
+            //-       .text-body-small.text-grey 5 votes
+
+
+          v-col.page-col-content(
+            cols='12'
+            :class='[tocPosition === `right` ? `page-col-content--toc-right` : `page-col-content--toc-left`, { "page-col-content--with-toc": tocPosition !== `off`, "page-col-content--toc-off": tocPosition === `off` }]'
+            )
+            v-tooltip(location='start', v-if='hasAnyPagePermissions && editShortcutsObj.editFab && !$vuetify.display.smAndDown')
+              template(v-slot:activator='{ props: tooltipProps }')
+                v-speed-dial(
+                  v-model='pageEditFab'
+                  :activator-props='tooltipProps'
+                  location='top center'
+                  transition='scale-transition'
+                )
+                  template(v-slot:activator='{ props: speedDialProps }')
+                    v-btn.btn-animate-edit.page-edit-fab(
+                      icon
+                      color='primary'
+                      v-bind='speedDialProps'
+                      :aria-expanded='pageEditFab ? `true` : `false`'
+                      :aria-label='$t(`common:header.pageActions`)'
+                    )
+                      v-icon mdi-pencil
+                  v-tooltip(location='start', v-if='hasWritePagesPermission')
+                    template(v-slot:activator='{ props }')
+                      v-btn(icon, size="small", color='white', v-bind='props', @click='pageEdit', :aria-label='$t(`common:page.editPage`)')
+                        v-icon(size='20') mdi-pencil
+                    span {{$t('common:page.editPage')}}
+                  v-tooltip(location='start', v-if='hasReadHistoryPermission')
+                    template(v-slot:activator='{ props }')
+                      v-btn(
+                        icon
+                        size="small"
+                        color='white'
+                        v-bind='props'
+                        @click='pageHistory'
+                        :aria-label='$t(`common:header.history`)'
+                      )
+                        v-icon(size='20') mdi-history
+                    span {{$t('common:header.history')}}
+                  v-tooltip(location='start', v-if='hasReadSourcePermission')
+                    template(v-slot:activator='{ props }')
+                      v-btn(
+                        icon
+                        size="small"
+                        color='white'
+                        v-bind='props'
+                        @click='pageSource'
+                        :aria-label='$t(`common:header.viewSource`)'
+                        )
+                        v-icon(size='20') mdi-code-tags
+                    span {{$t('common:header.viewSource')}}
+                  v-tooltip(location='start', v-if='hasWritePagesPermission')
+                    template(v-slot:activator='{ props }')
+                      v-btn(
+                        icon
+                        size="small"
+                        color='white'
+                        v-bind='props'
+                        @click='pageConvert'
+                        :aria-label='$t(`common:header.convert`)'
+                        )
+                        v-icon(size='20') mdi-lightning-bolt
+                    span {{$t('common:header.convert')}}
+                  v-tooltip(location='start', v-if='hasWritePagesPermission')
+                    template(v-slot:activator='{ props }')
+                      v-btn(
+                        icon
+                        size="small"
+                        color='white'
+                        v-bind='props'
+                        @click='pageDuplicate'
+                        :aria-label='$t(`common:header.duplicate`)'
+                        )
+                        v-icon(size='20') mdi-content-duplicate
+                    span {{$t('common:header.duplicate')}}
+                  v-tooltip(location='start', v-if='hasManagePagesPermission')
+                    template(v-slot:activator='{ props }')
+                      v-btn(
+                        icon
+                        size="small"
+                        color='white'
+                        v-bind='props'
+                        @click='pageMove'
+                        :aria-label='$t(`common:header.move`)'
+                        )
+                        v-icon(size='20') mdi-content-save-move-outline
+                    span {{$t('common:header.move')}}
+                  v-tooltip(location='start', v-if='hasDeletePagesPermission')
+                    template(v-slot:activator='{ props }')
+                      v-btn(
+                        icon
+                        size="small"
+                        color='error'
+                        v-bind='props'
+                        @click='pageDelete'
+                        :aria-label='$t(`common:header.delete`)'
+                        )
+                        v-icon(size='20') mdi-trash-can-outline
+                    span {{$t('common:header.delete')}}
+              span {{$t('common:page.editPage')}}
+            v-menu(
+              v-if='hasAnyPagePermissions && editShortcutsObj.editFab && $vuetify.display.smAndDown'
+              location='top end'
+              transition='scale-transition'
+            )
+              template(v-slot:activator='{ props }')
+                v-btn.page-edit-fab(
+                  icon
+                  color='primary'
+                  v-bind='props'
+                  :aria-label='$t(`common:header.pageActions`)'
+                )
+                  v-icon mdi-pencil
+              v-list(density='compact', nav)
+                v-list-subheader {{$t('common:header.pageActions')}}
+                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-pencil', @click='pageEdit')
+                  v-list-item-title {{$t('common:page.editPage')}}
+                v-list-item(v-if='hasReadHistoryPermission', prepend-icon='mdi-history', @click='pageHistory')
+                  v-list-item-title {{$t('common:header.history')}}
+                v-list-item(v-if='hasReadSourcePermission', prepend-icon='mdi-code-tags', @click='pageSource')
+                  v-list-item-title {{$t('common:header.viewSource')}}
+                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
+                  v-list-item-title {{$t('common:header.convert')}}
+                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
+                  v-list-item-title {{$t('common:header.duplicate')}}
+                v-list-item(v-if='hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
+                  v-list-item-title {{$t('common:header.move')}}
+                v-list-item.text-error(v-if='hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
+                  v-list-item-title {{$t('common:header.delete')}}
+            v-alert.page-page-context.mb-5(v-if='!isPublished', color='warning', variant="outlined", icon='mdi-minus-circle', density="compact")
+              .text-body-small {{$t('common:page.unpublishedWarning')}}
+            site-banner.page-page-context(:banner='siteBanner')
+            article.contents(ref='container', :aria-labelledby='pageTitleId')
+              template(v-if='$slots.contents')
+                slot(name='contents')
+              async-state(
+                v-else
+                state='empty'
+                :title='$t(`common:page.noContent`)'
+              )
+            section.comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView' aria-labelledby='discussion-title')
+              .comments-header
+                .comments-header-icon
+                  v-icon(size='20') mdi-comment-text-outline
+                div
+                  h2#discussion-title.comments-title {{$t('common:comments.title')}}
+                  .comments-subtitle {{$t('common:page.discussionSubtitle')}}
+              .comments-main
+                slot(name='comments')
+          #page-mobile-metadata.page-mobile-metadata
+          Teleport(
+            defer
+            :to='isTocMobile ? `#page-mobile-tools` : `#page-desktop-rail`'
+            :disabled='winWidth >= 600 && winWidth < 1280'
+          )
             v-card.page-shortcuts-card.mb-4(flat)
               v-toolbar(color='surface', flat, density="compact")
                 v-spacer
@@ -304,24 +476,41 @@
                   span {{$t('common:page.printFormat')}}
                 v-spacer
             v-card.page-toc-card.mb-4(v-if='tocPosition !== `off`', tag='nav', :aria-label='$t(`common:page.toc`)')
-              .text-label-small {{$t('common:page.toc')}}
-              v-list.py-2(v-if='tocFlattened.length', density="compact", nav, role='group', tabindex='-1')
-                v-list-item.page-toc-item(
-                  v-for='tocItem in tocFlattened'
-                  :key='tocItem.anchor'
-                  :href='tocItem.anchor'
-                  :style='`--toc-indent: ${Math.min(tocItem.depth, 5) * 14}px`'
-                  @click='tocLinkClicked($event, tocItem.anchor)'
-                  )
-                  template(v-slot:prepend)
-                    v-icon.page-toc-item-marker(size="x-small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
-                  v-list-item-title.page-toc-item-title(
-                    :class='{ "font-weight-bold": tocItem.depth === 0, "page-toc-item-title--third-level": tocItem.depth === 2 }'
-                    ) {{tocItem.title}}
-              .page-toc-empty(v-else)
-                v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
-                span.text-body-small {{$t('common:page.noSections')}}
+              v-btn.page-toc-toggle.text-none(
+                variant='text'
+                block
+                :aria-expanded='tocDisclosureExpanded'
+                aria-controls='page-toc-content'
+                @click='toggleToc'
+              )
+                span.page-toc-toggle-label.text-label-small {{$t('common:page.toc')}}
+                v-icon(size='small', aria-hidden='true') {{ tocDisclosureExpanded ? `mdi-chevron-up` : `mdi-chevron-down` }}
+              .text-label-small.page-toc-heading {{$t('common:page.toc')}}
+              div#page-toc-content.page-toc-content(
+                v-show='tocDisclosureExpanded'
+              )
+                v-list.py-2(v-if='tocFlattened.length', density="compact", nav, role='group', tabindex='-1')
+                  v-list-item.page-toc-item(
+                    v-for='tocItem in tocFlattened'
+                    :key='tocItem.anchor'
+                    :href='tocItem.anchor'
+                    :style='`--toc-indent: ${Math.min(tocItem.depth, 5) * 14}px`'
+                    @click='tocLinkClicked($event, tocItem.anchor)'
+                    )
+                    template(v-slot:prepend)
+                      v-icon.page-toc-item-marker(size="x-small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
+                    v-list-item-title.page-toc-item-title(
+                      :class='tocItem.depth === 0 ? `page-toc-item-title--depth-0` : tocItem.depth === 1 ? `page-toc-item-title--depth-1` : `page-toc-item-title--depth-2-plus`'
+                      ) {{tocItem.title}}
+                .page-toc-empty(v-else)
+                  v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
+                  span.text-body-small {{$t('common:page.noSections')}}
 
+          Teleport(
+            defer
+            :to='isTocMobile ? `#page-mobile-metadata` : `#page-desktop-rail`'
+            :disabled='winWidth >= 600 && winWidth < 1280'
+          )
             v-card.page-tags-card.mb-5(v-if='tags.length > 0')
               .pa-5
                 .text-label-small.pb-2.text-secondary {{$t('common:page.tags')}}
@@ -398,169 +587,6 @@
                     span {{$t('common:header.history')}}
                 .page-author-card-name.text-body-medium {{ authorName }}
                 .page-author-card-date.text-body-small.text-medium-emphasis {{ $helpers.formatMoment(updatedAt, 'calendar') }}
-
-            //- v-card.mb-5
-            //-   .pa-5
-            //-     .text-label-small.pb-2(:class='$vuetify.theme.current.dark ? `text-yellow-darken-3` : `text-yellow-darken-4`') Rating
-            //-     .text-center
-            //-       v-rating(
-            //-         v-model='rating'
-            //-         color='yellow-darken-3'
-            //-         bg-color='grey-lighten-1'
-            //-         half-increments
-            //-         hover
-            //-         )
-            //-       .text-body-small.text-grey 5 votes
-
-
-          v-col.page-col-content(
-            cols='12'
-            :class='[tocPosition === `right` ? `page-col-content--toc-right` : `page-col-content--toc-left`, { "page-col-content--with-toc": tocPosition !== `off`, "page-col-content--toc-off": tocPosition === `off` }]'
-            )
-            v-tooltip(location='start', v-if='hasAnyPagePermissions && editShortcutsObj.editFab && !$vuetify.display.smAndDown')
-              template(v-slot:activator='{ props: tooltipProps }')
-                v-speed-dial(
-                  v-model='pageEditFab'
-                  :activator-props='tooltipProps'
-                  location='top center'
-                  transition='scale-transition'
-                )
-                  template(v-slot:activator='{ props: speedDialProps }')
-                    v-btn.btn-animate-edit.page-edit-fab(
-                      icon
-                      color='primary'
-                      v-bind='speedDialProps'
-                      :aria-expanded='pageEditFab ? `true` : `false`'
-                      :aria-label='$t(`common:header.pageActions`)'
-                    )
-                      v-icon mdi-pencil
-                  v-tooltip(location='start', v-if='hasWritePagesPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(icon, size="small", color='white', v-bind='props', @click='pageEdit', :aria-label='$t(`common:page.editPage`)')
-                        v-icon(size='20') mdi-pencil
-                    span {{$t('common:page.editPage')}}
-                  v-tooltip(location='start', v-if='hasReadHistoryPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='white'
-                        v-bind='props'
-                        @click='pageHistory'
-                        :aria-label='$t(`common:header.history`)'
-                      )
-                        v-icon(size='20') mdi-history
-                    span {{$t('common:header.history')}}
-                  v-tooltip(location='start', v-if='hasReadSourcePermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='white'
-                        v-bind='props'
-                        @click='pageSource'
-                        :aria-label='$t(`common:header.viewSource`)'
-                        )
-                        v-icon(size='20') mdi-code-tags
-                    span {{$t('common:header.viewSource')}}
-                  v-tooltip(location='start', v-if='hasWritePagesPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='white'
-                        v-bind='props'
-                        @click='pageConvert'
-                        :aria-label='$t(`common:header.convert`)'
-                        )
-                        v-icon(size='20') mdi-lightning-bolt
-                    span {{$t('common:header.convert')}}
-                  v-tooltip(location='start', v-if='hasWritePagesPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='white'
-                        v-bind='props'
-                        @click='pageDuplicate'
-                        :aria-label='$t(`common:header.duplicate`)'
-                        )
-                        v-icon(size='20') mdi-content-duplicate
-                    span {{$t('common:header.duplicate')}}
-                  v-tooltip(location='start', v-if='hasManagePagesPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='white'
-                        v-bind='props'
-                        @click='pageMove'
-                        :aria-label='$t(`common:header.move`)'
-                        )
-                        v-icon(size='20') mdi-content-save-move-outline
-                    span {{$t('common:header.move')}}
-                  v-tooltip(location='start', v-if='hasDeletePagesPermission')
-                    template(v-slot:activator='{ props }')
-                      v-btn(
-                        icon
-                        size="small"
-                        color='error'
-                        v-bind='props'
-                        @click='pageDelete'
-                        :aria-label='$t(`common:header.delete`)'
-                        )
-                        v-icon(size='20') mdi-trash-can-outline
-                    span {{$t('common:header.delete')}}
-              span {{$t('common:page.editPage')}}
-            v-menu(
-              v-if='hasAnyPagePermissions && editShortcutsObj.editFab && $vuetify.display.smAndDown'
-              location='top end'
-              transition='scale-transition'
-            )
-              template(v-slot:activator='{ props }')
-                v-btn.page-edit-fab(
-                  icon
-                  color='primary'
-                  v-bind='props'
-                  :aria-label='$t(`common:header.pageActions`)'
-                )
-                  v-icon mdi-pencil
-              v-list(density='compact', nav)
-                v-list-subheader {{$t('common:header.pageActions')}}
-                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-pencil', @click='pageEdit')
-                  v-list-item-title {{$t('common:page.editPage')}}
-                v-list-item(v-if='hasReadHistoryPermission', prepend-icon='mdi-history', @click='pageHistory')
-                  v-list-item-title {{$t('common:header.history')}}
-                v-list-item(v-if='hasReadSourcePermission', prepend-icon='mdi-code-tags', @click='pageSource')
-                  v-list-item-title {{$t('common:header.viewSource')}}
-                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-lightning-bolt', @click='pageConvert')
-                  v-list-item-title {{$t('common:header.convert')}}
-                v-list-item(v-if='hasWritePagesPermission', prepend-icon='mdi-content-duplicate', @click='pageDuplicate')
-                  v-list-item-title {{$t('common:header.duplicate')}}
-                v-list-item(v-if='hasManagePagesPermission', prepend-icon='mdi-content-save-move-outline', @click='pageMove')
-                  v-list-item-title {{$t('common:header.move')}}
-                v-list-item.text-error(v-if='hasDeletePagesPermission', prepend-icon='mdi-trash-can-outline', @click='pageDelete')
-                  v-list-item-title {{$t('common:header.delete')}}
-            v-alert.mb-5(v-if='!isPublished', color='warning', variant="outlined", icon='mdi-minus-circle', density="compact")
-              .text-body-small {{$t('common:page.unpublishedWarning')}}
-            site-banner(:banner='siteBanner')
-            article.contents(ref='container', :aria-labelledby='pageTitleId')
-              template(v-if='$slots.contents')
-                slot(name='contents')
-              async-state(
-                v-else
-                state='empty'
-                :title='$t(`common:page.noContent`)'
-              )
-            section.comments-container#discussion(v-if='commentsEnabled && commentsPerms.read && !printView' aria-labelledby='discussion-title')
-              .comments-header
-                .comments-header-icon
-                  v-icon(size='20') mdi-comment-text-outline
-                div
-                  h2#discussion-title.comments-title {{$t('common:comments.title')}}
-                  .comments-subtitle {{$t('common:page.discussionSubtitle')}}
-              .comments-main
-                slot(name='comments')
     nav-footer
     notify
     search-results
@@ -975,6 +1001,7 @@ export default defineComponent({
     return {
       locales: siteLangs,
       navShown: initialWidth >= 1280,
+      tocExpanded: initialWidth > 599,
       upBtnShown: false,
       pageEditFab: false,
       pageWatched: false,
@@ -1058,6 +1085,13 @@ export default defineComponent({
     tocFlattened (): FlattenedTableOfContentsNode[] {
       return flattenTableOfContents(this.tocDecoded)
     },
+    isTocMobile (): boolean {
+      return this.winWidth <= 599
+    },
+    tocDisclosureExpanded (): boolean {
+      return !this.isTocMobile || this.tocExpanded
+    },
+
     tocPosition () {
       return wikiStore.site.tocPosition
     },
@@ -1197,6 +1231,8 @@ export default defineComponent({
     },
     resetPageRouteState(): void {
       this.cancelScheduledScroll()
+      this.tocExpanded = !this.isTocMobile
+
       this.pageEditFab = false
       this.pageWatched = false
       this.pageWatchLoading = false
@@ -1266,8 +1302,12 @@ export default defineComponent({
         }
       }, { once: true, signal: controller.signal })
     },
+    toggleToc () {
+      this.tocExpanded = !this.tocExpanded
+    },
     tocLinkClicked (event: MouseEvent, anchor: string) {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      this.tocExpanded = false
       event.preventDefault()
       this.scrollToPageAnchor(anchor)
     },
@@ -1676,9 +1716,14 @@ export default defineComponent({
       emitPageDelete()
     },
     handleSideNavVisibility () {
-      if (window.innerWidth === this.winWidth) { return }
-      this.winWidth = window.innerWidth
-      if (window.innerWidth >= 1280) {
+      const previousWidth = this.winWidth
+      const nextWidth = window.innerWidth
+      if (nextWidth === previousWidth) { return }
+      this.winWidth = nextWidth
+      if (previousWidth > 599 && nextWidth <= 599) {
+        this.tocExpanded = false
+      }
+      if (nextWidth >= 1280) {
         this.navShown = true
       } else {
         this.navShown = false
@@ -2140,7 +2185,9 @@ export default defineComponent({
     background-clip: padding-box;
   }
 
-  > .v-card {
+  > .v-card,
+  > .page-desktop-rail > .v-card {
+
     overflow: hidden;
     border: 1px solid var(--wiki-surface-border);
     border-radius: var(--wiki-panel-radius);
@@ -2158,6 +2205,15 @@ export default defineComponent({
   .v-chip {
     border-radius: var(--wiki-radius-xs);
   }
+}
+
+.page-mobile-tools,
+.page-mobile-metadata {
+  display: none;
+}
+
+.page-desktop-rail {
+  display: contents;
 }
 
 .page-col-sd--with-toc {
@@ -2208,11 +2264,26 @@ export default defineComponent({
   min-height: var(--page-toc-empty-height);
   flex-direction: column;
 
-  > .text-label-small {
+  > .page-toc-heading {
     padding:
       var(--wiki-space-4)
       var(--wiki-space-4)
       var(--wiki-space-2) !important;
+  }
+
+  .page-toc-toggle {
+    display: none;
+  }
+
+  .page-toc-toggle-label {
+    color: var(--wiki-accent-ink);
+    font-weight: var(--wiki-label-weight) !important;
+    letter-spacing: .09em !important;
+    text-transform: uppercase;
+  }
+
+  .page-toc-content {
+    min-width: 0;
   }
 
   .v-list {
@@ -2271,6 +2342,7 @@ export default defineComponent({
 }
 
 .page-toc-item-title {
+  min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
   padding-inline: 0 !important;
   font-size: .8125rem;
   line-height: 1.4;
@@ -2278,8 +2350,16 @@ export default defineComponent({
   white-space: normal;
 }
 
-.page-toc-item-title--third-level {
-  font-size: calc(.8125rem - 1pt);
+.page-toc-item-title--depth-0 {
+  font-weight: 700;
+}
+
+.page-toc-item-title--depth-1 {
+  font-weight: 550;
+}
+
+.page-toc-item-title--depth-2-plus {
+  font-weight: 400;
 }
 
 .page-tags-card,
@@ -3072,11 +3152,6 @@ export default defineComponent({
   font-size: .8125rem;
 }
 
-.comments-main {
-  padding: var(--wiki-space-6);
-  background: rgb(var(--v-theme-surface)) !important;
-}
-
 @media (max-width: 1279px) {
   .page-hero--with-toc,
   .page-hero--with-toc .page-header-section {
@@ -3084,20 +3159,9 @@ export default defineComponent({
   }
 
   .page-col-sd {
-    position: static;
-    display: grid;
-    max-height: none;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--wiki-space-4);
-    align-items: start;
-    overflow: visible;
-    padding-block-end: var(--wiki-space-5);
-    margin-block-start: 0;
-
-    > .v-card {
-      margin-bottom: 0 !important;
-    }
+    display: none;
   }
+
 
   .page-toc-card {
     max-height: calc(var(--wiki-grid-size) * 5);
@@ -3107,6 +3171,24 @@ export default defineComponent({
   .page-col-content:not(.is-page-header),
   .page-col-content--toc-right:not(.is-page-header) {
     padding-inline: 0;
+  }
+}
+@media (min-width: 600px) and (max-width: 1279px) {
+  .page-body > .v-row {
+    gap: var(--wiki-space-4);
+  }
+
+  .page-body > .v-row > .page-shortcuts-card,
+  .page-body > .v-row > .page-toc-card,
+  .page-body > .v-row > .page-tags-card,
+  .page-body > .v-row > .page-comments-card,
+  .page-body > .v-row > .page-author-card {
+    order: 2;
+    width: calc(50% - var(--wiki-space-4) / 2);
+    max-width: calc(50% - var(--wiki-space-4) / 2);
+    min-width: 0;
+    flex: 0 0 calc(50% - var(--wiki-space-4) / 2);
+    margin-bottom: 0 !important;
   }
 }
 
@@ -3206,7 +3288,54 @@ export default defineComponent({
     padding-block-end: var(--wiki-space-4);
   }
 
+  .page-mobile-tools {
+    display: flex;
+    width: 100%;
+    flex: 0 0 100%;
+    flex-direction: column;
+    gap: var(--wiki-space-3);
+  }
+
+  .page-mobile-metadata {
+    display: flex;
+    width: 100%;
+    flex: 0 0 100%;
+    order: 2;
+    flex-direction: column;
+    gap: var(--wiki-space-3);
+  }
+
+  .page-mobile-metadata > .v-card {
+    width: 100%;
+    max-width: 100%;
+    flex: 0 0 auto;
+    margin-bottom: 0 !important;
+  }
+
+  .page-mobile-tools > .page-shortcuts-card,
+  .page-mobile-tools > .page-toc-card {
+    width: 100%;
+    max-width: 100%;
+    flex: 0 0 auto;
+    margin-bottom: 0 !important;
+  }
+
+  .page-toc-heading {
+    display: none;
+  }
+
+  .page-toc-card .page-toc-toggle {
+    display: flex;
+    min-height: var(--wiki-control-height);
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--wiki-space-3) var(--wiki-space-4) !important;
+    border-radius: 0;
+  }
+
+
   .page-toc-card {
+    min-height: var(--wiki-control-height);
     max-height: calc(var(--wiki-grid-size) * 5);
   }
 
@@ -3321,7 +3450,14 @@ export default defineComponent({
   .page-edit-shortcuts,
   .page-edit-fab,
   .page-return-top,
+  .page-mobile-tools,
+  .page-mobile-metadata,
   .page-col-sd,
+  .page-shortcuts-card,
+  .page-toc-card,
+  .page-tags-card,
+  .page-comments-card,
+  .page-author-card,
   .comments-container {
     display: none !important;
   }

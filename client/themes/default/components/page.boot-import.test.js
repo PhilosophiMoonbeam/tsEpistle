@@ -204,9 +204,13 @@ describe('default page focused contracts', () => {
     const desktopRules = extractCssRules(style).filter(({ selector }) => selector === '@media (min-width: 1280px)')
     const desktopHeader = desktopRules.find(({ block }) => block.includes('.page-header-section'))?.block ?? null
     const desktopBody = desktopRules.find(({ block }) => block.includes('.page-col-sd--with-toc'))?.block ?? null
-    const readerSurface = extractCssRule(style, '.page-col-content > .contents')
-    const readerCopy = extractCssRule(readerSurface, '> div')
-    const thirdLevelTocTitle = extractCssRule(style, '.page-toc-item-title--third-level')
+    const tocTitle = extractCssRule(style, '.page-toc-item-title')
+    const tocRow = extractCssRule(style, '.page-toc-item')
+    const tocDepthRules = [
+      ['.page-toc-item-title--depth-0', '700'],
+      ['.page-toc-item-title--depth-1', '550'],
+      ['.page-toc-item-title--depth-2-plus', '400']
+    ]
 
     expectDeclarations(pageRoot, {
       '--page-reader-shell-max': '132rem',
@@ -220,30 +224,109 @@ describe('default page focused contracts', () => {
     expectDeclarations(pageBody, {
       width: 'min\\(100%,\\s*var\\(--page-reader-shell-max\\)\\)'
     })
-    expect(template).toContain(':class=\'{ "font-weight-bold": tocItem.depth === 0, "page-toc-item-title--third-level": tocItem.depth === 2 }\'')
-    expect(template).not.toContain('font-italic')
-    expect(template).not.toContain('"font-weight-medium": tocItem.depth === 0')
-    expectDeclarations(thirdLevelTocTitle, {
-      'font-size': 'calc\\(\\.8125rem - 1pt\\)'
+    expect(template).toMatch(
+      /:class='tocItem\.depth === 0 \? `page-toc-item-title--depth-0` : tocItem\.depth === 1 \? `page-toc-item-title--depth-1` : `page-toc-item-title--depth-2-plus`'/
+    )
+    expectDeclarations(tocTitle, {
+      'font-size': '\\.8125rem',
+      'line-height': '1\\.4'
     })
+    expectDeclarations(tocRow, {
+      'min-height': 'calc\\(var\\(--wiki-control-height\\) - var\\(--wiki-space-2\\)\\) !important'
+    })
+    expect(extractDeclarations(tocTitle)).not.toHaveProperty('font-family')
+    for (const [selector, fontWeight] of tocDepthRules) {
+      const depthTitle = extractCssRule(style, selector)
+      expectDeclarations(depthTitle, { 'font-weight': fontWeight })
+      const depthDeclarations = extractDeclarations(depthTitle)
+      expect(depthDeclarations).not.toHaveProperty('font-size')
+      expect(depthDeclarations).not.toHaveProperty('font-family')
+    }
     expect(template).toMatch(/v-card\.page-toc-card\.mb-4\(v-if='tocPosition !== `off`', tag='nav', :aria-label=/)
-    expect(template).toContain(":href='tocItem.anchor'")
+    expect(template).toContain('v-btn.page-toc-toggle')
+    expect(template).toMatch(/v-btn\.page-toc-toggle\.text-none\([\s\S]*?:aria-expanded='tocDisclosureExpanded'[\s\S]*?aria-controls='page-toc-content'[\s\S]*?@click='toggleToc'/)
+    expect(template).toContain('.text-label-small.page-toc-heading')
+    expect(template).toContain('div#page-toc-content.page-toc-content')
+    expect(template).toContain("v-show='tocDisclosureExpanded'")
+    expect(template).toContain(':href=\'tocItem.anchor\'')
     expect(template).toContain("@click='tocLinkClicked($event, tocItem.anchor)'")
-    expectDeclarations(readerCopy, {
-      width: 'min\\(100%,\\s*var\\(--page-reader-copy-max\\)\\)'
-    })
-    expectDeclarations(readerSurface, {
-      '--page-reader-surface-padding': 'clamp\\(var\\(--wiki-space-6\\),\\s*3vw,\\s*var\\(--wiki-space-12\\)\\)',
-      padding: 'var\\(--page-reader-surface-padding\\)'
-    })
-    expectDeclarations(readerCopy, {
-      margin: '0 auto 0 0'
-    })
+    expect(template).toMatch(/:style='`--toc-indent: \$\{Math\.min\(tocItem\.depth, 5\) \* 14\}px`'/)
+    expect(template).toContain('v-icon.page-toc-item-marker')
+    expect(script).toMatch(/tocExpanded:\s*initialWidth > 599/)
+    expect(script).toMatch(/isTocMobile\s*\([^)]*\)\s*:\s*boolean[\s\S]*?return this\.winWidth <= 599/)
+    expect(script).toMatch(/tocDisclosureExpanded\s*\([^)]*\)\s*:\s*boolean[\s\S]*?return !this\.isTocMobile \|\| this\.tocExpanded/)
+    expect(script).toMatch(/toggleToc\s*\(\)\s*\{\s*this\.tocExpanded = !this\.tocExpanded\s*\}/)
+    expect(script).toMatch(
+      /handleSideNavVisibility\s*\(\)\s*\{[\s\S]*?const previousWidth = this\.winWidth[\s\S]*?const nextWidth = window\.innerWidth[\s\S]*?this\.winWidth = nextWidth[\s\S]*?if \(previousWidth > 599 && nextWidth <= 599\)\s*\{\s*this\.tocExpanded = false\s*\}/
+    )
+    expect(script).toMatch(
+      /tocLinkClicked\s*\(event: MouseEvent, anchor: string\)\s*\{[\s\S]*?event\.metaKey[\s\S]*?event\.ctrlKey[\s\S]*?event\.shiftKey[\s\S]*?event\.altKey[\s\S]*?this\.tocExpanded = false[\s\S]*?event\.preventDefault\(\)[\s\S]*?this\.scrollToPageAnchor\(anchor\)/
+    )
+    expect((template.match(/v-card\.page-toc-card/g) ?? []).length).toBe(1)
+    expect(template).not.toMatch(/v-btn\.page-toc-heading/)
+    const mobileToolsIndex = template.indexOf('#page-mobile-tools.page-mobile-tools')
+    const mobileMetadataIndex = template.indexOf('#page-mobile-metadata.page-mobile-metadata')
+    const pageBodyIndex = template.indexOf('v-container.page-body')
+    const sidebarIndex = template.indexOf('v-col.page-col-sd(', pageBodyIndex)
+    const contentIndex = template.indexOf('v-col.page-col-content(', pageBodyIndex)
     const shortcutCardIndex = template.indexOf('v-card.page-shortcuts-card.mb-4')
     const tocCardIndex = template.indexOf('v-card.page-toc-card.mb-4')
+    const articleIndex = template.indexOf('article.contents(ref=\'container\'')
+    const primaryTeleportIndex = template.indexOf(":to='isTocMobile ? `#page-mobile-tools` : `#page-desktop-rail`'")
+    const metadataTeleportIndex = template.indexOf(":to='isTocMobile ? `#page-mobile-metadata` : `#page-desktop-rail`'")
+    expect(mobileToolsIndex).toBeGreaterThan(-1)
+    expect(mobileMetadataIndex).toBeGreaterThan(articleIndex)
+    expect(mobileToolsIndex).toBeLessThan(sidebarIndex)
+    expect(mobileToolsIndex).toBeLessThan(contentIndex)
+    expect(articleIndex).toBeLessThan(primaryTeleportIndex)
+    expect(primaryTeleportIndex).toBeLessThan(metadataTeleportIndex)
     expect(shortcutCardIndex).toBeGreaterThan(-1)
     expect(tocCardIndex).toBeGreaterThan(-1)
     expect(shortcutCardIndex).toBeLessThan(tocCardIndex)
+    expect(template).toMatch(/Teleport\([\s\S]*?defer\s*:to='isTocMobile \? `#page-mobile-tools` : `#page-desktop-rail`'[\s\S]*?:disabled='winWidth >= 600 && winWidth < 1280'[\s\S]*?v-card\.page-shortcuts-card[\s\S]*?v-card\.page-toc-card/)
+    expect(template).toMatch(/Teleport\([\s\S]*?defer\s*:to='isTocMobile \? `#page-mobile-metadata` : `#page-desktop-rail`'[\s\S]*?:disabled='winWidth >= 600 && winWidth < 1280'[\s\S]*?v-card\.page-tags-card[\s\S]*?v-card\.page-comments-card[\s\S]*?v-card\.page-author-card/)
+    expect((template.match(/v-card\.page-(?:tags|comments|author)-card/g) ?? []).length).toBe(3)
+    expect(template).toContain('page-col-sd--toc-off')
+    expect(template).toContain('page-col-content--with-toc')
+    expect(template).toContain('page-col-content--toc-off')
+    const tablet = extractCssRule(style, '@media (min-width: 600px) and (max-width: 1279px)')
+    const mobile = extractCssRule(style, '@media (max-width: 599px)')
+    const cssRuleIncluding = (source, expected) =>
+      extractCssRules(source).find(({ selector }) => selector.split(',').some(part => part.trim() === expected))?.block ?? null
+    const tabletCard = cssRuleIncluding(tablet, '.page-body > .v-row > .page-shortcuts-card')
+    expectDeclarations(cssRuleIncluding(tablet, '.page-body > .v-row'), {
+      gap: 'var\\(--wiki-space-4\\)'
+    })
+    expectDeclarations(tabletCard, {
+      width: 'calc\\(50% - var\\(--wiki-space-4\\) / 2\\)',
+      'max-width': 'calc\\(50% - var\\(--wiki-space-4\\) / 2\\)',
+      'min-width': '0',
+      flex: '0 0 calc\\(50% - var\\(--wiki-space-4\\) / 2\\)',
+      order: '2'
+    })
+    expectDeclarations(cssRuleIncluding(mobile, '.page-mobile-tools > .page-shortcuts-card'), {
+      width: '100%',
+      'max-width': '100%',
+      flex: '0 0 auto',
+      'margin-bottom': '0 !important'
+    })
+    expectDeclarations(cssRuleIncluding(mobile, '.page-mobile-metadata > .v-card'), {
+      width: '100%',
+      'max-width': '100%',
+      flex: '0 0 auto',
+      'margin-bottom': '0 !important'
+    })
+    expectDeclarations(cssRuleIncluding(style, '.page-mobile-tools'), { display: 'none' })
+    expectDeclarations(cssRuleIncluding(style, '.page-mobile-metadata'), { display: 'none' })
+    expectDeclarations(cssRuleIncluding(mobile, '.page-mobile-tools'), { display: 'flex' })
+    expectDeclarations(cssRuleIncluding(mobile, '.page-toc-card .page-toc-toggle'), { display: 'flex' })
+    expectDeclarations(cssRuleIncluding(mobile, '.page-toc-card'), {
+      'min-height': 'var\\(--wiki-control-height\\)',
+      'max-height': 'calc\\(var\\(--wiki-grid-size\\) \\* 5\\)'
+    })
+    expectDeclarations(cssRuleIncluding(mobile, '.page-mobile-metadata'), { display: 'flex', order: '2' })
+    expectDeclarations(extractCssRule(style, '.page-col-sd--toc-left, .page-col-sd--toc-right'), { order: '2' })
+    expectDeclarations(extractCssRule(style, '.page-col-content--toc-left, .page-col-content--toc-right'), { order: '1' })
     expectDeclarations(pageSidebar, {
       position: 'sticky',
       'max-height': 'calc\\(100dvh - var\\(--v-layout-top,\\s*var\\(--wiki-grid-size\\)\\) - var\\(--wiki-space-12\\)\\)',
@@ -255,9 +338,8 @@ describe('default page focused contracts', () => {
     expect(template).not.toMatch(/page-return-top--docked|:style='upBtnPosition'|location='bottom start'/)
     expect(template).toContain("@navigate='sidebarNavigationStarted'")
     expect(script).toMatch(
-      /tocLinkClicked\s*\(event: MouseEvent, anchor: string\)\s*\{[\s\S]*?event\.metaKey[\s\S]*?event\.ctrlKey[\s\S]*?event\.shiftKey[\s\S]*?event\.altKey[\s\S]*?event\.preventDefault\(\)[\s\S]*?this\.scrollToPageAnchor\(anchor\)/
+      /sidebarNavigationStarted\s*\(\)\s*\{\s*if \(this\.\$vuetify\.display\.width < 1280\) this\.navShown = false/
     )
-    expect(script).toMatch(/sidebarNavigationStarted\s*\(\)\s*\{\s*if \(this\.\$vuetify\.display\.width < 1280\) this\.navShown = false/)
     expect(style).toMatch(/--page-toc-empty-height:\s*calc\(var\(--wiki-grid-size\) \* 2\)/)
     const navigationDrawer = template.match(/v-navigation-drawer\(([\s\S]*?)\n {6}\)/)?.[1] ?? ''
     expect(navigationDrawer).not.toBe('')
@@ -331,10 +413,21 @@ describe('default page focused contracts', () => {
       'grid-column': '3'
     })
     expect(style).toMatch(/--page-toc-desktop-lift:\s*calc\(var\(--page-toc-empty-height\) \+ var\(--wiki-space-6\)\)/)
-    expect(style).toMatch(/@media\s*\(max-width:\s*1279px\)\s*\{[\s\S]*?\.page-col-sd\s*\{[\s\S]*?margin-block-start:\s*0;/s)
     expect(style).toMatch(/\.v-main \.contents[\s\S]*?h1\s*\{[^}]*color:\s*var\(--wiki-accent-ink\);/s)
     expect(style).not.toContain(':has(')
     expect(style).toMatch(/\.page-col-sd--with-toc\s*\{[^}]*margin-block-start:\s*calc\(var\(--page-toc-desktop-lift\) \* -1\)/s)
+  })
+
+  test('defers same-component Teleports with tablet-only disablement', () => {
+    const teleports = template.match(/Teleport\([\s\S]*?\n {10}\)/g) ?? []
+
+    expect(teleports).toHaveLength(2)
+    for (const teleport of teleports) {
+      expect(teleport).toMatch(/\n\s+defer\s*\n/)
+      expect(teleport.match(/:disabled='[^']+'/g)).toEqual([":disabled='winWidth >= 600 && winWidth < 1280'"])
+    }
+    expect(script).not.toMatch(/\bteleportReady\b/)
+    expect(template).not.toMatch(/\bteleportReady\b/)
   })
 
   test('keeps editorial type scoped, responsive, printable, and technically legible', () => {
@@ -427,7 +520,19 @@ describe('default page focused contracts', () => {
     expectDeclarations(extractCssRule(mobileContents, 'h3'), { 'font-size': '1\\.25rem' })
 
     const print = extractCssRule(style, '@media print')
-    const printHiddenRail = extractCssRules(print).find(({ selector }) => selector.split(',').some(part => part.trim() === '.page-col-sd'))?.block ?? null
+    const printHiddenRail = extractCssRules(print).find(({ selector }) => {
+      const selectors = selector.split(',').map(part => part.trim())
+      return [
+        '.page-col-sd',
+        '.page-mobile-tools',
+        '.page-mobile-metadata',
+        '.page-shortcuts-card',
+        '.page-toc-card',
+        '.page-tags-card',
+        '.page-comments-card',
+        '.page-author-card'
+      ].every(part => selectors.includes(part))
+    })?.block ?? null
     expectDeclarations(printHiddenRail, {
       display: 'none !important'
     })
