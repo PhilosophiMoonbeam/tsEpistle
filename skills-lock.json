@@ -7,11 +7,23 @@
       "skillPath": "packages/playground/.agents/skills/frontend-design/SKILL.md",
       "computedHash": "537c1df9d0c694ecf9139a911f9ad0bd111a7ebc173a55457568459e543fe75b"
     },
+    "tresjs-core-skilld": {
+      "source": "skilld-dev/vue-ecosystem-skills",
+      "sourceType": "github",
+      "skillPath": "skills/tresjs-core-skilld/SKILL.md",
+      "computedHash": "9e1df8101e9fbe5413b06e4b1f3a72b4472b21883de5356baef583637ce733b6"
+    },
     "vue": {
       "source": "antfu/skills",
       "sourceType": "github",
       "skillPath": "skills/vue/SKILL.md",
       "computedHash": "9c241141e07e836e4f0537c63e8f929fba3767c2997250be38e699f19b75e3f2"
+    },
+    "vue-skilld": {
+      "source": "skilld-dev/vue-ecosystem-skills",
+      "sourceType": "github",
+      "skillPath": "skills/vue-skilld/SKILL.md",
+      "computedHash": "cc8a825af14b77c75d5f7f5264539235ac776ea739dc49042cb580c4dc2240b2"
     },
     "vuetify-skilld": {
       "source": "skilld-dev/vue-ecosystem-skills",
