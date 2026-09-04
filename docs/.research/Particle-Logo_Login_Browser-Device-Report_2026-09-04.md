@@ -2,94 +2,109 @@
 
 ## Release identity
 
-- Runtime image: `tsepistle:48c96e7e`
-- Image ID: `sha256:97f9064a6a8f7d6389e5adf726f96f193fe5f60ea03730fbb99039eba84c2070`
-- Runtime and browser verification revision: `48c96e7ed516eaef7b0648d7564dfc0a55d27f07`
-- Threat-model successor revision: `b41f4249`
+- Runtime source/threat binding: `55f30709cd4b8de0ec1fd498cac7174f1cacd084`
+- Deployed image: `tsepistle:844427c3`
+- Deployed image revision: `844427c3cf19e5c89b3c119830ae220e1f90eca7`
+- Image ID: `sha256:f28b04297647cd2af4ead68c5462276b28a1f5ee1570a9bd5845f22e23df3258`
+- Final repository evidence head (later test/docs evidence): `aef4b2d3a1730243fb55349d6bb1db0e37da2709`
 - Playwright: 1.62.1
 - Bundled engines: Chromium 151.0.7922.34, Firefox 153.0, WebKit 26.5
 - Installed distribution check: Google Chrome 152.0.7977.82
 - Deployed surface: `https://agents8c48g.tail41a24a.ts.net:10443/login`
-- Active managed-logo revision: `77272185-bb45-40ad-88df-afcf20c9c25d`, pipeline v3
+- Active managed-logo revision: `6b3d846a-0c38-495f-a72b-e4fd4d871e42`, pipeline 4, state generation 7
+
+The runtime source/threat binding, deployed image revision, and later repository evidence
+head are recorded separately; the later head does not identify the runtime image.
 
 ## Executed release rows
 
-The final eight-project responsive suite executed 120 target/test combinations against the production image before promotion: 58 passed without retry, two intermittent decode/reduced-motion eligibility cases passed on the configured retry, and 60 inapplicable combinations were explicitly skipped by target capability. There were no terminal failures. A subsequent exact Chromium desktop run completed with 14 passes and one intentional skip; the synchronized motion case also passed independently at 1440×900 and 2560×1440.
+The 120-row responsive run was not fully green: 58 rows passed, 60 were explicit
+capability skips, and two initially non-passing or intermediate outcomes were corrected
+rather than counted as clean final rows. WebKit's delayed regional ratio exposed an
+invalid arbitrary `1.15` test multiplier; that multiplier was fixed and the targeted
+WebKit run then passed without retry. One Chromium asset-load transient recovered under
+the configured retry, and its exact test passed later without retry. No terminal failure
+remained.
 
-| Project | Engine/profile | Viewport/device | Applicable result | Visual | Fallback and cleanup |
-| --- | --- | --- | ---: | --- | --- |
-| `responsive-chromium-desktop` | Chromium 151 | 1440×900 desktop | 14 successful, 1 intentional skip | Canonical ordinary branding, density, coherent motion, depth cue, cursor slice, recovery | Reduced motion, import/fetch/decode failure, context loss, privacy, disposal |
-| `responsive-firefox-desktop` | Firefox 153 | 1440×900 desktop | 14 successful, 1 intentional skip | Same static and ordinary visual contract | Actual no-WebGL path verified as static fallback with zero enhancement work; auth remains usable |
-| `responsive-webkit-desktop` | WebKit 26.5 | 1440×900 desktop | 14 successful, 1 intentional skip | Same static and ordinary visual contract | Reduced-motion teardown boundary and settled resource trace passed |
-| `responsive-chromium-wide` | Chromium 151 | 2560×1440 desktop | 14 successful, 1 intentional skip | Fixed 2,000-particle wide fixture retained visible ink; motion and cursor locality passed | Full eligible-desktop fallback, auth, privacy, and cleanup contract |
-| `responsive-chromium-tablet` | Chromium 151, iPad Mini landscape profile | 1133×744 | 1 passed, 14 intentional skips | Personalized field correctly omitted | Login and registration operable; zero particle request/canvas |
-| `responsive-chromium-mobile` | Chromium 151, Pixel 7 profile | 412×839 | 1 successful, 14 intentional skips | Personalized field correctly omitted | Login and registration operable; zero particle request/canvas |
-| `responsive-webkit-mobile` | WebKit 26.5, iPhone 13 profile | 390×664 | 1 passed, 14 intentional skips | Personalized field correctly omitted | Login and registration operable; zero particle request/canvas |
-| `responsive-webkit-mobile-landscape` | WebKit 26.5, iPhone 13 landscape | 844×390 | 1 passed, 14 intentional skips | Personalized field correctly omitted | Scrollable login and registration remain operable; zero enhancement work |
-| `responsive-chromium-desktop` | Google Chrome 152.0.7977.82 | 1440×900 desktop | Distribution run retained from the release matrix | Full desktop visual contract | Full fallback, privacy, authentication, and cleanup contract |
+The exact production performance run passed 1/1, and targeted Chromium and WebKit
+fixed-time motion runs passed independently. The final browser/device evidence was:
+
+| Project | Engine/profile | Viewport/device | Result and scope |
+| --- | --- | --- | --- |
+| `responsive-chromium-desktop` | Chromium 151 | 1440×900 desktop | 13 direct passes, 1 retry-recovered asset-load transient, 1 intentional skip; the exact transient case later passed without retry |
+| `responsive-firefox-desktop` | Firefox 153 | 1440×900 desktop | 14 successful, 1 intentional skip; ordinary visual contract and actual no-WebGL fallback |
+| `responsive-webkit-desktop` | WebKit 26.5 | 1440×900 desktop | 13 initial passes, 1 invalid regional-ratio assertion corrected and then passed without retry, 1 intentional skip |
+| `responsive-chromium-wide` | Chromium 151 | 2560×1440 desktop | Desktop eligibility, motion locality, fallback, privacy, authentication, and cleanup |
+| `responsive-chromium-tablet` | Chromium 151, iPad Mini landscape profile | 1133×744 | 1 passed, 14 capability skips; no personalized field, login and registration operable |
+| `responsive-chromium-mobile` | Chromium 151, Pixel 7 profile | 412×839 | 1 successful, 14 capability skips; no personalized field, login and registration operable |
+| `responsive-webkit-mobile` | WebKit 26.5, iPhone 13 profile | 390×664 | 1 passed, 14 capability skips; login and registration operable |
+| `responsive-webkit-mobile-landscape` | WebKit 26.5, iPhone 13 landscape | 844×390 | 1 passed, 14 capability skips; scrollable login and registration operable |
+| `responsive-chromium-desktop` | Google Chrome 152.0.7977.82 | 1440×900 desktop | Distribution run retained from the release evidence |
 
 ## Visual and interaction evidence
 
 | Contract | Result |
 | --- | --- |
-| Ordinary logo identity | Pipeline v3 encodes the decoded, auto-oriented sRGB RGBA upload canvas before effect-only matte, trim, resize, or padding work. The active 481×481 source and live `logo.png` decode to byte-identical 481×481 RGBA pixels. |
-| Transparent uploads | Browser fixtures retained transparent corner alpha and source color populations; effect processing does not mutate the canonical ordinary artifact. |
-| Density and shape | Generation is bounded to 2,000–8,000 particles with deterministic component reservations and at least 0.90 reconstructed-mask IoU. The active source fell from 9,346 v2 particles to 4,673 v3 particles while retaining its orange/charcoal silhouette. |
-| Idle motion | Coherent spatial waves produce a gentle 3D gaseous field with 2.5–7 CSS-pixel displacement and one bounded 0.82–1.18 depth-size cue. Source RGBA values remain particle attributes. |
-| Cursor behavior | A trajectory-oriented 28–56 CSS-pixel blade produces 10–24 CSS-pixel displacement. Synchronized after-render captures proved the active corridor changes by more than 3× idle and 2× the outside region. |
-| Refill | The absolute-time squared envelope reaches zero at 240 ms; synchronized recovery capture proved the corridor residual falls below half the active slice. |
+| Ordinary logo identity | The decoded, auto-oriented sRGB RGBA upload remains the canonical ordinary artifact; effect processing does not mutate it. |
+| Density and reconstruction | Pipeline v4 generates `1000..4000` particles with IoU `>=0.75` and four deterministic reserves per component. The live count is 2,337 versus the prior 4,673 (50.0% within rounding), with visible individual gaps. The runtime uses a separate fixed four-slot impulse-uniform ring, and the parser retains a 16,000-record cap. |
+| Motion model | Input above 2 px activates a circular core and a fixed 12 px segment cap with an 8 px aggregate cap. A delayed `0.18` outward annulus reaches `2.1R`; an analytic damped spring is active for 240 ms and settled by 900 ms. Particle life is 0.9 s. There is no dynamic geometry or CPU particle loop. |
+| Cursor behavior | A 6 px pointer segment produced no long blade or gash. Immediate, 1000 ms, and another 1200 ms frames showed the intrinsic dark vertical stem; by 1000 ms the shape was back within the ongoing floating baseline, with discrete gaps preserved. |
 | Aura | The active generated aura is `#f9a134`; an absent configured aura remains transparent. |
 | Composition | Decorative field is a sibling after the login card, never intersects the card, and is absent below eligibility or with no measured free space. |
 | Accessibility | Landmark, heading, textbox and button names, title, tab order, focus geometry, and enabled authentication controls match the unmanaged baseline. |
 | Reduced motion at startup | Personalized static artifact rendered before mount; zero scene import, particle fetch, WebGL context, canvas, timer, RAF, idle callback, or pointer listener. |
 | Reduced motion at runtime | Static opacity changed synchronously, canvas was removed, active work reached zero, and callback/resource counters did not advance after the teardown boundary. |
 | Loading and GPU failures | Import, fetch, decode, corrupt-static, and context-loss paths settled to faithful static or ordinary output without loops while preserving authentication focus. |
-| Visibility and layout lifecycle | Hidden and offscreen two-second windows produced zero callbacks; hard-ineligible 959px layout produced zero canvas; no late callbacks or leaked timers, RAFs, idle callbacks, or pointer listeners. |
+| Visibility and layout lifecycle | Hidden and offscreen windows produced zero callbacks; hard-ineligible layout produced zero canvas; no late callbacks or leaked timers, RAFs, idle callbacks, or pointer listeners. |
 | Privacy | Particle fetch used `credentials: omit`; requests contained no particle cookie and remained same-origin; pointer movement generated no request or telemetry. |
 
 ## Performance and resource budgets
 
 ### Runtime renderer
 
-Measured against the deployed runtime in Chromium 151 at 1440×900, device scale factor 1.5, using the maximum supported 16,000-record decoder fixture over 20 cold runs:
+Measured against the deployed runtime in Chromium 151 at 1440×900, device scale
+factor 1.5, using 20 cold isolated contexts. The non-retriable fully active 10 s
+input window used 50 six-pixel segments plus four prime segments.
 
-| Metric | Result | Budget |
-| --- | ---: | ---: |
-| First rendered frame p95 | 471.5 ms | ≤ 1500 ms |
-| Frame interval p95 | 17.0 ms | ≤ 20 ms |
-| Frame interval p99 | 17.2 ms | ≤ 34 ms |
-| Callback CPU p95 | 0.1 ms | ≤ 2 ms |
+| Metric | Result | Budget or threshold |
+| --- | ---: | --- |
+| First rendered frame p95 | 444.5 ms | ≤ 1500 ms |
+| Fully active frame intervals | 599 over 9,982.9 ms | ≥250 intervals spanning ≥9000 ms |
+| Frame interval p95 / p99 | 16.9 ms / 17.1 ms | ≤20 ms / ≤34 ms |
+| Callback CPU p95 | 0.1 ms | ≤2 ms |
 | Cold-run timeouts | 0 | 0 |
-| Hidden/offscreen callback count over 2 s | 0 / 0 | 0 / 0 |
-| Idle displacement diagnostic | 5.6504 CSS px | 2.5–7 CSS px |
-| Slice displacement diagnostic | 16.1440 CSS px | 10–24 CSS px |
-| Depth scale diagnostic | 0.82–1.18 | 0.82–1.18 |
+| Active impulses / callbacks | 4 / 1,200 | Recorded in the non-retriable 10 s input window |
+| Hidden/offscreen callbacks | 0 / 0 | 0 / 0 |
+| Input and travel diagnostics | 50 six-pixel segments plus four prime segments; max travel 8; neighbor 0.18 | Fixed-time active-input coverage |
 
 ### Production bundles
 
 | Closure | Result | Budget |
 | --- | ---: | ---: |
-| Login direct JavaScript | 9,908 B gzip | 10.7 KiB gzip |
-| Lazy particle scene closure | 838.8 KiB raw / 223.2 KiB gzip | 950 KiB raw / 260 KiB gzip |
-| Initial login scene/Tres/Three/shader/particle assets | 0 B | 0 B |
+| Login direct JavaScript | 36,426 B raw / 9,906 B gzip | Release budget passed |
+| Lazy particle scene closure | 860,705 B raw / 229,105 B gzip | Release budget passed |
+| Initial particle closure | 0 B | 0 B |
 
 Largest-chunk and aggregate JavaScript budgets passed in the final image build.
 
-### Active pipeline-v3 artifacts
+### Active artifacts
 
-The active 13,151-byte source is a 481×481 PNG with SHA-256 `5ecad39758dc6fe9e357c04a0b22728f3d96d54ad8bc4374e22b39a44e257b16`. Production pipeline v3 generated and atomically activated:
+The source artifact is 13,151 B, 481×481, with SHA-256
+`5ecad39758dc6fe9e357c04a0b22728f3d96d54ad8bc4374e22b39a44e257b16`. The production
+artifacts were generated and atomically activated:
 
 | Artifact | Result |
 | --- | --- |
-| Canonical ordinary PNG | 481×481; decoded RGBA exactly equals the upload; SHA-256 `445c0a2a3d818fd27ab0efc6e31887a6903e331efe5868a0f82f9337781ba662` |
-| Particle v1 | 447×479; 4,673 records; 56,132 bytes; valid `TSEP` v1/flags 7 header; SHA-256 `6fe1c94529809ddf9f9383c92cc407e07866e2d569a5cbeacf8e692107edace8` |
-| Static effect PNG | 447×479; SHA-256 `c345218dde22893ff2c5b8b9e649184ea7af97b659b3919c3888df27cb1d56f7` |
-
-The parser retains the 16,000-record compatibility ceiling independently of the lower 2,000–8,000 generation budget.
+| Canonical ordinary PNG | 11,009 B; unchanged SHA-256 `445c0a2a3d818fd27ab0efc6e31887a6903e331efe5868a0f82f9337781ba662` |
+| Particle artifact | 447×479; 2,337 records; 28,100 B raw / 16,143 B gzip; SHA-256 `07d3764fde49f5ecd2a2f6cbf8b7477a00bf75c0827ef7982833278883e9b6d6`; `TSEP` v1 flags 7; CRC `1895907205` matches computed |
+| Static effect PNG | 74,986 B; SHA-256 `ecfad0ee14e96954ab9aa47e33cbad79d03db86e09626daee437f189abf3a5a5` |
+| Aura | `#f9a134` |
 
 ## Release-time browserslist accountability
 
-No target below is inferred from another target. “Unexecuted” means the named browser distribution was not installed on this Linux workstation; engine-profile coverage above is supporting evidence, not a claim of distribution equivalence.
+No target below is inferred from another target. “Unexecuted” means the named browser
+distribution was not installed on this Linux workstation; engine-profile coverage above
+is supporting evidence, not a claim of distribution equivalence.
 
 | Release-time target | Status and reason |
 | --- | --- |
@@ -112,12 +127,33 @@ No target below is inferred from another target. “Unexecuted” means the name
 
 ## Deployment verification
 
-Image `tsepistle:48c96e7e` was promoted to Docker container `wiki-tailnet` on `wiki-pg-migration-net`, bound to `127.0.0.1:3014`. The prior production container was retained, stopped, as `wiki-tailnet-rollback-e432698d`. The active container reports `running healthy`, embeds revision `48c96e7ed516eaef7b0648d7564dfc0a55d27f07`, and local plus tailnet `/healthz` return `200 {"ok":true}`.
+The pre-compatibility image `48c96e7e` was fully stopped and retained as
+`wiki-tailnet-rollback-48c96e7e`. The capability-only `@1` commit `2e0` was deployed
+fleet-wide, then stopped and retained as `wiki-tailnet-rollback-2e0cd7c8`.
 
-The stored source was reprocessed only after the old worker stopped. Pipeline v3 revision `77272185-bb45-40ad-88df-afcf20c9c25d` reached `ready`; `activeRevisionId` and `desiredRevisionId` both reference it at state generation 5. The runtime was restarted once after atomic activation so every server process loaded the matching v3 `logoUrl` and `logoEffect` descriptor.
+The final image `tsepistle:844427c3` runs on `wiki-tailnet`, port 3014, network
+`wiki-pg-migration-net`, with restart policy `unless-stopped`. It reports `running
+healthy`, and local plus tailnet `/healthz` return `200 {"ok":true}`. Only then was
+the `@2` v4 job `0c57ef54-4bcb-43a7-80e5-c23b4605d525` enqueued; it succeeded on
+attempt 1 with no error. The runtime restarted once after atomic activation.
 
-A real browser opened the deployed tailnet URL with title `Login | Tim O'Pedia`. In the harness profile, the lack of a fine hover pointer correctly selected fallback rendering while the ordinary image loaded from the v3 canonical URL with natural size 481×481. A separate unmocked Chromium desktop smoke against the deployed container reported fine-pointer desktop eligibility, WebGL2, a live 705×688 canvas, the exact active descriptor with 4,673 particles, and after-render idle/active/recovered frames. Pointer motion changed the rendered canvas (`activeVsIdleMean = 0.0074014`) without a network request.
+A real browser opened the deployed tailnet URL with title `Login | Tim O'Pedia`. The
+raw harness profile without fine-hover capability correctly selected ordinary fallback.
+The same real tailnet page, with desktop fine-hover media emulation and no asset or
+descriptor mocks, loaded one live 705.625×688.8125 canvas and the exact v4 descriptor
+and revision with 2,337 records. The pointer and timed-frame evidence above came from
+that live surface.
 
-Final verification: 374/374 repository test files passed; `bun run ci:static` passed dependency policy, licenses, Biome, shared/client/server types, OpenAPI, placeholder, agent release, and threat-model gates. Focused server branding tests passed 29/29; particle scene and pointer tests passed 25/25; deployed maximum-particle runtime performance passed 1/1. Independent correctness and security reviews reported no remaining finding at exact source `48c96e7ed516eaef7b0648d7564dfc0a55d27f07`.
+Verification covered 374/374 isolated test files. Full `ci:static` passed all named gates
+after the license inventory refresh. Exact production performance passed 1/1, and
+targeted Chromium and WebKit fixed-time motion passed. Correctness review reported no
+findings. A medium security rollout-document finding was corrected and its closure
+reported no findings. A performance stalled-loop gate finding was corrected with
+coverage thresholds and its closure reported no findings. Trace review also found and
+fixed a redundant CDP cache mutation causing `net::ERR_NETWORK_CHANGED` and a Tres
+pause/disconnect race.
 
-Additional stopped rollback containers remain available: `wiki-tailnet-rollback-e6d10411`, `wiki-tailnet-rollback-16fa062`, and `wiki-tailnet-rollback-c4fc3713`.
+Additional stopped rollback containers remain available:
+`wiki-tailnet-rollback-e6d10411`, `wiki-tailnet-rollback-16fa062`,
+`wiki-tailnet-rollback-c4fc3713`, `wiki-tailnet-rollback-48c96e7e`, and
+`wiki-tailnet-rollback-2e0cd7c8`.
