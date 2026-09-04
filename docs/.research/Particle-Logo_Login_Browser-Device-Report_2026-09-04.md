@@ -2,9 +2,9 @@
 
 ## Release identity
 
-- Runtime image: `tsepistle:e6d10411`
-- Image digest: `sha256:96632e196097210462c47c05fefedb853cce8382a1b1c50692d039ba29aa5df0`
-- Runtime source revision: `e6d104112779b272e0c78451eaf6ab7222fa0278`
+- Runtime image: `tsepistle:e432698d`
+- Image digest: `sha256:819f2d6d2aebb1199426a5b872238cc478a3633fde5f3f9f69eb513d0e281b97`
+- Runtime source revision: `e432698d4fd8e6b12c485a8a778e24dd79cf9bef`
 - Browser verification revision: `eb4145fa`
 - Playwright: 1.62.1
 - Bundled engines: Chromium 151.0.7922.34, Firefox 153.0, WebKit 26.5
@@ -105,8 +105,10 @@ No target below is inferred from another target. “Unexecuted” means the name
 
 ## Deployment verification
 
-The image was promoted to Docker container `wiki-tailnet` on `wiki-pg-migration-net`, bound to `127.0.0.1:3014`, and reported `running healthy`. Tailnet HTTPS continues to proxy port 10443 to that local binding. Local and tailnet `/healthz` returned `200 {"ok":true}`; local and tailnet `/login` returned `200 text/html`. Anonymous `/_api/site/logo` returned 403 before body handling, and a malformed public logo object returned 404.
+The corrected image was promoted to Docker container `wiki-tailnet` on `wiki-pg-migration-net`, bound to `127.0.0.1:3014`, and reported `running healthy`. Tailnet HTTPS continues to proxy port 10443 to that local binding. Local and tailnet `/healthz` returned `200 {"ok":true}`; local and tailnet `/login` returned `200 text/html`. Anonymous `/_api/site/logo` returned 403 before body handling, and a malformed public logo object returned 404.
 
-A real browser opened the deployed tailnet URL with title `Login | Tim O'Pedia`: the login card, email field, password field, and enabled Log In button were visible. The live database has no managed logo configured, so `/topedialogo23.png` and zero personalized particle fields is the correct ordinary fallback. Managed visuals were exercised through same-origin route-controlled browser fixtures against the identical production image without mutating live branding.
+A real browser opened the deployed tailnet URL with title `Login | Tim O'Pedia`: the login card, email field, password field, enabled Log In button, and existing `/topedialogo23.png` logo were visible. The live database has no active managed-logo revision; the rejected pipeline-v1 candidate remains failed and unactivated, so the legacy logo and zero personalized particle fields are the correct fallback. Deployment verification did not mutate branding.
 
-Rollback container retained, stopped: `wiki-tailnet-rollback-16fa062`.
+The exact rejected 13,151-byte, 481×481 transparent PNG (`sha256:5ecad39758dc6fe9e357c04a0b22728f3d96d54ad8bc4374e22b39a44e257b16`) was processed inside the final image. Pipeline v2 accepted it as a 447×479 normalized logo with 9,346 particles, 62.0967-pixel median stroke, and `#f9a134` aura; outputs were 13,125-byte ordinary PNG, 112,208-byte particle-v1, and 92,787-byte static-effect PNG. The correction scales only reconstructed particle core footprints by the normalized long-axis ratio used by the runtime renderer; the encoded particle data and 0.90 overlap gate remain unchanged.
+
+Rollback containers retained, stopped: `wiki-tailnet-rollback-e6d10411` and `wiki-tailnet-rollback-16fa062`.
