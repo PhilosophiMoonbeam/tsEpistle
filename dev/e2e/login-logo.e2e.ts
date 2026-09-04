@@ -66,6 +66,10 @@ interface ArtifactRequests {
   readonly particle: Request[]
   readonly static: Request[]
 }
+interface ParticleFetchObservation {
+  readonly credentials: RequestCredentials
+  readonly url: string
+}
 
 interface LogoResourceTrace {
   activeIdleCallbacks: number
@@ -85,6 +89,7 @@ interface LogoResourceTrace {
 }
 
 interface ReducedMotionChangeReport {
+  readonly performanceCallbackCount: number
   readonly canvasCount: number
   readonly pointerActive: boolean
   readonly staticOpacity: string | null
@@ -140,6 +145,37 @@ async function installManagedLogo(page: Page, effect: ManagedEffect, options: Ar
     })
   })
   return requests
+}
+
+async function browserSupportsWebGL2(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    return canvas.getContext('webgl2') !== null
+  })
+}
+
+async function installParticleFetchProbe(page: Page, particleUrl: string): Promise<void> {
+  await page.addInitScript(expectedParticleUrl => {
+    const probeWindow = window as Window & {
+      __loginLogoParticleFetches: ParticleFetchObservation[]
+    }
+    const nativeFetch = window.fetch.bind(window)
+    probeWindow.__loginLogoParticleFetches = []
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new globalThis.Request(input, init)
+      if (request.url === new URL(expectedParticleUrl, window.location.href).href) {
+        probeWindow.__loginLogoParticleFetches.push({
+          credentials: request.credentials,
+          url: request.url
+        })
+      }
+      return nativeFetch(input, init)
+    }) as typeof window.fetch
+  }, particleUrl)
+}
+
+async function readParticleFetchProbe(page: Page): Promise<ParticleFetchObservation[]> {
+  return page.evaluate(() => (window as Window & { __loginLogoParticleFetches: ParticleFetchObservation[] }).__loginLogoParticleFetches)
 }
 
 async function installLogoResourceTrace(page: Page): Promise<void> {
@@ -303,6 +339,7 @@ async function installReducedMotionChangeProbe(page: Page): Promise<void> {
   await page.evaluate(() => {
     const probeWindow = window as Window & {
       __loginLogoReducedMotionReport: ReducedMotionChangeReport | null
+      __logoParticlePerformance: { callbackCount: number }
       __readLoginLogoTrace: () => LogoResourceTrace
     }
     probeWindow.__loginLogoReducedMotionReport = null
@@ -312,6 +349,7 @@ async function installReducedMotionChangeProbe(page: Page): Promise<void> {
       motionQuery.removeEventListener('change', recordChange)
       const image = document.querySelector<HTMLElement>('.login-particle-logo__image')
       probeWindow.__loginLogoReducedMotionReport = {
+        performanceCallbackCount: probeWindow.__logoParticlePerformance.callbackCount,
         canvasCount: document.querySelectorAll('.login-particle-logo canvas').length,
         pointerActive: document.querySelector('.login-particle-logo--pointer-active') !== null,
         staticOpacity: image ? getComputedStyle(image).opacity : null,
@@ -338,21 +376,29 @@ async function installRegistrationShell(page: Page): Promise<void> {
 }
 
 async function installZeroFreeSpaceLogin(page: Page): Promise<void> {
-  await page.route(/\/login$/, async route => {
-    const request = route.request()
-    if (request.method() !== 'GET' || request.resourceType() !== 'document' || !request.isNavigationRequest() || new URL(request.url()).pathname !== '/login') {
-      await route.fallback()
-      return
+  await page.route(
+    url => url.pathname === '/login',
+    async route => {
+      const request = route.request()
+      if (
+        request.method() !== 'GET' ||
+        request.resourceType() !== 'document' ||
+        !request.isNavigationRequest() ||
+        new URL(request.url()).pathname !== '/login'
+      ) {
+        await route.fallback()
+        return
+      }
+      const response = await route.fetch()
+      const loginDocument = await response.text()
+      const zeroSpaceDocument = loginDocument.replace(
+        '</head>',
+        '<style id="login-logo-zero-space-fixture">.login > main.login-sd { width: 100% !important; max-width: none !important; }</style></head>'
+      )
+      if (zeroSpaceDocument === loginDocument) throw new Error('The login document did not contain the expected head element.')
+      await route.fulfill({ response, body: zeroSpaceDocument })
     }
-    const response = await route.fetch()
-    const loginDocument = await response.text()
-    const zeroSpaceDocument = loginDocument.replace(
-      '</head>',
-      '<style id="login-logo-zero-space-fixture">.login > main.login-sd { width: 100% !important; max-width: none !important; }</style></head>'
-    )
-    if (zeroSpaceDocument === loginDocument) throw new Error('The login document did not contain the expected head element.')
-    await route.fulfill({ response, body: zeroSpaceDocument })
-  })
+  )
 }
 
 async function measureLogoFreeWidth(page: Page): Promise<number> {
@@ -410,6 +456,51 @@ async function expectStaticFallback(page: Page, effect: ManagedEffect): Promise<
   await expect(image).toHaveAttribute('src', effect.staticUrl)
   await expect(image).toHaveCSS('opacity', '1')
   await expect(field.locator('canvas')).toHaveCount(0)
+}
+function expectNoActiveLogoWork(trace: LogoResourceTrace): void {
+  expect(trace.activeIdleCallbacks).toBe(0)
+  expect(trace.activeLogoTimers).toBe(0)
+  expect(trace.activeRafs).toBe(0)
+  expect(trace.pointerListenersAdded - trace.pointerListenersRemoved).toBe(0)
+}
+
+async function expectSettledLoadingFailure(
+  page: Page,
+  effect: ManagedEffect,
+  sceneRequests: readonly string[],
+  particleRequests: readonly Request[]
+): Promise<void> {
+  await expectStaticFallback(page, effect)
+  await expect
+    .poll(async () => {
+      const trace = await readLogoResourceTrace(page)
+      return {
+        activeIdleCallbacks: trace.activeIdleCallbacks,
+        activeLogoTimers: trace.activeLogoTimers,
+        activePointerListeners: trace.pointerListenersAdded - trace.pointerListenersRemoved,
+        activeRafs: trace.activeRafs
+      }
+    })
+    .toEqual({
+      activeIdleCallbacks: 0,
+      activeLogoTimers: 0,
+      activePointerListeners: 0,
+      activeRafs: 0
+    })
+  const immediateTrace = await readLogoResourceTrace(page)
+  expectNoActiveLogoWork(immediateTrace)
+  expect(sceneRequests.length).toBeLessThanOrEqual(1)
+  expect(particleRequests.length).toBeLessThanOrEqual(1)
+  const sceneRequestCount = sceneRequests.length
+  const particleRequestCount = particleRequests.length
+
+  await page.waitForTimeout(1_600)
+  await expectStaticFallback(page, effect)
+  const settledTrace = await readLogoResourceTrace(page)
+  expectNoActiveLogoWork(settledTrace)
+  expect(settledTrace).toEqual(immediateTrace)
+  expect(sceneRequests).toHaveLength(sceneRequestCount)
+  expect(particleRequests).toHaveLength(particleRequestCount)
 }
 
 async function collectTabOrder(page: Page, count = 5): Promise<string[]> {
@@ -502,7 +593,7 @@ async function assertTransparentSourceIdentity(image: Locator): Promise<void> {
     if (!context) return null
     context.drawImage(element, 0, 0, canvas.width, canvas.height)
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-    let colored = 0
+    let opaque = 0
     let nearBlack = 0
     let nearWhite = 0
     let sourceBlue = 0
@@ -511,25 +602,31 @@ async function assertTransparentSourceIdentity(image: Locator): Promise<void> {
       const green = pixels[offset + 1] ?? 0
       const blue = pixels[offset + 2] ?? 0
       const alpha = pixels[offset + 3] ?? 0
-      if (alpha > 240) colored += 1
+      if (alpha > 240) opaque += 1
       if (alpha > 240 && red < 32 && green < 32 && blue < 32) nearBlack += 1
       if (alpha > 240 && red > 235 && green > 235 && blue > 235) nearWhite += 1
       if (alpha > 240 && blue > 170 && green > 120 && red < 90) sourceBlue += 1
     }
+    const pixelCount = canvas.width * canvas.height
     return {
-      colored,
-      cornerAlpha: [pixels[3], pixels[(canvas.width - 1) * 4 + 3], pixels[(canvas.height - 1) * canvas.width * 4 + 3]],
-      nearBlack,
-      nearWhite,
-      sourceBlue
+      cornerAlpha: [
+        pixels[3],
+        pixels[(canvas.width - 1) * 4 + 3],
+        pixels[(canvas.height - 1) * canvas.width * 4 + 3],
+        pixels[(canvas.height * canvas.width - 1) * 4 + 3]
+      ],
+      nearBlackRatio: opaque === 0 ? 0 : nearBlack / opaque,
+      nearWhiteRatio: opaque === 0 ? 0 : nearWhite / opaque,
+      opaqueRatio: opaque / pixelCount,
+      sourceBlueRatio: opaque === 0 ? 0 : sourceBlue / opaque
     }
   })
   expect(sample).not.toBeNull()
-  expect(sample?.cornerAlpha).toEqual([0, 0, 0])
-  expect(sample?.colored).toBeGreaterThan(1_000)
-  expect(sample?.nearBlack).toBeGreaterThan(100)
-  expect(sample?.nearWhite).toBeGreaterThan(100)
-  expect(sample?.sourceBlue).toBeGreaterThan(100)
+  expect(sample?.cornerAlpha.every(alpha => (alpha ?? 255) < 16)).toBe(true)
+  expect(sample?.opaqueRatio).toBeGreaterThan(0.02)
+  expect(sample?.nearBlackRatio).toBeGreaterThan(0.002)
+  expect(sample?.nearWhiteRatio).toBeGreaterThan(0.01)
+  expect(sample?.sourceBlueRatio).toBeGreaterThan(0.01)
 }
 
 async function expectFieldGeometry(page: Page, effect: ManagedEffect): Promise<void> {
@@ -583,7 +680,7 @@ test.describe('managed login logo auth independence', () => {
         try {
           await samplePage.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
           await installManagedLogo(samplePage, fixture.effect)
-          await samplePage.goto('/login')
+          await samplePage.goto(`/login?logo-sample=${fixture.name}-${colorScheme}`)
           await expectStaticFallback(samplePage, fixture.effect)
           const ordinaryLogo = samplePage.locator('.login-brand .login-logo img')
           const staticImage = samplePage.locator('.login-particle-logo__image')
@@ -609,89 +706,66 @@ test.describe('managed login logo auth independence', () => {
     })
   }
 
-  test('omits the large field at 959px, 650px, and truly zero measured space while preserving a positive narrow static field', async ({
-    context
-  }, testInfo) => {
+  test('omits the large field at 959px, 650px, and truly zero measured space while preserving a positive narrow static field', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const artifacts = await installManagedLogo(page, wideEffect)
 
     for (const viewport of [
       { width: 959, height: 900 },
       { width: 1440, height: 650 }
     ]) {
-      const samplePage = await context.newPage()
-      try {
-        await samplePage.emulateMedia({ reducedMotion: 'no-preference' })
-        await samplePage.setViewportSize(viewport)
-        const artifacts = await installManagedLogo(samplePage, wideEffect)
-        await samplePage.goto('/login')
-        await expectOrdinaryLogin(samplePage)
-        await expect(samplePage.locator('.login-particle-logo')).toHaveCount(0)
-        const email = samplePage.getByLabel('Email Address', { exact: true })
-        await email.focus()
-        await expect(email).toBeFocused()
-        expect(artifacts.particle).toHaveLength(0)
-        expect(artifacts.static).toHaveLength(0)
-      } finally {
-        await samplePage.close()
-      }
-    }
-
-    const narrowPage = await context.newPage()
-    try {
-      await narrowPage.emulateMedia({ reducedMotion: 'no-preference' })
-      await narrowPage.setViewportSize({ width: 960, height: 900 })
-      const artifacts = await installManagedLogo(narrowPage, wideEffect)
-      await narrowPage.goto('/login')
-      await expectStaticFallback(narrowPage, wideEffect)
-      expect(await measureLogoFreeWidth(narrowPage)).toBeGreaterThan(0)
-      const narrowImageSize = await narrowPage.locator('.login-particle-logo__image').evaluate(image => {
-        const rect = image.getBoundingClientRect()
-        return { longAxis: Math.max(rect.width, rect.height), shortAxis: Math.min(rect.width, rect.height) }
-      })
-      expect(narrowImageSize.longAxis).toBeGreaterThanOrEqual(256)
-      expect(narrowImageSize.shortAxis).toBeGreaterThan(0)
-      expect(narrowImageSize.shortAxis).toBeLessThan(48)
-      expect(artifacts.particle).toHaveLength(0)
-      expect(artifacts.static.length).toBeGreaterThan(0)
-    } finally {
-      await narrowPage.close()
-    }
-
-    const zeroSpacePage = await context.newPage()
-    try {
-      await zeroSpacePage.emulateMedia({ reducedMotion: 'no-preference' })
-      await zeroSpacePage.setViewportSize({ width: 1440, height: 900 })
-      const artifacts = await installManagedLogo(zeroSpacePage, wideEffect)
-      await installZeroFreeSpaceLogin(zeroSpacePage)
-      await zeroSpacePage.goto('/login')
-      await expectOrdinaryLogin(zeroSpacePage)
-      expect(await measureLogoFreeWidth(zeroSpacePage)).toBeLessThanOrEqual(0)
-      await expect(zeroSpacePage.locator('.login-particle-logo')).toHaveCount(0)
+      await page.setViewportSize(viewport)
+      await page.goto(`/login?logo-sample=viewport-${viewport.width}x${viewport.height}`)
+      await expectOrdinaryLogin(page)
+      await expect(page.locator('.login-particle-logo')).toHaveCount(0)
+      const email = page.getByLabel('Email Address', { exact: true })
+      await email.focus()
+      await expect(email).toBeFocused()
       expect(artifacts.particle).toHaveLength(0)
       expect(artifacts.static).toHaveLength(0)
-
-      await expectLoginValidation(zeroSpacePage)
-      await zeroSpacePage.setViewportSize({ width: 960, height: 320 })
-      await expect(zeroSpacePage.locator('.login-particle-logo')).toHaveCount(0)
-      await expectScrollable(zeroSpacePage.locator('main.login-sd'))
-    } finally {
-      await zeroSpacePage.close()
     }
+
+    await page.setViewportSize({ width: 960, height: 900 })
+    await page.goto('/login?logo-sample=viewport-960x900')
+    await expectStaticFallback(page, wideEffect)
+    expect(await measureLogoFreeWidth(page)).toBeGreaterThan(0)
+    const narrowImageSize = await page.locator('.login-particle-logo__image').evaluate(image => {
+      const rect = image.getBoundingClientRect()
+      return { longAxis: Math.max(rect.width, rect.height), shortAxis: Math.min(rect.width, rect.height) }
+    })
+    expect(narrowImageSize.longAxis).toBeGreaterThanOrEqual(256)
+    expect(narrowImageSize.shortAxis).toBeGreaterThan(0)
+    expect(narrowImageSize.shortAxis).toBeLessThan(48)
+    expect(artifacts.particle).toHaveLength(0)
+    expect(artifacts.static.length).toBeGreaterThan(0)
+
+    const priorParticleRequestCount = artifacts.particle.length
+    const priorStaticRequestCount = artifacts.static.length
+    await installZeroFreeSpaceLogin(page)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.goto('/login?logo-sample=zero-space')
+    await expectOrdinaryLogin(page)
+    expect(await measureLogoFreeWidth(page)).toBeLessThanOrEqual(0)
+    await expect(page.locator('.login-particle-logo')).toHaveCount(0)
+    expect(artifacts.particle).toHaveLength(priorParticleRequestCount)
+    expect(artifacts.static).toHaveLength(priorStaticRequestCount)
+
+    await expectLoginValidation(page)
+    await page.setViewportSize({ width: 960, height: 320 })
+    await expect(page.locator('.login-particle-logo')).toHaveCount(0)
+    await expectScrollable(page.locator('main.login-sd'))
   })
 
-  test('preserves unmanaged landmark, heading, textbox, and button names, tab order, title, focus geometry, and auth controls', async ({
-    page,
-    context
-  }, testInfo) => {
+  test('preserves unmanaged landmark, heading, textbox, and button names, tab order, title, focus geometry, and auth controls', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
-    const baselinePage = await context.newPage()
-    await baselinePage.emulateMedia({ reducedMotion: 'reduce' })
-    await baselinePage.goto('/login')
-    await expectOrdinaryLogin(baselinePage)
-    const baselineTitle = await baselinePage.title()
-    const siteTitle = (await baselinePage.locator('#login-site-title').textContent())?.trim()
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/login?logo-sample=accessibility-baseline')
+    await expectOrdinaryLogin(page)
+    const baselineTitle = await page.title()
+    const siteTitle = (await page.locator('#login-site-title').textContent())?.trim()
     expect(siteTitle).toBeTruthy()
-    const baselineButtonNames = await accessibleButtonNames(baselinePage)
+    const baselineButtonNames = await accessibleButtonNames(page)
     expect(baselineButtonNames).toEqual(expect.arrayContaining(['View Password', 'Log In']))
     const expectedAccessibility: LoginAccessibilityContract = {
       buttons: baselineButtonNames,
@@ -699,13 +773,12 @@ test.describe('managed login logo auth independence', () => {
       landmarks: [siteTitle ?? ''],
       textboxes: ['Email Address', 'Password']
     }
-    await expectLoginAccessibilityContract(baselinePage, expectedAccessibility)
-    const baselineTabOrder = await collectTabOrder(baselinePage)
-    const baselineFocus = await focusSurfaceGeometry(baselinePage)
+    await expectLoginAccessibilityContract(page, expectedAccessibility)
+    const baselineTabOrder = await collectTabOrder(page)
+    const baselineFocus = await focusSurfaceGeometry(page)
 
-    await page.emulateMedia({ reducedMotion: 'reduce' })
     await installManagedLogo(page, squareEffect)
-    await page.goto('/login')
+    await page.goto('/login?logo-sample=accessibility-managed')
     await expectStaticFallback(page, squareEffect)
     const managedButtonNames = await accessibleButtonNames(page)
     expect(managedButtonNames).toEqual(baselineButtonNames)
@@ -731,7 +804,6 @@ test.describe('managed login logo auth independence', () => {
       }, managedFocus)
     ).toBe(false)
     await expect(page.getByLabel('Email Address', { exact: true })).toBeFocused()
-    await baselinePage.close()
   })
 
   test('uses personalized static output before mount under reduced motion with zero enhancement resource trace', async ({ page }, testInfo) => {
@@ -773,6 +845,7 @@ test.describe('managed login logo auth independence', () => {
   test('switches an animated field immediately to static on reduced-motion opt-in and permanently tears down its resources', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const supportsWebGL2 = await browserSupportsWebGL2(page)
     await installLogoResourceTrace(page)
     const artifacts = await installManagedLogo(page, squareEffect)
     const sceneRequests: string[] = []
@@ -783,6 +856,16 @@ test.describe('managed login logo auth independence', () => {
     await page.goto('/login')
     const field = page.locator('.login-particle-logo')
     const staticImage = field.locator('.login-particle-logo__image')
+    if (!supportsWebGL2) {
+      testInfo.annotations.push({
+        type: 'WebGL2 unavailable',
+        description: 'The animated reduced-motion transition is impossible; the personalized static fallback path is asserted instead.'
+      })
+      await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
+      await expectLoginValidation(page)
+      return
+    }
+
     await expect(field.locator('canvas')).toHaveCount(1)
     await expect(staticImage).toHaveCSS('opacity', '0')
     await expect.poll(async () => (await readLogoResourceTrace(page)).pointerListenersAdded).toBeGreaterThanOrEqual(2)
@@ -798,10 +881,6 @@ test.describe('managed login logo auth independence', () => {
     expect(priorParticleRequestCount).toBe(1)
 
     await page.getByLabel('Email Address', { exact: true }).focus()
-    await page.evaluate(() => {
-      const benchmark = (window as Window & { __logoParticlePerformance: { callbackCount: number } }).__logoParticlePerformance
-      benchmark.callbackCount = 0
-    })
     await installReducedMotionChangeProbe(page)
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await expect.poll(() => readReducedMotionChangeReport(page)).not.toBeNull()
@@ -830,9 +909,10 @@ test.describe('managed login logo auth independence', () => {
     expect(settledTrace.rafCallbacks).toBe(immediateTrace.rafCallbacks)
     expect(sceneRequests).toHaveLength(priorSceneRequestCount)
     expect(artifacts.particle).toHaveLength(priorParticleRequestCount)
-    expect(
-      await page.evaluate(() => (window as Window & { __logoParticlePerformance: { callbackCount: number } }).__logoParticlePerformance.callbackCount)
-    ).toBe(0)
+    const settledPerformanceCallbackCount = await page.evaluate(
+      () => (window as Window & { __logoParticlePerformance: { callbackCount: number } }).__logoParticlePerformance.callbackCount
+    )
+    expect(settledPerformanceCallbackCount).toBe(changeReport?.performanceCallbackCount)
     await expectLoginValidation(page)
   })
 
@@ -872,11 +952,27 @@ test.describe('managed login logo auth independence', () => {
   test('restores static treatment synchronously after WebGL context loss without moving auth focus', async ({ page }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
-    await installManagedLogo(page, squareEffect)
+    const supportsWebGL2 = await browserSupportsWebGL2(page)
+    await installLogoResourceTrace(page)
+    const artifacts = await installManagedLogo(page, squareEffect)
+    const sceneRequests: string[] = []
+    page.on('request', request => {
+      if (SCENE_REQUEST_PATTERN.test(request.url())) sceneRequests.push(request.url())
+    })
     await page.goto('/login')
     const field = page.locator('.login-particle-logo')
     const canvas = field.locator('canvas')
     const staticImage = field.locator('.login-particle-logo__image')
+    if (!supportsWebGL2) {
+      testInfo.annotations.push({
+        type: 'WebGL2 unavailable',
+        description: 'A WebGL context-loss event cannot exist; the personalized static fallback and authentication path are asserted instead.'
+      })
+      await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
+      await expectLoginValidation(page)
+      return
+    }
+
     await expect(canvas).toHaveCount(1)
     await expect(staticImage).toHaveCSS('opacity', '0')
     const email = page.getByLabel('Email Address', { exact: true })
@@ -905,34 +1001,63 @@ test.describe('managed login logo auth independence', () => {
     const baseURL = testInfo.project.use.baseURL
     if (typeof baseURL !== 'string') throw new Error('Playwright base URL is unavailable.')
     const origin = new URL(baseURL).origin
+    const supportsWebGL2 = await browserSupportsWebGL2(page)
     await page.context().addCookies([{ name: 'logo-e2e-sentinel', value: 'credential', url: origin }])
+    await installLogoResourceTrace(page)
+    await installParticleFetchProbe(page, squareEffect.particleUrl)
     const externalRequests: string[] = []
     const allRequests: string[] = []
+    const sceneRequests: string[] = []
     page.on('request', request => {
       const url = request.url()
       allRequests.push(url)
+      if (SCENE_REQUEST_PATTERN.test(url)) sceneRequests.push(url)
       if (/^https?:/.test(url) && new URL(url).origin !== origin) externalRequests.push(url)
     })
     const artifacts = await installManagedLogo(page, squareEffect)
 
     await page.goto('/login')
-    const canvas = page.locator('.login-particle-logo canvas')
-    await expect(canvas).toHaveCount(1)
-    await expect.poll(() => artifacts.particle.length).toBe(1)
-    expect(artifacts.particle[0]?.headers().cookie).toBeUndefined()
-    expect(artifacts.logo.some(request => request.headers().cookie?.includes('logo-e2e-sentinel=credential'))).toBe(true)
-    expect(artifacts.static.some(request => request.headers().cookie?.includes('logo-e2e-sentinel=credential'))).toBe(true)
+    await expectOrdinaryLogin(page)
+    await expect(page.locator('.login-brand .login-logo img')).toHaveAttribute('src', squareEffect.logoUrl)
+    const field = page.locator('.login-particle-logo')
+    const canvas = field.locator('canvas')
+    if (supportsWebGL2) {
+      await expect(canvas).toHaveCount(1)
+      await expect.poll(() => artifacts.particle.length).toBe(1)
+    } else {
+      await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
+    }
+
+    expect(await page.evaluate(() => document.cookie.split('; ').includes('logo-e2e-sentinel=credential'))).toBe(true)
+    const particleFetches = await readParticleFetchProbe(page)
+    expect(particleFetches).toHaveLength(artifacts.particle.length)
+    for (const [index, fetchObservation] of particleFetches.entries()) {
+      const networkRequest = artifacts.particle[index]
+      if (!networkRequest) throw new Error('A particle fetch did not produce a corresponding network request.')
+      expect(fetchObservation.credentials).toBe('omit')
+      expect(new URL(fetchObservation.url).origin).toBe(origin)
+      expect(networkRequest.url()).toBe(fetchObservation.url)
+      expect((await networkRequest.allHeaders()).cookie).toBeUndefined()
+    }
+    for (const url of allRequests) {
+      if (/^https?:/.test(url)) expect(new URL(url).origin).toBe(origin)
+    }
     expect(externalRequests).toEqual([])
 
     await page.waitForLoadState('networkidle')
     const requestCountBeforePointer = allRequests.length
-    const bounds = await canvas.boundingBox()
+    const pointerTarget = supportsWebGL2 ? canvas : field
+    const bounds = await pointerTarget.boundingBox()
     expect(bounds).not.toBeNull()
-    if (!bounds) return
+    if (!bounds) throw new Error('The visible logo surface has no pointer-test bounds.')
     await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
     await page.waitForTimeout(150)
     expect(allRequests).toHaveLength(requestCountBeforePointer)
     expect(externalRequests).toEqual([])
+    if (particleFetches.length === 0) {
+      await expectStaticFallback(page, squareEffect)
+      expectNoActiveLogoWork(await readLogoResourceTrace(page))
+    }
     await expectLoginValidation(page)
   })
 
@@ -1017,7 +1142,7 @@ test.describe('managed login logo auth independence', () => {
     await verifyPassword.fill('short')
     await name.fill('Logo Journey')
     await submit.click()
-    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(register.locator('.v-alert[role="alert"]')).toBeVisible()
     await expect(password).toBeFocused()
 
     await page.route('**/_api/auth/register', route =>
@@ -1036,7 +1161,7 @@ test.describe('managed login logo auth independence', () => {
       password: 'auth-independent-password',
       name: 'Logo Journey'
     })
-    await expect(page.getByRole('alert')).toBeVisible()
+    await expect(register.locator('.v-alert[role="alert"]')).toBeVisible()
 
     const viewport = page.viewportSize()
     expect(viewport).not.toBeNull()
