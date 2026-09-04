@@ -284,6 +284,7 @@
           #page-mobile-metadata.page-mobile-metadata
           Teleport(
             defer
+            :key='isTocMobile ? `mobile-tools` : winWidth < 1280 ? `tablet-tools` : `desktop-tools`'
             :to='isTocMobile ? `#page-mobile-tools` : `#page-desktop-rail`'
             :disabled='winWidth >= 600 && winWidth < 1280'
           )
@@ -508,6 +509,7 @@
 
           Teleport(
             defer
+            :key='isTocMobile ? `mobile-metadata` : winWidth < 1280 ? `tablet-metadata` : `desktop-metadata`'
             :to='isTocMobile ? `#page-mobile-metadata` : `#page-desktop-rail`'
             :disabled='winWidth >= 600 && winWidth < 1280'
           )
