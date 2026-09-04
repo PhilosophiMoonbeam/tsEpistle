@@ -9,6 +9,7 @@ const outputPath = process.env.LOGO_PARTICLE_PERFORMANCE_FILE ?? 'logo-particle-
 const viewport = { width: 1440, height: 900 }
 const deviceScaleFactor = 1.5
 const firstFrameRuns = 20
+const coldContextTeardownSettleMilliseconds = 250
 const firstFrameTimeoutMilliseconds = 2_000
 const warmUpMilliseconds = 2_000
 const animationSampleMilliseconds = 10_000
@@ -21,6 +22,8 @@ const thresholds = {
   activeImpulseMaximum: 4,
   animatedFrameP95Milliseconds: 20,
   animatedFrameP99Milliseconds: 34,
+  animatedFrameMinimumCoverageMilliseconds: 9_000,
+  animatedFrameMinimumIntervalSamples: 250,
   callbackCpuP95Milliseconds: 2,
   depthScaleMax: 1.18,
   depthScaleMin: 0.82,
@@ -377,6 +380,12 @@ function addExactViolation(violations: Violation[], invariant: string, measured:
   }
 }
 
+function addMinimumViolation(violations: Violation[], invariant: string, measured: number | null, minimum: number): void {
+  if (measured === null || !Number.isFinite(measured) || measured < minimum) {
+    violations.push({ invariant, measured, threshold: minimum })
+  }
+}
+
 function addMaximumViolation(violations: Violation[], invariant: string, measured: number | null, maximum: number): void {
   if (measured === null || !Number.isFinite(measured) || measured > maximum) {
     violations.push({ invariant, measured, threshold: maximum })
@@ -404,6 +413,9 @@ test('enforces pipeline-v4 managed login particle runtime budgets', async ({ bro
       firstFrameTimeouts += 1
     } finally {
       await context.close()
+      const { promise, resolve } = Promise.withResolvers<void>()
+      setTimeout(resolve, coldContextTeardownSettleMilliseconds)
+      await promise
     }
   }
 
@@ -466,6 +478,7 @@ test('enforces pipeline-v4 managed login particle runtime budgets', async ({ bro
   }
 
   const firstFrameP95Milliseconds = nearestRank(firstFrameSamplesMilliseconds, 0.95)
+  const animatedFrameCoverageMilliseconds = animation.frameIntervalsMilliseconds.reduce((total, interval) => total + interval, 0)
   const animatedFrameP95Milliseconds = nearestRank(animation.frameIntervalsMilliseconds, 0.95)
   const animatedFrameP99Milliseconds = nearestRank(animation.frameIntervalsMilliseconds, 0.99)
   const callbackCpuP95Milliseconds = nearestRank(animation.callbackCpuMilliseconds, 0.95)
@@ -473,6 +486,18 @@ test('enforces pipeline-v4 managed login particle runtime budgets', async ({ bro
   addExactViolation(violations, 'firstFrame.timeouts === 0', firstFrameTimeouts, thresholds.timeouts)
   addExactViolation(violations, 'firstFrame.samples.length === 20', firstFrameSamplesMilliseconds.length, firstFrameRuns)
   addMaximumViolation(violations, 'firstFrame.nearestRankP95Milliseconds <= 1500', firstFrameP95Milliseconds, thresholds.firstFrameP95Milliseconds)
+  addMinimumViolation(
+    violations,
+    'animation.frameIntervalSampleCount >= 250',
+    animation.frameIntervalsMilliseconds.length,
+    thresholds.animatedFrameMinimumIntervalSamples
+  )
+  addMinimumViolation(
+    violations,
+    'animation.frameCoverageMilliseconds >= 9000',
+    animatedFrameCoverageMilliseconds,
+    thresholds.animatedFrameMinimumCoverageMilliseconds
+  )
   addMaximumViolation(violations, 'animation.frameNearestRankP95Milliseconds <= 20', animatedFrameP95Milliseconds, thresholds.animatedFrameP95Milliseconds)
   addMaximumViolation(violations, 'animation.frameNearestRankP99Milliseconds <= 34', animatedFrameP99Milliseconds, thresholds.animatedFrameP99Milliseconds)
   addMaximumViolation(violations, 'animation.callbackCpuNearestRankP95Milliseconds <= 2', callbackCpuP95Milliseconds, thresholds.callbackCpuP95Milliseconds)
@@ -544,6 +569,8 @@ test('enforces pipeline-v4 managed login particle runtime budgets', async ({ bro
       inputSegmentCount: animationInput.segmentCount,
       inputPrimeSegmentCount: animationInput.primeSegmentCount,
       frameIntervalsMilliseconds: animation.frameIntervalsMilliseconds,
+      frameIntervalSampleCount: animation.frameIntervalsMilliseconds.length,
+      frameCoverageMilliseconds: animatedFrameCoverageMilliseconds,
       frameNearestRankP95Milliseconds: animatedFrameP95Milliseconds,
       frameNearestRankP99Milliseconds: animatedFrameP99Milliseconds,
       callbackCount: animation.callbackCount,
