@@ -9,15 +9,10 @@ attribute float logoSeed;
 uniform float uAspect;
 uniform vec3 uBackground;
 uniform float uDpr;
+uniform vec4 uImpulseDirectionTravel[4];
+uniform vec4 uImpulsePositionAge[4];
 uniform float uMedianStroke;
-uniform vec2 uPointer;
-uniform vec2 uPointerDirection;
-uniform float uPointerDisplacement;
-uniform float uPointerSpeed;
-uniform float uPointerStrength;
 uniform float uRenderedLongAxis;
-uniform float uSliceAlongRadius;
-uniform float uSliceAcrossRadius;
 uniform float uTime;
 uniform vec2 uViewport;
 
@@ -64,33 +59,57 @@ void main() {
   float idleScaleCss = clamp(idleAmplitudeCss * depthScale, 2.5, 7.0);
   vec2 idleCss = coherentFlow * idleScaleCss;
 
-  float directionLength = length(uPointerDirection);
-  vec2 bladeDirection = directionLength > 0.000001
-    ? uPointerDirection / directionLength
-    : vec2(1.0, 0.0);
-  vec2 bladeNormal = vec2(-bladeDirection.y, bladeDirection.x);
-  vec2 pointerDeltaCss = (basePosition - uPointer) * 0.5 * safeViewport;
-  float alongDistanceCss = dot(pointerDeltaCss, bladeDirection);
-  float acrossDistanceCss = dot(pointerDeltaCss, bladeNormal);
-  float alongFalloff = 1.0 - smoothstep(
-    0.0,
-    max(uSliceAlongRadius, 0.001),
-    abs(alongDistanceCss)
-  );
-  float acrossFalloff = 1.0 - smoothstep(
-    0.0,
-    max(uSliceAcrossRadius, 0.001),
-    abs(acrossDistanceCss)
-  );
-  float corridor = alongFalloff * acrossFalloff;
-  float centerSide = logoSeed < 0.5 ? -1.0 : 1.0;
-  float side = acrossDistanceCss == 0.0 ? centerSide : sign(acrossDistanceCss);
-  float sliceAmountCss = clamp(uPointerDisplacement, 10.0, 24.0)
-    * corridor
-    * clamp(uPointerStrength, 0.0, 1.0)
-    * smoothstep(0.0, 1.0, clamp(uPointerSpeed, 0.0, 1.0));
-  vec2 sliceCss = bladeNormal * side * sliceAmountCss;
-  vec2 position = basePosition + 2.0 * (idleCss + sliceCss) / safeViewport;
+  vec2 impulseCss = vec2(0.0);
+  for (int impulseIndex = 0; impulseIndex < 4; impulseIndex++) {
+    vec4 positionAge = uImpulsePositionAge[impulseIndex];
+    vec4 directionTravel = uImpulseDirectionTravel[impulseIndex];
+    if (positionAge.w < 0.5 || directionTravel.z <= 0.0) continue;
+
+    float ageSeconds = clamp(positionAge.z, 0.0, 0.9);
+    vec2 localCss = (basePosition - positionAge.xy) * 0.5 * safeViewport;
+    float distanceCss = length(localCss);
+    float radiusCss = clamp(directionTravel.w, 18.0, 32.0);
+    float primaryFalloff = 1.0 - smoothstep(0.2 * radiusCss, radiusCss, distanceCss);
+    float propagationStartCss = 0.85 * radiusCss;
+    float propagationEndCss = 2.1 * radiusCss;
+    float propagationFalloff = smoothstep(
+      propagationStartCss,
+      radiusCss,
+      distanceCss
+    ) * (1.0 - smoothstep(
+      radiusCss,
+      propagationEndCss,
+      distanceCss
+    ));
+    float lifetimeFade = 1.0 - smoothstep(0.72, 0.9, ageSeconds);
+    float seededFrequency = mix(9.0, 11.0, logoSeed);
+    float seededAmplitude = mix(0.9, 1.1, logoSeed);
+    float dampedSpring = seededAmplitude
+      * exp(-3.2 * ageSeconds)
+      * cos(seededFrequency * ageSeconds)
+      * lifetimeFade;
+    vec2 inputDirection = directionTravel.xy / max(length(directionTravel.xy), 0.000001);
+    vec2 outwardDirection = distanceCss > 0.000001
+      ? localCss / distanceCss
+      : vec2(cos(6.28318530718 * logoSeed), sin(6.28318530718 * logoSeed));
+    float propagationDelay = 0.08 + 0.18 * clamp(
+      (distanceCss - propagationStartCss) / max(propagationEndCss - propagationStartCss, 0.000001),
+      0.0,
+      1.0
+    );
+    float propagationLobe = smoothstep(
+      propagationDelay,
+      propagationDelay + 0.1,
+      ageSeconds
+    ) * exp(-3.2 * ageSeconds) * lifetimeFade;
+    impulseCss += directionTravel.z * (
+      inputDirection * primaryFalloff * dampedSpring
+      + outwardDirection * 0.18 * propagationFalloff * propagationLobe
+    );
+  }
+  float impulseMagnitude = length(impulseCss);
+  impulseCss *= impulseMagnitude > 8.0 ? 8.0 / impulseMagnitude : 1.0;
+  vec2 position = basePosition + 2.0 * (idleCss + impulseCss) / safeViewport;
 
   vec3 linearColor = srgbToLinear(logoColor.rgb);
   vec3 compositedColor = mix(uBackground, linearColor, logoColor.a);

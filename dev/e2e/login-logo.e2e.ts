@@ -47,6 +47,7 @@ const wideEffect = {
 }
 
 type ManagedEffect = typeof squareEffect | typeof wideEffect
+const PIPELINE_V4_RESERVED_SAMPLES_PER_COMPONENT = 4
 
 const crcTable = (() => {
   const table = new Uint32Array(256)
@@ -98,7 +99,8 @@ function createParticleFixture(effect: ManagedEffect): Buffer {
     [248, 248, 248, 244]
   ] as const
   for (let index = 0; index < count; index += 1) {
-    const component = index % 3
+    // The first four records of each meaningful color component are deterministic v4 reservations.
+    const component = index < 3 * PIPELINE_V4_RESERVED_SAMPLES_PER_COMPONENT ? Math.floor(index / PIPELINE_V4_RESERVED_SAMPLES_PER_COMPONENT) : index % 3
     const sequence = Math.floor(index / 3)
     const u = ((sequence * 73) % 997) / 996
     const v = ((sequence * 193) % 991) / 990
@@ -154,15 +156,27 @@ interface ParticleFetchObservation {
 }
 
 interface LogoMotionDiagnostics {
-  readonly elapsedSeconds: number
-  readonly particleCount: number
-  readonly pointerStrength: number
-  readonly pointerSpeed: number
-  readonly idleAmplitudeCss: number
-  readonly sliceDisplacementCss: number
-  readonly depthScaleMin: number
+  readonly activeImpulseCount: number
   readonly depthScaleMax: number
+  readonly depthScaleMin: number
+  readonly elapsedSeconds: number
+  readonly idleAmplitudeCss: number
+  readonly impulseLifetimeSeconds: number
+  readonly maxImpulseTravelCss: number
+  readonly neighborForceRatio: number
+  readonly particleCount: number
 }
+const motionDiagnosticKeys = [
+  'activeImpulseCount',
+  'depthScaleMax',
+  'depthScaleMin',
+  'elapsedSeconds',
+  'idleAmplitudeCss',
+  'impulseLifetimeSeconds',
+  'maxImpulseTravelCss',
+  'neighborForceRatio',
+  'particleCount'
+] as const
 
 interface LogoPerformanceHook {
   callbackCount: number
@@ -178,8 +192,12 @@ interface LogoRenderedFrame {
   readonly dataUrl: string
 }
 
+interface LogoFrameCaptureOptions {
+  readonly elapsedSeconds: number
+}
+
 interface LogoFrameCaptureHook {
-  request: (() => Promise<LogoRenderedFrame>) | null
+  request: ((options?: LogoFrameCaptureOptions) => Promise<LogoRenderedFrame>) | null
 }
 
 interface CapturedCanvasPng {
@@ -802,7 +820,8 @@ interface FrameAppearance {
 }
 
 interface FrameDifference {
-  readonly corridorMean: number
+  readonly annulusMean: number
+  readonly coreMean: number
   readonly mean: number
   readonly outsideMean: number
 }
@@ -813,10 +832,13 @@ async function decodeScreenshot(image: Buffer): Promise<RgbaFrame> {
   return { data: decoded.data, height: decoded.info.height, width: decoded.info.width }
 }
 const CANVAS_PNG_DATA_URL_PREFIX = 'data:image/png;base64,'
-
-async function captureLogoRenderedFrame(page: Page, pointerSample?: { readonly clientX: number; readonly clientY: number }): Promise<CapturedCanvasPng> {
+async function captureLogoRenderedFrame(
+  page: Page,
+  pointerSample?: { readonly clientX: number; readonly clientY: number },
+  elapsedSeconds?: number
+): Promise<CapturedCanvasPng> {
   const capture = await page.evaluate(
-    async ({ pointerSample }) => {
+    async ({ elapsedSeconds, pointerSample }) => {
       const field = document.querySelector('.login-particle-logo')
       const canvas = field?.querySelector('canvas')
       const hook = (
@@ -844,10 +866,10 @@ async function captureLogoRenderedFrame(page: Page, pointerSample?: { readonly c
         )
         impulseAt = performance.now()
       }
-      const renderedFrame = await request()
+      const renderedFrame = await request(elapsedSeconds === undefined ? undefined : { elapsedSeconds })
       return { ...renderedFrame, impulseAt }
     },
-    { pointerSample: pointerSample ?? null }
+    { elapsedSeconds, pointerSample: pointerSample ?? null }
   )
   if (!capture.dataUrl.startsWith(CANVAS_PNG_DATA_URL_PREFIX)) throw new Error('Expected a PNG canvas data URL.')
   if (!Number.isFinite(capture.capturedAt)) throw new Error('Expected a finite page capture timestamp.')
@@ -889,14 +911,12 @@ function analyzeFrame(frame: RgbaFrame): FrameAppearance {
   }
 }
 
-function compareFrames(
-  before: RgbaFrame,
-  after: RgbaFrame,
-  corridor?: { readonly across: number; readonly along: number; readonly x: number; readonly y: number }
-): FrameDifference {
+function compareFrames(before: RgbaFrame, after: RgbaFrame, influence?: { readonly radius: number; readonly x: number; readonly y: number }): FrameDifference {
   if (before.width !== after.width || before.height !== after.height) throw new Error('Particle screenshots changed dimensions.')
-  let corridorDifference = 0
-  let corridorSamples = 0
+  let coreDifference = 0
+  let coreSamples = 0
+  let annulusDifference = 0
+  let annulusSamples = 0
   let outsideDifference = 0
   let outsideSamples = 0
   let totalDifference = 0
@@ -908,19 +928,23 @@ function compareFrames(
         Math.abs((before.data[offset + 1] ?? 0) - (after.data[offset + 1] ?? 0)) +
         Math.abs((before.data[offset + 2] ?? 0) - (after.data[offset + 2] ?? 0))
       totalDifference += difference
-      if (!corridor) continue
-      const distance = ((x - corridor.x) / corridor.along) ** 2 + ((y - corridor.y) / corridor.across) ** 2
-      if (distance <= 1) {
-        corridorDifference += difference
-        corridorSamples += 1
-      } else if (distance >= 2.25) {
+      if (!influence) continue
+      const distance = Math.hypot(x - influence.x, y - influence.y)
+      if (distance <= influence.radius) {
+        coreDifference += difference
+        coreSamples += 1
+      } else if (distance > influence.radius && distance <= influence.radius * 2.1) {
+        annulusDifference += difference
+        annulusSamples += 1
+      } else if (distance >= influence.radius * 2.5) {
         outsideDifference += difference
         outsideSamples += 1
       }
     }
   }
   return {
-    corridorMean: corridorSamples === 0 ? 0 : corridorDifference / (corridorSamples * 3 * 255),
+    annulusMean: annulusSamples === 0 ? 0 : annulusDifference / (annulusSamples * 3 * 255),
+    coreMean: coreSamples === 0 ? 0 : coreDifference / (coreSamples * 3 * 255),
     mean: totalDifference / (before.width * before.height * 3 * 255),
     outsideMean: outsideSamples === 0 ? 0 : outsideDifference / (outsideSamples * 3 * 255)
   }
@@ -1213,7 +1237,9 @@ test.describe('managed login logo auth independence', () => {
     await expectLoginValidation(page)
   })
 
-  test('shows a lower-density volumetric idle field, a local swept slice, and sub-240ms refill without telemetry', async ({ page }, testInfo) => {
+  test('pipeline-v4 shows sparse circular impulse locality, propagation, bounded travel, and analytic spring settling without telemetry', async ({
+    page
+  }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     const supportsWebGL2 = await browserSupportsWebGL2(page)
@@ -1227,7 +1253,7 @@ test.describe('managed login logo auth independence', () => {
     })
     const artifacts = await installManagedLogo(page, squareEffect)
 
-    await page.goto('/login?logo-sample=motion')
+    await page.goto('/login?logo-sample=motion', { waitUntil: 'domcontentloaded' })
     await expectOrdinaryLogin(page)
     const ordinaryLogo = page.locator('.login-brand .login-logo img')
     await expect(ordinaryLogo).toHaveAttribute('src', squareEffect.logoUrl)
@@ -1237,7 +1263,7 @@ test.describe('managed login logo auth independence', () => {
     if (!supportsWebGL2) {
       testInfo.annotations.push({
         type: 'WebGL2 unavailable',
-        description: 'Volumetric motion cannot render; faithful ordinary branding and the static treatment remain asserted.'
+        description: 'Analytic motion cannot render; faithful ordinary branding and the static treatment remain asserted.'
       })
       await expectSettledLoadingFailure(page, squareEffect, sceneRequests, artifacts.particle)
       return
@@ -1251,96 +1277,91 @@ test.describe('managed login logo auth independence', () => {
 
     const idleMotion = await readLogoMotion(page)
     expect(idleMotion).not.toBeNull()
-    expect(idleMotion?.keys).toEqual([
-      'depthScaleMax',
-      'depthScaleMin',
-      'elapsedSeconds',
-      'idleAmplitudeCss',
-      'particleCount',
-      'pointerSpeed',
-      'pointerStrength',
-      'sliceDisplacementCss'
-    ])
+    expect(idleMotion?.keys).toEqual([...motionDiagnosticKeys].sort())
+    expect(squareEffect.count).toBeGreaterThanOrEqual(1_000)
+    expect(squareEffect.count).toBeLessThanOrEqual(4_000)
     expect(idleMotion?.diagnostics.particleCount).toBe(squareEffect.count)
-    expect(idleMotion?.diagnostics.particleCount).toBeLessThan(8_000)
-    expect(idleMotion?.diagnostics.pointerStrength).toBe(0)
-    expect(idleMotion?.diagnostics.pointerSpeed).toBe(0)
+    expect(idleMotion?.diagnostics.activeImpulseCount).toBe(0)
     expect(idleMotion?.diagnostics.idleAmplitudeCss).toBeGreaterThanOrEqual(2.5)
     expect(idleMotion?.diagnostics.idleAmplitudeCss).toBeLessThanOrEqual(7)
-    expect(idleMotion?.diagnostics.sliceDisplacementCss).toBeGreaterThanOrEqual(10)
-    expect(idleMotion?.diagnostics.sliceDisplacementCss).toBeLessThanOrEqual(24)
-    expect(idleMotion?.diagnostics.depthScaleMin).toBeGreaterThanOrEqual(0.82)
-    expect(idleMotion?.diagnostics.depthScaleMin).toBeLessThan(1)
-    expect(idleMotion?.diagnostics.depthScaleMax).toBeGreaterThan(1)
-    expect(idleMotion?.diagnostics.depthScaleMax).toBeLessThanOrEqual(1.18)
-    expect(idleMotion?.diagnostics.depthScaleMin).toBeLessThan(idleMotion?.diagnostics.depthScaleMax ?? 0)
+    expect(idleMotion?.diagnostics.impulseLifetimeSeconds).toBe(0.9)
+    expect(idleMotion?.diagnostics.depthScaleMin).toBe(0.82)
+    expect(idleMotion?.diagnostics.depthScaleMax).toBe(1.18)
+    const fixedShaderElapsedSeconds = 3.75
 
-    await page.waitForTimeout(80)
-    const idleBefore = await decodeScreenshot((await captureLogoRenderedFrame(page)).png)
     await page.waitForTimeout(120)
-    const idleAfter = await decodeScreenshot((await captureLogoRenderedFrame(page)).png)
-    const idleDifference = compareFrames(idleBefore, idleAfter)
-    const beforeAppearance = analyzeFrame(idleBefore)
-    const afterAppearance = analyzeFrame(idleAfter)
-    const centroidDrift = Math.hypot(afterAppearance.centroidX - beforeAppearance.centroidX, afterAppearance.centroidY - beforeAppearance.centroidY)
-    expect(idleDifference.mean).toBeGreaterThan(0.00001)
-    expect(idleDifference.mean).toBeLessThan(0.03)
-    expect(centroidDrift).toBeLessThan(Math.max(2, Math.min(idleAfter.width, idleAfter.height) * 0.01))
-    expect(afterAppearance.inkRatio).toBeGreaterThan(0.005)
-    expect(afterAppearance.inkRatio).toBeLessThan(0.48)
-
+    const idleBefore = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds)).png)
+    const appearance = analyzeFrame(idleBefore)
+    expect(appearance.inkRatio).toBeGreaterThan(0.002)
+    expect(appearance.inkRatio).toBeLessThan(0.32)
     await page.waitForLoadState('networkidle')
-    const requestCountBeforeSlice = requests.length
+    const requestCountBeforeImpulse = requests.length
+
     const bounds = await canvas.boundingBox()
     expect(bounds).not.toBeNull()
     if (!bounds) throw new Error('The animated logo has no pointer-test bounds.')
-    const sliceY = bounds.y + bounds.height * 0.52
-    await page.mouse.move(bounds.x + bounds.width * 0.2, sliceY)
-    await page.waitForTimeout(16)
-    await page.mouse.move(bounds.x + bounds.width * 0.4, sliceY)
-    await page.waitForTimeout(8)
-    const slicedCapture = await captureLogoRenderedFrame(page, {
-      clientX: bounds.x + bounds.width * 0.65,
-      clientY: sliceY
-    })
-    if (slicedCapture.impulseAt === null) throw new Error('The pointer capture did not record its page-clock impulse.')
-    const slicedFrame = await decodeScreenshot(slicedCapture.png)
-    const sliceMotion = await readLogoMotion(page)
-    expect(sliceMotion).not.toBeNull()
-    expect(sliceMotion?.diagnostics.pointerSpeed).toBeGreaterThan(0.5)
-    expect(sliceMotion?.diagnostics.pointerSpeed).toBeLessThanOrEqual(1)
-    expect(sliceMotion?.diagnostics.pointerStrength).toBeGreaterThan(0.05)
-    expect(sliceMotion?.diagnostics.pointerStrength).toBeLessThanOrEqual(1)
-    expect(sliceMotion?.diagnostics.sliceDisplacementCss).toBeGreaterThan((sliceMotion?.diagnostics.idleAmplitudeCss ?? Number.POSITIVE_INFINITY) * 1.4)
+    const pointerY = bounds.y + bounds.height * 0.52
+    const startX = bounds.x + bounds.width * 0.35
+    const travelCss = Math.min(48, bounds.width * 0.12)
+    const endX = startX + travelCss
+    await page.mouse.move(startX, pointerY)
+    await page.waitForTimeout(24)
+    const impulseCapture = await captureLogoRenderedFrame(page, { clientX: endX, clientY: pointerY }, fixedShaderElapsedSeconds)
+    if (impulseCapture.impulseAt === null) throw new Error('The pointer capture did not record its page-clock impulse.')
+    const impulseFrame = await decodeScreenshot(impulseCapture.png)
+    const impulseMotion = await readLogoMotion(page)
+    await page.waitForTimeout(180)
+    const propagationFrame = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds)).png)
+    expect(impulseMotion).not.toBeNull()
+    expect(impulseMotion?.diagnostics.activeImpulseCount).toBeGreaterThan(0)
+    expect(impulseMotion?.diagnostics.activeImpulseCount).toBeLessThanOrEqual(4)
+    expect(impulseMotion?.diagnostics.maxImpulseTravelCss).toBe(8)
+    expect(travelCss).toBeGreaterThan(12)
+    expect(Math.hypot(endX - startX, 0)).toBeGreaterThan(2)
+    expect(Math.hypot(endX - startX, 0)).toBeLessThanOrEqual(48)
 
-    const screenshotScale = slicedFrame.width / bounds.width
-    const renderedLongAxis = Math.min(bounds.width, bounds.height)
-    const acrossRadiusCss = Math.min(56, Math.max(28, 0.08 * renderedLongAxis))
-    const sliceCorridor = {
-      across: acrossRadiusCss * screenshotScale,
-      along: acrossRadiusCss * 1.8 * screenshotScale,
-      x: slicedFrame.width * 0.65,
-      y: slicedFrame.height * 0.52
+    const screenshotScale = impulseFrame.width / bounds.width
+    const radiusCss = Math.min(32, Math.max(18, 0.05 * Math.max(bounds.width, bounds.height)))
+    const influence = {
+      radius: radiusCss * screenshotScale,
+      x: (endX - bounds.x) * screenshotScale,
+      y: (pointerY - bounds.y) * screenshotScale
     }
-    const sliceDifference = compareFrames(idleAfter, slicedFrame, sliceCorridor)
-    expect(sliceDifference.mean).toBeGreaterThan(0.0001)
-    expect(sliceDifference.mean).toBeLessThan(0.12)
-    expect(sliceDifference.corridorMean).toBeGreaterThan(Math.max(0.0001, idleDifference.mean * 3))
-    expect(sliceDifference.corridorMean).toBeGreaterThan(sliceDifference.outsideMean * 2)
-    expect(requests).toHaveLength(requestCountBeforeSlice)
+    const immediateDifference = compareFrames(idleBefore, impulseFrame, influence)
+    expect(immediateDifference.mean).toBeGreaterThan(0.0001)
+    expect(immediateDifference.mean).toBeLessThan(0.12)
+    expect(immediateDifference.coreMean).toBeGreaterThan(0.0001)
 
-    const recoveryDeadline = slicedCapture.impulseAt + 240
-    await page.waitForFunction(deadline => performance.now() >= deadline, recoveryDeadline)
-    const recoveredCapture = await captureLogoRenderedFrame(page)
-    expect(recoveredCapture.capturedAt).toBeGreaterThanOrEqual(recoveryDeadline)
-    const recoveredFrame = await decodeScreenshot(recoveredCapture.png)
-    const recoveredMotion = await readLogoMotion(page)
-    expect(recoveredMotion).not.toBeNull()
-    expect(recoveredMotion?.diagnostics.pointerStrength).toBeLessThan(0.01)
-    const recoveredDifference = compareFrames(idleAfter, recoveredFrame, sliceCorridor)
-    expect(recoveredDifference.mean).toBeLessThan(Math.max(0.0001, idleDifference.mean * 3))
-    expect(recoveredDifference.corridorMean).toBeLessThan(sliceDifference.corridorMean * 0.5)
-    expect(requests).toHaveLength(requestCountBeforeSlice)
+    const propagationDifference = compareFrames(idleBefore, propagationFrame, influence)
+    expect(propagationDifference.mean).toBeGreaterThan(0.0001)
+    expect(propagationDifference.mean).toBeLessThan(0.12)
+    expect(propagationDifference.coreMean).toBeGreaterThan(0.0001)
+    expect(propagationDifference.annulusMean).toBeGreaterThan(0.00001)
+    expect(propagationDifference.coreMean).toBeGreaterThan(propagationDifference.annulusMean * 1.15)
+    expect(propagationDifference.annulusMean).toBeGreaterThan(propagationDifference.outsideMean * 1.1)
+
+    const at240Deadline = impulseCapture.impulseAt + 240
+    await page.waitForFunction(deadline => performance.now() >= deadline, at240Deadline)
+    const at240Capture = await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds)
+    const at240Frame = await decodeScreenshot(at240Capture.png)
+    const at240Motion = await readLogoMotion(page)
+    expect(at240Capture.capturedAt).toBeGreaterThanOrEqual(at240Deadline)
+    expect(at240Motion).not.toBeNull()
+    expect(at240Motion?.diagnostics.activeImpulseCount).toBeGreaterThan(0)
+    const at240Difference = compareFrames(idleBefore, at240Frame, influence)
+    expect(at240Difference.coreMean).toBeGreaterThan(0.00001)
+
+    const at900Deadline = impulseCapture.impulseAt + 900
+    await page.waitForFunction(deadline => performance.now() >= deadline, at900Deadline)
+    const at900Capture = await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds)
+    const at900Frame = await decodeScreenshot(at900Capture.png)
+    const at900Motion = await readLogoMotion(page)
+    expect(at900Capture.capturedAt).toBeGreaterThanOrEqual(at900Deadline)
+    expect(at900Motion).not.toBeNull()
+    expect(at900Motion?.diagnostics.activeImpulseCount).toBe(0)
+    const at900Difference = compareFrames(idleBefore, at900Frame, influence)
+    expect(at900Difference.coreMean).toBeLessThan(Math.max(0.0001, immediateDifference.coreMean * 0.5))
+    expect(requests).toHaveLength(requestCountBeforeImpulse)
     await expectLoginValidation(page)
   })
 

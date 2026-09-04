@@ -13,7 +13,12 @@ const firstFrameTimeoutMilliseconds = 2_000
 const warmUpMilliseconds = 2_000
 const animationSampleMilliseconds = 10_000
 const inactivitySampleMilliseconds = 2_000
+const animationInputCadenceMilliseconds = 200
+const animationInputSegmentCss = 6
+const animationInputPrimeSegmentCount = 4
+
 const thresholds = {
+  activeImpulseMaximum: 4,
   animatedFrameP95Milliseconds: 20,
   animatedFrameP99Milliseconds: 34,
   callbackCpuP95Milliseconds: 2,
@@ -24,18 +29,19 @@ const thresholds = {
   idleAmplitudeMaximumCss: 7,
   idleAmplitudeMinimumCss: 2.5,
   inactiveCallbackCount: 0,
+  impulseLifetimeSeconds: 0.9,
+  maxImpulseTravelCss: 8,
   motionParticleCount: 16_000,
-  pointerMaximum: 1,
-  pointerMinimum: 0,
+  neighborForceRatio: 0.18,
   retainedCanvasCount: 1,
-  sliceDisplacementMaximumCss: 24,
-  sliceDisplacementMinimumCss: 10,
   timeouts: 0
 } as const
 
 const logoUrl = `/_site-logo/${'1'.repeat(64)}/logo.png`
 const particleUrl = `/_site-logo/${'2'.repeat(64)}/particle.bin`
 const staticUrl = `/_site-logo/${'3'.repeat(64)}/effect.png`
+// The performance fixture intentionally exercises the parser's 16,000-record ceiling;
+// pipeline-v4 generators publish 1,000..4,000 records.
 const descriptor = {
   logoUrl,
   particleUrl,
@@ -53,25 +59,27 @@ const staticFixture =
   '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><circle cx="512" cy="512" r="448" fill="#336699"/><path d="M256 512h512M512 256v512" stroke="#fff" stroke-width="48"/></svg>'
 
 interface LogoMotionDiagnostics {
-  readonly elapsedSeconds: number
-  readonly particleCount: number
-  readonly pointerStrength: number
-  readonly pointerSpeed: number
-  readonly idleAmplitudeCss: number
-  readonly sliceDisplacementCss: number
-  readonly depthScaleMin: number
+  readonly activeImpulseCount: number
   readonly depthScaleMax: number
+  readonly depthScaleMin: number
+  readonly elapsedSeconds: number
+  readonly idleAmplitudeCss: number
+  readonly impulseLifetimeSeconds: number
+  readonly maxImpulseTravelCss: number
+  readonly neighborForceRatio: number
+  readonly particleCount: number
 }
 
 const motionDiagnosticKeys = [
+  'activeImpulseCount',
   'depthScaleMax',
   'depthScaleMin',
   'elapsedSeconds',
   'idleAmplitudeCss',
-  'particleCount',
-  'pointerSpeed',
-  'pointerStrength',
-  'sliceDisplacementCss'
+  'impulseLifetimeSeconds',
+  'maxImpulseTravelCss',
+  'neighborForceRatio',
+  'particleCount'
 ] as const
 
 interface BenchmarkState {
@@ -280,6 +288,52 @@ async function readMeasurements(page: Page): Promise<BenchmarkMeasurement> {
   })
 }
 
+async function primeAnimationInput(page: Page): Promise<number> {
+  const bounds = await page.locator('.login-particle-logo canvas').boundingBox()
+  if (!bounds) throw new Error('Particle canvas is unavailable for animation input')
+  const centerX = bounds.x + bounds.width / 2
+  const centerY = bounds.y + bounds.height / 2
+  const startX = centerX - animationInputSegmentCss / 2
+  const endX = centerX + animationInputSegmentCss / 2
+  if (startX < bounds.x || endX > bounds.x + bounds.width || centerY < bounds.y || centerY > bounds.y + bounds.height)
+    throw new Error('Animation input segment does not fit inside the particle canvas')
+
+  await page.mouse.move(startX, centerY)
+  for (let segment = 0; segment < animationInputPrimeSegmentCount; segment += 1) {
+    await page.mouse.move(segment % 2 === 0 ? endX : startX, centerY)
+  }
+  return animationInputPrimeSegmentCount
+}
+
+async function driveAnimationInput(page: Page): Promise<{ cadenceMilliseconds: number; segmentCount: number; segmentCss: number }> {
+  const bounds = await page.locator('.login-particle-logo canvas').boundingBox()
+  if (!bounds) throw new Error('Particle canvas is unavailable for animation input')
+  const centerX = bounds.x + bounds.width / 2
+  const centerY = bounds.y + bounds.height / 2
+  const startX = centerX - animationInputSegmentCss / 2
+  const endX = centerX + animationInputSegmentCss / 2
+  if (startX < bounds.x || endX > bounds.x + bounds.width || centerY < bounds.y || centerY > bounds.y + bounds.height)
+    throw new Error('Animation input segment does not fit inside the particle canvas')
+
+  await page.mouse.move(startX, centerY)
+  let segmentCount = 0
+  let nextX = endX
+  const segmentTotal = Math.ceil(animationSampleMilliseconds / animationInputCadenceMilliseconds)
+  for (let segment = 0; segment < segmentTotal; segment += 1) {
+    await page.mouse.move(nextX, centerY)
+    segmentCount += 1
+    nextX = nextX === endX ? startX : endX
+    if (segment + 1 < segmentTotal) await page.waitForTimeout(animationInputCadenceMilliseconds)
+  }
+  return {
+    cadenceMilliseconds: animationInputCadenceMilliseconds,
+    segmentCount,
+    segmentCss: animationInputSegmentCss
+  }
+}
+
+test.describe.configure({ retries: 0 })
+
 async function measureHidden(page: Page): Promise<InactivityMeasurement> {
   await page.evaluate(() => {
     const benchmarkWindow = window as BenchmarkWindow
@@ -320,23 +374,13 @@ async function measureOffscreen(page: Page): Promise<InactivityMeasurement> {
   }
 }
 
-function addMaximumViolation(violations: Violation[], invariant: string, measured: number | null, threshold: number): void {
-  if (measured === null || measured > threshold) violations.push({ invariant, measured, threshold })
-}
-
-function addExactViolation(violations: Violation[], invariant: string, measured: number, threshold: number): void {
-  if (measured !== threshold) violations.push({ invariant, measured, threshold })
-}
-
 function addRangeViolation(violations: Violation[], invariant: string, measured: number | null, minimum: number, maximum: number): void {
   if (measured === null || !Number.isFinite(measured) || measured < minimum || measured > maximum) {
     violations.push({ invariant, measured, threshold: maximum })
   }
 }
 
-test.describe.configure({ retries: 0 })
-
-test('enforces managed login particle runtime budgets', async ({ browser, browserName }, testInfo) => {
+test('enforces pipeline-v4 managed login particle runtime budgets', async ({ browser, browserName }, testInfo) => {
   test.skip(testInfo.project.name !== 'performance-desktop', 'Measured only by the performance-desktop project')
   test.setTimeout(120_000)
 
@@ -363,6 +407,12 @@ test('enforces managed login particle runtime budgets', async ({ browser, browse
     lastFrameAt: null,
     lastMotionKeys: null
   }
+  let animationInput = {
+    cadenceMilliseconds: animationInputCadenceMilliseconds,
+    segmentCount: 0,
+    segmentCss: animationInputSegmentCss,
+    primeSegmentCount: animationInputPrimeSegmentCount
+  }
   let animationSetupTimeouts = 0
   let hidden: InactivityMeasurement
   let offscreen: InactivityMeasurement
@@ -376,9 +426,15 @@ test('enforces managed login particle runtime budgets', async ({ browser, browse
       animationSetupTimeouts += 1
     }
     await page.waitForTimeout(warmUpMilliseconds)
+    const animationInputPrimeSegments = await primeAnimationInput(page)
     await resetMeasurements(page)
+    const animationInputPromise = driveAnimationInput(page)
     await page.waitForTimeout(animationSampleMilliseconds)
     animation = await readMeasurements(page)
+    animationInput = {
+      ...(await animationInputPromise),
+      primeSegmentCount: animationInputPrimeSegments
+    }
     actualDeviceScaleFactor = await page.evaluate(() => window.devicePixelRatio)
     hidden = await measureHidden(page)
     actualViewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
@@ -430,16 +486,8 @@ test('enforces managed login particle runtime budgets', async ({ browser, browse
     1
   )
   if (motion) {
-    addRangeViolation(violations, 'animation.lastMotion.elapsedSeconds is finite and nonnegative', motion.elapsedSeconds, 0, Number.MAX_SAFE_INTEGER)
-    addExactViolation(violations, 'animation.lastMotion.particleCount === 16000', motion.particleCount, thresholds.motionParticleCount)
-    addRangeViolation(
-      violations,
-      'animation.lastMotion.pointerStrength is within 0..1',
-      motion.pointerStrength,
-      thresholds.pointerMinimum,
-      thresholds.pointerMaximum
-    )
-    addRangeViolation(violations, 'animation.lastMotion.pointerSpeed is within 0..1', motion.pointerSpeed, thresholds.pointerMinimum, thresholds.pointerMaximum)
+    addExactViolation(violations, 'animation.lastMotion.activeImpulseCount === 4', motion.activeImpulseCount, thresholds.activeImpulseMaximum)
+    addExactViolation(violations, 'animation.lastMotion.particleCount === parser maximum 16000', motion.particleCount, thresholds.motionParticleCount)
     addRangeViolation(
       violations,
       'animation.lastMotion.idleAmplitudeCss is within 2.5..7',
@@ -447,13 +495,9 @@ test('enforces managed login particle runtime budgets', async ({ browser, browse
       thresholds.idleAmplitudeMinimumCss,
       thresholds.idleAmplitudeMaximumCss
     )
-    addRangeViolation(
-      violations,
-      'animation.lastMotion.sliceDisplacementCss is within 10..24',
-      motion.sliceDisplacementCss,
-      thresholds.sliceDisplacementMinimumCss,
-      thresholds.sliceDisplacementMaximumCss
-    )
+    addExactViolation(violations, 'animation.lastMotion.impulseLifetimeSeconds === 0.9', motion.impulseLifetimeSeconds, thresholds.impulseLifetimeSeconds)
+    addExactViolation(violations, 'animation.lastMotion.maxImpulseTravelCss === 8', motion.maxImpulseTravelCss, thresholds.maxImpulseTravelCss)
+    addExactViolation(violations, 'animation.lastMotion.neighborForceRatio === 0.18', motion.neighborForceRatio, thresholds.neighborForceRatio)
     addExactViolation(violations, 'animation.lastMotion.depthScaleMin === 0.82', motion.depthScaleMin, thresholds.depthScaleMin)
     addExactViolation(violations, 'animation.lastMotion.depthScaleMax === 1.18', motion.depthScaleMax, thresholds.depthScaleMax)
     addExactViolation(violations, 'animation.lastMotion depth diagnostics are ordered', motion.depthScaleMin < motion.depthScaleMax ? 1 : 0, 1)
@@ -486,6 +530,10 @@ test('enforces managed login particle runtime budgets', async ({ browser, browse
       warmUpMilliseconds,
       setupTimeouts: animationSetupTimeouts,
       sampleDurationMilliseconds: animationSampleMilliseconds,
+      inputCadenceMilliseconds: animationInput.cadenceMilliseconds,
+      inputSegmentCss: animationInput.segmentCss,
+      inputSegmentCount: animationInput.segmentCount,
+      inputPrimeSegmentCount: animationInput.primeSegmentCount,
       frameIntervalsMilliseconds: animation.frameIntervalsMilliseconds,
       frameNearestRankP95Milliseconds: animatedFrameP95Milliseconds,
       frameNearestRankP99Milliseconds: animatedFrameP99Milliseconds,

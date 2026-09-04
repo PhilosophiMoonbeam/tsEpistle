@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
-import { arch, cpus, platform, release, totalmem } from 'node:os'
+import { arch, cpus, platform, release, tmpdir, totalmem } from 'node:os'
+import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
+import { fileURLToPath } from 'node:url'
 import { deflateSync } from 'node:zlib'
 import sharp from 'sharp'
 
@@ -39,14 +41,21 @@ export interface SiteLogoProcessingEnvironment {
 
 export interface SiteLogoProcessingSample {
   durationMilliseconds: number
+  // Retained for the existing report gate; isolated samples contain an absolute process peak, not a baseline delta.
   peakRssDeltaBytes: number
   outcome: { status: 'accepted' } | { status: 'rejected'; errorCode: SiteLogoProcessingErrorCode }
+}
+
+export interface SiteLogoProcessingFixtureIdentity {
+  byteLength: number
+  sha256: string
 }
 
 export interface SiteLogoProcessingCaseInput {
   id: string
   category: CorpusCategory
   expected: ExpectedOutcome
+  fixture: SiteLogoProcessingFixtureIdentity
   samples: SiteLogoProcessingSample[]
 }
 
@@ -96,8 +105,9 @@ export interface SiteLogoProcessingBenchmarkReport {
   measurement: {
     concurrency: 1
     iterationsPerCase: number
+    processIsolation: 'fresh Bun child process per fixture iteration'
     wallClock: 'performance.now'
-    peakRss: 'maximum of sampled process RSS and process.resourceUsage maxRSS growth'
+    peakRss: 'absolute child process.resourceUsage().maxRSS converted from KiB to bytes on Linux'
   }
   thresholds: SiteLogoProcessingThresholds
   corpusWallMilliseconds: number
@@ -215,8 +225,9 @@ export const createSiteLogoProcessingBenchmarkReport = (input: SiteLogoProcessin
     measurement: {
       concurrency: SITE_LOGO_PROCESSING_CONCURRENCY,
       iterationsPerCase: input.iterationsPerCase,
+      processIsolation: 'fresh Bun child process per fixture iteration',
       wallClock: 'performance.now',
-      peakRss: 'maximum of sampled process RSS and process.resourceUsage maxRSS growth'
+      peakRss: 'absolute child process.resourceUsage().maxRSS converted from KiB to bytes on Linux'
     },
     thresholds: { ...input.thresholds },
     corpusWallMilliseconds: input.corpusWallMilliseconds,
@@ -265,12 +276,27 @@ const pngChunk = (type: string, data: Buffer): Buffer => {
   return chunk
 }
 
-const createAcceptedFixture = async (): Promise<Buffer> =>
-  await sharp({
-    create: { width: 512, height: 512, channels: 4, background: { r: 17, g: 83, b: 191, alpha: 1 } }
+const createAcceptedFixture = async (): Promise<Buffer> => {
+  const canvas = sharp({
+    create: { width: 512, height: 512, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } }
   })
+  const artwork = Buffer.from(`
+    <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+      <rect x="40" y="120" width="96" height="272" rx="48" fill="#2457c5"/>
+      <path
+        d="M256 72 352 256 256 440 160 256Z M256 188a68 68 0 1 0 0 136 68 68 0 1 0 0-136Z"
+        fill="#e86b35"
+        fill-rule="evenodd"
+      />
+      <circle cx="256" cy="256" r="26" fill="#f2c14e"/>
+      <rect x="376" y="120" width="96" height="272" rx="48" fill="#087f76"/>
+    </svg>
+  `)
+  return await canvas
+    .composite([{ input: artwork }])
     .png({ compressionLevel: 9, adaptiveFiltering: false })
     .toBuffer()
+}
 
 const createMalformedFixture = (): Buffer => Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
 
@@ -293,7 +319,7 @@ const createDecompressionBombFixture = (): Buffer => {
 
 const corpus = [
   {
-    id: 'accepted-opaque-png-badge',
+    id: 'accepted-transparent-chromatic-logo',
     category: 'accepted',
     expected: { status: 'accepted' },
     createFixture: createAcceptedFixture
@@ -317,38 +343,167 @@ const corpus = [
   createFixture: () => Buffer | Promise<Buffer>
 }>
 
+const CHILD_MODE_ARGUMENT = '--site-logo-processing-benchmark-child'
+const CHILD_OUTPUT_LIMIT_BYTES = 16 * 1024
+const CHILD_TIMEOUT_MILLISECONDS = SITE_LOGO_PROCESSING_DEFAULT_THRESHOLDS.maxCaseP95Milliseconds
+const SCRIPT_PATH = fileURLToPath(import.meta.url)
+
+interface ChildFixtureMeasurement extends SiteLogoProcessingSample {
+  fixture: SiteLogoProcessingFixtureIdentity
+}
+
+interface ChildResourceUsage {
+  // Bun.Subprocess.resourceUsage() normalizes maxRSS to bytes.
+  maxRSS: number
+}
+
+interface BenchmarkChildProcess {
+  stdout: ReadableStream<Uint8Array> | number | null | undefined
+  stderr: ReadableStream<Uint8Array> | number | null | undefined
+  exited: Promise<number>
+  kill(signal?: number | NodeJS.Signals): void
+  resourceUsage(): ChildResourceUsage | undefined
+}
+
+const fixtureIdentity = (bytes: Buffer): SiteLogoProcessingFixtureIdentity => ({
+  byteLength: bytes.byteLength,
+  sha256: createHash('sha256').update(bytes).digest('hex')
+})
+
+const maxRssKilobytesToBytes = (maxRssKilobytes: number): number => (Number.isFinite(maxRssKilobytes) && maxRssKilobytes >= 0 ? maxRssKilobytes * 1024 : 0)
+
 const safeErrorCode = (error: unknown): SiteLogoProcessingErrorCode => {
   if (error instanceof SiteLogoProcessingError && SITE_LOGO_PROCESSING_SAFE_ERROR_CODES.includes(error.code)) return error.code
   return 'PROCESSING_FAILED'
 }
 
-const measureFixture = async (bytes: Buffer): Promise<SiteLogoProcessingSample> => {
-  const sourceHash = createHash('sha256').update(bytes).digest('hex')
-  const rssBefore = process.memoryUsage().rss
-  const highWaterBefore = process.resourceUsage().maxRSS * 1024
-  let sampledPeakRss = rssBefore
-  const sampleRss = (): void => {
-    sampledPeakRss = Math.max(sampledPeakRss, process.memoryUsage().rss)
-  }
-  const sampler = setInterval(sampleRss, 5)
-  sampler.unref()
-  const startedAt = performance.now()
-  let outcome: SiteLogoProcessingSample['outcome']
+const runFixtureChild = async (fixturePath: string): Promise<void> => {
+  let measurement: ChildFixtureMeasurement
   try {
-    await processSiteLogoSource(bytes, sourceHash)
-    outcome = { status: 'accepted' }
-  } catch (error: unknown) {
-    outcome = { status: 'rejected', errorCode: safeErrorCode(error) }
-  } finally {
-    clearInterval(sampler)
-    sampleRss()
+    const bytes = await fs.readFile(fixturePath)
+    const fixture = fixtureIdentity(bytes)
+    const startedAt = performance.now()
+    let outcome: SiteLogoProcessingSample['outcome']
+    try {
+      await processSiteLogoSource(bytes, fixture.sha256)
+      outcome = { status: 'accepted' }
+    } catch (error: unknown) {
+      outcome = { status: 'rejected', errorCode: safeErrorCode(error) }
+    }
+    measurement = {
+      fixture,
+      durationMilliseconds: performance.now() - startedAt,
+      peakRssDeltaBytes: maxRssKilobytesToBytes(process.resourceUsage().maxRSS),
+      outcome
+    }
+  } catch {
+    measurement = {
+      fixture: { byteLength: 0, sha256: '' },
+      durationMilliseconds: 0,
+      peakRssDeltaBytes: maxRssKilobytesToBytes(process.resourceUsage().maxRSS),
+      outcome: { status: 'rejected', errorCode: 'PROCESSING_FAILED' }
+    }
   }
-  const durationMilliseconds = performance.now() - startedAt
-  const highWaterGrowth = Math.max(0, process.resourceUsage().maxRSS * 1024 - highWaterBefore)
+  process.stdout.write(`${JSON.stringify(measurement)}\n`)
+}
+
+const readBoundedChildOutput = async (stream: ReadableStream<Uint8Array>, limitBytes: number): Promise<string> => {
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let byteLength = 0
+  try {
+    while (true) {
+      const result = await reader.read()
+      if (result.done) break
+      byteLength += result.value.byteLength
+      if (byteLength > limitBytes) throw new Error('Site logo processing benchmark child output exceeded its limit')
+      chunks.push(result.value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return Buffer.concat(chunks, byteLength).toString('utf8')
+}
+
+const parseChildMeasurement = (serialized: string, expectedFixture: SiteLogoProcessingFixtureIdentity): SiteLogoProcessingSample | undefined => {
+  let candidate: unknown
+  try {
+    candidate = JSON.parse(serialized)
+  } catch {
+    return undefined
+  }
+  if (candidate === null || typeof candidate !== 'object') return undefined
+  const value = candidate as Partial<ChildFixtureMeasurement>
+  if (
+    value.fixture?.byteLength !== expectedFixture.byteLength ||
+    value.fixture.sha256 !== expectedFixture.sha256 ||
+    typeof value.durationMilliseconds !== 'number' ||
+    !Number.isFinite(value.durationMilliseconds) ||
+    value.durationMilliseconds < 0 ||
+    typeof value.peakRssDeltaBytes !== 'number' ||
+    !Number.isSafeInteger(value.peakRssDeltaBytes) ||
+    value.peakRssDeltaBytes < 0
+  ) {
+    return undefined
+  }
+  if (value.outcome?.status === 'accepted') {
+    return {
+      durationMilliseconds: value.durationMilliseconds,
+      peakRssDeltaBytes: value.peakRssDeltaBytes,
+      outcome: { status: 'accepted' }
+    }
+  }
+  if (value.outcome?.status === 'rejected' && SITE_LOGO_PROCESSING_SAFE_ERROR_CODES.includes(value.outcome.errorCode as SiteLogoProcessingErrorCode)) {
+    return {
+      durationMilliseconds: value.durationMilliseconds,
+      peakRssDeltaBytes: value.peakRssDeltaBytes,
+      outcome: { status: 'rejected', errorCode: value.outcome.errorCode as SiteLogoProcessingErrorCode }
+    }
+  }
+  return undefined
+}
+
+const failedChildSample = (startedAt: number, resourceUsage?: ChildResourceUsage): SiteLogoProcessingSample => {
+  const peakRssBytes = resourceUsage !== undefined && Number.isSafeInteger(resourceUsage.maxRSS) && resourceUsage.maxRSS >= 0 ? resourceUsage.maxRSS : 0
   return {
-    durationMilliseconds,
-    peakRssDeltaBytes: Math.max(0, sampledPeakRss - rssBefore, highWaterGrowth),
-    outcome
+    durationMilliseconds: performance.now() - startedAt,
+    peakRssDeltaBytes: peakRssBytes,
+    outcome: { status: 'rejected', errorCode: 'PROCESSING_FAILED' }
+  }
+}
+
+const measureFixture = async (fixturePath: string, expectedFixture: SiteLogoProcessingFixtureIdentity): Promise<SiteLogoProcessingSample> => {
+  const startedAt = performance.now()
+  let child: BenchmarkChildProcess | undefined
+  try {
+    child = Bun.spawn([process.execPath, SCRIPT_PATH, CHILD_MODE_ARGUMENT, fixturePath], {
+      env: process.env,
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'pipe',
+      timeout: CHILD_TIMEOUT_MILLISECONDS,
+      killSignal: 'SIGKILL',
+      maxBuffer: CHILD_OUTPUT_LIMIT_BYTES
+    }) as BenchmarkChildProcess
+    const stdout = child.stdout as ReadableStream<Uint8Array>
+    const stderr = child.stderr as ReadableStream<Uint8Array>
+    const [serialized, , exitCode] = await Promise.all([
+      readBoundedChildOutput(stdout, CHILD_OUTPUT_LIMIT_BYTES),
+      readBoundedChildOutput(stderr, CHILD_OUTPUT_LIMIT_BYTES),
+      child.exited
+    ])
+    if (exitCode !== 0) return failedChildSample(startedAt, child.resourceUsage())
+    return parseChildMeasurement(serialized, expectedFixture) ?? failedChildSample(startedAt, child.resourceUsage())
+  } catch {
+    if (child !== undefined) {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        // The child can exit between a stream failure and this best-effort kill.
+      }
+      await child.exited
+    }
+    return failedChildSample(startedAt, child?.resourceUsage())
   }
 }
 
@@ -365,30 +520,51 @@ const environmentMetadata = (): SiteLogoProcessingEnvironment => {
 
 export const runSiteLogoProcessingBenchmark = async (): Promise<void> => {
   const outputPath = process.env.SITE_LOGO_PROCESSING_BENCHMARK_FILE ?? 'site-logo-processing-benchmark.json'
-  const cases: SiteLogoProcessingCaseInput[] = []
-  const corpusStartedAt = performance.now()
-  for (const specification of corpus) {
-    const bytes = await specification.createFixture()
-    const samples: SiteLogoProcessingSample[] = []
-    for (let iteration = 0; iteration < SITE_LOGO_PROCESSING_ITERATIONS; iteration += 1) {
-      samples.push(await measureFixture(bytes))
+  const fixtureDirectory = await fs.mkdtemp(join(tmpdir(), 'wiki-site-logo-processing-benchmark-fixtures-'))
+  try {
+    const materializedCorpus: Array<{
+      specification: (typeof corpus)[number]
+      fixture: SiteLogoProcessingFixtureIdentity
+      fixturePath: string
+    }> = []
+    for (const [index, specification] of corpus.entries()) {
+      const bytes = await specification.createFixture()
+      const fixture = fixtureIdentity(bytes)
+      const fixturePath = join(fixtureDirectory, `${index}.fixture`)
+      await fs.writeFile(fixturePath, bytes, { flag: 'wx' })
+      materializedCorpus.push({ specification, fixture, fixturePath })
     }
-    cases.push({
-      id: specification.id,
-      category: specification.category,
-      expected: specification.expected,
-      samples
+
+    const cases: SiteLogoProcessingCaseInput[] = []
+    const corpusStartedAt = performance.now()
+    for (const { specification, fixture, fixturePath } of materializedCorpus) {
+      const samples: SiteLogoProcessingSample[] = []
+      for (let iteration = 0; iteration < SITE_LOGO_PROCESSING_ITERATIONS; iteration += 1) {
+        samples.push(await measureFixture(fixturePath, fixture))
+      }
+      cases.push({
+        id: specification.id,
+        category: specification.category,
+        expected: specification.expected,
+        fixture,
+        samples
+      })
+    }
+    const report = createSiteLogoProcessingBenchmarkReport({
+      generatedAt: new Date().toISOString(),
+      environment: environmentMetadata(),
+      thresholds: { ...SITE_LOGO_PROCESSING_DEFAULT_THRESHOLDS },
+      iterationsPerCase: SITE_LOGO_PROCESSING_ITERATIONS,
+      corpusWallMilliseconds: performance.now() - corpusStartedAt,
+      cases
     })
+    await publishSiteLogoProcessingBenchmarkReport(report, outputPath)
+  } finally {
+    await fs.rm(fixtureDirectory, { recursive: true, force: true })
   }
-  const report = createSiteLogoProcessingBenchmarkReport({
-    generatedAt: new Date().toISOString(),
-    environment: environmentMetadata(),
-    thresholds: { ...SITE_LOGO_PROCESSING_DEFAULT_THRESHOLDS },
-    iterationsPerCase: SITE_LOGO_PROCESSING_ITERATIONS,
-    corpusWallMilliseconds: performance.now() - corpusStartedAt,
-    cases
-  })
-  await publishSiteLogoProcessingBenchmarkReport(report, outputPath)
 }
 
-if (import.meta.main) await runSiteLogoProcessingBenchmark()
+if (import.meta.main) {
+  if (process.argv[2] === CHILD_MODE_ARGUMENT) await runFixtureChild(process.argv[3] ?? '')
+  else await runSiteLogoProcessingBenchmark()
+}

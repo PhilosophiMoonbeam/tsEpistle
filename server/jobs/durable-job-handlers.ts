@@ -84,7 +84,8 @@ export const createDurableJobHandlers = (
   Object.freeze({
     'cleanup-durable-jobs@1': cleanupDurableJobs,
     'cleanup-site-logo@1': cleanupSiteLogoRevisions,
-    'process-site-logo@1': createSiteLogoProcessHandler(),
+    'process-site-logo@1': createSiteLogoProcessHandler(1),
+    'process-site-logo@2': createSiteLogoProcessHandler(2),
     'rerender-content-extension@1': createContentExtensionRerenderHandler(wiki),
     'deliver-webhook@1': createWebhookDeliveryHandler(sessionSecret),
     'notify-page-watcher@1': createPageWatchNotificationHandler(wiki)

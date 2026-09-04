@@ -30,27 +30,30 @@ const environment: SiteLogoProcessingEnvironment = {
 const samples = (outcome: SiteLogoProcessingSample['outcome'], durations = [10, 20, 30]): SiteLogoProcessingSample[] =>
   durations.map((durationMilliseconds, index) => ({
     durationMilliseconds,
-    peakRssDeltaBytes: (index + 1) * 1024,
+    peakRssDeltaBytes: (128 + index) * 1024 * 1024,
     outcome
   }))
 
 const cases = (): SiteLogoProcessingCaseInput[] => [
   {
-    id: 'accepted-opaque-png-badge',
+    id: 'accepted-transparent-chromatic-logo',
     category: 'accepted',
     expected: { status: 'accepted' },
+    fixture: { byteLength: 12_345, sha256: 'a'.repeat(64) },
     samples: samples({ status: 'accepted' })
   },
   {
     id: 'malformed-truncated-png',
     category: 'malformed',
     expected: { status: 'rejected', errorCodes: ['INVALID_IMAGE'] },
+    fixture: { byteLength: 8, sha256: 'b'.repeat(64) },
     samples: samples({ status: 'rejected', errorCode: 'INVALID_IMAGE' })
   },
   {
     id: 'decompression-bomb-4097x4095-grayscale-png',
     category: 'decompression-bomb',
     expected: { status: 'rejected', errorCodes: ['INVALID_IMAGE', 'IMAGE_TOO_LARGE'] },
+    fixture: { byteLength: 67_890, sha256: 'c'.repeat(64) },
     samples: samples({ status: 'rejected', errorCode: 'IMAGE_TOO_LARGE' })
   }
 ]
@@ -77,7 +80,7 @@ afterEach(async () => {
 })
 
 describe('site logo processing benchmark evidence', () => {
-  it('uses nearest-rank summaries and deterministically records the complete concurrency-one corpus', () => {
+  it('records exact fixture identities and isolated absolute child-process peak RSS with nearest-rank summaries', () => {
     const values = [20, 1, 19, 2, 18, 3, 17, 4, 16, 5, 15, 6, 14, 7, 13, 8, 12, 9, 11, 10]
 
     expect(nearestRankPercentile(values, 0.5)).toBe(10)
@@ -90,13 +93,32 @@ describe('site logo processing benchmark evidence', () => {
 
     expect(second).toEqual(first)
     expect(first.status).toBe('passed')
-    expect(first.measurement).toMatchObject({ concurrency: 1, iterationsPerCase: 3 })
+    expect(first.measurement).toEqual({
+      concurrency: 1,
+      iterationsPerCase: 3,
+      processIsolation: 'fresh Bun child process per fixture iteration',
+      wallClock: 'performance.now',
+      peakRss: 'absolute child process.resourceUsage().maxRSS converted from KiB to bytes on Linux'
+    })
     expect(first.cases.map(result => ({ id: result.id, category: result.category, status: result.status }))).toEqual([
-      { id: 'accepted-opaque-png-badge', category: 'accepted', status: 'passed' },
+      { id: 'accepted-transparent-chromatic-logo', category: 'accepted', status: 'passed' },
       { id: 'malformed-truncated-png', category: 'malformed', status: 'passed' },
       { id: 'decompression-bomb-4097x4095-grayscale-png', category: 'decompression-bomb', status: 'passed' }
     ])
+    expect(first.cases.map(result => result.fixture)).toEqual([
+      { byteLength: 12_345, sha256: 'a'.repeat(64) },
+      { byteLength: 8, sha256: 'b'.repeat(64) },
+      { byteLength: 67_890, sha256: 'c'.repeat(64) }
+    ])
     expect(first.cases[0]?.durationMilliseconds).toEqual({ samples: 3, minimum: 10, p50: 20, p95: 30, p99: 30, maximum: 30 })
+    expect(first.cases[0]?.peakRssDeltaBytes).toEqual({
+      samples: 3,
+      minimum: 128 * 1024 * 1024,
+      p50: 129 * 1024 * 1024,
+      p95: 130 * 1024 * 1024,
+      p99: 130 * 1024 * 1024,
+      maximum: 130 * 1024 * 1024
+    })
     expect(first.cases.every(result => result.samples.length === 3 && result.thresholdViolations.length === 0)).toBe(true)
   })
 

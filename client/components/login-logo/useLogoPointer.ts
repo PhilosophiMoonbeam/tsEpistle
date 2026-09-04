@@ -2,25 +2,37 @@ import type { MaybeRefOrGetter } from 'vue'
 import { onBeforeUnmount, toValue, watch } from 'vue'
 
 const FINE_POINTER_MEDIA = '(hover: hover) and (pointer: fine)'
-const DECAY_DURATION_MS = 240
-const MIN_POINTER_SPEED_PX_PER_MS = 0.05
-const POINTER_SPEED_RANGE_PX_PER_MS = 0.85
 const LISTENER_OPTIONS: AddEventListenerOptions = Object.freeze({ passive: true })
 
-export interface LogoPointerState {
-  x: number
-  y: number
+export const LOGO_POINTER_IMPULSE_CAPACITY = 4
+export const LOGO_POINTER_IMPULSE_LIFETIME_SECONDS = 0.9
+export const LOGO_POINTER_MAX_SEGMENT_CSS = 12
+export const LOGO_POINTER_MAX_TRAVEL_CSS = 8
+export const LOGO_POINTER_NEIGHBOR_FORCE_RATIO = 0.18
+const LOGO_POINTER_MIN_SEGMENT_CSS = 2
+const MIN_INFLUENCE_RADIUS_CSS = 18
+const MAX_INFLUENCE_RADIUS_CSS = 32
+
+export interface LogoPointerImpulse {
+  active: boolean
+  ageSeconds: number
   directionX: number
   directionY: number
-  speed: number
-  strength: number
-  alongRadiusCss: number
-  acrossRadiusCss: number
-  displacementCss: number
+  radiusCss: number
+  travelCss: number
+  x: number
+  y: number
+}
+
+type LogoPointerImpulseRing = readonly [LogoPointerImpulse, LogoPointerImpulse, LogoPointerImpulse, LogoPointerImpulse]
+
+export interface LogoPointerState {
+  activeImpulseCount: number
+  influenceRadiusCss: number
+  readonly impulses: LogoPointerImpulseRing
 }
 
 export interface LogoPointerControllerOptions {
-  readonly medianStroke: number
   readonly now?: () => number
   readonly hasFinePointer?: () => boolean
 }
@@ -33,57 +45,44 @@ export interface UseLogoPointerOptions extends LogoPointerControllerOptions {
 
 const clamp = (minimum: number, value: number, maximum: number): number => Math.min(maximum, Math.max(minimum, value))
 
-const applyLogoPointerMotionMetrics = (
-  state: Pick<LogoPointerState, 'alongRadiusCss' | 'acrossRadiusCss' | 'displacementCss'>,
-  medianStroke: number,
-  renderedLongAxis: number
-): void => {
+export const logoPointerInfluenceRadius = (renderedLongAxis: number): number => {
   const safeLongAxis = Number.isFinite(renderedLongAxis) ? Math.max(0, renderedLongAxis) : 0
-  const safeMedianStroke = Number.isFinite(medianStroke) ? Math.max(0, medianStroke) : 0
-  const displayedStroke = (safeMedianStroke * safeLongAxis) / 1024
-  state.acrossRadiusCss = clamp(28, 0.08 * safeLongAxis, 56)
-  state.alongRadiusCss = 1.8 * state.acrossRadiusCss
-  state.displacementCss = clamp(10, displayedStroke, 24)
+  return clamp(MIN_INFLUENCE_RADIUS_CSS, 0.05 * safeLongAxis, MAX_INFLUENCE_RADIUS_CSS)
 }
 
-export const logoPointerMotionMetrics = (
-  medianStroke: number,
-  renderedLongAxis: number
-): Pick<LogoPointerState, 'alongRadiusCss' | 'acrossRadiusCss' | 'displacementCss'> => {
-  const metrics = { alongRadiusCss: 50.4, acrossRadiusCss: 28, displacementCss: 10 }
-  applyLogoPointerMotionMetrics(metrics, medianStroke, renderedLongAxis)
-  return metrics
-}
+const createImpulse = (): LogoPointerImpulse => ({
+  active: false,
+  ageSeconds: 0,
+  directionX: 1,
+  directionY: 0,
+  radiusCss: MIN_INFLUENCE_RADIUS_CSS,
+  travelCss: 0,
+  x: 0,
+  y: 0
+})
 
 export class LogoPointerController {
   readonly state: LogoPointerState = {
-    x: 0,
-    y: 0,
-    directionX: 1,
-    directionY: 0,
-    speed: 0,
-    strength: 0,
-    alongRadiusCss: 50.4,
-    acrossRadiusCss: 28,
-    displacementCss: 10
+    activeImpulseCount: 0,
+    influenceRadiusCss: MIN_INFLUENCE_RADIUS_CSS,
+    impulses: [createImpulse(), createImpulse(), createImpulse(), createImpulse()]
   }
 
   private active = false
   private attached = false
   private disposed = false
   private lastRenderedLongAxis = Number.NaN
-  private lastMotionTime: number | null = null
   private lastSampleX = 0
   private lastSampleY = 0
   private lastSampleTime: number | null = null
+  private nextImpulseIndex = 0
   private target: HTMLElement | null = null
   private coordinateTarget: HTMLElement | null = null
   private readonly hasFinePointer: () => boolean
-  private readonly medianStroke: number
+  private readonly impulseStartedAtMilliseconds = new Float64Array(LOGO_POINTER_IMPULSE_CAPACITY)
   private readonly now: () => number
 
-  constructor(options: LogoPointerControllerOptions) {
-    this.medianStroke = options.medianStroke
+  constructor(options: LogoPointerControllerOptions = {}) {
     this.now = options.now ?? (() => performance.now())
     const finePointerQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(FINE_POINTER_MEDIA) : null
     this.hasFinePointer = options.hasFinePointer ?? (() => finePointerQuery?.matches === true)
@@ -93,34 +92,34 @@ export class LogoPointerController {
     if (this.disposed || target === this.target) return
     this.detach()
     this.target = target
-    this.reset()
+    this.clear()
     this.attach()
   }
 
   setCoordinateTarget(target: HTMLElement | null): void {
     if (this.disposed || target === this.coordinateTarget) return
     this.coordinateTarget = target
-    this.reset()
+    this.clear()
   }
 
   setActive(active: boolean): void {
     if (this.disposed || active === this.active) return
     this.active = active
     if (active) {
-      this.reset()
+      this.clear()
       this.attach()
     } else {
       this.detach()
-      this.reset()
+      this.clear()
     }
   }
 
   update(renderedLongAxis: number, time = this.now()): LogoPointerState {
     if (renderedLongAxis !== this.lastRenderedLongAxis) {
-      applyLogoPointerMotionMetrics(this.state, this.medianStroke, renderedLongAxis)
+      this.state.influenceRadiusCss = logoPointerInfluenceRadius(renderedLongAxis)
       this.lastRenderedLongAxis = renderedLongAxis
     }
-    this.decayTo(time)
+    this.ageImpulses(time)
     return this.state
   }
 
@@ -131,7 +130,7 @@ export class LogoPointerController {
     this.coordinateTarget = null
     this.target = null
     this.active = false
-    this.reset()
+    this.clear()
   }
 
   private attach(): void {
@@ -150,27 +149,62 @@ export class LogoPointerController {
     this.attached = false
   }
 
-  private decayTo(time: number): void {
-    if (this.lastMotionTime === null || this.state.strength === 0 || !Number.isFinite(time)) return
-    const elapsed = Math.max(0, time - this.lastMotionTime)
-    const remaining = clamp(0, 1 - elapsed / DECAY_DURATION_MS, 1)
-    this.state.strength = remaining * remaining
-    if (this.state.strength === 0) this.reset(true)
+  private ageImpulses(time: number): void {
+    if (!Number.isFinite(time)) return
+    let activeImpulseCount = 0
+    for (let index = 0; index < LOGO_POINTER_IMPULSE_CAPACITY; index += 1) {
+      const impulse = this.state.impulses[index]
+      if (!impulse.active) continue
+      const ageSeconds = Math.max(0, time - this.impulseStartedAtMilliseconds[index]) / 1000
+      if (ageSeconds >= LOGO_POINTER_IMPULSE_LIFETIME_SECONDS) {
+        impulse.active = false
+        impulse.ageSeconds = LOGO_POINTER_IMPULSE_LIFETIME_SECONDS
+        continue
+      }
+      impulse.ageSeconds = ageSeconds
+      activeImpulseCount += 1
+    }
+    this.state.activeImpulseCount = activeImpulseCount
+    if (activeImpulseCount === 0) this.nextImpulseIndex = 0
   }
 
-  private reset(preserveSampleHistory = false): void {
-    this.state.x = 0
-    this.state.y = 0
-    this.state.directionX = 1
-    this.state.directionY = 0
-    this.state.speed = 0
-    this.state.strength = 0
-    this.lastMotionTime = null
-    if (!preserveSampleHistory) {
-      this.lastSampleTime = null
-      this.lastSampleX = 0
-      this.lastSampleY = 0
+  private clear(): void {
+    this.state.activeImpulseCount = 0
+    this.state.influenceRadiusCss = MIN_INFLUENCE_RADIUS_CSS
+    this.lastRenderedLongAxis = Number.NaN
+    this.lastSampleTime = null
+    this.lastSampleX = 0
+    this.lastSampleY = 0
+    this.nextImpulseIndex = 0
+    for (let index = 0; index < LOGO_POINTER_IMPULSE_CAPACITY; index += 1) {
+      const impulse = this.state.impulses[index]
+      impulse.active = false
+      impulse.ageSeconds = 0
+      impulse.directionX = 1
+      impulse.directionY = 0
+      impulse.radiusCss = MIN_INFLUENCE_RADIUS_CSS
+      impulse.travelCss = 0
+      impulse.x = 0
+      impulse.y = 0
+      this.impulseStartedAtMilliseconds[index] = 0
     }
+  }
+
+  private recordImpulse(clientX: number, clientY: number, bounds: DOMRect, deltaX: number, deltaY: number, travelCss: number, time: number): void {
+    const index = this.nextImpulseIndex
+    const impulse = this.state.impulses[index]
+    const inverseTravel = 1 / travelCss
+    impulse.active = true
+    impulse.ageSeconds = 0
+    impulse.directionX = clamp(-1, deltaX * inverseTravel, 1)
+    impulse.directionY = clamp(-1, deltaY * inverseTravel, 1)
+    impulse.radiusCss = this.state.influenceRadiusCss
+    impulse.travelCss = Math.min(travelCss, LOGO_POINTER_MAX_SEGMENT_CSS)
+    impulse.x = clamp(-1, (2 * (clientX - bounds.left)) / bounds.width - 1, 1)
+    impulse.y = clamp(-1, 1 - (2 * (clientY - bounds.top)) / bounds.height, 1)
+    this.impulseStartedAtMilliseconds[index] = time
+    this.nextImpulseIndex = (index + 1) % LOGO_POINTER_IMPULSE_CAPACITY
+    this.state.activeImpulseCount = Math.min(LOGO_POINTER_IMPULSE_CAPACITY, this.state.activeImpulseCount + 1)
   }
 
   private readonly onPointerMove = (event: PointerEvent): void => {
@@ -204,43 +238,20 @@ export class LogoPointerController {
 
     const motionTime = this.now()
     if (!Number.isFinite(motionTime)) return
+    this.ageImpulses(motionTime)
 
-    const lastSampleTime = this.lastSampleTime
-    const isFirstSample = lastSampleTime === null
-    let sampledSpeed = 0
-    let candidateDirectionX = this.state.directionX
-    let candidateDirectionY = this.state.directionY
-    if (!isFirstSample) {
+    if (this.lastSampleTime !== null) {
       const deltaX = clientX - this.lastSampleX
       const deltaY = this.lastSampleY - clientY
-      const distance = Math.hypot(deltaX, deltaY)
-      const elapsed = motionTime - lastSampleTime
-
-      if (distance > 0 && Number.isFinite(distance)) {
-        const inverseDistance = 1 / distance
-        candidateDirectionX = clamp(-1, deltaX * inverseDistance, 1)
-        candidateDirectionY = clamp(-1, deltaY * inverseDistance, 1)
+      const travelCss = Math.hypot(deltaX, deltaY)
+      if (Number.isFinite(travelCss) && travelCss > LOGO_POINTER_MIN_SEGMENT_CSS) {
+        this.recordImpulse(clientX, clientY, bounds, deltaX, deltaY, travelCss, motionTime)
       }
-
-      if (elapsed > 0 && Number.isFinite(elapsed) && Number.isFinite(distance)) {
-        const speedPosition = clamp(0, (distance / elapsed - MIN_POINTER_SPEED_PX_PER_MS) / POINTER_SPEED_RANGE_PX_PER_MS, 1)
-        sampledSpeed = speedPosition * speedPosition * (3 - 2 * speedPosition)
-      }
-    }
-
-    if (sampledSpeed > 0) {
-      this.state.directionX = candidateDirectionX
-      this.state.directionY = candidateDirectionY
-      this.state.speed = sampledSpeed
-      this.state.strength = 1
-      this.lastMotionTime = motionTime
     }
 
     this.lastSampleX = clientX
     this.lastSampleY = clientY
     this.lastSampleTime = motionTime
-    this.state.x = clamp(-1, (2 * (clientX - bounds.left)) / bounds.width - 1, 1)
-    this.state.y = clamp(-1, 1 - (2 * (clientY - bounds.top)) / bounds.height, 1)
   }
 
   private readonly onPointerLeave = (event: PointerEvent): void => {
@@ -248,7 +259,7 @@ export class LogoPointerController {
     this.lastSampleTime = null
     this.lastSampleX = 0
     this.lastSampleY = 0
-    this.decayTo(this.now())
+    this.ageImpulses(this.now())
   }
 }
 

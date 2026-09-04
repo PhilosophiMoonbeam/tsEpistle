@@ -105,6 +105,13 @@ interface ProcessPayload {
   revisionId: string
   retrySequence: number
 }
+
+type SiteLogoJobVersion = 1 | 2
+
+interface SiteLogoJobProtocol {
+  readonly jobVersion: SiteLogoJobVersion
+  readonly pipelineVersions: readonly number[]
+}
 interface ValidatedArtifacts {
   logoPng: Buffer
   particleV1: Buffer
@@ -185,13 +192,15 @@ const storedPayloadMatches = (row: DurableJobRow, payload: ProcessPayload): bool
   }
 }
 
-const ownsCurrentLease = (row: DurableJobRow | undefined, job: DurableJob, payload: ProcessPayload, now: Date): boolean => {
+const ownsCurrentLease = (row: DurableJobRow | undefined, job: DurableJob, payload: ProcessPayload, protocol: SiteLogoJobProtocol, now: Date): boolean => {
   const expiresAt = row ? asDate(row.leaseExpiresAt) : null
   return (
     row !== undefined &&
     row.id === job.id &&
+    job.type === 'process-site-logo' &&
+    Number(job.version) === protocol.jobVersion &&
     row.type === 'process-site-logo' &&
-    Number(row.version) === 1 &&
+    Number(row.version) === protocol.jobVersion &&
     row.state === 'running' &&
     row.leaseOwner !== null &&
     row.leaseOwner === job.leaseOwner &&
@@ -204,8 +213,8 @@ const ownsCurrentLease = (row: DurableJobRow | undefined, job: DurableJob, paylo
   )
 }
 
-const lockJob = async (transaction: Knex.Transaction, jobId: string): Promise<DurableJobRow | undefined> =>
-  await transaction<DurableJobRow>('durableJobs').where({ id: jobId }).forUpdate().first()
+const lockJob = async (transaction: Knex.Transaction, jobId: string, protocol: SiteLogoJobProtocol): Promise<DurableJobRow | undefined> =>
+  await transaction<DurableJobRow>('durableJobs').where({ id: jobId, type: 'process-site-logo', version: protocol.jobVersion }).forUpdate().first()
 
 const lockState = async (transaction: Knex.Transaction): Promise<StateRow> => {
   const state = await transaction<StateRow>('siteLogoState').where({ id: 1 }).forUpdate().first()
@@ -214,8 +223,13 @@ const lockState = async (transaction: Knex.Transaction): Promise<StateRow> => {
 }
 
 const EXHAUSTED_SITE_LOGO_ERROR = 'Durable job lease expired after its final allowed attempt'
-const UPGRADABLE_SITE_LOGO_PIPELINE_VERSIONS = [1, 2]
-const RECONCILABLE_SITE_LOGO_PIPELINE_VERSIONS = [1, 2, SITE_LOGO_PIPELINE_VERSION]
+const LEGACY_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 1, pipelineVersions: Object.freeze([1, 2, 3]) })
+const CURRENT_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({
+  jobVersion: 2,
+  pipelineVersions: Object.freeze([SITE_LOGO_PIPELINE_VERSION])
+})
+
+const protocolSupportsPipeline = (protocol: SiteLogoJobProtocol, pipelineVersion: number): boolean => protocol.pipelineVersions.includes(pipelineVersion)
 
 export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): Promise<number> =>
   await knex.transaction(async transaction => {
@@ -223,8 +237,15 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
       .join('siteLogoRevisions as revision', 'revision.jobId', 'job.id')
       .select('job.*', 'revision.id as revisionId', 'revision.retrySequence as revisionRetrySequence')
       .where('job.type', 'process-site-logo')
-      .where('job.version', 1)
-      .whereIn('revision.pipelineVersion', RECONCILABLE_SITE_LOGO_PIPELINE_VERSIONS)
+      .andWhere(protocols => {
+        protocols
+          .where(legacy =>
+            legacy.where('job.version', LEGACY_SITE_LOGO_PROTOCOL.jobVersion).whereIn('revision.pipelineVersion', LEGACY_SITE_LOGO_PROTOCOL.pipelineVersions)
+          )
+          .orWhere(current =>
+            current.where('job.version', CURRENT_SITE_LOGO_PROTOCOL.jobVersion).whereIn('revision.pipelineVersion', CURRENT_SITE_LOGO_PROTOCOL.pipelineVersions)
+          )
+      })
       .whereIn('revision.status', ['pending', 'running'])
       .whereRaw('?? >= ??', ['job.attempts', 'job.maxAttempts'])
       .andWhere(builder => {
@@ -238,6 +259,19 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
 
     const state = await lockState(transaction)
     for (const job of jobs) {
+      const jobVersion = Number(job.version)
+      const protocol = jobVersion === 1 ? LEGACY_SITE_LOGO_PROTOCOL : jobVersion === 2 ? CURRENT_SITE_LOGO_PROTOCOL : undefined
+      const pipelineVersion = Number(
+        (
+          await transaction<RevisionRow>('siteLogoRevisions')
+            .where({ id: job.revisionId, jobId: job.id, retrySequence: Number(job.revisionRetrySequence) })
+            .forUpdate()
+            .first('pipelineVersion')
+        )?.pipelineVersion
+      )
+      if (!protocol || !protocolSupportsPipeline(protocol, pipelineVersion)) {
+        throw new Error(`Exhausted site logo revision ${job.revisionId} lost its protocol fence`)
+      }
       const payload: ProcessPayload = {
         revisionId: job.revisionId,
         retrySequence: Number(job.revisionRetrySequence)
@@ -247,8 +281,8 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
         const updated = await transaction<DurableJobRow>('durableJobs')
           .where({
             id: job.id,
-            type: job.type,
-            version: job.version,
+            type: 'process-site-logo',
+            version: protocol.jobVersion,
             state: 'running',
             leaseOwner: job.leaseOwner,
             leaseToken: job.leaseToken
@@ -266,29 +300,13 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
           })
         if (updated !== 1) throw new Error(`Exhausted site logo durable job ${job.id} lost its fence`)
       }
-      const revision = await transaction<RevisionRow>('siteLogoRevisions')
-        .where({
-          id: payload.revisionId,
-          jobId: job.id,
-          retrySequence: payload.retrySequence
-        })
-        .forUpdate()
-        .first()
-      if (
-        !revision ||
-        !RECONCILABLE_SITE_LOGO_PIPELINE_VERSIONS.includes(Number(revision.pipelineVersion)) ||
-        !['pending', 'running'].includes(revision.status)
-      ) {
-        throw new Error(`Exhausted site logo revision ${payload.revisionId} lost its fence`)
-      }
-
       const updatedRevision = await transaction<RevisionRow>('siteLogoRevisions')
         .where({
           id: payload.revisionId,
           jobId: job.id,
-          retrySequence: payload.retrySequence
+          retrySequence: payload.retrySequence,
+          pipelineVersion
         })
-        .whereIn('pipelineVersion', RECONCILABLE_SITE_LOGO_PIPELINE_VERSIONS)
         .whereIn('status', ['pending', 'running'])
         .update({
           status: 'failed',
@@ -302,32 +320,43 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
     return jobs.length
   })
 
-const transitionToRunning = async (knex: Knex, job: DurableJob, payload: ProcessPayload): Promise<RevisionRow | null> =>
+const transitionToRunning = async (knex: Knex, job: DurableJob, payload: ProcessPayload, protocol: SiteLogoJobProtocol): Promise<RevisionRow | null> =>
   await knex.transaction(async transaction => {
     const now = new Date()
-    const durable = await lockJob(transaction, job.id)
-    if (!ownsCurrentLease(durable, job, payload, now)) throw new SiteLogoLeaseLostError(job.id)
-    let revision = await transaction<RevisionRow>('siteLogoRevisions').where({ id: payload.revisionId }).forUpdate().first()
+    const durable = await lockJob(transaction, job.id, protocol)
+    if (!ownsCurrentLease(durable, job, payload, protocol, now)) throw new SiteLogoLeaseLostError(job.id)
+    const revision = await transaction<RevisionRow>('siteLogoRevisions').where({ id: payload.revisionId }).forUpdate().first()
+    const pipelineVersion = Number(revision?.pipelineVersion)
     if (!revision || revision.jobId !== job.id || Number(revision.retrySequence) !== payload.retrySequence) {
       throw new TypeError('Site logo processing job does not match its revision')
     }
-    if (revision.status === 'ready' || revision.status === 'failed') return null
-    const storedPipelineVersion = Number(revision.pipelineVersion)
-    if (UPGRADABLE_SITE_LOGO_PIPELINE_VERSIONS.includes(storedPipelineVersion)) {
-      await transaction<RevisionRow>('siteLogoRevisions').where({ id: revision.id }).update({
-        pipelineVersion: SITE_LOGO_PIPELINE_VERSION,
-        updatedAt: now
-      })
-      revision = { ...revision, pipelineVersion: SITE_LOGO_PIPELINE_VERSION, updatedAt: now }
-    } else if (storedPipelineVersion !== SITE_LOGO_PIPELINE_VERSION) {
+    if (revision.status === 'ready' || revision.status === 'failed') {
+      if (
+        protocolSupportsPipeline(protocol, pipelineVersion) ||
+        (protocol.jobVersion === 1 && revision.status === 'ready' && pipelineVersion === SITE_LOGO_PIPELINE_VERSION)
+      ) {
+        return null
+      }
+      throw new TypeError('Site logo processing job does not match its revision')
+    }
+    if (!protocolSupportsPipeline(protocol, pipelineVersion)) {
       throw new TypeError('Site logo processing job does not match its revision')
     }
     if (revision.status === 'pending') {
-      await transaction<RevisionRow>('siteLogoRevisions').where({ id: revision.id }).update({
-        status: 'running',
-        startedAt: now,
-        updatedAt: now
-      })
+      const updated = await transaction<RevisionRow>('siteLogoRevisions')
+        .where({
+          id: revision.id,
+          jobId: job.id,
+          retrySequence: payload.retrySequence,
+          pipelineVersion,
+          status: 'pending'
+        })
+        .update({
+          status: 'running',
+          startedAt: now,
+          updatedAt: now
+        })
+      if (updated !== 1) throw new SiteLogoLeaseLostError(job.id)
       return { ...revision, status: 'running' as const, startedAt: now, updatedAt: now }
     }
     return revision
@@ -419,20 +448,32 @@ const logProcessingFailure = (job: DurableJob, payload: ProcessPayload, error: u
   })
 }
 
-const markFailed = async (knex: Knex, job: DurableJob, payload: ProcessPayload, code: SafeErrorCode): Promise<void> => {
+const markFailed = async (knex: Knex, job: DurableJob, payload: ProcessPayload, protocol: SiteLogoJobProtocol, code: SafeErrorCode): Promise<void> => {
   await knex.transaction(async transaction => {
     const now = new Date()
-    const durable = await lockJob(transaction, job.id)
-    if (!ownsCurrentLease(durable, job, payload, now)) throw new SiteLogoLeaseLostError(job.id)
+    const durable = await lockJob(transaction, job.id, protocol)
+    if (!ownsCurrentLease(durable, job, payload, protocol, now)) throw new SiteLogoLeaseLostError(job.id)
     const state = await lockState(transaction)
     const revision = await transaction<RevisionRow>('siteLogoRevisions').where({ id: payload.revisionId }).forUpdate().first()
-    if (!revision || revision.jobId !== job.id || Number(revision.retrySequence) !== payload.retrySequence) {
+    const pipelineVersion = Number(revision?.pipelineVersion)
+    if (
+      !revision ||
+      revision.jobId !== job.id ||
+      Number(revision.retrySequence) !== payload.retrySequence ||
+      !protocolSupportsPipeline(protocol, pipelineVersion)
+    ) {
       throw new TypeError('Site logo processing job does not match its revision')
     }
     if (revision.status === 'ready' || revision.status === 'failed') return
     if (revision.status !== 'running') throw new TypeError('Site logo revision is not running')
-    await transaction<RevisionRow>('siteLogoRevisions')
-      .where({ id: revision.id })
+    const updated = await transaction<RevisionRow>('siteLogoRevisions')
+      .where({
+        id: revision.id,
+        jobId: job.id,
+        retrySequence: payload.retrySequence,
+        pipelineVersion,
+        status: 'running'
+      })
       .update({
         status: 'failed',
         errorCode: code,
@@ -440,6 +481,7 @@ const markFailed = async (knex: Knex, job: DurableJob, payload: ProcessPayload, 
         retiredAt: state.desiredRevisionId === revision.id ? null : now,
         updatedAt: now
       })
+    if (updated !== 1) throw new SiteLogoLeaseLostError(job.id)
   })
 }
 
@@ -490,20 +532,22 @@ const publishArtifacts = async (
   knex: Knex,
   job: DurableJob,
   payload: ProcessPayload,
+  protocol: SiteLogoJobProtocol,
   artifacts: SiteLogoArtifacts,
   validated: ValidatedArtifacts
 ): Promise<void> => {
   await knex.transaction(async transaction => {
     const now = new Date()
-    const durable = await lockJob(transaction, job.id)
-    if (!ownsCurrentLease(durable, job, payload, now)) throw new SiteLogoLeaseLostError(job.id)
+    const durable = await lockJob(transaction, job.id, protocol)
+    if (!ownsCurrentLease(durable, job, payload, protocol, now)) throw new SiteLogoLeaseLostError(job.id)
     const state = await lockState(transaction)
     const revision = await transaction<RevisionRow>('siteLogoRevisions').where({ id: payload.revisionId }).forUpdate().first()
+    const pipelineVersion = Number(revision?.pipelineVersion)
     if (
       !revision ||
       revision.jobId !== job.id ||
       Number(revision.retrySequence) !== payload.retrySequence ||
-      Number(revision.pipelineVersion) !== SITE_LOGO_PIPELINE_VERSION
+      !protocolSupportsPipeline(protocol, pipelineVersion)
     ) {
       throw new TypeError('Site logo processing job does not match its revision')
     }
@@ -518,9 +562,16 @@ const publishArtifacts = async (
     await ensureImmutableObject(transaction, effect)
 
     const isDesired = state.desiredRevisionId === revision.id
-    await transaction<RevisionRow>('siteLogoRevisions')
-      .where({ id: revision.id })
+    const updated = await transaction<RevisionRow>('siteLogoRevisions')
+      .where({
+        id: revision.id,
+        jobId: job.id,
+        retrySequence: payload.retrySequence,
+        pipelineVersion,
+        status: 'running'
+      })
       .update({
+        pipelineVersion: SITE_LOGO_PIPELINE_VERSION,
         status: 'ready',
         logoPngKind: 'logo-png',
         logoPngHash: logo.sha256,
@@ -538,6 +589,7 @@ const publishArtifacts = async (
         retiredAt: isDesired ? null : now,
         updatedAt: now
       })
+    if (updated !== 1) throw new SiteLogoLeaseLostError(job.id)
 
     if (!isDesired) return
     if (state.activeRevisionId && state.activeRevisionId !== revision.id) {
@@ -557,11 +609,11 @@ const publishArtifacts = async (
   })
 }
 
-export const createSiteLogoProcessHandler =
-  (processor: SiteLogoProcessor = processSiteLogoSource): DurableJobHandler =>
-  async (job, { knex, signal }) => {
+export const createSiteLogoProcessHandler = (jobVersion: SiteLogoJobVersion, processor: SiteLogoProcessor = processSiteLogoSource): DurableJobHandler => {
+  const protocol = jobVersion === 1 ? LEGACY_SITE_LOGO_PROTOCOL : CURRENT_SITE_LOGO_PROTOCOL
+  return async (job, { knex, signal }) => {
     const payload = parsePayload(job)
-    const revision = await transitionToRunning(knex, job, payload)
+    const revision = await transitionToRunning(knex, job, payload, protocol)
     if (!revision) return
 
     let artifacts: SiteLogoArtifacts
@@ -578,13 +630,14 @@ export const createSiteLogoProcessHandler =
     } catch (error) {
       signal.throwIfAborted()
       logProcessingFailure(job, payload, error)
-      await markFailed(knex, job, payload, safeFailureCode(error))
+      await markFailed(knex, job, payload, protocol, safeFailureCode(error))
       return
     }
 
     signal.throwIfAborted()
-    await publishArtifacts(knex, job, payload, artifacts, validated)
+    await publishArtifacts(knex, job, payload, protocol, artifacts, validated)
   }
+}
 
 const objectReference = (kind: ObjectKind): { kindColumn: keyof RevisionRow; hashColumn: keyof RevisionRow } => {
   switch (kind) {

@@ -4,7 +4,8 @@ import type { Knex } from 'knex'
 import { DurableJobStore } from '../core/durable-jobs.ts'
 
 export const SITE_LOGO_SOURCE_LIMIT = 5_242_880
-const SITE_LOGO_PIPELINE_VERSION = 3
+const SITE_LOGO_PIPELINE_VERSION = 4
+const SITE_LOGO_JOB_VERSION = 2
 const STATUS_URL = '/_api/site/logo'
 const SHA256 = /^[a-f0-9]{64}$/
 
@@ -279,7 +280,7 @@ const enqueueCandidate = async (
   await transaction<SiteLogoRevisionRow>('siteLogoRevisions').insert(revision)
   const job = await new DurableJobStore(transaction).enqueue({
     type: 'process-site-logo',
-    version: 1,
+    version: SITE_LOGO_JOB_VERSION,
     payload: { revisionId, retrySequence },
     maxAttempts: 5
   })

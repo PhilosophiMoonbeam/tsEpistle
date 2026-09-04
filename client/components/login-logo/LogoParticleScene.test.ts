@@ -8,6 +8,7 @@ import type { Component } from 'vue'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { ParticleSceneEventFence as ParticleSceneEventFenceClass, ParticleSceneFrame, ParticleSceneResources } from './LogoParticleScene.vue'
 import type { LogoEffectDescriptor, ParsedLogoParticles } from './particle-logo.ts'
+import type { LogoPointerState } from './useLogoPointer.ts'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
@@ -151,17 +152,7 @@ interface SceneModule {
   updateParticleSceneFrame: (
     resources: ParticleSceneResources,
     pointerController: {
-      update: (renderedLongAxis: number) => {
-        alongRadiusCss: number
-        acrossRadiusCss: number
-        directionX: number
-        directionY: number
-        displacementCss: number
-        speed: number
-        strength: number
-        x: number
-        y: number
-      }
+      update: (renderedLongAxis: number) => LogoPointerState
     },
     frame: ParticleSceneFrame
   ) => void
@@ -247,16 +238,28 @@ const makeRenderer = (points = effect.count): RendererHarness => {
   return { canvas, clearAlpha, renderer }
 }
 
-const pointerState = {
-  alongRadiusCss: 100.8,
-  acrossRadiusCss: 56,
-  directionX: 0.6,
-  directionY: 0.8,
-  displacementCss: 24,
-  speed: 0.9,
-  strength: 0.75,
-  x: 0.25,
-  y: -0.5
+const pointerState: LogoPointerState = {
+  activeImpulseCount: 2,
+  influenceRadiusCss: 32,
+  impulses: [
+    { active: true, ageSeconds: 0.24, directionX: 0.6, directionY: 0.8, radiusCss: 32, travelCss: 6, x: 0.25, y: -0.5 },
+    { active: true, ageSeconds: 0.1, directionX: -1, directionY: 0, radiusCss: 24, travelCss: 3, x: -0.25, y: 0.5 },
+    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, x: 0, y: 0 },
+    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, x: 0, y: 0 }
+  ]
+}
+const expectNormalizedDirectionTravel = (
+  actual: readonly { readonly x: number; readonly y: number; readonly z: number; readonly w: number }[],
+  expected: readonly [number, number, number, number][]
+): void => {
+  expect(actual).toHaveLength(expected.length)
+  actual.forEach((value, index) => {
+    const [x, y, z, w] = expected[index]
+    expect(value.x).toBeCloseTo(x, 12)
+    expect(value.y).toBeCloseTo(y, 12)
+    expect(value.z).toBe(z)
+    expect(value.w).toBe(w)
+  })
 }
 
 interface TestFrameCapture {
@@ -264,8 +267,12 @@ interface TestFrameCapture {
   readonly dataUrl: string
 }
 
+interface TestFrameCaptureOptions {
+  readonly elapsedSeconds: number
+}
+
 interface TestFrameCaptureHook {
-  request: (() => Promise<TestFrameCapture>) | null
+  request: ((options?: TestFrameCaptureOptions) => Promise<TestFrameCapture>) | null
 }
 
 const installFrameCaptureHook = (): TestFrameCaptureHook => {
@@ -333,51 +340,34 @@ describe('LogoParticleScene resources', () => {
     disposeParticleSceneResources(resources)
   })
 
-  it('configures the gaseous-motion and anisotropic-slice shader contract', () => {
+  it('configures stable fixed impulse uniforms alongside the gaseous motion contract', () => {
     const resources = createParticleSceneResources(makeParticles(), effect)
 
     expect(Object.keys(resources.uniforms).sort()).toEqual([
       'uAspect',
       'uBackground',
       'uDpr',
+      'uImpulseDirectionTravel',
+      'uImpulsePositionAge',
       'uMedianStroke',
-      'uPointer',
-      'uPointerDirection',
-      'uPointerDisplacement',
-      'uPointerSpeed',
-      'uPointerStrength',
       'uRenderedLongAxis',
-      'uSliceAcrossRadius',
-      'uSliceAlongRadius',
       'uTime',
       'uViewport'
     ])
-    expect(resources.uniforms.uPointerDirection.value.toArray()).toEqual([1, 0])
-    expect(resources.uniforms.uPointerSpeed.value).toBe(0)
-    expect(resources.uniforms.uSliceAcrossRadius.value).toBe(28)
-    expect(resources.uniforms.uSliceAlongRadius.value).toBeCloseTo(50.4)
-
-    const vertexShader = shaderSources['./particle.vert.glsl?raw']
-    expect(vertexShader).toContain('float depthScale = clamp(1.0 + 0.18 * depth, 0.82, 1.18);')
-    expect(vertexShader).toContain('float idleAmplitudeCss = clamp(0.35 * displayedStroke, 2.5, 7.0);')
-    expect(vertexShader).toContain('float coherentFlowMagnitude = length(coherentFlow);')
-    expect(vertexShader).toContain('coherentFlow /= max(coherentFlowMagnitude, 1.0);')
-    expect(vertexShader).toContain('float idleScaleCss = clamp(idleAmplitudeCss * depthScale, 2.5, 7.0);')
-    expect(vertexShader).toContain('vec2 idleCss = coherentFlow * idleScaleCss;')
-    expect(vertexShader).not.toContain('vec2 idleCss = coherentFlow * clamp(idleAmplitudeCss * depthScale, 2.5, 7.0);')
-    expect(vertexShader.indexOf('coherentFlow /= max(coherentFlowMagnitude, 1.0);')).toBeLessThan(
-      vertexShader.indexOf('vec2 idleCss = coherentFlow * idleScaleCss;')
-    )
-    expect(vertexShader).toContain('dot(sourcePosition')
-    expect(vertexShader).toContain('float corridor = alongFalloff * acrossFalloff;')
-    expect(vertexShader).toContain('vec2 sliceCss = bladeNormal * side * sliceAmountCss;')
-    expect(vertexShader).toContain('float coreCssPixels = min((1.0 + 15.0 * sizeNorm) * depthScale * uRenderedLongAxis / 1024.0, 24.0);')
-    expect(vertexShader).toContain('float coreDevicePixels = coreCssPixels * uDpr;')
-    expect(vertexShader).not.toContain('float coreCssPixels = min((1.0 + 15.0 * sizeNorm) * uRenderedLongAxis / 1024.0, 24.0);')
-    expect(vertexShader).not.toContain('float coreDevicePixels = coreCssPixels * depthScale * uDpr;')
-    expect(vertexShader).toContain('float totalDevicePixels = (coreCssPixels + 2.0 * ringCssPixels) * uDpr;')
-    expect(vertexShader).not.toContain('float totalDevicePixels = (coreCssPixels + 2.0 * ringCssPixels) * depthScale * uDpr;')
-    expect(vertexShader).toContain('vec4(position, depth * 0.04, 1.0)')
+    expect(resources.uniforms.uImpulsePositionAge.value).toHaveLength(4)
+    expect(resources.uniforms.uImpulseDirectionTravel.value).toHaveLength(4)
+    expect(resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual([
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0]
+    ])
+    expect(resources.uniforms.uImpulseDirectionTravel.value.map(value => value.toArray())).toEqual([
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0]
+    ])
 
     disposeParticleSceneResources(resources)
   })
@@ -422,6 +412,8 @@ describe('LogoParticleScene resources', () => {
     const attributes = ['logoXY', 'logoDepth', 'logoColor', 'logoSize', 'logoSeed'].map(name => resources.geometry.getAttribute(name))
     const arrays = attributes.map(attribute => attribute.array)
     const versions = attributes.map(attribute => attribute.version)
+    const impulseDirectionUniforms = resources.uniforms.uImpulseDirectionTravel.value
+    const impulsePositionUniforms = resources.uniforms.uImpulsePositionAge.value
     const renderedLongAxes: number[] = []
     const pointerController = {
       update: (renderedLongAxis: number) => {
@@ -452,13 +444,19 @@ describe('LogoParticleScene resources', () => {
     expect(attributes.map(attribute => attribute.array)).toEqual(arrays)
     expect(attributes.map(attribute => attribute.version)).toEqual(versions)
     expect(new Uint8Array(particles.buffer)).toEqual(before)
-    expect(resources.uniforms.uPointer.value.toArray()).toEqual([0.25, -0.5])
-    expect(resources.uniforms.uPointerDirection.value.toArray()).toEqual([0.6, 0.8])
-    expect(resources.uniforms.uPointerSpeed.value).toBe(0.9)
-    expect(resources.uniforms.uSliceAlongRadius.value).toBe(100.8)
-    expect(resources.uniforms.uSliceAcrossRadius.value).toBe(56)
-    expect(resources.uniforms.uPointerDisplacement.value).toBe(24)
-    expect(resources.uniforms.uPointerStrength.value).toBe(0.75)
+    expect(resources.uniforms.uImpulseDirectionTravel.value).toBe(impulseDirectionUniforms)
+    expect(resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual([
+      [0.25, -0.5, 0.24, 1],
+      [-0.25, 0.5, 0.1, 1],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0]
+    ])
+    expectNormalizedDirectionTravel(resources.uniforms.uImpulseDirectionTravel.value, [
+      [0.6, 0.8, 6, 32],
+      [-1, 0, 3, 24],
+      [1, 0, 0, 18],
+      [1, 0, 0, 18]
+    ])
     expect(resources.uniforms.uDpr.value).toBe(1.5)
     expect(resources.uniforms.uTime.value).toBeCloseTo(119 / 60)
     disposeParticleSceneResources(resources)
@@ -492,9 +490,12 @@ describe('LogoParticleScene resources', () => {
 
     expect(scheduled.uniforms.uTime.value).toBe(4.25)
     expect(direct.uniforms.uTime.value).toBe(4.25)
-    expect(scheduled.uniforms.uPointer.value.toArray()).toEqual(direct.uniforms.uPointer.value.toArray())
-    expect(scheduled.uniforms.uPointerDirection.value.toArray()).toEqual(direct.uniforms.uPointerDirection.value.toArray())
-    expect(scheduled.uniforms.uPointerStrength.value).toBe(direct.uniforms.uPointerStrength.value)
+    expect(scheduled.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual(
+      direct.uniforms.uImpulsePositionAge.value.map(value => value.toArray())
+    )
+    expect(scheduled.uniforms.uImpulseDirectionTravel.value.map(value => value.toArray())).toEqual(
+      direct.uniforms.uImpulseDirectionTravel.value.map(value => value.toArray())
+    )
 
     disposeParticleSceneResources(scheduled)
     disposeParticleSceneResources(direct)
@@ -519,16 +520,20 @@ describe('LogoParticleScene resources', () => {
       const before = new Uint8Array(particles.buffer).slice()
       const resources = createParticleSceneResources(particles, effect)
       const diagnostics = benchmark.lastMotion
-      const oversizedPointer = {
+      const boundedPointer: LogoPointerState = {
         ...pointerState,
-        displacementCss: 80,
-        speed: 4,
-        strength: 3
+        activeImpulseCount: 4,
+        impulses: [
+          { active: true, ageSeconds: -4, directionX: 12, directionY: 16, radiusCss: 200, travelCss: 80, x: 4, y: -4 },
+          { active: true, ageSeconds: 0.9, directionX: 0, directionY: 0, radiusCss: 1, travelCss: 5, x: 0, y: 0 },
+          { active: true, ageSeconds: 0.4, directionX: 0, directionY: 1, radiusCss: 20, travelCss: 4, x: 0.2, y: 0.3 },
+          { active: false, ageSeconds: 0.2, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 4, x: 0, y: 0 }
+        ]
       }
 
       updateParticleSceneFrame(
         resources,
-        { update: () => oversizedPointer },
+        { update: () => boundedPointer },
         {
           elapsed: 123.5,
           height: 320,
@@ -536,27 +541,41 @@ describe('LogoParticleScene resources', () => {
           width: 640
         }
       )
+      expect(resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual([
+        [1, -1, 0, 1],
+        [0, 0, 0.9, 0],
+        [0.2, 0.3, 0.4, 1],
+        [0, 0, 0.2, 0]
+      ])
+      expectNormalizedDirectionTravel(resources.uniforms.uImpulseDirectionTravel.value, [
+        [0.6, 0.8, 12, 32],
+        [1, 0, 0, 18],
+        [0, 1, 4, 20],
+        [1, 0, 0, 18]
+      ])
 
       expect(benchmark.lastMotion).toBe(diagnostics)
       expect(Object.keys(diagnostics as object).sort()).toEqual([
+        'activeImpulseCount',
         'depthScaleMax',
         'depthScaleMin',
         'elapsedSeconds',
         'idleAmplitudeCss',
-        'particleCount',
-        'pointerSpeed',
-        'pointerStrength',
-        'sliceDisplacementCss'
+        'impulseLifetimeSeconds',
+        'maxImpulseTravelCss',
+        'neighborForceRatio',
+        'particleCount'
       ])
       expect(diagnostics).toEqual({
+        activeImpulseCount: 2,
         depthScaleMax: 1.18,
         depthScaleMin: 0.82,
         elapsedSeconds: 123.5,
         idleAmplitudeCss: 2.5,
-        particleCount: effect.count,
-        pointerSpeed: 1,
-        pointerStrength: 1,
-        sliceDisplacementCss: 24
+        impulseLifetimeSeconds: 0.9,
+        maxImpulseTravelCss: 8,
+        neighborForceRatio: 0.18,
+        particleCount: effect.count
       })
       expect(new Uint8Array(particles.buffer)).toEqual(before)
 
@@ -586,15 +605,10 @@ describe('LogoParticleScene resources', () => {
     const stableUniformValues = [
       resources.uniforms.uAspect.value,
       resources.uniforms.uDpr.value,
+      ...resources.uniforms.uImpulseDirectionTravel.value,
+      ...resources.uniforms.uImpulsePositionAge.value,
       resources.uniforms.uMedianStroke.value,
-      resources.uniforms.uPointer.value,
-      resources.uniforms.uPointerDirection.value,
-      resources.uniforms.uPointerDisplacement.value,
-      resources.uniforms.uPointerSpeed.value,
-      resources.uniforms.uPointerStrength.value,
       resources.uniforms.uRenderedLongAxis.value,
-      resources.uniforms.uSliceAcrossRadius.value,
-      resources.uniforms.uSliceAlongRadius.value,
       resources.uniforms.uTime.value,
       resources.uniforms.uViewport.value
     ]
@@ -613,15 +627,10 @@ describe('LogoParticleScene resources', () => {
     expect([
       resources.uniforms.uAspect.value,
       resources.uniforms.uDpr.value,
+      ...resources.uniforms.uImpulseDirectionTravel.value,
+      ...resources.uniforms.uImpulsePositionAge.value,
       resources.uniforms.uMedianStroke.value,
-      resources.uniforms.uPointer.value,
-      resources.uniforms.uPointerDirection.value,
-      resources.uniforms.uPointerDisplacement.value,
-      resources.uniforms.uPointerSpeed.value,
-      resources.uniforms.uPointerStrength.value,
       resources.uniforms.uRenderedLongAxis.value,
-      resources.uniforms.uSliceAcrossRadius.value,
-      resources.uniforms.uSliceAlongRadius.value,
       resources.uniforms.uTime.value,
       resources.uniforms.uViewport.value
     ]).toEqual(stableUniformValues)
@@ -753,6 +762,64 @@ describe('LogoParticleScene test frame capture lifecycle', () => {
       Reflect.deleteProperty(window, '__logoParticleFrameCapture')
     }
   })
+  it('applies a finite nonnegative elapsed override once before rendering, then resumes real elapsed time', async () => {
+    const hook = installFrameCaptureHook()
+    const mounted = mountParticleSceneContents()
+
+    try {
+      const request = hook.request
+      const beforeRender = loopHarness.beforeRender
+      const render = loopHarness.render
+      if (!request || !beforeRender || !render) throw new Error('Tres frame callbacks were not registered')
+      const canvas = document.createElement('canvas')
+      canvas.toDataURL = () => 'data:image/png;base64,override'
+
+      const overridden = request({ elapsedSeconds: 7.25 })
+      beforeRender(makeLoopContext(canvas))
+      expect(mounted.resources.uniforms.uTime.value).toBe(7.25)
+      expect(mounted.resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual([
+        [0.25, -0.5, 0.24, 1],
+        [-0.25, 0.5, 0.1, 1],
+        [0, 0, 0, 0],
+        [0, 0, 0, 0]
+      ])
+      render(makeLoopContext(canvas))
+      await expect(overridden).resolves.toEqual({
+        capturedAt: expect.any(Number),
+        dataUrl: 'data:image/png;base64,override'
+      })
+
+      const ordinary = request()
+      beforeRender(makeLoopContext(canvas))
+      expect(mounted.resources.uniforms.uTime.value).toBe(1)
+      render(makeLoopContext(canvas))
+      await expect(ordinary).resolves.toEqual({
+        capturedAt: expect.any(Number),
+        dataUrl: 'data:image/png;base64,override'
+      })
+    } finally {
+      mounted.unmount()
+      Reflect.deleteProperty(window, '__logoParticleFrameCapture')
+    }
+  })
+
+  it('rejects invalid elapsed overrides without scheduling a capture', async () => {
+    const hook = installFrameCaptureHook()
+    const mounted = mountParticleSceneContents()
+
+    try {
+      const request = hook.request
+      if (!request) throw new Error('Particle frame capture request was not registered')
+      const invalidationsBeforeRequest = loopHarness.invalidations
+      await expect(request({ elapsedSeconds: Number.NaN })).rejects.toThrow('elapsedSeconds override is invalid')
+      expect(loopHarness.invalidations).toBe(invalidationsBeforeRequest)
+      await expect(request({ elapsedSeconds: -1 })).rejects.toThrow('elapsedSeconds override is invalid')
+      await expect(request({ elapsedSeconds: Number.POSITIVE_INFINITY })).rejects.toThrow('elapsedSeconds override is invalid')
+    } finally {
+      mounted.unmount()
+      Reflect.deleteProperty(window, '__logoParticleFrameCapture')
+    }
+  })
 
   it('rejects a pending request and removes its registration during cleanup', async () => {
     const hook = installFrameCaptureHook()
@@ -761,8 +828,7 @@ describe('LogoParticleScene test frame capture lifecycle', () => {
     try {
       const request = hook.request
       if (!request) throw new Error('Particle frame capture request was not registered')
-      const pending = request()
-
+      const pending = request({ elapsedSeconds: 4 })
       mounted.unmount()
 
       await expect(pending).rejects.toThrow('Particle frame capture is unavailable')

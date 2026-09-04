@@ -40,6 +40,7 @@ import {
   ShaderMaterial,
   SRGBColorSpace,
   Vector2,
+  Vector4,
   WebGLRenderer
 } from 'three'
 import type { IUniform } from 'three'
@@ -58,7 +59,14 @@ import {
 import type { LogoEffectDescriptor, ParsedLogoParticles } from './particle-logo'
 import fragmentShader from './particle.frag.glsl?raw'
 import vertexShader from './particle.vert.glsl?raw'
-import { useLogoPointer } from './useLogoPointer'
+import {
+  LOGO_POINTER_IMPULSE_CAPACITY,
+  LOGO_POINTER_IMPULSE_LIFETIME_SECONDS,
+  LOGO_POINTER_MAX_SEGMENT_CSS,
+  LOGO_POINTER_MAX_TRAVEL_CSS,
+  LOGO_POINTER_NEIGHBOR_FORCE_RATIO,
+  useLogoPointer
+} from './useLogoPointer'
 import type { LogoPointerController } from './useLogoPointer'
 
 const DEFAULT_BACKGROUND = 0xffffff
@@ -66,8 +74,8 @@ const DEPTH_SCALE_MIN = 0.82
 const DEPTH_SCALE_MAX = 1.18
 const MIN_IDLE_AMPLITUDE_CSS = 2.5
 const MAX_IDLE_AMPLITUDE_CSS = 7
-const MIN_SLICE_DISPLACEMENT_CSS = 10
-const MAX_SLICE_DISPLACEMENT_CSS = 24
+const MIN_IMPULSE_RADIUS_CSS = 18
+const MAX_IMPULSE_RADIUS_CSS = 32
 const MAX_DIAGNOSTIC_ELAPSED_SECONDS = Number.MAX_SAFE_INTEGER
 const MAX_DIAGNOSTIC_PARTICLES = 16_000
 
@@ -77,28 +85,24 @@ interface ParticleUniforms {
   readonly uAspect: { value: number }
   readonly uBackground: { value: Color }
   readonly uDpr: { value: number }
+  readonly uImpulseDirectionTravel: { value: Vector4[] }
+  readonly uImpulsePositionAge: { value: Vector4[] }
   readonly uMedianStroke: { value: number }
-  readonly uPointer: { value: Vector2 }
-  readonly uPointerDirection: { value: Vector2 }
-  readonly uPointerDisplacement: { value: number }
-  readonly uPointerSpeed: { value: number }
-  readonly uPointerStrength: { value: number }
   readonly uRenderedLongAxis: { value: number }
-  readonly uSliceAcrossRadius: { value: number }
-  readonly uSliceAlongRadius: { value: number }
   readonly uTime: { value: number }
   readonly uViewport: { value: Vector2 }
 }
 
 export interface ParticleMotionDiagnostics {
-  elapsedSeconds: number
-  particleCount: number
-  pointerStrength: number
-  pointerSpeed: number
-  idleAmplitudeCss: number
-  sliceDisplacementCss: number
-  depthScaleMin: number
+  activeImpulseCount: number
   depthScaleMax: number
+  depthScaleMin: number
+  elapsedSeconds: number
+  idleAmplitudeCss: number
+  impulseLifetimeSeconds: number
+  maxImpulseTravelCss: number
+  neighborForceRatio: number
+  particleCount: number
 }
 
 export interface ParticleSceneResources {
@@ -112,10 +116,10 @@ export interface ParticleSceneResources {
 }
 
 export interface ParticleSceneFrame {
-  readonly elapsed: number
-  readonly height: number
-  readonly pixelRatio: number
-  readonly width: number
+  elapsed: number
+  height: number
+  pixelRatio: number
+  width: number
 }
 
 interface ParticleLoopControl {
@@ -123,12 +127,16 @@ interface ParticleLoopControl {
   stop: (() => void) | null
 }
 
+interface ParticleFrameCaptureOptions {
+  readonly elapsedSeconds: number
+}
+
 interface ParticleFrameCapture {
   readonly dataUrl: string
   readonly capturedAt: number
 }
 
-type ParticleFrameCaptureRequest = () => Promise<ParticleFrameCapture>
+type ParticleFrameCaptureRequest = (options?: ParticleFrameCaptureOptions) => Promise<ParticleFrameCapture>
 
 interface ParticleFrameCaptureHook {
   request: ParticleFrameCaptureRequest | null
@@ -136,10 +144,12 @@ interface ParticleFrameCaptureHook {
 
 interface ParticleFrameCaptureRegistration {
   afterRender: (canvas: HTMLCanvasElement) => void
+  consumeElapsedSecondsOverride: () => number | undefined
   dispose: (reason: Error) => void
 }
 
 interface PendingParticleFrameCapture {
+  elapsedSeconds?: number
   readonly reject: (reason: Error) => void
   readonly resolve: (capture: ParticleFrameCapture) => void
 }
@@ -209,17 +219,34 @@ const idleAmplitudeCss = (medianStroke: number, renderedLongAxis: number): numbe
   )
 
 const createMotionDiagnostics = (particleCount: number): ParticleMotionDiagnostics => ({
-  elapsedSeconds: 0,
-  particleCount: clamp(0, Math.round(finiteOr(particleCount, 0)), MAX_DIAGNOSTIC_PARTICLES),
-  pointerStrength: 0,
-  pointerSpeed: 0,
-  idleAmplitudeCss: MIN_IDLE_AMPLITUDE_CSS,
-  sliceDisplacementCss: MIN_SLICE_DISPLACEMENT_CSS,
+  activeImpulseCount: 0,
+  depthScaleMax: DEPTH_SCALE_MAX,
   depthScaleMin: DEPTH_SCALE_MIN,
-  depthScaleMax: DEPTH_SCALE_MAX
+  elapsedSeconds: 0,
+  idleAmplitudeCss: MIN_IDLE_AMPLITUDE_CSS,
+  impulseLifetimeSeconds: LOGO_POINTER_IMPULSE_LIFETIME_SECONDS,
+  maxImpulseTravelCss: LOGO_POINTER_MAX_TRAVEL_CSS,
+  neighborForceRatio: LOGO_POINTER_NEIGHBOR_FORCE_RATIO,
+  particleCount: clamp(0, Math.round(finiteOr(particleCount, 0)), MAX_DIAGNOSTIC_PARTICLES)
 })
 
 const asError = (reason: unknown): Error => reason instanceof Error ? reason : new Error(String(reason))
+
+const readParticleFrameCaptureElapsedSeconds = (options: unknown): number | undefined => {
+  if (options === undefined) return undefined
+  if (options === null || typeof options !== 'object' || Object.getPrototypeOf(options) !== Object.prototype) {
+    throw new Error('Particle frame capture elapsedSeconds override is invalid')
+  }
+  const keys = Reflect.ownKeys(options)
+  if (keys.length !== 1 || keys[0] !== 'elapsedSeconds') {
+    throw new Error('Particle frame capture elapsedSeconds override is invalid')
+  }
+  const elapsedSeconds = (options as { readonly elapsedSeconds?: unknown }).elapsedSeconds
+  if (typeof elapsedSeconds !== 'number' || !Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) {
+    throw new Error('Particle frame capture elapsedSeconds override is invalid')
+  }
+  return elapsedSeconds
+}
 
 const createParticleFrameCaptureRegistration = (
   invalidate: () => void
@@ -228,11 +255,17 @@ const createParticleFrameCaptureRegistration = (
   if (!hook) return null
   let disposed = false
   let pending: PendingParticleFrameCapture | null = null
-  const request: ParticleFrameCaptureRequest = () => {
+  const request: ParticleFrameCaptureRequest = options => {
     if (disposed) return Promise.reject(new Error('Particle frame capture is unavailable'))
     if (pending) return Promise.reject(new Error('A particle frame capture is already pending'))
+    let elapsedSeconds: number | undefined
+    try {
+      elapsedSeconds = readParticleFrameCaptureElapsedSeconds(options)
+    } catch (error) {
+      return Promise.reject(asError(error))
+    }
     return new Promise<ParticleFrameCapture>((resolve, reject) => {
-      pending = { reject, resolve }
+      pending = { elapsedSeconds, reject, resolve }
       try {
         invalidate()
       } catch (error) {
@@ -256,6 +289,12 @@ const createParticleFrameCaptureRegistration = (
         throw error
       }
     },
+    consumeElapsedSecondsOverride: () => {
+      if (!pending) return undefined
+      const elapsedSeconds = pending.elapsedSeconds
+      pending.elapsedSeconds = undefined
+      return elapsedSeconds
+    },
     dispose: reason => {
       if (disposed) return
       disposed = true
@@ -266,6 +305,7 @@ const createParticleFrameCaptureRegistration = (
     }
   }
 }
+
 
 const assertParticleViews = (particles: ParsedLogoParticles, effect: LogoEffectDescriptor): void => {
   if (
@@ -307,15 +347,19 @@ export const createParticleSceneResources = (
     uAspect: { value: effect.aspect },
     uBackground: { value: new Color(DEFAULT_BACKGROUND) },
     uDpr: { value: 1 },
+    uImpulseDirectionTravel: {
+      value: [
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0)
+      ]
+    },
+    uImpulsePositionAge: {
+      value: [new Vector4(0, 0, 0, 0), new Vector4(0, 0, 0, 0), new Vector4(0, 0, 0, 0), new Vector4(0, 0, 0, 0)]
+    },
     uMedianStroke: { value: effect.medianStroke },
-    uPointer: { value: new Vector2(0, 0) },
-    uPointerDirection: { value: new Vector2(1, 0) },
-    uPointerDisplacement: { value: MIN_SLICE_DISPLACEMENT_CSS },
-    uPointerSpeed: { value: 0 },
-    uPointerStrength: { value: 0 },
     uRenderedLongAxis: { value: 1 },
-    uSliceAcrossRadius: { value: 28 },
-    uSliceAlongRadius: { value: 50.4 },
     uTime: { value: 0 },
     uViewport: { value: new Vector2(1, 1) }
   }
@@ -480,44 +524,44 @@ export const updateParticleSceneFrame = (
     resources.uniforms.uAspect.value
   )
   const pointer = pointerController.update(resources.uniforms.uRenderedLongAxis.value)
-  const directionLength = Math.hypot(pointer.directionX, pointer.directionY)
-  const directionScale = Number.isFinite(directionLength) && directionLength > 0.000001
-    ? 1 / directionLength
-    : 0
-  const pointerStrength = clamp(0, finiteOr(pointer.strength, 0), 1)
-  const pointerSpeed = clamp(0, finiteOr(pointer.speed, 0), 1)
-  const pointerDisplacement = clamp(
-    MIN_SLICE_DISPLACEMENT_CSS,
-    finiteOr(pointer.displacementCss, MIN_SLICE_DISPLACEMENT_CSS),
-    MAX_SLICE_DISPLACEMENT_CSS
-  )
+  let activeImpulseCount = 0
+  for (let index = 0; index < LOGO_POINTER_IMPULSE_CAPACITY; index += 1) {
+    const impulse = pointer.impulses[index]
+    const ageSeconds = clamp(
+      0,
+      finiteOr(impulse.ageSeconds, LOGO_POINTER_IMPULSE_LIFETIME_SECONDS),
+      LOGO_POINTER_IMPULSE_LIFETIME_SECONDS
+    )
+    const active = impulse.active && ageSeconds < LOGO_POINTER_IMPULSE_LIFETIME_SECONDS
+    const directionLength = Math.hypot(impulse.directionX, impulse.directionY)
+    const directionScale = Number.isFinite(directionLength) && directionLength > 0.000001
+      ? 1 / directionLength
+      : 0
+    resources.uniforms.uImpulsePositionAge.value[index].set(
+      active ? clamp(-1, finiteOr(impulse.x, 0), 1) : 0,
+      active ? clamp(-1, finiteOr(impulse.y, 0), 1) : 0,
+      ageSeconds,
+      active ? 1 : 0
+    )
+    resources.uniforms.uImpulseDirectionTravel.value[index].set(
+      directionScale === 0 ? 1 : impulse.directionX * directionScale,
+      directionScale === 0 ? 0 : impulse.directionY * directionScale,
+      active ? clamp(0, finiteOr(impulse.travelCss, 0), LOGO_POINTER_MAX_SEGMENT_CSS) : 0,
+      clamp(MIN_IMPULSE_RADIUS_CSS, finiteOr(impulse.radiusCss, MIN_IMPULSE_RADIUS_CSS), MAX_IMPULSE_RADIUS_CSS)
+    )
+    if (active) activeImpulseCount += 1
+  }
   const elapsed = clamp(0, finiteOr(frame.elapsed, 0), Number.MAX_SAFE_INTEGER)
-
-  resources.uniforms.uPointer.value.set(
-    clamp(-1, finiteOr(pointer.x, 0), 1),
-    clamp(-1, finiteOr(pointer.y, 0), 1)
-  )
-  resources.uniforms.uPointerDirection.value.set(
-    directionScale === 0 ? 1 : pointer.directionX * directionScale,
-    directionScale === 0 ? 0 : pointer.directionY * directionScale
-  )
-  resources.uniforms.uPointerDisplacement.value = pointerDisplacement
-  resources.uniforms.uPointerSpeed.value = pointerSpeed
-  resources.uniforms.uPointerStrength.value = pointerStrength
-  resources.uniforms.uSliceAcrossRadius.value = Math.max(0.001, finiteOr(pointer.acrossRadiusCss, 28))
-  resources.uniforms.uSliceAlongRadius.value = Math.max(0.001, finiteOr(pointer.alongRadiusCss, 50.4))
   resources.uniforms.uTime.value = elapsed
 
   const diagnostics = resources.motionDiagnostics
   if (diagnostics) {
+    diagnostics.activeImpulseCount = activeImpulseCount
     diagnostics.elapsedSeconds = Math.min(elapsed, MAX_DIAGNOSTIC_ELAPSED_SECONDS)
-    diagnostics.pointerStrength = pointerStrength
-    diagnostics.pointerSpeed = pointerSpeed
     diagnostics.idleAmplitudeCss = idleAmplitudeCss(
       resources.uniforms.uMedianStroke.value,
       resources.uniforms.uRenderedLongAxis.value
     )
-    diagnostics.sliceDisplacementCss = pointerDisplacement
   }
 }
 
@@ -540,6 +584,12 @@ const ParticleSceneContents = defineComponent({
     const frameCapture = createParticleFrameCaptureRegistration(invalidate)
     if (frameCapture) props.loopControl.disposeFrameCapture = frameCapture.dispose
     let callbackFailed = false
+    const frame: ParticleSceneFrame = {
+      elapsed: 0,
+      height: 1,
+      pixelRatio: 1,
+      width: 1
+    }
 
     const fail = (reason: unknown): void => {
       if (callbackFailed) return
@@ -553,12 +603,13 @@ const ParticleSceneContents = defineComponent({
       const callbackStartedAt = benchmark ? performance.now() : 0
       try {
         if (!props.active || callbackFailed) return
-        updateParticleSceneFrame(props.resources, props.pointerController, {
-          elapsed,
-          height: sizes.height.value,
-          pixelRatio: renderer.getPixelRatio(),
-          width: sizes.width.value
-        })
+        frame.elapsed = elapsed
+        const elapsedSecondsOverride = frameCapture?.consumeElapsedSecondsOverride()
+        if (elapsedSecondsOverride !== undefined) frame.elapsed = elapsedSecondsOverride
+        frame.height = sizes.height.value
+        frame.pixelRatio = renderer.getPixelRatio()
+        frame.width = sizes.width.value
+        updateParticleSceneFrame(props.resources, props.pointerController, frame)
       } catch (error) {
         fail(error)
       } finally {
@@ -650,7 +701,6 @@ export default defineComponent({
     const pointerController = markRaw(useLogoPointer({
       active: renderEnabled,
       coordinateTarget: pointerCoordinateTarget,
-      medianStroke: props.effect.medianStroke,
       target: pointerTarget
     }))
     const disableRendering = (): void => {
