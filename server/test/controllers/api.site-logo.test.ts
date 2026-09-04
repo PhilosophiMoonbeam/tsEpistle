@@ -129,7 +129,7 @@ const seedReadyRevision = async (
     id: revisionId,
     sourceKind: 'source',
     sourceHash,
-    pipelineVersion: 1,
+    pipelineVersion: 2,
     status: 'ready',
     retrySequence,
     logoPngKind: 'logo-png',

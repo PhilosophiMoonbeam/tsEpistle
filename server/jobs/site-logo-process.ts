@@ -209,6 +209,7 @@ const lockState = async (transaction: Knex.Transaction): Promise<StateRow> => {
 }
 
 const EXHAUSTED_SITE_LOGO_ERROR = 'Durable job lease expired after its final allowed attempt'
+const UPGRADABLE_SITE_LOGO_PIPELINE_VERSION = 1
 
 const exhaustedProcessPayload = (row: DurableJobRow): ProcessPayload | null => {
   try {
@@ -265,9 +266,9 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
         .where({
           id: payload.revisionId,
           jobId: job.id,
-          retrySequence: payload.retrySequence,
-          pipelineVersion: SITE_LOGO_PIPELINE_VERSION
+          retrySequence: payload.retrySequence
         })
+        .whereIn('pipelineVersion', [UPGRADABLE_SITE_LOGO_PIPELINE_VERSION, SITE_LOGO_PIPELINE_VERSION])
         .whereIn('status', ['pending', 'running'])
         .update({
           status: 'failed',
@@ -285,23 +286,28 @@ const transitionToRunning = async (knex: Knex, job: DurableJob, payload: Process
     const now = new Date()
     const durable = await lockJob(transaction, job.id)
     if (!ownsCurrentLease(durable, job, payload, now)) throw new SiteLogoLeaseLostError(job.id)
-    const revision = await transaction<RevisionRow>('siteLogoRevisions').where({ id: payload.revisionId }).forUpdate().first()
-    if (
-      !revision ||
-      revision.jobId !== job.id ||
-      Number(revision.retrySequence) !== payload.retrySequence ||
-      Number(revision.pipelineVersion) !== SITE_LOGO_PIPELINE_VERSION
-    ) {
+    let revision = await transaction<RevisionRow>('siteLogoRevisions').where({ id: payload.revisionId }).forUpdate().first()
+    if (!revision || revision.jobId !== job.id || Number(revision.retrySequence) !== payload.retrySequence) {
       throw new TypeError('Site logo processing job does not match its revision')
     }
     if (revision.status === 'ready' || revision.status === 'failed') return null
+    const storedPipelineVersion = Number(revision.pipelineVersion)
+    if (storedPipelineVersion === UPGRADABLE_SITE_LOGO_PIPELINE_VERSION && SITE_LOGO_PIPELINE_VERSION === 2) {
+      await transaction<RevisionRow>('siteLogoRevisions').where({ id: revision.id }).update({
+        pipelineVersion: SITE_LOGO_PIPELINE_VERSION,
+        updatedAt: now
+      })
+      revision = { ...revision, pipelineVersion: SITE_LOGO_PIPELINE_VERSION, updatedAt: now }
+    } else if (storedPipelineVersion !== SITE_LOGO_PIPELINE_VERSION) {
+      throw new TypeError('Site logo processing job does not match its revision')
+    }
     if (revision.status === 'pending') {
       await transaction<RevisionRow>('siteLogoRevisions').where({ id: revision.id }).update({
         status: 'running',
         startedAt: now,
         updatedAt: now
       })
-      return { ...revision, status: 'running' as const, startedAt: now }
+      return { ...revision, status: 'running' as const, startedAt: now, updatedAt: now }
     }
     return revision
   })

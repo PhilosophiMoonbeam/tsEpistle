@@ -39,6 +39,7 @@ import {
   fixedVectorRaster,
   fixedVectorStaticRaster,
   fixtureMetadata,
+  lowResolutionDetailedEmblemFixture,
   neutralMatteFixture,
   opaqueMatteDetachedFixture,
   opaqueMatteDetachedRaster,
@@ -98,8 +99,8 @@ const animatedWebpHeader = (): Buffer => {
 }
 
 describe('site logo deterministic primitives', () => {
-  it('uses pipeline version one and rounds every tie away from zero', () => {
-    expect(SITE_LOGO_PIPELINE_VERSION).toBe(1)
+  it('uses pipeline version two and rounds every tie away from zero', () => {
+    expect(SITE_LOGO_PIPELINE_VERSION).toBe(2)
     expect([-2.5, -1.5, -0.5, 0.5, 1.5, 2.5].map(roundHalfAwayFromZero)).toEqual([-3, -2, -1, 1, 2, 3])
   })
 
@@ -356,6 +357,28 @@ describe('site logo source processing and hard gates', () => {
       expect(containsRgba(logo.data, [30, 180, 90, 255])).toBe(true)
       expect(containsRgba(logo.data, [30, 110, 220, 255])).toBe(true)
       expect(containsRgba(logo.data, [245, 180, 30, 255])).toBe(true)
+    },
+    GENERATED_CORPUS_TIMEOUT_MS
+  )
+  it(
+    'accepts a detailed 481px transparent emblem by scaling its reconstruction footprint to the normalized canvas',
+    async () => {
+      const source = await lowResolutionDetailedEmblemFixture()
+      const artifacts = await processSiteLogoSource(source, sha256(source))
+      expect({ width: artifacts.normalizedWidth, height: artifacts.normalizedHeight }).toEqual({ width: 460, height: 461 })
+      expect(parseParticleV1(artifacts.particleV1)).toMatchObject({
+        width: artifacts.normalizedWidth,
+        height: artifacts.normalizedHeight,
+        count: artifacts.particleCount
+      })
+      const logo = await decodeFixtureRgba(artifacts.logoPng)
+      expect({ width: logo.width, height: logo.height }).toEqual({ width: 512, height: 513 })
+      expect(rgbaAt(logo.data, logo.width, 0, 0)).toEqual([0, 0, 0, 0])
+      expect(containsRgba(logo.data, [249, 161, 52, 255])).toBe(true)
+      expect(containsRgba(logo.data, [75, 81, 93, 255])).toBe(true)
+      const effect = await decodeFixtureRgba(artifacts.effectStaticPng)
+      expect({ width: effect.width, height: effect.height }).toEqual({ width: 460, height: 461 })
+      expect(rgbaAt(effect.data, effect.width, 0, 0)).toEqual([0, 0, 0, 0])
     },
     GENERATED_CORPUS_TIMEOUT_MS
   )

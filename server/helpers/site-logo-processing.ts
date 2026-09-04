@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { deflateSync, gzipSync } from 'node:zlib'
 import sharp, { type Metadata } from 'sharp'
 
-export const SITE_LOGO_PIPELINE_VERSION = 1
+export const SITE_LOGO_PIPELINE_VERSION = 2
 
 export const SITE_LOGO_SOURCE_BYTE_LIMIT = 5_242_880
 export const SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT = 192_056
@@ -18,6 +18,7 @@ const MIN_PARTICLES = 4_000
 const PARTICLE_HEADER_BYTES = 56
 const PARTICLE_BYTES = 12
 const PARTICLE_FLAGS = 0x07
+const PARTICLE_REFERENCE_LONG_AXIS = 1024
 const TRANSPARENT = { r: 0, g: 0, b: 0, alpha: 0 } as const
 const SQRT_32 = Math.sqrt(32)
 const UINT64_SCALE = 2 ** 64
@@ -758,7 +759,8 @@ const rasterizeParticleLayers = (
   width: number,
   height: number,
   records: readonly ParticleRecord[],
-  includeContrastRings: boolean
+  includeContrastRings: boolean,
+  coreScale: number
 ): { rgba: Buffer; alpha: Float64Array; contrastRgba?: Buffer } => {
   const rgba = Buffer.alloc(width * height * 4)
   const contrastRgba = includeContrastRings ? Buffer.alloc(width * height * 4) : undefined
@@ -786,7 +788,7 @@ const rasterizeParticleLayers = (
     for (let recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
       const record = records[recordIndex]!
       const presentation = presentations?.[recordIndex]
-      const radius = (1 + 15 * ((record.size - 1) / 254)) / 2
+      const radius = ((1 + 15 * ((record.size - 1) / 254)) * coreScale) / 2
       const outerRadius = radius + (presentation?.useRing ? presentation.ringWidth : 0)
       if (y + 1 < record.y - outerRadius || y > record.y + outerRadius) continue
       const firstX = Math.max(0, Math.floor(record.x - outerRadius))
@@ -867,9 +869,11 @@ const rasterizeParticleLayers = (
 export const rasterizeParticles = (
   width: number,
   height: number,
-  records: readonly ParticleRecord[]
+  records: readonly ParticleRecord[],
+  coreScale = 1
 ): { rgba: Buffer; alpha: Float64Array; staticRgba: Buffer } => {
-  const layers = rasterizeParticleLayers(width, height, records, true)
+  if (!Number.isFinite(coreScale) || coreScale <= 0 || coreScale > 1) fail('PROCESSING_FAILED')
+  const layers = rasterizeParticleLayers(width, height, records, true, coreScale)
   const staticRgba = layers.contrastRgba ?? fail('PROCESSING_FAILED')
   return { rgba: layers.rgba, alpha: layers.alpha, staticRgba }
 }
@@ -1280,7 +1284,8 @@ const processUnlocked = async (sourceBytes: Buffer | Uint8Array, sourceHash: str
   const particleV1 = encodeParticleV1(normalized.width, normalized.height, records)
   const parsed = parseParticleV1(particleV1)
   if (!particlesMeetContrastCoverage(parsed.records)) fail('UNSUITABLE_LOGO')
-  const reconstruction = rasterizeParticles(parsed.width, parsed.height, parsed.records)
+  const coreScale = Math.min(1, Math.max(parsed.width, parsed.height) / PARTICLE_REFERENCE_LONG_AXIS)
+  const reconstruction = rasterizeParticles(parsed.width, parsed.height, parsed.records, coreScale)
   if (reconstructedMaskIou(normalized, reconstruction.alpha) < 0.9) fail('UNSUITABLE_LOGO')
   const effectStaticPng = encodeRgbaPng({ width: normalized.width, height: normalized.height, data: reconstruction.staticRgba })
   const framed = frameOrdinaryLogo(working)

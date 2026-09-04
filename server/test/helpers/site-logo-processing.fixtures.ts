@@ -148,6 +148,22 @@ export const transparentMulticolorDetachedFixture = async (): Promise<Buffer> =>
   paintCircle(data, width, 1040, 100, 56, [245, 180, 30, 255])
   return await encodeRgbaFixture(data, width, height, 'webp-alpha')
 }
+export const lowResolutionDetailedEmblemFixture = async (): Promise<Buffer> => {
+  const width = 481
+  const height = 481
+  const data = rgbaImage(width, height, [0, 0, 0, 0])
+  const orange = [249, 161, 52, 255] as const
+  const graphite = [75, 81, 93, 255] as const
+  paintCircle(data, width, 270, 280, 175, orange)
+  paintCircle(data, width, 270, 280, 92, [0, 0, 0, 0])
+  paintRectangle(data, width, 30, 65, 325, 115, graphite)
+  paintCircle(data, width, 55, 90, 35, graphite)
+  paintRectangle(data, width, 145, 105, 178, 435, graphite)
+  paintCircle(data, width, 115, 155, 10, orange)
+  paintCircle(data, width, 235, 45, 8, orange)
+  paintCircle(data, width, 105, 35, 6, graphite)
+  return await encodeRgbaFixture(data, width, height, 'png-alpha')
+}
 
 export const squareBadgeFixture = async (): Promise<Buffer> =>
   await encodeRgbaFixture(

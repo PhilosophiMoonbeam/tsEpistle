@@ -285,7 +285,7 @@ describe('site logo HA database authority', () => {
     expect(revisionA).toEqual({
       id: revisionId,
       sourceHash: sha256(sourceBytes),
-      pipelineVersion: 1,
+      pipelineVersion: 2,
       status: 'ready',
       retrySequence: 0,
       logoPngHash: hashes.logo,
