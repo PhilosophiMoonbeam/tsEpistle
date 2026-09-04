@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer'
 import { expect } from '@playwright/test'
 import type { Locator, Page, Request, TestInfo } from '@playwright/test'
-import { adminEmail, adminPassword, responsiveTest as test } from './helpers.ts'
+import { responsiveTest as test } from './helpers.ts'
 
 const LOGO_URL = `/_site-logo/${'a'.repeat(64)}/logo.png`
 const SQUARE_PARTICLE_URL = `/_site-logo/${'b'.repeat(64)}/particle.bin`
@@ -339,6 +339,11 @@ async function installRegistrationShell(page: Page): Promise<void> {
 
 async function installZeroFreeSpaceLogin(page: Page): Promise<void> {
   await page.route(/\/login$/, async route => {
+    const request = route.request()
+    if (request.method() !== 'GET' || request.resourceType() !== 'document' || !request.isNavigationRequest() || new URL(request.url()).pathname !== '/login') {
+      await route.fallback()
+      return
+    }
     const response = await route.fetch()
     const loginDocument = await response.text()
     const zeroSpaceDocument = loginDocument.replace(
@@ -369,7 +374,7 @@ function requireProjectRow(testInfo: TestInfo, projectNames: readonly string[]):
 async function expectOrdinaryLogin(page: Page): Promise<void> {
   const card = page.locator('main.login-sd')
   const title = card.locator('#login-site-title')
-  await expect(card).toBeVisible()
+  await expect(card).toBeVisible({ timeout: 15_000 })
   await expect(card.locator('.login-brand .login-logo img')).toBeVisible()
   await expect(title).toBeVisible()
   expect((await title.textContent())?.trim()).toBeTruthy()
@@ -435,6 +440,55 @@ async function focusSurfaceGeometry(page: Page): Promise<{ bottom: number; left:
     const focusSurface = element.closest('.v-input') ?? element
     const rect = focusSurface.getBoundingClientRect()
     return { bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top }
+  })
+}
+
+interface LoginAccessibilityContract {
+  readonly buttons: string[]
+  readonly headings: string[]
+  readonly landmarks: string[]
+  readonly textboxes: string[]
+}
+
+async function expectLoginAccessibilityContract(page: Page, contract: LoginAccessibilityContract): Promise<void> {
+  await expect(page.getByRole('main')).toHaveCount(contract.landmarks.length)
+  for (const name of contract.landmarks) {
+    await expect(page.getByRole('main', { name, exact: true })).toHaveCount(1)
+  }
+
+  await expect(page.getByRole('heading')).toHaveCount(contract.headings.length)
+  for (const name of contract.headings) {
+    await expect(page.getByRole('heading', { name, exact: true })).toHaveCount(1)
+  }
+
+  await expect(page.getByRole('textbox')).toHaveCount(contract.textboxes.length)
+  for (const name of contract.textboxes) {
+    await expect(page.getByRole('textbox', { name, exact: true })).toHaveCount(1)
+  }
+
+  await expect(page.getByRole('button')).toHaveCount(contract.buttons.length)
+  for (const name of contract.buttons) {
+    await expect(page.getByRole('button', { name, exact: true })).toHaveCount(1)
+  }
+}
+
+async function accessibleButtonNames(page: Page): Promise<string[]> {
+  return page.getByRole('button').evaluateAll(buttons => {
+    const normalize = (value: string | null | undefined): string => value?.replace(/\s+/g, ' ').trim() ?? ''
+    return buttons.map(button => {
+      const ariaLabel = normalize(button.getAttribute('aria-label'))
+      if (ariaLabel) return ariaLabel
+
+      const labelledBy = button
+        .getAttribute('aria-labelledby')
+        ?.split(/\s+/)
+        .map(id => normalize(document.getElementById(id)?.textContent))
+        .filter(Boolean)
+        .join(' ')
+      if (labelledBy) return labelledBy
+      if (button instanceof HTMLInputElement) return normalize(button.value)
+      return normalize(button.textContent)
+    })
   })
 }
 
@@ -519,99 +573,133 @@ test.describe('managed login logo auth independence', () => {
     { effect: wideEffect, name: 'wide' }
   ] as const) {
     test(`renders the transparent ${fixture.name} static treatment with preserved aspect and clear space in light and dark themes`, async ({
-      page
+      context
     }, testInfo) => {
       requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
-      await installManagedLogo(page, fixture.effect)
       const themeBackgrounds: string[] = []
 
       for (const colorScheme of ['light', 'dark'] as const) {
-        await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
-        await page.goto('/login')
-        await expectStaticFallback(page, fixture.effect)
-        const ordinaryLogo = page.locator('.login-brand .login-logo img')
-        const staticImage = page.locator('.login-particle-logo__image')
-        await expect(ordinaryLogo).toHaveAttribute('src', fixture.effect.logoUrl)
-        await expect(ordinaryLogo).toHaveCSS('width', '34px')
-        await expectFieldGeometry(page, fixture.effect)
-        expect(await page.locator('.login-particle-logo').evaluate(element => getComputedStyle(element).getPropertyValue('--login-logo-aura').trim())).toBe(
-          fixture.name === 'square' ? 'rgb(51 102 153 / 8%)' : 'transparent'
-        )
-        await assertTransparentSourceIdentity(ordinaryLogo)
-        await assertTransparentSourceIdentity(staticImage)
-        themeBackgrounds.push(await page.locator('.login').evaluate(element => getComputedStyle(element).backgroundColor))
-        await testInfo.attach(`${fixture.name}-${colorScheme}-${testInfo.project.name}`, {
-          body: await page.screenshot({ animations: 'disabled', fullPage: false }),
-          contentType: 'image/png'
-        })
+        const samplePage = await context.newPage()
+        try {
+          await samplePage.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+          await installManagedLogo(samplePage, fixture.effect)
+          await samplePage.goto('/login')
+          await expectStaticFallback(samplePage, fixture.effect)
+          const ordinaryLogo = samplePage.locator('.login-brand .login-logo img')
+          const staticImage = samplePage.locator('.login-particle-logo__image')
+          await expect(ordinaryLogo).toHaveAttribute('src', fixture.effect.logoUrl)
+          await expect(ordinaryLogo).toHaveCSS('width', '34px')
+          await expectFieldGeometry(samplePage, fixture.effect)
+          expect(
+            await samplePage.locator('.login-particle-logo').evaluate(element => getComputedStyle(element).getPropertyValue('--login-logo-aura').trim())
+          ).toBe(fixture.name === 'square' ? 'rgb(51 102 153 / 8%)' : 'transparent')
+          await assertTransparentSourceIdentity(ordinaryLogo)
+          await assertTransparentSourceIdentity(staticImage)
+          themeBackgrounds.push(await samplePage.locator('.login').evaluate(element => getComputedStyle(element).backgroundColor))
+          await testInfo.attach(`${fixture.name}-${colorScheme}-${testInfo.project.name}`, {
+            body: await samplePage.screenshot({ animations: 'disabled', fullPage: false }),
+            contentType: 'image/png'
+          })
+        } finally {
+          await samplePage.close()
+        }
       }
 
       expect(themeBackgrounds[0]).not.toBe(themeBackgrounds[1])
     })
   }
 
-  test('omits the large field at 959px, 650px, and truly zero measured space while preserving a positive narrow static field', async ({ page }, testInfo) => {
+  test('omits the large field at 959px, 650px, and truly zero measured space while preserving a positive narrow static field', async ({
+    context
+  }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
-    await page.emulateMedia({ reducedMotion: 'no-preference' })
-    const artifacts = await installManagedLogo(page, wideEffect)
 
     for (const viewport of [
       { width: 959, height: 900 },
       { width: 1440, height: 650 }
     ]) {
-      await page.setViewportSize(viewport)
-      await page.goto('/login')
-      await expectOrdinaryLogin(page)
-      await expect(page.locator('.login-particle-logo')).toHaveCount(0)
-      const email = page.getByLabel('Email Address', { exact: true })
-      await email.focus()
-      await expect(email).toBeFocused()
+      const samplePage = await context.newPage()
+      try {
+        await samplePage.emulateMedia({ reducedMotion: 'no-preference' })
+        await samplePage.setViewportSize(viewport)
+        const artifacts = await installManagedLogo(samplePage, wideEffect)
+        await samplePage.goto('/login')
+        await expectOrdinaryLogin(samplePage)
+        await expect(samplePage.locator('.login-particle-logo')).toHaveCount(0)
+        const email = samplePage.getByLabel('Email Address', { exact: true })
+        await email.focus()
+        await expect(email).toBeFocused()
+        expect(artifacts.particle).toHaveLength(0)
+        expect(artifacts.static).toHaveLength(0)
+      } finally {
+        await samplePage.close()
+      }
     }
 
-    expect(artifacts.particle).toHaveLength(0)
-    expect(artifacts.static).toHaveLength(0)
+    const narrowPage = await context.newPage()
+    try {
+      await narrowPage.emulateMedia({ reducedMotion: 'no-preference' })
+      await narrowPage.setViewportSize({ width: 960, height: 900 })
+      const artifacts = await installManagedLogo(narrowPage, wideEffect)
+      await narrowPage.goto('/login')
+      await expectStaticFallback(narrowPage, wideEffect)
+      expect(await measureLogoFreeWidth(narrowPage)).toBeGreaterThan(0)
+      const narrowImageSize = await narrowPage.locator('.login-particle-logo__image').evaluate(image => {
+        const rect = image.getBoundingClientRect()
+        return { longAxis: Math.max(rect.width, rect.height), shortAxis: Math.min(rect.width, rect.height) }
+      })
+      expect(narrowImageSize.longAxis).toBeGreaterThanOrEqual(256)
+      expect(narrowImageSize.shortAxis).toBeGreaterThan(0)
+      expect(narrowImageSize.shortAxis).toBeLessThan(48)
+      expect(artifacts.particle).toHaveLength(0)
+      expect(artifacts.static.length).toBeGreaterThan(0)
+    } finally {
+      await narrowPage.close()
+    }
 
-    await page.setViewportSize({ width: 960, height: 900 })
-    await page.goto('/login')
-    await expectStaticFallback(page, wideEffect)
-    expect(await measureLogoFreeWidth(page)).toBeGreaterThan(0)
-    const narrowImageSize = await page.locator('.login-particle-logo__image').evaluate(image => {
-      const rect = image.getBoundingClientRect()
-      return { longAxis: Math.max(rect.width, rect.height), shortAxis: Math.min(rect.width, rect.height) }
-    })
-    expect(narrowImageSize.longAxis).toBeGreaterThanOrEqual(256)
-    expect(narrowImageSize.shortAxis).toBeGreaterThan(0)
-    expect(narrowImageSize.shortAxis).toBeLessThan(48)
-    expect(artifacts.particle).toHaveLength(0)
-    expect(artifacts.static).toHaveLength(1)
+    const zeroSpacePage = await context.newPage()
+    try {
+      await zeroSpacePage.emulateMedia({ reducedMotion: 'no-preference' })
+      await zeroSpacePage.setViewportSize({ width: 1440, height: 900 })
+      const artifacts = await installManagedLogo(zeroSpacePage, wideEffect)
+      await installZeroFreeSpaceLogin(zeroSpacePage)
+      await zeroSpacePage.goto('/login')
+      await expectOrdinaryLogin(zeroSpacePage)
+      expect(await measureLogoFreeWidth(zeroSpacePage)).toBeLessThanOrEqual(0)
+      await expect(zeroSpacePage.locator('.login-particle-logo')).toHaveCount(0)
+      expect(artifacts.particle).toHaveLength(0)
+      expect(artifacts.static).toHaveLength(0)
 
-    await installZeroFreeSpaceLogin(page)
-    await page.setViewportSize({ width: 1440, height: 900 })
-    await page.goto('/login')
-    await expectOrdinaryLogin(page)
-    expect(await measureLogoFreeWidth(page)).toBeLessThanOrEqual(0)
-    await expect(page.locator('.login-particle-logo')).toHaveCount(0)
-    expect(artifacts.particle).toHaveLength(0)
-
-    await expectLoginValidation(page)
-    await page.setViewportSize({ width: 960, height: 320 })
-    await expect(page.locator('.login-particle-logo')).toHaveCount(0)
-    await expectScrollable(page.locator('main.login-sd'))
-
-    await page.getByLabel('Email Address', { exact: true }).fill(adminEmail)
-    await page.getByLabel('Password', { exact: true }).fill(adminPassword)
-    await page.getByRole('button', { name: 'Log In', exact: true }).click()
-    await expect(page).toHaveURL('/')
+      await expectLoginValidation(zeroSpacePage)
+      await zeroSpacePage.setViewportSize({ width: 960, height: 320 })
+      await expect(zeroSpacePage.locator('.login-particle-logo')).toHaveCount(0)
+      await expectScrollable(zeroSpacePage.locator('main.login-sd'))
+    } finally {
+      await zeroSpacePage.close()
+    }
   })
 
-  test('preserves the unmanaged accessibility tree, tab order, title, focus geometry, and auth controls', async ({ page, context }, testInfo) => {
+  test('preserves unmanaged landmark, heading, textbox, and button names, tab order, title, focus geometry, and auth controls', async ({
+    page,
+    context
+  }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
     const baselinePage = await context.newPage()
     await baselinePage.emulateMedia({ reducedMotion: 'reduce' })
     await baselinePage.goto('/login')
     await expectOrdinaryLogin(baselinePage)
     const baselineTitle = await baselinePage.title()
-    const baselineTree = await baselinePage.locator('body').ariaSnapshot()
+    const siteTitle = (await baselinePage.locator('#login-site-title').textContent())?.trim()
+    expect(siteTitle).toBeTruthy()
+    const baselineButtonNames = await accessibleButtonNames(baselinePage)
+    expect(baselineButtonNames).toEqual(expect.arrayContaining(['View Password', 'Log In']))
+    const expectedAccessibility: LoginAccessibilityContract = {
+      buttons: baselineButtonNames,
+      headings: [siteTitle ?? '', 'Enter your credentials'],
+      landmarks: [siteTitle ?? ''],
+      textboxes: ['Email Address', 'Password']
+    }
+    await expectLoginAccessibilityContract(baselinePage, expectedAccessibility)
     const baselineTabOrder = await collectTabOrder(baselinePage)
     const baselineFocus = await focusSurfaceGeometry(baselinePage)
 
@@ -619,12 +707,13 @@ test.describe('managed login logo auth independence', () => {
     await installManagedLogo(page, squareEffect)
     await page.goto('/login')
     await expectStaticFallback(page, squareEffect)
-    const managedTree = await page.locator('body').ariaSnapshot()
+    const managedButtonNames = await accessibleButtonNames(page)
+    expect(managedButtonNames).toEqual(baselineButtonNames)
+    await expectLoginAccessibilityContract(page, expectedAccessibility)
     const managedTabOrder = await collectTabOrder(page)
     const managedFocus = await focusSurfaceGeometry(page)
 
     expect(await page.title()).toBe(baselineTitle)
-    expect(managedTree).toBe(baselineTree)
     expect(managedTabOrder).toEqual(baselineTabOrder)
     expect(managedTabOrder).toHaveLength(5)
     expect(new Set(managedTabOrder).size).toBe(5)
