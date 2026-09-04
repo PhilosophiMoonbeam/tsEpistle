@@ -46,9 +46,10 @@ export interface ClaimDurableJobs {
   limit?: number
   leaseMs?: number
   now?: Date
+  supportedIdentities?: readonly string[]
 }
 
-export interface RunDurableJobsOptions extends ClaimDurableJobs {
+export interface RunDurableJobsOptions extends Omit<ClaimDurableJobs, 'supportedIdentities'> {
   handlers: Readonly<Record<string, DurableJobHandler>>
   retryDelay?: (attempt: number) => number
 }
@@ -60,6 +61,27 @@ const defaultLeaseMs = 30_000
 const defaultRetryDelay = (attempt: number): number => Math.min(300_000, 1_000 * 2 ** Math.max(0, attempt - 1))
 const exhaustedLeaseError = 'Durable job lease expired after its final allowed attempt'
 const validJobType = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+const validJobIdentity = /^([a-z0-9]+(?:-[a-z0-9]+)*)@([1-9]\d*)$/
+
+interface SupportedDurableJob {
+  type: string
+  version: number
+}
+
+const parseSupportedIdentities = (identities: readonly string[] | undefined): SupportedDurableJob[] | undefined => {
+  if (!identities) return undefined
+  const supported: SupportedDurableJob[] = []
+  for (const identity of identities) {
+    const match = validJobIdentity.exec(identity)
+    if (!match) continue
+    const type = match[1]
+    const versionCapture = match[2]
+    if (type === undefined || versionCapture === undefined) continue
+    const version = Number(versionCapture)
+    if (Number.isSafeInteger(version)) supported.push({ type, version })
+  }
+  return supported
+}
 
 const asDate = (value: Date | string | number): Date => {
   const date = value instanceof Date ? value : new Date(value)
@@ -92,6 +114,18 @@ const applyEligiblePredicate = (query: Knex.QueryBuilder, now: Date): Knex.Query
         expired.where('state', 'running').andWhere('leaseExpiresAt', '<=', now)
       })
     })
+
+const applySupportedIdentitiesPredicate = (query: Knex.QueryBuilder, supported: readonly SupportedDurableJob[] | undefined): Knex.QueryBuilder => {
+  if (!supported) return query
+  if (supported.length === 0) return query.whereRaw('1 = 0')
+  return query.where((identities: Knex.QueryBuilder) => {
+    for (const [index, identity] of supported.entries()) {
+      const clause = { type: identity.type, version: identity.version }
+      if (index === 0) identities.where(clause)
+      else identities.orWhere(clause)
+    }
+  })
+}
 
 export class DurableJobStore {
   private readonly knex: Knex | Knex.Transaction
@@ -147,21 +181,21 @@ export class DurableJobStore {
       throw new TypeError('leaseMs must be an integer from 1000 through 3600000')
     }
     const now = input.now ?? new Date()
+    const supported = parseSupportedIdentities(input.supportedIdentities)
     const leaseExpiresAt = new Date(now.getTime() + leaseMs)
-    await this.knex<DurableJobRow>(tableName)
-      .where('state', 'running')
-      .where('leaseExpiresAt', '<=', now)
-      .whereRaw('?? >= ??', ['attempts', 'maxAttempts'])
-      .update({
-        state: 'failed',
-        leaseOwner: null,
-        leaseToken: null,
-        leaseExpiresAt: null,
-        lastError: exhaustedLeaseError,
-        completedAt: now,
-        updatedAt: now
-      })
-    const candidates = (await applyEligiblePredicate(this.knex<DurableJobRow>(tableName).select('id'), now)
+    await applySupportedIdentitiesPredicate(
+      this.knex<DurableJobRow>(tableName).where('state', 'running').where('leaseExpiresAt', '<=', now).whereRaw('?? >= ??', ['attempts', 'maxAttempts']),
+      supported
+    ).update({
+      state: 'failed',
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastError: exhaustedLeaseError,
+      completedAt: now,
+      updatedAt: now
+    })
+    const candidates = (await applySupportedIdentitiesPredicate(applyEligiblePredicate(this.knex<DurableJobRow>(tableName).select('id'), now), supported)
       .orderBy('nextRunAt', 'asc')
       .orderBy('id', 'asc')
       .limit(limit * 3)) as Array<Pick<DurableJobRow, 'id'>>
@@ -170,7 +204,10 @@ export class DurableJobStore {
     for (const candidate of candidates) {
       if (claimed.length >= limit) break
       const leaseToken = randomUUID()
-      const updated = await applyEligiblePredicate(this.knex<DurableJobRow>(tableName).where('id', candidate.id), now).update({
+      const updated = await applySupportedIdentitiesPredicate(
+        applyEligiblePredicate(this.knex<DurableJobRow>(tableName).where('id', candidate.id), now),
+        supported
+      ).update({
         state: 'running',
         leaseOwner: input.workerId,
         leaseToken,
@@ -261,7 +298,13 @@ export class DurableJobStore {
 
 export const runDurableJobBatch = async (knex: Knex, options: RunDurableJobsOptions): Promise<DurableJob[]> => {
   const store = new DurableJobStore(knex)
-  const claimed = await store.claim(options)
+  const claimed = await store.claim({
+    workerId: options.workerId,
+    ...(options.limit === undefined ? {} : { limit: options.limit }),
+    ...(options.leaseMs === undefined ? {} : { leaseMs: options.leaseMs }),
+    ...(options.now === undefined ? {} : { now: options.now }),
+    supportedIdentities: Object.keys(options.handlers)
+  })
   const leaseMs = options.leaseMs ?? defaultLeaseMs
   const heartbeatMs = Math.max(1, Math.floor(leaseMs / 2))
   await Promise.all(

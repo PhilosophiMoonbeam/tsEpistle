@@ -67,6 +67,42 @@ describe('portable durable jobs', () => {
     expect(claims.flat()[0].attempts).toBe(1)
   })
 
+  it('claims and runs only jobs with a supported handler identity', async () => {
+    const unsupported = await store.enqueue({
+      type: 'unsupported-handler',
+      version: 1,
+      payload: {},
+      nextRunAt: new Date('2026-08-14T10:00:00.000Z')
+    })
+    const supported = await store.enqueue({
+      type: 'supported-handler',
+      version: 1,
+      payload: {},
+      nextRunAt: new Date('2026-08-14T11:00:00.000Z')
+    })
+    const handler = vi.fn()
+
+    const claimed = await runDurableJobBatch(knex, {
+      workerId: 'instance-a',
+      limit: 1,
+      now: new Date('2026-08-14T12:00:00.000Z'),
+      handlers: { 'supported-handler@1': handler }
+    })
+
+    expect(claimed).toEqual([expect.objectContaining({ id: supported.id, attempts: 1 })])
+    expect(handler).toHaveBeenCalledOnce()
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ id: supported.id }), expect.objectContaining({ knex, signal: expect.any(AbortSignal) }))
+    expect(await store.get(supported.id)).toMatchObject({ state: 'succeeded', attempts: 1 })
+    expect(await store.get(unsupported.id)).toMatchObject({
+      state: 'pending',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastError: null
+    })
+  })
+
   it('renews the lease while a handler remains blocked', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-14T12:00:00.000Z'))
