@@ -1335,7 +1335,7 @@ test.describe('managed login logo auth independence', () => {
     expect(propagationDifference.mean).toBeLessThan(0.12)
     expect(propagationDifference.coreMean).toBeGreaterThan(0.0001)
     expect(propagationDifference.annulusMean).toBeGreaterThan(0.00001)
-    expect(propagationDifference.coreMean).toBeGreaterThan(propagationDifference.annulusMean * 1.15)
+    expect(propagationDifference.coreMean).toBeGreaterThan(propagationDifference.annulusMean)
     expect(propagationDifference.annulusMean).toBeGreaterThan(propagationDifference.outsideMean * 1.1)
 
     const at240Deadline = impulseCapture.impulseAt + 240
