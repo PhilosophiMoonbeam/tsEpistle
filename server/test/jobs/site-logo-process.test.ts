@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
-import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import type { DurableJob } from '../../core/durable-jobs.ts'
 import { up as createDurableJobs } from '../../db/migrations/2.5.130.ts'
 import { up as addDurableJobLeaseToken } from '../../db/migrations/2.5.158.ts'
-import type { DurableJob } from '../../core/durable-jobs.ts'
 import type { SiteLogoArtifacts } from '../../helpers/site-logo-processing.ts'
 import { retrySiteLogoCandidate } from '../../operations/site-logo.ts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 
 const processingMocks = vi.hoisted(() => {
   class ProcessingError extends Error {
@@ -500,6 +500,44 @@ describe('managed site logo durable processing', () => {
       errorCode: null
     })
     expect((await knex('siteLogoRevisions').where({ id: activeId }).first('status'))?.status).toBe('ready')
+  })
+
+  it.each([1, 2] as const)('reconciles a terminal pipeline-v%s handler failure and makes its candidate retryable', async pipelineVersion => {
+    const { revisionId, job } = await enqueueCandidate(pipelineVersion)
+    const failedAt = new Date('2026-09-04T11:59:59.000Z')
+    const reconciledAt = new Date('2026-09-04T12:00:00.000Z')
+    await knex('durableJobs').where({ id: job.id }).update({
+      state: 'failed',
+      attempts: 5,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      lastError: 'older worker rejected the candidate pipeline version',
+      completedAt: failedAt,
+      updatedAt: failedAt
+    })
+
+    expect(await failExhaustedSiteLogoJobs(knex, reconciledAt)).toBe(1)
+    const terminalJob = await knex('durableJobs').where({ id: job.id }).first('state', 'attempts', 'lastError', 'completedAt')
+    expect(terminalJob).toMatchObject({
+      state: 'failed',
+      attempts: 5,
+      lastError: 'older worker rejected the candidate pipeline version'
+    })
+    expect(new Date(terminalJob.completedAt).getTime()).toBe(failedAt.getTime())
+    const terminalRevision = await knex('siteLogoRevisions').where({ id: revisionId }).first('status', 'errorCode', 'completedAt', 'retiredAt')
+    expect(terminalRevision).toMatchObject({
+      status: 'failed',
+      errorCode: 'PROCESSING_FAILED',
+      retiredAt: null
+    })
+    expect(new Date(terminalRevision.completedAt).getTime()).toBe(reconciledAt.getTime())
+    expect(await failExhaustedSiteLogoJobs(knex, new Date('2026-09-04T12:00:01.000Z'))).toBe(0)
+
+    await retrySiteLogoCandidate(null, knex)
+    const retriedState = await knex('siteLogoState').where({ id: 1 }).first('desiredRevisionId')
+    const retried = await knex('siteLogoRevisions').where({ id: retriedState.desiredRevisionId }).first('status', 'retrySequence', 'pipelineVersion')
+    expect(retried).toEqual({ status: 'pending', retrySequence: 1, pipelineVersion: 2 })
   })
 
   it('fails only the fenced older revision when a newer candidate is desired', async () => {

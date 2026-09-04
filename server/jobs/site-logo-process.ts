@@ -12,8 +12,8 @@ import {
   SITE_LOGO_PNG_BYTE_LIMIT,
   SITE_LOGO_SOURCE_BYTE_LIMIT,
   SITE_LOGO_STATIC_PNG_BYTE_LIMIT,
-  SiteLogoProcessingError,
   type SiteLogoArtifacts,
+  SiteLogoProcessingError,
   type SiteLogoProcessingErrorCode
 } from '../helpers/site-logo-processing.ts'
 
@@ -48,6 +48,11 @@ interface DurableJobRow {
   lastError: string | null
   updatedAt: Date | string | number
   completedAt: Date | string | number | null
+}
+
+interface ExhaustedJobCandidate extends DurableJobRow {
+  revisionId: string
+  revisionRetrySequence: number
 }
 
 interface RevisionRow {
@@ -211,62 +216,56 @@ const lockState = async (transaction: Knex.Transaction): Promise<StateRow> => {
 const EXHAUSTED_SITE_LOGO_ERROR = 'Durable job lease expired after its final allowed attempt'
 const UPGRADABLE_SITE_LOGO_PIPELINE_VERSION = 1
 
-const exhaustedProcessPayload = (row: DurableJobRow): ProcessPayload | null => {
-  try {
-    const payload: unknown = JSON.parse(row.payload)
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null
-    const revisionId = (payload as Record<string, unknown>).revisionId
-    const retrySequence = (payload as Record<string, unknown>).retrySequence
-    if (typeof revisionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(revisionId) || !Number.isSafeInteger(retrySequence) || Number(retrySequence) < 0) {
-      return null
-    }
-    return { revisionId, retrySequence: Number(retrySequence) }
-  } catch {
-    return null
-  }
-}
-
 export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): Promise<number> =>
   await knex.transaction(async transaction => {
-    const jobs = await transaction<DurableJobRow>('durableJobs')
-      .where({ type: 'process-site-logo', version: 1, state: 'running' })
-      .where('leaseExpiresAt', '<=', now)
-      .whereRaw('?? >= ??', ['attempts', 'maxAttempts'])
-      .orderBy('id', 'asc')
-      .forUpdate()
+    const jobs = (await transaction('durableJobs as job')
+      .join('siteLogoRevisions as revision', 'revision.jobId', 'job.id')
+      .select('job.*', 'revision.id as revisionId', 'revision.retrySequence as revisionRetrySequence')
+      .where('job.type', 'process-site-logo')
+      .where('job.version', 1)
+      .whereIn('revision.pipelineVersion', [UPGRADABLE_SITE_LOGO_PIPELINE_VERSION, SITE_LOGO_PIPELINE_VERSION])
+      .whereIn('revision.status', ['pending', 'running'])
+      .whereRaw('?? >= ??', ['job.attempts', 'job.maxAttempts'])
+      .andWhere(builder => {
+        builder.where('job.state', 'failed').orWhere(running => {
+          running.where('job.state', 'running').where('job.leaseExpiresAt', '<=', now)
+        })
+      })
+      .orderBy('job.id', 'asc')
+      .forUpdate()) as ExhaustedJobCandidate[]
     if (jobs.length === 0) return 0
 
     const state = await lockState(transaction)
     for (const job of jobs) {
-      const updated = await transaction<DurableJobRow>('durableJobs')
-        .where({
-          id: job.id,
-          type: job.type,
-          version: job.version,
-          state: 'running',
-          leaseOwner: job.leaseOwner,
-          leaseToken: job.leaseToken
-        })
-        .where('leaseExpiresAt', '<=', now)
-        .whereRaw('?? >= ??', ['attempts', 'maxAttempts'])
-        .update({
-          state: 'failed',
-          leaseOwner: null,
-          leaseToken: null,
-          leaseExpiresAt: null,
-          lastError: EXHAUSTED_SITE_LOGO_ERROR,
-          completedAt: now,
-          updatedAt: now
-        })
-      if (updated !== 1) throw new Error(`Exhausted site logo durable job ${job.id} lost its fence`)
+      if (job.state === 'running') {
+        const updated = await transaction<DurableJobRow>('durableJobs')
+          .where({
+            id: job.id,
+            type: job.type,
+            version: job.version,
+            state: 'running',
+            leaseOwner: job.leaseOwner,
+            leaseToken: job.leaseToken
+          })
+          .where('leaseExpiresAt', '<=', now)
+          .whereRaw('?? >= ??', ['attempts', 'maxAttempts'])
+          .update({
+            state: 'failed',
+            leaseOwner: null,
+            leaseToken: null,
+            leaseExpiresAt: null,
+            lastError: EXHAUSTED_SITE_LOGO_ERROR,
+            completedAt: now,
+            updatedAt: now
+          })
+        if (updated !== 1) throw new Error(`Exhausted site logo durable job ${job.id} lost its fence`)
+      }
 
-      const payload = exhaustedProcessPayload(job)
-      if (!payload) continue
-      await transaction<RevisionRow>('siteLogoRevisions')
+      const updatedRevision = await transaction<RevisionRow>('siteLogoRevisions')
         .where({
-          id: payload.revisionId,
+          id: job.revisionId,
           jobId: job.id,
-          retrySequence: payload.retrySequence
+          retrySequence: job.revisionRetrySequence
         })
         .whereIn('pipelineVersion', [UPGRADABLE_SITE_LOGO_PIPELINE_VERSION, SITE_LOGO_PIPELINE_VERSION])
         .whereIn('status', ['pending', 'running'])
@@ -274,9 +273,10 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
           status: 'failed',
           errorCode: 'PROCESSING_FAILED',
           completedAt: now,
-          retiredAt: state.desiredRevisionId === payload.revisionId ? null : now,
+          retiredAt: state.desiredRevisionId === job.revisionId ? null : now,
           updatedAt: now
         })
+      if (updatedRevision !== 1) throw new Error(`Exhausted site logo revision ${job.revisionId} lost its fence`)
     }
     return jobs.length
   })
