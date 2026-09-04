@@ -232,11 +232,16 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
         })
       })
       .orderBy('job.id', 'asc')
-      .forUpdate()) as ExhaustedJobCandidate[]
+      .forUpdate('job')) as ExhaustedJobCandidate[]
     if (jobs.length === 0) return 0
 
     const state = await lockState(transaction)
     for (const job of jobs) {
+      const payload: ProcessPayload = {
+        revisionId: job.revisionId,
+        retrySequence: Number(job.revisionRetrySequence)
+      }
+      if (!storedPayloadMatches(job, payload)) throw new TypeError(`Exhausted site logo durable job ${job.id} does not match its revision`)
       if (job.state === 'running') {
         const updated = await transaction<DurableJobRow>('durableJobs')
           .where({
@@ -260,12 +265,27 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
           })
         if (updated !== 1) throw new Error(`Exhausted site logo durable job ${job.id} lost its fence`)
       }
+      const revision = await transaction<RevisionRow>('siteLogoRevisions')
+        .where({
+          id: payload.revisionId,
+          jobId: job.id,
+          retrySequence: payload.retrySequence
+        })
+        .forUpdate()
+        .first()
+      if (
+        !revision ||
+        ![UPGRADABLE_SITE_LOGO_PIPELINE_VERSION, SITE_LOGO_PIPELINE_VERSION].includes(Number(revision.pipelineVersion)) ||
+        !['pending', 'running'].includes(revision.status)
+      ) {
+        throw new Error(`Exhausted site logo revision ${payload.revisionId} lost its fence`)
+      }
 
       const updatedRevision = await transaction<RevisionRow>('siteLogoRevisions')
         .where({
-          id: job.revisionId,
+          id: payload.revisionId,
           jobId: job.id,
-          retrySequence: job.revisionRetrySequence
+          retrySequence: payload.retrySequence
         })
         .whereIn('pipelineVersion', [UPGRADABLE_SITE_LOGO_PIPELINE_VERSION, SITE_LOGO_PIPELINE_VERSION])
         .whereIn('status', ['pending', 'running'])
@@ -273,7 +293,7 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
           status: 'failed',
           errorCode: 'PROCESSING_FAILED',
           completedAt: now,
-          retiredAt: state.desiredRevisionId === job.revisionId ? null : now,
+          retiredAt: state.desiredRevisionId === payload.revisionId ? null : now,
           updatedAt: now
         })
       if (updatedRevision !== 1) throw new Error(`Exhausted site logo revision ${job.revisionId} lost its fence`)
