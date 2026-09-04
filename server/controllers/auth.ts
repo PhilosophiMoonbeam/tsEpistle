@@ -46,10 +46,16 @@ const normalizeAuthBackgroundUrl = (backgroundUrl: unknown): string => {
   return normalizedBackgroundUrl || DEFAULT_AUTH_BACKGROUND_URL
 }
 
-export const normalizeFaviconUrl = (logoUrl: unknown): string => {
-  if (typeof logoUrl !== 'string') return '/_assets/favicon.ico'
-  const normalizedLogoUrl = logoUrl.trim()
-  return normalizedLogoUrl || '/_assets/favicon.ico'
+export const normalizeFaviconUrl = (logoUrl: unknown, fallbackLogoUrl?: unknown): string => {
+  if (typeof logoUrl === 'string') {
+    const normalizedLogoUrl = logoUrl.trim()
+    if (normalizedLogoUrl) return normalizedLogoUrl
+  }
+  if (typeof fallbackLogoUrl === 'string') {
+    const normalizedFallbackLogoUrl = fallbackLogoUrl.trim()
+    if (normalizedFallbackLogoUrl) return normalizedFallbackLogoUrl
+  }
+  return '/_assets/favicon.ico'
 }
 
 const routeParam = (req: Request, name: string): string => {
@@ -63,6 +69,7 @@ const routeParam = (req: Request, name: string): string => {
 export default function createAuthController(wiki: AuthWiki): express.Router {
   const router = express.Router()
 
+  const authFaviconUrl = (res: Response): string => normalizeFaviconUrl(res.locals.faviconUrl, wiki.config.logoUrl)
   /**
    * Login form
    */
@@ -80,7 +87,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
 
     // -> Show Login
     const bgUrl = normalizeAuthBackgroundUrl(wiki.config.auth.loginBgUrl)
-    res.render('login', { bgUrl, hideLocal: wiki.config.auth.hideLocal, faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl) })
+    res.render('login', { bgUrl, hideLocal: wiki.config.auth.hideLocal, faviconUrl: authFaviconUrl(res) })
   })
 
   /**
@@ -162,7 +169,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
     if (localStrg.selfRegistration) {
       res.render('register', {
         bgUrl,
-        faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl)
+        faviconUrl: authFaviconUrl(res)
       })
     } else {
       next(new wiki.Error.AuthRegistrationDisabled())
@@ -184,7 +191,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
       res.render('login', {
         bgUrl,
         hideLocal: wiki.config.auth.hideLocal,
-        faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl),
+        faviconUrl: authFaviconUrl(res),
         verificationToken: token
       })
     } catch (err) {
@@ -207,7 +214,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
       res.render('login', {
         bgUrl,
         hideLocal: wiki.config.auth.hideLocal,
-        faviconUrl: normalizeFaviconUrl(wiki.config.logoUrl),
+        faviconUrl: authFaviconUrl(res),
         resetPasswordToken: token
       })
     } catch (err) {

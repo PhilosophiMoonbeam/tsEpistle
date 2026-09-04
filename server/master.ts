@@ -19,11 +19,13 @@ import { sessionCookieOptions } from './helpers/session-cookie.ts'
 import securityMiddleware from './middlewares/security.ts'
 import seoMiddleware from './middlewares/seo.ts'
 import createAuthController, { normalizeFaviconUrl, type AuthWiki } from './controllers/auth.ts'
+import createSiteLogoController from './controllers/site-logo.ts'
 import createAgentsHostController from './controllers/agents-host.ts'
 import createUploadController, { type UploadWiki } from './controllers/upload.ts'
 import createCommonController, { type CommonWiki } from './controllers/common.ts'
 import createSslController, { type SslWiki } from './controllers/ssl.ts'
 import apiController, { type ApiRuntime } from './controllers/api/index.ts'
+import { siteLogoPreBodyRouter } from './controllers/api/site-logo.ts'
 import { configureTransportRuntime } from './controllers/_types.ts'
 import apiV1Controller from './controllers/api-v1/index.ts'
 import type { ProductMetadata } from '../shared/product.ts'
@@ -32,6 +34,7 @@ import { siteBannerOrDefault } from '../shared/site-banner.ts'
 import { normalizeAvailableEditors } from '../shared/page-editors.ts'
 import { normalizeThemeColors } from '../shared/theme-colors.ts'
 import pageHelper from './helpers/page.ts'
+import { resolveActiveBranding } from './helpers/site-logo-branding.ts'
 
 import { AgentProviderRegistry, type AgentProfileTokenKeys } from './agents/providers/registry.ts'
 import { DatabaseAgentSecretRegistry, decodeAgentProviderSecretKeys, environmentSecretValue } from './agents/providers/secrets.ts'
@@ -213,7 +216,11 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   const agentLimits = parseAgentOperationalLimits(wiki.config.agents)
   app.set('views', path.join(wiki.SERVERPATH, 'views'))
   app.set('view engine', 'pug')
-  app.use(compression())
+  app.use(
+    compression({
+      filter: (req, res) => !req.originalUrl.startsWith('/_site-logo/') && compression.filter(req, res)
+    })
+  )
 
   app.use(securityMiddleware)
   app.use(cors({ origin: false }))
@@ -238,6 +245,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     })
   )
   app.use('/', createSslController(wiki))
+  app.use('/', createSiteLogoController(wiki.models.knex))
 
   app.use(cookieParser())
   const currentSessionCookieOptions = sessionCookieOptions(() => wiki.config.host)
@@ -470,6 +478,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   app.use(agentsController)
 
   await wiki.servers.startGraphQL()
+  app.use('/_api/site/logo', siteLogoPreBodyRouter)
   const jsonBodyParser = express.json({ limit: wiki.config.bodyParserLimit ?? '5mb' })
   app.use('/_api', jsonBodyParser, apiController)
   app.use('/api/v1', jsonBodyParser, apiV1Controller)
@@ -498,7 +507,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   })
 
   app.use(async (_req, res, next) => {
-    res.locals.faviconUrl = normalizeFaviconUrl(wiki.config.logoUrl)
+    const branding = await resolveActiveBranding(wiki.models.knex, wiki.config.logoUrl)
+    res.locals.faviconUrl = normalizeFaviconUrl(branding.logoUrl)
     res.locals.siteConfig = {
       title: wiki.config.title,
       theme: wiki.config.theming.theme,
@@ -511,7 +521,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       contentLicense: wiki.config.contentLicense,
       footerOverride: wiki.config.footerOverride,
       banner: siteBannerOrDefault(wiki.config.banner),
-      logoUrl: wiki.config.logoUrl,
+      logoUrl: branding.logoUrl,
+      logoEffect: branding.logoEffect,
       availableEditors: normalizeAvailableEditors(wiki.config.editors?.available),
       product: wiki.product,
       agentsEnabled: wiki.config.agents.enabled,

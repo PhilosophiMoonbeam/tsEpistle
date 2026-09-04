@@ -1,0 +1,56 @@
+.login-particle-logo {
+  position: absolute;
+  z-index: 0;
+  display: grid;
+  overflow: hidden;
+  contain: strict;
+  isolation: isolate;
+  pointer-events: none;
+  user-select: none;
+
+  &--pointer-active {
+    pointer-events: auto;
+  }
+
+  &::before {
+    position: absolute;
+    z-index: -1;
+    inset: 4% 2%;
+    background: radial-gradient(
+      ellipse at center,
+      var(--login-logo-aura) 0,
+      color-mix(in srgb, var(--login-logo-aura) 44%, transparent) 42%,
+      transparent 74%
+    );
+    content: '';
+    filter: blur(24px);
+    pointer-events: none;
+  }
+
+  &__stage {
+    position: absolute;
+    inset: 8%;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+  }
+
+  &__image {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    object-position: center;
+    filter:
+      drop-shadow(0 1.25rem 1.75rem color-mix(in srgb, rgb(var(--v-theme-background)) 32%, transparent))
+      drop-shadow(0 .2rem .5rem color-mix(in srgb, rgb(var(--v-theme-on-background)) 12%, transparent));
+    pointer-events: none;
+    transform: translateZ(0);
+  }
+}
+
+@media print {
+  .login-particle-logo {
+    display: none;
+  }
+}

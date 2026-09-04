@@ -11,10 +11,14 @@ interface BunLockPackageMetadata {
 }
 
 interface BunLockfile {
-  workspaces: Record<string, {
-    dependencies?: Record<string, string>
-    optionalDependencies?: Record<string, string>
-  }>
+  workspaces: Record<
+    string,
+    {
+      dependencies?: Record<string, string>
+      devDependencies?: Record<string, string>
+      optionalDependencies?: Record<string, string>
+    }
+  >
   overrides?: Record<string, string>
   packages: Record<string, [string, string, BunLockPackageMetadata?]>
 }
@@ -41,6 +45,7 @@ interface InventoryPackage {
 interface LicensePolicy {
   schemaVersion: number
   allowedExpressions: string[]
+  packageApprovals: Record<string, string>
   deniedExpressions: string[]
   reviewRequiredExpressions: string[]
   unknownExpressionPolicy: 'review-required'
@@ -68,7 +73,7 @@ const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8')) as LicensePolicy
 const lockfileBytes = fs.readFileSync(lockfilePath)
 const lockfile = Bun.JSONC.parse(lockfileBytes.toString('utf8')) as BunLockfile
 
-const parsePackageDescriptor = (descriptor: string): { name: string, version: string } => {
+const parsePackageDescriptor = (descriptor: string): { name: string; version: string } => {
   const separator = descriptor.lastIndexOf('@')
   if (separator <= 0 || separator === descriptor.length - 1) {
     throw new Error(`Invalid Bun lockfile package descriptor: ${descriptor}`)
@@ -95,30 +100,43 @@ const matchesRange = (version: string, range: string): boolean => {
 const rootWorkspace = lockfile.workspaces['']
 if (!rootWorkspace) throw new Error('bun.lock does not define the root workspace')
 
-const productionPackages = new Map<string, ResolvedPackage>()
+// These build-time dependencies are bundled into shipped renderer code. Keep
+// this reviewed allowlist exact rather than traversing all development tooling.
+const reviewedRendererRootDevDependencies = {
+  '@tresjs/core': '5.8.3',
+  '@types/three': '0.184.1',
+  three: '0.184.0'
+} as const
+
+const trackedPackages = new Map<string, ResolvedPackage>()
 const pending = Object.entries({
   ...rootWorkspace.dependencies,
   ...rootWorkspace.optionalDependencies
 })
+for (const [dependencyName, reviewedVersion] of Object.entries(reviewedRendererRootDevDependencies)) {
+  const lockedVersion = rootWorkspace.devDependencies?.[dependencyName]
+  if (lockedVersion !== reviewedVersion) {
+    throw new Error(
+      `bun.lock root devDependencies.${dependencyName} must resolve reviewed renderer version ${reviewedVersion}; found ${lockedVersion ?? 'missing'}`
+    )
+  }
+  pending.push([dependencyName, reviewedVersion])
+}
 
 while (pending.length > 0) {
   const [dependencyName, range] = pending.pop() as [string, string]
-  const candidates = (packagesByName.get(dependencyName) ?? [])
-    .filter(candidate => matchesRange(candidate.version, range) || lockfile.overrides?.[dependencyName] === candidate.version)
+  const candidates = (packagesByName.get(dependencyName) ?? []).filter(
+    candidate => matchesRange(candidate.version, range) || lockfile.overrides?.[dependencyName] === candidate.version
+  )
   if (candidates.length === 0) {
-    throw new Error(`bun.lock cannot resolve production dependency ${dependencyName}@${range}`)
+    throw new Error(`bun.lock cannot resolve tracked dependency ${dependencyName}@${range}`)
   }
   for (const candidate of candidates) {
     const identity = `${candidate.name}@${candidate.version}`
-    if (productionPackages.has(identity)) continue
-    productionPackages.set(identity, candidate)
-    const requiredPeers = Object.entries(candidate.metadata.peerDependencies ?? {})
-      .filter(([name]) => !candidate.metadata.optionalPeers?.includes(name))
-    pending.push(
-      ...Object.entries(candidate.metadata.dependencies ?? {}),
-      ...Object.entries(candidate.metadata.optionalDependencies ?? {}),
-      ...requiredPeers
-    )
+    if (trackedPackages.has(identity)) continue
+    trackedPackages.set(identity, candidate)
+    const requiredPeers = Object.entries(candidate.metadata.peerDependencies ?? {}).filter(([name]) => !candidate.metadata.optionalPeers?.includes(name))
+    pending.push(...Object.entries(candidate.metadata.dependencies ?? {}), ...Object.entries(candidate.metadata.optionalDependencies ?? {}), ...requiredPeers)
   }
 }
 const packageMetadata = new Map<string, PackageMetadata>()
@@ -135,7 +153,9 @@ const normalizeLicense = (manifest: InstalledPackageManifest): string => {
   }
   if (Array.isArray(manifest.licenses)) {
     const expressions = manifest.licenses
-      .map(entry => typeof entry === 'string' ? entry : entry && typeof entry === 'object' && 'type' in entry ? (entry as { type?: unknown }).type : undefined)
+      .map(entry =>
+        typeof entry === 'string' ? entry : entry && typeof entry === 'object' && 'type' in entry ? (entry as { type?: unknown }).type : undefined
+      )
       .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
     if (expressions.length > 0) return [...new Set(expressions)].sort().join(' OR ')
   }
@@ -176,9 +196,25 @@ const collectInstalledPackages = (nodeModulesPath: string): void => {
 }
 collectInstalledPackages(path.join(rootPath, 'node_modules'))
 
-// These published manifests omit a license field. Their repository license
-// files were reviewed explicitly; any new metadata gap fails the release gate.
-const licenseMetadataOverrides: Record<string, { license: string, source: string }> = {
+// These exact manifests either omit license metadata or cannot be installed on
+// the inventory host. Their published metadata/license files were reviewed.
+const licenseMetadataOverrides: Record<string, { license: string; source: string }> = {
+  '@img/sharp-libvips-linux-riscv64@1.3.3': {
+    license: 'LGPL-3.0-or-later',
+    source: 'https://registry.npmjs.org/@img%2fsharp-libvips-linux-riscv64/1.3.3'
+  },
+  '@img/sharp-linux-riscv64@0.35.4': {
+    license: 'Apache-2.0',
+    source: 'https://registry.npmjs.org/@img%2fsharp-linux-riscv64/0.35.4'
+  },
+  '@img/sharp-webcontainers-wasm32@0.35.4': {
+    license: 'Apache-2.0',
+    source: 'https://registry.npmjs.org/@img%2fsharp-webcontainers-wasm32/0.35.4'
+  },
+  '@pmndrs/pointer-events@6.6.30': {
+    license: 'MIT',
+    source: 'https://github.com/pmndrs/xr/blob/main/packages/pointer-events/LICENSE'
+  },
   'notp@2.0.3': {
     license: 'MIT',
     source: 'https://github.com/guyht/notp/blob/master/LICENSE'
@@ -202,16 +238,18 @@ const licenseMetadataOverrides: Record<string, { license: string, source: string
 }
 
 const groupedPackages = new Map<string, InventoryPackage>()
+const resolvedLicenses = new Map<string, string>()
 const missingMetadata: string[] = []
 const unknownMetadata: string[] = []
-for (const identity of [...productionPackages.keys()].sort()) {
+for (const identity of [...trackedPackages.keys()].sort()) {
   const metadata = packageMetadata.get(identity)
-  if (!metadata) {
+  const override = licenseMetadataOverrides[identity]
+  if (!metadata && !override) {
     missingMetadata.push(identity)
     continue
   }
-  const override = licenseMetadataOverrides[identity]
-  const license = override?.license ?? metadata.license
+  const license = override?.license ?? metadata?.license ?? 'Unknown'
+  resolvedLicenses.set(identity, license)
   if (license === 'Unknown') unknownMetadata.push(identity)
   const separator = identity.lastIndexOf('@')
   const name = identity.slice(0, separator)
@@ -228,14 +266,14 @@ for (const identity of [...productionPackages.keys()].sort()) {
       name,
       versions: [version],
       license,
-      ...(metadata.author ? { author: metadata.author } : {}),
-      ...(metadata.homepage ? { homepage: metadata.homepage } : {}),
+      ...(metadata?.author ? { author: metadata.author } : {}),
+      ...(metadata?.homepage ? { homepage: metadata.homepage } : {}),
       ...(override?.source ? { licenseMetadataSource: override.source } : {})
     })
   }
 }
 if (missingMetadata.length > 0) {
-  throw new Error(`Production dependencies are missing from node_modules; run bun install --frozen-lockfile:\n${missingMetadata.join('\n')}`)
+  throw new Error(`Tracked dependencies are missing from node_modules; run bun install --frozen-lockfile:\n${missingMetadata.join('\n')}`)
 }
 if (unknownMetadata.length > 0) {
   throw new Error(`Unreviewed dependency license metadata: ${unknownMetadata.join(', ')}`)
@@ -246,11 +284,14 @@ const packages = [...groupedPackages.values()]
   .sort((left, right) => left.name.localeCompare(right.name) || left.license.localeCompare(right.license))
 
 if (
-  policy.schemaVersion !== 1
-  || !Array.isArray(policy.allowedExpressions)
-  || !Array.isArray(policy.deniedExpressions)
-  || !Array.isArray(policy.reviewRequiredExpressions)
-  || policy.unknownExpressionPolicy !== 'review-required'
+  policy.schemaVersion !== 1 ||
+  !Array.isArray(policy.allowedExpressions) ||
+  !policy.packageApprovals ||
+  typeof policy.packageApprovals !== 'object' ||
+  Array.isArray(policy.packageApprovals) ||
+  !Array.isArray(policy.deniedExpressions) ||
+  !Array.isArray(policy.reviewRequiredExpressions) ||
+  policy.unknownExpressionPolicy !== 'review-required'
 ) {
   throw new Error('license-policy.json does not match schema version 1')
 }
@@ -268,16 +309,20 @@ if (duplicateExpressions.length > 0) {
 const allowedExpressions = new Set(policy.allowedExpressions)
 const deniedExpressions = new Set(policy.deniedExpressions)
 const reviewRequiredExpressions = new Set(policy.reviewRequiredExpressions)
-const violations = packages
-  .filter(pkg => !allowedExpressions.has(pkg.license))
-  .map(pkg => {
-    const disposition = deniedExpressions.has(pkg.license)
-      ? 'denied'
-      : reviewRequiredExpressions.has(pkg.license) ? 'review-required' : policy.unknownExpressionPolicy
-    return `${pkg.name}@${pkg.versions.join(',')}: ${pkg.license} (${disposition})`
+const invalidPackageApprovals = Object.entries(policy.packageApprovals)
+  .filter(([identity, license]) => resolvedLicenses.get(identity) !== license)
+  .map(([identity, license]) => `${identity}: ${license}`)
+if (invalidPackageApprovals.length > 0) {
+  throw new Error(`Package-specific license approvals must match exact tracked dependencies:\n${invalidPackageApprovals.join('\n')}`)
+}
+const violations = [...resolvedLicenses.entries()]
+  .filter(([identity, license]) => !allowedExpressions.has(license) && policy.packageApprovals[identity] !== license)
+  .map(([identity, license]) => {
+    const disposition = deniedExpressions.has(license) ? 'denied' : reviewRequiredExpressions.has(license) ? 'review-required' : policy.unknownExpressionPolicy
+    return `${identity}: ${license} (${disposition})`
   })
 if (violations.length > 0) {
-  throw new Error(`Production dependency licenses violate policy:\n${violations.join('\n')}`)
+  throw new Error(`Tracked dependency licenses violate policy:\n${violations.join('\n')}`)
 }
 
 const inventory = {
@@ -285,7 +330,7 @@ const inventory = {
   source: {
     lockfile: 'bun.lock',
     sha256: createHash('sha256').update(lockfileBytes).digest('hex'),
-    scope: 'production',
+    scope: 'production dependencies and reviewed renderer build inputs',
     policy: {
       file: path.relative(rootPath, policyPath),
       sha256: createHash('sha256').update(fs.readFileSync(policyPath)).digest('hex')
@@ -300,8 +345,8 @@ if (checkOnly) {
   if (!fs.existsSync(outputPath) || fs.readFileSync(outputPath, 'utf8') !== serializedInventory) {
     throw new Error(`${path.relative(rootPath, outputPath)} is stale; run bun run licenses:inventory and commit the result`)
   }
-  console.log(`Verified ${packages.length} tracked production dependency license records`)
+  console.log(`Verified ${packages.length} tracked dependency license records`)
 } else {
   fs.writeFileSync(outputPath, serializedInventory)
-  console.log(`Wrote ${packages.length} production dependency license records to ${path.relative(rootPath, outputPath)}`)
+  console.log(`Wrote ${packages.length} tracked dependency license records to ${path.relative(rootPath, outputPath)}`)
 }

@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import templateCompilerOptions from '@tresjs/core/template-compiler-options'
 import vue from '@vitejs/plugin-vue'
 import { defineConfig, type Plugin } from 'vite'
 import vuetify from 'vite-plugin-vuetify'
@@ -25,7 +26,16 @@ export function runtimeAssetsPlugin(command: 'build' | 'serve', projectRoot = ro
 export default defineConfig(({ command }) => ({
   base: command === 'serve' ? '/' : '/_assets/',
   publicDir: resolve(root, 'client/static'),
-  plugins: [vue({ template: { transformAssetUrls: false } }), vuetify({ autoImport: true }), runtimeAssetsPlugin(command)],
+  plugins: [
+    vue({
+      template: {
+        ...templateCompilerOptions.template,
+        transformAssetUrls: false
+      }
+    }),
+    vuetify({ autoImport: true }),
+    runtimeAssetsPlugin(command)
+  ],
   resolve: {
     alias: {
       '@': resolve(root, 'client'),

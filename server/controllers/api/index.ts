@@ -15,6 +15,7 @@ import pagesRouter from './pages.ts'
 import renderingRouter from './rendering.ts'
 import searchRouter from './search.ts'
 import siteRouter from './site.ts'
+import siteLogoRouter from './site-logo.ts'
 import storageRouter from './storage.ts'
 import systemRouter from './system.ts'
 import themingRouter from './theming.ts'
@@ -36,6 +37,7 @@ router.use('/logging', loggingRouter)
 router.use('/navigation', navigationRouter)
 router.use('/mail', mailRouter)
 router.use('/storage', storageRouter)
+router.use('/site/logo', siteLogoRouter)
 router.use('/site', siteRouter)
 router.use('/rendering', renderingRouter)
 router.use('/comments', commentsRouter)

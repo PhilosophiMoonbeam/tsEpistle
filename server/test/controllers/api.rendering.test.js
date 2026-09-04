@@ -366,7 +366,11 @@ describe('controllers/api rendering endpoints', () => {
 
     try {
       expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
-      const apiRouter = express.__routers[0]
+      const apiRouter = express.__routers.find(router =>
+        router.use.mock.calls.some(([path]) => path === '/rendering')
+      )
+
+      expect(apiRouter).toBeDefined()
 
       expect(apiRouter.use).toHaveBeenCalledWith('/rendering', expect.any(Object))
     } finally {

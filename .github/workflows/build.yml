@@ -839,11 +839,119 @@ jobs:
         if-no-files-found: error
         retention-days: 30
 
+  site-logo-processing-amd64:
+    name: Site Logo Processing Gate (linux/amd64)
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
+    timeout-minutes: 20
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [publish-amd64]
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Download AMD64 Candidate Descriptors
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: amd64-image-descriptors
+        path: candidate-descriptors
+
+    - name: Exercise Exact AMD64 Candidate
+      shell: bash
+      run: |
+        dev/build/run-site-logo-processing-gate.sh \
+          "$(cat candidate-descriptors/image-amd64-descriptor.txt)" \
+          linux/amd64 \
+          "$RUNNER_TEMP/site-logo-processing-amd64/site-logo-processing-benchmark-amd64.json" \
+          "$BUN_VERSION"
+
+    - name: Upload AMD64 Site Logo Processing Report
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: site-logo-processing-benchmark-amd64
+        path: ${{ runner.temp }}/site-logo-processing-amd64
+        if-no-files-found: error
+        retention-days: 30
+
+    - name: Publish Gated AMD64 Image Descriptors
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: gated-amd64-image-descriptors
+        path: candidate-descriptors
+        if-no-files-found: error
+        retention-days: 30
+
+  site-logo-processing-arm64:
+    name: Site Logo Processing Gate (linux/arm64)
+    runs-on: [self-hosted, linux, x64, tsepistle-ci]
+    timeout-minutes: 30
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [arm]
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+    - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+    - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      with:
+        image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+        platforms: arm64
+
+    - name: Login to GitHub Container Registry
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Download ARM64 Candidate Descriptors
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      with:
+        name: arm64-image-descriptors
+        path: candidate-descriptors
+
+    - name: Exercise Exact ARM64 Candidate under QEMU
+      shell: bash
+      run: |
+        dev/build/run-site-logo-processing-gate.sh \
+          "$(cat candidate-descriptors/image-arm64-descriptor.txt)" \
+          linux/arm64 \
+          "$RUNNER_TEMP/site-logo-processing-arm64/site-logo-processing-benchmark-arm64.json" \
+          "$BUN_VERSION"
+
+    - name: Upload ARM64 Site Logo Processing Report
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: site-logo-processing-benchmark-arm64
+        path: ${{ runner.temp }}/site-logo-processing-arm64
+        if-no-files-found: error
+        retention-days: 30
+
+    - name: Publish Gated ARM64 Image Descriptors
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      with:
+        name: gated-arm64-image-descriptors
+        path: candidate-descriptors
+        if-no-files-found: error
+        retention-days: 30
+
   publish-canary:
     name: Promote Synchronized Canary Images
     runs-on: [self-hosted, linux, x64, tsepistle-ci]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [publish-amd64, arm]
+    needs: [site-logo-processing-amd64, site-logo-processing-arm64]
     permissions:
       contents: read
       packages: write
@@ -868,13 +976,13 @@ jobs:
     - name: Download AMD64 Image Descriptors
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
-        name: amd64-image-descriptors
+        name: gated-amd64-image-descriptors
         path: image-descriptors
 
     - name: Download ARM64 Image Descriptors
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
-        name: arm64-image-descriptors
+        name: gated-arm64-image-descriptors
         path: image-descriptors
 
     - name: Assemble Immutable Canary Promotion Record
@@ -1034,7 +1142,7 @@ jobs:
     name: Publish Preview Images
     runs-on: [self-hosted, linux, x64, tsepistle-ci]
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [publish-amd64, arm]
+    needs: [site-logo-processing-amd64, site-logo-processing-arm64]
     permissions:
       packages: write
 
@@ -1058,13 +1166,13 @@ jobs:
     - name: Download AMD64 Image Descriptors
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
-        name: amd64-image-descriptors
+        name: gated-amd64-image-descriptors
         path: image-descriptors
 
     - name: Download ARM64 Image Descriptors
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
       with:
-        name: arm64-image-descriptors
+        name: gated-arm64-image-descriptors
         path: image-descriptors
 
     - name: Enforce Threat Model Release State
@@ -1114,7 +1222,7 @@ jobs:
     runs-on: [self-hosted, linux, x64, tsepistle-ci]
     if: startsWith(github.ref, 'refs/tags/v')
     environment: prod
-    needs: [beta, reproducibility]
+    needs: [beta, reproducibility, site-logo-processing-amd64, site-logo-processing-arm64]
     permissions:
       actions: read
       attestations: write

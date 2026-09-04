@@ -30,12 +30,18 @@ COPY vite.config.mts ./
 RUN bun run build
 
 FROM oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS dependencies
+ARG TARGETARCH
 ENV NODE_ENV=production
 WORKDIR /wiki
 COPY package.json bun.lock ./
 COPY patches ./patches
 RUN --mount=type=cache,id=wiki-bun-production,target=/root/.bun/install/cache \
-    bun install --production --frozen-lockfile
+    case "$TARGETARCH" in \
+      amd64) BUN_CPU=x64 ;; \
+      arm64) BUN_CPU=arm64 ;; \
+      *) echo "Unsupported runtime architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac && \
+    bun install --production --frozen-lockfile --os=linux --cpu="$BUN_CPU"
 
 FROM oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS runtime
 
@@ -58,7 +64,7 @@ LABEL org.opencontainers.image.created="${WIKI_BUILD_DATE}" \
       io.tsepistle.upstream-base="${WIKI_UPSTREAM_BASE}"
 ENV NODE_ENV=production
 
-RUN apk add --no-cache bash curl git openssh gnupg && \
+RUN apk add --no-cache 'musl>=1.2.5' libstdc++ bash curl git openssh gnupg && \
     mkdir -p /wiki /logs /wiki/data/content /wiki/data/repo && \
     chown -R bun:bun /wiki /logs
 WORKDIR /wiki
@@ -72,11 +78,11 @@ COPY --chown=bun:bun package.json ./
 COPY --chown=bun:bun LICENSE ./
 COPY --chown=bun:bun NOTICE ./
 
-USER bun
+USER 1000:1000
 VOLUME ["/wiki/data/content"]
 VOLUME ["/wiki/data/repo"]
 EXPOSE 3000
 EXPOSE 3443
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD curl --fail --silent --show-error http://127.0.0.1:3000/healthz || exit 1
-CMD ["bun", "server/index.ts"]
+CMD ["sh", "-ec", "case \"$(uname -m)\" in x86_64) grep -qw sse4_2 /proc/cpuinfo || { echo 'Sharp requires an x64 CPU with SSE4.2' >&2; exit 78; } ;; aarch64) ;; *) echo \"Unsupported runtime architecture: $(uname -m)\" >&2; exit 78 ;; esac; exec bun server/index.ts"]

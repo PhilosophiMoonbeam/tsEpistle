@@ -279,7 +279,7 @@ describe('controllers/api site endpoints', () => {
       title: 'Planned maintenance',
       content: '**Starts at 20:00 UTC.**'
     })
-    expect(global.WIKI.config.logoUrl).toBe('/next.svg')
+    expect(global.WIKI.config.logoUrl).toBe('/logo.svg')
     expect(global.WIKI.config.pageExtensions).toEqual(['md', 'wiki'])
     expect(global.WIKI.config.editors.available).toEqual(['markdown', 'code'])
     expect(global.WIKI.config.seo).toEqual({
@@ -306,7 +306,7 @@ describe('controllers/api site endpoints', () => {
     expect(global.WIKI.config.uploads.maxFileSize).toBe(2097152)
     expect(global.WIKI.config.uploads.maxFiles).toBe(20)
     expect(global.WIKI.config.uploads.forceDownload).toBe(true)
-    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['host', 'title', 'company', 'contentLicense', 'footerOverride', 'banner', 'seo', 'logoUrl', 'pageExtensions', 'editors', 'auth', 'editShortcuts', 'features', 'security', 'uploads'])
+    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['host', 'title', 'company', 'contentLicense', 'footerOverride', 'banner', 'seo', 'pageExtensions', 'editors', 'auth', 'editShortcuts', 'features', 'security', 'uploads'])
     expect(global.WIKI.app.set.mock.calls).toEqual([['trust proxy', 1]])
     expect(res.status).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith({ message: 'Site configuration updated successfully' })

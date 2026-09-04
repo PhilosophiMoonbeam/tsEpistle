@@ -1,3 +1,4 @@
+import type { Knex } from 'knex'
 import _ from 'lodash'
 import { siteBannerOrDefault, validateSiteBanner } from '../../shared/site-banner.ts'
 import { normalizeAvailableEditors, validateAvailableEditors } from '../../shared/page-editors.ts'
@@ -14,7 +15,6 @@ const saveKeys = [
   'footerOverride',
   'banner',
   'seo',
-  'logoUrl',
   'pageExtensions',
   'editors',
   'auth',
@@ -44,6 +44,21 @@ interface SiteConfig extends Record<string, unknown> {
 
 const config = WIKI.config as SiteConfig
 const configService = WIKI.configSvc as { saveToDb(keys: string[]): Promise<unknown> }
+const rejectManagedLogoWrite = async (args: Record<string, unknown>): Promise<void> => {
+  if (!Object.hasOwn(args, 'logoUrl')) return
+  const runtime = WIKI as unknown as { models?: { knex?: Knex } }
+  const knex = runtime.models?.knex
+  if (!knex) return
+  const state = await knex<{ id: number; desiredRevisionId: string | null; activeRevisionId: string | null }>('siteLogoState')
+    .where({ id: 1 })
+    .first('desiredRevisionId', 'activeRevisionId')
+  if (state && (state.desiredRevisionId !== null || state.activeRevisionId !== null)) {
+    throw new ApplicationError('Managed logos can only be replaced through the dedicated logo API.', {
+      code: 'MANAGED_LOGO_CONFLICT',
+      status: 409
+    })
+  }
+}
 
 const getConfig = () => ({
   host: config.host,
@@ -77,6 +92,7 @@ const updateConfig = async (input: unknown): Promise<void> => {
     throw new ApplicationError('Site configuration payload must be an object.', { code: 'INVALID_SITE_CONFIGURATION' })
   }
   const args = input as Record<string, unknown>
+  await rejectManagedLogoWrite(args)
   const requestedHost = Object.hasOwn(args, 'host') ? _.trim(args.host as string).replace(/\/$/, '') : null
   const currentHostProtocol = URL.canParse(config.host) ? new URL(config.host).protocol : null
   const requestedHostProtocol = requestedHost !== null && URL.canParse(requestedHost) ? new URL(requestedHost).protocol : null
@@ -109,7 +125,7 @@ const updateConfig = async (input: unknown): Promise<void> => {
   if (requestedHost !== null) {
     config.host = requestedHost
   }
-  for (const field of ['title', 'company', 'logoUrl']) {
+  for (const field of ['title', 'company']) {
     if (Object.hasOwn(args, field)) config[field] = _.trim(args[field] as string)
   }
   for (const field of ['contentLicense', 'footerOverride']) {

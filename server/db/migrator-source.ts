@@ -90,7 +90,10 @@ export const KNOWN_APPLICATION_TABLES: Readonly<Record<string, true>> = {
   agentConversationFolders: true,
   agentRunTasks: true,
   agentGoals: true,
-  schemaLineage: true
+  schemaLineage: true,
+  siteLogoObjects: true,
+  siteLogoRevisions: true,
+  siteLogoState: true
 }
 
 function isMigration(value: unknown): value is Knex.Migration {

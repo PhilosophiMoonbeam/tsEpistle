@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-function readScript (relativePath) {
+function readScript(relativePath) {
   const source = fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8')
   const match = source.match(/<script(?:\s+lang=["']ts["'])?>\s*([\s\S]*?)\s*<\/script>/)
   return match && match[1]
@@ -18,11 +18,6 @@ describe('store singleton migration guard', () => {
       label: 'editor shell',
       path: 'client/components/editor.vue',
       storeUsage: /wikiStore\.editor\.editor/
-    },
-    {
-      label: 'admin general editor settings',
-      path: 'client/components/admin/admin-general.vue',
-      storeUsage: /wikiStore\.editor\.activeModal/
     },
     {
       label: 'admin security editor settings',

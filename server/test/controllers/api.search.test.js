@@ -478,7 +478,11 @@ describe('controllers/api search endpoints', () => {
 
     try {
       expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
-      const apiRouter = express.__routers[0]
+      const apiRouter = express.__routers.find(router =>
+        router.use.mock.calls.some(([path]) => path === '/search')
+      )
+
+      expect(apiRouter).toBeDefined()
 
       expect(apiRouter.use).toHaveBeenCalledWith('/search', expect.any(Object))
     } finally {

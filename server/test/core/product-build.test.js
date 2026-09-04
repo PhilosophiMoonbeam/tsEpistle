@@ -99,13 +99,24 @@ describe('product build and publication metadata', () => {
     expect(`${prQuality}\n${helmContract}`).not.toContain('helm package')
   })
 
-  test('commits the complete canary set once from a revision-bound immutable promotion record', () => {
+  test('commits the complete canary set once from a revision-bound immutable promotion record after exact-image gates', () => {
     const workflow = read('.github/workflows/build.yml')
     const resolver = read('dev/resolve-canary-promotion.sh')
     const amd64 = workflow.slice(workflow.indexOf('  publish-amd64:'), workflow.indexOf('\n  arm:'))
-    const arm64 = workflow.slice(workflow.indexOf('  arm:'), workflow.indexOf('\n  publish-canary:'))
+    const arm64 = workflow.slice(workflow.indexOf('  arm:'), workflow.indexOf('\n  site-logo-processing-amd64:'))
+    const amd64Gate = workflow.slice(workflow.indexOf('  site-logo-processing-amd64:'), workflow.indexOf('\n  site-logo-processing-arm64:'))
+    const arm64Gate = workflow.slice(workflow.indexOf('  site-logo-processing-arm64:'), workflow.indexOf('\n  publish-canary:'))
     const canary = workflow.slice(workflow.indexOf('  publish-canary:'), workflow.indexOf('\n  beta:'))
+    const beta = workflow.slice(workflow.indexOf('  beta:'), workflow.indexOf('\n  release:'))
     const release = workflow.slice(workflow.indexOf('  release:'))
+    const downloadedDescriptorArtifacts = job => Array.from(
+      job.matchAll(/uses: actions\/download-artifact@[^\n]+\n {6}with:\n {8}name: ([^\n]*image-descriptors)\n/g),
+      match => match[1]
+    )
+    const uploadedDescriptorArtifacts = job => Array.from(
+      job.matchAll(/uses: actions\/upload-artifact@[^\n]+\n {6}with:\n {8}name: ([^\n]*image-descriptors)\n/g),
+      match => match[1]
+    )
 
     expect(workflow).toContain('group: build-${{ github.ref }}')
     expect(workflow).toContain('cancel-in-progress: true')
@@ -114,15 +125,36 @@ describe('product build and publication metadata', () => {
     expect(amd64).toContain('candidate-amd64-${{ github.run_id }}-${{ github.run_attempt }}')
     expect(arm64).toContain('candidate-arm64-${{ github.run_id }}-${{ github.run_attempt }}')
 
+    expect(amd64Gate).toContain('needs: [publish-amd64]')
+    expect(downloadedDescriptorArtifacts(amd64Gate)).toEqual(['amd64-image-descriptors'])
+    expect(uploadedDescriptorArtifacts(amd64Gate)).toEqual(['gated-amd64-image-descriptors'])
+    expect(arm64Gate).toContain('needs: [arm]')
+    expect(downloadedDescriptorArtifacts(arm64Gate)).toEqual(['arm64-image-descriptors'])
+    expect(uploadedDescriptorArtifacts(arm64Gate)).toEqual(['gated-arm64-image-descriptors'])
+
     expect(canary).toContain("if: github.event_name == 'push' && github.ref == 'refs/heads/main'")
-    expect(canary).toContain('needs: [publish-amd64, arm]')
+    expect(canary).toContain('needs: [site-logo-processing-amd64, site-logo-processing-arm64]')
+    expect(beta).toContain('needs: [site-logo-processing-amd64, site-logo-processing-arm64]')
+    expect(release).toContain('needs: [beta, reproducibility, site-logo-processing-amd64, site-logo-processing-arm64]')
+    expect(downloadedDescriptorArtifacts(canary)).toEqual([
+      'gated-amd64-image-descriptors',
+      'gated-arm64-image-descriptors'
+    ])
+    expect(downloadedDescriptorArtifacts(beta)).toEqual([
+      'gated-amd64-image-descriptors',
+      'gated-arm64-image-descriptors'
+    ])
+    expect(uploadedDescriptorArtifacts(beta)).toEqual(['release-image-descriptors'])
+    expect(downloadedDescriptorArtifacts(release)).toEqual(['release-image-descriptors'])
     for (const descriptor of [
       'image-amd64-descriptor.txt',
       'image-arm64-descriptor.txt',
       'agent-browser-amd64-descriptor.txt',
       'agent-browser-arm64-descriptor.txt'
     ]) {
-      expect(canary).toContain(descriptor)
+      for (const promotion of [canary, beta, release]) {
+        expect(promotion).toContain(descriptor)
+      }
     }
     expect(canary).toContain('dev/build/Dockerfile.canary-promotion')
     expect(canary).toContain('mainSha: $main_sha')

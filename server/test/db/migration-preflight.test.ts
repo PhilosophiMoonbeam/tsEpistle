@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto'
+import fs from 'node:fs'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
 import { MigrationPreflightError, preflightMigrations } from '../../db/migration-preflight.ts'
 import { MIGRATION_LINEAGE_V1 } from '../../db/migration-contract.ts'
+import { up as createSiteLogoAuthority } from '../../db/migrations/tsepistle-000013-site-logo-authority.ts'
 
 type MigrationSpec = { name: string }
 
@@ -73,7 +76,7 @@ const createLineageMarker = async (db: Knex, version = MIGRATION_LINEAGE_V1.vers
 
 describe('database migration preflight', () => {
   let db: Knex
-  const currentMigration = 'tsepistle-000013-product-rename.js'
+  const currentMigration = 'tsepistle-000013-site-logo-authority.js'
   const available = ['2.0.0.js', '2.5.128.js', '2.5.129.js', MIGRATION_LINEAGE_V1.namespacedStart, currentMigration]
 
   beforeEach(() => {
@@ -299,5 +302,247 @@ describe('database migration preflight', () => {
     await createLedger(db, ['2.0.0.js'])
 
     await expect(Promise.resolve(preflightMigrations(db, migrationSource(available)))).rejects.toThrow('none of the expected Wiki application tables')
+  })
+})
+
+const siteLogoDatabaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
+const siteLogoPasswordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
+const siteLogoPassword = siteLogoPasswordFile ? fs.readFileSync(siteLogoPasswordFile, 'utf8').trim() : process.env.WIKI_TEST_POSTGRES_PASSWORD
+const siteLogoConnection =
+  siteLogoDatabaseName.endsWith('_site_logo_test') && siteLogoPassword
+    ? {
+        host: process.env.WIKI_TEST_POSTGRES_HOST ?? 'wiki-postgres',
+        port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432),
+        user: process.env.WIKI_TEST_POSTGRES_USER ?? 'wiki',
+        password: siteLogoPassword,
+        database: siteLogoDatabaseName
+      }
+    : null
+const siteLogoMigrationSuite = siteLogoConnection ? describe : describe.skip
+
+const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
+
+siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => {
+  let postgres: Knex
+
+  const dropManagedLogoSchema = async (): Promise<void> => {
+    await postgres.schema.dropTableIfExists('siteLogoState')
+    await postgres.schema.dropTableIfExists('siteLogoRevisions')
+    await postgres.schema.dropTableIfExists('siteLogoObjects')
+    await postgres.schema.dropTableIfExists('durableJobs')
+    await postgres.schema.dropTableIfExists('users')
+  }
+
+  beforeEach(async () => {
+    postgres = createKnex({ client: 'pg', connection: siteLogoConnection ?? undefined })
+    await dropManagedLogoSchema()
+    await postgres.schema.createTable('users', table => table.integer('id').primary())
+    await postgres.schema.createTable('durableJobs', table => table.uuid('id').primary())
+  })
+
+  afterEach(async () => {
+    if (!postgres) return
+    await dropManagedLogoSchema()
+    await postgres.destroy()
+  })
+
+  it('rolls back every new authority table when schema creation fails', async () => {
+    await postgres.schema.createTable('siteLogoRevisions', table => table.uuid('id').primary())
+
+    await expect(Promise.resolve(createSiteLogoAuthority(postgres))).rejects.toThrow()
+
+    expect(await postgres.schema.hasTable('siteLogoObjects')).toBe(false)
+    expect(await postgres.schema.hasTable('siteLogoState')).toBe(false)
+    expect(await postgres.schema.hasTable('siteLogoRevisions')).toBe(true)
+  })
+
+  it('allows nullable pre-ready metadata and atomically requires one validated ready bundle', async () => {
+    await createSiteLogoAuthority(postgres)
+
+    const sourceBytes = Buffer.from('source-image')
+    const logoBytes = Buffer.from('normalized-logo')
+    const particleBytes = Buffer.alloc(68, 1)
+    const staticBytes = Buffer.from('static-effect')
+    const sourceHash = digest(sourceBytes)
+    const logoHash = digest(logoBytes)
+    const particleHash = digest(particleBytes)
+    const staticHash = digest(staticBytes)
+    const now = new Date('2026-09-04T00:00:00.000Z')
+    const revisionId = '00000000-0000-4000-8000-000000000001'
+
+    await postgres('siteLogoObjects').insert({
+      kind: 'source',
+      sha256: sourceHash,
+      bytes: sourceBytes,
+      byteLength: sourceBytes.byteLength,
+      contentType: 'image/png',
+      createdAt: now
+    })
+    await postgres('siteLogoRevisions').insert({
+      id: revisionId,
+      sourceKind: 'source',
+      sourceHash,
+      pipelineVersion: 1,
+      status: 'pending',
+      retrySequence: 0,
+      createdAt: now,
+      updatedAt: now
+    })
+
+    expect(
+      await postgres('siteLogoRevisions')
+        .where({ id: revisionId })
+        .first(
+          'status',
+          'logoPngHash',
+          'particleV1Hash',
+          'effectStaticPngHash',
+          'normalizedWidth',
+          'normalizedHeight',
+          'particleCount',
+          'medianStroke',
+          'auraColor'
+        )
+    ).toEqual({
+      status: 'pending',
+      logoPngHash: null,
+      particleV1Hash: null,
+      effectStaticPngHash: null,
+      normalizedWidth: null,
+      normalizedHeight: null,
+      particleCount: null,
+      medianStroke: null,
+      auraColor: null
+    })
+
+    await expect(
+      Promise.resolve(
+        postgres('siteLogoRevisions').where({ id: revisionId }).update({
+          status: 'ready',
+          startedAt: now,
+          completedAt: now
+        })
+      )
+    ).rejects.toMatchObject({ code: '23514' })
+
+    await postgres('siteLogoObjects').insert([
+      {
+        kind: 'logo-png',
+        sha256: logoHash,
+        bytes: logoBytes,
+        byteLength: logoBytes.byteLength,
+        contentType: 'image/png',
+        createdAt: now
+      },
+      {
+        kind: 'particle-v1',
+        sha256: particleHash,
+        bytes: particleBytes,
+        byteLength: particleBytes.byteLength,
+        contentType: 'application/octet-stream',
+        createdAt: now
+      },
+      {
+        kind: 'effect-static-png',
+        sha256: staticHash,
+        bytes: staticBytes,
+        byteLength: staticBytes.byteLength,
+        contentType: 'image/png',
+        createdAt: now
+      }
+    ])
+
+    const outputReferences = {
+      logoPngKind: 'logo-png',
+      logoPngHash: logoHash,
+      particleV1Kind: 'particle-v1',
+      particleV1Hash: particleHash,
+      effectStaticPngKind: 'effect-static-png',
+      effectStaticPngHash: staticHash
+    }
+    await expect(
+      Promise.resolve(
+        postgres('siteLogoRevisions')
+          .where({ id: revisionId })
+          .update({
+            status: 'ready',
+            ...outputReferences,
+            startedAt: now,
+            completedAt: now
+          })
+      )
+    ).rejects.toMatchObject({ code: '23514' })
+
+    const readyBundle = {
+      status: 'ready',
+      ...outputReferences,
+      normalizedWidth: 640,
+      normalizedHeight: 320,
+      particleCount: 1,
+      medianStroke: 4,
+      startedAt: now,
+      completedAt: now
+    }
+
+    await expect(
+      Promise.resolve(
+        postgres('siteLogoRevisions')
+          .where({ id: revisionId })
+          .update({ ...readyBundle, logoPngHash: particleHash })
+      )
+    ).rejects.toMatchObject({ code: '23503' })
+
+    await expect(
+      Promise.resolve(
+        postgres('siteLogoRevisions')
+          .where({ id: revisionId })
+          .update({ ...readyBundle, auraColor: '#12ABCD' })
+      )
+    ).rejects.toMatchObject({ code: '23514' })
+
+    await expect(
+      Promise.resolve(
+        postgres.transaction(async transaction => {
+          await transaction('siteLogoRevisions').where({ id: revisionId }).update(readyBundle)
+          throw new Error('abort publication')
+        })
+      )
+    ).rejects.toThrow('abort publication')
+
+    expect(await postgres('siteLogoRevisions').where({ id: revisionId }).first('status', 'logoPngHash', 'normalizedWidth')).toEqual({
+      status: 'pending',
+      logoPngHash: null,
+      normalizedWidth: null
+    })
+
+    await postgres.transaction(async transaction => {
+      await transaction('siteLogoRevisions').where({ id: revisionId }).update(readyBundle)
+      await transaction('siteLogoState').where({ id: 1 }).update({ activeRevisionId: revisionId, updatedAt: now })
+    })
+
+    expect(
+      await postgres('siteLogoRevisions')
+        .innerJoin('siteLogoState', 'siteLogoState.activeRevisionId', 'siteLogoRevisions.id')
+        .where('siteLogoState.id', 1)
+        .first(
+          'siteLogoRevisions.status',
+          'siteLogoRevisions.logoPngHash',
+          'siteLogoRevisions.particleV1Hash',
+          'siteLogoRevisions.effectStaticPngHash',
+          'siteLogoRevisions.normalizedWidth',
+          'siteLogoRevisions.normalizedHeight',
+          'siteLogoRevisions.particleCount',
+          'siteLogoRevisions.medianStroke'
+        )
+    ).toEqual({
+      status: 'ready',
+      logoPngHash: logoHash,
+      particleV1Hash: particleHash,
+      effectStaticPngHash: staticHash,
+      normalizedWidth: 640,
+      normalizedHeight: 320,
+      particleCount: 1,
+      medianStroke: 4
+    })
   })
 })

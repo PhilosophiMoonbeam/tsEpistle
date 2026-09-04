@@ -56,27 +56,90 @@
                       persistent-hint
                     )
                   .text-label-small.text-grey.pa-4 {{$t('admin:general.logo')}}
-                  .logo-preview
-                    .text-label-large.mb-2 {{ $t('admin:general.logo') }}
-                    v-avatar(size='100', rounded='0')
-                      v-img(
-                        :key='logoRefreshKey'
-                        :src='config.logoUrl'
-                        alt='Current site logo preview'
-                        lazy-src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNcWQ8AAdcBKrJda2oAAAAASUVORK5CYII='
-                        aspect-ratio='1'
-                      )
-                  .logo-field
-                    v-text-field(
-                      variant="outlined"
-                      :label='$t(`admin:general.logoUrl`)'
-                      v-model='config.logoUrl'
-                      :hint='$t(`admin:general.logoUrlHint`)'
-                      persistent-hint
-                      append-icon='mdi-folder-image'
-                      @click:append='browseLogo'
-                      @keydown.enter.prevent='refreshLogo'
+                  .logo-manager.px-4.pb-4
+                    .logo-preview-grid
+                      .logo-preview-card
+                        .logo-preview-heading {{ $t('admin:general.logoActive') }}
+                        .logo-preview-frame
+                          v-img(
+                            v-if='activeLogoUrl'
+                            :src='activeLogoUrl'
+                            :alt='$t(`admin:general.logoActivePreviewAlt`)'
+                          )
+                          v-icon(v-else size='42' color='grey') mdi-image-off-outline
+                        v-chip.mt-3(
+                          v-if='activeLogoUrl'
+                          color='success'
+                          variant='tonal'
+                          size='small'
+                        ) {{ $t('admin:general.logoStatusActive') }}
+                      .logo-preview-card(v-if='candidateVisible')
+                        .logo-preview-heading {{ $t('admin:general.logoCandidate') }}
+                        .logo-preview-frame
+                          v-img(
+                            v-if='candidatePreviewUrl'
+                            :src='candidatePreviewUrl'
+                            :alt='$t(`admin:general.logoCandidatePreviewAlt`)'
+                          )
+                          v-icon(v-else size='42' color='grey') mdi-image-sync-outline
+                        v-chip.mt-3(
+                          :color='candidateStatusColor'
+                          variant='tonal'
+                          size='small'
+                          aria-live='polite'
+                        )
+                          v-progress-circular(
+                            v-if='logoUploading || candidateIsProcessing'
+                            indeterminate
+                            size='14'
+                            width='2'
+                            class='mr-2'
+                          )
+                          | {{ $t(candidateStatusKey) }}
+                        v-btn.mt-3(
+                          v-if='candidateHasFailed'
+                          color='primary'
+                          variant='tonal'
+                          size='small'
+                          :loading='logoRetrying'
+                          :disabled='logoUploading || logoRetrying'
+                          @click='retryLogo'
+                        )
+                          v-icon(start) mdi-refresh
+                          | {{ $t('admin:general.logoRetry') }}
+                    .logo-drop-target(
+                      :class='{ "logo-drop-target--active": logoDragActive, "logo-drop-target--disabled": logoUploading || logoRetrying }'
+                      role='button'
+                      tabindex='0'
+                      :aria-label='$t(`admin:general.logoPickerLabel`)'
+                      :aria-disabled='logoUploading || logoRetrying'
+                      @click='openLogoPicker'
+                      @keydown.enter.prevent='openLogoPicker'
+                      @keydown.space.prevent='openLogoPicker'
+                      @dragenter.prevent='onLogoDragEnter'
+                      @dragover.prevent
+                      @dragleave.prevent='onLogoDragLeave'
+                      @drop.prevent='onLogoDrop'
                     )
+                      input.logo-file-input(
+                        ref='logoFileInput'
+                        type='file'
+                        accept='image/png,image/jpeg,image/webp'
+                        :disabled='logoUploading || logoRetrying'
+                        @change='onLogoFileChange'
+                        @click.stop
+                      )
+                      v-icon.logo-drop-icon(size='34') mdi-image-plus-outline
+                      .logo-drop-copy
+                        .text-body-large.font-weight-medium {{ $t('admin:general.logoPickerTitle') }}
+                        .text-body-small.text-medium-emphasis {{ $t('admin:general.logoPickerHint') }}
+                    .logo-message.logo-message--error(
+                      v-if='logoErrorKey'
+                      role='alert'
+                    ) {{ $t(logoErrorKey) }}
+                    p.logo-disclosure.text-body-small.text-medium-emphasis
+                      v-icon.mr-2(size='18') mdi-earth
+                      | {{ $t('admin:general.logoPublicUsage') }}
                   .text-label-small.text-grey.pa-4 {{$t('admin:general.footerCopyright')}}
                   .px-3.pb-3
                     v-text-field(
@@ -319,37 +382,63 @@
           )
             v-icon(start) mdi-check
             span {{$t('common:actions.apply')}}
-    component(:is='activeModal')
 </template>
 
 <script lang='ts'>
-import { defineAsyncComponent } from 'vue'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
-import { onEditorInsert, offEditorInsert, type EditorInsertPayload } from '../../helpers/editor-insert-events'
 import { fetchSiteConfig, saveSiteConfig, type SiteConfig } from '../../helpers/site-api'
+import {
+  fetchSiteLogoStatus,
+  retrySiteLogo,
+  SiteLogoApiError,
+  SITE_LOGO_MAX_BYTES,
+  uploadSiteLogo,
+  type SiteLogoErrorCode,
+  type SiteLogoStatus
+} from '../../helpers/site-logo-api'
 import { loadingStart, loadingStop, pushGraphError, setLoading, showNotification } from '../../helpers/root-ui-store'
 import SiteBanner from '../common/site-banner.vue'
 
 const titleRegex = /[<>"]/i
+const logoErrorMessageKeys: Record<SiteLogoErrorCode, string> = {
+  UNSUPPORTED_IMAGE: 'admin:general.logoErrorUnsupported',
+  IMAGE_TOO_LARGE: 'admin:general.logoErrorTooLarge',
+  INVALID_IMAGE: 'admin:general.logoErrorInvalid',
+  NO_VISIBLE_PIXELS: 'admin:general.logoErrorNoVisiblePixels',
+  UNSUITABLE_LOGO: 'admin:general.logoErrorUnsuitable',
+  PROCESSING_FAILED: 'admin:general.logoErrorProcessing',
+  ARTIFACT_TOO_LARGE: 'admin:general.logoErrorArtifactTooLarge',
+  MANAGED_LOGO_CONFLICT: 'admin:general.logoErrorConflict'
+}
+
 
 export default {
   i18nOptions: { namespaces: 'editor' },
   components: {
-    SiteBanner,
-    editorModalMedia: defineAsyncComponent(() => import('../editor/editor-modal-media.vue'))
+    SiteBanner
   },
   data(): {
     config: SiteConfig,
     persistedConfig: SiteConfig | null,
     metaRobots: Array<{ title: string, value: string }>,
-    logoRefreshKey: number,
     initialLoading: boolean,
     loaded: boolean,
     saving: boolean,
     formValid: boolean | null,
     loadRequestId: number,
-    saveRequestId: number
+    saveRequestId: number,
+    logoStatus: SiteLogoStatus | null,
+    logoUploading: boolean,
+    logoRetrying: boolean,
+    logoDragActive: boolean,
+    logoDragDepth: number,
+    logoErrorKey: string | null,
+    candidatePreviewUrl: string,
+    logoPollTimer: number | null,
+    logoRequestId: number,
+    logoRequestController: AbortController | null,
+    logoDisposed: boolean
   } {
     return {
       config: {
@@ -383,13 +472,23 @@ export default {
         editMenuExternalUrl: ''
       },
       persistedConfig: null,
-      logoRefreshKey: 0,
       initialLoading: true,
       loaded: false,
       saving: false,
       formValid: null,
       loadRequestId: 0,
       saveRequestId: 0,
+      logoStatus: null,
+      logoUploading: false,
+      logoRetrying: false,
+      logoDragActive: false,
+      logoDragDepth: 0,
+      logoErrorKey: null,
+      candidatePreviewUrl: '',
+      logoPollTimer: null,
+      logoRequestId: 0,
+      logoRequestController: null,
+      logoDisposed: false,
       metaRobots: [
         { title: 'Index', value: 'index' },
         { title: 'Follow', value: 'follow' },
@@ -403,9 +502,30 @@ export default {
       get() { return wikiStore.site.title },
       set(value: string) { wikiStore.site.title = value }
     },
-    logoUrl: {
-      get() { return wikiStore.site.logoUrl },
-      set(value: string) { wikiStore.site.logoUrl = value }
+    activeLogoUrl () {
+      return this.logoStatus?.active?.logoUrl || this.config.logoUrl || ''
+    },
+    candidateVisible () {
+      return Boolean(
+        this.logoUploading ||
+        this.candidatePreviewUrl ||
+        (this.logoStatus?.candidate && this.logoStatus.candidate.status !== 'ready')
+      )
+    },
+    candidateIsProcessing () {
+      const status = this.logoStatus?.candidate?.status
+      return status === 'pending' || status === 'running'
+    },
+    candidateHasFailed () {
+      return this.logoStatus?.candidate?.status === 'failed'
+    },
+    candidateStatusKey () {
+      if (this.logoUploading) return 'admin:general.logoStatusUploading'
+      if (this.logoErrorKey || this.logoStatus?.candidate?.status === 'failed') return 'admin:general.logoStatusFailed'
+      return 'admin:general.logoStatusProcessing'
+    },
+    candidateStatusColor () {
+      return this.logoErrorKey || this.logoStatus?.candidate?.status === 'failed' ? 'error' : 'info'
     },
     company: {
       get() { return wikiStore.site.company },
@@ -418,10 +538,6 @@ export default {
     footerOverride: {
       get() { return wikiStore.site.footerOverride },
       set(value: string) { wikiStore.site.footerOverride = value }
-    },
-    activeModal: {
-      get() { return wikiStore.editor.activeModal },
-      set(value: string) { wikiStore.editor.activeModal = value }
     },
     dirty () {
       return this.persistedConfig !== null && !_.isEqual(this.siteConfigPayload(), this.persistedConfig)
@@ -465,7 +581,6 @@ export default {
         contentLicense: _.get(this.config, 'contentLicense', ''),
         footerOverride: _.get(this.config, 'footerOverride', ''),
         banner: _.get(this.config, 'banner', { isEnabled: false, title: '', content: '' }),
-        logoUrl: _.get(this.config, 'logoUrl', ''),
         pageExtensions: _.get(this.config, 'pageExtensions', ''),
         featurePageRatings: _.get(this.config, 'featurePageRatings', false),
         featurePageComments: _.get(this.config, 'featurePageComments', false),
@@ -526,7 +641,6 @@ export default {
         this.contentLicense = this.config.contentLicense ?? ''
         this.footerOverride = this.config.footerOverride ?? ''
         wikiStore.site.banner = _.cloneDeep(this.config.banner)
-        this.logoUrl = this.config.logoUrl ?? ''
       } catch (err) {
         if (requestId === this.saveRequestId) pushGraphError(wikiStore, err)
       } finally {
@@ -534,54 +648,270 @@ export default {
         loadingStop(wikiStore, 'admin-site-update')
       }
     },
-    browseLogo () {
-      wikiStore.editor.editorKey = 'common'
-      this.activeModal = 'editorModalMedia'
+    clearLogoPoll () {
+      if (this.logoPollTimer !== null) {
+        window.clearTimeout(this.logoPollTimer)
+        this.logoPollTimer = null
+      }
     },
-    refreshLogo () {
-      this.logoRefreshKey++
+    scheduleLogoPoll () {
+      this.clearLogoPoll()
+      if (this.logoDisposed || !this.candidateIsProcessing) return
+      this.logoPollTimer = window.setTimeout(() => {
+        this.logoPollTimer = null
+        this.refreshLogoStatus()
+      }, 1500)
     },
-    handleEditorInsert (opts: EditorInsertPayload) {
-      if (typeof opts.path === 'string') {
-        this.config.logoUrl = opts.path
+    applyLogoStatus (status: SiteLogoStatus) {
+      this.logoStatus = status
+      this.logoErrorKey = status.candidate?.status === 'failed'
+        ? this.logoErrorMessageKey(status.candidate.errorCode)
+        : null
+      if (!status.candidate || status.candidate.status === 'ready') this.clearCandidatePreview()
+      if (status.candidate?.status === 'pending' || status.candidate?.status === 'running') {
+        this.scheduleLogoPoll()
+      } else {
+        this.clearLogoPoll()
+      }
+    },
+    logoErrorMessageKey (code: SiteLogoErrorCode | null) {
+      return code ? logoErrorMessageKeys[code] : 'admin:general.logoErrorGeneric'
+    },
+    logoRequestErrorKey (error: unknown) {
+      return error instanceof SiteLogoApiError
+        ? this.logoErrorMessageKey(error.code)
+        : 'admin:general.logoErrorGeneric'
+    },
+    async refreshLogoStatus () {
+      const requestId = ++this.logoRequestId
+      this.logoRequestController?.abort()
+      const controller = new AbortController()
+      this.logoRequestController = controller
+      try {
+        const status = await fetchSiteLogoStatus(window.fetch.bind(window), controller.signal)
+        if (requestId !== this.logoRequestId || this.logoDisposed) return
+        this.applyLogoStatus(status)
+      } catch (error) {
+        if (requestId === this.logoRequestId && !this.logoDisposed && !controller.signal.aborted) {
+          this.clearLogoPoll()
+          this.logoErrorKey = this.logoRequestErrorKey(error)
+        }
+      }
+    },
+    openLogoPicker () {
+      if (this.logoUploading || this.logoRetrying) return
+      ;(this.$refs.logoFileInput as HTMLInputElement | undefined)?.click()
+    },
+    onLogoDragEnter () {
+      if (this.logoUploading || this.logoRetrying) return
+      this.logoDragDepth++
+      this.logoDragActive = true
+    },
+    onLogoDragLeave () {
+      this.logoDragDepth = Math.max(0, this.logoDragDepth - 1)
+      this.logoDragActive = this.logoDragDepth > 0
+    },
+    onLogoDrop (event: DragEvent) {
+      this.logoDragDepth = 0
+      this.logoDragActive = false
+      if (this.logoUploading || this.logoRetrying) return
+      this.acceptLogoFiles(event.dataTransfer?.files)
+    },
+    onLogoFileChange (event: Event) {
+      const input = event.target as HTMLInputElement
+      this.acceptLogoFiles(input.files)
+      input.value = ''
+    },
+    acceptLogoFiles (files: FileList | null | undefined) {
+      if (!files || files.length !== 1) {
+        this.logoErrorKey = 'admin:general.logoErrorOneFile'
+        return
+      }
+      const file = files.item(0)
+      if (!file) {
+        this.logoErrorKey = 'admin:general.logoErrorOneFile'
+      } else if (file.size > SITE_LOGO_MAX_BYTES) {
+        this.logoErrorKey = 'admin:general.logoErrorTooLarge'
+      } else {
+        this.uploadSelectedLogo(file)
+      }
+    },
+    replaceCandidatePreview (file: File) {
+      this.clearCandidatePreview()
+      this.candidatePreviewUrl = URL.createObjectURL(file)
+    },
+    clearCandidatePreview () {
+      if (!this.candidatePreviewUrl) return
+      URL.revokeObjectURL(this.candidatePreviewUrl)
+      this.candidatePreviewUrl = ''
+    },
+    async uploadSelectedLogo (file: File) {
+      this.clearLogoPoll()
+      const requestId = ++this.logoRequestId
+      this.logoRequestController?.abort()
+      const controller = new AbortController()
+      this.logoRequestController = controller
+      this.logoErrorKey = null
+      this.logoUploading = true
+      this.replaceCandidatePreview(file)
+      try {
+        const status = await uploadSiteLogo(window.fetch.bind(window), file, controller.signal)
+        if (requestId !== this.logoRequestId || this.logoDisposed) return
+        this.applyLogoStatus(status)
+      } catch (error) {
+        if (requestId === this.logoRequestId && !this.logoDisposed && !controller.signal.aborted) {
+          this.logoErrorKey = this.logoRequestErrorKey(error)
+        }
+      } finally {
+        if (requestId === this.logoRequestId && !this.logoDisposed) this.logoUploading = false
+      }
+    },
+    async retryLogo () {
+      if (this.logoUploading || this.logoRetrying) return
+      this.clearLogoPoll()
+      const requestId = ++this.logoRequestId
+      this.logoRequestController?.abort()
+      const controller = new AbortController()
+      this.logoRequestController = controller
+      this.logoErrorKey = null
+      this.logoRetrying = true
+      try {
+        const status = await retrySiteLogo(window.fetch.bind(window), controller.signal)
+        if (requestId !== this.logoRequestId || this.logoDisposed) return
+        this.applyLogoStatus(status)
+      } catch (error) {
+        if (requestId === this.logoRequestId && !this.logoDisposed && !controller.signal.aborted) {
+          this.logoErrorKey = this.logoRequestErrorKey(error)
+        }
+      } finally {
+        if (requestId === this.logoRequestId && !this.logoDisposed) this.logoRetrying = false
       }
     }
   },
   mounted () {
     this.loadConfig()
-    onEditorInsert(this.handleEditorInsert)
+    this.refreshLogoStatus()
   },
   beforeUnmount() {
+    this.logoDisposed = true
     this.loadRequestId++
     this.saveRequestId++
-    offEditorInsert(this.handleEditorInsert)
+    this.logoRequestId++
+    this.logoRequestController?.abort()
+    this.logoRequestController = null
+    this.clearLogoPoll()
+    this.clearCandidatePreview()
   }
 }
 </script>
 
 <style lang='scss'>
 
-  .logo-preview {
-    display: inline-flex;
-    flex-direction: column;
-    gap: .5rem;
-    margin: .5rem 1rem 1.5rem;
-    vertical-align: top;
+  .logo-manager {
+    --logo-manager-border: rgba(var(--v-border-color), var(--v-border-opacity));
   }
-
-  .logo-field {
-    display: inline-block;
-    width: calc(100% - 150px);
-    margin: .5rem 1rem 1.5rem 0;
-    vertical-align: top;
+  .logo-preview-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-bottom: 1rem;
   }
-
+  .logo-preview-card {
+    min-width: 0;
+    padding: 1rem;
+    border: 1px solid var(--logo-manager-border);
+    border-radius: 12px;
+    background: rgba(var(--v-theme-surface-variant), .24);
+  }
+  .logo-preview-heading {
+    margin-bottom: .75rem;
+    color: rgba(var(--v-theme-on-surface), .72);
+    font-size: .75rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .logo-preview-frame {
+    display: grid;
+    width: 100%;
+    height: 112px;
+    place-items: center;
+    overflow: hidden;
+    border-radius: 8px;
+    background:
+      linear-gradient(45deg, rgba(var(--v-theme-on-surface), .05) 25%, transparent 25%) 0 0 / 16px 16px,
+      linear-gradient(-45deg, rgba(var(--v-theme-on-surface), .05) 25%, transparent 25%) 0 8px / 16px 16px,
+      linear-gradient(45deg, transparent 75%, rgba(var(--v-theme-on-surface), .05) 75%) 8px -8px / 16px 16px,
+      linear-gradient(-45deg, transparent 75%, rgba(var(--v-theme-on-surface), .05) 75%) -8px 0 / 16px 16px;
+  }
+  .logo-preview-frame > .v-img {
+    width: 100%;
+    height: 100%;
+  }
+  .logo-drop-target {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    min-height: 96px;
+    padding: 1rem 1.25rem;
+    border: 1.5px dashed rgba(var(--v-theme-primary), .5);
+    border-radius: 12px;
+    background: rgba(var(--v-theme-primary), .045);
+    cursor: pointer;
+    transition: border-color .16s ease, background-color .16s ease, transform .16s ease;
+  }
+  .logo-drop-target:hover,
+  .logo-drop-target:focus-visible,
+  .logo-drop-target--active {
+    border-color: rgb(var(--v-theme-primary));
+    background: rgba(var(--v-theme-primary), .1);
+    outline: none;
+    transform: translateY(-1px);
+  }
+  .logo-drop-target:focus-visible {
+    box-shadow: 0 0 0 3px rgba(var(--v-theme-primary), .22);
+  }
+  .logo-drop-target--disabled {
+    cursor: wait;
+    opacity: .58;
+    transform: none;
+  }
+  .logo-file-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .logo-drop-icon {
+    flex: 0 0 auto;
+    color: rgb(var(--v-theme-primary));
+  }
+  .logo-drop-copy {
+    min-width: 0;
+  }
+  .logo-message {
+    margin-top: .75rem;
+    font-size: .875rem;
+  }
+  .logo-message--error {
+    color: rgb(var(--v-theme-error));
+  }
+  .logo-disclosure {
+    display: flex;
+    align-items: flex-start;
+    margin: 1rem 0 0;
+    line-height: 1.5;
+  }
   @media (max-width: 600px) {
-    .logo-preview,
-    .logo-field {
-      display: block;
-      width: auto;
-      margin: .5rem 1rem 1rem;
+    .logo-preview-grid {
+      grid-template-columns: 1fr;
+    }
+    .logo-drop-target {
+      align-items: flex-start;
     }
   }
 </style>

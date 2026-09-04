@@ -1,8 +1,10 @@
 import nodemailer from 'nodemailer'
 import type { SMTPTransportOptions, Transporter } from 'nodemailer'
+import type { Knex } from 'knex'
 import _ from 'lodash'
 import fs from 'fs-extra'
 import path from 'node:path'
+import { resolveActiveBranding } from '../helpers/site-logo-branding.ts'
 
 interface MailOptions {
   template: string
@@ -30,6 +32,7 @@ interface WikiContext {
   SERVERPATH: string
   Error: { MailNotConfigured: new () => Error; MailTemplateFailed: new () => Error }
   config: { company: string; host: string; logoUrl: string; title: string; mail: MailConfig }
+  models: { knex: Knex }
   logger: { warn(message: unknown): void }
 }
 const wiki = WIKI as unknown as WikiContext
@@ -64,6 +67,8 @@ const mail = {
       throw new wiki.Error.MailNotConfigured()
     }
     const template = await this.loadTemplate(opts.template)
+    const branding = await resolveActiveBranding(wiki.models.knex, wiki.config.logoUrl)
+    const logo = (branding.logoUrl.startsWith('http') ? '' : wiki.config.host) + branding.logoUrl
     return transport.sendMail({
       headers: { 'x-mailer': 'tsEpistle' },
       from: `"${wiki.config.mail.senderName}" <${wiki.config.mail.senderEmail}>`,
@@ -72,10 +77,10 @@ const mail = {
       ...(opts.messageId === undefined ? {} : { messageId: opts.messageId }),
       ...(opts.text === undefined ? {} : { text: opts.text }),
       html: template({
-        logo: (wiki.config.logoUrl.startsWith('http') ? '' : wiki.config.host) + wiki.config.logoUrl,
-        siteTitle: wiki.config.title,
         copyright: wiki.config.company.length > 0 ? wiki.config.company : 'Powered by tsEpistle',
-        ...opts.data
+        ...opts.data,
+        logo,
+        siteTitle: wiki.config.title
       })
     })
   },

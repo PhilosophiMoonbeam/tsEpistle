@@ -273,6 +273,7 @@
             variant='outlined'
             @click='screen = `login`'
             ) {{ $t('auth:switchToLogin.link') }}
+      LoginParticleLogo(:effect='logoEffect')
     v-dialog(v-model='isTFAShown', max-width='500', persistent, aria-labelledby='login-tfa-title')
       v-card.login-dialog-card(variant='flat', :aria-busy='isLoading')
         form.login-tfa.text-center.pa-5(novalidate, @submit.prevent='verifySecurityCode(false)')
@@ -355,6 +356,8 @@ import { wikiStore } from '@/store/index.ts'
 import { fetchAuthStrategies, submitAuthRequest, submitStatusRequest, type AuthResponse, type AuthStrategy } from '../helpers/auth-api'
 import { getErrorMessage } from '../helpers/root-ui-store'
 import { sanitizeTfaQrImage } from '../helpers/tfa-qr'
+import LoginParticleLogo from './login-logo/LoginParticleLogo.vue'
+import { isLogoEffectDescriptor, type LogoEffectDescriptor } from './login-logo/particle-logo'
 
 type LoginScreen = 'login' | 'forgot' | 'verifyEmail' | 'resetPwd' | 'changePwd' | 'success'
 
@@ -367,6 +370,9 @@ function focusComponent (ref: unknown): void {
 
 export default defineComponent({
   i18nOptions: { namespaces: 'auth' },
+  components: {
+    LoginParticleLogo
+  },
   props: {
     bgUrl: {
       type: String,
@@ -442,6 +448,10 @@ export default defineComponent({
       return siteConfig.title
     },
     logoUrl () { return siteConfig.logoUrl },
+    logoEffect (): LogoEffectDescriptor | null {
+      const candidate = (siteConfig as { logoEffect?: unknown }).logoEffect
+      return isLogoEffectDescriptor(candidate) && candidate.logoUrl === siteConfig.logoUrl ? candidate : null
+    },
     loginStyle () {
       return this.bgUrl ? { backgroundImage: `url(${this.bgUrl})` } : {}
     },
@@ -815,7 +825,10 @@ export default defineComponent({
     background:
       radial-gradient(
         circle at 78% 16%,
-        color-mix(in srgb, var(--wiki-accent-spectral) 24%, transparent),
+        var(
+          --login-logo-aura,
+          color-mix(in srgb, var(--wiki-accent-spectral) 24%, transparent)
+        ),
         transparent 34rem
       ),
       linear-gradient(

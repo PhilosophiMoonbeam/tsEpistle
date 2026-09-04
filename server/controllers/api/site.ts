@@ -5,12 +5,13 @@ import siteOperations from '../../operations/site.ts'
 
 const router = express.Router()
 
-
-const requireSystemAccess = (req: Request, res: Response): boolean => { if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
-  res.status(403).json({ error: 'Forbidden' })
-  return false
+const requireSystemAccess = (req: Request, res: Response): boolean => {
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) {
+    res.status(403).json({ error: 'Forbidden' })
+    return false
+  }
+  return true
 }
-return true }
 
 router.get('/config', async (req, res) => {
   if (!requireSystemAccess(req, res)) return
@@ -34,7 +35,8 @@ router.put('/config', async (req, res) => {
   } catch (err) {
     const status = typeof err === 'object' && err !== null && 'status' in err && typeof err.status === 'number' ? err.status : 500
     const message = err instanceof Error ? err.message : String(err)
-    res.status(status).json({ error: message || 'Site configuration update failed' })
+    const code = err instanceof Error && err.name === 'MANAGED_LOGO_CONFLICT' ? 'MANAGED_LOGO_CONFLICT' : null
+    res.status(status).json(code === null ? { error: message || 'Site configuration update failed' } : { error: message, code })
   }
 })
 
