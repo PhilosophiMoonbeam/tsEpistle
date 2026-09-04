@@ -1,11 +1,23 @@
 {
   "version": 1,
   "skills": {
+    "codemirror": {
+      "source": "solanabettercall/skills",
+      "sourceType": "github",
+      "skillPath": "skills/codemirror/SKILL.md",
+      "computedHash": "691f68166f4881f7607780b3ffc251a3eb2281a2366fc46aa575d4308ac1586e"
+    },
     "frontend-design": {
       "source": "vercel-labs/agent-eval",
       "sourceType": "github",
       "skillPath": "packages/playground/.agents/skills/frontend-design/SKILL.md",
       "computedHash": "537c1df9d0c694ecf9139a911f9ad0bd111a7ebc173a55457568459e543fe75b"
+    },
+    "tiptap": {
+      "source": "ueberdosis/tiptap",
+      "sourceType": "github",
+      "skillPath": "skills/tiptap/SKILL.md",
+      "computedHash": "772943440276fedbc27339a57ad35ccd3c2bc19c1df3c7ba5237cc5d88f3604a"
     },
     "tresjs-core-skilld": {
       "source": "skilld-dev/vue-ecosystem-skills",
