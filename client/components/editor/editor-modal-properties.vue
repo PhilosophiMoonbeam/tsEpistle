@@ -551,6 +551,9 @@ export default defineComponent({
     }
   },
   watch: {
+    '$vuetify.theme.current.dark' (newValue: boolean) {
+      this.cm?.setDark(newValue)
+    },
     modelValue: {
       immediate: true,
       handler (newValue: boolean) {
@@ -794,6 +797,8 @@ export default defineComponent({
     loadEditor(ref: HTMLElement, mode: 'js' | 'css') {
       const cm = new TextEditor({
         parent: ref,
+        ariaLabel: mode === 'js' ? 'Page JavaScript' : 'Page CSS',
+        dark: this.$vuetify.theme.current.dark,
         value: mode === 'js' ? this.scriptJs : this.scriptCss,
         language: mode === 'js' ? javascript() : css(),
         onChange: value => {

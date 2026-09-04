@@ -76,6 +76,11 @@ export default defineComponent({
       }
     }
   },
+  watch: {
+    '$vuetify.theme.current.dark' (newValue: boolean) {
+      this.cm?.setDark(newValue)
+    }
+  },
   methods: {
     toggleModal(key: string) {
       this.activeModal = (this.activeModal === key) ? '' : key
@@ -170,6 +175,8 @@ export default defineComponent({
     }
     const cm = new TextEditor({
       parent,
+      ariaLabel: 'HTML source',
+      dark: this.$vuetify.theme.current.dark,
       value: wikiStore.editor.content,
       language: html(),
       onChange: value => {
@@ -178,7 +185,6 @@ export default defineComponent({
       onCursor: position => this.positionSync(position)
     })
     this.cm = markRaw(cm)
-    parent.querySelector<HTMLElement>('.cm-content')?.setAttribute('aria-label', 'HTML source')
 
     onEditorInsert(this.handleEditorInsert)
 

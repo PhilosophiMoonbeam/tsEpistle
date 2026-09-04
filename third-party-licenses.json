@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "0993f7809155fa1b374cf3d86b0463f5060260bd3a92a68ac5a6721b533503cf",
+    "sha256": "d1cd4707169f67528b921f653f8d28650bc36caf1ce50e8e2218610634731efa",
     "scope": "production",
     "policy": {
       "file": "license-policy.json",
@@ -502,8 +502,7 @@
     {
       "name": "@codemirror/view",
       "versions": [
-        "6.43.11",
-        "6.43.8"
+        "6.43.11"
       ],
       "license": "MIT",
       "author": "Marijn Haverbeke"
@@ -5331,7 +5330,7 @@
     {
       "name": "y-codemirror.next",
       "versions": [
-        "0.3.5"
+        "0.3.6"
       ],
       "license": "MIT",
       "author": "Kevin Jahns <kevin.jahns@protonmail.com>",

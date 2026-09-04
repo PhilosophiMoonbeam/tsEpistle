@@ -1,6 +1,6 @@
 import { basicSetup } from 'codemirror'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
-import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Compartment, Prec, StateEffect, StateField, type Extension } from '@codemirror/state'
 import { defaultHighlightStyle, foldEffect, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 
@@ -13,6 +13,8 @@ export interface TextEditorHandle {
   destroy: () => void
   focus: () => void
   requestMeasure: () => void
+  setSpellcheck: (enabled: boolean) => void
+  setDark: (enabled: boolean) => void
   getValue: () => string
   setValue: (value: string) => void
   cursor: (which?: 'from' | 'to' | 'head') => TextPosition
@@ -50,9 +52,7 @@ class ActionWidget extends WidgetType {
   }
 }
 
-const semanticHighlightStyle = HighlightStyle.define([
-  { tag: tags.url, color: 'var(--wiki-accent-ink)' }
-])
+const semanticHighlightStyle = HighlightStyle.define([{ tag: tags.url, color: 'var(--wiki-accent-ink)' }])
 
 const setMarkers = StateEffect.define<DecorationSet>()
 const markerField = StateField.define<DecorationSet>({
@@ -67,11 +67,47 @@ const markerField = StateField.define<DecorationSet>({
   provide: field => EditorView.decorations.from(field)
 })
 
+const textEditorTheme = EditorView.theme({
+  '&': {
+    height: '100%',
+    backgroundColor: 'rgb(var(--v-theme-surface))',
+    color: 'rgb(var(--v-theme-on-surface))',
+    fontFamily: 'Roboto Mono, monospace',
+    fontSize: '.9rem'
+  },
+  '.cm-scroller': { overflow: 'auto' },
+  '.cm-content': { caretColor: 'rgb(var(--v-theme-on-surface))' },
+  '.cm-cursor': { borderLeftColor: 'rgb(var(--v-theme-on-surface))' },
+  '.cm-gutters': {
+    backgroundColor: 'color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-on-surface)) 6%)',
+    color: 'rgba(var(--v-theme-on-surface), .54)',
+    borderRight: '1px solid rgba(var(--v-theme-on-surface), .12)'
+  },
+  '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgba(var(--v-theme-on-surface), .06)' },
+  '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'rgba(var(--v-theme-primary), .24)' },
+  '.cm-buttonmarker': {
+    backgroundColor: 'rgba(var(--v-theme-primary), .18)',
+    border: '1px solid rgba(var(--v-theme-primary), .7)',
+    appearance: 'none',
+    display: 'inline',
+    cursor: 'pointer',
+    color: 'inherit',
+    font: 'inherit',
+    lineHeight: 'inherit',
+    margin: '0',
+    verticalAlign: 'baseline',
+    padding: '0 4px'
+  }
+})
+
 type TextEditorOptions = {
   parent: HTMLElement
+  ariaLabel: string
+  dark: boolean
   value: string
   language?: Extension
   direction?: 'ltr' | 'rtl'
+  spellcheck?: boolean
   onChange?: (value: string) => void
   onCursor?: (position: TextPosition) => void
   extensions?: Extension[]
@@ -79,8 +115,10 @@ type TextEditorOptions = {
 
 export class TextEditor implements TextEditorHandle {
   private readonly view: EditorView
+  private readonly spellcheck = new Compartment()
+  private readonly darkTheme = new Compartment()
 
-  constructor({ parent, value, language, direction = 'ltr', onChange, onCursor, extensions = [] }: TextEditorOptions) {
+  constructor({ parent, value, ariaLabel, dark, language, direction = 'ltr', spellcheck, onChange, onCursor, extensions = [] }: TextEditorOptions) {
     this.view = new EditorView({
       parent,
       doc: value,
@@ -88,44 +126,15 @@ export class TextEditor implements TextEditorHandle {
         basicSetup,
         syntaxHighlighting(defaultHighlightStyle),
         Prec.highest(syntaxHighlighting(semanticHighlightStyle)),
+        this.darkTheme.of(EditorView.darkTheme.of(dark)),
         EditorView.lineWrapping,
-        EditorView.contentAttributes.of({ dir: direction }),
+        EditorView.contentAttributes.of({ dir: direction, 'aria-label': ariaLabel }),
+        this.spellcheck.of(spellcheck === undefined ? [] : EditorView.contentAttributes.of({ spellcheck: String(spellcheck) })),
         EditorView.updateListener.of(update => {
           if (update.docChanged) onChange?.(update.state.doc.toString())
           if (update.selectionSet) onCursor?.(this.cursor())
         }),
-        EditorView.theme({
-          '&': {
-            height: '100%',
-            backgroundColor: 'rgb(var(--v-theme-surface))',
-            color: 'rgb(var(--v-theme-on-surface))',
-            fontFamily: 'Roboto Mono, monospace',
-            fontSize: '.9rem'
-          },
-          '.cm-scroller': { overflow: 'auto' },
-          '.cm-content': { caretColor: 'rgb(var(--v-theme-on-surface))' },
-          '.cm-cursor': { borderLeftColor: 'rgb(var(--v-theme-on-surface))' },
-          '.cm-gutters': {
-            backgroundColor: 'color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-on-surface)) 6%)',
-            color: 'rgba(var(--v-theme-on-surface), .54)',
-            borderRight: '1px solid rgba(var(--v-theme-on-surface), .12)'
-          },
-          '.cm-activeLine, .cm-activeLineGutter': { backgroundColor: 'rgba(var(--v-theme-on-surface), .06)' },
-          '&.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'rgba(var(--v-theme-primary), .24)' },
-          '.cm-buttonmarker': {
-            backgroundColor: 'rgba(var(--v-theme-primary), .18)',
-            border: '1px solid rgba(var(--v-theme-primary), .7)',
-            appearance: 'none',
-            display: 'inline',
-            cursor: 'pointer',
-            color: 'inherit',
-            font: 'inherit',
-            lineHeight: 'inherit',
-            margin: '0',
-            verticalAlign: 'baseline',
-            padding: '0 4px'
-          }
-        }),
+        textEditorTheme,
         markerField,
         ...(language ? [language] : []),
         ...extensions
@@ -143,6 +152,18 @@ export class TextEditor implements TextEditorHandle {
 
   requestMeasure(): void {
     this.view.requestMeasure()
+  }
+
+  setSpellcheck(enabled: boolean): void {
+    this.view.dispatch({
+      effects: this.spellcheck.reconfigure(EditorView.contentAttributes.of({ spellcheck: String(enabled) }))
+    })
+  }
+
+  setDark(enabled: boolean): void {
+    this.view.dispatch({
+      effects: this.darkTheme.reconfigure(EditorView.darkTheme.of(enabled))
+    })
   }
 
   getValue(): string {

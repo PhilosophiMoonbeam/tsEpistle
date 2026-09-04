@@ -162,6 +162,11 @@ export default defineComponent({
       }
     }
   },
+  watch: {
+    '$vuetify.theme.current.dark' (newValue: boolean) {
+      this.cm?.setDark(newValue)
+    }
+  },
   methods: {
     onDialogModelUpdate (isOpen: boolean) {
       if (!isOpen) this.requestClose()
@@ -270,6 +275,8 @@ export default defineComponent({
       this.mergeValue = initialMergeValue
       this.cm = markRaw(new TextEditor({
         parent: container,
+        ariaLabel: 'Editable merge result',
+        dark: this.$vuetify.theme.current.dark,
         value: initialMergeValue,
         language,
         direction: siteConfig.rtl ? 'rtl' : 'ltr',

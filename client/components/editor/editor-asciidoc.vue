@@ -255,6 +255,9 @@ export default defineComponent({
     }
   },
   watch: {
+    '$vuetify.theme.current.dark' (newValue: boolean) {
+      this.cm?.setDark(newValue)
+    },
     previewShown (newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
         this.debouncedProcessContent?.cancel()
@@ -458,6 +461,8 @@ export default defineComponent({
     }
     const cm = new TextEditor({
       parent: container,
+      ariaLabel: 'AsciiDoc source',
+      dark: this.$vuetify.theme.current.dark,
       value: wikiStore.editor.content,
       direction: siteConfig.rtl ? 'rtl' : 'ltr',
       extensions: [
@@ -475,7 +480,6 @@ export default defineComponent({
       onCursor: position => this.positionSync(position)
     })
     this.cm = markRaw(cm)
-    container.querySelector<HTMLElement>('.cm-content')?.setAttribute('aria-label', 'AsciiDoc source')
 
     // Render initial preview
     void this.processContent(wikiStore.editor.content)

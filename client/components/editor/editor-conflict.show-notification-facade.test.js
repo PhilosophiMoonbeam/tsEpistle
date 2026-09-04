@@ -95,6 +95,7 @@ const createConflictHarness = ({
   const context = {
     ...state,
     $nextTick: async () => {},
+    $vuetify: { theme: { current: { dark: false } } },
     $refs: { cm: container },
     activeModal: 'editorModalConflict',
     editorKey,
@@ -213,6 +214,8 @@ describe('editor conflict REST migration guard', () => {
     expect(rawValues).toContain(harness.context.cm)
     expect(harness.context.cm.options).toMatchObject({
       parent: harness.context.$refs.cm,
+      ariaLabel: 'Editable merge result',
+      dark: false,
       value: 'local draft',
       language: { language: 'markdown' },
       direction: 'ltr'

@@ -472,6 +472,9 @@ export default defineComponent({
     },
   },
   watch: {
+    '$vuetify.theme.current.dark' (newValue: boolean) {
+      this.cm?.setDark(newValue)
+    },
     previewShown (newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) {
         this.debouncedProcessContent?.cancel()
@@ -491,10 +494,7 @@ export default defineComponent({
       }
     },
     spellModeActive (newValue: boolean) {
-      const source = (this.$refs.cm as HTMLElement | undefined)?.querySelector<HTMLElement>('.cm-content')
-      if (source) {
-        source.setAttribute('spellcheck', String(newValue))
-      }
+      this.cm?.setSpellcheck(newValue)
       if (newValue) {
         this.$nextTick(() => {
           if (!this.editorDisposed && this.cm) {
@@ -904,8 +904,11 @@ export default defineComponent({
     }
     const cm = new TextEditor({
       parent: container,
+      ariaLabel: 'Markdown source',
+      dark: this.$vuetify.theme.current.dark,
       value: wikiStore.editor.content,
       language: markdown(),
+      spellcheck: false,
       direction: siteConfig.rtl ? 'rtl' : 'ltr',
       extensions,
       onChange: value => {
@@ -921,9 +924,6 @@ export default defineComponent({
       configurable: true,
       value: cm
     })
-    const source = container.querySelector<HTMLElement>('.cm-content')
-    source?.setAttribute('aria-label', 'Markdown source')
-    source?.setAttribute('spellcheck', 'false')
 
     // Render initial preview
 
