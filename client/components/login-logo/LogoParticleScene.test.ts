@@ -310,24 +310,38 @@ const makeLoopContext = (canvas: HTMLCanvasElement): LoopTestContext => ({
 })
 
 const mountParticleSceneContents = (
-  pointerController: { update: (renderedLongAxis: number, time?: number) => LogoPointerState } = { update: () => pointerState }
+  pointerController: { update: (renderedLongAxis: number, time?: number) => LogoPointerState } = { update: () => pointerState },
+  options: { active?: boolean } = {}
 ) => {
   resetLoopHarness()
   const resources = createParticleSceneResources(makeParticles(), effect)
-  const loopControl = { stop: null as (() => void) | null }
+  const active = Vue.ref(options.active ?? true)
+  const loopControl = { ready: false, stop: null as (() => void) | null }
   const host = document.createElement('div')
   document.body.append(host)
-  const app = Vue.createApp(ParticleSceneContents, {
-    active: true,
-    loopControl,
-    pointerController,
-    resources
+  const app = Vue.createApp({
+    setup: () => () =>
+      Vue.h(ParticleSceneContents, {
+        active: active.value,
+        loopControl,
+        pointerController,
+        resources
+      })
   })
   let mounted = true
   app.mount(host)
 
   return {
+    ready: () => {
+      loopHarness.starts += 1
+      loopControl.ready = true
+      if (!active.value) loopControl.stop?.()
+    },
     resources,
+    setActive: async (nextActive: boolean) => {
+      active.value = nextActive
+      await Vue.nextTick()
+    },
     unmount: () => {
       if (!mounted) return
       mounted = false
@@ -337,6 +351,45 @@ const mountParticleSceneContents = (
     }
   }
 }
+
+describe('LogoParticleScene render loop lifecycle', () => {
+  it('defers initial active starts until ready and keeps later transitions on demand', async () => {
+    const mounted = mountParticleSceneContents()
+
+    try {
+      expect(loopHarness.starts).toBe(0)
+      mounted.ready()
+      expect(loopHarness.starts).toBe(1)
+      expect(loopHarness.stops).toBe(0)
+
+      await mounted.setActive(false)
+      expect(loopHarness.stops).toBe(1)
+
+      const invalidationsBeforeActivation = loopHarness.invalidations
+      await mounted.setActive(true)
+      expect(loopHarness.starts).toBe(2)
+      expect(loopHarness.invalidations).toBe(invalidationsBeforeActivation + 1)
+    } finally {
+      mounted.unmount()
+    }
+  })
+
+  it('stops the eagerly started loop immediately when ready finds the scene inactive', () => {
+    const mounted = mountParticleSceneContents(undefined, { active: false })
+
+    try {
+      expect(loopHarness.starts).toBe(0)
+      expect(loopHarness.stops).toBe(0)
+
+      mounted.ready()
+
+      expect(loopHarness.starts).toBe(1)
+      expect(loopHarness.stops).toBe(1)
+    } finally {
+      mounted.unmount()
+    }
+  })
+})
 
 describe('LogoParticleScene resources', () => {
   it('publishes only the contracted props and events', () => {

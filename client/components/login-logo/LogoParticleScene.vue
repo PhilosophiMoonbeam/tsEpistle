@@ -138,6 +138,7 @@ export interface ParticleSceneFrame {
 
 interface ParticleLoopControl {
   disposeFrameCapture?: (reason: Error) => void
+  ready: boolean
   stop: (() => void) | null
 }
 
@@ -785,7 +786,7 @@ const ParticleSceneContents = defineComponent({
     watch(
       () => props.active,
       active => {
-        if (callbackFailed) return
+        if (callbackFailed || !props.loopControl.ready) return
         if (active) {
           start()
           invalidate()
@@ -795,10 +796,6 @@ const ParticleSceneContents = defineComponent({
       },
       { flush: 'sync', immediate: true }
     )
-
-    onMounted(() => {
-      if (!props.active) stop()
-    })
     onBeforeUnmount(() => {
       frameCapture?.dispose(new Error('Particle frame capture is unavailable'))
       if (frameCapture && props.loopControl.disposeFrameCapture === frameCapture.dispose) {
@@ -831,7 +828,7 @@ export default defineComponent({
     const resources = shallowRef<ParticleSceneResources | null>(null)
     const renderEnabled = ref(false)
     const webglAvailable = ref(false)
-    const loopControl = markRaw<ParticleLoopControl>({ stop: null })
+    const loopControl = markRaw<ParticleLoopControl>({ ready: false, stop: null })
     const pointerTarget = shallowRef<HTMLElement | null>(null)
     const pointerCoordinateTarget = shallowRef<HTMLElement | null>(null)
     let setupError: Error | null = null
@@ -872,6 +869,7 @@ export default defineComponent({
       if (tornDown) return
       tornDown = true
       disableRendering()
+      loopControl.ready = false
       loopControl.disposeFrameCapture?.(new Error('Particle frame capture is unavailable'))
       pointerController.dispose()
       pointerTarget.value = null
@@ -916,10 +914,11 @@ export default defineComponent({
 
       try {
         fence.ready(renderer)
+        loopControl.ready = true
+        if (!renderEnabled.value) loopControl.stop?.()
         const wrapper = renderer.domElement.closest('.login-particle-logo')
         pointerTarget.value = wrapper instanceof HTMLElement ? wrapper : null
         pointerCoordinateTarget.value = renderer.domElement
-        if (resources.value) updateParticleSceneBackground(resources.value, renderer.domElement)
         surfaceObserver = new MutationObserver(() => {
           if (!resources.value || fence.hasFailed) return
           updateParticleSceneBackground(resources.value, renderer.domElement)
