@@ -66,14 +66,14 @@ import vertexShader from './particle.vert.glsl?raw'
 import {
   LOGO_POINTER_BOUNCE_RATIO,
   LOGO_POINTER_EXPLOSION_CAPACITY,
+  LOGO_POINTER_EXPLOSION_MIN_SCALE,
+  LOGO_POINTER_EXPLOSION_MAX_SCALE,
   LOGO_POINTER_EXPLOSION_HOLD_SECONDS,
   LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS,
   LOGO_POINTER_EXPLOSION_REFILL_SECONDS,
   LOGO_POINTER_IMPULSE_CAPACITY,
   LOGO_POINTER_IMPULSE_LIFETIME_SECONDS,
   LOGO_POINTER_NEIGHBOR_FORCE_RATIO,
-  LOGO_POINTER_MAX_RADIUS_CSS,
-  LOGO_POINTER_MAX_SEGMENT_CSS,
   LOGO_POINTER_MAX_TRAVEL_CSS,
   useLogoPointer
 } from './useLogoPointer'
@@ -84,7 +84,6 @@ const DEPTH_SCALE_MIN = 0.82
 const DEPTH_SCALE_MAX = 1.18
 const MIN_IDLE_AMPLITUDE_CSS = 3.5
 const MAX_IDLE_AMPLITUDE_CSS = 10
-const MIN_IMPULSE_RADIUS_CSS = 18
 const MAX_DIAGNOSTIC_ELAPSED_SECONDS = Number.MAX_SAFE_INTEGER
 const MAX_DIAGNOSTIC_PARTICLES = 16_000
 
@@ -94,8 +93,8 @@ interface ParticleUniforms {
   readonly uAspect: { value: number }
   readonly uBackground: { value: Color }
   readonly uDpr: { value: number }
-  readonly uImpulseDirectionTravel: { value: Vector4[] }
-  readonly uImpulsePositionAge: { value: Vector4[] }
+  readonly uBrushPositionRadius: { value: Vector4 }
+  readonly uBrushDirection: { value: Vector2 }
   readonly uExplosionPositionAge: { value: Vector4[] }
   readonly uMedianStroke: { value: number }
   readonly uRenderedLongAxis: { value: number }
@@ -433,26 +432,8 @@ export const createParticleSceneResources = (
     uAspect: { value: effect.aspect },
     uBackground: { value: new Color(DEFAULT_BACKGROUND) },
     uDpr: { value: 1 },
-    uImpulseDirectionTravel: {
-      value: [
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0)
-      ]
-    },
-    uImpulsePositionAge: {
-      value: [
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0),
-        new Vector4(0, 0, 0, 0)
-      ]
-    },
+    uBrushPositionRadius: { value: new Vector4(0, 0, 18, 0) },
+    uBrushDirection: { value: new Vector2(0, 0) },
     uExplosionPositionAge: {
       value: [
         new Vector4(0, 0, 0, 0),
@@ -673,22 +654,6 @@ export const updateParticleSceneFrame = (
       LOGO_POINTER_IMPULSE_LIFETIME_SECONDS
     )
     const active = impulse.active && ageSeconds < LOGO_POINTER_IMPULSE_LIFETIME_SECONDS
-    const directionLength = Math.hypot(impulse.directionX, impulse.directionY)
-    const directionScale = Number.isFinite(directionLength) && directionLength > 0.000001
-      ? 1 / directionLength
-      : 0
-    resources.uniforms.uImpulsePositionAge.value[index].set(
-      active ? clamp(-1, finiteOr(impulse.x, 0), 1) : 0,
-      active ? clamp(-1, finiteOr(impulse.y, 0), 1) : 0,
-      ageSeconds,
-      active ? clamp(0.9, finiteOr(impulse.strength, 1), 3.2) : 0
-    )
-    resources.uniforms.uImpulseDirectionTravel.value[index].set(
-      directionScale === 0 ? 1 : impulse.directionX * directionScale,
-      directionScale === 0 ? 0 : impulse.directionY * directionScale,
-      active ? clamp(0, finiteOr(impulse.travelCss, 0), LOGO_POINTER_MAX_SEGMENT_CSS) : 0,
-      clamp(MIN_IMPULSE_RADIUS_CSS, finiteOr(impulse.radiusCss, MIN_IMPULSE_RADIUS_CSS), LOGO_POINTER_MAX_RADIUS_CSS)
-    )
     if (active) activeImpulseCount += 1
   }
   let activeExplosionCount = 0
@@ -704,13 +669,16 @@ export const updateParticleSceneFrame = (
       active ? clamp(-1, finiteOr(explosion.x, 0), 1) : 0,
       active ? clamp(-1, finiteOr(explosion.y, 0), 1) : 0,
       ageSeconds,
-      active ? 1 : 0
+      active ? clamp(LOGO_POINTER_EXPLOSION_MIN_SCALE, finiteOr(explosion.scale, 1), LOGO_POINTER_EXPLOSION_MAX_SCALE) : 0
     )
     if (active) activeExplosionCount += 1
   }
   const elapsed = clamp(0, finiteOr(frame.elapsed, 0), Number.MAX_SAFE_INTEGER)
   resources.uniforms.uTime.value = elapsed
-  resources.cloud.update(elapsed, frame.width, frame.height, pointer)
+  resources.cloud.update(elapsed, frame.width, frame.height, pointer, frame.pointerTimeMilliseconds === undefined ? elapsed : frame.pointerTimeMilliseconds / 1000)
+  const brush = resources.cloud.brush
+  resources.uniforms.uBrushPositionRadius.value.set(brush.x, brush.y, brush.radius, brush.travel)
+  resources.uniforms.uBrushDirection.value.set(brush.directionX, brush.directionY)
   if (resources.cloud.count > 0) resources.cloudMotion.needsUpdate = true
 
   const diagnostics = resources.motionDiagnostics

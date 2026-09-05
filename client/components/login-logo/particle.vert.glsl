@@ -10,8 +10,8 @@ attribute float logoSeed;
 uniform float uAspect;
 uniform vec3 uBackground;
 uniform float uDpr;
-uniform vec4 uImpulseDirectionTravel[6];
-uniform vec4 uImpulsePositionAge[6];
+uniform vec4 uBrushPositionRadius;
+uniform vec2 uBrushDirection;
 uniform vec4 uExplosionPositionAge[6];
 uniform float uMedianStroke;
 uniform float uRenderedLongAxis;
@@ -67,54 +67,15 @@ void main() {
   vec2 orbit = vec2(sin(phase + uTime * 0.37), cos(phase * 1.7 + uTime * 0.31));
   vec2 idleCss = (coherentFlow * idleScaleCss + orbit * wander) * idleWarmup;
 
-  vec2 cursorCss = vec2(0.0);
-  for (int impulseIndex = 0; impulseIndex < 6; impulseIndex++) {
-    vec4 positionAge = uImpulsePositionAge[impulseIndex];
-    vec4 directionTravel = uImpulseDirectionTravel[impulseIndex];
-    if (positionAge.w <= 0.0 || directionTravel.z <= 0.0) continue;
-
-    float strength = clamp(positionAge.w, 0.9, 3.2);
-    float ageSeconds = clamp(positionAge.z, 0.0, 1.4);
-    vec2 localCss = (basePosition - positionAge.xy) * 0.5 * safeViewport;
-    float distanceCss = length(localCss);
-    float radiusCss = clamp(directionTravel.w, 18.0, 72.0);
-    float primaryFalloff = 1.0 - smoothstep(0.16 * radiusCss, radiusCss, distanceCss);
-    float annulusFalloff = smoothstep(0.42 * radiusCss, radiusCss, distanceCss)
-      * (1.0 - smoothstep(radiusCss, 2.35 * radiusCss, distanceCss));
-    float attack = smoothstep(0.0, 0.035, ageSeconds);
-    float kickFade = 1.0 - smoothstep(0.38, 0.92, ageSeconds);
-    float settle = smoothstep(0.48, 0.84, ageSeconds)
-      * (1.0 - smoothstep(0.92, 1.26, ageSeconds));
-    vec2 inputDirection = directionTravel.xy / max(length(directionTravel.xy), 0.000001);
-    vec2 outwardDirection = distanceCss > 0.000001
-      ? localCss / distanceCss
-      : vec2(cos(6.28318530718 * logoSeed), sin(6.28318530718 * logoSeed));
-    vec2 tangentDirection = vec2(-outwardDirection.y, outwardDirection.x);
-    float turbulence = sin(6.28318530718 * logoSeed + 5.4 * ageSeconds);
-    vec2 disruptiveKick =
-      inputDirection * (0.72 * primaryFalloff + 0.20 * annulusFalloff)
-      + outwardDirection * (0.90 * primaryFalloff + 0.72 * annulusFalloff)
-      + tangentDirection * (0.22 + 0.18 * turbulence) * annulusFalloff;
-    vec2 restorativePull =
-      inputDirection * 0.48 * primaryFalloff
-      + outwardDirection * (0.72 * primaryFalloff + 0.56 * annulusFalloff);
-    cursorCss += strength * directionTravel.z * (
-      disruptiveKick * attack * kickFade
-      - restorativePull * settle
-    );
-  }
-  float cursorMagnitude = length(cursorCss);
-  cursorCss *= cursorMagnitude > 42.0 ? 42.0 / cursorMagnitude : 1.0;
-
   vec2 explosionCss = vec2(0.0);
   for (int explosionIndex = 0; explosionIndex < 6; explosionIndex++) {
     vec4 positionAge = uExplosionPositionAge[explosionIndex];
-    if (positionAge.w < 0.5) continue;
+    if (positionAge.w <= 0.0) continue;
 
     float ageSeconds = clamp(positionAge.z, 0.0, 2.8);
     vec2 localCss = (basePosition - positionAge.xy) * 0.5 * safeViewport;
     float distanceCss = length(localCss);
-    float radiusCss = clamp(0.30 * uRenderedLongAxis, 100.0, 240.0);
+    float radiusCss = clamp(0.30 * uRenderedLongAxis, 100.0, 240.0) * positionAge.w;
     float influence = 1.0 - smoothstep(0.0, radiusCss, distanceCss);
     vec2 radial = distanceCss > 0.001 ? localCss / distanceCss : vec2(cos(phase), sin(phase));
     vec2 tangent = vec2(-radial.y, radial.x);
@@ -124,6 +85,21 @@ void main() {
     float travel = radiusCss * influence * attack * recovery;
     explosionCss += (radial * (0.75 + 0.55 * fract(logoSeed * 13.0))
       + tangent * 0.32 * sin(ageSeconds * 2.4 + depth)) * travel;
+  }
+  // Sample the brush at the scattered position, never the particle's logo anchor.
+  // This adds a small local deflection without replacing the ongoing burst/return path.
+  vec2 cursorCss = vec2(0.0);
+  if (uBrushPositionRadius.w > 0.01 && cloudMotion.z < 0.5) {
+    vec2 localCss = (basePosition - uBrushPositionRadius.xy) * 0.5 * safeViewport + idleCss + explosionCss;
+    float distanceCss = length(localCss);
+    float radiusCss = uBrushPositionRadius.z;
+    float influence = 1.0 - smoothstep(0.0, radiusCss, distanceCss);
+    // Soft normalization has no directional jump at the brush center.
+    vec2 outward = localCss / sqrt(dot(localCss, localCss) + 64.0);
+    vec2 tangent = vec2(-outward.y, outward.x);
+    float response = mix(0.55, 1.0, fract(logoSeed * 23.0));
+    cursorCss = (outward * 0.85 + uBrushDirection * 0.45 + tangent * (0.16 * sin(phase)))
+      * influence * uBrushPositionRadius.w * response;
   }
   vec2 displacement = mix(idleCss + cursorCss + explosionCss, cloudMotion.xy, cloudMotion.z);
   vec2 position = basePosition + 2.0 * displacement / safeViewport;

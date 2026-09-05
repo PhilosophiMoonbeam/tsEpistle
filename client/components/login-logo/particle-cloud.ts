@@ -1,3 +1,4 @@
+import { ParticleBrush } from './particle-brush'
 import type { ParsedLogoParticles } from './particle-logo'
 import type { LogoPointerState } from './useLogoPointer'
 
@@ -11,6 +12,7 @@ const CELL = 24
 const TAU = Math.PI * 2
 
 export class ParticleCloud {
+  readonly brush = new ParticleBrush()
   /** CSS displacement and a bead flag. Original logo attributes remain immutable. */
   readonly motion: Float32Array
   readonly indices: Uint16Array
@@ -62,7 +64,8 @@ export class ParticleCloud {
     this.cellY = new Int32Array(this.count)
   }
 
-  update(time: number, width: number, height: number, pointer: LogoPointerState): void {
+  update(time: number, width: number, height: number, pointer: LogoPointerState, interactionTime = time): void {
+    this.brush.update(interactionTime, pointer)
     if (this.count === 0) return
     const aspect = this.particles.width / this.particles.height
     const fitX = Math.min(1, (aspect * height) / width)
@@ -103,14 +106,14 @@ export class ParticleCloud {
         const dx = this.x[b]! - (blast.x * width) / 2
         const dy = this.y[b]! - (blast.y * height) / 2
         const d = Math.max(1, Math.hypot(dx, dy))
-        const reach = Math.max(100, longAxis * 0.3)
-        const force = Math.max(0, 1 - d / reach) ** 2 * 950
+        const reach = Math.min(240, Math.max(100, longAxis * 0.3)) * blast.scale
+        const force = Math.max(0, 1 - d / reach) ** 2 * 950 * blast.scale
         this.vx[b] += ((dx / d) * 0.94 - (dy / d) * 0.34) * force
         this.vy[b] += ((dy / d) * 0.94 + (dx / d) * 0.34) * force
       }
     }
     while (this.accumulator >= STEP) {
-      this.step(time, pointer)
+      this.step(time)
       this.accumulator -= STEP
     }
     for (let b = 0; b < this.count; b++) {
@@ -120,7 +123,7 @@ export class ParticleCloud {
     }
   }
 
-  private step(time: number, pointer: LogoPointerState): void {
+  private step(time: number): void {
     const damping = Math.exp(-3.8 * STEP)
     this.heads.fill(-1)
     for (let b = 0; b < this.count; b++) {
@@ -129,15 +132,14 @@ export class ParticleCloud {
       const ty = this.homeY[b]! + Math.cos(time * 0.39 + phase * 1.7) * 9
       let ax = (tx - this.x[b]!) * 12
       let ay = (ty - this.y[b]!) * 12
-      for (const impulse of pointer.impulses) {
-        if (!impulse.active || impulse.ageSeconds > 0.3) continue
-        const dx = this.x[b]! - (impulse.x * this.width) / 2
-        const dy = this.y[b]! - (impulse.y * this.height) / 2
+      const brush = this.brush
+      if (brush.travel > 0.01) {
+        const dx = this.x[b]! - (brush.x * this.width) / 2
+        const dy = this.y[b]! - (brush.y * this.height) / 2
         const d = Math.max(1, Math.hypot(dx, dy))
-        const reach = impulse.radiusCss * 1.8
-        const force = Math.max(0, 1 - d / reach) ** 2 * (1 - impulse.ageSeconds / 0.3) * impulse.strength * 750
-        ax += (dx / d + impulse.directionX * 0.65) * force
-        ay += (dy / d + impulse.directionY * 0.65) * force
+        const force = Math.max(0, 1 - d / brush.radius) ** 2 * brush.travel * 65
+        ax += (dx / d + brush.directionX * 0.65) * force
+        ay += (dy / d + brush.directionY * 0.65) * force
       }
       this.vx[b] = (this.vx[b]! + ax * STEP) * damping
       this.vy[b] = (this.vy[b]! + ay * STEP) * damping

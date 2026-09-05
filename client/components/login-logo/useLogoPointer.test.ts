@@ -583,3 +583,31 @@ describe('LogoPointerController input and lifecycle', () => {
     expect(target.classList.contains('login-particle-logo--pointer-active')).toBe(false)
   })
 })
+
+describe('variable explosions', () => {
+  it('chooses a bounded size once per accepted click and preserves it through motion and recovery', () => {
+    let time = 0
+    const choices = [0, 0.5, 1, Number.NaN, -1, 2]
+    let draws = 0
+    const target = targetWithBounds()
+    const controller = new LogoPointerController({ hasFinePointer: () => true, now: () => time, random: () => choices[draws++]! })
+    controller.setTarget(target)
+    controller.setCoordinateTarget(target)
+    controller.setActive(true)
+    for (let i = 0; i < 6; i++) {
+      target.dispatchEvent(pointerEvent('pointerdown', { clientX: 150, clientY: 100 }))
+      time += 10
+    }
+    const scales = controller.state.explosions.map(blast => blast.scale)
+    expect(scales).toEqual([0.9, 1.175, 1.45, 1.175, 0.9, 1.45])
+    target.dispatchEvent(pointerEvent('pointerdown', { clientX: 150, clientY: 100 }))
+    expect(draws).toBe(6)
+    time = 500
+    target.dispatchEvent(pointerEvent('pointermove', { clientX: 190, clientY: 120 }))
+    controller.update(800, time)
+    expect(controller.state.explosions.map(blast => blast.scale)).toEqual(scales)
+    controller.update(800, 2000)
+    expect(controller.state.explosions.map(blast => blast.scale)).toEqual(scales)
+    controller.dispose()
+  })
+})

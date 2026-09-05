@@ -252,28 +252,14 @@ const pointerState: LogoPointerState = {
     { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, strength: 1, x: 0, y: 0 }
   ],
   explosions: [
-    { active: true, ageSeconds: 0.24, x: 0.25, y: -0.5 },
-    { active: true, ageSeconds: 0.1, x: -0.25, y: 0.5 },
-    { active: false, ageSeconds: 0, x: 0, y: 0 },
-    { active: false, ageSeconds: 0, x: 0, y: 0 },
-    { active: false, ageSeconds: 0, x: 0, y: 0 },
-    { active: false, ageSeconds: 0, x: 0, y: 0 }
+    { scale: 1, active: true, ageSeconds: 0.24, x: 0.25, y: -0.5 },
+    { scale: 1, active: true, ageSeconds: 0.1, x: -0.25, y: 0.5 },
+    { scale: 1, active: false, ageSeconds: 0, x: 0, y: 0 },
+    { scale: 1, active: false, ageSeconds: 0, x: 0, y: 0 },
+    { scale: 1, active: false, ageSeconds: 0, x: 0, y: 0 },
+    { scale: 1, active: false, ageSeconds: 0, x: 0, y: 0 }
   ]
 }
-const expectNormalizedDirectionTravel = (
-  actual: readonly { readonly x: number; readonly y: number; readonly z: number; readonly w: number }[],
-  expected: readonly [number, number, number, number][]
-): void => {
-  expect(actual).toHaveLength(expected.length)
-  actual.forEach((value, index) => {
-    const [x, y, z, w] = expected[index]
-    expect(value.x).toBeCloseTo(x, 12)
-    expect(value.y).toBeCloseTo(y, 12)
-    expect(value.z).toBe(z)
-    expect(value.w).toBe(w)
-  })
-}
-
 interface TestFrameCapture {
   readonly capturedAt: number
   readonly dataUrl: string
@@ -408,26 +394,24 @@ describe('LogoParticleScene resources', () => {
     disposeParticleSceneResources(resources)
   })
 
-  it('configures stable six-slot cursor and explosion uniforms', () => {
+  it('configures stable brush and six-slot explosion uniforms', () => {
     const resources = createParticleSceneResources(makeParticles(), effect)
 
     expect(Object.keys(resources.uniforms).sort()).toEqual([
       'uAspect',
       'uBackground',
+      'uBrushDirection',
+      'uBrushPositionRadius',
       'uDpr',
       'uExplosionPositionAge',
-      'uImpulseDirectionTravel',
-      'uImpulsePositionAge',
       'uMedianStroke',
       'uRenderedLongAxis',
       'uTime',
       'uViewport'
     ])
-    expect(resources.uniforms.uImpulsePositionAge.value).toHaveLength(6)
-    expect(resources.uniforms.uImpulseDirectionTravel.value).toHaveLength(6)
     expect(resources.uniforms.uExplosionPositionAge.value).toHaveLength(6)
-    expect(resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual(Array.from({ length: 6 }, () => [0, 0, 0, 0]))
-    expect(resources.uniforms.uImpulseDirectionTravel.value.map(value => value.toArray())).toEqual(Array.from({ length: 6 }, () => [0, 0, 0, 0]))
+    expect(resources.uniforms.uBrushPositionRadius.value.toArray()).toEqual([0, 0, 18, 0])
+    expect(resources.uniforms.uBrushDirection.value.toArray()).toEqual([0, 0])
     expect(resources.uniforms.uExplosionPositionAge.value.map(value => value.toArray())).toEqual(Array.from({ length: 6 }, () => [0, 0, 0, 0]))
 
     disposeParticleSceneResources(resources)
@@ -473,8 +457,8 @@ describe('LogoParticleScene resources', () => {
     const attributes = ['logoXY', 'logoDepth', 'logoColor', 'logoSize', 'logoSeed'].map(name => resources.geometry.getAttribute(name))
     const arrays = attributes.map(attribute => attribute.array)
     const versions = attributes.map(attribute => attribute.version)
-    const impulseDirectionUniforms = resources.uniforms.uImpulseDirectionTravel.value
-    const impulsePositionUniforms = resources.uniforms.uImpulsePositionAge.value
+    const impulseDirectionUniforms = resources.uniforms.uBrushDirection.value
+    const impulsePositionUniforms = resources.uniforms.uBrushPositionRadius.value
     const explosionPositionUniforms = resources.uniforms.uExplosionPositionAge.value
     const renderedLongAxes: number[] = []
     const pointerController = {
@@ -505,17 +489,13 @@ describe('LogoParticleScene resources', () => {
     expect(renderedLongAxes.every(value => value === 640)).toBe(true)
     expect(attributes.map(attribute => attribute.array)).toEqual(arrays)
     expect(attributes.map(attribute => attribute.version)).toEqual(versions)
-    expect(resources.uniforms.uImpulseDirectionTravel.value).toBe(impulseDirectionUniforms)
-    expect(resources.uniforms.uImpulsePositionAge.value).toBe(impulsePositionUniforms)
+    expect(resources.uniforms.uBrushDirection.value).toBe(impulseDirectionUniforms)
+    expect(resources.uniforms.uBrushPositionRadius.value).toBe(impulsePositionUniforms)
     expect(resources.uniforms.uExplosionPositionAge.value).toBe(explosionPositionUniforms)
-    expect(resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual([
-      [0.25, -0.5, 0.24, 2.2],
-      [-0.25, 0.5, 0.1, 1.1],
-      [0, 0, 0, 0],
-      [0, 0, 0, 0],
-      [0, 0, 0, 0],
-      [0, 0, 0, 0]
-    ])
+    expect(resources.uniforms.uBrushPositionRadius.value.x).toBeCloseTo(-0.25)
+    expect(resources.uniforms.uBrushPositionRadius.value.y).toBeCloseTo(0.5)
+    expect(resources.uniforms.uBrushPositionRadius.value.w).toBeGreaterThan(0)
+    expect(resources.uniforms.uBrushPositionRadius.value.w).toBeLessThanOrEqual(32)
     expect(resources.uniforms.uExplosionPositionAge.value.map(value => value.toArray())).toEqual([
       [0.25, -0.5, 0.24, 1],
       [-0.25, 0.5, 0.1, 1],
@@ -524,14 +504,8 @@ describe('LogoParticleScene resources', () => {
       [0, 0, 0, 0],
       [0, 0, 0, 0]
     ])
-    expectNormalizedDirectionTravel(resources.uniforms.uImpulseDirectionTravel.value, [
-      [0.6, 0.8, 6, 32],
-      [-1, 0, 3, 24],
-      [1, 0, 0, 18],
-      [1, 0, 0, 18],
-      [1, 0, 0, 18],
-      [1, 0, 0, 18]
-    ])
+    expect(resources.uniforms.uBrushDirection.value.x).toBeCloseTo(-1)
+    expect(resources.uniforms.uBrushDirection.value.y).toBe(0)
     expect(resources.uniforms.uDpr.value).toBe(1.5)
     expect(resources.uniforms.uTime.value).toBeCloseTo(119 / 60)
     disposeParticleSceneResources(resources)
@@ -607,11 +581,11 @@ describe('LogoParticleScene resources', () => {
 
     expect(scheduled.uniforms.uTime.value).toBe(4.25)
     expect(direct.uniforms.uTime.value).toBe(4.25)
-    expect(scheduled.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual(
-      direct.uniforms.uImpulsePositionAge.value.map(value => value.toArray())
+    expect(scheduled.uniforms.uBrushPositionRadius.value.toArray()).toEqual(
+      direct.uniforms.uBrushPositionRadius.value.toArray()
     )
-    expect(scheduled.uniforms.uImpulseDirectionTravel.value.map(value => value.toArray())).toEqual(
-      direct.uniforms.uImpulseDirectionTravel.value.map(value => value.toArray())
+    expect(scheduled.uniforms.uBrushDirection.value.toArray()).toEqual(
+      direct.uniforms.uBrushDirection.value.toArray()
     )
 
     disposeParticleSceneResources(scheduled)
@@ -663,22 +637,8 @@ describe('LogoParticleScene resources', () => {
           width: 640
         }
       )
-      expect(resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual([
-        [1, -1, 0, 3.2],
-        [0, 0, 1.4, 0],
-        [0, 0, 0.4, 0],
-        [0, 0, 0.2, 0],
-        [0, 0, 0.2, 0],
-        [0, 0, 0.2, 0]
-      ])
-      expectNormalizedDirectionTravel(resources.uniforms.uImpulseDirectionTravel.value, [
-        [0.6, 0.8, 20, 72],
-        [1, 0, 0, 18],
-        [0, 1, 0, 20],
-        [1, 0, 0, 18],
-        [1, 0, 0, 18],
-        [1, 0, 0, 18]
-      ])
+      expect(resources.uniforms.uBrushPositionRadius.value.toArray()).toEqual([1, -1, 72, 0])
+      expect(resources.uniforms.uBrushDirection.value.toArray()).toEqual([0, 0])
       expect(resources.uniforms.uExplosionPositionAge.value).toHaveLength(6)
 
       expect(benchmark.lastMotion).toBe(diagnostics)
@@ -801,8 +761,8 @@ describe('LogoParticleScene resources', () => {
     const stableUniformValues = [
       resources.uniforms.uAspect.value,
       resources.uniforms.uDpr.value,
-      ...resources.uniforms.uImpulseDirectionTravel.value,
-      ...resources.uniforms.uImpulsePositionAge.value,
+      resources.uniforms.uBrushDirection.value,
+      resources.uniforms.uBrushPositionRadius.value,
       resources.uniforms.uMedianStroke.value,
       resources.uniforms.uRenderedLongAxis.value,
       resources.uniforms.uTime.value,
@@ -823,8 +783,8 @@ describe('LogoParticleScene resources', () => {
     expect([
       resources.uniforms.uAspect.value,
       resources.uniforms.uDpr.value,
-      ...resources.uniforms.uImpulseDirectionTravel.value,
-      ...resources.uniforms.uImpulsePositionAge.value,
+      resources.uniforms.uBrushDirection.value,
+      resources.uniforms.uBrushPositionRadius.value,
       resources.uniforms.uMedianStroke.value,
       resources.uniforms.uRenderedLongAxis.value,
       resources.uniforms.uTime.value,
@@ -980,14 +940,8 @@ describe('LogoParticleScene test frame capture lifecycle', () => {
       beforeRender(makeLoopContext(canvas))
       expect(mounted.resources.uniforms.uTime.value).toBe(7.25)
       expect(pointerTimes).toEqual([12_345])
-      expect(mounted.resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual([
-        [0.25, -0.5, 0.24, 2.2],
-        [-0.25, 0.5, 0.1, 1.1],
-        [0, 0, 0, 0],
-        [0, 0, 0, 0],
-        [0, 0, 0, 0],
-        [0, 0, 0, 0]
-      ])
+      expect(mounted.resources.uniforms.uBrushPositionRadius.value.x).toBeCloseTo(-0.25)
+      expect(mounted.resources.uniforms.uBrushPositionRadius.value.y).toBeCloseTo(0.5)
       expect(mounted.resources.uniforms.uExplosionPositionAge.value).toHaveLength(6)
       render(makeLoopContext(canvas))
       await expect(overridden).resolves.toEqual({

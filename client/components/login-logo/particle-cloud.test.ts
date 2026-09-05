@@ -97,3 +97,84 @@ describe('particle cloud physics', () => {
     expect(displacement(a)).toBeLessThan(2)
   })
 })
+
+// Brush state is bounded independently of event rate and particle count.
+describe('continuous particle brush', () => {
+  it('preserves continuity when a saturated pointer ring is replaced or reversed', () => {
+    const cloud = new ParticleCloud(particles(0))
+    const state = pointer()
+    const impulse = state.impulses[0]
+    Object.assign(impulse, { active: true, x: -0.3, y: 0, travelCss: 20, strength: 3, radiusCss: 60 })
+    for (let i = 0; i <= 30; i++) cloud.update(i / 60, 800, 800, state)
+    const before = { ...cloud.brush }
+    Object.assign(impulse, { x: 0.3, directionX: -1 })
+    cloud.update(0.5, 800, 800, state)
+    expect(cloud.brush.x).toBe(before.x)
+    expect(cloud.brush.travel).toBe(before.travel)
+    expect(cloud.brush.directionX).toBe(before.directionX)
+    cloud.update(0.5 + 1 / 120, 800, 800, state)
+    expect(cloud.brush.x).toBeGreaterThan(before.x)
+    expect(cloud.brush.x).toBeLessThan(-0.2)
+    expect(cloud.brush.directionX).toBeGreaterThan(0.7)
+    expect(cloud.brush.travel).toBeLessThanOrEqual(32)
+    impulse.active = false
+    cloud.update(0.52, 800, 800, state)
+    expect(cloud.brush.travel).toBeGreaterThan(20)
+    for (let i = 1; i <= 120; i++) cloud.update(0.52 + i / 60, 800, 800, state)
+    expect(cloud.brush.travel).toBeLessThan(0.001)
+  })
+
+  it('smooths consistently at 60 and 120 Hz and resets after suspension', () => {
+    const a = new ParticleCloud(particles(0))
+    const b = new ParticleCloud(particles(0))
+    const state = pointer()
+    Object.assign(state.impulses[0], { active: true, x: 0.4, y: -0.2, travelCss: 10, strength: 2 })
+    for (let i = 0; i <= 60; i++) a.update(i / 60, 800, 800, state)
+    for (let i = 0; i <= 120; i++) b.update(i / 120, 800, 800, state)
+    expect(a.brush.travel).toBeCloseTo(b.brush.travel, 8)
+    expect(a.brush.directionX).toBeCloseTo(b.brush.directionX, 8)
+    a.update(30, 800, 800, state)
+    expect(a.brush.travel).toBe(0)
+  })
+
+  it('pushes a scattered bead only when the brush reaches its current position', () => {
+    const state = pointer()
+    Object.assign(state.impulses[0], { active: true, x: 0, y: 0, radiusCss: 50, travelCss: 20, strength: 2 })
+    const near = new ParticleCloud(particles(1, true))
+    const far = new ParticleCloud(particles(1, true))
+    const idle = new ParticleCloud(particles(1, true))
+    const idleState = pointer()
+    for (const cloud of [near, far, idle]) {
+      cloud.update(0, 800, 800, idleState)
+      // All three beads have the same home and blast displacement.
+      cloud.x[0] = 200
+      cloud.y[0] = 0
+      cloud.vx[0] = cloud.vy[0] = 0
+    }
+    const farState = pointer()
+    Object.assign(farState.impulses[0], state.impulses[0])
+    state.impulses[0].x = 0.48 // 192px: next to the displaced bead.
+    for (let i = 1; i <= 6; i++) {
+      near.update(i / 120, 800, 800, state)
+      far.update(i / 120, 800, 800, farState)
+      idle.update(i / 120, 800, 800, idleState)
+    }
+    expect(far.x[0]).toBe(idle.x[0])
+    expect(far.y[0]).toBe(idle.y[0])
+    expect(near.vx[0]!).toBeGreaterThan(idle.vx[0]!)
+  })
+
+  it('gives larger blasts more reach while retaining recovery and the same bead budget', () => {
+    const small = new ParticleCloud(particles(1, true))
+    const large = new ParticleCloud(particles(1, true))
+    const smallState = pointer()
+    const largeState = pointer()
+    for (const cloud of [small, large]) cloud.update(0, 800, 800, pointer())
+    Object.assign(smallState.explosions[0], { active: true, x: 0, y: 0, scale: 0.9 })
+    Object.assign(largeState.explosions[0], { active: true, x: 0, y: 0, scale: 1.45 })
+    small.update(1 / 120, 800, 800, smallState)
+    large.update(1 / 120, 800, 800, largeState)
+    expect(Math.hypot(large.vx[0]!, large.vy[0]!)).toBeGreaterThan(Math.hypot(small.vx[0]!, small.vy[0]!) * 2)
+    expect(large.count).toBe(small.count)
+  })
+})

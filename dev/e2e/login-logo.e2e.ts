@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { readFileSync } from 'node:fs'
 import type { Locator, Page, Request, TestInfo } from '@playwright/test'
 import { expect } from '@playwright/test'
 import sharp from 'sharp'
@@ -1647,4 +1648,109 @@ test.describe('managed login logo auth independence', () => {
     await submit.scrollIntoViewIfNeeded()
     await expect(submit).toBeVisible()
   })
+})
+
+const particleVertexShader = readFileSync(new URL('../../client/components/login-logo/particle.vert.glsl', import.meta.url), 'utf8')
+
+// Read actual GPU vertex positions: screenshots alone cannot distinguish a particle's
+// home from its displaced position, or isolate a brush from ongoing blast motion.
+test('the dust brush is local to scattered particles and preserves variable blast paths', async ({ page }, testInfo) => {
+  requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
+  const result = await page.evaluate(source => {
+    const canvas = document.createElement('canvas')
+    const gl = canvas.getContext('webgl2')
+    if (!gl) return null
+    const compile = (type: number, code: string): WebGLShader => {
+      const shader = gl.createShader(type)!
+      gl.shaderSource(shader, code)
+      gl.compileShader(shader)
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) ?? 'Shader compile failed')
+      return shader
+    }
+    const vert = compile(gl.VERTEX_SHADER, `#version 300 es
+#define CLOUD_DUST_END 0.7
+#define CLOUD_BEAD_START 0.935
+${source.replace(/attribute /g, 'in ').replace(/varying /g, 'out ').replace('void main()', 'void particleMain()').replace('precision highp float;', `precision highp float;
+uniform mat4 projectionMatrix;
+uniform mat4 modelViewMatrix;
+out vec4 testedPosition;`)}
+void main() { particleMain(); testedPosition = gl_Position; }`)
+    const frag = compile(gl.FRAGMENT_SHADER, '#version 300 es\nprecision highp float;\nout vec4 color;\nvoid main(){color=vec4(1.0);}')
+    const program = gl.createProgram()!
+    gl.attachShader(program, vert)
+    gl.attachShader(program, frag)
+    gl.transformFeedbackVaryings(program, ['testedPosition'], gl.INTERLEAVED_ATTRIBS)
+    gl.linkProgram(program)
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) ?? 'Shader link failed')
+    gl.useProgram(program)
+    const uniform = (name: string) => gl.getUniformLocation(program, name)
+    const scalar = (name: string, value: number) => gl.uniform1f(uniform(name), value)
+    const attr = (name: string, x: number, y = 0, z = 0, w = 1) => {
+      const location = gl.getAttribLocation(program, name)
+      if (location >= 0) gl.vertexAttrib4f(location, x, y, z, w)
+    }
+    const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
+    gl.uniformMatrix4fv(uniform('projectionMatrix'), false, identity)
+    gl.uniformMatrix4fv(uniform('modelViewMatrix'), false, identity)
+    scalar('uAspect', 1)
+    scalar('uRenderedLongAxis', 800)
+    scalar('uMedianStroke', 2)
+    scalar('uTime', 0) // No idle drift; measure only blast and pointer displacement.
+    scalar('uDpr', 1)
+    gl.uniform2f(uniform('uViewport'), 800, 800)
+    gl.uniform2f(uniform('uBrushDirection'), 1, 0)
+    attr('logoXY', 0.12, 0.05)
+    attr('logoSeed', 0.3)
+    attr('logoDepth', 0)
+    attr('cloudMotion', 0, 0, 0)
+    const buffer = gl.createBuffer()!
+    gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, buffer)
+    gl.bufferData(gl.TRANSFORM_FEEDBACK_BUFFER, 16, gl.STREAM_READ)
+    const feedback = gl.createTransformFeedback()!
+    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, feedback)
+    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, buffer)
+    gl.enable(gl.RASTERIZER_DISCARD)
+    const position = new Float32Array(4)
+    const draw = (scale: number, age: number, brushX = 0, brushY = 0, travel = 0) => {
+      gl.uniform4f(uniform('uExplosionPositionAge[0]'), 0, 0, age, scale)
+      gl.uniform4f(uniform('uBrushPositionRadius'), brushX, brushY, 30, travel)
+      gl.beginTransformFeedback(gl.POINTS)
+      gl.drawArrays(gl.POINTS, 0, 1)
+      gl.endTransformFeedback()
+      gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER, 0, position)
+      return [position[0]! * 400, position[1]! * 400]
+    }
+    const home = draw(0, 0)
+    const small = draw(0.9, 0.35)
+    const large = draw(1.45, 0.35)
+    const blast = draw(1, 0.35)
+    const remote = draw(1, 0.35, 0.12, 0.05, 32)
+    const local = draw(1, 0.35, (blast[0]! - 8) / 400, blast[1]! / 400, 32)
+    const recovering = draw(1, 1.6)
+    const recoveringRemote = draw(1, 1.6, -0.8, -0.8, 32)
+    const recovered = draw(1.45, 2.8)
+    const error = gl.getError()
+    gl.disable(gl.RASTERIZER_DISCARD)
+    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null)
+    gl.deleteTransformFeedback(feedback)
+    gl.deleteBuffer(buffer)
+    gl.deleteProgram(program)
+    gl.deleteShader(vert)
+    gl.deleteShader(frag)
+    gl.getExtension('WEBGL_lose_context')?.loseContext()
+    return { home, small, large, blast, remote, local, recovering, recoveringRemote, recovered, error }
+  }, particleVertexShader)
+  test.skip(!result, 'WebGL2 unavailable')
+  if (!result) return
+  const distance = (a: number[], b: number[]) => Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!)
+  expect(result.error).toBe(0)
+  expect(distance(result.small, result.home)).toBeGreaterThan(80)
+  expect(distance(result.large, result.home)).toBeGreaterThan(distance(result.small, result.home) * 1.5)
+  // A pointer over the original anchor must not move the scattered particle at all.
+  expect(distance(result.remote, result.blast)).toBeLessThan(0.001)
+  expect(distance(result.local, result.blast)).toBeGreaterThan(3)
+  expect(distance(result.local, result.blast)).toBeLessThan(32)
+  expect(distance(result.local, result.home)).toBeGreaterThan(80)
+  expect(distance(result.recoveringRemote, result.recovering)).toBeLessThan(0.001)
+  expect(distance(result.recovered, result.home)).toBeLessThan(0.001)
 })

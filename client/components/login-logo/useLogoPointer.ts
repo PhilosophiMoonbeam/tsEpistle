@@ -12,6 +12,8 @@ export const LOGO_POINTER_NEIGHBOR_FORCE_RATIO = 0.72
 export const LOGO_POINTER_BOUNCE_RATIO = 0.4
 export const LOGO_POINTER_SPEED_REFERENCE_CSS_PER_SECOND = 900
 export const LOGO_POINTER_EXPLOSION_CAPACITY = 6
+export const LOGO_POINTER_EXPLOSION_MIN_SCALE = 0.9
+export const LOGO_POINTER_EXPLOSION_MAX_SCALE = 1.45
 export const LOGO_POINTER_EXPLOSION_HOLD_SECONDS = 0.35
 export const LOGO_POINTER_EXPLOSION_REFILL_SECONDS = 2.4
 export const LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS = 2.8
@@ -33,6 +35,7 @@ export interface LogoPointerImpulse {
 }
 
 export interface LogoPointerExplosion {
+  scale: number
   active: boolean
   ageSeconds: number
   x: number
@@ -59,6 +62,7 @@ export interface LogoPointerState {
 
 export interface LogoPointerControllerOptions {
   readonly now?: () => number
+  readonly random?: () => number
   readonly hasFinePointer?: () => boolean
 }
 
@@ -88,6 +92,7 @@ const createImpulse = (): LogoPointerImpulse => ({
 })
 
 const createExplosion = (): LogoPointerExplosion => ({
+  scale: 1,
   active: false,
   ageSeconds: 0,
   x: 0,
@@ -128,9 +133,11 @@ export class LogoPointerController {
   private readonly explosionStartedAtMilliseconds = new Float64Array(LOGO_POINTER_EXPLOSION_CAPACITY)
   private readonly explosionDeadlineMilliseconds = new Float64Array(LOGO_POINTER_EXPLOSION_CAPACITY)
   private readonly now: () => number
+  private readonly random: () => number
 
   constructor(options: LogoPointerControllerOptions = {}) {
     this.now = options.now ?? (() => performance.now())
+    this.random = options.random ?? Math.random
     const finePointerQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(FINE_POINTER_MEDIA) : null
     this.hasFinePointer = options.hasFinePointer ?? (() => finePointerQuery?.matches === true)
   }
@@ -270,6 +277,7 @@ export class LogoPointerController {
     for (let index = 0; index < LOGO_POINTER_EXPLOSION_CAPACITY; index += 1) {
       const explosion = this.state.explosions[index]
       explosion.active = false
+      explosion.scale = 1
       explosion.ageSeconds = 0
       explosion.x = 0
       explosion.y = 0
@@ -306,6 +314,9 @@ export class LogoPointerController {
     if (this.state.explosions[index].active) return
     const explosion = this.state.explosions[index]
     explosion.active = true
+    const choice = this.random()
+    explosion.scale = LOGO_POINTER_EXPLOSION_MIN_SCALE +
+      (LOGO_POINTER_EXPLOSION_MAX_SCALE - LOGO_POINTER_EXPLOSION_MIN_SCALE) * clamp(0, Number.isFinite(choice) ? choice : 0.5, 1)
     explosion.ageSeconds = 0
     explosion.x = clamp(-1, (2 * (clientX - bounds.left)) / bounds.width - 1, 1)
     explosion.y = clamp(-1, 1 - (2 * (clientY - bounds.top)) / bounds.height, 1)
