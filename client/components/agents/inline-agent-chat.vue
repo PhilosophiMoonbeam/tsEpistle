@@ -1221,7 +1221,7 @@ defineExpose({ sendPrompt, focusComposer, focusConversation, scrollToLatest })
   max-width: 36rem;
   margin: 0;
   color: rgb(var(--v-theme-on-surface));
-  font-family: var(--wiki-font-heading);
+  font-family: var(--wiki-font-display);
   font-size: clamp(1.5rem, 4vw, 2.125rem);
   font-weight: 680;
   letter-spacing: -.035em;

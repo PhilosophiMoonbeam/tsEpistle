@@ -504,6 +504,7 @@ describe('controllers/api users endpoints', () => {
   it.each([
     [{ appearance: 'dark' }, { id: 42, appearance: 'dark' }],
     [{ fontFamily: 'roboto-flex' }, { id: 42, fontFamily: 'roboto-flex' }],
+    [{ fontFamily: 'blend' }, { id: 42, fontFamily: 'blend' }],
     [
       { appearance: 'light', fontFamily: 'newsreader' },
       { id: 42, appearance: 'light', fontFamily: 'newsreader' }

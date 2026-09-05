@@ -87,13 +87,20 @@ describe('self-hosted typography contracts', () => {
   const fontFaces = extractBlocks(fontSource, '@font-face').map(declarations)
   const assetNames = fs.readdirSync(path.join(root, 'client/fonts/default'))
 
-  test('uses Roboto Flex for every proportional role by default and switches them together', () => {
+  test('blends display type by default and restores uniform roles for explicit fonts', () => {
     const rootTokens = declarations(extractBlocks(base, ':root')[0])
     const newsreaderTokens = declarations(extractBlocks(base, "html[data-wiki-font='newsreader']")[0])
 
     expect(rootTokens['--wiki-font-newsreader']).toBe("'Newsreader', ui-serif, Georgia, Cambria, 'Times New Roman', serif")
     expect(rootTokens['--wiki-font-roboto-flex']).toBe("'Roboto Flex', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif")
     expect(rootTokens['--wiki-font-selected']).toBe('var(--wiki-font-roboto-flex)')
+    expect(rootTokens['--wiki-font-display']).toBe('var(--wiki-font-newsreader)')
+    expect(newsreaderTokens['--wiki-font-display']).toBe('var(--wiki-font-selected)')
+    const robotoTokens = declarations(extractBlocks(base, "html[data-wiki-font='roboto-flex']")[0])
+    expect(robotoTokens['--wiki-font-display']).toBe('var(--wiki-font-selected)')
+    expect(read('client/themes/default/components/page.vue')).toMatch(/\.page-title \{\s*font-family: var\(--wiki-font-display\)/)
+    expect(read('client/components/agents/inline-agent-chat.vue')).toMatch(/\.inline-agent__welcome h2 \{[^}]*font-family: var\(--wiki-font-display\)/)
+
     for (const token of ['--wiki-font-body', '--wiki-font-heading', '--wiki-font-reader']) {
       expect(rootTokens[token]).toBe('var(--wiki-font-selected)')
     }

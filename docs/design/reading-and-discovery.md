@@ -4,7 +4,7 @@ The September 2026 review focused on the shared reading shell, site navigation, 
 
 ## Implemented decisions
 
-- The self-hosted Newsreader face identifies document titles. Article text retains the reader's font preference. Document language and update time are visible beside the title.
+- The default **Editorial blend** pairs self-hosted Newsreader for document titles and the Wiki Agent welcome heading with Roboto Flex for reading and controls. A dedicated display token keeps these serif accents selective. **Newsreader** and **Roboto Flex** choices apply uniformly to proportional text, including titles; code remains monospace. The account menu previews and explains all three choices. New accounts and unset preferences default to blend; existing saved font choices are preserved. Document language and update time are visible beside the title.
 - The desktop outline is narrower, leaving more room for content. Its own bounded list keeps filtering and page metadata reachable on long documents.
 - Outlines with more than ten headings offer local filtering. Matches retain their ancestor chain; a clear empty state and clearing the field make recovery straightforward. No page content is sent to a service for this filter.
 - The current reading section is marked with `aria-current="location"`. Geometry is cached on layout changes, and scrolling uses a binary search scheduled once per animation frame. Observers and listeners are disposed when the page is refreshed or unmounted.

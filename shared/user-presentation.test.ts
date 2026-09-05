@@ -11,7 +11,7 @@ import {
 
 describe('user presentation preferences', () => {
   it('defines the stable default font family', () => {
-    expect(DEFAULT_USER_FONT_FAMILY).toBe('roboto-flex')
+    expect(DEFAULT_USER_FONT_FAMILY).toBe('blend')
     expect(normalizeUserFontFamily(undefined)).toBe(DEFAULT_USER_FONT_FAMILY)
   })
 
@@ -35,6 +35,7 @@ describe('user presentation preferences', () => {
   it('parses a strict, non-empty partial profile-preferences request', () => {
     expect(ProfilePreferencesInputSchema.safeParse({ appearance: 'dark' }).success).toBe(true)
     expect(ProfilePreferencesInputSchema.safeParse({ fontFamily: 'roboto-flex' }).success).toBe(true)
+    expect(ProfilePreferencesInputSchema.safeParse({ fontFamily: 'blend' }).success).toBe(true)
     expect(ProfilePreferencesInputSchema.safeParse({ appearance: 'system', fontFamily: 'newsreader' }).success).toBe(true)
 
     expect(ProfilePreferencesInputSchema.safeParse({}).success).toBe(false)

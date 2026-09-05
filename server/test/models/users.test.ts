@@ -569,7 +569,7 @@ describe('User aggregate transactions', () => {
     expect(database.state.memberships.map(membership => membership.groupId)).toEqual(expectedGroups)
     expect(database.commits).toBe(1)
     expect(database.state.users[0]).toMatchObject({
-      fontFamily: 'roboto-flex'
+      fontFamily: 'blend'
     })
   })
 

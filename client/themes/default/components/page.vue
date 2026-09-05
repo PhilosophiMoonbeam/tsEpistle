@@ -2113,7 +2113,7 @@ export default defineComponent({
   }
 
   .page-title {
-    font-family: var(--wiki-font-newsreader);
+    font-family: var(--wiki-font-display);
     min-width: 0;
     margin: 0;
     color: rgb(var(--v-theme-on-surface));

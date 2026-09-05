@@ -48,6 +48,8 @@ describe('authenticated presentation preferences contract', () => {
   })
 
   test('offers full-card fixed typeface previews without reading-gutter choices', () => {
+    expect(script).toContain("{ value: 'blend', label: 'Editorial blend'")
+    expect(template).toContain('Default')
     expect(script).toContain("{ value: 'newsreader', label: 'Newsreader'")
     expect(script).toContain("{ value: 'roboto-flex', label: 'Roboto Flex'")
     expect(template).toMatch(/:class='`presentation-selector__card--\$\{option\.value\}`'/)

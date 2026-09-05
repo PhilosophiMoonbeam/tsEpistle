@@ -2,9 +2,9 @@
 section.presentation-selector(:aria-busy='saving ? `true` : `false`')
   fieldset.presentation-selector__group(:disabled='saving' :aria-describedby='fontDescriptionId')
     legend.presentation-selector__legend Typeface
-    p.presentation-selector__description.text-body-small.text-medium-emphasis(:id='fontDescriptionId') Choose the reading voice used throughout the wiki.
+    p.presentation-selector__description.text-body-small.text-medium-emphasis(:id='fontDescriptionId') Choose a font pairing or one typeface throughout. Code stays monospace.
     .presentation-selector__typefaces
-      .presentation-selector__option(v-for='option in fontOptions' :key='option.value')
+      .presentation-selector__option(v-for='option in fontOptions' :key='option.value' :class='{ "presentation-selector__option--blend": option.value === `blend` }')
         input.presentation-selector__radio(
           type='radio'
           name='wiki-font-family'
@@ -18,9 +18,15 @@ section.presentation-selector(:aria-busy='saving ? `true` : `false`')
           :class='`presentation-selector__card--${option.value}`'
           :for='fontOptionId(option.value)'
         )
-          span.presentation-selector__specimen(aria-hidden='true') Ag
+          span.presentation-selector__specimen(aria-hidden='true')
+            template(v-if='option.value === `blend`')
+              span.presentation-selector__specimen-serif A
+              span.presentation-selector__specimen-sans g
+            template(v-else) Ag
           span.presentation-selector__copy
-            strong.presentation-selector__name {{ option.label }}
+            span.presentation-selector__heading
+              strong.presentation-selector__name {{ option.label }}
+              span.presentation-selector__default(v-if='option.value === `blend`') Default
             span.presentation-selector__note {{ option.description }}
 
   v-progress-linear.presentation-selector__progress(
@@ -52,8 +58,9 @@ const fontGroupId = useId()
 const statusMessage = ref('')
 
 const fontOptions: readonly FontOption[] = [
-  { value: 'newsreader', label: 'Newsreader', description: 'An editorial serif for long-form reading.' },
-  { value: 'roboto-flex', label: 'Roboto Flex', description: 'A precise sans serif with an open rhythm.' }
+  { value: 'blend', label: 'Editorial blend', description: 'Newsreader for page titles and the Wiki Agent welcome; Roboto Flex for reading and controls.' },
+  { value: 'newsreader', label: 'Newsreader', description: 'An editorial serif throughout the wiki.' },
+  { value: 'roboto-flex', label: 'Roboto Flex', description: 'A precise sans serif throughout the wiki.' }
 ]
 
 const saving = computed(() => (wikiStore.loadingCounts[PREFERENCE_LOADING_KEY] ?? 0) > 0)
@@ -132,6 +139,46 @@ async function selectFontFamily (next: UserFontFamily): Promise<void> {
   position: relative;
   min-width: 0;
 }
+
+.presentation-selector__option--blend {
+  grid-column: 1 / -1;
+}
+
+.presentation-selector__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wiki-space-2);
+}
+
+.presentation-selector__default {
+  padding: .125rem .375rem;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: var(--wiki-radius-pill);
+  font-family: var(--wiki-font-roboto-flex);
+  font-size: .625rem;
+  font-weight: 550;
+  line-height: 1.2;
+}
+
+.presentation-selector__card--blend {
+  font-family: var(--wiki-font-roboto-flex);
+
+  .presentation-selector__name {
+    font-family: var(--wiki-font-newsreader);
+    font-size: 1rem;
+    font-weight: 550;
+  }
+
+  .presentation-selector__specimen {
+    display: flex;
+    justify-content: center;
+    align-items: baseline;
+  }
+}
+
+.presentation-selector__specimen-serif { font-family: var(--wiki-font-newsreader); }
+.presentation-selector__specimen-sans { font-family: var(--wiki-font-roboto-flex); }
 
 .presentation-selector__radio {
   position: absolute;

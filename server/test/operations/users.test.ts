@@ -119,7 +119,8 @@ describe('user authority revocation', () => {
 describe('profile preferences operation', () => {
   it.each([
     ['appearance', { appearance: 'dark' }],
-    ['font family', { fontFamily: 'roboto-flex' }]
+    ['font family', { fontFamily: 'roboto-flex' }],
+    ['editorial blend', { fontFamily: 'blend' }]
   ])('updates an independent %s preference and refreshes the JWT by user id', async (_label, input) => {
     const { refreshToken, updateUser } = installWiki()
     const operations = await vi.importFresh('../../operations/users.ts', import.meta.url)

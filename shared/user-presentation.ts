@@ -1,9 +1,9 @@
 import { z } from 'zod'
 
 export const PROFILE_APPEARANCE_VALUES = ['system', 'light', 'dark'] as const
-export const USER_FONT_FAMILY_VALUES = ['newsreader', 'roboto-flex'] as const
+export const USER_FONT_FAMILY_VALUES = ['blend', 'newsreader', 'roboto-flex'] as const
 
-export const DEFAULT_USER_FONT_FAMILY = 'roboto-flex' as const
+export const DEFAULT_USER_FONT_FAMILY = 'blend' as const
 
 export const ProfileAppearanceSchema = z.enum(PROFILE_APPEARANCE_VALUES)
 export const UserFontFamilySchema = z.enum(USER_FONT_FAMILY_VALUES)
