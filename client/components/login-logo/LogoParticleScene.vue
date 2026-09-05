@@ -35,6 +35,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
+  DynamicDrawUsage,
   NormalBlending,
   NoToneMapping,
   OrthographicCamera,
@@ -59,6 +60,7 @@ import {
   watch
 } from 'vue'
 import type { LogoEffectDescriptor, ParsedLogoParticles } from './particle-logo'
+import { CLOUD_BEAD_FRACTION, CLOUD_DUST_FRACTION, ParticleCloud } from './particle-cloud'
 import fragmentShader from './particle.frag.glsl?raw'
 import vertexShader from './particle.vert.glsl?raw'
 import {
@@ -92,7 +94,6 @@ interface ParticleUniforms {
   readonly uAspect: { value: number }
   readonly uBackground: { value: Color }
   readonly uDpr: { value: number }
-  readonly uCoreSizeFactor: { value: number }
   readonly uImpulseDirectionTravel: { value: Vector4[] }
   readonly uImpulsePositionAge: { value: Vector4[] }
   readonly uExplosionPositionAge: { value: Vector4[] }
@@ -106,6 +107,7 @@ export interface ParticleMotionDiagnostics {
   activeExplosionCount: number
   activeImpulseCount: number
   bounceRatio: number
+  collisionParticleCount: number
   depthScaleMax: number
   depthScaleMin: number
   elapsedSeconds: number
@@ -121,6 +123,8 @@ export interface ParticleMotionDiagnostics {
 
 export interface ParticleSceneResources {
   readonly camera: OrthographicCamera
+  readonly cloud: ParticleCloud
+  readonly cloudMotion: BufferAttribute
   readonly geometry: BufferGeometry
   readonly material: ShaderMaterial
   readonly motionDiagnostics: ParticleMotionDiagnostics | null
@@ -259,10 +263,11 @@ const idleAmplitudeCss = (medianStroke: number, renderedLongAxis: number): numbe
     MAX_IDLE_AMPLITUDE_CSS
   )
 
-const createMotionDiagnostics = (particleCount: number): ParticleMotionDiagnostics => ({
+const createMotionDiagnostics = (particleCount: number, collisionParticleCount: number): ParticleMotionDiagnostics => ({
   activeExplosionCount: 0,
   activeImpulseCount: 0,
   bounceRatio: LOGO_POINTER_BOUNCE_RATIO,
+  collisionParticleCount,
   depthScaleMax: DEPTH_SCALE_MAX,
   depthScaleMin: DEPTH_SCALE_MIN,
   elapsedSeconds: 0,
@@ -414,7 +419,10 @@ export const createParticleSceneResources = (
 ): ParticleSceneResources => {
   assertParticleViews(particles, effect)
 
+  const cloud = new ParticleCloud(particles)
+  const cloudMotion = new BufferAttribute(cloud.motion, 3).setUsage(DynamicDrawUsage)
   const geometry = new BufferGeometry()
+  geometry.setAttribute('cloudMotion', cloudMotion)
   geometry.setAttribute('logoXY', new BufferAttribute(particles.xy, 2, true))
   geometry.setAttribute('logoDepth', new BufferAttribute(particles.depth, 1, true))
   geometry.setAttribute('logoColor', new BufferAttribute(particles.rgba, 4, true))
@@ -425,7 +433,6 @@ export const createParticleSceneResources = (
     uAspect: { value: effect.aspect },
     uBackground: { value: new Color(DEFAULT_BACKGROUND) },
     uDpr: { value: 1 },
-    uCoreSizeFactor: { value: effect.pipelineVersion === 5 ? 2 / 3 : 1 },
     uImpulseDirectionTravel: {
       value: [
         new Vector4(0, 0, 0, 0),
@@ -463,6 +470,7 @@ export const createParticleSceneResources = (
   }
   const material = new ShaderMaterial({
     blending: NormalBlending,
+    defines: { CLOUD_BEAD_START: 1 - CLOUD_BEAD_FRACTION, CLOUD_DUST_END: CLOUD_DUST_FRACTION },
     depthTest: false,
     depthWrite: false,
     fragmentShader,
@@ -484,13 +492,15 @@ export const createParticleSceneResources = (
   camera.updateMatrixWorld()
 
   const motionDiagnosticsBenchmark = readParticlePerformanceBenchmark()
-  const motionDiagnostics = motionDiagnosticsBenchmark ? createMotionDiagnostics(particles.count) : null
+  const motionDiagnostics = motionDiagnosticsBenchmark ? createMotionDiagnostics(particles.count, cloud.count) : null
   if (motionDiagnosticsBenchmark && motionDiagnostics) {
     motionDiagnosticsBenchmark.lastMotion = motionDiagnostics
   }
 
   return {
     camera,
+    cloud,
+    cloudMotion,
     disposed: false,
     geometry,
     material,
@@ -700,6 +710,8 @@ export const updateParticleSceneFrame = (
   }
   const elapsed = clamp(0, finiteOr(frame.elapsed, 0), Number.MAX_SAFE_INTEGER)
   resources.uniforms.uTime.value = elapsed
+  resources.cloud.update(elapsed, frame.width, frame.height, pointer)
+  if (resources.cloud.count > 0) resources.cloudMotion.needsUpdate = true
 
   const diagnostics = resources.motionDiagnostics
   if (diagnostics) {
@@ -818,7 +830,9 @@ const ParticleSceneContents = defineComponent({
       stop()
     })
 
-    return () => h('primitive', { dispose: null, object: props.resources.points })
+    return () => props.resources && !props.resources.disposed
+      ? h('primitive', { dispose: null, object: props.resources.points })
+      : null
   }
 })
 
@@ -926,6 +940,7 @@ export default defineComponent({
       try {
         // TresJS 5.8.3 skips its zero-valued NoToneMapping prop, so enforce it on the renderer.
         renderer.toneMapping = NoToneMapping
+        if (resources.value) updateParticleSceneBackground(resources.value, renderer.domElement)
         fence.ready(renderer)
         loopControl.ready = true
         if (!renderEnabled.value) loopControl.stop?.()

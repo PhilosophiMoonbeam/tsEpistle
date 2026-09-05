@@ -414,7 +414,6 @@ describe('LogoParticleScene resources', () => {
     expect(Object.keys(resources.uniforms).sort()).toEqual([
       'uAspect',
       'uBackground',
-      'uCoreSizeFactor',
       'uDpr',
       'uExplosionPositionAge',
       'uImpulseDirectionTravel',
@@ -424,7 +423,6 @@ describe('LogoParticleScene resources', () => {
       'uTime',
       'uViewport'
     ])
-    expect(resources.uniforms.uCoreSizeFactor.value).toBe(2 / 3)
     expect(resources.uniforms.uImpulsePositionAge.value).toHaveLength(6)
     expect(resources.uniforms.uImpulseDirectionTravel.value).toHaveLength(6)
     expect(resources.uniforms.uExplosionPositionAge.value).toHaveLength(6)
@@ -433,29 +431,6 @@ describe('LogoParticleScene resources', () => {
     expect(resources.uniforms.uExplosionPositionAge.value.map(value => value.toArray())).toEqual(Array.from({ length: 6 }, () => [0, 0, 0, 0]))
 
     disposeParticleSceneResources(resources)
-  })
-
-  it('preallocates the version-matched core factor and keeps it stable across frames', () => {
-    const v4 = createParticleSceneResources(makeParticles(), { ...effect, pipelineVersion: 4 })
-    const v5 = createParticleSceneResources(makeParticles(), effect)
-    const future = createParticleSceneResources(makeParticles(), { ...effect, pipelineVersion: 6 })
-    const v4Uniform = v4.uniforms.uCoreSizeFactor
-    const v5Uniform = v5.uniforms.uCoreSizeFactor
-
-    expect(v4Uniform.value).toBe(1)
-    expect(v5Uniform.value).toBe(2 / 3)
-    expect(future.uniforms.uCoreSizeFactor.value).toBe(1)
-
-    updateParticleSceneFrame(v4, { update: () => pointerState }, { elapsed: 1, height: 320, pixelRatio: 1, width: 640 })
-    updateParticleSceneFrame(v5, { update: () => pointerState }, { elapsed: 1, height: 320, pixelRatio: 1, width: 640 })
-    expect(v4.uniforms.uCoreSizeFactor).toBe(v4Uniform)
-    expect(v5.uniforms.uCoreSizeFactor).toBe(v5Uniform)
-    expect(v4Uniform.value).toBe(1)
-    expect(v5Uniform.value).toBe(2 / 3)
-
-    disposeParticleSceneResources(v4)
-    disposeParticleSceneResources(v5)
-    disposeParticleSceneResources(future)
   })
 
   it('constructs normalized zero-copy geometry attributes over the immutable SoA views', () => {
@@ -491,7 +466,7 @@ describe('LogoParticleScene resources', () => {
     disposeParticleSceneResources(resources)
   })
 
-  it('updates every animated frame through uniforms without per-particle mutation or attribute uploads', () => {
+  it('animates while keeping uploaded source attributes immutable', () => {
     const particles = makeParticles()
     const before = new Uint8Array(particles.buffer).slice()
     const resources = createParticleSceneResources(particles, effect)
@@ -711,6 +686,7 @@ describe('LogoParticleScene resources', () => {
         'activeExplosionCount',
         'activeImpulseCount',
         'bounceRatio',
+        'collisionParticleCount',
         'depthScaleMax',
         'depthScaleMin',
         'elapsedSeconds',
@@ -727,6 +703,7 @@ describe('LogoParticleScene resources', () => {
         activeExplosionCount: 2,
         activeImpulseCount: 1,
         bounceRatio: 0.4,
+        collisionParticleCount: 1,
         depthScaleMax: 1.18,
         depthScaleMin: 0.82,
         elapsedSeconds: 123.5,
@@ -823,7 +800,6 @@ describe('LogoParticleScene resources', () => {
     const versions = attributes.map(attribute => attribute.version)
     const stableUniformValues = [
       resources.uniforms.uAspect.value,
-      resources.uniforms.uCoreSizeFactor.value,
       resources.uniforms.uDpr.value,
       ...resources.uniforms.uImpulseDirectionTravel.value,
       ...resources.uniforms.uImpulsePositionAge.value,
@@ -846,7 +822,6 @@ describe('LogoParticleScene resources', () => {
     expect(resources.uniforms.uBackground.value.equals(darkBackground)).toBe(false)
     expect([
       resources.uniforms.uAspect.value,
-      resources.uniforms.uCoreSizeFactor.value,
       resources.uniforms.uDpr.value,
       ...resources.uniforms.uImpulseDirectionTravel.value,
       ...resources.uniforms.uImpulsePositionAge.value,

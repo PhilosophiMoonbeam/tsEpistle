@@ -1,6 +1,7 @@
 precision highp float;
 
 attribute vec2 logoXY;
+attribute vec3 cloudMotion;
 attribute float logoDepth;
 attribute vec4 logoColor;
 attribute float logoSize;
@@ -8,7 +9,6 @@ attribute float logoSeed;
 
 uniform float uAspect;
 uniform vec3 uBackground;
-uniform float uCoreSizeFactor;
 uniform float uDpr;
 uniform vec4 uImpulseDirectionTravel[6];
 uniform vec4 uImpulsePositionAge[6];
@@ -19,10 +19,9 @@ uniform float uTime;
 uniform vec2 uViewport;
 
 varying vec4 vColor;
+varying float vBead;
 varying float vCoreRatio;
 varying float vLifecycle;
-varying vec3 vRingColor;
-varying float vUseRing;
 varying float vHalfPixel;
 
 vec3 srgbToLinear(vec3 value) {
@@ -62,7 +61,11 @@ void main() {
   coherentFlow /= max(coherentFlowMagnitude, 1.0);
   float idleScaleCss = clamp(idleAmplitudeCss * depthScale, 3.5, 10.0);
   float idleWarmup = smoothstep(0.0, 1.0, uTime);
-  vec2 idleCss = coherentFlow * idleScaleCss * idleWarmup;
+  // Independent orbits break the sampling grid; a coherent current keeps the cloud legible.
+  float phase = logoSeed * 6.28318530718;
+  float wander = mix(1.4, 9.0, fract(logoSeed * 17.0));
+  vec2 orbit = vec2(sin(phase + uTime * 0.37), cos(phase * 1.7 + uTime * 0.31));
+  vec2 idleCss = (coherentFlow * idleScaleCss + orbit * wander) * idleWarmup;
 
   vec2 cursorCss = vec2(0.0);
   for (int impulseIndex = 0; impulseIndex < 6; impulseIndex++) {
@@ -104,7 +107,6 @@ void main() {
   cursorCss *= cursorMagnitude > 42.0 ? 42.0 / cursorMagnitude : 1.0;
 
   vec2 explosionCss = vec2(0.0);
-  float explosionLifecycle = 1.0;
   for (int explosionIndex = 0; explosionIndex < 6; explosionIndex++) {
     vec4 positionAge = uExplosionPositionAge[explosionIndex];
     if (positionAge.w < 0.5) continue;
@@ -112,31 +114,22 @@ void main() {
     float ageSeconds = clamp(positionAge.z, 0.0, 2.8);
     vec2 localCss = (basePosition - positionAge.xy) * 0.5 * safeViewport;
     float distanceCss = length(localCss);
-    float radiusCss = clamp(0.10 * uRenderedLongAxis, 32.0, 88.0);
-    float influence = 1.0 - smoothstep(0.15 * radiusCss, radiusCss, distanceCss);
-    float oldFade = smoothstep(0.0, 0.35, ageSeconds);
-    float refillFade = smoothstep(0.35, 0.57, ageSeconds);
-    float oldScatter = oldFade * (1.0 - refillFade);
-    float oldResidual = influence * oldFade;
-    float replacementLifecycle = influence * refillFade;
-    float refillStream = 1.0 - smoothstep(0.35, 2.75, ageSeconds);
-    vec2 radial = distanceCss > 0.000001
-      ? localCss / distanceCss
-      : vec2(cos(6.28318530718 * logoSeed), sin(6.28318530718 * logoSeed));
+    float radiusCss = clamp(0.30 * uRenderedLongAxis, 100.0, 240.0);
+    float influence = 1.0 - smoothstep(0.0, radiusCss, distanceCss);
+    vec2 radial = distanceCss > 0.001 ? localCss / distanceCss : vec2(cos(phase), sin(phase));
     vec2 tangent = vec2(-radial.y, radial.x);
-    float phase = 6.28318530718 * fract(
-      logoSeed + dot(positionAge.xy, vec2(0.754877666, 0.569840296))
-    );
-    vec2 deterministicNearby = radial * (0.52 + 0.20 * sin(phase)) + tangent * (0.22 * cos(phase));
-    explosionCss += radial * (0.46 * radiusCss * influence * oldScatter);
-    explosionCss += deterministicNearby * (0.30 * radiusCss * influence * replacementLifecycle * refillStream);
-    float slotLifecycle = clamp(1.0 - oldResidual + replacementLifecycle, 0.0, 1.0);
-    explosionLifecycle = min(explosionLifecycle, slotLifecycle);
+    // An expanding, twisting burst with a damped return. Particles keep their identity.
+    float attack = 1.0 - exp(-12.0 * ageSeconds);
+    float recovery = 1.0 - smoothstep(0.30, 2.8, ageSeconds);
+    float travel = radiusCss * influence * attack * recovery;
+    explosionCss += (radial * (0.75 + 0.55 * fract(logoSeed * 13.0))
+      + tangent * 0.32 * sin(ageSeconds * 2.4 + depth)) * travel;
   }
-  vec2 position = basePosition + 2.0 * (idleCss + cursorCss + explosionCss) / safeViewport;
+  vec2 displacement = mix(idleCss + cursorCss + explosionCss, cloudMotion.xy, cloudMotion.z);
+  vec2 position = basePosition + 2.0 * displacement / safeViewport;
   vec2 ndcPos = abs(position);
   float edgeFade = 1.0 - smoothstep(0.94, 1.02, max(ndcPos.x, ndcPos.y));
-  vLifecycle = explosionLifecycle * edgeFade;
+  vLifecycle = edgeFade;
 
   vec3 linearColor = srgbToLinear(logoColor.rgb);
   vec3 compositedColor = mix(uBackground, linearColor, logoColor.a);
@@ -145,18 +138,24 @@ void main() {
   float directContrast = contrastRatio(compositedLuminance, backgroundLuminance);
   float blackContrast = (backgroundLuminance + 0.05) / 0.05;
   float whiteContrast = 1.05 / (backgroundLuminance + 0.05);
-  vUseRing = directContrast < 3.0 ? 1.0 : 0.0;
-  vRingColor = whiteContrast > blackContrast ? vec3(1.0) : vec3(0.0);
+  // Lift low-contrast source colors into the surface palette, avoiding heavy black/white outlines.
+  vec3 contrastTint = whiteContrast > blackContrast ? vec3(0.68, 0.76, 0.82) : vec3(0.08, 0.12, 0.16);
+  linearColor = mix(linearColor, contrastTint, (1.0 - smoothstep(1.0, 3.0, directContrast)) * 0.52);
 
-  float sizeNorm = (logoSize * 255.0 - 1.0) / 254.0;
-  float coreCssPixels = min(uCoreSizeFactor * (1.0 + 15.0 * sizeNorm) * depthScale * uRenderedLongAxis / 1024.0, 24.0);
-  float ringCssPixels = vUseRing * mix(1.25, 2.0, clamp((3.0 - directContrast) / 2.0, 0.0, 1.0));
-  float coreDevicePixels = max(coreCssPixels * uDpr, 1.5);
-  float totalDevicePixels = max(coreDevicePixels + 2.0 * ringCssPixels * uDpr, 1.5);
-  gl_PointSize = totalDevicePixels;
-  vHalfPixel = 1.0 / totalDevicePixels;
-  vCoreRatio = coreDevicePixels / max(totalDevicePixels, 1.0);
-  vColor = vec4(linearColor, logoColor.a);
+  // 70% fine dust, 23.5% mid-size motes, 6.5% collision beads. Alpha is not particle size.
+  float dustSize = mix(2.2, 5.0, logoSeed / CLOUD_DUST_END);
+  float moteSize = mix(5.0, 9.0, (logoSeed - CLOUD_DUST_END) / (CLOUD_BEAD_START - CLOUD_DUST_END));
+  float beadSize = mix(11.0, 18.0, (logoSeed - CLOUD_BEAD_START) / (1.0 - CLOUD_BEAD_START));
+  float diameter = logoSeed < CLOUD_DUST_END ? dustSize : (logoSeed < CLOUD_BEAD_START ? moteSize : beadSize);
+  float sourceCoverage = mix(0.65, 1.0, logoSize);
+  float coreCssPixels = min(diameter * sourceCoverage * depthScale * uRenderedLongAxis / 1024.0, 22.0);
+  float coreDevicePixels = max(coreCssPixels * uDpr, 1.25);
+  gl_PointSize = coreDevicePixels + 2.0;
+  vHalfPixel = 1.0 / gl_PointSize;
+  vCoreRatio = coreDevicePixels / gl_PointSize;
+  vBead = smoothstep(0.70, 0.98, logoSeed);
+  float opacity = mix(0.50, 0.94, smoothstep(0.0, 0.94, logoSeed));
+  vColor = vec4(linearColor, logoColor.a * opacity);
 
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, depth * 0.04, 1.0);
 }

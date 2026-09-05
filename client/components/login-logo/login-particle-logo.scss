@@ -34,7 +34,6 @@
         transparent 75%
       );
     content: '';
-    filter: blur(28px);
     pointer-events: none;
     transform: translateZ(0);
     transition: opacity var(--wiki-motion-slow) var(--wiki-motion-ease-out);
@@ -46,9 +45,6 @@
     display: grid;
     place-items: center;
     pointer-events: none;
-    filter:
-      drop-shadow(0 1.25rem 2rem var(--wiki-shadow-color))
-      drop-shadow(0 .25rem .75rem color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent));
   }
 
   &__image {

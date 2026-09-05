@@ -453,7 +453,10 @@ export default defineComponent({
       return isLogoEffectDescriptor(candidate) && candidate.logoUrl === siteConfig.logoUrl ? candidate : null
     },
     loginStyle () {
-      return this.bgUrl ? { backgroundImage: `url(${this.bgUrl})` } : {}
+      const stockBackground = this.bgUrl === '/_assets/img/splash/tsepistle-orbit.svg'
+      return this.bgUrl && !(this.logoEffect && stockBackground)
+        ? { backgroundImage: `url(${this.bgUrl})` }
+        : {}
     },
     filteredStrategies () {
       const qParams = new URLSearchParams(window.location.search)

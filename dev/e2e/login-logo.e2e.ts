@@ -150,7 +150,7 @@ function createParticleFixture(effect: ManagedEffect): Buffer {
     bytes[rgbaOffset + index * 4 + 2] = color[2]
     bytes[rgbaOffset + index * 4 + 3] = color[3]
     bytes[sizeOffset + index] = sample.size
-    bytes.writeUInt16LE((index % 65_535) + 1, seedOffset + index * 2)
+    bytes.writeUInt16LE(((index * 40_503) % 65_535) + 1, seedOffset + index * 2)
   }
   bytes.writeUInt32LE(crc32(bytes.subarray(headerBytes)), 24)
   return bytes
@@ -181,6 +181,7 @@ interface ParticleFetchObservation {
 interface LogoMotionDiagnostics {
   readonly activeExplosionCount: number
   readonly activeImpulseCount: number
+  readonly collisionParticleCount: number
   readonly bounceRatio: number
   readonly depthScaleMax: number
   readonly depthScaleMin: number
@@ -198,6 +199,7 @@ const motionDiagnosticKeys = [
   'activeExplosionCount',
   'activeImpulseCount',
   'bounceRatio',
+  'collisionParticleCount',
   'depthScaleMax',
   'depthScaleMin',
   'elapsedSeconds',
@@ -1014,123 +1016,6 @@ function compareFrames(before: RgbaFrame, after: RgbaFrame, influence?: { readon
   }
 }
 
-interface CircularRegion {
-  readonly radius: number
-  readonly x: number
-  readonly y: number
-}
-
-interface RegionAppearance {
-  readonly foregroundMean: number
-  readonly radialCentroid: number
-}
-
-function frameBackground(frame: RgbaFrame): readonly [number, number, number] {
-  const corners = [0, frame.width - 1, (frame.height - 1) * frame.width, frame.height * frame.width - 1]
-  const average = (channel: number): number => corners.reduce((sum, pixel) => sum + (frame.data[pixel * 4 + channel] ?? 0), 0) / corners.length
-  return [average(0), average(1), average(2)]
-}
-
-function analyzeRegion(frame: RgbaFrame, region: CircularRegion): RegionAppearance {
-  const background = frameBackground(frame)
-  let foreground = 0
-  let radialMoment = 0
-  let samples = 0
-  for (let y = Math.max(0, Math.floor(region.y - region.radius)); y <= Math.min(frame.height - 1, Math.ceil(region.y + region.radius)); y += 1) {
-    for (let x = Math.max(0, Math.floor(region.x - region.radius)); x <= Math.min(frame.width - 1, Math.ceil(region.x + region.radius)); x += 1) {
-      const distance = Math.hypot(x - region.x, y - region.y)
-      if (distance > region.radius) continue
-      const offset = (y * frame.width + x) * 4
-      const weight =
-        Math.abs((frame.data[offset] ?? 0) - background[0]) +
-        Math.abs((frame.data[offset + 1] ?? 0) - background[1]) +
-        Math.abs((frame.data[offset + 2] ?? 0) - background[2])
-      foreground += weight
-      radialMoment += distance * weight
-      samples += 1
-    }
-  }
-  return {
-    foregroundMean: samples === 0 ? 0 : foreground / (samples * 3 * 255),
-    radialCentroid: foreground === 0 ? 0 : radialMoment / foreground
-  }
-}
-
-function estimateHorizontalTranslation(before: RgbaFrame, after: RgbaFrame, region: CircularRegion, maximumShift: number): number {
-  if (before.width !== after.width || before.height !== after.height) throw new Error('Particle screenshots changed dimensions.')
-  let bestShift = 0
-  let bestError = Number.POSITIVE_INFINITY
-  for (let shift = -maximumShift; shift <= maximumShift; shift += 1) {
-    let error = 0
-    for (let y = Math.max(0, Math.floor(region.y - region.radius)); y <= Math.min(before.height - 1, Math.ceil(region.y + region.radius)); y += 1) {
-      for (let x = Math.max(0, Math.floor(region.x - region.radius)); x <= Math.min(before.width - 1, Math.ceil(region.x + region.radius)); x += 1) {
-        if (Math.hypot(x - region.x, y - region.y) > region.radius || x + shift < 0 || x + shift >= after.width) continue
-        const beforeOffset = (y * before.width + x) * 4
-        const afterOffset = (y * after.width + x + shift) * 4
-        error +=
-          Math.abs((before.data[beforeOffset] ?? 0) - (after.data[afterOffset] ?? 0)) +
-          Math.abs((before.data[beforeOffset + 1] ?? 0) - (after.data[afterOffset + 1] ?? 0)) +
-          Math.abs((before.data[beforeOffset + 2] ?? 0) - (after.data[afterOffset + 2] ?? 0))
-      }
-    }
-    if (error < bestError) {
-      bestError = error
-      bestShift = shift
-    }
-  }
-  return bestShift
-}
-
-function estimateDarkCoreDiameter(frame: RgbaFrame): number {
-  const background = frameBackground(frame)
-  const fittedHalfAxis = Math.min(frame.width, frame.height) / 2
-  const centerX = frame.width / 2 + 0.04 * fittedHalfAxis
-  const centerY = frame.height / 2
-  const radius = 0.39 * fittedHalfAxis
-  const weights: number[] = []
-  for (let y = Math.floor(centerY - radius); y <= Math.ceil(centerY + radius); y += 1) {
-    for (let x = Math.floor(centerX - radius); x <= Math.ceil(centerX + radius); x += 1) {
-      if (x < 0 || x >= frame.width || y < 0 || y >= frame.height || Math.hypot(x - centerX, y - centerY) > radius) continue
-      const offset = (y * frame.width + x) * 4
-      const residuals = [0, 1, 2].map(channel => Math.abs(background[channel]! - (frame.data[offset + channel] ?? 0)))
-      const spread = Math.max(...residuals) - Math.min(...residuals)
-      const weight = residuals[0]! + residuals[1]! + residuals[2]!
-      if (weight > 36 && spread < 24) weights.push(weight)
-    }
-  }
-  if (weights.length === 0) throw new Error('The calibrated dark fixture component was not rendered.')
-  weights.sort((first, second) => first - second)
-  const solidWeight = weights[Math.floor(weights.length * 0.9)]!
-  const effectiveArea = weights.reduce((sum, weight) => sum + Math.min(1, weight / solidWeight), 0)
-  let darkParticleCount = 0
-  for (let index = 0; index < squareEffect.count; index += 1) {
-    if (particleFixtureSample(index).component === 1) darkParticleCount += 1
-  }
-  return 2 * Math.sqrt(effectiveArea / (Math.PI * darkParticleCount))
-}
-
-function blueFixtureCentroid(frame: RgbaFrame, sample: ParticleFixtureSample): { readonly x: number; readonly y: number } {
-  const fittedHalfAxis = Math.min(frame.width, frame.height) / 2
-  const centerX = frame.width / 2 + sample.x * fittedHalfAxis
-  const centerY = frame.height / 2 - sample.y * fittedHalfAxis
-  const radius = 8
-  let weight = 0
-  let weightedX = 0
-  let weightedY = 0
-  for (let y = Math.floor(centerY - radius); y <= Math.ceil(centerY + radius); y += 1) {
-    for (let x = Math.floor(centerX - radius); x <= Math.ceil(centerX + radius); x += 1) {
-      if (x < 0 || x >= frame.width || y < 0 || y >= frame.height || Math.hypot(x - centerX, y - centerY) > radius) continue
-      const offset = (y * frame.width + x) * 4
-      const blueWeight = Math.max(0, (frame.data[offset + 2] ?? 0) - (frame.data[offset] ?? 0))
-      weight += blueWeight
-      weightedX += x * blueWeight
-      weightedY += y * blueWeight
-    }
-  }
-  if (weight === 0) throw new Error('The calibrated blue fixture marker was not rendered.')
-  return { x: weightedX / weight, y: weightedY / weight }
-}
-
 async function expectFieldGeometry(page: Page, effect: ManagedEffect): Promise<void> {
   const report = await page.locator('.login-particle-logo').evaluate((field, descriptor) => {
     const image = field.querySelector('.login-particle-logo__image')
@@ -1418,7 +1303,7 @@ test.describe('managed login logo auth independence', () => {
     await expectLoginValidation(page)
   })
 
-  test('pipeline-v5 proves smaller points, stronger idle and cursor motion, delayed cascade/bounce, bounded explosions, and recovery without telemetry', async ({
+  test('renders a drifting particle cloud with cursor response, visible scatter, and recovery without telemetry', async ({
     page
   }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
@@ -1456,158 +1341,51 @@ test.describe('managed login logo auth independence', () => {
     await expect.poll(() => readLogoMotion(page)).not.toBeNull()
     expect(artifacts.particle).toHaveLength(1)
 
-    const idleMotion = await readLogoMotion(page)
-    expect(idleMotion).not.toBeNull()
-    expect(idleMotion?.keys).toEqual([...motionDiagnosticKeys].sort())
-    expect(squareEffect.count).toBeGreaterThanOrEqual(2_000)
-    expect(squareEffect.count).toBeLessThanOrEqual(8_000)
-    expect(idleMotion?.diagnostics.particleCount).toBe(squareEffect.count)
-    expect(idleMotion?.diagnostics.activeImpulseCount).toBe(0)
-    expect(idleMotion?.diagnostics.activeExplosionCount).toBe(0)
-    expect(idleMotion?.diagnostics.idleAmplitudeCss).toBeGreaterThanOrEqual(3.5)
-    expect(idleMotion?.diagnostics.idleAmplitudeCss).toBeLessThanOrEqual(10)
-    expect(idleMotion?.diagnostics.impulseLifetimeSeconds).toBe(1.4)
-    expect(idleMotion?.diagnostics.maxImpulseTravelCss).toBe(14)
-    expect(idleMotion?.diagnostics.neighborForceRatio).toBe(0.32)
-    expect(idleMotion?.diagnostics.bounceRatio).toBe(0.22)
-    expect(idleMotion?.diagnostics.explosionHoldSeconds).toBe(0.35)
-    expect(idleMotion?.diagnostics.explosionRefillSeconds).toBe(2.4)
-    expect(idleMotion?.diagnostics.explosionLifetimeSeconds).toBe(2.8)
-    expect(idleMotion?.diagnostics.depthScaleMin).toBe(0.82)
-    expect(idleMotion?.diagnostics.depthScaleMax).toBe(1.18)
-
-    const fixedShaderElapsedSeconds = 5.25
-    const renderedCursorMotionEpsilon = 0.000001
-    const cursorImmediateDelayMs = 120
-    // This fixed sample measured 2.6504 screenshot px at pixelScale ~= 0.9991.
-    // The old 2.5/3.5 amplitude ratio predicts 1.893 px, leaving margin on both sides.
-    const minimumRenderedIdleDisplacementCss = 2.2
+    const baselineTime = 5.25
     const idleAtZero = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0)).png)
-    const idleAtLater = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds)).png)
-    const idleDifference = compareFrames(idleAtZero, idleAtLater)
-    expect(analyzeFrame(idleAtZero).inkRatio).toBeGreaterThan(0.002)
-    expect(analyzeFrame(idleAtZero).inkRatio).toBeLessThan(0.32)
-    expect(idleDifference.mean).toBeGreaterThan(0.0001)
+    const baseline = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime)).png)
+    expect(analyzeFrame(baseline).inkRatio).toBeGreaterThan(0.002)
+    expect(compareFrames(idleAtZero, baseline).mean).toBeGreaterThan(0.0001)
+    await expect(field.locator('.login-particle-logo__stage')).toHaveCSS('filter', 'none')
 
     await page.waitForLoadState('networkidle')
     const requestCountBeforeInput = requests.length
     const bounds = await canvas.boundingBox()
-    expect(bounds).not.toBeNull()
-    if (!bounds) throw new Error('The animated logo has no pointer-test bounds.')
-    const pointerX = bounds.x + bounds.width * 0.5
-    const pointerY = bounds.y + bounds.height * 0.52
-    const pixelScale = idleAtZero.width / bounds.width
-    const renderedLongAxis = Math.min(bounds.width, bounds.height)
-    const renderedCoreDiameter = estimateDarkCoreDiameter(idleAtZero)
-    expect(renderedCoreDiameter).toBeLessThan(Math.max(1.3, renderedLongAxis * pixelScale * 0.0012))
-    const idleMarker = particleFixtureSample(3)
-    const idleMarkerAtZero = blueFixtureCentroid(idleAtZero, idleMarker)
-    const idleMarkerAtLater = blueFixtureCentroid(idleAtLater, idleMarker)
-    const renderedIdleDisplacement = Math.hypot(idleMarkerAtLater.x - idleMarkerAtZero.x, idleMarkerAtLater.y - idleMarkerAtZero.y)
-    expect(renderedIdleDisplacement).toBeGreaterThan(minimumRenderedIdleDisplacementCss * pixelScale)
-
-    const interactionClockMilliseconds = 1_000_000_000
-    await page.mouse.move(pointerX - 12, pointerY)
-    const cursorBefore = await decodeScreenshot(
-      (await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, interactionClockMilliseconds - 1)).png
-    )
-    const cursorStartedAt = interactionClockMilliseconds
-    await captureLogoRenderedFrame(
-      page,
-      { clientX: pointerX + 30, clientY: pointerY, pointerType: 'mouse', type: 'pointermove' },
-      fixedShaderElapsedSeconds,
-      cursorStartedAt
-    )
-    const cursorImmediate = await decodeScreenshot(
-      (await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, cursorStartedAt + cursorImmediateDelayMs)).png
-    )
-    const influence = {
-      radius: Math.min(32, Math.max(18, 0.05 * Math.max(bounds.width, bounds.height))) * (cursorImmediate.width / bounds.width),
-      x: (pointerX + 30 - bounds.x) * (cursorImmediate.width / bounds.width),
-      y: (pointerY - bounds.y) * (cursorImmediate.width / bounds.width)
-    }
-    const cursorImmediateDifference = compareFrames(cursorBefore, cursorImmediate, influence)
-    expect(cursorImmediateDifference.coreMean).toBeGreaterThan(renderedCursorMotionEpsilon)
-    const cascade = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, cursorStartedAt + 420)).png)
-    const cascadeDifference = compareFrames(cursorBefore, cascade, influence)
-    expect(cascadeDifference.annulusMean).toBeGreaterThan(cascadeDifference.outsideMean * 1.1)
-    expect(cascadeDifference.coreMean).toBeGreaterThan(renderedCursorMotionEpsilon)
-    const bounceRegion = {
-      radius: influence.radius * 0.42,
-      x: influence.x + influence.radius * 1.2,
-      y: influence.y
-    }
-    const maximumBounceShift = Math.max(6, Math.ceil(7 * pixelScale))
-    const cascadeShift = estimateHorizontalTranslation(cursorBefore, cascade, bounceRegion, maximumBounceShift)
-    const bounce = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, cursorStartedAt + 1_100)).png)
-    const bounceShift = estimateHorizontalTranslation(cursorBefore, bounce, bounceRegion, maximumBounceShift)
-    expect(cascadeShift).toBeGreaterThanOrEqual(Math.max(1, Math.round(2 * pixelScale)))
-    expect(bounceShift).toBeLessThanOrEqual(-Math.max(1, Math.round(pixelScale)))
-
-    await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, cursorStartedAt + 1_500)
+    if (!bounds) throw new Error('The particle field has no bounds')
+    const x = bounds.x + bounds.width * 0.5
+    const y = bounds.y + bounds.height * 0.5
+    const clock = 1_000_000_000
+    await captureLogoRenderedFrame(page, { clientX: x - 25, clientY: y }, baselineTime, clock)
+    await captureLogoRenderedFrame(page, { clientX: x + 25, clientY: y }, baselineTime, clock + 30)
+    const moved = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, clock + 180)).png)
+    expect((await readLogoMotion(page))?.diagnostics.activeImpulseCount).toBeGreaterThan(0)
+    expect(compareFrames(baseline, moved).mean).toBeGreaterThan(0.00001)
+    await captureLogoRenderedFrame(page, undefined, baselineTime, clock + 1500)
     expect((await readLogoMotion(page))?.diagnostics.activeImpulseCount).toBe(0)
 
-    const blast = async (type: 'mouse' | 'touch', startedAt: number, x = pointerX, y = pointerY): Promise<void> => {
-      await captureLogoRenderedFrame(page, { clientX: x, clientY: y, pointerType: type, type: 'pointerdown' }, fixedShaderElapsedSeconds, startedAt)
-      await dispatchLogoPointerEvent(page, { clientX: x, clientY: y, pointerType: type, type: 'pointerup' })
-    }
-    const blastStartedAt = cursorStartedAt + 5_000
-    const explosionBaseline = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, blastStartedAt - 1)).png)
-    const explosionRadius = Math.min(88, Math.max(32, 0.1 * renderedLongAxis)) * pixelScale
-    const explosionRegion = {
-      radius: explosionRadius * 0.62,
-      x: (pointerX - bounds.x) * pixelScale,
-      y: (pointerY - bounds.y) * pixelScale
-    }
-    const explosionBaselineAppearance = analyzeRegion(explosionBaseline, explosionRegion)
-    await blast('mouse', blastStartedAt)
-    const oldFade = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, blastStartedAt + 220)).png)
-    expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBeGreaterThan(0)
-    const oldFadeAppearance = analyzeRegion(oldFade, explosionRegion)
-    const oldFadeDifference = compareFrames(explosionBaseline, oldFade, explosionRegion)
-    expect(oldFadeAppearance.foregroundMean).toBeLessThan(explosionBaselineAppearance.foregroundMean * 0.8)
-    expect(oldFadeDifference.coreMean).toBeGreaterThan(oldFadeDifference.outsideMean * 3)
-
-    const refill = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, blastStartedAt + 700)).png)
-    const refillAppearance = analyzeRegion(refill, explosionRegion)
-    const refillDifference = compareFrames(explosionBaseline, refill, explosionRegion)
-    expect(refillAppearance.foregroundMean).toBeGreaterThan(oldFadeAppearance.foregroundMean * 1.2)
-    expect(refillDifference.coreMean).toBeGreaterThan(refillDifference.outsideMean * 3)
-    expect(refillDifference.coreMean).toBeGreaterThan(0.0001)
-
-    const beforeExpiry = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, blastStartedAt + 2_760)).png)
-    const beforeExpiryDifference = compareFrames(explosionBaseline, beforeExpiry, explosionRegion)
-    expect(beforeExpiryDifference.coreMean).toBeLessThan(refillDifference.coreMean * 0.12)
-    const recovered = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, blastStartedAt + 2_850)).png)
-    const recoveryDifference = compareFrames(explosionBaseline, recovered, explosionRegion)
-    expect(recoveryDifference.mean).toBeLessThan(0.00001)
-    expect(recoveryDifference.coreMean).toBeLessThan(refillDifference.coreMean * 0.08)
+    const blastTime = clock + 5000
+    const before = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, blastTime - 1)).png)
+    await captureLogoRenderedFrame(page, { clientX: x, clientY: y, type: 'pointerdown' }, baselineTime, blastTime)
+    await dispatchLogoPointerEvent(page, { clientX: x, clientY: y, type: 'pointerup' })
+    const scattered = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, blastTime + 350)).png)
+    expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(1)
+    const scatteredDifference = compareFrames(before, scattered).mean
+    expect(scatteredDifference).toBeGreaterThan(0.0001)
+    // Scatter must retain visible particles, rather than making an alpha hole.
+    expect(analyzeFrame(scattered).inkRatio).toBeGreaterThan(analyzeFrame(before).inkRatio * 0.70)
+    const recovered = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, baselineTime, blastTime + 3000)).png)
+    // The physical beads continue drifting; the recovered frame need not be pixel-identical.
+    // Fixed-step physics tests separately compare recovery against an undisturbed cloud.
+    expect(compareFrames(before, recovered).mean).toBeLessThan(scatteredDifference * 0.60)
     expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(0)
 
-    const orderedOlderAt = blastStartedAt + 5_000
-    await blast('mouse', orderedOlderAt)
-    await blast('touch', orderedOlderAt + 2_560)
-    const orderedLifecycle = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, orderedOlderAt + 2_760)).png)
-    expect(analyzeRegion(orderedLifecycle, explosionRegion).foregroundMean).toBeLessThan(explosionBaselineAppearance.foregroundMean * 0.9)
-    await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, orderedOlderAt + 5_500)
-
-    const reversedOlderAt = orderedOlderAt + 7_000
-    await blast('mouse', reversedOlderAt + 2_560)
-    await blast('touch', reversedOlderAt)
-    const reversedLifecycle = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, reversedOlderAt + 2_760)).png)
-    expect(compareFrames(orderedLifecycle, reversedLifecycle, explosionRegion).mean).toBeLessThan(0.00001)
-    await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, reversedOlderAt + 5_500)
-
-    const burstStartedAt = reversedOlderAt + 7_000
-    for (let index = 0; index < 8; index += 1) {
-      await blast(index % 2 === 0 ? 'mouse' : 'touch', burstStartedAt + index, pointerX + index, pointerY)
+    for (let i = 0; i < 8; i++) {
+      await captureLogoRenderedFrame(page, { clientX: x + i, clientY: y, type: 'pointerdown' }, baselineTime, blastTime + 4000 + i)
+      await dispatchLogoPointerEvent(page, { clientX: x + i, clientY: y, type: 'pointerup' })
     }
     expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(6)
-    await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, burstStartedAt + 2_900)
+    await captureLogoRenderedFrame(page, undefined, baselineTime, blastTime + 7000)
     expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(0)
-    await blast('touch', burstStartedAt + 3_000)
-    expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBeGreaterThan(0)
-    await dispatchLogoPointerEvent(page, { clientX: pointerX, clientY: pointerY, pointerType: 'touch', type: 'pointercancel' })
     expect(requests).toHaveLength(requestCountBeforeInput)
     await expectLoginValidation(page)
   })

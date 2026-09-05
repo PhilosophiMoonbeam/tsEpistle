@@ -31,7 +31,7 @@ const thresholds = {
   callbackCpuP95Milliseconds: 2,
   depthScaleMax: 1.18,
   depthScaleMin: 0.82,
-  bounceRatio: 0.22,
+  bounceRatio: 0.4,
   explosionHoldSeconds: 0.35,
   explosionLifetimeSeconds: 2.8,
   explosionRefillSeconds: 2.4,
@@ -41,8 +41,8 @@ const thresholds = {
   idleAmplitudeMinimumCss: 3.5,
   inactiveCallbackCount: 0,
   impulseLifetimeSeconds: 1.4,
-  maxImpulseTravelCss: 14,
-  neighborForceRatio: 0.32,
+  maxImpulseTravelCss: 42,
+  neighborForceRatio: 0.72,
   retainedCanvasCount: 1,
   parserParticleMaximum: 16_000,
   timeouts: 0
@@ -73,6 +73,7 @@ const staticFixture =
 interface LogoMotionDiagnostics {
   readonly activeExplosionCount: number
   readonly activeImpulseCount: number
+  readonly collisionParticleCount: number
   readonly bounceRatio: number
   readonly depthScaleMax: number
   readonly depthScaleMin: number
@@ -91,6 +92,7 @@ const motionDiagnosticKeys = [
   'activeExplosionCount',
   'activeImpulseCount',
   'bounceRatio',
+  'collisionParticleCount',
   'depthScaleMax',
   'depthScaleMin',
   'elapsedSeconds',
@@ -205,8 +207,8 @@ function createParticleFixture(): Buffer {
     bytes[rgbaOffset + index * 4 + 1] = 102 + (index % 48)
     bytes[rgbaOffset + index * 4 + 2] = 153 + (index % 48)
     bytes[rgbaOffset + index * 4 + 3] = 255
-    bytes[sizeOffset + index] = 4 + (index % 12)
-    bytes.writeUInt16LE((index % 65_535) + 1, seedOffset + index * 2)
+    bytes[sizeOffset + index] = 255
+    bytes.writeUInt16LE(((index * 40_503) % 65_535) + 1, seedOffset + index * 2)
   }
   bytes.writeUInt32LE(crc32(bytes.subarray(headerBytes)), 24)
   return bytes
@@ -400,6 +402,9 @@ async function readMotionAfterRenderedFrame(
             clientX: pointerEvent.clientX,
             clientY: pointerEvent.clientY,
             isPrimary: true,
+            pointerId: 1,
+            button: 0,
+            buttons: pointerEvent.type === 'pointerdown' ? 1 : 0,
             pointerType: 'mouse'
           })
         )
@@ -560,7 +565,7 @@ function addRangeViolation(violations: Violation[], invariant: string, measured:
   }
 }
 
-test('enforces pipeline-v5 managed login particle runtime budgets with bounded explosions', async ({ browser, browserName }, testInfo) => {
+test('enforces managed login cloud runtime budgets with bounded explosions', async ({ browser, browserName }, testInfo) => {
   test.skip(testInfo.project.name !== 'performance-desktop', 'Measured only by the performance-desktop project')
   test.setTimeout(120_000)
 
@@ -702,6 +707,7 @@ test('enforces pipeline-v5 managed login particle runtime budgets with bounded e
     thresholds.activeImpulseMaximum
   )
   if (motion) {
+    addExactViolation(violations, 'animation.lastMotion.collisionParticleCount === 512', motion.collisionParticleCount, 512)
     addMaximumViolation(violations, 'animation.lastMotion.particleCount <= parser maximum 16000', motion.particleCount, thresholds.parserParticleMaximum)
     addRangeViolation(
       violations,
@@ -711,9 +717,9 @@ test('enforces pipeline-v5 managed login particle runtime budgets with bounded e
       thresholds.idleAmplitudeMaximumCss
     )
     addExactViolation(violations, 'animation.lastMotion.impulseLifetimeSeconds === 1.4', motion.impulseLifetimeSeconds, thresholds.impulseLifetimeSeconds)
-    addExactViolation(violations, 'animation.lastMotion.maxImpulseTravelCss === 14', motion.maxImpulseTravelCss, thresholds.maxImpulseTravelCss)
-    addExactViolation(violations, 'animation.lastMotion.neighborForceRatio === 0.32', motion.neighborForceRatio, thresholds.neighborForceRatio)
-    addExactViolation(violations, 'animation.lastMotion.bounceRatio === 0.22', motion.bounceRatio, thresholds.bounceRatio)
+    addExactViolation(violations, 'animation.lastMotion.maxImpulseTravelCss === 42', motion.maxImpulseTravelCss, thresholds.maxImpulseTravelCss)
+    addExactViolation(violations, 'animation.lastMotion.neighborForceRatio === 0.72', motion.neighborForceRatio, thresholds.neighborForceRatio)
+    addExactViolation(violations, 'animation.lastMotion.bounceRatio === 0.4', motion.bounceRatio, thresholds.bounceRatio)
     addExactViolation(violations, 'animation.lastMotion.explosionHoldSeconds === 0.35', motion.explosionHoldSeconds, thresholds.explosionHoldSeconds)
     addExactViolation(violations, 'animation.lastMotion.explosionRefillSeconds === 2.4', motion.explosionRefillSeconds, thresholds.explosionRefillSeconds)
     addExactViolation(violations, 'animation.lastMotion.explosionLifetimeSeconds === 2.8', motion.explosionLifetimeSeconds, thresholds.explosionLifetimeSeconds)
