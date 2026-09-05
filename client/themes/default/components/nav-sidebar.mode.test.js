@@ -34,8 +34,10 @@ describe('Custom Navigation preserves its two views', () => {
       it(`respects ${preference ?? 'unset'} preference with a ${label} menu`, () => {
         const localStorage = storage(preference)
         const sidebar = mountSidebar({ items, localStorage })
-        expect(sidebar.currentMode).toBe(preference === 'browse' ? 'browse' : 'custom')
-        expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(preference === 'browse' ? 1 : 0)
+        const expected = preference === 'browse' || preference === 'custom'
+          ? preference : items.includes(guide) ? 'custom' : 'browse'
+        expect(sidebar.currentMode).toBe(expected)
+        expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(expected === 'browse' ? 1 : 0)
         expect(localStorage.setItem).not.toHaveBeenCalled()
       })
     }
@@ -66,7 +68,7 @@ describe('Custom Navigation preserves its two views', () => {
   }
 
   it('loads the current page directory when expanding parents is enabled', () => {
-    const sidebar = mountSidebar({ expandParentByDefault: true })
+    const sidebar = mountSidebar({ expandParentByDefault: true, items: [guide] })
     sidebar.switchMode('browse')
     expect(sidebar.loadFromCurrentPath).toHaveBeenCalledTimes(1)
     expect(sidebar.fetchBrowseItems).not.toHaveBeenCalled()
@@ -75,7 +77,8 @@ describe('Custom Navigation preserves its two views', () => {
   it('keeps both views usable when storage reads and writes fail', () => {
     const unavailable = () => { throw new Error('Storage unavailable') }
     const sidebar = mountSidebar({ localStorage: { getItem: unavailable, setItem: unavailable } })
-    expect(sidebar.currentMode).toBe('custom')
+    expect(sidebar.currentMode).toBe('browse')
+    sidebar.loadedCache = [0]
     sidebar.switchMode('browse')
     expect(sidebar.currentMode).toBe('browse')
     expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(1)

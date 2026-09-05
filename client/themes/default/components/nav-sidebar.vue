@@ -389,9 +389,11 @@ export default defineComponent({
     } else {
       try {
         const storedPreference = window.localStorage.getItem('navPref')
-        this.currentMode = storedPreference === 'browse' ? 'browse' : 'custom'
+        this.currentMode = storedPreference === 'browse' || storedPreference === 'custom'
+          ? storedPreference
+          : this.customItems.some(item => item.k === 'link') ? 'custom' : 'browse'
       } catch {
-        this.currentMode = 'custom'
+        this.currentMode = this.customItems.some(item => item.k === 'link') ? 'custom' : 'browse'
       }
     }
     if (this.currentMode === 'browse') {

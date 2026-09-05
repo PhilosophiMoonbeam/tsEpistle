@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { activeOutlineIndex, filterOutline } from './page-outline'
+import { activeOutlineIndex, filterOutline, overviewOutline } from './page-outline'
 
 const outline = [
   { anchor: '#guide', title: 'Guide', depth: 0 },
@@ -19,6 +19,14 @@ describe('document outline', () => {
     expect(filterOutline(outline, '  ')).toBe(outline)
     expect(filterOutline(outline, 'missing')).toEqual([])
     expect(filterOutline([], 'api')).toEqual([])
+  })
+  test('overview hides deep detail but retains the active heading and its ancestor chain', () => {
+    expect(overviewOutline(outline, '').map(entry => entry.anchor)).toEqual(['#guide', '#setup', '#search', '#reference', '#api'])
+    expect(overviewOutline(outline, '#keys')).toEqual(outline)
+    const deep = [...outline.slice(0, 3), { anchor: '#rotation', title: 'Rotation', depth: 4 }, ...outline.slice(3)]
+    expect(overviewOutline(deep, '#rotation')).toEqual(deep)
+    expect(overviewOutline(deep, '#missing')).toEqual(overviewOutline(outline, ''))
+    expect(overviewOutline([], '#missing')).toEqual([])
   })
   test('tracks the last heading crossed in either scroll direction, including boundaries', () => {
     const positions = [100, 260, 500, 910]

@@ -345,7 +345,7 @@ describe('default page focused contracts', () => {
     expect(navigationDrawer).not.toBe('')
     expect(navigationDrawer).toContain(":mobile-breakpoint='1280'")
     expect(navigationDrawer).toContain(":width='$vuetify.display.width >= 1280 ? 281.6 : 256'")
-    expect(navigationDrawer).toContain("v-model='navShown'")
+    expect(navigationDrawer).toContain("v-model='navigationOpen'")
     expect(navigationDrawer).toContain("@update:model-value='navigationVisibilityChanged'")
     expect(navigationDrawer).not.toMatch(/(?:^|\s):?temporary=/)
     expect(navigationDrawer).not.toMatch(/(?:^|\s):?location=/)
