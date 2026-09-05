@@ -1,5 +1,6 @@
 <template lang="pug">
   v-app.wiki-page(v-scroll='upBtnScroll', :class='$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`')
+    a.page-skip-link(:href='`#${pageArticleId}`', @click.prevent='focusArticle') Skip to content
     nav-header(v-if='!printView')
     v-navigation-drawer(
       v-if='navMode !== `NONE` && !printView'
@@ -82,10 +83,17 @@
             :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, `page-header--toc-${tocPosition}`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn) }]'
             )
             .page-header-headings
+              .page-document-label
+                v-icon(icon='mdi-book-open-page-variant-outline', size='15', aria-hidden='true')
+                span Knowledge / {{ locale.toUpperCase() }}
               .page-title-row.d-flex.align-center
                 h1.page-title(ref='pageTitle', :id='pageTitleId') {{title}}
                 v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') {{$t('common:page.private')}}
               p.page-description(v-if='description') {{description}}
+              .page-document-meta(v-if='updatedAt')
+                v-icon(icon='mdi-clock-outline', size='14', aria-hidden='true')
+                span Updated {{ $helpers.formatMoment(updatedAt, 'calendar') }}
+
             .page-edit-shortcuts(
               v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
               :class='tocPosition === `right` ? `is-right` : ``'
@@ -264,7 +272,7 @@
             v-alert.page-page-context.mb-5(v-if='!isPublished', color='warning', variant="outlined", icon='mdi-minus-circle', density="compact")
               .text-body-small {{$t('common:page.unpublishedWarning')}}
             site-banner.page-page-context(:banner='siteBanner')
-            article.contents(ref='container', :aria-labelledby='pageTitleId')
+            article.contents(ref='container', :id='pageArticleId', tabindex='-1', :aria-labelledby='pageTitleId')
               template(v-if='$slots.contents')
                 slot(name='contents')
               async-state(
@@ -486,15 +494,32 @@
               )
                 span.page-toc-toggle-label.text-label-small {{$t('common:page.toc')}}
                 v-icon(size='small', aria-hidden='true') {{ tocDisclosureExpanded ? `mdi-chevron-up` : `mdi-chevron-down` }}
-              .text-label-small.page-toc-heading {{$t('common:page.toc')}}
+              .text-label-small.page-toc-heading
+                span {{$t('common:page.toc')}}
+                span.page-toc-count {{ tocFlattened.length }}
+
               div#page-toc-content.page-toc-content(
                 v-show='tocDisclosureExpanded'
               )
+                v-text-field.page-toc-filter(
+                  v-if='tocFlattened.length > 10'
+                  v-model='tocQuery'
+                  label='Find a section'
+                  prepend-inner-icon='mdi-magnify'
+                  density='compact'
+                  variant='outlined'
+                  hide-details
+                  clearable
+                  @keydown.esc.stop='tocQuery = ``'
+                )
+                .page-toc-filter-empty(v-if='tocQuery && !tocVisible.length', role='status') No matching sections.
                 v-list.py-2(v-if='tocFlattened.length', density="compact", nav, role='group', tabindex='-1')
                   v-list-item.page-toc-item(
-                    v-for='tocItem in tocFlattened'
+                    v-for='tocItem in tocVisible'
                     :key='tocItem.anchor'
                     :href='tocItem.anchor'
+                    :active='activeAnchor === tocItem.anchor'
+                    :aria-current='activeAnchor === tocItem.anchor ? `location` : undefined'
                     :style='`--toc-indent: ${Math.min(tocItem.depth, 5) * 14}px`'
                     @click='tocLinkClicked($event, tocItem.anchor)'
                     )
@@ -770,6 +795,7 @@ import Prism from '../../../libs/prism/setup'
 import mermaid from 'mermaid'
 import { wikiStore } from '@/store/index.ts'
 import _ from 'lodash'
+import { filterOutline, trackPageOutline } from '@/helpers/page-outline'
 import ClipboardJS from 'clipboard'
 import boot from '../../../modules/boot.ts'
 import {
@@ -1003,7 +1029,10 @@ export default defineComponent({
     return {
       locales: siteLangs,
       navShown: initialWidth >= 1280,
-      tocExpanded: initialWidth > 599,
+      tocExpanded: initialWidth >= 1280,
+      tocQuery: '',
+      activeAnchor: '',
+      outlineCleanup: null as (() => void) | null,
       upBtnShown: false,
       pageEditFab: false,
       pageWatched: false,
@@ -1031,8 +1060,9 @@ export default defineComponent({
       pageProtection: { protected: false, version: 0, updatedBy: null, updatedAt: null } as PageProtection,
       pageProtectionPassword: '',
       scrollOpts: markRaw({
-        duration: 1500,
-        offset: 0,
+        duration: 250,
+        layout: true,
+        offset: -24,
         easing: 'easeInOutCubic'
       }),
       scrollStyle: markRaw({
@@ -1051,6 +1081,9 @@ export default defineComponent({
     }
   },
   computed: {
+    pageArticleId (): string {
+      return `wiki-page-shell-${this.pageId}-article`
+    },
     pageTitleId (): string {
       return `wiki-page-shell-${this.pageId}-title`
     },
@@ -1087,11 +1120,17 @@ export default defineComponent({
     tocFlattened (): FlattenedTableOfContentsNode[] {
       return flattenTableOfContents(this.tocDecoded)
     },
+    tocVisible (): FlattenedTableOfContentsNode[] {
+      return filterOutline(this.tocFlattened, this.tocQuery || '')
+    },
     isTocMobile (): boolean {
       return this.winWidth <= 599
     },
+    isTocCompact (): boolean {
+      return this.winWidth < 1280
+    },
     tocDisclosureExpanded (): boolean {
-      return !this.isTocMobile || this.tocExpanded
+      return !this.isTocCompact || this.tocExpanded
     },
 
     tocPosition () {
@@ -1203,6 +1242,7 @@ export default defineComponent({
   beforeUnmount () {
     if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
+    this.outlineCleanup?.()
     this.restorePrintView()
     this.routeAnimationAbortController?.abort()
     this.routeAnimationAbortController = null
@@ -1212,6 +1252,9 @@ export default defineComponent({
   },
   methods: {
     mergeProps,
+    focusArticle(): void {
+      (this.$refs.container as HTMLElement)?.focus()
+    },
     syncPageStore(): void {
       wikiStore.page.authorId = this.authorId
       wikiStore.page.authorName = this.authorName
@@ -1233,7 +1276,9 @@ export default defineComponent({
     },
     resetPageRouteState(): void {
       this.cancelScheduledScroll()
-      this.tocExpanded = !this.isTocMobile
+      this.tocExpanded = !this.isTocCompact
+      this.tocQuery = ''
+      this.activeAnchor = ''
 
       this.pageEditFab = false
       this.pageWatched = false
@@ -1279,6 +1324,19 @@ export default defineComponent({
       })
       this.contentExtensionCleanup?.()
       this.contentExtensionCleanup = hydrateContentExtensions(container)
+      this.outlineCleanup?.()
+      this.outlineCleanup = trackPageOutline(container, this.tocFlattened, anchor => {
+        this.activeAnchor = anchor
+        void this.$nextTick(() => {
+          const active = this.$el.querySelector('.page-toc-item[aria-current="location"]') as HTMLElement | null
+          const list = active?.closest('.v-list') as HTMLElement | null
+          if (!active || !list || list.contains(document.activeElement)) return
+          const row = active.getBoundingClientRect()
+          const viewport = list.getBoundingClientRect()
+          if (row.top < viewport.top) list.scrollTop -= viewport.top - row.top
+          else if (row.bottom > viewport.bottom) list.scrollTop += row.bottom - viewport.bottom
+        })
+      })
       boot.notify('page-ready')
     },
     animatePageRoute(): void {
@@ -1722,7 +1780,7 @@ export default defineComponent({
       const nextWidth = window.innerWidth
       if (nextWidth === previousWidth) { return }
       this.winWidth = nextWidth
-      if (previousWidth > 599 && nextWidth <= 599) {
+      if (previousWidth >= 1280 && nextWidth < 1280) {
         this.tocExpanded = false
       }
       if (nextWidth >= 1280) {
@@ -1747,11 +1805,76 @@ export default defineComponent({
   --page-toc-empty-height: calc(var(--wiki-grid-size) * 2);
   --page-toc-desktop-lift: calc(var(--page-toc-empty-height) + var(--wiki-space-6));
   --page-reader-shell-max: 132rem;
-  --page-metadata-rail-width: clamp(18rem, 22.5vw, 21rem);
+  --page-metadata-rail-width: clamp(15rem, 18vw, 17rem);
   --page-reader-column-gap: var(--wiki-space-6);
   --page-reader-copy-max: 101.2ch;
 
   font-family: var(--wiki-font-body);
+}
+
+// The document identity and outline use the same quiet editorial hierarchy.
+.page-skip-link {
+  position: fixed;
+  inset-block-start: .5rem;
+  inset-inline-start: 1rem;
+  z-index: 3000;
+  padding: .75rem 1rem;
+  border-radius: var(--wiki-control-radius);
+  background: rgb(var(--v-theme-surface));
+  color: rgb(var(--v-theme-on-surface));
+  transform: translateY(-200%);
+  &:focus { transform: translateY(0); }
+}
+
+.page-document-label,
+.page-document-meta {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 65%, transparent);
+}
+
+.page-document-label {
+  margin-block-end: .625rem;
+  font-size: .6875rem;
+  font-weight: 650;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.page-document-meta {
+  margin-block-start: .875rem;
+  font-size: .75rem;
+}
+
+.page-toc-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.page-toc-count {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 65%, transparent);
+  font-family: var(--wiki-font-mono);
+  font-size: .6875rem;
+}
+
+.page-toc-filter {
+  margin: .5rem .75rem;
+  .v-field { border-radius: .5rem; }
+  .v-field__input, .v-label { font-size: .8125rem; }
+}
+
+.page-toc-filter-empty {
+  padding: .75rem 1rem;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 65%, transparent);
+  font-size: .8125rem;
+}
+
+.page-toc-item[aria-current='location'] {
+  border-inline-start-color: rgb(var(--v-theme-primary));
+  background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+  color: var(--wiki-accent-ink);
 }
 
 .page-main {
@@ -1990,12 +2113,13 @@ export default defineComponent({
   }
 
   .page-title {
+    font-family: var(--wiki-font-newsreader);
     min-width: 0;
     margin: 0;
     color: rgb(var(--v-theme-on-surface));
     font-size: clamp(2.125rem, 1.6rem + 1.8vw, 3.25rem);
-    font-weight: 700;
-    letter-spacing: -.052em;
+    font-weight: 550;
+    letter-spacing: -.035em;
     line-height: 1.02;
     overflow-wrap: anywhere;
     text-wrap: balance;
@@ -2286,6 +2410,11 @@ export default defineComponent({
 
   .page-toc-content {
     min-width: 0;
+    .v-list {
+      max-height: min(52dvh, 32rem);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
   }
 
   .v-list {
@@ -2344,7 +2473,6 @@ export default defineComponent({
 }
 
 .page-toc-item-title {
-  min-height: calc(var(--wiki-control-height) - var(--wiki-space-2));
   padding-inline: 0 !important;
   font-size: .8125rem;
   line-height: 1.4;
@@ -2459,13 +2587,12 @@ export default defineComponent({
   --page-reader-surface-padding: clamp(var(--wiki-space-6), 3vw, var(--wiki-space-12));
 
   min-height: calc(var(--wiki-grid-size) * 3);
+  scroll-margin-block-start: calc(var(--v-layout-top, 64px) + 24px);
   padding: var(--page-reader-surface-padding);
   border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-hero-radius);
+  border-radius: var(--wiki-panel-radius);
   background: rgb(var(--v-theme-surface));
-  box-shadow:
-    var(--wiki-shadow-inset),
-    var(--wiki-shadow-sm);
+  box-shadow: var(--wiki-shadow-xs);
 
   > div {
     width: min(100%, var(--page-reader-copy-max));
@@ -3166,8 +3293,19 @@ export default defineComponent({
 
 
   .page-toc-card {
+    min-height: var(--wiki-control-height);
     max-height: calc(var(--wiki-grid-size) * 5);
     overflow-y: auto !important;
+  }
+
+  .page-toc-card > .page-toc-heading { display: none; }
+
+  .page-toc-card .page-toc-toggle {
+    display: flex;
+    min-height: var(--wiki-control-height);
+    justify-content: space-between;
+    padding-inline: var(--wiki-space-4) !important;
+    .v-btn__content { width: 100%; justify-content: space-between; }
   }
 
   .page-col-content:not(.is-page-header),
@@ -3176,6 +3314,14 @@ export default defineComponent({
   }
 }
 @media (min-width: 600px) and (max-width: 1279px) {
+  .page-body > .v-row > .page-shortcuts-card,
+  .page-body > .v-row > .page-toc-card {
+    order: 0 !important;
+    align-self: flex-start;
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--wiki-control-radius);
+  }
+
   .page-body > .v-row {
     gap: var(--wiki-space-4);
   }

@@ -174,7 +174,7 @@ describe('default page focused contracts', () => {
 
   test('labels page content with a page-scoped shell title outside authored heading slugs', () => {
     expect(template).toMatch(/h1\.page-title\(ref='pageTitle', :id='pageTitleId'\) \{\{title\}\}/)
-    expect(template).toMatch(/article\.contents\(ref='container', :aria-labelledby='pageTitleId'\)/)
+    expect(template).toMatch(/article\.contents\(ref='container', :id='pageArticleId', tabindex='-1', :aria-labelledby='pageTitleId'\)/)
     expect(script).toMatch(/pageTitleId \(\): string \{\s+return `wiki-page-shell-\$\{this\.pageId\}-title`\s+\}/)
     expect(script).not.toMatch(/wiki:page:\$\{this\.pageId\}:shell-title/)
     expect(script).not.toMatch(/pageTitleId \(\): string \{\s+return ['"`]page-title['"`]\s+\}/)
@@ -183,7 +183,7 @@ describe('default page focused contracts', () => {
 
   test('renders a plain reading surface without gutter code', () => {
     expect(template).toMatch(
-      /article\.contents\(ref='container', :aria-labelledby='pageTitleId'\)\s+template\(v-if='\$slots\.contents'\)\s+slot\(name='contents'\)\s+async-state\(/
+      /article\.contents\(ref='container', :id='pageArticleId', tabindex='-1', :aria-labelledby='pageTitleId'\)\s+template\(v-if='\$slots\.contents'\)\s+slot\(name='contents'\)\s+async-state\(/
     )
     expect(template).not.toMatch(/page-gutter-(?:ornament|column)|wiki-gutter-art/)
     expect(script).not.toMatch(
@@ -214,7 +214,7 @@ describe('default page focused contracts', () => {
 
     expectDeclarations(pageRoot, {
       '--page-reader-shell-max': '132rem',
-      '--page-metadata-rail-width': 'clamp\\(18rem,\\s*22\\.5vw,\\s*21rem\\)',
+      '--page-metadata-rail-width': 'clamp\\(15rem,\\s*18vw,\\s*17rem\\)',
       '--page-reader-column-gap': 'var\\(--wiki-space-6\\)',
       '--page-reader-copy-max': '101\\.2ch'
     })
@@ -252,12 +252,12 @@ describe('default page focused contracts', () => {
     expect(template).toContain("@click='tocLinkClicked($event, tocItem.anchor)'")
     expect(template).toMatch(/:style='`--toc-indent: \$\{Math\.min\(tocItem\.depth, 5\) \* 14\}px`'/)
     expect(template).toContain('v-icon.page-toc-item-marker')
-    expect(script).toMatch(/tocExpanded:\s*initialWidth > 599/)
+    expect(script).toMatch(/tocExpanded:\s*initialWidth >= 1280/)
     expect(script).toMatch(/isTocMobile\s*\([^)]*\)\s*:\s*boolean[\s\S]*?return this\.winWidth <= 599/)
-    expect(script).toMatch(/tocDisclosureExpanded\s*\([^)]*\)\s*:\s*boolean[\s\S]*?return !this\.isTocMobile \|\| this\.tocExpanded/)
+    expect(script).toMatch(/tocDisclosureExpanded\s*\([^)]*\)\s*:\s*boolean[\s\S]*?return !this\.isTocCompact \|\| this\.tocExpanded/)
     expect(script).toMatch(/toggleToc\s*\(\)\s*\{\s*this\.tocExpanded = !this\.tocExpanded\s*\}/)
     expect(script).toMatch(
-      /handleSideNavVisibility\s*\(\)\s*\{[\s\S]*?const previousWidth = this\.winWidth[\s\S]*?const nextWidth = window\.innerWidth[\s\S]*?this\.winWidth = nextWidth[\s\S]*?if \(previousWidth > 599 && nextWidth <= 599\)\s*\{\s*this\.tocExpanded = false\s*\}/
+      /handleSideNavVisibility\s*\(\)\s*\{[\s\S]*?const previousWidth = this\.winWidth[\s\S]*?const nextWidth = window\.innerWidth[\s\S]*?this\.winWidth = nextWidth[\s\S]*?if \(previousWidth >= 1280 && nextWidth < 1280\)\s*\{\s*this\.tocExpanded = false\s*\}/
     )
     expect(script).toMatch(
       /tocLinkClicked\s*\(event: MouseEvent, anchor: string\)\s*\{[\s\S]*?event\.metaKey[\s\S]*?event\.ctrlKey[\s\S]*?event\.shiftKey[\s\S]*?event\.altKey[\s\S]*?this\.tocExpanded = false[\s\S]*?event\.preventDefault\(\)[\s\S]*?this\.scrollToPageAnchor\(anchor\)/
@@ -293,7 +293,7 @@ describe('default page focused contracts', () => {
     const mobile = extractCssRule(style, '@media (max-width: 599px)')
     const cssRuleIncluding = (source, expected) =>
       extractCssRules(source).find(({ selector }) => selector.split(',').some(part => part.trim() === expected))?.block ?? null
-    const tabletCard = cssRuleIncluding(tablet, '.page-body > .v-row > .page-shortcuts-card')
+    const tabletCard = cssRuleIncluding(tablet, '.page-body > .v-row > .page-tags-card')
     expectDeclarations(cssRuleIncluding(tablet, '.page-body > .v-row'), {
       gap: 'var\\(--wiki-space-4\\)'
     })
@@ -447,7 +447,7 @@ describe('default page focused contracts', () => {
     expect(heroSystem).not.toMatch(/font-synthesis|wiki-font-reader/)
     expectDeclarations(title, {
       'font-size': 'clamp\\(2\\.125rem,\\s*1\\.6rem \\+ 1\\.8vw,\\s*3\\.25rem\\)',
-      'font-weight': '700',
+      'font-weight': '550',
       'line-height': '1\\.02'
     })
     expectDeclarations(description, {

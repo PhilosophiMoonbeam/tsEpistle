@@ -115,18 +115,18 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
 
   test('keeps MIXED mode switching and TREE browsing structurally intact', () => {
     expect(source).toMatch(/v-btn\.nav-sidebar-mode[\s\S]*?v-if='navMode === `MIXED` && currentMode === `custom`'[\s\S]*?common:sidebar\.browse/)
-    expect(source).toMatch(/v-btn\.nav-sidebar-mode[\s\S]*?v-else-if='navMode === `MIXED` && currentMode === `browse`'[\s\S]*?common:sidebar\.mainMenu/)
+    expect(source).toMatch(/v-btn\.nav-sidebar-mode[\s\S]*?v-else-if='navMode === `MIXED` && currentMode === `browse` && customItems.length > 0'[\s\S]*?common:sidebar\.mainMenu/)
     expect(source).toMatch(/v-if='currentMode === `custom`'/)
     expect(source).toMatch(/v-else-if='currentMode === `browse`'/)
     expect(script).toMatch(/if \(this\.navMode === 'TREE'\) \{\s*this\.currentMode = 'browse'/)
     expect(script).toMatch(/else if \(this\.navMode === 'STATIC'\) \{\s*this\.currentMode = 'custom'/)
   })
 
-  test('ignores invalid localStorage preferences and falls back to custom mode', () => {
+  test('uses browse for an empty menu and otherwise respects the saved navigation mode', () => {
     const mounted = script.match(/mounted\s*\(\s*\) \{[\s\S]*?\n {2}\}\n\}\)/)?.[0]
     expect(mounted).toBeDefined()
     expect(mounted).toMatch(/const \w+ = window\.localStorage\.getItem\('navPref'\)/)
-    expect(mounted).toMatch(/(?:=== ['"]custom['"]|includes\(['"]custom['"]\))/)
+    expect(mounted).toContain("this.customItems.length === 0 || storedPreference === 'browse' ? 'browse' : 'custom'")
     expect(mounted).toMatch(/(?:=== ['"]browse['"]|includes\(['"]browse['"]\))/)
     expect(mounted).toMatch(/:\s*['"]custom['"]/)
   })

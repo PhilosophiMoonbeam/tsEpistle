@@ -21,13 +21,16 @@
         )
         .text-body-medium.text-none {{$t('common:sidebar.browse')}}
       v-btn.nav-sidebar-mode.ms-3(
-        v-else-if='navMode === `MIXED` && currentMode === `browse`'
+        v-else-if='navMode === `MIXED` && currentMode === `browse` && customItems.length > 0'
         variant="tonal"
         color='primary'
         prepend-icon='mdi-navigation'
         @click='switchMode(`custom`)'
         )
         .text-body-medium.text-none {{$t('common:sidebar.mainMenu')}}
+    .nav-sidebar-directory-heading(v-if='currentMode === `browse`')
+      span {{$t('common:sidebar.browse')}}
+      v-icon(icon='mdi-file-tree-outline', size='16', aria-hidden='true')
     v-divider.nav-sidebar-edge
     //-> Custom Navigation
     v-list.nav-sidebar-list.py-2(v-if='currentMode === `custom`', density="compact", :class='color', nav, role='group', tabindex='-1')
@@ -380,7 +383,7 @@ export default defineComponent({
       this.currentMode = 'custom'
     } else {
       const storedPreference = window.localStorage.getItem('navPref')
-      this.currentMode = storedPreference === 'custom' || storedPreference === 'browse' ? storedPreference : 'custom'
+      this.currentMode = this.customItems.length === 0 || storedPreference === 'browse' ? 'browse' : 'custom'
     }
     if (this.currentMode === 'browse') {
       if (this.expandParentByDefault) this.loadFromCurrentPath()
@@ -396,6 +399,18 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+.nav-sidebar-directory-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.25rem 1.25rem .75rem;
+  color: rgb(var(--v-theme-on-surface-variant));
+  font-size: .6875rem;
+  font-weight: 650;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
 .nav-sidebar {
   --nav-active-direction: 90deg;
   display: block;

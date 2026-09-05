@@ -59,7 +59,11 @@
                 @keydown.down.prevent='searchMove(`down`)'
                 @keydown.up.prevent='searchMove(`up`)'
                 autocomplete='off'
+                aria-keyshortcuts='Control+k Meta+k'
               )
+                template(v-slot:append-inner)
+                  kbd.nav-header-search-key(v-if='!search && !searchIsFocused', aria-hidden='true') {{ searchShortcutLabel }}
+
             v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
                 v-btn.nav-header-browse(icon, v-bind='props', href='/t', data-search-modal-action, :aria-label='$t(`common:header.browseTags`)')
@@ -87,6 +91,15 @@
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
           .nav-header-slot-actions(v-if='$vuetify.display.mdAndUp || mobileActions')
             slot(name='actions')
+          v-btn.nav-header-agent(
+            v-if='canUseAgent && !hideSearch && mode !== `edit` && $vuetify.display.lgAndUp'
+            prepend-icon='mdi-auto-fix'
+            variant='tonal'
+            color='primary'
+            size='small'
+            data-search-modal-action
+            @click='openAgent'
+          ) Wiki Agent
           //- LANGUAGES
 
           template(v-if='mode === `view` && locales.length > 0 && $vuetify.display.mdAndUp')
@@ -397,6 +410,8 @@ export default defineComponent({
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
     permissions(): string[] { return wikiStore.user.permissions },
     searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.search') },
+    canUseAgent(): boolean { return Boolean(siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) },
+    searchShortcutLabel(): string { return /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K' },
     searchInputIcon(): string { return this.searchMode === 'ask' ? 'mdi-auto-fix' : 'mdi-magnify' },
     picture (): UserPicture {
       const pictureUrl = typeof this.pictureUrl === 'string' ? this.pictureUrl : ''
@@ -559,8 +574,18 @@ export default defineComponent({
       if (this.searchIsShown) void this.focusSearchField()
       else this.searchClose()
     },
+    openAgent(): void {
+      this.searchMode = 'ask'
+      void this.focusSearchField()
+    },
     handleSearchShortcut(event: KeyboardEvent): void {
       if (this.hideSearch || event.defaultPrevented || event.repeat || event.isComposing) return
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        this.searchMode = 'search'
+        void this.focusSearchField()
+        return
+      }
       if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'a') return
       if (!siteConfig.agentsEnabled || !this.isAuthenticated || !this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) return
       event.preventDefault()
@@ -667,6 +692,17 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+.nav-header-search-key {
+  flex: 0 0 auto;
+  padding: .125rem .375rem;
+  border: 1px solid var(--wiki-surface-border);
+  border-radius: .375rem;
+  color: rgb(var(--v-theme-on-surface-variant));
+  font-size: .6875rem;
+  white-space: nowrap;
+}
+.nav-header-agent { margin-inline: .375rem; }
+
 .nav-header {
   --nav-header-accent-direction: 90deg;
   isolation: isolate;
