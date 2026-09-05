@@ -16,11 +16,10 @@
               color='success'
               variant="flat"
               size="large"
+              prepend-icon='mdi-check'
               :loading='saving'
               :disabled='!loaded || initialLoading || saving || !dirty || !formValid'
-            )
-              v-icon(start) mdi-check
-              span {{$t('common:actions.apply')}}
+            ) {{$t('common:actions.apply')}}
         v-form#general-form(
           @submit.prevent='save'
           v-model='formValid'
@@ -377,11 +376,10 @@
             color='success'
             variant='flat'
             size='large'
+            prepend-icon='mdi-check'
             :loading='saving'
             :disabled='!loaded || initialLoading || saving || !dirty || !formValid'
-          )
-            v-icon(start) mdi-check
-            span {{$t('common:actions.apply')}}
+          ) {{$t('common:actions.apply')}}
 </template>
 
 <script lang='ts'>

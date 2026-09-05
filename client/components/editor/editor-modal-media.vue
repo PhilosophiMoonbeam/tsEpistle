@@ -21,7 +21,7 @@
                   template(v-slot:activator='{ props }')
                     v-btn.ml-3.my-0.mr-0.radius-7(variant="tonal", size="large", color='primary', :icon='$vuetify.display.xs', :class='{ "editor-media-icon-button": $vuetify.display.xs }', aria-label='Create folder', v-bind='props')
                       v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
-                      span.hidden-sm-and-down {{$t('editor:assets.newFolder')}}
+                      span.d-none.d-md-inline {{$t('editor:assets.newFolder')}}
                   v-card(:aria-busy='newFolderLoading')
                     .dialog-header.is-short.text-body-large#editor-media-new-folder-title {{$t('editor:assets.newFolder')}}
                     v-card-text.pt-5

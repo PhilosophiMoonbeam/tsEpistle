@@ -63,11 +63,11 @@
           color="primary"
           type='submit'
           variant="flat"
+          prepend-icon='mdi-comment'
           :aria-label='$t(`common:comments.postComment`)'
           :loading='isPosting'
           :disabled='isPosting'
         )
-          v-icon(start) mdi-comment
           span.text-none {{$t('common:comments.postComment')}}
     async-state.comments-loading(
       v-if='isLoading && (!hasLoadedOnce || comments.length === 0)'
@@ -138,23 +138,23 @@
               )
               .d-flex.align-center.pt-3
                 v-spacer
-                v-btn.mr-3(
+                v-btn.me-3(
                   color="primary"
                   type='button'
                   @click='editCommentCancel'
                   variant="outlined"
+                  prepend-icon='mdi-close'
                   :disabled='isBusy'
                 )
-                  v-icon(start) mdi-close
                   span.text-none {{$t('common:actions.cancel')}}
                 v-btn(
                   color="primary"
                   type='submit'
                   variant="flat"
+                  prepend-icon='mdi-comment'
                   :loading='isBusy'
                   :disabled='isBusy'
                 )
-                  v-icon(start) mdi-comment
                   span.text-none {{$t('common:comments.updateComment')}}
     async-state.comments-empty(
       v-else-if='permissions.write'

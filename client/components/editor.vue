@@ -47,10 +47,10 @@
           variant='tonal'
           color='primary'
           aria-label='Save and close'
+          prepend-icon='mdi-content-save-move-outline'
           @click='saveAndClose'
           :disabled='collaborationDiscarded'
         )
-          v-icon(start) mdi-content-save-move-outline
           span Save and close
         v-btn.editor-page-action.animated.fadeInDown.wait-p1s(
           v-if='$vuetify.display.mdAndUp'

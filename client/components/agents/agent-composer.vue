@@ -254,7 +254,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import type { AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import type { VisibleAgentSkill } from '../../helpers/agents-api.ts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
@@ -281,9 +281,9 @@ const draft = ref('')
 const goalMode = ref(false)
 const skillMenuOpen = ref(false)
 const selectedSkillIds = ref<string[]>([])
-const composerRoot = ref<{ $el?: HTMLElement } | HTMLElement | null>(null)
-const messageInput = ref<{ focus: () => void; $el?: HTMLElement } | null>(null)
-const skillsTrigger = ref<{ focus?: () => void; $el?: HTMLElement } | HTMLElement | null>(null)
+const composerRoot = useTemplateRef<{ $el?: HTMLElement } | HTMLElement>('composerRoot')
+const messageInput = useTemplateRef<{ focus: () => void; $el?: HTMLElement }>('messageInput')
+const skillsTrigger = useTemplateRef<{ focus?: () => void; $el?: HTMLElement } | HTMLElement>('skillsTrigger')
 const dismissedCommandToken = ref<{ start: number; prefix: string } | null>(null)
 const activeCommandIndex = ref(0)
 const sendFailed = ref(false)

@@ -197,11 +197,11 @@
                         color='primary'
                         size="small"
                         variant="outlined"
+                        prepend-icon='mdi-eye'
                         @click='toggleViewMode'
                         :aria-label='viewMode === `line-by-line` ? `Switch to side-by-side diff` : `Switch to line-by-line diff`'
                         :aria-pressed='viewMode === `side-by-side`'
                       )
-                        v-icon(start) mdi-eye
                         span.text-label-small View: {{viewMode === 'line-by-line' ? 'Line by line' : 'Side by side'}}
                 v-card.mt-3.history-diff(flat dir='ltr' aria-labelledby='history-comparison-heading')
                   div(v-html='diffHTML')

@@ -1,10 +1,13 @@
 <template lang='pug'>
-  v-container.fill-height.d-flex.align-center.flex-wrap(fluid)
-    v-row
+  v-container(fluid)
+    AdminHero(
+      icon='mdi-chart-box-outline'
+      title='Statistics'
+      description='Useful information about your wiki'
+      heading-id='admin-stats-title'
+    )
+    v-row.mt-4
       v-col(cols='12')
-        .admin-header-icon: v-icon(size='80', color='primary') mdi-chart-box-outline
-        h1.ma-0.text-headline-medium.text-primary Statistics
-        p.ma-0.text-body-large.text-medium-emphasis Useful information about your wiki
         async-state(
           state='empty'
           title='Statistics are not available'
@@ -12,13 +15,7 @@
         )
 </template>
 
-<script lang='ts'>
+<script setup lang='ts'>
 import AsyncState from '@/components/common/async-state.vue'
-
-export default {
-  components: {
-    AsyncState
-  }
-}
 </script>
 

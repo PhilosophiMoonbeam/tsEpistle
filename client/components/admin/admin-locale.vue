@@ -22,13 +22,12 @@
             v-btn(
               color='success'
               variant="flat"
+              prepend-icon='mdi-check'
               @click='save'
               size="large"
               :loading='loading'
               :disabled='!canSave'
-            )
-              v-icon(start, aria-hidden='true') mdi-check
-              span {{$t('common:actions.apply')}}
+            ) {{$t('common:actions.apply')}}
         v-form
           v-row
             v-col(xl='6' lg='5' cols='12')

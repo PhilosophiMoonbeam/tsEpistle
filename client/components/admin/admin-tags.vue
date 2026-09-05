@@ -110,9 +110,7 @@
                             v-spacer
                             v-btn(type='button', variant="text", @click='deleteTagDialog = false', :disabled='deleting') {{$t('common:actions.cancel')}}
                             v-btn(type='button', color='red', @click='deleteTag(current)', :loading='deleting', :disabled='deleting') {{$t('common:actions.delete')}}
-                      v-btn.px-5.mr-2(type='submit', color='success', variant="flat", :loading='saving', :disabled='saving || deleting || !tagValid')
-                        v-icon(start) mdi-content-save
-                        span {{$t('common:actions.save')}}
+                      v-btn.px-5.me-2(type='submit', color='success', variant="flat", prepend-icon='mdi-content-save', :loading='saving', :disabled='saving || deleting || !tagValid') {{$t('common:actions.save')}}
               v-card(v-else-if='!loading && !errorMessage && tags.length > 0')
                 v-card-text.text-medium-emphasis {{$t('admin:tags.noSelectionText')}}
 

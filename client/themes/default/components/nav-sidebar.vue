@@ -16,17 +16,17 @@
       v-btn.nav-sidebar-mode.ms-3(
         v-if='navMode === `MIXED` && currentMode === `custom`'
         variant="tonal"
+        prepend-icon='mdi-file-tree'
         @click='switchMode(`browse`)'
         )
-        v-icon(start) mdi-file-tree
         .text-body-medium.text-none {{$t('common:sidebar.browse')}}
       v-btn.nav-sidebar-mode.ms-3(
         v-else-if='navMode === `MIXED` && currentMode === `browse`'
         variant="tonal"
         color='primary'
+        prepend-icon='mdi-navigation'
         @click='switchMode(`custom`)'
         )
-        v-icon(start) mdi-navigation
         .text-body-medium.text-none {{$t('common:sidebar.mainMenu')}}
     v-divider.nav-sidebar-edge
     //-> Custom Navigation

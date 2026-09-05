@@ -45,6 +45,10 @@ const loadManager = (view, overrides = {}) => {
   const emit = (event, busy) => {
     if (event === 'update:busy') emittedBusy.push(busy)
   }
+  let currentCleanupRegistrar = null
+  const onWatcherCleanup = cleanup => {
+    currentCleanupRegistrar?.(cleanup)
+  }
   const watch = (watched, callback, options) => {
     const watchedRefs = Array.isArray(watched) ? watched : [watched]
     let previousValues = watchedRefs.map(item => item.value)
@@ -55,9 +59,16 @@ const loadManager = (view, overrides = {}) => {
       const values = watchedRefs.map(item => item.value)
       const previous = previousValues
       previousValues = values
-      callback(Array.isArray(watched) ? values : values[0], Array.isArray(watched) ? previous : previous[0], nextCleanup => {
+      currentCleanupRegistrar = nextCleanup => {
         cleanup = nextCleanup
-      })
+      }
+      try {
+        callback(Array.isArray(watched) ? values : values[0], Array.isArray(watched) ? previous : previous[0], nextCleanup => {
+          cleanup = nextCleanup
+        })
+      } finally {
+        currentCleanupRegistrar = null
+      }
     }
     for (const watchedRef of watchedRefs) {
       const subscribers = subscriptions.get(watchedRef) ?? []
@@ -70,6 +81,7 @@ const loadManager = (view, overrides = {}) => {
     'computed',
     'nextTick',
     'onBeforeUnmount',
+    'onWatcherCleanup',
     'defineEmits',
     'ref',
     'shallowRef',
@@ -95,6 +107,7 @@ const loadManager = (view, overrides = {}) => {
     }),
     () => Promise.resolve(),
     callback => beforeUnmount.push(callback),
+    onWatcherCleanup,
     () => emit,
     ref,
     ref,

@@ -1,28 +1,20 @@
 <template lang='pug'>
   .v-card-info(:class='`v-card-info--` + color')
     v-card-text.d-flex.align-center
-      v-icon(:icon='icon', :color='color', start)
+      v-icon.me-2(:icon='icon', :color='color')
       slot
 </template>
 
-<script lang='ts'>
-import { defineComponent, type PropType } from 'vue'
+<script setup lang='ts'>
+export type CardInfoColor = 'info' | 'error'
 
-type CardInfoColor = 'info' | 'error'
-
-export default defineComponent({
-  props: {
-    color: {
-      type: String as PropType<CardInfoColor>,
-      default: 'info',
-      validator: (value: string): value is CardInfoColor => value === 'info' || value === 'error'
-    },
-    icon: {
-      type: String,
-      default: 'mdi-information-outline'
-    }
-  }
-})
+const {
+  color = 'info',
+  icon = 'mdi-information-outline'
+} = defineProps<{
+  color?: CardInfoColor
+  icon?: string
+}>()
 </script>
 
 <style lang="scss">

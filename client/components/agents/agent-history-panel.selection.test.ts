@@ -102,6 +102,10 @@ const loadPanel = (
 ): PanelHarness => {
   const emit = vi.fn()
   const unmountCallbacks: Array<() => void> = []
+  let currentCleanupRegistrar: ((cleanup: WatchCleanup) => void) | null = null
+  const onWatcherCleanup = (cleanup: WatchCleanup): void => {
+    currentCleanupRegistrar?.(cleanup)
+  }
   const ref = <T>(initialValue: T): ReactiveRef<T> => {
     let value = initialValue
     const watchers: Array<{ callback: WatchCallback; cleanup?: WatchCleanup }> = []
@@ -115,9 +119,16 @@ const loadPanel = (
         for (const watcher of watchers) {
           watcher.cleanup?.()
           watcher.cleanup = undefined
-          void watcher.callback(nextValue, previous, cleanup => {
+          currentCleanupRegistrar = cleanup => {
             watcher.cleanup = cleanup
-          })
+          }
+          try {
+            void watcher.callback(nextValue, previous, cleanup => {
+              watcher.cleanup = cleanup
+            })
+          } finally {
+            currentCleanupRegistrar = null
+          }
         }
       },
       subscribe: callback => watchers.push({ callback })
@@ -133,6 +144,7 @@ const loadPanel = (
     'computed',
     'nextTick',
     'onBeforeUnmount',
+    'onWatcherCleanup',
     'ref',
     'shallowRef',
     'useTemplateRef',
@@ -181,6 +193,7 @@ const loadPanel = (
     }),
     () => Promise.resolve(),
     (callback: () => void) => unmountCallbacks.push(callback),
+    onWatcherCleanup,
     ref,
     ref,
     useTemplateRef,

@@ -38,18 +38,19 @@
 <script setup lang="ts">
 export type AsyncStateKind = 'loading' | 'empty' | 'error'
 
-withDefaults(
-  defineProps<{
-    state: AsyncStateKind
-    title: string
-    message?: string
-    retryLabel?: string
-    announce?: boolean
-  }>(),
-  {
-    announce: true
-  }
-)
+const {
+  state,
+  title,
+  message,
+  retryLabel,
+  announce = true
+} = defineProps<{
+  state: AsyncStateKind
+  title: string
+  message?: string
+  retryLabel?: string
+  announce?: boolean
+}>()
 
 defineEmits<{
   retry: []

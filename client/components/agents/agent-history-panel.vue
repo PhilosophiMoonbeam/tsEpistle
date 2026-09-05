@@ -352,7 +352,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onWatcherCleanup, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
@@ -394,6 +394,7 @@ const historyCloseButton = useTemplateRef<ComponentRoot>('historyCloseButton')
 const historySearchField = useTemplateRef<ComponentRoot>('historySearchField')
 const deleteDialogCard = useTemplateRef<ComponentRoot>('deleteDialogCard')
 const removeFolderDialogCard = useTemplateRef<ComponentRoot>('removeFolderDialogCard')
+const folderInput = useTemplateRef<ComponentRoot>('folderInput')
 const folderEditorRestoreTarget = shallowRef<HTMLElement | null>(null)
 const destructiveRestoreTarget = shallowRef<HTMLElement | null>(null)
 let destructiveFocusScope: ModalFocusScope | null = null
@@ -763,9 +764,9 @@ const saveSessionTitle = async (): Promise<void> => {
     savingSessionTitle.value = false
   }
 }
-watch(sessionEditorOpen, async (open, _previous, onCleanup) => {
+watch(sessionEditorOpen, async open => {
   let cancelled = false
-  onCleanup(() => { cancelled = true })
+  onWatcherCleanup(() => { cancelled = true })
   if (open) return
   await nextTick()
   if (cancelled) return
@@ -804,9 +805,9 @@ const saveFolder = async (): Promise<void> => {
   } catch (value) { dialogError.value = message(value, 'The folder could not be saved.') }
   finally { savingFolder.value = false }
 }
-watch(folderEditorOpen, async (open, _previous, onCleanup) => {
+watch(folderEditorOpen, async open => {
   let cancelled = false
-  onCleanup(() => { cancelled = true })
+  onWatcherCleanup(() => { cancelled = true })
   if (open) return
   await nextTick()
   if (cancelled) return
@@ -856,9 +857,9 @@ const expandActiveFolder = (): void => {
   const activeSession = displaySessions.value.find(session => session.id === activeId)
   if (activeSession?.folderId && !openFolderIds.value.includes(activeSession.folderId)) openFolderIds.value.push(activeSession.folderId)
 }
-watch([deletingSession, removingFolder], async ([session, folder], _previous, onCleanup) => {
+watch([deletingSession, removingFolder], async ([session, folder]) => {
   let cancelled = false
-  onCleanup(() => { cancelled = true })
+  onWatcherCleanup(() => { cancelled = true })
   if (!session && !folder) {
     await nextTick()
     if (cancelled) return

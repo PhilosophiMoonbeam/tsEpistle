@@ -25,17 +25,10 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, onUpdated, ref, useId, useTemplateRef } from 'vue'
 
-const props = withDefaults(defineProps<{
-  modelValue: unknown[]
+const modelValue = defineModel<unknown[]>({ required: true })
+const { handle = '', tag = 'div' } = defineProps<{
   handle?: string
   tag?: string
-}>(), {
-  handle: '',
-  tag: 'div'
-})
-
-const emit = defineEmits<{
-  'update:modelValue': [value: unknown[]]
 }>()
 
 const root = useTemplateRef<HTMLElement>('root')
@@ -81,11 +74,11 @@ function removeInstructionReference (element: HTMLElement): void {
 function refreshChildren (): void {
   const children = itemChildren()
   const itemCount = children.length
-  for (const handle of root.value?.querySelectorAll<HTMLElement>('[data-draggable-handle="true"]') ?? []) {
-    if (props.handle && handle.matches(props.handle)) continue
-    handle.removeAttribute('aria-pressed')
-    removeInstructionReference(handle)
-    handle.removeAttribute('data-draggable-handle')
+  for (const elementHandle of root.value?.querySelectorAll<HTMLElement>('[data-draggable-handle="true"]') ?? []) {
+    if (handle && elementHandle.matches(handle)) continue
+    elementHandle.removeAttribute('aria-pressed')
+    removeInstructionReference(elementHandle)
+    elementHandle.removeAttribute('data-draggable-handle')
   }
   for (const [index, child] of children.entries()) {
     child.draggable = true
@@ -95,18 +88,18 @@ function refreshChildren (): void {
     child.setAttribute('aria-posinset', String(index + 1))
     child.setAttribute('aria-setsize', String(itemCount))
     child.removeAttribute('aria-grabbed')
-    if (props.handle) {
-      for (const handle of child.querySelectorAll(props.handle)) {
-        if (!(handle instanceof HTMLElement)) continue
-        handle.tabIndex = 0
-        handle.setAttribute('role', 'button')
-        handle.setAttribute('aria-roledescription', 'sortable item')
-        if (!handle.hasAttribute('aria-label') && !handle.hasAttribute('aria-labelledby')) {
-          handle.setAttribute('aria-label', 'Reorder item')
+    if (handle) {
+      for (const elementHandle of child.querySelectorAll(handle)) {
+        if (!(elementHandle instanceof HTMLElement)) continue
+        elementHandle.tabIndex = 0
+        elementHandle.setAttribute('role', 'button')
+        elementHandle.setAttribute('aria-roledescription', 'sortable item')
+        if (!elementHandle.hasAttribute('aria-label') && !elementHandle.hasAttribute('aria-labelledby')) {
+          elementHandle.setAttribute('aria-label', 'Reorder item')
         }
-        handle.setAttribute('aria-pressed', String(sourceIndex === index))
-        handle.setAttribute('data-draggable-handle', 'true')
-        addInstructionReference(handle)
+        elementHandle.setAttribute('aria-pressed', String(sourceIndex === index))
+        elementHandle.setAttribute('data-draggable-handle', 'true')
+        addInstructionReference(elementHandle)
       }
     } else {
       child.tabIndex = 0
@@ -141,29 +134,29 @@ function directChildIndex (target: EventTarget | null): number {
 }
 
 function itemIndexForKeyboardTarget (target: EventTarget | null): number {
-  if (props.handle) {
+  if (handle) {
     if (!(target instanceof Element)) return -1
-    const handle = target.closest(props.handle)
-    return handle && root.value?.contains(handle) ? directChildIndex(handle) : -1
+    const elementHandle = target.closest(handle)
+    return elementHandle && root.value?.contains(elementHandle) ? directChildIndex(elementHandle) : -1
   }
   return directChildIndex(target)
 }
 
 function positionMessage (index: number): string {
-  return `Position ${index + 1} of ${props.modelValue.length}`
+  return `Position ${index + 1} of ${modelValue.value.length}`
 }
 
 function emitReorder (from: number, to: number): void {
-  if (from < 0 || to < 0 || from === to || from >= props.modelValue.length || to >= props.modelValue.length) return
-  const next = [...props.modelValue]
+  if (from < 0 || to < 0 || from === to || from >= modelValue.value.length || to >= modelValue.value.length) return
+  const next = [...modelValue.value]
   const [moved] = next.splice(from, 1)
   next.splice(to, 0, moved)
-  emit('update:modelValue', next)
+  modelValue.value = next
 }
 
 function handlePointerDown (event: PointerEvent): void {
-  const handle = props.handle && event.target instanceof Element ? event.target.closest(props.handle) : null
-  const validHandle = !props.handle || Boolean(handle && directChildIndex(handle) >= 0)
+  const handleEl = handle && event.target instanceof Element ? event.target.closest(handle) : null
+  const validHandle = !handle || Boolean(handleEl && directChildIndex(handleEl) >= 0)
   handlePressed = validHandle
   if (!validHandle || event.pointerType === 'mouse') return
   pointerId = event.pointerId
@@ -181,7 +174,7 @@ function handlePointerMove (event: PointerEvent): void {
     const moved = Math.abs(event.clientX - pointerStartX) + Math.abs(event.clientY - pointerStartY)
     if (moved < 6) return
     pointerDragging = true
-    pointerOriginal = [...props.modelValue]
+    pointerOriginal = [...modelValue.value]
     sourceIndex = pointerStartIndex
     liveMessage.value = `Picked up item, ${positionMessage(pointerStartIndex)}`
   }
@@ -214,7 +207,7 @@ function handlePointerUp (event: PointerEvent): void {
 function handlePointerCancel (event: PointerEvent): void {
   if (pointerId !== event.pointerId) return
   if (pointerDragging && pointerOriginal) {
-    emit('update:modelValue', pointerOriginal)
+    modelValue.value = pointerOriginal
     liveMessage.value = 'Cancelled reorder'
   }
   if (root.value?.hasPointerCapture?.(event.pointerId)) root.value.releasePointerCapture(event.pointerId)
@@ -233,7 +226,7 @@ function handleKeydown (event: KeyboardEvent): void {
     event.preventDefault()
     event.stopPropagation()
     keyboardIndex = index
-    keyboardOriginal = [...props.modelValue]
+    keyboardOriginal = [...modelValue.value]
     sourceIndex = index
     liveMessage.value = `Picked up item, ${positionMessage(index)}`
     scheduleRefreshChildren()
@@ -242,7 +235,7 @@ function handleKeydown (event: KeyboardEvent): void {
   if (event.key === 'Escape') {
     event.preventDefault()
     event.stopPropagation()
-    if (keyboardOriginal) emit('update:modelValue', keyboardOriginal)
+    if (keyboardOriginal) modelValue.value = keyboardOriginal
     liveMessage.value = 'Cancelled reorder'
     resetDrag()
     keyboardIndex = -1
@@ -263,7 +256,7 @@ function handleKeydown (event: KeyboardEvent): void {
   event.preventDefault()
   event.stopPropagation()
   const targetIndex = keyboardIndex + offset
-  if (targetIndex < 0 || targetIndex >= props.modelValue.length) return
+  if (targetIndex < 0 || targetIndex >= modelValue.value.length) return
   emitReorder(keyboardIndex, targetIndex)
   keyboardIndex = targetIndex
   sourceIndex = targetIndex
@@ -275,7 +268,7 @@ function handleKeydown (event: KeyboardEvent): void {
 function handleFocusOut (event: FocusEvent): void {
   if (keyboardIndex < 0) return
   if (itemIndexForKeyboardTarget(event.relatedTarget) === keyboardIndex) return
-  if (keyboardOriginal) emit('update:modelValue', keyboardOriginal)
+  if (keyboardOriginal) modelValue.value = keyboardOriginal
   liveMessage.value = 'Cancelled reorder'
   keyboardIndex = -1
   keyboardOriginal = null

@@ -6,24 +6,16 @@
         h1#welcome-title.text-headline-medium {{ $t('welcome.title') }}
         p.onboarding-subtitle.text-body-large {{ $t('welcome.subtitle') }}
         .onboarding-actions
-          v-btn(color='primary', :href='`/e/` + locale + `/home`', size="x-large")
-            v-icon(start) mdi-plus
-            span {{ $t('welcome.createhome') }}
-          v-btn(color='primary', variant='outlined', href='/a', size="x-large")
-            v-icon(start) mdi-view-dashboard
-            span {{ $t('welcome.goadmin') }}
+          v-btn(color='primary', :href='`/e/` + locale + `/home`', size="x-large", prepend-icon='mdi-plus') {{ $t('welcome.createhome') }}
+          v-btn(color='primary', variant='outlined', href='/a', size="x-large", prepend-icon='mdi-view-dashboard') {{ $t('welcome.goadmin') }}
 </template>
 
-<script lang='ts'>
-
-export default {
-  props: {
-    locale: {
-      type: String,
-      default: 'en'
-    }
-  }
-}
+<script setup lang='ts'>
+const {
+  locale = 'en'
+} = defineProps<{
+  locale?: string
+}>()
 </script>
 
 <style lang='scss'>

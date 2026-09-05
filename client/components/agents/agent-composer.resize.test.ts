@@ -147,6 +147,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     'onBeforeUnmount',
     'onMounted',
     'ref',
+    'useTemplateRef',
     'watch',
     'defineProps',
     'defineEmits',
@@ -183,6 +184,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     (callback: () => void) => unmountCallbacks.push(callback),
     (callback: () => void) => mountedCallbacks.push(callback),
     <T>(value: T): Ref<T> => ({ value }),
+    <T>(_key: string): Ref<T | null> => ({ value: null }),
     () => {},
     () => props,
     () =>

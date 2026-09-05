@@ -30,15 +30,13 @@
             )
               v-icon mdi-refresh
             v-btn(
-              type='button'
               color='success'
               variant="flat"
+              prepend-icon='mdi-check'
               :loading='saving'
               :disabled='!loaded || initialLoading || saving || !dirty'
               @click='save'
-            )
-              v-icon(start) mdi-check
-              span {{$t('common:actions.apply')}}
+            ) {{$t('common:actions.apply')}}
         v-alert(v-if='initialLoading', type='info', variant='tonal', role='status') Loading navigation settings…
         v-alert(
           v-else-if='loadError'
@@ -227,9 +225,7 @@
                               span {{navItem.label}}
                         v-menu(location="bottom", min-width='200px', style='flex: 1 1;')
                           template(v-slot:activator='{ props }')
-                            v-btn(v-bind='props', color='primary', variant="flat", block)
-                              v-icon(start) mdi-plus
-                              span {{$t('common:actions.add')}}
+                            v-btn(v-bind='props', color='primary', variant="flat", prepend-icon='mdi-plus', block) {{$t('common:actions.add')}}
                           v-list
                             v-list-item(@click='addItem("link")')
                               template(v-slot:prepend)
@@ -244,14 +240,12 @@
                                 v-avatar(size='24'): v-icon mdi-minus
                               v-list-item-title {{$t('admin:navigation.divider')}}
                   v-col(cols='12', lg='7', xl='8')
-                    v-card(flat, style='border-radius: 0 var(--wiki-control-radius) var(--wiki-control-radius) 0;')
+                    v-card(flat, style='border-start-start-radius: 0; border-end-start-radius: 0; border-start-end-radius: var(--wiki-control-radius); border-end-end-radius: var(--wiki-control-radius);')
                       template(v-if='current.kind === "link"')
                         v-toolbar(height='56', color="surface-variant", flat)
                           .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.link') })}}
                           v-spacer
-                          v-btn.px-5(color='error', variant="text", :disabled='saving', @click='deleteItem(current)')
-                            v-icon(start) mdi-delete
-                            span Remove item
+                          v-btn.px-5(color='error', variant="text", prepend-icon='mdi-delete', :disabled='saving', @click='deleteItem(current)') Remove item
                         v-card-text
                           v-text-field(
                             variant="outlined"
@@ -293,18 +287,17 @@
                             hide-details
                           )
                           .d-flex.align-center.mt-4(v-else-if='current.targetType === "page"')
-                            v-btn.ml-8(
+                            v-btn.ms-8(
                               color='primary'
+                              prepend-icon='mdi-magnify'
                               @click='selectPage'
-                              )
-                              v-icon(start) mdi-magnify
-                              span {{$t('admin:navigation.selectPageButton')}}
+                            ) {{$t('admin:navigation.selectPageButton')}}
                             .text-body-small.ml-4.text-primary {{current.target}}
                           v-text-field(
                             v-else-if='current.targetType === `search`'
                             variant="outlined"
                             :label='$t("admin:navigation.navType.searchQuery")'
-                            prepend-icon='search'
+                            prepend-icon='mdi-magnify'
                             v-model='current.target'
                           )
                         v-divider
@@ -313,9 +306,7 @@
                         v-toolbar(height='56', color="surface-variant", flat)
                           .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.header') })}}
                           v-spacer
-                          v-btn.px-5(color='error', variant="text", :disabled='saving', @click='deleteItem(current)')
-                            v-icon(start) mdi-delete
-                            span Remove item
+                          v-btn.px-5(color='error', variant="text", prepend-icon='mdi-delete', :disabled='saving', @click='deleteItem(current)') Remove item
                         v-card-text
                           v-text-field(
                             variant="outlined"
@@ -329,9 +320,7 @@
                         v-toolbar(height='56', color="surface-variant", flat)
                           .text-body-large {{$t('admin:navigation.edit', { kind: $t('admin:navigation.divider') })}}
                           v-spacer
-                          v-btn.px-5(color='error', variant="text", :disabled='saving', @click='deleteItem(current)')
-                            v-icon(start) mdi-delete
-                            span Remove item
+                          v-btn.px-5(color='error', variant="text", prepend-icon='mdi-delete', :disabled='saving', @click='deleteItem(current)') Remove item
 
                       v-card-text(v-if='current.kind')
                         .text-label-large Visibility
@@ -364,16 +353,15 @@
             color='success'
             variant='flat'
             size='large'
+            prepend-icon='mdi-check'
             :loading='saving'
             :disabled='!loaded || initialLoading || saving || !dirty'
             @click='save'
-          )
-            v-icon(start) mdi-check
-            span {{$t('common:actions.apply')}}
+          ) {{$t('common:actions.apply')}}
     v-dialog(v-model='copyFromLocaleDialogIsShown', max-width='650', persistent, aria-labelledby='copy-navigation-dialog-title')
       v-card
         .dialog-header.is-short.is-primary
-          v-icon.mr-3(color='white') mdi-arrange-send-backward
+          v-icon.me-3(color='white') mdi-arrange-send-backward
           span#copy-navigation-dialog-title {{$t('admin:navigation.copyFromLocale')}}
         v-card-text.pt-5
           .text-body-medium {{$t('admin:navigation.copyFromLocaleInfoText')}}
@@ -391,9 +379,7 @@
         v-card-chin
           v-spacer
           v-btn(variant="text", @click='copyFromLocaleDialogIsShown = false') {{$t('common:actions.cancel')}}
-          v-btn.px-3(variant="flat", color='primary', :disabled='!copySourceCount', @click='copyFromLocale')
-            v-icon(start) mdi-chevron-right
-            span {{$t('common:actions.copy')}} ({{copySourceCount}})
+          v-btn.px-3(variant="flat", color='primary', prepend-icon='mdi-chevron-right', :disabled='!copySourceCount', @click='copyFromLocale') {{$t('common:actions.copy')}} ({{copySourceCount}})
 
     page-selector(mode='select', v-model='selectPageModal', :open-handler='selectPageHandle', path='home', :locale='currentLang')
 </template>

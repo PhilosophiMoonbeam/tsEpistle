@@ -19,11 +19,11 @@ import { computed, useId } from 'vue'
 import type { SiteBannerConfig } from '../../../shared/site-banner.ts'
 import { renderSafeMarkdown } from '../../helpers/safe-markdown.ts'
 
-const props = defineProps<{ banner: SiteBannerConfig }>()
+const { banner } = defineProps<{ banner: SiteBannerConfig }>()
 const bannerTitleId = useId()
 
-const isVisible = computed(() => props.banner.isEnabled && Boolean(props.banner.title || props.banner.content))
-const renderedContent = computed(() => renderSafeMarkdown(props.banner.content)
+const isVisible = computed(() => banner.isEnabled && Boolean(banner.title || banner.content))
+const renderedContent = computed(() => renderSafeMarkdown(banner.content)
   .replace(/<h[1-6](\s[^>]*)?>/g, '<h3$1>')
   .replace(/<\/h[1-6]>/g, '</h3>'))
 </script>
@@ -33,11 +33,11 @@ const renderedContent = computed(() => renderSafeMarkdown(props.banner.content)
   gap: 1rem;
   margin-block-end: 1.25rem;
   padding: 1rem 1.25rem;
-  border: 1px solid rgba(var(--v-theme-warning), .42);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-warning)) 42%, transparent);
   border-inline-start-width: .35rem;
   border-radius: var(--wiki-control-radius);
   color: rgb(var(--v-theme-on-surface));
-  background: rgba(var(--v-theme-warning), .12);
+  background: color-mix(in srgb, rgb(var(--v-theme-warning)) 12%, transparent);
 }
 .site-banner__icon {
   flex: 0 0 auto;
@@ -76,8 +76,8 @@ const renderedContent = computed(() => renderSafeMarkdown(props.banner.content)
 }
 .site-banner__content :deep(blockquote) {
   padding-inline: .85rem;
-  border-inline-start: .2rem solid rgba(var(--v-theme-warning), .6);
-  color: rgba(var(--v-theme-on-surface), .82);
+  border-inline-start: .2rem solid color-mix(in srgb, rgb(var(--v-theme-warning)) 60%, transparent);
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 82%, transparent);
 }
 .site-banner__content :deep(a) {
   color: rgb(var(--v-theme-primary));
@@ -91,7 +91,7 @@ const renderedContent = computed(() => renderSafeMarkdown(props.banner.content)
 .site-banner__content :deep(code) {
   padding: .1em .3em;
   border-radius: .25rem;
-  background: rgba(var(--v-theme-on-surface), .1);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
   font-size: .92em;
 }
 .site-banner__content :deep(pre) {
@@ -99,7 +99,7 @@ const renderedContent = computed(() => renderSafeMarkdown(props.banner.content)
   overflow-x: auto;
   padding: .65rem .8rem;
   border-radius: var(--wiki-control-radius);
-  background: rgba(var(--v-theme-on-surface), .08);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
 }
 .site-banner__content :deep(pre code) {
   padding: 0;
@@ -114,11 +114,11 @@ const renderedContent = computed(() => renderSafeMarkdown(props.banner.content)
 .site-banner__content :deep(th),
 .site-banner__content :deep(td) {
   padding: .35rem .55rem;
-  border: 1px solid rgba(var(--v-border-color), .28);
+  border: 1px solid color-mix(in srgb, rgb(var(--v-border-color)) 28%, transparent);
   text-align: start;
 }
 .site-banner__content :deep(th) {
-  background: rgba(var(--v-theme-on-surface), .08);
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 8%, transparent);
 }
 .site-banner__content :deep(p:last-child),
 .site-banner__content :deep(ul:last-child),

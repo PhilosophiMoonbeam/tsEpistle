@@ -16,49 +16,40 @@
             size='large'
             color='primary'
             variant='flat'
-          )
-            v-icon(start) mdi-plus
-            span {{ $t('newpage.create') }}
+            prepend-icon='mdi-plus'
+          ) {{ $t('newpage.create') }}
           v-btn.newpage-action.newpage-action--back(
             color='primary'
             @click='goBack'
             variant='outlined'
             size='large'
-          )
-            v-icon(start) {{ $vuetify.locale.isRtl ? 'mdi-arrow-right' : 'mdi-arrow-left' }}
-            span {{ $t('newpage.goback') }}
+            :prepend-icon='$vuetify.locale.isRtl ? "mdi-arrow-right" : "mdi-arrow-left"'
+          ) {{ $t('newpage.goback') }}
 </template>
 
-<script lang='ts'>
+<script setup lang='ts'>
+const {
+  locale = 'en',
+  path = 'home'
+} = defineProps<{
+  locale?: string
+  path?: string
+}>()
 
-export default {
-  props: {
-    locale: {
-      type: String,
-      default: 'en'
-    },
-    path: {
-      type: String,
-      default: 'home'
-    }
-  },
-  methods: {
-    goBack (): void {
-      let hasSameOriginHistory = false
-      if (window.history.length > 1 && document.referrer) {
-        try {
-          hasSameOriginHistory = new URL(document.referrer, window.location.href).origin === window.location.origin
-        } catch {
-          hasSameOriginHistory = false
-        }
-      }
-      if (hasSameOriginHistory) {
-        window.history.back()
-        return
-      }
-      window.location.assign(`/${encodeURIComponent(this.locale)}`)
+const goBack = (): void => {
+  let hasSameOriginHistory = false
+  if (window.history.length > 1 && document.referrer) {
+    try {
+      hasSameOriginHistory = new URL(document.referrer, window.location.href).origin === window.location.origin
+    } catch {
+      hasSameOriginHistory = false
     }
   }
+  if (hasSameOriginHistory) {
+    window.history.back()
+    return
+  }
+  window.location.assign(`/${encodeURIComponent(locale)}`)
 }
 </script>
 

@@ -6,17 +6,18 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
-const props = withDefaults(defineProps<{
+const {
+  value,
+  duration = 600,
+  formatValue = (v: number) => v
+} = defineProps<{
   value: number
   duration?: number
   formatValue?: (value: number) => string | number
-}>(), {
-  duration: 600,
-  formatValue: (value: number) => value
-})
+}>()
 
-const displayValue = ref<string | number>(props.formatValue(0))
-const announcementValue = ref<string | number>(props.formatValue(props.value))
+const displayValue = ref<string | number>(formatValue(0))
+const announcementValue = ref<string | number>(formatValue(value))
 let frame: number | null = null
 let renderedValue = 0
 const mediaQuery = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -34,16 +35,16 @@ function cancelFrame (): void {
 
 function commitTarget (target: number): void {
   renderedValue = target
-  displayValue.value = props.formatValue(target)
+  displayValue.value = formatValue(target)
 }
 
 function animateTo (target: number): void {
   cancelFrame()
-  announcementValue.value = props.formatValue(target)
-  const duration = Number.isFinite(props.duration) ? Math.max(0, props.duration) : 0
+  announcementValue.value = formatValue(target)
+  const animDuration = Number.isFinite(duration) ? Math.max(0, duration) : 0
   if (
     reducedMotionEnabled() ||
-    duration === 0 ||
+    animDuration === 0 ||
     target === renderedValue ||
     !Number.isFinite(target) ||
     !Number.isFinite(renderedValue)
@@ -61,10 +62,10 @@ function animateTo (target: number): void {
   const from = renderedValue
   const startedAt = performance.now()
   const render = (now: number): void => {
-    const progress = Math.min(1, (now - startedAt) / duration)
+    const progress = Math.min(1, (now - startedAt) / animDuration)
     const eased = 1 - Math.pow(1 - progress, 5)
     renderedValue = from + (target - from) * eased
-    displayValue.value = props.formatValue(renderedValue)
+    displayValue.value = formatValue(renderedValue)
     if (progress < 1) {
       frame = requestAnimationFrame(render)
     } else {
@@ -75,23 +76,23 @@ function animateTo (target: number): void {
   frame = requestAnimationFrame(render)
 }
 
-watch(() => props.value, animateTo, { immediate: true })
+watch(() => value, animateTo, { immediate: true })
 
-watch(() => props.formatValue, formatValue => {
-  displayValue.value = formatValue(renderedValue)
-  announcementValue.value = formatValue(props.value)
+watch(() => formatValue, currentFormat => {
+  displayValue.value = currentFormat(renderedValue)
+  announcementValue.value = currentFormat(value)
 })
 
 function handleMotionPreferenceChange (event: MediaQueryListEvent): void {
   if (event.matches) {
     cancelFrame()
-    commitTarget(props.value)
+    commitTarget(value)
   }
 }
 
 onMounted(() => {
   mediaQuery?.addEventListener?.('change', handleMotionPreferenceChange)
-  if (mediaQuery?.matches) commitTarget(props.value)
+  if (mediaQuery?.matches) commitTarget(value)
 })
 
 onBeforeUnmount(() => {

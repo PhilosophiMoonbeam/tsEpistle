@@ -8,14 +8,15 @@ import type { AgentCitation } from '../../../shared/agents/contracts.ts'
 import { renderSafeMarkdown } from '../../helpers/safe-markdown.ts'
 import { formatAgentCitationMarkers } from './agent-citations.ts'
 
-const props = withDefaults(defineProps<{
+const {
+  content,
+  citations = [],
+  streaming = false
+} = defineProps<{
   content: string
   citations?: readonly AgentCitation[]
   streaming?: boolean
-}>(), {
-  citations: () => [],
-  streaming: false
-})
+}>()
 
 interface CopyReset {
   readonly timer: number
@@ -58,7 +59,7 @@ const showCopyResult = (button: HTMLButtonElement, label: string, state: 'succes
 }
 
 const renderMarkdown = (): string => renderSafeMarkdown(
-  formatAgentCitationMarkers(props.content, props.citations, props.streaming)
+  formatAgentCitationMarkers(content, citations, streaming)
 )
   .replace(
     /<pre(?=>|\s)/g,
@@ -81,7 +82,7 @@ const renderMarkdown = (): string => renderSafeMarkdown(
     }
   )
 const citationSemanticSignature = computed(() => JSON.stringify(
-  props.citations.map(citation => [
+  citations.map(citation => [
     citation.evidenceId,
     citation.kind,
     citation.label,
@@ -152,22 +153,22 @@ const restoreRenderedDomState = (state: RenderedDomState | null): void => {
 }
 
 const rendered = ref(renderMarkdown())
-let renderedContent = props.content
+let renderedContent = content
 let renderedCitationSignature = citationSemanticSignature.value
-let renderedStreaming = props.streaming
+let renderedStreaming = streaming
 let scheduledFrame: number | null = null
 let renderVersion = 0
 const commitRender = (): void => {
   scheduledFrame = null
   if (
-    props.content === renderedContent &&
-    props.streaming === renderedStreaming &&
+    content === renderedContent &&
+    streaming === renderedStreaming &&
     citationSemanticSignature.value === renderedCitationSignature
   ) return
   const nextRendered = renderMarkdown()
-  renderedContent = props.content
+  renderedContent = content
   renderedCitationSignature = citationSemanticSignature.value
-  renderedStreaming = props.streaming
+  renderedStreaming = streaming
   if (nextRendered === rendered.value) return
   const domState = captureRenderedDomState()
   const version = ++renderVersion
@@ -185,9 +186,9 @@ const scheduleRender = (): void => {
   scheduledFrame = window.requestAnimationFrame(commitRender)
 }
 watch(
-  [() => props.content, citationSemanticSignature, () => props.streaming],
+  [() => content, citationSemanticSignature, () => streaming],
   () => {
-    if (props.streaming) {
+    if (streaming) {
       scheduleRender()
       return
     }

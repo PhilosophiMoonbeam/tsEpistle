@@ -78,7 +78,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, useTemplateRef } from 'vue'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 
@@ -94,7 +94,7 @@ const emit = defineEmits<{
   remove: [restoreTarget: HTMLElement | null]
 }>()
 type ComponentRoot = { $el?: HTMLElement }
-const trigger = ref<ComponentRoot | HTMLElement | null>(null)
+const trigger = useTemplateRef<ComponentRoot | HTMLElement>('trigger')
 const triggerElement = (): HTMLElement | null => {
   const value = trigger.value
   if (!value) return null

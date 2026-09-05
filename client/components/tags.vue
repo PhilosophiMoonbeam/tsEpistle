@@ -157,10 +157,9 @@
             v-if='$vuetify.display.smAndDown'
             color='primary'
             variant='tonal'
+            prepend-icon='mdi-tag-multiple-outline'
             @click='tagDrawerShown = true'
-          )
-            v-icon(start) mdi-tag-multiple-outline
-            span {{$t('common:header.browseTags')}}
+          ) {{$t('common:header.browseTags')}}
 
         section.tags-results(v-else aria-live='polite')
           v-data-iterator(
@@ -195,16 +194,12 @@
                 v-icon(size='48' color='primary') mdi-text-search
                 h2 {{$t('tags:noResultsWithFilter')}}
                 p Try a different search or clear the filter.
-                v-btn(color='primary' variant='tonal' @click='innerSearch = ""')
-                  v-icon(start) mdi-close
-                  span Clear search
+                v-btn(color='primary' variant='tonal' prepend-icon='mdi-close' @click='innerSearch = ""') Clear search
               .tags-state(v-else)
                 v-icon(size='48' color='primary') mdi-file-search-outline
                 h2 {{$t('tags:noResults')}}
                 p Adjust your selected tags to find pages.
-                v-btn(color='primary' variant='tonal' @click='clearSelection')
-                  v-icon(start) mdi-filter-remove-outline
-                  span {{$t('tags:clearSelection')}}
+                v-btn(color='primary' variant='tonal' prepend-icon='mdi-filter-remove-outline' @click='clearSelection') {{$t('tags:clearSelection')}}
             template(v-slot:default='props')
               .tags-result-grid
                 article(v-for='entry of props.items' :key='`page-` + entry.raw.id')

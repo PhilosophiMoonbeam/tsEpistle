@@ -60,7 +60,7 @@ const makeFolder = (id = '10000000-0000-4000-8000-000000000001', name = 'Roadmap
 })
 
 const loadActions = (session: AgentSessionSummary, folders: AgentConversationFolderView[]): ActionsHarness => {
-  const evaluate = new Function('computed', 'ref', 'defineProps', 'defineEmits', `${executableActionsScript}\nreturn { availableFolders, canMove }`) as (
+  const evaluate = new Function('computed', 'ref', 'useTemplateRef', 'defineProps', 'defineEmits', `${executableActionsScript}\nreturn { availableFolders, canMove }`) as (
     ...dependencies: unknown[]
   ) => ActionsHarness
   return evaluate(
@@ -70,6 +70,7 @@ const loadActions = (session: AgentSessionSummary, folders: AgentConversationFol
       }
     }),
     <T>(value: T): Ref<T> => ({ value }),
+    <T>(_key: string): Ref<T | null> => ({ value: null }),
     () => ({ session, folders, busy: false }),
     () => () => undefined
   )

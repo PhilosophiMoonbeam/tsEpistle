@@ -29,9 +29,8 @@
             :loading='saveLoading'
             :disabled='!profileReady'
             size="large"
-          )
-            v-icon(start) mdi-check
-            span {{$t('common:actions.save')}}
+            prepend-icon='mdi-check'
+          ) {{$t('common:actions.save')}}
           //- v-btn.animated.fadeInDown.mr-0(variant='outlined', color='primary', disabled)
           //-   v-icon(start) mdi-earth
           //-   span {{$t('profile:viewPublicProfile')}}

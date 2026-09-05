@@ -183,7 +183,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onWatcherCleanup, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
 import { clearAgentMemories, createAgentMemory, getAgentMemories, removeAgentMemory, updateAgentMemory, type AgentMemoryEntry, type AgentMemoryTarget, type AgentMemoryView } from '../../helpers/agents-api.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
@@ -432,9 +432,9 @@ const clear = async (): Promise<void> => {
   saving.value = false; actionBusy.value = ''
 }
 
-watch([open, removing, clearing], async ([managerOpen, entry, clearOpen], _previous, onCleanup) => {
+watch([open, removing, clearing], async ([managerOpen, entry, clearOpen]) => {
   let cancelled = false
-  onCleanup(() => { cancelled = true })
+  onWatcherCleanup(() => { cancelled = true })
   if (!managerOpen) {
     destructiveFocusScope?.deactivate({ restoreFocus: false })
     destructiveFocusScope = null

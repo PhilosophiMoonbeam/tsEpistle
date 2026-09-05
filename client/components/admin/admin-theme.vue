@@ -219,11 +219,11 @@ v-container.admin-theme(fluid)
       color='success'
       variant='flat'
       size='large'
+      prepend-icon='mdi-check'
       :loading='saving'
       :disabled='!loaded || initialLoading || saving || !dirty || !configValid'
     )
-      v-icon(start) mdi-check
-      span {{ $t('common:actions.apply') }}
+      | {{ $t('common:actions.apply') }}
   v-dialog(v-model='deletePaletteDialog', max-width='520', aria-labelledby='delete-palette-title')
     v-card
       v-card-title#delete-palette-title Delete color theme?
@@ -236,7 +236,7 @@ v-container.admin-theme(fluid)
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useTheme } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
 import ThemeColorField from './theme-color-field.vue'
@@ -279,7 +279,7 @@ const createConfig = (): ThemeConfig => {
 
 const theme = useTheme()
 const config = reactive<ThemeConfig>(createConfig())
-const persistedConfig = ref<ThemeConfig>(createConfig())
+const persistedConfig = shallowRef<ThemeConfig>(createConfig())
 const previewMode = ref<PaletteMode>(theme.current.value?.dark ? 'dark' : 'light')
 watch(() => theme.current.value.dark, isDark => {
   previewMode.value = isDark ? 'dark' : 'light'

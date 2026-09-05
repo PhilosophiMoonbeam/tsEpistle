@@ -1,8 +1,8 @@
 <template lang='pug'>
 section.appearance-selector(:aria-busy='saving ? `true` : `false`')
   .appearance-selector__heading
-    .text-label-large {{ props.label }}
-    .text-body-small.text-medium-emphasis(:id='descriptionId') {{ props.description }}
+    .text-label-large {{ label }}
+    .text-body-small.text-medium-emphasis(:id='descriptionId') {{ description }}
   v-btn-toggle(
     :model-value='selectedAppearance'
     class='appearance-selector__options'
@@ -12,7 +12,7 @@ section.appearance-selector(:aria-busy='saving ? `true` : `false`')
     density='compact'
     variant='outlined'
     :disabled='saving'
-    :aria-label='props.label'
+    :aria-label='label'
     :aria-describedby='descriptionId'
     @update:model-value='selectAppearance'
   )
@@ -57,13 +57,13 @@ type AppearanceOption = {
   icon: string
 }
 
-const props = withDefaults(defineProps<{
+const {
+  label = 'Appearance',
+  description = 'System follows your device until Light or Dark is chosen.'
+} = defineProps<{
   label?: string
   description?: string
-}>(), {
-  label: 'Appearance',
-  description: 'System follows your device until Light or Dark is chosen.'
-})
+}>()
 
 const theme = useTheme()
 const selectedAppearance = computed<Appearance>(() => normalizeAppearance(wikiStore.user.appearance))
