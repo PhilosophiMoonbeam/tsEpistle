@@ -10,7 +10,7 @@ The September 2026 review focused on the shared reading shell, site navigation, 
 - The current reading section is marked with `aria-current="location"`. Geometry is cached on layout changes, and scrolling uses a binary search scheduled once per animation frame. Observers and listeners are disposed when the page is refreshed or unmounted.
 - Tablet contents and page tools appear before the article in a compact row. Both tablet and phone contents start collapsed. The configured left/right/off outline placement remains supported.
 - Section jumps take 250 ms and account for the fixed app bar. Reduced-motion preferences are respected. A skip link transfers keyboard focus to the article.
-- Mixed navigation opens the page browser when no custom navigation exists. Static navigation remains administrator-controlled; saved browse preferences remain supported.
+- Custom (mixed) navigation keeps Main Menu and Browse visible as two selectable views, even when the custom menu is empty or filtered by permissions. The saved view is respected; without a preference it starts with Main Menu. An empty menu explains how to browse available pages. Static and site-tree navigation remain administrator-controlled.
 - Ctrl/Command+K opens and focuses search, including on phones. The desktop field shows the platform shortcut. Authorized users get a direct Wiki Agent button on larger screens, with the existing Search/Ask controls available at smaller widths.
 
 ## Verification

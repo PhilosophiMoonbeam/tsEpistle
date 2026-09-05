@@ -113,21 +113,17 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
     expect(script).toContain("return this.items.filter(item => item.k !== 'link' || item.y !== 'home')")
   })
 
-  test('keeps MIXED mode switching and TREE browsing structurally intact', () => {
-    expect(source).toMatch(/v-btn\.nav-sidebar-mode[\s\S]*?v-if='navMode === `MIXED` && currentMode === `custom`'[\s\S]*?common:sidebar\.browse/)
-    expect(source).toMatch(/v-btn\.nav-sidebar-mode[\s\S]*?v-else-if='navMode === `MIXED` && currentMode === `browse` && customItems.length > 0'[\s\S]*?common:sidebar\.mainMenu/)
+  test('keeps both MIXED view controls available and exposes the selected state', () => {
+    expect(source).toContain(".nav-sidebar-modes(v-if='navMode === `MIXED`', role='group'")
+    expect(source.match(/v-btn\.nav-sidebar-mode\(/g)).toHaveLength(2)
+    expect(source).toContain(":aria-pressed='currentMode === `custom`'")
+    expect(source).toContain(":aria-pressed='currentMode === `browse`'")
+    expect(source).toContain("@click='switchMode(`custom`)'")
+    expect(source).toContain("@click='switchMode(`browse`)'")
+    const controls = source.slice(source.indexOf('.nav-sidebar-modes('), source.indexOf('v-divider.nav-sidebar-edge'))
+    expect(controls).not.toContain('customItems')
+    expect(source).toContain('common:sidebar.emptyNavigationHint')
     expect(source).toMatch(/v-if='currentMode === `custom`'/)
     expect(source).toMatch(/v-else-if='currentMode === `browse`'/)
-    expect(script).toMatch(/if \(this\.navMode === 'TREE'\) \{\s*this\.currentMode = 'browse'/)
-    expect(script).toMatch(/else if \(this\.navMode === 'STATIC'\) \{\s*this\.currentMode = 'custom'/)
-  })
-
-  test('uses browse for an empty menu and otherwise respects the saved navigation mode', () => {
-    const mounted = script.match(/mounted\s*\(\s*\) \{[\s\S]*?\n {2}\}\n\}\)/)?.[0]
-    expect(mounted).toBeDefined()
-    expect(mounted).toMatch(/const \w+ = window\.localStorage\.getItem\('navPref'\)/)
-    expect(mounted).toContain("this.customItems.length === 0 || storedPreference === 'browse' ? 'browse' : 'custom'")
-    expect(mounted).toMatch(/(?:=== ['"]browse['"]|includes\(['"]browse['"]\))/)
-    expect(mounted).toMatch(/:\s*['"]custom['"]/)
   })
 })

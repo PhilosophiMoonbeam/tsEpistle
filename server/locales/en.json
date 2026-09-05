@@ -233,6 +233,8 @@
       "root": "(root)",
       "browse": "Browse",
       "mainMenu": "Main Menu",
+      "navigationMode": "Navigation view",
+      "emptyNavigationHint": "Switch to Browse to explore available pages.",
       "currentDirectory": "Current Directory",
       "openNavigation": "Open navigation",
       "closeNavigation": "Close navigation",
@@ -987,7 +989,7 @@
       "emptyList": "Navigation is empty",
       "modeCustom": {
         "title": "Custom Navigation",
-        "description": "Static Navigation Menu + Site Tree Button"
+        "description": "Custom menu and page browser, with a switch between both views"
       },
       "modeStatic": {
         "title": "Static Navigation",

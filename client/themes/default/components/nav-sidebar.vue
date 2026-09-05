@@ -13,22 +13,22 @@
         )
         v-icon(:start='navMode === `STATIC`', size='20') mdi-home
         span.nav-sidebar-home-label.text-body-medium.text-none(v-if='navMode === `STATIC`') {{$t('common:header.home')}}
-      v-btn.nav-sidebar-mode.ms-3(
-        v-if='navMode === `MIXED` && currentMode === `custom`'
-        variant="tonal"
-        prepend-icon='mdi-file-tree'
-        @click='switchMode(`browse`)'
-        )
-        .text-body-medium.text-none {{$t('common:sidebar.browse')}}
-      v-btn.nav-sidebar-mode.ms-3(
-        v-else-if='navMode === `MIXED` && currentMode === `browse` && customItems.length > 0'
-        variant="tonal"
-        color='primary'
-        prepend-icon='mdi-navigation'
-        @click='switchMode(`custom`)'
-        )
-        .text-body-medium.text-none {{$t('common:sidebar.mainMenu')}}
-    .nav-sidebar-directory-heading(v-if='currentMode === `browse`')
+      .nav-sidebar-modes(v-if='navMode === `MIXED`', role='group', :aria-label='$t(`common:sidebar.navigationMode`)')
+        v-btn.nav-sidebar-mode(
+          :variant='currentMode === `custom` ? `tonal` : `text`'
+          :color='currentMode === `custom` ? `primary` : undefined'
+          :aria-pressed='currentMode === `custom`'
+          @click='switchMode(`custom`)'
+          )
+          span {{$t('common:sidebar.mainMenu')}}
+        v-btn.nav-sidebar-mode(
+          :variant='currentMode === `browse` ? `tonal` : `text`'
+          :color='currentMode === `browse` ? `primary` : undefined'
+          :aria-pressed='currentMode === `browse`'
+          @click='switchMode(`browse`)'
+          )
+          span {{$t('common:sidebar.browse')}}
+    .nav-sidebar-directory-heading(v-if='navMode === `TREE`')
       span {{$t('common:sidebar.browse')}}
       v-icon(icon='mdi-file-tree-outline', size='16', aria-hidden='true')
     v-divider.nav-sidebar-edge
@@ -38,6 +38,7 @@
         v-if='customItems.length === 0'
         state='empty'
         :title='$t(`common:sidebar.noNavigationItems`)'
+        :message='navMode === `MIXED` ? $t(`common:sidebar.emptyNavigationHint`) : undefined'
       )
       template(v-else)
         template(v-for='(item, idx) of customItems', :key='item.k === `link` ? `link-${item.t}-${item.l}` : item.k === `header` ? `header-${item.l}-${idx}` : `divider-${idx}`')
@@ -251,7 +252,11 @@ export default defineComponent({
     },
     switchMode (mode: NavigationMode) {
       this.currentMode = mode
-      window.localStorage.setItem('navPref', mode)
+      try {
+        window.localStorage.setItem('navPref', mode)
+      } catch {
+        // Navigation remains usable when browser storage is unavailable.
+      }
       if (mode === 'browse' && this.loadedCache.length < 1) {
         if (this.expandParentByDefault) this.loadFromCurrentPath()
         else this.fetchBrowseItems()
@@ -382,8 +387,12 @@ export default defineComponent({
     } else if (this.navMode === 'STATIC') {
       this.currentMode = 'custom'
     } else {
-      const storedPreference = window.localStorage.getItem('navPref')
-      this.currentMode = this.customItems.length === 0 || storedPreference === 'browse' ? 'browse' : 'custom'
+      try {
+        const storedPreference = window.localStorage.getItem('navPref')
+        this.currentMode = storedPreference === 'browse' ? 'browse' : 'custom'
+      } catch {
+        this.currentMode = 'custom'
+      }
     }
     if (this.currentMode === 'browse') {
       if (this.expandParentByDefault) this.loadFromCurrentPath()
@@ -681,9 +690,32 @@ export default defineComponent({
     }
   }
 
-  .nav-sidebar-mode {
-    flex: 1 1 100%;
+  .nav-sidebar-modes {
+    display: flex;
+    flex: 1 1 auto;
     min-width: 0;
+    gap: var(--wiki-space-1);
+    margin-inline-start: var(--wiki-space-2);
+  }
+
+  .nav-sidebar-mode {
+    flex: 1 1 0;
+    min-width: 0;
+    height: auto;
+    padding: var(--wiki-space-2);
+    border-color: transparent;
+    font-size: .75rem;
+    box-shadow: none;
+
+    .v-btn__content {
+      white-space: normal;
+      line-height: 1.3;
+    }
+
+    &[aria-pressed='true'] {
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 28%, transparent);
+      box-shadow: var(--wiki-shadow-xs);
+    }
   }
 }
 
@@ -723,10 +755,6 @@ export default defineComponent({
 
   .nav-sidebar-switcher {
     padding: var(--wiki-space-2);
-
-    .nav-sidebar-mode {
-      margin-inline-start: var(--wiki-space-2) !important;
-    }
   }
 }
 
@@ -750,6 +778,11 @@ export default defineComponent({
 
   .nav-sidebar .v-list-item::before {
     background: Highlight;
+  }
+
+  .nav-sidebar-mode[aria-pressed='true'] {
+    outline: 2px solid Highlight;
+    outline-offset: -4px;
   }
 }
 
