@@ -67,9 +67,10 @@ import {
   LOGO_POINTER_EXPLOSION_REFILL_SECONDS,
   LOGO_POINTER_IMPULSE_CAPACITY,
   LOGO_POINTER_IMPULSE_LIFETIME_SECONDS,
+  LOGO_POINTER_NEIGHBOR_FORCE_RATIO,
+  LOGO_POINTER_MAX_RADIUS_CSS,
   LOGO_POINTER_MAX_SEGMENT_CSS,
   LOGO_POINTER_MAX_TRAVEL_CSS,
-  LOGO_POINTER_NEIGHBOR_FORCE_RATIO,
   useLogoPointer
 } from './useLogoPointer'
 import type { LogoPointerController } from './useLogoPointer'
@@ -80,7 +81,6 @@ const DEPTH_SCALE_MAX = 1.18
 const MIN_IDLE_AMPLITUDE_CSS = 3.5
 const MAX_IDLE_AMPLITUDE_CSS = 10
 const MIN_IMPULSE_RADIUS_CSS = 18
-const MAX_IMPULSE_RADIUS_CSS = 32
 const MAX_DIAGNOSTIC_ELAPSED_SECONDS = Number.MAX_SAFE_INTEGER
 const MAX_DIAGNOSTIC_PARTICLES = 16_000
 
@@ -660,13 +660,13 @@ export const updateParticleSceneFrame = (
       active ? clamp(-1, finiteOr(impulse.x, 0), 1) : 0,
       active ? clamp(-1, finiteOr(impulse.y, 0), 1) : 0,
       ageSeconds,
-      active ? 1 : 0
+      active ? clamp(0.9, finiteOr(impulse.strength, 1), 3.2) : 0
     )
     resources.uniforms.uImpulseDirectionTravel.value[index].set(
       directionScale === 0 ? 1 : impulse.directionX * directionScale,
       directionScale === 0 ? 0 : impulse.directionY * directionScale,
       active ? clamp(0, finiteOr(impulse.travelCss, 0), LOGO_POINTER_MAX_SEGMENT_CSS) : 0,
-      clamp(MIN_IMPULSE_RADIUS_CSS, finiteOr(impulse.radiusCss, MIN_IMPULSE_RADIUS_CSS), MAX_IMPULSE_RADIUS_CSS)
+      clamp(MIN_IMPULSE_RADIUS_CSS, finiteOr(impulse.radiusCss, MIN_IMPULSE_RADIUS_CSS), LOGO_POINTER_MAX_RADIUS_CSS)
     )
     if (active) activeImpulseCount += 1
   }

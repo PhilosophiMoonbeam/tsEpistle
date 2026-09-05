@@ -66,32 +66,40 @@ void main() {
   for (int impulseIndex = 0; impulseIndex < 6; impulseIndex++) {
     vec4 positionAge = uImpulsePositionAge[impulseIndex];
     vec4 directionTravel = uImpulseDirectionTravel[impulseIndex];
-    if (positionAge.w < 0.5 || directionTravel.z <= 0.0) continue;
+    if (positionAge.w <= 0.0 || directionTravel.z <= 0.0) continue;
 
+    float strength = clamp(positionAge.w, 0.9, 3.2);
     float ageSeconds = clamp(positionAge.z, 0.0, 1.4);
     vec2 localCss = (basePosition - positionAge.xy) * 0.5 * safeViewport;
     float distanceCss = length(localCss);
-    float radiusCss = clamp(directionTravel.w, 18.0, 32.0);
-    float primaryFalloff = 1.0 - smoothstep(0.2 * radiusCss, radiusCss, distanceCss);
-    float annulusFalloff = smoothstep(0.55 * radiusCss, radiusCss, distanceCss)
-      * (1.0 - smoothstep(radiusCss, 2.15 * radiusCss, distanceCss));
-    float outwardDelay = smoothstep(0.08, 0.24, ageSeconds);
-    float outwardFade = 1.0 - smoothstep(0.72, 1.10, ageSeconds);
-    float bounceDelay = smoothstep(0.72, 0.96, ageSeconds);
-    float bounceFade = 1.0 - smoothstep(1.12, 1.4, ageSeconds);
-    float spring = exp(-2.25 * ageSeconds) * sin(7.2 * ageSeconds);
+    float radiusCss = clamp(directionTravel.w, 18.0, 72.0);
+    float primaryFalloff = 1.0 - smoothstep(0.16 * radiusCss, radiusCss, distanceCss);
+    float annulusFalloff = smoothstep(0.42 * radiusCss, radiusCss, distanceCss)
+      * (1.0 - smoothstep(radiusCss, 2.35 * radiusCss, distanceCss));
+    float attack = smoothstep(0.0, 0.035, ageSeconds);
+    float kickFade = 1.0 - smoothstep(0.38, 0.92, ageSeconds);
+    float settle = smoothstep(0.48, 0.84, ageSeconds)
+      * (1.0 - smoothstep(0.92, 1.26, ageSeconds));
     vec2 inputDirection = directionTravel.xy / max(length(directionTravel.xy), 0.000001);
     vec2 outwardDirection = distanceCss > 0.000001
       ? localCss / distanceCss
       : vec2(cos(6.28318530718 * logoSeed), sin(6.28318530718 * logoSeed));
-    cursorCss += directionTravel.z * (
-      inputDirection * primaryFalloff * spring
-      + outwardDirection * 0.32 * annulusFalloff * outwardDelay * outwardFade
-      - outwardDirection * 0.22 * annulusFalloff * bounceDelay * bounceFade
+    vec2 tangentDirection = vec2(-outwardDirection.y, outwardDirection.x);
+    float turbulence = sin(6.28318530718 * logoSeed + 5.4 * ageSeconds);
+    vec2 disruptiveKick =
+      inputDirection * (0.72 * primaryFalloff + 0.20 * annulusFalloff)
+      + outwardDirection * (0.90 * primaryFalloff + 0.72 * annulusFalloff)
+      + tangentDirection * (0.22 + 0.18 * turbulence) * annulusFalloff;
+    vec2 restorativePull =
+      inputDirection * 0.48 * primaryFalloff
+      + outwardDirection * (0.72 * primaryFalloff + 0.56 * annulusFalloff);
+    cursorCss += strength * directionTravel.z * (
+      disruptiveKick * attack * kickFade
+      - restorativePull * settle
     );
   }
   float cursorMagnitude = length(cursorCss);
-  cursorCss *= cursorMagnitude > 14.0 ? 14.0 / cursorMagnitude : 1.0;
+  cursorCss *= cursorMagnitude > 42.0 ? 42.0 / cursorMagnitude : 1.0;
 
   vec2 explosionCss = vec2(0.0);
   float explosionLifecycle = 1.0;

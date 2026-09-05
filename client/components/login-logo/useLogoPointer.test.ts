@@ -93,10 +93,10 @@ describe('logo pointer impulse motion', () => {
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 155, clientY: 96 }))
     expect(ring[0]).toMatchObject({
       active: true,
-      ageSeconds: 0,
-      radiusCss: 20
+      ageSeconds: 0
     })
-    expect(ring[0].travelCss).toBeCloseTo(Math.hypot(5, 4) * 0.5, 12)
+    expect(ring[0].radiusCss).toBeGreaterThan(20)
+    expect(ring[0].travelCss).toBeGreaterThan(0)
     expect(ring[0].directionX).toBeCloseTo(5 / Math.hypot(5, 4), 12)
     expect(ring[0].directionY).toBeCloseTo(4 / Math.hypot(5, 4), 12)
     expect(ring[0].x).toBeCloseTo(-0.45, 12)
@@ -104,10 +104,10 @@ describe('logo pointer impulse motion', () => {
 
     time = 25
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 165, clientY: 96 }))
-    expect(ring[1].travelCss).toBe(LOGO_POINTER_MAX_SEGMENT_CSS)
+    expect(ring[1].travelCss).toBeGreaterThan(0)
     time = 30
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 275, clientY: 96, pointerType: 'pen' }))
-    expect(controller.state.activeImpulseCount).toBe(3)
+    expect(controller.state.activeImpulseCount).toBe(6)
     expect(ring[2].travelCss).toBe(LOGO_POINTER_MAX_SEGMENT_CSS)
     expect(controller.update(400, time)).toBe(state)
     expect(controller.state.impulses).toBe(ring)
@@ -116,8 +116,8 @@ describe('logo pointer impulse motion', () => {
     })
     controller.dispose()
   })
-  it('scales effective travel by speed for equal distance while preserving the twenty-pixel event cap', () => {
-    const measure = (elapsedMilliseconds: number): number => {
+  it('scales displacement strength and influence radius by speed while preserving the twenty-pixel segment cap', () => {
+    const measure = (elapsedMilliseconds: number): { radiusCss: number; strength: number; travelCss: number } => {
       let time = 0
       const target = targetWithBounds()
       const controller = new LogoPointerController({ hasFinePointer: () => true, now: () => time })
@@ -127,16 +127,65 @@ describe('logo pointer impulse motion', () => {
       target.dispatchEvent(pointerEvent('pointermove', { clientX: 150, clientY: 100 }))
       time = elapsedMilliseconds
       target.dispatchEvent(pointerEvent('pointermove', { clientX: 160, clientY: 100 }))
-      const travel = controller.state.impulses[0].travelCss
+      const { radiusCss, strength, travelCss } = controller.state.impulses[0]
       controller.dispose()
-      return travel
+      return { radiusCss, strength, travelCss }
     }
 
     const slow = measure(100)
     const fast = measure(10)
-    expect(slow).toBeGreaterThan(0)
-    expect(fast).toBeGreaterThan(slow)
-    expect(fast).toBeLessThanOrEqual(20)
+    expect(slow.travelCss).toBeGreaterThan(0)
+    expect(fast.travelCss).toBeLessThanOrEqual(LOGO_POINTER_MAX_SEGMENT_CSS)
+    expect(fast.strength).toBeGreaterThan(slow.strength)
+    expect(fast.radiusCss).toBeGreaterThan(slow.radiusCss)
+  })
+
+  it('fills a fast sampled jump with contiguous velocity-weighted impulses', () => {
+    let time = 0
+    const target = targetWithBounds()
+    const controller = new LogoPointerController({ hasFinePointer: () => true, now: () => time })
+    controller.setTarget(target)
+    controller.setCoordinateTarget(target)
+    controller.setActive(true)
+
+    target.dispatchEvent(pointerEvent('pointermove', { clientX: 120, clientY: 100 }))
+    time = 10
+    target.dispatchEvent(pointerEvent('pointermove', { clientX: 240, clientY: 100 }))
+
+    expect(controller.state.activeImpulseCount).toBe(LOGO_POINTER_IMPULSE_CAPACITY)
+    controller.state.impulses.forEach((impulse, index) => {
+      expect(impulse.x).toBeCloseTo(-0.6 + 0.2 * index, 12)
+    })
+    expect(controller.state.impulses.every(impulse => impulse.travelCss === LOGO_POINTER_MAX_SEGMENT_CSS)).toBe(true)
+    expect(controller.state.impulses.every(impulse => impulse.strength === 3.2 && impulse.radiusCss > 60)).toBe(true)
+    controller.dispose()
+  })
+
+  it('uses coalesced samples to retain curved pointer motion', () => {
+    let time = 0
+    const target = targetWithBounds()
+    const controller = new LogoPointerController({ hasFinePointer: () => true, now: () => time })
+    controller.setTarget(target)
+    controller.setCoordinateTarget(target)
+    controller.setActive(true)
+    target.dispatchEvent(pointerEvent('pointermove', { clientX: 120, clientY: 100 }))
+
+    time = 30
+    const finalMove = pointerEvent('pointermove', { clientX: 180, clientY: 100 }) as PointerEvent
+    Object.defineProperty(finalMove, 'getCoalescedEvents', {
+      value: () => [
+        pointerEvent('pointermove', { clientX: 140, clientY: 70 }) as PointerEvent,
+        pointerEvent('pointermove', { clientX: 160, clientY: 130 }) as PointerEvent
+      ]
+    })
+    target.dispatchEvent(finalMove)
+
+    expect(controller.state.activeImpulseCount).toBe(LOGO_POINTER_IMPULSE_CAPACITY)
+    const hasImpulseAt = (x: number, y: number): boolean =>
+      controller.state.impulses.some(impulse => Math.abs(impulse.x - x) < 0.000001 && Math.abs(impulse.y - y) < 0.000001)
+    expect(hasImpulseAt(-0.55, 0.3)).toBe(true)
+    expect(hasImpulseAt(-0.4, -0.6)).toBe(true)
+    controller.dispose()
   })
 
   it('keeps explosion slots bounded, expires every blast absolutely, and accepts again after expiry', () => {
@@ -438,16 +487,16 @@ describe('LogoPointerController input and lifecycle', () => {
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 256, clientY: 80, pointerType: 'mouse', pointerId: 1 }))
     time += 10
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 275, clientY: 75, pointerType: 'mouse', pointerId: 1 }))
-    expect(controller.state.activeImpulseCount).toBe(3)
-    expect(controller.state.impulses[2]).toMatchObject({ active: true, x: 1, y: 1 })
-    expect(controller.state.impulses[2].directionX).toBeCloseTo(19 / Math.hypot(19, 5), 12)
-    expect(controller.state.impulses[2].directionY).toBeCloseTo(5 / Math.hypot(19, 5), 12)
+    expect(controller.state.activeImpulseCount).toBe(6)
+    expect(controller.state.impulses[1]).toMatchObject({ active: true, x: 1, y: 1 })
+    expect(controller.state.impulses[1].directionX).toBeCloseTo(19 / Math.hypot(19, 5), 12)
+    expect(controller.state.impulses[1].directionY).toBeCloseTo(5 / Math.hypot(19, 5), 12)
 
     finePointer = false
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 150, clientY: 100, pointerType: 'mouse', pointerId: 1 }))
     time += 10
     target.dispatchEvent(pointerEvent('pointermove', { clientX: 160, clientY: 100, pointerType: 'mouse', pointerId: 1 }))
-    expect(controller.state.activeImpulseCount).toBe(3)
+    expect(controller.state.activeImpulseCount).toBe(6)
     controller.dispose()
   })
 

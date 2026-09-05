@@ -244,12 +244,12 @@ const pointerState: LogoPointerState = {
   activeExplosionCount: 2,
   influenceRadiusCss: 32,
   impulses: [
-    { active: true, ageSeconds: 0.24, directionX: 0.6, directionY: 0.8, radiusCss: 32, travelCss: 6, x: 0.25, y: -0.5 },
-    { active: true, ageSeconds: 0.1, directionX: -1, directionY: 0, radiusCss: 24, travelCss: 3, x: -0.25, y: 0.5 },
-    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, x: 0, y: 0 },
-    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, x: 0, y: 0 },
-    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, x: 0, y: 0 },
-    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, x: 0, y: 0 }
+    { active: true, ageSeconds: 0.24, directionX: 0.6, directionY: 0.8, radiusCss: 32, travelCss: 6, strength: 2.2, x: 0.25, y: -0.5 },
+    { active: true, ageSeconds: 0.1, directionX: -1, directionY: 0, radiusCss: 24, travelCss: 3, strength: 1.1, x: -0.25, y: 0.5 },
+    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, strength: 1, x: 0, y: 0 },
+    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, strength: 1, x: 0, y: 0 },
+    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, strength: 1, x: 0, y: 0 },
+    { active: false, ageSeconds: 0, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 0, strength: 1, x: 0, y: 0 }
   ],
   explosions: [
     { active: true, ageSeconds: 0.24, x: 0.25, y: -0.5 },
@@ -534,8 +534,8 @@ describe('LogoParticleScene resources', () => {
     expect(resources.uniforms.uImpulsePositionAge.value).toBe(impulsePositionUniforms)
     expect(resources.uniforms.uExplosionPositionAge.value).toBe(explosionPositionUniforms)
     expect(resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual([
-      [0.25, -0.5, 0.24, 1],
-      [-0.25, 0.5, 0.1, 1],
+      [0.25, -0.5, 0.24, 2.2],
+      [-0.25, 0.5, 0.1, 1.1],
       [0, 0, 0, 0],
       [0, 0, 0, 0],
       [0, 0, 0, 0],
@@ -669,12 +669,12 @@ describe('LogoParticleScene resources', () => {
         ...pointerState,
         activeImpulseCount: 2,
         impulses: [
-          { active: true, ageSeconds: -4, directionX: 12, directionY: 16, radiusCss: 200, travelCss: 80, x: 4, y: -4 },
-          { active: true, ageSeconds: 1.4, directionX: 0, directionY: 0, radiusCss: 1, travelCss: 5, x: 0, y: 0 },
-          { active: false, ageSeconds: 0.4, directionX: 0, directionY: 1, radiusCss: 20, travelCss: 4, x: 0.2, y: 0.3 },
-          { active: false, ageSeconds: 0.2, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 4, x: 0, y: 0 },
-          { active: false, ageSeconds: 0.2, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 4, x: 0, y: 0 },
-          { active: false, ageSeconds: 0.2, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 4, x: 0, y: 0 }
+          { active: true, ageSeconds: -4, directionX: 12, directionY: 16, radiusCss: 200, travelCss: 80, strength: 4, x: 4, y: -4 },
+          { active: true, ageSeconds: 1.4, directionX: 0, directionY: 0, radiusCss: 1, travelCss: 5, strength: 1.6, x: 0, y: 0 },
+          { active: false, ageSeconds: 0.4, directionX: 0, directionY: 1, radiusCss: 20, travelCss: 4, strength: 1, x: 0.2, y: 0.3 },
+          { active: false, ageSeconds: 0.2, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 4, strength: 1, x: 0, y: 0 },
+          { active: false, ageSeconds: 0.2, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 4, strength: 1, x: 0, y: 0 },
+          { active: false, ageSeconds: 0.2, directionX: 1, directionY: 0, radiusCss: 18, travelCss: 4, strength: 1, x: 0, y: 0 }
         ]
       }
 
@@ -689,7 +689,7 @@ describe('LogoParticleScene resources', () => {
         }
       )
       expect(resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual([
-        [1, -1, 0, 1],
+        [1, -1, 0, 3.2],
         [0, 0, 1.4, 0],
         [0, 0, 0.4, 0],
         [0, 0, 0.2, 0],
@@ -697,7 +697,7 @@ describe('LogoParticleScene resources', () => {
         [0, 0, 0.2, 0]
       ])
       expectNormalizedDirectionTravel(resources.uniforms.uImpulseDirectionTravel.value, [
-        [0.6, 0.8, 20, 32],
+        [0.6, 0.8, 20, 72],
         [1, 0, 0, 18],
         [0, 1, 0, 20],
         [1, 0, 0, 18],
@@ -726,7 +726,7 @@ describe('LogoParticleScene resources', () => {
       expect(diagnostics).toEqual({
         activeExplosionCount: 2,
         activeImpulseCount: 1,
-        bounceRatio: 0.22,
+        bounceRatio: 0.4,
         depthScaleMax: 1.18,
         depthScaleMin: 0.82,
         elapsedSeconds: 123.5,
@@ -735,8 +735,8 @@ describe('LogoParticleScene resources', () => {
         explosionRefillSeconds: 2.4,
         idleAmplitudeCss: 3.5,
         impulseLifetimeSeconds: 1.4,
-        maxImpulseTravelCss: 14,
-        neighborForceRatio: 0.32,
+        maxImpulseTravelCss: 42,
+        neighborForceRatio: 0.72,
         particleCount: effect.count
       })
       expect(new Uint8Array(particles.buffer)).toEqual(before)
@@ -1006,8 +1006,8 @@ describe('LogoParticleScene test frame capture lifecycle', () => {
       expect(mounted.resources.uniforms.uTime.value).toBe(7.25)
       expect(pointerTimes).toEqual([12_345])
       expect(mounted.resources.uniforms.uImpulsePositionAge.value.map(value => value.toArray())).toEqual([
-        [0.25, -0.5, 0.24, 1],
-        [-0.25, 0.5, 0.1, 1],
+        [0.25, -0.5, 0.24, 2.2],
+        [-0.25, 0.5, 0.1, 1.1],
         [0, 0, 0, 0],
         [0, 0, 0, 0],
         [0, 0, 0, 0],

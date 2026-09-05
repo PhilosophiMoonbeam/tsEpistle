@@ -7,14 +7,15 @@ const LISTENER_OPTIONS: AddEventListenerOptions = Object.freeze({ passive: true 
 export const LOGO_POINTER_IMPULSE_CAPACITY = 6
 export const LOGO_POINTER_IMPULSE_LIFETIME_SECONDS = 1.4
 export const LOGO_POINTER_MAX_SEGMENT_CSS = 20
-export const LOGO_POINTER_MAX_TRAVEL_CSS = 14
-export const LOGO_POINTER_NEIGHBOR_FORCE_RATIO = 0.32
-export const LOGO_POINTER_BOUNCE_RATIO = 0.22
+export const LOGO_POINTER_MAX_TRAVEL_CSS = 42
+export const LOGO_POINTER_NEIGHBOR_FORCE_RATIO = 0.72
+export const LOGO_POINTER_BOUNCE_RATIO = 0.4
 export const LOGO_POINTER_SPEED_REFERENCE_CSS_PER_SECOND = 900
 export const LOGO_POINTER_EXPLOSION_CAPACITY = 6
 export const LOGO_POINTER_EXPLOSION_HOLD_SECONDS = 0.35
 export const LOGO_POINTER_EXPLOSION_REFILL_SECONDS = 2.4
 export const LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS = 2.8
+export const LOGO_POINTER_MAX_RADIUS_CSS = 72
 const LOGO_POINTER_MIN_SEGMENT_CSS = 2
 const MIN_INFLUENCE_RADIUS_CSS = 18
 const MAX_INFLUENCE_RADIUS_CSS = 32
@@ -26,6 +27,7 @@ export interface LogoPointerImpulse {
   directionY: number
   radiusCss: number
   travelCss: number
+  strength: number
   x: number
   y: number
 }
@@ -78,8 +80,9 @@ const createImpulse = (): LogoPointerImpulse => ({
   ageSeconds: 0,
   directionX: 1,
   directionY: 0,
-  radiusCss: MIN_INFLUENCE_RADIUS_CSS,
   travelCss: 0,
+  radiusCss: MIN_INFLUENCE_RADIUS_CSS,
+  strength: 1,
   x: 0,
   y: 0
 })
@@ -257,8 +260,9 @@ export class LogoPointerController {
       impulse.ageSeconds = 0
       impulse.directionX = 1
       impulse.directionY = 0
-      impulse.radiusCss = MIN_INFLUENCE_RADIUS_CSS
       impulse.travelCss = 0
+      impulse.radiusCss = MIN_INFLUENCE_RADIUS_CSS
+      impulse.strength = 1
       impulse.x = 0
       impulse.y = 0
       this.impulseStartedAtMilliseconds[index] = 0
@@ -326,18 +330,135 @@ export class LogoPointerController {
     const replacesActiveImpulse = impulse.active
     const inverseTravel = 1 / travelCss
     const speed = travelCss / Math.max(deltaSeconds, 0.001)
-    const speedRatio = clamp(0.5, speed / LOGO_POINTER_SPEED_REFERENCE_CSS_PER_SECOND, 2)
+    const speedRatio = clamp(0, speed / LOGO_POINTER_SPEED_REFERENCE_CSS_PER_SECOND, 3)
+    const speedResponse = Math.sqrt(speedRatio)
     impulse.active = true
     impulse.ageSeconds = 0
     impulse.directionX = clamp(-1, deltaX * inverseTravel, 1)
     impulse.directionY = clamp(-1, deltaY * inverseTravel, 1)
-    impulse.radiusCss = this.state.influenceRadiusCss
-    impulse.travelCss = Math.min(LOGO_POINTER_MAX_SEGMENT_CSS, travelCss * speedRatio)
+    impulse.radiusCss = clamp(
+      this.state.influenceRadiusCss,
+      this.state.influenceRadiusCss + 30 * speedResponse,
+      LOGO_POINTER_MAX_RADIUS_CSS
+    )
+    impulse.strength = clamp(0.9, 1 + 1.35 * speedResponse, 3.2)
+    impulse.travelCss = Math.min(
+      LOGO_POINTER_MAX_SEGMENT_CSS,
+      travelCss * (0.75 + 0.5 * speedResponse)
+    )
     impulse.x = clamp(-1, (2 * (clientX - bounds.left)) / bounds.width - 1, 1)
     impulse.y = clamp(-1, 1 - (2 * (clientY - bounds.top)) / bounds.height, 1)
     this.impulseStartedAtMilliseconds[index] = time
     this.nextImpulseIndex = (index + 1) % LOGO_POINTER_IMPULSE_CAPACITY
     if (!replacesActiveImpulse) this.state.activeImpulseCount += 1
+  }
+
+  private processPointerSample(
+    clientX: number,
+    clientY: number,
+    bounds: DOMRect,
+    pointerId: number,
+    motionTime: number
+  ): void {
+    if (!this.validCoordinates(clientX, clientY, bounds)) {
+      if (this.lastSamplePointerId === pointerId) this.clearSamplingBaseline()
+      return
+    }
+    this.ageImpulses(motionTime)
+    if (this.lastSampleTime === null || this.lastSamplePointerId !== pointerId) {
+      this.lastSampleX = clientX
+      this.lastSampleY = clientY
+      this.lastSampleTime = motionTime
+      this.lastSamplePointerId = pointerId
+      return
+    }
+
+    const deltaX = clientX - this.lastSampleX
+    const deltaY = this.lastSampleY - clientY
+    const travelCss = Math.hypot(deltaX, deltaY)
+    const deltaSeconds = (motionTime - this.lastSampleTime) / 1000
+    if (
+      !Number.isFinite(travelCss) ||
+      !Number.isFinite(deltaSeconds) ||
+      travelCss <= LOGO_POINTER_MIN_SEGMENT_CSS ||
+      deltaSeconds < 0
+    ) return
+
+    const segmentCount = Math.min(
+      LOGO_POINTER_IMPULSE_CAPACITY,
+      Math.max(1, Math.ceil(travelCss / LOGO_POINTER_MAX_SEGMENT_CSS))
+    )
+    const sampleX = this.lastSampleX
+    const sampleY = this.lastSampleY
+    const sampleTime = this.lastSampleTime
+    const segmentDeltaX = deltaX / segmentCount
+    const segmentDeltaY = deltaY / segmentCount
+    const segmentTravelCss = travelCss / segmentCount
+    const segmentSeconds = deltaSeconds / segmentCount
+    for (let index = 1; index <= segmentCount; index += 1) {
+      const progress = index / segmentCount
+      this.recordImpulse(
+        sampleX + deltaX * progress,
+        sampleY - deltaY * progress,
+        bounds,
+        segmentDeltaX,
+        segmentDeltaY,
+        segmentTravelCss,
+        segmentSeconds,
+        sampleTime + (motionTime - sampleTime) * progress
+      )
+    }
+    this.lastSampleX = clientX
+    this.lastSampleY = clientY
+    this.lastSampleTime = motionTime
+  }
+
+  private coalescedSampleTime(
+    sample: PointerEvent,
+    eventTime: number,
+    finalTimeStamp: number
+  ): number {
+    const sampleTimeStamp = sample.timeStamp
+    if (
+      !Number.isFinite(finalTimeStamp) ||
+      !Number.isFinite(sampleTimeStamp) ||
+      sampleTimeStamp > finalTimeStamp
+    ) return eventTime
+    return eventTime - (finalTimeStamp - sampleTimeStamp)
+  }
+
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    const eventPointerId = pointerIdOf(event)
+    const owned = this.ownedPointerId === eventPointerId
+    if (
+      !this.active ||
+      event.isPrimary !== true ||
+      (event.pointerType !== 'mouse' && event.pointerType !== 'pen' && event.pointerType !== 'touch') ||
+      !this.coordinateTarget ||
+      (this.ownedPointerId !== null && !owned) ||
+      (!owned && event.pointerType === 'touch') ||
+      (event.pointerType !== 'touch' && !this.hasFinePointer())
+    )
+      return
+
+    const eventTime = this.now()
+    if (!Number.isFinite(eventTime)) return
+    const bounds = this.coordinateTarget.getBoundingClientRect()
+    const finalTimeStamp = event.timeStamp
+    const processSample = (sample: PointerEvent): void => {
+      this.processPointerSample(
+        sample.clientX,
+        sample.clientY,
+        bounds,
+        eventPointerId,
+        this.coalescedSampleTime(sample, eventTime, finalTimeStamp)
+      )
+    }
+    const coalescedEvents = event.getCoalescedEvents?.()
+    if (coalescedEvents) {
+      for (const sample of coalescedEvents) processSample(sample)
+    }
+    processSample(event)
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
@@ -364,50 +485,6 @@ export class LogoPointerController {
     this.recordExplosion(event.clientX, event.clientY, bounds, eventTime)
   }
 
-  private readonly onPointerMove = (event: PointerEvent): void => {
-    const eventPointerId = pointerIdOf(event)
-    const owned = this.ownedPointerId === eventPointerId
-    if (
-      !this.active ||
-      event.isPrimary !== true ||
-      (event.pointerType !== 'mouse' && event.pointerType !== 'pen' && event.pointerType !== 'touch') ||
-      !this.coordinateTarget ||
-      (this.ownedPointerId !== null && !owned) ||
-      (!owned && event.pointerType === 'touch') ||
-      (event.pointerType !== 'touch' && !this.hasFinePointer())
-    )
-      return
-
-    const clientX = event.clientX
-    const clientY = event.clientY
-    const bounds = this.coordinateTarget.getBoundingClientRect()
-    if (!this.validCoordinates(clientX, clientY, bounds)) {
-      if (this.lastSamplePointerId === eventPointerId) this.clearSamplingBaseline()
-      return
-    }
-
-    const motionTime = this.now()
-    if (!Number.isFinite(motionTime)) return
-    this.ageImpulses(motionTime)
-    if (this.lastSampleTime === null || this.lastSamplePointerId !== eventPointerId) {
-      this.lastSampleX = clientX
-      this.lastSampleY = clientY
-      this.lastSampleTime = motionTime
-      this.lastSamplePointerId = eventPointerId
-      return
-    }
-
-    const deltaX = clientX - this.lastSampleX
-    const deltaY = this.lastSampleY - clientY
-    const travelCss = Math.hypot(deltaX, deltaY)
-    const deltaSeconds = (motionTime - this.lastSampleTime) / 1000
-    if (Number.isFinite(travelCss) && Number.isFinite(deltaSeconds) && travelCss > LOGO_POINTER_MIN_SEGMENT_CSS && deltaSeconds >= 0) {
-      this.recordImpulse(clientX, clientY, bounds, deltaX, deltaY, Math.min(travelCss, LOGO_POINTER_MAX_SEGMENT_CSS), deltaSeconds, motionTime)
-      this.lastSampleX = clientX
-      this.lastSampleY = clientY
-      this.lastSampleTime = motionTime
-    }
-  }
 
   private readonly onPointerLeave = (event: PointerEvent): void => {
     if (!this.active || event.isPrimary !== true || this.ownedPointerId === pointerIdOf(event)) return
