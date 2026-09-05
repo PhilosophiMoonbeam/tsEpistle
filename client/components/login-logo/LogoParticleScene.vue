@@ -13,7 +13,7 @@
     :premultiplied-alpha="false"
     render-mode="on-demand"
     :stencil="false"
-    :tone-mapping="0"
+    :tone-mapping="NoToneMapping"
     @error="handleRendererError"
     @ready="handleRendererReady"
     @render="handleRendererRender"
@@ -36,6 +36,7 @@ import {
   BufferGeometry,
   Color,
   NormalBlending,
+  NoToneMapping,
   OrthographicCamera,
   Points,
   ShaderMaterial,
@@ -590,7 +591,7 @@ const isTransparent = (color: string): boolean =>
   color === '' ||
   color === 'transparent' ||
   /rgba\([^)]*,\s*0(?:\.0+)?\s*\)$/i.test(color) ||
-  /rgb\([^)]*\/\s*0(?:\.0+)?%?\s*\)$/i.test(color)
+  /rgba?\([^)]*\/\s*0(?:\.0+)?%?\s*\)$/i.test(color)
 
 const normalizeCssColor = (color: string): string => {
   const modernRgb = /^\s*rgba?\(\s*([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+%?)(?:\s*\/\s*([\d.]+%?))?\s*\)$/i.exec(color)
@@ -923,6 +924,8 @@ export default defineComponent({
       }
 
       try {
+        // TresJS 5.8.3 skips its zero-valued NoToneMapping prop, so enforce it on the renderer.
+        renderer.toneMapping = NoToneMapping
         fence.ready(renderer)
         loopControl.ready = true
         if (!renderEnabled.value) loopControl.stop?.()
@@ -961,6 +964,7 @@ export default defineComponent({
       handleRendererError,
       handleRendererReady,
       handleRendererRender,
+      NoToneMapping,
       loopControl,
       pointerController,
       renderEnabled,

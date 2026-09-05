@@ -866,14 +866,18 @@ export default defineComponent({
     overflow-y: auto;
     border: 1px solid var(--wiki-surface-border-strong);
     border-radius: var(--wiki-hero-radius);
-    background: color-mix(
-      in srgb,
-      rgb(var(--v-theme-surface)) 92%,
-      transparent
-    );
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    background: var(--wiki-surface-raised);
     box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
+
+    @supports ((backdrop-filter: blur(16px)) or (-webkit-backdrop-filter: blur(16px))) {
+      background: color-mix(
+        in srgb,
+        rgb(var(--v-theme-surface)) 92%,
+        transparent
+      );
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
   }
 
   &-brand {
@@ -1064,6 +1068,14 @@ export default defineComponent({
         min-height: var(--wiki-control-height);
       }
     }
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .login-sd {
+    background: var(--wiki-surface-raised);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 }
 

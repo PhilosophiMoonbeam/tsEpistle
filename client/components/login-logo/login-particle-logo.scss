@@ -11,10 +11,13 @@
   &--pointer-active {
     pointer-events: auto;
     touch-action: none;
-    cursor: grab;
 
-    &:active {
-      cursor: grabbing;
+    @media (hover: hover) and (pointer: fine) {
+      cursor: grab;
+
+      &:active {
+        cursor: grabbing;
+      }
     }
   }
 
