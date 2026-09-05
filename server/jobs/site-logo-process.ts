@@ -106,7 +106,7 @@ interface ProcessPayload {
   retrySequence: number
 }
 
-type SiteLogoJobVersion = 1 | 2
+type SiteLogoJobVersion = 1 | 2 | 3
 
 interface SiteLogoJobProtocol {
   readonly jobVersion: SiteLogoJobVersion
@@ -224,10 +224,21 @@ const lockState = async (transaction: Knex.Transaction): Promise<StateRow> => {
 
 const EXHAUSTED_SITE_LOGO_ERROR = 'Durable job lease expired after its final allowed attempt'
 const LEGACY_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 1, pipelineVersions: Object.freeze([1, 2, 3]) })
-const CURRENT_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({
-  jobVersion: 2,
-  pipelineVersions: Object.freeze([SITE_LOGO_PIPELINE_VERSION])
-})
+const PIPELINE_V4_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 2, pipelineVersions: Object.freeze([4]) })
+const CURRENT_SITE_LOGO_PROTOCOL: SiteLogoJobProtocol = Object.freeze({ jobVersion: 3, pipelineVersions: Object.freeze([SITE_LOGO_PIPELINE_VERSION]) })
+
+const protocolForJobVersion = (jobVersion: number): SiteLogoJobProtocol | undefined => {
+  switch (jobVersion) {
+    case LEGACY_SITE_LOGO_PROTOCOL.jobVersion:
+      return LEGACY_SITE_LOGO_PROTOCOL
+    case PIPELINE_V4_SITE_LOGO_PROTOCOL.jobVersion:
+      return PIPELINE_V4_SITE_LOGO_PROTOCOL
+    case CURRENT_SITE_LOGO_PROTOCOL.jobVersion:
+      return CURRENT_SITE_LOGO_PROTOCOL
+    default:
+      return undefined
+  }
+}
 
 const protocolSupportsPipeline = (protocol: SiteLogoJobProtocol, pipelineVersion: number): boolean => protocol.pipelineVersions.includes(pipelineVersion)
 
@@ -241,6 +252,11 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
         protocols
           .where(legacy =>
             legacy.where('job.version', LEGACY_SITE_LOGO_PROTOCOL.jobVersion).whereIn('revision.pipelineVersion', LEGACY_SITE_LOGO_PROTOCOL.pipelineVersions)
+          )
+          .orWhere(v4 =>
+            v4
+              .where('job.version', PIPELINE_V4_SITE_LOGO_PROTOCOL.jobVersion)
+              .whereIn('revision.pipelineVersion', PIPELINE_V4_SITE_LOGO_PROTOCOL.pipelineVersions)
           )
           .orWhere(current =>
             current.where('job.version', CURRENT_SITE_LOGO_PROTOCOL.jobVersion).whereIn('revision.pipelineVersion', CURRENT_SITE_LOGO_PROTOCOL.pipelineVersions)
@@ -259,8 +275,7 @@ export const failExhaustedSiteLogoJobs = async (knex: Knex, now = new Date()): P
 
     const state = await lockState(transaction)
     for (const job of jobs) {
-      const jobVersion = Number(job.version)
-      const protocol = jobVersion === 1 ? LEGACY_SITE_LOGO_PROTOCOL : jobVersion === 2 ? CURRENT_SITE_LOGO_PROTOCOL : undefined
+      const protocol = protocolForJobVersion(Number(job.version))
       const pipelineVersion = Number(
         (
           await transaction<RevisionRow>('siteLogoRevisions')
@@ -333,10 +348,11 @@ const transitionToRunning = async (knex: Knex, job: DurableJob, payload: Process
     if (revision.status === 'ready' || revision.status === 'failed') {
       if (
         protocolSupportsPipeline(protocol, pipelineVersion) ||
-        (protocol.jobVersion === 1 && revision.status === 'ready' && pipelineVersion === SITE_LOGO_PIPELINE_VERSION)
-      ) {
+        (revision.status === 'ready' &&
+          protocol.jobVersion === LEGACY_SITE_LOGO_PROTOCOL.jobVersion &&
+          protocolSupportsPipeline(PIPELINE_V4_SITE_LOGO_PROTOCOL, pipelineVersion))
+      )
         return null
-      }
       throw new TypeError('Site logo processing job does not match its revision')
     }
     if (!protocolSupportsPipeline(protocol, pipelineVersion)) {
@@ -571,7 +587,7 @@ const publishArtifacts = async (
         status: 'running'
       })
       .update({
-        pipelineVersion: SITE_LOGO_PIPELINE_VERSION,
+        pipelineVersion,
         status: 'ready',
         logoPngKind: 'logo-png',
         logoPngHash: logo.sha256,
@@ -609,12 +625,19 @@ const publishArtifacts = async (
   })
 }
 
-export const createSiteLogoProcessHandler = (jobVersion: SiteLogoJobVersion, processor: SiteLogoProcessor = processSiteLogoSource): DurableJobHandler => {
-  const protocol = jobVersion === 1 ? LEGACY_SITE_LOGO_PROTOCOL : CURRENT_SITE_LOGO_PROTOCOL
+export const createSiteLogoProcessHandler = (jobVersion: SiteLogoJobVersion, processor?: SiteLogoProcessor): DurableJobHandler => {
+  const protocol = protocolForJobVersion(jobVersion)
+  if (!protocol) throw new TypeError(`Unsupported site logo job protocol ${jobVersion}`)
+  const isDefaultLegacyHandler = processor === undefined && protocol.jobVersion !== CURRENT_SITE_LOGO_PROTOCOL.jobVersion
+  const selectedProcessor = processor ?? processSiteLogoSource
   return async (job, { knex, signal }) => {
     const payload = parsePayload(job)
     const revision = await transitionToRunning(knex, job, payload, protocol)
     if (!revision) return
+    if (isDefaultLegacyHandler) {
+      await markFailed(knex, job, payload, protocol, 'PROCESSING_FAILED')
+      return
+    }
 
     let artifacts: SiteLogoArtifacts
     let validated: ValidatedArtifacts
@@ -623,7 +646,7 @@ export const createSiteLogoProcessHandler = (jobVersion: SiteLogoJobVersion, pro
       signal.throwIfAborted()
       artifacts = await serializeProcessing(async () => {
         signal.throwIfAborted()
-        return await processor(source, revision.sourceHash)
+        return await selectedProcessor(source, revision.sourceHash)
       })
       signal.throwIfAborted()
       validated = validateArtifacts(artifacts)

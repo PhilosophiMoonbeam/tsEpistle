@@ -1,6 +1,6 @@
+import type { ContentExtensionRerenderContext } from '../content-extensions/rerender.ts'
 import { type DurableJobHandler } from '../core/durable-jobs.ts'
 import { decryptWebhookSecret, resolveWebhookUrl, sendSignedWebhook, WebhookDeliveryError } from '../core/webhooks.ts'
-import type { ContentExtensionRerenderContext } from '../content-extensions/rerender.ts'
 import { createContentExtensionRerenderHandler } from './content-extension-rerender.ts'
 import { createPageWatchNotificationHandler, type PageWatchWikiContext } from './page-watch-notification.ts'
 import { cleanupSiteLogoRevisions, createSiteLogoProcessHandler } from './site-logo-process.ts'
@@ -86,6 +86,7 @@ export const createDurableJobHandlers = (
     'cleanup-site-logo@1': cleanupSiteLogoRevisions,
     'process-site-logo@1': createSiteLogoProcessHandler(1),
     'process-site-logo@2': createSiteLogoProcessHandler(2),
+    'process-site-logo@3': createSiteLogoProcessHandler(3),
     'rerender-content-extension@1': createContentExtensionRerenderHandler(wiki),
     'deliver-webhook@1': createWebhookDeliveryHandler(sessionSecret),
     'notify-page-watcher@1': createPageWatchNotificationHandler(wiki)

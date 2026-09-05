@@ -5,6 +5,7 @@ export const SITE_LOGO_OBJECT_KINDS = ['source', 'logo-png', 'particle-v1', 'eff
 export type SiteLogoObjectKind = (typeof SITE_LOGO_OBJECT_KINDS)[number]
 
 export interface SiteLogoEffectDescriptor {
+  readonly pipelineVersion: number
   readonly logoUrl: string
   readonly particleUrl: string
   readonly staticUrl: string
@@ -30,6 +31,7 @@ interface SiteLogoObjectRecord {
 }
 
 interface ActiveRevisionRow {
+  readonly pipelineVersion: number | string
   readonly logoPngKind: string | null
   readonly logoPngHash: string | null
   readonly particleV1Kind: string | null
@@ -158,6 +160,7 @@ export const resolveActiveBranding = async (knex: Knex | Knex.Transaction, legac
     .where('state.id', 1)
     .andWhere('revision.status', 'ready')
     .first(
+      'revision.pipelineVersion',
       'revision.logoPngKind',
       'revision.logoPngHash',
       'revision.particleV1Kind',
@@ -184,11 +187,12 @@ export const resolveActiveBranding = async (knex: Knex | Knex.Transaction, legac
     !SHA256_PATTERN.test(row.effectStaticPngHash)
   )
     return legacyBranding(legacyLogoUrl)
+  const pipelineVersion = integerInRange(row.pipelineVersion, 1, 5)
 
   const width = integerInRange(row.normalizedWidth, 2, 4096)
   const height = integerInRange(row.normalizedHeight, 2, 4096)
   const count = integerInRange(row.particleCount, 1, MAX_PARTICLE_COUNT)
-  if (width === null || height === null || count === null) return legacyBranding(legacyLogoUrl)
+  if (pipelineVersion === null || width === null || height === null || count === null) return legacyBranding(legacyLogoUrl)
   const medianStroke = validMedianStroke(row.medianStroke, Math.max(width, height))
   if (medianStroke === null || (row.auraColor !== null && !AURA_COLOR_PATTERN.test(row.auraColor))) return legacyBranding(legacyLogoUrl)
 
@@ -213,6 +217,7 @@ export const resolveActiveBranding = async (knex: Knex | Knex.Transaction, legac
 
   const logoUrl = `/_site-logo/${row.logoPngHash}/logo.png`
   const logoEffect: SiteLogoEffectDescriptor = {
+    pipelineVersion,
     logoUrl,
     particleUrl: `/_site-logo/${row.particleV1Hash}/particle.bin`,
     staticUrl: `/_site-logo/${row.effectStaticPngHash}/effect.png`,

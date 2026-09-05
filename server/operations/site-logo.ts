@@ -4,8 +4,8 @@ import type { Knex } from 'knex'
 import { DurableJobStore } from '../core/durable-jobs.ts'
 
 export const SITE_LOGO_SOURCE_LIMIT = 5_242_880
-const SITE_LOGO_PIPELINE_VERSION = 4
-const SITE_LOGO_JOB_VERSION = 2
+const SITE_LOGO_PIPELINE_VERSION = 5
+const SITE_LOGO_JOB_VERSION = 3
 const STATUS_URL = '/_api/site/logo'
 const SHA256 = /^[a-f0-9]{64}$/
 
@@ -392,7 +392,7 @@ export const uploadSiteLogoCandidate = async (bytes: Buffer, requestedBy: number
       return { statusCode: 200 as const, status: await statusWithUrl(transaction, activatedState) }
     }
 
-    await retireTerminalRevision(transaction, state.desiredRevisionId, '', now)
+    await retireTerminalRevision(transaction, state.desiredRevisionId, state.activeRevisionId ?? '', now)
     const retrySequence = desiredRevision?.sourceHash === sourceHash ? Number(desiredRevision.retrySequence) + 1 : 0
     const revision = await enqueueCandidate(transaction, sourceHash, requestedBy, retrySequence, now)
     await transaction<SiteLogoStateRow>('siteLogoState')

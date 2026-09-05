@@ -475,6 +475,7 @@ const LoginParticleLogo = compiledModule.exports.default
 if (!LoginParticleLogo) throw new Error('LoginParticleLogo.vue did not export a component')
 
 const managedEffect: LogoEffectDescriptor = {
+  pipelineVersion: 5,
   logoUrl: '/_site-logo/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/logo.png',
   particleUrl: '/_site-logo/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/particle.bin',
   staticUrl: '/_site-logo/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/effect.png',
@@ -737,6 +738,7 @@ describe('LoginParticleLogo static behavior', () => {
     expect(login.style.getPropertyValue('--login-logo-aura')).toBe('')
 
     await mounted.setEffect({
+      pipelineVersion: managedEffect.pipelineVersion,
       logoUrl: managedEffect.logoUrl,
       particleUrl: managedEffect.particleUrl,
       staticUrl: managedEffect.staticUrl,

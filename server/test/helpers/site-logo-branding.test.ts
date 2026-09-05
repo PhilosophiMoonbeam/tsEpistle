@@ -54,6 +54,7 @@ const particleObject = (width: number, height: number, count: number, variant: n
 
 interface Bundle {
   readonly revisionId: string
+  readonly pipelineVersion: number
   readonly logoHash: string
   readonly particleHash: string
   readonly staticHash: string
@@ -69,6 +70,7 @@ const expectedBranding = (bundle: Bundle): ActiveBranding => {
   return {
     logoUrl,
     logoEffect: {
+      pipelineVersion: bundle.pipelineVersion,
       logoUrl,
       particleUrl: `/_site-logo/${bundle.particleHash}/particle.bin`,
       staticUrl: `/_site-logo/${bundle.staticHash}/effect.png`,
@@ -144,6 +146,7 @@ describe('resolved site-logo branding', () => {
     const staticBytes = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.from(`static-${input.variant}`)])
     const bundle: Bundle = {
       revisionId: input.revisionId,
+      pipelineVersion: input.pipelineVersion ?? 3,
       logoHash: digest(logoBytes),
       particleHash: digest(particles),
       staticHash: digest(staticBytes),
@@ -179,7 +182,7 @@ describe('resolved site-logo branding', () => {
     await db('siteLogoRevisions').insert({
       id: bundle.revisionId,
       status: 'ready',
-      pipelineVersion: input.pipelineVersion ?? 3,
+      pipelineVersion: bundle.pipelineVersion,
       logoPngKind: 'logo-png',
       logoPngHash: bundle.logoHash,
       particleV1Kind: 'particle-v1',
@@ -207,6 +210,35 @@ describe('resolved site-logo branding', () => {
     for (const logoUrl of unmanagedLogoUrls) {
       expect(await resolveActiveBranding(db, logoUrl)).toEqual({ logoUrl, logoEffect: null })
     }
+  })
+  it.each([1, 2, 3, 4, 5])('exposes supported pipeline v%s in the active descriptor', async pipelineVersion => {
+    const active = await insertReadyBundle({
+      revisionId: `00000000-0000-4000-8000-00000000000${pipelineVersion}`,
+      variant: pipelineVersion,
+      width: 640,
+      height: 320,
+      count: 2,
+      medianStroke: 4,
+      pipelineVersion
+    })
+    await db('siteLogoState').where({ id: 1 }).update({ activeRevisionId: active.revisionId, desiredRevisionId: active.revisionId })
+
+    expect(await resolveActiveBranding(db, '/assets/legacy.svg')).toEqual(expectedBranding(active))
+  })
+
+  it.each([0, 1.5, 6])('falls back to ordinary legacy branding for unsupported pipeline version %s', async pipelineVersion => {
+    const active = await insertReadyBundle({
+      revisionId: '00000000-0000-4000-8000-00000000000a',
+      variant: 1,
+      width: 640,
+      height: 320,
+      count: 2,
+      medianStroke: 4,
+      pipelineVersion
+    })
+    await db('siteLogoState').where({ id: 1 }).update({ activeRevisionId: active.revisionId, desiredRevisionId: active.revisionId })
+
+    expect(await resolveActiveBranding(db, '/assets/legacy.svg')).toEqual({ logoUrl: '/assets/legacy.svg', logoEffect: null })
   })
 
   it('keeps the complete active A branding while replacement B is pending, processing, or ordinarily failed', async () => {

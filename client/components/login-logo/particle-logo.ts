@@ -71,7 +71,7 @@ const LOGO_URL_PATTERN = /^\/_site-logo\/[0-9a-f]{64}\/logo\.png$/
 const PARTICLE_URL_PATTERN = /^\/_site-logo\/[0-9a-f]{64}\/particle\.bin$/
 const STATIC_URL_PATTERN = /^\/_site-logo\/[0-9a-f]{64}\/effect\.png$/
 const AURA_COLOR_PATTERN = /^#[0-9a-f]{6}$/
-const REQUIRED_KEYS = ['logoUrl', 'particleUrl', 'staticUrl', 'width', 'height', 'aspect', 'count', 'medianStroke'] as const
+const REQUIRED_KEYS = ['pipelineVersion', 'logoUrl', 'particleUrl', 'staticUrl', 'width', 'height', 'aspect', 'count', 'medianStroke'] as const
 const ALLOWED_KEYS: Record<string, true> = Object.fromEntries([...REQUIRED_KEYS, 'auraColor'].map(key => [key, true]))
 
 const isIntegerInRange = (value: unknown, minimum: number, maximum: number): value is number =>
@@ -87,6 +87,7 @@ export function isLogoEffectDescriptor(value: unknown): value is LogoEffectDescr
   if (REQUIRED_KEYS.some(key => !Object.hasOwn(descriptor, key))) return false
   if (keys.some(key => ALLOWED_KEYS[key] !== true)) return false
   if (
+    !isIntegerInRange(descriptor.pipelineVersion, 1, 5) ||
     typeof descriptor.logoUrl !== 'string' ||
     !LOGO_URL_PATTERN.test(descriptor.logoUrl) ||
     typeof descriptor.particleUrl !== 'string' ||

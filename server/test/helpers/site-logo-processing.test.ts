@@ -112,8 +112,8 @@ const animatedWebpHeader = (): Buffer => {
 }
 
 describe('site logo deterministic primitives', () => {
-  it('uses pipeline version four and rounds every tie away from zero', () => {
-    expect(SITE_LOGO_PIPELINE_VERSION).toBe(4)
+  it('uses pipeline version five and rounds every tie away from zero', () => {
+    expect(SITE_LOGO_PIPELINE_VERSION).toBe(5)
     expect([-2.5, -1.5, -0.5, 0.5, 1.5, 2.5].map(roundHalfAwayFromZero)).toEqual([-3, -2, -1, 1, 2, 3])
   })
 
@@ -183,7 +183,7 @@ describe('site logo deterministic primitives', () => {
     expect(() => parseParticleV1(sentinel)).toThrow(SiteLogoProcessingError)
   })
 
-  it('matches the literal 8x8 core and contrast-ring rasters, IoU, and deterministic static PNG hash', () => {
+  it('matches the literal 8x8 core and 2/3-diameter contrast-ring rasters, IoU, and deterministic static PNG hash', () => {
     const parsed = parseParticleV1(Buffer.from(FIXED_VECTOR_BINARY_HEX, 'hex'))
     const rasterized = rasterizeParticles(8, 8, parsed.records)
     const expected = fixedVectorRaster()
@@ -367,7 +367,7 @@ describe('site logo source processing and hard gates', () => {
     GENERATED_CORPUS_TIMEOUT_MS
   )
   it(
-    'accepts the exact 481px PNG at 2,352 deterministic particles with 0.75 mask fidelity and full canonical canvas',
+    'accepts the exact 481px PNG at 4,704 deterministic particles with 0.75 mask fidelity and full canonical canvas',
     async () => {
       const source = await lowResolutionDetailedEmblemFixture()
       const artifacts = await processSiteLogoSource(source, sha256(source))
@@ -378,7 +378,7 @@ describe('site logo source processing and hard gates', () => {
       }).toEqual({
         width: LOW_RESOLUTION_EMBLEM_VECTOR.normalizedWidth,
         height: LOW_RESOLUTION_EMBLEM_VECTOR.normalizedHeight,
-        count: 2_352
+        count: LOW_RESOLUTION_EMBLEM_VECTOR.particleCount
       })
       const parsed = parseParticleV1(artifacts.particleV1)
       expect(parsed).toMatchObject({
@@ -407,7 +407,7 @@ describe('site logo source processing and hard gates', () => {
   )
 
   it(
-    'accepts the exact square badge at 3,703 deterministic particles with 0.75 mask fidelity and separate canvases',
+    'accepts the exact square badge at 7,407 deterministic particles with 0.75 mask fidelity and separate canvases',
     async () => {
       const source = await squareBadgeFixture()
       const artifacts = await processSiteLogoSource(source, sha256(source))
@@ -418,7 +418,7 @@ describe('site logo source processing and hard gates', () => {
       }).toEqual({
         width: SQUARE_BADGE_VECTOR.normalizedWidth,
         height: SQUARE_BADGE_VECTOR.normalizedHeight,
-        count: 3_703
+        count: SQUARE_BADGE_VECTOR.particleCount
       })
       expect(particleMaskIou(await normalizedNativeAlphaRaster(source), artifacts.particleV1)).toBeGreaterThanOrEqual(0.75)
       expect(await decodeFixtureRgba(artifacts.logoPng)).toEqual(await decodeFixtureRgba(source))
@@ -497,7 +497,8 @@ describe('site logo source processing and hard gates', () => {
       const artifacts = await processSiteLogoSource(source, sha256(source))
       expect({ width: artifacts.normalizedWidth, height: artifacts.normalizedHeight }).toEqual({ width: 338, height: 1106 })
       expect((artifacts.normalizedWidth - 82) / (artifacts.normalizedHeight - 82)).toBe(0.25)
-      expect(artifacts.particleCount).toBeGreaterThanOrEqual(1_000)
+      expect(artifacts.particleCount).toBeGreaterThanOrEqual(2_000)
+      expect(artifacts.particleCount).toBeLessThanOrEqual(8_000)
     },
     GENERATED_CORPUS_TIMEOUT_MS
   )
@@ -526,8 +527,9 @@ describe('site logo source processing and hard gates', () => {
       const artifactHashes = (artifacts: typeof first): string[] => [artifacts.logoPng, artifacts.particleV1, artifacts.effectStaticPng].map(sha256)
       expect(artifactHashes(first)).toEqual(artifactHashes(second))
       expect(new Set(artifactHashes(first)).size).toBe(3)
-      expect(first.particleCount).toBeGreaterThanOrEqual(1_000)
-      expect(first.particleCount).toBeLessThanOrEqual(4_000)
+      expect(first.particleCount).toBe(SQUARE_BADGE_VECTOR.particleCount)
+      expect(first.particleCount).toBeGreaterThanOrEqual(2_000)
+      expect(first.particleCount).toBeLessThanOrEqual(8_000)
       expect(first.particleV1.length).toBeLessThanOrEqual(SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT)
       expect(parseParticleV1(first.particleV1)).toMatchObject({
         width: first.normalizedWidth,

@@ -27,6 +27,7 @@ const squareEffect = {
   logoUrl: LOGO_URL,
   particleUrl: SQUARE_PARTICLE_URL,
   staticUrl: SQUARE_STATIC_URL,
+  pipelineVersion: 5,
   width: 8,
   height: 8,
   aspect: 1,
@@ -39,6 +40,7 @@ const wideEffect = {
   logoUrl: LOGO_URL,
   particleUrl: WIDE_PARTICLE_URL,
   staticUrl: WIDE_STATIC_URL,
+  pipelineVersion: 5,
   width: 1200,
   height: 100,
   aspect: 12,
@@ -47,7 +49,7 @@ const wideEffect = {
 }
 
 type ManagedEffect = typeof squareEffect | typeof wideEffect
-const PIPELINE_V4_RESERVED_SAMPLES_PER_COMPONENT = 4
+const PIPELINE_V5_RESERVED_SAMPLES_PER_COMPONENT = 8
 
 const crcTable = (() => {
   const table = new Uint32Array(256)
@@ -63,6 +65,44 @@ function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff
   for (const value of bytes) crc = (crc >>> 8) ^ crcTable[(crc ^ value) & 0xff]!
   return (crc ^ 0xffffffff) >>> 0
+}
+
+interface ParticleFixtureSample {
+  readonly component: number
+  readonly depth: number
+  readonly sequence: number
+  readonly size: number
+  readonly x: number
+  readonly y: number
+}
+
+function particleFixtureSample(index: number): ParticleFixtureSample {
+  const component = index < 3 * PIPELINE_V5_RESERVED_SAMPLES_PER_COMPONENT ? Math.floor(index / PIPELINE_V5_RESERVED_SAMPLES_PER_COMPONENT) : index % 3
+  const sequence = Math.floor(index / 3)
+  const u = ((sequence * 73) % 997) / 996
+  const v = ((sequence * 193) % 991) / 990
+  let x: number
+  let y: number
+  if (component === 0) {
+    x = -0.8 + 0.5 * u
+    y = -0.6 + 1.2 * v
+  } else if (component === 1) {
+    const angle = 2 * Math.PI * v
+    const radius = 0.34 * Math.sqrt(u)
+    x = 0.04 + radius * Math.cos(angle)
+    y = radius * Math.sin(angle)
+  } else {
+    x = 0.42 + 0.38 * u
+    y = -0.5 + v
+  }
+  return {
+    component,
+    depth: [-96, 0, 96][sequence % 3]!,
+    sequence,
+    size: 5 + (sequence % 8),
+    x,
+    y
+  }
 }
 
 function createParticleFixture(effect: ManagedEffect): Buffer {
@@ -99,34 +139,17 @@ function createParticleFixture(effect: ManagedEffect): Buffer {
     [248, 248, 248, 244]
   ] as const
   for (let index = 0; index < count; index += 1) {
-    // The first four records of each meaningful color component are deterministic v4 reservations.
-    const component = index < 3 * PIPELINE_V4_RESERVED_SAMPLES_PER_COMPONENT ? Math.floor(index / PIPELINE_V4_RESERVED_SAMPLES_PER_COMPONENT) : index % 3
-    const sequence = Math.floor(index / 3)
-    const u = ((sequence * 73) % 997) / 996
-    const v = ((sequence * 193) % 991) / 990
-    let x: number
-    let y: number
-    if (component === 0) {
-      x = -0.8 + 0.5 * u
-      y = -0.6 + 1.2 * v
-    } else if (component === 1) {
-      const angle = 2 * Math.PI * v
-      const radius = 0.34 * Math.sqrt(u)
-      x = 0.04 + radius * Math.cos(angle)
-      y = radius * Math.sin(angle)
-    } else {
-      x = 0.42 + 0.38 * u
-      y = -0.5 + v
-    }
-    bytes.writeInt16LE(Math.round(x * 32_767), xyOffset + index * 4)
-    bytes.writeInt16LE(Math.round(y * 32_767), xyOffset + index * 4 + 2)
-    bytes.writeInt8([-96, 0, 96][sequence % 3]!, depthOffset + index)
-    const color = componentColors[component]!
+    // The first eight records of each meaningful color component are deterministic v5 reservations.
+    const sample = particleFixtureSample(index)
+    bytes.writeInt16LE(Math.round(sample.x * 32_767), xyOffset + index * 4)
+    bytes.writeInt16LE(Math.round(sample.y * 32_767), xyOffset + index * 4 + 2)
+    bytes.writeInt8(sample.depth, depthOffset + index)
+    const color = componentColors[sample.component]!
     bytes[rgbaOffset + index * 4] = color[0]
     bytes[rgbaOffset + index * 4 + 1] = color[1]
     bytes[rgbaOffset + index * 4 + 2] = color[2]
     bytes[rgbaOffset + index * 4 + 3] = color[3]
-    bytes[sizeOffset + index] = 5 + (sequence % 8)
+    bytes[sizeOffset + index] = sample.size
     bytes.writeUInt16LE((index % 65_535) + 1, seedOffset + index * 2)
   }
   bytes.writeUInt32LE(crc32(bytes.subarray(headerBytes)), 24)
@@ -156,10 +179,15 @@ interface ParticleFetchObservation {
 }
 
 interface LogoMotionDiagnostics {
+  readonly activeExplosionCount: number
   readonly activeImpulseCount: number
+  readonly bounceRatio: number
   readonly depthScaleMax: number
   readonly depthScaleMin: number
   readonly elapsedSeconds: number
+  readonly explosionHoldSeconds: number
+  readonly explosionLifetimeSeconds: number
+  readonly explosionRefillSeconds: number
   readonly idleAmplitudeCss: number
   readonly impulseLifetimeSeconds: number
   readonly maxImpulseTravelCss: number
@@ -167,10 +195,15 @@ interface LogoMotionDiagnostics {
   readonly particleCount: number
 }
 const motionDiagnosticKeys = [
+  'activeExplosionCount',
   'activeImpulseCount',
+  'bounceRatio',
   'depthScaleMax',
   'depthScaleMin',
   'elapsedSeconds',
+  'explosionHoldSeconds',
+  'explosionLifetimeSeconds',
+  'explosionRefillSeconds',
   'idleAmplitudeCss',
   'impulseLifetimeSeconds',
   'maxImpulseTravelCss',
@@ -187,13 +220,22 @@ interface LogoPerformanceHook {
   lastMotion?: LogoMotionDiagnostics
 }
 
+interface LogoFramePointerSample {
+  readonly clientX: number
+  readonly clientY: number
+  readonly pointerId?: number
+  readonly pointerType?: 'mouse' | 'pen' | 'touch'
+  readonly type?: 'pointercancel' | 'pointerdown' | 'pointermove' | 'pointerup'
+}
+
 interface LogoRenderedFrame {
   readonly capturedAt: number
   readonly dataUrl: string
 }
 
 interface LogoFrameCaptureOptions {
-  readonly elapsedSeconds: number
+  readonly elapsedSeconds?: number
+  readonly pointerTimeMilliseconds?: number
 }
 
 interface LogoFrameCaptureHook {
@@ -202,7 +244,6 @@ interface LogoFrameCaptureHook {
 
 interface CapturedCanvasPng {
   readonly capturedAt: number
-  readonly impulseAt: number | null
   readonly png: Buffer
 }
 
@@ -395,17 +436,21 @@ async function installLogoResourceTrace(page: Page): Promise<void> {
       callback: EventListenerOrEventListenerObject | null,
       options?: boolean | AddEventListenerOptions
     ): void {
-      if ((type === 'pointermove' || type === 'pointerleave') && this instanceof Element && this.classList.contains('login-particle-logo')) {
+      const trackedPointerEvent =
+        type === 'pointermove' || type === 'pointerleave' || type === 'pointerdown' || type === 'pointerup' || type === 'pointercancel'
+      if (trackedPointerEvent && this instanceof Element && this.classList.contains('login-particle-logo')) {
         trace.pointerListenersAdded += 1
       }
       nativeAddEventListener.call(this, type, callback, options)
     }
     EventTarget.prototype.removeEventListener = function (
       type: string,
-      callback: EventListenerOrEventListenerObject | null,
+      callback: EventListenerOrEventObject | null,
       options?: boolean | EventListenerOptions
     ): void {
-      if ((type === 'pointermove' || type === 'pointerleave') && this instanceof Element && this.classList.contains('login-particle-logo')) {
+      const trackedPointerEvent =
+        type === 'pointermove' || type === 'pointerleave' || type === 'pointerdown' || type === 'pointerup' || type === 'pointercancel'
+      if (trackedPointerEvent && this instanceof Element && this.classList.contains('login-particle-logo')) {
         trace.pointerListenersRemoved += 1
       }
       nativeRemoveEventListener.call(this, type, callback, options)
@@ -834,11 +879,15 @@ async function decodeScreenshot(image: Buffer): Promise<RgbaFrame> {
 const CANVAS_PNG_DATA_URL_PREFIX = 'data:image/png;base64,'
 async function captureLogoRenderedFrame(
   page: Page,
-  pointerSample?: { readonly clientX: number; readonly clientY: number },
-  elapsedSeconds?: number
+  pointerSample?: LogoFramePointerSample,
+  elapsedSeconds?: number,
+  pointerTimeMilliseconds?: number
 ): Promise<CapturedCanvasPng> {
+  if (pointerSample && pointerTimeMilliseconds === undefined) {
+    throw new Error('Deterministic pointer captures require a pointer clock.')
+  }
   const capture = await page.evaluate(
-    async ({ elapsedSeconds, pointerSample }) => {
+    async ({ elapsedSeconds, pointerSample, pointerTimeMilliseconds }) => {
       const field = document.querySelector('.login-particle-logo')
       const canvas = field?.querySelector('canvas')
       const hook = (
@@ -853,34 +902,49 @@ async function captureLogoRenderedFrame(
       if (typeof request !== 'function') {
         throw new Error('The animated logo after-render capture hook is unavailable.')
       }
-      let impulseAt: number | null = null
+      const options: LogoFrameCaptureOptions = {
+        ...(elapsedSeconds === undefined ? {} : { elapsedSeconds }),
+        ...(pointerTimeMilliseconds === undefined ? {} : { pointerTimeMilliseconds })
+      }
+      const capturePromise = request(Object.keys(options).length === 0 ? undefined : options)
       if (pointerSample) {
         field.dispatchEvent(
-          new PointerEvent('pointermove', {
+          new PointerEvent(pointerSample.type ?? 'pointermove', {
             bubbles: true,
             clientX: pointerSample.clientX,
             clientY: pointerSample.clientY,
             isPrimary: true,
-            pointerType: 'mouse'
+            pointerId: pointerSample.pointerId ?? 1,
+            pointerType: pointerSample.pointerType ?? 'mouse'
           })
         )
-        impulseAt = performance.now()
       }
-      const renderedFrame = await request(elapsedSeconds === undefined ? undefined : { elapsedSeconds })
-      return { ...renderedFrame, impulseAt }
+      return capturePromise
     },
-    { elapsedSeconds, pointerSample: pointerSample ?? null }
+    { elapsedSeconds, pointerSample: pointerSample ?? null, pointerTimeMilliseconds }
   )
   if (!capture.dataUrl.startsWith(CANVAS_PNG_DATA_URL_PREFIX)) throw new Error('Expected a PNG canvas data URL.')
   if (!Number.isFinite(capture.capturedAt)) throw new Error('Expected a finite page capture timestamp.')
-  if (capture.impulseAt !== null && (!Number.isFinite(capture.impulseAt) || capture.capturedAt < capture.impulseAt)) {
-    throw new Error('Expected the rendered frame timestamp to follow its pointer impulse.')
-  }
   return {
     capturedAt: capture.capturedAt,
-    impulseAt: capture.impulseAt,
     png: Buffer.from(capture.dataUrl.slice(CANVAS_PNG_DATA_URL_PREFIX.length), 'base64')
   }
+}
+async function dispatchLogoPointerEvent(page: Page, sample: LogoFramePointerSample): Promise<void> {
+  await page.evaluate(({ clientX, clientY, pointerId, pointerType, type }) => {
+    const field = document.querySelector('.login-particle-logo')
+    if (!(field instanceof HTMLElement)) throw new Error('The animated logo field is unavailable.')
+    field.dispatchEvent(
+      new PointerEvent(type ?? 'pointermove', {
+        bubbles: true,
+        clientX,
+        clientY,
+        isPrimary: true,
+        pointerId: pointerId ?? 1,
+        pointerType: pointerType ?? 'mouse'
+      })
+    )
+  }, sample)
 }
 
 function analyzeFrame(frame: RgbaFrame): FrameAppearance {
@@ -948,6 +1012,123 @@ function compareFrames(before: RgbaFrame, after: RgbaFrame, influence?: { readon
     mean: totalDifference / (before.width * before.height * 3 * 255),
     outsideMean: outsideSamples === 0 ? 0 : outsideDifference / (outsideSamples * 3 * 255)
   }
+}
+
+interface CircularRegion {
+  readonly radius: number
+  readonly x: number
+  readonly y: number
+}
+
+interface RegionAppearance {
+  readonly foregroundMean: number
+  readonly radialCentroid: number
+}
+
+function frameBackground(frame: RgbaFrame): readonly [number, number, number] {
+  const corners = [0, frame.width - 1, (frame.height - 1) * frame.width, frame.height * frame.width - 1]
+  const average = (channel: number): number => corners.reduce((sum, pixel) => sum + (frame.data[pixel * 4 + channel] ?? 0), 0) / corners.length
+  return [average(0), average(1), average(2)]
+}
+
+function analyzeRegion(frame: RgbaFrame, region: CircularRegion): RegionAppearance {
+  const background = frameBackground(frame)
+  let foreground = 0
+  let radialMoment = 0
+  let samples = 0
+  for (let y = Math.max(0, Math.floor(region.y - region.radius)); y <= Math.min(frame.height - 1, Math.ceil(region.y + region.radius)); y += 1) {
+    for (let x = Math.max(0, Math.floor(region.x - region.radius)); x <= Math.min(frame.width - 1, Math.ceil(region.x + region.radius)); x += 1) {
+      const distance = Math.hypot(x - region.x, y - region.y)
+      if (distance > region.radius) continue
+      const offset = (y * frame.width + x) * 4
+      const weight =
+        Math.abs((frame.data[offset] ?? 0) - background[0]) +
+        Math.abs((frame.data[offset + 1] ?? 0) - background[1]) +
+        Math.abs((frame.data[offset + 2] ?? 0) - background[2])
+      foreground += weight
+      radialMoment += distance * weight
+      samples += 1
+    }
+  }
+  return {
+    foregroundMean: samples === 0 ? 0 : foreground / (samples * 3 * 255),
+    radialCentroid: foreground === 0 ? 0 : radialMoment / foreground
+  }
+}
+
+function estimateHorizontalTranslation(before: RgbaFrame, after: RgbaFrame, region: CircularRegion, maximumShift: number): number {
+  if (before.width !== after.width || before.height !== after.height) throw new Error('Particle screenshots changed dimensions.')
+  let bestShift = 0
+  let bestError = Number.POSITIVE_INFINITY
+  for (let shift = -maximumShift; shift <= maximumShift; shift += 1) {
+    let error = 0
+    for (let y = Math.max(0, Math.floor(region.y - region.radius)); y <= Math.min(before.height - 1, Math.ceil(region.y + region.radius)); y += 1) {
+      for (let x = Math.max(0, Math.floor(region.x - region.radius)); x <= Math.min(before.width - 1, Math.ceil(region.x + region.radius)); x += 1) {
+        if (Math.hypot(x - region.x, y - region.y) > region.radius || x + shift < 0 || x + shift >= after.width) continue
+        const beforeOffset = (y * before.width + x) * 4
+        const afterOffset = (y * after.width + x + shift) * 4
+        error +=
+          Math.abs((before.data[beforeOffset] ?? 0) - (after.data[afterOffset] ?? 0)) +
+          Math.abs((before.data[beforeOffset + 1] ?? 0) - (after.data[afterOffset + 1] ?? 0)) +
+          Math.abs((before.data[beforeOffset + 2] ?? 0) - (after.data[afterOffset + 2] ?? 0))
+      }
+    }
+    if (error < bestError) {
+      bestError = error
+      bestShift = shift
+    }
+  }
+  return bestShift
+}
+
+function estimateDarkCoreDiameter(frame: RgbaFrame): number {
+  const background = frameBackground(frame)
+  const fittedHalfAxis = Math.min(frame.width, frame.height) / 2
+  const centerX = frame.width / 2 + 0.04 * fittedHalfAxis
+  const centerY = frame.height / 2
+  const radius = 0.39 * fittedHalfAxis
+  const weights: number[] = []
+  for (let y = Math.floor(centerY - radius); y <= Math.ceil(centerY + radius); y += 1) {
+    for (let x = Math.floor(centerX - radius); x <= Math.ceil(centerX + radius); x += 1) {
+      if (x < 0 || x >= frame.width || y < 0 || y >= frame.height || Math.hypot(x - centerX, y - centerY) > radius) continue
+      const offset = (y * frame.width + x) * 4
+      const residuals = [0, 1, 2].map(channel => Math.abs(background[channel]! - (frame.data[offset + channel] ?? 0)))
+      const spread = Math.max(...residuals) - Math.min(...residuals)
+      const weight = residuals[0]! + residuals[1]! + residuals[2]!
+      if (weight > 36 && spread < 24) weights.push(weight)
+    }
+  }
+  if (weights.length === 0) throw new Error('The calibrated dark fixture component was not rendered.')
+  weights.sort((first, second) => first - second)
+  const solidWeight = weights[Math.floor(weights.length * 0.9)]!
+  const effectiveArea = weights.reduce((sum, weight) => sum + Math.min(1, weight / solidWeight), 0)
+  let darkParticleCount = 0
+  for (let index = 0; index < squareEffect.count; index += 1) {
+    if (particleFixtureSample(index).component === 1) darkParticleCount += 1
+  }
+  return 2 * Math.sqrt(effectiveArea / (Math.PI * darkParticleCount))
+}
+
+function blueFixtureCentroid(frame: RgbaFrame, sample: ParticleFixtureSample): { readonly x: number; readonly y: number } {
+  const fittedHalfAxis = Math.min(frame.width, frame.height) / 2
+  const centerX = frame.width / 2 + sample.x * fittedHalfAxis
+  const centerY = frame.height / 2 - sample.y * fittedHalfAxis
+  const radius = 8
+  let weight = 0
+  let weightedX = 0
+  let weightedY = 0
+  for (let y = Math.floor(centerY - radius); y <= Math.ceil(centerY + radius); y += 1) {
+    for (let x = Math.floor(centerX - radius); x <= Math.ceil(centerX + radius); x += 1) {
+      if (x < 0 || x >= frame.width || y < 0 || y >= frame.height || Math.hypot(x - centerX, y - centerY) > radius) continue
+      const offset = (y * frame.width + x) * 4
+      const blueWeight = Math.max(0, (frame.data[offset + 2] ?? 0) - (frame.data[offset] ?? 0))
+      weight += blueWeight
+      weightedX += x * blueWeight
+      weightedY += y * blueWeight
+    }
+  }
+  if (weight === 0) throw new Error('The calibrated blue fixture marker was not rendered.')
+  return { x: weightedX / weight, y: weightedY / weight }
 }
 
 async function expectFieldGeometry(page: Page, effect: ManagedEffect): Promise<void> {
@@ -1189,7 +1370,7 @@ test.describe('managed login logo auth independence', () => {
 
     await expect(field.locator('canvas')).toHaveCount(1)
     await expect(staticImage).toHaveCSS('opacity', '0')
-    await expect.poll(async () => (await readLogoResourceTrace(page)).pointerListenersAdded).toBeGreaterThanOrEqual(2)
+    await expect.poll(async () => (await readLogoResourceTrace(page)).pointerListenersAdded).toBeGreaterThanOrEqual(5)
     await expect
       .poll(() => page.evaluate(() => (window as Window & { __logoParticlePerformance: { callbackCount: number } }).__logoParticlePerformance.callbackCount))
       .toBeGreaterThan(0)
@@ -1237,7 +1418,7 @@ test.describe('managed login logo auth independence', () => {
     await expectLoginValidation(page)
   })
 
-  test('pipeline-v4 shows sparse circular impulse locality, propagation, bounded travel, and analytic spring settling without telemetry', async ({
+  test('pipeline-v5 proves smaller points, stronger idle and cursor motion, delayed cascade/bounce, bounded explosions, and recovery without telemetry', async ({
     page
   }, testInfo) => {
     requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
@@ -1278,88 +1459,156 @@ test.describe('managed login logo auth independence', () => {
     const idleMotion = await readLogoMotion(page)
     expect(idleMotion).not.toBeNull()
     expect(idleMotion?.keys).toEqual([...motionDiagnosticKeys].sort())
-    expect(squareEffect.count).toBeGreaterThanOrEqual(1_000)
-    expect(squareEffect.count).toBeLessThanOrEqual(4_000)
+    expect(squareEffect.count).toBeGreaterThanOrEqual(2_000)
+    expect(squareEffect.count).toBeLessThanOrEqual(8_000)
     expect(idleMotion?.diagnostics.particleCount).toBe(squareEffect.count)
     expect(idleMotion?.diagnostics.activeImpulseCount).toBe(0)
-    expect(idleMotion?.diagnostics.idleAmplitudeCss).toBeGreaterThanOrEqual(2.5)
-    expect(idleMotion?.diagnostics.idleAmplitudeCss).toBeLessThanOrEqual(7)
-    expect(idleMotion?.diagnostics.impulseLifetimeSeconds).toBe(0.9)
+    expect(idleMotion?.diagnostics.activeExplosionCount).toBe(0)
+    expect(idleMotion?.diagnostics.idleAmplitudeCss).toBeGreaterThanOrEqual(3.5)
+    expect(idleMotion?.diagnostics.idleAmplitudeCss).toBeLessThanOrEqual(10)
+    expect(idleMotion?.diagnostics.impulseLifetimeSeconds).toBe(1.4)
+    expect(idleMotion?.diagnostics.maxImpulseTravelCss).toBe(14)
+    expect(idleMotion?.diagnostics.neighborForceRatio).toBe(0.32)
+    expect(idleMotion?.diagnostics.bounceRatio).toBe(0.22)
+    expect(idleMotion?.diagnostics.explosionHoldSeconds).toBe(0.35)
+    expect(idleMotion?.diagnostics.explosionRefillSeconds).toBe(2.4)
+    expect(idleMotion?.diagnostics.explosionLifetimeSeconds).toBe(2.8)
     expect(idleMotion?.diagnostics.depthScaleMin).toBe(0.82)
     expect(idleMotion?.diagnostics.depthScaleMax).toBe(1.18)
-    const fixedShaderElapsedSeconds = 3.75
 
-    await page.waitForTimeout(120)
-    const idleBefore = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds)).png)
-    const appearance = analyzeFrame(idleBefore)
-    expect(appearance.inkRatio).toBeGreaterThan(0.002)
-    expect(appearance.inkRatio).toBeLessThan(0.32)
+    const fixedShaderElapsedSeconds = 5.25
+    const renderedCursorMotionEpsilon = 0.000001
+    const cursorImmediateDelayMs = 120
+    // This fixed sample measured 2.6504 screenshot px at pixelScale ~= 0.9991.
+    // The old 2.5/3.5 amplitude ratio predicts 1.893 px, leaving margin on both sides.
+    const minimumRenderedIdleDisplacementCss = 2.2
+    const idleAtZero = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, 0)).png)
+    const idleAtLater = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds)).png)
+    const idleDifference = compareFrames(idleAtZero, idleAtLater)
+    expect(analyzeFrame(idleAtZero).inkRatio).toBeGreaterThan(0.002)
+    expect(analyzeFrame(idleAtZero).inkRatio).toBeLessThan(0.32)
+    expect(idleDifference.mean).toBeGreaterThan(0.0001)
+
     await page.waitForLoadState('networkidle')
-    const requestCountBeforeImpulse = requests.length
-
+    const requestCountBeforeInput = requests.length
     const bounds = await canvas.boundingBox()
     expect(bounds).not.toBeNull()
     if (!bounds) throw new Error('The animated logo has no pointer-test bounds.')
+    const pointerX = bounds.x + bounds.width * 0.5
     const pointerY = bounds.y + bounds.height * 0.52
-    const startX = bounds.x + bounds.width * 0.35
-    const travelCss = Math.min(48, bounds.width * 0.12)
-    const endX = startX + travelCss
-    await page.mouse.move(startX, pointerY)
-    await page.waitForTimeout(24)
-    const impulseCapture = await captureLogoRenderedFrame(page, { clientX: endX, clientY: pointerY }, fixedShaderElapsedSeconds)
-    if (impulseCapture.impulseAt === null) throw new Error('The pointer capture did not record its page-clock impulse.')
-    const impulseFrame = await decodeScreenshot(impulseCapture.png)
-    const impulseMotion = await readLogoMotion(page)
-    await page.waitForTimeout(180)
-    const propagationFrame = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds)).png)
-    expect(impulseMotion).not.toBeNull()
-    expect(impulseMotion?.diagnostics.activeImpulseCount).toBeGreaterThan(0)
-    expect(impulseMotion?.diagnostics.activeImpulseCount).toBeLessThanOrEqual(4)
-    expect(impulseMotion?.diagnostics.maxImpulseTravelCss).toBe(8)
-    expect(travelCss).toBeGreaterThan(12)
-    expect(Math.hypot(endX - startX, 0)).toBeGreaterThan(2)
-    expect(Math.hypot(endX - startX, 0)).toBeLessThanOrEqual(48)
+    const pixelScale = idleAtZero.width / bounds.width
+    const renderedLongAxis = Math.min(bounds.width, bounds.height)
+    const renderedCoreDiameter = estimateDarkCoreDiameter(idleAtZero)
+    expect(renderedCoreDiameter).toBeLessThan(Math.max(1.3, renderedLongAxis * pixelScale * 0.0012))
+    const idleMarker = particleFixtureSample(3)
+    const idleMarkerAtZero = blueFixtureCentroid(idleAtZero, idleMarker)
+    const idleMarkerAtLater = blueFixtureCentroid(idleAtLater, idleMarker)
+    const renderedIdleDisplacement = Math.hypot(idleMarkerAtLater.x - idleMarkerAtZero.x, idleMarkerAtLater.y - idleMarkerAtZero.y)
+    expect(renderedIdleDisplacement).toBeGreaterThan(minimumRenderedIdleDisplacementCss * pixelScale)
 
-    const screenshotScale = impulseFrame.width / bounds.width
-    const radiusCss = Math.min(32, Math.max(18, 0.05 * Math.max(bounds.width, bounds.height)))
+    const interactionClockMilliseconds = 1_000_000_000
+    await page.mouse.move(pointerX - 12, pointerY)
+    const cursorBefore = await decodeScreenshot(
+      (await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, interactionClockMilliseconds - 1)).png
+    )
+    const cursorStartedAt = interactionClockMilliseconds
+    await captureLogoRenderedFrame(
+      page,
+      { clientX: pointerX + 30, clientY: pointerY, pointerType: 'mouse', type: 'pointermove' },
+      fixedShaderElapsedSeconds,
+      cursorStartedAt
+    )
+    const cursorImmediate = await decodeScreenshot(
+      (await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, cursorStartedAt + cursorImmediateDelayMs)).png
+    )
     const influence = {
-      radius: radiusCss * screenshotScale,
-      x: (endX - bounds.x) * screenshotScale,
-      y: (pointerY - bounds.y) * screenshotScale
+      radius: Math.min(32, Math.max(18, 0.05 * Math.max(bounds.width, bounds.height))) * (cursorImmediate.width / bounds.width),
+      x: (pointerX + 30 - bounds.x) * (cursorImmediate.width / bounds.width),
+      y: (pointerY - bounds.y) * (cursorImmediate.width / bounds.width)
     }
-    const immediateDifference = compareFrames(idleBefore, impulseFrame, influence)
-    expect(immediateDifference.mean).toBeLessThan(0.12)
-    expect(immediateDifference.coreMean).toBeGreaterThan(0.0001)
+    const cursorImmediateDifference = compareFrames(cursorBefore, cursorImmediate, influence)
+    expect(cursorImmediateDifference.coreMean).toBeGreaterThan(renderedCursorMotionEpsilon)
+    const cascade = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, cursorStartedAt + 420)).png)
+    const cascadeDifference = compareFrames(cursorBefore, cascade, influence)
+    expect(cascadeDifference.annulusMean).toBeGreaterThan(cascadeDifference.outsideMean * 1.1)
+    expect(cascadeDifference.coreMean).toBeGreaterThan(renderedCursorMotionEpsilon)
+    const bounceRegion = {
+      radius: influence.radius * 0.42,
+      x: influence.x + influence.radius * 1.2,
+      y: influence.y
+    }
+    const maximumBounceShift = Math.max(6, Math.ceil(7 * pixelScale))
+    const cascadeShift = estimateHorizontalTranslation(cursorBefore, cascade, bounceRegion, maximumBounceShift)
+    const bounce = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, cursorStartedAt + 1_100)).png)
+    const bounceShift = estimateHorizontalTranslation(cursorBefore, bounce, bounceRegion, maximumBounceShift)
+    expect(cascadeShift).toBeGreaterThanOrEqual(Math.max(1, Math.round(2 * pixelScale)))
+    expect(bounceShift).toBeLessThanOrEqual(-Math.max(1, Math.round(pixelScale)))
 
-    const propagationDifference = compareFrames(idleBefore, propagationFrame, influence)
-    expect(propagationDifference.mean).toBeLessThan(0.12)
-    expect(propagationDifference.coreMean).toBeGreaterThan(0.0001)
-    expect(propagationDifference.annulusMean).toBeGreaterThan(0.00001)
-    expect(propagationDifference.coreMean).toBeGreaterThan(propagationDifference.annulusMean)
-    expect(propagationDifference.annulusMean).toBeGreaterThan(propagationDifference.outsideMean * 1.1)
+    await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, cursorStartedAt + 1_500)
+    expect((await readLogoMotion(page))?.diagnostics.activeImpulseCount).toBe(0)
 
-    const at240Deadline = impulseCapture.impulseAt + 240
-    await page.waitForFunction(deadline => performance.now() >= deadline, at240Deadline)
-    const at240Capture = await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds)
-    const at240Frame = await decodeScreenshot(at240Capture.png)
-    const at240Motion = await readLogoMotion(page)
-    expect(at240Capture.capturedAt).toBeGreaterThanOrEqual(at240Deadline)
-    expect(at240Motion).not.toBeNull()
-    expect(at240Motion?.diagnostics.activeImpulseCount).toBeGreaterThan(0)
-    const at240Difference = compareFrames(idleBefore, at240Frame, influence)
-    expect(at240Difference.coreMean).toBeGreaterThan(0.00001)
+    const blast = async (type: 'mouse' | 'touch', startedAt: number, x = pointerX, y = pointerY): Promise<void> => {
+      await captureLogoRenderedFrame(page, { clientX: x, clientY: y, pointerType: type, type: 'pointerdown' }, fixedShaderElapsedSeconds, startedAt)
+      await dispatchLogoPointerEvent(page, { clientX: x, clientY: y, pointerType: type, type: 'pointerup' })
+    }
+    const blastStartedAt = cursorStartedAt + 5_000
+    const explosionBaseline = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, blastStartedAt - 1)).png)
+    const explosionRadius = Math.min(88, Math.max(32, 0.1 * renderedLongAxis)) * pixelScale
+    const explosionRegion = {
+      radius: explosionRadius * 0.62,
+      x: (pointerX - bounds.x) * pixelScale,
+      y: (pointerY - bounds.y) * pixelScale
+    }
+    const explosionBaselineAppearance = analyzeRegion(explosionBaseline, explosionRegion)
+    await blast('mouse', blastStartedAt)
+    const oldFade = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, blastStartedAt + 220)).png)
+    expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBeGreaterThan(0)
+    const oldFadeAppearance = analyzeRegion(oldFade, explosionRegion)
+    const oldFadeDifference = compareFrames(explosionBaseline, oldFade, explosionRegion)
+    expect(oldFadeAppearance.foregroundMean).toBeLessThan(explosionBaselineAppearance.foregroundMean * 0.8)
+    expect(oldFadeDifference.coreMean).toBeGreaterThan(oldFadeDifference.outsideMean * 3)
 
-    const at900Deadline = impulseCapture.impulseAt + 900
-    await page.waitForFunction(deadline => performance.now() >= deadline, at900Deadline)
-    const at900Capture = await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds)
-    const at900Frame = await decodeScreenshot(at900Capture.png)
-    const at900Motion = await readLogoMotion(page)
-    expect(at900Capture.capturedAt).toBeGreaterThanOrEqual(at900Deadline)
-    expect(at900Motion).not.toBeNull()
-    expect(at900Motion?.diagnostics.activeImpulseCount).toBe(0)
-    const at900Difference = compareFrames(idleBefore, at900Frame, influence)
-    expect(at900Difference.coreMean).toBeLessThan(Math.max(0.0001, immediateDifference.coreMean * 0.5))
-    expect(requests).toHaveLength(requestCountBeforeImpulse)
+    const refill = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, blastStartedAt + 700)).png)
+    const refillAppearance = analyzeRegion(refill, explosionRegion)
+    const refillDifference = compareFrames(explosionBaseline, refill, explosionRegion)
+    expect(refillAppearance.foregroundMean).toBeGreaterThan(oldFadeAppearance.foregroundMean * 1.2)
+    expect(refillDifference.coreMean).toBeGreaterThan(refillDifference.outsideMean * 3)
+    expect(refillDifference.coreMean).toBeGreaterThan(0.0001)
+
+    const beforeExpiry = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, blastStartedAt + 2_760)).png)
+    const beforeExpiryDifference = compareFrames(explosionBaseline, beforeExpiry, explosionRegion)
+    expect(beforeExpiryDifference.coreMean).toBeLessThan(refillDifference.coreMean * 0.12)
+    const recovered = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, blastStartedAt + 2_850)).png)
+    const recoveryDifference = compareFrames(explosionBaseline, recovered, explosionRegion)
+    expect(recoveryDifference.mean).toBeLessThan(0.00001)
+    expect(recoveryDifference.coreMean).toBeLessThan(refillDifference.coreMean * 0.08)
+    expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(0)
+
+    const orderedOlderAt = blastStartedAt + 5_000
+    await blast('mouse', orderedOlderAt)
+    await blast('touch', orderedOlderAt + 2_560)
+    const orderedLifecycle = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, orderedOlderAt + 2_760)).png)
+    expect(analyzeRegion(orderedLifecycle, explosionRegion).foregroundMean).toBeLessThan(explosionBaselineAppearance.foregroundMean * 0.9)
+    await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, orderedOlderAt + 5_500)
+
+    const reversedOlderAt = orderedOlderAt + 7_000
+    await blast('mouse', reversedOlderAt + 2_560)
+    await blast('touch', reversedOlderAt)
+    const reversedLifecycle = await decodeScreenshot((await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, reversedOlderAt + 2_760)).png)
+    expect(compareFrames(orderedLifecycle, reversedLifecycle, explosionRegion).mean).toBeLessThan(0.00001)
+    await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, reversedOlderAt + 5_500)
+
+    const burstStartedAt = reversedOlderAt + 7_000
+    for (let index = 0; index < 8; index += 1) {
+      await blast(index % 2 === 0 ? 'mouse' : 'touch', burstStartedAt + index, pointerX + index, pointerY)
+    }
+    expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(6)
+    await captureLogoRenderedFrame(page, undefined, fixedShaderElapsedSeconds, burstStartedAt + 2_900)
+    expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBe(0)
+    await blast('touch', burstStartedAt + 3_000)
+    expect((await readLogoMotion(page))?.diagnostics.activeExplosionCount).toBeGreaterThan(0)
+    await dispatchLogoPointerEvent(page, { clientX: pointerX, clientY: pointerY, pointerType: 'touch', type: 'pointercancel' })
+    expect(requests).toHaveLength(requestCountBeforeInput)
     await expectLoginValidation(page)
   })
 

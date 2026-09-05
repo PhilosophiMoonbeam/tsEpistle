@@ -1,11 +1,12 @@
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { LogoEffectDescriptor } from '../../../shared/site-logo.ts'
-import { PARTICLE_ATTRIBUTE_ITEM_SIZES, PARTICLE_V1_MAX_BYTES, parseParticleV1 } from './particle-logo.ts'
+import { isLogoEffectDescriptor, PARTICLE_ATTRIBUTE_ITEM_SIZES, PARTICLE_V1_MAX_BYTES, parseParticleV1 } from './particle-logo.ts'
 
 const VECTOR_HEX =
   '545345500107380008000000080000000200000018000000cf8f46fd3800000040000000420000004a0000004c000000500000000000000025c94912db36b7eded4ddc283cc81e6edca05578d20431d4'
 const HASH = '0'.repeat(64)
 const descriptor: LogoEffectDescriptor = {
+  pipelineVersion: 5,
   logoUrl: `/_site-logo/${HASH}/logo.png`,
   particleUrl: `/_site-logo/${HASH}/particle.bin`,
   staticUrl: `/_site-logo/${HASH}/effect.png`,
@@ -72,6 +73,17 @@ describe('particle-v1 browser parser', () => {
     ])
     for (const view of [parsed.xy, parsed.depth, parsed.rgba, parsed.size, parsed.seed]) expect(view.buffer).toBe(source)
     expect(new Uint8Array(source)).toEqual(before)
+  })
+  it('requires an exact supported pipeline version in every descriptor', () => {
+    for (const pipelineVersion of [1, 2, 3, 4, 5]) {
+      expect(isLogoEffectDescriptor({ ...descriptor, pipelineVersion })).toBe(true)
+    }
+
+    const { pipelineVersion: _pipelineVersion, ...missingVersion } = descriptor
+    expect(isLogoEffectDescriptor(missingVersion)).toBe(false)
+    for (const pipelineVersion of [0, 1.5, 6, '5', null]) {
+      expect(isLogoEffectDescriptor({ ...descriptor, pipelineVersion })).toBe(false)
+    }
   })
 
   it('rejects truncated, trailing, and over-limit inputs', () => {

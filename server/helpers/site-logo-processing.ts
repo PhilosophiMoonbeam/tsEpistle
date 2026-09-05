@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { deflateSync, gzipSync } from 'node:zlib'
 import sharp, { type Metadata } from 'sharp'
 
-export const SITE_LOGO_PIPELINE_VERSION = 4
+export const SITE_LOGO_PIPELINE_VERSION = 5
 
 export const SITE_LOGO_SOURCE_BYTE_LIMIT = 5_242_880
 export const SITE_LOGO_PARTICLE_RAW_BYTE_LIMIT = 192_056
@@ -14,9 +14,9 @@ const MAX_INPUT_PIXELS = 16_777_216
 const MAX_INPUT_DIMENSION = 4096
 const MIN_INPUT_DIMENSION = 64
 const MAX_PARTICLES = 16_000
-const MAX_GENERATED_PARTICLES = 4_000
-const MIN_GENERATED_PARTICLES = 1_000
-const RESERVED_PARTICLES_PER_COMPONENT = 4
+const MAX_GENERATED_PARTICLES = 8_000
+const MIN_GENERATED_PARTICLES = 2_000
+const RESERVED_PARTICLES_PER_COMPONENT = 8
 const PARTICLE_HEADER_BYTES = 56
 const PARTICLE_BYTES = 12
 const MIN_RECONSTRUCTED_MASK_IOU = 0.75
@@ -819,6 +819,8 @@ interface ParticleContrastPresentation {
   readonly darkCovered: boolean
 }
 
+const STATIC_CORE_DIAMETER_FACTOR = 2 / 3
+
 const rasterizeParticleLayers = (
   width: number,
   height: number,
@@ -853,13 +855,17 @@ const rasterizeParticleLayers = (
       const record = records[recordIndex]!
       const presentation = presentations?.[recordIndex]
       const radius = ((1 + 15 * ((record.size - 1) / 254)) * coreScale) / 2
-      const outerRadius = radius + (presentation?.useRing ? presentation.ringWidth : 0)
+      const staticRadius = radius * STATIC_CORE_DIAMETER_FACTOR
+      const staticOuterRadius = staticRadius + (presentation?.useRing ? presentation.ringWidth : 0)
+      const outerRadius = Math.max(radius, staticOuterRadius)
       if (y + 1 < record.y - outerRadius || y > record.y + outerRadius) continue
       const firstX = Math.max(0, Math.floor(record.x - outerRadius))
       const lastX = Math.min(width - 1, Math.floor(record.x + outerRadius))
       const sourceAlpha = record.rgba[3] / 255
       const inverse = 1 - sourceAlpha
       const radiusSquared = radius * radius
+      const staticRadiusSquared = staticRadius * staticRadius
+      const staticOuterRadiusSquared = staticOuterRadius * staticOuterRadius
       const outerRadiusSquared = outerRadius * outerRadius
       for (let x = firstX; x <= lastX; x += 1) {
         for (let subY = 0; subY < 8; subY += 1) {
@@ -876,8 +882,14 @@ const rasterizeParticleLayers = (
               green[sample] = (record.rgba[1] / 255) * sourceAlpha + green[sample]! * inverse
               blue[sample] = (record.rgba[2] / 255) * sourceAlpha + blue[sample]! * inverse
             }
-            if (contrastAlpha && contrastRed && contrastGreen && contrastBlue && (inCore || presentation?.useRing)) {
-              const channel = inCore ? undefined : presentation!.ringNeutral / 255
+            if (
+              contrastAlpha &&
+              contrastRed &&
+              contrastGreen &&
+              contrastBlue &&
+              (distanceSquared <= staticRadiusSquared || (presentation?.useRing === true && distanceSquared <= staticOuterRadiusSquared))
+            ) {
+              const channel = distanceSquared <= staticRadiusSquared ? undefined : presentation!.ringNeutral / 255
               contrastAlpha[sample] = sourceAlpha + contrastAlpha[sample]! * inverse
               contrastRed[sample] = (channel ?? record.rgba[0] / 255) * sourceAlpha + contrastRed[sample]! * inverse
               contrastGreen[sample] = (channel ?? record.rgba[1] / 255) * sourceAlpha + contrastGreen[sample]! * inverse

@@ -1,4 +1,5 @@
 export interface LogoEffectDescriptor {
+  readonly pipelineVersion: number
   readonly logoUrl: string
   readonly particleUrl: string
   readonly staticUrl: string

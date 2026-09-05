@@ -60,6 +60,11 @@ import type { LogoEffectDescriptor, ParsedLogoParticles } from './particle-logo'
 import fragmentShader from './particle.frag.glsl?raw'
 import vertexShader from './particle.vert.glsl?raw'
 import {
+  LOGO_POINTER_BOUNCE_RATIO,
+  LOGO_POINTER_EXPLOSION_CAPACITY,
+  LOGO_POINTER_EXPLOSION_HOLD_SECONDS,
+  LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS,
+  LOGO_POINTER_EXPLOSION_REFILL_SECONDS,
   LOGO_POINTER_IMPULSE_CAPACITY,
   LOGO_POINTER_IMPULSE_LIFETIME_SECONDS,
   LOGO_POINTER_MAX_SEGMENT_CSS,
@@ -72,8 +77,8 @@ import type { LogoPointerController } from './useLogoPointer'
 const DEFAULT_BACKGROUND = 0xffffff
 const DEPTH_SCALE_MIN = 0.82
 const DEPTH_SCALE_MAX = 1.18
-const MIN_IDLE_AMPLITUDE_CSS = 2.5
-const MAX_IDLE_AMPLITUDE_CSS = 7
+const MIN_IDLE_AMPLITUDE_CSS = 3.5
+const MAX_IDLE_AMPLITUDE_CSS = 10
 const MIN_IMPULSE_RADIUS_CSS = 18
 const MAX_IMPULSE_RADIUS_CSS = 32
 const MAX_DIAGNOSTIC_ELAPSED_SECONDS = Number.MAX_SAFE_INTEGER
@@ -85,8 +90,10 @@ interface ParticleUniforms {
   readonly uAspect: { value: number }
   readonly uBackground: { value: Color }
   readonly uDpr: { value: number }
+  readonly uCoreSizeFactor: { value: number }
   readonly uImpulseDirectionTravel: { value: Vector4[] }
   readonly uImpulsePositionAge: { value: Vector4[] }
+  readonly uExplosionPositionAge: { value: Vector4[] }
   readonly uMedianStroke: { value: number }
   readonly uRenderedLongAxis: { value: number }
   readonly uTime: { value: number }
@@ -94,10 +101,15 @@ interface ParticleUniforms {
 }
 
 export interface ParticleMotionDiagnostics {
+  activeExplosionCount: number
   activeImpulseCount: number
+  bounceRatio: number
   depthScaleMax: number
   depthScaleMin: number
   elapsedSeconds: number
+  explosionHoldSeconds: number
+  explosionLifetimeSeconds: number
+  explosionRefillSeconds: number
   idleAmplitudeCss: number
   impulseLifetimeSeconds: number
   maxImpulseTravelCss: number
@@ -110,6 +122,7 @@ export interface ParticleSceneResources {
   readonly geometry: BufferGeometry
   readonly material: ShaderMaterial
   readonly motionDiagnostics: ParticleMotionDiagnostics | null
+  readonly motionDiagnosticsBenchmark: ParticlePerformanceBenchmark | null
   readonly points: Points<BufferGeometry, ShaderMaterial>
   readonly uniforms: ParticleUniforms
   disposed: boolean
@@ -119,6 +132,7 @@ export interface ParticleSceneFrame {
   elapsed: number
   height: number
   pixelRatio: number
+  pointerTimeMilliseconds?: number
   width: number
 }
 
@@ -128,7 +142,8 @@ interface ParticleLoopControl {
 }
 
 interface ParticleFrameCaptureOptions {
-  readonly elapsedSeconds: number
+  readonly elapsedSeconds?: number
+  readonly pointerTimeMilliseconds?: number
 }
 
 interface ParticleFrameCapture {
@@ -145,11 +160,13 @@ interface ParticleFrameCaptureHook {
 interface ParticleFrameCaptureRegistration {
   afterRender: (canvas: HTMLCanvasElement) => void
   consumeElapsedSecondsOverride: () => number | undefined
+  currentTimeMilliseconds: () => number | undefined
   dispose: (reason: Error) => void
 }
 
 interface PendingParticleFrameCapture {
   elapsedSeconds?: number
+  pointerTimeMilliseconds?: number
   readonly reject: (reason: Error) => void
   readonly resolve: (capture: ParticleFrameCapture) => void
 }
@@ -157,6 +174,14 @@ interface PendingParticleFrameCapture {
 type ParticleFrameCaptureWindow = Window & {
   readonly __logoParticleFrameCapture?: unknown
 }
+
+interface ParticleFrameCaptureClock {
+  currentTimeMilliseconds?: number
+  readonly hook: ParticleFrameCaptureHook
+  readonly now: () => number
+}
+
+const particleFrameCaptureClocks = new WeakMap<ParticleFrameCaptureHook, ParticleFrameCaptureClock>()
 
 interface SceneEvents {
   readonly firstFrame: () => void
@@ -205,6 +230,19 @@ const readParticleFrameCaptureHook = (): ParticleFrameCaptureHook | null => {
     ? hook as ParticleFrameCaptureHook
     : null
 }
+
+const readParticleFrameCaptureClock = (): ParticleFrameCaptureClock | null => {
+  const hook = readParticleFrameCaptureHook()
+  if (!hook) return null
+  const existing = particleFrameCaptureClocks.get(hook)
+  if (existing) return existing
+  const clock: ParticleFrameCaptureClock = {
+    hook,
+    now: () => clock.currentTimeMilliseconds ?? performance.now()
+  }
+  particleFrameCaptureClocks.set(hook, clock)
+  return clock
+}
 const clamp = (minimum: number, value: number, maximum: number): number =>
   Math.min(maximum, Math.max(minimum, value))
 
@@ -214,15 +252,20 @@ const finiteOr = (value: number, fallback: number): number =>
 const idleAmplitudeCss = (medianStroke: number, renderedLongAxis: number): number =>
   clamp(
     MIN_IDLE_AMPLITUDE_CSS,
-    0.35 * Math.max(0, finiteOr(medianStroke, 0)) * Math.max(0, finiteOr(renderedLongAxis, 0)) / 1024,
+    0.50 * Math.max(0, finiteOr(medianStroke, 0)) * Math.max(0, finiteOr(renderedLongAxis, 0)) / 1024,
     MAX_IDLE_AMPLITUDE_CSS
   )
 
 const createMotionDiagnostics = (particleCount: number): ParticleMotionDiagnostics => ({
+  activeExplosionCount: 0,
   activeImpulseCount: 0,
+  bounceRatio: LOGO_POINTER_BOUNCE_RATIO,
   depthScaleMax: DEPTH_SCALE_MAX,
   depthScaleMin: DEPTH_SCALE_MIN,
   elapsedSeconds: 0,
+  explosionHoldSeconds: LOGO_POINTER_EXPLOSION_HOLD_SECONDS,
+  explosionLifetimeSeconds: LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS,
+  explosionRefillSeconds: LOGO_POINTER_EXPLOSION_REFILL_SECONDS,
   idleAmplitudeCss: MIN_IDLE_AMPLITUDE_CSS,
   impulseLifetimeSeconds: LOGO_POINTER_IMPULSE_LIFETIME_SECONDS,
   maxImpulseTravelCss: LOGO_POINTER_MAX_TRAVEL_CSS,
@@ -232,44 +275,74 @@ const createMotionDiagnostics = (particleCount: number): ParticleMotionDiagnosti
 
 const asError = (reason: unknown): Error => reason instanceof Error ? reason : new Error(String(reason))
 
-const readParticleFrameCaptureElapsedSeconds = (options: unknown): number | undefined => {
+const readParticleFrameCaptureOptions = (
+  options: unknown
+): ParticleFrameCaptureOptions | undefined => {
   if (options === undefined) return undefined
   if (options === null || typeof options !== 'object' || Object.getPrototypeOf(options) !== Object.prototype) {
-    throw new Error('Particle frame capture elapsedSeconds override is invalid')
+    throw new Error('Particle frame capture options are invalid')
   }
   const keys = Reflect.ownKeys(options)
-  if (keys.length !== 1 || keys[0] !== 'elapsedSeconds') {
+  if (
+    keys.length === 0 ||
+    keys.length > 2 ||
+    keys.some(key => key !== 'elapsedSeconds' && key !== 'pointerTimeMilliseconds')
+  ) {
+    throw new Error('Particle frame capture options are invalid')
+  }
+  const captureOptions = options as {
+    readonly elapsedSeconds?: unknown
+    readonly pointerTimeMilliseconds?: unknown
+  }
+  const elapsedSeconds = captureOptions.elapsedSeconds
+  if (
+    'elapsedSeconds' in captureOptions &&
+    (typeof elapsedSeconds !== 'number' || !Number.isFinite(elapsedSeconds) || elapsedSeconds < 0)
+  ) {
     throw new Error('Particle frame capture elapsedSeconds override is invalid')
   }
-  const elapsedSeconds = (options as { readonly elapsedSeconds?: unknown }).elapsedSeconds
-  if (typeof elapsedSeconds !== 'number' || !Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) {
-    throw new Error('Particle frame capture elapsedSeconds override is invalid')
+  const pointerTimeMilliseconds = captureOptions.pointerTimeMilliseconds
+  if (
+    'pointerTimeMilliseconds' in captureOptions &&
+    (
+      typeof pointerTimeMilliseconds !== 'number' ||
+      !Number.isFinite(pointerTimeMilliseconds) ||
+      pointerTimeMilliseconds < 0
+    )
+  ) {
+    throw new Error('Particle frame capture pointerTimeMilliseconds override is invalid')
   }
-  return elapsedSeconds
+  return {
+    ...(typeof elapsedSeconds === 'number' ? { elapsedSeconds } : {}),
+    ...(typeof pointerTimeMilliseconds === 'number' ? { pointerTimeMilliseconds } : {})
+  }
 }
 
 const createParticleFrameCaptureRegistration = (
   invalidate: () => void
 ): ParticleFrameCaptureRegistration | null => {
-  const hook = readParticleFrameCaptureHook()
-  if (!hook) return null
+  const clock = readParticleFrameCaptureClock()
+  if (!clock) return null
+  const { hook } = clock
   let disposed = false
   let pending: PendingParticleFrameCapture | null = null
   const request: ParticleFrameCaptureRequest = options => {
     if (disposed) return Promise.reject(new Error('Particle frame capture is unavailable'))
     if (pending) return Promise.reject(new Error('A particle frame capture is already pending'))
-    let elapsedSeconds: number | undefined
+    let captureOptions: ParticleFrameCaptureOptions | undefined
     try {
-      elapsedSeconds = readParticleFrameCaptureElapsedSeconds(options)
+      captureOptions = readParticleFrameCaptureOptions(options)
     } catch (error) {
       return Promise.reject(asError(error))
     }
     return new Promise<ParticleFrameCapture>((resolve, reject) => {
-      pending = { elapsedSeconds, reject, resolve }
+      pending = { ...captureOptions, reject, resolve }
+      clock.currentTimeMilliseconds = captureOptions?.pointerTimeMilliseconds
       try {
         invalidate()
       } catch (error) {
         pending = null
+        clock.currentTimeMilliseconds = undefined
         reject(asError(error))
       }
     })
@@ -281,6 +354,7 @@ const createParticleFrameCaptureRegistration = (
       if (!pending) return
       const capture = pending
       pending = null
+      clock.currentTimeMilliseconds = undefined
       try {
         const dataUrl = canvas.toDataURL('image/png')
         capture.resolve({ dataUrl, capturedAt: performance.now() })
@@ -289,6 +363,7 @@ const createParticleFrameCaptureRegistration = (
         throw error
       }
     },
+    currentTimeMilliseconds: () => clock.currentTimeMilliseconds,
     consumeElapsedSecondsOverride: () => {
       if (!pending) return undefined
       const elapsedSeconds = pending.elapsedSeconds
@@ -301,6 +376,7 @@ const createParticleFrameCaptureRegistration = (
       if (hook.request === request) hook.request = null
       const capture = pending
       pending = null
+      clock.currentTimeMilliseconds = undefined
       capture?.reject(reason)
     }
   }
@@ -342,13 +418,15 @@ export const createParticleSceneResources = (
   geometry.setAttribute('logoSize', new BufferAttribute(particles.size, 1, true))
   geometry.setAttribute('logoSeed', new BufferAttribute(particles.seed, 1, true))
   geometry.setDrawRange(0, particles.count)
-
   const uniforms: ParticleUniforms = {
     uAspect: { value: effect.aspect },
     uBackground: { value: new Color(DEFAULT_BACKGROUND) },
     uDpr: { value: 1 },
+    uCoreSizeFactor: { value: effect.pipelineVersion === 5 ? 2 / 3 : 1 },
     uImpulseDirectionTravel: {
       value: [
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
         new Vector4(0, 0, 0, 0),
         new Vector4(0, 0, 0, 0),
         new Vector4(0, 0, 0, 0),
@@ -356,7 +434,24 @@ export const createParticleSceneResources = (
       ]
     },
     uImpulsePositionAge: {
-      value: [new Vector4(0, 0, 0, 0), new Vector4(0, 0, 0, 0), new Vector4(0, 0, 0, 0), new Vector4(0, 0, 0, 0)]
+      value: [
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0)
+      ]
+    },
+    uExplosionPositionAge: {
+      value: [
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0),
+        new Vector4(0, 0, 0, 0)
+      ]
     },
     uMedianStroke: { value: effect.medianStroke },
     uRenderedLongAxis: { value: 1 },
@@ -384,16 +479,30 @@ export const createParticleSceneResources = (
   camera.lookAt(0, 0, 0)
   camera.updateMatrixWorld()
 
-  const benchmark = readParticlePerformanceBenchmark()
-  const motionDiagnostics = benchmark ? createMotionDiagnostics(particles.count) : null
-  if (benchmark && motionDiagnostics) benchmark.lastMotion = motionDiagnostics
+  const motionDiagnosticsBenchmark = readParticlePerformanceBenchmark()
+  const motionDiagnostics = motionDiagnosticsBenchmark ? createMotionDiagnostics(particles.count) : null
+  if (motionDiagnosticsBenchmark && motionDiagnostics) {
+    motionDiagnosticsBenchmark.lastMotion = motionDiagnostics
+  }
 
-  return { camera, disposed: false, geometry, material, motionDiagnostics, points, uniforms }
+  return {
+    camera,
+    disposed: false,
+    geometry,
+    material,
+    motionDiagnostics,
+    motionDiagnosticsBenchmark,
+    points,
+    uniforms
+  }
 }
 
 export const disposeParticleSceneResources = (resources: ParticleSceneResources): void => {
   if (resources.disposed) return
   resources.disposed = true
+  if (resources.motionDiagnosticsBenchmark?.lastMotion === resources.motionDiagnostics) {
+    Reflect.deleteProperty(resources.motionDiagnosticsBenchmark, 'lastMotion')
+  }
   resources.points.removeFromParent()
   resources.camera.removeFromParent()
   resources.geometry.dispose()
@@ -515,7 +624,13 @@ export const updateParticleSceneFrame = (
   pointerController: Pick<LogoPointerController, 'update'>,
   frame: ParticleSceneFrame
 ): void => {
-  if (resources.disposed || frame.width <= 0 || frame.height <= 0) return
+  if (
+    resources.disposed ||
+    !Number.isFinite(frame.width) ||
+    !Number.isFinite(frame.height) ||
+    frame.width <= 0 ||
+    frame.height <= 0
+  ) return
   resources.uniforms.uViewport.value.set(frame.width, frame.height)
   resources.uniforms.uDpr.value = clamp(1, finiteOr(frame.pixelRatio, 1), 1.5)
   resources.uniforms.uRenderedLongAxis.value = renderedLongAxis(
@@ -523,7 +638,9 @@ export const updateParticleSceneFrame = (
     frame.height,
     resources.uniforms.uAspect.value
   )
-  const pointer = pointerController.update(resources.uniforms.uRenderedLongAxis.value)
+  const pointer = frame.pointerTimeMilliseconds === undefined
+    ? pointerController.update(resources.uniforms.uRenderedLongAxis.value)
+    : pointerController.update(resources.uniforms.uRenderedLongAxis.value, frame.pointerTimeMilliseconds)
   let activeImpulseCount = 0
   for (let index = 0; index < LOGO_POINTER_IMPULSE_CAPACITY; index += 1) {
     const impulse = pointer.impulses[index]
@@ -551,12 +668,30 @@ export const updateParticleSceneFrame = (
     )
     if (active) activeImpulseCount += 1
   }
+  let activeExplosionCount = 0
+  for (let index = 0; index < LOGO_POINTER_EXPLOSION_CAPACITY; index += 1) {
+    const explosion = pointer.explosions[index]
+    const ageSeconds = clamp(
+      0,
+      finiteOr(explosion.ageSeconds, LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS),
+      LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS
+    )
+    const active = explosion.active && ageSeconds < LOGO_POINTER_EXPLOSION_LIFETIME_SECONDS
+    resources.uniforms.uExplosionPositionAge.value[index].set(
+      active ? clamp(-1, finiteOr(explosion.x, 0), 1) : 0,
+      active ? clamp(-1, finiteOr(explosion.y, 0), 1) : 0,
+      ageSeconds,
+      active ? 1 : 0
+    )
+    if (active) activeExplosionCount += 1
+  }
   const elapsed = clamp(0, finiteOr(frame.elapsed, 0), Number.MAX_SAFE_INTEGER)
   resources.uniforms.uTime.value = elapsed
 
   const diagnostics = resources.motionDiagnostics
   if (diagnostics) {
     diagnostics.activeImpulseCount = activeImpulseCount
+    diagnostics.activeExplosionCount = activeExplosionCount
     diagnostics.elapsedSeconds = Math.min(elapsed, MAX_DIAGNOSTIC_ELAPSED_SECONDS)
     diagnostics.idleAmplitudeCss = idleAmplitudeCss(
       resources.uniforms.uMedianStroke.value,
@@ -588,6 +723,7 @@ const ParticleSceneContents = defineComponent({
       elapsed: 0,
       height: 1,
       pixelRatio: 1,
+      pointerTimeMilliseconds: undefined,
       width: 1
     }
 
@@ -606,6 +742,7 @@ const ParticleSceneContents = defineComponent({
         frame.elapsed = elapsed
         const elapsedSecondsOverride = frameCapture?.consumeElapsedSecondsOverride()
         if (elapsedSecondsOverride !== undefined) frame.elapsed = elapsedSecondsOverride
+        frame.pointerTimeMilliseconds = frameCapture?.currentTimeMilliseconds()
         frame.height = sizes.height.value
         frame.pixelRatio = renderer.getPixelRatio()
         frame.width = sizes.width.value
@@ -697,10 +834,12 @@ export default defineComponent({
     let surfaceObserver: MutationObserver | null = null
     let tornDown = false
     const benchmark = readParticlePerformanceBenchmark()
+    const frameCaptureClock = readParticleFrameCaptureClock()
 
     const pointerController = markRaw(useLogoPointer({
       active: renderEnabled,
       coordinateTarget: pointerCoordinateTarget,
+      now: frameCaptureClock?.now,
       target: pointerTarget
     }))
     const disableRendering = (): void => {

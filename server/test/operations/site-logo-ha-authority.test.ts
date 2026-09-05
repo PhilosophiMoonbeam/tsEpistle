@@ -119,7 +119,7 @@ const createLogoNode = (name: string, db: Knex, legacyLogoUrl: string, dependenc
     const jobs = await store.claim({ workerId: name, limit: 1, leaseMs: 60_000 })
     if (jobs.length !== 1) throw new Error(`${name} expected exactly one site logo job`)
     const job = jobs[0]!
-    await createSiteLogoProcessHandler(2, processor)(job, { knex: db, signal: new AbortController().signal })
+    await createSiteLogoProcessHandler(3, processor)(job, { knex: db, signal: new AbortController().signal })
     if (!(await store.complete(job))) throw new Error(`${name} lost its site logo job before completion`)
   },
   status: async () => await dependencies.getStatus(db),
@@ -262,6 +262,7 @@ describe('site logo HA database authority', () => {
     expect(snapshotA).toEqual({
       logoUrl: `/_site-logo/${hashes.logo}/logo.png`,
       logoEffect: {
+        pipelineVersion: 5,
         logoUrl: `/_site-logo/${hashes.logo}/logo.png`,
         particleUrl: `/_site-logo/${hashes.particle}/particle.bin`,
         staticUrl: `/_site-logo/${hashes.effect}/effect.png`,
@@ -284,7 +285,7 @@ describe('site logo HA database authority', () => {
     expect(revisionA).toEqual({
       id: revisionId,
       sourceHash: sha256(sourceBytes),
-      pipelineVersion: 4,
+      pipelineVersion: 5,
       status: 'ready',
       retrySequence: 0,
       logoPngHash: hashes.logo,

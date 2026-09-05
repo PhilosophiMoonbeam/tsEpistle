@@ -2,6 +2,7 @@ precision highp float;
 
 varying vec4 vColor;
 varying float vCoreRatio;
+varying float vLifecycle;
 varying vec3 vRingColor;
 varying float vUseRing;
 
@@ -12,7 +13,7 @@ void main() {
   float coreCoverage = 1.0 - smoothstep(vCoreRatio - antialias, vCoreRatio + antialias, radius);
   float ringCoverage = max(0.0, outerCoverage - coreCoverage) * vUseRing;
   vec3 color = mix(vRingColor, vColor.rgb, coreCoverage);
-  float alpha = vColor.a * max(coreCoverage, ringCoverage);
+  float alpha = vColor.a * vLifecycle * max(coreCoverage, ringCoverage);
   if (alpha <= 0.001) discard;
 
   gl_FragColor = vec4(color, alpha);

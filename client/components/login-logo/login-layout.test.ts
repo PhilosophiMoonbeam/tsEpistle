@@ -2,9 +2,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
+import { renderToString } from '@vue/server-renderer'
 import { JSDOM } from 'jsdom'
 import * as Vue from 'vue'
-import { renderToString } from '@vue/server-renderer'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import { isLogoEffectDescriptor, type LogoEffectDescriptor } from './particle-logo.ts'
 
@@ -57,6 +57,7 @@ if (compiledTemplate.errors.length > 0) {
 const renderLogin = new Function('Vue', compiledTemplate.code)(Vue) as Vue.RenderFunction
 
 const managedEffect: LogoEffectDescriptor = {
+  pipelineVersion: 5,
   logoUrl: '/_site-logo/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/logo.png',
   particleUrl: '/_site-logo/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/particle.bin',
   staticUrl: '/_site-logo/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/effect.png',
@@ -377,6 +378,10 @@ describe('login personalized static-logo integration', () => {
     expect(staleDom.window.document.querySelector('.login-particle-logo')).toBeNull()
     expect(staleDom.window.document.querySelector<HTMLImageElement>('.login-brand .login-logo img')?.getAttribute('src')).toBe(managedEffect.logoUrl)
     staleDom.window.close()
+    const futureDom = await renderConfiguredLoginDom(managedEffect.logoUrl, { ...managedEffect, pipelineVersion: 6 })
+    expect(futureDom.window.document.querySelector('.login-particle-logo')).toBeNull()
+    expect(futureDom.window.document.querySelector<HTMLImageElement>('.login-brand .login-logo img')?.getAttribute('src')).toBe(managedEffect.logoUrl)
+    futureDom.window.close()
 
     const currentDom = await renderConfiguredLoginDom(managedEffect.logoUrl, managedEffect)
     expect(currentDom.window.document.querySelector<HTMLElement>('.login-particle-logo')?.dataset.staticUrl).toBe(managedEffect.staticUrl)
