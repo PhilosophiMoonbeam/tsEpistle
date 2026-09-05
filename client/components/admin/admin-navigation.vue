@@ -168,7 +168,7 @@
                         )
                         v-tooltip(location="top")
                           template(v-slot:activator='{ props }')
-                            v-btn.ml-2(icon, variant='text', v-bind='props', :aria-label='$t(`admin:navigation.copyFromLocale`)', :disabled='copyLocales.length < 1', @click='openCopyFromLocaleDialog')
+                            v-btn.ms-2(icon, variant='text', v-bind='props', :aria-label='$t(`admin:navigation.copyFromLocale`)', :disabled='copyLocales.length < 1', @click='openCopyFromLocaleDialog')
                               v-icon mdi-arrange-send-backward
                           span {{$t('admin:navigation.copyFromLocale')}}
                       v-list.navigation-tree.py-2(density="compact", nav)
@@ -211,7 +211,7 @@
                               v-btn.nav-drag-handle(icon, size='small', variant='text', :aria-label='`Reorder divider`', @click.stop='selectItem(navItem)')
                                 v-icon(size='18') mdi-drag-horizontal
                               v-divider
-                            v-list-subheader.pl-4.clickable(
+                            v-list-subheader.ps-4.clickable(
                               v-else-if='navItem.kind === "header"'
                               tabindex='0'
                               :aria-label='itemSelectionLabel(navItem)'
@@ -261,13 +261,13 @@
                             v-model='current.icon'
                             hide-details
                           )
-                          .text-body-small.pt-3.pl-5 The default icon set is #[strong Material Design Icons]. In order to use another icon set, you must first select it in the Theme administration section.
-                          .text-body-small.pt-3.pl-5: strong Material Design Icons
-                          .text-body-small.pl-5 Refer to the #[a(href='https://materialdesignicons.com/', target='_blank', rel='noopener') Material Design Icons Reference] for the list of all possible values. You must prefix all values with #[code mdi-], e.g. #[code mdi-home]
-                          .text-body-small.pt-3.pl-5: strong Font Awesome 5
-                          .text-body-small.pl-5 Refer to the #[a(href='https://fontawesome.com/icons?d=gallery&m=free', target='_blank', rel='noopener') Font Awesome 5 Reference] for the list of all possible values. You must prefix all values with #[code fas fa-], e.g. #[code fas fa-home]. Note that some icons use different prefixes (e.g. #[code fab], #[code fad], #[code fal], #[code far]).
-                          .text-body-small.pt-3.pl-5: strong Font Awesome 4
-                          .text-body-small.pl-5 Refer to the #[a(href='https://fontawesome.com/v4.7.0/icons/', target='_blank', rel='noopener') Font Awesome 4 Reference] for the list of all possible values. You must prefix all values with #[code fa fa-], e.g. #[code fa fa-home]
+                          .text-body-small.pt-3.ps-5 The default icon set is #[strong Material Design Icons]. In order to use another icon set, you must first select it in the Theme administration section.
+                          .text-body-small.pt-3.ps-5: strong Material Design Icons
+                          .text-body-small.ps-5 Refer to the #[a(href='https://materialdesignicons.com/', target='_blank', rel='noopener') Material Design Icons Reference] for the list of all possible values. You must prefix all values with #[code mdi-], e.g. #[code mdi-home]
+                          .text-body-small.pt-3.ps-5: strong Font Awesome 5
+                          .text-body-small.ps-5 Refer to the #[a(href='https://fontawesome.com/icons?d=gallery&m=free', target='_blank', rel='noopener') Font Awesome 5 Reference] for the list of all possible values. You must prefix all values with #[code fas fa-], e.g. #[code fas fa-home]. Note that some icons use different prefixes (e.g. #[code fab], #[code fad], #[code fal], #[code far]).
+                          .text-body-small.pt-3.ps-5: strong Font Awesome 4
+                          .text-body-small.ps-5 Refer to the #[a(href='https://fontawesome.com/v4.7.0/icons/', target='_blank', rel='noopener') Font Awesome 4 Reference] for the list of all possible values. You must prefix all values with #[code fa fa-], e.g. #[code fa fa-home]
                         v-divider
                         v-card-text
                           v-select(
@@ -292,7 +292,7 @@
                               prepend-icon='mdi-magnify'
                               @click='selectPage'
                             ) {{$t('admin:navigation.selectPageButton')}}
-                            .text-body-small.ml-4.text-primary {{current.target}}
+                            .text-body-small.ms-4.text-primary {{current.target}}
                           v-text-field(
                             v-else-if='current.targetType === `search`'
                             variant="outlined"
@@ -695,7 +695,10 @@ export default {
   height: 100%;
   overflow: hidden;
   border: 1px solid var(--wiki-surface-border);
-  border-radius: var(--wiki-radius-sm) 0 0 var(--wiki-radius-sm) !important;
+  border-start-start-radius: var(--wiki-radius-sm) !important;
+  border-end-start-radius: var(--wiki-radius-sm) !important;
+  border-start-end-radius: 0 !important;
+  border-end-end-radius: 0 !important;
   background: var(--wiki-surface-soft);
 }
 

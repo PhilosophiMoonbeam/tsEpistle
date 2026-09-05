@@ -6,7 +6,7 @@
       description='Useful information about your wiki'
       heading-id='admin-stats-title'
     )
-    v-row.mt-4
+    v-row
       v-col(cols='12')
         async-state(
           state='empty'
