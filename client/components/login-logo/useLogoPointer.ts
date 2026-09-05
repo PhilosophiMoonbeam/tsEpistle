@@ -191,6 +191,7 @@ export class LogoPointerController {
 
   private detach(): void {
     if (!this.attached || !this.target) return
+    if (this.ownedPointerId !== null) this.releasePointerCapture(this.ownedPointerId)
     this.target.removeEventListener('pointerdown', this.onPointerDown, LISTENER_OPTIONS)
     this.target.removeEventListener('pointermove', this.onPointerMove, LISTENER_OPTIONS)
     this.target.removeEventListener('pointerleave', this.onPointerLeave, LISTENER_OPTIONS)
@@ -320,14 +321,9 @@ export class LogoPointerController {
     deltaSeconds: number,
     time: number
   ): void {
-    if (this.state.activeImpulseCount >= LOGO_POINTER_IMPULSE_CAPACITY) return
-    let index = this.nextImpulseIndex
-    for (let attempt = 0; attempt < LOGO_POINTER_IMPULSE_CAPACITY; attempt += 1) {
-      if (!this.state.impulses[index].active) break
-      index = (index + 1) % LOGO_POINTER_IMPULSE_CAPACITY
-    }
-    if (this.state.impulses[index].active) return
+    const index = this.nextImpulseIndex
     const impulse = this.state.impulses[index]
+    const replacesActiveImpulse = impulse.active
     const inverseTravel = 1 / travelCss
     const speed = travelCss / Math.max(deltaSeconds, 0.001)
     const speedRatio = clamp(0.5, speed / LOGO_POINTER_SPEED_REFERENCE_CSS_PER_SECOND, 2)
@@ -341,7 +337,7 @@ export class LogoPointerController {
     impulse.y = clamp(-1, 1 - (2 * (clientY - bounds.top)) / bounds.height, 1)
     this.impulseStartedAtMilliseconds[index] = time
     this.nextImpulseIndex = (index + 1) % LOGO_POINTER_IMPULSE_CAPACITY
-    this.state.activeImpulseCount = Math.min(LOGO_POINTER_IMPULSE_CAPACITY, this.state.activeImpulseCount + 1)
+    if (!replacesActiveImpulse) this.state.activeImpulseCount += 1
   }
 
   private readonly onPointerDown = (event: PointerEvent): void => {
@@ -362,22 +358,23 @@ export class LogoPointerController {
     this.clearSamplingBaseline()
     this.lastSampleX = event.clientX
     this.lastSampleY = event.clientY
-    if (event.pointerType !== 'touch' && this.hasFinePointer()) {
-      this.lastSamplePointerId = eventPointerId
-      this.lastSampleTime = eventTime
-    }
+    this.lastSamplePointerId = eventPointerId
+    this.lastSampleTime = eventTime
+    this.target?.setPointerCapture?.(eventPointerId)
     this.recordExplosion(event.clientX, event.clientY, bounds, eventTime)
   }
 
   private readonly onPointerMove = (event: PointerEvent): void => {
     const eventPointerId = pointerIdOf(event)
+    const owned = this.ownedPointerId === eventPointerId
     if (
       !this.active ||
       event.isPrimary !== true ||
-      (event.pointerType !== 'mouse' && event.pointerType !== 'pen') ||
-      !this.hasFinePointer() ||
+      (event.pointerType !== 'mouse' && event.pointerType !== 'pen' && event.pointerType !== 'touch') ||
       !this.coordinateTarget ||
-      (this.ownedPointerId !== null && eventPointerId !== this.ownedPointerId)
+      (this.ownedPointerId !== null && !owned) ||
+      (!owned && event.pointerType === 'touch') ||
+      (event.pointerType !== 'touch' && !this.hasFinePointer())
     )
       return
 
@@ -392,25 +389,28 @@ export class LogoPointerController {
     const motionTime = this.now()
     if (!Number.isFinite(motionTime)) return
     this.ageImpulses(motionTime)
-
-    if (this.lastSampleTime !== null && this.lastSamplePointerId === eventPointerId) {
-      const deltaX = clientX - this.lastSampleX
-      const deltaY = this.lastSampleY - clientY
-      const travelCss = Math.hypot(deltaX, deltaY)
-      const deltaSeconds = (motionTime - this.lastSampleTime) / 1000
-      if (Number.isFinite(travelCss) && Number.isFinite(deltaSeconds) && travelCss > LOGO_POINTER_MIN_SEGMENT_CSS && deltaSeconds >= 0) {
-        this.recordImpulse(clientX, clientY, bounds, deltaX, deltaY, Math.min(travelCss, LOGO_POINTER_MAX_SEGMENT_CSS), deltaSeconds, motionTime)
-      }
+    if (this.lastSampleTime === null || this.lastSamplePointerId !== eventPointerId) {
+      this.lastSampleX = clientX
+      this.lastSampleY = clientY
+      this.lastSampleTime = motionTime
+      this.lastSamplePointerId = eventPointerId
+      return
     }
 
-    this.lastSampleX = clientX
-    this.lastSampleY = clientY
-    this.lastSampleTime = motionTime
-    this.lastSamplePointerId = eventPointerId
+    const deltaX = clientX - this.lastSampleX
+    const deltaY = this.lastSampleY - clientY
+    const travelCss = Math.hypot(deltaX, deltaY)
+    const deltaSeconds = (motionTime - this.lastSampleTime) / 1000
+    if (Number.isFinite(travelCss) && Number.isFinite(deltaSeconds) && travelCss > LOGO_POINTER_MIN_SEGMENT_CSS && deltaSeconds >= 0) {
+      this.recordImpulse(clientX, clientY, bounds, deltaX, deltaY, Math.min(travelCss, LOGO_POINTER_MAX_SEGMENT_CSS), deltaSeconds, motionTime)
+      this.lastSampleX = clientX
+      this.lastSampleY = clientY
+      this.lastSampleTime = motionTime
+    }
   }
 
   private readonly onPointerLeave = (event: PointerEvent): void => {
-    if (!this.active || event.isPrimary !== true) return
+    if (!this.active || event.isPrimary !== true || this.ownedPointerId === pointerIdOf(event)) return
     this.clearSampling(event)
     this.ageImpulses(this.now())
     this.ageExplosions(this.now())
@@ -418,14 +418,19 @@ export class LogoPointerController {
 
   private readonly onPointerUp = (event: PointerEvent): void => {
     if (!this.active || event.isPrimary !== true) return
+    this.releasePointerCapture(pointerIdOf(event))
     this.clearSampling(event)
   }
 
   private readonly onPointerCancel = (event: PointerEvent): void => {
     if (!this.active || event.isPrimary !== true) return
+    this.releasePointerCapture(pointerIdOf(event))
     this.clearSampling(event)
   }
 
+  private releasePointerCapture(pointerId: number): void {
+    if (this.target?.hasPointerCapture?.(pointerId)) this.target.releasePointerCapture(pointerId)
+  }
   private clearSampling(event: PointerEvent): void {
     const eventPointerId = pointerIdOf(event)
     if (this.ownedPointerId !== null) {

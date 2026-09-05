@@ -10,6 +10,7 @@
 
   &--pointer-active {
     pointer-events: auto;
+    touch-action: none;
   }
 
   &::before {
