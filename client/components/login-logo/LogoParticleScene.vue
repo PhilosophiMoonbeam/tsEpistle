@@ -473,6 +473,7 @@ export const createParticleSceneResources = (
   points.frustumCulled = false
   points.matrixAutoUpdate = false
   points.updateMatrix()
+  points.matrixWorldNeedsUpdate = true
 
   const camera = new OrthographicCamera(-1, 1, 1, -1, 0.1, 10)
   camera.position.z = 2
@@ -767,6 +768,9 @@ const ParticleSceneContents = defineComponent({
           }
           benchmark.lastFrameAt = callbackStartedAt
         }
+        // TresJS v5's ready hook eagerly activates loop.start(). In order to maintain
+        // zero-cost CPU/GPU idle state when the scene is inactive, we operate on-demand
+        // and re-queue the subsequent frame via invalidate() only while props.active is true.
         invalidate()
       } catch (error) {
         fail(error)

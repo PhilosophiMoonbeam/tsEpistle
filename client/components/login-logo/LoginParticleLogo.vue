@@ -44,6 +44,7 @@ import {
   type PropType,
   ref,
   shallowRef,
+  useTemplateRef,
   watch
 } from 'vue'
 import {
@@ -121,8 +122,8 @@ export default defineComponent({
     const loadedStaticUrl = ref<string | null>(null)
     const sceneMount = shallowRef<SceneMount | null>(null)
     const sceneReady = ref(false)
-    const sceneInstance = shallowRef<ParticleSceneInstance | null>(null)
-    const staticImageElement = shallowRef<HTMLImageElement | null>(null)
+    const sceneInstance = useTemplateRef<ParticleSceneInstance>('sceneInstance')
+    const staticImageElement = useTemplateRef<HTMLImageElement>('staticImageElement')
     const activeEffect = computed(() => isLogoEffectDescriptor(props.effect) ? props.effect : null)
     const animationSizeEligible = computed(() => {
       const currentLayout = layout.value
@@ -498,7 +499,7 @@ export default defineComponent({
         position: 'relative',
         zIndex: '1',
         opacity: sceneReady.value ? '0' : '1',
-        transition: reducedMotion.value ? 'none' : 'opacity 180ms ease-out'
+        transition: reducedMotion.value ? 'none' : 'opacity 280ms cubic-bezier(0.16, 1, 0.3, 1)'
       }
     })
     const sceneStyle: Record<string, string> = {

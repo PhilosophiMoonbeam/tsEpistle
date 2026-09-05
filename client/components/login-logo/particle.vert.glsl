@@ -124,9 +124,10 @@ void main() {
     explosionLifecycle = min(explosionLifecycle, slotLifecycle);
   }
   float explosionMagnitude = length(explosionCss);
-  explosionCss *= explosionMagnitude > 128.0 ? 128.0 / explosionMagnitude : 1.0;
-  vLifecycle = explosionLifecycle;
   vec2 position = basePosition + 2.0 * (idleCss + cursorCss + explosionCss) / safeViewport;
+  vec2 ndcPos = abs(position);
+  float edgeFade = 1.0 - smoothstep(0.94, 1.02, max(ndcPos.x, ndcPos.y));
+  vLifecycle = explosionLifecycle * edgeFade;
 
   vec3 linearColor = srgbToLinear(logoColor.rgb);
   vec3 compositedColor = mix(uBackground, linearColor, logoColor.a);
@@ -141,8 +142,8 @@ void main() {
   float sizeNorm = (logoSize * 255.0 - 1.0) / 254.0;
   float coreCssPixels = min(uCoreSizeFactor * (1.0 + 15.0 * sizeNorm) * depthScale * uRenderedLongAxis / 1024.0, 24.0);
   float ringCssPixels = vUseRing * mix(1.25, 2.0, clamp((3.0 - directContrast) / 2.0, 0.0, 1.0));
-  float coreDevicePixels = coreCssPixels * uDpr;
-  float totalDevicePixels = (coreCssPixels + 2.0 * ringCssPixels) * uDpr;
+  float coreDevicePixels = max(coreCssPixels * uDpr, 1.5);
+  float totalDevicePixels = max(coreDevicePixels + 2.0 * ringCssPixels * uDpr, 1.5);
   gl_PointSize = totalDevicePixels;
   vCoreRatio = coreDevicePixels / max(totalDevicePixels, 1.0);
   vColor = vec4(linearColor, logoColor.a);

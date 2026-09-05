@@ -15,15 +15,15 @@
   &::before {
     position: absolute;
     z-index: -1;
-    inset: 4% 2%;
+    inset: 0;
     background: radial-gradient(
       ellipse at center,
-      var(--login-logo-aura) 0,
-      color-mix(in srgb, var(--login-logo-aura) 44%, transparent) 42%,
-      transparent 74%
+      var(--login-logo-aura) 0%,
+      color-mix(in srgb, var(--login-logo-aura) 65%, transparent) 45%,
+      transparent 72%
     );
     content: '';
-    filter: blur(24px);
+    filter: blur(16px);
     pointer-events: none;
   }
 
@@ -33,6 +33,9 @@
     display: grid;
     place-items: center;
     pointer-events: none;
+    filter:
+      drop-shadow(0 1.25rem 1.75rem color-mix(in srgb, rgb(var(--v-theme-background)) 32%, transparent))
+      drop-shadow(0 .2rem .5rem color-mix(in srgb, rgb(var(--v-theme-on-background)) 12%, transparent));
   }
 
   &__image {
@@ -41,9 +44,6 @@
     max-height: 100%;
     object-fit: contain;
     object-position: center;
-    filter:
-      drop-shadow(0 1.25rem 1.75rem color-mix(in srgb, rgb(var(--v-theme-background)) 32%, transparent))
-      drop-shadow(0 .2rem .5rem color-mix(in srgb, rgb(var(--v-theme-on-background)) 12%, transparent));
     pointer-events: none;
     transform: translateZ(0);
   }

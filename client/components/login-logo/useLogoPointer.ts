@@ -1,5 +1,5 @@
 import type { MaybeRefOrGetter } from 'vue'
-import { onBeforeUnmount, toValue, watch } from 'vue'
+import { getCurrentInstance, onBeforeUnmount, toValue, watch } from 'vue'
 
 const FINE_POINTER_MEDIA = '(hover: hover) and (pointer: fine)'
 const LISTENER_OPTIONS: AddEventListenerOptions = Object.freeze({ passive: true })
@@ -457,7 +457,9 @@ export const useLogoPointer = (options: UseLogoPointerOptions): LogoPointerContr
     },
     { flush: 'sync', immediate: true }
   )
-  onBeforeUnmount(() => controller.dispose())
+  if (getCurrentInstance()) {
+    onBeforeUnmount(() => controller.dispose())
+  }
 
   return controller
 }
