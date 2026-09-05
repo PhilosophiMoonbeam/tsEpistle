@@ -6,7 +6,7 @@ Existing managed logo uploads automatically use the cloud renderer. The binary r
 
 The scene uses one Three.js `Points` draw call inside the existing TresJS canvas. Source positions, depth, colors, and seeds remain zero-copy, immutable views of the validated binary artifact.
 
-The deterministic seed assigns approximately 70% of particles to fine dust, 23.5% to medium motes, and 6.5% to large beads. Source alpha controls coverage instead of giving every opaque source pixel the same diameter. The shader adds independent orbits to a coherent flow, analytic sphere lighting, and a twisting explosion that moves particles instead of fading them out. Low-contrast colors blend toward a contrasting surface tint, without heavy outlines.
+The deterministic seed assigns approximately 70% of particles to fine dust, 23.5% to medium motes, and 6.5% to large beads. Source alpha controls coverage instead of giving every opaque source pixel the same diameter. The shader adds independent orbits to a coherent flow, analytic sphere lighting, and a twisting explosion that moves particles instead of fading them out. Fine dust starts at 66% opacity and skips sphere-lighting calculations; larger sprites increase coverage without adding particles or draw calls. Low-contrast colors blend toward a contrasting surface tint, without heavy outlines.
 
 At most 512 large beads have physical spring motion and collision response. A spatial hash searches adjacent cells, visits each pair once, and caps candidate visits per bead. The simulation uses a 120 Hz fixed step with at most four steps per rendered frame; a suspended tab cannot create a catch-up backlog. Fine dust remains entirely shader animated. Bead displacements use one preallocated dynamic attribute upload (12 bytes per source particle, at most 192 KB per frame). There are no per-frame particle allocations, mesh instances, lighting passes, bloom passes, or CSS filters over the canvas.
 
@@ -17,7 +17,7 @@ The default orbit illustration is omitted when a managed logo is configured. Exp
 ## Tuning
 
 - `particle-cloud.ts`: `CLOUD_DUST_FRACTION` and `CLOUD_BEAD_FRACTION` control the population mix; both are passed as shader defines. `CLOUD_BEAD_LIMIT` caps physical beads independently of source density. Keep the fractions positive and their sum below one.
-- `particle.vert.glsl`: diameter ranges at a 1024 CSS-pixel logo axis are 2.2–5 px, 5–9 px, and 11–18 px. Coverage and depth adjust these, with a final 22 px cap. When changing the large-bead range, update the collision radius formula in `ParticleCloud.update` too.
+- `particle.vert.glsl`: diameter ranges at a 1024 CSS-pixel logo axis are 4–8 px, 8–12 px, and 13–20 px. Coverage and depth adjust these, with a final 22 px cap. When changing the large-bead range, update the collision radius formula in `ParticleCloud.update` too.
 - `particle-cloud.ts`: spring stiffness, damping, and the fixed step control weight and settling; the hash cell must remain at least the maximum collision diameter.
 - `useLogoPointer.ts`: input sampling and bounded six-slot impulse/explosion buffers.
 
@@ -46,3 +46,5 @@ Production-bundle check on 2026-09-05, Chromium 151.0.7922.34, 1440 × 900, DPR 
 | Hidden and offscreen callbacks | 0 | 0 |
 
 The benchmark seeds span all particle populations and synthetic clicks use a valid mouse pointer ID. The old fixture's sequential low seeds and invalid pointer ID did not exercise the large-bead and explosion paths.
+
+Coverage tuning check, same browser/viewport/DPR and 16,000-particle workload: after enlarging the size ranges and increasing fine-dust opacity, frame p95 / p99 measured 17.0 / 17.4 ms (previously 16.9 / 17.2 ms), callback CPU p95 remained 0.7 ms, and first-frame p95 measured 385 ms with zero timeouts. All runtime budgets still pass; particle count, draw calls, physics cap, and upload size are unchanged. Larger sprites do shade more pixels, so this is a measured absence of material slowdown on this test machine, not a claim of zero additional GPU work.

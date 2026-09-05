@@ -143,9 +143,9 @@ void main() {
   linearColor = mix(linearColor, contrastTint, (1.0 - smoothstep(1.0, 3.0, directContrast)) * 0.52);
 
   // 70% fine dust, 23.5% mid-size motes, 6.5% collision beads. Alpha is not particle size.
-  float dustSize = mix(2.2, 5.0, logoSeed / CLOUD_DUST_END);
-  float moteSize = mix(5.0, 9.0, (logoSeed - CLOUD_DUST_END) / (CLOUD_BEAD_START - CLOUD_DUST_END));
-  float beadSize = mix(11.0, 18.0, (logoSeed - CLOUD_BEAD_START) / (1.0 - CLOUD_BEAD_START));
+  float dustSize = mix(4.0, 8.0, logoSeed / CLOUD_DUST_END);
+  float moteSize = mix(8.0, 12.0, (logoSeed - CLOUD_DUST_END) / (CLOUD_BEAD_START - CLOUD_DUST_END));
+  float beadSize = mix(13.0, 20.0, (logoSeed - CLOUD_BEAD_START) / (1.0 - CLOUD_BEAD_START));
   float diameter = logoSeed < CLOUD_DUST_END ? dustSize : (logoSeed < CLOUD_BEAD_START ? moteSize : beadSize);
   float sourceCoverage = mix(0.65, 1.0, logoSize);
   float coreCssPixels = min(diameter * sourceCoverage * depthScale * uRenderedLongAxis / 1024.0, 22.0);
@@ -154,7 +154,7 @@ void main() {
   vHalfPixel = 1.0 / gl_PointSize;
   vCoreRatio = coreDevicePixels / gl_PointSize;
   vBead = smoothstep(0.70, 0.98, logoSeed);
-  float opacity = mix(0.50, 0.94, smoothstep(0.0, 0.94, logoSeed));
+  float opacity = mix(0.66, 0.94, smoothstep(0.0, 0.94, logoSeed));
   vColor = vec4(linearColor, logoColor.a * opacity);
 
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, depth * 0.04, 1.0);

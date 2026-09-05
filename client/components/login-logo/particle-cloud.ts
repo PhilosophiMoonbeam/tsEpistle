@@ -79,7 +79,7 @@ export class ParticleCloud {
         const seed = this.particles.seed[i]! / 65535
         const coverage = 0.65 + (0.35 * this.particles.size[i]!) / 255
         const depthScale = 1 + (0.18 * this.particles.depth[i]!) / 127
-        this.radius[b] = Math.min(22, ((11 + (7 * (seed - (1 - CLOUD_BEAD_FRACTION))) / CLOUD_BEAD_FRACTION) * coverage * depthScale * longAxis) / 1024) / 2
+        this.radius[b] = Math.min(22, ((13 + (7 * (seed - (1 - CLOUD_BEAD_FRACTION))) / CLOUD_BEAD_FRACTION) * coverage * depthScale * longAxis) / 1024) / 2
       }
       this.width = width
       this.height = height
