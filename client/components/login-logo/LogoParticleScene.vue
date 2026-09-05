@@ -13,6 +13,7 @@
     :premultiplied-alpha="false"
     render-mode="on-demand"
     :stencil="false"
+    :tone-mapping="0"
     @error="handleRendererError"
     @ready="handleRendererReady"
     @render="handleRendererRender"
@@ -591,13 +592,22 @@ const isTransparent = (color: string): boolean =>
   /rgba\([^)]*,\s*0(?:\.0+)?\s*\)$/i.test(color) ||
   /rgb\([^)]*\/\s*0(?:\.0+)?%?\s*\)$/i.test(color)
 
+const normalizeCssColor = (color: string): string => {
+  const modernRgb = /^\s*rgba?\(\s*([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+%?)(?:\s*\/\s*([\d.]+%?))?\s*\)$/i.exec(color)
+  if (modernRgb) {
+    const [, r, g, b, a] = modernRgb
+    return a !== undefined ? `rgba(${r}, ${g}, ${b}, ${a})` : `rgb(${r}, ${g}, ${b})`
+  }
+  return color
+}
+
 const readSurfaceColor = (canvas: HTMLCanvasElement): Color => {
   let element: HTMLElement | null = canvas.parentElement
   while (element) {
     const color = window.getComputedStyle(element).backgroundColor
     if (!isTransparent(color)) {
       try {
-        return new Color().setStyle(color, SRGBColorSpace)
+        return new Color().setStyle(normalizeCssColor(color), SRGBColorSpace)
       } catch {
         break
       }

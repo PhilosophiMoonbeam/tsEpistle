@@ -824,12 +824,12 @@ export default defineComponent({
     inset: 0;
     background:
       radial-gradient(
-        circle at 78% 16%,
+        circle at 72% 50%,
         var(
           --login-logo-aura,
           color-mix(in srgb, var(--wiki-accent-spectral) 24%, transparent)
         ),
-        transparent 34rem
+        transparent 38rem
       ),
       linear-gradient(
         108deg,
@@ -868,9 +868,11 @@ export default defineComponent({
     border-radius: var(--wiki-hero-radius);
     background: color-mix(
       in srgb,
-      rgb(var(--v-theme-surface)) 96%,
-      rgb(var(--v-theme-background))
+      rgb(var(--v-theme-surface)) 92%,
+      transparent
     );
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
     box-shadow: var(--wiki-shadow-lg), var(--wiki-shadow-inset);
   }
 

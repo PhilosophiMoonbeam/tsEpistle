@@ -28,8 +28,15 @@ interface Environment {
   card: RectInit
 }
 
-let environment: Environment
-let pageVisibility: DocumentVisibilityState
+let environment: Environment = {
+  width: 1440,
+  height: 900,
+  hover: true,
+  finePointer: true,
+  reducedMotion: false,
+  card: { left: 86, top: 120, width: 480, height: 660 }
+}
+let pageVisibility: DocumentVisibilityState = 'visible'
 
 interface SceneControls {
   firstFrame: () => void

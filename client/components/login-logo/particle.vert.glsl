@@ -23,6 +23,7 @@ varying float vCoreRatio;
 varying float vLifecycle;
 varying vec3 vRingColor;
 varying float vUseRing;
+varying float vHalfPixel;
 
 vec3 srgbToLinear(vec3 value) {
   vec3 lower = value / 12.92;
@@ -60,7 +61,8 @@ void main() {
   float coherentFlowMagnitude = length(coherentFlow);
   coherentFlow /= max(coherentFlowMagnitude, 1.0);
   float idleScaleCss = clamp(idleAmplitudeCss * depthScale, 3.5, 10.0);
-  vec2 idleCss = coherentFlow * idleScaleCss;
+  float idleWarmup = smoothstep(0.0, 1.0, uTime);
+  vec2 idleCss = coherentFlow * idleScaleCss * idleWarmup;
 
   vec2 cursorCss = vec2(0.0);
   for (int impulseIndex = 0; impulseIndex < 6; impulseIndex++) {
@@ -131,7 +133,6 @@ void main() {
     float slotLifecycle = clamp(1.0 - oldResidual + replacementLifecycle, 0.0, 1.0);
     explosionLifecycle = min(explosionLifecycle, slotLifecycle);
   }
-  float explosionMagnitude = length(explosionCss);
   vec2 position = basePosition + 2.0 * (idleCss + cursorCss + explosionCss) / safeViewport;
   vec2 ndcPos = abs(position);
   float edgeFade = 1.0 - smoothstep(0.94, 1.02, max(ndcPos.x, ndcPos.y));
@@ -153,6 +154,7 @@ void main() {
   float coreDevicePixels = max(coreCssPixels * uDpr, 1.5);
   float totalDevicePixels = max(coreDevicePixels + 2.0 * ringCssPixels * uDpr, 1.5);
   gl_PointSize = totalDevicePixels;
+  vHalfPixel = 1.0 / totalDevicePixels;
   vCoreRatio = coreDevicePixels / max(totalDevicePixels, 1.0);
   vColor = vec4(linearColor, logoColor.a);
 
