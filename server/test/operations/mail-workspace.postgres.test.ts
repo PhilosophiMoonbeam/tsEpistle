@@ -38,7 +38,7 @@ const body = (workspace: MailConfigurationWorkspace): MailDraft & { fingerprint:
 })
 suite('Mail workspace diagnostics on PostgreSQL', () => {
   let db: Knex, fallback: Record<string, unknown>
-  let workspace: ReturnType<typeof createMailWorkspaceStore>, runtimeKey: string
+  let workspace: ReturnType<typeof createMailWorkspaceStore>, runtimeKey: string, runtimeEnabled: boolean
   const verify = vi.fn(),
     send = vi.fn(),
     render = vi.fn(),
@@ -98,15 +98,17 @@ suite('Mail workspace diagnostics on PostgreSQL', () => {
       await db('settings').insert({ key, value: JSON.stringify(value), updatedAt: '2026-09-06T00:00:00.000Z' })
     fallback = { mail: { pass: 'stale-runtime-secret' }, host: 'https://stale.example.test', offline: true }
     runtimeKey = mailConfigurationKey(initial())
+    runtimeEnabled = true
     verify.mockReset().mockResolvedValue(true)
     send.mockReset().mockResolvedValue({ accepted: ['recipient@example.test'], rejected: [] })
     render.mockReset().mockResolvedValue({ html: '<p>Actual renderer fixture</p>', subject: 'Sample' })
     resolveTxt.mockReset()
     published.mockReset().mockImplementation(value => {
       runtimeKey = mailConfigurationKey(value)
+      runtimeEnabled = value.enabled !== false
     })
     const runtime = {
-      runtime: () => ({ active: true, configurationKey: runtimeKey, generation: 'fixture', paused: false, state: 'ready' }),
+      runtime: () => ({ active: runtimeEnabled, configurationKey: runtimeKey, generation: 'fixture', paused: false, state: 'ready' }),
       verify,
       send,
       render
@@ -304,10 +306,11 @@ suite('Mail workspace diagnostics on PostgreSQL', () => {
     ).rejects.toMatchObject({ status: 409 })
     expect(send).not.toHaveBeenCalled()
   })
-  it('checks actual saved DKIM public material through DNS without using SMTP', async () => {
+  it('checks a staged DKIM key before enabling signing or SMTP delivery', async () => {
     const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ format: 'pem', type: 'pkcs8' }).toString()
     const input = body(await workspace.inspect(admin))
-    input.policy.useDKIM = true
+    input.policy.useDKIM = false
+    input.policy.enabled = false
     input.secrets.dkimPrivateKey = { action: 'replace', value: pem }
     await workspace.save(admin, input)
     const saved = await workspace.inspect(admin)
@@ -315,6 +318,9 @@ suite('Mail workspace diagnostics on PostgreSQL', () => {
     const check = { id: randomUUID(), kind: 'dkim', fingerprint: saved.fingerprint }
     await workspace.startCheck(admin, check)
     await waitForCheck(check.id, 'succeeded')
+    expect(saved.policy.enabled).toBe(false)
+    expect(saved.runtime.allocated).toBe(false)
+    expect(saved.policy.useDKIM).toBe(false)
     expect(resolveTxt).toHaveBeenCalledWith('wiki._domainkey.example.test')
     expect(send).not.toHaveBeenCalled()
     expect(verify).not.toHaveBeenCalled()

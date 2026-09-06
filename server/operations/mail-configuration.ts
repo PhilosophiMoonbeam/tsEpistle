@@ -107,7 +107,7 @@ export const createMailConfigurationStore = (deps: Dependencies) => {
   const presentState = (current: Awaited<ReturnType<typeof state>>): MailConfigurationWorkspace => {
     let dkimRecord: MailConfigurationWorkspace['dkimRecord'] = null
     try {
-      dkimRecord = mailDkimPublicRecord(current.runtime)
+      dkimRecord = mailDkimPublicRecord(current.runtime, true)
     } catch {
       /* Invalid saved signing keys have no publishable record. */
     }

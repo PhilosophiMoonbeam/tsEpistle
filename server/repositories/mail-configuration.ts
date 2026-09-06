@@ -18,8 +18,8 @@ export const mailConfigurationKey = (value: unknown): string =>
   createHash('sha256')
     .update(JSON.stringify(mailRuntimeConfiguration(value)))
     .digest('hex')
-export const mailDkimPublicRecord = (value: MailRuntimeConfiguration): { name: string; value: string; bits: number } | null => {
-  if (!value.useDKIM) return null
+export const mailDkimPublicRecord = (value: MailRuntimeConfiguration, includeInactive = false): { name: string; value: string; bits: number } | null => {
+  if (!value.useDKIM && (!includeInactive || !value.dkimPrivateKey)) return null
   if (!isMailDomain(value.dkimDomainName) || !value.dkimDomainName.includes('.') || !isMailDomain(value.dkimKeySelector))
     throw new Error('Enter the DKIM signing domain and selector before generating DNS instructions.')
   try {

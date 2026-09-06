@@ -105,7 +105,7 @@ export const createMailWorkspaceStore = (deps: Dependencies) => {
       let outcome: Pick<MailCheck, 'state' | 'summary'>
       if ('failure' in checked) outcome = { state: 'failed', summary: checked.failure! }
       else if (kind === 'dkim') {
-        const record = mailDkimPublicRecord(checked.saved.runtime)
+        const record = mailDkimPublicRecord(checked.saved.runtime, true)
         if (!record) outcome = { state: 'failed', summary: 'Configure DKIM signing before checking its DNS record.' }
         else {
           startedEffect = true
@@ -253,7 +253,7 @@ export const createMailWorkspaceStore = (deps: Dependencies) => {
           }
           if (value.kind === 'dkim') {
             try {
-              if (!mailDkimPublicRecord(saved.runtime)) return fail('Configure DKIM signing before checking DNS.')
+              if (!mailDkimPublicRecord(saved.runtime, true)) return fail('Configure DKIM signing before checking DNS.')
             } catch {
               return fail('Configure a valid DKIM domain, selector and signing key before checking DNS.')
             }
