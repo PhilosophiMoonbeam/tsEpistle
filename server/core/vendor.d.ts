@@ -195,11 +195,20 @@ declare module 'nodemailer' {
       user: string
     }
     host: string
-    name: string
+    name?: string
     port: number
     secure: boolean
+    requireTLS?: boolean
+    ignoreTLS?: boolean
+    connectionTimeout?: number
+    greetingTimeout?: number
+    socketTimeout?: number
+    dnsTimeout?: number
+    dkim?: { domainName: string; keySelector: string; privateKey: string }
     tls: {
       rejectUnauthorized: boolean
+      servername?: string
+      minVersion?: 'TLSv1.2' | 'TLSv1.3'
     }
   }
 
@@ -211,6 +220,7 @@ declare module 'nodemailer' {
     subject: string
     text?: string
     to: AddressLike | AddressLike[]
+    replyTo?: AddressLike
   }
 
   export interface SentMessageInfo {
@@ -226,6 +236,8 @@ declare module 'nodemailer' {
 
   export interface Transporter {
     sendMail(options: SendMailOptions): Promise<SentMessageInfo>
+    verify(): Promise<true>
+    close(): void
   }
 
   interface NodemailerApi {
