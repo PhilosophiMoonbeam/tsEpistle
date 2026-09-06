@@ -117,3 +117,41 @@ export interface MailConfigurationWorkspace {
   dkimRecord: { name: string; value: string; bits: number } | null
   history: MailConfigurationEvent[]
 }
+
+export type MailCheckKind = 'connection' | 'dkim' | 'test'
+export type MailCheckState = 'running' | 'succeeded' | 'failed' | 'uncertain'
+export interface MailCheck {
+  id: string
+  kind: MailCheckKind
+  state: MailCheckState
+  actorId: number | null
+  recipient: string | null
+  configurationRevision: string
+  createdAt: string
+  completedAt: string | null
+  summary: string
+}
+export interface MailWorkspace extends MailConfigurationWorkspace {
+  runtime: {
+    allocated: boolean
+    settingsCurrent: boolean
+    offline: boolean
+    state: 'disabled' | 'invalid' | 'ready'
+  }
+  checks: MailCheck[]
+}
+export const MailCheckRequestSchema = z.discriminatedUnion('kind', [
+  z.object({ id: z.string().uuid(), kind: z.literal('connection'), fingerprint: z.string().length(64) }).strict(),
+  z.object({ id: z.string().uuid(), kind: z.literal('dkim'), fingerprint: z.string().length(64) }).strict(),
+  z
+    .object({
+      id: z.string().uuid(),
+      kind: z.literal('test'),
+      fingerprint: z.string().length(64),
+      recipient: z.string().trim().refine(isMailAddress, 'Enter a single recipient email address.'),
+      confirmSend: z.literal(true),
+      acknowledgedUncertainId: z.string().uuid().optional()
+    })
+    .strict()
+])
+export type MailCheckRequest = z.infer<typeof MailCheckRequestSchema>

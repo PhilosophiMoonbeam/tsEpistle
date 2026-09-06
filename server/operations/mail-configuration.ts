@@ -139,10 +139,10 @@ export const createMailConfigurationStore = (deps: Dependencies) => {
     inspect,
     reviewState: state,
     presentState,
-    async save(requester: PagePrincipal, input: unknown): Promise<{ revision: string; fields: string[] }> {
+    async save(requester: PagePrincipal, input: unknown, transaction?: Knex.Transaction): Promise<{ revision: string; fields: string[] }> {
       const parsed = WriteSchema.safeParse(input)
       if (!parsed.success) return fail('Provide complete mail settings, explicit credential actions and a review reason.')
-      return deps.db.transaction(async tx => {
+      const publish = async (tx: Knex.Transaction) => {
         const current = await state(tx, requester, true),
           draft = parsed.data
         if (draft.fingerprint !== current.fingerprint) return fail('Mail settings or your access changed. Reload and review again.', 409)
@@ -174,7 +174,8 @@ export const createMailConfigurationStore = (deps: Dependencies) => {
             .onConflict('key')
             .merge(['value', 'updatedAt'])
         return { revision: event.id, fields }
-      })
+      }
+      return transaction ? publish(transaction) : deps.db.transaction(publish)
     }
   }
 }
