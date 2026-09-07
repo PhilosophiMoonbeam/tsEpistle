@@ -7,37 +7,37 @@ The visual direction is an editorial workspace: quiet surfaces, concise context,
 
 ## Current handoff status — 7 September 2026
 
-**23 of 27 areas have completed their deployed-and-verified milestones.** SSL (`26d38739`, migration 25) remains the maintained, verified deployment. Logging, Extensions, Utilities and Developer flags now have implemented, pre-release-verified source/preview checkpoints, but **none is deployed or counted complete**. Migration 26 exists only in source and the isolated restored preview. The final cross-area review remains outstanding. This status supersedes the historical pause language below; the historical evidence remains a record of its checkpoint. See [`continue.md`](../continue.md) for operating standards and deployment context.
+**27 of 27 areas have completed their deployed-and-verified milestones, and the final cross-area review is complete.** The maintained release is `13001f7c` with migration 26. The historical source/preview checkpoint below is superseded by the final release record, while its architecture, constraints and evidence remain applicable. See [`continue.md`](../continue.md) for operating standards and deployment context.
 
 | Area | Workflow and capability scope | State |
 | --- | --- | --- |
-| Pages | Inventory, filtering, ownership, publication, detail and bulk actions | Implemented; first milestone verified |
-| Tags | Taxonomy, usage, editing and consolidation | Implemented; first milestone verified |
-| Editors | Availability, recommendations, format usage and authoring entry | Implemented; first milestone verified |
-| Rendering | Module configuration, pipeline inspection and stored output | Implemented; first milestone verified |
-| Comments | Providers, discussion and moderation | Implemented; first milestone verified |
-| Users | Discovery, details, creation and access lifecycle | Implemented; first milestone verified |
-| Groups | Membership, permissions, page rules and effective access | Implemented; first milestone verified |
-| Authentication | Providers, sign-in, provisioning and diagnostics | Verified and deployed (provider workspace, provisioning, initialization, reviewed saves) |
-| Security | Sessions, protections and policies | Deployed and verified; five policy sections, reviewed persistence, session effects and shared password enforcement |
-| Wiki Agent | Providers/models, skills, browser, tools, memory, MCP and runtime | Implemented; first milestone verified |
-| Search | Providers, retrieval, index lifecycle and evaluation | Implemented; first milestone verified |
-| API | Credentials/scopes, integration setup and reference | Implemented; first milestone verified; latest source availability repair remains in progress |
-| Webhooks | Events, endpoints, deliveries, tests and recovery | Implemented; first milestone verified |
-| General | Identity, announcements, features and defaults | Deployed and verified; reviewed identity/publishing, scheduled announcements, logo review and runtime recovery |
-| Theme | Palette library, reader typography/layout, local previews, custom source and reviewed publication | Implemented and verified |
-| Navigation | Structure, ordering, audiences and preview | Implemented, deployed and verified |
-| Locale | Languages, defaults and multilingual operation | Implemented, deployed and verified |
-| Analytics | Providers, insight and collection controls | Implemented, deployed and verified |
-| System | Environment, health and diagnostics | Implemented, deployed and verified |
-| Storage | Targets, synchronization, recovery and job state | Implemented; first milestone verified |
-| Mail | Sender, transport, signing, templates and delivery diagnostics | Deployed and verified; four-section workspace and diagnostic recovery |
-| SSL | Certificates, renewal and ingress responsibilities | Deployed and verified; connection evidence, reviewed lifecycle/policy and operation recovery |
-| Logging | Destinations, privileged live diagnostics and process reconciliation | Implemented and pre-release source/preview verified; deployment and live verification pending |
-| Extensions | Bundled capability library, dependencies and bounded observations | Implemented and pre-release source/preview verified; deployment and live verification pending |
-| Utilities | Reviewed maintenance, imports, safe export and recovery receipts | Implemented and pre-release source/isolated-preview verified; deployment and live verification pending |
-| Developer flags | Diagnostic constraints, reviewed policy and runtime promotion | Implemented and pre-release source/preview verified; deployment and live verification pending |
-| GraphQL explorer | Integration, authentication and exploration | Implemented; first milestone verified |
+| Pages | Inventory, filtering, ownership, publication, detail and bulk actions | Deployed and verified |
+| Tags | Taxonomy, usage, editing and consolidation | Deployed and verified |
+| Editors | Availability, recommendations, format usage and authoring entry | Deployed and verified |
+| Rendering | Module configuration, pipeline inspection and stored output | Deployed and verified |
+| Comments | Providers, discussion and moderation | Deployed and verified |
+| Users | Discovery, details, creation and access lifecycle | Deployed and verified |
+| Groups | Membership, permissions, page rules and effective access | Deployed and verified |
+| Authentication | Providers, sign-in, provisioning and diagnostics | Deployed and verified |
+| Security | Sessions, protections and policies | Deployed and verified |
+| Wiki Agent | Providers/models, skills, browser, tools, memory, MCP and runtime | Deployed and verified |
+| Search | Providers, retrieval, index lifecycle and evaluation | Deployed and verified |
+| API | Credentials/scopes, integration setup and reference | Deployed and verified, including the configuration-availability repair |
+| Webhooks | Events, endpoints, deliveries, tests and recovery | Deployed and verified |
+| General | Identity, announcements, features and defaults | Deployed and verified |
+| Theme | Palette library, reader typography/layout, local previews, custom source and reviewed publication | Deployed and verified |
+| Navigation | Structure, ordering, audiences and preview | Deployed and verified |
+| Locale | Languages, defaults and multilingual operation | Deployed and verified |
+| Analytics | Providers, insight and collection controls | Deployed and verified |
+| System | Environment, health and diagnostics | Deployed and verified |
+| Storage | Targets, synchronization, recovery and job state | Deployed and verified |
+| Mail | Sender, transport, signing, templates and delivery diagnostics | Deployed and verified |
+| SSL | Certificates, renewal and ingress responsibilities | Deployed and verified |
+| Logging | Destinations, privileged live diagnostics and process reconciliation | Deployed and verified |
+| Extensions | Bundled capability library, dependencies and bounded observations | Deployed and verified |
+| Utilities | Reviewed maintenance, imports, safe export and recovery receipts | Deployed and verified, with migration 26 |
+| Developer flags | Diagnostic constraints, reviewed policy and runtime promotion | Deployed and verified |
+| GraphQL explorer | Integration, authentication and exploration | Deployed and verified |
 
 ## Wiki Agent findings
 
@@ -845,11 +845,11 @@ Raw database comparisons confirmed deployment preserved every original selected 
 
 All 24 deployed section views (four sections at 1440/900/390 pixels in both themes) passed WCAG A/AA checks without horizontal overflow, browser exceptions, external requests or unexpected writes. The visual matrix used real container assets/API responses with read-transport isolation; the separate native workflow session had no interception. Evidence: ignored local `ssl-live-audit.json`, `ssl-native-verification.json` and `ssl-live-*.png` under `.playwright-cli/admin-review`.
 
-The owned temporary PostgreSQL SSL fixture and its credential files were removed after all persistence tests passed. Temporary raw settings snapshots and browser authentication export were removed. SSL's milestone is complete. The remaining target list is Logging, Extensions, Utilities, Developer flags and final cross-area verification. `continue.md` records the handoff; work stops here as requested, with the full goal still paused and incomplete.
+At the historical SSL handoff, Logging, Extensions, Utilities, Developer flags and final cross-area verification remained. That pause and target list are superseded by the final release record below.
 
-## Resumed four-area source checkpoint — not a release record
+## Historical resumed four-area source checkpoint
 
-The following sections record current source and isolated-preview evidence only. They do not change the deployed count, replace the maintained SSL image, or authorize a production mutation. The restored preview is offline, uses a temporary PostgreSQL 17 database and disabled external targets; it is not the maintained deployment.
+The following source and isolated-preview evidence preceded the final release record below. It did not then authorize a production mutation or change the deployed count. The restored preview was offline, used a temporary PostgreSQL 17 database and disabled external targets; it was not the maintained deployment.
 
 ### Logging — reviewed configuration and bounded diagnostics
 
@@ -872,7 +872,7 @@ The following sections record current source and isolated-preview evidence only.
 - Migration 26 down refuses to discard any recorded operation: prefer a forward fix. A database restore is destructive and is not automatically authorized; take and verify a backup before any production migration or restoration.
 - Current pre-release PostgreSQL proof comprises seven real suites, 46 cases and 220 assertions. The earlier 37-case/193-assertion checkpoint (Flags 6/25, Logging 12/42, Utilities 11/31, authentication utilities 6/28, content import 1/5 and relational export 1/62) remains historical evidence, not the final aggregate. The isolated restored preview applied migration 26. Its earlier browser Utilities checkpoint had incorrect export IDs and busy-state axe findings; those remain historical failures. The corrected native portable-export workflow proves exactly 14 public IDs with three private IDs excluded, a mode-0700 destination and mode-0600 gzip output, plus a real worker tree receipt and lost-response no-replay recovery; see `administration-export-workflow.json`.
 
-- `guest-utility-workflow.json` records cloned-runtime Guest recovery: anonymous page access was denied with HTTP 403 before the reviewed reset, became HTTP 200 immediately after its receipt, and the original membership count of two was restored. No live Guest reset occurred. The content-import adapter defect was corrected: the actual default `models.storage` executor imported one page (ID 37), source bytes stayed unchanged, exact Storage configuration/runtime was restored and the fixture page was deleted. Imported-page lookup is explicitly public with a null owner and updates the user revision. `content-import-workflow.json` records this source/clone proof; it is not a production import.
+- `guest-utility-workflow.json` records cloned-runtime Guest recovery: anonymous page access was denied with HTTP 403 before the reviewed reset, became HTTP 200 immediately after its receipt, and the original membership count of two was restored. No live Guest reset occurred. The content-import adapter defect was corrected: the actual default `models.storage` executor imported one page (ID 37), source bytes stayed unchanged, exact Storage configuration/runtime was restored and the fixture page was deleted. Imported-page lookup is explicitly public with a null owner; updates are guarded by the expected source revision. `content-import-workflow.json` records this source/clone proof; it is not a production import.
 
 ### Developer flags — narrow diagnostic promotion
 
@@ -880,10 +880,29 @@ The following sections record current source and isolated-preview evidence only.
 - The workspace distinguishes deployment defaults, effective database policy and this process's Knex-debug observation. Failed runtime reconciliation reports `needs-attention`; it does not claim a peer reload or cross-node application. The outbound reload event is best-effort and the maintained deployment has one application container. Retired REST mutation paths return 410; legacy GraphQL reads remain compatibility reads rather than another writable policy path.
 - Preview evidence: native keyboard and pointer Developer-flag controls passed. `administration-recovery-ui.json` passed protected-draft/no-replay cases, 500-record retention and escaping. A populated Logging trail passed four 1440/390 light/dark audits with zero findings.
 
-### Cross-area evidence, defect and remaining release gates
+### Historical cross-area evidence and release gates
 
 - Final pre-release source gates pass: full suite 468/468; shared/client/server type checks; lint; dependency and license checks (808); placeholders; and production Vite/bundle budgets. The current PostgreSQL evidence is seven real suites, 46 cases and 220 assertions. These are source/pre-release results, not a deployed-image result.
 - A read-only baseline review covered all 23 completed milestones (519 main section views, 126 nested views and six GraphQL views). It found source fixes separately; it did not re-complete or re-release those areas. A newer 108-view preview found and corrected Logging proxy clones, a remote logo, contrast issues, Utilities busy labels and export pagination. The final preview is now recorded in `administration-final-preview.json`: 114 views, with zero axe findings, overflow, page errors, external requests or writes. This remains preview evidence; the old Logging remote-logo source removal still needs live no-egress verification.
 - Recorded artifacts distinguish what passed: `administration-workflows.json` covers Logging save/apply/restore and Flags stage/promote/restore; `administration-utility-workflows.json` covers lost-response read-only recovery, minimal sessionStorage identity and a real tree-worker receipt but also records the earlier wrong export IDs and busy axe findings; `administration-export-workflow.json`, `guest-utility-workflow.json` and `content-import-workflow.json` record the corrected native Utilities proofs; `extensions-workflow.json` covers the passed Extensions flows above. `auth-utility-workflow.json` records real cloned API-toggle enforcement and signing-rotation UI/re-auth return, a rejected-and-recorded-revoked issued key, and an unchanged root-secret hash. No real SMTP, ACME, external Sentry or third-party endpoint request is evidence for this checkpoint.
-- The latest API availability defect is source-corrected and covered by the pre-release checkpoint: a module-captured stale `config.api` could persist the still-enabled policy after a successful disable and nested configuration reload. The repair transactionally writes the durable `settings.api` row, rechecks current `manage:system`/`manage:api` authority, and publishes the current runtime object only after commit. Signing, API/global-toggle and Guest-cache clone proofs pass. This is not deployed or live verified.
-- Remaining work is release-only: clean Main commit/push; a fresh verified production backup; production build/deploy of the reviewed image and migration 26; migration/image/health readback; final native live and cross-area/no-egress review; temporary-state cleanup; then recording the final revision, backup, rollback compose and live evidence. Until then, deployment remains SSL `26d38739`/migration 25 and the completed deployed count remains 23.
+- At this historical pre-release checkpoint, the latest API availability defect was source-corrected but not yet deployed: a module-captured stale `config.api` could persist the still-enabled policy after a successful disable and nested configuration reload. The repair transactionally writes the durable `settings.api` row, rechecks current `manage:system`/`manage:api` authority, and publishes the current runtime object only after commit. Signing, API/global-toggle and Guest-cache clone proofs passed; final live release evidence appears below.
+- This historical release-gate list was fulfilled by the final release and cross-area verification record below.
+
+## Final release and cross-area verification — 7 September 2026
+
+Source commit `13001f7ce21074083820449ef51603a1e1c8c584` was pushed to `main`; the clean image `tsepistle:13001f7c` built successfully and the Wiki-only compose deployment completed at `2026-09-07T09:07Z`. The running container reports that exact revision, `/healthz` returned HTTP 200 `{ ok: true }`, and `tsepistle-000026-utilities-operations.js` is applied. The live URL is unchanged.
+
+The fresh pre-release backup is `/home/bbferko/.local/state/wiki-tailnet/backups/before-administration-operations-20260907T090608Z.dump` (2,907,757 bytes, mode 0600, 660 validated `pg_restore` list lines). `/home/bbferko/.local/state/wiki-tailnet/compose.before-13001f7c.yml` retains SSL image `26d38739`. Inspect migration-26 compatibility before any downgrade; its down migration refuses recorded operation loss, so prefer a forward fix. Database restoration is destructive and requires explicit authorization. The existing compose-volume warning is unchanged and no volumes were recreated.
+
+### Live verification and boundaries
+
+- The detailed live matrix passed 114 views with zero axe findings, overflow, page errors, external requests or writes; native Developer-flags keyboard and pointer interaction also passed. A consolidated final cross-area matrix has 591 unique area/view/width/theme records across all 26 `/a` destinations plus the dashboard at 1440/900/390 in light and dark themes: zero scoped violations/overflow and every navigation section keyboard-activated.
+- GraphQL separately passed six views with zero axe findings/overflow and six native typed-query-retention checks. Mail's audit intentionally excludes traversal into its sandboxed preview iframe because axe encountered a cross-origin `SecurityError`; host chrome/navigation and screenshots were verified. This is not a claim of iframe axe coverage. The earlier nested 126-view preview remains historical source proof.
+- Live Logging JSON save/apply and default save/apply restored `info`/`default`. Live Flags staged `true` without enabling it, then restored `false`; SQL logging was never enabled. Cache receipt `534b4133-c21b-4ebb-8f3f-13f32b9addfe` succeeded. Live workflow dialogs and axe checks had zero findings.
+- Dangerous effects were deliberately not performed live: no signing rotation, Guest reset, import/export, external Sentry, email, ACME or storage operation. Those behaviors retain their clone/loopback evidence and their real runtime boundaries. Exact private baseline comparison confirmed original live pages, source revisions, visibility, owners, Storage, loggers and flags unchanged. Previously absent console keys now explicitly persist `info`/`default`; retained administration history and the Utilities receipt are intentional. `localeCatalog` contents are unchanged; its `observedAt` refreshed at startup.
+
+### Final validation and cleanup
+
+Source gates passed: full suite 468/468, all shared/client/server type checks, lint, dependency/licenses 808, placeholders, production build and bundle budgets; seven real PostgreSQL suites passed 46 cases/220 assertions. After deployment, preview infrastructure was stopped; the disposable PostgreSQL 17 container and databases, temporary PostgreSQL environment/configuration/data/dump, private live-before JSON, browser-auth copies and throwaway drivers were removed. Ignored non-secret screenshots/reports and the maintained backup/rollback artifacts remain. Post-cleanup `/healthz` remained HTTP 200.
+
+All 27 milestones are now deployed and verified. The final cross-area review is complete. Documentation-only commits after this record do not change the application revision.
