@@ -27,7 +27,7 @@ The visual direction is an editorial workspace: quiet surfaces, concise context,
 | System | Environment, health and diagnostics | Implemented, deployed and verified |
 | Storage | Targets, synchronization, recovery and job state | Implemented; first milestone verified |
 | Mail | Sender, transport, signing, templates and delivery diagnostics | Deployed and verified; four-section workspace and diagnostic recovery |
-| SSL | Certificates, renewal and ingress responsibilities | Pending |
+| SSL | Certificates, renewal and ingress responsibilities | Implemented; release verification in progress |
 | Logging | Destinations and troubleshooting | Pending |
 | Extensions | Availability, configuration and dependencies | Pending |
 | Utilities | Import, export and maintenance workflows | Pending |
@@ -814,3 +814,17 @@ Verification: 12 real PostgreSQL policy tests with 39 assertions pass for secret
 ### Requested handoff boundary
 
 The user has requested that work stop after the complete SSL section and its related considerations are implemented, deployed and verified. At that point, update this completed/remaining inventory and create `continue.md` for the next agent, covering the broader goal, operating standards, implementation context, deployment/recovery details, verification evidence and remaining targets. Do not begin Logging, Extensions, Utilities or Developer flags before that handoff. The full Administration goal is not complete at this boundary and must not be marked complete.
+
+
+### SSL workspace integration and interface
+
+The HTTPS workspace now exposes Connections, Certificates, Redirect policy and Operations. Public ingress and native listeners have separate handshake evidence, certificate trust/hostname/expiry details and certificate-chain receipts. Deployment-owned provider, ports and material sources are read-only. Local material validation precedes reviewed replacement; Bun listener interruption requires acknowledgment. ACME issuance is explicitly reviewed and saves material separately from application. The interface explains proxy ownership and the current startup-only renewal behavior; it does not imply a periodic renewal scheduler exists.
+
+Migration 25 adds durable, attributed HTTPS operation receipts with single-operation exclusion, idempotent request identity, heartbeat/interruption evidence and uncertain-outcome acknowledgment. Settings, listener revisions and current human/API authority are rechecked before effects. Applying material requires the validated material identity, including reloaded file contents. Public-check receipts gate redirect enablement for the current settings and expire after 15 minutes. Redirect policy commits before process publication; trusted proxy HTTPS avoids loops. The old hardcoded SSL status and legacy mutations return 410, and their obsolete client functions and source-string UI tests have been removed.
+
+The interface includes reviewed saves, reset, draft navigation protection, stale-save recovery, unconfirmed-save recovery, operation polling/read recovery, addressable sections/receipts and evidence export. API responses and exports contain public certificate metadata, never private material or deployment file paths. Read-only operation recovery never repeats certificate issuance or replacement.
+
+Verification before release: nine focused TLS/material/probe/ACME/controller/migration test files pass, plus existing System client/navigation regressions. Fifteen actual PostgreSQL operation cases pass with 65 assertions, supplementing the previously recorded 12 policy and 10 ACME persistence cases. Shared/client/server type checks, repository lint, production compilation and bundle budgets pass. The browser matrix and release verification are being finalized; no live certificate issuance or native replacement has been requested.
+
+
+The final preview matrix passed 30 views (four sections plus issuance review at 1440/900/390 pixels in light and dark), with no audited WCAG A/AA violations, horizontal overflow, browser exceptions, external requests or unexpected writes. Workflow verification passed material validation/replacement acknowledgment, lost operation response and read-only receipt recovery, stale-save draft retention, lost-save persistence recovery, keyboard dismissal of the leave guard and read-failure recovery. Contrast findings were corrected before the final passing run. Artifacts: `.playwright-cli/admin-review/ssl-next-*` (ignored, local).

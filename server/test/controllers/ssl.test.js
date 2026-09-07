@@ -24,7 +24,7 @@ const createWiki = host => ({
     info: vi.fn(),
     warn: vi.fn()
   },
-  servers: { servers: { https: {} } }
+  servers: { servers: { https: { listening: true } } }
 })
 
 const loadRedirectHandler = async wiki => {
@@ -59,7 +59,7 @@ describe('controllers/ssl HTTPS redirect', () => {
     expect(next).not.toHaveBeenCalled()
   })
 
-  it('upgrades a configured HTTP origin while preserving its authority and request path/query', async () => {
+  it('requires the configured public origin to explicitly use HTTPS', async () => {
     const wiki = createWiki('http://wiki.example.test:8080')
     const handler = await loadRedirectHandler(wiki)
     const req = {
@@ -72,7 +72,8 @@ describe('controllers/ssl HTTPS redirect', () => {
 
     handler(req, res, next)
 
-    expect(res.redirect).toHaveBeenCalledWith('https://wiki.example.test:8080/search?q=redirect%20safety&locale=en')
+    expect(res.redirect).not.toHaveBeenCalled()
+    expect(res.sendStatus).toHaveBeenCalledWith(503)
     expect(next).not.toHaveBeenCalled()
   })
 
@@ -106,11 +107,32 @@ describe('controllers/ssl HTTPS redirect', () => {
 
     handler(req, res, next)
 
-    expect(res.sendStatus).toHaveBeenCalledWith(500)
+    expect(res.sendStatus).toHaveBeenCalledWith(503)
     expect(res.redirect).not.toHaveBeenCalled()
     expect(next).not.toHaveBeenCalled()
     expect(wiki.logger.warn).toHaveBeenCalledWith(expect.stringContaining('configured site host'))
   })
+  it('redirects an insecure request behind a trusted proxy without a native HTTPS listener', async () => {
+    const wiki = createWiki('https://wiki.example.test:10443')
+    wiki.servers.servers.https = null
+    wiki.config.security = { securityTrustProxy: true }
+    const handler = await loadRedirectHandler(wiki), next = vi.fn(), res = { redirect: vi.fn(), sendStatus: vi.fn() }
+    handler({ secure: false, originalUrl: '/docs?mode=print' }, res, next)
+    expect(res.redirect).toHaveBeenCalledWith('https://wiki.example.test:10443/docs?mode=print')
+    expect(next).not.toHaveBeenCalled()
+    handler({ secure: true, originalUrl: '/docs' }, res, next)
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(res.redirect).toHaveBeenCalledTimes(1)
+  })
+  it('does not create a proxy redirect loop without trusted secure-request information', async () => {
+    const wiki = createWiki('https://wiki.example.test')
+    wiki.servers.servers.https = null
+    const handler = await loadRedirectHandler(wiki), next = vi.fn(), res = { redirect: vi.fn(), sendStatus: vi.fn() }
+    handler({ secure: false, originalUrl: '/docs' }, res, next)
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(res.redirect).not.toHaveBeenCalled()
+  })
+
 })
 
 describe('controllers/ssl active HTTP challenge', () => {

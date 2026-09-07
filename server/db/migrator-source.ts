@@ -93,7 +93,8 @@ export const KNOWN_APPLICATION_TABLES: Readonly<Record<string, true>> = {
   schemaLineage: true,
   siteLogoObjects: true,
   siteLogoRevisions: true,
-  siteLogoState: true
+  siteLogoState: true,
+  tlsOperations: true
 }
 
 function isMigration(value: unknown): value is Knex.Migration {

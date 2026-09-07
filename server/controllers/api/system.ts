@@ -9,12 +9,18 @@ const router = express.Router()
 
 router.get('/workspace', async (req, res) => {
   res.set('Cache-Control', 'no-store')
-  if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) return res.status(403).json({error: 'System administration is required.'})
+  if (!getWikiAuth().checkAccess(req.user, ['manage:system'])) return res.status(403).json({ error: 'System administration is required.' })
   try {
     return res.json(await getSystemWorkspaceStore().inspect(req.user))
   } catch (error) {
     const denied = error instanceof Error && 'status' in error && error.status === 403
-    return res.status(denied ? 403 : 503).json({error: denied ? 'Current system administration access is required.' : 'System observations could not be collected. Check application and database availability, then try again.'})
+    return res
+      .status(denied ? 403 : 503)
+      .json({
+        error: denied
+          ? 'Current system administration access is required.'
+          : 'System observations could not be collected. Check application and database availability, then try again.'
+      })
   }
 })
 
@@ -205,30 +211,14 @@ router.get('/export-status', (req, res) => {
   res.json(systemOperations.getExportStatus())
 })
 
-router.get('/ssl', (req, res) => {
+const retiredTls = (req: Request, res: Response) => {
+  if (typeof res.set === 'function') res.set('Cache-Control', 'no-store')
   if (!requireSystemAccess(req, res)) return
-  res.json(systemOperations.getSsl())
-})
-
-router.patch('/ssl/redirection', async (req, res) => {
-  if (!requireSystemAccess(req, res)) return
-  try {
-    await systemOperations.setSslRedirection(req.body && req.body.enabled)
-    res.json({ message: 'HTTP Redirection state set successfully.' })
-  } catch (err) {
-    sendError(res, err, 'HTTP Redirection update failed')
-  }
-})
-
-router.post('/ssl/renew', async (req, res) => {
-  if (!requireSystemAccess(req, res)) return
-  try {
-    await systemOperations.renewSslCertificate()
-    res.json({ message: 'SSL Certificate renewed successfully.' })
-  } catch (err) {
-    sendError(res, err, 'SSL Certificate renewal failed')
-  }
-})
+  res.status(410).json({ error: 'HTTPS administration now uses reviewed workspace operations. Reload Administration or use /_api/tls/workspace.' })
+}
+router.get('/ssl', retiredTls)
+router.patch('/ssl/redirection', retiredTls)
+router.post('/ssl/renew', retiredTls)
 
 router.post('/flags', async (req, res, next) => {
   if (!requireSystemAccess(req, res)) return

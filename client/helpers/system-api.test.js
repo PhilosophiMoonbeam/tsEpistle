@@ -4,9 +4,6 @@ import {
   fetchSystemTelemetry,
   fetchSystemExportStatus,
   fetchSystemHost,
-  fetchSystemSsl,
-  updateSystemSslRedirection,
-  renewSystemSslCertificate,
   fetchSystemFlags,
   fetchSystemExtensions,
   updateSystemFlags,
@@ -364,120 +361,6 @@ describe('system api helper', () => {
     })
 
     await expect(Promise.resolve(fetchSystemHost(fetchImpl, 'Bad host load'))).rejects.toThrow('Bad host load')
-  })
-
-  test('fetches and validates SSL status payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      createJsonResponse({
-        httpPort: 3000,
-        httpRedirection: true,
-        httpsPort: 3443,
-        sslDomain: 'docs.example.test',
-        sslExpirationDate: '2026-06-01T00:00:00.000Z',
-        sslProvider: 'letsencrypt',
-        sslStatus: 'OK',
-        sslSubscriberEmail: 'ops@example.test',
-        privateValue: 'must not be returned by helper'
-      })
-    )
-
-    expect(await fetchSystemSsl(fetchImpl)).toEqual({
-      httpPort: 3000,
-      httpRedirection: true,
-      httpsPort: 3443,
-      sslDomain: 'docs.example.test',
-      sslExpirationDate: '2026-06-01T00:00:00.000Z',
-      sslProvider: 'letsencrypt',
-      sslStatus: 'OK',
-      sslSubscriberEmail: 'ops@example.test'
-    })
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/ssl', {
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json'
-      }
-    })
-  })
-
-  test('accepts nullable SSL status fields', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      createJsonResponse({
-        httpPort: 0,
-        httpRedirection: false,
-        httpsPort: 0,
-        sslDomain: null,
-        sslExpirationDate: null,
-        sslProvider: null,
-        sslStatus: 'OK',
-        sslSubscriberEmail: null
-      })
-    )
-
-    expect(await fetchSystemSsl(fetchImpl)).toEqual({
-      httpPort: 0,
-      httpRedirection: false,
-      httpsPort: 0,
-      sslDomain: null,
-      sslExpirationDate: null,
-      sslProvider: null,
-      sslStatus: 'OK',
-      sslSubscriberEmail: null
-    })
-  })
-
-  test('rejects malformed SSL status payload roots', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([]))
-
-    await expect(Promise.resolve(fetchSystemSsl(fetchImpl, 'Bad SSL payload'))).rejects.toThrow('Bad SSL payload')
-  })
-
-  test.each([
-    ['httpPort', '3000'],
-    ['httpsPort', Infinity],
-    ['httpRedirection', 'true'],
-    ['sslStatus', null],
-    ['sslDomain', false],
-    ['sslExpirationDate', 123],
-    ['sslProvider', {}],
-    ['sslSubscriberEmail', []]
-  ])('rejects malformed SSL status field %s', async (field, value) => {
-    const payload = {
-      httpPort: 3000,
-      httpRedirection: false,
-      httpsPort: 3443,
-      sslDomain: 'docs.example.test',
-      sslExpirationDate: '2026-06-01T00:00:00.000Z',
-      sslProvider: 'letsencrypt',
-      sslStatus: 'OK',
-      sslSubscriberEmail: 'ops@example.test'
-    }
-    payload[field] = value
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
-
-    await expect(Promise.resolve(fetchSystemSsl(fetchImpl, 'Bad SSL payload'))).rejects.toThrow('Bad SSL payload')
-  })
-
-  test('surfaces API error messages for failed SSL status loads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: false,
-      headers: {
-        get: () => 'application/json; charset=utf-8'
-      },
-      json: async () => ({ error: 'manage:system is required' })
-    })
-
-    await expect(Promise.resolve(fetchSystemSsl(fetchImpl, 'Bad SSL load'))).rejects.toThrow('manage:system is required')
-  })
-
-  test('rejects non-JSON successful SSL status responses', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue({
-      ok: true,
-      headers: {
-        get: () => 'text/plain'
-      }
-    })
-
-    await expect(Promise.resolve(fetchSystemSsl(fetchImpl, 'Bad SSL load'))).rejects.toThrow('Bad SSL load')
   })
 
   test('fetches and normalizes system flags', async () => {
@@ -859,58 +742,6 @@ describe('system api helper', () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'companion missing' }, false))
 
     await expect(Promise.resolve(performSystemUpgrade(fetchImpl, 'Bad upgrade'))).rejects.toThrow('companion missing')
-  })
-
-  test('updates SSL redirection through REST', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'HTTP Redirection state set successfully.' }))
-
-    expect(await updateSystemSslRedirection(fetchImpl, true)).toEqual({ message: 'HTTP Redirection state set successfully.' })
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/ssl/redirection', {
-      method: 'PATCH',
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ enabled: true })
-    })
-  })
-
-  test('rejects malformed SSL redirection update responses', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: '' }))
-
-    await expect(Promise.resolve(updateSystemSslRedirection(fetchImpl, false, 'Bad SSL redirection'))).rejects.toThrow('Bad SSL redirection')
-  })
-
-  test('surfaces API error messages for failed SSL redirection updates', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'enabled must be a boolean' }, false))
-
-    await expect(Promise.resolve(updateSystemSslRedirection(fetchImpl, 'yes', 'Bad SSL redirection'))).rejects.toThrow('enabled must be a boolean')
-  })
-
-  test('renews SSL certificates through REST', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'SSL Certificate renewed successfully.' }))
-
-    expect(await renewSystemSslCertificate(fetchImpl)).toEqual({ message: 'SSL Certificate renewed successfully.' })
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/system/ssl/renew', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json'
-      }
-    })
-  })
-
-  test('rejects malformed SSL certificate renewal responses', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ ok: true }))
-
-    await expect(Promise.resolve(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew'))).rejects.toThrow('Bad SSL renew')
-  })
-
-  test('surfaces API error messages for failed SSL certificate renewals', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'SSL is disabled' }, false))
-
-    await expect(Promise.resolve(renewSystemSslCertificate(fetchImpl, 'Bad SSL renew'))).rejects.toThrow('SSL is disabled')
   })
 
   test('starts system export with same-origin JSON POST options', async () => {

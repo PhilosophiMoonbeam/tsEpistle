@@ -335,31 +335,6 @@ const startExport = async (input: unknown): Promise<void> => {
   wiki.system.export({ entities, path: desiredPath })
 }
 
-const getSsl = () => ({
-  httpPort: wiki.servers.servers.http ? _.get(wiki.servers.servers.http.address(), 'port', 0) : 0,
-  httpRedirection: _.get(wiki.config, 'server.sslRedir', false),
-  httpsPort: wiki.servers.servers.https ? _.get(wiki.servers.servers.https.address(), 'port', 0) : 0,
-  sslDomain: wiki.config.ssl.enabled && wiki.config.ssl.provider === 'letsencrypt' ? wiki.config.ssl.domain : null,
-  sslExpirationDate: wiki.config.ssl.enabled && wiki.config.ssl.provider === 'letsencrypt' ? _.get(wiki.config.letsencrypt, 'payload.expires', null) : null,
-  sslProvider: wiki.config.ssl.enabled ? wiki.config.ssl.provider : null,
-  sslStatus: 'OK',
-  sslSubscriberEmail: wiki.config.ssl.enabled && wiki.config.ssl.provider === 'letsencrypt' ? wiki.config.ssl.subscriberEmail : null
-})
-
-const setSslRedirection = async (enabled: unknown): Promise<void> => {
-  if (typeof enabled !== 'boolean') throw new ApplicationError('enabled must be a boolean', { code: 'INVALID_SSL_REDIRECTION' })
-  wiki.config.server.sslRedir = enabled
-  await wiki.configSvc.saveToDb(['server'])
-}
-
-const renewSslCertificate = async () => {
-  if (!wiki.config.ssl.enabled) throw new wiki.Error.SystemSSLDisabled()
-  if (wiki.config.ssl.provider !== 'letsencrypt') throw new wiki.Error.SystemSSLRenewInvalidProvider()
-  if (!wiki.servers.le) throw new wiki.Error.SystemSSLLEUnavailable()
-  await wiki.servers.le.requestCertificate()
-  await wiki.servers.restartServer('https')
-}
-
 const checkForUpdate = async () => ({
   product: wiki.product,
   currentVersion: wiki.product.version,
@@ -375,7 +350,6 @@ export default {
   getExportStatus,
   getHost,
   getInfo,
-  getSsl,
   getSummary,
   getTelemetry,
   listExtensions,
@@ -385,9 +359,7 @@ export default {
   purgePageHistory,
   rebuildPageTree,
   renderPage,
-  renewSslCertificate,
   resetTelemetryClientId,
-  setSslRedirection,
   setTelemetry,
   startExport,
   updateFlags

@@ -68,3 +68,25 @@ export interface TlsConfigurationWorkspace {
   savedCertificateIssue: string | null
   history: TlsConfigurationEvent[]
 }
+
+export type TlsOperationKind = 'public-check' | 'native-check' | 'validate-material' | 'apply-certificate' | 'renew-certificate'
+export interface TlsOperation {
+  id: string
+  kind: TlsOperationKind
+  state: 'running' | 'succeeded' | 'failed' | 'uncertain'
+  phase: string
+  actorId: number | null
+  apiKeyId: number | null
+  reason: string
+  createdAt: string
+  completedAt: string | null
+  summary: string
+  result: {
+    connection?: TlsConnectionEvidence
+    material?: { certificate: TlsCertificateEvidence; source: 'inline' | 'file'; format: 'pem' | 'pfx' }
+    applied?: TlsAppliedMaterial
+  } | null
+}
+export interface TlsWorkspace extends TlsConfigurationWorkspace {
+  operations: TlsOperation[]
+}

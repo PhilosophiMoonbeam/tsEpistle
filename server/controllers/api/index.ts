@@ -11,6 +11,7 @@ import groupsRouter from './groups.ts'
 import localesRouter from './locales.ts'
 import loggingRouter from './logging.ts'
 import mailRouter from './mail.ts'
+import tlsRouter from './tls.ts'
 import navigationRouter from './navigation.ts'
 import pagesRouter from './pages.ts'
 import renderingRouter from './rendering.ts'
@@ -38,6 +39,7 @@ router.use('/theming', themingRouter)
 router.use('/logging', loggingRouter)
 router.use('/navigation', navigationRouter)
 router.use('/mail', mailRouter)
+router.use('/tls', tlsRouter)
 router.use('/storage', storageRouter)
 router.use('/site/logo', siteLogoRouter)
 router.use('/site', siteRouter)

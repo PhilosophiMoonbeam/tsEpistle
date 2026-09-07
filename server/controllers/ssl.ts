@@ -1,32 +1,12 @@
 import express from 'express'
+import { publicTlsTarget } from '../repositories/tls-probe.ts'
 
 interface RedirectPathAndQuery {
   pathname: string
   search: string
 }
 
-const configuredHttpsOrigin = (configuredHost: string | undefined): URL | null => {
-  if (!configuredHost) return null
-  try {
-    const configured = new URL(configuredHost)
-    if (
-      (configured.protocol !== 'http:' && configured.protocol !== 'https:') ||
-      !configured.hostname ||
-      configured.username ||
-      configured.password ||
-      configured.pathname !== '/' ||
-      configured.search ||
-      configured.hash
-    )
-      return null
-
-    const redirectOrigin = new URL(configured.origin)
-    redirectOrigin.protocol = 'https:'
-    return redirectOrigin
-  } catch {
-    return null
-  }
-}
+const configuredHttpsOrigin = (configuredHost: string | undefined): URL | null => (publicTlsTarget(configuredHost) ? new URL(configuredHost!) : null)
 
 const safelyParsedPathAndQuery = (originalUrl: string): RedirectPathAndQuery | null => {
   try {
@@ -41,12 +21,13 @@ export interface SslWiki {
   config: {
     host?: string
     server: { sslRedir: boolean }
+    security?: { securityTrustProxy?: boolean }
   }
   logger: {
     info(message: string): void
     warn(message: string): void
   }
-  servers: { servers: { https: unknown }; le?: { readonly challenge: { token: string; keyAuthorization?: string } | null } | null }
+  servers: { servers: { https: { listening?: boolean } | null }; le?: { readonly challenge: { token: string; keyAuthorization?: string } | null } | null }
 }
 
 export default function createSslController(wiki: SslWiki): express.Router {
@@ -68,12 +49,13 @@ export default function createSslController(wiki: SslWiki): express.Router {
    * Redirect to HTTPS if HTTP Redirection is enabled
    */
   router.all('/{*sslRedirectPath}', (req, res, next) => {
-    if (!wiki.config.server.sslRedir || req.secure || !wiki.servers.servers.https) return next()
+    if (!wiki.config.server.sslRedir || req.secure) return next()
+    if (!wiki.servers.servers.https?.listening && wiki.config.security?.securityTrustProxy !== true) return next()
 
     const redirectOrigin = configuredHttpsOrigin(wiki.config.host)
     if (!redirectOrigin) {
-      wiki.logger.warn('(SSL) HTTPS redirect rejected because the configured site host is not a valid HTTP(S) origin.')
-      return res.sendStatus(500)
+      wiki.logger.warn('(SSL) HTTPS redirect rejected because the configured site host is not a valid HTTPS origin.')
+      return res.sendStatus(503)
     }
 
     const requestTarget = safelyParsedPathAndQuery(req.originalUrl)

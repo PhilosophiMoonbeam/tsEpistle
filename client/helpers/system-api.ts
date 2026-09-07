@@ -31,17 +31,6 @@ export type SystemInfo = SystemSummary & {
   workingDirectory: string
 }
 
-export type SystemSslInfo = {
-  httpPort: number
-  httpRedirection: boolean
-  httpsPort: number
-  sslDomain: string | null
-  sslExpirationDate: string | null
-  sslProvider: string | null
-  sslStatus: string
-  sslSubscriberEmail: string | null
-}
-
 export type SystemFlags = Record<string, boolean>
 
 export type SystemExtension = {
@@ -225,36 +214,6 @@ function normalizeSystemHostPayload(payload: unknown, fallbackMessage: string) {
   }
 }
 
-function normalizeSystemSslPayload(payload: unknown, fallbackMessage: string): SystemSslInfo {
-  if (!isRecord(payload)) {
-    throw new Error(fallbackMessage)
-  }
-
-  const requiredNumberFields = ['httpPort', 'httpsPort']
-  const nullableStringFields = ['sslDomain', 'sslExpirationDate', 'sslProvider', 'sslSubscriberEmail']
-
-  if (requiredNumberFields.some(field => !Number.isFinite(payload[field]))) {
-    throw new Error(fallbackMessage)
-  }
-  if (typeof payload.httpRedirection !== 'boolean' || typeof payload.sslStatus !== 'string') {
-    throw new Error(fallbackMessage)
-  }
-  if (nullableStringFields.some(field => typeof payload[field] !== 'string' && payload[field] !== null)) {
-    throw new Error(fallbackMessage)
-  }
-
-  return {
-    httpPort: payload.httpPort,
-    httpRedirection: payload.httpRedirection,
-    httpsPort: payload.httpsPort,
-    sslDomain: payload.sslDomain,
-    sslExpirationDate: payload.sslExpirationDate,
-    sslProvider: payload.sslProvider,
-    sslStatus: payload.sslStatus,
-    sslSubscriberEmail: payload.sslSubscriberEmail
-  } as SystemSslInfo
-}
-
 function normalizeSystemExtension(row: unknown, fallbackMessage: string): SystemExtension {
   if (!isRecord(row)) {
     throw new Error(fallbackMessage)
@@ -356,53 +315,6 @@ async function fetchSystemHost(fetchImpl: FetchImpl, fallbackMessage = 'Site hos
   })
 
   return normalizeSystemHostPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
-}
-
-async function fetchSystemSsl(fetchImpl: FetchImpl, fallbackMessage = 'SSL status response is invalid') {
-  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/ssl', {
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json'
-    }
-  })
-
-  return normalizeSystemSslPayload(await parseJsonResponse(response, fallbackMessage), fallbackMessage)
-}
-
-async function updateSystemSslRedirection(fetchImpl: FetchImpl, enabled: boolean, fallbackMessage = 'HTTP Redirection update failed') {
-  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/ssl/redirection', {
-    method: 'PATCH',
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ enabled })
-  })
-
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || typeof payload.message !== 'string' || payload.message.length < 1) {
-    throw new Error(fallbackMessage)
-  }
-
-  return payload
-}
-
-async function renewSystemSslCertificate(fetchImpl: FetchImpl, fallbackMessage = 'SSL Certificate renewal failed') {
-  const response = await sameOriginJsonFetch(fetchImpl, '/_api/system/ssl/renew', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json'
-    }
-  })
-
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || typeof payload.message !== 'string' || payload.message.length < 1) {
-    throw new Error(fallbackMessage)
-  }
-
-  return payload
 }
 
 async function fetchSystemFlags(fetchImpl: FetchImpl, fallbackMessage = 'System flags response is invalid'): Promise<SystemFlags> {
@@ -656,9 +568,6 @@ export {
   fetchSystemExportStatus,
   startSystemExport,
   fetchSystemHost,
-  fetchSystemSsl,
-  updateSystemSslRedirection,
-  renewSystemSslCertificate,
   fetchSystemFlags,
   fetchSystemExtensions,
   updateSystemFlags,

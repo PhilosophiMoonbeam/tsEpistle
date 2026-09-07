@@ -258,7 +258,7 @@ export function buildAdminNavigation(translate: (key: string) => string, permiss
         },
         {
           key: 'ssl',
-          label: translate('admin:ssl.title'),
+          label: 'HTTPS & certificates',
           icon: 'mdi-certificate-outline',
           to: '/ssl',
           permission: 'manage:system',

@@ -94,6 +94,8 @@ interface ServerCollection {
 }
 
 export interface PreparedHttpsContext {
+  /** Internal identity for matching reviewed material. Never expose through an API. */
+  materialKey: string
   certificate: TlsAppliedMaterial['certificate']
   source: TlsAppliedMaterial['source']
   format: TlsAppliedMaterial['format']
@@ -294,6 +296,7 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
       const material = await prepareTlsMaterial(configuration)
       let consumed = false
       return {
+        materialKey: material.key,
         certificate: material.certificate ? structuredClone(material.certificate) : null,
         source: material.source,
         format: material.format,
