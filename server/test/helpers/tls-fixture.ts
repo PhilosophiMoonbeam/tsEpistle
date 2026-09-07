@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /** Local, short-lived test material. No external CA or production certificate is used. */
-export const tlsFixture = () => {
+export const tlsFixture = (days = 2) => {
   const directory = mkdtempSync(join(tmpdir(), 'tsepistle-tls-test-'))
   chmodSync(directory, 0o700)
   const issue = (name: string) => {
@@ -24,7 +24,7 @@ export const tlsFixture = () => {
         '-out',
         certPath,
         '-days',
-        '2',
+        String(days),
         '-subj',
         '/CN=wiki.example.test',
         '-addext',

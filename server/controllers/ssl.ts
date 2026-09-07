@@ -1,5 +1,4 @@
 import express from 'express'
-import _ from 'lodash'
 
 interface RedirectPathAndQuery {
   pathname: string
@@ -41,16 +40,13 @@ const safelyParsedPathAndQuery = (originalUrl: string): RedirectPathAndQuery | n
 export interface SslWiki {
   config: {
     host?: string
-    letsencrypt: {
-      challenge: false | { token: string; keyAuthorization: string }
-    }
     server: { sslRedir: boolean }
   }
   logger: {
     info(message: string): void
     warn(message: string): void
   }
-  servers: { servers: { https: unknown } }
+  servers: { servers: { https: unknown }; le?: { readonly challenge: { token: string; keyAuthorization?: string } | null } | null }
 }
 
 export default function createSslController(wiki: SslWiki): express.Router {
@@ -61,17 +57,11 @@ export default function createSslController(wiki: SslWiki): express.Router {
    */
   router.get('/.well-known/acme-challenge/:token', (req, res) => {
     res.type('text/plain')
-    if (_.get(wiki.config, 'letsencrypt.challenge', false)) {
-      if (wiki.config.letsencrypt.challenge && wiki.config.letsencrypt.challenge.token === req.params.token) {
-        res.send(wiki.config.letsencrypt.challenge.keyAuthorization)
-        wiki.logger.info(`(LETSENCRYPT) Received valid challenge request. [ ACCEPTED ]`)
-      } else {
-        res.status(406).send('Invalid Challenge Token!')
-        wiki.logger.warn(`(LETSENCRYPT) Received invalid challenge request. [ REJECTED ]`)
-      }
-    } else {
-      res.status(418).end()
-    }
+    res.set('Cache-Control', 'no-store')
+    const challenge = wiki.servers.le?.challenge
+    if (!challenge?.keyAuthorization) return res.status(418).end()
+    if (challenge.token !== req.params.token) return res.status(406).send('Invalid Challenge Token!')
+    return res.send(challenge.keyAuthorization)
   })
 
   /**

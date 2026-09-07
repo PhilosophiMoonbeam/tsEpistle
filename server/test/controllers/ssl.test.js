@@ -112,3 +112,30 @@ describe('controllers/ssl HTTPS redirect', () => {
     expect(wiki.logger.warn).toHaveBeenCalledWith(expect.stringContaining('configured site host'))
   })
 })
+
+describe('controllers/ssl active HTTP challenge', () => {
+  it('serves only the current runtime challenge and ignores old persisted challenge values', async () => {
+    express.__router.get.mockClear()
+    const wiki = createWiki('https://wiki.example.test')
+    wiki.config.letsencrypt.challenge = { token: 'persisted-token', keyAuthorization: 'stale-authorization' }
+    wiki.servers.le = { challenge: null }
+    const { default: createSslController } = await vi.importFresh('../../controllers/ssl.ts', import.meta.url)
+    createSslController(wiki)
+    const handler = express.__router.get.mock.calls.find(([path]) => path === '/.well-known/acme-challenge/:token')[1]
+    const res = { type: vi.fn(), set: vi.fn(), status: vi.fn(), end: vi.fn(), send: vi.fn() }
+    res.status.mockReturnValue(res)
+    handler({ params: { token: 'persisted-token' } }, res)
+    expect(res.status).toHaveBeenLastCalledWith(418)
+    expect(res.send).not.toHaveBeenCalled()
+    wiki.servers.le.challenge = { token: 'runtime-token', keyAuthorization: 'current-public-authorization' }
+    handler({ params: { token: 'wrong-token' } }, res)
+    expect(res.status).toHaveBeenLastCalledWith(406)
+    handler({ params: { token: 'runtime-token' } }, res)
+    expect(res.send).toHaveBeenLastCalledWith('current-public-authorization')
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    expect(res.type).toHaveBeenCalledWith('text/plain')
+    wiki.servers.le.challenge = null
+    handler({ params: { token: 'runtime-token' } }, res)
+    expect(res.status).toHaveBeenLastCalledWith(418)
+  })
+})
