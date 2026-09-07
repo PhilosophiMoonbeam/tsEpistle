@@ -11,7 +11,7 @@ import type { ProductMetadata } from '../../shared/product.ts'
 interface AppConfig {
   [key: string]: unknown
   db: { pass: string | number }
-  flags: { sqllog: boolean }
+  flags: { ldapdebug: boolean; sqllog: boolean }
   security?: { securityTrustProxy?: boolean }
   port: number | string
   setup?: boolean
@@ -84,6 +84,7 @@ function isAppConfig(value: unknown): value is AppConfig {
   if (!isRecord(value) || !isRecord(value.db) || !isRecord(value.flags)) return false
   return (
     (typeof value.db.pass === 'string' || typeof value.db.pass === 'number') &&
+    typeof value.flags.ldapdebug === 'boolean' &&
     typeof value.flags.sqllog === 'boolean' &&
     (typeof value.port === 'string' || typeof value.port === 'number')
   )
@@ -114,10 +115,12 @@ const mergeSavedConfiguration = (saved: unknown, fallback: unknown): unknown => 
   if (saved === undefined) return _.cloneDeep(fallback)
   if (!_.isPlainObject(saved)) return _.cloneDeep(saved)
   const source = saved as Record<string, unknown>
-  const defaults = _.isPlainObject(fallback) ? fallback as Record<string, unknown> : {}
-  return Object.fromEntries([...new Set([...Object.keys(defaults), ...Object.keys(source)])]
-    .filter(key => !['__proto__', 'constructor', 'prototype'].includes(key))
-    .map(key => [key, mergeSavedConfiguration(source[key], defaults[key])]))
+  const defaults = _.isPlainObject(fallback) ? (fallback as Record<string, unknown>) : {}
+  return Object.fromEntries(
+    [...new Set([...Object.keys(defaults), ...Object.keys(source)])]
+      .filter(key => !['__proto__', 'constructor', 'prototype'].includes(key))
+      .map(key => [key, mergeSavedConfiguration(source[key], defaults[key])])
+  )
 }
 
 const configService: ConfigService = {
@@ -223,14 +226,20 @@ const configService: ConfigService = {
 
   subscribeToEvents() {
     const wiki = getWiki()
-    wiki.events.inbound.on('reloadConfig', async () => {
-      const previousLanguage = JSON.stringify(wiki.config.lang)
-      await wiki.configSvc.loadFromDb()
-      if (wiki.lang && previousLanguage !== JSON.stringify(wiki.config.lang)) await wiki.lang.refreshNamespaces()
-      await wiki.configSvc.applyFlags()
-      wiki.app?.set('trust proxy', wiki.config.security?.securityTrustProxy === true ? 1 : false)
-      const audience = isRecord(wiki.config.auth) ? wiki.config.auth.audience : undefined
-      if (wiki.auth && typeof audience === 'string' && (wiki.auth.jwtAudience !== audience || wiki.auth.strategyHost !== wiki.config.host)) await wiki.auth.activateStrategies()
+    let reloadQueue = Promise.resolve()
+    wiki.events.inbound.on('reloadConfig', () => {
+      const reload = reloadQueue.then(async () => {
+        const previousLanguage = JSON.stringify(wiki.config.lang)
+        await wiki.configSvc.loadFromDb()
+        if (wiki.lang && previousLanguage !== JSON.stringify(wiki.config.lang)) await wiki.lang.refreshNamespaces()
+        await wiki.configSvc.applyFlags()
+        wiki.app?.set('trust proxy', wiki.config.security?.securityTrustProxy === true ? 1 : false)
+        const audience = isRecord(wiki.config.auth) ? wiki.config.auth.audience : undefined
+        if (wiki.auth && typeof audience === 'string' && (wiki.auth.jwtAudience !== audience || wiki.auth.strategyHost !== wiki.config.host))
+          await wiki.auth.activateStrategies()
+      })
+      reloadQueue = reload.catch(() => undefined)
+      return reload
     })
   }
 }

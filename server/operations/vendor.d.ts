@@ -26,28 +26,3 @@ declare module 'clean-css' {
     minify(source: string): Output
   }
 }
-
-declare module 'mongodb' {
-  interface MongoClientOptions {
-    appName?: string
-  }
-
-  interface MongoCursor<TDocument extends object> {
-    hasNext(): Promise<boolean>
-    next(): Promise<TDocument | null>
-  }
-
-  interface MongoCollection<TDocument extends object> {
-    find(filter?: object): MongoCursor<TDocument>
-  }
-
-  interface MongoDatabase {
-    collection<TDocument extends object = Record<string, unknown>>(name: string): MongoCollection<TDocument>
-  }
-
-  export class MongoClient {
-    static connect(url: string, options?: MongoClientOptions): Promise<MongoClient>
-    db(name?: string): MongoDatabase
-    close(force?: boolean): Promise<void>
-  }
-}

@@ -1,5 +1,12 @@
 import { expect } from '@playwright/test'
-import { expectLocatorWithinViewport, expectResponsiveLayout, openAuthenticatedPage, openSearch, responsiveTest as test } from './helpers.ts'
+import {
+  authenticateAsAdmin,
+  expectLocatorWithinViewport,
+  expectResponsiveLayout,
+  openAuthenticatedPage,
+  openSearch,
+  responsiveTest as test
+} from './helpers.ts'
 
 test.describe('responsive UI quality matrix', () => {
   test.beforeEach(() => {
@@ -696,7 +703,36 @@ test.describe('responsive UI quality matrix', () => {
     await expect(page.getByText('No matching settings', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Clear search', exact: true }).click()
     await expect(page.locator('.dashboard-directory__link')).toHaveCount(27)
+    const directory = page.locator('#settings')
+    for (const link of await directory.locator('.dashboard-directory__link').all()) {
+      await expect(link).toHaveAttribute('href', /^\/(?:a\/[^/]+|graphql)$/)
+    }
+    const pagesLink = directory.getByRole('link', { name: /^Pages / })
+    await pagesLink.focus()
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL('/a/pages')
+  })
 
+  test('keeps GraphQL documentation usable without losing the current query', async ({ page }) => {
+    await authenticateAsAdmin(page)
+    await page.goto('/graphql', { waitUntil: 'domcontentloaded' })
+    await expect(page.locator('.graphiql-execute-button')).toBeVisible()
+    const viewport = page.viewportSize()
+    if (!viewport) throw new Error('This responsive test requires a configured viewport.')
+    expect(await page.evaluate(() => window.innerWidth)).toBe(viewport.width)
+    await page.getByRole('textbox', { name: 'Editor content' }).first().focus()
+    await page.keyboard.press('ControlOrMeta+A')
+    await page.keyboard.insertText('query PaneRetention { __typename }')
+    const queryEditor = page.locator('.graphiql-query-editor')
+    await expect(queryEditor).toContainText('PaneRetention')
+    await page.getByRole('button', { name: 'Show Documentation Explorer', exact: true }).click()
+    await expect(page.locator('.graphiql-doc-explorer')).toBeVisible()
+    await expectResponsiveLayout(page, 'GraphQL schema documentation')
+    if (viewport.width <= 700) await expect(queryEditor).toBeHidden()
+    await page.getByRole('button', { name: 'Hide Documentation Explorer', exact: true }).click()
+    await expect(queryEditor).toBeVisible()
+    await expect(queryEditor).toContainText('PaneRetention')
+    await expectResponsiveLayout(page, 'Restored GraphQL query')
   })
 
   test('keeps Agent Chat readable and operable', async ({ page }) => {
@@ -704,12 +740,17 @@ test.describe('responsive UI quality matrix', () => {
     const entrance = page.locator('.nav-header-agent')
     await expectLocatorWithinViewport(entrance, 'Wiki Agent entrance')
     await expect(entrance.locator('.v-icon')).toBeVisible()
-    await expect.poll(() => page.locator('.nav-header').evaluate(header =>
-      Array.from(header.querySelectorAll('button')).filter(button => {
-        const bounds = button.getBoundingClientRect()
-        return bounds.width > 0 && (bounds.left < 0 || bounds.right > window.innerWidth)
-      }).length
-    )).toBe(0)
+    await expect
+      .poll(() =>
+        page.locator('.nav-header').evaluate(
+          header =>
+            Array.from(header.querySelectorAll('button')).filter(button => {
+              const bounds = button.getBoundingClientRect()
+              return bounds.width > 0 && (bounds.left < 0 || bounds.right > window.innerWidth)
+            }).length
+        )
+      )
+      .toBe(0)
     await openSearch(page)
     await expect(page.locator('.search-results-agent-entry')).toBeVisible()
     await page.locator('.search-results-agent-entry').click()
@@ -877,7 +918,7 @@ test.describe('focused reading', () => {
     await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
     await page.getByRole('button', { name: 'Focus reading', exact: true }).click()
     const headings = page.locator('article.contents h2:not(details h2):visible')
-    test.skip(await headings.count() < 2, 'This document has fewer than two visible sections')
+    test.skip((await headings.count()) < 2, 'This document has fewer than two visible sections')
     const passage = headings.nth(1)
     await passage.evaluate(element => window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY - 120))
     await expect.poll(async () => Math.abs(((await passage.boundingBox())?.y ?? 0) - 120)).toBeLessThan(2)

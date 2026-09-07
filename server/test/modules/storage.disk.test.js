@@ -827,7 +827,7 @@ describe('Git storage rename identities', () => {
     const createPage = vi.fn().mockResolvedValue({ id: 1 })
     const updatePage = vi.fn().mockResolvedValue({ id: 2 })
     const getPageFromDb = vi.fn(({ path: pagePath }) => Promise.resolve(pagePath === 'log'
-      ? { id: 2, title: 'Log', description: '', isPublished: true, tags: [] }
+      ? { id: 2, sourceRevision: 'current-log-revision', title: 'Log', description: '', isPublished: true, tags: [] }
       : null))
     global.WIKI.models.pages = { createPage, getPageFromDb, updatePage }
     global.WIKI.models.editors = {
@@ -864,8 +864,8 @@ describe('Git storage rename identities', () => {
       expect.objectContaining({ kind: 'page', relPath: 'en/log.concept.md', ok: true })
     ])
 
-    expect(getPageFromDb).toHaveBeenCalledWith({ path: 'index', locale: 'en' })
-    expect(getPageFromDb).toHaveBeenCalledWith({ path: 'log', locale: 'en' })
+    expect(getPageFromDb).toHaveBeenCalledWith({ path: 'index', locale: 'en', visibility: 'public', ownerId: null })
+    expect(getPageFromDb).toHaveBeenCalledWith({ path: 'log', locale: 'en', visibility: 'public', ownerId: null })
     expect(createPage).toHaveBeenCalledWith(expect.objectContaining({
       path: 'index',
       locale: 'en',
@@ -874,6 +874,7 @@ describe('Git storage rename identities', () => {
     }))
     expect(updatePage).toHaveBeenCalledWith(expect.objectContaining({
       id: 2,
+      expectedSourceRevision: 'current-log-revision',
       okfProducer: 'import:git',
       skipStorage: true
     }))
@@ -1307,7 +1308,7 @@ describe('storage page-document ingress', () => {
     })
 
     expect(result).toMatchObject({ ok: true, format: 'okf_valid' })
-    expect(getPageFromDb).toHaveBeenCalledWith({ path: 'index', locale: 'en' })
+    expect(getPageFromDb).toHaveBeenCalledWith({ path: 'index', locale: 'en', visibility: 'public', ownerId: null })
     expect(createPage).toHaveBeenCalledWith(expect.objectContaining({
       path: 'index',
       locale: 'en',
@@ -1332,6 +1333,7 @@ describe('storage page-document ingress', () => {
     const updatePage = vi.fn().mockResolvedValue({ id: 2 })
     const getPageFromDb = vi.fn().mockResolvedValue({
       id: 2,
+      sourceRevision: 'current-log-revision',
       title: 'Existing',
       description: '',
       isPublished: true,
@@ -1352,8 +1354,9 @@ describe('storage page-document ingress', () => {
     })
 
     expect(result).toMatchObject({ ok: true, format: 'okf_valid' })
-    expect(getPageFromDb).toHaveBeenCalledWith({ path: 'log', locale: 'fr' })
+    expect(getPageFromDb).toHaveBeenCalledWith({ path: 'log', locale: 'fr', visibility: 'public', ownerId: null })
     expect(updatePage).toHaveBeenCalledWith(expect.objectContaining({
+      expectedSourceRevision: 'current-log-revision',
       content: 'Updated',
       okfMetadata: expect.objectContaining({
         verified: { by: 'human:99', at: '2026-08-30T00:00:00Z' }

@@ -1,31 +1,36 @@
-import commandExistsModule from 'command-exists'
-import os from 'node:os'
+import type { OptionalExtensionDefinition } from '../../../../shared/extensions-workspace.ts'
+import { observeBundledCommand } from '../command-observation.ts'
 
-type CommandExists = (commandName: string) => Promise<string>
-
-const isCommandExists = (value: unknown): value is CommandExists => typeof value === 'function'
-
-if (!isCommandExists(commandExistsModule)) {
-  throw new TypeError('command-exists does not export a callable function.')
-}
-const commandExists = commandExistsModule
-
-const plugin = {
+const plugin: OptionalExtensionDefinition = {
   key: 'pandoc',
   title: 'Pandoc',
-  description: 'Convert between markup formats. Required for converting from other formats such as MediaWiki, AsciiDoc, Textile and other wikis.',
-  async isCompatible () {
-    return os.arch() === 'x64'
+  description: 'An optional document-conversion command retained for deployment-owned integrations.',
+  installation: {
+    boundary: 'application-image',
+    detail: 'The standard application image does not add Pandoc. Its executable belongs in a reviewed custom image when an integration needs it.',
+    recovery:
+      'Build and deploy a reviewed application image that includes a compatible Pandoc executable, then refresh this page. Administration never runs a package manager or installer.'
   },
-  isInstalled: false,
-  async check () {
-    try {
-      await commandExists('pandoc')
-      this.isInstalled = true
-    } catch {
-      this.isInstalled = false
+  capabilities: [
+    {
+      title: 'No active application consumer',
+      detail:
+        'This build does not register an import, rendering or export workflow that invokes Pandoc. Installing the executable alone does not add a conversion feature.'
     }
-    return this.isInstalled
+  ],
+  dependencies: [
+    {
+      title: 'Pandoc executable',
+      detail: 'Availability is based on a fixed, bounded `pandoc --version` check in the application process; command output is not retained or exposed.'
+    }
+  ],
+  async observe() {
+    const outcome = await observeBundledCommand('pandoc')
+    return outcome === 'usable'
+      ? { state: 'usable', compatibility: 'verified', evidence: 'The application completed a bounded Pandoc executable check.' }
+      : outcome === 'missing'
+        ? { state: 'missing', compatibility: 'unknown', evidence: 'The Pandoc executable is not present in the application process.' }
+        : { state: 'unknown', compatibility: 'unknown', evidence: 'The Pandoc executable could not be observed within its bounded check.' }
   }
 }
 

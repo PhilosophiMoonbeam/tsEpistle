@@ -38,6 +38,15 @@ interface PageModel {
   renderPage(page: unknown): Promise<unknown>
 }
 
+interface ScheduledWorker {
+  finished: Promise<unknown>
+  stop(): Promise<unknown>
+}
+
+interface Scheduler {
+  registerJob(options: { name: string; immediate: true; worker: true }, data?: unknown): ScheduledWorker
+}
+
 interface WikiModels {
   groups: { query(): CountQuery }
   pages: PageModel
@@ -57,7 +66,6 @@ interface WikiConfig {
     storage?: unknown
     host?: unknown
   }
-  flags: Record<string, boolean>
   host: unknown
   telemetry: {
     clientId?: unknown
@@ -83,15 +91,7 @@ interface WikiSystemState {
     message?: string
     startedAt?: unknown
   }
-  export(options: { entities: string[]; path: string }): unknown
-}
-
-interface WikiExtension {
-  key: string
-  title: unknown
-  description: unknown
-  isInstalled: unknown
-  isCompatible(): Promise<boolean>
+  export(options: { entities: string[]; path: string }): Promise<void>
 }
 
 interface WikiServices extends Record<string, unknown> {
@@ -99,15 +99,11 @@ interface WikiServices extends Record<string, unknown> {
   version: string
   models: WikiModels
   system: WikiSystemState
+  scheduler: Scheduler
   product: ProductMetadata
   config: WikiConfig
-  configSvc: {
-    applyFlags(): Promise<unknown>
-    saveToDb(keys: string[]): Promise<unknown>
-  }
   telemetry: {
     enabled: boolean
-    generateClientId(): unknown
   }
   servers: {
     servers: {
@@ -116,9 +112,6 @@ interface WikiServices extends Record<string, unknown> {
     }
     le?: { requestCertificate(): Promise<unknown> }
     restartServer(protocol: string): Promise<unknown>
-  }
-  extensions: {
-    ext: Record<string, WikiExtension>
   }
   events: {
     outbound: { emit(event: string): unknown }
@@ -130,10 +123,17 @@ interface WikiServices extends Record<string, unknown> {
   }
 }
 
-// WIKI is initialized before operation modules are loaded.
-const wiki = WIKI as WikiServices
-
-const getosAsync = promisify(getos)
+interface SystemRuntimeGlobal {
+  WIKI: WikiServices
+}
+interface OperatingSystemInfo {
+  dist?: string
+  codename?: string
+  release?: string
+}
+const systemRuntimeGlobal = globalThis as unknown as SystemRuntimeGlobal
+const wiki = systemRuntimeGlobal.WIKI
+const getosAsync = promisify(getos) as unknown as () => Promise<OperatingSystemInfo>
 
 const getSummary = async () => {
   const product = ProductMetadataSchema.parse(wiki.product)
@@ -186,77 +186,7 @@ const getInfo = async () => ({
   workingDirectory: process.cwd()
 })
 
-const listFlags = () => Object.entries(wiki.config.flags).map(([key, value]) => ({ key, value }))
-
-interface SystemFlag {
-  key: string
-  value: boolean
-}
-
-const isSystemFlag = (row: unknown): row is SystemFlag =>
-  Boolean(
-    row && typeof row === 'object' && !Array.isArray(row) && typeof Reflect.get(row, 'key') === 'string' && typeof Reflect.get(row, 'value') === 'boolean'
-  )
-
-function validateFlags(flags: unknown): asserts flags is SystemFlag[] {
-  if (!Array.isArray(flags)) {
-    throw new ApplicationError('flags must be an array', { code: 'INVALID_SYSTEM_FLAGS' })
-  }
-  if (!flags.every(isSystemFlag)) {
-    throw new ApplicationError('flags entries must contain string keys and boolean values', { code: 'INVALID_SYSTEM_FLAGS' })
-  }
-}
-
-const updateFlags = async (flags: unknown): Promise<void> => {
-  validateFlags(flags)
-  const allowedKeys = Object.keys(wiki.config.flags)
-  if (flags.some(row => !allowedKeys.includes(row.key))) throw new ApplicationError('flags entries must use known flag keys', { code: 'INVALID_SYSTEM_FLAGS' })
-  if (_.uniq(flags.map(row => row.key)).length !== flags.length)
-    throw new ApplicationError('flags entries must not contain duplicate keys', { code: 'INVALID_SYSTEM_FLAGS' })
-  if (flags.length !== allowedKeys.length || allowedKeys.some(key => !flags.find(row => row.key === key))) {
-    throw new ApplicationError('flags payload must include the full known flag set', { code: 'INVALID_SYSTEM_FLAGS' })
-  }
-  const previous = _.cloneDeep(wiki.config.flags)
-  try {
-    wiki.config.flags = Object.fromEntries(flags.map(row => [row.key, row.value]))
-    await wiki.configSvc.applyFlags()
-    const saved = await wiki.configSvc.saveToDb(['flags'])
-    if (saved === false) throw new Error('System flags could not be persisted.')
-  } catch (err) {
-    wiki.config.flags = previous
-    await wiki.configSvc.applyFlags()
-    throw err
-  }
-}
-
-const listExtensions = async () => {
-  const extensions: Array<Record<string, unknown>> = []
-  for (const extension of Object.values(wiki.extensions.ext)) {
-    extensions.push({
-      key: extension.key,
-      title: extension.title,
-      description: extension.description,
-      isInstalled: extension.isInstalled,
-      isCompatible: await extension.isCompatible()
-    })
-  }
-  return extensions
-}
-
 const getHost = () => ({ host: wiki.config.host })
-const getTelemetry = () => ({ telemetry: _.get(wiki.telemetry, 'enabled', false), telemetryClientId: _.get(wiki.config, 'telemetry.clientId', null) })
-
-const setTelemetry = async (enabled: unknown): Promise<void> => {
-  if (typeof enabled !== 'boolean') throw new ApplicationError('enabled must be a boolean', { code: 'INVALID_TELEMETRY_STATE' })
-  wiki.config.telemetry.isEnabled = enabled
-  wiki.telemetry.enabled = enabled
-  await wiki.configSvc.saveToDb(['telemetry'])
-}
-
-const resetTelemetryClientId = async () => {
-  wiki.telemetry.generateClientId()
-  await wiki.configSvc.saveToDb(['telemetry'])
-}
 
 const performUpgrade = async (): Promise<void> => {
   throw new ApplicationError('Preview updates are unavailable because no fork-owned update provider is configured.', {
@@ -270,7 +200,29 @@ const flushPageCache = async () => {
   wiki.events.outbound.emit('flushCache')
 }
 const flushTemporaryUploads = () => wiki.models.assets.flushTempUploads()
-const rebuildPageTree = () => wiki.models.pages.rebuildTree()
+
+const workerEffectTimeoutMs = 120_000
+
+const runBoundedWorker = async (name: string, data?: unknown): Promise<void> => {
+  const job = wiki.scheduler.registerJob({ name, immediate: true, worker: true }, data)
+  let stopping: Promise<unknown> | undefined
+  const timeout = setTimeout(() => {
+    stopping = job.stop()
+  }, workerEffectTimeoutMs)
+  try {
+    await job.finished
+  } finally {
+    clearTimeout(timeout)
+  }
+  if (stopping) {
+    await stopping
+    throw new Error(`The ${name} worker exceeded its ${workerEffectTimeoutMs / 1_000}-second execution limit and was stopped.`)
+  }
+}
+
+const rebuildPageTree = async (): Promise<void> => {
+  await runBoundedWorker('rebuild-tree')
+}
 
 const migratePagesToLocale = (input: unknown): Promise<number> => {
   const sourceLocale = input && typeof input === 'object' && !Array.isArray(input) ? Reflect.get(input, 'sourceLocale') : undefined
@@ -296,7 +248,7 @@ const renderPage = async (id: unknown): Promise<void> => {
   if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1) throw new ApplicationError('id must be a positive integer', { code: 'INVALID_PAGE_ID' })
   const page = await wiki.models.pages.query().findById(id)
   if (!page) throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
-  await wiki.models.pages.renderPage(page)
+  await runBoundedWorker('render-page', id)
 }
 
 const purgePageHistory = (olderThan: unknown): unknown => {
@@ -308,31 +260,55 @@ const purgePageHistory = (olderThan: unknown): unknown => {
 const getExportStatus = () => ({
   status: _.get(wiki.system, 'exportStatus.status', 'notrunning'),
   progress: Math.ceil(_.get(wiki.system, 'exportStatus.progress', 0)),
-  message: _.get(wiki.system, 'exportStatus.message', ''),
-  startedAt: _.get(wiki.system, 'exportStatus.startedAt', null)
+  message: _.get(wiki.system, 'exportStatus.message', '')
 })
+const exportEntities: readonly string[] = ['assets', 'comments', 'navigation', 'pages', 'history', 'settings', 'groups', 'users']
 
 function validateExportEntities(entities: unknown): asserts entities is string[] {
   if (!Array.isArray(entities) || entities.length < 1) {
-    throw new ApplicationError('entities must be a non-empty string array', { code: 'INVALID_EXPORT_ENTITIES' })
+    throw new ApplicationError('entities must be a non-empty supported section array', { code: 'INVALID_EXPORT_ENTITIES' })
   }
   for (const entity of entities as unknown[]) {
-    if (typeof entity !== 'string' || entity.length < 1) {
-      throw new ApplicationError('entities must be a non-empty string array', { code: 'INVALID_EXPORT_ENTITIES' })
+    if (typeof entity !== 'string' || !exportEntities.includes(entity)) {
+      throw new ApplicationError('entities must be a non-empty supported section array', { code: 'INVALID_EXPORT_ENTITIES' })
     }
   }
 }
 
-const startExport = async (input: unknown): Promise<void> => {
+const startExport = async (input: unknown, beforeStart?: () => Promise<void>): Promise<void> => {
   const entities = input && typeof input === 'object' && !Array.isArray(input) ? Reflect.get(input, 'entities') : undefined
   const exportPath = input && typeof input === 'object' && !Array.isArray(input) ? Reflect.get(input, 'exportPath') : undefined
   validateExportEntities(entities)
   if (typeof exportPath !== 'string' || exportPath.length < 1) throw new ApplicationError('path must be a non-empty string', { code: 'INVALID_EXPORT_PATH' })
-  const desiredPath = path.resolve(wiki.ROOTPATH, exportPath)
   if (wiki.system.exportStatus.status === 'running') throw new Error('Another export is already running.')
-  await fs.ensureDir(desiredPath)
-  if ((await fs.readdir(desiredPath)).length) throw new Error('Target directory must be empty!')
-  wiki.system.export({ entities, path: desiredPath })
+
+  const rootPath = path.resolve(wiki.ROOTPATH)
+  const desiredPath = path.resolve(rootPath, exportPath)
+  const lexicalRelative = path.relative(rootPath, desiredPath)
+  if (lexicalRelative === '' || lexicalRelative === '..' || lexicalRelative.startsWith(`..${path.sep}`) || path.isAbsolute(lexicalRelative))
+    throw new ApplicationError('Export path must be a folder beneath the application root.', { code: 'UNSAFE_EXPORT_PATH' })
+
+  let existingParent = desiredPath
+  while (!(await fs.pathExists(existingParent))) {
+    const parent = path.dirname(existingParent)
+    if (parent === existingParent) throw new ApplicationError('Export path has no accessible parent folder.', { code: 'UNSAFE_EXPORT_PATH' })
+    existingParent = parent
+  }
+  const [realRoot, realParent] = await Promise.all([fs.realpath(rootPath), fs.realpath(existingParent)])
+  const parentRelative = path.relative(realRoot, realParent)
+  if (parentRelative === '..' || parentRelative.startsWith(`..${path.sep}`) || path.isAbsolute(parentRelative))
+    throw new ApplicationError('Export path resolves outside the application root.', { code: 'UNSAFE_EXPORT_PATH' })
+
+  await fs.mkdir(desiredPath, { recursive: true, mode: 0o700 })
+  const realPath = await fs.realpath(desiredPath)
+  const resolvedRelative = path.relative(realRoot, realPath)
+  if (resolvedRelative === '' || resolvedRelative === '..' || resolvedRelative.startsWith(`..${path.sep}`) || path.isAbsolute(resolvedRelative))
+    throw new ApplicationError('Export path resolves outside the application root.', { code: 'UNSAFE_EXPORT_PATH' })
+  if ((await fs.readdir(realPath)).length) throw new Error('Target directory must be empty!')
+
+  if (beforeStart) await beforeStart()
+  if (wiki.system.exportStatus.status === 'running') throw new Error('Another export is already running.')
+  await wiki.system.export({ entities, path: realPath })
 }
 
 const checkForUpdate = async () => ({
@@ -347,20 +323,14 @@ export default {
   checkForUpdate,
   flushPageCache,
   flushTemporaryUploads,
-  getExportStatus,
   getHost,
   getInfo,
   getSummary,
-  getTelemetry,
-  listExtensions,
-  listFlags,
   migratePagesToLocale,
+  getExportStatus,
   performUpgrade,
   purgePageHistory,
   rebuildPageTree,
   renderPage,
-  resetTelemetryClientId,
-  setTelemetry,
-  startExport,
-  updateFlags
+  startExport
 }

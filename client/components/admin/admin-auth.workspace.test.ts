@@ -1,9 +1,44 @@
 import fs from 'node:fs'
+import { parse } from '@vue/compiler-sfc'
+import * as ts from 'typescript'
 import { describe, expect, it, vi } from '../../../server/test/bun-test.mts'
 import { authenticationDraft, authenticationSignature } from '../../helpers/authentication-workspace-api.ts'
-const source = fs.readFileSync('client/components/admin/admin-auth.vue', 'utf8'),
-  script = source.match(/<script lang="ts">([\s\S]*?)<\/script>/)![1]!
-const compiled = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .+$/gm, '').replace('export default', 'const component ='))
+
+const compileComponentOptions = (path: string): string => {
+  const parsed = parse(fs.readFileSync(path, 'utf8'), { filename: path })
+  if (parsed.errors.length > 0 || !parsed.descriptor.script || parsed.descriptor.scriptSetup)
+    throw new Error(`Could not read the ordinary script from ${path}.`)
+
+  const source = ts.createSourceFile(path, parsed.descriptor.script.content, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const transformed = ts.transform(source, [
+    context => root =>
+      ts.visitEachChild(
+        root,
+        node => {
+          if (ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node) || ts.isExportDeclaration(node)) return undefined
+          if (ts.isExportAssignment(node)) {
+            if (node.isExportEquals) throw new Error(`${path} must use an ES module default export.`)
+            return ts.factory.createVariableStatement(
+              undefined,
+              ts.factory.createVariableDeclarationList(
+                [ts.factory.createVariableDeclaration('component', undefined, undefined, node.expression)],
+                ts.NodeFlags.Const
+              )
+            )
+          }
+          return node
+        },
+        context
+      )
+  ])
+  try {
+    return new Bun.Transpiler({ loader: 'ts' }).transformSync(ts.createPrinter().printFile(transformed.transformed[0]!))
+  } finally {
+    transformed.dispose()
+  }
+}
+
+const compiled = compileComponentOptions('client/components/admin/admin-auth.vue')
 const provider = {
   key: 'org',
   strategyKey: 'oidc',

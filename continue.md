@@ -1,171 +1,73 @@
-# Administration overhaul — agent handoff
+# Administration overhaul — current handoff
 
-Prepared 7 September 2026 after the SSL milestone. **Stop/resume boundary: the user explicitly asked to complete and verify SSL, update tracking, write this document, then pause. SSL is complete. Do not begin another area until the user resumes the work. The full goal is not complete.** The goal tool currently reports the broader goal as paused; do not mark it complete.
+Prepared 7 September 2026. The Administration overhaul is **active and incomplete**; it is not paused. Source work for the final four areas is uncommitted on `main`. No new application release has been deployed: the maintained deployment remains the verified SSL image `tsepistle:26d38739` (application revision `26d387395992fc66e3452be65617261481591d06`, migration 25). Treat the ledger as the long-form record, but treat the status and gates in this document as current.
 
-## What we are building
+Authoritative history and area inventory: [`docs/administration-overhaul-ledger.md`](docs/administration-overhaul-ledger.md). **Twenty-three** Administration areas remain deployed-and-verified milestones; the four new areas and final cross-area review are not released. Do not mark all 27 areas complete from prior milestone counts.
 
-This repository is tsEpistle, a substantially modernized Wiki.js fork intended as a next-generation wiki for humans and agent memory, with search, an internal Wiki Agent and MCP access for third-party agents. The user wants an end-to-end Administration overhaul, not another dashboard/header pass. Every destination, its nested sections, dialogs and operational workflows should be thoughtfully redesigned, with useful missing capabilities implemented where justified. They gave creative control and prefer an aesthetically pleasing ideal form.
+## Operating standard
 
-The shared visual direction is an editorial workspace: quiet surfaces, generous but useful spacing, serif display headings, strong task hierarchy, readable records and progressive disclosure. Tailor each section to its administrator jobs. Avoid a generic wall of cards, decorative diagnostics, unsupported controls, fabricated health, or merely wrapping the old form in a new hero.
+1. Follow an administrator job end to end: UI, transport, authorization, persistence, process effect and recovery. Do not add a control without real behavior.
+2. Keep **draft**, **saved policy**, **running process** and **observed evidence** distinct. A configured destination or allocated transport is not delivery evidence.
+3. Privileged writes require a meaningful reason, review/fingerprint conflict protection and current human/API authority. Recheck authority immediately before effects; an API key is its own actor, never a synthetic administrator.
+4. Persist before publishing process state. Report saved-but-not-applied truthfully; preserve unrelated settings and secrets; use explicit credential keep/replace/clear semantics.
+5. Record consequential work before side effects. Use request IDs, bounded/concurrent-operation control, phases, durable receipts and explicit acknowledgement of uncertain outcomes. A refresh reads a receipt; it never replays an unconfirmed mutation.
+6. Build loading, empty, validation, conflict, dirty-navigation, error, recovery and keyboard/focus states. Reject stale async responses and duplicate submission.
+7. Keep nested administrative sections addressable with stable query URLs. Admin router paths are relative to `/a`; use `router.replace({ query: ... })` for same-area navigation and preserve relevant query state.
+8. Use real PostgreSQL for transaction, lock, concurrency and persistence-fault behavior; use local fixtures for transports. Never exercise real SMTP, ACME, third-party Sentry or other external effects merely as a test.
+9. Verify actual UI behavior at desktop and mobile widths, in both themes, including dialogs and recovery paths. Audit accessible contrast/overflow/errors and unexpected requests/writes. A transport-isolated visual audit is not a substitute for a native workflow.
+10. Release only a clean, reviewed source revision with a fresh validated backup and rollback compose. Change only the wiki image, then prove health, revision, migration and reversible live workflows. Do not touch unrelated services or delete a volume to hide a compose warning.
 
-Authoritative tracking: [`docs/administration-overhaul-ledger.md`](docs/administration-overhaul-ledger.md). It contains the area inventory, capability decisions, implementation and deployment evidence, and historical limitations. Read its current status and the latest milestone entries first; earlier “next steps” are historical, not current blockers.
+## Four-area architecture and authority map
 
-## Completed and remaining targets
+All workspace routes are under `/_api`, return no-store responses, require `manage:system`, and are backed by current-authority operations. Use the existing transport helpers and shared schemas rather than adding a parallel protocol.
 
-**23 of 27 areas have completed their recorded implementation milestones.** This does not substitute for the final cross-area review.
+| Area | UI / client transport | Shared / server authority | API and behavior boundary |
+| --- | --- | --- | --- |
+| Logging | `client/components/admin/admin-logging.vue`, `admin-logging-console.vue`, `logging-workspace.scss`; `client/helpers/logging-workspace-api.ts` | `shared/logging-workspace.ts`; `server/operations/logging.ts`, `logging-live-trail.ts`; `server/controllers/api/logging.ts` | `GET/PUT /_api/logging/workspace`, `POST /workspace/apply`, and bounded SSE `GET /live`. Save and apply are separate. The live trail rechecks authority, caps principal connections/events, redacts output, and is operational evidence—not a durable log archive or a delivery claim. |
+| Extensions | `client/components/admin/admin-extensions.vue`, `extensions-workspace.scss`; `client/helpers/extensions-workspace-api.ts` | `shared/extensions-workspace.ts`; `server/operations/extensions-workspace.ts`; `server/controllers/api/extensions.ts` | `GET /_api/extensions/workspace` is read-only. It reports the deployment-owned installed image and capability/dependency observations. It does **not** install, remove, mutate, or infer an extension's runtime health. Content-extension enablement remains separately owned by `/_api/content-extensions`. |
+| Utilities | `client/components/admin/admin-utilities.vue` and focused import/export/content/cache/auth/telemetry/review components; `client/helpers/utilities-workspace-api.ts` | `shared/utilities-workspace.ts`; `server/operations/utilities-workspace.ts`; migration `server/db/migrations/tsepistle-000026-utilities-operations.ts`; `server/controllers/api/utilities.ts` | `GET /_api/utilities/workspace`, `POST /operations`, `GET /operations/:id`. Operations have durable receipts, actor/request identity, acknowledgement and crypto-fenced recovery. Portable exports are bounded and paginated; do not expose credentials, private paths, raw secrets or unrestricted data. |
+| Developer flags | `client/components/admin/admin-dev-flags.vue`, `developer-flags-workspace.scss`; `client/helpers/developer-flags-api.ts` | `shared/developer-flags.ts`; `server/operations/developer-flags.ts`; `server/controllers/api/developer-flags.ts` | `GET/PUT /_api/developer-flags/workspace`, `POST /workspace/apply`. Only grounded diagnostic flags are supported. A saved flag policy is **staged** until a separate apply/promote operation; the process report says whether it is actually applied/current. Legacy System flag writes are retired. |
 
-| Area | Route | Current status |
-| --- | --- | --- |
-| Pages | `/a/pages` | Milestone implemented and verified |
-| Tags | `/a/tags` | Milestone implemented and verified |
-| Editors | `/a/editor` | Milestone implemented and verified |
-| Rendering | `/a/rendering` | Milestone implemented and verified |
-| Comments | `/a/comments` | Milestone implemented and verified |
-| Users | `/a/users` | Milestone implemented and verified |
-| Groups | `/a/groups` | Milestone implemented and verified |
-| Authentication | `/a/auth` | Deployed and verified |
-| Security | `/a/security` | Deployed and verified |
-| Wiki Agent | `/a/agents` | Milestone implemented and verified |
-| Search | `/a/search` | Milestone implemented and verified |
-| API | `/a/api` | Milestone implemented and verified |
-| Webhooks | `/a/webhooks` | Milestone implemented and verified |
-| General | `/a/general` | Deployed and verified |
-| Theme | `/a/theme` | Deployed and verified |
-| Navigation | `/a/navigation` | Deployed and verified |
-| Locale | `/a/locale` | Deployed and verified |
-| Analytics | `/a/analytics` | Deployed and verified |
-| System | `/a/system` | Deployed and verified |
-| Storage | `/a/storage` | Deployed and verified |
-| Mail | `/a/mail` | Deployed and verified |
-| HTTPS & certificates (SSL) | `/a/ssl` | **Latest milestone: deployed and verified** |
-| Logging | `/a/logging` | **Remaining** |
-| Extensions | `/a/extensions` | **Remaining** |
-| Utilities | `/a/utilities` | **Remaining** |
-| Developer flags | `/a/dev-flags` | **Remaining** |
-| GraphQL explorer | `/graphql` | Milestone implemented and verified |
+## Current source evidence and boundaries
 
-When resumed, the intended next area is Logging. Inspect its real code, APIs, data and live UI before selecting an implementation. Remaining broad scope:
+This is a complete source/isolated-preview checkpoint for all four new areas, not live proof and not a release declaration. No coding fix remains in this checkpoint.
 
-- **Logging:** destinations, configuration, useful troubleshooting/operational evidence, understandable levels and formats, sensitive-data handling, validation and recovery. Distinguish configured destinations from evidence of actual delivery; do not fabricate a log viewer if no source exists.
-- **Extensions:** availability versus installation, discovery, configuration, dependencies, capability constraints and clear recovery. Respect the deployment's actual installation boundaries.
-- **Utilities:** import/export and maintenance jobs, reviewed destructive actions, progress, durable receipts, failures and recovery. Avoid automatic retry of operations with uncertain effects.
-- **Developer flags:** purpose, dependencies, constraints, deployment versus saved/process state, reviewed activation, effects and reversibility.
-- **Final cross-area review:** revisit all 27 destinations, dashboard links and Workspace controls; verify cohesion, nested flows, keyboard/mobile/theme behavior, permission boundaries, regressions and documented limitations. Do not infer overall completion just from this count.
+- The full suite passed **468/468**. Shared/client/server type checks, lint, dependency and license checks (808 dependencies), placeholder checks, Vite compilation and bundle budgets all passed.
+- Seven real-PostgreSQL suites passed **46 cases / 220 assertions**. This includes the current API availability repair; its source/controller gates pass. Migration 26 utilities operations has been applied/tested only to the isolated restored preview.
+- The local Sentry fixture smoke delivered exactly two envelopes (warning and error), then no envelopes after disablement. This proves the fixture loop only; no real Sentry destination was contacted.
+- `administration-workflows.json` records passed desktop clone write workflows for Logging save/apply/restore and Flags stage/promote/restore; `extensions-workflow.json` records passed filtering, keyboard navigation, the Browser deep link and failed-refresh recovery. Dashboard and GraphiQL desktop/mobile workflows passed after href, wrapped-title, viewport and pane corrections. These are local ignored artifacts under `.playwright-cli/admin-review`.
+- Earlier `administration-utility-workflows.json` proves lost-response read-only recovery, minimal session-storage receipt identity and a real tree-worker receipt, but also records the then-wrong export IDs and busy-state accessibility findings; do not reuse it as a final matrix. The corrected isolated-clone portable export now passed with 14 exact public IDs, excluded private page 3, and produced directory/file modes 0700/0600 (`administration-export-workflow.json`). The isolated-clone API/global-state and signing-rotation UI also passed: a scoped key worked, disabling rejected it, re-enabling restored it; rotation redirected/re-authenticated to its receipt, rejected and recorded the revoked key, and left the encryption-root hash unchanged (`auth-utility-workflow.json`). No production signing rotation occurred.
+- The prior 108-view preview exposed and corrected logging proxy clones, a remote logo load, contrast, Utilities busy labels and export pagination. The **final preview passed 114 views** with zero scoped aXe findings, horizontal overflow, browser errors, external requests or unexpected writes; native Flags keyboard/pointer verification also passed. Recovery UI protected Sentry and import drafts without mutating actual fixtures; the bounded trail retained 500 records with escaping, and four populated-trail audits passed with zero findings. This is preview/native-source evidence, not a live release. The old 23-area baseline review (519 main section views, 126 nested views and 6 GraphQL views) remains read-only baseline coverage, not final validation of the changed source.
+- The actual-disk content import workflow passed for page 37: source bytes were unchanged, Storage configuration/runtime were exactly restored and the fixture was deleted. The corrected import uses public identity/revision, the default executor and full phase fencing. No real SMTP, ACME, external Sentry, or other external service request is evidence for this work.
 
-## Operating standards established during this work
+## Live and preview separation
 
-1. Follow a complete job from UI through API, persistence and process effects. Inspect the actual system before designing. Implement justified missing functionality with real backend behavior; do not add inert controls.
-2. Distinguish **draft**, **saved settings**, **running process**, and **observed evidence**. A saved provider, allocated transport, or listening socket is not proof of successful delivery or public health. Label point-in-time observations accurately.
-3. Use reviewed writes with a meaningful reason, fingerprint/revision checks, and current authority. Recheck human activity, authentication version, group membership and permissions, or API-key revocation/expiry and request-bound identity. Cached access checks alone are insufficient for privileged changes.
-4. Commit persistence before publishing process state. Report saved-but-not-applied outcomes honestly and provide a guarded application/reconciliation flow. Preserve unrelated settings and secrets. Use explicit keep/replace/clear semantics for credentials; never put private values or server paths into public projections, receipts or exports.
-5. Record consequential operations before side effects. Use request IDs, concurrent-operation exclusion, operation phases, completion receipts and uncertainty after interrupted/lost outcomes. Refresh/recovery reads existing receipts; it must not replay mutations. Recheck authority/configuration immediately before effects.
-6. Include loading, empty, error, validation, save/reset, conflict, dirty-navigation, progress and recovery states. Preserve drafts on a conflict; make a refreshed review explicit. Avoid duplicate submissions and stale async responses. Background modal content should be inert, with usable focus and keyboard behavior.
-7. Give meaningful nested sections stable query URLs. Admin router base is `/a`: use router paths such as `/ssl`, not `/a/ssl`. Same-section navigation uses `router.replace({ query: ... })`. Preserve relevant queries and support receipt/detail links.
-8. Verify actual behavior with focused tests. Use real PostgreSQL for transactions, locks, concurrency and persistence faults. Use local protocol fixtures for transport behavior. Mock external services and never send real mail or request a real certificate merely to test. Do not add source-string tests that lock in a component's incidental implementation.
-9. Browser-check desktop/tablet/phone (1440/900/390 pixels) in light and dark, including relevant dialogs and failure workflows. Run WCAG A/AA scans, inspect screenshots, check overflow and browser errors, and verify no unexpected writes or external requests. Preview interception is not live verification: separately exercise the deployed app without interception.
-10. Run applicable shared/client/server type checks, lint, targeted regressions, production build and bundle budgets. Broaden checks when changes or failures justify it; do not endlessly repeat passing suites. Update the ledger with exact evidence and limitations.
-11. Commit and push **the current `main` branch**. User explicitly requires this; no PR unless requested. Do not create another worktree/branch unnecessarily. No subagents unless the user or applicable instructions explicitly request delegation.
-12. Deploy each complete area to the maintained container with a clean source revision, a fresh validated database backup, and a preserved rollback compose. Confirm health, migration and image revision, then exercise reversible live workflows and restoration. Do not touch unrelated containers or send messages to others.
+The maintained service is the verified SSL release, not the source checkpoint: **https://agents8c48g.tail41a24a.ts.net:10443**, container `wiki-tailnet`, image `tsepistle:26d38739`, and application revision `26d387395992fc66e3452be65617261481591d06`. Compose is `/home/bbferko/.local/state/wiki-tailnet/compose.yml` (service `wiki`); local health is `http://127.0.0.1:3014/healthz`, observed `{"ok":true}`. Its PostgreSQL 17 service is `wiki-postgres`, database/user `wiki`; never print credentials or raw settings. The latest applied migration is `tsepistle-000025-tls-operations.js` in the `migrations` table. It must not receive test fixtures, credentials, experimental migration 26, or preview mutations.
 
-Use the listed frontend-design, Vue, Vuetify and Playwright skills when relevant. Vue/Vuetify skill metadata can be ahead of installed versions; verify installed APIs. User AGENTS instructions require Context7 for library/API-specific questions: resolve with `npx ctx7@latest library ...` before `docs`, at most three commands per question. Ordinary refactoring is exempt. Do not silently substitute memory after quota errors. Current environment grants unrestricted filesystem/network access and never accepts sandbox permission flags.
+The inherited pre-SSL release backup is `/home/bbferko/.local/state/wiki-tailnet/backups/before-ssl-workspace-20260907T015019Z.dump` (2,903,850 bytes, mode 0600, 655 validated archive-list lines). Its rollback compose is `/home/bbferko/.local/state/wiki-tailnet/compose.before-26d38739.yml`, preserving the previous verified Mail image `a75d4111`. These are the prior-release recovery artifacts, not the backup/rollback proof required for the next release.
 
-## Current source and deployment
+The temporary offline preview is separate: `http://127.0.0.1:3015`, hub process `wiki-admin-resumption-preview`, with loopback PostgreSQL 17 container `wiki-admin-resumption-test` on port 55439 and restored database `resumption_preview`. It was restored from a private, mode-0600 dump; temporary config and data directories are private. External targets are disabled, cloned jobs are removed, and setup did not mutate original live rows. It is disposable infrastructure, **not** the maintained deployment. Remove its credentials, data, database/container and browser state after final verification; do not print any raw secret values.
 
-- Repository: `/home/bbferko/repos/tsEpistle`; branch **main**, changes committed and pushed.
-- Live URL: **https://agents8c48g.tail41a24a.ts.net:10443**.
-- Container: **wiki-tailnet**; image **tsepistle:26d38739**.
-- Deployed application revision: **26d387395992fc66e3452be65617261481591d06**. Documentation-only handoff commits follow this revision; that does not mean the application image is stale.
-- Compose: `/home/bbferko/.local/state/wiki-tailnet/compose.yml`, service `wiki`.
-- Local health: `http://127.0.0.1:3014/healthz`; response `{"ok":true}`. Container is healthy.
-- Database: container **wiki-postgres**, database/user `wiki`; PostgreSQL 17. Do not print credentials or raw settings.
-- Latest applied migration: **tsepistle-000025-tls-operations.js**. Migration ledger table is **migrations**, not `knex_migrations`.
-- Runtime/toolchain: Bun **1.4.0**, Vue **3.5.41**, Vuetify **4.1.9**, Vite **8.2.1**.
-- Fresh pre-SSL backup: `/home/bbferko/.local/state/wiki-tailnet/backups/before-ssl-workspace-20260907T015019Z.dump` — **2,903,850 bytes**, mode **0600**, **655** archive-list lines validated.
-- Rollback compose: `/home/bbferko/.local/state/wiki-tailnet/compose.before-26d38739.yml`, preserving the prior verified Mail image **a75d4111**. Do not blindly downgrade an image against newer schema: migration preflight can reject unknown migrations. Inspect compatibility; full database restoration is destructive and is not authorized just by this handoff. Migration 25 refuses to drop recorded TLS operations; prefer a forward fix.
-- Compose reports an existing repository-volume project-label mismatch; it reuses the intended volume and deploys successfully. Do not delete or recreate that volume to silence the warning.
+## Verification procedure
 
-Release procedure: commit/push clean inputs → `bun run docker:build tsepistle:<sha>` → fresh mode-0600 `pg_dump -Fc` and validated `pg_restore --list` → save prior compose → change only wiki image → `docker compose -f <compose> up -d --no-deps wiki` → health/revision/migration and live verification. Do not rebuild solely for a documentation-only commit.
+1. Reinspect source changes and run the scoped contract/controller/real-PostgreSQL proofs needed for the four areas. Use an isolated loopback database only; never point a test at the live database. Keep migration 26 proof separate from release proof until release preparation.
+2. Start/refresh the offline preview using actual built assets and APIs. For host network-change churn, isolate only read transport to stabilize a visual matrix; separately run native workflows with real API transport. Verify no unintended external-origin requests.
+3. Run native desktop and mobile workflows. Use actual mobile viewport metadata, not merely a narrow desktop viewport. Verify save/apply restoration for Logging and Flags, Extensions' read-only boundaries/recovery, and all Utilities operation/receipt/export paths.
+4. For GraphiQL, wait for **DOM readiness**, not `networkidle`; its traffic can keep the network active. Verify GraphQL separately at desktop and mobile sizes.
+5. Record the final new-area view/workflow matrix only after it passes. Include accessibility, contrast, overflow, browser-error and no-egress observations, and distinguish transport-isolated visual results from native workflow results.
+6. Use fixture-only data. Make every fixture uniquely attributable, restore any changed policy/state, then remove fixtures, private browser auth state, temporary credentials and preview infrastructure.
 
-## SSL architecture and completed behavior
+## Release, backup and rollback
 
-Main files:
+Before any new deployment, Main must commit the complete reviewed source and produce a release revision. Take a fresh `pg_dump -Fc` backup with mode 0600 and validate it with `pg_restore --list`; capture its path, byte count and listing count. Preserve a compose copy referencing the prior verified image. Build the intended image, change only the wiki service image, deploy it without dependent-service replacement, then check health, container revision and applied migration.
 
-- `client/components/admin/admin-ssl.vue`, `tls-workspace.scss`: four-section interface.
-- `client/helpers/tls-workspace-api.ts`: same-origin transport, response/receipt validation and recovery.
-- `shared/tls-workspace.ts`: public certificate, listener, policy and receipt contracts.
-- `server/controllers/api/tls.ts`, mounted under `/_api/tls`: workspace GET/PUT, saved-policy application, operation POST and receipt GET. No-store and manage:system access.
-- `server/operations/tls-configuration.ts`: reviewed settings, fingerprints, configuration history, current authority and saved/process state.
-- `server/operations/tls-workspace.ts`: guarded policy publication and durable operations. Kinds: public-check, native-check, validate-material, apply-certificate, renew-certificate.
-- `server/helpers/system-authority.ts`: current human/API authorization; API actions attributed to API keys, not synthetic human user 1.
-- `server/repositories/tls-material.ts`, `tls-preflight.ts`, `tls-probe.ts`: bounded PEM/PFX material validation, public metadata and handshake-only diagnostics. Private paths, passphrases and key material never leave these boundaries.
-- `server/core/servers.ts`: prepare/apply native certificate material, runtime evidence, restoration and lifecycle guards.
-- `server/core/letsencrypt.ts`, `server/repositories/acme-state.ts`: staged ACME keys/account/certificate persistence, advisory-lock exclusion, current deployment/authority fences and ephemeral challenges.
-- `server/controllers/ssl.ts`: redirect policy works with native HTTPS or a trusted proxy, skips already-secure requests and uses only the configured HTTPS origin.
-- `server/db/migrations/tsepistle-000025-tls-operations.ts`: durable operation table and SSL administration seed.
+Rollback is a decision, not a reflex: inspect image/schema compatibility first. Do not blindly downgrade against migration 26. If a schema restoration is necessary, it is destructive and requires explicit authorization and a verified restore plan. Prefer a forward correction where safe. Keep the compose-volume label warning unchanged: it reuses the intended volume and is not permission to recreate/delete it.
 
-Important details for future maintenance:
+SSL remains the deployed baseline and its important limits still apply: Bun lacks `https.Server.setSecureContext`, so certificate replacement needs an explicitly acknowledged listener restart; issuance saves material and is reviewed/applied separately; renewal is startup-only with a five-day threshold, not a periodic scheduler.
 
-- **Bun 1.4.0 does not implement `https.Server.setSecureContext` despite the Node typings.** Capability detection is deliberate. Bun replacement requires an explicitly acknowledged listener restart and interrupts active HTTPS connections. The old validated material is retained for restoration if replacement fails. Node's context-reload path is capability-gated.
-- Certificate issuance **saves only**. Validate current material, review replacement, then apply it separately. Material identity includes actual file contents and must match the validation receipt. Internal material hashes/HMACs are not public API fields.
-- Native and public checks observe different endpoints. Probes perform TLS handshakes without an HTTP/page request, record trust and hostname separately, bound time/chain size, and are not a claim about every client network path.
-- Redirect enablement requires current configuration and a successful public check no older than 15 minutes with trust, hostname and current certificate validity. Disabling remains possible for repair. Saved public-address/proxy dependencies must match the process before enabling is applied.
-- A separate effect fingerprint allows an ACME operation's own staged persistence while still fencing unrelated policy, deployment, access and listener changes. A full review fingerprint is used for review/initial execution.
-- ACME coordination uses a pinned PostgreSQL session advisory lock without an open transaction across CA calls. Lost ownership or uncertain unlock destroys the raw connection using installed Knex's `client.destroyRawConnection`, not a nonexistent `destroyConnection` method.
-- Runtime challenges expire after ten minutes, are not persisted, and disappear on incompatible deployment/offline changes. CA errors are redacted; never echo provider error text that may contain sensitive data.
-- Heartbeats are 15 seconds; abandoned operation evidence becomes uncertain after 120 seconds. Uncertain certificate effects are never automatically replayed; another mutation requires acknowledgment of the latest uncertain receipt.
-- Renewal is currently checked at **startup**, with a five-day threshold. There is **no periodic renewal scheduler**. The UI explains this limitation. Do not claim recurring renewal is implemented.
-- Legacy `/_api/system/ssl`, `/ssl/redirection`, `/ssl/renew` return 410 after authorization. Their hardcoded status and unsafe mutations, obsolete client functions and implementation-specific component tests were removed.
+## Exact remaining gates
 
-## Verification at this handoff
+1. Complete and record the final native desktop/mobile workflows with actual API transport and the final cross-area review of all 27 destinations, dashboard/Workspace links, nested routes, keyboard/dialog behavior, responsive/theme behavior, authorization boundaries and regression boundaries. GraphiQL must use DOM readiness rather than `networkidle`. The final preview's no-egress result does not replace deployed/native proof.
+2. Main alone: commit/push this clean source checkpoint, make and validate a fresh backup, preserve rollback compose, build/deploy the image, verify live health/revision/migration, execute reversible live workflows, restore original live values, and clean temporary infrastructure/secrets.
+3. Main alone: record final, observed release image/revision, migration, fresh backup and rollback artifacts, live health/workflow/restoration evidence, final visual/native matrices, and cleanup evidence in this handoff and the ledger. No new live release exists yet; do not invent any of those facts beforehand.
 
-Backend/local evidence:
-
-- Nine isolated test files covering TLS material, endpoint probes, real-socket HTTPS replacement/rollback, mocked ACME service, TLS/System controllers, redirect behavior and migration contract/preflight pass.
-- Real PostgreSQL: **15 operation tests / 65 assertions**, **12 configuration tests / 39 assertions**, **10 ACME persistence tests / 26 assertions**. Fault coverage includes stale/current authority, atomic rollback, lock loss, concurrent operations, uncertain completion and no replay.
-- ACME service: **15 tests / 61 assertions**, using temporary certificates and a mocked CA. Native TLS socket tests verify actual certificate replacement and recovery, including Bun interruption behavior and PFX.
-- Existing System client and navigation tests pass after legacy SSL cleanup. Shared/client/server type checks, repository lint, production build and bundle budgets pass.
-- Preview browser matrix: **30 views** (four sections plus issuance review × three widths × two themes), no audited accessibility violations/overflow. Workflow tests cover material validation, explicit replacement acknowledgment, lost operation/save responses, read-only recovery, stale drafts, keyboard dismissal and read errors.
-
-Live evidence:
-
-- Healthy deployed revision and migration 25 confirmed. Initial deployment preserved the original selected settings exactly.
-- Native browser, **without interception**, verified one public-check operation, reviewed redirect enablement, safe redirect destination despite an untrusted Host header, public reload without a proxy loop, reviewed restoration and history. Legacy endpoint returns 410.
-- Public endpoint: **TLS 1.3**, certificate trusted, hostname matched, expires **2026-10-21T14:28:04.000Z**. This is a recorded observation, not a future guarantee.
-- Native HTTPS remains disabled; application serves HTTP 3000 behind the trusted reverse proxy.
-- Redirect is restored **disabled**. Every pre-existing selected setting is unchanged. There was no persisted `server` setting before verification; the only new runtime-policy setting is `{"sslRedir":false}`, matching the original effective behavior. Two attributed policy-history entries and one public-check receipt remain.
-- **24 deployed views** (four sections × three widths × two themes) pass WCAG A/AA/overflow/browser checks using actual container assets and API responses with read-transport isolation. This matrix is separate from the unintercepted native workflow above.
-- No real certificate issuance, production certificate replacement, email or third-party message was sent during verification.
-
-Ignored local evidence is in `.playwright-cli/admin-review`: `ssl-next.ts`, `ssl-next-audit.json`, `ssl-native.ts`, `ssl-native-verification.json`, `ssl-live.ts`, `ssl-live-audit.json`, screenshots `ssl-next-*` and `ssl-live-*`. Earlier Mail/Storage/etc. harnesses are also useful patterns. These ignored artifacts are local, not shipped with git; the ledger records their results. Temporary browser authentication export and raw settings snapshots have been deleted. The owned `wiki-ssl-test-20260907` PostgreSQL fixture and both temporary credential env files have been removed. Do not assume they still exist.
-
-## Useful verification and tooling details
-
-Use `bun run test <file...>` for the repository's isolated test runner. For a real PostgreSQL suite, create a new isolated, loopback-only disposable database with the suite's required name suffix and temporary mode-0600 credentials, then export the environment and invoke **`bun test <file>`**. `bun --env-file ... test` can resolve the package script instead and is not proof the real-database suite ran. The SSL suites share tables; run them sequentially. Never point them at the live database.
-
-Typical checks:
-
-```sh
-bun run typecheck:shared
-bun run typecheck:client
-bun run typecheck:server
-bun run lint
-bun run test server/test/helpers/tls-material.test.ts server/test/helpers/tls-probe.test.ts server/test/core/servers.tls.test.js server/test/core/letsencrypt.test.ts server/test/controllers/api.tls.test.js server/test/controllers/ssl.test.js
-bun --bun vite build
-bun run bundle:check
-```
-
-Shared type checking comes first after shared-contract changes. `bun run build` generates revision metadata and requires clean git; use direct Vite for an uncommitted preview. Biome ignores Vue/SCSS, so use installed Prettier for those files:
-
-```sh
-bun --bun prettier --write --single-quote --no-semi --trailing-comma none --print-width 150 --html-whitespace-sensitivity ignore <files>
-```
-
-Use named Vue handlers. Multiple semicolon-separated statements in event attributes can become invalid after this formatter removes semicolons; Vite previously caught this.
-
-Persistent Playwright CLI session: `wiki-design`, authenticated to the maintained site. Reinspect its current page before using selectors. If another harness needs auth state, `playwright-cli -s=wiki-design state-save .playwright-cli/admin-review/state.json`, chmod 0600, and remove it afterward. Never print token/cookie values. For Vuetify selects, focus the combobox, ArrowDown, then choose the exact role-option. A dialog's text can appear before entry animation/focus settles; focus a dialog control before testing Escape.
-
-The host has occasionally produced browser network-change churn. Read-only routed transport can stabilize a visual matrix; it must not replace a separate native deployed workflow check. Mail preview iframes also caused AxeBuilder traversal stalls; scan the admin document and actual rendered templates separately when needed rather than claiming an opaque iframe was checked.
-
-When testing callbacks whose errors are intentionally caught/redacted, do not place the only assertions inside the callback. Capture observations or a completion flag and assert outside; otherwise a swallowed assertion can falsely pass.
-
-Proceed with Logging only after resumption. Preserve this handoff boundary, use the ledger, and finish each remaining area through deployment and verification before marking its milestone complete.

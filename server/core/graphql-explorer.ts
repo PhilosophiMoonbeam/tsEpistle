@@ -2,9 +2,20 @@ import { GRAPHQL_IDE_VERSION } from '../../shared/graphql-ide.ts'
 import { renderGraphiQL, type GraphiQLOptions } from 'graphql-yoga'
 
 export const GRAPHQL_STARTERS = Object.freeze({
-  pages: { title: 'Page inventory', query: 'query PageInventory {\n  pages {\n    list(limit: 10) {\n      id\n      title\n      path\n      locale\n    }\n  }\n}' },
-  search: { title: 'Search pages', query: 'query SearchPages($query: String!) {\n  pages {\n    search(query: $query) {\n      results { id title path locale }\n    }\n  }\n}', variables: '{"query":"wiki"}' },
-  schema: { title: 'Schema entry points', query: 'query SchemaEntryPoints {\n  __schema {\n    queryType { name fields { name description } }\n    mutationType { name fields { name description } }\n  }\n}' }
+  pages: {
+    title: 'Page inventory',
+    query: 'query PageInventory {\n  pages {\n    list(limit: 10) {\n      id\n      title\n      path\n      locale\n    }\n  }\n}'
+  },
+  search: {
+    title: 'Search pages',
+    query: 'query SearchPages($query: String!) {\n  pages {\n    search(query: $query) {\n      results { id title path locale }\n    }\n  }\n}',
+    variables: '{"query":"wiki"}'
+  },
+  schema: {
+    title: 'Schema entry points',
+    query:
+      'query SchemaEntryPoints {\n  __schema {\n    queryType { name fields { name description } }\n    mutationType { name fields { name description } }\n  }\n}'
+  }
 })
 
 export const GRAPHQL_EXPLORER_OPTIONS: GraphiQLOptions = Object.freeze({
@@ -12,7 +23,9 @@ export const GRAPHQL_EXPLORER_OPTIONS: GraphiQLOptions = Object.freeze({
   subscriptionsProtocol: 'WS',
   credentials: 'same-origin',
   shouldPersistHeaders: false,
-  defaultQuery: '# Your signed-in session is used unless you supply a bearer token.\n# Permissions and page rules apply. Mutations change real data.\n\n' + GRAPHQL_STARTERS.pages.query,
+  defaultQuery:
+    '# Your signed-in session is used unless you supply a bearer token.\n# Permissions and page rules apply. Mutations change real data.\n\n' +
+    GRAPHQL_STARTERS.pages.query,
   defaultTabs: [{ query: GRAPHQL_STARTERS.pages.query }],
   defaultEditorToolsVisibility: 'variables',
   schemaDescription: true
@@ -21,7 +34,7 @@ export const GRAPHQL_EXPLORER_OPTIONS: GraphiQLOptions = Object.freeze({
 /** Static workspace chrome around Yoga's full schema-aware IDE. No user data enters this HTML. */
 export const renderWorkspaceGraphiQL = (options: GraphiQLOptions): string => {
   const starters = JSON.stringify(GRAPHQL_STARTERS).replaceAll('<', '\\u003c')
-  const styles = `<style>
+  const styles = `<meta name="viewport" content="width=device-width, initial-scale=1"><style>
     html,body { margin:0; height:100%; overflow:hidden; }
     body { display:flex; flex-direction:column; }
     .graphiql-logo { display:none; }
@@ -42,6 +55,11 @@ export const renderWorkspaceGraphiQL = (options: GraphiQLOptions): string => {
     body.graphiql-dark .graphiql-container { --color-primary:38,65%,68%; }
     @media(prefers-color-scheme:dark) { body:not(.graphiql-light) .graphiql-container { --color-primary:38,65%,68%; } }
     @media(max-width:700px) { .workspace-bar { padding:.75rem; flex-wrap:wrap; gap:.5rem; }.workspace-brand strong { font-size:20px; }.workspace-brand span { display:none; }.workspace-guide { padding:1rem; }.workspace-guide-grid { grid-template-columns:1fr; gap:1rem; }.workspace-actions { flex-wrap:wrap; }.workspace-actions a,.workspace-actions button { font-size:12px; padding:.4rem .6rem; } }
+    @media(max-width:700px) {
+      .graphiql-main:has(> .graphiql-plugin:not(:empty)) > .graphiql-sessions,
+      .graphiql-main:has(> .graphiql-plugin:not(:empty)) > .graphiql-horizontal-drag-bar { display:none; }
+      .graphiql-main > .graphiql-plugin { flex:1 1 0% !important; min-width:0 !important; }
+    }
   </style>`
   const chrome = `<header class="workspace-bar"><div class="workspace-brand"><strong>GraphQL workspace</strong><span>tsEpistle / API exploration</span></div><nav class="workspace-actions" aria-label="Workspace controls"><button id="workspace-help" type="button" aria-expanded="false" aria-controls="workspace-guide">Starter queries &amp; help</button><a href="/a/api#explore">API administration</a><a href="/">Back to wiki</a></nav></header>
   <section id="workspace-guide" class="workspace-guide" hidden aria-label="GraphQL workspace guide"><div class="workspace-guide-grid"><div><h2>Explore with your current access.</h2><p>Your browser session authenticates requests by default. Supply an <code>Authorization: Bearer &lt;API_KEY&gt;</code> header to evaluate a credential instead. Header persistence is disabled for this workspace.</p><p>Queries and variables may remain in this browser’s local IDE history. Mutations affect real wiki data. Use schema documentation to check required arguments, and inspect the response’s <code>errors</code> field even when HTTP status is 200.</p></div><div><label for="workspace-starter">Read-only starter query</label><select id="workspace-starter"><option value="pages">Page inventory</option><option value="search">Search pages</option><option value="schema">Schema entry points</option></select><textarea id="workspace-query" readonly aria-label="Starter query"></textarea><p id="workspace-variables"></p><button id="workspace-copy" type="button">Copy query</button><span id="workspace-copy-status" role="status" aria-live="polite"></span></div></div></section>`
@@ -58,5 +76,8 @@ export const renderWorkspaceGraphiQL = (options: GraphiQLOptions): string => {
   return renderGraphiQL(ideOptions)
     .replaceAll(`https://unpkg.com/@graphql-yoga/graphiql@${GRAPHQL_IDE_VERSION}/dist/`, `/_assets/graphiql/${GRAPHQL_IDE_VERSION}/`)
     .replace('https://raw.githubusercontent.com/graphql-hive/graphql-yoga/refs/heads/main/website/src/app/favicon.ico', '/_assets/favicon.ico')
-    .replace('</head>', styles + '</head>').replace('<noscript>', chrome + '<noscript>').replace('</body>', script + '</body>').replaceAll('Loading __TITLE__...', 'Loading GraphQL workspace…')
+    .replace('</head>', styles + '</head>')
+    .replace('<noscript>', chrome + '<noscript>')
+    .replace('</body>', script + '</body>')
+    .replaceAll('Loading __TITLE__...', 'Loading GraphQL workspace…')
 }

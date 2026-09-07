@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "e063a600dd3b37f61cdf6f66c25f54979bb348fac1f9f2dcbf12eec6cd24c141",
+    "sha256": "a9c4ca96551132581574d1bdc29343016d88511c311be16d7612bf3ec3bf2f46",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -2952,15 +2952,6 @@
       "license": "MIT",
       "author": "Felix Geisendörfer <felix@debuggable.com> (http://debuggable.com/)",
       "homepage": "https://github.com/felixge/node-combined-stream"
-    },
-    {
-      "name": "command-exists",
-      "versions": [
-        "1.2.9"
-      ],
-      "license": "MIT",
-      "author": "Matthew Conlen",
-      "homepage": "https://github.com/mathisonian/command-exists"
     },
     {
       "name": "commander",

@@ -9,9 +9,7 @@ import {
   revokeAdminApiKey,
   createAdminApiKey,
   submitAuthRequest,
-  submitStatusRequest,
-  regenerateAuthCertificates,
-  resetGuestUser
+  submitStatusRequest
 } from './auth-api.ts'
 
 function createJsonResponse(payload, ok = true, status = ok ? 200 : 400) {
@@ -312,23 +310,21 @@ describe('auth api helper', () => {
   })
 
   test('rejects malformed admin active authentication strategy payloads', async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValue(
-        createJsonResponse([
-          {
-            key: 'github',
-            strategy: { key: 'github' },
-            config: [{ key: 'clientId', value: '{' }],
-            order: 1,
-            isEnabled: true,
-            displayName: 'GitHub',
-            selfRegistration: false,
-            domainWhitelist: [],
-            autoEnrollGroups: []
-          }
-        ])
-      )
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          key: 'github',
+          strategy: { key: 'github' },
+          config: [{ key: 'clientId', value: '{' }],
+          order: 1,
+          isEnabled: true,
+          displayName: 'GitHub',
+          selfRegistration: false,
+          domainWhitelist: [],
+          autoEnrollGroups: []
+        }
+      ])
+    )
 
     await expect(Promise.resolve(fetchAdminAuthActiveStrategies(fetchImpl, 'Bad active payload'))).rejects.toThrow('Bad active payload')
   })
@@ -376,7 +372,7 @@ describe('auth api helper', () => {
             id: 7,
             name: 'Deploy',
             keyShort: '...12345678901234567890',
-          grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
+            grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
             key: '[REDACTED]',
             isRevoked: false,
             expiration: '2026-01-01T00:00:00.000Z',
@@ -469,7 +465,7 @@ describe('auth api helper', () => {
             id: 7,
             name: 'Legacy',
             keyShort: '...[redacted]',
-          grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
+            grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
             isRevoked: false,
             expiration: '2026-01-01T00:00:00.000Z',
             createdAt: '2025-01-01T00:00:00.000Z',
@@ -811,48 +807,6 @@ describe('auth api helper', () => {
         )
       )
     ).rejects.toThrow('Generic status error')
-  })
-
-  test('regenerates auth certificates through REST', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Certificates have been regenerated successfully.' }))
-
-    expect(await regenerateAuthCertificates(fetchImpl)).toEqual({ message: 'Certificates have been regenerated successfully.' })
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/certificates/regenerate', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({})
-    })
-  })
-
-  test('surfaces API errors for auth certificate regeneration', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'cert regen failed' }, false, 500))
-
-    await expect(Promise.resolve(regenerateAuthCertificates(fetchImpl))).rejects.toThrow('cert regen failed')
-  })
-
-  test('resets the guest user through REST', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Guest user has been reset successfully.' }))
-
-    expect(await resetGuestUser(fetchImpl)).toEqual({ message: 'Guest user has been reset successfully.' })
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/guest/reset', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({})
-    })
-  })
-
-  test('surfaces API errors for guest user reset', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'guest reset failed' }, false, 500))
-
-    await expect(Promise.resolve(resetGuestUser(fetchImpl))).rejects.toThrow('guest reset failed')
   })
 
   test('updates admin authentication strategies with same-origin JSON POST options', async () => {

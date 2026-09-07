@@ -182,6 +182,46 @@ describe('controllers/api auth endpoints', () => {
     }
   })
 
+  const apiStateDatabase = () => {
+    const tables = {
+      groups: [{ id: 1, permissions: ['manage:api'], adminRevision: 'api-manager' }],
+      users: [{ id: 1, isActive: true, authVersion: 0 }],
+      userGroups: [{ userId: 1, groupId: 1 }],
+      settings: []
+    }
+    const transaction = table => {
+      let criteria = {}
+      let firstOnly = false
+      const matching = () => tables[table].filter(row => Object.entries(criteria).every(([key, value]) => row[key] === value))
+      const query = {
+        select: () => query,
+        orderBy: () => query,
+        where: (key, value) => {
+          criteria = { ...criteria, [key]: value }
+          return query
+        },
+        forUpdate: () => query,
+        first: () => {
+          firstOnly = true
+          return query
+        },
+        insert: value => ({
+          onConflict: () => ({
+            merge: async () => {
+              const existing = tables[table].find(row => row.key === value.key)
+              if (existing) Object.assign(existing, value)
+              else tables[table].push(value)
+              return 1
+            }
+          })
+        }),
+        then: (resolve, reject) => Promise.resolve(firstOnly ? matching()[0] : matching()).then(resolve, reject)
+      }
+      return query
+    }
+    return { transaction: vi.fn(callback => callback(transaction)), tables }
+  }
+
   const loadHandlers = async () => {
     await vi.importFresh('../../controllers/api/auth.ts', import.meta.url)
     const withRuntime = handler => (req, ...args) => {
@@ -692,15 +732,21 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('updates admin API state through REST when authorized', async () => {
+    const database = apiStateDatabase()
+    global.WIKI.models.knex = database
     const { setApiState } = await loadHandlers()
-    const req = { user: { permissions: ['manage:api'] }, body: { enabled: false } }
+    const req = { user: { id: 1, authVersion: 0, permissions: ['manage:api'] }, body: { enabled: false } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await setApiState(req, res)
 
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:api'] }, ['manage:system', 'manage:api'])
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system', 'manage:api'])
     expect(global.WIKI.config.api.isEnabled).toBe(false)
-    expect(global.WIKI.configSvc.saveToDb).toHaveBeenCalledWith(['api'])
+    expect(database.tables.settings).toEqual([
+      expect.objectContaining({ key: 'api', value: JSON.stringify({ isEnabled: false }) })
+    ])
+    expect(global.WIKI.configSvc.saveToDb).not.toHaveBeenCalled()
+    expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('reloadConfig')
     expect(res.json).toHaveBeenCalledWith({ message: 'API State changed successfully' })
   })
 
@@ -716,16 +762,16 @@ describe('controllers/api auth endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'enabled must be a boolean' })
   })
 
-  it('returns JSON errors when admin API state persistence fails', async () => {
-    global.WIKI.configSvc.saveToDb.mockRejectedValueOnce(new Error('api save failed'))
+  it('returns a redacted JSON error when admin API state persistence fails', async () => {
+    global.WIKI.models.knex = { transaction: vi.fn().mockRejectedValueOnce(new Error('api save failed')) }
     const { setApiState } = await loadHandlers()
-    const req = { user: { permissions: ['manage:api'] }, body: { enabled: false } }
+    const req = { user: { id: 1, authVersion: 0, permissions: ['manage:api'] }, body: { enabled: false } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await setApiState(req, res)
 
     expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'api save failed' })
+    expect(res.json).toHaveBeenCalledWith({ error: 'API state update failed' })
     expect(global.WIKI.config.api.isEnabled).toBe(true)
   })
 
@@ -893,16 +939,19 @@ describe('controllers/api auth endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or manage:api is required' })
   })
 
-  it('regenerates certificates for manage:system users', async () => {
-    const { regenerateCertificates } = await loadHandlers()
-    const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+  it.each([
+    ['regenerateCertificates', 'regenerateCertificates'],
+    ['resetGuestUser', 'resetGuestUser']
+  ])('retires direct %s mutation requests behind the reviewed Utilities workspace', async (handlerName, effect) => {
+    const handlers = await loadHandlers()
+    const res = { set: vi.fn(), json: vi.fn(), status: vi.fn().mockReturnThis() }
 
-    await regenerateCertificates(req, res)
+    await handlers[handlerName]({ user: { permissions: ['manage:system'] } }, res)
 
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
-    expect(global.WIKI.auth.regenerateCertificates).toHaveBeenCalledTimes(1)
-    expect(res.json).toHaveBeenCalledWith({ message: 'Certificates have been regenerated successfully.' })
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    expect(res.status).toHaveBeenCalledWith(410)
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.stringContaining('Utilities workspace') }))
+    expect(global.WIKI.auth[effect]).not.toHaveBeenCalled()
   })
 
   it('rejects certificate regeneration for manage:api-only users', async () => {
@@ -918,29 +967,6 @@ describe('controllers/api auth endpoints', () => {
     expect(global.WIKI.auth.regenerateCertificates).not.toHaveBeenCalled()
   })
 
-  it('returns JSON error messages for certificate regeneration failures', async () => {
-    global.WIKI.auth.regenerateCertificates.mockRejectedValueOnce(new Error('cert regen failed'))
-    const { regenerateCertificates } = await loadHandlers()
-    const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-
-    await regenerateCertificates(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'cert regen failed' })
-  })
-
-  it('resets the guest user for manage:system users', async () => {
-    const { resetGuestUser } = await loadHandlers()
-    const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-
-    await resetGuestUser(req, res)
-
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:system'] }, ['manage:system'])
-    expect(global.WIKI.auth.resetGuestUser).toHaveBeenCalledTimes(1)
-    expect(res.json).toHaveBeenCalledWith({ message: 'Guest user has been reset successfully.' })
-  })
 
   it('rejects guest user reset for manage:api-only users', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
@@ -955,17 +981,6 @@ describe('controllers/api auth endpoints', () => {
     expect(global.WIKI.auth.resetGuestUser).not.toHaveBeenCalled()
   })
 
-  it('returns JSON error messages for guest user reset failures', async () => {
-    global.WIKI.auth.resetGuestUser.mockRejectedValueOnce(new Error('guest reset failed'))
-    const { resetGuestUser } = await loadHandlers()
-    const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-
-    await resetGuestUser(req, res)
-
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'guest reset failed' })
-  })
 
   it('does not expose internal configuration or admin-only auth metadata', async () => {
     const { strategies } = await loadHandlers()

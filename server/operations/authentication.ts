@@ -7,6 +7,7 @@ import configuration from './configuration.ts'
 import { getAuthenticationAdministrationStore } from './authentication-administration.ts'
 import type { AuthenticationProviderDraft, AuthenticationValue } from '../../shared/authentication-policy.ts'
 import type { PagePrincipal } from '../helpers/page-access.ts'
+import type { SystemRequester } from '../helpers/system-authority.ts'
 import errors from './errors.ts'
 import { createAuthRateLimiter, type AuthRateLimiter } from '../helpers/auth-rate-limiter.ts'
 
@@ -59,8 +60,8 @@ interface AuthenticationModel {
 interface AuthService {
   strategies: Record<string, Strategy>
   activateStrategies(): Promise<unknown>
-  regenerateCertificates(): unknown
-  resetGuestUser(): unknown
+  regenerateCertificates(requester?: SystemRequester): Promise<{ revokedApiKeys: number }>
+  resetGuestUser(requester?: SystemRequester): Promise<void>
   revokeUserTokens(input: { id: number; kind: 'u' }): void
 }
 interface RegistrationContext {
@@ -259,8 +260,8 @@ const loginChangePassword = async (args: unknown, context: unknown): Promise<{ j
   return { jwt: result.jwt }
 }
 const forgotPassword = (args: unknown, context: unknown): unknown => getUserModel().loginForgotPassword(args, context)
-const regenerateCertificates = (): unknown => getAuth().regenerateCertificates()
-const resetGuestUser = (): unknown => getAuth().resetGuestUser()
+const regenerateCertificates = (requester?: SystemRequester): Promise<{ revokedApiKeys: number }> => getAuth().regenerateCertificates(requester)
+const resetGuestUser = (requester?: SystemRequester): Promise<void> => getAuth().resetGuestUser(requester)
 const register = async (args: Record<string, unknown>, context: RegistrationContext): Promise<unknown> => {
   await admitRegistration(context)
   return getUserModel().register({ ...args, verify: true }, context)

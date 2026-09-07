@@ -37,6 +37,18 @@ export interface WikiPage {
   $relatedQuery(relation: string): Promise<UnknownRecord[]>
 }
 
+export interface PublicPageLookup {
+  path: string
+  locale: string
+  visibility: 'public'
+  ownerId: null
+}
+
+export interface PageUpdateInput extends UnknownRecord {
+  id: number
+  expectedSourceRevision: string
+}
+
 export interface WikiAsset {
   id: number
   path: string
@@ -123,11 +135,11 @@ export interface WikiModels {
     cleanHTML(value: string): string
     createPage(value: UnknownRecord): Promise<WikiPage>
     deletePage(value: UnknownRecord): Promise<void>
-    getPageFromDb(value: UnknownRecord): Promise<WikiPage | null>
+    getPageFromDb(value: number | PublicPageLookup): Promise<WikiPage | null>
     movePage(value: UnknownRecord): Promise<void>
     parseMetadata(content: string, filename: string): UnknownRecord
     query(): QueryBuilder<WikiPage>
-    updatePage(value: UnknownRecord): Promise<WikiPage>
+    updatePage(value: PageUpdateInput): Promise<WikiPage>
   }
   users: {
     getRootUser(): Promise<WikiUser>
@@ -149,7 +161,7 @@ export interface WikiRuntime {
   config: {
     dataPath: string
     db: { type: string }
-    flags: { ldapdebug: boolean }
+    flags: { ldapdebug: boolean; sqllog: boolean }
     host: string
     lang: {
       code: string
@@ -369,7 +381,7 @@ export function storageActionFormat(value: unknown): StorageActionFormat | null 
   if (value === 'legacy_wiki') return 'legacyWiki'
   if (value === 'plain_markdown') return 'plain'
   if (value === 'okf_invalid') return 'invalid'
-  return storageActionFormats.includes(value as StorageActionFormat) ? value as StorageActionFormat : null
+  return storageActionFormats.includes(value as StorageActionFormat) ? (value as StorageActionFormat) : null
 }
 
 export function boundedStorageActionText(value: unknown, fallback: string | null = null): string | null {
@@ -386,7 +398,8 @@ export function boundedStorageActionPath(value: unknown): string {
 export function isStorageActionSummary(value: unknown): value is StorageActionSummary {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const summary = value as Partial<StorageActionSummary>
-  return typeof summary.targetKey === 'string' &&
+  return (
+    typeof summary.targetKey === 'string' &&
     typeof summary.handler === 'string' &&
     (summary.outcome === 'succeeded' || summary.outcome === 'partial' || summary.outcome === 'failed') &&
     Number.isInteger(summary.total) &&
@@ -398,6 +411,7 @@ export function isStorageActionSummary(value: unknown): value is StorageActionSu
     typeof summary.startedAt === 'string' &&
     typeof summary.completedAt === 'string' &&
     typeof summary.message === 'string'
+  )
 }
 
 export interface StorageContext<C extends StorageConfig = StorageConfig> {

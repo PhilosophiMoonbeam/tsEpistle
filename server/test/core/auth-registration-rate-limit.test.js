@@ -3,6 +3,7 @@ import createKnex from 'knex'
 const router = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  put: vi.fn(),
   use: vi.fn()
 }))
 
@@ -36,6 +37,7 @@ let graphResolvers
 beforeEach(async () => {
   router.get.mockClear()
   router.post.mockClear()
+  router.put.mockClear()
   router.use.mockClear()
   knex = createKnex({
     client: 'better-sqlite3',

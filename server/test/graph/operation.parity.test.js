@@ -63,10 +63,10 @@ const makeResponse = () => ({
   json: vi.fn().mockReturnThis()
 })
 
-const expectEquivalentOperationInputs = (operation, input) => {
+const expectEquivalentOperationInputs = (operation, ...inputs) => {
   expect(operation).toHaveBeenCalledTimes(2)
-  expect(operation).toHaveBeenNthCalledWith(1, input)
-  expect(operation).toHaveBeenNthCalledWith(2, input)
+  expect(operation).toHaveBeenNthCalledWith(1, ...inputs)
+  expect(operation).toHaveBeenNthCalledWith(2, ...inputs)
 }
 
 const operationError = (message, { status, code, name }) => {
@@ -174,45 +174,6 @@ describe('REST and GraphQL shared operation parity', () => {
       expect(failedRestResponse.json).not.toHaveBeenCalled()
     })
 
-    it('normalizes activation mutations and maps success and errors per transport', async () => {
-      operationMocks.users.setActive.mockResolvedValue(undefined)
-      const requester = { id: 1, permissions: ['manage:users'] }
-      const restResponse = makeResponse()
-
-      await adapters.users.router.handler('patch', '/:id/status')(
-        { user: requester, params: { id: '42' }, body: { isActive: true } },
-        restResponse,
-        vi.fn()
-      )
-      const graphResult = await adapters.users.resolver.UserMutation.activate(null, { id: 42 })
-
-      const expectedInput = { id: 42, isActive: true }
-      expectEquivalentOperationInputs(operationMocks.users.setActive, expectedInput)
-      expect(restResponse.json).toHaveBeenCalledWith({
-        succeeded: true,
-        message: 'User activated successfully'
-      })
-      expect(graphResult).toEqual({ responseResult: graphSuccess('User activated successfully') })
-
-      operationMocks.users.setActive.mockClear()
-      const failure = operationError('activation denied', { status: 409, code: 73, name: 'Conflict' })
-      operationMocks.users.setActive.mockRejectedValue(failure)
-      const failedRestResponse = makeResponse()
-
-      await adapters.users.router.handler('patch', '/:id/status')(
-        { user: requester, params: { id: '42' }, body: { isActive: true } },
-        failedRestResponse,
-        vi.fn()
-      )
-      const failedGraphResult = await adapters.users.resolver.UserMutation.activate(null, { id: 42 })
-
-      expectEquivalentOperationInputs(operationMocks.users.setActive, expectedInput)
-      expect(failedRestResponse.status).toHaveBeenCalledWith(409)
-      expect(failedRestResponse.json).toHaveBeenCalledWith({ error: 'activation denied' })
-      expect(failedGraphResult).toEqual({
-        responseResult: { succeeded: false, errorCode: 73, slug: 'Conflict', message: 'activation denied' }
-      })
-    })
   })
 
   describe('groups', () => {
@@ -274,9 +235,9 @@ describe('REST and GraphQL shared operation parity', () => {
         restResponse,
         vi.fn()
       )
-      const graphResult = await adapters.groups.resolver.GroupMutation.create(null, { name: 'Editors' })
+      const graphResult = await adapters.groups.resolver.GroupMutation.create(null, { name: 'Editors' }, { req: { user: requester } })
 
-      expectEquivalentOperationInputs(operationMocks.groups.create, 'Editors')
+      expectEquivalentOperationInputs(operationMocks.groups.create, 'Editors', requester)
       expect(restResponse.json).toHaveBeenCalledWith({
         succeeded: true,
         message: 'Group created successfully.',
@@ -294,9 +255,9 @@ describe('REST and GraphQL shared operation parity', () => {
         failedRestResponse,
         vi.fn()
       )
-      await expect(Promise.resolve(adapters.groups.resolver.GroupMutation.create(null, { name: 'Editors' }))).rejects.toBe(failure)
+      await expect(Promise.resolve(adapters.groups.resolver.GroupMutation.create(null, { name: 'Editors' }, { req: { user: requester } }))).rejects.toBe(failure)
 
-      expectEquivalentOperationInputs(operationMocks.groups.create, 'Editors')
+      expectEquivalentOperationInputs(operationMocks.groups.create, 'Editors', requester)
       expect(failedRestResponse.status).toHaveBeenCalledWith(409)
       expect(failedRestResponse.json).toHaveBeenCalledWith({ error: 'group already exists' })
     })

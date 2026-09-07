@@ -15,7 +15,12 @@ import telemetry from './telemetry.ts'
 import type { ProductMetadata } from '../../shared/product.ts'
 const EventEmitter2 = EventEmitter2Module.EventEmitter2
 
-interface Logger { error(message: unknown): void; info(message: string): void; warn(message: unknown): void }
+interface Logger {
+  error(message: unknown): void
+  info(message: string): void
+  warn(message: unknown): void
+  reconcileSaved(): Promise<{ state: 'ready' | 'partially-applied' | 'unapplied'; message: string | null }>
+}
 interface KernelModels {
   analytics: { refreshProvidersFromDisk(): Promise<void> }
   authentication: { refreshStrategiesFromDisk(): Promise<void> }
@@ -48,7 +53,13 @@ interface WikiContext {
   product: ProductMetadata
   version: string
 }
-interface KernelService { init(): Promise<void>; preBootMaster(): Promise<void>; bootMaster(): Promise<void>; postBootMaster(): Promise<void>; shutdown(devMode?: boolean): Promise<void> }
+interface KernelService {
+  init(): Promise<void>
+  preBootMaster(): Promise<void>
+  bootMaster(): Promise<void>
+  postBootMaster(): Promise<void>
+  shutdown(devMode?: boolean): Promise<void>
+}
 
 function hasMethod(value: unknown, method: string): boolean {
   if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return false
@@ -56,7 +67,8 @@ function hasMethod(value: unknown, method: string): boolean {
 }
 
 function hasKernelModels(value: InitializedDatabase): value is InitializedModels {
-  return hasMethod(value.analytics, 'refreshProvidersFromDisk') &&
+  return (
+    hasMethod(value.analytics, 'refreshProvidersFromDisk') &&
     hasMethod(value.authentication, 'refreshStrategiesFromDisk') &&
     hasMethod(value.commentProviders, 'initProvider') &&
     hasMethod(value.commentProviders, 'refreshProvidersFromDisk') &&
@@ -67,6 +79,7 @@ function hasKernelModels(value: InitializedDatabase): value is InitializedModels
     hasMethod(value.searchEngines, 'refreshSearchEnginesFromDisk') &&
     hasMethod(value.storage, 'initTargets') &&
     hasMethod(value.storage, 'refreshTargetsFromDisk')
+  )
 }
 
 const wiki = WIKI as unknown as WikiContext
@@ -136,6 +149,13 @@ const kernel: KernelService = {
     await models.commentProviders.refreshProvidersFromDisk()
     await models.editors.refreshEditorsFromDisk()
     await models.loggers.refreshLoggersFromDisk()
+    try {
+      const logging = await wiki.logger.reconcileSaved()
+      if (logging.state !== 'ready') wiki.logger.warn(logging.message ?? 'Saved logging destinations were not fully reconciled in this process.')
+    } catch (error) {
+      wiki.logger.warn('Saved logging destinations could not be reconciled in this process. Console logging remains available.')
+      if (wiki.IS_DEBUG) wiki.logger.error(error)
+    }
     await models.renderers.refreshRenderersFromDisk()
     await models.searchEngines.refreshSearchEnginesFromDisk()
     await models.storage.refreshTargetsFromDisk()

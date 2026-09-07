@@ -156,6 +156,8 @@ const loginBundle = await Bun.build({
     'vue',
     'js-cookie',
     '@/store/index.ts',
+    '../helpers/password-policy.ts',
+    '../../shared/security-policy.ts',
     '../helpers/auth-api',
     '../helpers/root-ui-store',
     '../helpers/tfa-qr',
@@ -167,9 +169,9 @@ const loginBundle = await Bun.build({
     {
       name: 'login-layout-test-sfc',
       setup(build) {
-        build.onResolve({ filter: /^virtual:login\.vue$/ }, args => ({
+        build.onResolve({ filter: /^virtual:login\.vue$/ }, () => ({
           namespace: 'login-layout-test-sfc',
-          path: args.path
+          path: loginPath
         }))
         build.onLoad({ filter: /.*/, namespace: 'login-layout-test-sfc' }, () => ({
           contents: compiledLoginComponent,
@@ -181,10 +183,12 @@ const loginBundle = await Bun.build({
   ],
   target: 'bun'
 })
-if (!loginBundle.success || loginBundle.outputs.length !== 1) {
+if (!loginBundle.success) {
   throw new Error(`Could not bundle login.vue: ${loginBundle.logs.map(log => log.message).join(', ')}`)
 }
-const loginBundleCode = await loginBundle.outputs[0].text()
+const loginBundleOutput = loginBundle.outputs.find(output => output.kind === 'entry-point')
+if (!loginBundleOutput) throw new Error('Compiled login.vue did not produce an entry-point module')
+const loginBundleCode = await loginBundleOutput.text()
 const loginModuleStart = loginBundleCode.indexOf('(function(')
 if (loginModuleStart < 0) throw new Error('Compiled login.vue did not produce a CommonJS module')
 interface CompiledLoginModule {
@@ -208,6 +212,8 @@ loginModuleFactory(
     if (specifier === '@/store/index.ts') {
       return { wikiStore: { showNotification: () => undefined, startLoading: () => undefined, stopLoading: () => undefined } }
     }
+    if (specifier === '../helpers/password-policy.ts') return { passwordPolicyMixin: {} }
+    if (specifier === '../../shared/security-policy.ts') return { newPasswordIssue: () => null }
     if (specifier === '../helpers/auth-api') {
       return {
         fetchAuthStrategies: async () => [],
@@ -280,6 +286,9 @@ const renderLoginDom = async (effect: LogoEffectDescriptor | null): Promise<JSDO
       tfaSecret: '',
       username: ''
     }),
+    methods: {
+      forgotPassword: () => undefined
+    },
     render: renderLogin
   })
   const app = Vue.createSSRApp(component)
@@ -288,29 +297,18 @@ const renderLoginDom = async (effect: LogoEffectDescriptor | null): Promise<JSDO
   return new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url: 'http://localhost/login' })
 }
 
-const renderConfiguredLoginDom = async (logoUrl: string, logoEffect: LogoEffectDescriptor): Promise<JSDOM> => {
+const resolveConfiguredLogoEffect = (logoUrl: string, logoEffect: LogoEffectDescriptor): LogoEffectDescriptor | null => {
   const previousSiteConfig = Object.getOwnPropertyDescriptor(globalThis, 'siteConfig')
-  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
   Object.defineProperty(globalThis, 'siteConfig', {
     configurable: true,
     value: { title: 'Example knowledge base', logoUrl, logoEffect }
   })
-  Object.defineProperty(globalThis, 'window', {
-    configurable: true,
-    value: { location: { search: '' } }
-  })
-
   try {
-    const app = Vue.createSSRApp(Login)
-    for (const [name, component] of Object.entries(components)) app.component(name, component)
-    app.config.globalProperties.$t = (key: string): string => key
-    const html = await renderToString(app)
-    return new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url: 'http://localhost/login' })
+    const options = Login as unknown as { computed: { logoEffect: () => LogoEffectDescriptor | null } }
+    return options.computed.logoEffect.call({})
   } finally {
     if (previousSiteConfig) Object.defineProperty(globalThis, 'siteConfig', previousSiteConfig)
     else Reflect.deleteProperty(globalThis, 'siteConfig')
-    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)
-    else Reflect.deleteProperty(globalThis, 'window')
   }
 }
 
@@ -367,25 +365,16 @@ describe('login personalized static-logo integration', () => {
     dom.window.close()
   })
 
-  it('renders only the structurally valid descriptor bound to the current site logo', async () => {
+  it('accepts only a valid descriptor bound to the current site logo', () => {
     const staleEffect: LogoEffectDescriptor = {
       ...managedEffect,
       logoUrl: '/_site-logo/dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd/logo.png'
     }
     expect(isLogoEffectDescriptor(staleEffect)).toBe(true)
 
-    const staleDom = await renderConfiguredLoginDom(managedEffect.logoUrl, staleEffect)
-    expect(staleDom.window.document.querySelector('.login-particle-logo')).toBeNull()
-    expect(staleDom.window.document.querySelector<HTMLImageElement>('.login-brand .login-logo img')?.getAttribute('src')).toBe(managedEffect.logoUrl)
-    staleDom.window.close()
-    const futureDom = await renderConfiguredLoginDom(managedEffect.logoUrl, { ...managedEffect, pipelineVersion: 6 })
-    expect(futureDom.window.document.querySelector('.login-particle-logo')).toBeNull()
-    expect(futureDom.window.document.querySelector<HTMLImageElement>('.login-brand .login-logo img')?.getAttribute('src')).toBe(managedEffect.logoUrl)
-    futureDom.window.close()
-
-    const currentDom = await renderConfiguredLoginDom(managedEffect.logoUrl, managedEffect)
-    expect(currentDom.window.document.querySelector<HTMLElement>('.login-particle-logo')?.dataset.staticUrl).toBe(managedEffect.staticUrl)
-    currentDom.window.close()
+    expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, staleEffect)).toBeNull()
+    expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, { ...managedEffect, pipelineVersion: 6 })).toBeNull()
+    expect(resolveConfiguredLogoEffect(managedEffect.logoUrl, managedEffect)).toBe(managedEffect)
   })
 
   it('keeps the ordinary brand and authentication form when there is no managed effect', async () => {

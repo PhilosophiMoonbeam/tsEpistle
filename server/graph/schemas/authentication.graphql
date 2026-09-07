@@ -60,10 +60,6 @@ type AuthenticationMutation {
     enabled: Boolean!
   ): DefaultResponse @auth(requires: ["manage:system"])
 
-
-  regenerateCertificates: DefaultResponse @auth(requires: ["manage:system"])
-
-  resetGuestUser: DefaultResponse @auth(requires: ["manage:system"])
 }
 
 # -----------------------------------------------

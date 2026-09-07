@@ -1,31 +1,35 @@
-import commandExistsModule from 'command-exists'
-import os from 'node:os'
+import type { OptionalExtensionDefinition } from '../../../../shared/extensions-workspace.ts'
 
-type CommandExists = (commandName: string) => Promise<string>
-
-const isCommandExists = (value: unknown): value is CommandExists => typeof value === 'function'
-
-if (!isCommandExists(commandExistsModule)) {
-  throw new TypeError('command-exists does not export a callable function.')
-}
-const commandExists = commandExistsModule
-
-const plugin = {
+const plugin: OptionalExtensionDefinition = {
   key: 'puppeteer',
   title: 'Puppeteer',
-  description: 'Headless chromium browser for server-side rendering. Required for generating PDF versions of pages and render content elements on the server (e.g. Mermaid diagrams)',
-  async isCompatible () {
-    return os.arch() === 'x64'
+  description: 'A legacy optional browser entry that is not provided by the application process.',
+  installation: {
+    boundary: 'separate-image',
+    detail:
+      'Browser automation uses the separately deployed Agent Browser image with Playwright Chromium. The application image does not include Puppeteer or a server-side PDF renderer.',
+    recovery:
+      'Do not add or execute a browser package from Administration. If the Agent Browser service is unavailable, repair its reviewed deployment and verify it through the Agent workspace.'
   },
-  isInstalled: false,
-  async check () {
-    try {
-      await commandExists('pandoc')
-      this.isInstalled = true
-    } catch {
-      this.isInstalled = false
+  capabilities: [
+    {
+      title: 'No application-process renderer',
+      detail: 'This application build has no page-PDF or Mermaid workflow that invokes Puppeteer.',
+      configuration: { label: 'Open Agent Browser', path: '/agents', hash: 'browser' }
     }
-    return this.isInstalled
+  ],
+  dependencies: [
+    {
+      title: 'Separate Agent Browser image',
+      detail: 'Its Chromium dependency is installed and sandboxed in the dedicated Agent Browser image, outside this application process.'
+    }
+  ],
+  async observe() {
+    return {
+      state: 'not-provided',
+      compatibility: 'not-applicable',
+      evidence: 'No Puppeteer package or browser executable is inspected from the application process.'
+    }
   }
 }
 

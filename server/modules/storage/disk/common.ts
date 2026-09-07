@@ -50,7 +50,6 @@ function isImportFile(value: unknown): value is ImportFile {
   )
 }
 
-
 function toError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
 }
@@ -183,7 +182,9 @@ const plugin = {
     }
     const currentPage = await wiki.models.pages.getPageFromDb({
       path: pageIdentity.path,
-      locale: pageIdentity.locale
+      locale: pageIdentity.locale,
+      visibility: 'public',
+      ownerId: null
     })
     const currentPublishedState = currentPage && 'isPublished' in currentPage && typeof currentPage.isPublished === 'boolean' ? currentPage.isPublished : true
     if (currentPage) {
@@ -191,6 +192,7 @@ const plugin = {
       wiki.logger.info(`(STORAGE/${moduleName}) Page marked as modified: ${normalizedRelPath}`)
       const page = await wiki.models.pages.updatePage({
         id: currentPage.id,
+        expectedSourceRevision: String(currentPage.sourceRevision),
         title: document.title ?? currentPage.title,
         description: document.description ?? currentPage.description ?? '',
         tags:
@@ -231,7 +233,6 @@ const plugin = {
     })
     return { relPath: normalizedRelPath, format: document.format, sha256: document.sha256, ok: true, document, page }
   },
-
 
   async resolveAssetFolder(relPath: string): Promise<number | null> {
     if (!this.assetFolders) {

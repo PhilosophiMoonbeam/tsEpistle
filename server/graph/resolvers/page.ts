@@ -1,6 +1,5 @@
 import graphHelper from '../../helpers/graph.ts'
 import pageOperations from '../../operations/pages.ts'
-import systemOperations from '../../operations/system.ts'
 
 type ResolverArgs = Record<string, unknown>
 interface ResolverContext {
@@ -114,30 +113,6 @@ export default {
       try {
         const page = await pageOperations.transferOwnership({ ...operationContext(context), ...args })
         return { responseResult: graphHelper.generateSuccess('Page ownership has been transferred.'), page }
-      } catch (err: unknown) {
-        return graphHelper.generateError(err)
-      }
-    },
-    async flushCache() {
-      try {
-        await systemOperations.flushPageCache()
-        return { responseResult: graphHelper.generateSuccess('Pages Cache has been flushed successfully.') }
-      } catch (err: unknown) {
-        return graphHelper.generateError(err)
-      }
-    },
-    async migrateToLocale(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
-      try {
-        const count = await systemOperations.migratePagesToLocale({ ...args, requester: context.req.user })
-        return { responseResult: graphHelper.generateSuccess('Migrated content to target locale successfully.'), count }
-      } catch (err: unknown) {
-        return graphHelper.generateError(err)
-      }
-    },
-    async rebuildTree() {
-      try {
-        await systemOperations.rebuildPageTree()
-        return { responseResult: graphHelper.generateSuccess('Page tree rebuilt successfully.') }
       } catch (err: unknown) {
         return graphHelper.generateError(err)
       }

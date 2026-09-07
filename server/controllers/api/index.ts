@@ -6,6 +6,8 @@ import assetsRouter from './assets.ts'
 import authRouter from './auth.ts'
 import commentsRouter from './comments.ts'
 import contentExtensionsRouter from './content-extensions.ts'
+import developerFlagsRouter from './developer-flags.ts'
+import extensionsRouter from './extensions.ts'
 import editorsRouter from './editors.ts'
 import groupsRouter from './groups.ts'
 import localesRouter from './locales.ts'
@@ -22,6 +24,7 @@ import storageRouter from './storage.ts'
 import systemRouter from './system.ts'
 import themingRouter from './theming.ts'
 import usersRouter from './users.ts'
+import utilitiesRouter from './utilities.ts'
 import taxonomyRouter from './taxonomy.ts'
 import webhooksRouter from './webhooks.ts'
 
@@ -46,6 +49,9 @@ router.use('/site', siteRouter)
 router.use('/rendering', renderingRouter)
 router.use('/comments', commentsRouter)
 router.use('/content-extensions', contentExtensionsRouter)
+router.use('/developer-flags', developerFlagsRouter)
+router.use('/extensions', extensionsRouter)
+router.use('/utilities', utilitiesRouter)
 router.use('/locales', localesRouter)
 router.use('/groups', groupsRouter)
 router.use('/editors', editorsRouter)

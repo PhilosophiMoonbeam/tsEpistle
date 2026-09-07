@@ -1,0 +1,432 @@
+.extensions-workspace {
+  --extensions-line: rgba(var(--v-theme-on-surface), 0.14);
+  --extensions-wash: rgba(var(--v-theme-primary), 0.055);
+  --extensions-muted: rgba(var(--v-theme-on-surface), 0.66);
+  max-width: 1540px;
+  padding-bottom: 2.5rem !important;
+}
+
+.extensions-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(24rem, 30rem);
+  align-items: start;
+  gap: 1.5rem 3rem;
+  padding: 0.35rem 0.45rem 1.25rem;
+  border-bottom: 1px solid var(--extensions-line);
+}
+
+.extensions-kicker {
+  display: block;
+  color: var(--wiki-accent-ink);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.extensions-heading h1,
+.extensions-detail h2,
+.extensions-library-heading h2 {
+  font-family: var(--font-family-serif, Georgia, serif);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+}
+
+.extensions-heading h1 {
+  margin: 0.3rem 0 0.45rem;
+  font-size: clamp(2rem, 3.2vw, 2.85rem);
+  line-height: 1.04;
+}
+
+.extensions-heading-copy > p {
+  max-width: 52rem;
+  margin: 0;
+  color: var(--extensions-muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.extensions-heading-meta {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.extensions-heading-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+  margin: 0;
+}
+
+.extensions-heading-facts dt,
+.extensions-installation dt {
+  color: var(--extensions-muted);
+  font-size: 0.66rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.extensions-heading-facts dd,
+.extensions-installation dd {
+  margin: 0.22rem 0 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.extensions-heading-facts .extensions-stat {
+  font-family: var(--font-family-serif, Georgia, serif);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.extensions-heading-actions {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.extensions-boundary {
+  display: flex;
+  align-items: start;
+  gap: 0.4rem;
+  min-width: 0;
+  margin: 0;
+  padding-left: 0.65rem;
+  color: var(--extensions-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  border-left: 2px solid var(--wiki-accent-ink);
+}
+
+.extensions-boundary .v-icon {
+  flex: 0 0 auto;
+  margin-top: 0.08rem;
+  color: var(--wiki-accent-ink);
+}
+
+.extensions-library {
+  display: grid;
+  grid-template-columns: minmax(16rem, 0.72fr) minmax(0, 2.28fr);
+  gap: 0;
+  margin-top: 1rem;
+  border: 1px solid var(--extensions-line);
+  border-radius: 0.8rem;
+  overflow: hidden;
+}
+
+.extensions-library-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 1rem;
+  background: var(--extensions-wash);
+  border-right: 1px solid var(--extensions-line);
+}
+
+.extensions-library-nav > .v-input {
+  flex: 0 0 auto;
+}
+
+.extensions-library-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.extensions-library-heading h2 {
+  margin: 0.25rem 0 0;
+  font-size: 1.4rem;
+  line-height: 1.1;
+}
+
+.extensions-library-heading > span,
+.extensions-filter-note,
+.extensions-recovery-note {
+  color: var(--extensions-muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.extensions-filter-note {
+  margin: 0;
+}
+
+.extensions-library-list {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.extensions-library-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  gap: 0.65rem;
+  padding: 0.65rem;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    transform 140ms ease;
+}
+
+.extensions-library-row:hover {
+  background: rgba(var(--v-theme-surface), 0.72);
+  border-color: var(--extensions-line);
+}
+
+.extensions-library-row.is-selected {
+  background: rgb(var(--v-theme-surface));
+  border-color: var(--wiki-accent-ink);
+  box-shadow: 0 0.25rem 1rem rgba(0, 0, 0, 0.06);
+}
+
+.extensions-library-row:focus-visible,
+.extensions-detail :is(a, button):focus-visible {
+  outline: 2px solid var(--wiki-accent-ink);
+  outline-offset: 3px;
+}
+
+.extensions-library-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.extensions-library-copy strong,
+.extensions-fact-list strong {
+  overflow-wrap: anywhere;
+}
+
+.extensions-library-copy small {
+  color: var(--extensions-muted);
+  font-size: 0.7rem;
+}
+
+.extensions-detail {
+  min-width: 0;
+  padding: clamp(1rem, 2.25vw, 2rem);
+}
+
+.extensions-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--extensions-line);
+}
+
+.extensions-detail h2 {
+  margin: 0.3rem 0 0.45rem;
+  font-size: clamp(1.75rem, 2.8vw, 2.65rem);
+  line-height: 1;
+}
+
+.extensions-detail-header p,
+.extensions-detail section > div > p,
+.extensions-fact-list p {
+  color: var(--extensions-muted);
+  line-height: 1.55;
+}
+
+.extensions-detail-header p {
+  max-width: 48rem;
+  margin: 0;
+}
+
+.extensions-state-chips {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 0.4rem;
+}
+
+.extensions-evidence {
+  margin: 1rem 0;
+  padding: 0.75rem 0.9rem;
+  background: var(--extensions-wash);
+  border-left: 3px solid var(--wiki-accent-ink);
+}
+
+.extensions-evidence h3,
+.extensions-installation h3,
+.extensions-grid h3,
+.extensions-recovery h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.92rem;
+}
+
+.extensions-evidence p {
+  margin: 0.15rem 0 0.4rem;
+  line-height: 1.5;
+}
+
+.extensions-evidence time {
+  color: var(--extensions-muted);
+  font-size: 0.72rem;
+}
+
+.extensions-installation,
+.extensions-recovery {
+  display: grid;
+  grid-template-columns: 1.7rem minmax(0, 1fr);
+  gap: 0.65rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--extensions-line);
+}
+
+.extensions-installation {
+  border-top: 0;
+}
+
+.extensions-installation p,
+.extensions-recovery p {
+  max-width: 57rem;
+  margin: 0;
+  line-height: 1.55;
+}
+
+.extensions-installation dl {
+  margin: 0.75rem 0 0;
+}
+
+.extensions-section-number {
+  color: var(--wiki-accent-ink);
+  font-family: var(--font-family-serif, Georgia, serif);
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.extensions-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+  padding: 1rem 0;
+  border-top: 1px solid var(--extensions-line);
+}
+
+.extensions-grid > section {
+  min-width: 0;
+}
+
+.extensions-grid .extensions-section-number {
+  display: block;
+  margin-bottom: 0.55rem;
+}
+
+.extensions-fact-list {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.extensions-fact-list li {
+  padding: 0.75rem;
+  background: rgba(var(--v-theme-on-surface), 0.035);
+  border: 1px solid var(--extensions-line);
+  border-radius: 0.5rem;
+}
+
+.extensions-fact-list p {
+  margin: 0.25rem 0 0;
+  font-size: 0.82rem;
+}
+
+.extensions-fact-list .v-btn {
+  margin: 0.3rem -0.35rem -0.3rem;
+}
+
+.extensions-recovery {
+  border-bottom: 1px solid var(--extensions-line);
+}
+
+.extensions-recovery-note {
+  margin-top: 0.55rem !important;
+}
+
+@media (max-width: 1080px) {
+  .extensions-heading {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  .extensions-heading-meta {
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.8fr);
+    align-items: center;
+  }
+}
+
+@media (max-width: 840px) {
+  .extensions-library {
+    grid-template-columns: 1fr;
+  }
+
+  .extensions-library-nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--extensions-line);
+  }
+
+  .extensions-library-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .extensions-workspace {
+    padding-right: 0.65rem !important;
+    padding-left: 0.65rem !important;
+  }
+
+  .extensions-heading {
+    padding: 0.25rem 0.2rem 1rem;
+  }
+
+  .extensions-heading-meta,
+  .extensions-heading-facts,
+  .extensions-heading-actions,
+  .extensions-grid,
+  .extensions-library-list {
+    grid-template-columns: 1fr;
+  }
+
+  .extensions-heading-facts {
+    gap: 0.65rem;
+  }
+
+  .extensions-heading-actions {
+    align-items: start;
+  }
+
+  .extensions-heading-actions .v-btn {
+    justify-self: start;
+  }
+
+  .extensions-library-nav,
+  .extensions-detail {
+    padding: 0.9rem;
+  }
+
+  .extensions-detail-header {
+    flex-direction: column;
+    gap: 0.8rem;
+  }
+
+  .extensions-state-chips {
+    justify-content: start;
+  }
+}

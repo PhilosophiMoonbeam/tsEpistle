@@ -4,6 +4,7 @@ import { accountSessionIsCurrent } from './account-session.ts'
 import { principalId, type PagePrincipal } from './page-access.ts'
 import errors from '../operations/errors.ts'
 
+export type SystemAuthorityPermission = 'manage:system' | 'manage:api'
 export interface SystemRequester {
   user: PagePrincipal
   apiKey?: { id: number; groupId: number; expiresAt: number | null }
@@ -21,7 +22,13 @@ const denied = (message: string): never => {
   throw new errors.ApplicationError(message, { status: 403 })
 }
 /** Revalidate current database authority for both browser sessions and API principals. */
-export const requireSystemAuthority = async (tx: Knex.Transaction, requester: SystemRequester, lock = false, now = new Date()) => {
+export const requireSystemAuthority = async (
+  tx: Knex.Transaction,
+  requester: SystemRequester,
+  lock = false,
+  now = new Date(),
+  allowedPermissions: readonly SystemAuthorityPermission[] = ['manage:system']
+) => {
   const gq = tx<Group>('groups').select('id', 'permissions', 'adminRevision').orderBy('id'),
     groups = await (lock ? gq.forUpdate() : gq)
   if (!requester.user) return denied('An administrator sign-in is required.')
@@ -66,7 +73,7 @@ export const requireSystemAuthority = async (tx: Knex.Transaction, requester: Sy
     ids = [key.groupId]
     apiKeyId = key.id
   }
-  if (!groups.some(group => ids.includes(group.id) && Array.isArray(group.permissions) && group.permissions.includes('manage:system')))
-    return denied('System administration is required.')
+  if (!groups.some(group => ids.includes(group.id) && Array.isArray(group.permissions) && group.permissions.some(permission => allowedPermissions.includes(permission as SystemAuthorityPermission))))
+    return denied(allowedPermissions.includes('manage:api') ? 'System or API administration is required.' : 'System administration is required.')
   return { actorId, apiKeyId, ids, groups }
 }

@@ -1,22 +1,31 @@
+import { randomUUID } from 'node:crypto'
 import _ from 'lodash'
-import cfgHelper from '../helpers/config.ts'
 import fs from 'fs-extra'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import { pipeline } from 'node:stream/promises'
 import { Readable } from 'node:stream'
-import { MongoClient, type MongoCursor } from 'mongodb'
 
+import {
+  projectCommentExport,
+  projectGroupExport,
+  projectHistoryExport,
+  projectPageExport,
+  projectSettingsExport,
+  projectUserExport
+} from '../repositories/utility-export-projection.ts'
 type QueryRow = Record<string, unknown>
 
 interface QueryBuilder {
   count(expression: string): QueryBuilder
   first(): Promise<{ total: string | number }>
+  where(column: string, value: unknown): QueryBuilder
+  orderBy(column: string): QueryBuilder
   offset(value: number): QueryBuilder
   limit(value: number): QueryBuilder
   withGraphJoined(graph: Record<string, boolean>): QueryBuilder
+  withGraphFetched(graph: Record<string, boolean>): QueryBuilder
   modifyGraph(name: string, callback: (builder: { select(...columns: string[]): void }) => void): QueryBuilder
-  where(column: string, value: unknown): QueryBuilder
   then<TResult>(resolve: (value: QueryRow[]) => TResult): Promise<TResult>
 }
 
@@ -24,33 +33,10 @@ interface QueryModel {
   query(): QueryBuilder
 }
 
-interface ImportedUser {
-  email: string
-  name: string
-  password: string
-  provider: string
-  providerId: string
-  role: 'user'
-  createdAt?: Date | string
-}
-
-interface MongoUser {
-  email: string
-  name?: string
-  password?: string
-  provider?: string
-  providerId?: string
-  createdAt?: Date | string
-}
-
 interface AssetChunk {
   filename: string
   folderId?: number
   data: string | NodeJS.ArrayBufferView
-}
-
-interface UpgradeOptions {
-  mongoCnStr: string
 }
 
 interface ExportOptions {
@@ -67,7 +53,6 @@ interface ExportStatus {
 }
 
 interface WikiModels {
-  User: { bulkCreate(users: ImportedUser[]): Promise<unknown> }
   assetFolders: { getAllPaths(): Promise<Record<string, string>> }
   assets: QueryModel
   comments: QueryModel
@@ -96,6 +81,7 @@ interface WikiModels {
         }
       }
     }
+    raw?(statement: string): Promise<{ rows?: unknown[] } | unknown[]>
   }
 }
 
@@ -117,27 +103,76 @@ const exportStatus: ExportStatus = {
   updatedAt: null
 }
 
-async function collectCursor<TDocument extends object>(cursor: MongoCursor<TDocument>): Promise<TDocument[]> {
-  const documents: TDocument[] = []
-  while (await cursor.hasNext()) {
-    const document = await cursor.next()
-    if (document !== null) documents.push(document)
-  }
-  return documents
-}
-
-async function* serializeJsonBatches(batchSize: number, fetchBatch: (offset: number) => Promise<QueryRow[]>, onBatch: () => void): AsyncGenerator<string> {
+async function* serializeJsonBatches(
+  batchSize: number,
+  fetchBatch: (offset: number) => Promise<QueryRow[]>,
+  onBatch: () => void,
+  project: (row: QueryRow) => QueryRow | null = row => row
+): AsyncGenerator<string> {
   let isFirst = true
   for (let offset = 0; ; offset += batchSize) {
     const rows = await fetchBatch(offset)
     if (rows.length === 0) break
     for (const row of rows) {
-      yield `${isFirst ? '[\n' : ',\n'}${JSON.stringify(row, null, 2)}`
+      const value = project(row)
+      if (value === null) continue
+      yield `${isFirst ? '[\n' : ',\n'}${JSON.stringify(value, null, 2)}`
       isFirst = false
     }
     onBatch()
   }
   yield '\n]'
+}
+
+const privateDirectory = async (directory: string): Promise<void> => {
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 })
+}
+
+const temporaryPath = (destination: string): string => `${destination}.${process.pid}.${randomUUID()}.tmp`
+
+const writeFileAtomic = async (destination: string, data: string | Uint8Array): Promise<void> => {
+  await privateDirectory(path.dirname(destination))
+  const temporary = temporaryPath(destination)
+  try {
+    await fs.writeFile(temporary, data, { flag: 'wx', mode: 0o600 })
+    await fs.rename(temporary, destination)
+  } catch (error) {
+    await fs.remove(temporary)
+    throw error
+  }
+}
+
+const writeJsonAtomic = async (destination: string, value: unknown): Promise<void> => {
+  await writeFileAtomic(destination, `${JSON.stringify(value, null, 2)}\n`)
+}
+
+const writeGzipJsonAtomic = async (destination: string, values: AsyncIterable<string>): Promise<void> => {
+  await privateDirectory(path.dirname(destination))
+  const temporary = temporaryPath(destination)
+  try {
+    await pipeline(Readable.from(values), zlib.createGzip(), fs.createWriteStream(temporary, { flags: 'wx', mode: 0o600 }))
+    await fs.rename(temporary, destination)
+  } catch (error) {
+    await fs.remove(temporary)
+    throw error
+  }
+}
+
+const childPath = (directory: string, relativePath: string): string => {
+  const destination = path.resolve(directory, relativePath)
+  if (destination === directory || !destination.startsWith(`${directory}${path.sep}`)) throw new Error(`Export path escapes assets directory: ${relativePath}`)
+  return destination
+}
+
+const protectedAssetPaths = async (): Promise<Set<string>> => {
+  if (!wiki.models.knex.raw) return new Set()
+  const result = await wiki.models.knex.raw('SELECT "assetPath" FROM "pageProtectedAssets"')
+  const rows = Array.isArray(result) ? result : Array.isArray(result.rows) ? result.rows : []
+  return new Set(
+    rows
+      .map(row => (row !== null && typeof row === 'object' ? Reflect.get(row, 'assetPath') : undefined))
+      .filter((value): value is string => typeof value === 'string')
+  )
 }
 
 const system = {
@@ -154,53 +189,6 @@ const system = {
     return this
   },
   /**
-   * Upgrade from WIKI.js 1.x - MongoDB database
-   *
-   * @param {Object} opts Options object
-   */
-  async upgradeFromMongo(opts: UpgradeOptions): Promise<boolean> {
-    wiki.logger.info('Upgrading from MongoDB...')
-
-    const parsedMongoConStr = cfgHelper.parseConfigValue(opts.mongoCnStr)
-    const client = await MongoClient.connect(parsedMongoConStr)
-
-    try {
-      const users = client.db().collection<MongoUser>('users')
-
-      // Check if users table is populated
-      const userCount = (await collectCursor(users.find())).length
-      if (userCount < 2) {
-        throw new Error('MongoDB Upgrade: Users table is empty!')
-      }
-
-      // Import all users
-      const userData = await collectCursor(
-        users.find({
-          email: {
-            $not: 'guest'
-          }
-        })
-      )
-      await wiki.models.User.bulkCreate(
-        userData.map(
-          (usr): ImportedUser => ({
-            email: usr.email,
-            name: usr.name || 'Imported User',
-            password: usr.password || '',
-            provider: usr.provider || 'local',
-            providerId: usr.providerId || '',
-            role: 'user',
-            ...(usr.createdAt === undefined ? {} : { createdAt: usr.createdAt })
-          })
-        )
-      )
-
-      return true
-    } finally {
-      await client.close()
-    }
-  },
-  /**
    * Export Wiki to Disk
    */
   async export(opts: ExportOptions): Promise<void> {
@@ -215,6 +203,7 @@ const system = {
     const progressMultiplier = 1 / opts.entities.length
 
     try {
+      await privateDirectory(opts.path)
       for (const entity of opts.entities) {
         switch (entity) {
           // -----------------------------------------
@@ -222,14 +211,16 @@ const system = {
           // -----------------------------------------
           case 'assets': {
             wiki.logger.info('Exporting assets...')
-            const assetFolders = await wiki.models.assetFolders.getAllPaths()
+            const [assetFolders, protectedPaths] = await Promise.all([wiki.models.assetFolders.getAllPaths(), protectedAssetPaths()])
             const assetsCountRaw = await wiki.models.assets.query().count('* as total').first()
             const assetsCount = Number.parseInt(String(assetsCountRaw.total), 10)
             if (assetsCount < 1) {
               wiki.logger.warn('There are no assets to export! Skipping...')
               break
             }
-            const assetsProgressMultiplier = progressMultiplier / Math.ceil(assetsCount / 50)
+            const assetsDirectory = path.resolve(opts.path, 'assets')
+            await privateDirectory(assetsDirectory)
+            const assetsProgressMultiplier = progressMultiplier / assetsCount
             wiki.logger.info(`Found ${assetsCount} assets to export. Streaming to disk...`)
 
             await pipeline(
@@ -237,8 +228,12 @@ const system = {
               async (assets: AsyncIterable<AssetChunk>) => {
                 for await (const asset of assets) {
                   const filename = asset.folderId && asset.folderId > 0 ? `${_.get(assetFolders, asset.folderId)}/${asset.filename}` : asset.filename
-                  wiki.logger.info(`Exporting asset ${filename}...`)
-                  await fs.outputFile(path.join(opts.path, 'assets', filename), asset.data)
+                  if (protectedPaths.has(filename)) {
+                    this.exportStatus.progress += assetsProgressMultiplier * 100
+                    continue
+                  }
+                  const outputPath = childPath(assetsDirectory, filename)
+                  await writeFileAtomic(outputPath, asset.data as string | Uint8Array)
                   this.exportStatus.progress += assetsProgressMultiplier * 100
                 }
               }
@@ -266,6 +261,7 @@ const system = {
               async offset =>
                 await wiki.models.comments
                   .query()
+                  .orderBy('comments.id')
                   .offset(offset)
                   .limit(50)
                   .withGraphJoined({
@@ -273,16 +269,17 @@ const system = {
                     page: true
                   })
                   .modifyGraph('author', builder => {
-                    builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
+                    builder.select('users.id', 'users.name')
                   })
                   .modifyGraph('page', builder => {
-                    builder.select('pages.id', 'pages.path', 'pages.localeCode', 'pages.title')
+                    builder.select('pages.id', 'pages.path', 'pages.localeCode', 'pages.title', 'pages.visibility')
                   }),
               () => {
                 this.exportStatus.progress += commentsProgressMultiplier * 100
-              }
+              },
+              projectCommentExport
             )
-            await pipeline(Readable.from(comments), zlib.createGzip(), fs.createWriteStream(outputPath))
+            await writeGzipJsonAtomic(outputPath, comments)
             wiki.logger.info('Export: comments.json.gz created successfully.')
             break
           }
@@ -293,7 +290,7 @@ const system = {
             wiki.logger.info('Exporting groups...')
             const outputPath = path.join(opts.path, 'groups.json')
             const groups = await wiki.models.groups.query()
-            await fs.outputJSON(outputPath, groups, { spaces: 2 })
+            await writeJsonAtomic(outputPath, groups.map(projectGroupExport))
             wiki.logger.info('Export: groups.json created successfully.')
             this.exportStatus.progress += progressMultiplier * 100
             break
@@ -304,7 +301,7 @@ const system = {
           case 'history': {
             wiki.logger.info('Exporting pages history...')
             const outputPath = path.join(opts.path, 'pages-history.json.gz')
-            const pagesCountRaw = await wiki.models.pageHistory.query().count('* as total').first()
+            const pagesCountRaw = await wiki.models.pageHistory.query().where('visibility', 'public').count('* as total').first()
             const pagesCount = Number.parseInt(String(pagesCountRaw.total), 10)
             if (pagesCount < 1) {
               wiki.logger.warn('There are no pages history to export! Skipping...')
@@ -318,27 +315,26 @@ const system = {
               async offset =>
                 await wiki.models.pageHistory
                   .query()
+                  .where('visibility', 'public')
+                  .orderBy('pageHistory.id')
                   .offset(offset)
                   .limit(10)
-                  .withGraphJoined({
+                  .withGraphFetched({
                     author: true,
-                    page: true,
                     tags: true
                   })
                   .modifyGraph('author', builder => {
-                    builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
-                  })
-                  .modifyGraph('page', builder => {
-                    builder.select('pages.id', 'pages.title', 'pages.path', 'pages.localeCode')
+                    builder.select('users.id', 'users.name')
                   })
                   .modifyGraph('tags', builder => {
-                    builder.select('tags.tag', 'tags.title')
+                    builder.select('tags.id', 'tags.tag', 'tags.title')
                   }),
               () => {
                 this.exportStatus.progress += pagesProgressMultiplier * 100
-              }
+              },
+              projectHistoryExport
             )
-            await pipeline(Readable.from(pages), zlib.createGzip(), fs.createWriteStream(outputPath))
+            await writeGzipJsonAtomic(outputPath, pages)
             wiki.logger.info('Export: pages-history.json.gz created successfully.')
             break
           }
@@ -353,18 +349,16 @@ const system = {
             for (const entry of navigationRaw) {
               if (typeof entry.key === 'string') navigation[entry.key] = entry.config
             }
-            await fs.outputJSON(outputPath, navigation, { spaces: 2 })
+            await writeJsonAtomic(outputPath, navigation)
             wiki.logger.info('Export: navigation.json created successfully.')
             this.exportStatus.progress += progressMultiplier * 100
             break
           }
           // -----------------------------------------
-          // PAGES
-          // -----------------------------------------
           case 'pages': {
             wiki.logger.info('Exporting pages...')
             const outputPath = path.join(opts.path, 'pages.json.gz')
-            const pagesCountRaw = await wiki.models.pages.query().count('* as total').first()
+            const pagesCountRaw = await wiki.models.pages.query().where('visibility', 'public').count('* as total').first()
             const pagesCount = Number.parseInt(String(pagesCountRaw.total), 10)
             if (pagesCount < 1) {
               wiki.logger.warn('There are no pages to export! Skipping...')
@@ -378,53 +372,58 @@ const system = {
               async offset =>
                 await wiki.models.pages
                   .query()
+                  .where('visibility', 'public')
+                  .orderBy('pages.id')
                   .offset(offset)
                   .limit(10)
-                  .withGraphJoined({
+                  .withGraphFetched({
                     author: true,
                     creator: true,
                     tags: true
                   })
                   .modifyGraph('author', builder => {
-                    builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
+                    builder.select('users.id', 'users.name')
                   })
                   .modifyGraph('creator', builder => {
-                    builder.select('users.id', 'users.name', 'users.email', 'users.providerKey')
+                    builder.select('users.id', 'users.name')
                   })
                   .modifyGraph('tags', builder => {
-                    builder.select('tags.tag', 'tags.title')
+                    builder.select('tags.id', 'tags.tag', 'tags.title')
                   }),
               () => {
                 this.exportStatus.progress += pagesProgressMultiplier * 100
-              }
+              },
+              projectPageExport
             )
-            await pipeline(Readable.from(pages), zlib.createGzip(), fs.createWriteStream(outputPath))
+            await writeGzipJsonAtomic(outputPath, pages)
             wiki.logger.info('Export: pages.json.gz created successfully.')
             break
           }
           // -----------------------------------------
           // SETTINGS
-          // -----------------------------------------
           case 'settings': {
             wiki.logger.info('Exporting settings...')
             const outputPath = path.join(opts.path, 'settings.json')
-            const config = {
-              ...wiki.config,
-              modules: {
-                analytics: await wiki.models.analytics.query(),
-                authentication: (await wiki.models.authentication.query()).map(a => ({
-                  ...a,
-                  domainWhitelist: _.get(a, 'domainWhitelist.v', []),
-                  autoEnrollGroups: _.get(a, 'autoEnrollGroups.v', [])
-                })),
-                commentProviders: await wiki.models.commentProviders.query(),
-                renderers: await wiki.models.renderers.query(),
-                searchEngines: await wiki.models.searchEngines.query(),
-                storage: await wiki.models.storage.query()
-              },
-              apiKeys: await wiki.models.apiKeys.query().where('isRevoked', false)
-            }
-            await fs.outputJSON(outputPath, config, { spaces: 2 })
+            const [analytics, authentication, commentProviders, renderers, searchEngines, storage, apiKeys] = await Promise.all([
+              wiki.models.analytics.query(),
+              wiki.models.authentication.query(),
+              wiki.models.commentProviders.query(),
+              wiki.models.renderers.query(),
+              wiki.models.searchEngines.query(),
+              wiki.models.storage.query(),
+              wiki.models.apiKeys.query()
+            ])
+            const config = projectSettingsExport({
+              config: wiki.config,
+              analytics,
+              authentication,
+              commentProviders,
+              renderers,
+              searchEngines,
+              storage,
+              apiKeys
+            })
+            await writeJsonAtomic(outputPath, config)
             wiki.logger.info('Export: settings.json created successfully.')
             this.exportStatus.progress += progressMultiplier * 100
             break
@@ -449,9 +448,10 @@ const system = {
               async offset =>
                 await wiki.models.users
                   .query()
+                  .orderBy('users.id')
                   .offset(offset)
                   .limit(50)
-                  .withGraphJoined({
+                  .withGraphFetched({
                     groups: true,
                     provider: true
                   })
@@ -463,9 +463,10 @@ const system = {
                   }),
               () => {
                 this.exportStatus.progress += usersProgressMultiplier * 100
-              }
+              },
+              projectUserExport
             )
-            await pipeline(Readable.from(users), zlib.createGzip(), fs.createWriteStream(outputPath))
+            await writeGzipJsonAtomic(outputPath, users)
 
             wiki.logger.info('Export: users.json.gz created successfully.')
             break

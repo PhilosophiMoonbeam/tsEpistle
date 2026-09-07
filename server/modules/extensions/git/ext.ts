@@ -1,30 +1,37 @@
-import commandExistsModule from 'command-exists'
+import type { OptionalExtensionDefinition } from '../../../../shared/extensions-workspace.ts'
+import { observeBundledCommand } from '../command-observation.ts'
 
-type CommandExists = (commandName: string) => Promise<string>
-
-const isCommandExists = (value: unknown): value is CommandExists => typeof value === 'function'
-
-if (!isCommandExists(commandExistsModule)) {
-  throw new TypeError('command-exists does not export a callable function.')
-}
-const commandExists = commandExistsModule
-
-const plugin = {
+const plugin: OptionalExtensionDefinition = {
   key: 'git',
   title: 'Git',
-  description: 'Distributed version control system. Required for the Git storage module.',
-  isInstalled: false,
-  async isCompatible () {
-    return true
+  description: 'The command-line client used by the configured Git storage target.',
+  installation: {
+    boundary: 'application-image',
+    detail: 'Git is supplied by the reviewed application image, not installed from Administration.',
+    recovery:
+      'If this observation is missing, rebuild and deploy an application image that includes Git, then refresh this page. Do not install packages in a running container.'
   },
-  async check () {
-    try {
-      await commandExists('git')
-      this.isInstalled = true
-    } catch {
-      this.isInstalled = false
+  capabilities: [
+    {
+      title: 'Git storage',
+      detail: 'The Git storage target uses the Git executable for repository initialization, synchronization and recovery.',
+      configuration: { label: 'Configure Git storage', path: '/storage', query: { section: 'targets', target: 'git' } }
     }
-    return this.isInstalled
+  ],
+  dependencies: [
+    {
+      title: 'Git executable',
+      detail:
+        'The application runs a fixed `git --version` check from its own PATH. A target with a reviewed custom binary path is observed by the Storage workspace instead.'
+    }
+  ],
+  async observe() {
+    const outcome = await observeBundledCommand('git')
+    return outcome === 'usable'
+      ? { state: 'usable', compatibility: 'verified', evidence: 'The application completed a bounded Git executable check.' }
+      : outcome === 'missing'
+        ? { state: 'missing', compatibility: 'unknown', evidence: 'The Git executable is not present in the application process.' }
+        : { state: 'unknown', compatibility: 'unknown', evidence: 'The Git executable could not be observed within its bounded check.' }
   }
 }
 

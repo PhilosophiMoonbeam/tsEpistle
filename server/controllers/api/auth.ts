@@ -9,6 +9,7 @@ import apiOperations from '../../operations/api.ts'
 import { describeApiConnections } from '../../operations/api-connections.ts'
 import authenticationOperations from '../../operations/authentication.ts'
 import { getAuthenticationAdministrationStore } from '../../operations/authentication-administration.ts'
+import { systemRequester } from '../../helpers/system-authority.ts'
 
 const router = express.Router()
 
@@ -216,11 +217,12 @@ router.get('/api/connections', async (req, res, next) => {
 router.post('/api/state', async (req, res) => {
   if (!requireAdminApiAccess(req, res)) return
   try {
-    await apiOperations.setState(objectValue(req.body, 'enabled'))
+    await apiOperations.setState(systemRequester(req), objectValue(req.body, 'enabled'))
     res.json({ message: 'API State changed successfully' })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    res.status(errorStatus(err) ?? 500).json({ error: message || 'API state update failed' })
+    const status = errorStatus(err)
+    const expected = status && [400, 403, 404, 409].includes(status)
+    res.status(expected ? status : 500).json({ error: expected && err instanceof Error ? err.message : 'API state update failed' })
   }
 })
 
@@ -252,26 +254,16 @@ router.post('/api/keys/:id/revoke', async (req, res) => {
   }
 })
 
-router.post('/certificates/regenerate', async (req, res) => {
+router.post('/certificates/regenerate', (req, res) => {
   if (!requireSystemAccess(req, res)) return
-  try {
-    await authenticationOperations.regenerateCertificates()
-    res.json({ message: 'Certificates have been regenerated successfully.' })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    res.status(500).json({ error: message || 'Certificate regeneration failed' })
-  }
+  res.set('Cache-Control', 'no-store')
+  res.status(410).json({ error: 'Use the Utilities workspace to review and regenerate authentication certificates.' })
 })
 
-router.post('/guest/reset', async (req, res) => {
+router.post('/guest/reset', (req, res) => {
   if (!requireSystemAccess(req, res)) return
-  try {
-    await authenticationOperations.resetGuestUser()
-    res.json({ message: 'Guest user has been reset successfully.' })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    res.status(500).json({ error: message || 'Guest user reset failed' })
-  }
+  res.set('Cache-Control', 'no-store')
+  res.status(410).json({ error: 'Use the Utilities workspace to review and reset guest access.' })
 })
 
 router.post('/register', async (req, res, next) => {

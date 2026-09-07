@@ -548,14 +548,6 @@ export async function createAdminApiKey(
   }
 }
 
-export async function regenerateAuthCertificates(fetchImpl: FetchImpl, fallbackMessage = 'Certificate regeneration failed'): Promise<StatusResponse> {
-  return submitStatusRequest(fetchImpl, '/_api/auth/certificates/regenerate', {}, fallbackMessage)
-}
-
-export async function resetGuestUser(fetchImpl: FetchImpl, fallbackMessage = 'Guest user reset failed'): Promise<StatusResponse> {
-  return submitStatusRequest(fetchImpl, '/_api/auth/guest/reset', {}, fallbackMessage)
-}
-
 export async function registerAccount(
   fetchImpl: FetchImpl,
   input: { email: string; password: string; name: string },

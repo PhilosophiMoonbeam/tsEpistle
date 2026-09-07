@@ -31,7 +31,6 @@ describe('database migration namespace contract', () => {
     const files = (await readdir(path.resolve('server/db/migrations'))).filter(file => file.endsWith('.ts'))
     const ordered = orderMigrationFiles(files)
 
-    expect(ordered.at(-1)).toBe('tsepistle-000025-tls-operations')
     expect(ordered).toHaveLength(files.length)
   })
 

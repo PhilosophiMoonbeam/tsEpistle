@@ -10,42 +10,22 @@ extend type Mutation {
   system: SystemMutation
 }
 
+
 # -----------------------------------------------
 # QUERIES
 # -----------------------------------------------
 
 type SystemQuery {
-  flags: [SystemFlag] @auth(requires: ["manage:system"])
   info: SystemInfo
-  extensions: [SystemExtension] @auth(requires: ["manage:system"])
-  exportStatus: SystemExportStatus @auth(requires: ["manage:system"])
-}
+  flags: [SystemFlag] @auth(requires: ["manage:system"])
 
-# -----------------------------------------------
-# MUTATIONS
-# -----------------------------------------------
+}
 
 type SystemMutation {
   updateFlags(
     flags: [SystemFlagInput]!
   ): DefaultResponse @auth(requires: ["manage:system"])
-
-  resetTelemetryClientId: DefaultResponse @auth(requires: ["manage:system"])
-
-  setTelemetry(
-    enabled: Boolean!
-  ): DefaultResponse @auth(requires: ["manage:system"])
-
-  importUsersFromV1(
-    mongoDbConnString: String!
-    groupMode: SystemImportUsersGroupMode!
-  ): SystemImportUsersResponse @auth(requires:  ["manage:system"])
-
 }
-
-# -----------------------------------------------
-# TYPES
-# -----------------------------------------------
 
 type SystemFlag {
   key: String!
@@ -56,6 +36,7 @@ input SystemFlagInput {
   key: String!
   value: Boolean!
 }
+
 
 type SystemInfo {
   configFile: String @auth(requires: ["manage:system"])
@@ -107,36 +88,5 @@ type ProductMetadata {
   date: Date!
 }
 
-enum SystemImportUsersGroupMode {
-  MULTI
-  SINGLE
-  NONE
-}
 
-type SystemImportUsersResponse {
-  responseResult: ResponseStatus
-  usersCount: Int
-  groupsCount: Int
-  failed: [SystemImportUsersResponseFailed]
-}
 
-type SystemImportUsersResponseFailed {
-  provider: String
-  email: String
-  error: String
-}
-
-type SystemExtension {
-  key: String!
-  title: String!
-  description: String!
-  isInstalled: Boolean!
-  isCompatible: Boolean!
-}
-
-type SystemExportStatus {
-  status: String
-  progress: Int
-  message: String
-  startedAt: Date
-}

@@ -5,31 +5,23 @@ import { pathToFileURL } from 'node:url'
 import { makeExecutableSchema } from '@graphql-tools/schema'
 import type { IResolvers } from '@graphql-tools/utils'
 import _ from 'lodash'
-import { PubSub } from 'graphql-subscriptions'
-import { LEVEL, MESSAGE } from 'triple-beam'
+import { LEVEL } from 'triple-beam'
 import Transport from 'winston-transport'
 
 import { authDirectiveTransformer } from './directives/auth.ts'
 import { createRateLimitDirective } from './directives/rate-limit.ts'
+import { LoggingLiveTrailBroker } from '../operations/logging-live-trail.ts'
+import { redactLoggingLiveOutput } from '../operations/logging.ts'
 
 type ResolverMap = IResolvers<unknown, unknown, Record<string, unknown>, unknown>
 type LogInfo = Record<PropertyKey, unknown>
 type LogCallback = (error: null, success: true) => void
-interface GraphEvents extends Record<string, unknown> {
-  livetrail: {
-    loggingLiveTrail: {
-      timestamp: Date
-      level: unknown
-      output: unknown
-    }
-  }
-}
 
 export interface GraphRuntime extends Record<string, unknown> {
   ROOTPATH: string
   SERVERPATH: string
   config: unknown
-  GQLEmitter?: unknown
+  loggingLiveTrail?: LoggingLiveTrailBroker
   logger: {
     add(transport: Transport): void
     info(message: string): void
@@ -38,12 +30,13 @@ export interface GraphRuntime extends Record<string, unknown> {
 }
 
 const isWikiLogger = (value: unknown): value is GraphRuntime['logger'] =>
-  typeof value === 'object' && value !== null &&
+  typeof value === 'object' &&
+  value !== null &&
   typeof Reflect.get(value, 'add') === 'function' &&
   typeof Reflect.get(value, 'info') === 'function' &&
   typeof Reflect.get(value, 'warn') === 'function'
 
-export async function createGraphQLArtifacts (runtime: GraphRuntime) {
+export async function createGraphQLArtifacts(runtime: GraphRuntime) {
   const serverPath = runtime.SERVERPATH
   const logger = runtime.logger
   if (typeof serverPath !== 'string' || !isWikiLogger(logger)) {
@@ -51,8 +44,8 @@ export async function createGraphQLArtifacts (runtime: GraphRuntime) {
   }
 
   logger.info('Loading GraphQL Schema...')
-  const graphEmitter = new PubSub<GraphEvents>()
-  runtime.GQLEmitter = graphEmitter
+  const liveTrail = new LoggingLiveTrailBroker()
+  runtime.loggingLiveTrail = liveTrail
 
   const { rateLimitDirectiveTypeDefs, rateLimitDirectiveTransformer } = createRateLimitDirective()
   const typeDefs = [rateLimitDirectiveTypeDefs]
@@ -63,19 +56,18 @@ export async function createGraphQLArtifacts (runtime: GraphRuntime) {
 
   const resolvers: ResolverMap = {}
   const resolverDirectory = path.join(serverPath, 'graph/resolvers')
-  const resolverFiles = fs.readdirSync(resolverDirectory, { withFileTypes: true })
-    .filter(entry => entry.isFile() && entry.name.endsWith('.ts'))
-  const resolverModules: unknown[] = await Promise.all(resolverFiles.map(entry => {
-    return import(pathToFileURL(path.join(resolverDirectory, entry.name)).href)
-  }))
+  const resolverFiles = fs.readdirSync(resolverDirectory, { withFileTypes: true }).filter(entry => entry.isFile() && entry.name.endsWith('.ts'))
+  const resolverModules: unknown[] = await Promise.all(
+    resolverFiles.map(entry => {
+      return import(pathToFileURL(path.join(resolverDirectory, entry.name)).href)
+    })
+  )
   for (const resolverModule of resolverModules) {
     if (typeof resolverModule !== 'object' || resolverModule === null || !('default' in resolverModule)) {
       throw new TypeError('GraphQL resolver module must have a default export')
     }
     const resolverExport = resolverModule.default
-    const resolver = typeof resolverExport === 'function'
-      ? await Reflect.apply(resolverExport, undefined, [runtime])
-      : resolverExport
+    const resolver = typeof resolverExport === 'function' ? await Reflect.apply(resolverExport, undefined, [runtime]) : resolverExport
     if (typeof resolver !== 'object' || resolver === null) {
       throw new TypeError('GraphQL resolver default export must be an object or resolver factory')
     }
@@ -90,13 +82,11 @@ export async function createGraphQLArtifacts (runtime: GraphRuntime) {
     name = 'liveTrailLogger'
     override level = 'debug'
 
-    override log (info: LogInfo, callback: LogCallback = () => {}) {
-      void graphEmitter.publish('livetrail', {
-        loggingLiveTrail: {
-          timestamp: new Date(),
-          level: info[LEVEL],
-          output: info[MESSAGE]
-        }
+    override log(info: LogInfo, callback: LogCallback = () => {}) {
+      liveTrail.publish({
+        timestamp: new Date(),
+        level: typeof info[LEVEL] === 'string' ? info[LEVEL] : 'info',
+        output: redactLoggingLiveOutput(info.message)
       })
       callback(null, true)
     }
@@ -104,5 +94,5 @@ export async function createGraphQLArtifacts (runtime: GraphRuntime) {
 
   logger.add(new LiveTrailLogger({}))
   logger.info('GraphQL Schema: [ OK ]')
-  return { graphEmitter, resolvers, schema, typeDefs }
+  return { resolvers, schema, typeDefs }
 }

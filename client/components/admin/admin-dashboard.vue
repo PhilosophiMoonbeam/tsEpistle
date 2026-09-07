@@ -1,4 +1,4 @@
-<template lang='pug'>
+<template lang="pug">
   v-container.admin-dashboard(fluid)
     admin-hero(
       title='Workspace overview'
@@ -119,7 +119,7 @@
             h3(:id='`directory-${group.key}`') {{ group.label }}
           p {{ group.description }}
           .dashboard-directory__links
-            component.dashboard-directory__link(v-for='item in group.items' :key='item.key' :is='item.to ? `router-link` : `a`' :to='item.to' :href='item.href')
+            component.dashboard-directory__link(v-for='item in group.items' :key='item.key' :is='item.to ? `router-link` : `a`' v-bind='item.to ? { to: item.to } : { href: item.href }')
               span
                 strong {{ item.label }}
                 small {{ item.description }}
@@ -132,8 +132,7 @@
       span Built for people and agents.
 </template>
 
-
-<script lang='ts'>
+<script lang="ts">
 import { markRaw } from 'vue'
 import { buildAdminNavigation, filterAdminNavigation } from '../../helpers/admin-navigation'
 import { inject } from 'vue'
@@ -177,28 +176,107 @@ export default {
     }
   },
   computed: {
-    canViewRecentPages() { return this.hasPermission(['manage:system', 'write:pages', 'manage:pages', 'delete:pages']) },
-    canViewLastLogins() { return this.hasPermission(['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users']) },
-    info() { return wikiStore.admin.info },
-    siteTitle() { return wikiStore.site.title?.trim() || 'tsEpistle' },
-    permissions() { return wikiStore.user.permissions },
+    canViewRecentPages() {
+      return this.hasPermission(['manage:system', 'write:pages', 'manage:pages', 'delete:pages'])
+    },
+    canViewLastLogins() {
+      return this.hasPermission(['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users'])
+    },
+    info() {
+      return wikiStore.admin.info
+    },
+    siteTitle() {
+      return wikiStore.site.title?.trim() || 'tsEpistle'
+    },
+    permissions() {
+      return wikiStore.user.permissions
+    },
     dashboardStats() {
       return [
-        { key: 'pages', label: this.$t('admin:dashboard.pages'), value: this.info.pagesTotal, hint: 'Pages in the workspace', icon: 'mdi-file-document-multiple-outline', to: '/pages', permission: ['manage:system', 'write:pages', 'manage:pages', 'delete:pages'] },
-        { key: 'tags', label: this.$t('admin:tags.title'), value: this.info.tagsTotal, hint: 'Topics connecting knowledge', icon: 'mdi-tag-multiple-outline', to: '/tags', permission: 'manage:system' },
-        { key: 'users', label: this.$t('admin:dashboard.users'), value: this.info.usersTotal, hint: 'Workspace accounts', icon: 'mdi-account-multiple-outline', to: '/users', permission: ['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users'] },
-        { key: 'groups', label: this.$t('admin:dashboard.groups'), value: this.info.groupsTotal, hint: 'Roles and permission sets', icon: 'mdi-account-key-outline', to: '/groups', permission: ['manage:system', 'manage:groups', 'write:groups'] }
-      ].filter(stat => this.hasPermission(stat.permission)).map(stat => ({ ...stat, ariaLabel: `${this.summaryLoading ? 'Loading' : this.summaryError ? 'Unavailable' : stat.value} ${stat.label}. ${stat.hint}.` }))
+        {
+          key: 'pages',
+          label: this.$t('admin:dashboard.pages'),
+          value: this.info.pagesTotal,
+          hint: 'Pages in the workspace',
+          icon: 'mdi-file-document-multiple-outline',
+          to: '/pages',
+          permission: ['manage:system', 'write:pages', 'manage:pages', 'delete:pages']
+        },
+        {
+          key: 'tags',
+          label: this.$t('admin:tags.title'),
+          value: this.info.tagsTotal,
+          hint: 'Topics connecting knowledge',
+          icon: 'mdi-tag-multiple-outline',
+          to: '/tags',
+          permission: 'manage:system'
+        },
+        {
+          key: 'users',
+          label: this.$t('admin:dashboard.users'),
+          value: this.info.usersTotal,
+          hint: 'Workspace accounts',
+          icon: 'mdi-account-multiple-outline',
+          to: '/users',
+          permission: ['manage:system', 'manage:groups', 'write:groups', 'manage:users', 'write:users']
+        },
+        {
+          key: 'groups',
+          label: this.$t('admin:dashboard.groups'),
+          value: this.info.groupsTotal,
+          hint: 'Roles and permission sets',
+          icon: 'mdi-account-key-outline',
+          to: '/groups',
+          permission: ['manage:system', 'manage:groups', 'write:groups']
+        }
+      ]
+        .filter((stat) => this.hasPermission(stat.permission))
+        .map((stat) => ({
+          ...stat,
+          ariaLabel: `${this.summaryLoading ? 'Loading' : this.summaryError ? 'Unavailable' : stat.value} ${stat.label}. ${stat.hint}.`
+        }))
     },
     settingsGroups() {
-      return filterAdminNavigation(buildAdminNavigation(key => this.$t(key), this.permissions, this.info), this.settingsSearch || '')
+      return filterAdminNavigation(
+        buildAdminNavigation((key) => this.$t(key), this.permissions, this.info),
+        this.settingsSearch || ''
+      )
     },
     connections() {
       return [
-        { key: 'search', title: 'Make knowledge discoverable', kind: 'Search', description: 'Choose your search engine and maintain the index that helps readers find answers.', icon: 'mdi-text-search-variant', action: 'Configure search', to: '/search', permission: 'manage:system' },
-        { key: 'agents', title: 'Give your wiki an agent', kind: 'Wiki Agent', description: siteConfig.agentsEnabled ? 'Manage models, approved skills and the boundaries of your built-in assistant.' : 'Explore agent administration and the deployment settings needed to enable it.', icon: 'mdi-creation-outline', action: 'Manage agents', to: '/agents', permission: 'manage:system' },
-        { key: 'api', title: 'Connect your ecosystem', kind: 'API & MCP', description: 'Manage integration keys and connect external tools to your shared knowledge.', icon: 'mdi-connection', action: 'Explore integrations', to: '/api', permission: ['manage:system', 'manage:api'] }
-      ].filter(item => this.hasPermission(item.permission))
+        {
+          key: 'search',
+          title: 'Make knowledge discoverable',
+          kind: 'Search',
+          description: 'Choose your search engine and maintain the index that helps readers find answers.',
+          icon: 'mdi-text-search-variant',
+          action: 'Configure search',
+          to: '/search',
+          permission: 'manage:system'
+        },
+        {
+          key: 'agents',
+          title: 'Give your wiki an agent',
+          kind: 'Wiki Agent',
+          description: siteConfig.agentsEnabled
+            ? 'Manage models, approved skills and the boundaries of your built-in assistant.'
+            : 'Explore agent administration and the deployment settings needed to enable it.',
+          icon: 'mdi-creation-outline',
+          action: 'Manage agents',
+          to: '/agents',
+          permission: 'manage:system'
+        },
+        {
+          key: 'api',
+          title: 'Connect your ecosystem',
+          kind: 'API & MCP',
+          description: 'Manage integration keys and connect external tools to your shared knowledge.',
+          icon: 'mdi-connection',
+          action: 'Explore integrations',
+          to: '/api',
+          permission: ['manage:system', 'manage:api']
+        }
+      ].filter((item) => this.hasPermission(item.permission))
     }
   },
   watch: {
@@ -227,7 +305,7 @@ export default {
   },
   methods: {
     hasPermission(prm: string | string[]) {
-      return Array.isArray(prm) ? prm.some(permission => this.permissions.includes(permission)) : this.permissions.includes(prm)
+      return Array.isArray(prm) ? prm.some((permission) => this.permissions.includes(permission)) : this.permissions.includes(prm)
     },
     async loadRecentPages() {
       const requestId = ++this.recentPagesRequestId
@@ -276,11 +354,24 @@ export default {
   }
 }
 </script>
-<style lang='scss'>
+<style lang="scss">
 .admin-dashboard {
   container-type: inline-size;
-  .v-list-item-subtitle { opacity: 1; color: var(--admin-muted); }
-  .admin-hero { padding-block: .25rem 1rem; margin-bottom: 0; border-bottom: 0; }
+  .v-list-item-subtitle {
+    opacity: 1;
+    color: var(--admin-muted);
+  }
+  .dashboard-mobile-list .admin-record-link {
+    display: block;
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .admin-hero {
+    padding-block: 0.25rem 1rem;
+    margin-bottom: 0;
+    border-bottom: 0;
+  }
 }
 .dashboard-inventory {
   display: grid;
@@ -294,24 +385,67 @@ export default {
   padding: 1rem 1.5rem;
   color: rgb(var(--v-theme-on-surface));
   text-decoration: none;
-  transition: background-color .15s;
-  + .admin-stat { border-inline-start: 1px solid var(--wiki-surface-border); }
-  &:hover { background: color-mix(in srgb, var(--wiki-ambient-accent) 6%, transparent); }
-  &__top { display: flex; align-items: center; gap: .5rem; color: var(--admin-muted); font-size: .8rem; }
-  &__arrow { margin-inline-start: auto; }
-  &__value { margin-top: .8rem; font-size: 2.5rem; font-weight: 550; letter-spacing: -.06em; line-height: 1.1; font-variant-numeric: tabular-nums; }
-  &__hint { margin-top: .4rem; font-size: .75rem; color: var(--admin-muted); }
+  transition: background-color 0.15s;
+  + .admin-stat {
+    border-inline-start: 1px solid var(--wiki-surface-border);
+  }
+  &:hover {
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 6%, transparent);
+  }
+  &__top {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--admin-muted);
+    font-size: 0.8rem;
+  }
+  &__arrow {
+    margin-inline-start: auto;
+  }
+  &__value {
+    margin-top: 0.8rem;
+    font-size: 2.5rem;
+    font-weight: 550;
+    letter-spacing: -0.06em;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  &__hint {
+    margin-top: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--admin-muted);
+  }
 }
 .dashboard-section-heading {
   display: flex;
   align-items: center;
   gap: 1.5rem;
-  margin-block: 1.5rem .8rem;
-  h2 { margin-top: .3rem; font-size: 1.4rem; font-weight: 560; letter-spacing: -.025em; line-height: 1.25; }
-  &__eyebrow { color: var(--wiki-accent-ink); font-size: .65rem; font-weight: 650; letter-spacing: .13em; text-transform: uppercase; }
-  &__rule { height: 1px; flex: 1; background: var(--wiki-surface-border); }
+  margin-block: 1.5rem 0.8rem;
+  h2 {
+    margin-top: 0.3rem;
+    font-size: 1.4rem;
+    font-weight: 560;
+    letter-spacing: -0.025em;
+    line-height: 1.25;
+  }
+  &__eyebrow {
+    color: var(--wiki-accent-ink);
+    font-size: 0.65rem;
+    font-weight: 650;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+  }
+  &__rule {
+    height: 1px;
+    flex: 1;
+    background: var(--wiki-surface-border);
+  }
 }
-.dashboard-connections__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+.dashboard-connections__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
 .dashboard-connection {
   display: flex;
   flex-direction: column;
@@ -322,43 +456,221 @@ export default {
   background: var(--wiki-surface-raised);
   color: rgb(var(--v-theme-on-surface));
   text-decoration: none;
-  transition: border-color .15s, background-color .15s;
-  &:hover { border-color: var(--wiki-accent-ink); background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised)); }
-  &__top { display: flex; align-items: center; gap: .65rem; color: var(--wiki-accent-ink); > .v-icon:last-child { margin-inline-start: auto; } }
-  &__kind { font-size: .7rem; font-weight: 650; letter-spacing: .065em; text-transform: uppercase; }
-  h3 { margin-block: 1rem .5rem; font-size: 1.15rem; font-weight: 600; letter-spacing: -.02em; line-height: 1.3; }
-  p { flex: 1; margin: 0 0 1rem; color: var(--admin-muted); font-size: .82rem; line-height: 1.55; }
-  &__link { display: flex; align-items: center; gap: .5rem; font-size: .78rem; font-weight: 650; color: var(--wiki-accent-ink); }
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
+  &:hover {
+    border-color: var(--wiki-accent-ink);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised));
+  }
+  &__top {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    color: var(--wiki-accent-ink);
+    > .v-icon:last-child {
+      margin-inline-start: auto;
+    }
+  }
+  &__kind {
+    font-size: 0.7rem;
+    font-weight: 650;
+    letter-spacing: 0.065em;
+    text-transform: uppercase;
+  }
+  h3 {
+    margin-block: 1rem 0.5rem;
+    font-size: 1.15rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.3;
+  }
+  p {
+    flex: 1;
+    margin: 0 0 1rem;
+    color: var(--admin-muted);
+    font-size: 0.82rem;
+    line-height: 1.55;
+  }
+  &__link {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.78rem;
+    font-weight: 650;
+    color: var(--wiki-accent-ink);
+  }
 }
 .dashboard-panel {
   overflow: hidden;
-  &__header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1.1rem 1.25rem; border-bottom: 1px solid var(--wiki-surface-border); }
-  &__heading { display: flex; align-items: center; gap: .75rem; min-width: 0; h2 { font-size: .95rem; font-weight: 620; } p { font-size: .75rem; color: var(--admin-muted); margin: .2rem 0 0; } }
-  &__icon { color: var(--admin-muted); }
-  .v-table { background: transparent; }
-  td { font-size: .8rem; }
-  .v-table__wrapper { padding-inline: .5rem; }
-  .dashboard-data-table td { max-width: 18rem; overflow-wrap: anywhere; }
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.25rem;
+    border-bottom: 1px solid var(--wiki-surface-border);
+  }
+  &__heading {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+    h2 {
+      font-size: 0.95rem;
+      font-weight: 620;
+    }
+    p {
+      font-size: 0.75rem;
+      color: var(--admin-muted);
+      margin: 0.2rem 0 0;
+    }
+  }
+  &__icon {
+    color: var(--admin-muted);
+  }
+  .v-table {
+    background: transparent;
+  }
+  td {
+    font-size: 0.8rem;
+  }
+  .v-table__wrapper {
+    padding-inline: 0.5rem;
+  }
+  .dashboard-data-table td {
+    max-width: 18rem;
+    overflow-wrap: anywhere;
+  }
 }
 .dashboard-directory {
   scroll-margin-top: calc(var(--wiki-header-height, 64px) + 1rem);
-  &__search { flex: 0 1 18rem; min-width: 12rem; }
-  &__grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.5rem; }
-  &__group { min-width: 0; padding: 1.25rem; border: 1px solid var(--wiki-surface-border); border-radius: var(--admin-radius); background: var(--wiki-surface-raised); > p { color: var(--admin-muted); font-size: .78rem; margin-block: .55rem 1rem; } }
-  &__heading { display: flex; align-items: center; gap: .65rem; color: var(--wiki-accent-ink); h3 { color: rgb(var(--v-theme-on-surface)); font-size: 1rem; font-weight: 620; } }
-  &__link { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding-block: .8rem; color: rgb(var(--v-theme-on-surface)); text-decoration: none; border-top: 1px solid var(--wiki-surface-border); strong { display: block; font-size: .82rem; font-weight: 570; } small { display: block; margin-top: .2rem; color: var(--admin-muted); font-size: .73rem; line-height: 1.4; } &:hover strong { color: var(--wiki-accent-ink); text-decoration: underline; text-underline-offset: .2em; } > .v-icon { color: var(--admin-muted); } }
+  &__search {
+    flex: 0 1 18rem;
+    min-width: 12rem;
+  }
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.5rem;
+  }
+  &__group {
+    min-width: 0;
+    padding: 1.25rem;
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: var(--admin-radius);
+    background: var(--wiki-surface-raised);
+    > p {
+      color: var(--admin-muted);
+      font-size: 0.78rem;
+      margin-block: 0.55rem 1rem;
+    }
+  }
+  &__heading {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    color: var(--wiki-accent-ink);
+    h3 {
+      color: rgb(var(--v-theme-on-surface));
+      font-size: 1rem;
+      font-weight: 620;
+    }
+  }
+  &__link {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding-block: 0.8rem;
+    color: rgb(var(--v-theme-on-surface));
+    text-decoration: none;
+    border-top: 1px solid var(--wiki-surface-border);
+    strong {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 570;
+    }
+    small {
+      display: block;
+      margin-top: 0.2rem;
+      color: var(--admin-muted);
+      font-size: 0.73rem;
+      line-height: 1.4;
+    }
+    &:hover strong {
+      color: var(--wiki-accent-ink);
+      text-decoration: underline;
+      text-underline-offset: 0.2em;
+    }
+    > .v-icon {
+      color: var(--admin-muted);
+    }
+  }
 }
-.dashboard-footnote { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--wiki-surface-border); color: var(--admin-muted); font-size: .72rem; }
-@media (max-width: 1199px) { .dashboard-directory__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.dashboard-footnote {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--wiki-surface-border);
+  color: var(--admin-muted);
+  font-size: 0.72rem;
+}
+@media (max-width: 1199px) {
+  .dashboard-directory__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 @media (max-width: 699px) {
-  .dashboard-inventory { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .admin-stat { padding: 1rem; &:nth-child(3) { border-inline-start: 0; } &:nth-child(n+3) { border-top: 1px solid var(--wiki-surface-border); } }
-  .dashboard-connections__grid, .dashboard-directory__grid { grid-template-columns: 1fr; }
-  .dashboard-connection { padding: 1.1rem; h3 { margin-top: .8rem; } p { margin-bottom: 1rem; } }
-  .dashboard-section-heading { flex-wrap: wrap; gap: .75rem; }
-  .dashboard-directory__search { flex-basis: 100%; }
-  .dashboard-panel__header { flex-wrap: wrap; }
+  .dashboard-inventory {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .admin-stat {
+    padding: 1rem;
+    &:nth-child(3) {
+      border-inline-start: 0;
+    }
+    &:nth-child(n + 3) {
+      border-top: 1px solid var(--wiki-surface-border);
+    }
+  }
+  .dashboard-connections__grid,
+  .dashboard-directory__grid {
+    grid-template-columns: 1fr;
+  }
+  .dashboard-connection {
+    padding: 1.1rem;
+    h3 {
+      margin-top: 0.8rem;
+    }
+    p {
+      margin-bottom: 1rem;
+    }
+  }
+  .dashboard-section-heading {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .dashboard-directory__search {
+    flex-basis: 100%;
+  }
+  .dashboard-panel__header {
+    flex-wrap: wrap;
+  }
 }
-@media (prefers-reduced-motion: reduce) { .admin-stat, .dashboard-connection { transition: none; } }
-@container (max-width: 760px) { .dashboard-connections__grid, .dashboard-directory__grid { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) {
+  .admin-stat,
+  .dashboard-connection {
+    transition: none;
+  }
+}
+@container (max-width: 760px) {
+  .dashboard-connections__grid,
+  .dashboard-directory__grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

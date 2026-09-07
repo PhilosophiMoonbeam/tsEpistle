@@ -1,15 +1,18 @@
 import type { AuthenticationRuntime } from '../../shared/authentication-policy.ts'
 import { accountSessionIsCurrent, sessionVersion } from '../helpers/account-session.ts'
 import { tagAliasMap, type TagIdentity } from '../helpers/tag-aliases.ts'
+import type { SystemRequester } from '../helpers/system-authority.ts'
+import { requireSystemAuthority } from '../helpers/system-authority.ts'
+import type { Knex } from 'knex'
 import passport from 'passport'
 import passportJwt from 'passport-jwt'
 import jwt from 'jsonwebtoken'
 import ms from 'ms'
-import { DateTime } from 'luxon'
-import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { generateKeyPairSync } from 'node:crypto'
 import pemJwk from 'pem-jwk'
 import type NodeCache from 'node-cache'
 import type { NextFunction, Request, Response } from 'express'
+import { DateTime } from 'luxon'
 
 import commonHelper from '../helpers/common.ts'
 import securityHelper from '../helpers/security.ts'
@@ -153,10 +156,11 @@ interface ApiKeyQuery extends PromiseLike<ApiKeyRecord[]> {
 }
 
 interface WikiModels {
-  tags: { query(): PromiseLike<TagIdentity[]> }
   apiKeys: { query(): ApiKeyQuery }
   authentication: { getStrategies(): Promise<StrategyRecord[]> }
   groups: { query(): GroupQuery }
+  knex: Knex
+  tags: { query(): PromiseLike<TagIdentity[]> }
   users: {
     getGuestUser(): Promise<StoredUser>
     query(): UsersQuery
@@ -212,7 +216,7 @@ interface EffectivePermissions {
 }
 
 interface AuthService {
-  activateStrategies(): Promise<void>
+  activateStrategies(strict?: boolean): Promise<void>
   authenticateUserToken(token: string): Promise<StoredUser | null>
   authenticate(req: Request, res: Response, next: NextFunction): void
   checkAccess(user: AccessUser | undefined, permissions?: string[], page?: PageContext | false): boolean
@@ -224,10 +228,10 @@ interface AuthService {
   guest: GuestState
   init(): AuthService
   passport: typeof passport
-  regenerateCertificates(): Promise<void>
+  regenerateCertificates(requester?: SystemRequester): Promise<{ revokedApiKeys: number }>
   reloadApiKeys(): Promise<void>
   reloadGroups(): Promise<void>
-  resetGuestUser(): Promise<void>
+  resetGuestUser(requester?: SystemRequester): Promise<void>
   revocationList: NodeCache
   revokeUserTokens(request: RevokeRequest): void
   strategies: Record<string, ActiveStrategy>
@@ -295,11 +299,6 @@ const getExpiredAt = (info: unknown): string | null => {
   const expiredAt = info.expiredAt
   if (expiredAt instanceof Date) return expiredAt.toISOString()
   return typeof expiredAt === 'string' ? expiredAt : null
-}
-const randomBytesPromise = (size: number): Promise<Buffer> => {
-  const { promise, resolve, reject } = Promise.withResolvers<Buffer>()
-  randomBytes(size, (error, buffer) => (error ? reject(error) : resolve(buffer)))
-  return promise
 }
 const extractBearerToken = (req: Request): string | null => {
   const authorization = req.get('authorization')
@@ -372,7 +371,8 @@ const auth: AuthService = {
     return this
   },
 
-  async activateStrategies() {
+  async activateStrategies(strict = false) {
+    let failed = false
     const activation = activationQueue.then(async () => {
       const wiki = getWiki()
       try {
@@ -428,6 +428,7 @@ const auth: AuthService = {
             this.strategyStatus[strategyRecord.key] = { ...observed, checkedAt: new Date().toISOString(), state: 'ready' }
             wiki.logger.info(`Authentication Strategy ${strategyRecord.displayName}: [ OK ]`)
           } catch (error: unknown) {
+            failed = true
             this.strategyStatus[strategyRecord.key] = { ...observed, checkedAt: new Date().toISOString(), state: 'failed' }
             passport.unuse(strategyRecord.key)
             wiki.logger.error(`Authentication Strategy ${strategyRecord.displayName} (${strategyRecord.key}): [ FAILED ]`)
@@ -436,12 +437,14 @@ const auth: AuthService = {
         }
         this.strategyHost = activationHost
       } catch (error: unknown) {
+        failed = true
         wiki.logger.error('Failed to initialize Authentication Strategies: [ ERROR ]')
         wiki.logger.error(error)
       }
     })
     activationQueue = activation.catch(() => {})
     await activation
+    if (strict && failed) throw new Error('Authentication strategies could not be activated.')
   },
 
   authenticate(req, res, next) {
@@ -663,46 +666,67 @@ const auth: AuthService = {
     this.validApiKeys = keys.map(key => key.id)
   },
 
-  async regenerateCertificates() {
+  async regenerateCertificates(requester?: SystemRequester) {
     const wiki = getWiki()
     wiki.logger.info('Regenerating certificates...')
-    wiki.config.sessionSecret = (await randomBytesPromise(32)).toString('hex')
     const certificates = generateKeyPairSync('rsa', {
       modulusLength: 2048,
       publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
       privateKeyEncoding: { type: 'pkcs1', format: 'pem', cipher: 'aes-256-cbc', passphrase: wiki.config.sessionSecret }
     })
-    wiki.config.certs = {
+    const nextCertificates = {
       jwk: pemJwk.pem2jwk(certificates.publicKey),
       public: certificates.publicKey,
       private: certificates.privateKey
     }
-    await wiki.configSvc.saveToDb(['certs', 'sessionSecret'])
-    await this.activateStrategies()
+    const revokedApiKeys = await wiki.models.knex.transaction(async tx => {
+      if (requester) await requireSystemAuthority(tx, requester, true)
+      const updatedAt = new Date().toISOString()
+      await tx('settings').insert({ key: 'certs', value: nextCertificates, updatedAt }).onConflict('key').merge({ value: nextCertificates, updatedAt })
+      const revoked = await tx('apiKeys').where('isRevoked', false).update({ isRevoked: true, updatedAt }, ['id'])
+      return revoked.length
+    })
+    wiki.config.certs = nextCertificates
+    await this.activateStrategies(true)
+    await this.reloadApiKeys()
+    wiki.events.outbound.emit('reloadConfig')
     wiki.events.outbound.emit('reloadAuthStrategies')
     wiki.logger.info('Regenerated certificates: [ COMPLETED ]')
+    return { revokedApiKeys }
   },
 
-  async resetGuestUser() {
+  async resetGuestUser(requester?: SystemRequester) {
     const wiki = getWiki()
     wiki.logger.info('Resetting guest account...')
-    const guestGroup = await wiki.models.groups.query().where('id', 2).first()
-    if (!guestGroup) throw new Error('Guest group is missing')
-    await wiki.models.users.query().delete().where({ providerKey: 'local', email: 'guest@example.com' }).orWhere('id', 2)
-    const guestUser = await wiki.models.users.query().insert({
-      id: 2,
-      provider: 'local',
-      email: 'guest@example.com',
-      name: 'Guest',
-      password: '',
-      locale: 'en',
-      defaultEditor: 'markdown',
-      tfaIsActive: false,
-      isSystem: true,
-      isActive: true,
-      isVerified: true
+    await wiki.models.knex.transaction(async tx => {
+      if (requester) await requireSystemAuthority(tx, requester, true)
+      const guestGroup = await tx('groups').where('id', 2).forUpdate().first('id')
+      if (!guestGroup) throw new Error('Guest group is missing')
+      const currentGuest = await tx('users').where('id', 2).forUpdate().first('id')
+      const duplicateGuest = await tx('users').where({ providerKey: 'local', email: 'guest@example.com' }).whereNot('id', 2).forUpdate().first('id')
+      if (duplicateGuest) throw new Error('The reserved guest identity is already assigned to another account')
+      const updatedAt = new Date().toISOString()
+      const guest = {
+        providerKey: 'local',
+        email: 'guest@example.com',
+        name: 'Guest',
+        password: '',
+        tfaIsActive: false,
+        tfaSecret: null,
+        localeCode: 'en',
+        defaultEditor: 'markdown',
+        isSystem: true,
+        isActive: true,
+        isVerified: true,
+        mustChangePwd: false,
+        updatedAt
+      }
+      if (currentGuest) await tx('users').where('id', 2).update(guest)
+      else await tx('users').insert({ id: 2, ...guest, createdAt: updatedAt })
+      await tx('userGroups').where('userId', 2).delete()
+      await tx('userGroups').insert({ userId: 2, groupId: 2 })
     })
-    await guestUser.$relatedQuery('groups').relate(guestGroup.id)
+    this.guest.cacheExpiration = DateTime.utc().minus({ days: 1 })
     wiki.logger.info('Guest user has been reset: [ COMPLETED ]')
   },
 

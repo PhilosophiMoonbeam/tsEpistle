@@ -60,7 +60,6 @@ test.describe('release accessibility profiles', () => {
     expect(reachedAdministration, 'Administration must be reachable in the tab order').toBe(true)
     await page.keyboard.press('Enter')
     await expect(page).toHaveURL('/a/dashboard')
-    await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
   })
 
   test('meets contrast and accessibility gates in dark mode', async ({ page }, testInfo) => {

@@ -1,45 +1,36 @@
+import type { Request } from 'express'
+
 import graphHelper from '../../helpers/graph.ts'
-import importV1Operations from '../../operations/import-v1.ts'
+import { systemRequester } from '../../helpers/system-authority.ts'
+import errors from '../../operations/errors.ts'
+import { getDeveloperFlagsWorkspaceStore } from '../../operations/developer-flags.ts'
 import systemOperations from '../../operations/system.ts'
 
-type ResolverArgs = Record<string, unknown>
-
+interface ResolverContext {
+  req: Request
+}
 export default {
-  Query: { async system () { return {} } },
-  Mutation: { async system () { return {} } },
+  Query: {
+    async system() {
+      return {}
+    }
+  },
+  Mutation: {
+    async system() {
+      return {}
+    }
+  },
   SystemQuery: {
-    flags: systemOperations.listFlags,
-    info: systemOperations.getInfo,
-    extensions: systemOperations.listExtensions,
-    exportStatus: systemOperations.getExportStatus
+    async flags(_obj: unknown, _args: Record<string, unknown>, context: ResolverContext) {
+      return getDeveloperFlagsWorkspaceStore().legacyList(systemRequester(context.req))
+    },
+    info: systemOperations.getInfo
   },
   SystemMutation: {
-    async updateFlags (_obj: unknown, args: ResolverArgs) {
-      try {
-        await systemOperations.updateFlags(args.flags)
-        return { responseResult: graphHelper.generateSuccess('System Flags applied successfully') }
-      } catch (err: unknown) { return graphHelper.generateError(err) }
-    },
-    async resetTelemetryClientId () {
-      try {
-        await systemOperations.resetTelemetryClientId()
-        return { responseResult: graphHelper.generateSuccess('Telemetry state updated successfully') }
-      } catch (err: unknown) { return graphHelper.generateError(err) }
-    },
-    async setTelemetry (_obj: unknown, args: ResolverArgs) {
-      try {
-        await systemOperations.setTelemetry(args.enabled)
-        return { responseResult: graphHelper.generateSuccess('Telemetry Client ID has been reset successfully') }
-      } catch (err: unknown) { return graphHelper.generateError(err) }
-    },
-    async importUsersFromV1 (_obj: unknown, args: ResolverArgs) {
-      try {
-        const result = await importV1Operations.importUsers(args)
-        return {
-          responseResult: graphHelper.generateSuccess('Import completed.'),
-          ...result
-        }
-      } catch (err: unknown) { return graphHelper.generateError(err) }
+    async updateFlags() {
+      return graphHelper.generateError(
+        new errors.ApplicationError('Developer flags now use reviewed workspace settings. Use /_api/developer-flags/workspace.', { status: 410 })
+      )
     }
   }
 }

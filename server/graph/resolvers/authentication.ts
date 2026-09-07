@@ -52,7 +52,6 @@ export default function createAuthenticationResolvers(runtime: GraphRuntime) {
   if (typeof rootPath !== 'string' || !isAuthenticationConfig(config) || !isWikiLogger(logger)) {
     throw new TypeError('Authentication resolvers require the root path, config, and logger')
   }
-  const ldapDebug = config.flags.ldapdebug
 
   return {
     Query: {
@@ -80,7 +79,7 @@ export default function createAuthenticationResolvers(runtime: GraphRuntime) {
           const authResult = normalizeResult(await authenticationOperations.login(args, context))
           return { ...authResult, responseResult: graphHelper.generateSuccess('Login success') }
         } catch (err: unknown) {
-          if (args.strategy === 'ldap' && ldapDebug) {
+          if (args.strategy === 'ldap' && config.flags.ldapdebug) {
             logger.warn('LDAP LOGIN ERROR (c1): ', err)
           }
           return graphHelper.generateError(err)
@@ -122,22 +121,6 @@ export default function createAuthenticationResolvers(runtime: GraphRuntime) {
         try {
           await authenticationOperations.setMetricsState(args.enabled)
           return { responseResult: graphHelper.generateSuccess('Metrics state changed successfully') }
-        } catch (err: unknown) {
-          return graphHelper.generateError(err)
-        }
-      },
-      async regenerateCertificates() {
-        try {
-          await authenticationOperations.regenerateCertificates()
-          return { responseResult: graphHelper.generateSuccess('Certificates have been regenerated successfully.') }
-        } catch (err: unknown) {
-          return graphHelper.generateError(err)
-        }
-      },
-      async resetGuestUser() {
-        try {
-          await authenticationOperations.resetGuestUser()
-          return { responseResult: graphHelper.generateSuccess('Guest user has been reset successfully.') }
         } catch (err: unknown) {
           return graphHelper.generateError(err)
         }

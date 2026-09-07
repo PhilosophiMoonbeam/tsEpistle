@@ -103,7 +103,6 @@ enum AssetKind {
 type AssetMutation {
   createFolder(name: String, parentFolderId: Int!, slug: String!): DefaultResponse
   deleteAsset(id: Int!): DefaultResponse
-  flushTempUploads: DefaultResponse
   renameAsset(filename: String!, id: Int!): DefaultResponse
 }
 
@@ -141,9 +140,7 @@ type AuthenticationMutation {
   login(password: String!, strategy: String!, username: String!): AuthenticationLoginResponse
   loginChangePassword(continuationToken: String!, newPassword: String!): AuthenticationLoginResponse
   loginTFA(continuationToken: String!, securityCode: String!, setup: Boolean): AuthenticationLoginResponse
-  regenerateCertificates: DefaultResponse
   register(email: String!, name: String!, password: String!): AuthenticationRegisterResponse
-  resetGuestUser: DefaultResponse
   setMetricsState(enabled: Boolean!): DefaultResponse
 }
 
@@ -448,20 +445,12 @@ type PageListItem {
   visibility: PageVisibility!
 }
 
-type PageMigrationResponse {
-  count: Int
-  responseResult: ResponseStatus!
-}
-
 type PageMutation {
   changeVisibility(confirmPublication: Boolean, expectedSourceRevision: String!, id: Int!, visibility: PageVisibility!): PageResponse
   convert(editor: String!, expectedSourceRevision: String!, id: Int!): DefaultResponse
   create(content: String!, description: String!, editor: String!, isPublished: Boolean!, locale: String!, path: String!, publishEndDate: Date, publishStartDate: Date, scriptCss: String, scriptJs: String, tags: [String]!, title: String!, visibility: PageVisibility!): PageResponse
   delete(expectedSourceRevision: String!, id: Int!): DefaultResponse
-  flushCache: DefaultResponse
-  migrateToLocale(sourceLocale: String!, targetLocale: String!): PageMigrationResponse
   move(destinationLocale: String!, destinationPath: String!, expectedSourceRevision: String!, id: Int!): DefaultResponse
-  rebuildTree: DefaultResponse
   restore(expectedSourceRevision: String!, pageId: Int!, versionId: Int!): DefaultResponse
   transferOwnership(expectedSourceRevision: String!, id: Int!, ownerId: Int!): PageResponse
   update(content: String, description: String, editor: String, expectedSourceRevision: String!, id: Int!, isPublished: Boolean, locale: String, path: String, publishEndDate: Date, publishStartDate: Date, scriptCss: String, scriptJs: String, tags: [String], title: String): PageResponse
@@ -744,21 +733,6 @@ type Subscription {
   loggingLiveTrail: LoggerTrailLine
 }
 
-type SystemExportStatus {
-  message: String
-  progress: Int
-  startedAt: Date
-  status: String
-}
-
-type SystemExtension {
-  description: String!
-  isCompatible: Boolean!
-  isInstalled: Boolean!
-  key: String!
-  title: String!
-}
-
 type SystemFlag {
   key: String!
   value: Boolean!
@@ -767,25 +741,6 @@ type SystemFlag {
 input SystemFlagInput {
   key: String!
   value: Boolean!
-}
-
-enum SystemImportUsersGroupMode {
-  MULTI
-  NONE
-  SINGLE
-}
-
-type SystemImportUsersResponse {
-  failed: [SystemImportUsersResponseFailed]
-  groupsCount: Int
-  responseResult: ResponseStatus
-  usersCount: Int
-}
-
-type SystemImportUsersResponseFailed {
-  email: String
-  error: String
-  provider: String
 }
 
 type SystemInfo {
@@ -823,15 +778,10 @@ type SystemInfo {
 }
 
 type SystemMutation {
-  importUsersFromV1(groupMode: SystemImportUsersGroupMode!, mongoDbConnString: String!): SystemImportUsersResponse
-  resetTelemetryClientId: DefaultResponse
-  setTelemetry(enabled: Boolean!): DefaultResponse
   updateFlags(flags: [SystemFlagInput]!): DefaultResponse
 }
 
 type SystemQuery {
-  exportStatus: SystemExportStatus
-  extensions: [SystemExtension]
   flags: [SystemFlag]
   info: SystemInfo
 }

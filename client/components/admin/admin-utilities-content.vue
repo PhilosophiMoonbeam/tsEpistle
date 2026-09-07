@@ -1,356 +1,216 @@
-<template lang='pug'>
-  v-card
-    v-toolbar(flat, color='primary', density="compact")
-      .text-body-large {{ $t('admin:utilities.contentTitle') }}
-    v-card-text
-      .text-body-large.pb-3.text-primary Rebuild Page Tree
-      .text-body-medium The virtual structure of your wiki is automatically inferred from all page paths. You can trigger a full rebuild of the tree if some virtual folders are missing or not valid anymore.
-      v-btn(variant="outlined", color='primary', @click='rebuildTree', :disabled='loading', :loading='loading && activeAction === "rebuild"').ml-0.mt-3
-        v-icon(start, aria-hidden='true') mdi-file-tree
-        span Rebuild Page Tree
-
-      v-divider.my-5
-
-      .text-body-large.pb-3.text-primary Rerender All Pages
-      .text-body-medium All pages will be rendered again. Useful if internal links are broken or the rendering pipeline has changed.
-      v-btn(variant="outlined", color='primary', @click='rerenderPages', :disabled='loading', :loading='isRerendering').ml-0.mt-3
-        v-icon(start, aria-hidden='true') mdi-refresh
-        span Rerender All Pages
-      v-dialog(
-        v-model='isRerendering'
-        persistent
-        max-width='450'
-        aria-labelledby='rerender-dialog-title'
-        )
-        v-card(color="blue-darken-2")
-          v-card-text.pa-10.text-center
-            semipolar-spinner.animated.fadeIn(
-              :animation-duration='1500'
-              :size='65'
-              color='#FFF'
-              style='margin: 0 auto;'
-              aria-hidden='true'
-            )
-            .mt-5.text-body-large.text-white#rerender-dialog-title Rerendering all pages...
-            .text-body-small(role="status" aria-live="polite" v-if='renderIndex > 0') Rendering {{renderCurrentPath}}... ({{renderIndex}}/{{renderTotal}}, {{renderProgress}}%)
-            .text-body-small.mt-4 Do not leave this page.
-            v-progress-linear.mt-5(
-              color='white'
-              :model-value='renderProgress'
-              stream
-              rounded
-              :buffer-value='0'
-              aria-label='Rerender progress'
-              :aria-valuetext='`${renderProgress}% complete`'
-            )
-
-      v-divider.my-5
-
-      .text-body-large.pb-3.pl-0.text-primary Migrate all pages to target locale
-      .text-body-medium Move eligible pages from the source locale into the target locale. Existing target pages are not overwritten.
-      .text-body-medium.text-error: strong This operation is destructive and cannot be reversed! Make sure you have proper backups!
-      v-row.mt-5.align-center
-        v-col(cols='12', sm='5')
-          v-select(
-            label='Source Locale'
-            variant="outlined"
-            :items='locales'
-            item-title='name'
-            item-value='code'
-            v-model='sourceLocale'
-            :disabled='loading || locales.length < 2'
-            :error-messages='migrationLocaleError'
-          )
-        v-col.d-none.d-sm-flex(cols='auto')
-          v-icon(size="large", aria-hidden='true') mdi-chevron-right-box-outline
-        v-col(cols='12', sm='5')
-          v-select(
-            label='Target Locale'
-            variant="outlined"
-            :items='locales'
-            item-title='name'
-            item-value='code'
-            v-model='targetLocale'
-            :disabled='loading || locales.length < 2'
-            :error-messages='migrationLocaleError'
-          )
-      v-btn(variant="outlined", color='error', @click='requestMigration', :disabled='loading || !isMigrationValid', :loading='loading && activeAction === "migrate"').ml-0.mt-3
-        v-icon(start, aria-hidden='true') mdi-database-export
-        span Review Migration
-
-      v-divider.my-5
-
-      .text-body-large.pb-3.pl-0.text-primary Purge Page History
-      .text-body-medium You may want to purge old history for pages to reduce database usage.
-      .text-body-medium This operation only affects the database and not any history saved by a storage module (e.g. git version history)
-      v-row.mt-5
-        v-col(cols='12', sm='6', md='5')
-          v-select(
-            label='Delete history older than...'
-            variant="outlined"
-            :items='purgeHistoryOptions'
-            item-title='title'
-            item-value='key'
-            v-model='purgeHistorySelection'
-            :disabled='loading'
-          )
-      v-btn(variant="outlined", color='error', @click='requestPurge', :disabled='loading || !purgeHistorySelection', :loading='loading && activeAction === `purge`').ml-0.mt-3
-        v-icon(start, aria-hidden='true') mdi-delete-clock
-        span Review Purge
-      v-dialog(v-model='isConfirmShown', max-width='520', aria-labelledby='content-confirm-title', @after-leave='pendingConfirmation = ""')
-        v-card
-          v-card-title#content-confirm-title Confirm destructive operation
-          v-card-text
-            .text-body-medium(v-if='pendingConfirmation === `migrate`') This will migrate all eligible pages from {{ sourceLocale }} to {{ targetLocale }}. Existing target pages are not overwritten.
-            .text-body-medium(v-else) This will permanently delete page history older than {{ selectedPurgeTitle }} from the database. Storage-module history is not affected.
-            .text-body-medium.mt-3.text-error This action cannot be undone.
-          v-card-actions
-            v-spacer
-            v-btn(autofocus, variant="text", @click='cancelConfirmation', :disabled='loading') Cancel
-            v-btn(color='error', variant="flat", @click='confirmDestructiveAction', :loading='loading') {{ pendingConfirmation === `migrate` ? 'Migrate Pages' : 'Purge History' }}
+<template lang="pug">
+v-card
+  v-card-title Content maintenance
+  v-card-subtitle Repair derived content, move eligible locale records, or delete old history through reviewed receipts.
+  v-card-text
+    v-row
+      v-col(cols='12' md='6')
+        v-sheet.pa-4.rounded.border.h-100
+          h2.text-title-medium Rebuild page tree
+          p.text-body-medium.mt-2 Recreate the inferred folder tree from current page paths. It does not edit page content.
+          v-btn.mt-4(variant='outlined' color='primary' :disabled='busy' @click='openReview(`content-rebuild-tree`)') Review tree rebuild
+      v-col(cols='12' md='6')
+        v-sheet.pa-4.rounded.border.h-100
+          h2.text-title-medium Rerender all pages
+          p.text-body-medium.mt-2 Rebuild rendered output page by page. This can take time; the receipt shows persisted progress if the browser closes.
+          v-btn.mt-4(variant='outlined' color='primary' :disabled='busy' @click='openReview(`content-rerender`)') Review full rerender
+    v-divider.my-6
+    v-row
+      v-col(cols='12' md='6')
+        v-sheet.pa-4.rounded.border.h-100
+          h2.text-title-medium Migrate pages to a locale
+          p.text-body-medium.mt-2 Move eligible pages without overwriting an existing target page. This action cannot be reversed automatically.
+          v-alert.mt-3(v-if='!locales.length' color='warning' variant='tonal' density='compact') No current locales are available for migration. Reload Utilities after locale configuration is restored.
+          v-row.mt-1
+            v-col(cols='12' sm='6')
+              v-select(v-model='sourceLocale' :items='locales' item-title='name' item-value='code' label='Source locale' variant='outlined' hide-details :disabled='busy || !locales.length')
+            v-col(cols='12' sm='6')
+              v-select(v-model='targetLocale' :items='locales' item-title='name' item-value='code' label='Target locale' variant='outlined' hide-details :disabled='busy || !locales.length')
+          v-btn.mt-4(variant='outlined' color='warning' :disabled='busy || !canMigrate' @click='openReview(`content-migrate-locale`)') Review locale migration
+      v-col(cols='12' md='6')
+        v-sheet.pa-4.rounded.border.h-100
+          h2.text-title-medium Purge page history
+          p.text-body-medium.mt-2 Permanently remove database history older than the selected retention period. Storage-module history is not changed.
+          v-select.mt-3(v-model='olderThan' :items='historyPeriods' item-title='title' item-value='value' label='Delete history older than' variant='outlined' hide-details :disabled='busy')
+          v-btn.mt-4(variant='outlined' color='error' :disabled='busy' @click='openReview(`content-purge-history`)') Review history purge
+  utility-review(
+    v-model:open='review.open'
+    :title='review.title'
+    :effect='review.effect'
+    :confirm-text='review.confirmation'
+    :parameters='review.parameters'
+    :submission-error='reviewError'
+    :busy='busy'
+    :uncertain-receipt='uncertainReceipt'
+    @dirty-state='setReviewDirty'
+    @confirm='submit'
+  )
 </template>
 
+<script lang="ts">
+import { defineComponent, type PropType } from 'vue'
+import {
+  UtilityHistoryRetentionPeriods,
+  utilityOperationConfirmation,
+  type UtilitiesWorkspace,
+  type UtilityOperation,
+  type UtilityOperationKind
+} from '../../../shared/utilities-workspace.ts'
+import UtilityReview from './admin-utilities-review.vue'
 
-<script lang='ts'>
-import { defineComponent } from 'vue'
-import { fetchPageList } from '../../helpers/pages-api'
-import { wikiStore } from '@/store/index.ts'
-import { migratePagesToLocale, purgePageHistory, rebuildPageTree, renderPage } from '../../helpers/system-api'
+type ContentKind = Extract<UtilityOperationKind, 'content-rebuild-tree' | 'content-rerender' | 'content-migrate-locale' | 'content-purge-history'>
+type ReviewSnapshot = {
+  kind: ContentKind
+  title: string
+  effect: string
+  confirmation: string
+  parameters: Array<{ label: string; value: string }>
+  payload: Record<string, string>
+}
 
-import { SemipolarSpinner } from 'epic-spinners'
-
-/* global siteLangs */
+const historyPeriodTitles: Record<string, string> = {
+  P1D: '1 day',
+  P1M: '1 month',
+  P3M: '3 months',
+  P6M: '6 months',
+  P1Y: '1 year',
+  P2Y: '2 years',
+  P3Y: '3 years',
+  P5Y: '5 years'
+}
+const historyPeriodTitle = (value: string): string => historyPeriodTitles[value] ?? value
 
 export default defineComponent({
-  components: {
-    SemipolarSpinner
+  components: { UtilityReview },
+  props: {
+    workspace: { type: Object as PropType<UtilitiesWorkspace>, required: true },
+    busy: { type: Boolean, default: false },
+    uncertainReceipt: { type: Object as PropType<UtilityOperation | null>, default: null }
   },
-  data: () => {
-    return {
-      isRerendering: false,
-      isConfirmShown: false,
-      pendingConfirmation: '' as '' | 'migrate' | 'purge',
-      activeAction: '' as '' | 'rebuild' | 'rerender' | 'migrate' | 'purge',
-      loading: false,
-      isDisposed: false,
-      renderProgress: 0,
-      renderIndex: 0,
-      renderTotal: 0,
-      renderCurrentPath: '',
-      sourceLocale: '',
-      targetLocale: '',
-      purgeHistorySelection: 'P1Y',
-      purgeHistoryOptions: [
-        { key: 'P1D', title: '1 day' },
-        { key: 'P1M', title: '1 month' },
-        { key: 'P3M', title: '3 months' },
-        { key: 'P6M', title: '6 months' },
-        { key: 'P1Y', title: '1 year' },
-        { key: 'P2Y', title: '2 years' },
-        { key: 'P3Y', title: '3 years' },
-        { key: 'P5Y', title: '5 years' }
-      ]
+  emits: ['request', 'draft-state'],
+  data: () => ({
+    sourceLocale: '',
+    targetLocale: '',
+    olderThan: 'P1Y',
+    review: {
+      open: false,
+      kind: 'content-rebuild-tree' as ContentKind,
+      title: '',
+      effect: '',
+      confirmation: '',
+      parameters: [] as Array<{ label: string; value: string }>,
+      payload: {} as Record<string, string>
+    },
+    reviewError: '',
+    reviewDirty: false
+  }),
+  computed: {
+    locales() {
+      return this.workspace.locales
+    },
+    historyPeriods() {
+      return UtilityHistoryRetentionPeriods.map((value) => ({ value, title: historyPeriodTitle(value) }))
+    },
+    canMigrate(): boolean {
+      return (
+        this.locales.some((locale) => locale.code === this.sourceLocale) &&
+        this.locales.some((locale) => locale.code === this.targetLocale) &&
+        this.sourceLocale !== this.targetLocale
+      )
+    },
+    formDirty(): boolean {
+      return Boolean(this.sourceLocale || this.targetLocale || this.olderThan !== 'P1Y')
     }
   },
-  beforeUnmount () {
-    this.isDisposed = true
-  },
-  computed: {
-    locales () {
-      return siteLangs
+  watch: {
+    'workspace.locales': {
+      immediate: true,
+      handler() {
+        if (!this.locales.some((locale) => locale.code === this.sourceLocale)) this.sourceLocale = ''
+        if (!this.locales.some((locale) => locale.code === this.targetLocale)) this.targetLocale = ''
+      }
     },
-    isMigrationValid () {
-      return Boolean(this.sourceLocale && this.targetLocale && this.sourceLocale !== this.targetLocale)
+    sourceLocale() {
+      this.publishDraftState()
     },
-    migrationLocaleError () {
-      return this.sourceLocale && this.sourceLocale === this.targetLocale
-        ? 'Source and target locales must be different.'
-        : ''
+    targetLocale() {
+      this.publishDraftState()
     },
-    selectedPurgeTitle () {
-      return this.purgeHistoryOptions.find(option => option.key === this.purgeHistorySelection)?.title || this.purgeHistorySelection
+    olderThan() {
+      this.publishDraftState()
     }
   },
   methods: {
-    requestMigration () {
-      if (this.isMigrationValid) {
-        this.pendingConfirmation = 'migrate'
-        this.isConfirmShown = true
-      }
+    localeTitle(code: string): string {
+      const locale = this.locales.find((value) => value.code === code)
+      return locale ? `${locale.name} (${locale.code})` : code
     },
-    requestPurge () {
-      if (this.purgeHistorySelection) {
-        this.pendingConfirmation = 'purge'
-        this.isConfirmShown = true
+    openReview(kind: ContentKind) {
+      if (this.busy || (kind === 'content-migrate-locale' && !this.canMigrate)) return
+      const payload = Object.freeze(
+        kind === 'content-migrate-locale'
+          ? { sourceLocale: this.sourceLocale, targetLocale: this.targetLocale }
+          : kind === 'content-purge-history'
+            ? { olderThan: this.olderThan }
+            : {}
+      ) as Record<string, string>
+      const detail: Record<ContentKind, Omit<ReviewSnapshot, 'kind' | 'confirmation' | 'payload'>> = {
+        'content-rebuild-tree': {
+          title: 'Review page-tree rebuild',
+          effect: 'This regenerates the inferred page tree from current paths. It does not edit source content.',
+          parameters: [{ label: 'Maintenance operation', value: 'Rebuild page tree from current page paths' }]
+        },
+        'content-rerender': {
+          title: 'Review full rerender',
+          effect:
+            'This rebuilds rendered output for every current page. It can be interrupted; refresh the receipt rather than restarting an unconfirmed run.',
+          parameters: [{ label: 'Maintenance operation', value: 'Rerender every current page' }]
+        },
+        'content-migrate-locale': {
+          title: 'Review locale migration',
+          effect: `This moves eligible pages from ${this.localeTitle(this.sourceLocale)} to ${this.localeTitle(this.targetLocale)}. Existing target pages are not overwritten.`,
+          parameters: [
+            { label: 'Source locale', value: this.localeTitle(this.sourceLocale) },
+            { label: 'Target locale', value: this.localeTitle(this.targetLocale) }
+          ]
+        },
+        'content-purge-history': {
+          title: 'Review history purge',
+          effect: `This permanently deletes database page history older than ${historyPeriodTitle(this.olderThan)}.`,
+          parameters: [
+            { label: 'Delete history older than', value: historyPeriodTitle(this.olderThan) },
+            { label: 'Storage-module history', value: 'Unchanged' }
+          ]
+        }
       }
+      this.review = { open: true, kind, confirmation: utilityOperationConfirmation(kind), payload, ...detail[kind] }
+      this.reviewError = ''
     },
-    cancelConfirmation () {
-      if (!this.loading) {
-        this.isConfirmShown = false
-      }
+    setReviewDirty(dirty: boolean) {
+      this.reviewDirty = dirty
+      this.publishDraftState()
     },
-    async confirmDestructiveAction () {
-      if (this.loading || this.isDisposed) {
-        return
-      }
-      const action = this.pendingConfirmation
-      this.isConfirmShown = false
-      if (action === 'migrate') {
-        await this.migrateToLocale()
-      } else if (action === 'purge') {
-        await this.purgeHistory()
-      }
+    publishDraftState() {
+      this.$emit('draft-state', this.formDirty || this.reviewDirty)
     },
-    async rebuildTree () {
-      if (this.loading || this.isDisposed) {
-        return
-      }
-      this.loading = true
-      this.activeAction = 'rebuild'
-      wikiStore.startLoading('admin-utilities-content-rebuildtree')
-      try {
-        await rebuildPageTree(window.fetch.bind(window))
-        if (this.isDisposed) {
-          return
+    submit({ reason, acknowledgedUncertainId }: { reason: string; acknowledgedUncertainId?: string }) {
+      const snapshot = this.review
+      if (!snapshot.open || this.busy) return
+      this.$emit('request', {
+        kind: snapshot.kind,
+        reason,
+        acknowledgedUncertainId,
+        payload: snapshot.payload,
+        onRecorded: () => {
+          this.review.open = false
+          this.reviewError = ''
+          this.setReviewDirty(false)
+        },
+        onRejected: (message: string) => {
+          this.reviewError = message
         }
-        wikiStore.showNotification({
-          message: 'Page Tree rebuilt successfully.',
-          style: 'success',
-          icon: 'check'
-        })
-      } catch (err) {
-        if (!this.isDisposed) wikiStore.showError(err)
-      } finally {
-        wikiStore.stopLoading('admin-utilities-content-rebuildtree')
-        if (!this.isDisposed) {
-          this.loading = false
-          this.activeAction = ''
-        }
-      }
-    },
-    async rerenderPages () {
-      if (this.loading || this.isDisposed) {
-        return
-      }
-      this.loading = true
-      this.activeAction = 'rerender'
-      this.isRerendering = true
-      wikiStore.startLoading('admin-utilities-content-rerender')
-      try {
-        const pages = await fetchPageList(window.fetch.bind(window))
-        if (this.isDisposed) {
-          return
-        }
-        if (pages.length < 1) {
-          throw new Error('Could not find any page to render!')
-        }
-
-        this.renderIndex = 0
-        this.renderProgress = 0
-        this.renderTotal = pages.length
-        let failed = 0
-        for (const page of pages) {
-          this.renderCurrentPath = `${page.locale}/${page.path}`
-          try {
-            await renderPage(window.fetch.bind(window), page.id)
-          } catch (err) {
-            failed++
-          } finally {
-            if (this.isDisposed) {
-              break
-            }
-            this.renderIndex++
-            this.renderProgress = Math.round(this.renderIndex / this.renderTotal * 100)
-          }
-        }
-        if (this.isDisposed) {
-          return
-        }
-        if (failed > 0) {
-          wikiStore.showNotification({
-            message: `Completed with ${failed} pages that failed to render. Check server logs for details.`,
-            style: 'error',
-            icon: 'alert'
-          })
-        } else {
-          wikiStore.showNotification({
-            message: 'All pages have been rendered successfully.',
-            style: 'success',
-            icon: 'check'
-          })
-        }
-      } catch (err) {
-        if (!this.isDisposed) wikiStore.showError(err)
-      } finally {
-        wikiStore.stopLoading('admin-utilities-content-rerender')
-        if (!this.isDisposed) {
-          this.isRerendering = false
-          this.loading = false
-          this.activeAction = ''
-        }
-      }
-    },
-    async migrateToLocale () {
-      if (!this.isMigrationValid) {
-        return
-      }
-      if (this.loading || this.isDisposed) {
-        return
-      }
-      this.loading = true
-      this.activeAction = 'migrate'
-      wikiStore.startLoading('admin-utilities-content-migratelocale')
-      try {
-        const resp = await migratePagesToLocale(window.fetch.bind(window), this.sourceLocale, this.targetLocale)
-        if (this.isDisposed) {
-          return
-        }
-        wikiStore.showNotification({
-          message: `Migrated ${resp.count} page(s) to target locale successfully.`,
-          style: 'success',
-          icon: 'check'
-        })
-      } catch (err) {
-        if (!this.isDisposed) wikiStore.showError(err)
-      } finally {
-        wikiStore.stopLoading('admin-utilities-content-migratelocale')
-        if (!this.isDisposed) {
-          this.loading = false
-          this.activeAction = ''
-        }
-      }
-    },
-    async purgeHistory () {
-      if (this.loading || this.isDisposed) {
-        return
-      }
-      if (!this.purgeHistorySelection) {
-        return
-      }
-      this.loading = true
-      this.activeAction = 'purge'
-      wikiStore.startLoading('admin-utilities-content-purgehistory')
-      try {
-        await purgePageHistory(window.fetch.bind(window), this.purgeHistorySelection)
-        if (this.isDisposed) {
-          return
-        }
-        wikiStore.showNotification({
-          message: 'Purged history successfully.',
-          style: 'success',
-          icon: 'check'
-        })
-      } catch (err) {
-        if (!this.isDisposed) wikiStore.showError(err)
-      } finally {
-        wikiStore.stopLoading('admin-utilities-content-purgehistory')
-        if (!this.isDisposed) {
-          this.loading = false
-          this.activeAction = ''
-        }
-      }
+      })
     }
   }
-
 })
 </script>

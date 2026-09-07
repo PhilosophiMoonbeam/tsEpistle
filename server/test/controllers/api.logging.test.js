@@ -2,402 +2,175 @@ vi.mockModule('express', import.meta.url, () => {
   const routers = []
   const express = {
     Router: () => {
-      const router = {
-        get: vi.fn(),
-        post: vi.fn(),
-        patch: vi.fn(),
-        put: vi.fn(),
-        delete: vi.fn(),
-        use: vi.fn()
-      }
+      const router = { get: vi.fn(), post: vi.fn(), put: vi.fn() }
       routers.push(router)
       return router
     },
     __routers: routers
   }
-
   return { default: express, ...express }
 })
 
 const { default: express } = await import('express')
 
-const API_CONTROLLER_NAMES = [
-  'analytics',
-  'assets',
-  'auth',
-  'comments',
-  'groups',
-  'locales',
-  'logging',
-  'mail',
-  'navigation',
-  'pages',
-  'rendering',
-  'search',
-  'site',
-  'storage',
-  'system',
-  'theming',
-  'users'
-]
+describe('reviewed Logging API', () => {
+  let workspace
+  let systemRequester
+  let access
+  let transport
 
-const loadApiIndexRouter = async () => {
-  const subrouters = Object.fromEntries(API_CONTROLLER_NAMES.map(name => [name, {}]))
-
-  for (const name of API_CONTROLLER_NAMES) {
-    vi.mockModule(`../../controllers/api/${name}.ts`, import.meta.url, () => ({
-      default: subrouters[name]
-    }))
-  }
-
-  try {
-    expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
-  } finally {
-    for (const name of API_CONTROLLER_NAMES) {
-      vi.unmockModule(`../../controllers/api/${name}.ts`, import.meta.url)
-    }
-  }
-
-  return { apiRouter: express.__routers.at(-1), subrouters }
-}
-
-describe('controllers/api logging endpoints', () => {
   beforeEach(() => {
     vi.resetModules()
     express.__routers.length = 0
-
-    global.WIKI = {
-      auth: {
-        checkAccess: vi.fn()
-      },
-      data: {
-        loggers: [
-          {
-            key: 'alpha',
-            title: 'Alpha Logger',
-            description: 'Alpha logging provider.',
-            logo: '/alpha.svg',
-            website: 'https://example.test/alpha-logger',
-            props: {
-              endpoint: {
-                type: 'string',
-                title: 'Endpoint',
-                order: 2,
-                hint: 'Example endpoint label'
-              },
-              redact: {
-                type: 'boolean',
-                title: 'Redact Values',
-                order: 1
-              },
-              unusedField: {
-                type: 'string',
-                title: 'Unused Field'
-              }
-            },
-            unrelatedMetadata: 'do-not-return'
-          },
-          {
-            key: 'beta',
-            title: 'Beta Logger',
-            description: 'Beta logging provider.',
-            logo: '/beta.svg',
-            website: 'https://example.test/beta-logger',
-            props: {}
-          }
-        ]
-      },
-      models: {
-        loggers: {
-          query: vi.fn(),
-          getLoggers: vi.fn().mockResolvedValue([
-            {
-              key: 'beta',
-              isEnabled: false,
-              level: 'warn',
-              config: {},
-              privateField: 'do-not-return',
-              props: {
-                raw: true
-              }
-            },
-            {
-              key: 'alpha',
-              isEnabled: true,
-              level: 'info',
-              config: {
-                endpoint: 'example-endpoint',
-                redact: true
-              },
-              privateField: 'do-not-return',
-              internalConfig: {
-                raw: 'do-not-return'
-              }
-            }
-          ])
-        }
-      }
+    workspace = {
+      inspect: vi.fn().mockResolvedValue({ fingerprint: 'f'.repeat(64) }),
+      save: vi.fn().mockResolvedValue({ revision: 'save-1', applied: false }),
+      apply: vi.fn().mockResolvedValue({ revision: 'apply-1', applied: true }),
+      authorizeLive: vi.fn().mockResolvedValue(undefined)
     }
+    systemRequester = vi.fn(req => ({ user: req.user, apiKey: req.apiKeyAuth }))
+    access = vi.fn().mockReturnValue(true)
+    transport = {}
+    vi.mockModule('../../operations/logging.ts', import.meta.url, () => ({
+      getLoggingWorkspaceStore: () => workspace,
+      redactLoggingLiveOutput: value => String(value)
+    }))
+    vi.mockModule('../../helpers/system-authority.ts', import.meta.url, () => ({ systemRequester }))
+    vi.mockModule('../../controllers/_types.ts', import.meta.url, () => ({
+      errorStatus: error => error?.status,
+      getTransportRuntime: () => transport,
+      getWikiAuth: () => ({ checkAccess: access })
+    }))
   })
 
-  const loadLoggersRouter = async () => {
+  afterEach(() => {
+    vi.unmockModule('../../operations/logging.ts', import.meta.url)
+    vi.unmockModule('../../helpers/system-authority.ts', import.meta.url)
+    vi.unmockModule('../../controllers/_types.ts', import.meta.url)
+  })
+
+  const response = () => ({
+    set: vi.fn().mockReturnThis(),
+    status: vi.fn().mockReturnThis(),
+    json: vi.fn().mockReturnThis(),
+    flushHeaders: vi.fn(),
+    write: vi.fn().mockReturnValue(true),
+    end: vi.fn(),
+    writableEnded: false
+  })
+  const handler = async (method, path) => {
     await vi.importFresh('../../controllers/api/logging.ts', import.meta.url)
-    return express.__routers[0]
+    const entry = express.__routers.at(-1)[method].mock.calls.find(([registered]) => registered === path)
+    return entry?.[1]
   }
 
-  const loadLoggersHandler = async () => {
-    const router = await loadLoggersRouter()
-    return router.get.mock.calls.find(([path]) => path === '/loggers')[1]
-  }
+  it('reads the workspace through the current authority boundary', async () => {
+    const read = await handler('get', '/workspace')
+    const req = { user: { id: 1 } }
+    const res = response()
 
-  const saveLoggersHandler = async () => {
-    const router = await loadLoggersRouter()
-    return router.post.mock.calls.find(([path]) => path === '/loggers')[1]
-  }
+    await read(req, res)
 
-  it('registers logging loggers route', async () => { const handler = await loadLoggersHandler()
-
-  expect(typeof handler).toBe('function') })
-
-
-  it('returns 403 for unauthorized logger requests without querying loggers', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = await loadLoggersHandler()
-    const req = { user: { permissions: [] } }
-    const res = { sendStatus: vi.fn(), json: vi.fn() }
-
-    await handler(req, res, vi.fn())
-
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
-    expect(res.sendStatus).toHaveBeenCalledWith(403)
-    expect(res.json).not.toHaveBeenCalled()
-    expect(global.WIKI.models.loggers.getLoggers).not.toHaveBeenCalled()
+    expect(access).toHaveBeenCalledWith(req.user, ['manage:system'])
+    expect(systemRequester).toHaveBeenCalledWith(req)
+    expect(workspace.inspect).toHaveBeenCalledWith({ user: req.user, apiKey: undefined })
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
+    expect(res.json).toHaveBeenCalledWith({ fingerprint: 'f'.repeat(64) })
   })
 
-  it('returns allowlisted logger fields sorted by title without raw props or internal fields', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = await loadLoggersHandler()
-    const res = { sendStatus: vi.fn(), json: vi.fn() }
+  it('writes and applies only the reviewed workspace payload', async () => {
+    const save = await handler('put', '/workspace')
+    const apply = await handler('post', '/workspace/apply')
+    const req = { user: { id: 1 }, body: { fingerprint: 'f'.repeat(64), reason: 'Rotate destination policy' } }
 
-    await handler({ user: {} }, res, vi.fn())
+    await save(req, response())
+    await apply(req, response())
 
-    expect(global.WIKI.models.loggers.getLoggers).toHaveBeenCalledWith()
-    expect(res.json).toHaveBeenCalledWith([
-      {
-        isEnabled: true,
-        key: 'alpha',
-        title: 'Alpha Logger',
-        description: 'Alpha logging provider.',
-        logo: '/alpha.svg',
-        website: 'https://example.test/alpha-logger',
-        level: 'info',
-        config: expect.any(Array)
-      },
-      {
-        isEnabled: false,
-        key: 'beta',
-        title: 'Beta Logger',
-        description: 'Beta logging provider.',
-        logo: '/beta.svg',
-        website: 'https://example.test/beta-logger',
-        level: 'warn',
-        config: []
-      }
-    ])
-    const row = res.json.mock.calls[0][0][0]
-    expect(row).not.toHaveProperty('props')
-    expect(row).not.toHaveProperty('privateField')
-    expect(row).not.toHaveProperty('internalConfig')
-    expect(row).not.toHaveProperty('unrelatedMetadata')
+    expect(workspace.save).toHaveBeenCalledWith({ user: req.user, apiKey: undefined }, req.body)
+    expect(workspace.apply).toHaveBeenCalledWith({ user: req.user, apiKey: undefined }, req.body)
   })
 
-  it('uses current logger metadata and preserves PostgreSQL booleans', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = await loadLoggersHandler()
-    global.WIKI.data.loggers = [{
-      key: 'late',
-      title: 'Late Logger',
-      description: 'Loaded after route initialization.',
-      logo: '/late.svg',
-      website: 'https://example.test/late-logger',
-      props: {}
-    }]
-    global.WIKI.models.loggers.getLoggers.mockResolvedValue([{
-      key: 'late',
-      isEnabled: true,
-      level: 'info',
-      config: {}
-    }])
-    const res = { sendStatus: vi.fn(), json: vi.fn() }
+  it('preserves expected conflict detail while bounding unexpected failures', async () => {
+    workspace.save.mockRejectedValueOnce(Object.assign(new Error('Logging settings changed. Reload and review again.'), { status: 409 }))
+    workspace.apply.mockRejectedValueOnce(new Error('private transport exception'))
+    const save = await handler('put', '/workspace')
+    const apply = await handler('post', '/workspace/apply')
+    const req = { user: { id: 1 }, body: {} }
+    const conflict = response()
+    const unavailable = response()
 
-    await handler({ user: {} }, res, vi.fn())
+    await save(req, conflict)
+    await apply(req, unavailable)
 
-    expect(res.json).toHaveBeenCalledWith([{
-      isEnabled: true,
-      key: 'late',
-      title: 'Late Logger',
-      description: 'Loaded after route initialization.',
-      logo: '/late.svg',
-      website: 'https://example.test/late-logger',
-      level: 'info',
-      config: []
-    }])
+    expect(conflict.status).toHaveBeenCalledWith(409)
+    expect(conflict.json).toHaveBeenCalledWith({ error: 'Logging settings changed. Reload and review again.' })
+    expect(unavailable.status).toHaveBeenCalledWith(503)
+    expect(unavailable.json.mock.calls[0][0].error).not.toContain('private transport exception')
   })
 
-  it('merges config with logger metadata as JSON strings sorted by config key', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = await loadLoggersHandler()
-    const res = { sendStatus: vi.fn(), json: vi.fn() }
+  it('retires direct logger writes after revalidating authority', async () => {
+    const retired = await handler('post', '/loggers')
+    const req = { user: { id: 1 }, body: { loggers: [] } }
+    const res = response()
 
-    await handler({ user: {} }, res, vi.fn())
+    await retired(req, res)
 
-    const config = res.json.mock.calls[0][0][0].config
-    expect(config.map(row => row.key)).toEqual(['endpoint', 'redact'])
-    expect(config).toEqual([
-      {
-        key: 'endpoint',
-        value: JSON.stringify({
-          type: 'string',
-          title: 'Endpoint',
-          order: 2,
-          hint: 'Example endpoint label',
-          value: 'example-endpoint'
-        })
-      },
-      {
-        key: 'redact',
-        value: JSON.stringify({
-          type: 'boolean',
-          title: 'Redact Values',
-          order: 1,
-          value: true
-        })
-      }
-    ])
+    expect(workspace.authorizeLive).toHaveBeenCalledWith({ user: req.user, apiKey: undefined })
+    expect(res.status).toHaveBeenCalledWith(410)
+    expect(res.json.mock.calls[0][0].error).toContain('/_api/logging/workspace')
   })
 
-  it('registers logging save loggers route', async () => { const handler = await saveLoggersHandler()
+  it('does not open a live stream when the logging trail broker is unavailable', async () => {
+    const live = await handler('get', '/live')
+    const res = response()
 
-  expect(typeof handler).toBe('function') })
+    await live({ user: { id: 1 } }, res)
 
-  it('returns JSON 403 for unauthorized logger saves without patching loggers', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(false)
-    const handler = await saveLoggersHandler()
-    const req = { user: { permissions: [] }, body: { loggers: [] } }
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-
-    await handler(req, res)
-
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system'])
-    expect(res.status).toHaveBeenCalledWith(403)
-    expect(res.json).toHaveBeenCalledWith({ error: 'Forbidden' })
-    expect(global.WIKI.models.loggers.query).not.toHaveBeenCalled()
+    expect(res.status).toHaveBeenCalledWith(503)
+    expect(workspace.authorizeLive).not.toHaveBeenCalled()
+    expect(res.flushHeaders).not.toHaveBeenCalled()
   })
 
-  it('returns JSON 400 for malformed logger save payloads', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const handler = await saveLoggersHandler()
-    const invalidPayloads = [
-      {},
-      { loggers: 'not-array' },
-      { loggers: [null] },
-      { loggers: [{ key: 'alpha', isEnabled: 'yes', level: 'info', config: [] }] },
-      { loggers: [{ key: 'alpha', isEnabled: true, level: 42, config: [] }] },
-      { loggers: [{ key: 'alpha', isEnabled: true, level: 'info', config: [{ key: 'endpoint', value: 42 }] }] }
-    ]
-
-    for (const body of invalidPayloads) {
-      const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-      await handler({ user: {}, body }, res)
-      expect(res.status).toHaveBeenCalledWith(400)
-      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid loggers payload' })
+  it('reserves a principal slot before authorization so a third simultaneous request is rejected', async () => {
+    const live = await handler('get', '/live')
+    transport.loggingLiveTrail = {
+      subscribe: vi.fn(() => {
+        const completion = Promise.withResolvers()
+        const source = {
+          pendingEvents: 0,
+          pendingBytes: 0,
+          next: () => completion.promise,
+          return: () => {
+            completion.resolve({ value: undefined, done: true })
+            return Promise.resolve({ value: undefined, done: true })
+          },
+          [Symbol.asyncIterator] () { return this }
+        }
+        return source
+      })
     }
-    expect(global.WIKI.models.loggers.query).not.toHaveBeenCalled()
-  })
-
-  it('patches logger rows by key preserving GraphQL config string semantics', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const patch = vi.fn().mockReturnThis()
-    const where = vi.fn().mockResolvedValue(1)
-    global.WIKI.models.loggers.query.mockReturnValue({ patch, where })
-    const handler = await saveLoggersHandler()
-    const loggers = [
-      {
-        key: 'alpha',
-        isEnabled: true,
-        level: 'debug',
-        config: [
-          { key: 'endpoint', value: JSON.stringify({ v: 'https://log.example.test' }) },
-          { key: 'redact', value: JSON.stringify({ v: true }) }
-        ]
-      },
-      {
-        key: 'beta',
-        isEnabled: false,
-        level: 'warn',
-        config: []
+    const request = () => {
+      let close = () => {}
+      return {
+        user: { id: 1 },
+        once: vi.fn((_event, listener) => { close = listener }),
+        off: vi.fn(),
+        close: () => close()
       }
-    ]
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
+    }
+    const firstRequest = request()
+    const secondRequest = request()
+    const thirdRequest = request()
+    const first = live(firstRequest, response())
+    const second = live(secondRequest, response())
 
-    await handler({ user: {}, body: { loggers } }, res)
+    await vi.waitFor(() => expect(transport.loggingLiveTrail.subscribe).toHaveBeenCalledTimes(2))
+    const rejected = response()
+    await live(thirdRequest, rejected)
 
-    expect(global.WIKI.models.loggers.query).toHaveBeenCalledTimes(2)
-    expect(patch).toHaveBeenNthCalledWith(1, {
-      isEnabled: true,
-      level: 'debug',
-      config: {
-        endpoint: JSON.stringify({ v: 'https://log.example.test' }),
-        redact: JSON.stringify({ v: true })
-      }
-    })
-    expect(where).toHaveBeenNthCalledWith(1, 'key', 'alpha')
-    expect(patch).toHaveBeenNthCalledWith(2, {
-      isEnabled: false,
-      level: 'warn',
-      config: {}
-    })
-    expect(where).toHaveBeenNthCalledWith(2, 'key', 'beta')
-    expect(res.status).not.toHaveBeenCalled()
-    expect(res.json).toHaveBeenCalledWith({ message: 'Loggers updated successfully' })
-  })
-
-  it('returns JSON 500 for unexpected logger save failures', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    global.WIKI.models.loggers.query.mockReturnValue({
-      patch: vi.fn().mockReturnThis(),
-      where: vi.fn().mockRejectedValue(new Error('patch failed'))
-    })
-    const handler = await saveLoggersHandler()
-    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() }
-
-    await handler({
-      user: {},
-      body: {
-        loggers: [{ key: 'alpha', isEnabled: true, level: 'info', config: [] }]
-      }
-    }, res)
-
-    expect(res.status).toHaveBeenCalledWith(500)
-    expect(res.json).toHaveBeenCalledWith({ error: 'patch failed' })
-  })
-
-  it('forwards unexpected failures to next', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
-    const err = new Error('logging failed')
-    global.WIKI.models.loggers.getLoggers.mockRejectedValue(err)
-    const handler = await loadLoggersHandler()
-    const res = { sendStatus: vi.fn(), json: vi.fn() }
-    const next = vi.fn()
-
-    await handler({ user: {} }, res, next)
-
-    expect(next).toHaveBeenCalledWith(err)
-    expect(res.json).not.toHaveBeenCalled()
-  })
-  it('is mounted by the API index router', async () => {
-    const { apiRouter, subrouters } = await loadApiIndexRouter()
-
-    expect(apiRouter.use).toHaveBeenCalledWith('/logging', subrouters.logging)
+    expect(rejected.status).toHaveBeenCalledWith(429)
+    firstRequest.close()
+    secondRequest.close()
+    await Promise.all([first, second])
   })
 })
