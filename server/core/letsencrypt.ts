@@ -12,6 +12,8 @@ import { loadTlsMaterial, type TlsMaterialConfiguration } from '../repositories/
 import type { TlsCertificateEvidence } from '../../shared/tls-workspace.ts'
 
 interface Deployment {
+  enabled: boolean
+  provider: string
   domain: string
   subscriberEmail: string
   offline: boolean
@@ -36,6 +38,7 @@ export interface LetsEncryptService {
 }
 class AcmeLifecycleError extends Error {}
 const domain = (value: string): string => {
+  if (typeof value !== 'string') throw new AcmeLifecycleError('Configure a valid certificate domain in deployment settings.')
   const ascii = domainToASCII(value.trim()).toLowerCase()
   if (
     !ascii ||
@@ -99,13 +102,15 @@ export const createLetsEncryptService = (deps: Dependencies): LetsEncryptService
       running = true
       try {
         return await deps.state.exclusive(async assertHeld => {
-          const selected = deps.deployment(),
+          const selected = { ...deps.deployment() },
             hostname = domain(selected.domain)
           if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/.test(selected.subscriberEmail) || selected.subscriberEmail.length > 254)
             throw new AcmeLifecycleError('Configure a valid ACME subscriber email in deployment settings.')
           const guard = async () => {
             await assertHeld()
             const current = deps.deployment()
+            if (!current.enabled || current.provider !== 'letsencrypt')
+              throw new AcmeLifecycleError('Native Let’s Encrypt is not enabled in deployment settings.')
             if (current.offline) throw new AcmeLifecycleError('Certificate requests are paused while offline mode is enabled.')
             if (domain(current.domain) !== hostname || current.subscriberEmail !== selected.subscriberEmail)
               throw new AcmeLifecycleError('Certificate deployment settings changed during the request.')
@@ -222,7 +227,7 @@ interface WikiContext {
     letsencrypt: AcmeSavedState
     maintainerEmail: string
     offline?: boolean
-    ssl: { domain: string; subscriberEmail: string } & TlsMaterialConfiguration
+    ssl: { enabled?: boolean; provider?: string; domain: string; subscriberEmail: string } & TlsMaterialConfiguration
   }
   logger: Dependencies['logger']
 }
@@ -231,7 +236,13 @@ const getService = () => {
   const wiki = WIKI as unknown as WikiContext
   return (instance ??= createLetsEncryptService({
     state: createAcmeStateStore(wiki.models.knex, () => wiki.config.letsencrypt),
-    deployment: () => ({ domain: wiki.config.ssl.domain, subscriberEmail: wiki.config.ssl.subscriberEmail, offline: wiki.config.offline === true }),
+    deployment: () => ({
+      enabled: wiki.config.ssl.enabled === true,
+      provider: wiki.config.ssl.provider ?? '',
+      domain: wiki.config.ssl.domain,
+      subscriberEmail: wiki.config.ssl.subscriberEmail,
+      offline: wiki.config.offline === true
+    }),
     maintainerEmail: wiki.config.maintainerEmail,
     version: wiki.version,
     staging: wiki.dev === true,

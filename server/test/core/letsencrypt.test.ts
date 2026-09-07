@@ -42,7 +42,7 @@ const setup = (initial = original()) => {
     accounts: { create: vi.fn(async () => ({ key: { kid: 'new-fixture-account' } })) },
     certificates: { create: vi.fn(async () => payload()) }
   }
-  const deployment = { domain: 'wiki.example.test', subscriberEmail: 'admin@example.test', offline: false }
+  const deployment = { enabled: true, provider: 'letsencrypt', domain: 'wiki.example.test', subscriberEmail: 'admin@example.test', offline: false }
   const publish = vi.fn(),
     configureTls = vi.fn(),
     logger = { info: vi.fn(), warn: vi.fn() },
@@ -258,5 +258,23 @@ describe('ACME issuance and saved certificate lifecycle', () => {
     })
     await expect(test.service.requestCertificate()).rejects.toThrow('could not be confirmed')
     expect(callbackVerified).toBe(true)
+  })
+  it('captures subscriber identity and aborts when its settings change during issuance', async () => {
+    const test = setup()
+    test.client.certificates.create.mockImplementationOnce(async () => {
+      test.deployment.subscriberEmail = 'changed@example.test'
+      return payload()
+    })
+    await expect(test.service.requestCertificate()).rejects.toThrow('settings changed')
+    expect(test.store.save).not.toHaveBeenCalled()
+  })
+  it('stops when native certificate management is disabled before the next effect', async () => {
+    const test = setup()
+    test.client.init.mockImplementationOnce(async () => {
+      test.deployment.enabled = false
+      return {}
+    })
+    await expect(test.service.requestCertificate()).rejects.toThrow('not enabled')
+    expect(test.client.certificates.create).not.toHaveBeenCalled()
   })
 })

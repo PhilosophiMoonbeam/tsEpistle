@@ -32,3 +32,39 @@ export interface TlsAppliedMaterial {
   source: 'inline' | 'file'
   format: 'pem' | 'pfx'
 }
+
+export interface TlsConfigurationEvent {
+  id: string
+  createdAt: string
+  actorId: number | null
+  apiKeyId: number | null
+  reason: string
+  enabled: boolean
+}
+export interface TlsListenerSnapshot {
+  httpPort: number | null
+  httpsPort: number | null
+  material: TlsAppliedMaterial | null
+  replacementMode: 'context-reload' | 'listener-restart' | null
+}
+export interface TlsConfigurationWorkspace {
+  fingerprint: string
+  revision: string
+  observedAt: string
+  publicUrl: string
+  offline: boolean
+  redirection: { enabled: boolean; eligible: boolean; reason: string | null; trustedProxy: boolean }
+  deployment: {
+    enabled: boolean
+    provider: string | null
+    format: string | null
+    source: 'inline' | 'file'
+    domain: string | null
+    subscriberEmail: string | null
+  }
+  listeners: TlsListenerSnapshot
+  runtimeRedirection: { enabled: boolean; eligible: boolean; publicUrl: string; settingsCurrent: boolean }
+  savedCertificate: TlsCertificateEvidence | null
+  savedCertificateIssue: string | null
+  history: TlsConfigurationEvent[]
+}
