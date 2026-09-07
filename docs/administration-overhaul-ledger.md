@@ -7,7 +7,7 @@ The visual direction is an editorial workspace: quiet surfaces, concise context,
 
 ## Current handoff status — 7 September 2026
 
-**27 of 27 areas have completed their deployed-and-verified milestones, and the final cross-area review is complete.** The maintained release is `13001f7c` with migration 26. The historical source/preview checkpoint below is superseded by the final release record, while its architecture, constraints and evidence remain applicable. See [`continue.md`](../continue.md) for operating standards and deployment context.
+**27 of 27 areas have completed their deployed-and-verified milestones, and the final cross-area review is complete.** The maintained release is `4d146593` with migration 26, following independent validation and corrections to the successor release `13001f7c`. See [`administration-independent-review.md`](administration-independent-review.md) for the independent findings and acceptance evidence. The historical source/preview checkpoint below is superseded by the final release record, while its architecture, constraints and evidence remain applicable. See [`continue.md`](../continue.md) for operating standards and deployment context.
 
 | Area | Workflow and capability scope | State |
 | --- | --- | --- |
@@ -911,3 +911,10 @@ All 27 milestones are now deployed and verified. The final cross-area review is 
 ### Independent successor validation — corrections before acceptance
 
 A new user-requested goal independently reviews successor commits `13001f7c` / `2b0c358d` against the SSL handoff. See [`administration-independent-review.md`](administration-independent-review.md) for the prioritized findings, source judgments and independent evidence. The review confirmed substantive completion of the four remaining areas but found gaps in log credential redaction, Utilities terminal-receipt failure handling, heartbeat coverage and first-use/mobile presentation. The user additionally confirmed that the remaining MongoDB user-import path must be removed in favor of the project's PostgreSQL + OKF architecture. The importer/dependency/BSON patch are removed; historic receipts and immutable migration history remain readable. Corrected preview and release verification follow before accepting the amended release.
+
+
+### Independent review release — deployed and accepted
+
+Corrections are deployed as `tsepistle:4d146593` (`4d14659364f619c772f335d07190d9d3e73ce2c8`), healthy with migration 26 unchanged. All 68 detailed deployed views passed without scoped accessibility findings, overflow, browser exceptions, external requests or writes. Separate native checks verified the new defaults, keyboard disclosure, confirmation gating, rejection of the retired importer without a receipt, and unchanged Logging/Flags runtime observations. Selected saved settings and every logger enablement/level/configuration value were exactly preserved. The deployed redactor passed synthetic JSON/URI credential checks. One initial native chunk/section-load failure was not reproduced in subsequent native/CLI/matrix checks; its cause is unconfirmed and recorded in the review.
+
+Backup `/home/bbferko/.local/state/wiki-tailnet/backups/before-independent-administration-review-20260907T094808Z.dump` is 2,912,470 bytes, mode 0600, with 665 archive lines verified. `compose.before-4d146593.yml` retains successor image `13001f7c`. Independent database evidence totals 48 cases/224 assertions across seven PostgreSQL suites. Preview evidence totals 68 passing detailed views; GraphQL has four independent passing viewport/theme/query-retention observations. Temporary fixtures and sensitive snapshots were removed. The broader 27-area scope is accepted with these corrections; the independent review document qualifies the original completion claim and records remaining operating limits.

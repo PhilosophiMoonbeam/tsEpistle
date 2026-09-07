@@ -41,3 +41,18 @@ No production signing rotation, guest reset, history purge, import/export, SQL d
 The four areas' capability boundaries are intentional: Extensions describes image-owned tools; Logging has one supported remote transport and a bounded ephemeral trail; Utilities exports a documented portable projection rather than private secrets or a full database backup; Flags expose grounded diagnostics with staged activation. SSL still has startup-only renewal and Bun listener-restart replacement as documented in the prior handoff. No change in this review alters PostgreSQL search or OKF content behavior.
 
 The review's conclusion is qualified: the successor met the broad remaining feature scope, but the release needed the concrete corrections above. A passing screenshot matrix alone is not evidence of complete product or systems quality.
+
+
+## Accepted correction release and final live verification
+
+Deployed **`tsepistle:4d146593`**, exact application revision **`4d14659364f619c772f335d07190d9d3e73ce2c8`**, to `wiki-tailnet` at 09:49 UTC on 7 September 2026. Container health and `/healthz` pass; migration 26 remains latest and no new migration was required. Source and documentation are committed/pushed on `main`.
+
+Fresh backup: `/home/bbferko/.local/state/wiki-tailnet/backups/before-independent-administration-review-20260907T094808Z.dump` — **2,912,470 bytes**, mode **0600**, **665** archive-list lines validated. Rollback compose `compose.before-4d146593.yml` retains the successor image `13001f7c` on the same migration-26 schema.
+
+All **68 deployed detailed views** passed scoped WCAG A/AA, overflow, page-exception, external-request and unexpected-write checks using actual assets/APIs without route interception. A separate native browser run verified Sentry-first selection and its DSN label, keyboard legacy disclosure, Content maintenance as the default, review confirmation gating, current Logging/Flags observations and SQL logging remaining disabled. A direct request for the retired user importer returned **400** and created **no receipt**. This is a rejected-input check, not an attempted real import.
+
+Exact private before/after comparisons confirmed the selected saved policies and all logger enablement/level/configuration values were unchanged. Container inspection confirmed the importer module, direct MongoDB dependency and BSON patch are absent. Executing the deployed redactor on synthetic JSON and PostgreSQL URI credentials confirmed masking and retained diagnostic context without writing a live log record.
+
+One initial native Utilities navigation reported that its section could not be loaded. A fresh native run, the separate CLI session and the complete non-intercepted matrix passed. No persistent application fault was reproduced; the initial failure's cause was not established and is not represented as a proven network error. It remains an observation to revisit if users see recurrence.
+
+Temporary PostgreSQL infrastructure, credentials, browser authentication export and raw baseline snapshots were removed. The independent review goal is satisfied: the broad feature scope is accepted with the corrections above deployed, and the remaining operating limitations are documented. The earlier completion record should be read together with this review, not as proof that no defects existed.

@@ -1,6 +1,10 @@
 # Administration overhaul — final release handoff
 
-Prepared 7 September 2026. The Administration overhaul is **complete**: all **27 of 27** milestones are deployed and verified, and the final cross-area review is complete. The released source is commit `13001f7ce21074083820449ef51603a1e1c8c584` on `main`; the maintained image is `tsepistle:13001f7c`. A documentation-only commit may follow this record and is **not** a new application revision.
+Updated after independent validation on 7 September 2026. The broad **27-area Administration scope is complete**, with the independent review's corrections now deployed. Current application release: **`4d14659364f619c772f335d07190d9d3e73ce2c8`**, image **`tsepistle:4d146593`**. Documentation-only commits may follow. Read [`docs/administration-independent-review.md`](docs/administration-independent-review.md) alongside this handoff: the successor's original completion claim missed real redaction, recovery and usability gaps.
+
+The user explicitly confirmed **PostgreSQL + OKF** as the architecture. The MongoDB user importer, its UI/API execution path, driver dependency and unused BSON patch have been removed. Do not reintroduce MongoDB. Old operation receipts/migration history remain readable; new `import-v1-users` requests return 400 without a receipt. Git/local-folder content import remains.
+
+The independent review also strengthened live-log redaction and Utilities terminal-write recovery/heartbeats, prioritized supported logging providers, made Content maintenance the Utilities default, restored mobile text visibility, fixed two phone contrast defects and delayed import validation errors until interaction. Independent evidence includes 48 real-PostgreSQL cases/224 assertions, 68 corrected preview views, 68 deployed detailed views, all administration landing routes and four GraphQL checks. All current targeted checks pass; see the review for the exact full-suite provenance and one transient native section-load observation.
 
 Authoritative long-form history: [`docs/administration-overhaul-ledger.md`](docs/administration-overhaul-ledger.md). This document is the current operational handoff.
 
@@ -28,7 +32,7 @@ All workspace routes are under `/_api`, return no-store responses, require `mana
 | Utilities | `client/components/admin/admin-utilities.vue` plus import/export/content/cache/auth/telemetry/review components; `client/helpers/utilities-workspace-api.ts` | `shared/utilities-workspace.ts`; `server/operations/utilities-workspace.ts`; migration `server/db/migrations/tsepistle-000026-utilities-operations.ts`; `server/controllers/api/utilities.ts` | `GET /_api/utilities/workspace`, `POST /operations`, `GET /operations/:id`. Durable receipts include actor/request identity, acknowledgement and crypto-fenced recovery. Portable exports are bounded/paginated and never expose credentials, private paths, raw secrets or unrestricted data. |
 | Developer flags | `client/components/admin/admin-dev-flags.vue`, `developer-flags-workspace.scss`; `client/helpers/developer-flags-api.ts` | `shared/developer-flags.ts`; `server/operations/developer-flags.ts`; `server/controllers/api/developer-flags.ts` | `GET/PUT /_api/developer-flags/workspace`, `POST /workspace/apply`. Only grounded diagnostics are supported. A saved policy is **staged** until separately applied/promoted; the process report shows whether it is applied/current. Legacy System flag writes are retired. |
 
-## Released source and isolated-proof record
+## Successor release proof — historical evidence
 
 The final source gates passed: full suite **468/468**; shared/client/server type checks, lint, dependency and license checks (808 dependencies), placeholder checks, Vite and bundle budgets. Seven real-PostgreSQL suites passed **46 cases / 220 assertions**, including API availability/current-authority repair. Migration 26 was first exercised only on an isolated restored preview.
 
@@ -38,19 +42,21 @@ The corrected portable export passed with 14 exact public IDs, excluded private 
 
 Ignored non-secret reports/screenshots may remain under `.playwright-cli/admin-review`; old failed Utility export/busy-state artifacts remain historical only and must not be represented as final evidence.
 
-## Current maintained deployment and final live proof
+## Current maintained deployment and verification history
 
 - Live URL: **https://agents8c48g.tail41a24a.ts.net:10443**.
-- Service: `wiki-tailnet`, compose `/home/bbferko/.local/state/wiki-tailnet/compose.yml`, wiki-only deployment at `2026-09-07T09:07Z`.
-- Image/revision: `tsepistle:13001f7c`, exact released revision `13001f7ce21074083820449ef51603a1e1c8c584`.
+- Service: `wiki-tailnet`, compose `/home/bbferko/.local/state/wiki-tailnet/compose.yml`, wiki-only correction deployment at `2026-09-07T09:49Z`.
+- Image/revision: `tsepistle:4d146593`, exact released revision `4d14659364f619c772f335d07190d9d3e73ce2c8`.
 - Health: `http://127.0.0.1:3014/healthz` returned HTTP 200 with `{"ok":true}` after cleanup.
 - Database: PostgreSQL 17 service `wiki-postgres`, database/user `wiki`; migration `tsepistle-000026-utilities-operations.js` is applied in `migrations`. Never print credentials or raw settings.
-- Final backup: `/home/bbferko/.local/state/wiki-tailnet/backups/before-administration-operations-20260907T090608Z.dump`, 2,907,757 bytes, mode 0600, 660 validated `pg_restore --list` lines.
-- Rollback compose: `/home/bbferko/.local/state/wiki-tailnet/compose.before-13001f7c.yml`, retaining SSL image `26d38739`. Inspect migration-26 compatibility before downgrade; database restoration is destructive and requires explicit authorization. The existing compose-volume warning remains; no volumes were recreated.
+- Final backup: `/home/bbferko/.local/state/wiki-tailnet/backups/before-independent-administration-review-20260907T094808Z.dump`, 2,912,470 bytes, mode 0600, 665 validated `pg_restore --list` lines.
+- Rollback compose: `/home/bbferko/.local/state/wiki-tailnet/compose.before-4d146593.yml`, retaining successor image `13001f7c` on the same migration-26 schema. Inspect compatibility before downgrade; database restoration is destructive and requires explicit authorization. The existing compose-volume warning remains; no volumes were recreated.
 
-Final live detailed verification passed 114 views with zero scoped aXe findings, overflow, page errors, external requests or writes. The final cross-area review recorded 591 unique area/view/width/theme observations across all 26 `/a` destinations plus Dashboard at 1440/900/390 in light/dark; all navigation sections were keyboard-activated. GraphQL separately passed six aXe/overflow views and six native typed-query retention checks. The Mail audit does not claim aXe coverage inside its intentionally sandboxed preview iframe: aXe encountered a cross-origin `SecurityError`; host chrome/navigation and screenshots were verified. The earlier 126 nested-preview source observations remain separate historical proof.
+The successor release’s historical live detailed verification passed 114 views with zero scoped aXe findings, overflow, page errors, external requests or writes. The final cross-area review recorded 591 unique area/view/width/theme observations across all 26 `/a` destinations plus Dashboard at 1440/900/390 in light/dark; all navigation sections were keyboard-activated. GraphQL separately passed six aXe/overflow views and six native typed-query retention checks. The Mail audit does not claim aXe coverage inside its intentionally sandboxed preview iframe: aXe encountered a cross-origin `SecurityError`; host chrome/navigation and screenshots were verified. The earlier 126 nested-preview source observations remain separate historical proof.
 
 Live workflow checks saved/applied Logging JSON, then restored `info`/`default`; Flags were staged true without enabling, then restored false, with SQL logging never enabled; utility cache receipt `534b4133-c21b-4ebb-8f3f-13f32b9addfe` succeeded. Dialog/aXe checks were clean. Baseline comparison confirmed original live pages, source revisions, visibility, owners, Storage, loggers and flags unchanged. Console keys originally absent/inherited are now explicitly `info`/`default`; retained administration history and the utility receipt are intentional. Locale catalog contents are unchanged; `observedAt` refreshed at startup.
+
+The latest independent correction release passed 68 detailed native-transport views with zero scoped accessibility/overflow/page-error findings or external requests/writes. Separate native checks verified the retired importer rejection, keyboard/default workflows and current Logging/Flags state. Exact selected-policy and logger configuration comparisons passed; no receipt was created by the rejected importer request. Temporary independent-review database infrastructure, credentials, auth export and baseline snapshots were removed.
 
 No live signing rotation, guest reset, import/export, external Sentry/email/ACME/storage effect was exercised. Those dangerous effects were proved only in clone/loopback environments.
 
@@ -62,4 +68,4 @@ Cleanup is complete: the preview hub stopped; disposable PostgreSQL 17 container
 
 SSL remains an operating limitation: Bun does not provide `https.Server.setSecureContext`, so certificate replacement needs an explicitly acknowledged listener restart; issuance saves material and is reviewed/applied separately; renewal is startup-only with a five-day threshold, not a periodic scheduler.
 
-There is no remaining Administration implementation or release gate. For future changes, follow the operating standard and release procedure above, preserve the final live baseline, and add only observed evidence to this handoff and the ledger.
+No identified Administration correction or release gate remains outstanding. The independent review records the limits of that acceptance; it is not a claim that the product can contain no further defects. For future changes, follow the operating standard and release procedure above, preserve the final live baseline, and add only observed evidence to this handoff and the ledger.
