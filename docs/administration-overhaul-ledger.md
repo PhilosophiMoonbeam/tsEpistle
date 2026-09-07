@@ -4,6 +4,11 @@ This continues beyond the shared shell refresh. Each destination needs a review 
 
 The visual direction is an editorial workspace: quiet surfaces, concise context, prominent task controls, readable records and progressive disclosure of advanced settings. Configuration state must be distinguishable from observed operational health.
 
+
+## Current handoff status — 7 September 2026
+
+**23 of 27 areas have completed their recorded implementation milestones.** SSL is the latest deployed and verified area. Remaining: **Logging, Extensions, Utilities and Developer flags**, followed by a final cross-area review. The broader goal remains paused and incomplete. The user requested this stopping point after SSL; do not start another area until work is resumed. See [`continue.md`](../continue.md) for the agent handoff, deployment context, standards and remaining scope. Earlier “next” notes below describe historical checkpoints and are superseded by this status and the latest deployment evidence.
+
 | Area | Workflow and capability scope | State |
 | --- | --- | --- |
 | Pages | Inventory, filtering, ownership, publication, detail and bulk actions | Implemented; first milestone verified |
@@ -27,7 +32,7 @@ The visual direction is an editorial workspace: quiet surfaces, concise context,
 | System | Environment, health and diagnostics | Implemented, deployed and verified |
 | Storage | Targets, synchronization, recovery and job state | Implemented; first milestone verified |
 | Mail | Sender, transport, signing, templates and delivery diagnostics | Deployed and verified; four-section workspace and diagnostic recovery |
-| SSL | Certificates, renewal and ingress responsibilities | Implemented; release verification in progress |
+| SSL | Certificates, renewal and ingress responsibilities | Deployed and verified; connection evidence, reviewed lifecycle/policy and operation recovery |
 | Logging | Destinations and troubleshooting | Pending |
 | Extensions | Availability, configuration and dependencies | Pending |
 | Utilities | Import, export and maintenance workflows | Pending |
@@ -828,3 +833,16 @@ Verification before release: nine focused TLS/material/probe/ACME/controller/mig
 
 
 The final preview matrix passed 30 views (four sections plus issuance review at 1440/900/390 pixels in light and dark), with no audited WCAG A/AA violations, horizontal overflow, browser exceptions, external requests or unexpected writes. Workflow verification passed material validation/replacement acknowledgment, lost operation response and read-only receipt recovery, stale-save draft retention, lost-save persistence recovery, keyboard dismissal of the leave guard and read-failure recovery. Contrast findings were corrected before the final passing run. Artifacts: `.playwright-cli/admin-review/ssl-next-*` (ignored, local).
+
+
+### SSL deployment, verification and requested handoff
+
+Deployed `tsepistle:26d38739`, full application revision `26d387395992fc66e3452be65617261481591d06`, to `wiki-tailnet`. Container health and `/healthz` pass; migration `tsepistle-000025-tls-operations.js` is applied. The fresh backup is `/home/bbferko/.local/state/wiki-tailnet/backups/before-ssl-workspace-20260907T015019Z.dump`: 2,903,850 bytes, mode 0600, 655 archive-list lines validated. Rollback compose `/home/bbferko/.local/state/wiki-tailnet/compose.before-26d38739.yml` preserves the verified Mail image `a75d4111`. Documentation-only commits after this release do not change its application revision.
+
+A native browser session using actual assets and APIs, with no request interception, verified first load, one public handshake operation, reviewed redirect enablement, secure public reload without a redirect loop, and reviewed restoration to the original disabled policy. An HTTP request with an untrusted Host header redirected only to the configured public HTTPS origin while preserving its path/query. The live endpoint negotiated TLS 1.3, passed certificate trust and hostname checks, and presented a certificate expiring `2026-10-21T14:28:04.000Z`. The application remains on HTTP port 3000 behind the trusted reverse proxy; native TLS is disabled. Legacy SSL status now returns 410 as intended.
+
+Raw database comparisons confirmed deployment preserved every original selected setting, and the reversible policy verification left every pre-existing host/security/ACME/server setting unchanged. Since no server setting existed before, verification added only `{ "sslRedir": false }`, matching the original effective policy. Two attributed policy-history events and one successful public-check receipt remain as evidence. No production ACME issuance, certificate replacement or external message was requested.
+
+All 24 deployed section views (four sections at 1440/900/390 pixels in both themes) passed WCAG A/AA checks without horizontal overflow, browser exceptions, external requests or unexpected writes. The visual matrix used real container assets/API responses with read-transport isolation; the separate native workflow session had no interception. Evidence: ignored local `ssl-live-audit.json`, `ssl-native-verification.json` and `ssl-live-*.png` under `.playwright-cli/admin-review`.
+
+The owned temporary PostgreSQL SSL fixture and its credential files were removed after all persistence tests passed. Temporary raw settings snapshots and browser authentication export were removed. SSL's milestone is complete. The remaining target list is Logging, Extensions, Utilities, Developer flags and final cross-area verification. `continue.md` records the handoff; work stops here as requested, with the full goal still paused and incomplete.
