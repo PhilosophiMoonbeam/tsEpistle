@@ -380,4 +380,33 @@ suite('Utilities workspace persistence on PostgreSQL', () => {
       await rm(path.join(process.cwd(), destination), { force: true, recursive: true })
     }
   })
+  it('rejects the retired user importer before recording any operation', async () => {
+    const input = await request()
+    await expect(store.start(administrator, { ...input, kind: 'import-v1-users', confirmation: 'IMPORT USERS', payload: {} })).rejects.toMatchObject({ status: 400 })
+    expect(await db('utilitiesOperations').count('* as count').first()).toMatchObject({ count: '0' })
+  })
+
+  it('leaves a recoverable interrupted receipt when both terminal writes fail', async () => {
+    await db.raw(`CREATE FUNCTION independent_terminal_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      IF NEW.state <> 'running' THEN RAISE EXCEPTION 'fixture terminal persistence failure'; END IF;
+      RETURN NEW;
+    END $$`)
+    await db.raw('CREATE TRIGGER independent_terminal_failure BEFORE UPDATE ON "utilitiesOperations" FOR EACH ROW EXECUTE FUNCTION independent_terminal_failure()')
+    try {
+      const input = await request()
+      await store.start(administrator, input)
+      await effectDispatched.promise
+      operation.resolve()
+      await new Promise(resolve => setTimeout(resolve, 100))
+      // A lost terminal receipt must not reject the detached executor or replay its effect.
+      await db('utilitiesOperations').where('id', input.id).update({ heartbeatAt: new Date(Date.now() - 180_000).toISOString() })
+      const receipt = await store.receipt(administrator, input.id)
+      expect(receipt.state).toBe('uncertain')
+      expect(flushTemporaryUploadsCalls).toBe(1)
+    } finally {
+      await db.raw('DROP TRIGGER independent_terminal_failure ON "utilitiesOperations"')
+      await db.raw('DROP FUNCTION independent_terminal_failure()')
+    }
+  })
+
 })

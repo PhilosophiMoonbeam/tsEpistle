@@ -1,6 +1,6 @@
 <template lang="pug">
 v-dialog(:model-value='open' max-width='620' :fullscreen='$vuetify.display.smAndDown' aria-labelledby='utility-review-title' @update:model-value='setOpen')
-  v-card
+  v-card.utility-review-card
     v-card-title#utility-review-title.text-wrap {{ title }}
     v-card-text
       .text-body-medium {{ effect }}
@@ -129,5 +129,12 @@ export default defineComponent({
     margin: 0;
     overflow-wrap: anywhere;
   }
+}
+</style>
+
+<style lang="scss">
+.utility-review-card .v-counter {
+  color: rgba(var(--v-theme-on-surface), 0.78);
+  opacity: 1;
 }
 </style>

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "source": {
     "lockfile": "bun.lock",
-    "sha256": "a9c4ca96551132581574d1bdc29343016d88511c311be16d7612bf3ec3bf2f46",
+    "sha256": "27dade1dc0b76f85a70c9060dd4e7af6faf324f73a46ad8377d2d4dabdf5a7a7",
     "scope": "production dependencies and reviewed renderer build inputs",
     "policy": {
       "file": "license-policy.json",
@@ -1316,15 +1316,6 @@
       "homepage": "https://modelcontextprotocol.io"
     },
     {
-      "name": "@mongodb-js/saslprep",
-      "versions": [
-        "1.5.0"
-      ],
-      "license": "MIT",
-      "author": "Dmitry Tsvettsikh <me@reklatsmasters.com>",
-      "homepage": "https://github.com/mongodb-js/devtools-shared/tree/main/packages/saslprep"
-    },
-    {
       "name": "@n1ru4l/push-pull-async-iterable-iterator",
       "versions": [
         "3.2.0"
@@ -2124,28 +2115,12 @@
       "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/web-bluetooth"
     },
     {
-      "name": "@types/webidl-conversions",
-      "versions": [
-        "7.0.3"
-      ],
-      "license": "MIT",
-      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/webidl-conversions"
-    },
-    {
       "name": "@types/webxr",
       "versions": [
         "0.5.24"
       ],
       "license": "MIT",
       "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/webxr"
-    },
-    {
-      "name": "@types/whatwg-url",
-      "versions": [
-        "13.0.0"
-      ],
-      "license": "MIT",
-      "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/whatwg-url"
     },
     {
       "name": "@types/ws",
@@ -2728,14 +2703,6 @@
       "license": "MIT",
       "author": "Dustin Diaz <dustin@dustindiaz.com> (http://dustindiaz.com)",
       "homepage": "https://github.com/bowser-js/bowser"
-    },
-    {
-      "name": "bson",
-      "versions": [
-        "7.3.2"
-      ],
-      "license": "Apache-2.0",
-      "author": "The MongoDB NodeJS Team"
     },
     {
       "name": "buffer-equal-constant-time",
@@ -4616,15 +4583,6 @@
       "author": "Douglas Christopher Wilson <doug@somethingdoug.com>"
     },
     {
-      "name": "memory-pager",
-      "versions": [
-        "1.5.0"
-      ],
-      "license": "MIT",
-      "author": "Mathias Buus (@mafintosh)",
-      "homepage": "https://github.com/mafintosh/memory-pager"
-    },
-    {
       "name": "merge-descriptors",
       "versions": [
         "2.0.0"
@@ -4723,23 +4681,6 @@
         "1.9.0"
       ],
       "license": "MIT"
-    },
-    {
-      "name": "mongodb",
-      "versions": [
-        "7.5.0"
-      ],
-      "license": "Apache-2.0",
-      "author": "The MongoDB NodeJS Team",
-      "homepage": "https://github.com/mongodb/node-mongodb-native"
-    },
-    {
-      "name": "mongodb-connection-string-url",
-      "versions": [
-        "7.0.2"
-      ],
-      "license": "Apache-2.0",
-      "homepage": "https://github.com/mongodb-js/mongodb-connection-string-url"
     },
     {
       "name": "motion-dom",
@@ -6021,15 +5962,6 @@
       "homepage": "https://github.com/7rulnik/source-map-js"
     },
     {
-      "name": "sparse-bitfield",
-      "versions": [
-        "3.0.3"
-      ],
-      "license": "MIT",
-      "author": "Mathias Buus (@mafintosh)",
-      "homepage": "https://github.com/mafintosh/sparse-bitfield"
-    },
-    {
       "name": "split2",
       "versions": [
         "4.2.0"
@@ -6326,7 +6258,6 @@
       "name": "tr46",
       "versions": [
         "0.0.3",
-        "5.1.1",
         "6.0.0"
       ],
       "license": "MIT",
@@ -6615,7 +6546,6 @@
       "name": "webidl-conversions",
       "versions": [
         "3.0.1",
-        "7.0.0",
         "8.0.1"
       ],
       "license": "BSD-2-Clause",
@@ -6633,7 +6563,6 @@
     {
       "name": "whatwg-url",
       "versions": [
-        "14.2.0",
         "16.0.1",
         "17.1.0",
         "5.0.0"

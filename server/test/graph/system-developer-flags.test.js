@@ -4,7 +4,6 @@ vi.mockModule('../../operations/developer-flags.ts', import.meta.url, () => ({ g
 vi.mockModule('../../operations/system.ts', import.meta.url, () => ({
   default: { getInfo: vi.fn(), getExportStatus: vi.fn(), resetTelemetryClientId: vi.fn(), setTelemetry: vi.fn() }
 }))
-vi.mockModule('../../operations/import-v1.ts', import.meta.url, () => ({ default: { importUsers: vi.fn() } }))
 
 describe('GraphQL developer flag compatibility adapter', () => {
   beforeEach(async () => {

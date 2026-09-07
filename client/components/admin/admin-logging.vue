@@ -3,7 +3,7 @@
     <div :inert="dialogOpen || undefined">
       <admin-hero
         title="Logging"
-        description="Choose deliberate destinations, preserve sensitive credentials and distinguish saved policy from this process."
+        description="Configure log delivery, tune console output and follow live events."
         icon="mdi-text-box-search-outline"
       >
         <template #actions>
@@ -75,6 +75,16 @@
                     density="compact"
                     hide-details
                   />
+                  <button
+                    v-if="legacyDestinationCount"
+                    type="button"
+                    class="logging-legacy-toggle"
+                    :aria-expanded="showLegacy"
+                    :disabled="busy"
+                    @click="showLegacy = !showLegacy"
+                  >
+                    {{ showLegacy ? 'Hide legacy destinations' : 'Show legacy destinations (' + legacyDestinationCount + ')' }}
+                  </button>
                   <div v-if="filteredDestinations.length" class="logging-destination-list">
                     <button
                       v-for="destination in filteredDestinations"
@@ -116,7 +126,7 @@
                     </div>
                   </div>
                   <v-alert :type="destinationRuntimeTone(selectedDestination.runtime.state)" variant="tonal" class="mt-5">
-                    <strong>Runtime in this process: {{ destinationRuntimeLabel(selectedDestination.runtime.state) }}.</strong>
+                    <strong class="mr-1">Runtime in this process: {{ destinationRuntimeLabel(selectedDestination.runtime.state) }}.</strong>
                     <span v-if="selectedDestination.runtime.message">{{ selectedDestination.runtime.message }}</span>
                     <span v-else>Saved policy is {{ selectedDestination.isEnabled ? 'enabled' : 'disabled' }}.</span>
                   </v-alert>
@@ -409,6 +419,10 @@ const consolePolicy = ref<LoggingWorkspace['console'] | null>(null)
 const destinations = ref<LoggingDestinationDraft[]>([])
 const secretChanges = ref<Record<string, LoggingSecretChange>>({})
 const catalogueQuery = ref('')
+const showLegacy = ref(false)
+const legacyDestinationCount = computed(
+  () => saved.value?.destinations.filter((item) => item.availability === 'unavailable' && !item.isEnabled).length || 0
+)
 const loading = ref(false)
 const saving = ref(false)
 const applying = ref(false)
@@ -431,10 +445,15 @@ const dialogOpen = computed(() => reviewOpen.value || discardOpen.value)
 const destinationFor = (key: string) => saved.value?.destinations.find((destination) => destination.key === key)
 const filteredDestinations = computed(() => {
   const query = catalogueQuery.value.trim().toLocaleLowerCase()
-  if (!query) return saved.value?.destinations ?? []
-  return (saved.value?.destinations ?? []).filter((destination) =>
-    `${destination.key} ${destination.title} ${destination.description ?? ''}`.toLocaleLowerCase().includes(query)
-  )
+  return [...(saved.value?.destinations ?? [])]
+    .filter((destination) =>
+      query
+        ? `${destination.key} ${destination.title} ${destination.description ?? ''}`.toLocaleLowerCase().includes(query)
+        : showLegacy.value || destination.availability === 'available' || destination.isEnabled || destination.key === route.query.destination
+    )
+    .sort(
+      (left, right) => Number(right.availability === 'available') - Number(left.availability === 'available') || left.title.localeCompare(right.title)
+    )
 })
 const selectedDestinationKey = computed(() => {
   const requested = typeof route.query.destination === 'string' ? route.query.destination : ''

@@ -8,5 +8,6 @@ defaultLevel: warn
 props:
   key:
     type: String
-    title: Key
+    title: Sentry DSN
+    hint: The project DSN used to send log events to Sentry.
     sensitive: true

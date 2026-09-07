@@ -169,7 +169,6 @@
     "mime-types": "3.0.2",
     "moment": "2.30.1",
     "moment-timezone": "0.6.3",
-    "mongodb": "7.5.0",
     "ms": "2.1.3",
     "multer": "2.2.0",
     "nanoid": "6.0.1",
@@ -332,7 +331,6 @@
     "markdown-it-multimd-table@4.2.3": "patches/markdown-it-multimd-table@4.2.3.patch",
     "undici@8.10.0": "patches/undici@8.10.0.patch",
     "better-sqlite3@13.0.3": "patches/better-sqlite3@13.0.3.patch",
-    "bson@7.3.2": "patches/bson@7.3.2.patch",
     "@tresjs/core@5.8.3": "patches/@tresjs__core@5.8.3.patch"
   },
   "trustedDependencies": [

@@ -1,60 +1,45 @@
 <template lang="pug">
 v-card
-  v-card-title Import from Wiki.js 1.x
-  v-card-subtitle Import users and content as separate reviewed operations. A partial or interrupted import is never replayed automatically.
+  v-card-title Content import
+  v-card-subtitle Bring documents and assets into this workspace from a Git repository or local folder.
   v-card-text
     v-alert(color='warning' variant='tonal' icon='mdi-alert-outline')
-      .text-body-medium Import can create users, groups, pages and assets. Take a verified backup and complete each source once before starting another operation.
-    v-tabs(v-model='section' color='primary' :disabled='busy')
-      v-tab(value='users') Users
-      v-tab(value='content') Content and uploads
-    v-window(v-model='section').mt-5
-      v-window-item(value='users')
-        h2.text-title-medium User source
-        p.text-body-medium.mt-2 The connection string is sent only for the requested import. It is not written to the Utilities receipt or review summary.
-        p.text-body-medium.mt-2 This importer uses the current MongoDB driver, not the original Wiki.js 1.x driver. Restore older source databases into a compatible MongoDB server before importing. This operation does not upgrade or modify the source database.
-        v-text-field(v-model='mongoDbConnString' type='password' label='Wiki.js 1.x MongoDB connection string' variant='outlined' autocomplete='off' :disabled='busy' :error-messages='mongoError')
-        v-radio-group.utility-import-group-strategy(v-model='groupMode' label='Imported user group strategy' :disabled='busy')
-          v-radio(value='MULTI' label='Create groups for each unique legacy permission set')
-          v-radio(value='SINGLE' label='Create one shared imported-user group')
-          v-radio(value='NONE' label='Create no groups')
-        v-btn.mt-3(color='warning' variant='flat' :disabled='busy || !canImportUsers' @click='openUsersReview') Review user import
-      v-window-item(value='content')
-        h2.text-title-medium Content source
-        v-list.mb-4(density='compact' aria-label='Import target availability')
-          v-list-item(:prepend-icon='importTargets.git.available ? `mdi-check-circle-outline` : `mdi-close-circle-outline`' :title='importTargets.git.available ? `Git import available` : `Git import unavailable`' :subtitle='targetAvailability(importTargets.git)')
-          v-list-item(:prepend-icon='importTargets.disk.available ? `mdi-check-circle-outline` : `mdi-close-circle-outline`' :title='importTargets.disk.available ? `Local-folder import available` : `Local-folder import unavailable`' :subtitle='targetAvailability(importTargets.disk)')
-        p.text-body-medium.mt-2 Content import saves the reviewed disk or Git storage configuration, activates it, then imports its documents and assets. Git credentials are secret fields and never enter receipts or review details.
-        v-radio-group(v-model='contentMode' inline label='Source' :disabled='busy')
-          v-radio(value='git' label='Git repository' :disabled='!importTargets.git.available')
-          v-radio(value='disk' label='Local folder' :disabled='!importTargets.disk.available')
-        v-alert.mb-4(v-if='!selectedTarget.available' color='warning' variant='tonal' density='compact') {{ selectedTargetMessage }}
-        template(v-if='contentMode === `disk`')
-          v-text-field(v-model='diskPath' label='Content folder path' variant='outlined' :disabled='busy || !importTargets.disk.available' :error-messages='diskError')
+      .text-body-medium Import can create pages and assets. Take a verified backup and complete each source once before starting another operation.
+    h2.text-title-medium Content source
+    v-list.mb-4(density='compact' aria-label='Import target availability')
+      v-list-item(:prepend-icon='importTargets.git.available ? `mdi-check-circle-outline` : `mdi-close-circle-outline`' :title='importTargets.git.available ? `Git import available` : `Git import unavailable`' :subtitle='targetAvailability(importTargets.git)')
+      v-list-item(:prepend-icon='importTargets.disk.available ? `mdi-check-circle-outline` : `mdi-close-circle-outline`' :title='importTargets.disk.available ? `Local-folder import available` : `Local-folder import unavailable`' :subtitle='targetAvailability(importTargets.disk)')
+    p.text-body-medium.mt-2 Content import saves the reviewed disk or Git storage configuration, activates it, then imports its documents and assets. Git credentials are secret fields and never enter receipts or review details.
+    v-radio-group(v-model='contentMode' inline label='Source' :disabled='busy')
+      v-radio(value='git' label='Git repository' :disabled='!importTargets.git.available')
+      v-radio(value='disk' label='Local folder' :disabled='!importTargets.disk.available')
+    v-alert.mb-4(v-if='!selectedTarget.available' color='warning' variant='tonal' density='compact') {{ selectedTargetMessage }}
+    template(v-if='contentMode === `disk`')
+      v-text-field(v-model='diskPath' label='Content folder path' variant='outlined' :disabled='busy || !importTargets.disk.available' :error-messages='diskError' @blur='touched.disk = true')
+    template(v-else)
+      v-row
+        v-col(cols='12' md='8')
+          v-text-field(v-model='git.repoUrl' label='Repository URL' variant='outlined' :disabled='busy || !importTargets.git.available' :error-messages='gitError' @blur='touched.repo = true')
+        v-col(cols='12' md='4')
+          v-text-field(v-model='git.branch' label='Branch' variant='outlined' :disabled='busy || !importTargets.git.available')
+        v-col(cols='12' md='4')
+          v-select(v-model='git.authType' :items='authTypes' item-title='title' item-value='value' label='Authentication' variant='outlined' :disabled='busy || !importTargets.git.available')
+        v-col(cols='12' md='8')
+          v-switch(v-model='git.verifySSL' label='Verify HTTPS certificate' color='primary' hide-details :disabled='busy || !importTargets.git.available')
+        v-col(v-if='git.authType === `ssh`' cols='12')
+          v-textarea(v-model='git.privateKey' label='SSH private key contents' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='privateKeyError' @blur='touched.key = true')
         template(v-else)
-          v-row
-            v-col(cols='12' md='8')
-              v-text-field(v-model='git.repoUrl' label='Repository URL' variant='outlined' :disabled='busy || !importTargets.git.available' :error-messages='gitError')
-            v-col(cols='12' md='4')
-              v-text-field(v-model='git.branch' label='Branch' variant='outlined' :disabled='busy || !importTargets.git.available')
-            v-col(cols='12' md='4')
-              v-select(v-model='git.authType' :items='authTypes' item-title='title' item-value='value' label='Authentication' variant='outlined' :disabled='busy || !importTargets.git.available')
-            v-col(cols='12' md='8')
-              v-switch(v-model='git.verifySSL' label='Verify HTTPS certificate' color='primary' hide-details :disabled='busy || !importTargets.git.available')
-            v-col(v-if='git.authType === `ssh`' cols='12')
-              v-textarea(v-model='git.privateKey' label='SSH private key contents' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='privateKeyError')
-            template(v-else)
-              v-col(cols='12' md='6')
-                v-text-field(v-model='git.username' label='Username' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available')
-              v-col(cols='12' md='6')
-                v-text-field(v-model='git.password' type='password' label='Password or access token' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='passwordError')
-            v-col(cols='12' md='6')
-              v-text-field(v-model='git.defaultName' label='Fallback author name' variant='outlined' :disabled='busy || !importTargets.git.available')
-            v-col(cols='12' md='6')
-              v-text-field(v-model='git.defaultEmail' label='Fallback author email' variant='outlined' :disabled='busy || !importTargets.git.available')
-            v-col(cols='12')
-              v-text-field(v-model='git.localRepoPath' label='Local working-copy path' variant='outlined' :disabled='busy || !importTargets.git.available')
-        v-btn.mt-3(color='warning' variant='flat' :disabled='busy || !canImportContent' @click='openContentReview') Review content import
+          v-col(cols='12' md='6')
+            v-text-field(v-model='git.username' label='Username' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available')
+          v-col(cols='12' md='6')
+            v-text-field(v-model='git.password' type='password' label='Password or access token' variant='outlined' autocomplete='off' :disabled='busy || !importTargets.git.available' :error-messages='passwordError' @blur='touched.password = true')
+        v-col(cols='12' md='6')
+          v-text-field(v-model='git.defaultName' label='Fallback author name' variant='outlined' :disabled='busy || !importTargets.git.available')
+        v-col(cols='12' md='6')
+          v-text-field(v-model='git.defaultEmail' label='Fallback author email' variant='outlined' :disabled='busy || !importTargets.git.available')
+        v-col(cols='12')
+          v-text-field(v-model='git.localRepoPath' label='Local working-copy path' variant='outlined' :disabled='busy || !importTargets.git.available')
+    v-btn.mt-3(color='warning' variant='flat' :disabled='busy || !canImportContent' @click='openContentReview') Review content import
   utility-review(
     v-model:open='review.open'
     :title='review.title'
@@ -79,7 +64,7 @@ import {
 } from '../../../shared/utilities-workspace.ts'
 import UtilityReview from './admin-utilities-review.vue'
 
-type ImportKind = Extract<UtilityOperationKind, 'import-v1-users' | 'import-v1-content'>
+type ImportKind = Extract<UtilityOperationKind, 'import-v1-content'>
 type GitDraft = {
   repoUrl: string
   branch: string
@@ -102,19 +87,6 @@ type ReviewSnapshot = {
   payload: ImportPayload
 }
 
-const mongoUri = (value: string): URL | null => {
-  if (value.length > 4096 || /\s/.test(value)) return null
-  try {
-    const parsed = new URL(value)
-    return (parsed.protocol === 'mongodb:' || parsed.protocol === 'mongodb+srv:') && Boolean(parsed.host) && !parsed.hash ? parsed : null
-  } catch {
-    return null
-  }
-}
-const mongoSourceIdentity = (value: string): string => {
-  const parsed = mongoUri(value)
-  return parsed ? `${parsed.protocol}//${parsed.host}${parsed.pathname || '/'}` : 'MongoDB source (credentials hidden)'
-}
 const repositoryIdentity = (value: string): string => {
   try {
     const parsed = new URL(value)
@@ -133,9 +105,7 @@ export default defineComponent({
   },
   emits: ['request', 'draft-state'],
   data: () => ({
-    section: 'users',
-    mongoDbConnString: '',
-    groupMode: 'MULTI',
+    touched: { disk: false, repo: false, key: false, password: false },
     contentMode: 'git' as 'git' | 'disk',
     diskPath: '',
     git: {
@@ -156,7 +126,7 @@ export default defineComponent({
     ],
     review: {
       open: false,
-      kind: 'import-v1-users' as ImportKind,
+      kind: 'import-v1-content' as ImportKind,
       title: '',
       effect: '',
       confirmation: '',
@@ -179,25 +149,23 @@ export default defineComponent({
         'This import target is unavailable in the current deployment. Choose an available source before reviewing the import.'
       )
     },
-    mongoError(): string {
-      return !this.mongoDbConnString ? '' : mongoUri(this.mongoDbConnString) ? '' : 'Enter a valid mongodb:// or mongodb+srv:// connection string.'
-    },
     diskError(): string {
+      if (!this.touched.disk) return ''
       return this.contentMode !== 'disk' || this.diskPath.trim().length > 0 ? '' : 'Enter a content folder path.'
     },
     gitError(): string {
+      if (!this.touched.repo) return ''
       return this.contentMode !== 'git' || this.git.repoUrl.trim().length > 0 ? '' : 'Enter a repository URL.'
     },
     privateKeyError(): string {
+      if (!this.touched.key) return ''
       return this.contentMode !== 'git' || this.git.authType !== 'ssh' || this.git.privateKey.trim().length > 0 ? '' : 'Enter the SSH private key.'
     },
     passwordError(): string {
+      if (!this.touched.password) return ''
       return this.contentMode !== 'git' || this.git.authType !== 'basic' || (this.git.username.trim().length > 0 && this.git.password.length > 0)
         ? ''
         : 'Enter a username and password or access token.'
-    },
-    canImportUsers(): boolean {
-      return Boolean(mongoUri(this.mongoDbConnString)) && ['MULTI', 'SINGLE', 'NONE'].includes(this.groupMode)
     },
     canImportContent(): boolean {
       if (this.contentMode === 'disk') return this.importTargets.disk.available && this.diskPath.trim().length > 0
@@ -214,8 +182,6 @@ export default defineComponent({
     formDirty(): boolean {
       const git = this.git
       return Boolean(
-        this.mongoDbConnString ||
-        this.groupMode !== 'MULTI' ||
         this.contentMode !== 'git' ||
         this.diskPath ||
         git.repoUrl ||
@@ -232,12 +198,6 @@ export default defineComponent({
     }
   },
   watch: {
-    mongoDbConnString() {
-      this.publishDraftState()
-    },
-    groupMode() {
-      this.publishDraftState()
-    },
     contentMode() {
       this.publishDraftState()
     },
@@ -254,33 +214,6 @@ export default defineComponent({
   methods: {
     targetAvailability(target: { available: boolean; reason: string | null }): string {
       return target.available ? 'Ready for a reviewed import.' : (target.reason ?? 'Unavailable in the current deployment.')
-    },
-    openUsersReview() {
-      if (!this.canImportUsers || this.busy) return
-      const payload = Object.freeze({ mongoDbConnString: this.mongoDbConnString, groupMode: this.groupMode }) as ImportPayload
-      this.review = {
-        open: true,
-        kind: 'import-v1-users',
-        title: 'Review Wiki.js 1.x user import',
-        effect:
-          'This reads the reviewed MongoDB user records, creates missing users and may create groups. Existing local users are skipped. No welcome email is sent.',
-        confirmation: utilityOperationConfirmation('import-v1-users'),
-        parameters: [
-          { label: 'MongoDB source', value: mongoSourceIdentity(this.mongoDbConnString) },
-          {
-            label: 'Imported user groups',
-            value:
-              this.groupMode === 'MULTI'
-                ? 'Create groups for each legacy permission set'
-                : this.groupMode === 'SINGLE'
-                  ? 'Create one shared imported-user group'
-                  : 'Do not create imported-user groups'
-          },
-          { label: 'Connection credentials', value: 'Supplied; value hidden' }
-        ],
-        payload
-      }
-      this.reviewError = ''
     },
     contentPayload(): ImportPayload {
       return this.contentMode === 'disk'
@@ -329,7 +262,7 @@ export default defineComponent({
       this.review = {
         open: true,
         kind: 'import-v1-content',
-        title: 'Review Wiki.js 1.x content import',
+        title: 'Review content import',
         effect:
           'This saves the selected storage target before activating it, then reads documents and assets from the reviewed source. Existing conflict and document-validation rules apply.',
         confirmation: utilityOperationConfirmation('import-v1-content'),
@@ -354,11 +287,8 @@ export default defineComponent({
         acknowledgedUncertainId,
         payload: snapshot.payload,
         onRecorded: () => {
-          if (snapshot.kind === 'import-v1-users') this.mongoDbConnString = ''
-          else {
-            this.git.privateKey = ''
-            this.git.password = ''
-          }
+          this.git.privateKey = ''
+          this.git.password = ''
           this.review.open = false
           this.reviewError = ''
           this.setReviewDirty(false)
@@ -371,12 +301,3 @@ export default defineComponent({
   }
 })
 </script>
-
-<style lang="scss" scoped>
-.utility-import-group-strategy {
-  :deep(.v-input__control > .v-label) {
-    color: rgb(var(--v-theme-on-surface));
-    opacity: 1;
-  }
-}
-</style>

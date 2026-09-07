@@ -450,3 +450,17 @@
     }
   }
 }
+
+.logging-workspace .logging-legacy-toggle {
+  display: block;
+  margin: 14px 0 4px;
+  padding: 8px 0;
+  color: rgb(var(--v-theme-on-surface));
+  background: transparent;
+  border: 0;
+  text-align: left;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}

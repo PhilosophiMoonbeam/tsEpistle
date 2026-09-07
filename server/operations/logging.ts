@@ -195,8 +195,8 @@ const availabilityReason = (key: string): string | null =>
     : 'This release does not include an active transport for this legacy destination. Its saved values are retained, but it cannot be enabled or used to deliver logs.'
 
 const redactionPatterns = [
-  /((?:authorization|token|password|passphrase|secret|api[-_]?key|dsn)\s*[:=]\s*)(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
-  /https?:\/\/[^\s/@]+:[^\s/@]+@/gi,
+  /((?:["']?)(?:authorization|(?:access[-_]?|refresh[-_]?|id[-_]?)?token|password|passphrase|(?:client[-_]?)?secret|api[-_]?key|dsn)["']?\s*[:=]\s*)(?:(?:bearer|basic)\s+)?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi,
+  /([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi,
   /https?:\/\/[^\s/@]+@[^/\s]+\/\d+/gi,
   /\b(?:bearer\s+|eyJ)[a-zA-Z0-9._-]{16,}\b/gi
 ] as const satisfies readonly [RegExp, RegExp, RegExp, RegExp]
@@ -205,7 +205,7 @@ const redactionPatterns = [
 export const redactLoggingLiveOutput = (value: unknown): string => {
   let output = typeof value === 'string' ? value : String(value ?? '')
   output = output.replace(redactionPatterns[0], '$1[redacted]')
-  output = output.replace(redactionPatterns[1], 'https://[redacted]@')
+  output = output.replace(redactionPatterns[1], '$1[redacted]@')
   output = output.replace(redactionPatterns[2], 'https://[redacted]')
   output = output.replace(redactionPatterns[3], '[redacted token]')
   output = Array.from(output, character => {

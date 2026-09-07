@@ -43,7 +43,7 @@ const cacheCompiled = compileComponentOptions('client/components/admin/admin-uti
 
 const receipt = {
   id: '11111111-1111-4111-8111-111111111111',
-  kind: 'import-v1-users',
+  kind: 'import-v1-content',
   state: 'running',
   phase: 'queued',
   actorId: 1,
@@ -117,29 +117,29 @@ function arrange(overrides: Record<string, unknown> = {}) {
 
 describe('Utilities reviewed operation recovery', () => {
   it('stores an immutable reactive review snapshot before a lost response and resolves only its exact receipt', async () => {
-    const draft = reactive({ mongoDbConnString: 'mongodb://admin:private@legacy.example/wiki', groupMode: 'MULTI' })
+    const draft = reactive({ password: 'fixture-private-token', mode: 'git' })
     const { state, transport, window, values } = arrange({
       startUtilitiesOperation: vi.fn(async () => {
-        draft.groupMode = 'SINGLE'
+        draft.mode = 'disk'
         throw new Error('Connection lost')
       })
     })
     const recorded = vi.fn()
     await state.requestOperation({
-      kind: 'import-v1-users',
-      reason: 'Recover the reviewed user import',
+      kind: 'import-v1-content',
+      reason: 'Recover the reviewed content import',
       payload: draft,
       onRecorded: recorded
     })
     expect(state).not.toBe(toRaw(state))
     expect(transport.startUtilitiesOperation).toHaveBeenCalledWith(
-      expect.objectContaining({ payload: { mongoDbConnString: 'mongodb://admin:private@legacy.example/wiki', groupMode: 'MULTI' } })
+      expect.objectContaining({ payload: { password: 'fixture-private-token', mode: 'git' } })
     )
     expect(transport.startUtilitiesOperation).toHaveBeenCalledOnce()
     expect(window.sessionStorage.setItem).toHaveBeenCalledWith('utilities.pending-operation.v1', expect.any(String))
     const serializedPending = window.sessionStorage.setItem.mock.calls[0]![1] as string
-    expect(JSON.parse(serializedPending)).toEqual({ id: receipt.id, kind: 'import-v1-users', createdAt: expect.any(String) })
-    expect(serializedPending).not.toContain(draft.mongoDbConnString)
+    expect(JSON.parse(serializedPending)).toEqual({ id: receipt.id, kind: 'import-v1-content', createdAt: expect.any(String) })
+    expect(serializedPending).not.toContain(draft.password)
     expect(window.sessionStorage.setItem.mock.invocationCallOrder[0]).toBeLessThan(transport.startUtilitiesOperation.mock.invocationCallOrder[0])
     expect(transport.fetchUtilitiesReceipt).toHaveBeenCalledWith(receipt.id)
     expect(recorded).toHaveBeenCalledWith(receipt)
@@ -163,20 +163,20 @@ describe('Utilities reviewed operation recovery', () => {
 
   it('releases a known rejected reactive request without clearing its caller secret or replaying it', async () => {
     const rejected = vi.fn()
-    const draft = reactive({ mongoDbConnString: 'mongodb://admin:private@legacy.example/wiki', groupMode: 'MULTI' })
+    const draft = reactive({ password: 'fixture-private-token', mode: 'git' })
     const { state, transport } = arrange({
       startUtilitiesOperation: vi.fn().mockRejectedValue(Object.assign(new Error('Settings changed; review again.'), { status: 409 }))
     })
     await state.requestOperation({
-      kind: 'import-v1-users',
-      reason: 'Review the user import',
+      kind: 'import-v1-content',
+      reason: 'Review the content import',
       payload: draft,
       onRejected: rejected
     })
     expect(transport.startUtilitiesOperation).toHaveBeenCalledOnce()
     expect(transport.fetchUtilitiesReceipt).not.toHaveBeenCalled()
     expect(rejected).toHaveBeenCalledWith('Settings changed; review again.')
-    expect(draft.mongoDbConnString).toBe('mongodb://admin:private@legacy.example/wiki')
+    expect(draft.password).toBe('fixture-private-token')
     expect(state.pendingRequest).toBeNull()
   })
 
@@ -197,7 +197,7 @@ describe('Utilities reviewed operation recovery', () => {
     state.section = 'export'
     component.watch['$route.query.section'].handler.call(state, undefined)
     component.watch['$route.query.receipt'].handler.call(state, undefined)
-    expect(state.section).toBe('auth')
+    expect(state.section).toBe('content')
     expect(state.receiptId).toBe('')
   })
 })

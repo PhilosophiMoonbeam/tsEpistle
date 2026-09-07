@@ -15,7 +15,6 @@ import {
 import { LocaleCodeSchema } from '../../shared/locale-policy.ts'
 import { requireSystemAuthority, type SystemRequester } from '../helpers/system-authority.ts'
 import authenticationOperations from './authentication.ts'
-import importV1Operations, { isConfirmedImportV1UsersFailure } from './import-v1.ts'
 import { runUtilityContentImport } from './utility-content-import.ts'
 import systemOperations from './system.ts'
 import { storageModuleDefinition } from '../repositories/storage-configuration.ts'
@@ -116,7 +115,6 @@ const inputSchema = z
       'content-migrate-locale',
       'content-purge-history',
       'export',
-      'import-v1-users',
       'import-v1-content',
       'telemetry-save',
       'telemetry-reset-client-id'
@@ -237,10 +235,6 @@ const validatePayload = (input: StartInput) => {
     )
       fail('Choose one or more supported export sections.')
     if (!z.string().trim().min(1).max(4096).safeParse(value.path).success) fail('Enter an export folder path.')
-  }
-  if (input.kind === 'import-v1-users') {
-    if (!z.string().min(11).max(4096).safeParse(value.mongoDbConnString).success) fail('Enter a valid Wiki.js 1.x MongoDB connection string.')
-    if (!z.enum(['SINGLE', 'MULTI', 'NONE']).safeParse(value.groupMode).success) fail('Choose an imported-user group strategy.')
   }
   if (input.kind === 'import-v1-content') {
     if (!z.enum(['git', 'disk']).safeParse(value.mode).success) fail('Choose a supported Wiki.js 1.x content source.')
@@ -397,6 +391,10 @@ export const createUtilitiesWorkspaceStore = (db: Knex): UtilitiesWorkspaceStore
   }
   const execute = async (requester: SystemRequester, input: StartInput) => {
     let effectStarted = false
+    const heartbeat = setInterval(() => {
+      void db('utilitiesOperations').where({ id: input.id, state: 'running' }).update({ heartbeatAt: now().toISOString() }).catch(() => {})
+    }, 15_000)
+    heartbeat.unref()
     let importEffectFingerprint: string | undefined
     const fenceEffect = async () => {
       const fingerprint = await fence(requester, input, 'working', importEffectFingerprint ?? input.fingerprint, importEffectFingerprint !== undefined)
@@ -479,33 +477,6 @@ export const createUtilitiesWorkspaceStore = (db: Knex): UtilitiesWorkspaceStore
           await observeExport(input.id, effect)
           break
         }
-        case 'import-v1-users': {
-          await fenceEffect()
-          try {
-            const imported = await importV1Operations.importUsers({ mongoDbConnString: payload.mongoDbConnString, groupMode: payload.groupMode })
-            const aggregate = {
-              processed: imported.usersCount + imported.failed.length,
-              succeeded: imported.usersCount,
-              failed: imported.failed.length,
-              skipped: imported.failed.length
-            }
-            if (imported.failed.length === 0) {
-              await finish(input.id, {
-                summary: `Wiki.js 1.x user import completed with ${imported.usersCount} imported user records.`,
-                result: aggregate
-              })
-            } else {
-              await failKnownOutcome(input.id, {
-                summary: `Wiki.js 1.x user import completed partially with ${imported.usersCount} imported records and ${imported.failed.length} skipped or failed records.`,
-                result: aggregate
-              })
-            }
-          } catch (error) {
-            if (!isConfirmedImportV1UsersFailure(error)) throw error
-            await failKnownOutcome(input.id, { summary: 'The legacy database could not be read before any user or group record was imported.' })
-          }
-          break
-        }
         case 'import-v1-content': {
           const imported = await runUtilityContentImport(requester, payload, input.reason, fenceEffect)
           const counts = imported.counts,
@@ -565,8 +536,13 @@ export const createUtilitiesWorkspaceStore = (db: Knex): UtilitiesWorkspaceStore
         }
       }
     } catch {
-      await stop(input.id, effectStarted)
+      try {
+        await stop(input.id, effectStarted)
+      } catch {
+        // An unavailable receipt store becomes stale/uncertain; never reject an unobserved background promise or replay its effects.
+      }
     } finally {
+      clearInterval(heartbeat)
       active.delete(input.id)
     }
   }

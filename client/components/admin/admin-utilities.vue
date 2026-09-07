@@ -2,7 +2,7 @@
 v-container.admin-utilities(fluid)
   AdminHero(
     title='Utilities'
-    description='Reviewed maintenance work with durable receipts. A receipt records the request before any service or data effect begins.'
+    description='Maintain content, move data and recover workspace services. Review each action and follow its recorded outcome.'
     icon='mdi-toolbox-outline'
     heading-id='admin-utilities-heading'
   )
@@ -101,6 +101,8 @@ v-container.admin-utilities(fluid)
                       dd {{ line.value }}
                   v-alert.mt-3(v-if='hasPartialResult(selectedReceipt)' color='warning' variant='tonal' density='compact') This receipt records aggregate counts only. It does not identify individual imported or skipped items; inspect the affected source and application logs before deciding whether to start a new import.
                   .text-body-small.mt-3 Receipt ID: #[code {{ selectedReceipt.id }}]
+                  .text-body-small.mt-1 Requested: {{ new Date(selectedReceipt.createdAt).toLocaleString() }}
+                  .text-body-small.mt-1 {{ selectedReceipt.apiKeyId ? `API key ${selectedReceipt.apiKeyId}` : selectedReceipt.actorId ? `User ${selectedReceipt.actorId}` : 'System' }}
                   .text-body-small.mt-1 Reason: {{ selectedReceipt.reason }}
                   .text-body-small.mt-1(v-if='selectedReceipt.acknowledgedAt') Uncertainty acknowledged by a later recorded request.
                 v-btn.mt-3(size='small' variant='text' :disabled='receiptLoading' @click='clearReceipt') Clear receipt selection
@@ -138,8 +140,8 @@ const tools = markRaw([
   { key: 'cache', title: 'Cache', subtitle: 'Clear server or browser caches', icon: 'mdi-cached', component: 'UtilityCache' },
   {
     key: 'import',
-    title: 'Wiki.js 1.x import',
-    subtitle: 'Bring in users or content',
+    title: 'Content import',
+    subtitle: 'Bring in documents and assets',
     icon: 'mdi-database-import-outline',
     component: 'UtilityImportv1'
   },
@@ -196,7 +198,7 @@ export default defineComponent({
   },
   data: () => ({
     tools,
-    section: 'auth' as ToolKey,
+    section: 'content' as ToolKey,
     workspace: null as UtilitiesWorkspace | null,
     loading: false,
     busy: false,
@@ -240,7 +242,7 @@ export default defineComponent({
     '$route.query.section': {
       immediate: true,
       handler(value: unknown) {
-        this.section = typeof value === 'string' && tools.some((tool) => tool.key === value) ? (value as ToolKey) : 'auth'
+        this.section = typeof value === 'string' && tools.some((tool) => tool.key === value) ? (value as ToolKey) : 'content'
       }
     },
     '$route.query.receipt': {
@@ -398,7 +400,7 @@ export default defineComponent({
       if (this.busy || this.pendingRequest || section === this.section) return
       if (!this.canLeave()) {
         const value = this.$route.query.section
-        this.section = typeof value === 'string' && tools.some((tool) => tool.key === value) ? (value as ToolKey) : 'auth'
+        this.section = typeof value === 'string' && tools.some((tool) => tool.key === value) ? (value as ToolKey) : 'content'
         return
       }
       this.$router.replace({ query: { ...this.$route.query, section } })
@@ -539,6 +541,26 @@ export default defineComponent({
 </script>
 
 <style lang="scss">
+.admin-utilities {
+  .v-radio-group > .v-input__control > .v-label {
+    color: rgb(var(--v-theme-on-surface));
+    opacity: 1;
+  }
+  .v-card-subtitle {
+    white-space: normal;
+    overflow: visible;
+    line-height: 1.6;
+  }
+  .admin-utilities-receipts .v-list-item-title {
+    white-space: normal;
+    overflow: visible;
+    line-height: 1.45;
+  }
+  .admin-utilities-receipts .v-list-item__append {
+    padding-left: 12px;
+  }
+}
+
 .admin-utilities-nav {
   position: sticky;
   top: 1rem;

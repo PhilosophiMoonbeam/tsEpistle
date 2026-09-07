@@ -11,6 +11,7 @@ export const UtilityOperationKindSchema = z.enum([
   'content-migrate-locale',
   'content-purge-history',
   'export',
+  // Historical receipts remain readable; this retired kind is rejected by the operation API.
   'import-v1-users',
   'import-v1-content',
   'telemetry-save',
@@ -78,7 +79,7 @@ export const utilityOperationTitle = (kind: UtilityOperationKind): string =>
     'content-migrate-locale': 'Migrate pages to another locale',
     'content-purge-history': 'Purge page history',
     export: 'Export workspace data',
-    'import-v1-users': 'Import Wiki.js 1.x users',
+    'import-v1-users': 'Legacy user import (retired)',
     'import-v1-content': 'Import Wiki.js 1.x content',
     'telemetry-save': 'Update telemetry preference',
     'telemetry-reset-client-id': 'Reset telemetry client ID'

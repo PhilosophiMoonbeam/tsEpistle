@@ -906,3 +906,8 @@ The fresh pre-release backup is `/home/bbferko/.local/state/wiki-tailnet/backups
 Source gates passed: full suite 468/468, all shared/client/server type checks, lint, dependency/licenses 808, placeholders, production build and bundle budgets; seven real PostgreSQL suites passed 46 cases/220 assertions. After deployment, preview infrastructure was stopped; the disposable PostgreSQL 17 container and databases, temporary PostgreSQL environment/configuration/data/dump, private live-before JSON, browser-auth copies and throwaway drivers were removed. Ignored non-secret screenshots/reports and the maintained backup/rollback artifacts remain. Post-cleanup `/healthz` remained HTTP 200.
 
 All 27 milestones are now deployed and verified. The final cross-area review is complete. Documentation-only commits after this record do not change the application revision.
+
+
+### Independent successor validation — corrections before acceptance
+
+A new user-requested goal independently reviews successor commits `13001f7c` / `2b0c358d` against the SSL handoff. See [`administration-independent-review.md`](administration-independent-review.md) for the prioritized findings, source judgments and independent evidence. The review confirmed substantive completion of the four remaining areas but found gaps in log credential redaction, Utilities terminal-receipt failure handling, heartbeat coverage and first-use/mobile presentation. The user additionally confirmed that the remaining MongoDB user-import path must be removed in favor of the project's PostgreSQL + OKF architecture. The importer/dependency/BSON patch are removed; historic receipts and immutable migration history remain readable. Corrected preview and release verification follow before accepting the amended release.

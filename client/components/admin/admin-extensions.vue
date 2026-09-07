@@ -4,7 +4,7 @@ v-container.extensions-workspace(fluid)
     div.extensions-heading-copy
       span.extensions-kicker Optional capabilities
       h1#extensions-title Extensions
-      p Inspect bundled definitions, their installation boundaries and point-in-time process observations. They do not prove remote delivery, page rendering or future image health.
+      p See which optional tools are available to the wiki and where to configure them.
     div.extensions-heading-meta
       dl.extensions-heading-facts
         div
@@ -20,7 +20,7 @@ v-container.extensions-workspace(fluid)
         v-btn(variant='outlined' color='primary' size='small' prepend-icon='mdi-refresh' :loading='loading' :disabled='loading' @click='refresh') Refresh observations
         p.extensions-boundary
           v-icon(icon='mdi-shield-lock-outline' size='16' aria-hidden='true')
-          span Read-only: refresh runs bounded checks only; it never installs packages, executes administrator input or changes the host.
+          span Availability is checked in this process. Installation is managed with the application image.
   async-state(v-if='loading && !workspace' state='loading' title='Reading the deployed extension library' message='Checking the bundled definitions and their bounded process observations.')
   async-state(v-else-if='error && !workspace' state='error' title='Extension observations could not be read' :message='error' retry-label='Try again' @retry='refresh')
   template(v-else-if='workspace && workspace.extensions.length')
@@ -108,9 +108,9 @@ v-container.extensions-workspace(fluid)
         section.extensions-recovery
           span.extensions-section-number 04
           div
-            h3 Recovery without mutation replay
+            h3 If a tool is missing
             p {{ selectedExtension.installation.recovery }}
-            p.extensions-recovery-note Refresh only re-observes the current image. It never repeats deployment, package installation or an external effect.
+            p.extensions-recovery-note After updating the application image, refresh to check availability again.
       v-alert(v-else-if='requestedExtensionIsFilteredOut' type='info' variant='outlined' icon='mdi-filter-variant') The selected extension is outside the current filter. Clear or change the filter to inspect it.
       v-alert(v-else-if='requestedExtensionIsUnavailable' type='warning' variant='outlined' icon='mdi-alert-circle-outline') The selected extension is not reported by this deployed application image. Choose an available extension to inspect it.
       v-alert(v-else type='info' variant='outlined' icon='mdi-puzzle-outline') Select an extension to inspect its deployment boundary.
