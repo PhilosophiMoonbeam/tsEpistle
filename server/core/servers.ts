@@ -1,5 +1,5 @@
 import { GRAPHQL_EXPLORER_OPTIONS, renderWorkspaceGraphiQL } from './graphql-explorer.ts'
-import fs from 'fs-extra'
+import { randomUUID } from 'node:crypto'
 import http from 'node:http'
 import https from 'node:https'
 import type { Socket } from 'node:net'
@@ -9,12 +9,14 @@ import { createYoga, maskError, type YogaServerInstance } from 'graphql-yoga'
 import { useServer } from 'graphql-ws/use/ws'
 import type { Disposable } from 'graphql-ws'
 import { WebSocketServer } from 'ws'
-import _ from 'lodash'
 import { execute as graphqlExecute, subscribe as graphqlSubscribe } from 'graphql'
 
 import { createGraphQLArtifacts, type GraphRuntime } from '../graph/index.ts'
 import { isPublicGraphError } from '../helpers/graph.ts'
 import letsencrypt from './letsencrypt.ts'
+import { tlsCertificateAt, type TlsMaterial, type TlsMaterialConfiguration } from '../repositories/tls-material.ts'
+import { prepareTlsMaterial } from '../repositories/tls-preflight.ts'
+import type { TlsAppliedMaterial } from '../../shared/tls-workspace.ts'
 
 interface ServerConfig {
   auth: { audience: string }
@@ -91,12 +93,24 @@ interface ServerCollection {
   https: https.Server | null
 }
 
+export interface PreparedHttpsContext {
+  certificate: TlsAppliedMaterial['certificate']
+  source: TlsAppliedMaterial['source']
+  format: TlsAppliedMaterial['format']
+  mode: 'context-reload' | 'listener-restart'
+  apply(options?: { allowRestart?: boolean }): Promise<TlsAppliedMaterial>
+}
+
 interface ServersCore {
   servers: ServerCollection
   connections: Map<string, Socket>
   le: typeof letsencrypt | null
   startHTTP(): Promise<void>
   startHTTPS(): Promise<void>
+  launchHTTPS(material: TlsMaterial, port: number, bindIP: string): Promise<https.Server>
+  retireHTTPS(server: https.Server): Promise<void>
+  inspectHttpsMaterial(): TlsAppliedMaterial | null
+  prepareHttpsContext(configuration?: TlsMaterialConfiguration): Promise<PreparedHttpsContext>
   startGraphQL(): Promise<void>
   installGraphQLSubscriptions(server: NodeServer): void
   authenticateGraphQLSubscription(connectionParams: unknown, request: http.IncomingMessage): Promise<SubscriptionAuthentication>
@@ -109,10 +123,6 @@ interface ServersCore {
 interface ExecutionRoot {
   execute: typeof graphqlExecute
   subscribe: typeof graphqlSubscribe
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
 }
 
 function isListenError(error: unknown): error is NodeJS.ErrnoException {
@@ -163,6 +173,14 @@ async function closeServer(server: NodeServer): Promise<void> {
 }
 
 export default function createServersCore(wiki: ServerWiki): ServersCore {
+  const applied = new WeakMap<https.Server, TlsAppliedMaterial>()
+  const materials = new WeakMap<https.Server, TlsMaterial>()
+  let httpsGeneration = 0
+  let replacing = false
+  let stopping = false
+  let replacementDone: Promise<void> | null = null
+  const configurationIdentity = () => JSON.stringify(wiki.config.ssl)
+  const copy = (value: TlsAppliedMaterial): TlsAppliedMaterial => ({ ...value, certificate: value.certificate ? tlsCertificateAt(value.certificate) : null })
   const serversCore: ServersCore = {
     servers: {
       graph: null,
@@ -191,46 +209,163 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
     },
 
     async startHTTPS(): Promise<void> {
+      if (stopping || replacing || this.servers.https?.listening) throw new Error('The HTTPS listener is already running or being replaced.')
+      const generation = ++httpsGeneration
       if (wiki.config.ssl.provider === 'letsencrypt') {
         this.le = letsencrypt
         await this.le.init()
       }
 
       wiki.logger.info(`HTTPS Server on port: [ ${wiki.config.ssl.port} ]`)
-      const tlsOptions: https.ServerOptions = {}
+      const identity = configurationIdentity()
+      const material = await prepareTlsMaterial(wiki.config.ssl)
+      if (generation !== httpsGeneration || stopping || replacing || this.servers.https?.listening || identity !== configurationIdentity())
+        throw new Error('HTTPS listener or deployment configuration changed during certificate loading.')
+      await this.launchHTTPS(material, wiki.config.ssl.port, wiki.config.bindIP)
+      wiki.logger.info('HTTPS Server: [ RUNNING ]')
+    },
+
+    async launchHTTPS(material, port, bindIP): Promise<https.Server> {
+      const server = https.createServer(material.options, wiki.app)
+      this.servers.https = server
       try {
-        if (wiki.config.ssl.format === 'pem') {
-          tlsOptions.key = wiki.config.ssl.inline ? wiki.config.ssl.key : fs.readFileSync(wiki.config.ssl.key)
-          tlsOptions.cert = wiki.config.ssl.inline ? wiki.config.ssl.cert : fs.readFileSync(wiki.config.ssl.cert)
-        } else {
-          tlsOptions.pfx = wiki.config.ssl.inline ? wiki.config.ssl.pfx : fs.readFileSync(wiki.config.ssl.pfx)
+        this.installGraphQLSubscriptions(server)
+        wiki.collaboration.install(server)
+        server.on('connection', connection => {
+          const key = `https:${connection.remoteAddress}:${connection.remotePort}`
+          this.connections.set(key, connection)
+          connection.on('close', () => {
+            if (this.connections.get(key) === connection) this.connections.delete(key)
+          })
+        })
+        await listen(server, port, bindIP, wiki.logger)
+        materials.set(server, material)
+        applied.set(server, {
+          revision: randomUUID(),
+          appliedAt: new Date().toISOString(),
+          certificate: material.certificate,
+          source: material.source,
+          format: material.format
+        })
+        return server
+      } catch (error) {
+        try {
+          await this.retireHTTPS(server)
+        } catch {
+          wiki.logger.error('HTTPS startup cleanup reported a transport failure.')
         }
-        if (!_.isEmpty(wiki.config.ssl.passphrase)) {
-          tlsOptions.passphrase = wiki.config.ssl.passphrase
-        }
-        if (!_.isEmpty(wiki.config.ssl.dhparam)) {
-          tlsOptions.dhparam = wiki.config.ssl.dhparam
-        }
-      } catch (error: unknown) {
-        wiki.logger.error('Failed to setup HTTPS server parameters:')
-        wiki.logger.error(errorMessage(error))
         throw error
       }
+    },
 
-      const server = https.createServer(tlsOptions, wiki.app)
-      this.servers.https = server
-      this.installGraphQLSubscriptions(server)
-      wiki.collaboration.install(server)
-      server.on('connection', connection => {
-        const key = `https:${connection.remoteAddress}:${connection.remotePort}`
-        this.connections.set(key, connection)
-        connection.on('close', () => {
-          this.connections.delete(key)
-        })
-      })
+    async retireHTTPS(server): Promise<void> {
+      let firstError: unknown
+      const attempt = async (action: () => unknown) => {
+        try {
+          await action()
+        } catch (error) {
+          firstError ??= error
+        }
+      }
+      await attempt(() => this.disposeGraphQLSubscriptions(server))
+      await attempt(() => wiki.collaboration.dispose(server))
+      await attempt(() => this.closeConnections('https'))
+      await attempt(() => server.closeAllConnections())
+      await attempt(() => closeServer(server))
+      if (this.servers.https === server && !server.listening) this.servers.https = null
+      if (firstError) throw firstError
+    },
 
-      await listen(server, wiki.config.ssl.port, wiki.config.bindIP, wiki.logger)
-      wiki.logger.info('HTTPS Server: [ RUNNING ]')
+    inspectHttpsMaterial(): TlsAppliedMaterial | null {
+      const server = this.servers.https
+      const state = server?.listening ? applied.get(server) : null
+      return state ? copy(state) : null
+    },
+
+    async prepareHttpsContext(configuration = wiki.config.ssl): Promise<PreparedHttpsContext> {
+      const server = this.servers.https
+      if (!server?.listening) throw new Error('The application HTTPS listener is not running.')
+      const previous = applied.get(server)
+      const previousMaterial = materials.get(server)
+      const address = server.address()
+      if (!address || typeof address === 'string' || !previousMaterial) throw new Error('The HTTPS listener material cannot be recovered for replacement.')
+      const mode = typeof server.setSecureContext === 'function' ? 'context-reload' : 'listener-restart'
+      const identity = configurationIdentity()
+      const material = await prepareTlsMaterial(configuration)
+      let consumed = false
+      return {
+        certificate: material.certificate ? structuredClone(material.certificate) : null,
+        source: material.source,
+        format: material.format,
+        mode,
+        apply: async (options = {}) => {
+          if (consumed) throw new Error('This prepared certificate replacement has already been applied.')
+          if (
+            stopping ||
+            replacing ||
+            this.servers.https !== server ||
+            !server.listening ||
+            applied.get(server) !== previous ||
+            identity !== configurationIdentity()
+          )
+            throw new Error('The HTTPS listener or deployment configuration changed. Review the certificate again.')
+          if (
+            material.certificate &&
+            (new Date(material.certificate.validUntil).getTime() <= Date.now() || new Date(material.certificate.validFrom).getTime() > Date.now())
+          )
+            throw new Error('The replacement certificate is outside its validity period.')
+          if (mode === 'listener-restart' && options.allowRestart !== true)
+            throw new Error('This runtime requires an HTTPS listener restart. Review the connection interruption before applying.')
+          consumed = true
+          replacing = true
+          let finishReplacement!: () => void
+          replacementDone = new Promise(resolve => {
+            finishReplacement = resolve
+          })
+          try {
+            if (mode === 'context-reload') {
+              // Runtimes implementing the Node API can preserve established connections.
+              server.setSecureContext(material.options)
+              materials.set(server, material)
+              const next: TlsAppliedMaterial = {
+                revision: randomUUID(),
+                appliedAt: new Date().toISOString(),
+                certificate: material.certificate,
+                source: material.source,
+                format: material.format
+              }
+              applied.set(server, next)
+              return copy(next)
+            }
+            // Bun 1.4 does not implement setSecureContext. An explicitly reviewed restart
+            // uses already validated material, with the previous material kept for recovery.
+            try {
+              await this.retireHTTPS(server)
+              const next = await this.launchHTTPS(material, address.port, address.address)
+              return copy(applied.get(next)!)
+            } catch {
+              // Ensure partially disposed old transports cannot remain active beside recovery.
+              try {
+                try {
+                  await this.retireHTTPS(server)
+                } catch {
+                  wiki.logger.error('HTTPS replacement cleanup reported a transport failure.')
+                }
+                if (server.listening) throw new Error('Previous listener could not stop.')
+                await this.launchHTTPS(previousMaterial, address.port, address.address)
+              } catch {
+                wiki.logger.error('HTTPS certificate replacement and listener recovery failed. Restore the listener from deployment configuration.')
+                throw new Error('Certificate replacement failed and the previous HTTPS listener could not be restored. Deployment recovery is required.')
+              }
+              throw new Error('Certificate replacement failed. The HTTPS listener was restored using its previous material.')
+            }
+          } finally {
+            replacing = false
+            replacementDone = null
+            finishReplacement()
+          }
+        }
+      }
     },
 
     async startGraphQL(): Promise<void> {
@@ -384,34 +519,44 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
     },
 
     async stopServers(): Promise<void> {
-      let firstError: unknown
-      const teardown = async (action: () => Promise<unknown>): Promise<void> => {
-        try {
-          await action()
-        } catch (error) {
-          firstError ??= error
-          wiki.logger.error(error)
+      stopping = true
+      httpsGeneration += 1
+      await replacementDone
+      try {
+        let firstError: unknown
+        const teardown = async (action: () => Promise<unknown>): Promise<void> => {
+          try {
+            await action()
+          } catch (error) {
+            firstError ??= error
+            wiki.logger.error(error)
+          }
         }
-      }
 
-      await teardown(() => this.disposeGraphQLSubscriptions())
-      await teardown(() => wiki.collaboration.dispose())
-      this.closeConnections()
-      if (this.servers.http) {
-        const server = this.servers.http
-        await teardown(() => closeServer(server))
-        this.servers.http = null
+        await teardown(() => this.disposeGraphQLSubscriptions())
+        await teardown(() => wiki.collaboration.dispose())
+        this.closeConnections()
+        if (this.servers.http) {
+          const server = this.servers.http
+          server.closeAllConnections()
+          await teardown(() => closeServer(server))
+          this.servers.http = null
+        }
+        if (this.servers.https) {
+          const server = this.servers.https
+          server.closeAllConnections()
+          await teardown(() => closeServer(server))
+          this.servers.https = null
+        }
+        this.servers.graph = null
+        if (firstError) throw firstError
+      } finally {
+        stopping = false
       }
-      if (this.servers.https) {
-        const server = this.servers.https
-        await teardown(() => closeServer(server))
-        this.servers.https = null
-      }
-      this.servers.graph = null
-      if (firstError) throw firstError
     },
 
     async restartServer(server = 'https'): Promise<void> {
+      if (stopping || replacing) throw new Error('A server shutdown or certificate replacement is already in progress.')
       this.closeConnections(server)
       switch (server) {
         case 'http':
