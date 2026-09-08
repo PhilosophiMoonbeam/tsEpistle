@@ -200,6 +200,7 @@ describe('default page focused contracts', () => {
     expect(template).not.toBeNull()
     expect(style).not.toBeNull()
     const pageRoot = extractCssRule(style, '.wiki-page')
+    const pageHero = extractCssRule(style, '.page-hero')
     const pageHeader = extractCssRule(style, '.page-header-section')
     const pageBody = extractCssRule(style, '.page-body')
     const pageSidebar = extractCssRule(style, '.page-col-sd')
@@ -226,6 +227,16 @@ describe('default page focused contracts', () => {
     expectDeclarations(pageBody, {
       width: 'min\\(100%,\\s*var\\(--page-reader-shell-max\\)\\)'
     })
+    expect(pageHero).not.toBeNull()
+    expect(pageBody).not.toBeNull()
+    const stripComments = block => (block ? block.replace(/\/\*[\s\S]*?\*\//g, ' ') : block)
+    const heroDeclarations = extractDeclarations(stripComments(pageHero))
+    const bodyDeclarations = extractDeclarations(stripComments(pageBody))
+    expect(heroDeclarations.position).toMatch(/^(?:relative|absolute|fixed|sticky)$/)
+    expect(bodyDeclarations.position).toMatch(/^(?:relative|absolute|fixed|sticky)$/)
+    expect(heroDeclarations['z-index']).toMatch(/^-?\d+$/)
+    expect(bodyDeclarations['z-index']).toMatch(/^-?\d+$/)
+    expect(Number(bodyDeclarations['z-index'])).toBeGreaterThan(Number(heroDeclarations['z-index']))
     expect(script).toMatch(/page-toc-item-title--depth-0[\s\S]*?page-toc-item-title--depth-1[\s\S]*?page-toc-item-title--depth-2-plus/)
     expectDeclarations(tocTitle, {
       'font-size': '\\.8125rem',

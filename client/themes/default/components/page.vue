@@ -2835,9 +2835,10 @@ export default defineComponent({
 }
 
 
+/* Stacking context must paint above .page-hero (z-index: 2) so upward-lifted desktop rail cards remain visible and interactive */
 .page-body {
   position: relative;
-  z-index: 1;
+  z-index: 3;
   width: min(100%, var(--page-reader-shell-max));
   margin-inline: auto;
   padding:
