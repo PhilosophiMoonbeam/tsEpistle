@@ -58,12 +58,13 @@ const validOkfMetadata = {
 }
 
 const knowledgeProjection = (overrides: Partial<KnowledgeProjectionView> = {}): KnowledgeProjectionView => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   sourceRevision: '8',
   state: 'partial',
   conceptType: 'Procedure',
   summary: 'Operational deployment runbook.',
   tags: ['runbook'],
+  searchTerms: ['deployment runbook'],
   entities: [{ name: 'Deployment', type: 'Process' }],
   relationships: [],
   openQuestions: [],
@@ -77,12 +78,16 @@ const knowledgeProjection = (overrides: Partial<KnowledgeProjectionView> = {}): 
     staleAfter: null
   },
   missingFields: ['concept.relationships'],
-  provenance: { deterministicVersion: 'wiki-knowledge-v1', utility: null },
+  provenance: { deterministicVersion: 'wiki-knowledge-v2', utility: null },
   ...overrides
 })
 
 class PageNotFound extends Error {
   readonly code = 'PAGE_NOT_FOUND'
+}
+
+class PageLocked extends Error {
+  readonly code = 'PAGE_LOCKED'
 }
 
 type KnowledgeDependency = NonNullable<Parameters<typeof registerPageReadActions>[1]['knowledge']>
@@ -135,28 +140,52 @@ const setup = (
 describe('permission-safe page read actions', () => {
   it('applies the user-selected scope even when the model requests a broader search', async () => {
     const { execute, operations } = setup()
-    await execute('pages.search', { query: 'guide', locale: 'fr', path: 'elsewhere', limit: 5, offset: 0 }, { scope: { kind: 'section', locale: 'en', path: 'docs' }, sources: [] })
+    await execute(
+      'pages.search',
+      { query: 'guide', locale: 'fr', path: 'elsewhere', limit: 5, offset: 0 },
+      { scope: { kind: 'section', locale: 'en', path: 'docs' }, sources: [] }
+    )
     expect(operations.search).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en', path: 'docs' }))
-    await execute('pages.search', { query: 'guide', limit: 5, offset: 0 }, { scope: { kind: 'selected' }, sources: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', visibility: 'public', sourceRevision: '8' }] })
+    await execute(
+      'pages.search',
+      { query: 'guide', limit: 5, offset: 0 },
+      { scope: { kind: 'selected' }, sources: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', visibility: 'public', sourceRevision: '8' }] }
+    )
     expect(operations.search).toHaveBeenLastCalledWith(expect.objectContaining({ pageIds: [42] }))
   })
 
-  it('returns bounded hydrated search results without protected model fields', async () => {
-    const { execute, operations } = setup({
+  it('returns bounded current search candidates without protected model fields', async () => {
+    const { execute } = setup({
       search: vi.fn(async () => ({
         results: [
-          { path: 'docs/start', locale: 'en', visibility: 'public', tags: ['runbook'], score: 12.5, matchedFields: ['tag', 'graph'] },
-          { path: 'private/notes', locale: 'en', visibility: 'private', matchedFields: ['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'] },
-          { path: 'deleted', locale: 'en', visibility: 'public' }
+          {
+            id: 42,
+            sourceRevision: '8',
+            path: 'docs/start',
+            locale: 'en',
+            visibility: 'public',
+            tags: ['runbook'],
+            score: 12.5,
+            matchedFields: ['tag', 'graph']
+          },
+          {
+            id: 43,
+            sourceRevision: '2',
+            path: 'private/notes',
+            locale: 'en',
+            visibility: 'private',
+            matchedFields: ['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge']
+          },
+          { id: 44, sourceRevision: '1', path: 'deleted', locale: 'en', visibility: 'public' }
         ],
         suggestions: ['notes'],
         totalHits: 3,
         windowLimit: 150,
         windowTruncated: true
       })),
-      getByPath: async input => {
-        if (input.path === 'deleted') throw new PageNotFound()
-        return input.visibility === 'private' ? page({ id: 43, path: 'private/notes', visibility: 'private', ownerId: 7, sourceRevision: 2 }) : page()
+      get: async input => {
+        if (input.id === 44) throw new PageNotFound()
+        return input.id === 43 ? page({ id: 43, path: 'private/notes', visibility: 'private', ownerId: 7, sourceRevision: 2 }) : page()
       }
     })
     expect(await execute('pages.search', { query: 'notes', path: 'docs', limit: 3, offset: 0 })).toEqual({
@@ -200,135 +229,85 @@ describe('permission-safe page read actions', () => {
       windowTruncated: true,
       nextOffset: null
     })
-    expect(operations.search).toHaveBeenCalledWith(expect.objectContaining({ requester: principal, path: 'docs', limit: 100 }))
   })
 
-  it('pages a fixed merged search window without duplicates, skips, or deleted hydrations', async () => {
-    const projection = knowledgeProjection()
-    const lexicalCandidates = Array.from({ length: 18 }, (_, index) => ({
-      path: `lexical/${index}`,
-      locale: 'en',
-      visibility: index % 7 === 0 ? ('private' as const) : ('public' as const),
-      title: 'Untrusted search metadata',
-      tags: ['lexical'],
-      score: 200 - index * 2,
-      matchedFields: ['title' as const]
-    }))
-    const knowledgeCandidates = Array.from({ length: 18 }, (_, index) => ({
-      id: 300 + index,
-      path: index < 12 ? lexicalCandidates[index].path : `knowledge/${index}`,
-      locale: 'en',
-      visibility: index < 12 ? lexicalCandidates[index].visibility : index % 5 === 0 ? ('private' as const) : ('public' as const),
-      score: 201 - index * 2,
-      matchedFields: ['knowledge' as const],
-      knowledge: projection
-    }))
-    const hydrate = vi.fn(async (input: Record<string, unknown>) => {
-      const path = String(input.path)
-      if (path === 'lexical/0') throw new PageNotFound()
-      const index = Number(path.slice(path.indexOf('/') + 1))
-      return page({
-        id: path.startsWith('lexical/') ? 100 + index : 200 + index,
-        localeCode: String(input.locale),
-        path,
-        title: `Hydrated ${path}`,
-        sourceRevision: String(100 + index),
-        visibility: input.visibility
-      })
-    })
+  it('uses the unified search order, skips locked candidates, and attaches only revision-matched knowledge', async () => {
+    const currentProjection = knowledgeProjection()
+    const staleProjection = knowledgeProjection({ sourceRevision: '7' })
     const knowledge: KnowledgeDependency = {
-      getCurrent: vi.fn(async () => projection),
-      getRevision: vi.fn(async () => projection),
-      getCurrentMany: vi.fn(async () => new Map()),
-      searchVisible: vi.fn(async input => knowledgeCandidates.slice(0, input.limit))
+      getCurrent: vi.fn(async () => currentProjection),
+      getRevision: vi.fn(async () => currentProjection),
+      getCurrentMany: vi.fn(
+        async () =>
+          new Map([
+            [42, currentProjection],
+            [43, staleProjection]
+          ])
+      )
     }
-    const { execute, operations } = setup(
+    const { execute } = setup(
       {
-        search: vi.fn(async input => ({
-          results: lexicalCandidates.slice(0, Number(input.limit)),
+        search: vi.fn(async () => ({
+          results: [
+            {
+              id: 42,
+              sourceRevision: '8',
+              locale: 'en',
+              path: 'docs/knowledge',
+              visibility: 'public',
+              tags: ['runbook'],
+              score: 9,
+              matchedFields: ['knowledge']
+            },
+            { id: 43, sourceRevision: '8', locale: 'en', path: 'docs/lexical', visibility: 'public', tags: [], score: 8, matchedFields: ['title'] },
+            { id: 44, sourceRevision: '8', locale: 'en', path: 'docs/locked', visibility: 'public', tags: [], score: 7, matchedFields: ['title'] },
+            { id: 45, sourceRevision: '8', locale: 'en', path: 'docs/replaced', visibility: 'public', tags: [], score: 6, matchedFields: ['title'] },
+            { id: 46, sourceRevision: '8', locale: 'en', path: 'docs/visibility', visibility: 'public', tags: [], score: 5, matchedFields: ['title'] }
+          ],
           suggestions: [],
-          totalHits: lexicalCandidates.length,
-          windowLimit: 150,
+          totalHits: 5,
+          windowLimit: 100,
           windowTruncated: false
         })),
-        getByPath: hydrate
+        get: async input => {
+          if (input.id === 44) throw new PageLocked()
+          if (input.id === 45) return page({ id: 45, path: 'docs/replaced', sourceRevision: '9' })
+          if (input.id === 46) return page({ id: 46, path: 'docs/visibility', visibility: 'private' })
+          return page({ id: input.id, path: input.id === 42 ? 'docs/knowledge' : 'docs/lexical' })
+        }
       },
       knowledge
     )
-    type SearchPage = {
-      locale: string
-      path: string
-      title: string
-      score: number
-      knowledge: KnowledgeProjectionView | null
-    }
-    type SearchPageResponse = {
-      results: SearchPage[]
-      totalInWindow: number
-      windowLimit: number
-      windowTruncated: boolean
-      nextOffset: number | null
-    }
-    const responses: SearchPageResponse[] = []
-    const collected: SearchPage[] = []
-    let offset = 0
-    while (true) {
-      const response = (await execute('pages.search', {
-        query: 'candidate',
-        limit: 12,
-        offset
-      })) as SearchPageResponse
-      responses.push(response)
-      collected.push(...response.results)
-      if (response.nextOffset === null) break
-      expect(response.nextOffset).toBe(offset + response.results.length)
-      offset = response.nextOffset
-    }
 
-    const expectedScores = new Map<string, number>()
-    for (const candidate of [...lexicalCandidates, ...knowledgeCandidates]) {
-      expectedScores.set(candidate.path, Math.max(expectedScores.get(candidate.path) ?? 0, candidate.score))
+    const response = (await execute('pages.search', { query: 'deployment', limit: 10, offset: 0 })) as {
+      results: Array<{ id: number; matchedFields: string[]; knowledge: KnowledgeProjectionView | null }>
     }
-    expectedScores.delete('lexical/0')
-    const expectedOrder = [...expectedScores].sort((left, right) => right[1] - left[1]).map(([path]) => path)
-    expect(collected.map(result => result.path)).toEqual(expectedOrder)
-    expect(new Set(collected.map(result => `${result.locale}\u0000${result.path}`)).size).toBe(collected.length)
-    expect(collected).toHaveLength(23)
-    expect(collected.filter(result => result.knowledge !== null)).toHaveLength(17)
-    expect(collected.filter(result => result.knowledge === null)).toHaveLength(6)
-    expect(collected.every(result => result.title === `Hydrated ${result.path}`)).toBe(true)
-    expect(responses.map(response => response.nextOffset)).toEqual([12, null])
-    expect(responses.every(response => response.totalInWindow === 23 && response.windowLimit === 250 && response.windowTruncated === false)).toBe(true)
-    expect(operations.search).toHaveBeenCalledTimes(2)
-    expect(operations.search).toHaveBeenNthCalledWith(1, expect.objectContaining({ limit: 100, requester: principal }))
-    expect(operations.search).toHaveBeenNthCalledWith(2, expect.objectContaining({ limit: 100, requester: principal }))
-    expect(knowledge.searchVisible).toHaveBeenCalledTimes(2)
-    expect(knowledge.searchVisible).toHaveBeenNthCalledWith(1, expect.objectContaining({ limit: 100, requester: principal }))
-    expect(knowledge.searchVisible).toHaveBeenNthCalledWith(2, expect.objectContaining({ limit: 100, requester: principal }))
-    expect(hydrate).toHaveBeenCalledTimes(48)
-    expect(hydrate.mock.calls.every(([input]) => input.requester === principal)).toBe(true)
-    expect(collected.some(result => result.path === 'lexical/0')).toBe(false)
+    expect(response.results.map(result => result.id)).toEqual([42, 43])
+    expect(response.results[0]).toMatchObject({ matchedFields: ['knowledge'], knowledge: currentProjection })
+    expect(response.results[1]).toMatchObject({ matchedFields: ['title'], knowledge: null })
   })
 
-  it('searches and filters the shared current knowledge projection', async () => {
+  it('attaches matching knowledge and preserves internal hydration failures', async () => {
     const projection = knowledgeProjection()
     const knowledge: KnowledgeDependency = {
       getCurrent: vi.fn(async () => projection),
       getRevision: vi.fn(async () => projection),
-      getCurrentMany: vi.fn(async () => new Map([[42, projection]])),
-      searchVisible: vi.fn(async () => [
-        {
-          id: 42,
-          locale: 'en',
-          path: 'docs/start',
-          visibility: 'public',
-          score: 7,
-          matchedFields: ['knowledge'],
-          knowledge: projection
-        }
-      ])
+      getCurrentMany: vi.fn(async () => new Map([[42, projection]]))
     }
-    const { execute } = setup({}, knowledge)
+    const searchResult = {
+      id: 42,
+      sourceRevision: '8',
+      locale: 'en',
+      path: 'docs/start',
+      visibility: 'public',
+      tags: [],
+      score: 7,
+      matchedFields: ['knowledge']
+    }
+    const { execute } = setup(
+      { search: vi.fn(async () => ({ results: [searchResult], suggestions: [], totalHits: 1, windowLimit: 100, windowTruncated: false })) },
+      knowledge
+    )
 
     expect(
       await execute('pages.search', {
@@ -337,25 +316,16 @@ describe('permission-safe page read actions', () => {
         limit: 10,
         offset: 0
       })
-    ).toMatchObject({
-      results: [
-        {
-          id: 42,
-          matchedFields: ['knowledge'],
-          knowledge: {
-            state: 'partial',
-            conceptType: 'Procedure',
-            summary: 'Operational deployment runbook.'
-          }
-        }
-      ]
+    ).toMatchObject({ results: [{ id: 42, matchedFields: ['knowledge'], knowledge: projection }] })
+
+    const failure = new Error('database unavailable')
+    const broken = setup({
+      search: async () => ({ results: [searchResult], suggestions: [], totalHits: 1, windowLimit: 100, windowTruncated: false }),
+      get: async () => {
+        throw failure
+      }
     })
-    expect(knowledge.searchVisible).toHaveBeenCalledWith(
-      expect.objectContaining({
-        query: 'deployment',
-        filter: { state: 'partial', conceptType: 'Procedure' }
-      })
-    )
+    await expect(Promise.resolve(broken.execute('pages.search', { query: 'deployment', limit: 10, offset: 0 }))).rejects.toBe(failure)
   })
 
   it('searches and pages the visible tag taxonomy', async () => {
@@ -419,6 +389,30 @@ describe('permission-safe page read actions', () => {
     expect(operations.discover).toHaveBeenCalledWith(expect.objectContaining({ locale: 'en', path: 'docs', depth: 1, order: 'path', requester: principal }))
   })
 
+  it('skips locked discovery and recent candidates while direct reads remain explicit', async () => {
+    const locked = new PageLocked()
+    const { execute } = setup({
+      discover: async () => ({
+        pages: [
+          { id: 42, locale: 'en', path: 'docs/locked', title: 'Locked', description: null, updatedAt: new Date(), tags: [] },
+          { id: 43, locale: 'en', path: 'docs/visible', title: 'Visible', description: null, updatedAt: new Date(), tags: [] }
+        ],
+        totalInWindow: 2,
+        windowLimit: 100,
+        nextOffset: null
+      }),
+      listRecent: async () => [{ id: 42 }, { id: 43 }],
+      get: async input => {
+        if (input.id === 42) throw locked
+        return page({ id: 43, path: 'docs/visible' })
+      }
+    })
+
+    await expect(Promise.resolve(execute('pages.get', { id: 42 }))).rejects.toBe(locked)
+    expect((await execute('pages.discover', { locale: 'en', path: 'docs', tags: [], limit: 10, offset: 0 })).pages).toHaveLength(1)
+    expect((await execute('pages.listRecent', { limit: 10 })).pages).toMatchObject([{ id: 43, path: 'docs/visible' }])
+  })
+
   it('exposes canonical rendered heading anchors as precise citation destinations', async () => {
     const toc = JSON.stringify([
       {
@@ -449,8 +443,7 @@ describe('permission-safe page read actions', () => {
     const knowledge: KnowledgeDependency = {
       getCurrent: vi.fn(async () => currentProjection),
       getRevision: vi.fn(async () => historicalProjection),
-      getCurrentMany: vi.fn(async () => new Map()),
-      searchVisible: vi.fn(async () => [])
+      getCurrentMany: vi.fn(async () => new Map())
     }
     const { execute, operations } = setup(
       {
@@ -701,7 +694,16 @@ describe('permission-safe page read actions', () => {
       getVersion: async () => page({ id: undefined, pageId: 42, sourceRevision: 6, versionDate: '2026-08-16T00:00:00.000Z' })
     })
     expect(await execute('pages.listHistory', { pageId: 42, limit: 10 })).toEqual({
-      versions: [{ id: 9, sourceRevision: '6', resourceUri: 'wiki://pages/42/versions/9/revisions/6/okf', action: 'edit', versionDate: '2026-08-16T00:00:00.000Z', authorName: 'Editor' }]
+      versions: [
+        {
+          id: 9,
+          sourceRevision: '6',
+          resourceUri: 'wiki://pages/42/versions/9/revisions/6/okf',
+          action: 'edit',
+          versionDate: '2026-08-16T00:00:00.000Z',
+          authorName: 'Editor'
+        }
+      ]
     })
     expect(await execute('pages.getVersion', { pageId: 42, versionId: 9 })).toMatchObject({
       id: 42,
@@ -726,6 +728,7 @@ describe('permission-safe page read actions', () => {
 
   it('continues cited graph traversal with a principal-bound opaque cursor', async () => {
     const { execute, operations } = setup({
+      get: async input => page(Number(input.id) === 43 ? { id: 43, path: 'docs/next', title: 'Next', tags: [{ tag: 'Runbook' }] } : {}),
       listRelated: vi.fn(async input =>
         Number(input.offset) === 0
           ? {
@@ -781,5 +784,62 @@ describe('permission-safe page read actions', () => {
     })
     expect(operations.listRelated).toHaveBeenNthCalledWith(1, expect.objectContaining({ pageId: 42, limit: 1, offset: 0, requester: principal }))
     expect(operations.listRelated).toHaveBeenNthCalledWith(2, expect.objectContaining({ pageId: 42, limit: 1, offset: 1, requester: principal }))
+  })
+
+  it('skips locked related candidates before loading their derived knowledge', async () => {
+    const getCurrentMany = vi.fn(async () => new Map([[43, knowledgeProjection({ sourceRevision: '8' })]]))
+    const { execute } = setup(
+      {
+        get: async () => {
+          throw new PageLocked()
+        },
+        listRelated: async () => ({
+          pages: [
+            page({
+              id: 43,
+              path: 'docs/protected',
+              title: 'Protected',
+              distance: 1,
+              direction: 'outgoing',
+              viaPageId: 42
+            })
+          ],
+          truncated: false,
+          nextOffset: null
+        })
+      },
+      { getCurrent: async () => null, getRevision: async () => null, getCurrentMany }
+    )
+
+    expect(await execute('pages.related', { pageId: 42, limit: 1, cursor: null })).toEqual({ pages: [], nextCursor: null })
+    expect(getCurrentMany).toHaveBeenCalledWith([])
+  })
+
+  it('fences stale related candidates before loading their derived knowledge', async () => {
+    const getCurrentMany = vi.fn(async () => new Map([[43, knowledgeProjection({ sourceRevision: '9' })]]))
+    const { execute } = setup(
+      {
+        get: async () => page({ id: 43, path: 'docs/next', title: 'Next', sourceRevision: '9' }),
+        listRelated: async () => ({
+          pages: [
+            page({
+              id: 43,
+              path: 'docs/next',
+              title: 'Next',
+              sourceRevision: '8',
+              distance: 1,
+              direction: 'outgoing',
+              viaPageId: 42
+            })
+          ],
+          truncated: false,
+          nextOffset: null
+        })
+      },
+      { getCurrent: async () => null, getRevision: async () => null, getCurrentMany }
+    )
+
+    expect(await execute('pages.related', { pageId: 42, limit: 1, cursor: null })).toEqual({ pages: [], nextCursor: null })
+    expect(getCurrentMany).toHaveBeenCalledWith([])
   })
 })

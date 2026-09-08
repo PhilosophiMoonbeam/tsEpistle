@@ -33,7 +33,7 @@ describe('agent utility model', () => {
     const create = vi.fn(async () => ({
       service: { chat },
       model: 'model-mini',
-      capabilities: { maxContextTokens: 10_000 },
+      capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 },
       pricing: { revision: 'price-1', inputMicrosPerMillionTokens: 1_000_000, outputMicrosPerMillionTokens: 2_000_000 }
     }))
     const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
@@ -85,13 +85,18 @@ describe('agent utility model', () => {
             tags: ['deployment'],
             entities: [{ name: 'Release pipeline', type: 'System' }],
             relationships: [{ subject: 'Deployment', predicate: 'uses', object: 'Release pipeline' }],
-            openQuestions: []
+            openQuestions: [],
+            searchTerms: ['release deployment']
           })
         }
       ],
       modelUsage: { ai: 'test', model: 'model-mini', tokens: { promptTokens: 25, completionTokens: 12, totalTokens: 37 } }
     }))
-    const create = vi.fn(async () => ({ service: { chat }, model: 'model-mini' }))
+    const create = vi.fn(async () => ({
+      service: { chat },
+      model: 'model-mini',
+      capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 }
+    }))
     const utility = new AgentUtilityModel({ create } as unknown as AgentProviderFactory)
 
     const result = await utility.enrichKnowledge({
@@ -102,7 +107,7 @@ describe('agent utility model', () => {
     })
 
     expect(result).toMatchObject({
-      value: { type: 'Procedure', tags: ['deployment'] },
+      value: { type: 'Procedure', tags: ['deployment'], searchTerms: ['release deployment'] },
       model: 'model-mini',
       inputTokens: 25,
       outputTokens: 12
@@ -113,10 +118,26 @@ describe('agent utility model', () => {
     expect(chat.mock.calls[0]?.[0]).not.toHaveProperty('functions')
   })
 
-  it('rejects nonconforming utility knowledge output instead of filling gaps', async () => {
-    const chat = vi.fn(async () => ({ results: [{ index: 0, content: '```json\n{}\n```' }] }))
+  it('rejects undeclared or malformed utility knowledge output instead of filling gaps', async () => {
+    const chat = vi.fn(async () => ({
+      results: [
+        {
+          index: 0,
+          content: JSON.stringify({
+            type: null,
+            summary: null,
+            tags: [],
+            entities: [],
+            relationships: [],
+            openQuestions: [],
+            searchTerms: [],
+            unexpected: 'field'
+          })
+        }
+      ]
+    }))
     const utility = new AgentUtilityModel({
-      create: vi.fn(async () => ({ service: { chat }, model: 'model-mini' }))
+      create: vi.fn(async () => ({ service: { chat }, model: 'model-mini', capabilities: { maxContextTokens: 10_000, maxOutputTokens: 4_000 } }))
     } as unknown as AgentProviderFactory)
 
     await expect(
@@ -129,5 +150,45 @@ describe('agent utility model', () => {
         })
       )
     ).rejects.toThrow()
+  })
+
+  it('clamps knowledge source and output to resolved provider capabilities', async () => {
+    const chat = vi.fn(async () => ({
+      results: [
+        {
+          index: 0,
+          content: JSON.stringify({
+            type: null,
+            summary: null,
+            tags: [],
+            entities: [],
+            relationships: [],
+            openQuestions: [],
+            searchTerms: []
+          })
+        }
+      ]
+    }))
+    const utility = new AgentUtilityModel({
+      create: vi.fn(async () => ({ service: { chat }, model: 'model-mini', capabilities: { maxContextTokens: 2_000, maxOutputTokens: 8 } }))
+    } as unknown as AgentProviderFactory)
+
+    await utility.enrichKnowledge({
+      profileVersionId: request.profileVersionId,
+      page: {
+        title: 'Deploy',
+        description: '',
+        locale: 'en',
+        path: 'ops/deploy',
+        contentType: 'markdown',
+        content: 'Source '.repeat(20_000)
+      },
+      missingFields: ['concept.searchTerms'],
+      signal: request.signal
+    })
+
+    const providerRequest = chat.mock.calls[0]?.[0]
+    expect(providerRequest).toMatchObject({ modelConfig: { maxTokens: 8 } })
+    expect(Buffer.byteLength(JSON.stringify(providerRequest), 'utf8')).toBeLessThanOrEqual(1_992)
   })
 })

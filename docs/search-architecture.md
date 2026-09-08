@@ -1,6 +1,6 @@
 # Search architecture
 
-Wiki search exposes PostgreSQL Advanced as its sole engine. The browser UI, Wiki Agent, and MCP all use this shared PostgreSQL retrieval contract, so scope, ranking, suggestions, and rebuild behavior stay consistent across every caller.
+PostgreSQL Advanced is the sole production search engine. `operations.search` is the implemented unified lexical-plus-knowledge owner for browser, Agent, MCP, and API search; focused implementation and benchmark evidence is recorded in [the foundation audit](search-foundation-audit.md). This is not a deployment or complete-release claim.
 
 ## Design decisions
 
@@ -9,7 +9,7 @@ Wiki search exposes PostgreSQL Advanced as its sole engine. The browser UI, Wiki
 - **Metadata-aware reranking.** Exact title, exact tag, exact path, title prefix, tag prefix, and trigram similarity add deterministic boosts above the lexical score.
 - **Bounded graph support.** A recursive CTE traverses links only between the top lexical candidates, to depth two. It can distinguish a coherent linked cluster without turning every query into a whole-wiki graph walk or returning unrelated neighbors.
 - **Fuzzy retrieval is a fallback.** Exact lexical and substring candidates run first. Trigram word similarity runs only when fewer than five exact candidates exist. This preserves typo tolerance without making common tag or keyword queries scan a broad fuzzy set.
-- **Stable, inspectable evidence.** Every result carries its final `score`, normalized `tags`, and `matchedFields` (`title`, `tag`, `path`, `description`, `content`, or `graph`). Scores have deterministic title and page-ID tie breakers.
+- **Stable, inspectable rank signals.** Results carry final `score`, normalized `tags`, and lexical/graph `matchedFields`. The unified contract additionally permits `knowledge`, labeled **knowledge hints** in user interfaces; it is neither verified fact nor citation evidence. Scores have deterministic title and page-ID tie breakers.
 
 ## Engine contract and invariants
 
@@ -50,34 +50,36 @@ The PostgreSQL engine also ensures source-side indexes on `pageLinks.pageId`, `p
 
 ## Query pipeline
 
+### Unified pipeline
+
 ```mermaid
 flowchart LR
-    Q[User query] --> P[Normalize and parse query]
-    P --> E[Exact title, tag, and path priority set]
-    P --> L[GIN lexical and substring candidates]
-    E --> B[Bounded candidate union]
-    L --> B
-    B -->|fewer than 5| F[Trigram fuzzy fallback]
-    B --> R[Field-aware lexical rerank]
-    F --> R
-    R --> C[Top 100 candidates]
-    C --> G[Depth-2 recursive link CTE]
-    G --> S[Stable final score]
-    S --> A[ACL and protected-page filter]
-    A --> U[UI, Wiki Agent, and MCP]
+    Q[User query and scope] --> P[Normalize and classify structured syntax]
+    P --> A[Operations: prefilter ACL, publication, protection, locale, path, selected IDs]
+    A --> L[PostgreSQL lexical and graph candidates]
+    A --> K[Revision-matched knowledge candidates]
+    L --> U[One bounded deterministic union]
+    K --> U
+    U --> H[Hydrate matching page ID and source revision]
+    H --> R[Current-access recheck and result]
+    R --> S[Browser, Agent, and MCP]
 ```
 
-The graph score is deliberately capped at `1.25`. Links can settle close lexical results, but cannot outrank an exact title or exact tag by themselves.
+`operations.search` supplies bounded authorized public IDs to PostgreSQL, asks the knowledge repository for candidates constrained by the same public/private and selected-page scope, and orders the combined candidates once. The Agent no longer maintains a local knowledge union, cap, ranking, or access path.
 
-Locale and path filters are part of both exact and fuzzy candidate selection. Path scope means the selected path itself or descendants under `path/`; wildcard characters remain literal.
+The engine owns query classification. Quotes, standalone case-insensitive `OR`, and token-boundary negation are structured input. Structured input does not enter raw substring, fuzzy, acronym, or generated-hint fallbacks that change its semantics; ordinary hyphenated identifiers remain ordinary input. Blank trimmed input is empty across public, private, and knowledge retrieval. Locale/path (including literal `%`/`_`), selected page IDs, ACL, current publication window, and protection filter before a candidate cap. The raw 500-candidate cutoff cannot hide an authorized result inside an earlier unauthorized window.
 
-Search accepts PostgreSQL web-search syntax: quote a phrase to require adjacent terms and prefix an unwanted term with `-` to exclude it. Agent and MCP callers can apply the same exact-locale and path-or-descendant filters as the UI.
+The graph score is capped at `1.25`: explicit links may settle close lexical candidates but must never let graph support alone outrank an exact title or tag. The protected-bridge violation (public 71 → protected 70 → public 69) is corrected and native-retested: protected related output/knowledge disappeared, public scores dropped 7.4925 → 6.75, and a public direct link restored the expected distance-one graph signal. The stale-edge worker-stall repair is also verified: during page 70 revision 2's held running `links` receipt, `links[]` was empty and depth-one related returned only public incoming 71; after lease release, a real worker recorded a succeeded receipt and removed old 70 edges. Engine candidates pin the authorized revision map before caps, source edges require current succeeded link receipts, and raw edge revision/routes are compared with that snapshot. In session observation, deleted synthetic page 69 render/links receipts were recreated by a normal worker at exact revision 1, proving bounded legacy backfill; the retained benchmark artifact (`docs/benchmarks/search-graph-boundary-2026-09-07.json`) records this recovery under `legacyRenderAndLinksRecovered: true` alongside an empty `receipts: []` array rather than retaining individual receipt rows. Public lexical candidates still honor empty dates as open bounds where the page contract permits, compare offset-bearing ISO dates as instants, and fail closed for invalid dates/windows. Private pages remain outside the shared index, use the owner-or-system-manager `canReadPage` authority for direct path reads, and contribute at most 50 results regardless of the public window.
 
 ## Wiki content as Agent and MCP memory
 
 Wiki pages are shared, mutable, citable external knowledge. They complement the Wiki Agent's bounded personal memory rather than replacing it. Durable preferences and stable user-specific facts belong in dedicated memory; facts that can be rediscovered from Wiki pages stay in the Wiki and are retrieved when needed.
 
-Both Agent chat and MCP expose the same grounded retrieval sequence:
+### OpenWiki comparison boundary
+
+OpenWiki's Code Wiki Claims use stable claim IDs, resolver-owned versioned evidence, stale/unresolved state, and confirm/update/retract reconciliation; its provenance discipline preserves extensions and competing credible sources. tsEpistle deliberately does not implement Claims sidecars, evidence IDs, or contradiction reconciliation. Its authoritative layer is database-backed pages/history, dynamic ACL, `pageTags`, and server-owned OKF authority; projections and generated hints are revisioned retrieval data only. They never become citation authority or automatically enter the separate owner-scoped personal-memory snapshot.
+
+Agent chat and MCP use the grounded retrieval sequence below. The shared search operation is the implemented candidate path; it is still selection metadata rather than page-read evidence:
 
 1. `pages.search` / `wiki_search_pages` finds lexical, tag, path, and graph-supported seeds, including spelling suggestions.
 2. `pages.searchTags` / `wiki_search_tags` searches the existing taxonomy while `pages.listTags` / `wiki_list_tags` pages through it deterministically.
@@ -86,16 +88,9 @@ Both Agent chat and MCP expose the same grounded retrieval sequence:
 5. `pages.get` / `wiki_get_page` reads each promising page before its content is used.
 6. Answers cite the retrieved page evidence.
 
-`pages.related` is deliberately separate from the latency-sensitive search reranker. It constructs an undirected adjacency graph from canonical `pageLinks`, then performs deterministic breadth-first traversal:
+`pages.related` is deliberately separate from the latency-sensitive search reranker. Its required contract is an undirected adjacency graph built only from current, published, publication-window-open, unprotected pages authorized for the requester; every returned node and every bridge must satisfy those conditions. Traversal remains deterministic breadth-first with at most 100 pages, opaque requester/seed/depth-bound cursor state, optional `maxDepth` 1..32, shortest-distance then title/path/ID order, edge direction, and predecessor ID. Current body-read authorization must be rechecked before related knowledge is attached.
 
-- every directly linked page is distance one; traversal depth counts edges, not the number of neighbors;
-- each response contains at most 100 pages; an opaque signed `nextCursor` continues from the exact requester, seed page, and depth scope until the connected component is exhausted;
-- an optional `maxDepth` from 1 through 32 supports deliberately local exploration;
-- ordering is shortest distance, then title, path, and page ID;
-- results include distance, incoming/outgoing/bidirectional direction, and the preceding page ID;
-- only published public pages authorized for the requester enter the adjacency graph, so an inaccessible page can neither appear nor act as a hidden bridge.
-
-The breadth-first walk runs over a set-based PostgreSQL edge read rather than inside the search CTE. Authorization rules can depend on live path, locale, and tags, so filtering nodes before constructing adjacency is safer than traversing the database graph first and filtering results afterward. The search CTE remains a candidate-only depth-two reranker; `pages.related` provides intentional broad graph retrieval.
+[`search-graph-boundary-2026-09-07.json`](benchmarks/search-graph-boundary-2026-09-07.json) records the protected-bridge score drop, visible-link control, held-receipt `links[]` result, no stale 69 traversal, released-lease edge deletion, and legacy receipt recovery (attested via `legacyRenderAndLinksRecovered: true` with empty `receipts: []`, reflecting session observation of exact revision-1 recreation). Graph admission now requires preauthorized revision pins and current succeeded link receipts before cap/ranking, then compares raw edge revision/routes to the authorization snapshot. Public metadata lexical behavior remains separate while protected endpoints never contribute graph score, graph traversal, or body-derived knowledge attachment.
 
 Internal Wiki links are durable graph edges derived from canonical authored content. A page mutation records a `links` projection intent alongside the authoritative page revision; the projection worker replaces `pageLinks` only after validating that immutable intent against the current page identity and source hash. Agent instructions and Agent/MCP proposal descriptions therefore require authors to search and read related pages before a knowledge-changing create or patch, then add canonical links and precise tags only when supported by the page content. Links remain visible, reviewable, and reproducible from page history; the Agent must not invent invisible edges merely to influence retrieval.
 
@@ -107,24 +102,24 @@ Internal Wiki links are durable graph edges derived from canonical authored cont
 - Workers claim bounded batches with expiring leases and heartbeats. A lost lease cannot complete an effect, failures retain durable retry state, and superseded revisions cannot overwrite a newer projection.
 - A `search` intent waits for the exact revision's render intent to succeed. Published public pages are reconciled through the PostgreSQL engine; private, unpublished, and absent pages have both `pagesVector` and `pagesWords` removed. Success is recorded only after `pagesVector.sourceRevision` proves the current authoritative revision, or after absence of both derived rows is proven.
 - Search maintenance scans bounded sets for missing current-revision intents, revision mismatches, orphan vectors, and stale suggestion rows. It re-arms only an immutable payload that still matches the current page revision, identity, and source hash. Payload or hash corruption remains terminal evidence rather than being silently rewritten.
-- Knowledge projection is maintained independently from search retrieval. Its lifecycle discovers missing current/history projections, retries eligible work, and re-arms failed durable `knowledge` effects only from validated canonical intent. `pages` and page history remain authoritative; `pageKnowledgeProjections` is repairable derived state.
+- Knowledge projection is independently maintained repairable state, never a second access-control or citation system. `operations.search` queries only exact-current projections with the same publication, ACL, selected-ID, locale/path, private-owner/system-manager, and protected-source constraints as lexical candidates before cap/union. Projection schema 2 persists normalized `searchTokens` using the configured dictionary and a GIN index; a dictionary change invalidates/rebuilds this derived search state. `searchVisible` returns no projection candidates for structured syntax, preventing summary/hint matches from bypassing quoted/negated/`OR` source semantics. Lifecycle discovers missing current/history projections, schema/version mismatch, revision mismatch, and repairable utility absence from validated immutable intent. A requested exact revision that is absent or mismatched fails closed; it never falls back to current data. Markdown link extraction excludes code spans/fences, bounds labels, and preserves an unavailable source line as nullable/unknown rather than inventing it.
+
+Utility enrichment is outside requester-scoped retrieval. The configured conformed profile is an operator-approved shared-content processor: preflight checks current revision/source hash, public visibility, publication window, and password/protection state, not requester/page-rule/anonymous-read ACL. It may receive published shared ACL-restricted pages; a private, protected, unpublished, scheduled, expired, or invalid-window source found at preflight is not dispatched. Retrieval still enforces requester ACL. Utility has no tools, accepts strict bounded schema output only for declared projection gaps, and cannot write authority/source/tags/verification; neither that prompt nor generated text is an injection-proof or semantic-truth guarantee. Post-dispatch eligibility changes discard output but cannot retract bytes already transmitted. Schema-2 `searchTerms` backfill may invoke it once per eligible current page; operators must approve the shared corpus/provider and review total budget because there is no total backfill-cost quota.
 - Rename and delete intents carry the prior identity or desired absence, so stale link/search identities are evicted without treating a derived row as source truth.
 - Activation validates or recreates the search schema and performs a rebuild when its schema, dictionary, or source revisions are stale. An explicit rebuild truncates the derived tables inside the advisory-locked transaction, then walks published public page identities in bounded keyset-cursor batches. Each canonical rendered document is indexed before the next identity batch is loaded; rollback restores the prior derived state on any failure.
 
-Protected pages never contribute content tokens during either incremental indexing or rebuild. Their visible title, path, description, and tags remain searchable. Private pages stay outside the shared index and are searched only inside the requester's owner scope. Private retrieval applies the requested locale and path scope and matches title, description, content, path, and tags before merging results into the same deterministic ordering.
+Protected pages do not contribute content tokens during indexing or rebuild. Protected body-derived projection hints are barred from direct lexical/knowledge retrieval; the graph-path exception was resolved by protected-endpoint/current-body fencing and exact-current-revision succeeded-receipt gating. Visible metadata is evaluated only if product policy permits it and under the same structured semantics. Private pages stay outside the shared index and are searched locally for the owner or authorized system manager. The fixed private contribution is at most 50 results regardless of the requested public window.
 
 ## Wiki Agent contract
 
-`pages.search` returns bounded hydrated page summaries with:
+`pages.search` is the Agent projection of the shared operation, not a second retriever. It returns bounded hydrated summaries with:
 
-- citations and canonical page identity;
-- tags, numeric rank, and matched fields;
-- spelling `suggestions`;
-- `totalInWindow`, the number of authorized raw hits available inside the bounded search window;
-- `windowLimit` and `windowTruncated`, which distinguish an exhausted result set from one capped by the public or private retrieval window;
-- `nextOffset`, which advances through raw hits even if a page is deleted between retrieval and hydration.
+- canonical page identity and the matching source revision;
+- tags, numeric rank, lexical/graph/`knowledge` matched fields, and spelling suggestions;
+- `totalInWindow`, `windowLimit`, and `windowTruncated` for the bounded candidate window rather than a whole-wiki total; and
+- `nextOffset`, which advances raw candidates even if a page disappears during hydration.
 
-The shared PostgreSQL index contributes at most the configured search maximum, 100 by default. An owner-scoped private search contributes at most 50 additional hits. These are candidate-window semantics, not a whole-wiki total.
+Hydration rejects a candidate whose page ID/source revision no longer identifies the returned route. A projection is attached only when it shares the hydrated page revision. Expected locked/unavailable candidates are omitted without aborting unrelated results. The public/default candidate limit is 100 and the independent private contribution limit is 50.
 
 `pages.searchTags` returns at most 20 normalized matching tag values. `pages.listTags` returns at most 100 stable tag records per call with `nextOffset`.
 
@@ -163,12 +158,12 @@ Every checked draft emits a bounded `evidence.provenance` event. It records whet
 
 Two executable benchmarks cover different contracts and must not be compared as if they measured the same path:
 
-- `bun run benchmark:page-index` exercises the discovery repository's bounded page-index candidate read, authorization principals, overflow sentinel, query count, connection use, heap growth, and PostgreSQL plan counters. It does not invoke the search plugin.
-- `bun run benchmark:postgres-search` starts an isolated PostgreSQL 17 container and invokes `server/modules/search/postgres/engine.ts` against a deterministic 20,000-page corpus (seed `20_260_831`) containing rendered content, normalized tags, and canonical links. It measures the plugin rebuild and warmed exact title/content, typo/fuzzy, multi-term description, and common-tag distributions.
+- `bun run benchmark:page-index` measures the discovery repository's bounded page-index candidate read, principals, overflow sentinel, query count, connection use, heap growth, and PostgreSQL plan counters. It does not invoke the search engine.
+- `bun run benchmark:postgres-search` uses an isolated PostgreSQL 17 container and a deterministic 20,000-page corpus (seed `20_260_831`) to measure rebuild and warmed engine distributions. It must never write to a production database.
 
-The PostgreSQL search report records the PostgreSQL and `pg_trgm` versions, corpus seed and expected/observed shape, vector/suggestion counts and revision/orphan checks, search schema version and dictionary, engine caps, iterations, warmups, raw samples, nearest-rank percentiles, representative result checks, configured thresholds, and every violation. By default, every query distribution must meet a 200 ms p95 threshold; `POSTGRES_SEARCH_MAX_QUERY_P95_MS` provides an environment override. Representative correctness checks cover exact-title precedence, rendered-content retrieval, typo fallback, multi-term description retrieval, and common-tag cap/membership. Publication is an atomic JSON replacement; invariant or threshold failure still publishes the diagnostic report and exits nonzero. The wrapper refuses non-dedicated database names and removes its container on every exit, so it cannot read production data.
+The retained lexical baseline in [`search-foundation-before-2026-09-07.json`](benchmarks/search-foundation-before-2026-09-07.json) recorded recall@5 `0.8181818181818182` and zero-result rate `0.18181818181818182` over 11 seeded queries; it preserves the `AFR` and held-out paraphrase misses as diagnostics. The final isolated PostgreSQL 17.10 report, [`search-foundation-after-2026-09-07.json`](benchmarks/search-foundation-after-2026-09-07.json), passed with no threshold violations: its required four-case lexical acceptance scope passed, and its separate revisioned augmented fixture scored recall@5/MRR@5/nDCG@5 `1.0` with zero-result rate `0` across the same 11-query corpus. Rebuild time was **25,772.876510 ms**, with query p95 latencies of **26.583659 ms** for exact title/content (p50 23.742542 ms), **24.870621 ms** for typo/fuzzy (p50 24.150178 ms), **31.693809 ms** for multi-term description (p50 26.985204 ms), and **62.194827 ms** for common tag queries (p50 60.943106 ms), all well below the 200 ms threshold. The fixture is deterministic repository/union evidence, not actual utility-model output.
 
-Measured timings are machine-specific and depend on machine load and PostgreSQL settings; they are not universal performance claims. No historical latency values are claimed here. A benchmark result is evidence only when retained from the executable command with its complete self-describing report.
+Actual configured-utility evidence is separately retained in `docs/benchmarks/search-utility-before-2026-09-07.json` and `docs/benchmarks/search-utility-after-2026-09-07.json`. The latter successful `gpt-5.6-luna` request generated four novel terms and passed term-ingestion, `AFR`, selected-scope, structured-query, and absent-query controls, but `restore the ultraviolet verification code` still returned no result. The reports must not be compared as if they measured one path, and neither makes a universal semantic-recall or model-equivalence claim.
 
 ## Projection observability
 
@@ -179,21 +174,10 @@ Measured timings are machine-specific and depend on machine load and PostgreSQL 
 
 Search document counts are not a sufficient correctness check by themselves: equal counts can still hide a revision mismatch and an orphan. Alerting should evaluate the vector anomaly gauges together with durable-effect age and failure status. Derived-state repair may re-arm matching immutable intent; operators must investigate payload/hash validation failures rather than bypassing them.
 
-## Operational checks
+## Operational evidence and remaining record
 
-After activating or upgrading the PostgreSQL engine:
+Implementation gates include four real PostgreSQL suites (**21 cases / 61 assertions**: knowledge search 4/10, utility admission 3/5, search foundation 12/37, and search graph rank 2/9), server and shared/client types, and all scoped files; the full test suite passes **472/472 isolated files**. The isolated report, migrated MCP-focused tests (7/7), native reader/browser accessibility, continuation, search/tree/preview/focus proof, least-privilege MCP read/resource/revocation proof, and resolved graph-boundary proof are recorded in [the foundation audit](search-foundation-audit.md). The reader and admin evaluator had zero WCAG 2 A/AA and 2.1 AA violations in the observed light/dark scenarios; the final browser heading is **Search results**.
 
-1. Rebuild the search index once if activation did not already repair the schema or stale revisions; investigate advisory-lock contention instead of retrying concurrent rebuilds.
-2. Confirm `pagesSearchMetadata` records contract ID `1`, schema version `2`, and the configured dictionary.
-3. Confirm every published public page has one `pagesVector` row with the same `sourceRevision`, and that no ineligible or absent page retains vector or suggestion rows.
-4. Confirm the `pages_vector_tokens_idx`, `pages_vector_tags_idx`, `pages_vector_facets_trgm_idx`, and `pages_words_word_trgm_idx` indexes are valid, ready, live, and use their expected operator classes.
-5. Search an exact title, a tag, a content-only phrase, a quoted phrase, an excluded term, and a misspelling; confirm suggestions and window metadata.
-6. Confirm locale and path scope work for public results and the owner's private title, content, path, and tag matches.
-7. Confirm a protected content-only term is absent while the protected page's visible metadata remains searchable.
-8. Confirm tag search, tag pagination, and structured discovery return only authorized records and reject an over-broad discovery scope.
-9. Confirm `pages.related` returns authorized direct links and backlinks, continues a connected component with its opaque cursor, rejects a modified cursor, and does not traverse through a denied page.
-10. Confirm the Wiki Agent calls search or discovery, optionally `pages.related`, then `pages.get`, and emits a page citation.
-11. Use an adversarial page where an incident name appears in the introduction and procedures appear in another section. Confirm the wrong section is rejected, the corrected grouped answer is accepted, unsupported verification language is withheld, and `evidence.provenance` records the claim-to-section mapping.
-12. Run `bun run benchmark:page-index` for discovery regressions and `bun run benchmark:postgres-search` for engine regressions; retain each atomic JSON report rather than transcribing isolated latency values.
+The current build used explicit supported `WIKI_BUILD_REVISION` content fingerprint `3adffcba7255a3f88ec490ceffefe6f826e9508a`, not a Git revision; the worktree remains intentionally uncommitted and is not deployed. Retained live attestation in `docs/benchmarks/search-foundation-live-2026-09-07.json` confirms `source.deployedToMaintainedInstance: false`, `maintainedAuthoritativeState.pagesUnchanged: true`, `pageHistoryUnchanged: true`, `settingsUnchanged: true`, and `repositoryBindMounts: 0` (raw private fingerprints were verified during audit but are not retained in repo artifacts). Under the manifest-driven attestation framework (`docs/security/review-attestations.json`), the former monolithic Covered source mechanism in the threat model has been replaced by structured review records. The historical `55f30709cd4b8de0ec1fd498cac7174f1cacd084` baseline is represented by a non-independent, release-ineligible structured record with blocking finding `SEC-EXT-001` (external reviewer unassigned). The current search audit is represented by a `working-tree-audit` record using fingerprint `3adffcba7255a3f88ec490ceffefe6f826e9508a` (base `d3d5a63326c056bb847fdb2552be0a1cf1eb7020`), which constitutes non-independent and release-ineligible staged evidence rather than a release attestation; release remains blocked until committed exact source receives independent review and a release-eligible `source-review` record. Cleanup of disposable audit tooling, sensitive restored artifacts, and clone infrastructure is complete based on current evidence (`docs/benchmarks/search-foundation-live-2026-09-07.json` records `cleanup.completed: true`, all resource cleanup booleans true, and `remaining: []`).
 
-No embedding generation or document-chunk synchronization is required. Search vectors and knowledge records are derived asynchronously from durable page-mutation intent and remain reproducible from authoritative pages and history.
+No embedding generation or document-chunk synchronization is required. Search vectors and knowledge records remain asynchronous, repairable projections from durable mutation intent and authoritative pages/history.

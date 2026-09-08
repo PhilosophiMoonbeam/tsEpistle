@@ -283,11 +283,26 @@ export const rearmPageMutationEffect = async (
   return updated === 1
 }
 
+const PAGE_MUTATION_OUTBOX_CLAIM_LOCK_NAMESPACE = 0x57494b4f
+
+const isPostgres = (knex: Knex | Knex.Transaction): boolean => {
+  const client = String(knex.client.config.client)
+  return client === 'pg' || client === 'postgres' || client === 'postgresql'
+}
+
+const acquirePageMutationClaimLocks = async (transaction: Knex.Transaction, effects: readonly PageProjectionEffectKind[]): Promise<void> => {
+  if (!isPostgres(transaction)) return
+  for (const effect of [...effects].sort()) {
+    await transaction.raw('SELECT pg_advisory_xact_lock(?, hashtext(?))', [PAGE_MUTATION_OUTBOX_CLAIM_LOCK_NAMESPACE, effect])
+  }
+}
+
 export const claimPageMutationEffects = async (
   knex: Knex,
   input: {
     readonly leaseOwner: string
     readonly limit?: number
+    readonly maxActive?: number
     readonly leaseMs?: number
     readonly now?: Date
     readonly effects?: readonly PageProjectionEffectKind[]
@@ -296,22 +311,45 @@ export const claimPageMutationEffects = async (
   if (!input.leaseOwner || input.leaseOwner.length > 255) throw new PageMutationOutboxError('INVALID_LEASE_OWNER', 'Projection lease owner is invalid')
   const limit = input.limit ?? 10
   const leaseMs = input.leaseMs ?? 60_000
-  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(leaseMs) || leaseMs < 1_000 || leaseMs > 10 * 60_000) {
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > 128 ||
+    !Number.isSafeInteger(leaseMs) ||
+    leaseMs < 1_000 ||
+    leaseMs > 10 * 60_000 ||
+    (input.maxActive !== undefined && (!Number.isSafeInteger(input.maxActive) || input.maxActive < 1 || input.maxActive > 128))
+  ) {
     throw new PageMutationOutboxError('INVALID_LEASE', 'Projection lease bounds are invalid')
   }
   const effects = input.effects ?? PAGE_PROJECTION_EFFECT_KINDS
   if (effects.length === 0 || new Set(effects).size !== effects.length || effects.some(effect => !PAGE_PROJECTION_EFFECT_KINDS.includes(effect))) {
     throw new PageMutationOutboxError('INVALID_EFFECT_SET', 'Projection claim effects must be unique and supported')
   }
-  const now = input.now ?? new Date()
-  const nowIso = now.toISOString()
   return knex.transaction(async transaction => {
-    await transaction<PageMutationOutboxRow>('pageMutationOutbox')
-      .where('status', 'running')
-      .where('leaseExpiresAt', '<=', nowIso)
-      .update({ status: 'pending', leaseOwner: null, leaseToken: null, leaseExpiresAt: null, updatedAt: nowIso })
+    if (input.maxActive !== undefined) await acquirePageMutationClaimLocks(transaction, effects)
+    const now = input.now ?? new Date()
+    const nowIso = now.toISOString()
+    let expiredLeases = transaction<PageMutationOutboxRow>('pageMutationOutbox').where('status', 'running').where('leaseExpiresAt', '<=', nowIso)
+    if (input.maxActive !== undefined) expiredLeases = expiredLeases.whereIn('effectKind', effects)
+    await expiredLeases.update({ status: 'pending', leaseOwner: null, leaseToken: null, leaseExpiresAt: null, updatedAt: nowIso })
+    const active =
+      input.maxActive === undefined
+        ? 0
+        : Number(
+            (
+              await transaction<PageMutationOutboxRow>('pageMutationOutbox')
+                .where('status', 'running')
+                .whereIn('effectKind', effects)
+                .where('leaseExpiresAt', '>', nowIso)
+                .count<{ count: string }>({ count: '*' })
+                .first()
+            )?.count ?? 0
+          )
+    const claimLimit = input.maxActive === undefined ? limit : Math.min(limit, Math.max(0, input.maxActive - active))
+    if (claimLimit === 0) return []
     const claimed: ClaimedPageProjectionEffect[] = []
-    while (claimed.length < limit) {
+    while (claimed.length < claimLimit) {
       let claimQuery = transaction<PageMutationOutboxRow>('pageMutationOutbox')
         .whereIn('status', ['pending', 'retry'])
         .whereIn('effectKind', effects)
@@ -364,12 +402,14 @@ export const claimPageMutationEffects = async (
         .orderBy('availableAt', 'asc')
         .orderBy('createdAt', 'asc')
         .orderBy('id', 'asc')
-        .limit(limit - claimed.length)
+        .limit(claimLimit - claimed.length)
         .forUpdate()
       const client = String(transaction.client.config.client)
       if (client === 'pg' || client === 'postgres' || client === 'postgresql' || client.includes('mysql')) claimQuery = claimQuery.skipLocked()
       const rows = await claimQuery
       if (rows.length === 0) break
+      const claimsBefore = claimed.length
+      let candidatesRemoved = false
       for (const row of rows) {
         let payload: PageProjectionPayload
         try {
@@ -377,7 +417,7 @@ export const claimPageMutationEffects = async (
         } catch (error: unknown) {
           if (!(error instanceof PageMutationOutboxError)) throw error
           const detail = error.message.slice(0, 1_000)
-          await transaction<PageMutationOutboxRow>('pageMutationOutbox')
+          const quarantined = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
             .where({ id: row.id, status: row.status })
             .update({
               status: 'failed',
@@ -388,6 +428,7 @@ export const claimPageMutationEffects = async (
               leaseExpiresAt: null,
               updatedAt: nowIso
             })
+          candidatesRemoved ||= quarantined === 1
           continue
         }
         const leaseToken = randomUUID()
@@ -405,6 +446,7 @@ export const claimPageMutationEffects = async (
         if (updated !== 1) continue
         claimed.push({ id: row.id, leaseToken, attempts: Number(row.attempts) + 1, payload })
       }
+      if (claimed.length === claimsBefore && !candidatesRemoved) break
     }
     return claimed
   })
@@ -808,12 +850,16 @@ const searchStateDisagrees = async (knex: Knex, page: SearchMaintenancePage): Pr
 const PAGE_PROJECTION_LEASE_MILLISECONDS = 60_000
 const PAGE_PROJECTION_HEARTBEAT_MILLISECONDS = 20_000
 const SEARCH_MAINTENANCE_LIMIT = 10
+const GRAPH_MAINTENANCE_LIMIT = 10
+const GRAPH_MAINTENANCE_SCAN_BATCH = 32
+const GRAPH_MAINTENANCE_SCAN_LIMIT = 128
 
 export class PageProjectionLifecycle {
   readonly #knex: Knex
   readonly #workerId: string
   readonly #sinks: Readonly<Partial<Record<PageProjectionEffectKind, PageProjectionSink>>>
   #running = false
+  #graphMaintenanceCursor = 0
 
   constructor(knex: Knex, workerId: string, runtime: PageProjectionRuntime) {
     this.#knex = knex
@@ -822,6 +868,128 @@ export class PageProjectionLifecycle {
       render: new RenderProjectionSink(knex, runtime),
       links: new LinksProjectionSink(knex, runtime),
       search: new SearchProjectionSink(knex, runtime)
+    }
+  }
+
+  async #maintainGraphEffects(): Promise<void> {
+    let afterPageId = this.#graphMaintenanceCursor
+    let scanned = 0
+    let backfilled = 0
+    while (scanned < GRAPH_MAINTENANCE_SCAN_LIMIT && backfilled < GRAPH_MAINTENANCE_LIMIT) {
+      const batchLimit = Math.min(GRAPH_MAINTENANCE_SCAN_BATCH, GRAPH_MAINTENANCE_SCAN_LIMIT - scanned)
+      const candidates = await this.#knex<ProjectionPageRow>('pages as page')
+        .select(
+          'page.id',
+          'page.sourceRevision',
+          'page.content',
+          'page.render',
+          'page.isPublished',
+          'page.localeCode',
+          'page.path',
+          'page.visibility',
+          'page.ownerId'
+        )
+        .leftJoin('pageMutationOutbox as linksEffect', join => {
+          join
+            .on('linksEffect.pageId', '=', 'page.id')
+            .andOn('linksEffect.sourceRevision', '=', 'page.sourceRevision')
+            .andOnVal('linksEffect.effectKind', '=', 'links')
+        })
+        .where('page.id', '>', afterPageId)
+        .where('page.visibility', 'public')
+        .where('page.isPublished', true)
+        .whereNull('linksEffect.id')
+        .orderBy('page.id')
+        .limit(batchLimit)
+      if (candidates.length === 0) {
+        this.#graphMaintenanceCursor = 0
+        break
+      }
+
+      for (const candidate of candidates) {
+        scanned += 1
+        afterPageId = Number(candidate.id)
+        this.#graphMaintenanceCursor = afterPageId
+        const recovered = await this.#knex.transaction(async transaction => {
+          let candidateRevision: string
+          try {
+            candidateRevision = revisionString(candidate.sourceRevision)
+          } catch {
+            return false
+          }
+          const page = await transaction<ProjectionPageRow>('pages')
+            .where({ id: candidate.id, sourceRevision: candidate.sourceRevision })
+            .forUpdate()
+            .first('id', 'sourceRevision', 'content', 'render', 'isPublished', 'localeCode', 'path', 'visibility', 'ownerId')
+          if (!page || page.visibility !== 'public' || (page.isPublished !== true && page.isPublished !== 1)) return false
+
+          let pageRevision: string
+          try {
+            pageRevision = revisionString(page.sourceRevision)
+          } catch {
+            return false
+          }
+          const candidateLocation: PageProjectionLocation = {
+            locale: candidate.localeCode,
+            path: candidate.path,
+            visibility: candidate.visibility,
+            ownerId: candidate.ownerId
+          }
+          if (pageRevision !== candidateRevision || sha256(page.content) !== sha256(candidate.content) || !pageLocationMatches(page, candidateLocation)) {
+            return false
+          }
+
+          const existingLinks = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
+            .where({ pageId: page.id, sourceRevision: pageRevision, effectKind: 'links' })
+            .first('id')
+          if (existingLinks) return false
+
+          const renderEffect = await transaction<PageMutationOutboxRow>('pageMutationOutbox')
+            .where({ pageId: page.id, sourceRevision: pageRevision, effectKind: 'render' })
+            .first()
+          let effects: readonly PageProjectionEffectKind[] = ['render', 'links']
+          if (renderEffect) {
+            if (!['pending', 'retry', 'running', 'succeeded'].includes(renderEffect.status)) return false
+            let renderPayload: PageProjectionPayload
+            try {
+              renderPayload = parseRowPayload(renderEffect)
+            } catch (error: unknown) {
+              if (error instanceof PageMutationOutboxError) return false
+              throw error
+            }
+            if (renderPayload.desiredState !== 'present' || !isExactProjectionSource(page, renderPayload)) return false
+            effects = ['links']
+          }
+
+          try {
+            await enqueuePageMutationEffects(transaction, {
+              pageId: page.id,
+              sourceRevision: pageRevision,
+              desiredState: 'present',
+              action: 'update',
+              source: page.content,
+              location: {
+                locale: page.localeCode,
+                path: page.path,
+                visibility: page.visibility,
+                ownerId: page.ownerId
+              },
+              effects
+            })
+          } catch (error: unknown) {
+            if (error instanceof PageMutationOutboxError && error.code === 'OUTBOX_IDEMPOTENCY_CONFLICT') return false
+            throw error
+          }
+          return true
+        })
+        if (recovered) backfilled += 1
+        if (backfilled >= GRAPH_MAINTENANCE_LIMIT) break
+      }
+      if (backfilled >= GRAPH_MAINTENANCE_LIMIT) break
+      if (candidates.length < batchLimit) {
+        this.#graphMaintenanceCursor = 0
+        break
+      }
     }
   }
 
@@ -986,6 +1154,7 @@ export class PageProjectionLifecycle {
     if (this.#running) return { processed: 0 }
     this.#running = true
     try {
+      await this.#maintainGraphEffects()
       await this.#maintainSearchEffects()
       const claims = await claimPageMutationEffects(this.#knex, {
         leaseOwner: this.#workerId,

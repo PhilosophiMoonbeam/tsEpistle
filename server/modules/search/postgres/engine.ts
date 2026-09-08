@@ -1,4 +1,14 @@
-import { wiki, type SearchConfig, type SearchContext, type SearchPlugin, type SearchResult, type UnknownRecord, type WikiPage } from '../../types.ts'
+import { isStructuredSearchQuery } from '../../../helpers/search-query.ts'
+import {
+  wiki,
+  type SearchConfig,
+  type SearchContext,
+  type SearchOptions,
+  type SearchPlugin,
+  type SearchResult,
+  type SearchResultEntry,
+  type WikiPage
+} from '../../types.ts'
 import type { Knex } from 'knex'
 
 const VECTOR_TABLE = 'pagesVector'
@@ -15,14 +25,14 @@ interface PostgresSearchConfig extends SearchConfig {
 }
 
 type PostgresSearchContext = SearchContext<PostgresSearchConfig>
-
-interface PostgresSearchRow extends UnknownRecord {
+interface PostgresSearchRow extends SearchResultEntry {
   description: string
   id: number
   locale: string
   matchedFields: string[]
   path: string
   score: number
+  sourceRevision: string
   tags: string[]
   title: string
 }
@@ -545,33 +555,48 @@ const queryPages = async (
   knex: Knex,
   dictionary: string,
   query: string,
-  options: { locale?: string; path?: string; pageIds?: number[] },
+  isStructured: boolean,
+  options: Pick<SearchOptions, 'locale' | 'path' | 'pageIds' | 'pageRevisions'>,
   maxHits: number
 ): Promise<PostgresSearchRow[]> => {
   const path = options.path ?? null
   const pathPrefix = path === null ? null : `${path.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}/%`
+  const pageRevisions = options.pageRevisions === undefined || options.pageRevisions === null ? null : JSON.stringify(options.pageRevisions)
   const results = await knex.raw<PostgresRawResult<PostgresSearchRow>>(
     `
-    WITH RECURSIVE query_input AS (
+    WITH RECURSIVE parsed_query AS (
       SELECT
         ?::regconfig AS dictionary,
         websearch_to_tsquery(?::regconfig, ?) AS query,
         lower(trim(?)) AS raw_query,
+        ?::boolean AS is_structured,
         ?::text AS like_query,
         ?::text AS locale_filter,
         ?::text AS path_filter,
         ?::text AS path_prefix,
-        ?::int[] AS allowed_ids
+        ?::int[] AS allowed_ids,
+        ?::jsonb AS page_revisions
+    ), query_input AS (
+      SELECT
+        parsed_query.*,
+        numnode(query) > 0 AS has_terms,
+        querytree(query) NOT IN ('', 'T') AS has_positive_evidence
+      FROM parsed_query
     ), priority_ids AS MATERIALIZED (
       SELECT vector."pageId"
       FROM "pagesVector" vector
       CROSS JOIN query_input input
-      WHERE (
-        lower(vector.title) = input.raw_query OR
-        vector.tags @> ARRAY[input.raw_query]::text[] OR
-        lower(vector.path) = input.raw_query
-      )
+      WHERE NOT input.is_structured
+        AND (
+          lower(vector.title) = input.raw_query OR
+          vector.tags @> ARRAY[input.raw_query]::text[] OR
+          lower(vector.path) = input.raw_query
+        )
       AND (input.allowed_ids IS NULL OR vector."pageId" = ANY(input.allowed_ids))
+      AND (
+        input.page_revisions IS NULL OR
+        vector."sourceRevision"::text = input.page_revisions ->> (vector."pageId"::text)
+      )
       AND (input.locale_filter IS NULL OR vector.locale = input.locale_filter)
       AND (
         input.path_filter IS NULL OR
@@ -592,11 +617,15 @@ const queryPages = async (
       WHERE (SELECT count(*) FROM priority_ids) < ?
       AND NOT EXISTS (SELECT 1 FROM priority_ids exact JOIN "pagesVector" direct ON direct."pageId" = exact."pageId" WHERE lower(direct.path) = input.raw_query)
       AND (
-        (input.query <> ''::tsquery AND vector.tokens @@ input.query) OR
-        vector.facets ILIKE input.like_query ESCAPE '\\'
+        (input.has_terms AND vector.tokens @@ input.query) OR
+        (NOT input.is_structured AND vector.facets ILIKE input.like_query ESCAPE '\\')
       )
       AND NOT EXISTS (SELECT 1 FROM priority_ids priority WHERE priority."pageId" = vector."pageId")
       AND (input.allowed_ids IS NULL OR vector."pageId" = ANY(input.allowed_ids))
+      AND (
+        input.page_revisions IS NULL OR
+        vector."sourceRevision"::text = input.page_revisions ->> (vector."pageId"::text)
+      )
       AND (input.locale_filter IS NULL OR vector.locale = input.locale_filter)
       AND (
         input.path_filter IS NULL OR
@@ -618,9 +647,14 @@ const queryPages = async (
       CROSS JOIN query_input input
       WHERE (SELECT count(*) FROM exact_ids) < 5
       AND NOT EXISTS (SELECT 1 FROM priority_ids exact JOIN "pagesVector" direct ON direct."pageId" = exact."pageId" WHERE lower(direct.path) = input.raw_query OR lower(direct.title) = input.raw_query)
+      AND NOT input.is_structured
       AND length(input.raw_query) >= 3
       AND input.raw_query <% vector.facets
       AND (input.allowed_ids IS NULL OR vector."pageId" = ANY(input.allowed_ids))
+      AND (
+        input.page_revisions IS NULL OR
+        vector."sourceRevision"::text = input.page_revisions ->> (vector."pageId"::text)
+      )
       AND (input.locale_filter IS NULL OR vector.locale = input.locale_filter)
       AND (
         input.path_filter IS NULL OR
@@ -639,13 +673,15 @@ const queryPages = async (
         input.dictionary,
         input.query,
         input.raw_query,
+        input.is_structured,
+        input.has_positive_evidence,
         ts_rank_cd('{0.05,0.2,0.6,1.0}'::real[], vector.tokens, input.query, 32) AS lexical_rank,
         lower(vector.title) = input.raw_query AS exact_title,
         lower(vector.path) = input.raw_query AS exact_path,
         lower(vector.title) LIKE input.raw_query || '%' AS title_prefix,
         EXISTS (SELECT 1 FROM unnest(vector.tags) tag WHERE lower(tag) = input.raw_query) AS exact_tag,
         EXISTS (SELECT 1 FROM unnest(vector.tags) tag WHERE lower(tag) LIKE input.raw_query || '%') AS tag_prefix,
-        word_similarity(input.raw_query, vector.facets) AS facet_similarity
+        CASE WHEN input.is_structured THEN 0.0 ELSE word_similarity(input.raw_query, vector.facets) END AS facet_similarity
       FROM candidate_ids ids
       JOIN "pagesVector" vector ON vector."pageId" = ids."pageId"
       CROSS JOIN query_input input
@@ -664,18 +700,42 @@ const queryPages = async (
       FROM matched
       ORDER BY preliminary_score DESC, lower(matched.title), matched."pageId"
       LIMIT ?
+    ), graph_nodes AS MATERIALIZED (
+      SELECT candidate."pageId", page."sourceRevision", page."localeCode" AS locale, page.path
+      FROM candidates candidate
+      JOIN pages page ON page.id = candidate."pageId"
+        AND page."sourceRevision" = candidate."sourceRevision"
+        AND page."localeCode" = candidate.locale
+        AND page.path = candidate.path
+      WHERE page.visibility = 'public'
+        AND page."isPublished" = true
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "pageAccessPasswords" protection
+          WHERE protection."pageId" = page.id
+        )
     ), edges AS MATERIALIZED (
       SELECT links."pageId" AS source_id, target."pageId" AS target_id
       FROM "pageLinks" links
-      JOIN candidates source ON source."pageId" = links."pageId"
-      JOIN "pagesVector" target ON target.locale = links."localeCode" AND target.path = links.path
-      JOIN candidates selected_target ON selected_target."pageId" = target."pageId"
+      JOIN graph_nodes source ON source."pageId" = links."pageId"
+      JOIN "pageMutationOutbox" receipt
+        ON receipt."pageId" = source."pageId"
+        AND receipt."sourceRevision" = source."sourceRevision"
+        AND receipt."effectKind" = 'links'
+        AND receipt."desiredState" = 'present'
+        AND receipt.status = 'succeeded'
+      JOIN graph_nodes target ON target.locale = links."localeCode" AND target.path = links.path
       UNION
       SELECT target."pageId" AS source_id, links."pageId" AS target_id
       FROM "pageLinks" links
-      JOIN candidates source ON source."pageId" = links."pageId"
-      JOIN "pagesVector" target ON target.locale = links."localeCode" AND target.path = links.path
-      JOIN candidates selected_target ON selected_target."pageId" = target."pageId"
+      JOIN graph_nodes source ON source."pageId" = links."pageId"
+      JOIN "pageMutationOutbox" receipt
+        ON receipt."pageId" = source."pageId"
+        AND receipt."sourceRevision" = source."sourceRevision"
+        AND receipt."effectKind" = 'links'
+        AND receipt."desiredState" = 'present'
+        AND receipt.status = 'succeeded'
+      JOIN graph_nodes target ON target.locale = links."localeCode" AND target.path = links.path
     ), graph_walk(root_id, page_id, depth, root_score) AS (
       SELECT candidate."pageId", candidate."pageId", 0, candidate.preliminary_score
       FROM candidates candidate
@@ -700,21 +760,22 @@ const queryPages = async (
         candidate.*,
         coalesce(support.graph_score, 0.0) AS graph_score,
         candidate.exact_title OR
-          candidate.query @@ to_tsvector(candidate.dictionary, candidate.title) OR
-          word_similarity(candidate.raw_query, candidate.title) >= 0.6 AS title_match,
+          (candidate.has_positive_evidence AND candidate.query @@ to_tsvector(candidate.dictionary, candidate.title)) OR
+          (NOT candidate.is_structured AND word_similarity(candidate.raw_query, candidate.title) >= 0.6) AS title_match,
         candidate.exact_tag OR
-          candidate.query @@ to_tsvector(candidate.dictionary, array_to_string(candidate.tags, ' ')) OR
-          EXISTS (SELECT 1 FROM unnest(candidate.tags) tag WHERE word_similarity(candidate.raw_query, tag) >= 0.6) AS tag_match,
+          (candidate.has_positive_evidence AND candidate.query @@ to_tsvector(candidate.dictionary, array_to_string(candidate.tags, ' '))) OR
+          (NOT candidate.is_structured AND EXISTS (SELECT 1 FROM unnest(candidate.tags) tag WHERE word_similarity(candidate.raw_query, tag) >= 0.6)) AS tag_match,
         candidate.exact_path OR
-          candidate.query @@ to_tsvector(candidate.dictionary, replace(candidate.path, '/', ' ')) OR
-          word_similarity(candidate.raw_query, replace(candidate.path, '/', ' ')) >= 0.6 AS path_match,
-        candidate.query @@ to_tsvector(candidate.dictionary, candidate.description) OR
-          word_similarity(candidate.raw_query, candidate.description) >= 0.6 AS description_match
+          (candidate.has_positive_evidence AND candidate.query @@ to_tsvector(candidate.dictionary, replace(candidate.path, '/', ' '))) OR
+          (NOT candidate.is_structured AND word_similarity(candidate.raw_query, replace(candidate.path, '/', ' ')) >= 0.6) AS path_match,
+        (candidate.has_positive_evidence AND candidate.query @@ to_tsvector(candidate.dictionary, candidate.description)) OR
+          (NOT candidate.is_structured AND word_similarity(candidate.raw_query, candidate.description) >= 0.6) AS description_match
       FROM candidates candidate
       LEFT JOIN graph_support support ON support.page_id = candidate."pageId"
     )
     SELECT
       ranked."pageId" AS id,
+      ranked."sourceRevision"::text AS "sourceRevision",
       ranked.path,
       ranked.locale,
       ranked.title,
@@ -726,13 +787,30 @@ const queryPages = async (
         CASE WHEN ranked.tag_match THEN 'tag' END,
         CASE WHEN ranked.path_match THEN 'path' END,
         CASE WHEN ranked.description_match THEN 'description' END,
-        CASE WHEN ranked.lexical_rank > 0 AND NOT (ranked.title_match OR ranked.tag_match OR ranked.path_match OR ranked.description_match) THEN 'content' END,
+        CASE WHEN ranked.has_positive_evidence AND ranked.lexical_rank > 0 AND NOT (ranked.title_match OR ranked.tag_match OR ranked.path_match OR ranked.description_match) THEN 'content' END,
         CASE WHEN ranked.graph_score > 0 THEN 'graph' END
       ], NULL)::text[] AS "matchedFields"
     FROM ranked
     ORDER BY score DESC, ranked.preliminary_score DESC, lower(ranked.title), ranked."pageId"
   `,
-    [dictionary, dictionary, query, query, escapedLikeTerm(query), options.locale ?? null, path, pathPrefix, options.pageIds ?? null, maxHits * EXACT_MATCH_CANDIDATE_MULTIPLIER, maxHits, maxHits * EXACT_MATCH_CANDIDATE_MULTIPLIER, maxHits, maxHits]
+    [
+      dictionary,
+      dictionary,
+      query,
+      query,
+      isStructured,
+      escapedLikeTerm(query),
+      options.locale ?? null,
+      path,
+      pathPrefix,
+      options.pageIds ?? null,
+      pageRevisions,
+      maxHits * EXACT_MATCH_CANDIDATE_MULTIPLIER,
+      maxHits,
+      maxHits * EXACT_MATCH_CANDIDATE_MULTIPLIER,
+      maxHits,
+      maxHits
+    ]
   )
   return results.rows
 }
@@ -789,11 +867,19 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
   async query(q, opts): Promise<SearchResult> {
     const query = q.trim()
     if (!query) return { results: [], suggestions: [], totalHits: 0 }
+    const isStructured = isStructuredSearchQuery(query)
     const knex = getKnexClient()
     try {
-      const results = await queryPages(knex, this.config.dictLanguage, query, opts, Math.min(1001, Math.max(1, opts.limit ?? wiki.config.search.maxHits)))
+      const results = await queryPages(
+        knex,
+        this.config.dictLanguage,
+        query,
+        isStructured,
+        opts,
+        Math.min(1001, Math.max(1, opts.limit ?? wiki.config.search.maxHits))
+      )
       const suggestions =
-        results.length < 5
+        results.length < 5 && !isStructured
           ? await suggestionsFor(
               knex,
               query,
@@ -846,10 +932,17 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
     // A single statement observes one database snapshot without modifying the index.
     const result = await getKnexClient().transaction(async transaction => {
       await transaction.raw("SET LOCAL statement_timeout = '5s'")
-      return transaction.raw<PostgresRawResult<{
-      publicPages: string; indexedPages: string; missingPages: string; stalePages: string; excludedEntries: string
-      dictionary: string | null; schemaVersion: number | null
-    }>>(`
+      return transaction.raw<
+        PostgresRawResult<{
+          publicPages: string
+          indexedPages: string
+          missingPages: string
+          stalePages: string
+          excludedEntries: string
+          dictionary: string | null
+          schemaVersion: number | null
+        }>
+      >(`
       SELECT
         count(page.id) FILTER (WHERE page.visibility = 'public' AND page."isPublished") AS "publicPages",
         count(vector."pageId") AS "indexedPages",
@@ -867,10 +960,15 @@ const plugin: SearchPlugin<PostgresSearchConfig, PostgresSearchContext> & Postgr
     if (!row) throw new Error('Search index inspection returned no data')
     return {
       checkedAt: new Date().toISOString(),
-      publicPages: Number(row.publicPages), indexedPages: Number(row.indexedPages),
-      missingPages: Number(row.missingPages), stalePages: Number(row.stalePages), excludedEntries: Number(row.excludedEntries),
-      configuredDictionary: this.config.dictLanguage, indexedDictionary: row.dictionary,
-      schemaVersion: row.schemaVersion, expectedSchemaVersion: SEARCH_SCHEMA_VERSION
+      publicPages: Number(row.publicPages),
+      indexedPages: Number(row.indexedPages),
+      missingPages: Number(row.missingPages),
+      stalePages: Number(row.stalePages),
+      excludedEntries: Number(row.excludedEntries),
+      configuredDictionary: this.config.dictLanguage,
+      indexedDictionary: row.dictionary,
+      schemaVersion: row.schemaVersion,
+      expectedSchemaVersion: SEARCH_SCHEMA_VERSION
     }
   }
 }

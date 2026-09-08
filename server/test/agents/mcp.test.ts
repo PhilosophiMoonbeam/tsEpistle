@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts
 import { createWikiMcpController } from '../../agents/mcp.ts'
 import { decideProposal } from '../../agents/proposals/execution.ts'
 import { up as createKnowledgeProjectionStore } from '../../db/migrations/2.5.152.ts'
+import { up as createKnowledgeSearchStore } from '../../db/migrations/tsepistle-000027-knowledge-search.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { knowledgeSearchText, projectPageKnowledge } from '../../knowledge/projection.ts'
 
@@ -34,26 +35,30 @@ const humanPrincipal = (): Express.User => ({
   groups: [3],
   ownershipUserId: 7
 })
-const postInitialize = (port: number, headers: Record<string, string>): Promise<number> => new Promise((resolve, reject) => {
-  const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
-  const request = httpRequest({
-    hostname: '127.0.0.1',
-    port,
-    path: '/mcp',
-    method: 'POST',
-    headers: {
-      accept: 'application/json, text/event-stream',
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body),
-      ...headers
-    }
-  }, response => {
-    response.resume()
-    resolve(response.statusCode ?? 0)
+const postInitialize = (port: number, headers: Record<string, string>): Promise<number> =>
+  new Promise((resolve, reject) => {
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} })
+    const request = httpRequest(
+      {
+        hostname: '127.0.0.1',
+        port,
+        path: '/mcp',
+        method: 'POST',
+        headers: {
+          accept: 'application/json, text/event-stream',
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(body),
+          ...headers
+        }
+      },
+      response => {
+        response.resume()
+        resolve(response.statusCode ?? 0)
+      }
+    )
+    request.on('error', reject)
+    request.end(body)
   })
-  request.on('error', reject)
-  request.end(body)
-})
 
 const createProposalTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('agentProposals', table => {
@@ -75,7 +80,18 @@ const createProposalTables = async (db: Knex): Promise<void> => {
     table.string('authoritySha256').notNullable()
     table.integer('pageId').nullable()
     table.bigInteger('baseSourceRevision').nullable()
-    for (const name of ['baseLineEnding', 'baseRawSha256', 'baseCanonicalSha256', 'disclosedRangesSha256', 'patchFormat', 'patchSha256', 'resultRawSha256', 'resultCanonicalSha256', 'diffSha256'] as const) table.string(name).nullable()
+    for (const name of [
+      'baseLineEnding',
+      'baseRawSha256',
+      'baseCanonicalSha256',
+      'disclosedRangesSha256',
+      'patchFormat',
+      'patchSha256',
+      'resultRawSha256',
+      'resultCanonicalSha256',
+      'diffSha256'
+    ] as const)
+      table.string(name).nullable()
     table.boolean('baseFinalNewline').nullable()
     table.integer('patchEngineVersion').nullable()
     table.text('patch').nullable()
@@ -129,7 +145,6 @@ const createProposalTables = async (db: Knex): Promise<void> => {
   })
 }
 
-
 describe('Wiki MCP transport', () => {
   let db: Knex
   let server: ReturnType<express.Express['listen']>
@@ -149,6 +164,7 @@ describe('Wiki MCP transport', () => {
     })
     await db('pages').insert({ id: 42, sourceRevision: '8' })
     await createKnowledgeProjectionStore(db)
+    await createKnowledgeSearchStore(db)
     const projection = projectPageKnowledge({
       pageId: 42,
       sourceRevision: '8',
@@ -184,26 +200,43 @@ describe('Wiki MCP transport', () => {
     movePage = vi.fn(async () => ({}))
     resolvedPrincipal = apiPrincipal()
     authorizeMutation = vi.fn(async () => {})
-    listRelated = vi.fn(async input => Number(input.offset) === 0
-      ? {
-          pages: [{
-            id: 43,
-            path: 'docs/next',
-            localeCode: 'en',
-            title: 'Next',
-            description: '',
-            contentType: 'markdown',
-            sourceRevision: '9',
-            updatedAt: new Date('2026-08-25T00:00:00.000Z'),
-            tags: [],
-            distance: 1,
-            direction: 'outgoing',
-            viaPageId: 42
-          }],
-          truncated: true,
-          nextOffset: 1
+    listRelated = vi.fn(async input => {
+      const pages = [
+        {
+          id: 43,
+          path: 'docs/next',
+          localeCode: 'en',
+          title: 'Next',
+          description: '',
+          contentType: 'markdown',
+          sourceRevision: '9',
+          updatedAt: new Date('2026-08-25T00:00:00.000Z'),
+          tags: [],
+          distance: 1,
+          direction: 'outgoing',
+          viaPageId: 42
+        },
+        {
+          id: 44,
+          path: 'docs/following',
+          localeCode: 'en',
+          title: 'Following',
+          description: '',
+          contentType: 'markdown',
+          sourceRevision: '10',
+          updatedAt: new Date('2026-08-26T00:00:00.000Z'),
+          tags: [],
+          distance: 2,
+          direction: 'outgoing',
+          viaPageId: 43
         }
-      : { pages: [], truncated: false, nextOffset: null })
+      ]
+      const offset = Number(input.offset)
+      const page = pages[offset]
+      return page
+        ? { pages: [page], truncated: offset + 1 < pages.length, nextOffset: offset + 1 < pages.length ? offset + 1 : null }
+        : { pages: [], truncated: false, nextOffset: null }
+    })
     const app = express()
     authenticate = vi.fn((req, _res, next) => {
       const user = apiPrincipal()
@@ -225,10 +258,57 @@ describe('Wiki MCP transport', () => {
         searchTags: vi.fn(),
         listTags: vi.fn(),
         discover: vi.fn(),
-        get: vi.fn(async () => ({ id: 42, authorId: 7, path: 'docs/start', locale: 'en', title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '8', updatedAt: '2026-08-25T00:00:00.000Z', visibility: 'public', tags: [], extra: validOkfExtra })),
-        getByPath: vi.fn(async () => ({ id: 42, authorId: 7, path: 'docs/start', locale: 'en', title: 'Start', description: '', content: '# Start\n', contentType: 'markdown', sourceRevision: '8', updatedAt: '2026-08-25T00:00:00.000Z', visibility: 'public', tags: [], extra: validOkfExtra })),
+        get: vi.fn(async input => {
+          const id = Number(input.id)
+          const page =
+            id === 43
+              ? { id: 43, path: 'docs/next', title: 'Next', content: '# Next\n', sourceRevision: '9', updatedAt: '2026-08-25T00:00:00.000Z' }
+              : id === 44
+                ? { id: 44, path: 'docs/following', title: 'Following', content: '# Following\n', sourceRevision: '10', updatedAt: '2026-08-26T00:00:00.000Z' }
+                : { id: 42, path: 'docs/start', title: 'Start', content: '# Start\n', sourceRevision: '8', updatedAt: '2026-08-25T00:00:00.000Z' }
+          return {
+            ...page,
+            authorId: 7,
+            locale: 'en',
+            description: '',
+            contentType: 'markdown',
+            visibility: 'public',
+            tags: [],
+            extra: validOkfExtra
+          }
+        }),
+        getByPath: vi.fn(async () => ({
+          id: 42,
+          authorId: 7,
+          path: 'docs/start',
+          locale: 'en',
+          title: 'Start',
+          description: '',
+          content: '# Start\n',
+          contentType: 'markdown',
+          sourceRevision: '8',
+          updatedAt: '2026-08-25T00:00:00.000Z',
+          visibility: 'public',
+          tags: [],
+          extra: validOkfExtra
+        })),
         getHistory: vi.fn(),
-        getVersion: vi.fn(async input => ({ id: 42, versionId: Number(input.versionId), authorId: 7, path: 'docs/start', locale: 'en', title: 'Start historical', description: '', content: '# Start historical\n', contentType: 'markdown', sourceRevision: String(Number(input.versionId) + 7), updatedAt: '2026-08-25T00:00:00.000Z', visibility: 'public', tags: [], extra: validOkfExtra })),
+        getVersion: vi.fn(async input => ({
+          id: 42,
+          versionId: Number(input.versionId),
+          authorId: 7,
+          path: 'docs/start',
+          locale: 'en',
+          title: 'Start historical',
+          description: '',
+          content: '# Start historical\n',
+          contentType: 'markdown',
+          sourceRevision: String(Number(input.versionId) + 7),
+          updatedAt: '2026-08-25T00:00:00.000Z',
+          visibility: 'public',
+          tags: [],
+          extra: validOkfExtra
+        })),
         listRecent: vi.fn(),
         listLinks: vi.fn(),
         listRelated,
@@ -268,7 +348,7 @@ describe('Wiki MCP transport', () => {
 
   afterEach(async () => {
     await client?.close()
-    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
+    await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())))
     await db.destroy()
   })
 
@@ -283,10 +363,13 @@ describe('Wiki MCP transport', () => {
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
       authProvider: { token: async () => 'test-api-token' }
     })
-    client = new Client({ name: 'wiki-mcp-test', version: '1.0.0' }, {
-      capabilities: { elicitation: { form: {} } },
-      versionNegotiation: { mode: 'auto' }
-    })
+    client = new Client(
+      { name: 'wiki-mcp-test', version: '1.0.0' },
+      {
+        capabilities: { elicitation: { form: {} } },
+        versionNegotiation: { mode: 'auto' }
+      }
+    )
     await client.connect(transport)
     expect(authenticate).toHaveBeenCalledTimes(1)
     const listed = await client.listTools()
@@ -308,10 +391,13 @@ describe('Wiki MCP transport', () => {
     const legacyTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
       authProvider: { token: async () => 'test-api-token' }
     })
-    client = new Client({ name: 'wiki-mcp-legacy-test', version: '1.0.0' }, {
-      capabilities: {},
-      versionNegotiation: { mode: 'legacy' }
-    })
+    client = new Client(
+      { name: 'wiki-mcp-legacy-test', version: '1.0.0' },
+      {
+        capabilities: {},
+        versionNegotiation: { mode: 'legacy' }
+      }
+    )
     await client.connect(legacyTransport)
     const legacyNames = (await client.listTools()).tools.map(tool => tool.name)
     expect(legacyNames).toContain('wiki_prepare_page_patch')
@@ -334,17 +420,22 @@ describe('Wiki MCP transport', () => {
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
       authProvider: { token: async () => 'test-api-token' }
     })
-    client = new Client({ name: 'wiki-mcp-okf-test', version: '1.0.0' }, {
-      capabilities: {},
-      versionNegotiation: { mode: 'auto' }
-    })
+    client = new Client(
+      { name: 'wiki-mcp-okf-test', version: '1.0.0' },
+      {
+        capabilities: {},
+        versionNegotiation: { mode: 'auto' }
+      }
+    )
     await client.connect(transport)
 
     expect(await client.listResourceTemplates()).toMatchObject({
-      resourceTemplates: expect.arrayContaining([expect.objectContaining({
-        uriTemplate: 'wiki://pages/{pageId}/versions/{version}/revisions/{sourceRevision}/okf',
-        mimeType: 'text/markdown'
-      })])
+      resourceTemplates: expect.arrayContaining([
+        expect.objectContaining({
+          uriTemplate: 'wiki://pages/{pageId}/versions/{version}/revisions/{sourceRevision}/okf',
+          mimeType: 'text/markdown'
+        })
+      ])
     })
     const pageResult = await client.callTool({ name: 'wiki_get_page', arguments: { path: 'docs/start', locale: 'en' } })
     expect(pageResult.structuredContent).toMatchObject({
@@ -419,23 +510,29 @@ describe('Wiki MCP transport', () => {
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
       authProvider: { token: async () => 'test-api-token' }
     })
-    client = new Client({ name: 'wiki-mcp-related-test', version: '1.0.0' }, {
-      capabilities: {},
-      versionNegotiation: { mode: 'auto' }
-    })
+    client = new Client(
+      { name: 'wiki-mcp-related-test', version: '1.0.0' },
+      {
+        capabilities: {},
+        versionNegotiation: { mode: 'auto' }
+      }
+    )
     await client.connect(transport)
     const first = await client.callTool({
       name: 'wiki_get_related_pages',
       arguments: { pageId: 42, limit: 1, cursor: null }
     })
     const firstResult = JSON.parse(String(Reflect.get(first.content[0] ?? {}, 'text'))) as { pages: Array<{ id?: unknown }>; nextCursor: string | null }
-    expect(firstResult.pages.some(page => page.id === 43)).toBe(true)
+    expect(firstResult.pages).toEqual([expect.objectContaining({ id: 43, sourceRevision: '9', path: 'docs/next', locale: 'en' })])
     expect(typeof firstResult.nextCursor).toBe('string')
     const second = await client.callTool({
       name: 'wiki_get_related_pages',
       arguments: { pageId: 42, limit: 1, cursor: firstResult.nextCursor }
     })
-    expect(JSON.parse(String(Reflect.get(second.content[0] ?? {}, 'text')))).toEqual({ pages: [], nextCursor: null })
+    expect(JSON.parse(String(Reflect.get(second.content[0] ?? {}, 'text')))).toEqual({
+      pages: [expect.objectContaining({ id: 44, sourceRevision: '10', path: 'docs/following', locale: 'en' })],
+      nextCursor: null
+    })
     expect(listRelated).toHaveBeenNthCalledWith(1, expect.objectContaining({ offset: 0 }))
     expect(listRelated).toHaveBeenNthCalledWith(2, expect.objectContaining({ offset: 1 }))
   })
@@ -445,11 +542,14 @@ describe('Wiki MCP transport', () => {
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
       authProvider: { token: async () => 'test-api-token' }
     })
-    client = new Client({ name: 'wiki-mcp-write-test', version: '1.0.0' }, {
-      capabilities: { elicitation: { form: {} } },
-      versionNegotiation: { mode: 'auto' },
-      inputRequired: { autoFulfill: false }
-    })
+    client = new Client(
+      { name: 'wiki-mcp-write-test', version: '1.0.0' },
+      {
+        capabilities: { elicitation: { form: {} } },
+        versionNegotiation: { mode: 'auto' },
+        inputRequired: { autoFulfill: false }
+      }
+    )
     await client.connect(transport)
     const prepared = await client.callTool({
       name: 'wiki_prepare_page_move',
@@ -465,23 +565,29 @@ describe('Wiki MCP transport', () => {
     expect(typeof preparedText).toBe('string')
     const proposalResult = JSON.parse(String(preparedText)) as { proposalId: string; approvalId: string; status: string }
     expect(proposalResult.status).toBe('pending')
-    const pendingApply = await client.callTool({
-      name: 'wiki_apply_page_proposal',
-      arguments: {
-        proposalId: proposalResult.proposalId,
-        approvalId: proposalResult.approvalId
-      }
-    }, { allowInputRequired: true })
+    const pendingApply = await client.callTool(
+      {
+        name: 'wiki_apply_page_proposal',
+        arguments: {
+          proposalId: proposalResult.proposalId,
+          approvalId: proposalResult.approvalId
+        }
+      },
+      { allowInputRequired: true }
+    )
     expect(pendingApply).toMatchObject({ resultType: 'input_required', requestState: expect.stringMatching(/^v1\./) })
 
     await client.close()
     const retryTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
       authProvider: { token: async () => 'test-api-token' }
     })
-    client = new Client({ name: 'wiki-mcp-approval-retry-test', version: '1.0.0' }, {
-      capabilities: { elicitation: { form: {} } },
-      versionNegotiation: { mode: 'auto' }
-    })
+    client = new Client(
+      { name: 'wiki-mcp-approval-retry-test', version: '1.0.0' },
+      {
+        capabilities: { elicitation: { form: {} } },
+        versionNegotiation: { mode: 'auto' }
+      }
+    )
     client.setRequestHandler('elicitation/create', async () => {
       await decideProposal(db, {
         proposalId: proposalResult.proposalId,
@@ -504,10 +610,12 @@ describe('Wiki MCP transport', () => {
     const appliedText = Reflect.get(applied.content[0] ?? {}, 'text')
     expect(JSON.parse(String(appliedText))).toMatchObject({ proposalId: proposalResult.proposalId, status: 'applied' })
     expect(movePage).toHaveBeenCalledOnce()
-    expect(movePage).toHaveBeenCalledWith(expect.objectContaining({
-      input: expect.objectContaining({ id: 42, destinationPath: 'docs/next' }),
-      requester: expect.objectContaining({ id: 7 })
-    }))
+    expect(movePage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ id: 42, destinationPath: 'docs/next' }),
+        requester: expect.objectContaining({ id: 7 })
+      })
+    )
     expect(authorizeMutation.mock.calls.map(call => call[0].requester.id)).toEqual([90, 7, 90, 7])
   })
 

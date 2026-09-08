@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": 1,
+  "threatModelPath": "docs/security/threat-model.md",
+  "activeReviewId": "legacy-baseline-55f30709",
+  "records": [
+    {
+      "id": "legacy-baseline-55f30709",
+      "path": "docs/security/review-attestations/legacy-baseline-55f30709.json"
+    },
+    {
+      "id": "search-foundation-2026-09-07",
+      "path": "docs/security/review-attestations/search-foundation-2026-09-07.json"
+    }
+  ]
+}

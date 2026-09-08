@@ -30,7 +30,7 @@ const FIELD_ORDER = [
   'attester'
 ] as const
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u
-const ISO_WITH_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u
+const ISO_WITH_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u
 const MARKDOWN_LINK = /(\[[^\]\n]*\]\(\s*)(<[^>\n]+>|[^\s)\n]+)/gu
 const FENCE = /^ {0,3}(`{3,}|~{3,})/u
 
@@ -114,7 +114,8 @@ export const mutateOkfMetadata = (input: OkfMetadataMutation): OkfMetadata => {
     return fail('INVALID_OKF_PRODUCER', 'OKF producer must identify a human, agent, MCP request, or import')
   let at: string
   if (input.at instanceof Date) {
-    if (!Number.isFinite(input.at.valueOf())) return fail('INVALID_OKF_TIMESTAMP', 'OKF mutation timestamp must be an ISO 8601 datetime with an explicit UTC offset')
+    if (!Number.isFinite(input.at.valueOf()))
+      return fail('INVALID_OKF_TIMESTAMP', 'OKF mutation timestamp must be an ISO 8601 datetime with an explicit UTC offset')
     at = input.at.toISOString()
   } else {
     at = input.at ?? new Date().toISOString()
@@ -153,7 +154,6 @@ export const mutateOkfMetadata = (input: OkfMetadataMutation): OkfMetadata => {
   }
   return validateMetadata(metadata)
 }
-
 
 export interface OkfPageDocument {
   readonly version: typeof OKF_VERSION
@@ -194,7 +194,7 @@ const daysInMonth = (year: number, month: number): number => {
 export const isOkfTimestamp = (value: string): boolean => {
   const match = ISO_WITH_OFFSET.exec(value)
   if (!match) return false
-  const [, yearValue, monthValue, dayValue, hourValue, minuteValue, secondValue, offsetHourValue, offsetMinuteValue] = match
+  const [, yearValue, monthValue, dayValue, hourValue, minuteValue, secondValue, , offsetHourValue, offsetMinuteValue] = match
   const year = Number(yearValue)
   const month = Number(monthValue)
   const day = Number(dayValue)
@@ -217,12 +217,32 @@ export const isOkfTimestamp = (value: string): boolean => {
   )
 }
 
+interface OkfTimestampInstant {
+  readonly milliseconds: number
+  readonly subMilliseconds: string
+}
+
+const parseOkfTimestampInstant = (value: string): OkfTimestampInstant => {
+  const match = ISO_WITH_OFFSET.exec(value)
+  if (!match) throw new Error('Validated OKF timestamp did not match its grammar')
+  const fraction = match[7]?.slice(1) ?? ''
+  const milliseconds = Date.parse(fraction ? value.replace(`.${fraction}`, '') : value) + Number(fraction.slice(0, 3).padEnd(3, '0'))
+  return { milliseconds, subMilliseconds: fraction.slice(3).replace(/0+$/u, '') }
+}
+
+const compareOkfTimestampInstants = (left: OkfTimestampInstant, right: OkfTimestampInstant): number => {
+  if (left.milliseconds !== right.milliseconds) return left.milliseconds < right.milliseconds ? -1 : 1
+  const precision = Math.max(left.subMilliseconds.length, right.subMilliseconds.length)
+  const leftFraction = left.subMilliseconds.padEnd(precision, '0')
+  const rightFraction = right.subMilliseconds.padEnd(precision, '0')
+  return leftFraction === rightFraction ? 0 : leftFraction < rightFraction ? -1 : 1
+}
+
 const actorEvent = (value: unknown, field: string, code: string): OkfActorEvent => {
   if (!isRecord(value)) return fail(code, `OKF field ${field} must be an actor event`)
   const by = nonEmptyString(value.by, `${field}.by`, 255, code)
   const at = value.at === undefined ? undefined : nonEmptyString(value.at, `${field}.at`, 64, code)
-  if (at !== undefined && !isOkfTimestamp(at))
-    return fail(code, `OKF field ${field}.at must be an ISO 8601 datetime with an explicit UTC offset`)
+  if (at !== undefined && !isOkfTimestamp(at)) return fail(code, `OKF field ${field}.at must be an ISO 8601 datetime with an explicit UTC offset`)
   return { ...value, by, ...(at === undefined ? {} : { at }) }
 }
 
@@ -318,23 +338,31 @@ const verificationEvents = (metadata: OkfMetadata): readonly OkfActorEvent[] =>
 const summarizeValidatedOkfTrust = (metadata: OkfMetadata, now: Date): OkfTrustSummary => {
   const events = verificationEvents(metadata)
   const generatedAt = metadata.generated?.at ?? null
-  const datedVerification = events
-    .map(event => event.at)
-    .filter((value): value is string => value !== undefined)
-    .sort()
-  const verifiedAt = datedVerification.at(-1) ?? null
+  const generatedInstant = generatedAt === null ? null : parseOkfTimestampInstant(generatedAt)
+  let verifiedAt: string | null = null
+  let verifiedInstant: OkfTimestampInstant | null = null
+  for (const event of events) {
+    if (event.at === undefined) continue
+    const instant = parseOkfTimestampInstant(event.at)
+    if (verifiedInstant === null || compareOkfTimestampInstants(instant, verifiedInstant) > 0) {
+      verifiedAt = event.at
+      verifiedInstant = instant
+    }
+  }
   const trustTier = events.length === 0 ? 'unverified' : events.some(event => event.by.startsWith('human:')) ? 'human-reviewed' : 'machine-confirmed'
   const verification =
     events.length === 0
       ? 'unverified'
-      : generatedAt !== null && (verifiedAt === null || Date.parse(verifiedAt) < Date.parse(generatedAt))
+      : verifiedInstant === null || (generatedInstant !== null && compareOkfTimestampInstants(verifiedInstant, generatedInstant) < 0)
         ? 'outdated'
         : 'current'
   return {
     trustTier,
     verification,
     status: metadata.status ?? 'stable',
-    stale: metadata.stale_after !== undefined && now.valueOf() >= Date.parse(metadata.stale_after),
+    stale:
+      metadata.stale_after !== undefined &&
+      compareOkfTimestampInstants(parseOkfTimestampInstant(now.toISOString()), parseOkfTimestampInstant(metadata.stale_after)) >= 0,
     generatedAt,
     verifiedAt
   }
@@ -377,7 +405,6 @@ export const parseOkfDocument = (document: string, now = new Date()): ParsedOkfD
   return { version: OKF_VERSION, metadata, body, trust: summarizeValidatedOkfTrust(metadata, now) }
 }
 
-
 export const renderOkfDocument = (metadataInput: OkfMetadata, body: string): string => {
   const { serialized } = validateMetadataAndSerialize(metadataInput)
   const normalizedBody = body.replaceAll('\r\n', '\n').replace(/^\n+/u, '')
@@ -386,7 +413,6 @@ export const renderOkfDocument = (metadataInput: OkfMetadata, body: string): str
     return fail('OKF_DOCUMENT_TOO_LARGE', `OKF document exceeds ${OKF_MAX_DOCUMENT_BYTES} bytes`)
   return document
 }
-
 
 const escapedConceptPath = (pagePath: string): string => {
   const segments = pagePath.split('/')

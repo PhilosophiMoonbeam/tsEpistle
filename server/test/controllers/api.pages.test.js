@@ -22,7 +22,7 @@ vi.mockModule('express', import.meta.url, () => {
 
 const express = await import('express')
 const storedKnowledgeProjection = (sourceRevision = '8') => ({
-  version: 1,
+  version: 2,
   source: {
     pageId: 7,
     sourceRevision,
@@ -41,6 +41,7 @@ const storedKnowledgeProjection = (sourceRevision = '8') => ({
     description: 'Alpha description',
     summary: 'Projected Alpha',
     tags: ['alpha'],
+    searchTerms: [],
     sections: [],
     links: [],
     sources: [],
@@ -57,18 +58,101 @@ const storedKnowledgeProjection = (sourceRevision = '8') => ({
     staleAfter: null
   },
   completeness: { state: 'complete', missingFields: [] },
-  provenance: { deterministicVersion: 'wiki-knowledge-v1', fields: [], utility: null }
+  provenance: { deterministicVersion: 'wiki-knowledge-v2', fields: [], utility: null }
 })
 
-const knexWithProjection = (projection = null) =>
-  vi.fn().mockImplementation(table => {
+const projectionSearchDictionary = 'english'
+
+const knexWithProjection = (projection = null) => {
+  const knex = vi.fn().mockImplementation(table => {
     const chain = {
-      first: vi.fn().mockResolvedValue(table === 'pageKnowledgeProjections as projections' && projection !== null ? { projection } : undefined),
+      first: vi.fn().mockResolvedValue(table === 'pageKnowledgeProjections as projections' && projection !== null
+        ? {
+            pageId: 7,
+            sourceRevision: '8',
+            sourceSha256: 'a'.repeat(64),
+            deterministicVersion: 'wiki-knowledge-v2',
+            searchDictionary: projectionSearchDictionary,
+            projection
+          }
+        : undefined),
       join: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
       select: vi.fn().mockResolvedValue([])
     }
     return chain
+  })
+  knex.client = { config: { client: 'pg' } }
+  return knex
+}
+
+const graphPage = ({ id, path, localeCode = 'en', title, sourceRevision = 1 }) => ({
+  id,
+  path,
+  localeCode,
+  title,
+  description: '',
+  visibility: 'public',
+  ownerId: null,
+  isPublished: true,
+  publishStartDate: '',
+  publishEndDate: '',
+  contentType: 'markdown',
+  sourceRevision,
+  updatedAt: '2026-01-02T00:00:00.000Z',
+  tags: []
+})
+
+const graphPageQuery = (pages, failure) => {
+  const result = failure ? Promise.reject(failure) : Promise.resolve(pages)
+  const chain = {
+    column: vi.fn(),
+    modify: vi.fn(),
+    modifyGraph: vi.fn(),
+    then: result.then.bind(result),
+    withGraphJoined: vi.fn()
+  }
+  chain.column.mockReturnValue(chain)
+  chain.withGraphJoined.mockReturnValue(chain)
+  chain.modifyGraph.mockImplementation((_relation, applyModifier) => {
+    applyModifier({ select: vi.fn() })
+    return chain
+  })
+  chain.modify.mockImplementation(applyModifier => {
+    applyModifier({ where: vi.fn() })
+    return chain
+  })
+  return chain
+}
+const linksKnex = ({ rows, protectedPageIds = [], receipts = [] }) =>
+  vi.fn(table => {
+    if (table === 'pageAccessPasswords') return Promise.resolve(protectedPageIds.map(pageId => ({ pageId })))
+    if (table === 'pageMutationOutbox') {
+      const query = {
+        where: vi.fn().mockReturnThis(),
+        select: vi.fn().mockReturnThis(),
+        then: vi.fn((resolve, reject) => Promise.resolve(receipts).then(resolve, reject))
+      }
+      return query
+    }
+    if (table !== 'pages') throw new Error(`Unexpected table ${table}`)
+    const query = {
+      column: vi.fn().mockReturnThis(),
+      fullOuterJoin: vi.fn().mockReturnThis(),
+      leftJoin: vi.fn(function (_table, callback) {
+        if (typeof callback === 'function') {
+          const joinBuilder = {
+            on: vi.fn().mockReturnThis(),
+            andOn: vi.fn().mockReturnThis()
+          }
+          callback.call(joinBuilder)
+        }
+        return this
+      }),
+      where: vi.fn().mockReturnThis(),
+      then: vi.fn((resolve, reject) => Promise.resolve(rows).then(resolve, reject))
+    }
+    return query
   })
 
 
@@ -83,6 +167,13 @@ describe('controllers/api pages endpoints', () => {
     express.__router.put.mockClear()
 
     global.WIKI = {
+      data: {
+        searchEngine: {
+          config: {
+            dictLanguage: projectionSearchDictionary
+          }
+        }
+      },
       auth: {
         checkAccess: vi.fn().mockReturnValue(true)
       },
@@ -1018,7 +1109,6 @@ describe('controllers/api pages endpoints', () => {
     expect(next).toHaveBeenCalledWith(expect.any(Error))
     expect(next.mock.calls[0][0].message).toBe('pages db down')
   })
-
   it('registers the page links route before the page detail route', async () => {
     const { links } = await loadHandler()
     const routes = express.__router.get.mock.calls.map(([path]) => path)
@@ -1028,56 +1118,115 @@ describe('controllers/api pages endpoints', () => {
     expect(routes.indexOf('/links')).toBeLessThan(routes.indexOf('/:id'))
   })
 
-  it('returns GraphQL-compatible page links with PostgreSQL full-join semantics', async () => {
+  it('returns page link records for accessible endpoint records', async () => {
     const rows = [
-      { id: 1, path: 'docs/home', title: 'Home', link: 'docs/target', locale: 'en' },
-      { id: 1, path: 'docs/home', title: 'Home', link: 'docs/other', locale: 'fr' },
-      { id: 2, path: 'docs/target', title: 'Target', link: null, locale: null }
+      {
+        id: 1,
+        path: 'docs/home',
+        title: 'Home',
+        sourceRevision: 1,
+        sourceLocale: 'en',
+        link: 'docs/target',
+        locale: 'en',
+        targetId: 2,
+        targetRevision: 1,
+        targetPath: 'docs/target',
+        targetLocale: 'en'
+      },
+      {
+        id: 1,
+        path: 'docs/home',
+        title: 'Home',
+        sourceRevision: 1,
+        sourceLocale: 'en',
+        link: 'docs/other',
+        locale: 'fr',
+        targetId: 3,
+        targetRevision: 1,
+        targetPath: 'docs/other',
+        targetLocale: 'fr'
+      },
+      { id: 2, path: 'docs/target', title: 'Target', sourceRevision: 1, sourceLocale: 'en', link: null, locale: null }
     ]
-    const chain = {
-      column: vi.fn().mockReturnThis(),
-      fullOuterJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockResolvedValue(rows)
-    }
-    global.WIKI.models.knex.mockReturnValueOnce(chain)
+    global.WIKI.models.pages.query.mockImplementationOnce(() =>
+      graphPageQuery([
+        graphPage({ id: 1, path: 'docs/home', title: 'Home' }),
+        graphPage({ id: 2, path: 'docs/target', title: 'Target' }),
+        graphPage({ id: 3, path: 'docs/other', localeCode: 'fr', title: 'Other' })
+      ])
+    )
+    global.WIKI.models.knex = linksKnex({
+      rows,
+      receipts: [{ pageId: 1, sourceRevision: 1 }]
+    })
+
+
     const { links } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await links(req, res, vi.fn())
 
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { permissions: ['read:pages'] }, ['manage:system', 'read:pages'])
-    expect(global.WIKI.models.knex).toHaveBeenCalledWith('pages')
-    expect(chain.column).toHaveBeenCalledWith({ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' })
-    expect(chain.fullOuterJoin).toHaveBeenCalledWith('pageLinks', 'pages.id', 'pageLinks.pageId')
-    expect(chain.where).toHaveBeenCalledWith({ 'pages.localeCode': 'en', 'pages.visibility': 'public' })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(7, { permissions: ['read:pages'] }, ['read:pages'], { path: null, locale: null })
     expect(res.json).toHaveBeenCalledWith([
       { id: 1, title: 'Home', path: 'en/docs/home', links: ['en/docs/target', 'fr/docs/other'] },
       { id: 2, title: 'Target', path: 'en/docs/target', links: [] }
     ])
   })
 
-
   it('filters page links when source or target page access is denied', async () => {
     const rows = [
-      { id: 1, path: 'docs/home', title: 'Home', link: 'docs/target', locale: 'en' },
-      { id: 2, path: 'docs/hidden-source', title: 'Hidden Source', link: 'docs/target', locale: 'en' },
-      { id: 3, path: 'docs/hidden-target', title: 'Hidden Target', link: 'docs/secret', locale: 'en' }
+      {
+        id: 1,
+        path: 'docs/home',
+        title: 'Home',
+        sourceRevision: 1,
+        sourceLocale: 'en',
+        link: 'docs/target',
+        locale: 'en',
+        targetId: 2,
+        targetRevision: 1,
+        targetPath: 'docs/target',
+        targetLocale: 'en'
+      },
+      {
+        id: 3,
+        path: 'docs/hidden-source',
+        title: 'Hidden Source',
+        sourceRevision: 1,
+        sourceLocale: 'en',
+        link: 'docs/target',
+        locale: 'en',
+        targetId: 2,
+        targetRevision: 1,
+        targetPath: 'docs/target',
+        targetLocale: 'en'
+      },
+      {
+        id: 1,
+        path: 'docs/home',
+        title: 'Home',
+        sourceRevision: 1,
+        sourceLocale: 'en',
+        link: 'docs/secret',
+        locale: 'en',
+        targetId: 4,
+        targetRevision: 1,
+        targetPath: 'docs/secret',
+        targetLocale: 'en'
+      }
     ]
-    const chain = {
-      column: vi.fn().mockReturnThis(),
-      fullOuterJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockResolvedValue(rows)
-    }
-    global.WIKI.models.knex.mockReturnValueOnce(chain)
-    global.WIKI.auth.checkAccess
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false)
+    global.WIKI.models.pages.query.mockImplementationOnce(() =>
+      graphPageQuery([
+        graphPage({ id: 1, path: 'docs/home', title: 'Home' }),
+        graphPage({ id: 2, path: 'docs/target', title: 'Target' }),
+        graphPage({ id: 3, path: 'docs/hidden-source', title: 'Hidden Source' }),
+        graphPage({ id: 4, path: 'docs/secret', title: 'Secret' })
+      ])
+    )
+    global.WIKI.models.knex = linksKnex({ rows, receipts: [{ pageId: 1, sourceRevision: 1 }] })
+    global.WIKI.auth.checkAccess.mockImplementation((_user, _permissions, page) =>
+      page?.path !== 'docs/hidden-source' && page?.path !== 'docs/secret'
+    )
     const { links } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
@@ -1114,22 +1263,19 @@ describe('controllers/api pages endpoints', () => {
     expect(global.WIKI.models.knex).not.toHaveBeenCalled()
   })
 
-  it('forwards unexpected page links failures to next', async () => {
+  it('forwards graph metadata failures to next', async () => {
     const next = vi.fn()
-    const chain = {
-      column: vi.fn().mockReturnThis(),
-      fullOuterJoin: vi.fn().mockReturnThis(),
-      where: vi.fn().mockRejectedValue(new Error('links db down'))
-    }
-    global.WIKI.models.knex.mockReturnValueOnce(chain)
+    const failure = new Error('graph metadata unavailable')
+    global.WIKI.models.pages.query.mockImplementationOnce(() => graphPageQuery([], failure))
+    global.WIKI.models.knex = linksKnex({ rows: [] })
     const { links } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await links(req, res, next)
 
-    expect(next).toHaveBeenCalledWith(expect.any(Error))
-    expect(next.mock.calls[0][0].message).toBe('links db down')
+    expect(next).toHaveBeenCalledWith(failure)
+    expect(res.json).not.toHaveBeenCalled()
   })
 
   it('registers the page detail route', async () => {
@@ -1247,12 +1393,13 @@ describe('controllers/api pages endpoints', () => {
         projection: {
           state: 'current',
           value: {
-            schemaVersion: 1,
+            schemaVersion: 2,
             sourceRevision: '8',
             state: 'complete',
             conceptType: 'Reference',
             summary: 'Projected Alpha',
             tags: ['alpha'],
+            searchTerms: [],
             entities: [],
             relationships: [],
             openQuestions: [],
@@ -1266,7 +1413,7 @@ describe('controllers/api pages endpoints', () => {
               stale: false
             },
             missingFields: [],
-            provenance: { deterministicVersion: 'wiki-knowledge-v1', fields: [], utility: null }
+            provenance: { deterministicVersion: 'wiki-knowledge-v2', fields: [], utility: null }
           }
         }
       }

@@ -5,8 +5,8 @@ import type { RequestAuthContext } from '../../../shared/agents/contracts.ts'
 import { type ActionAuthority, ActionKernel, ActionKernelError } from './kernel.ts'
 import { issueWikiLineSnapshot } from '../patch/wiki-line-patch.ts'
 import type { KnowledgeProjectionView } from '../../knowledge/projection.ts'
-import type { KnowledgeDiscoveryFilter, KnowledgeSearchCandidate } from '../../knowledge/lifecycle.ts'
-import { okfResourceUri, pageAuthority, serializeCanonicalOkfPage, type PageAuthority } from '../okf.ts'
+import type { KnowledgeDiscoveryFilter } from '../../knowledge/lifecycle.ts'
+import { okfResourceUri, pageAuthority, serializeCanonicalOkfPage } from '../okf.ts'
 const SEARCH_CANDIDATE_WINDOW_LIMIT = 100
 const SearchMatchFieldSchema = z.enum(['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'])
 const PageRowSchema = z.looseObject({
@@ -30,6 +30,8 @@ const PageRowSchema = z.looseObject({
 const SearchResponseSchema = z.looseObject({
   results: z.array(
     z.looseObject({
+      id: z.coerce.number().int().positive(),
+      sourceRevision: z.union([z.string(), z.number()]),
       path: z.string(),
       locale: z.string(),
       visibility: z.enum(['public', 'private']).optional(),
@@ -117,14 +119,6 @@ export interface PageReadActionDependencies {
     getCurrent(pageId: number): Promise<KnowledgeProjectionView | null>
     getRevision(pageId: number, sourceRevision: string): Promise<KnowledgeProjectionView | null>
     getCurrentMany(pageIds: readonly number[]): Promise<ReadonlyMap<number, KnowledgeProjectionView>>
-    searchVisible(input: {
-      readonly query: string
-      readonly requester: Express.User
-      readonly locale?: string
-      readonly path?: string
-      readonly limit: number
-      readonly filter?: KnowledgeDiscoveryFilter
-    }): Promise<readonly KnowledgeSearchCandidate[]>
   }
 }
 
@@ -271,11 +265,15 @@ const parsePage = (value: unknown, includeContent: boolean, versionId: number | 
   }
 }
 
-
 const pageNotFound = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false
   if ('code' in error && error.code === 'PAGE_NOT_FOUND') return true
   return error.name.includes('PageNotFound')
+}
+
+const pageUnavailable = (error: unknown): boolean => {
+  if (pageNotFound(error)) return true
+  return error instanceof Error && (('code' in error && error.code === 'PAGE_LOCKED') || error.name === 'PAGE_LOCKED')
 }
 
 const getPageBySelector = async (operations: PageOperations, requester: Express.User, input: PageGetInput): Promise<unknown> => {
@@ -359,7 +357,8 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
   kernel.register('pages.search', async (rawInput, context) => {
     const requested = rawInput as SearchInput
     const scope = context.knowledgeContext?.scope
-    const input = { ...requested,
+    const input = {
+      ...requested,
       ...(scope?.kind === 'section' ? { locale: scope.locale, path: scope.path } : {}),
       ...(scope?.kind === 'locale' ? { locale: scope.locale } : {})
     }
@@ -368,63 +367,37 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
       query: input.query,
       ...(input.locale ? { locale: input.locale } : {}),
       ...(input.path !== undefined ? { path: input.path } : {}),
+      ...(input.knowledge ? { knowledge: input.knowledge } : {}),
       limit: SEARCH_CANDIDATE_WINDOW_LIMIT,
       ...(scope?.kind === 'selected' ? { pageIds: context.knowledgeContext?.sources.map(source => source.id) } : {}),
       requester
     })
     const response = SearchResponseSchema.safeParse(rawResponse)
     if (!response.success) throw operationFailure('Page search returned an invalid result')
-    const knowledgeCandidates = dependencies.knowledge
-      ? await dependencies.knowledge.searchVisible({
-          query: input.query,
-          requester,
-          ...(input.locale ? { locale: input.locale } : {}),
-          ...(input.path !== undefined ? { path: input.path } : {}),
-          limit: SEARCH_CANDIDATE_WINDOW_LIMIT,
-          ...(input.knowledge ? { filter: input.knowledge } : {})
-        })
-      : []
-    const candidates = new Map(
-      response.data.results.map(result => [
-        `${result.locale}\u0000${result.path}\u0000${result.visibility ?? 'public'}`,
-        { ...result, knowledge: null as KnowledgeProjectionView | null }
-      ])
-    )
-    for (const candidate of knowledgeCandidates) {
-      const key = `${candidate.locale}\u0000${candidate.path}\u0000${candidate.visibility}`
-      const existing = candidates.get(key)
-      candidates.set(key, {
-        path: candidate.path,
-        locale: candidate.locale,
-        visibility: candidate.visibility,
-        tags: existing?.tags ?? candidate.knowledge.tags,
-        score: Math.max(existing?.score ?? 0, candidate.score),
-        matchedFields: [...new Set([...(existing?.matchedFields ?? []), ...candidate.matchedFields])],
-        knowledge: candidate.knowledge
-      })
-    }
     const hydrated = (
       await Promise.all(
-        [...candidates.values()].map(async result => {
+        response.data.results.map(async result => {
           try {
-            const page = parsePage(
-              await operations.getByPath({
-                path: result.path,
-                locale: result.locale,
-                visibility: result.visibility ?? 'public',
-                requester
-              }),
-              false
+            const rawPage = await operations.get({ id: result.id, requester })
+            const page = parsePage(rawPage, false)
+            const visibility =
+              rawPage !== null && typeof rawPage === 'object' && 'visibility' in rawPage && rawPage.visibility === 'private' ? 'private' : 'public'
+            if (
+              page.id !== result.id ||
+              page.sourceRevision !== String(result.sourceRevision) ||
+              page.locale !== result.locale ||
+              page.path !== result.path ||
+              visibility !== (result.visibility ?? 'public')
             )
+              return null
             return {
               ...page,
               tags: result.tags,
               score: result.score,
-              matchedFields: result.matchedFields,
-              knowledge: result.knowledge
+              matchedFields: result.matchedFields
             }
           } catch (error: unknown) {
-            if (pageNotFound(error)) return null
+            if (pageUnavailable(error)) return null
             throw error
           }
         })
@@ -434,21 +407,22 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
       ? await dependencies.knowledge.getCurrentMany(hydrated.map(result => result.id))
       : new Map<number, KnowledgeProjectionView>()
     const filtered = hydrated
-      .filter(result => scope?.kind !== 'selected' || context.knowledgeContext?.sources.some(source => source.id === result.id))
-      .map(result => ({
-        ...result,
-        knowledge: result.knowledge ?? currentKnowledge.get(result.id) ?? null
-      }))
+      .map(result => {
+        const knowledge = currentKnowledge.get(result.id)
+        return {
+          ...result,
+          knowledge: knowledge?.sourceRevision === result.sourceRevision ? knowledge : null
+        }
+      })
       .filter(result => (result.knowledge !== null ? matchesKnowledgeFilter(result.knowledge, input.knowledge) : input.knowledge === undefined))
-      .sort((left, right) => right.score - left.score || left.title.localeCompare(right.title) || left.path.localeCompare(right.path))
     const selected = filtered.slice(input.offset, input.offset + input.limit)
     const consumedThrough = input.offset + selected.length
     return {
       results: selected,
       suggestions: response.data.suggestions,
       totalInWindow: filtered.length,
-      windowLimit: dependencies.knowledge ? response.data.windowLimit + SEARCH_CANDIDATE_WINDOW_LIMIT : response.data.windowLimit,
-      windowTruncated: response.data.windowTruncated || knowledgeCandidates.length >= SEARCH_CANDIDATE_WINDOW_LIMIT,
+      windowLimit: response.data.windowLimit,
+      windowTruncated: response.data.windowTruncated,
       nextOffset: consumedThrough < filtered.length ? consumedThrough : null
     }
   })
@@ -508,7 +482,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
               updatedAt: item.updatedAt instanceof Date ? item.updatedAt.toISOString() : item.updatedAt
             }
           } catch (error: unknown) {
-            if (pageNotFound(error)) return null
+            if (pageUnavailable(error)) return null
             throw error
           }
         })
@@ -518,7 +492,10 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
       ? await dependencies.knowledge.getCurrentMany(hydrated.map(result => result.id))
       : new Map<number, KnowledgeProjectionView>()
     const filtered = hydrated
-      .map(result => ({ ...result, knowledge: currentKnowledge.get(result.id) ?? null }))
+      .map(result => {
+        const knowledge = currentKnowledge.get(result.id)
+        return { ...result, knowledge: knowledge?.sourceRevision === result.sourceRevision ? knowledge : null }
+      })
       .filter(result => (result.knowledge !== null ? matchesKnowledgeFilter(result.knowledge, knowledgeFilter) : knowledgeFilter === undefined))
     const pages = knowledgeFilter ? filtered.slice(input.offset, input.offset + input.limit) : filtered
     const totalInWindow = knowledgeFilter ? filtered.length : response.data.totalInWindow
@@ -533,7 +510,8 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
   kernel.register('pages.get', async (rawInput, context) => {
     const requester = await requesterFor(dependencies.resolveRequester, context.authority)
     const page = parsePage(await getPageBySelector(operations, requester, rawInput as PageGetInput), true)
-    return { ...page, knowledge: (await dependencies.knowledge?.getCurrent(page.id)) ?? null }
+    const projection = await dependencies.knowledge?.getCurrent(page.id)
+    return { ...page, knowledge: projection?.sourceRevision === page.sourceRevision ? projection : null }
   })
   kernel.register('pages.getOkf', async (rawInput, context) => {
     const input = rawInput as OkfInput
@@ -546,7 +524,8 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const parsed = parsePage(rawPage, true, historical ? input.versionId : null)
     if (parsed.contentType !== 'markdown') throw new ActionKernelError('UNSUPPORTED_CONTENT_TYPE', 'Only Markdown pages can be serialized as OKF concepts', 409)
     if (typeof parsed.content !== 'string') throw operationFailure('Page operation omitted Markdown source')
-    if (parsed.authority.state !== 'valid') throw new ActionKernelError('INVALID_OKF_AUTHORITY', `Cannot serialize page with ${parsed.authority.state} OKF authority`, 409)
+    if (parsed.authority.state !== 'valid')
+      throw new ActionKernelError('INVALID_OKF_AUTHORITY', `Cannot serialize page with ${parsed.authority.state} OKF authority`, 409)
     const projection = historical
       ? await dependencies.knowledge?.getRevision(parsed.id, parsed.sourceRevision)
       : await dependencies.knowledge?.getCurrent(parsed.id)
@@ -598,7 +577,7 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
             const page = parsePage(await operations.get({ id: item.id, requester }), false)
             return !input.locale || page.locale === input.locale ? page : null
           } catch (error: unknown) {
-            if (pageNotFound(error)) return null
+            if (pageUnavailable(error)) return null
             throw error
           }
         })
@@ -607,7 +586,12 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const knowledge = dependencies.knowledge
       ? await dependencies.knowledge.getCurrentMany(hydrated.map(page => page.id))
       : new Map<number, KnowledgeProjectionView>()
-    return { pages: hydrated.map(page => ({ ...page, knowledge: knowledge.get(page.id) ?? null })) }
+    return {
+      pages: hydrated.map(page => {
+        const projection = knowledge.get(page.id)
+        return { ...page, knowledge: projection?.sourceRevision === page.sourceRevision ? projection : null }
+      })
+    }
   })
 
   kernel.register('pages.listHistory', async (rawInput, context) => {
@@ -636,13 +620,14 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     const versionDate = z.looseObject({ versionDate: z.union([z.string(), z.date()]) }).safeParse(value)
     if (!versionDate.success) throw operationFailure('Page version operation omitted its date')
     const citationSections = 'citationSections' in parsed ? (parsed.citationSections ?? []) : []
+    const projection = await dependencies.knowledge?.getRevision(parsed.id, parsed.sourceRevision)
     return {
       ...parsed,
       citation: { ...parsed.citation, href: versionedCitationHref(parsed.citation.href, input.versionId) },
       citationSections: citationSections.map(citation => ({ ...citation, href: versionedCitationHref(citation.href, input.versionId) })),
       versionId: input.versionId,
       versionDate: versionDate.data.versionDate instanceof Date ? versionDate.data.versionDate.toISOString() : versionDate.data.versionDate,
-      knowledge: (await dependencies.knowledge?.getRevision(parsed.id, parsed.sourceRevision)) ?? null
+      knowledge: projection?.sourceRevision === parsed.sourceRevision ? projection : null
     }
   })
 
@@ -681,18 +666,46 @@ export const registerPageReadActions = (kernel: ActionKernel, dependencies: Page
     if (!response.success) throw operationFailure('Related pages operation returned an invalid result')
     if (response.data.truncated !== (response.data.nextOffset !== null))
       throw operationFailure('Related pages operation returned inconsistent continuation state')
-    const pages = response.data.pages.map(page => ({
-      ...parsePage(page, false),
-      tags: normalizedPageTags(page.tags),
-      distance: page.distance,
-      direction: page.direction,
-      viaPageId: page.viaPageId
-    }))
+    const pages = (
+      await Promise.all(
+        response.data.pages.map(async listed => {
+          try {
+            const candidate = parsePage(listed, false)
+            const rawPage = await operations.get({ id: candidate.id, requester })
+            const page = parsePage(rawPage, false)
+            const candidateVisibility = listed.visibility === 'private' ? 'private' : 'public'
+            const visibility =
+              rawPage !== null && typeof rawPage === 'object' && 'visibility' in rawPage && rawPage.visibility === 'private' ? 'private' : 'public'
+            if (
+              page.id !== candidate.id ||
+              page.sourceRevision !== candidate.sourceRevision ||
+              page.locale !== candidate.locale ||
+              page.path !== candidate.path ||
+              visibility !== candidateVisibility
+            )
+              return null
+            return {
+              ...page,
+              tags: normalizedPageTags(rawPage !== null && typeof rawPage === 'object' && 'tags' in rawPage ? rawPage.tags : undefined),
+              distance: listed.distance,
+              direction: listed.direction,
+              viaPageId: listed.viaPageId
+            }
+          } catch (error: unknown) {
+            if (pageUnavailable(error)) return null
+            throw error
+          }
+        })
+      )
+    ).filter(page => page !== null)
     const knowledge = dependencies.knowledge
       ? await dependencies.knowledge.getCurrentMany(pages.map(page => page.id))
       : new Map<number, KnowledgeProjectionView>()
     return {
-      pages: pages.map(page => ({ ...page, knowledge: knowledge.get(page.id) ?? null })),
+      pages: pages.map(page => {
+        const projection = knowledge.get(page.id)
+        return { ...page, knowledge: projection?.sourceRevision === page.sourceRevision ? projection : null }
+      }),
       nextCursor:
         response.data.nextOffset === null
           ? null

@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "baseGitRevision": "d3d5a63326c056bb847fdb2552be0a1cf1eb7020",
+    "previewFingerprint": "3adffcba7255a3f88ec490ceffefe6f826e9508a",
+    "fingerprintIsNotGitCommit": true,
+    "deployedToMaintainedInstance": false
+  },
+  "verification": {
+    "fullSuiteFiles": 472,
+    "fullSuitePassed": true,
+    "postgresSuites": 4,
+    "postgresCases": 21,
+    "postgresAssertions": 61,
+    "buildAndBundleBudgetsPassed": true,
+    "staticChecksExceptPreexistingThreatAttestationPassed": true
+  },
+  "browser": {
+    "finalQuery": {
+      "knowledgeHintVisible": true,
+      "resultHeading": true,
+      "horizontalOverflow": false
+    },
+    "sourcePreviewRevision": 1,
+    "escapeRestoredPreviewFocus": true,
+    "nativeContinuation": {
+      "initial": 20,
+      "loaded": 25,
+      "scopePreserved": true
+    },
+    "mutationContinuation": {
+      "initial": 20,
+      "next": 4,
+      "snapshotVisible": 23,
+      "noDuplicates": true,
+      "newInsertionExcluded": true,
+      "queryMismatchStatus": 409,
+      "sessionMismatchStatus": 409
+    },
+    "accessibility": [
+      {
+        "surface": "reader",
+        "width": 1365,
+        "theme": "light",
+        "violations": []
+      },
+      {
+        "surface": "reader",
+        "width": 1365,
+        "theme": "dark",
+        "violations": []
+      },
+      {
+        "surface": "reader",
+        "width": 320,
+        "theme": "light",
+        "violations": []
+      },
+      {
+        "surface": "reader",
+        "width": 320,
+        "theme": "dark",
+        "violations": []
+      },
+      {
+        "surface": "admin-evaluator",
+        "theme": "dark",
+        "violations": []
+      },
+      {
+        "surface": "admin-evaluator",
+        "theme": "light",
+        "violations": []
+      }
+    ],
+    "screenshots": ".playwright-cli/search-foundation-audit"
+  },
+  "mcp": {
+    "realSdkTransport": true,
+    "pathScopedReadOnlyKey": true,
+    "knowledgeOnlySearch": true,
+    "revisionMatchedSourceRead": true,
+    "exactOkfResource": true,
+    "staleResourceDenied": true,
+    "outsideScopeDenied": true,
+    "privateReadDenied": true,
+    "revokedKeyDenied": true,
+    "protectedAndStaleGraphDisclosuresClosed": true
+  },
+  "maintainedAuthoritativeState": {
+    "pagesUnchanged": true,
+    "pageHistoryUnchanged": true,
+    "settingsUnchanged": true,
+    "repositoryBindMounts": 0
+  },
+  "cleanup": {
+    "completed": true,
+    "previewStopped": true,
+    "disposablePostgresStopped": true,
+    "sensitiveSnapshotAndConfigRemoved": true,
+    "browserAndDatabaseHandlesClosed": true,
+    "remaining": []
+  }
+}

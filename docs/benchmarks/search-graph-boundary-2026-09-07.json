@@ -1,0 +1,133 @@
+{
+  "schemaVersion": 1,
+  "fixture": "Synthetic clone-only graph; no maintained source changes",
+  "protectedBefore": {
+    "relatedError": false,
+    "relatedPages": [
+      {
+        "id": 70,
+        "distance": 1,
+        "viaPageId": 71
+      },
+      {
+        "id": 69,
+        "distance": 2,
+        "viaPageId": 70
+      }
+    ],
+    "graphSearch": [
+      {
+        "id": 71,
+        "matchedFields": [
+          "title",
+          "graph",
+          "knowledge"
+        ],
+        "score": 7.4925
+      },
+      {
+        "id": 69,
+        "matchedFields": [
+          "title",
+          "graph",
+          "knowledge"
+        ],
+        "score": 7.4925
+      }
+    ],
+    "directProtectedReadDenied": true,
+    "protectedKnowledgePresent": true,
+    "protectedEntityLabelExposed": true
+  },
+  "protectedAfter": {
+    "relatedError": false,
+    "relatedPages": [],
+    "graphSearch": [
+      {
+        "id": 71,
+        "matchedFields": [
+          "title",
+          "knowledge"
+        ],
+        "score": 6.75
+      },
+      {
+        "id": 69,
+        "matchedFields": [
+          "title",
+          "knowledge"
+        ],
+        "score": 6.75
+      }
+    ],
+    "directProtectedReadDenied": true
+  },
+  "visibleControl": {
+    "update": {
+      "status": 200,
+      "sourceRevision": "2"
+    },
+    "related": [
+      {
+        "id": 69,
+        "distance": 1,
+        "viaPageId": 71
+      }
+    ],
+    "links": [
+      {
+        "label": "en/audit/search-foundation-e375bad1-8de3-45ea-813e-aabda8f0e895/graph-tail",
+        "target": "en/audit/search-foundation-e375bad1-8de3-45ea-813e-aabda8f0e895/graph-tail",
+        "kind": "page"
+      }
+    ],
+    "graphSearch": [
+      {
+        "id": 71,
+        "matchedFields": [
+          "title",
+          "graph",
+          "knowledge"
+        ],
+        "sourceRevision": "2"
+      },
+      {
+        "id": 69,
+        "matchedFields": [
+          "title",
+          "graph",
+          "knowledge"
+        ],
+        "sourceRevision": "1"
+      }
+    ]
+  },
+  "staleRevisionBefore": {
+    "sourceRevision": "2",
+    "redacted": true,
+    "links": [
+      {
+        "label": "en/audit/search-foundation-e375bad1-8de3-45ea-813e-aabda8f0e895/graph-tail",
+        "target": "en/audit/search-foundation-e375bad1-8de3-45ea-813e-aabda8f0e895/graph-tail",
+        "kind": "page"
+      }
+    ]
+  },
+  "staleRevisionAfter": {
+    "heldReceiptStatus": "running",
+    "links": [],
+    "related": [
+      {
+        "id": 71,
+        "distance": 1,
+        "direction": "incoming"
+      }
+    ]
+  },
+  "recovery": {
+    "releasedHeldLinksSucceeded": true,
+    "redactedOutgoingRows": 0,
+    "legacyRenderAndLinksRecovered": true,
+    "receipts": []
+  }
+}

@@ -2,6 +2,9 @@ import taxonomy from './taxonomy.ts'
 import { tagAliasMap, resolveTagName } from '../helpers/tag-aliases.ts'
 import _ from 'lodash'
 import { searchExcerpt } from '../helpers/search-excerpt.ts'
+import { isStructuredSearchQuery } from '../helpers/search-query.ts'
+import { PageKnowledgeRepository, type KnowledgeDiscoveryFilter } from '../knowledge/lifecycle.ts'
+import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
 import type { Knex } from 'knex'
 import type { SearchResult as ProviderSearchResult } from '../modules/types.ts'
@@ -11,11 +14,11 @@ import { pageTreeAccess, treeAncestorIds } from '../repositories/page-tree-acces
 import { isPageEditorKey, normalizeAvailableEditors } from '../../shared/page-editors.ts'
 import { OKF_PRODUCER_CONTEXT } from '../okf/mutation-context.ts'
 import { assertPageUnlocked } from './page-protection.ts'
-
 import errors from './errors.ts'
 
 const { ApplicationError } = errors
 const PRIVATE_SEARCH_WINDOW_LIMIT = 50
+const KNOWLEDGE_SEARCH_WINDOW_LIMIT = 100
 const DEFAULT_PUBLIC_SEARCH_WINDOW_LIMIT = 100
 
 interface TagRecord extends Record<string, unknown> {
@@ -31,11 +34,12 @@ interface PageRecord extends Record<string, unknown> {
   title: string
   description?: string | null
   updatedAt: Date
-  isPublished?: boolean
+  sourceRevision?: string | number
   editorKey: string
   extra: Record<string, unknown>
   visibility: PageVisibility
   ownerId: number | null
+  isPublished: boolean
   tags: TagRecord[]
 }
 interface PageSourceRecord extends PageRecord {
@@ -60,12 +64,28 @@ interface LinkRow {
   id: number
   title: string
   path: string
+  sourceRevision?: string | number
+  sourceLocale?: string
   link?: string
   locale?: string
+  targetId?: number
+  targetRevision?: string | number
+  targetPath?: string
+  targetLocale?: string
 }
 interface PageGraphEdgeRow {
   sourceId: number
   targetId: number
+  sourceRevision?: string | number
+  targetRevision?: string | number
+  sourcePath?: string
+  sourceLocale?: string
+  targetPath?: string
+  targetLocale?: string
+}
+interface PageMutationReceiptRow {
+  pageId: number
+  sourceRevision: string | number
 }
 interface RelatedPageRecord extends PageRecord {
   distance: number
@@ -121,9 +141,11 @@ interface TagWithRelations extends TagRecord {
 interface RelatedTagQuery extends PromiseLike<TagRecord[]> {
   for(pageId: number): RelatedTagQuery
 }
-const SEARCH_MATCH_FIELDS = ['title', 'tag', 'path', 'description', 'content', 'graph'] as const
+const SEARCH_MATCH_FIELDS = ['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'] as const
 type SearchMatchField = (typeof SEARCH_MATCH_FIELDS)[number]
 interface SearchResult extends Record<string, unknown> {
+  id: number
+  sourceRevision: string
   path: string
   locale: string
   title?: unknown
@@ -131,6 +153,12 @@ interface SearchResult extends Record<string, unknown> {
   tags?: unknown
   score?: unknown
   matchedFields?: unknown
+  metadataOnly?: boolean
+}
+interface RankedSearchResult extends SearchResult {
+  tags: string[]
+  score: number
+  matchedFields: SearchMatchField[]
 }
 interface SearchResponse extends ProviderSearchResult {
   results: SearchResult[]
@@ -138,6 +166,8 @@ interface SearchResponse extends ProviderSearchResult {
 interface PrivateSearchRankRow {
   id: number
   score: number
+  sourceRevision: string | number
+  metadataOnly?: boolean
 }
 interface WikiPageOperations {
   Error: {
@@ -492,7 +522,7 @@ const searchTags = async (input: OperationInput) => {
 const authorizedPageSource = async (input: OperationInput): Promise<PageSourceRecord> => {
   const requester = input.requester
   const page = await wiki.models.pages.getPageFromDb(positiveInteger(input.id, 'id'))
-  if (!page || !canReadPage(requester, page)) {
+  if (!page || !canAccessCurrentPageSource(requester, page)) {
     throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
   }
   await assertUnlocked(input, page.id)
@@ -515,6 +545,8 @@ const publicationWindowOpen = (page: Record<string, unknown>, now = Date.now()):
   const end = page.publishEndDate
   return (!start || new Date(String(start)).valueOf() <= now) && (!end || new Date(String(end)).valueOf() >= now)
 }
+const canAccessCurrentPageSource = (requester: Express.User | undefined, page: PageRecord): boolean =>
+  page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page)) ? canReadPage(requester, page) : canWritePage(requester, page)
 
 const preview = async (input: OperationInput): Promise<WikiSource> => {
   // Both readers enforce current ownership, page rules, publication, and password unlock.
@@ -525,9 +557,14 @@ const preview = async (input: OperationInput): Promise<WikiSource> => {
   const rendered = typeof render === 'string' ? render : ''
   const query = typeof input.query === 'string' ? input.query.slice(0, 256) : ''
   return {
-    id: page.id, locale: page.localeCode, path: page.path, title: page.title,
-    description: page.description ?? '', visibility: page.visibility,
-    updatedAt: new Date(page.updatedAt).toISOString(), sourceRevision: String(Reflect.get(page, 'sourceRevision')),
+    id: page.id,
+    locale: page.localeCode,
+    path: page.path,
+    title: page.title,
+    description: page.description ?? '',
+    visibility: page.visibility,
+    updatedAt: new Date(page.updatedAt).toISOString(),
+    sourceRevision: String(Reflect.get(page, 'sourceRevision')),
     ...searchExcerpt(rendered, query)
   }
 }
@@ -549,34 +586,125 @@ const getSource = async (
   }
 }
 
+const graphEligiblePages = async (requester: Express.User | undefined): Promise<Map<number, PageRecord>> => {
+  const [pages, protectedIds] = await Promise.all([
+    wiki.models.pages
+      .query()
+      .column([
+        'pages.id',
+        'pages.path',
+        'pages.localeCode',
+        'pages.title',
+        'pages.description',
+        'pages.visibility',
+        'pages.ownerId',
+        'pages.isPublished',
+        'pages.publishStartDate',
+        'pages.publishEndDate',
+        'pages.contentType',
+        'pages.sourceRevision',
+        'pages.updatedAt'
+      ])
+      .withGraphJoined('tags')
+      .modifyGraph('tags', builder => {
+        builder.select('tag')
+      })
+      .modify(builder => {
+        builder.where({ 'pages.visibility': 'public', 'pages.isPublished': true })
+      }),
+    protectedPageIds()
+  ])
+  return new Map<number, PageRecord>(
+    pages.filter(page => publicationWindowOpen(page) && canReadPage(requester, page) && !protectedIds.has(page.id)).map(page => [page.id, page] as const)
+  )
+}
+
+const currentLinkReceiptKey = (pageId: number, sourceRevision: string): string => `${pageId}:${sourceRevision}`
+
+const succeededLinkReceiptKeys = async (): Promise<Set<string>> => {
+  const rows = (await wiki.models
+    .knex('pageMutationOutbox')
+    .where({ effectKind: 'links', desiredState: 'present', status: 'succeeded' })
+    .select('pageId', 'sourceRevision')) as PageMutationReceiptRow[]
+  return new Set(
+    rows.flatMap(row => {
+      const pageId = Number(row.pageId)
+      const sourceRevision = currentSourceRevision(row.sourceRevision)
+      return Number.isSafeInteger(pageId) && pageId > 0 && sourceRevision !== undefined ? [currentLinkReceiptKey(pageId, sourceRevision)] : []
+    })
+  )
+}
+
+const graphPageSnapshotMatches = (rawId: unknown, rawRevision: unknown, rawPath: unknown, rawLocale: unknown, page: PageRecord): boolean => {
+  const revision = currentSourceRevision(rawRevision)
+  const authorizedRevision = currentSourceRevision(page.sourceRevision)
+  return (
+    Number(rawId) === page.id &&
+    revision !== undefined &&
+    authorizedRevision !== undefined &&
+    revision === authorizedRevision &&
+    rawPath === page.path &&
+    rawLocale === page.localeCode
+  )
+}
+
 const listLinks = async (input: OperationInput) => {
   const requester = input.requester
   const locale = stringValue(input.locale, 'locale')
-  const columns = [{ id: 'pages.id' }, { path: 'pages.path' }, 'title', { link: 'pageLinks.path' }, { locale: 'pageLinks.localeCode' }]
-  const rows = await wiki.models
-    .knex('pages')
-    .column(...columns)
-    .fullOuterJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
-    .where({ 'pages.localeCode': locale, 'pages.visibility': 'public' })
+  const pagesById = await graphEligiblePages(requester)
+  // Do not list an edge if either endpoint became protected after the metadata snapshot.
+  for (const protectedId of await protectedPageIds()) pagesById.delete(protectedId)
+  const pagesByRoute = new Map<string, PageRecord>([...pagesById.values()].map(page => [`${page.localeCode}/${page.path}`, page] as const))
+  const columns = [
+    { id: 'pages.id' },
+    { title: 'pages.title' },
+    { path: 'pages.path' },
+    { sourceRevision: 'pages.sourceRevision' },
+    { sourceLocale: 'pages.localeCode' },
+    { link: 'pageLinks.path' },
+    { locale: 'pageLinks.localeCode' },
+    { targetId: 'target.id' },
+    { targetRevision: 'target.sourceRevision' },
+    { targetPath: 'target.path' },
+    { targetLocale: 'target.localeCode' }
+  ]
+  const [rows, receiptKeys] = await Promise.all([
+    wiki.models
+      .knex('pages')
+      .column(...columns)
+      .fullOuterJoin('pageLinks', 'pages.id', 'pageLinks.pageId')
+      .leftJoin('pages as target', function () {
+        this.on('target.localeCode', '=', 'pageLinks.localeCode').andOn('target.path', '=', 'pageLinks.path')
+      })
+      .where({ 'pages.localeCode': locale, 'pages.visibility': 'public', 'pages.isPublished': true }),
+    succeededLinkReceiptKeys()
+  ])
 
   return _.reduce<LinkRow, LinkResult[]>(
-    rows,
+    rows as LinkRow[],
     (result, value) => {
-      if (
-        !wiki.auth.checkAccess(requester, ['read:pages'], { path: value.path, locale }) ||
-        !wiki.auth.checkAccess(requester, ['read:pages'], { path: value.link, locale: value.locale })
-      )
-        return result
-
-      const existing = _.find(result, ['id', value.id])
+      const source = pagesById.get(Number(value.id))
+      if (!source || !graphPageSnapshotMatches(value.id, value.sourceRevision, value.path, value.sourceLocale, source)) return result
+      const target = typeof value.link === 'string' && typeof value.locale === 'string' ? pagesByRoute.get(`${value.locale}/${value.link}`) : undefined
+      const sourceRevision = currentSourceRevision(value.sourceRevision)
+      const targetId = Number(value.targetId)
+      const edgeAllowed =
+        sourceRevision !== undefined &&
+        receiptKeys.has(currentLinkReceiptKey(source.id, sourceRevision)) &&
+        target !== undefined &&
+        graphPageSnapshotMatches(value.targetId, value.targetRevision, value.targetPath, value.targetLocale, target) &&
+        targetId === target.id &&
+        value.locale === target.localeCode &&
+        value.link === target.path
+      const existing = _.find(result, ['id', source.id])
       if (existing) {
-        if (value.link) existing.links.push(`${value.locale}/${value.link}`)
+        if (edgeAllowed) existing.links.push(`${target.localeCode}/${target.path}`)
       } else {
         result.push({
-          id: value.id,
-          title: value.title,
-          path: `${locale}/${value.path}`,
-          links: value.link ? [`${value.locale}/${value.link}`] : []
+          id: source.id,
+          title: source.title,
+          path: `${source.localeCode}/${source.path}`,
+          links: edgeAllowed ? [`${target.localeCode}/${target.path}`] : []
         })
       }
       return result
@@ -605,31 +733,11 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
   })
   if (source.visibility !== 'public' || source.isPublished === false) return { pages: [], truncated: false, nextOffset: null }
 
-  const visiblePages = await wiki.models.pages
-    .query()
-    .column([
-      'pages.id',
-      'pages.path',
-      'pages.localeCode',
-      'pages.title',
-      'pages.description',
-      'pages.visibility',
-      'pages.ownerId',
-      'pages.contentType',
-      'pages.sourceRevision',
-      'pages.updatedAt'
-    ])
-    .withGraphJoined('tags')
-    .modifyGraph('tags', builder => {
-      builder.select('tag')
-    })
-    .modify(builder => {
-      builder.where({ 'pages.visibility': 'public', 'pages.isPublished': true })
-    })
-  const pagesById = new Map<number, PageRecord>()
-  for (const page of visiblePages) {
-    if (canReadPage(requester, page)) pagesById.set(page.id, page)
-  }
+  const pagesById = await graphEligiblePages(requester)
+  if (!pagesById.has(pageId)) return { pages: [], truncated: false, nextOffset: null }
+
+  // Exclude pages protected after the metadata snapshot before their edges can enter the traversal.
+  for (const protectedId of await protectedPageIds()) pagesById.delete(protectedId)
   if (!pagesById.has(pageId)) return { pages: [], truncated: false, nextOffset: null }
 
   const rawEdges = (await wiki.models
@@ -644,7 +752,17 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
       'target.visibility': 'public',
       'target.isPublished': true
     })
-    .select({ sourceId: 'source.id', targetId: 'target.id' })) as PageGraphEdgeRow[]
+    .select({
+      sourceId: 'source.id',
+      sourceRevision: 'source.sourceRevision',
+      sourcePath: 'source.path',
+      sourceLocale: 'source.localeCode',
+      targetId: 'target.id',
+      targetRevision: 'target.sourceRevision',
+      targetPath: 'target.path',
+      targetLocale: 'target.localeCode'
+    })) as PageGraphEdgeRow[]
+  const receiptKeys = await succeededLinkReceiptKeys()
 
   const adjacency = new Map<number, Map<number, number>>()
   const connect = (from: number, to: number, direction: number): void => {
@@ -656,6 +774,19 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
   for (const edge of rawEdges) {
     const sourceId = Number(edge.sourceId)
     const targetId = Number(edge.targetId)
+    const sourcePage = pagesById.get(sourceId)
+    const targetPage = pagesById.get(targetId)
+    const sourceRevision = currentSourceRevision(edge.sourceRevision)
+    if (
+      sourcePage === undefined ||
+      targetPage === undefined ||
+      sourceRevision === undefined ||
+      !receiptKeys.has(currentLinkReceiptKey(sourceId, sourceRevision)) ||
+      !graphPageSnapshotMatches(edge.sourceId, edge.sourceRevision, edge.sourcePath, edge.sourceLocale, sourcePage) ||
+      !graphPageSnapshotMatches(edge.targetId, edge.targetRevision, edge.targetPath, edge.targetLocale, targetPage)
+    ) {
+      continue
+    }
     connect(sourceId, targetId, 1)
     connect(targetId, sourceId, 2)
   }
@@ -710,13 +841,22 @@ const remove = async (input: OperationInput): Promise<unknown> => {
 }
 
 const updateTag = async (input: OperationInput): Promise<void> => {
-  await taxonomy().legacyChange({ requester: input.requester, sessionId: input.sessionId ?? '' }, {
-    action: 'edit', tagId: positiveInteger(input.id, 'id'), tag: stringValue(input.tag, 'tag'), title: stringValue(input.title, 'title')
-  })
+  await taxonomy().legacyChange(
+    { requester: input.requester, sessionId: input.sessionId ?? '' },
+    {
+      action: 'edit',
+      tagId: positiveInteger(input.id, 'id'),
+      tag: stringValue(input.tag, 'tag'),
+      title: stringValue(input.title, 'title')
+    }
+  )
 }
 
 const removeTag = async (value: unknown, context: OperationInput = {}): Promise<void> => {
-  await taxonomy().legacyChange({ requester: context.requester, sessionId: context.sessionId ?? '' }, { action: 'archive', tagId: positiveInteger(value, 'id') })
+  await taxonomy().legacyChange(
+    { requester: context.requester, sessionId: context.sessionId ?? '' },
+    { action: 'archive', tagId: positiveInteger(value, 'id') }
+  )
 }
 
 const getHistory = async (input: OperationInput) => {
@@ -771,14 +911,13 @@ const resultTags = (value: unknown): string[] => {
   return [...new Set(tags)].sort().slice(0, 50)
 }
 
-const rankedSearchResult = (
-  result: SearchResult,
-  query: string
-): SearchResult & {
-  tags: string[]
-  score: number
-  matchedFields: SearchMatchField[]
-} => {
+const currentSourceRevision = (value: unknown): string | undefined => {
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return String(value)
+  if (typeof value === 'string' && /^[1-9][0-9]*$/.test(value)) return value
+  return undefined
+}
+
+const rankedSearchResult = (result: SearchResult, query: string): RankedSearchResult => {
   const normalizedQuery = query.trim().toLocaleLowerCase()
   const tags = resultTags(result.tags)
   const title = typeof result.title === 'string' ? result.title.toLocaleLowerCase() : ''
@@ -788,11 +927,14 @@ const rankedSearchResult = (
     ? result.matchedFields.filter((field): field is SearchMatchField => typeof field === 'string' && SEARCH_MATCH_FIELDS.includes(field as SearchMatchField))
     : []
   const derivedFields: SearchMatchField[] = []
-  if (title.includes(normalizedQuery)) derivedFields.push('title')
-  if (tags.some(tag => tag.includes(normalizedQuery))) derivedFields.push('tag')
-  if (path.includes(normalizedQuery)) derivedFields.push('path')
-  if (description.includes(normalizedQuery)) derivedFields.push('description')
-  if (derivedFields.length === 0) derivedFields.push('content')
+  const structuredQuery = isStructuredSearchQuery(query)
+  if (!structuredQuery) {
+    if (title.includes(normalizedQuery)) derivedFields.push('title')
+    if (tags.some(tag => tag.includes(normalizedQuery))) derivedFields.push('tag')
+    if (path.includes(normalizedQuery)) derivedFields.push('path')
+    if (description.includes(normalizedQuery)) derivedFields.push('description')
+  }
+  if (derivedFields.length === 0 && !result.metadataOnly && !structuredQuery) derivedFields.push('content')
   const matchedFields = [...new Set(reportedFields.length > 0 ? reportedFields : derivedFields)]
   const exactTitle = title === normalizedQuery
   const exactTag = tags.includes(normalizedQuery)
@@ -802,14 +944,104 @@ const rankedSearchResult = (
     (path.includes(normalizedQuery) ? 3 : 0) +
     (description.includes(normalizedQuery) ? 1.5 : 0) +
     (matchedFields.includes('content') ? 1 : 0)
+  const { metadataOnly: _metadataOnly, ...summary } = result
   return {
-    ...result,
+    ...summary,
     tags,
     score: typeof result.score === 'number' && Number.isFinite(result.score) ? Math.max(0, result.score) : derivedScore,
     matchedFields
   }
 }
 const escapeLikePattern = (value: string): string => value.replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')
+
+const privateSearchFilters = ({
+  locale,
+  path,
+  ownerId,
+  pageIds
+}: {
+  locale?: string
+  path?: string
+  ownerId?: number
+  pageIds?: readonly number[]
+}): { filters: string[]; bindings: Knex.RawBinding[] } => {
+  const filters = ["page.visibility = 'private'"]
+  const bindings: Knex.RawBinding[] = []
+  if (ownerId !== undefined) {
+    filters.push('page."ownerId" = ?')
+    bindings.push(ownerId)
+  }
+  if (locale !== undefined) {
+    filters.push('page."localeCode" = ?')
+    bindings.push(locale)
+  }
+  if (path !== undefined) {
+    filters.push(`(page.path = ? OR page.path LIKE ? ESCAPE '\\')`)
+    bindings.push(path, `${escapeLikePattern(path)}/%`)
+  }
+  if (pageIds !== undefined) {
+    filters.push('page.id = ANY(?::int[])')
+    bindings.push([...pageIds])
+  }
+  return { filters, bindings }
+}
+
+const structuredPrivateSearch = async (
+  query: string,
+  filters: readonly string[],
+  bindings: readonly Knex.RawBinding[],
+  limit: number
+): Promise<PrivateSearchRankRow[]> => {
+  const ranked = await wiki.models.knex.raw<{ rows: PrivateSearchRankRow[] }>(
+    `
+      WITH query_input AS (
+        SELECT websearch_to_tsquery('simple', ?::text) AS query
+      ), matched AS MATERIALIZED (
+        SELECT
+          page.id,
+          page."sourceRevision" AS "sourceRevision",
+          lower(page.title) AS title_order,
+          lower(page.path) AS path_order,
+          EXISTS (SELECT 1 FROM "pageAccessPasswords" protection WHERE protection."pageId" = page.id) AS is_protected,
+          to_tsvector(
+            'simple',
+            concat_ws(' ', page.title, page.path, coalesce(page.description, ''), coalesce(tag_matches.tag_text, ''))
+          ) AS metadata_tokens,
+          to_tsvector('simple', coalesce(page.content, '')) AS content_tokens
+        FROM pages page
+        LEFT JOIN LATERAL (
+          SELECT string_agg(tag.tag, ' ') AS tag_text
+          FROM "pageTags" page_tag
+          JOIN tags tag ON tag.id = page_tag."tagId"
+          WHERE page_tag."pageId" = page.id
+        ) tag_matches ON true
+        WHERE ${filters.join('\n          AND ')}
+      ), ranked AS (
+        SELECT
+          matched.id,
+          matched."sourceRevision",
+          matched.is_protected,
+          matched.title_order,
+          matched.path_order,
+          CASE
+            WHEN matched.is_protected THEN ts_rank_cd(matched.metadata_tokens, input.query, 32)
+            ELSE ts_rank_cd(matched.metadata_tokens || matched.content_tokens, input.query, 32)
+          END AS score
+        FROM matched
+        CROSS JOIN query_input input
+        WHERE
+          (matched.is_protected AND matched.metadata_tokens @@ input.query) OR
+          (NOT matched.is_protected AND (matched.metadata_tokens || matched.content_tokens) @@ input.query)
+      )
+      SELECT id, score, "sourceRevision", is_protected AS "metadataOnly"
+      FROM ranked
+      ORDER BY score DESC, title_order, path_order, id
+      LIMIT ?
+    `,
+    [query, ...bindings, limit]
+  )
+  return ranked.rows
+}
 
 const searchPrivatePages = async ({
   query,
@@ -823,106 +1055,104 @@ const searchPrivatePages = async ({
   locale?: string
   path?: string
   ownerId?: number
-  pageIds?: number[]
+  pageIds?: readonly number[]
   limit?: number
 }): Promise<PageRecord[]> => {
-  const escapedQuery = escapeLikePattern(query)
-  const bindings: Knex.RawBinding[] = [escapedQuery, `${escapedQuery}%`, `%${escapedQuery}%`]
-  const filters = ["page.visibility = 'private'"]
-  if (ownerId !== undefined) {
-    filters.push('page."ownerId" = ?')
-    bindings.push(ownerId)
-  }
-  if (locale !== undefined) {
-    filters.push('page."localeCode" = ?')
-    bindings.push(locale)
-  }
-  if (path !== undefined) {
-    filters.push(`(page.path = ? OR page.path LIKE ? ESCAPE '\\')`)
-    bindings.push(path, `${escapeLikePattern(path)}/%`)
-  }
-  if (selectedPageIds) { filters.push('page.id = ANY(?::int[])'); bindings.push(selectedPageIds) }
-  bindings.push(limit)
-  const ranked = await wiki.models.knex.raw<{ rows: PrivateSearchRankRow[] }>(
-    `
-      WITH query_input AS (
-        SELECT
-          ?::text AS exact_query,
-          ?::text AS prefix_query,
-          ?::text AS contains_query
-      ), matched AS MATERIALIZED (
-        SELECT
-          page.id,
-          lower(page.title) AS title_order,
-          lower(page.path) AS path_order,
-          page.title ILIKE input.exact_query ESCAPE '\\' AS title_exact,
-          page.title ILIKE input.prefix_query ESCAPE '\\' AS title_prefix,
-          page.title ILIKE input.contains_query ESCAPE '\\' AS title_contains,
-          page.path ILIKE input.exact_query ESCAPE '\\' AS path_exact,
-          page.path ILIKE input.prefix_query ESCAPE '\\' AS path_prefix,
-          page.path ILIKE input.contains_query ESCAPE '\\' AS path_contains,
-          page.description ILIKE input.exact_query ESCAPE '\\' AS description_exact,
-          page.description ILIKE input.prefix_query ESCAPE '\\' AS description_prefix,
-          page.description ILIKE input.contains_query ESCAPE '\\' AS description_contains,
-          (page.content ILIKE input.contains_query ESCAPE '\\' AND NOT EXISTS (SELECT 1 FROM "pageAccessPasswords" protection WHERE protection."pageId" = page.id)) AS content_contains,
-          coalesce(tag_matches.exact_match, false) AS tag_exact,
-          coalesce(tag_matches.prefix_match, false) AS tag_prefix,
-          coalesce(tag_matches.contains_match, false) AS tag_contains
-        FROM pages page
-        CROSS JOIN query_input input
-        LEFT JOIN LATERAL (
-          SELECT
-            bool_or(tag.tag ILIKE input.exact_query ESCAPE '\\') AS exact_match,
-            bool_or(tag.tag ILIKE input.prefix_query ESCAPE '\\') AS prefix_match,
-            bool_or(tag.tag ILIKE input.contains_query ESCAPE '\\') AS contains_match
-          FROM "pageTags" page_tag
-          JOIN tags tag ON tag.id = page_tag."tagId"
-          WHERE page_tag."pageId" = page.id
-        ) tag_matches ON true
-        WHERE ${filters.join('\n          AND ')}
-      ), ranked AS (
-        SELECT
-          matched.id,
-          matched.title_order,
-          matched.path_order,
-          (
-            CASE WHEN matched.title_exact THEN 10.0 WHEN matched.title_prefix THEN 6.0 WHEN matched.title_contains THEN 4.0 ELSE 0.0 END +
-            CASE WHEN matched.tag_exact THEN 7.0 WHEN matched.tag_prefix THEN 3.0 WHEN matched.tag_contains THEN 2.0 ELSE 0.0 END +
-            CASE WHEN matched.path_exact THEN 6.0 WHEN matched.path_prefix THEN 4.0 WHEN matched.path_contains THEN 3.0 ELSE 0.0 END +
-            CASE
-              WHEN matched.description_exact THEN 3.0
-              WHEN matched.description_prefix THEN 2.0
-              WHEN matched.description_contains THEN 1.5
-              ELSE 0.0
-            END +
-            CASE
-              WHEN matched.content_contains AND NOT (
-                matched.title_contains OR matched.tag_contains OR matched.path_contains OR matched.description_contains
-              ) THEN 1.0
-              ELSE 0.0
-            END
-          )::double precision AS score
-        FROM matched
-        WHERE
-          matched.title_contains OR
-          matched.tag_contains OR
-          matched.path_contains OR
-          matched.description_contains OR
-          matched.content_contains
-      )
-      SELECT id, score
-      FROM ranked
-      ORDER BY score DESC, title_order, path_order, id
-      LIMIT ?
-    `,
-    bindings
-  )
-  const rankById = new Map(ranked.rows.map(row => [row.id, row.score]))
+  const { filters, bindings: scopeBindings } = privateSearchFilters({
+    ...(locale === undefined ? {} : { locale }),
+    ...(path === undefined ? {} : { path }),
+    ...(ownerId === undefined ? {} : { ownerId }),
+    ...(selectedPageIds === undefined ? {} : { pageIds: selectedPageIds })
+  })
+  const boundedLimit = Math.min(PRIVATE_SEARCH_WINDOW_LIMIT, Math.max(1, limit))
+  const rows = isStructuredSearchQuery(query)
+    ? await structuredPrivateSearch(query, filters, scopeBindings, boundedLimit)
+    : (
+        await wiki.models.knex.raw<{ rows: PrivateSearchRankRow[] }>(
+          `
+            WITH query_input AS (
+              SELECT
+                ?::text AS exact_query,
+                ?::text AS prefix_query,
+                ?::text AS contains_query
+            ), matched AS MATERIALIZED (
+              SELECT
+                page.id,
+                page."sourceRevision" AS "sourceRevision",
+                lower(page.title) AS title_order,
+                lower(page.path) AS path_order,
+                page.title ILIKE input.exact_query ESCAPE '\\' AS title_exact,
+                page.title ILIKE input.prefix_query ESCAPE '\\' AS title_prefix,
+                page.title ILIKE input.contains_query ESCAPE '\\' AS title_contains,
+                page.path ILIKE input.exact_query ESCAPE '\\' AS path_exact,
+                page.path ILIKE input.prefix_query ESCAPE '\\' AS path_prefix,
+                page.path ILIKE input.contains_query ESCAPE '\\' AS path_contains,
+                page.description ILIKE input.exact_query ESCAPE '\\' AS description_exact,
+                page.description ILIKE input.prefix_query ESCAPE '\\' AS description_prefix,
+                page.description ILIKE input.contains_query ESCAPE '\\' AS description_contains,
+                (page.content ILIKE input.contains_query ESCAPE '\\' AND NOT EXISTS (SELECT 1 FROM "pageAccessPasswords" protection WHERE protection."pageId" = page.id)) AS content_contains,
+                EXISTS (SELECT 1 FROM "pageAccessPasswords" protection WHERE protection."pageId" = page.id) AS is_protected,
+                coalesce(tag_matches.exact_match, false) AS tag_exact,
+                coalesce(tag_matches.prefix_match, false) AS tag_prefix,
+                coalesce(tag_matches.contains_match, false) AS tag_contains
+              FROM pages page
+              CROSS JOIN query_input input
+              LEFT JOIN LATERAL (
+                SELECT
+                  bool_or(tag.tag ILIKE input.exact_query ESCAPE '\\') AS exact_match,
+                  bool_or(tag.tag ILIKE input.prefix_query ESCAPE '\\') AS prefix_match,
+                  bool_or(tag.tag ILIKE input.contains_query ESCAPE '\\') AS contains_match
+                FROM "pageTags" page_tag
+                JOIN tags tag ON tag.id = page_tag."tagId"
+                WHERE page_tag."pageId" = page.id
+              ) tag_matches ON true
+              WHERE ${filters.join('\n                AND ')}
+            ), ranked AS (
+              SELECT
+                matched.id,
+                matched."sourceRevision",
+                matched.is_protected,
+                matched.title_order,
+                matched.path_order,
+                (
+                  CASE WHEN matched.title_exact THEN 10.0 WHEN matched.title_prefix THEN 6.0 WHEN matched.title_contains THEN 4.0 ELSE 0.0 END +
+                  CASE WHEN matched.tag_exact THEN 7.0 WHEN matched.tag_prefix THEN 3.0 WHEN matched.tag_contains THEN 2.0 ELSE 0.0 END +
+                  CASE WHEN matched.path_exact THEN 6.0 WHEN matched.path_prefix THEN 4.0 WHEN matched.path_contains THEN 3.0 ELSE 0.0 END +
+                  CASE
+                    WHEN matched.description_exact THEN 3.0
+                    WHEN matched.description_prefix THEN 2.0
+                    WHEN matched.description_contains THEN 1.5
+                    ELSE 0.0
+                  END +
+                  CASE
+                    WHEN matched.content_contains AND NOT (
+                      matched.title_contains OR matched.tag_contains OR matched.path_contains OR matched.description_contains
+                    ) THEN 1.0
+                    ELSE 0.0
+                  END
+                )::double precision AS score
+              FROM matched
+              WHERE
+                matched.title_contains OR
+                matched.tag_contains OR
+                matched.path_contains OR
+                matched.description_contains OR
+                matched.content_contains
+            )
+            SELECT id, score, "sourceRevision", is_protected AS "metadataOnly"
+            FROM ranked
+            ORDER BY score DESC, title_order, path_order, id
+            LIMIT ?
+          `,
+          [escapeLikePattern(query), `${escapeLikePattern(query)}%`, `%${escapeLikePattern(query)}%`, ...scopeBindings, boundedLimit]
+        )
+      ).rows
+  const rankById = new Map(rows.map(row => [row.id, row]))
   const pageIds = [...rankById.keys()]
   if (pageIds.length === 0) return []
   const hydratedPages = await wiki.models.pages
     .query()
-    .column(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'description', 'visibility', 'ownerId'])
+    .column(['pages.id', 'pages.sourceRevision', 'path', { locale: 'localeCode' }, 'title', 'description', 'visibility', 'ownerId'])
     .withGraphJoined('tags')
     .modifyGraph('tags', builder => {
       builder.select('tag')
@@ -941,10 +1171,87 @@ const searchPrivatePages = async ({
   const pagesById = new Map(hydratedPages.map(page => [page.id, page]))
   return pageIds.flatMap(id => {
     const page = pagesById.get(id)
-    const score = rankById.get(id)
-    return page === undefined || score === undefined ? [] : [{ ...page, score }]
+    const rank = rankById.get(id)
+    if (!page || !rank) return []
+    const rankedRevision = currentSourceRevision(rank.sourceRevision)
+    const hydratedRevision = currentSourceRevision(page.sourceRevision)
+    if (rankedRevision === undefined || hydratedRevision === undefined || rankedRevision !== hydratedRevision) return []
+    return [
+      {
+        ...page,
+        sourceRevision: hydratedRevision,
+        ...(rank.metadataOnly ? { metadataOnly: true } : {}),
+        score: rank.score
+      }
+    ]
   })
 }
+
+const protectedPageIds = async (): Promise<Set<number>> =>
+  new Set((await wiki.models.knex('pageAccessPasswords')).map(row => Reflect.get(row, 'pageId')).filter((id): id is number => typeof id === 'number'))
+
+const matchingProtectedMetadataIds = async (query: string, pageIds: readonly number[]): Promise<Set<number>> => {
+  if (pageIds.length === 0) return new Set()
+  const matched = await wiki.models.knex.raw<{ rows: Array<{ id: number }> }>(
+    `
+      WITH query_input AS (
+        SELECT websearch_to_tsquery('simple', ?::text) AS query
+      ), metadata AS MATERIALIZED (
+        SELECT
+          page.id,
+          to_tsvector(
+            'simple',
+            concat_ws(' ', page.title, page.path, coalesce(page.description, ''), coalesce(string_agg(tag.tag, ' '), ''))
+          ) AS tokens
+        FROM pages page
+        LEFT JOIN "pageTags" page_tag ON page_tag."pageId" = page.id
+        LEFT JOIN tags tag ON tag.id = page_tag."tagId"
+        WHERE page.id = ANY(?::int[])
+        GROUP BY page.id, page.title, page.path, page.description
+      )
+      SELECT metadata.id
+      FROM metadata
+      CROSS JOIN query_input
+      WHERE metadata.tokens @@ query_input.query
+    `,
+    [query, [...pageIds]]
+  )
+  return new Set(matched.rows.map(row => row.id))
+}
+
+const knowledgeFilter = (value: unknown): KnowledgeDiscoveryFilter | undefined => {
+  if (value === undefined) return undefined
+  const filter = recordValue(value, 'knowledge')
+  const state = filter.state
+  const lifecycleStatus = filter.lifecycleStatus
+  const trustTier = filter.trustTier
+  const stale = filter.stale
+  const conceptType = filter.conceptType
+  if (state !== undefined && state !== 'complete' && state !== 'partial') throw new ApplicationError('Invalid knowledge state', { code: 'INVALID_INPUT' })
+  if (lifecycleStatus !== undefined && lifecycleStatus !== 'draft' && lifecycleStatus !== 'stable' && lifecycleStatus !== 'deprecated') {
+    throw new ApplicationError('Invalid knowledge lifecycle status', { code: 'INVALID_INPUT' })
+  }
+  if (trustTier !== undefined && trustTier !== 'unverified' && trustTier !== 'machine-confirmed' && trustTier !== 'human-reviewed') {
+    throw new ApplicationError('Invalid knowledge trust tier', { code: 'INVALID_INPUT' })
+  }
+  if (stale !== undefined && typeof stale !== 'boolean') throw new ApplicationError('knowledge.stale must be a boolean', { code: 'INVALID_INPUT' })
+  if (conceptType !== undefined && typeof conceptType !== 'string')
+    throw new ApplicationError('knowledge.conceptType must be a string', { code: 'INVALID_INPUT' })
+  return {
+    ...(state === undefined ? {} : { state }),
+    ...(lifecycleStatus === undefined ? {} : { lifecycleStatus }),
+    ...(trustTier === undefined ? {} : { trustTier }),
+    ...(stale === undefined ? {} : { stale }),
+    ...(conceptType === undefined ? {} : { conceptType })
+  }
+}
+
+const matchesKnowledgeFilter = (knowledge: KnowledgeProjectionView, filter: KnowledgeDiscoveryFilter): boolean =>
+  (filter.state === undefined || knowledge.state === filter.state) &&
+  (filter.lifecycleStatus === undefined || knowledge.lifecycle.status === filter.lifecycleStatus) &&
+  (filter.trustTier === undefined || knowledge.lifecycle.trustTier === filter.trustTier) &&
+  (filter.stale === undefined || knowledge.lifecycle.stale === filter.stale) &&
+  (filter.conceptType === undefined || knowledge.conceptType?.toLocaleLowerCase() === filter.conceptType.toLocaleLowerCase())
 
 const search = async (input: OperationInput) => {
   const requester = input.requester
@@ -952,116 +1259,309 @@ const search = async (input: OperationInput) => {
   const locale = input.locale === undefined ? undefined : stringValue(input.locale, 'locale')
   const path = input.path === undefined ? undefined : stringValue(input.path, 'path')
   const requestedLimit = input.limit === undefined ? undefined : Math.min(1001, positiveInteger(input.limit, 'limit'))
-  const selectedPageIds = input.pageIds === undefined ? undefined : Array.isArray(input.pageIds) && input.pageIds.length <= 8 ? input.pageIds.map(id => positiveInteger(id, 'pageId')) : (() => { throw new ApplicationError('Invalid selected pages', { code: 'INVALID_INPUT' }) })()
-  const protectedPageIds = new Set(
-    (await wiki.models.knex('pageAccessPasswords')).map(row => Reflect.get(row, 'pageId')).filter((id): id is number => typeof id === 'number')
-  )
-  let authorizedPublicIds: number[] | undefined
-  if (wiki.data.searchEngine?.supportsPageFilters) {
-    // Evaluate current page rules and protected metadata before ranking and limiting candidates.
-    const pages = await wiki.models.pages.query()
-      .select('pages.id', 'pages.localeCode', 'pages.path', 'pages.title', 'pages.description', 'pages.visibility', 'pages.ownerId', 'pages.isPublished', 'pages.publishStartDate', 'pages.publishEndDate')
-      .withGraphJoined('tags').modifyGraph('tags', builder => { builder.select('tag') })
-      .modify(builder => {
-        builder.where({ visibility: 'public', isPublished: true })
-        if (locale) builder.andWhere('pages.localeCode', locale)
-        if (path) builder.andWhere(scope => { scope.where('pages.path', path).orWhere('pages.path', 'LIKE', `${escapeLikePattern(path)}/%`) })
-        if (selectedPageIds) builder.whereIn('pages.id', selectedPageIds)
-      })
-    authorizedPublicIds = pages.filter(page => publicationWindowOpen(page) && canReadPage(requester, page) && (!protectedPageIds.has(page.id) ||
-      [page.title, page.description ?? '', page.path, ...resultTags(page.tags)].join(' ').toLocaleLowerCase().includes(query.toLocaleLowerCase()))).map(page => page.id)
-  }
-  const args = {
-    ..._.omit(input, ['requester', 'query', 'locale', 'path', 'pageIds', 'limit']),
-    ...(authorizedPublicIds ? { pageIds: authorizedPublicIds } : {}),
-    ...(requestedLimit ? { limit: requestedLimit } : {}),
-    ...(locale === undefined ? {} : { locale }),
-    ...(path === undefined ? {} : { path })
-  }
+  const selectedPageIds =
+    input.pageIds === undefined
+      ? undefined
+      : Array.isArray(input.pageIds) && input.pageIds.length <= 8
+        ? input.pageIds.map(id => positiveInteger(id, 'pageId'))
+        : (() => {
+            throw new ApplicationError('Invalid selected pages', { code: 'INVALID_INPUT' })
+          })()
+  const filter = knowledgeFilter(input.knowledge)
   const privateOwnerId = principalId(requester)
   const canSearchAllPrivatePages = requester !== undefined && managesSystem(requester)
   const canSearchPrivatePages = canSearchAllPrivatePages || privateOwnerId !== null
-  const privatePages = !canSearchPrivatePages
-    ? []
-    : await searchPrivatePages({
-        query,
-        ...(selectedPageIds ? { pageIds: selectedPageIds } : {}),
-        ...(requestedLimit ? { limit: requestedLimit } : {}),
-        ...(locale === undefined ? {} : { locale }),
-        ...(path === undefined ? {} : { path }),
-        ...(canSearchAllPrivatePages || privateOwnerId === null ? {} : { ownerId: privateOwnerId })
-      })
-  let publicResponse: SearchResponse
-  if (wiki.data.searchEngine) {
-    publicResponse = await wiki.data.searchEngine.query(query, { query, ...args })
-  } else {
-    publicResponse = { results: [], suggestions: [], totalHits: 0 }
-  }
-
-  const publicIdentities = new Set<string>()
-  const livePublicPagesByIdentity = new Map<string, PageRecord>()
-  if (publicResponse.results.length > 0) {
-    const livePublicPages = await wiki.models.pages
-      .query()
-      .select('pages.id', 'pages.localeCode', 'pages.path', 'pages.title', 'pages.description', 'pages.publishStartDate', 'pages.publishEndDate')
-      .withGraphJoined('tags')
-      .modifyGraph('tags', builder => {
-        builder.select('tag')
-      })
-      .modify(builder => {
-        builder.where({ visibility: 'public', isPublished: true })
-        builder.andWhere(matches => {
-          for (const result of publicResponse.results) {
-            matches.orWhere({ localeCode: result.locale, path: result.path })
-          }
-        })
-      })
-    const normalizedQuery = query.toLocaleLowerCase()
-    for (const page of livePublicPages) {
-      const identity = `${page.localeCode}\u0000${page.path}`
-      livePublicPagesByIdentity.set(identity, page)
-      const searchableMetadata = [page.title, page.description ?? '', page.path, ...resultTags(page.tags)].join(' ').toLocaleLowerCase()
-      if (publicationWindowOpen(page) && (!protectedPageIds.has(page.id) || searchableMetadata.includes(normalizedQuery))) publicIdentities.add(identity)
-    }
-  }
-  const publicResults = publicResponse.results
-    .filter(
-      result =>
-        publicIdentities.has(`${result.locale}\u0000${result.path}`) &&
-        (!selectedPageIds || selectedPageIds.includes(livePublicPagesByIdentity.get(`${result.locale}\u0000${result.path}`)?.id ?? 0)) &&
-        wiki.auth.checkAccess(requester, ['read:pages'], {
-          path: result.path,
-          locale: result.locale,
-          tags: resultTags(livePublicPagesByIdentity.get(`${result.locale}\u0000${result.path}`)?.tags)
-        })
-    )
-    .map(result => {
-      const livePage = livePublicPagesByIdentity.get(`${result.locale}\u0000${result.path}`)
-      return {
-        ...result,
-        id: livePage?.id,
-        title: livePage?.title,
-        description: livePage?.description ?? '',
-        tags: resultTags(livePage?.tags),
-        visibility: 'public' as const
-      }
-    })
-  const results = [
-    ...privatePages.map(page => rankedSearchResult({ ...page, locale: page.locale ?? page.localeCode }, query)),
-    ...publicResults.map(result => rankedSearchResult(result, query))
-  ].sort(
-    (left, right) => right.score - left.score || String(left.title).localeCompare(String(right.title)) || String(left.path).localeCompare(String(right.path))
-  )
   const configuredPublicLimit = requestedLimit ?? wiki.config.search?.maxHits
   const publicWindowLimit =
     Number.isSafeInteger(configuredPublicLimit) && Number(configuredPublicLimit) > 0 ? Number(configuredPublicLimit) : DEFAULT_PUBLIC_SEARCH_WINDOW_LIMIT
+  const privateWindowLimit = canSearchPrivatePages ? PRIVATE_SEARCH_WINDOW_LIMIT : 0
+  const knowledgeWindowLimit = Math.min(KNOWLEDGE_SEARCH_WINDOW_LIMIT, publicWindowLimit)
+  const windowLimit = publicWindowLimit + privateWindowLimit + knowledgeWindowLimit
+  if (!query.trim()) {
+    return {
+      results: [],
+      suggestions: [],
+      totalHits: 0,
+      windowLimit,
+      windowTruncated: false
+    }
+  }
+
+  const initialProtectedPageIds = await protectedPageIds()
+  // Public authorization, publication, selected scope, and metadata-only protection are resolved before either bounded backend runs.
+  const eligiblePublicPages = await wiki.models.pages
+    .query()
+    .select(
+      'pages.id',
+      'pages.sourceRevision',
+      'pages.localeCode',
+      'pages.path',
+      'pages.title',
+      'pages.description',
+      'pages.visibility',
+      'pages.ownerId',
+      'pages.isPublished',
+      'pages.publishStartDate',
+      'pages.publishEndDate'
+    )
+    .withGraphJoined('tags')
+    .modifyGraph('tags', builder => {
+      builder.select('tag')
+    })
+    .modify(builder => {
+      builder.where({ visibility: 'public', isPublished: true })
+      if (locale !== undefined) builder.andWhere('pages.localeCode', locale)
+      if (path !== undefined) {
+        builder.andWhere(scope => {
+          scope.where('pages.path', path).orWhere('pages.path', 'LIKE', `${escapeLikePattern(path)}/%`)
+        })
+      }
+      if (selectedPageIds !== undefined) builder.whereIn('pages.id', selectedPageIds)
+    })
+  const metadataEligibleProtectedIds = await matchingProtectedMetadataIds(
+    query,
+    eligiblePublicPages.filter(page => initialProtectedPageIds.has(page.id)).map(page => page.id)
+  )
+  const authorizedPublicRevisionById = new Map<number, string>()
+  for (const page of eligiblePublicPages) {
+    if (!publicationWindowOpen(page) || !canReadPage(requester, page)) continue
+    if (initialProtectedPageIds.has(page.id) && !metadataEligibleProtectedIds.has(page.id)) continue
+    const sourceRevision = currentSourceRevision(page.sourceRevision)
+    if (sourceRevision !== undefined) authorizedPublicRevisionById.set(page.id, sourceRevision)
+  }
+  const authorizedPublicIds = [...authorizedPublicRevisionById.keys()]
+  const knowledgeRepository = new PageKnowledgeRepository(wiki.models.knex)
+  const [filteredPublicIdsRaw, filteredPrivateIds] =
+    filter === undefined
+      ? [authorizedPublicIds, undefined]
+      : await Promise.all([
+          knowledgeRepository.filterVisibleCurrentIds({
+            requester,
+            pageIds: authorizedPublicIds,
+            authorizedPageIds: authorizedPublicIds,
+            filter
+          }),
+          knowledgeRepository.filterVisibleCurrentIds({
+            requester,
+            authorizedPageIds: authorizedPublicIds,
+            filter
+          })
+        ])
+  const filteredPublicIds = filteredPublicIdsRaw.filter(pageId => authorizedPublicRevisionById.has(pageId))
+  const pageRevisions = Object.fromEntries(filteredPublicIds.map(pageId => [String(pageId), authorizedPublicRevisionById.get(pageId)] as const)) as Record<
+    string,
+    string
+  >
+  const effectivePrivateIds = filteredPrivateIds ?? []
+  const args = {
+    pageIds: filteredPublicIds,
+    pageRevisions,
+    ...(requestedLimit === undefined ? {} : { limit: requestedLimit }),
+    ...(locale === undefined ? {} : { locale }),
+    ...(path === undefined ? {} : { path })
+  }
+  const [privatePages, publicResponse, knowledgeCandidates] = await Promise.all([
+    !canSearchPrivatePages || (filter !== undefined && effectivePrivateIds.length === 0)
+      ? Promise.resolve([])
+      : searchPrivatePages({
+          query,
+          ...(filter === undefined ? (selectedPageIds === undefined ? {} : { pageIds: selectedPageIds }) : { pageIds: effectivePrivateIds }),
+          limit: privateWindowLimit,
+          ...(locale === undefined ? {} : { locale }),
+          ...(path === undefined ? {} : { path }),
+          ...(canSearchAllPrivatePages || privateOwnerId === null ? {} : { ownerId: privateOwnerId })
+        }),
+    wiki.data.searchEngine
+      ? wiki.data.searchEngine.query(query, { query, ...args })
+      : Promise.resolve<SearchResponse>({ results: [], suggestions: [], totalHits: 0 }),
+    knowledgeRepository.searchVisible({
+      query,
+      requester,
+      limit: knowledgeWindowLimit,
+      ...(locale === undefined ? {} : { locale }),
+      ...(path === undefined ? {} : { path }),
+      ...(selectedPageIds === undefined ? {} : { pageIds: selectedPageIds }),
+      authorizedPageIds: filteredPublicIds,
+      ...(filter === undefined ? {} : { filter })
+    })
+  ])
+
+  const publicResultIds = publicResponse.results.map(result => result.id)
+  const candidatePageIds = [...new Set([...publicResultIds, ...knowledgeCandidates.map(candidate => candidate.id)])]
+  const livePages =
+    candidatePageIds.length === 0
+      ? []
+      : await wiki.models.pages
+          .query()
+          .select(
+            'pages.id',
+            'pages.sourceRevision',
+            'pages.localeCode',
+            'pages.path',
+            'pages.title',
+            'pages.description',
+            'pages.visibility',
+            'pages.ownerId',
+            'pages.isPublished',
+            'pages.publishStartDate',
+            'pages.publishEndDate'
+          )
+          .withGraphJoined('tags')
+          .modifyGraph('tags', builder => {
+            builder.select('tag')
+          })
+          .modify(builder => {
+            builder.whereIn('pages.id', candidatePageIds)
+          })
+  const livePagesById = new Map(livePages.map(page => [page.id, page]))
+  const currentProtectedPageIds = await protectedPageIds()
+  const currentProtectedMetadataIds = await matchingProtectedMetadataIds(
+    query,
+    livePages.filter(page => page.visibility === 'public' && currentProtectedPageIds.has(page.id)).map(page => page.id)
+  )
+  const currentPrivateMetadataIds = await matchingProtectedMetadataIds(
+    query,
+    privatePages.filter(page => currentProtectedPageIds.has(page.id)).map(page => page.id)
+  )
+  const publicResults = publicResponse.results.flatMap(result => {
+    const id = result.id
+    const page = livePagesById.get(id)
+    const indexedRevision = currentSourceRevision(result.sourceRevision)
+    const liveRevision = currentSourceRevision(page?.sourceRevision)
+    if (
+      !page ||
+      indexedRevision === undefined ||
+      liveRevision === undefined ||
+      page.visibility !== 'public' ||
+      page.localeCode !== result.locale ||
+      page.path !== result.path ||
+      indexedRevision !== liveRevision ||
+      !page.isPublished ||
+      !publicationWindowOpen(page) ||
+      !canReadPage(requester, page) ||
+      (currentProtectedPageIds.has(page.id) && !currentProtectedMetadataIds.has(page.id))
+    ) {
+      return []
+    }
+    const metadataOnly = currentProtectedPageIds.has(page.id)
+    return [
+      {
+        ...result,
+        id: page.id,
+        sourceRevision: liveRevision,
+        title: page.title,
+        description: page.description ?? '',
+        tags: resultTags(page.tags),
+        matchedFields: metadataOnly && Array.isArray(result.matchedFields) ? result.matchedFields.filter(field => field !== 'content') : result.matchedFields,
+        metadataOnly,
+        visibility: 'public' as const
+      }
+    ]
+  })
+  const privateResults = privatePages.flatMap(page => {
+    const sourceRevision = currentSourceRevision(page.sourceRevision)
+    const metadataOnly = currentProtectedPageIds.has(page.id)
+    if (sourceRevision === undefined || (metadataOnly && !currentPrivateMetadataIds.has(page.id)) || !canReadPage(requester, page)) {
+      return []
+    }
+    return [
+      rankedSearchResult(
+        {
+          ...page,
+          locale: page.locale ?? page.localeCode,
+          sourceRevision,
+          metadataOnly
+        },
+        query
+      )
+    ]
+  })
+  const knowledgeResults = knowledgeCandidates.flatMap(candidate => {
+    const page = livePagesById.get(candidate.id)
+    const pageRevision = currentSourceRevision(page?.sourceRevision)
+    if (
+      !page ||
+      pageRevision === undefined ||
+      page.visibility !== candidate.visibility ||
+      page.localeCode !== candidate.locale ||
+      page.path !== candidate.path ||
+      pageRevision !== candidate.sourceRevision ||
+      (selectedPageIds !== undefined && !selectedPageIds.includes(page.id)) ||
+      currentProtectedPageIds.has(page.id) ||
+      !canReadPage(requester, page) ||
+      (page.visibility === 'public' && (!page.isPublished || !publicationWindowOpen(page)))
+    ) {
+      return []
+    }
+    return [
+      {
+        id: page.id,
+        sourceRevision: pageRevision,
+        locale: page.localeCode,
+        path: page.path,
+        title: page.title,
+        description: page.description ?? '',
+        tags: resultTags(page.tags),
+        visibility: page.visibility,
+        score: candidate.score,
+        matchedFields: candidate.matchedFields
+      }
+    ]
+  })
+  const lexicalResults = [...privateResults, ...publicResults.map(result => rankedSearchResult(result, query))]
+  const currentKnowledgeById =
+    filter === undefined ? new Map<number, KnowledgeProjectionView>() : await knowledgeRepository.getCurrentMany(lexicalResults.map(result => result.id))
+  const filteredLexicalResults =
+    filter === undefined
+      ? lexicalResults
+      : lexicalResults.filter(result => {
+          const id = result.id
+          const knowledge = currentKnowledgeById.get(id)
+          return (
+            !currentProtectedPageIds.has(id) &&
+            knowledge !== undefined &&
+            knowledge.sourceRevision === currentSourceRevision(result.sourceRevision) &&
+            matchesKnowledgeFilter(knowledge, filter)
+          )
+        })
+  const resultsById = new Map<number, RankedSearchResult>()
+  for (const result of [...filteredLexicalResults, ...knowledgeResults.map(result => rankedSearchResult(result, query))]) {
+    const id = result.id
+    const existing = resultsById.get(id)
+    resultsById.set(
+      id,
+      existing === undefined
+        ? result
+        : {
+            ...existing,
+            score: Math.max(existing.score, result.score),
+            matchedFields: [...new Set([...existing.matchedFields, ...result.matchedFields])]
+          }
+    )
+  }
+  const orderedResults = [...resultsById.values()].sort(
+    (left, right) =>
+      right.score - left.score ||
+      String(left.title).localeCompare(String(right.title)) ||
+      String(left.path).localeCompare(String(right.path)) ||
+      left.locale.localeCompare(right.locale) ||
+      Number(left.id) - Number(right.id)
+  )
+  const privateCandidates = orderedResults.filter(result => result.visibility === 'private')
+  const admittedPrivateIds = new Set(privateCandidates.slice(0, PRIVATE_SEARCH_WINDOW_LIMIT).map(result => result.id))
+  const results = orderedResults.filter(result => result.visibility !== 'private' || admittedPrivateIds.has(result.id))
+  const privateContributionTruncated = privateCandidates.length > PRIVATE_SEARCH_WINDOW_LIMIT
   return {
     ...publicResponse,
     suggestions: publicResults.length === publicResponse.results.length ? publicResponse.suggestions : [],
     results,
     totalHits: results.length,
-    windowLimit: publicWindowLimit + (canSearchPrivatePages ? (requestedLimit ?? PRIVATE_SEARCH_WINDOW_LIMIT) : 0),
-    windowTruncated: publicResponse.results.length >= publicWindowLimit || privatePages.length >= (requestedLimit ?? PRIVATE_SEARCH_WINDOW_LIMIT)
+    windowLimit,
+    windowTruncated:
+      publicResponse.results.length >= publicWindowLimit ||
+      (canSearchPrivatePages && privatePages.length >= privateWindowLimit) ||
+      privateContributionTruncated ||
+      knowledgeCandidates.length >= knowledgeWindowLimit
   }
 }
 
@@ -1070,9 +1570,29 @@ const getByPath = async (input: OperationInput) => {
   const path = stringValue(input.path, 'path')
   const locale = stringValue(input.locale, 'locale')
   const visibility: PageVisibility = input.visibility === 'private' ? 'private' : 'public'
-  const ownerId = visibility === 'private' ? principalId(requester) : null
-  const page = await wiki.models.pages.getPageFromDb({ path, locale, visibility, ownerId })
-  if (!page || !canReadPage(requester, page)) throw new wiki.Error.PageNotFound()
+  let page: PageSourceRecord | undefined
+  if (visibility === 'private' && managesSystem(requester)) {
+    // Path does not identify a private page globally: refuse a cross-owner ambiguity instead of choosing an arbitrary owner.
+    const candidates = await wiki.models.pages
+      .query()
+      .column(['pages.id', 'pages.path', 'pages.localeCode', 'pages.visibility', 'pages.ownerId'])
+      .withGraphJoined('tags')
+      .modifyGraph('tags', builder => {
+        builder.select('tag')
+      })
+      .modify(builder => {
+        builder.where({ path, localeCode: locale, visibility: 'private' })
+      })
+      .limit(2)
+    const [candidate] = candidates
+    if (candidates.length === 1 && candidate !== undefined && canReadPage(requester, candidate)) page = await wiki.models.pages.getPageFromDb(candidate.id)
+  } else {
+    const ownerId = visibility === 'private' ? principalId(requester) : null
+    page = await wiki.models.pages.getPageFromDb({ path, locale, visibility, ownerId })
+  }
+  if (!page || page.path !== path || page.localeCode !== locale || page.visibility !== visibility || !canAccessCurrentPageSource(requester, page)) {
+    throw new wiki.Error.PageNotFound()
+  }
   await assertUnlocked(input, page.id)
   return { ...page, locale: page.localeCode, editor: page.editorKey, scriptJs: page.extra.js, scriptCss: page.extra.css }
 }
@@ -1112,22 +1632,26 @@ const getTreeSnapshot = async (input: OperationInput, db: Knex.Transaction) => {
       })
     })
     .orderBy([{ column: 'isFolder', order: 'desc' }, 'title'])
-  return results.flatMap(result => {
-    const readable = access.readable.has(result.id)
-    const reachable = Boolean(result.isFolder) && access.reachable.has(result.id)
-    if ((!readable && !reachable) || (mode === 'PAGES' && !readable)) return []
-    return [{
-      ...result,
-      // A denied page can also be a folder leading to readable descendants.
-      // Preserve traversal without exposing that page's title, ID or edit action.
-      title: readable ? result.title : result.path.split('/').at(-1),
-      pageId: readable ? result.pageId : null,
-      isFolder: Boolean(result.isFolder),
-      parent: result.parent || 0,
-      locale: result.localeCode,
-      canEdit: readable && access.editable.has(result.id)
-    }]
-  }).sort((a, b) => Number(b.isFolder) - Number(a.isFolder) || String(a.title).localeCompare(String(b.title)))
+  return results
+    .flatMap(result => {
+      const readable = access.readable.has(result.id)
+      const reachable = Boolean(result.isFolder) && access.reachable.has(result.id)
+      if ((!readable && !reachable) || (mode === 'PAGES' && !readable)) return []
+      return [
+        {
+          ...result,
+          // A denied page can also be a folder leading to readable descendants.
+          // Preserve traversal without exposing that page's title, ID or edit action.
+          title: readable ? result.title : result.path.split('/').at(-1),
+          pageId: readable ? result.pageId : null,
+          isFolder: Boolean(result.isFolder),
+          parent: result.parent || 0,
+          locale: result.localeCode,
+          canEdit: readable && access.editable.has(result.id)
+        }
+      ]
+    })
+    .sort((a, b) => Number(b.isFolder) - Number(a.isFolder) || String(a.title).localeCompare(String(b.title)))
 }
 
 // Tree IDs are rebuilt on page moves; authorization and returned rows must share a snapshot.
@@ -1188,10 +1712,13 @@ const update = async (input: OperationInput): Promise<unknown> => {
   const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS', ...(replaceOkfMetadata ? [] : ['okfMetadata'])])
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
   return wiki.models.pages.updatePage(
-    withRequester({
-      ...(replaceOkfMetadata ? { ...payload, replaceOkfMetadata: true } : payload),
-      ...(collaborationGeneration === undefined ? {} : { expectedCollaborationGeneration: collaborationGeneration })
-    }, input.requester)
+    withRequester(
+      {
+        ...(replaceOkfMetadata ? { ...payload, replaceOkfMetadata: true } : payload),
+        ...(collaborationGeneration === undefined ? {} : { expectedCollaborationGeneration: collaborationGeneration })
+      },
+      input.requester
+    )
   )
 }
 const setPublication = async (input: OperationInput): Promise<unknown> => {
@@ -1203,10 +1730,24 @@ const setPublication = async (input: OperationInput): Promise<unknown> => {
     const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/.exec(value)
     if (!parts) return false
     const [, year, month, day, hour, minute, second, , offsetHour, offsetMinute] = parts
-    const y = Number(year), m = Number(month), d = Number(day)
+    const y = Number(year),
+      m = Number(month),
+      d = Number(day)
     const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0)
     const days = m === 2 ? (leap ? 29 : 28) : [4, 6, 9, 11].includes(m) ? 30 : 31
-    return m >= 1 && m <= 12 && d >= 1 && d <= days && Number(hour) <= 23 && Number(minute) <= 59 && Number(second) <= 59 && Number(offsetHour || 0) <= 14 && Number(offsetMinute || 0) <= 59 && (Number(offsetHour) !== 14 || Number(offsetMinute) === 0) && Number.isFinite(Date.parse(value))
+    return (
+      m >= 1 &&
+      m <= 12 &&
+      d >= 1 &&
+      d <= days &&
+      Number(hour) <= 23 &&
+      Number(minute) <= 59 &&
+      Number(second) <= 59 &&
+      Number(offsetHour || 0) <= 14 &&
+      Number(offsetMinute || 0) <= 59 &&
+      (Number(offsetHour) !== 14 || Number(offsetMinute) === 0) &&
+      Number.isFinite(Date.parse(value))
+    )
   }
   const dates: Record<string, string> = {}
   for (const field of ['publishStartDate', 'publishEndDate']) {
@@ -1217,7 +1758,8 @@ const setPublication = async (input: OperationInput): Promise<unknown> => {
     else throw new ApplicationError('Publication dates must be valid ISO timestamps or empty.', { code: 'INVALID_INPUT' })
   }
   if (Object.keys(dates).length === 1) throw new ApplicationError('Supply both publication boundaries when changing the schedule.', { code: 'INVALID_INPUT' })
-  if (dates.publishStartDate && dates.publishEndDate && Date.parse(dates.publishEndDate) <= Date.parse(dates.publishStartDate)) throw new ApplicationError('Publication end must be after its start.', { code: 'INVALID_INPUT' })
+  if (dates.publishStartDate && dates.publishEndDate && Date.parse(dates.publishEndDate) <= Date.parse(dates.publishStartDate))
+    throw new ApplicationError('Publication end must be after its start.', { code: 'INVALID_INPUT' })
   // Delegate authorization, password protection, revision checks, history,
   // rendering, indexing and durable events to the normal editor update path.
   return update({ ...input, input: { id, expectedSourceRevision: expected, isPublished: input.isPublished, ...dates } })

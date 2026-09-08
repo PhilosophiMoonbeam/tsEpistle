@@ -117,7 +117,7 @@
           template(v-else)
             .search-results-summary(v-if='hasFreshResponse')
               div(role='status' aria-live='polite' aria-atomic='true')
-                .search-results-eyebrow Direct matches
+                .search-results-eyebrow Search results
                 .search-results-count(v-if='results.length')
                   span {{ response.windowTruncated ? `At least ${response.totalHits} matches` : `${response.totalHits} ${response.totalHits === 1 ? 'match' : 'matches'}` }}
                   span.search-results-window(v-if='response.results.length < response.totalHits')  · Showing the top {{ response.results.length }}
@@ -457,7 +457,7 @@ export default defineComponent({
   },
   methods: {
     matchSummary(item: PageSearchRow): string {
-      const labels = { title: 'title', tag: 'tags', path: 'page path', description: 'description', content: 'page text', graph: 'related links' }
+      const labels = { title: 'title', tag: 'tags', path: 'page path', description: 'description', content: 'page text', graph: 'related links', knowledge: 'knowledge hints' }
       const fields = [...new Set(item.matchedFields ?? [])].map(field => labels[field]).filter(Boolean)
       return fields.length ? `Matches ${fields.slice(0, 3).join(' · ')}` : ''
     },
@@ -1103,6 +1103,7 @@ export default defineComponent({
   }
   &-item .v-list-item-subtitle {
     margin-top: var(--wiki-space-1);
+    opacity: .8;
     overflow-wrap: anywhere;
     line-height: 1.4;
     white-space: normal;
@@ -1242,7 +1243,7 @@ export default defineComponent({
 <style scoped>
 .search-results-row { position: relative; }
 .search-results-row .search-results-item { padding-inline-end: 7rem; }
-.search-results-preview { position: absolute; inset-inline-end: 1rem; bottom: 1rem; display: flex; align-items: center; gap: .4rem; padding: .5rem .65rem; border-radius: .65rem; color: rgb(var(--v-theme-primary)); font-size: .75rem; background: rgb(var(--v-theme-primary) / .08); }
+.search-results-preview { position: absolute; inset-inline-end: 1rem; bottom: 1rem; display: flex; align-items: center; gap: .4rem; padding: .5rem .65rem; border-radius: .65rem; color: var(--wiki-accent-ink, rgb(var(--v-theme-on-surface))); font-size: .75rem; background: rgb(var(--v-theme-primary) / .08); }
 .search-results-preview:hover { background: rgb(var(--v-theme-primary) / .17); }
 .search-results-preview:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
 @media (max-width: 480px) { .search-results-row .search-results-item { padding-inline-end: 3.5rem; } .search-results-preview { inset-inline-end: .5rem; } .search-results-preview span { display: none; } }

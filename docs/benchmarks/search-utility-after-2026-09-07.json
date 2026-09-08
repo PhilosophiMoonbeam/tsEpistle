@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "outcome": "succeeded",
+  "modelRequest": {
+    "success": true,
+    "profileVersionId": "3b2c09ac-a6e6-4463-904a-dd51a7ee00ac",
+    "model": "gpt-5.6-luna",
+    "inputSha256": "4b0efef09c09e17c48e447e53a26e468fe06d325e61f5a4ed42a6c865a30ef6e",
+    "outputSha256": "680916aefaeae1dcfdc3fb75951aa7dd363e17378aaf6310eeb90c7b3c464637",
+    "inputTokens": 343,
+    "outputTokens": 232
+  },
+  "producedHints": {
+    "terms": [
+      "checksum restoration after integrity verification failure",
+      "verify a recovered checksum before completing the procedure",
+      "ultraviolet marmot checksum repair",
+      "integrity check failure recovery steps"
+    ],
+    "count": 4,
+    "nonSourceCount": 4,
+    "noNovelParaphrase": false
+  },
+  "retrieval": {
+    "acronym": {
+      "found": true,
+      "sourceRevision": "1"
+    },
+    "modelHintIngestion": {
+      "found": true,
+      "sourceRevision": "1"
+    },
+    "heldOutSemanticGain": {
+      "query": "restore the ultraviolet verification code",
+      "expectedId": 40,
+      "resultIds": [],
+      "hit": false
+    },
+    "negativeControls": {
+      "outsideSelectedScope": true,
+      "structuredQuery": true,
+      "absentQuery": true
+    }
+  },
+  "cleanup": {
+    "outcome": "completed"
+  },
+  "fixture": {
+    "title": "Amber Falcon Runbook",
+    "content": "# Amber Falcon Runbook\n\nUse ultraviolet marmot checksum recovery when the amber-falcon integrity check fails. Confirm the restored checksum before closing the recovery procedure.\n",
+    "locale": "en",
+    "dictionary": "english",
+    "pathPolicy": "A fresh random synthetic audit path was used per invocation.",
+    "requestedGap": "concept.searchTerms",
+    "heldOutQuery": "restore the ultraviolet verification code"
+  }
+}

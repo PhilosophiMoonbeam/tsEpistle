@@ -1,9 +1,19 @@
-import { evaluateSearchRelevance } from './search-relevance.ts'
+import {
+  evaluateSearchRelevance,
+  SEARCH_AUGMENTED_RELEVANCE_CASES,
+  SEARCH_RELEVANCE_ACCEPTANCE_CASES,
+  SEARCH_RELEVANCE_CASES,
+  type SearchRelevanceEvaluation
+} from './search-relevance.ts'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
 import knexModule from 'knex'
 import type { Knex } from 'knex'
+import { up as createKnowledgeProjectionSchema } from '../db/migrations/2.5.152.ts'
+import { up as createKnowledgeSearchIndex } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
+import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
+import { knowledgeSearchText, mergeKnowledgeUtilityResult, projectPageKnowledge } from '../knowledge/projection.ts'
 
 export const POSTGRES_SEARCH_CORPUS = Object.freeze({
   seed: 20_260_831,
@@ -32,6 +42,7 @@ export const POSTGRES_SEARCH_QUERIES = Object.freeze({
 
 export type PostgresSearchQueryKind = keyof typeof POSTGRES_SEARCH_QUERIES
 export const POSTGRES_SEARCH_SCHEMA_VERSION = 2
+const POSTGRES_SEARCH_DICTIONARY = 'english'
 export const POSTGRES_SEARCH_DEFAULT_THRESHOLDS = Object.freeze({
   maxRebuildMilliseconds: 300_000,
   maxQueryP95Milliseconds: 200
@@ -77,15 +88,27 @@ export interface LatencyDistribution {
 }
 
 export interface BenchmarkViolation {
-  scope: 'environment' | 'corpus' | 'projection' | 'rebuild' | 'correctness' | PostgresSearchQueryKind
+  scope: 'environment' | 'corpus' | 'projection' | 'rebuild' | 'correctness' | 'relevance' | PostgresSearchQueryKind
   invariant: string
   measured: number | string
   threshold: number | string
 }
 
+export interface PostgresSearchRelevanceEvidence {
+  lexicalBaseline: SearchRelevanceEvaluation
+  lexicalAcceptance: SearchRelevanceEvaluation
+  augmentedFixture: SearchRelevanceEvaluation
+}
+
+const requiredRelevanceFixtures = {
+  lexicalBaseline: SEARCH_RELEVANCE_CASES.filter(fixture => fixture.acceptance === 'required'),
+  lexicalAcceptance: SEARCH_RELEVANCE_ACCEPTANCE_CASES.filter(fixture => fixture.acceptance === 'required'),
+  augmentedFixture: SEARCH_AUGMENTED_RELEVANCE_CASES.filter(fixture => fixture.acceptance === 'required')
+}
+
 export interface PostgresSearchBenchmarkReport {
-  reportVersion: 1
-  relevance?: Awaited<ReturnType<typeof evaluateSearchRelevance>>
+  reportVersion: 2
+  relevance: PostgresSearchRelevanceEvidence
   status: 'passed' | 'failed'
   environment: {
     postgresVersion: string
@@ -126,6 +149,7 @@ export interface PostgresSearchBenchmarkInput {
   rebuildMilliseconds: number
   querySamples: Record<PostgresSearchQueryKind, number[]>
   representativeChecks: RepresentativeCheck[]
+  relevance: PostgresSearchRelevanceEvidence
 }
 
 export interface AtomicReportFileSystem {
@@ -136,6 +160,8 @@ export interface AtomicReportFileSystem {
 
 const defaultAtomicReportFileSystem: AtomicReportFileSystem = fs
 const queryKinds = Object.keys(POSTGRES_SEARCH_QUERIES) as PostgresSearchQueryKind[]
+
+const sameIds = (left: readonly number[], right: readonly number[]): boolean => left.length === right.length && left.every((id, index) => id === right[index])
 
 export const percentile = (values: readonly number[], quantile: number): number => {
   if (values.length === 0) throw new Error('Cannot calculate a percentile without samples')
@@ -275,6 +301,42 @@ export const createPostgresSearchBenchmarkReport = (input: PostgresSearchBenchma
       })
     }
   }
+  const relevanceEvaluations: Array<[keyof PostgresSearchRelevanceEvidence, SearchRelevanceEvaluation]> = [
+    ['lexicalBaseline', input.relevance.lexicalBaseline],
+    ['lexicalAcceptance', input.relevance.lexicalAcceptance],
+    ['augmentedFixture', input.relevance.augmentedFixture]
+  ]
+  for (const [evaluationName, evaluation] of relevanceEvaluations) {
+    for (const fixture of requiredRelevanceFixtures[evaluationName]) {
+      const measured = evaluation.cases.find(result => result.name === fixture.name)
+      if (!measured) {
+        thresholdViolations.push({
+          scope: 'relevance',
+          invariant: `${evaluationName}.${fixture.name} produces required evidence`,
+          measured: 'missing',
+          threshold: `query=${JSON.stringify(fixture.query)} expected=[${fixture.expected.join(',')}]`
+        })
+        continue
+      }
+      if (measured.query !== fixture.query || !sameIds(measured.expected, fixture.expected) || !sameIds(measured.excluded, fixture.excluded ?? [])) {
+        thresholdViolations.push({
+          scope: 'relevance',
+          invariant: `${evaluationName}.${fixture.name} preserves the required fixture`,
+          measured: `query=${JSON.stringify(measured.query)} expected=[${measured.expected.join(',')}] excluded=[${measured.excluded.join(',')}]`,
+          threshold: `query=${JSON.stringify(fixture.query)} expected=[${fixture.expected.join(',')}] excluded=[${(fixture.excluded ?? []).join(',')}]`
+        })
+        continue
+      }
+      if (!measured.passed) {
+        thresholdViolations.push({
+          scope: 'relevance',
+          invariant: `${evaluationName}.${measured.name} passes`,
+          measured: `query=${JSON.stringify(measured.query)} top5=[${measured.top5.join(',')}] returned=[${measured.returned.join(',')}] samples=[${measured.samples.map(sample => `top5=[${sample.top5.join(',')}] returned=[${sample.returned.join(',')}]`).join(';')}] missing=[${measured.missingExpected.join(',')}] excluded=[${measured.unexpectedExcluded.join(',')}] scope=[${measured.scopeViolations.join(',')}] unexpected=[${measured.unexpectedResults.join(',')}]`,
+          threshold: `expected=[${measured.expected.join(',')}] excluded=[${measured.excluded.join(',')}]`
+        })
+      }
+    }
+  }
   const failedChecks = input.representativeChecks.filter(check => !check.passed)
   if (failedChecks.length > 0) {
     thresholdViolations.push({
@@ -286,7 +348,8 @@ export const createPostgresSearchBenchmarkReport = (input: PostgresSearchBenchma
   }
 
   return {
-    reportVersion: 1,
+    reportVersion: 2,
+    relevance: input.relevance,
     status: thresholdViolations.length === 0 ? 'passed' : 'failed',
     environment: {
       postgresVersion: input.postgresVersion,
@@ -351,7 +414,7 @@ const positiveNumber = (name: string, fallback: number): number => {
 
 const recreateSourceSchema = async (knex: Knex): Promise<void> => {
   await knex.raw(`
-    DROP TABLE IF EXISTS "pageAccessPasswords", "pageLinks", "pageTags", tags, pages CASCADE;
+    DROP TABLE IF EXISTS "pageKnowledgeProjections", "pageMutationOutbox", "pageAccessPasswords", "pageLinks", "pageTags", tags, pages CASCADE;
     CREATE TABLE pages (
       id integer PRIMARY KEY,
       "sourceRevision" bigint NOT NULL,
@@ -359,9 +422,17 @@ const recreateSourceSchema = async (knex: Knex): Promise<void> => {
       "localeCode" varchar(35) NOT NULL,
       title text NOT NULL,
       description text,
+      content text NOT NULL DEFAULT '',
       render text NOT NULL,
+      "contentType" text NOT NULL DEFAULT 'markdown',
+      "authorId" integer NOT NULL DEFAULT 1,
+      "ownerId" integer,
+      extra jsonb NOT NULL DEFAULT '{}'::jsonb,
+      "updatedAt" timestamptz NOT NULL DEFAULT now(),
       visibility text NOT NULL,
-      "isPublished" boolean NOT NULL
+      "isPublished" boolean NOT NULL,
+      "publishStartDate" timestamptz,
+      "publishEndDate" timestamptz
     );
     CREATE TABLE tags (
       id integer PRIMARY KEY,
@@ -379,6 +450,14 @@ const recreateSourceSchema = async (knex: Knex): Promise<void> => {
       path text NOT NULL,
       PRIMARY KEY ("pageId", "localeCode", path)
     );
+    CREATE TABLE "pageMutationOutbox" (
+      "pageId" integer NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+      "sourceRevision" bigint NOT NULL,
+      "effectKind" varchar(64) NOT NULL,
+      "desiredState" varchar(32) NOT NULL,
+      status varchar(24) NOT NULL,
+      PRIMARY KEY ("pageId", "sourceRevision", "effectKind")
+    );
     CREATE TABLE "pageAccessPasswords" (
       "pageId" integer PRIMARY KEY REFERENCES pages(id) ON DELETE CASCADE
     );
@@ -388,7 +467,7 @@ const recreateSourceSchema = async (knex: Knex): Promise<void> => {
 const prepareCorpus = async (knex: Knex): Promise<void> => {
   await knex.raw(
     `
-      INSERT INTO pages (id, "sourceRevision", path, "localeCode", title, description, render, visibility, "isPublished")
+      INSERT INTO pages (id, "sourceRevision", path, "localeCode", title, description, content, render, visibility, "isPublished")
       SELECT
         sequence,
         sequence,
@@ -401,10 +480,17 @@ const prepareCorpus = async (knex: Knex): Promise<void> => {
         END,
         CASE
           WHEN sequence = 2718 THEN 'Orbital cedar calibration protocol for deterministic actuator calibration'
+          WHEN sequence = 19004 THEN 'Deterministic withheld description for the negation fixture'
           ELSE 'Deterministic description for benchmark page ' || sequence || ' in topic ' || (sequence % 200)
         END,
         CASE
+          WHEN sequence = 42 THEN '# Amber Falcon\n\nultraviolet marmot checksum recovery procedure'
+          WHEN sequence = 43 THEN '# Phrase distractor\n\nultraviolet registry for marmot calibration retains a checksum'
+          ELSE 'Deterministic benchmark source ' || sequence
+        END,
+        CASE
           WHEN sequence = 42 THEN '<article><h1>Amber Falcon</h1><p>ultraviolet marmot checksum recovery procedure</p></article>'
+          WHEN sequence = 43 THEN '<article><h1>Phrase distractor</h1><p>ultraviolet registry for marmot calibration retains a checksum</p></article>'
           ELSE '<article><h1>Rendered page ' || sequence || '</h1><p>Deterministic corpus seed ' || ? || ' content family ' || (sequence % 97) || '</p></article>'
         END,
         'public',
@@ -436,6 +522,10 @@ const prepareCorpus = async (knex: Knex): Promise<void> => {
       WHEN source.id < 20000 THEN source.id + 1
       ELSE 18001
     END;
+    INSERT INTO "pageMutationOutbox" ("pageId", "sourceRevision", "effectKind", "desiredState", status)
+    SELECT id, "sourceRevision", 'links', 'present', 'succeeded'
+    FROM pages;
+    ANALYZE "pageMutationOutbox";
 
     ANALYZE pages;
     ANALYZE tags;
@@ -530,7 +620,10 @@ interface BenchmarkEngine {
   config: { dictLanguage: string }
   init(): Promise<void>
   rebuild(): Promise<void>
-  query(query: string, options: { locale?: string; path?: string; pageIds?: number[]; limit?: number }): Promise<SearchResponse>
+  query(
+    query: string,
+    options: { locale?: string; path?: string; pageIds?: number[]; pageRevisions?: Record<string, string>; limit?: number }
+  ): Promise<SearchResponse>
 }
 
 const asSearchResponse = (value: unknown): SearchResponse => {
@@ -552,6 +645,130 @@ const benchmarkQueries = async (engine: BenchmarkEngine, iterations: number, war
     }
   }
   return samples
+}
+
+interface BenchmarkKnowledgeCandidate {
+  id: number
+  knowledge: { tags: string[] }
+}
+
+interface BenchmarkKnowledgeRepository {
+  searchVisible(input: {
+    query: string
+    requester: undefined
+    locale?: string
+    path?: string
+    pageIds?: number[]
+    limit: number
+  }): Promise<readonly BenchmarkKnowledgeCandidate[]>
+}
+interface BenchmarkProjectionSource {
+  sourceRevision: string | number
+  localeCode: string
+  path: string
+  contentType: string
+  content: string
+  title: string
+  description: string | null
+  updatedAt: Date | string
+  authorId: number
+}
+
+const prepareAugmentedProjectionFixture = async (knex: Knex): Promise<BenchmarkKnowledgeRepository> => {
+  await createKnowledgeProjectionSchema(knex)
+  await createKnowledgeSearchIndex(knex)
+  const source = await knex<BenchmarkProjectionSource>('pages')
+    .where('id', 42)
+    .first('sourceRevision', 'localeCode', 'path', 'contentType', 'content', 'title', 'description', 'updatedAt', 'authorId')
+  if (!source) throw new Error('PostgreSQL benchmark projection source is missing')
+  const tags = await knex('pageTags').join('tags', 'tags.id', 'pageTags.tagId').where('pageTags.pageId', 42).orderBy('tags.tag').pluck<string>('tags.tag')
+  const generatedAt = '2026-09-07T00:00:00.000Z'
+  const projection = mergeKnowledgeUtilityResult(
+    projectPageKnowledge({
+      pageId: 42,
+      sourceRevision: source.sourceRevision,
+      locale: source.localeCode,
+      path: source.path,
+      visibility: 'public',
+      contentType: source.contentType,
+      content: source.content,
+      title: source.title,
+      description: source.description,
+      tags,
+      updatedAt: source.updatedAt,
+      authorId: source.authorId
+    }),
+    {
+      type: null,
+      summary: null,
+      tags: [],
+      entities: [],
+      relationships: [],
+      openQuestions: [],
+      searchTerms: ['restore the ultraviolet verification code']
+    },
+    {
+      profileVersionId: '11111111-1111-4111-8111-111111111111',
+      model: 'fixture-generated-search-terms',
+      inputSha256: 'a'.repeat(64),
+      outputSha256: 'b'.repeat(64),
+      generatedAt
+    }
+  )
+  const searchText = knowledgeSearchText(projection)
+  const dictionary = POSTGRES_SEARCH_DICTIONARY
+  await knex('pageKnowledgeProjections').insert({
+    pageId: projection.source.pageId,
+    sourceRevision: projection.source.sourceRevision,
+    sourceSha256: projection.source.sha256,
+    schemaVersion: projection.version,
+    deterministicVersion: projection.provenance.deterministicVersion,
+    state: projection.completeness.state,
+    enrichmentState: 'fixture-generated',
+    conceptType: projection.concept.type,
+    summary: projection.concept.summary,
+    searchText,
+    searchDictionary: dictionary,
+    searchTokens: knex.raw('to_tsvector(?::regconfig, ?)', [dictionary, searchText]),
+    lifecycleStatus: projection.lifecycle.status,
+    trustTier: projection.lifecycle.trustTier,
+    verification: projection.lifecycle.verification,
+    staleAfter: projection.lifecycle.staleAfter,
+    utilityProfileVersionId: projection.provenance.utility?.profileVersionId ?? null,
+    utilityModel: projection.provenance.utility?.model ?? null,
+    utilityInputSha256: projection.provenance.utility?.inputSha256 ?? null,
+    utilityOutputSha256: projection.provenance.utility?.outputSha256 ?? null,
+    utilityGeneratedAt: projection.provenance.utility?.generatedAt ?? null,
+    projection: JSON.stringify(projection),
+    lastError: null,
+    createdAt: generatedAt,
+    updatedAt: generatedAt
+  })
+  return new PageKnowledgeRepository(knex) as BenchmarkKnowledgeRepository
+}
+
+const searchWithAugmentedFixture = async (
+  engine: BenchmarkEngine,
+  knowledge: BenchmarkKnowledgeRepository,
+  query: string,
+  options: { locale?: string; path?: string; pageIds?: number[]; limit?: number }
+): Promise<SearchResponse> => {
+  const lexical = await engine.query(query, options)
+  const knowledgeCandidates = await knowledge.searchVisible({
+    query,
+    requester: undefined,
+    ...(options.locale === undefined ? {} : { locale: options.locale }),
+    ...(options.path === undefined ? {} : { path: options.path }),
+    ...(options.pageIds === undefined ? {} : { pageIds: options.pageIds }),
+    limit: Math.min(POSTGRES_SEARCH_CAPS.maxHits, options.limit ?? POSTGRES_SEARCH_CAPS.maxHits)
+  })
+  const lexicalIds = new Set(lexical.results.map(result => result.id))
+  return {
+    results: [
+      ...lexical.results,
+      ...knowledgeCandidates.filter(candidate => !lexicalIds.has(candidate.id)).map(candidate => ({ id: candidate.id, tags: candidate.knowledge.tags }))
+    ]
+  }
 }
 
 const representativeChecks = async (engine: BenchmarkEngine): Promise<RepresentativeCheck[]> => {
@@ -598,7 +815,9 @@ const representativeChecks = async (engine: BenchmarkEngine): Promise<Representa
 
 const installBenchmarkWiki = (knex: Knex): void => {
   Reflect.set(globalThis, 'WIKI', {
+    auth: { checkAccess: () => true },
     config: { db: { type: 'postgres' }, search: { maxHits: POSTGRES_SEARCH_CAPS.maxHits } },
+    data: { searchEngine: { config: { dictLanguage: POSTGRES_SEARCH_DICTIONARY } } },
     Error: { SearchActivationFailed: class SearchActivationFailed extends Error {} },
     logger: {
       info: () => undefined,
@@ -645,7 +864,7 @@ export const runPostgresSearchBenchmark = async (): Promise<void> => {
     installBenchmarkWiki(knex)
     // The engine captures the WIKI runtime during module evaluation, so the isolated benchmark runtime must exist before it is loaded.
     const engineModule = await import('../modules/search/postgres/engine.ts')
-    const engine = Object.assign(engineModule.default, { config: { dictLanguage: 'english' } }) as unknown as BenchmarkEngine
+    const engine = Object.assign(engineModule.default, { config: { dictLanguage: POSTGRES_SEARCH_DICTIONARY } }) as unknown as BenchmarkEngine
     await engine.init()
     await prepareCorpus(knex)
 
@@ -653,9 +872,29 @@ export const runPostgresSearchBenchmark = async (): Promise<void> => {
     await engine.rebuild()
     const rebuildMilliseconds = performance.now() - rebuildStartedAt
     await knex.raw('ANALYZE "pagesVector"; ANALYZE "pagesWords";')
-
     const querySamples = await benchmarkQueries(engine, iterations, warmupsPerDistribution)
     const checks = await representativeChecks(engine)
+    const knowledge = await prepareAugmentedProjectionFixture(knex)
+
+    const lexicalBaseline = await evaluateSearchRelevance((query, options) => engine.query(query, options), {
+      corpus: 'Seeded 20,000-page PostgreSQL lexical corpus; the historic baseline retains the acronym and paraphrase gaps as diagnostic observations.',
+      provenance: 'PostgreSQL lexical and graph engine only. Diagnostic augmentation gaps do not make the lexical baseline fail.',
+      cases: SEARCH_RELEVANCE_CASES
+    })
+    const lexicalAcceptance = await evaluateSearchRelevance((query, options) => engine.query(query, options), {
+      corpus: 'Seeded 20,000-page PostgreSQL lexical corpus with phrase, negation, disjunction, empty-input, and selected-scope fixtures.',
+      provenance: 'PostgreSQL lexical and graph engine only; all cases are required engine correctness and exclusion acceptance.',
+      cases: SEARCH_RELEVANCE_ACCEPTANCE_CASES
+    })
+    const augmentedFixture = await evaluateSearchRelevance((query, options) => searchWithAugmentedFixture(engine, knowledge, query, options), {
+      corpus:
+        'The same seeded 20,000-page, 11-query PostgreSQL relevance corpus as the lexical baseline, with a current revisioned pageKnowledgeProjections fixture for page 42.',
+      provenance:
+        'The benchmark adapter unions PostgreSQL engine and PageKnowledgeRepository candidates, including deterministic title acronym AFR and fixture-generated concept.searchTerms paraphrase. This is deterministic fixture evidence, not live utility-model output; server/test/search-foundation.postgres.test.ts provides separate actual operations.search PostgreSQL proof.',
+      cases: SEARCH_AUGMENTED_RELEVANCE_CASES
+    })
+    const relevance = { lexicalBaseline, lexicalAcceptance, augmentedFixture }
+
     const observedCorpus = await observeCorpus(knex)
     const derivedSearch = await observeDerivedSearch(knex)
     const versions = await knex.raw<{ rows: Array<{ postgresVersion: string; postgresMajorVersion: unknown; pgTrgmVersion: string }> }>(`
@@ -684,10 +923,10 @@ export const runPostgresSearchBenchmark = async (): Promise<void> => {
       thresholds,
       rebuildMilliseconds,
       querySamples,
-      representativeChecks: checks
+      representativeChecks: checks,
+      relevance
     })
-    const relevance = await evaluateSearchRelevance((query, options) => engine.query(query, options))
-    await publishPostgresSearchBenchmarkReport({ ...report, relevance }, outputPath)
+    await publishPostgresSearchBenchmarkReport(report, outputPath)
   } finally {
     await knex.destroy()
   }

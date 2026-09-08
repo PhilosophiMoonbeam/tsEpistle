@@ -44,18 +44,29 @@ describe('related page graph traversal', () => {
       page(6, 'Beyond Hidden', 'beyond-hidden')
     ]
     const edges = [
-      { sourceId: 1, targetId: 2 },
-      { sourceId: 3, targetId: 2 },
-      { sourceId: 2, targetId: 4 },
-      { sourceId: 4, targetId: 2 },
-      { sourceId: 4, targetId: 5 },
-      { sourceId: 5, targetId: 6 }
+      { sourceId: 1, sourceRevision: '1', sourcePath: 'alpha', sourceLocale: 'en', targetId: 2, targetRevision: '2', targetPath: 'bravo', targetLocale: 'en' },
+      { sourceId: 3, sourceRevision: '3', sourcePath: 'charlie', sourceLocale: 'en', targetId: 2, targetRevision: '2', targetPath: 'bravo', targetLocale: 'en' },
+      { sourceId: 2, sourceRevision: '2', sourcePath: 'bravo', sourceLocale: 'en', targetId: 4, targetRevision: '4', targetPath: 'delta', targetLocale: 'en' },
+      { sourceId: 4, sourceRevision: '4', sourcePath: 'delta', sourceLocale: 'en', targetId: 2, targetRevision: '2', targetPath: 'bravo', targetLocale: 'en' },
+      { sourceId: 4, sourceRevision: '4', sourcePath: 'delta', sourceLocale: 'en', targetId: 5, targetRevision: '5', targetPath: 'hidden', targetLocale: 'en' },
+      { sourceId: 5, sourceRevision: '5', sourcePath: 'hidden', sourceLocale: 'en', targetId: 6, targetRevision: '6', targetPath: 'beyond-hidden', targetLocale: 'en' }
     ]
+    const receipts = edges
+      .map(edge => `${edge.sourceId}:${edge.sourceRevision}`)
+      .filter((key, index, all) => all.indexOf(key) === index)
+      .map(key => {
+        const [pageId, sourceRevision] = key.split(':')
+        return { pageId: Number(pageId), sourceRevision }
+      })
     const visiblePageQuery = pageQuery(pages)
     const edgeQuery = {
       join: vi.fn(function () { return this }),
       where: vi.fn(function () { return this }),
       select: vi.fn(async () => edges)
+    }
+    const receiptQuery = {
+      where: vi.fn(function () { return this }),
+      select: vi.fn(async () => receipts)
     }
     const checkAccess = vi.fn((_user, _permissions, context = {}) => context.path !== 'hidden')
     global.WIKI = {
@@ -66,6 +77,8 @@ describe('related page graph traversal', () => {
       models: {
         knex: vi.fn(table => {
           if (table === 'pageLinks as links') return edgeQuery
+          if (table === 'pageMutationOutbox') return receiptQuery
+          if (table === 'pageAccessPasswords') return [{ pageId: 5 }]
           throw new Error(`Unexpected table ${table}`)
         }),
         pages: {

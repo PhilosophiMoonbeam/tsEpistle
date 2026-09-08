@@ -66,6 +66,42 @@ describe('OKF v0.2 documents', () => {
     expect(parsed.trust).toMatchObject({ verification: 'outdated', stale: true })
   })
 
+  it('orders dated verification by instant and keeps undated verification conservative', () => {
+    const generated = '2026-08-22T23:00:00Z'
+    expect(
+      summarizeOkfTrust({
+        type: 'Reference',
+        generated: { by: 'agent:7', at: generated },
+        verified: [
+          { by: 'human:1', at: '2026-08-23T00:30:00+02:00' },
+          { by: 'human:2', at: '2026-08-22T23:30:00Z' },
+          { by: 'human:3', at: '2026-08-23T01:30:00+02:00' }
+        ]
+      })
+    ).toMatchObject({ verification: 'current', verifiedAt: '2026-08-22T23:30:00Z' })
+    expect(
+      summarizeOkfTrust({
+        type: 'Reference',
+        generated: { by: 'agent:7', at: generated },
+        verified: { by: 'human:1', at: '2026-08-23T00:30:00+02:00' }
+      })
+    ).toMatchObject({ verification: 'outdated', verifiedAt: '2026-08-23T00:30:00+02:00' })
+    expect(
+      summarizeOkfTrust({
+        type: 'Reference',
+        generated: { by: 'agent:7', at: '2026-08-22T23:00:00.0009Z' },
+        verified: { by: 'human:1', at: '2026-08-22T23:00:00.0001Z' }
+      })
+    ).toMatchObject({ verification: 'outdated', verifiedAt: '2026-08-22T23:00:00.0001Z' })
+    expect(summarizeOkfTrust({ type: 'Reference', stale_after: '2026-08-22T23:00:00.0009Z' }, new Date('2026-08-22T23:00:00.000Z'))).toMatchObject({
+      stale: false
+    })
+    expect(summarizeOkfTrust({ type: 'Reference', verified: { by: 'human:1' } })).toMatchObject({
+      verification: 'outdated',
+      verifiedAt: null
+    })
+  })
+
   it('renders deterministic frontmatter while preserving extensions', () => {
     const parsed = parseOkfDocument(document)
     const first = renderOkfDocument(parsed.metadata, parsed.body)
@@ -107,9 +143,7 @@ describe('OKF v0.2 documents', () => {
     const values = Array.from({ length: 4_000 }, () => 'x').join(', ')
     const compactImport = `---\ntype: Reference\nextension: [${values}]\nfiller: ${'x'.repeat(50_000)}\n---\n`
     expect(Buffer.byteLength(/^---\n([\s\S]*?)\n---/u.exec(compactImport)![1]!, 'utf8')).toBeLessThanOrEqual(65_536)
-    expect(() => parseOkfDocument(compactImport)).toThrow(
-      expect.objectContaining<Partial<OkfDocumentError>>({ code: 'OKF_FRONTMATTER_TOO_LARGE' })
-    )
+    expect(() => parseOkfDocument(compactImport)).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'OKF_FRONTMATTER_TOO_LARGE' }))
   })
 
   it('rejects documents beyond the document byte ceiling', () => {
@@ -135,8 +169,8 @@ describe('OKF v0.2 documents', () => {
       '---',
       'type: Reference',
       'extension:',
-      ...Array.from({ length: 20 }, (_, index) => `${'  '.repeat(index + 1)}level_${index}:`).map(
-        (line, index, lines) => index === lines.length - 1 ? `${line} value` : line
+      ...Array.from({ length: 20 }, (_, index) => `${'  '.repeat(index + 1)}level_${index}:`).map((line, index, lines) =>
+        index === lines.length - 1 ? `${line} value` : line
       ),
       '---',
       ''
@@ -144,9 +178,7 @@ describe('OKF v0.2 documents', () => {
 
     expect(Buffer.byteLength(recursiveAlias, 'utf8')).toBeLessThanOrEqual(65_536)
     for (const hostile of [recursiveAlias, mergedMapping, excessiveNesting])
-      expect(() => parseOkfDocument(hostile)).toThrow(
-        expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_OKF_YAML' })
-      )
+      expect(() => parseOkfDocument(hostile)).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_OKF_YAML' }))
   })
 
   it('strictly validates stored metadata before producing trust', () => {
@@ -208,15 +240,7 @@ describe('OKF page interchange', () => {
     expect(parseOkfFilePath(okfFilePath('en', 'guides/Index'))).toEqual({ locale: 'en', pagePath: 'guides/Index' })
     expect(parseOkfFilePath('en/topic.concept.md')).toEqual({ locale: 'en', pagePath: 'topic.concept' })
 
-    for (const invalid of [
-      'home.md',
-      '/en/home.md',
-      'en/index.md',
-      'en/guides/../home.md',
-      'en//home.md',
-      'en/.md',
-      'en/home.markdown'
-    ])
+    for (const invalid of ['home.md', '/en/home.md', 'en/index.md', 'en/guides/../home.md', 'en//home.md', 'en/.md', 'en/home.markdown'])
       expect(parseOkfFilePath(invalid)).toBeNull()
   })
 
@@ -275,23 +299,27 @@ describe('OKF page interchange', () => {
       vendor: { retained: false }
     })
     expect(summarizeOkfTrust(changed)).toMatchObject({ trustTier: 'human-reviewed', verification: 'outdated' })
-    expect(() => mutateOkfMetadata({
-      existing,
-      proposed: { type: 'Metric', verified: { by: '', at: '2026-08-01T00:00:00Z' } },
-      producer: 'agent:run-12',
-      knowledgeChanged: true
-    })).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_VERIFIED' }))
-    expect(() => createOkfPageDocument({
-      locale: 'en',
-      path: 'bad',
-      title: 'Bad',
-      description: '',
-      tags: [],
-      content: '# Bad',
-      updatedAt: '2026-08-22T12:00:00Z',
-      authorId: 7,
-      metadata: { type: 'Reference', tags: [''] }
-    })).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_TAGS' }))
+    expect(() =>
+      mutateOkfMetadata({
+        existing,
+        proposed: { type: 'Metric', verified: { by: '', at: '2026-08-01T00:00:00Z' } },
+        producer: 'agent:run-12',
+        knowledgeChanged: true
+      })
+    ).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_VERIFIED' }))
+    expect(() =>
+      createOkfPageDocument({
+        locale: 'en',
+        path: 'bad',
+        title: 'Bad',
+        description: '',
+        tags: [],
+        content: '# Bad',
+        updatedAt: '2026-08-22T12:00:00Z',
+        authorId: 7,
+        metadata: { type: 'Reference', tags: [''] }
+      })
+    ).toThrow(expect.objectContaining<Partial<OkfDocumentError>>({ code: 'INVALID_TAGS' }))
   })
 
   it('replaces editable authority without replacing server-owned trust', () => {

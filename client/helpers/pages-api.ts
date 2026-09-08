@@ -68,11 +68,12 @@ export type OkfTrustSummary = {
 }
 
 export type KnowledgeProjectionView = {
-  schemaVersion: 1
+  schemaVersion: 2
   sourceRevision: string
   state: 'complete' | 'partial'
   conceptType: string | null
   summary: string
+  searchTerms: string[]
   tags: string[]
   entities: Array<{ name: string; type: string }>
   relationships: Array<{ subject: string; predicate: string; object: string }>
@@ -86,9 +87,11 @@ export type KnowledgeProjectionView = {
     verifiedAt: string | null
     staleAfter: string | null
   }
-  missingFields: Array<'concept.type' | 'concept.summary' | 'concept.tags' | 'concept.entities' | 'concept.relationships' | 'concept.openQuestions'>
+  missingFields: Array<
+    'concept.type' | 'concept.summary' | 'concept.searchTerms' | 'concept.tags' | 'concept.entities' | 'concept.relationships' | 'concept.openQuestions'
+  >
   provenance: {
-    deterministicVersion: 'wiki-knowledge-v1'
+    deterministicVersion: 'wiki-knowledge-v2'
     fields?: Array<{ field: string; source: 'page' | 'metadata' | 'deterministic' | 'utility'; evidence: string }>
     utility: {
       profileVersionId: string
@@ -163,8 +166,7 @@ const boundedJsonTree = (root: unknown): boolean => {
   }
   return visit(root, 0)
 }
-const nonEmptyBoundedString = (value: unknown, maximum: number): value is string =>
-  typeof value === 'string' && value.length > 0 && value.length <= maximum
+const nonEmptyBoundedString = (value: unknown, maximum: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= maximum
 const normalizeActor = (value: unknown): OkfActorEvent | null => {
   if (!isRecord(value) || !nonEmptyBoundedString(value.by, 255)) return null
   if (value.at !== undefined && (!nonEmptyBoundedString(value.at, 64) || !isIsoDate(value.at))) return null
@@ -177,17 +179,19 @@ const okfMetadataValidationMessage = (value: unknown): string | null => {
   if (value.title !== undefined && !nonEmptyBoundedString(value.title, 255)) return 'Title must be between 1 and 255 characters.'
   if (value.description !== undefined && !nonEmptyBoundedString(value.description, 2_000)) return 'Description must be between 1 and 2,000 characters.'
   if (value.resource !== undefined && !nonEmptyBoundedString(value.resource, 4_096)) return 'Resource must be between 1 and 4,096 characters.'
-  if (
-    value.tags !== undefined &&
-    (!Array.isArray(value.tags) || value.tags.length > 100 || value.tags.some(tag => !nonEmptyBoundedString(tag, 255)))
-  ) return 'Tags must contain at most 100 non-empty values of at most 255 characters each.'
-  if (value.status !== undefined && value.status !== 'draft' && value.status !== 'stable' && value.status !== 'deprecated') return 'Status must be draft, stable, or deprecated.'
-  if (value.generated !== undefined && normalizeActor(value.generated) === null) return 'Generated must identify an actor and may include a valid ISO-8601 timestamp.'
+  if (value.tags !== undefined && (!Array.isArray(value.tags) || value.tags.length > 100 || value.tags.some(tag => !nonEmptyBoundedString(tag, 255))))
+    return 'Tags must contain at most 100 non-empty values of at most 255 characters each.'
+  if (value.status !== undefined && value.status !== 'draft' && value.status !== 'stable' && value.status !== 'deprecated')
+    return 'Status must be draft, stable, or deprecated.'
+  if (value.generated !== undefined && normalizeActor(value.generated) === null)
+    return 'Generated must identify an actor and may include a valid ISO-8601 timestamp.'
   if (value.verified !== undefined) {
     const events = Array.isArray(value.verified) ? value.verified : [value.verified]
-    if (events.length < 1 || events.length > 100 || events.some(event => normalizeActor(event) === null)) return 'Verified must contain between 1 and 100 valid actor events.'
+    if (events.length < 1 || events.length > 100 || events.some(event => normalizeActor(event) === null))
+      return 'Verified must contain between 1 and 100 valid actor events.'
   }
-  if (value.stale_after !== undefined && (!nonEmptyBoundedString(value.stale_after, 64) || !isIsoDate(value.stale_after))) return 'Stale after must be a valid ISO-8601 timestamp.'
+  if (value.stale_after !== undefined && (!nonEmptyBoundedString(value.stale_after, 64) || !isIsoDate(value.stale_after)))
+    return 'Stale after must be a valid ISO-8601 timestamp.'
   if (value.sources !== undefined) {
     if (!Array.isArray(value.sources) || value.sources.length > 100) return 'Sources must contain at most 100 entries.'
     for (const [index, source] of value.sources.entries()) {
@@ -213,30 +217,58 @@ const normalizeTrust = (value: unknown): OkfTrustSummary | null => {
     typeof value.stale !== 'boolean' ||
     (value.generatedAt !== null && !isIsoDate(value.generatedAt)) ||
     (value.verifiedAt !== null && !isIsoDate(value.verifiedAt))
-  ) return null
+  )
+    return null
   return value as OkfTrustSummary
 }
 const normalizeProjection = (value: unknown): KnowledgeProjectionView | null => {
   if (
     !isRecord(value) ||
     !boundedJsonTree(value) ||
-    !hasOnlyKeys(value, ['schemaVersion', 'sourceRevision', 'state', 'conceptType', 'summary', 'tags', 'entities', 'relationships', 'openQuestions', 'lifecycle', 'missingFields', 'provenance']) ||
-    value.schemaVersion !== 1 ||
+    !hasOnlyKeys(value, [
+      'schemaVersion',
+      'sourceRevision',
+      'state',
+      'conceptType',
+      'summary',
+      'searchTerms',
+      'tags',
+      'entities',
+      'relationships',
+      'openQuestions',
+      'lifecycle',
+      'missingFields',
+      'provenance'
+    ]) ||
+    value.schemaVersion !== 2 ||
     !nonEmptyBoundedString(value.sourceRevision, 64) ||
     !/^[1-9][0-9]*$/u.test(value.sourceRevision) ||
     (value.state !== 'complete' && value.state !== 'partial') ||
     (value.conceptType !== null && !nonEmptyBoundedString(value.conceptType, 128)) ||
     typeof value.summary !== 'string' ||
     value.summary.length > 2_000 ||
+    !Array.isArray(value.searchTerms) ||
+    value.searchTerms.length > 20 ||
+    value.searchTerms.some(term => !nonEmptyBoundedString(term, 120)) ||
     !Array.isArray(value.tags) ||
     value.tags.length > 100 ||
     value.tags.some(tag => !nonEmptyBoundedString(tag, 255)) ||
     !Array.isArray(value.entities) ||
     value.entities.length > 20 ||
-    value.entities.some(entity => !isRecord(entity) || !hasOnlyKeys(entity, ['name', 'type']) || !nonEmptyBoundedString(entity.name, 255) || !nonEmptyBoundedString(entity.type, 128)) ||
+    value.entities.some(
+      entity =>
+        !isRecord(entity) || !hasOnlyKeys(entity, ['name', 'type']) || !nonEmptyBoundedString(entity.name, 255) || !nonEmptyBoundedString(entity.type, 128)
+    ) ||
     !Array.isArray(value.relationships) ||
     value.relationships.length > 20 ||
-    value.relationships.some(relationship => !isRecord(relationship) || !hasOnlyKeys(relationship, ['subject', 'predicate', 'object']) || !nonEmptyBoundedString(relationship.subject, 255) || !nonEmptyBoundedString(relationship.predicate, 128) || !nonEmptyBoundedString(relationship.object, 1_024)) ||
+    value.relationships.some(
+      relationship =>
+        !isRecord(relationship) ||
+        !hasOnlyKeys(relationship, ['subject', 'predicate', 'object']) ||
+        !nonEmptyBoundedString(relationship.subject, 255) ||
+        !nonEmptyBoundedString(relationship.predicate, 128) ||
+        !nonEmptyBoundedString(relationship.object, 1_024)
+    ) ||
     !Array.isArray(value.openQuestions) ||
     value.openQuestions.length > 20 ||
     value.openQuestions.some(question => !nonEmptyBoundedString(question, 1_000)) ||
@@ -250,31 +282,75 @@ const normalizeProjection = (value: unknown): KnowledgeProjectionView | null => 
     (value.lifecycle.verifiedAt !== null && !isIsoDate(value.lifecycle.verifiedAt)) ||
     (value.lifecycle.staleAfter !== null && !isIsoDate(value.lifecycle.staleAfter)) ||
     !Array.isArray(value.missingFields) ||
-    value.missingFields.length > 6 ||
-    value.missingFields.some(field => !['concept.type', 'concept.summary', 'concept.tags', 'concept.entities', 'concept.relationships', 'concept.openQuestions'].includes(field)) ||
+    value.missingFields.length > 7 ||
+    value.missingFields.some(
+      field =>
+        ![
+          'concept.type',
+          'concept.summary',
+          'concept.searchTerms',
+          'concept.tags',
+          'concept.entities',
+          'concept.relationships',
+          'concept.openQuestions'
+        ].includes(field)
+    ) ||
     !isRecord(value.provenance) ||
     !hasOnlyKeys(value.provenance, ['deterministicVersion', 'fields', 'utility']) ||
-    value.provenance.deterministicVersion !== 'wiki-knowledge-v1'
-  ) return null
+    value.provenance.deterministicVersion !== 'wiki-knowledge-v2'
+  )
+    return null
   const fields = value.provenance.fields
   if (
     fields !== undefined &&
-    (!Array.isArray(fields) || fields.length > 100 || fields.some(field => !isRecord(field) || !hasOnlyKeys(field, ['field', 'source', 'evidence']) || !nonEmptyBoundedString(field.field, 128) || typeof field.source !== 'string' || !['page', 'metadata', 'deterministic', 'utility'].includes(field.source) || !nonEmptyBoundedString(field.evidence, 1_024)))
-  ) return null
+    (!Array.isArray(fields) ||
+      fields.length > 100 ||
+      fields.some(
+        field =>
+          !isRecord(field) ||
+          !hasOnlyKeys(field, ['field', 'source', 'evidence']) ||
+          !nonEmptyBoundedString(field.field, 128) ||
+          typeof field.source !== 'string' ||
+          !['page', 'metadata', 'deterministic', 'utility'].includes(field.source) ||
+          !nonEmptyBoundedString(field.evidence, 1_024)
+      ))
+  )
+    return null
   const utility = value.provenance.utility
-  if (utility !== null && (!isRecord(utility) || !hasOnlyKeys(utility, ['profileVersionId', 'model', 'inputSha256', 'outputSha256', 'generatedAt']) || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(utility.profileVersionId)) || !nonEmptyBoundedString(utility.model, 255) || !/^[a-f0-9]{64}$/u.test(String(utility.inputSha256)) || !/^[a-f0-9]{64}$/u.test(String(utility.outputSha256)) || !isIsoDate(utility.generatedAt))) return null
+  if (
+    utility !== null &&
+    (!isRecord(utility) ||
+      !hasOnlyKeys(utility, ['profileVersionId', 'model', 'inputSha256', 'outputSha256', 'generatedAt']) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(String(utility.profileVersionId)) ||
+      !nonEmptyBoundedString(utility.model, 255) ||
+      !/^[a-f0-9]{64}$/u.test(String(utility.inputSha256)) ||
+      !/^[a-f0-9]{64}$/u.test(String(utility.outputSha256)) ||
+      !isIsoDate(utility.generatedAt))
+  )
+    return null
   return value as KnowledgeProjectionView
 }
 const normalizePageOkf = (value: unknown, sourceRevision: string, fallbackMessage: string): PageOkfView => {
-  if (!isRecord(value) || !hasOnlyKeys(value, ['authority', 'projection']) || !isRecord(value.authority) || !hasOnlyKeys(value.authority, ['state', 'metadata', 'trust'])) throw new Error(fallbackMessage)
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ['authority', 'projection']) ||
+    !isRecord(value.authority) ||
+    !hasOnlyKeys(value.authority, ['state', 'metadata', 'trust'])
+  )
+    throw new Error(fallbackMessage)
   const state = value.authority.state
   if (state !== 'valid' && state !== 'missing' && state !== 'invalid') throw new Error(fallbackMessage)
   const metadata = value.authority.metadata === null ? null : normalizeOkfMetadata(value.authority.metadata)
   const trust = value.authority.trust === null ? null : normalizeTrust(value.authority.trust)
-  if (value.authority.metadata !== null && metadata === null || value.authority.trust !== null && trust === null) throw new Error(fallbackMessage)
+  if ((value.authority.metadata !== null && metadata === null) || (value.authority.trust !== null && trust === null)) throw new Error(fallbackMessage)
   if (state !== 'valid' && (metadata !== null || trust !== null)) throw new Error(fallbackMessage)
   if (state === 'valid' && (metadata === null || trust === null)) throw new Error(fallbackMessage)
-  if (!isRecord(value.projection) || !hasOnlyKeys(value.projection, ['state', 'value']) || (value.projection.state !== 'current' && value.projection.state !== 'pending')) throw new Error(fallbackMessage)
+  if (
+    !isRecord(value.projection) ||
+    !hasOnlyKeys(value.projection, ['state', 'value']) ||
+    (value.projection.state !== 'current' && value.projection.state !== 'pending')
+  )
+    throw new Error(fallbackMessage)
   const projection = value.projection.value === null ? null : normalizeProjection(value.projection.value)
   if (value.projection.value !== null && projection === null) throw new Error(fallbackMessage)
   if (value.projection.state === 'pending' && projection !== null) throw new Error(fallbackMessage)
@@ -285,8 +361,6 @@ const defaultPageOkf = (): PageOkfView => ({
   authority: { state: 'invalid', metadata: null, trust: null },
   projection: { state: 'pending', value: null }
 })
-
-
 
 export type PageDetails = {
   id: number
@@ -457,9 +531,10 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
   ) {
     throw new Error(fallbackMessage)
   }
-  const okf = (row as Record<string, unknown>).okf === undefined || (row as Record<string, unknown>).okf === null
-    ? defaultPageOkf()
-    : normalizePageOkf((row as Record<string, unknown>).okf, normalizedSourceRevision, fallbackMessage)
+  const okf =
+    (row as Record<string, unknown>).okf === undefined || (row as Record<string, unknown>).okf === null
+      ? defaultPageOkf()
+      : normalizePageOkf((row as Record<string, unknown>).okf, normalizedSourceRevision, fallbackMessage)
 
   return {
     id: page.id!,
@@ -497,14 +572,12 @@ const EDITABLE_OKF_EXCLUDED_KEYS: Record<string, true> = {
   'x-wiki': true
 }
 export class OkfMetadataValidationError extends Error {
-  constructor (detail: string) {
+  constructor(detail: string) {
     super(`Fix the Knowledge / OKF metadata before saving: ${detail}`)
     this.name = 'OkfMetadataValidationError'
   }
 }
-export type OkfMetadataPayloadValidation =
-  | { valid: true; payload: Record<string, unknown> | undefined }
-  | { valid: false; error: OkfMetadataValidationError }
+export type OkfMetadataPayloadValidation = { valid: true; payload: Record<string, unknown> | undefined } | { valid: false; error: OkfMetadataValidationError }
 export function validateOkfMetadataPayload(value: unknown): OkfMetadataPayloadValidation {
   if (value === null || value === undefined) return { valid: true, payload: undefined }
   const detail = okfMetadataValidationMessage(value)
@@ -521,7 +594,6 @@ export function buildOkfMetadataPayload(value: unknown): Record<string, unknown>
   if (!result.valid) throw result.error
   return result.payload
 }
-
 
 function normalizePageLinkRow(row: unknown, fallbackMessage: string): PageLinkRow {
   if (!row || typeof row !== 'object' || Array.isArray(row)) {
@@ -890,7 +962,7 @@ export type PageTreeRow = {
   canEdit?: boolean
 }
 
-export type PageSearchMatchField = 'title' | 'tag' | 'path' | 'description' | 'content' | 'graph'
+export type PageSearchMatchField = 'title' | 'tag' | 'path' | 'description' | 'content' | 'graph' | 'knowledge'
 
 export type PageSearchRow = {
   id: string | number
@@ -956,15 +1028,23 @@ export async function updatePage(
   expectedCollaborationGeneration?: number,
   fallbackMessage = 'Page update failed'
 ): Promise<WrittenPage> {
-  if (!/^[1-9][0-9]*$/u.test(expectedSourceRevision) ||
-    (expectedCollaborationGeneration !== undefined &&
-      (!Number.isSafeInteger(expectedCollaborationGeneration) || expectedCollaborationGeneration < 1))) throw new Error(fallbackMessage)
+  if (
+    !/^[1-9][0-9]*$/u.test(expectedSourceRevision) ||
+    (expectedCollaborationGeneration !== undefined && (!Number.isSafeInteger(expectedCollaborationGeneration) || expectedCollaborationGeneration < 1))
+  )
+    throw new Error(fallbackMessage)
   return normalizeWrittenPage(
-    await sendJson(fetchImpl, `/_api/pages/${encodeURIComponent(id)}`, 'PUT', {
-      ...input,
-      expectedSourceRevision,
-      ...(expectedCollaborationGeneration === undefined ? {} : { expectedCollaborationGeneration })
-    }, fallbackMessage),
+    await sendJson(
+      fetchImpl,
+      `/_api/pages/${encodeURIComponent(id)}`,
+      'PUT',
+      {
+        ...input,
+        expectedSourceRevision,
+        ...(expectedCollaborationGeneration === undefined ? {} : { expectedCollaborationGeneration })
+      },
+      fallbackMessage
+    ),
     fallbackMessage,
     false
   )
@@ -1106,7 +1186,14 @@ export async function fetchPageConflictLatest(
 
 export async function fetchPageTree(
   fetchImpl: FetchImpl,
-  options: { locale: string; parent?: number; path?: string; visibility?: 'public' | 'private'; mode?: 'ALL' | 'FOLDERS' | 'PAGES'; includeAncestors?: boolean },
+  options: {
+    locale: string
+    parent?: number
+    path?: string
+    visibility?: 'public' | 'private'
+    mode?: 'ALL' | 'FOLDERS' | 'PAGES'
+    includeAncestors?: boolean
+  },
   fallbackMessage = 'Page tree response is invalid'
 ): Promise<PageTreeRow[]> {
   const params = new URLSearchParams({ locale: options.locale, mode: options.mode || 'ALL' })
@@ -1185,7 +1272,7 @@ export async function searchPages(
       typeof row.score !== 'number' ||
       !Number.isFinite(row.score) ||
       !Array.isArray(row.matchedFields) ||
-      row.matchedFields.some(field => !['title', 'tag', 'path', 'description', 'content', 'graph'].includes(String(field)))
+      row.matchedFields.some(field => !['title', 'tag', 'path', 'description', 'content', 'graph', 'knowledge'].includes(String(field)))
     ) {
       throw new Error(fallbackMessage)
     }
@@ -1203,7 +1290,10 @@ export async function searchPages(
     }
   })
   if (payload.suggestions.some(suggestion => typeof suggestion !== 'string')) throw new Error(fallbackMessage)
-  return { results, suggestions: payload.suggestions, totalHits: payload.totalHits,
+  return {
+    results,
+    suggestions: payload.suggestions,
+    totalHits: payload.totalHits,
     ...(typeof payload.nextCursor === 'string' || payload.nextCursor === null ? { nextCursor: payload.nextCursor } : {}),
     ...(typeof payload.windowTruncated === 'boolean' ? { windowTruncated: payload.windowTruncated } : {}),
     ...(typeof payload.windowLimit === 'number' ? { windowLimit: payload.windowLimit } : {})

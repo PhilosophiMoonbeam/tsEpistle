@@ -460,6 +460,7 @@ export interface SearchConfig extends UnknownRecord {
 
 export interface SearchOptions extends UnknownRecord {
   pageIds?: number[]
+  pageRevisions?: Record<string, string>
   limit?: number
   locale?: string
   path?: string
@@ -470,8 +471,13 @@ export interface SearchContext<C extends SearchConfig = SearchConfig, Client = u
   config: C
 }
 
+export interface SearchResultEntry extends UnknownRecord {
+  id: number
+  sourceRevision: string
+}
+
 export interface SearchResult {
-  results: unknown[]
+  results: SearchResultEntry[]
   suggestions: string[]
   totalHits: number
 }

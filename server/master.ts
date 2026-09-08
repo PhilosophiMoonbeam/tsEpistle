@@ -368,7 +368,9 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
     })
     wiki.agentRuntime = agentRuntime
   }
-  const knowledgeLifecycle = new PageKnowledgeLifecycle(wiki.models.knex, `knowledge-${process.pid}`, utilityModel)
+  const knowledgeLifecycle = new PageKnowledgeLifecycle(wiki.models.knex, `knowledge-${process.pid}`, utilityModel, {
+    utilityConcurrency: agentLimits.provider.globalConcurrency
+  })
   const projectionLifecycle = new PageProjectionLifecycle(wiki.models.knex, `page-projection-${process.pid}`, {
     async renderPage(pageId): Promise<void> {
       const page = await wiki.models.pages.getPageFromDb(pageId)

@@ -1,0 +1,1993 @@
+{
+  "reportVersion": 2,
+  "relevance": {
+    "lexicalBaseline": {
+      "corpus": "Seeded 20,000-page PostgreSQL lexical corpus; the historic baseline retains the acronym and paraphrase gaps as diagnostic observations.",
+      "provenance": "PostgreSQL lexical and graph engine only. Diagnostic augmentation gaps do not make the lexical baseline fail.",
+      "cases": [
+        {
+          "name": "exact title",
+          "query": "Amber Falcon Runbook",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [
+            42
+          ],
+          "returned": [
+            42
+          ],
+          "samples": [
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 22.90661099999852
+        },
+        {
+          "name": "content terms",
+          "query": "ultraviolet marmot checksum",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [
+            42,
+            43
+          ],
+          "returned": [
+            42,
+            43
+          ],
+          "samples": [
+            {
+              "top5": [
+                42,
+                43
+              ],
+              "returned": [
+                42,
+                43
+              ]
+            },
+            {
+              "top5": [
+                42,
+                43
+              ],
+              "returned": [
+                42,
+                43
+              ]
+            },
+            {
+              "top5": [
+                42,
+                43
+              ],
+              "returned": [
+                42,
+                43
+              ]
+            },
+            {
+              "top5": [
+                42,
+                43
+              ],
+              "returned": [
+                42,
+                43
+              ]
+            },
+            {
+              "top5": [
+                42,
+                43
+              ],
+              "returned": [
+                42,
+                43
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 25.852155000000494
+        },
+        {
+          "name": "typo",
+          "query": "celestal harbor handbook",
+          "expected": [
+            314
+          ],
+          "excluded": [],
+          "top5": [
+            314
+          ],
+          "returned": [
+            314
+          ],
+          "samples": [
+            {
+              "top5": [
+                314
+              ],
+              "returned": [
+                314
+              ]
+            },
+            {
+              "top5": [
+                314
+              ],
+              "returned": [
+                314
+              ]
+            },
+            {
+              "top5": [
+                314
+              ],
+              "returned": [
+                314
+              ]
+            },
+            {
+              "top5": [
+                314
+              ],
+              "returned": [
+                314
+              ]
+            },
+            {
+              "top5": [
+                314
+              ],
+              "returned": [
+                314
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 25.298374999998487
+        },
+        {
+          "name": "path",
+          "query": "knowledge/topic-42/page-42",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [
+            42
+          ],
+          "returned": [
+            42
+          ],
+          "samples": [
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 20.248999000003096
+        },
+        {
+          "name": "description",
+          "query": "deterministic actuator calibration",
+          "expected": [
+            2718
+          ],
+          "excluded": [],
+          "top5": [
+            2718
+          ],
+          "returned": [
+            2718
+          ],
+          "samples": [
+            {
+              "top5": [
+                2718
+              ],
+              "returned": [
+                2718
+              ]
+            },
+            {
+              "top5": [
+                2718
+              ],
+              "returned": [
+                2718
+              ]
+            },
+            {
+              "top5": [
+                2718
+              ],
+              "returned": [
+                2718
+              ]
+            },
+            {
+              "top5": [
+                2718
+              ],
+              "returned": [
+                2718
+              ]
+            },
+            {
+              "top5": [
+                2718
+              ],
+              "returned": [
+                2718
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 27.457801999997173
+        },
+        {
+          "name": "related concepts",
+          "query": "checksum recovery",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [
+            42
+          ],
+          "returned": [
+            42
+          ],
+          "samples": [
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 23.762790000000678
+        },
+        {
+          "name": "abbreviation requires augmentation",
+          "query": "AFR",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [],
+          "returned": [],
+          "samples": [
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            }
+          ],
+          "missingExpected": [
+            42
+          ],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": false,
+          "recallAt5": 0,
+          "reciprocalRankAt5": 0,
+          "ndcgAt5": 0,
+          "zeroResults": true,
+          "p95Milliseconds": 21.94475500000408
+        },
+        {
+          "name": "paraphrase requires generated search terms",
+          "query": "restore the ultraviolet verification code",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [],
+          "returned": [],
+          "samples": [
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            }
+          ],
+          "missingExpected": [
+            42
+          ],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": false,
+          "recallAt5": 0,
+          "reciprocalRankAt5": 0,
+          "ndcgAt5": 0,
+          "zeroResults": true,
+          "p95Milliseconds": 27.79342199999519
+        },
+        {
+          "name": "selected page and tag",
+          "query": "common-platform",
+          "expected": [
+            19000
+          ],
+          "excluded": [],
+          "top5": [
+            19000
+          ],
+          "returned": [
+            19000
+          ],
+          "samples": [
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 99.5144650000002
+        },
+        {
+          "name": "locale and section",
+          "query": "common-platform",
+          "expected": [
+            19000
+          ],
+          "excluded": [],
+          "top5": [
+            19000
+          ],
+          "returned": [
+            19000
+          ],
+          "samples": [
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 87.51143600000069
+        },
+        {
+          "name": "authorized tail beyond ordinary cap",
+          "query": "common-platform",
+          "expected": [
+            19000
+          ],
+          "excluded": [],
+          "top5": [
+            19000
+          ],
+          "returned": [
+            19000
+          ],
+          "samples": [
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 99.32348599999386
+        }
+      ],
+      "recallAt5": 0.8181818181818182,
+      "meanReciprocalRankAt5": 0.8181818181818182,
+      "meanNdcgAt5": 0.8181818181818182,
+      "zeroResultRate": 0.18181818181818182,
+      "requiredCases": 9,
+      "failedCases": []
+    },
+    "lexicalAcceptance": {
+      "corpus": "Seeded 20,000-page PostgreSQL lexical corpus with phrase, negation, disjunction, empty-input, and selected-scope fixtures.",
+      "provenance": "PostgreSQL lexical and graph engine only; all cases are required engine correctness and exclusion acceptance.",
+      "cases": [
+        {
+          "name": "quoted phrase returns the contiguous seeded content",
+          "query": "\"ultraviolet marmot checksum\"",
+          "expected": [
+            42
+          ],
+          "excluded": [
+            43
+          ],
+          "top5": [
+            42
+          ],
+          "returned": [
+            42
+          ],
+          "samples": [
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 8.718928999995114
+        },
+        {
+          "name": "negation excludes the selected common-tag distractor",
+          "query": "common-platform -withheld",
+          "expected": [
+            19000
+          ],
+          "excluded": [
+            19004
+          ],
+          "top5": [
+            19000
+          ],
+          "returned": [
+            19000
+          ],
+          "samples": [
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 13.77974600000016
+        },
+        {
+          "name": "disjunction retains both seeded branches",
+          "query": "Amber OR Celestial",
+          "expected": [
+            42,
+            314
+          ],
+          "excluded": [],
+          "top5": [
+            42,
+            314
+          ],
+          "returned": [
+            42,
+            314
+          ],
+          "samples": [
+            {
+              "top5": [
+                42,
+                314
+              ],
+              "returned": [
+                42,
+                314
+              ]
+            },
+            {
+              "top5": [
+                42,
+                314
+              ],
+              "returned": [
+                42,
+                314
+              ]
+            },
+            {
+              "top5": [
+                42,
+                314
+              ],
+              "returned": [
+                42,
+                314
+              ]
+            },
+            {
+              "top5": [
+                42,
+                314
+              ],
+              "returned": [
+                42,
+                314
+              ]
+            },
+            {
+              "top5": [
+                42,
+                314
+              ],
+              "returned": [
+                42,
+                314
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 8.35175999999774
+        },
+        {
+          "name": "empty query returns no results",
+          "query": "   ",
+          "expected": [],
+          "excluded": [],
+          "top5": [],
+          "returned": [],
+          "samples": [
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            },
+            {
+              "top5": [],
+              "returned": []
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 0,
+          "ndcgAt5": 1,
+          "zeroResults": true,
+          "p95Milliseconds": 0.03156899999885354
+        }
+      ],
+      "recallAt5": 1,
+      "meanReciprocalRankAt5": 0.75,
+      "meanNdcgAt5": 1,
+      "zeroResultRate": 0.25,
+      "requiredCases": 4,
+      "failedCases": []
+    },
+    "augmentedFixture": {
+      "corpus": "The same seeded 20,000-page, 11-query PostgreSQL relevance corpus as the lexical baseline, with a current revisioned pageKnowledgeProjections fixture for page 42.",
+      "provenance": "The benchmark adapter unions PostgreSQL engine and PageKnowledgeRepository candidates, including deterministic title acronym AFR and fixture-generated concept.searchTerms paraphrase. This is deterministic fixture evidence, not live utility-model output; server/test/search-foundation.postgres.test.ts provides separate actual operations.search PostgreSQL proof.",
+      "cases": [
+        {
+          "name": "exact title",
+          "query": "Amber Falcon Runbook",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [
+            42
+          ],
+          "returned": [
+            42
+          ],
+          "samples": [
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 29.357450000003155
+        },
+        {
+          "name": "content terms",
+          "query": "ultraviolet marmot checksum",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [
+            42,
+            43
+          ],
+          "returned": [
+            42,
+            43
+          ],
+          "samples": [
+            {
+              "top5": [
+                42,
+                43
+              ],
+              "returned": [
+                42,
+                43
+              ]
+            },
+            {
+              "top5": [
+                42,
+                43
+              ],
+              "returned": [
+                42,
+                43
+              ]
+            },
+            {
+              "top5": [
+                42,
+                43
+              ],
+              "returned": [
+                42,
+                43
+              ]
+            },
+            {
+              "top5": [
+                42,
+                43
+              ],
+              "returned": [
+                42,
+                43
+              ]
+            },
+            {
+              "top5": [
+                42,
+                43
+              ],
+              "returned": [
+                42,
+                43
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 26.57034399999975
+        },
+        {
+          "name": "typo",
+          "query": "celestal harbor handbook",
+          "expected": [
+            314
+          ],
+          "excluded": [],
+          "top5": [
+            314
+          ],
+          "returned": [
+            314
+          ],
+          "samples": [
+            {
+              "top5": [
+                314
+              ],
+              "returned": [
+                314
+              ]
+            },
+            {
+              "top5": [
+                314
+              ],
+              "returned": [
+                314
+              ]
+            },
+            {
+              "top5": [
+                314
+              ],
+              "returned": [
+                314
+              ]
+            },
+            {
+              "top5": [
+                314
+              ],
+              "returned": [
+                314
+              ]
+            },
+            {
+              "top5": [
+                314
+              ],
+              "returned": [
+                314
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 25.504122000005736
+        },
+        {
+          "name": "path",
+          "query": "knowledge/topic-42/page-42",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [
+            42
+          ],
+          "returned": [
+            42
+          ],
+          "samples": [
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 21.86677800000325
+        },
+        {
+          "name": "description",
+          "query": "deterministic actuator calibration",
+          "expected": [
+            2718
+          ],
+          "excluded": [],
+          "top5": [
+            2718
+          ],
+          "returned": [
+            2718
+          ],
+          "samples": [
+            {
+              "top5": [
+                2718
+              ],
+              "returned": [
+                2718
+              ]
+            },
+            {
+              "top5": [
+                2718
+              ],
+              "returned": [
+                2718
+              ]
+            },
+            {
+              "top5": [
+                2718
+              ],
+              "returned": [
+                2718
+              ]
+            },
+            {
+              "top5": [
+                2718
+              ],
+              "returned": [
+                2718
+              ]
+            },
+            {
+              "top5": [
+                2718
+              ],
+              "returned": [
+                2718
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 32.009202000001096
+        },
+        {
+          "name": "related concepts",
+          "query": "checksum recovery",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [
+            42
+          ],
+          "returned": [
+            42
+          ],
+          "samples": [
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 25.704618000003393
+        },
+        {
+          "name": "abbreviation requires augmentation",
+          "query": "AFR",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [
+            42
+          ],
+          "returned": [
+            42
+          ],
+          "samples": [
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 23.433200999999826
+        },
+        {
+          "name": "paraphrase requires generated search terms",
+          "query": "restore the ultraviolet verification code",
+          "expected": [
+            42
+          ],
+          "excluded": [],
+          "top5": [
+            42
+          ],
+          "returned": [
+            42
+          ],
+          "samples": [
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            },
+            {
+              "top5": [
+                42
+              ],
+              "returned": [
+                42
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 29.655730999998923
+        },
+        {
+          "name": "selected page and tag",
+          "query": "common-platform",
+          "expected": [
+            19000
+          ],
+          "excluded": [],
+          "top5": [
+            19000
+          ],
+          "returned": [
+            19000
+          ],
+          "samples": [
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 102.7506229999999
+        },
+        {
+          "name": "locale and section",
+          "query": "common-platform",
+          "expected": [
+            19000
+          ],
+          "excluded": [],
+          "top5": [
+            19000
+          ],
+          "returned": [
+            19000
+          ],
+          "samples": [
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 91.74588999999833
+        },
+        {
+          "name": "authorized tail beyond ordinary cap",
+          "query": "common-platform",
+          "expected": [
+            19000
+          ],
+          "excluded": [],
+          "top5": [
+            19000
+          ],
+          "returned": [
+            19000
+          ],
+          "samples": [
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            },
+            {
+              "top5": [
+                19000
+              ],
+              "returned": [
+                19000
+              ]
+            }
+          ],
+          "missingExpected": [],
+          "unexpectedExcluded": [],
+          "scopeViolations": [],
+          "unexpectedResults": [],
+          "passed": true,
+          "recallAt5": 1,
+          "reciprocalRankAt5": 1,
+          "ndcgAt5": 1,
+          "zeroResults": false,
+          "p95Milliseconds": 99.7351090000011
+        }
+      ],
+      "recallAt5": 1,
+      "meanReciprocalRankAt5": 1,
+      "meanNdcgAt5": 1,
+      "zeroResultRate": 0,
+      "requiredCases": 11,
+      "failedCases": []
+    }
+  },
+  "status": "passed",
+  "environment": {
+    "postgresVersion": "17.10",
+    "postgresMajorVersion": 17,
+    "pgTrgmVersion": "1.6"
+  },
+  "corpus": {
+    "seed": 20260831,
+    "expected": {
+      "pages": 20000,
+      "renderedPages": 20000,
+      "links": 20000,
+      "distinctTags": 21,
+      "tagAssignments": 25000,
+      "locales": {
+        "en": 18000,
+        "fr": 2000
+      }
+    },
+    "observed": {
+      "pages": 20000,
+      "renderedPages": 20000,
+      "links": 20000,
+      "distinctTags": 21,
+      "tagAssignments": 25000,
+      "locales": {
+        "en": 18000,
+        "fr": 2000
+      }
+    }
+  },
+  "searchSchema": {
+    "version": 2,
+    "dictionary": "english"
+  },
+  "derivedSearch": {
+    "vectors": 20000,
+    "suggestionTerms": 330609,
+    "revisionMismatches": 0,
+    "orphanVectors": 0
+  },
+  "caps": {
+    "maxHits": 100,
+    "fuzzyFallbackExactHitThreshold": 5,
+    "suggestionLimit": 5,
+    "graphDepth": 2,
+    "rebuildBatchSize": 100
+  },
+  "iterations": 30,
+  "warmupsPerDistribution": 5,
+  "thresholds": {
+    "maxRebuildMilliseconds": 300000,
+    "maxQueryP95Milliseconds": 200
+  },
+  "rebuildMilliseconds": 25772.876510000002,
+  "queryDistributions": [
+    {
+      "kind": "exactTitleContent",
+      "queries": [
+        "Amber Falcon Runbook",
+        "ultraviolet marmot checksum"
+      ],
+      "samples": 30,
+      "durationsMilliseconds": [
+        26.23787999999695,
+        22.35023700000238,
+        26.44899699999951,
+        23.441125999997894,
+        26.280499000000418,
+        22.431769999999233,
+        25.80865300000005,
+        23.670066000002407,
+        26.077988999997615,
+        23.742541999999958,
+        26.583658999999898,
+        22.47519100000136,
+        25.721628999999666,
+        22.87189600000056,
+        26.67260599999645,
+        22.69162800000049,
+        25.427096999999776,
+        22.4413080000013,
+        25.471550000002026,
+        22.312936999998783,
+        25.69183400000111,
+        22.305201000002853,
+        25.172569000002113,
+        22.071593000000576,
+        25.562129999998433,
+        22.341010000000097,
+        25.42205599999943,
+        22.910949999997683,
+        26.487928999998985,
+        23.12632499999745
+      ],
+      "p50Milliseconds": 23.742541999999958,
+      "p95Milliseconds": 26.583658999999898,
+      "p99Milliseconds": 26.67260599999645,
+      "maximumMilliseconds": 26.67260599999645
+    },
+    {
+      "kind": "typoFuzzy",
+      "queries": [
+        "celestal harbor handbook",
+        "amber falcn runbook"
+      ],
+      "samples": 30,
+      "durationsMilliseconds": [
+        24.175585000000865,
+        24.721301000001404,
+        23.79233600000225,
+        25.05080000000089,
+        24.27896899999905,
+        24.59690700000283,
+        24.27281800000128,
+        24.285321999999724,
+        23.801061999998637,
+        24.297764999999345,
+        23.6632230000032,
+        24.166487999998935,
+        23.77072500000213,
+        24.15017799999987,
+        23.936476999999286,
+        24.275692999999592,
+        24.14923600000111,
+        24.343520999998873,
+        23.562674000000698,
+        24.127755999998044,
+        23.758732000002055,
+        24.17873200000031,
+        24.047625999999582,
+        24.449078999998164,
+        23.720840999998472,
+        24.056281000001036,
+        23.9566049999994,
+        24.87062099999821,
+        24.28735499999675,
+        24.035822999998345
+      ],
+      "p50Milliseconds": 24.15017799999987,
+      "p95Milliseconds": 24.87062099999821,
+      "p99Milliseconds": 25.05080000000089,
+      "maximumMilliseconds": 25.05080000000089
+    },
+    {
+      "kind": "multiTermDescription",
+      "queries": [
+        "orbital cedar calibration protocol",
+        "deterministic actuator calibration"
+      ],
+      "samples": 30,
+      "durationsMilliseconds": [
+        26.926072999998723,
+        26.433295999999245,
+        27.59095200000229,
+        26.28858400000172,
+        27.183555999999953,
+        26.111292000001413,
+        27.08674400000018,
+        26.13593799999944,
+        27.33009099999981,
+        26.150956000001315,
+        29.743956000002072,
+        26.883892999998352,
+        28.018083999999362,
+        26.98520400000052,
+        33.716959000001225,
+        31.69380900000033,
+        28.024556000000302,
+        27.26908700000058,
+        27.59444799999983,
+        27.528784999998607,
+        27.69827300000179,
+        26.081676999998308,
+        27.29887299999973,
+        26.262965999998414,
+        26.97132799999963,
+        26.078860999998142,
+        26.79984499999773,
+        26.765621000002284,
+        27.213403000001563,
+        26.0459800000026
+      ],
+      "p50Milliseconds": 26.98520400000052,
+      "p95Milliseconds": 31.69380900000033,
+      "p99Milliseconds": 33.716959000001225,
+      "maximumMilliseconds": 33.716959000001225
+    },
+    {
+      "kind": "commonTag",
+      "queries": [
+        "common-platform"
+      ],
+      "samples": 30,
+      "durationsMilliseconds": [
+        61.14636799999789,
+        61.27392800000234,
+        61.96740000000136,
+        62.19482699999935,
+        61.06815099999949,
+        60.49521399999867,
+        60.81394299999738,
+        60.66903100000127,
+        60.90569500000129,
+        60.62314500000139,
+        60.55647999999928,
+        60.94310599999881,
+        60.91994200000045,
+        61.16522299999997,
+        60.94711300000199,
+        61.22757999999885,
+        60.89826200000243,
+        60.779028000000835,
+        60.57133800000156,
+        60.95061999999962,
+        62.04723000000013,
+        63.48968900000182,
+        60.39507700000104,
+        60.87656000000061,
+        60.62939700000061,
+        60.78016900000148,
+        61.04728199999954,
+        61.30865200000335,
+        61.6360969999987,
+        62.18290400000478
+      ],
+      "p50Milliseconds": 60.94310599999881,
+      "p95Milliseconds": 62.19482699999935,
+      "p99Milliseconds": 63.48968900000182,
+      "maximumMilliseconds": 63.48968900000182
+    }
+  ],
+  "representativeChecks": [
+    {
+      "name": "exact title ranks the seeded page first",
+      "passed": true,
+      "expected": "first page id 42",
+      "observed": "first page id 42"
+    },
+    {
+      "name": "rendered content retrieves the seeded page",
+      "passed": true,
+      "expected": "results include page id 42",
+      "observed": "result ids 42,43"
+    },
+    {
+      "name": "typo fallback retrieves the seeded page",
+      "passed": true,
+      "expected": "results include page id 314",
+      "observed": "result ids 314"
+    },
+    {
+      "name": "multi-term description retrieves the seeded page",
+      "passed": true,
+      "expected": "results include page id 2718",
+      "observed": "result ids 2718"
+    },
+    {
+      "name": "common tag fills the cap with matching pages",
+      "passed": true,
+      "expected": "100 results tagged common-platform",
+      "observed": "100 results, 100 tagged common-platform"
+    }
+  ],
+  "thresholdViolations": []
+}

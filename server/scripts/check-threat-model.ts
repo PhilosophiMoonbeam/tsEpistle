@@ -1,9 +1,13 @@
 import { spawnSync } from 'node:child_process'
-import { access, readFile } from 'node:fs/promises'
+import crypto, { createHash } from 'node:crypto'
+import { access, lstat, readFile, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/
+const DIGEST_PATTERN = /^[0-9a-f]{64}$/
+const ED25519_PREFIX_DER = Buffer.from('302a300506032b6570032100', 'hex')
+
 const REQUIRED_COMMANDS = [
   'bun run dependencies:check',
   'bun run licenses:check',
@@ -11,31 +15,367 @@ const REQUIRED_COMMANDS = [
   'bun audit --production',
   'bun run typecheck:server'
 ] as const
+
 const THREAT_MODEL_SCRIPT = 'bun server/scripts/check-threat-model.ts'
 const THREAT_MODEL_CI_COMMAND = 'bun run threat-model:check'
 
-type PackageManifest = {
+export const CANONICAL_REPOSITORY = 'PhilosophiMoonbeam/tsEpistle'
+export const CANONICAL_FINGERPRINT_ALGORITHM = 'tsepistle-isolated-preview-v1'
+export const SECURITY_BOUNDARY_DIGEST_PREFIX = 'tsepistle-security-boundary-v1\0'
+export const ATTESTATION_SIGNING_PREFIX = 'tsepistle-threat-review-attestation-v1\0'
+export const CANONICAL_THREAT_MODEL_PATH = 'docs/security/threat-model.md'
+
+export const CANONICAL_POLICY_V1_PREFIXES = ['server/', 'client/', 'shared/', 'deploy/', 'patches/', '.github/workflows/', '.github/actions/', 'dev/'] as const
+
+export const CANONICAL_POLICY_V1_EXACT_FILES: Record<string, true> = {
+  '.dockerignore': true,
+  '.gitattributes': true,
+  LICENSE: true,
+  NOTICE: true,
+  'package.json': true,
+  'bun.lock': true,
+  'bunfig.toml': true,
+  'biome.json': true,
+  'config.sample.yml': true,
+  'license-policy.json': true,
+  'playwright.config.ts': true,
+  'vite.config.mts': true
+}
+
+/**
+ * Canonical exact ignored file path permitted as a generated build artifact.
+ * Only `server/.build-metadata.json` may be excluded from ignored-boundary drift,
+ * because `server/scripts/generate-build-metadata.ts` deterministically overwrites it
+ * during supported builds and it remains separately governed by build provenance.
+ * If it ever becomes tracked it remains in the covered-tree digest.
+ * Every other ignored file under canonical boundary must still fail.
+ */
+export const CANONICAL_IGNORED_BUILD_METADATA_PATH = 'server/.build-metadata.json'
+
+export type PackageManifest = {
   packageManager?: unknown
   scripts?: unknown
   [key: string]: unknown
 }
 
-export type ThreatModelFinding = {
+export type FindingDisposition = 'blocking' | 'accepted' | 'resolved'
+
+export type ReviewFinding = {
   id: string
   severity: string
+  disposition: FindingDisposition
+  evidencePaths: string[]
+}
+
+export type ReviewerInfo = {
+  identity: string
+  independent: boolean
+  reviewedAt: string
+}
+
+export type SourceReviewSource = {
+  revision: string
+  baseRevision: string
+  coveredTreeDigest: string
+}
+
+export type WorkingTreeAuditSource = {
+  baseRevision: string
+  fingerprint: string
+  fingerprintAlgorithm: string
+}
+
+export type SourceReviewSignature = {
+  algorithm: 'ed25519'
+  keyId: string
+  value: string
+}
+
+export type BaseReviewRecord = {
+  schemaVersion: number
+  id: string
+  kind: 'source-review' | 'working-tree-audit'
+  repository: string
+  policyVersion: number
+  threatModelDigest: string
+  reviewer: ReviewerInfo
+  releaseEligible: boolean
+  findings: ReviewFinding[]
+  evidencePaths: string[]
+}
+
+export type SourceReviewRecord = BaseReviewRecord & {
+  kind: 'source-review'
+  source: SourceReviewSource
+  signature?: SourceReviewSignature
+}
+
+export type WorkingTreeAuditRecord = BaseReviewRecord & {
+  kind: 'working-tree-audit'
+  source: WorkingTreeAuditSource
+  signature?: never
+}
+
+export type ReviewRecord = SourceReviewRecord | WorkingTreeAuditRecord
+
+export type ReviewAttestationsManifest = {
+  schemaVersion: number
+  policyVersion: number
+  threatModelPath: string
+  activeReviewId: string
+  records: Array<{
+    id: string
+    path: string
+  }>
 }
 
 export type ThreatModelContract = {
-  reviewedRevision: string
-  externalReviewer: string
-  openFindings: ThreatModelFinding[]
-  resolvedFindingIds: string[]
-  citedPaths: string[]
+  modelVersion: number
   commands: string[]
+  citedPaths: string[]
 }
 
 export type ThreatModelCheckOptions = {
   release?: boolean
+}
+
+export type TrustedKey = {
+  id: string
+  identity: string
+  algorithm: 'ed25519'
+  publicKey: string
+}
+
+export type TrustedKeysConfig = {
+  schemaVersion: 1
+  repository: string
+  keys: TrustedKey[]
+}
+
+function runGit(rootPath: string, args: string[]) {
+  return spawnSync('git', args, {
+    cwd: rootPath,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function isSecurityBoundaryPath(changedPath: string): boolean {
+  const normalized = changedPath.replace(/^[.][/]/, '').replaceAll('\\', '/')
+  if (CANONICAL_POLICY_V1_PREFIXES.some(prefix => normalized.startsWith(prefix))) {
+    return true
+  }
+  if (CANONICAL_POLICY_V1_EXACT_FILES[normalized]) {
+    return true
+  }
+  if (/^tsconfig(?:[^/]*)\.json$/.test(normalized)) {
+    return true
+  }
+  return false
+}
+
+export function computeCoveredTreeDigest(rootPath: string, revision = 'HEAD'): string {
+  const git = runGit(rootPath, ['ls-tree', '-r', '-z', revision])
+  if (git.status !== 0) {
+    throw new Error(`Cannot list Git tree for revision ${revision}: ${String(git.stderr).trim()}`)
+  }
+  const entries: Array<{ path: string; mode: string; type: string; objectId: string }> = []
+  const tokens = String(git.stdout).split('\0').filter(Boolean)
+  for (const token of tokens) {
+    const tabIndex = token.indexOf('\t')
+    if (tabIndex === -1) continue
+    const meta = token.slice(0, tabIndex)
+    const filePath = token.slice(tabIndex + 1)
+    const [mode, type, objectId] = meta.split(' ')
+    if (type !== 'tree' && isSecurityBoundaryPath(filePath)) {
+      entries.push({ path: filePath, mode: mode ?? '', type: type ?? '', objectId: objectId ?? '' })
+    }
+  }
+  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  const hash = createHash('sha256')
+  hash.update(SECURITY_BOUNDARY_DIGEST_PREFIX)
+  for (const entry of entries) {
+    hash.update(`${entry.path}\0${entry.mode}\0${entry.type}\0${entry.objectId}\0`)
+  }
+  return hash.digest('hex')
+}
+
+export function computeThreatModelDigest(content: string | Buffer): string {
+  return createHash('sha256').update(content).digest('hex')
+}
+
+export function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value)
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(',')}]`
+  }
+  const obj = value as Record<string, unknown>
+  const keys = Object.keys(obj).sort()
+  const entries = keys.map(key => `${JSON.stringify(key)}:${canonicalJson(obj[key])}`)
+  return `{${entries.join(',')}}`
+}
+
+export function computeRecordSigningPayload(record: Record<string, unknown>): Buffer {
+  const { signature: _omitted, ...rest } = record
+  const json = canonicalJson(rest)
+  const prefix = Buffer.from(ATTESTATION_SIGNING_PREFIX, 'utf8')
+  return Buffer.concat([prefix, Buffer.from(json, 'utf8')])
+}
+
+export function parseEd25519PublicKey(rawKey: string): crypto.KeyObject {
+  const trimmed = rawKey.trim()
+  if (trimmed.startsWith('-----BEGIN')) {
+    return crypto.createPublicKey(trimmed)
+  }
+  if (/^[0-9a-fA-F]{64}$/.test(trimmed)) {
+    const rawBytes = Buffer.from(trimmed, 'hex')
+    const der = Buffer.concat([ED25519_PREFIX_DER, rawBytes])
+    return crypto.createPublicKey({ key: der, format: 'der', type: 'spki' })
+  }
+  try {
+    const buf = Buffer.from(trimmed, 'base64')
+    if (buf.length === 32) {
+      const der = Buffer.concat([ED25519_PREFIX_DER, buf])
+      return crypto.createPublicKey({ key: der, format: 'der', type: 'spki' })
+    }
+    return crypto.createPublicKey({ key: buf, format: 'der', type: 'spki' })
+  } catch (err) {
+    throw new Error(`Invalid Ed25519 public key: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+export function parseSignatureValue(value: string): Buffer {
+  const trimmed = value.trim()
+  if (/^[0-9a-fA-F]{128}$/.test(trimmed)) {
+    return Buffer.from(trimmed, 'hex')
+  }
+  const buf = Buffer.from(trimmed, 'base64')
+  if (buf.length === 64) {
+    return buf
+  }
+  throw new Error(`Ed25519 signature must be 64 bytes (128 hex chars or 64-byte base64), received ${buf.length} bytes`)
+}
+
+export function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12) return false
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0
+  const daysInMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+  const maxDays = daysInMonth[month - 1]!
+  return day >= 1 && day <= maxDays
+}
+
+export function isValidIsoTimestamp(value: string): boolean {
+  const parsed = new Date(value)
+  return Number.isFinite(parsed.valueOf()) && parsed.toISOString() === value
+}
+
+export function parseTrustedKeysConfig(raw: string): { config?: TrustedKeysConfig; error?: string } {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    return { error: `Malformed THREAT_REVIEW_TRUSTED_KEYS_JSON: ${err instanceof Error ? err.message : String(err)}` }
+  }
+  if (!isPlainObject(parsed)) {
+    return { error: 'THREAT_REVIEW_TRUSTED_KEYS_JSON must be a JSON object' }
+  }
+  if (parsed.schemaVersion !== 1) {
+    return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON schemaVersion must be 1, received: ${String(parsed.schemaVersion)}` }
+  }
+  if (parsed.repository !== CANONICAL_REPOSITORY) {
+    return {
+      error: `THREAT_REVIEW_TRUSTED_KEYS_JSON repository must be "${CANONICAL_REPOSITORY}", received: ${String(parsed.repository)}`
+    }
+  }
+  if (!Array.isArray(parsed.keys)) {
+    return { error: 'THREAT_REVIEW_TRUSTED_KEYS_JSON keys must be an array' }
+  }
+  const keys: TrustedKey[] = []
+  for (let idx = 0; idx < parsed.keys.length; idx++) {
+    const k = parsed.keys[idx]
+    if (!isPlainObject(k)) {
+      return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON keys[${idx}] must be an object` }
+    }
+    if (typeof k.id !== 'string' || !k.id.trim()) {
+      return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON keys[${idx}].id must be a non-empty string` }
+    }
+    if (typeof k.identity !== 'string' || !k.identity.trim()) {
+      return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON keys[${idx}].identity must be a non-empty string` }
+    }
+    if (k.algorithm !== 'ed25519') {
+      return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON keys[${idx}].algorithm must be "ed25519", received: ${String(k.algorithm)}` }
+    }
+    if (typeof k.publicKey !== 'string' || !k.publicKey.trim()) {
+      return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON keys[${idx}].publicKey must be a non-empty string` }
+    }
+    keys.push({
+      id: k.id.trim(),
+      identity: k.identity.trim(),
+      algorithm: 'ed25519',
+      publicKey: k.publicKey.trim()
+    })
+  }
+  return {
+    config: {
+      schemaVersion: 1,
+      repository: parsed.repository as string,
+      keys
+    }
+  }
+}
+
+function isRepoRelativePath(relativePath: string): boolean {
+  if (typeof relativePath !== 'string' || !relativePath.trim()) return false
+  if (path.isAbsolute(relativePath)) return false
+  if (relativePath.startsWith('/') || relativePath.startsWith('\\')) return false
+  const normalized = path.normalize(relativePath)
+  return !normalized.startsWith('..') && !path.isAbsolute(normalized)
+}
+
+async function checkRealpathContained(realRoot: string, resolvedPath: string, relativePath: string, label: string): Promise<string | null> {
+  try {
+    const realTarget = await realpath(resolvedPath)
+    const relReal = path.relative(realRoot, realTarget)
+    if (relReal.startsWith('..') || path.isAbsolute(relReal)) {
+      return `${label} escapes repository via symlink: ${relativePath}`
+    }
+    return null
+  } catch {
+    // Target does not exist; check nearest existing ancestor directory
+    let current = path.dirname(resolvedPath)
+    while (current !== path.dirname(current)) {
+      try {
+        const realParent = await realpath(current)
+        const relParent = path.relative(realRoot, realParent)
+        if (relParent.startsWith('..') || path.isAbsolute(relParent)) {
+          return `${label} escapes repository via parent symlink: ${relativePath}`
+        }
+        break
+      } catch {
+        current = path.dirname(current)
+      }
+    }
+    return null
+  }
+}
+
+async function checkNotSymlink(resolvedPath: string, relativePath: string, label: string): Promise<string | null> {
+  try {
+    const st = await lstat(resolvedPath)
+    if (st.isSymbolicLink()) {
+      return `${label} must not be a symbolic link: ${relativePath}`
+    }
+  } catch {
+    // missing or unreadable handled elsewhere
+  }
+  return null
 }
 
 function extractRepositoryCitations(markdown: string): string[] {
@@ -50,24 +390,126 @@ function extractRepositoryCitations(markdown: string): string[] {
   return [...citations]
 }
 
-function extractGateCommands(markdown: string): string[] {
-  const section = markdown.match(/(?:^|\n)## Executable security gate\s*\n([\s\S]*?)(?=\n##\s|$)/)?.[1]
-  if (!section) throw new Error('Threat model must contain an Executable security gate section')
-  const blocks = [...section.matchAll(/```console\s*\n([\s\S]*?)```/g)]
-  if (blocks.length !== 1) throw new Error('Executable security gate must contain exactly one console command block')
-  return (blocks[0]?.[1] ?? '')
-    .split('\n')
-    .map(line => line.trim())
-    .filter(Boolean)
+type MarkdownSection = {
+  heading: string
+  lines: string[]
 }
 
-function extractTableRows(markdown: string, heading: string, expectedHeaders: string[]): string[][] {
-  const escapedHeading = heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const sectionMatches = [...markdown.matchAll(new RegExp(`(?:^|\\n)## ${escapedHeading}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, 'g'))]
-  if (sectionMatches.length !== 1) throw new Error(`Threat model must contain exactly one ${heading} section`)
+function parseSections(markdown: string): MarkdownSection[] {
+  const lines = markdown.split('\n')
+  let inCode = false
+  let fenceChar = ''
+  let fenceLen = 0
 
-  const section = sectionMatches[0]?.[1] ?? ''
-  const tableBlocks = [...section.matchAll(/(?:^|\n)((?:\|[^\n]*\|[ \t]*(?:\n|$))+)/g)]
+  const sections: MarkdownSection[] = []
+  let currentHeading: string | null = null
+  let currentLines: string[] = []
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^[ \t]*(`{3,}|~{3,})/)
+    const fence = fenceMatch?.[1]
+    if (!inCode) {
+      if (fence) {
+        const char = fence.charAt(0)
+        if (char === '`' || char === '~') {
+          inCode = true
+          fenceChar = char
+          fenceLen = fence.length
+        }
+      } else {
+        const headingMatch = line.match(/^##\s+([^\n]+)$/)
+        const rawHeading = headingMatch?.[1]
+        if (rawHeading !== undefined) {
+          const heading = rawHeading.trim()
+          if (heading.length > 0) {
+            if (currentHeading !== null) {
+              sections.push({ heading: currentHeading, lines: currentLines })
+            }
+            currentHeading = heading
+            currentLines = []
+            continue
+          }
+        }
+      }
+    } else {
+      const closeMatch = line.match(/^[ \t]*(`{3,}|~{3,})[ \t]*$/)
+      const closeFence = closeMatch?.[1]
+      if (closeFence && fenceChar !== '' && closeFence.charAt(0) === fenceChar && closeFence.length >= fenceLen) {
+        inCode = false
+      }
+    }
+    if (currentHeading !== null) {
+      currentLines.push(line)
+    }
+  }
+  if (currentHeading !== null) {
+    sections.push({ heading: currentHeading, lines: currentLines })
+  }
+  return sections
+}
+
+function extractGateCommandsFromSection(lines: string[]): string[] {
+  const consoleBlocks: string[][] = []
+  let activeFence: { char: string; length: number; console: boolean; lines: string[] } | undefined
+
+  for (const line of lines) {
+    if (!activeFence) {
+      const opening = /^[ \t]*(`{3,}|~{3,})([^`]*)$/.exec(line)
+      const marker = opening?.[1]
+      if (!marker) continue
+      activeFence = {
+        char: marker.charAt(0),
+        length: marker.length,
+        console: (opening?.[2] ?? '').trim() === 'console',
+        lines: []
+      }
+      continue
+    }
+
+    const closing = /^[ \t]*(`{3,}|~{3,})[ \t]*$/.exec(line)?.[1]
+    if (closing && closing.charAt(0) === activeFence.char && closing.length >= activeFence.length) {
+      if (activeFence.console) consoleBlocks.push(activeFence.lines)
+      activeFence = undefined
+      continue
+    }
+    if (activeFence.console) activeFence.lines.push(line)
+  }
+
+  if (consoleBlocks.length !== 1) throw new Error('Executable security gate must contain exactly one console command block')
+  return consoleBlocks[0]!.map(line => line.trim()).filter(Boolean)
+}
+
+function extractTableRowsFromSection(lines: string[], heading: string, expectedHeaders: string[]): string[][] {
+  let inCode = false
+  let fenceChar = ''
+  let fenceLen = 0
+  const nonCodeLines: string[] = []
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^[ \t]*(`{3,}|~{3,})/)
+    const fence = fenceMatch?.[1]
+    if (!inCode) {
+      if (fence) {
+        const char = fence.charAt(0)
+        if (char === '`' || char === '~') {
+          inCode = true
+          fenceChar = char
+          fenceLen = fence.length
+        }
+      } else {
+        nonCodeLines.push(line)
+      }
+    } else {
+      const closeMatch = line.match(/^[ \t]*(`{3,}|~{3,})[ \t]*$/)
+      const closeFence = closeMatch?.[1]
+      if (closeFence && fenceChar !== '' && closeFence.charAt(0) === fenceChar && closeFence.length >= fenceLen) {
+        inCode = false
+      }
+    }
+  }
+
+  const text = nonCodeLines.join('\n')
+  const tableBlocks = [...text.matchAll(/(?:^|\n)((?:\|[^\n]*\|[ \t]*(?:\n|$))+)/g)]
   const matchingTables = tableBlocks
     .map(match =>
       (match[1] ?? '')
@@ -96,50 +538,53 @@ function extractTableRows(markdown: string, heading: string, expectedHeaders: st
   return rows
 }
 
-function findingId(label: string): string {
-  const match = label.match(/^([A-Z][A-Z0-9-]*-\d+)\s+—\s+\S/)
-  if (!match) throw new Error(`Finding must begin with a stable ID and description: ${label}`)
-  return match[1] ?? ''
-}
-
 export function parseThreatModel(markdown: string): ThreatModelContract {
-  const statusRows = extractTableRows(markdown, 'Status and review contract', ['Field', 'Value'])
+  if (/\bpnpm\b|pnpm-lock\.yaml|package-lock\.json|yarn\.lock/.test(markdown)) {
+    throw new Error('Threat model dependency evidence must use Bun and bun.lock exclusively')
+  }
+
+  const sections = parseSections(markdown)
+  const statusSections = sections.filter(s => s.heading === 'Status and review contract')
+  if (statusSections.length === 0) {
+    throw new Error('Threat model must contain a Status and review contract section')
+  }
+  if (statusSections.length > 1) {
+    throw new Error('Threat model contains duplicate Status and review contract sections')
+  }
+
+  const gateSections = sections.filter(s => s.heading === 'Executable security gate')
+  if (gateSections.length === 0) {
+    throw new Error('Threat model must contain an Executable security gate section')
+  }
+  if (gateSections.length > 1) {
+    throw new Error('Threat model contains duplicate Executable security gate sections')
+  }
+
+  const statusRows = extractTableRowsFromSection(statusSections[0]?.lines ?? [], 'Status and review contract', ['Field', 'Value'])
   const status = new Map<string, string>()
   for (const [field = '', value = ''] of statusRows) {
     if (status.has(field)) throw new Error(`Status and review contract contains duplicate field: ${field}`)
     status.set(field, value)
   }
 
-  const coveredValue = status.get('Covered source')
-  if (!coveredValue) throw new Error('Threat model must contain exactly one Covered source row')
-  const revisionMatch = coveredValue.match(/^`([^`]+)`$/)
-  if (!revisionMatch) throw new Error('Covered source must be one backticked full Git revision')
-  const reviewedRevision = revisionMatch[1] ?? ''
-  if (!FULL_SHA_PATTERN.test(reviewedRevision)) {
-    throw new Error('Covered source must be exactly one full 40-character lowercase Git revision, not a branch or range')
+  const modelVersionValue = status.get('Model version')
+  if (!modelVersionValue) throw new Error('Threat model must declare a Model version')
+  if (!/^[1-9][0-9]*$/.test(modelVersionValue.trim())) {
+    throw new Error(`Model version must be a positive integer: ${modelVersionValue}`)
   }
-  const externalReviewer = status.get('External reviewer')
-  if (!externalReviewer) throw new Error('Threat model must declare an External reviewer')
-  if (/\bpnpm\b|pnpm-lock\.yaml|package-lock\.json|yarn\.lock/.test(markdown)) {
-    throw new Error('Threat model dependency evidence must use Bun and bun.lock exclusively')
+  const modelVersion = Number.parseInt(modelVersionValue.trim(), 10)
+  if (modelVersion !== 1) {
+    throw new Error(`Unsupported model version: expected 1, received ${modelVersion}`)
   }
 
-  const openFindings = extractTableRows(markdown, 'Open findings and accepted limitations', ['Finding', 'Severity', 'Owner', 'Required disposition']).map(
-    ([label = '', severity = '']) => ({ id: findingId(label), severity })
-  )
-  const resolvedFindingIds = extractTableRows(markdown, 'Resolved findings', ['Finding', 'Resolution evidence']).map(([label = '']) => findingId(label))
-  const findingIds = [...openFindings.map(finding => finding.id), ...resolvedFindingIds]
-  const duplicateFinding = findingIds.find((id, index) => findingIds.indexOf(id) !== index)
-  if (duplicateFinding) throw new Error(`Finding must have exactly one open or resolved disposition: ${duplicateFinding}`)
-
-  const commands = extractGateCommands(markdown)
+  const commands = extractGateCommandsFromSection(gateSections[0]?.lines ?? [])
   for (const requiredCommand of REQUIRED_COMMANDS) {
     if (!commands.includes(requiredCommand)) throw new Error(`Executable security gate is missing command: ${requiredCommand}`)
   }
   const citedPaths = extractRepositoryCitations(markdown)
   if (!citedPaths.includes('bun.lock')) throw new Error('Threat model must cite bun.lock as frozen dependency evidence')
 
-  return { reviewedRevision, externalReviewer, openFindings, resolvedFindingIds, citedPaths, commands }
+  return { modelVersion, commands, citedPaths }
 }
 
 function packageScripts(manifest: PackageManifest): Record<string, unknown> | undefined {
@@ -152,133 +597,844 @@ function packageManagerName(manifest: PackageManifest): string | undefined {
   return manifest.packageManager.match(/^([^@]+)@/)?.[1]
 }
 
-function runGit(rootPath: string, args: string[]) {
-  return spawnSync('git', args, {
-    cwd: rootPath,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe']
-  })
-}
-
-export function isSecurityBoundaryPath(changedPath: string): boolean {
-  if (changedPath === 'server/scripts/check-threat-model.ts' || changedPath.startsWith('server/test/')) return false
-  if (/^(?:server|shared|client)\//.test(changedPath)) return true
-  if (changedPath === 'package.json' || changedPath === 'bun.lock' || /^(?:pnpm-lock\.yaml|package-lock\.json|yarn\.lock)$/.test(changedPath)) return true
-  return changedPath.startsWith('patches/')
-}
-
-function packageOnlyAddsThreatModelGate(baseText: string, currentManifest: PackageManifest): boolean {
-  let baseManifest: PackageManifest
-  try {
-    baseManifest = JSON.parse(baseText) as PackageManifest
-  } catch {
-    return false
-  }
-  const currentScripts = packageScripts(currentManifest)
-  if (!currentScripts || currentScripts['threat-model:check'] !== THREAT_MODEL_SCRIPT) return false
-  const currentStatic = currentScripts['ci:static']
-  if (typeof currentStatic !== 'string') return false
-  const marker = ` && ${THREAT_MODEL_CI_COMMAND}`
-  if (!currentStatic.endsWith(marker) || currentStatic.slice(0, -marker.length).includes(THREAT_MODEL_CI_COMMAND)) return false
-
-  const normalized = structuredClone(currentManifest)
-  const normalizedScripts = packageScripts(normalized)
-  if (!normalizedScripts) return false
-  delete normalizedScripts['threat-model:check']
-  normalizedScripts['ci:static'] = currentStatic.slice(0, -marker.length)
-  return isDeepStrictEqual(baseManifest, normalized)
-}
-
-async function validateCitations(rootPath: string, citedPaths: string[], failures: string[]) {
-  for (const citedPath of citedPaths) {
-    const resolved = path.resolve(rootPath, citedPath)
-    const relative = path.relative(rootPath, resolved)
-    if (relative.startsWith('..') || path.isAbsolute(relative)) {
-      failures.push(`Cited path escapes the repository: ${citedPath}`)
+async function validateContainedPaths(rootPath: string, realRoot: string, paths: string[], label: string, failures: string[]) {
+  for (const p of paths) {
+    if (!isRepoRelativePath(p)) {
+      failures.push(`${label} escapes repository: ${p}`)
+      continue
+    }
+    const resolved = path.resolve(rootPath, p)
+    const escapeError = await checkRealpathContained(realRoot, resolved, p, label)
+    if (escapeError) {
+      failures.push(escapeError)
       continue
     }
     try {
       await access(resolved)
     } catch {
-      failures.push(`Cited path does not exist: ${citedPath}`)
+      failures.push(`${label} does not exist: ${p}`)
     }
   }
 }
 
 export async function checkThreatModel(rootPath = process.cwd(), options: ThreatModelCheckOptions = {}): Promise<string[]> {
   const failures: string[] = []
-  let manifest: PackageManifest
-  let contract: ThreatModelContract
+
+  let realRoot: string
   try {
-    contract = parseThreatModel(await readFile(path.join(rootPath, 'docs/security/threat-model.md'), 'utf8'))
+    realRoot = await realpath(rootPath)
   } catch (error) {
-    return [error instanceof Error ? error.message : String(error)]
+    return [`Cannot resolve repository root realpath: ${error instanceof Error ? error.message : String(error)}`]
   }
+
+  const manifestRel = 'docs/security/review-attestations.json'
+  const manifestPath = path.resolve(rootPath, manifestRel)
+
+  const manifestSymlinkErr = await checkNotSymlink(manifestPath, manifestRel, 'Manifest file')
+  if (manifestSymlinkErr) {
+    failures.push(manifestSymlinkErr)
+    return failures
+  }
+
+  const manifestEscapeErr = await checkRealpathContained(realRoot, manifestPath, manifestRel, 'Manifest file')
+  if (manifestEscapeErr) {
+    failures.push(manifestEscapeErr)
+    return failures
+  }
+
+  let manifestRaw: string
   try {
-    manifest = JSON.parse(await readFile(path.join(rootPath, 'package.json'), 'utf8')) as PackageManifest
+    manifestRaw = await readFile(manifestPath, 'utf8')
   } catch (error) {
-    return [`Cannot read package.json: ${error instanceof Error ? error.message : String(error)}`]
+    return [`Cannot read review attestations manifest: ${error instanceof Error ? error.message : String(error)}`]
   }
-  if (options.release) {
-    if (/^unassigned\b/i.test(contract.externalReviewer)) failures.push('External reviewer is unassigned; release publication is blocked')
-    const releaseBlockers = contract.openFindings.filter(finding => finding.severity.toLowerCase() === 'release blocker')
-    if (releaseBlockers.length > 0) failures.push(`Unresolved release blockers: ${releaseBlockers.map(finding => finding.id).join(', ')}`)
+
+  let manifestParsed: unknown
+  try {
+    manifestParsed = JSON.parse(manifestRaw)
+  } catch (error) {
+    return [`Malformed review attestations manifest JSON: ${error instanceof Error ? error.message : String(error)}`]
   }
-  const manager = packageManagerName(manifest)
-  if (manager !== 'bun') failures.push('packageManager must select a versioned Bun release')
-  for (const command of contract.commands) {
-    const prefix = command.split(/\s+/, 1)[0]
-    if (prefix !== manager) failures.push(`Security command prefix does not match packageManager: ${command}`)
+
+  if (!isPlainObject(manifestParsed)) {
+    return ['Manifest must be a JSON object']
   }
-  const scripts = packageScripts(manifest)
-  if (!scripts) {
-    failures.push('package.json scripts must be an object')
+
+  if (manifestParsed.schemaVersion !== 1) {
+    failures.push(`Unsupported manifest schemaVersion: expected 1, received ${String(manifestParsed.schemaVersion)}`)
+  }
+  if (manifestParsed.policyVersion !== 1) {
+    failures.push(`Unsupported manifest policyVersion: expected 1, received ${String(manifestParsed.policyVersion)}`)
+  }
+
+  if (typeof manifestParsed.threatModelPath !== 'string' || !manifestParsed.threatModelPath.trim()) {
+    failures.push('Manifest threatModelPath must be a non-empty string')
   } else {
-    for (const command of contract.commands) {
-      const scriptMatch = command.match(/^bun run ([A-Za-z0-9:_-]+)$/)
-      if (scriptMatch && typeof scripts[scriptMatch[1] ?? ''] !== 'string') failures.push(`Referenced package script does not exist: ${scriptMatch[1]}`)
+    if (!isRepoRelativePath(manifestParsed.threatModelPath)) {
+      failures.push(`Manifest threatModelPath escapes repository: ${manifestParsed.threatModelPath}`)
     }
-    if (scripts['threat-model:check'] !== THREAT_MODEL_SCRIPT) failures.push(`package.json must define threat-model:check as ${THREAT_MODEL_SCRIPT}`)
-    const ciStatic = scripts['ci:static']
-    if (typeof ciStatic !== 'string' || !ciStatic.split(' && ').includes(THREAT_MODEL_CI_COMMAND)) {
-      failures.push('ci:static must execute bun run threat-model:check')
+    if (manifestParsed.threatModelPath !== CANONICAL_THREAT_MODEL_PATH) {
+      failures.push(`Manifest threatModelPath must be canonical literal "${CANONICAL_THREAT_MODEL_PATH}", received: ${manifestParsed.threatModelPath}`)
     }
   }
-  await validateCitations(rootPath, contract.citedPaths, failures)
 
-  const exists = runGit(rootPath, ['cat-file', '-e', `${contract.reviewedRevision}^{commit}`])
+  if (typeof manifestParsed.activeReviewId !== 'string' || !manifestParsed.activeReviewId.trim()) {
+    failures.push('Manifest activeReviewId must be a non-empty string')
+  } else if (manifestParsed.activeReviewId !== manifestParsed.activeReviewId.trim()) {
+    failures.push('Manifest activeReviewId must not contain leading or trailing whitespace')
+  }
+  if (!Array.isArray(manifestParsed.records) || manifestParsed.records.length === 0) {
+    failures.push('Manifest records must be a non-empty array')
+    return failures
+  }
+
+  const manifestThreatModelPath = typeof manifestParsed.threatModelPath === 'string' ? manifestParsed.threatModelPath.trim() : ''
+  const manifestActiveReviewId = typeof manifestParsed.activeReviewId === 'string' ? manifestParsed.activeReviewId.trim() : ''
+
+  const recordIds = new Set<string>()
+  const recordPaths = new Set<string>()
+  const validRecordRefs: Array<{ id: string; path: string }> = []
+
+  for (let idx = 0; idx < manifestParsed.records.length; idx++) {
+    const recordRef = manifestParsed.records[idx]
+    if (!isPlainObject(recordRef)) {
+      failures.push(`Manifest record reference at index ${idx} must be an object`)
+      continue
+    }
+    if (typeof recordRef.id !== 'string' || !recordRef.id.trim()) {
+      failures.push(`Manifest record reference id at index ${idx} must be a non-empty string`)
+      continue
+    }
+    const normalizedId = recordRef.id.trim()
+    if (recordRef.id !== normalizedId) {
+      failures.push(`Manifest record reference id at index ${idx} must not contain leading or trailing whitespace`)
+    }
+    if (recordIds.has(normalizedId)) {
+      failures.push(`Duplicate record ID in manifest: ${normalizedId}`)
+    }
+    recordIds.add(normalizedId)
+
+    if (typeof recordRef.path !== 'string' || !recordRef.path.trim()) {
+      failures.push(`Manifest record reference path must be a non-empty string for id: ${normalizedId}`)
+      continue
+    }
+    const normalizedPath = recordRef.path.trim()
+    if (recordRef.path !== normalizedPath) {
+      failures.push(`Manifest record reference path must not contain leading or trailing whitespace for id: ${normalizedId}`)
+    }
+    if (!isRepoRelativePath(normalizedPath)) {
+      failures.push(`Manifest record path escapes repository: ${normalizedPath}`)
+      continue
+    }
+    if (recordPaths.has(normalizedPath)) {
+      failures.push(`Duplicate record path in manifest: ${normalizedPath}`)
+    }
+    recordPaths.add(normalizedPath)
+    validRecordRefs.push({ id: normalizedId, path: normalizedPath })
+  }
+
+  if (manifestActiveReviewId && !recordIds.has(manifestActiveReviewId)) {
+    failures.push(`Active review ID "${manifestActiveReviewId}" is not present in manifest records`)
+  }
+
+  let threatModelRaw = ''
+  if (manifestThreatModelPath === CANONICAL_THREAT_MODEL_PATH && isRepoRelativePath(manifestThreatModelPath)) {
+    const resolvedThreatModel = path.resolve(rootPath, manifestThreatModelPath)
+    const tmSymlinkErr = await checkNotSymlink(resolvedThreatModel, manifestThreatModelPath, 'Threat model file')
+    if (tmSymlinkErr) {
+      failures.push(tmSymlinkErr)
+    }
+    const tmEscapeErr = await checkRealpathContained(realRoot, resolvedThreatModel, manifestThreatModelPath, 'Threat model file')
+    if (tmEscapeErr) {
+      failures.push(tmEscapeErr)
+    } else {
+      try {
+        threatModelRaw = await readFile(resolvedThreatModel, 'utf8')
+      } catch (error) {
+        failures.push(`Cannot read threat model at ${manifestThreatModelPath}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  }
+
+  let threatModelContract: ThreatModelContract | undefined
+  if (threatModelRaw) {
+    try {
+      threatModelContract = parseThreatModel(threatModelRaw)
+    } catch (error) {
+      failures.push(`Threat model parsing failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  const recordsById = new Map<string, ReviewRecord>()
+  const rawRecordsById = new Map<string, Record<string, unknown>>()
+
+  for (const recordRef of validRecordRefs) {
+    const resolvedRecordPath = path.resolve(rootPath, recordRef.path)
+    const recSymlinkErr = await checkNotSymlink(resolvedRecordPath, recordRef.path, 'Record file')
+    if (recSymlinkErr) {
+      failures.push(recSymlinkErr)
+      continue
+    }
+    const recEscapeErr = await checkRealpathContained(realRoot, resolvedRecordPath, recordRef.path, 'Record file')
+    if (recEscapeErr) {
+      failures.push(recEscapeErr)
+      continue
+    }
+
+    let recordContent = ''
+    try {
+      recordContent = await readFile(resolvedRecordPath, 'utf8')
+    } catch (error) {
+      failures.push(`Cannot read review record at ${recordRef.path}: ${error instanceof Error ? error.message : String(error)}`)
+      continue
+    }
+
+    let recordRaw: unknown
+    try {
+      recordRaw = JSON.parse(recordContent)
+    } catch (error) {
+      failures.push(`Malformed review record JSON at ${recordRef.path}: ${error instanceof Error ? error.message : String(error)}`)
+      continue
+    }
+
+    if (!isPlainObject(recordRaw)) {
+      failures.push(`Record ${recordRef.id} must be a JSON object`)
+      continue
+    }
+
+    let hasRecordStructuralError = false
+
+    if (recordRaw.schemaVersion !== 1) {
+      failures.push(`Record ${recordRef.id} has unsupported schemaVersion: ${String(recordRaw.schemaVersion)}`)
+      hasRecordStructuralError = true
+    }
+    if (recordRaw.id !== recordRef.id) {
+      failures.push(`Record file ${recordRef.path} ID "${String(recordRaw.id)}" does not match manifest ID "${recordRef.id}"`)
+      hasRecordStructuralError = true
+    }
+    if (recordRaw.repository !== CANONICAL_REPOSITORY) {
+      failures.push(`Record ${recordRef.id} repository must be "${CANONICAL_REPOSITORY}", received: ${String(recordRaw.repository)}`)
+      hasRecordStructuralError = true
+    }
+    if (recordRaw.policyVersion !== 1) {
+      failures.push(`Record ${recordRef.id} has unsupported policyVersion: ${String(recordRaw.policyVersion)}`)
+      hasRecordStructuralError = true
+    }
+    if (typeof recordRaw.threatModelDigest !== 'string' || !DIGEST_PATTERN.test(recordRaw.threatModelDigest)) {
+      failures.push(`Record ${recordRef.id} threatModelDigest must be a 64-character lowercase SHA-256 hex string`)
+      hasRecordStructuralError = true
+    }
+
+    const recordKind = recordRaw.kind
+    if (recordKind !== 'source-review' && recordKind !== 'working-tree-audit') {
+      failures.push(`Record ${recordRef.id} has invalid kind: ${String(recordKind)}`)
+      hasRecordStructuralError = true
+    }
+
+    if (!isPlainObject(recordRaw.reviewer)) {
+      failures.push(`Record ${recordRef.id} must declare reviewer object`)
+      hasRecordStructuralError = true
+    } else {
+      if (typeof recordRaw.reviewer.identity !== 'string' || !recordRaw.reviewer.identity.trim()) {
+        failures.push(`Record ${recordRef.id} reviewer must have non-empty identity`)
+        hasRecordStructuralError = true
+      }
+      if (typeof recordRaw.reviewer.independent !== 'boolean') {
+        failures.push(`Record ${recordRef.id} reviewer independent field must be a boolean`)
+        hasRecordStructuralError = true
+      }
+      if (typeof recordRaw.reviewer.reviewedAt !== 'string' || !recordRaw.reviewer.reviewedAt.trim()) {
+        failures.push(`Record ${recordRef.id} reviewer must have non-empty reviewedAt`)
+        hasRecordStructuralError = true
+      } else {
+        const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(recordRaw.reviewer.reviewedAt)
+        if (!dateMatch) {
+          failures.push(`Record ${recordRef.id} reviewer.reviewedAt must be an exact YYYY-MM-DD date, received: "${recordRaw.reviewer.reviewedAt}"`)
+          hasRecordStructuralError = true
+        } else {
+          const year = parseInt(dateMatch[1]!, 10)
+          const month = parseInt(dateMatch[2]!, 10)
+          const day = parseInt(dateMatch[3]!, 10)
+          if (!isValidCalendarDate(year, month, day)) {
+            failures.push(`Record ${recordRef.id} reviewer.reviewedAt is not a valid calendar date: "${recordRaw.reviewer.reviewedAt}"`)
+            hasRecordStructuralError = true
+          }
+        }
+      }
+    }
+
+    if (typeof recordRaw.releaseEligible !== 'boolean') {
+      failures.push(`Record ${recordRef.id} releaseEligible must be a boolean`)
+      hasRecordStructuralError = true
+    }
+
+    const parsedFindings: ReviewFinding[] = []
+    if (!Array.isArray(recordRaw.findings)) {
+      failures.push(`Record ${recordRef.id} findings must be an array`)
+      hasRecordStructuralError = true
+    } else {
+      const findingIds = new Set<string>()
+      for (let fIdx = 0; fIdx < recordRaw.findings.length; fIdx++) {
+        const finding = recordRaw.findings[fIdx]
+        if (!isPlainObject(finding)) {
+          failures.push(`Record ${recordRef.id} finding at index ${fIdx} must be an object`)
+          hasRecordStructuralError = true
+          continue
+        }
+        if (typeof finding.id !== 'string' || !finding.id.trim()) {
+          failures.push(`Record ${recordRef.id} finding at index ${fIdx} id must be a non-empty string`)
+          hasRecordStructuralError = true
+        } else {
+          if (findingIds.has(finding.id)) {
+            failures.push(`Record ${recordRef.id} contains duplicate finding ID: ${finding.id}`)
+            hasRecordStructuralError = true
+          }
+          findingIds.add(finding.id)
+        }
+        if (typeof finding.severity !== 'string' || !finding.severity.trim()) {
+          failures.push(`Record ${recordRef.id} finding ${String(finding.id)} must declare severity`)
+          hasRecordStructuralError = true
+        }
+        if (finding.disposition !== 'blocking' && finding.disposition !== 'accepted' && finding.disposition !== 'resolved') {
+          failures.push(
+            `Record ${recordRef.id} finding ${String(finding.id)} disposition must be blocking, accepted, or resolved; received: ${String(finding.disposition)}`
+          )
+          hasRecordStructuralError = true
+        }
+        if (!Array.isArray(finding.evidencePaths)) {
+          failures.push(`Record ${recordRef.id} finding ${String(finding.id)} evidencePaths must be an array`)
+          hasRecordStructuralError = true
+        } else {
+          for (let epIdx = 0; epIdx < finding.evidencePaths.length; epIdx++) {
+            const ep = finding.evidencePaths[epIdx]
+            if (typeof ep !== 'string' || !ep.trim()) {
+              failures.push(`Record ${recordRef.id} finding ${String(finding.id)} evidencePaths[${epIdx}] must be a non-empty string`)
+              hasRecordStructuralError = true
+            }
+          }
+        }
+        parsedFindings.push({
+          id: String(finding.id ?? ''),
+          severity: String(finding.severity ?? ''),
+          disposition: (finding.disposition ?? 'blocking') as FindingDisposition,
+          evidencePaths: Array.isArray(finding.evidencePaths) ? (finding.evidencePaths as string[]) : []
+        })
+      }
+    }
+
+    if (!Array.isArray(recordRaw.evidencePaths)) {
+      failures.push(`Record ${recordRef.id} evidencePaths must be an array`)
+      hasRecordStructuralError = true
+    } else {
+      for (let epIdx = 0; epIdx < recordRaw.evidencePaths.length; epIdx++) {
+        const ep = recordRaw.evidencePaths[epIdx]
+        if (typeof ep !== 'string' || !ep.trim()) {
+          failures.push(`Record ${recordRef.id} evidencePaths[${epIdx}] must be a non-empty string`)
+          hasRecordStructuralError = true
+        }
+      }
+    }
+
+    if (recordKind === 'source-review') {
+      const src = recordRaw.source
+      if (!isPlainObject(src)) {
+        failures.push(`Record ${recordRef.id} source-review must have source object`)
+        hasRecordStructuralError = true
+      } else {
+        if (typeof src.revision !== 'string' || !FULL_SHA_PATTERN.test(src.revision)) {
+          failures.push(`Record ${recordRef.id} source.revision must be a 40-character lowercase hex Git commit`)
+          hasRecordStructuralError = true
+        }
+        if (typeof src.baseRevision !== 'string' || !FULL_SHA_PATTERN.test(src.baseRevision)) {
+          failures.push(`Record ${recordRef.id} source.baseRevision must be a 40-character lowercase hex Git commit`)
+          hasRecordStructuralError = true
+        }
+        if (typeof src.coveredTreeDigest !== 'string' || !DIGEST_PATTERN.test(src.coveredTreeDigest)) {
+          failures.push(`Record ${recordRef.id} source.coveredTreeDigest must be a 64-character lowercase hex SHA-256`)
+          hasRecordStructuralError = true
+        }
+      }
+
+      if (recordRaw.signature !== undefined) {
+        const sig = recordRaw.signature
+        if (!isPlainObject(sig)) {
+          failures.push(`Record ${recordRef.id} signature must be an object`)
+          hasRecordStructuralError = true
+        } else {
+          if (sig.algorithm !== 'ed25519') {
+            failures.push(`Record ${recordRef.id} signature.algorithm must be "ed25519", received: ${String(sig.algorithm)}`)
+            hasRecordStructuralError = true
+          }
+          if (typeof sig.keyId !== 'string' || !sig.keyId.trim()) {
+            failures.push(`Record ${recordRef.id} signature.keyId must be a non-empty string`)
+            hasRecordStructuralError = true
+          }
+          if (typeof sig.value !== 'string' || !sig.value.trim()) {
+            failures.push(`Record ${recordRef.id} signature.value must be a non-empty string`)
+            hasRecordStructuralError = true
+          }
+        }
+      }
+    } else if (recordKind === 'working-tree-audit') {
+      if (isPlainObject(recordRaw.reviewer) && recordRaw.reviewer.independent !== false) {
+        failures.push(`Working-tree-audit record ${recordRef.id} must declare reviewer.independent as false`)
+        hasRecordStructuralError = true
+      }
+      if (recordRaw.releaseEligible !== false) {
+        failures.push(`Working-tree-audit record ${recordRef.id} must declare releaseEligible as false`)
+        hasRecordStructuralError = true
+      }
+      if (recordRaw.signature !== undefined) {
+        failures.push(`Working-tree-audit record ${recordRef.id} must not have a signature`)
+        hasRecordStructuralError = true
+      }
+      const src = recordRaw.source
+      if (!isPlainObject(src)) {
+        failures.push(`Record ${recordRef.id} working-tree-audit must have source object`)
+        hasRecordStructuralError = true
+      } else {
+        if (typeof src.baseRevision !== 'string' || !FULL_SHA_PATTERN.test(src.baseRevision)) {
+          failures.push(`Record ${recordRef.id} source.baseRevision must be a 40-character lowercase hex Git commit`)
+          hasRecordStructuralError = true
+        }
+        if (typeof src.fingerprint !== 'string' || !src.fingerprint.trim()) {
+          failures.push(`Record ${recordRef.id} source.fingerprint must be a non-empty string`)
+          hasRecordStructuralError = true
+        }
+        if (src.fingerprintAlgorithm !== CANONICAL_FINGERPRINT_ALGORITHM) {
+          failures.push(
+            `Working-tree-audit record ${recordRef.id} source.fingerprintAlgorithm must be "${CANONICAL_FINGERPRINT_ALGORITHM}", received: ${String(src.fingerprintAlgorithm)}`
+          )
+          hasRecordStructuralError = true
+        }
+      }
+    }
+
+    if (!hasRecordStructuralError) {
+      recordsById.set(recordRef.id, recordRaw as unknown as ReviewRecord)
+      rawRecordsById.set(recordRef.id, recordRaw)
+    }
+  }
+
+  const activeRecord = recordsById.get(manifestActiveReviewId)
+  const activeRecordRaw = rawRecordsById.get(manifestActiveReviewId)
+
+  if (!activeRecord || !activeRecordRaw) {
+    failures.push(`Active review record "${manifestActiveReviewId}" could not be loaded`)
+    return failures
+  }
+
+  if (activeRecord.kind !== 'source-review') {
+    failures.push(`Active review record must have kind "source-review", found: "${activeRecord.kind}"`)
+    return failures
+  }
+
+  if (threatModelRaw) {
+    const computedDigest = computeThreatModelDigest(threatModelRaw)
+    if (activeRecord.threatModelDigest !== computedDigest) {
+      failures.push(`Threat-model content digest does not match active review record: expected ${activeRecord.threatModelDigest}, computed ${computedDigest}`)
+    }
+  }
+
+  if (threatModelContract) {
+    await validateContainedPaths(rootPath, realRoot, threatModelContract.citedPaths, 'Cited path', failures)
+  }
+
+  await validateContainedPaths(rootPath, realRoot, activeRecord.evidencePaths, 'Active record evidence path', failures)
+  for (const finding of activeRecord.findings) {
+    await validateContainedPaths(rootPath, realRoot, finding.evidencePaths, `Finding ${finding.id} evidence path`, failures)
+  }
+
+  let packageManifest: PackageManifest | undefined
+  try {
+    packageManifest = JSON.parse(await readFile(path.join(rootPath, 'package.json'), 'utf8')) as PackageManifest
+  } catch (error) {
+    failures.push(`Cannot read package.json: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  if (packageManifest && threatModelContract) {
+    const manager = packageManagerName(packageManifest)
+    if (manager !== 'bun') {
+      failures.push('packageManager must select a versioned Bun release')
+    }
+    for (const command of threatModelContract.commands) {
+      const prefix = command.split(/\s+/, 1)[0]
+      if (prefix !== manager) {
+        failures.push(`Security command prefix does not match packageManager: ${command}`)
+      }
+    }
+    const scripts = packageScripts(packageManifest)
+    if (!scripts) {
+      failures.push('package.json scripts must be an object')
+    } else {
+      for (const command of threatModelContract.commands) {
+        const scriptMatch = command.match(/^bun run ([A-Za-z0-9:_-]+)$/)
+        if (scriptMatch && typeof scripts[scriptMatch[1] ?? ''] !== 'string') {
+          failures.push(`Referenced package script does not exist: ${scriptMatch[1]}`)
+        }
+      }
+      if (scripts['threat-model:check'] !== THREAT_MODEL_SCRIPT) {
+        failures.push(`package.json must define threat-model:check as ${THREAT_MODEL_SCRIPT}`)
+      }
+      const ciStatic = scripts['ci:static']
+      if (typeof ciStatic !== 'string' || !ciStatic.split(' && ').includes(THREAT_MODEL_CI_COMMAND)) {
+        failures.push('ci:static must execute bun run threat-model:check')
+      }
+    }
+  }
+
+  const { revision, baseRevision, coveredTreeDigest } = activeRecord.source
+
+  const exists = runGit(rootPath, ['cat-file', '-e', `${revision}^{commit}`])
   if (exists.status !== 0) {
-    failures.push(`Reviewed revision does not exist in this repository: ${contract.reviewedRevision}`)
-    return failures
-  }
-  const ancestor = runGit(rootPath, ['merge-base', '--is-ancestor', contract.reviewedRevision, 'HEAD'])
-  if (ancestor.status !== 0) {
-    failures.push(`Reviewed revision is not an ancestor of HEAD: ${contract.reviewedRevision}`)
+    failures.push(`Reviewed revision does not exist in this repository: ${revision}`)
     return failures
   }
 
-  const changed = runGit(rootPath, ['diff', '--name-only', '--no-renames', '-z', contract.reviewedRevision, 'HEAD'])
-  if (changed.status !== 0) {
-    failures.push(`Cannot compare reviewed revision with HEAD: ${String(changed.stderr).trim()}`)
+  const baseExists = runGit(rootPath, ['cat-file', '-e', `${baseRevision}^{commit}`])
+  if (baseExists.status !== 0) {
+    failures.push(`Base revision does not exist in this repository: ${baseRevision}`)
     return failures
   }
-  const changedPaths = String(changed.stdout).split('\0').filter(Boolean)
-  const boundaryChanges = changedPaths.filter(isSecurityBoundaryPath)
-  const packageIndex = boundaryChanges.indexOf('package.json')
-  if (packageIndex !== -1) {
-    const basePackage = runGit(rootPath, ['show', `${contract.reviewedRevision}:package.json`])
-    if (basePackage.status === 0 && packageOnlyAddsThreatModelGate(String(basePackage.stdout), manifest)) boundaryChanges.splice(packageIndex, 1)
+
+  const baseAncestor = runGit(rootPath, ['merge-base', '--is-ancestor', baseRevision, revision])
+  if (baseAncestor.status !== 0) {
+    failures.push(`Base revision is not an ancestor of reviewed revision: ${baseRevision}`)
+    return failures
   }
-  if (boundaryChanges.length > 0) {
-    failures.push(`Security-boundary source changed after the reviewed revision:\n- ${boundaryChanges.join('\n- ')}`)
+
+  const ancestor = runGit(rootPath, ['merge-base', '--is-ancestor', revision, 'HEAD'])
+  if (ancestor.status !== 0) {
+    failures.push(`Reviewed revision is not an ancestor of HEAD: ${revision}`)
+    return failures
   }
+
+  let revisionComputedDigest = ''
+  try {
+    revisionComputedDigest = computeCoveredTreeDigest(rootPath, revision)
+  } catch (error) {
+    failures.push(`Failed to compute covered-tree digest for reviewed revision ${revision}: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  if (revisionComputedDigest && revisionComputedDigest !== coveredTreeDigest) {
+    failures.push(
+      `Active review record coveredTreeDigest does not match reviewed revision tree: declared ${coveredTreeDigest}, computed ${revisionComputedDigest}`
+    )
+  }
+
+  const revisionDiff = runGit(rootPath, ['diff', '--name-only', '--no-renames', '-z', '--ignore-submodules=none', revision, 'HEAD'])
+  if (revisionDiff.status !== 0) {
+    failures.push(`Git diff between reviewed revision ${revision} and HEAD failed: ${String(revisionDiff.stderr).trim()}`)
+  } else {
+    const boundaryChanges = String(revisionDiff.stdout).split('\0').filter(Boolean).filter(isSecurityBoundaryPath)
+    if (boundaryChanges.length > 0) {
+      failures.push(`Security-boundary source changed after the reviewed revision:\n- ${boundaryChanges.join('\n- ')}`)
+    }
+  }
+
+  let headDigest = ''
+  try {
+    headDigest = computeCoveredTreeDigest(rootPath, 'HEAD')
+  } catch (error) {
+    failures.push(`Failed to compute covered-tree digest for HEAD: ${error instanceof Error ? error.message : String(error)}`)
+  }
+
+  if (headDigest && headDigest !== coveredTreeDigest) {
+    failures.push(`Covered-tree digest of HEAD does not match active review record: expected ${coveredTreeDigest}, computed ${headDigest}`)
+  }
+
+  const stagedRaw = runGit(rootPath, ['diff', '--cached', '--name-only', '--no-renames', '-z', '--ignore-submodules=none'])
+  if (stagedRaw.status !== 0) {
+    failures.push(`Git staged diff failed: ${String(stagedRaw.stderr).trim()}`)
+  }
+  const unstagedRaw = runGit(rootPath, ['diff', '--name-only', '--no-renames', '-z', '--ignore-submodules=none'])
+  if (unstagedRaw.status !== 0) {
+    failures.push(`Git unstaged diff failed: ${String(unstagedRaw.stderr).trim()}`)
+  }
+  const untrackedRaw = runGit(rootPath, ['ls-files', '--others', '--exclude-standard', '-z'])
+  if (untrackedRaw.status !== 0) {
+    failures.push(`Git untracked files enumeration failed: ${String(untrackedRaw.stderr).trim()}`)
+  }
+  const ignoredRaw = runGit(rootPath, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z'])
+  if (ignoredRaw.status !== 0) {
+    failures.push(`Git ignored files enumeration failed: ${String(ignoredRaw.stderr).trim()}`)
+  }
+  const indexFlagsRaw = runGit(rootPath, ['ls-files', '-v', '-z'])
+  if (indexFlagsRaw.status !== 0) {
+    failures.push(`Git index flags enumeration failed: ${String(indexFlagsRaw.stderr).trim()}`)
+  }
+
+  if (indexFlagsRaw.status === 0) {
+    const indexTokens = String(indexFlagsRaw.stdout).split('\0').filter(Boolean)
+    const flaggedFiles: string[] = []
+    for (const token of indexTokens) {
+      const tag = token.slice(0, 1)
+      const filePath = token.slice(2)
+      if (tag === 'h' || tag === 'S' || tag === 's') {
+        flaggedFiles.push(`${filePath} (${tag === 'h' ? 'assume-unchanged' : 'skip-worktree'})`)
+      }
+    }
+    if (flaggedFiles.length > 0) {
+      failures.push(`Git index contains assume-unchanged or skip-worktree entries:\n- ${flaggedFiles.join('\n- ')}`)
+    }
+  }
+
+  const stagedPaths = stagedRaw.status === 0 ? String(stagedRaw.stdout).split('\0').filter(Boolean) : []
+  const unstagedPaths = unstagedRaw.status === 0 ? String(unstagedRaw.stdout).split('\0').filter(Boolean) : []
+  const untrackedPaths = untrackedRaw.status === 0 ? String(untrackedRaw.stdout).split('\0').filter(Boolean) : []
+  const ignoredPaths = ignoredRaw.status === 0 ? String(ignoredRaw.stdout).split('\0').filter(Boolean) : []
+
+  const stagedBoundary = stagedPaths.filter(isSecurityBoundaryPath)
+  const unstagedBoundary = unstagedPaths.filter(isSecurityBoundaryPath)
+  const untrackedBoundary = untrackedPaths.filter(isSecurityBoundaryPath)
+  const allIgnoredBoundary = ignoredPaths.filter(isSecurityBoundaryPath)
+
+  let buildMetadataExceptionValid = false
+  if (allIgnoredBoundary.includes(CANONICAL_IGNORED_BUILD_METADATA_PATH)) {
+    const metadataRel = CANONICAL_IGNORED_BUILD_METADATA_PATH
+    const resolvedMetadata = path.resolve(rootPath, metadataRel)
+    let isSymlink = false
+    let isRegularFile = false
+
+    try {
+      const st = await lstat(resolvedMetadata)
+      if (st.isSymbolicLink()) {
+        isSymlink = true
+        failures.push(`Build metadata file must not be a symbolic link: ${metadataRel}`)
+      } else if (!st.isFile()) {
+        failures.push(`Build metadata file must be a regular file: ${metadataRel}`)
+      } else {
+        isRegularFile = true
+      }
+    } catch (error) {
+      failures.push(`Cannot stat build metadata file at ${metadataRel}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+
+    const metadataEscapeErr = await checkRealpathContained(realRoot, resolvedMetadata, metadataRel, 'Build metadata file')
+    if (metadataEscapeErr) {
+      failures.push(metadataEscapeErr)
+    }
+
+    let metadataParsed: unknown
+    if (isRegularFile && !isSymlink && !metadataEscapeErr) {
+      try {
+        const raw = await readFile(resolvedMetadata, 'utf8')
+        try {
+          metadataParsed = JSON.parse(raw)
+        } catch (error) {
+          failures.push(`Malformed build metadata JSON at ${metadataRel}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      } catch (error) {
+        failures.push(`Cannot read build metadata file at ${metadataRel}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+
+    if (metadataParsed !== undefined) {
+      if (!isPlainObject(metadataParsed)) {
+        failures.push(`Build metadata at ${metadataRel} must be a JSON object`)
+      } else {
+        const keys = Object.keys(metadataParsed)
+        const extraKeys = keys.filter(k => k !== 'revision' && k !== 'date')
+        if (extraKeys.length > 0) {
+          failures.push(`Build metadata at ${metadataRel} contains unexpected keys: ${extraKeys.join(', ')}`)
+        }
+        if (!('revision' in metadataParsed)) {
+          failures.push(`Build metadata at ${metadataRel} is missing "revision" key`)
+        }
+        if (!('date' in metadataParsed)) {
+          failures.push(`Build metadata at ${metadataRel} is missing "date" key`)
+        }
+
+        let revisionOk = false
+        if (typeof metadataParsed.revision !== 'string' || !metadataParsed.revision.trim()) {
+          failures.push(`Build metadata revision at ${metadataRel} must be a non-empty string`)
+        } else {
+          const headRevRes = runGit(rootPath, ['rev-parse', 'HEAD'])
+          if (headRevRes.status !== 0) {
+            failures.push(`Failed to determine current HEAD commit: ${String(headRevRes.stderr).trim()}`)
+          } else {
+            const currentHead = String(headRevRes.stdout).trim()
+            if (metadataParsed.revision !== currentHead) {
+              failures.push(`Build metadata revision does not match current HEAD: expected ${currentHead}, received ${metadataParsed.revision}`)
+            } else {
+              revisionOk = true
+            }
+          }
+        }
+
+        let dateOk = false
+        if (typeof metadataParsed.date !== 'string' || !metadataParsed.date.trim()) {
+          failures.push(`Build metadata date at ${metadataRel} must be a non-empty string`)
+        } else if (!isValidIsoTimestamp(metadataParsed.date)) {
+          failures.push(`Build metadata date is not a valid canonical ISO timestamp: ${metadataParsed.date}`)
+        } else {
+          dateOk = true
+        }
+
+        if (isRegularFile && !isSymlink && !metadataEscapeErr && extraKeys.length === 0 && keys.length === 2 && revisionOk && dateOk) {
+          buildMetadataExceptionValid = true
+        }
+      }
+    }
+  }
+
+  const ignoredBoundary = allIgnoredBoundary.filter(p => !(p === CANONICAL_IGNORED_BUILD_METADATA_PATH && buildMetadataExceptionValid))
+
+  const boundaryDriftSections: string[] = []
+  if (stagedBoundary.length > 0) {
+    boundaryDriftSections.push(`Staged boundary changes:\n- ${stagedBoundary.join('\n- ')}`)
+  }
+  if (unstagedBoundary.length > 0) {
+    boundaryDriftSections.push(`Unstaged boundary changes:\n- ${unstagedBoundary.join('\n- ')}`)
+  }
+  if (untrackedBoundary.length > 0) {
+    boundaryDriftSections.push(`Untracked boundary files:\n- ${untrackedBoundary.join('\n- ')}`)
+  }
+  if (ignoredBoundary.length > 0) {
+    boundaryDriftSections.push(`Ignored boundary files:\n- ${ignoredBoundary.join('\n- ')}`)
+  }
+
+  if (boundaryDriftSections.length > 0) {
+    failures.push(`Working tree has dirty security-boundary drift:\n${boundaryDriftSections.join('\n')}`)
+  }
+
+  const trustedKeysEnv = process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON
+  let trustedKeysConfig: TrustedKeysConfig | undefined
+
+  if (trustedKeysEnv && trustedKeysEnv.trim()) {
+    const parseRes = parseTrustedKeysConfig(trustedKeysEnv)
+    if (parseRes.error) {
+      failures.push(parseRes.error)
+    } else {
+      trustedKeysConfig = parseRes.config
+    }
+  }
+
+  for (const recordRef of validRecordRefs) {
+    const record = recordsById.get(recordRef.id)
+    const recordRaw = rawRecordsById.get(recordRef.id)
+    if (!record || !recordRaw) continue
+
+    if (record.kind === 'source-review') {
+      const claimsIndependent = record.reviewer.independent === true
+      const claimsReleaseEligible = record.releaseEligible === true
+      const claimsIndependenceOrRelease = claimsIndependent || claimsReleaseEligible
+      const recordLabel = record.id === manifestActiveReviewId ? 'Active review record' : `Record ${record.id}`
+
+      if (claimsIndependenceOrRelease) {
+        if (!record.signature) {
+          const claims: string[] = []
+          if (claimsIndependent) claims.push('independent=true')
+          if (claimsReleaseEligible) claims.push('releaseEligible=true')
+          failures.push(`${recordLabel} claims ${claims.join(' and ')} but has no signature`)
+        }
+        if (!trustedKeysConfig) {
+          if (!trustedKeysEnv || !trustedKeysEnv.trim()) {
+            if (!failures.some(f => f.includes('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required'))) {
+              failures.push(
+                options.release
+                  ? 'THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required for release verification'
+                  : 'THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required to verify trusted review records'
+              )
+            }
+          }
+        }
+      }
+
+      if (record.signature) {
+        if (!trustedKeysConfig) {
+          if (!trustedKeysEnv || !trustedKeysEnv.trim()) {
+            if (options.release && !failures.some(f => f.includes('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required'))) {
+              failures.push('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required for release verification')
+            }
+          }
+        } else {
+          const sigKeyId = record.signature.keyId
+          const trustedKey = trustedKeysConfig.keys.find(k => k.id === sigKeyId)
+          if (!trustedKey) {
+            failures.push(`${recordLabel} signature keyId "${sigKeyId}" is not in trusted keys`)
+          } else if (record.reviewer.identity !== trustedKey.identity) {
+            failures.push(`${recordLabel} reviewer identity "${record.reviewer.identity}" does not match trusted key identity "${trustedKey.identity}"`)
+          } else {
+            try {
+              const keyObj = parseEd25519PublicKey(trustedKey.publicKey)
+              const sigBytes = parseSignatureValue(record.signature.value)
+              const payload = computeRecordSigningPayload(recordRaw)
+              const isValid = crypto.verify(null, payload, keyObj, sigBytes)
+              if (!isValid) {
+                failures.push(`${recordLabel} signature verification failed`)
+              }
+            } catch (error) {
+              failures.push(`${recordLabel} signature verification error: ${error instanceof Error ? error.message : String(error)}`)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (options.release) {
+    const allDirtySections: string[] = []
+    if (stagedPaths.length > 0) {
+      allDirtySections.push(`Staged changes:\n- ${stagedPaths.join('\n- ')}`)
+    }
+    if (unstagedPaths.length > 0) {
+      allDirtySections.push(`Unstaged changes:\n- ${unstagedPaths.join('\n- ')}`)
+    }
+    if (untrackedPaths.length > 0) {
+      allDirtySections.push(`Untracked files:\n- ${untrackedPaths.join('\n- ')}`)
+    }
+    if (ignoredBoundary.length > 0) {
+      allDirtySections.push(`Ignored boundary files:\n- ${ignoredBoundary.join('\n- ')}`)
+    }
+    if (allDirtySections.length > 0) {
+      failures.push(`Release check requires a clean repository, but dirty paths were found:\n${allDirtySections.join('\n')}`)
+    }
+
+    if (!activeRecord.reviewer.independent) {
+      failures.push(`Active review record reviewer must be independent for release: ${activeRecord.reviewer.identity}`)
+    }
+    if (!activeRecord.releaseEligible) {
+      failures.push('Active review record is not marked releaseEligible')
+    }
+    if (!activeRecord.signature) {
+      failures.push('Active review record must have a valid detached signature for release')
+    }
+    if (!trustedKeysEnv || !trustedKeysEnv.trim()) {
+      if (!failures.some(f => f.includes('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required'))) {
+        failures.push('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required for release verification')
+      }
+    }
+    const blockingFindings = activeRecord.findings.filter(finding => finding.disposition === 'blocking')
+    if (blockingFindings.length > 0) {
+      failures.push(`Release blocked by unresolved findings: ${blockingFindings.map(f => f.id).join(', ')}`)
+    }
+  }
+
   return failures
 }
 
 async function main() {
   const args = process.argv.slice(2)
-  if (args.some(argument => argument !== '--release') || args.length > 1) throw new Error('Usage: bun server/scripts/check-threat-model.ts [--release]')
+  if (args.includes('--digest')) {
+    const rootPath = process.cwd()
+    const digestIdx = args.indexOf('--digest')
+    const revArg = args[digestIdx + 1]
+    const revision = revArg && !revArg.startsWith('--') ? revArg : 'HEAD'
+    const treeDigest = computeCoveredTreeDigest(rootPath, revision)
+    console.log(`Covered-tree digest (${revision}): ${treeDigest}`)
+    try {
+      const tmContent = await readFile(path.join(rootPath, CANONICAL_THREAT_MODEL_PATH), 'utf8')
+      const tmDigest = computeThreatModelDigest(tmContent)
+      console.log(`Threat-model digest: ${tmDigest}`)
+    } catch {
+      // ignore if threat model missing
+    }
+    return
+  }
+
+  if (args.some(argument => argument !== '--release') || args.length > 1) {
+    throw new Error('Usage: bun server/scripts/check-threat-model.ts [--release] [--digest [revision]]')
+  }
   const release = args[0] === '--release'
   const failures = await checkThreatModel(process.cwd(), { release })
   if (failures.length > 0) throw new Error(`Threat-model contract failed:\n- ${failures.join('\n- ')}`)

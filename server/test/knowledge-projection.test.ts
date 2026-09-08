@@ -2,11 +2,13 @@ import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from './bun-test.mts'
 import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import { up as createProjectionStore } from '../db/migrations/2.5.152.ts'
+import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
 import { PageKnowledgeLifecycle } from '../knowledge/lifecycle.ts'
 import {
   KnowledgeProjectionSchema,
   KnowledgeProjectionViewSchema,
   knowledgeProjectionView,
+  knowledgeSearchText,
   mergeKnowledgeUtilityResult,
   projectPageKnowledge
 } from '../knowledge/projection.ts'
@@ -43,15 +45,23 @@ describe('page knowledge projection', () => {
     expect(first).toEqual(second)
     expect(source).toEqual(original)
     expect(first.source.sha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(first.version).toBe(2)
+    expect(first.provenance.deterministicVersion).toBe('wiki-knowledge-v2')
     expect(projectPageKnowledge({ ...source, title: 'Deploy revised' }).source.sha256).not.toBe(first.source.sha256)
     expect(first.concept.sections).toEqual([expect.objectContaining({ id: 'deploy', title: 'Deploy', startLine: 1, endLine: 3 })])
     expect(first.lifecycle).toMatchObject({ status: 'draft', trustTier: 'human-reviewed', verification: 'outdated' })
-    expect(first.completeness.missingFields).toEqual(['concept.tags', 'concept.entities', 'concept.relationships', 'concept.openQuestions'])
+    expect(first.completeness.missingFields).toEqual([
+      'concept.tags',
+      'concept.entities',
+      'concept.relationships',
+      'concept.openQuestions',
+      'concept.searchTerms'
+    ])
     expect(first.completeness.state).toBe('complete')
   })
 
   it('accepts utility values only for declared gaps and records exact provenance', () => {
-    const deterministic = projectPageKnowledge(source)
+    const deterministic = projectPageKnowledge({ ...source, title: 'Amber Falcon Runbook' })
     const enriched = mergeKnowledgeUtilityResult(
       deterministic,
       {
@@ -60,7 +70,8 @@ describe('page knowledge projection', () => {
         tags: ['release', 'operations'],
         entities: [{ name: 'Release pipeline', type: 'System' }],
         relationships: [{ subject: 'Deploy', predicate: 'uses', object: 'Release pipeline' }],
-        openQuestions: ['Who owns rollback?']
+        openQuestions: ['Who owns rollback?'],
+        searchTerms: ['release deployment', 'AFR']
       },
       {
         profileVersionId: '00000000-0000-4000-8000-000000000001',
@@ -74,11 +85,13 @@ describe('page knowledge projection', () => {
     expect(enriched.concept.type).toBe('Procedure')
     expect(enriched.concept.summary).toBe('Use the release pipeline exactly.')
     expect(enriched.concept.tags).toEqual(['release', 'operations'])
+    expect(enriched.concept.searchTerms).toEqual(['AFR', 'release deployment'])
     expect(enriched.completeness).toEqual({ state: 'complete', missingFields: [] })
     expect(enriched.provenance.utility).toMatchObject({ model: 'utility-small', outputSha256: 'b'.repeat(64) })
     const fieldProvenance = knowledgeProjectionView(enriched).provenance.fields
     expect(fieldProvenance).toContainEqual({ field: 'concept.type', source: 'metadata', evidence: 'pages.extra.okf.type' })
     expect(fieldProvenance).toContainEqual({ field: 'concept.tags', source: 'utility', evidence: 'b'.repeat(64) })
+    expect(fieldProvenance).toContainEqual({ field: 'concept.searchTerms', source: 'utility', evidence: 'b'.repeat(64) })
     expect(fieldProvenance).not.toContainEqual(expect.objectContaining({ field: 'concept.type', source: 'utility' }))
   })
 
@@ -92,7 +105,8 @@ describe('page knowledge projection', () => {
         tags: [],
         entities: [],
         relationships: [],
-        openQuestions: []
+        openQuestions: [],
+        searchTerms: []
       },
       {
         profileVersionId: '00000000-0000-4000-8000-000000000001',
@@ -215,6 +229,65 @@ stale_after: 2026-08-20T00:00:00.000Z
     ])
   })
 
+  it('derives conservative title aliases and ignores Markdown code or images as provenance edges', () => {
+    const longLabel = 'L'.repeat(300)
+    const projection = projectPageKnowledge({
+      ...source,
+      title: 'Amber Falcon Runbook',
+      content: [
+        '`[inline example](fake/inline)`',
+        '```markdown',
+        '[fenced example](https://example.com/fenced)',
+        '```',
+        '![diagram](https://example.com/image)',
+        '',
+        '    [indented example](https://example.com/indented)',
+        `[${longLabel}](linked/${'path'.repeat(300)})`
+      ].join('\n')
+    })
+
+    expect(projection.concept.searchTerms).toEqual(['AFR'])
+    expect(projection.concept.links).toEqual([expect.objectContaining({ label: longLabel, kind: 'page', line: 8 })])
+    expect(projection.concept.sources).toEqual([])
+    expect(projection.concept.entities).toEqual([{ name: 'L'.repeat(255), type: 'WikiPage' }])
+    expect(projection.concept.relationships).toEqual([expect.objectContaining({ subject: 'Amber Falcon Runbook' })])
+    expect(projection.concept.relationships[0]?.object).toHaveLength(1_024)
+  })
+
+  it('preserves actual link lines for inline, reference, rich-label, and autolinks', () => {
+    const inlineProjection = projectPageKnowledge({
+      ...source,
+      content: ['Introductory prose', '[Actual link](operations/actual)'].join('\n')
+    })
+    const referenceProjection = projectPageKnowledge({
+      ...source,
+      content: ['Introductory prose', '[Reference link][reference]', '', '[reference]: operations/reference'].join('\n')
+    })
+    const richReferenceProjection = projectPageKnowledge({
+      ...source,
+      content: ['Introductory prose', '[*Actual link*][reference]', '', '[reference]: operations/reference'].join('\n')
+    })
+    const autolinkProjection = projectPageKnowledge({
+      ...source,
+      content: ['Introductory prose', '<https://example.com/actual>'].join('\n')
+    })
+
+    expect(inlineProjection.concept.links).toEqual([expect.objectContaining({ target: 'operations/actual', line: 2 })])
+    expect(referenceProjection.concept.links).toEqual([expect.objectContaining({ target: 'operations/reference', line: 2 })])
+    expect(richReferenceProjection.concept.links).toEqual([expect.objectContaining({ target: 'operations/reference', line: 2 })])
+    expect(autolinkProjection.concept.links).toEqual([expect.objectContaining({ target: 'https://example.com/actual', line: 2 })])
+  })
+
+  it('omits empty Markdown headings and preserves long valid Unicode identities', () => {
+    const emptyHeading = projectPageKnowledge({ ...source, content: '#  \n' })
+    const unicodePath = '界'.repeat(123)
+    const unicodePathProjection = projectPageKnowledge({ ...source, path: unicodePath })
+
+    expect(emptyHeading.concept.sections).toEqual([])
+    expect(unicodePathProjection.concept.id).toBe(`wiki:en:${encodeURIComponent(unicodePath)}`)
+    expect(unicodePathProjection.concept.id.length).toBeLessThanOrEqual(10_000)
+  })
+
   it('exposes bounded field provenance in projection views', () => {
     const view = knowledgeProjectionView(projectPageKnowledge(source))
     expect(view.provenance.fields).toEqual(
@@ -256,10 +329,21 @@ stale_after: 2026-08-20T00:00:00.000Z
     expect(projection.concept.sections[0]?.title.length).toBeLessThanOrEqual(512)
   })
 
-  it('does not close Markdown fences with shorter or different delimiters', () => {
+  it('does not close Markdown fences with shorter, different, or trailing delimiters', () => {
     const projection = projectPageKnowledge({
       ...source,
-      content: ['# Visible before', '````ts', '# Hidden one', '```', '# Hidden two', '~~~~', '# Hidden three', '`````', '# Visible after'].join('\n')
+      content: [
+        '# Visible before',
+        '````ts',
+        '```not-a-close',
+        '# Hidden one',
+        '```',
+        '# Hidden two',
+        '~~~~',
+        '# Hidden three',
+        '`````',
+        '# Visible after'
+      ].join('\n')
     })
 
     expect(projection.concept.sections.map(section => section.title)).toEqual(['Visible before', 'Visible after'])
@@ -273,7 +357,7 @@ stale_after: 2026-08-20T00:00:00.000Z
 
     expect(projection.completeness).toEqual({
       state: 'complete',
-      missingFields: ['concept.tags', 'concept.entities', 'concept.relationships']
+      missingFields: ['concept.tags', 'concept.entities', 'concept.relationships', 'concept.searchTerms']
     })
   })
 })
@@ -291,6 +375,9 @@ describe('terminal knowledge effect recovery', () => {
       table.string('path').notNullable()
       table.string('visibility').notNullable()
       table.integer('ownerId').nullable()
+      table.boolean('isPublished').notNullable()
+      table.dateTime('publishStartDate').nullable()
+      table.dateTime('publishEndDate').nullable()
       table.string('contentType').notNullable()
       table.string('title').notNullable()
       table.text('description').nullable()
@@ -305,6 +392,9 @@ describe('terminal knowledge effect recovery', () => {
     await db.schema.createTable('pageTags', table => {
       table.integer('pageId').notNullable()
       table.integer('tagId').notNullable()
+    })
+    await db.schema.createTable('pageAccessPasswords', table => {
+      table.integer('pageId').notNullable()
     })
     await db.schema.createTable('pageMutationOutbox', table => {
       table.uuid('id').primary()
@@ -340,6 +430,7 @@ describe('terminal knowledge effect recovery', () => {
       table.boolean('conformed').notNullable()
     })
     await createProjectionStore(db)
+    await createKnowledgeSearchStore(db)
   })
 
   afterEach(async () => db.destroy())
@@ -352,6 +443,9 @@ describe('terminal knowledge effect recovery', () => {
       localeCode: 'en',
       path: 'operations/recover',
       visibility: 'public',
+      isPublished: true,
+      publishStartDate: null,
+      publishEndDate: null,
       ownerId: null,
       contentType: 'markdown',
       title: 'Recover',

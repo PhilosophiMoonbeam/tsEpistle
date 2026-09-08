@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 1,
+  "id": "legacy-baseline-55f30709",
+  "kind": "source-review",
+  "repository": "PhilosophiMoonbeam/tsEpistle",
+  "policyVersion": 1,
+  "threatModelDigest": "e873cd500c8e8fca2a9e8292b3fa62b293cc4a2664e763857f03c3d81024ab16",
+  "reviewer": {
+    "identity": "tsEpistle maintainers",
+    "independent": false,
+    "reviewedAt": "2026-09-04"
+  },
+  "releaseEligible": false,
+  "source": {
+    "revision": "55f30709cd4b8de0ec1fd498cac7174f1cacd084",
+    "baseRevision": "25c17cb74359fea7564c5d59118ff75b9ede6c77",
+    "coveredTreeDigest": "defc97a395ab98709683518d8a81f0ec778870d670a110c3d24edff6c519a2ce"
+  },
+  "findings": [
+    {
+      "id": "SEC-EXT-001",
+      "severity": "Release blocker",
+      "disposition": "blocking",
+      "evidencePaths": [
+        "docs/security/review-history.md"
+      ]
+    },
+    {
+      "id": "SEC-ADAPTER-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/threat-model.md"
+      ]
+    },
+    {
+      "id": "SEC-DEP-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/threat-model.md"
+      ]
+    },
+    {
+      "id": "SEC-AUTH-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "dev/e2e/setup.e2e.ts"
+      ]
+    },
+    {
+      "id": "SEC-OPS-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "dev/e2e/multi-instance-smoke.sh",
+        "server/test/core/durable-jobs.test.ts"
+      ]
+    },
+    {
+      "id": "SEC-MCP-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "server/test/core/auth.api-access.test.ts"
+      ]
+    },
+    {
+      "id": "SEC-MCP-002",
+      "severity": "Low",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "server/test/core/auth.api-access.test.ts"
+      ]
+    }
+  ],
+  "evidencePaths": [
+    "docs/security/review-history.md",
+    "docs/security/threat-model.md"
+  ]
+}

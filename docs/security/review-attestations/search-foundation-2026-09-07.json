@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "id": "search-foundation-2026-09-07",
+  "kind": "working-tree-audit",
+  "repository": "PhilosophiMoonbeam/tsEpistle",
+  "policyVersion": 1,
+  "threatModelDigest": "e873cd500c8e8fca2a9e8292b3fa62b293cc4a2664e763857f03c3d81024ab16",
+  "reviewer": {
+    "identity": "tsEpistle maintainers",
+    "independent": false,
+    "reviewedAt": "2026-09-07"
+  },
+  "releaseEligible": false,
+  "source": {
+    "baseRevision": "d3d5a63326c056bb847fdb2552be0a1cf1eb7020",
+    "fingerprint": "3adffcba7255a3f88ec490ceffefe6f826e9508a",
+    "fingerprintAlgorithm": "tsepistle-isolated-preview-v1"
+  },
+  "findings": [
+    {
+      "id": "SEC-EXT-001",
+      "severity": "Release blocker",
+      "disposition": "blocking",
+      "evidencePaths": [
+        "docs/security/review-history.md"
+      ]
+    },
+    {
+      "id": "SEC-SEARCH-GRAPH-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/benchmarks/search-graph-boundary-2026-09-07.json"
+      ]
+    },
+    {
+      "id": "SEC-SEARCH-STALE-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/benchmarks/search-graph-boundary-2026-09-07.json"
+      ]
+    },
+    {
+      "id": "SEC-SEARCH-LIMIT-001",
+      "severity": "Low",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/search-foundation-audit.md"
+      ]
+    }
+  ],
+  "evidencePaths": [
+    "docs/search-foundation-audit.md",
+    "docs/benchmarks/search-foundation-live-2026-09-07.json",
+    "docs/benchmarks/search-graph-boundary-2026-09-07.json",
+    "docs/benchmarks/search-foundation-after-2026-09-07.json",
+    "docs/benchmarks/search-foundation-before-2026-09-07.json",
+    "docs/benchmarks/search-utility-after-2026-09-07.json",
+    "docs/benchmarks/search-utility-before-2026-09-07.json"
+  ]
+}

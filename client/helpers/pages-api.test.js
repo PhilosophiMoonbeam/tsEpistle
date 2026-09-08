@@ -1,6 +1,27 @@
-import { buildOkfMetadataPayload, deletePage, deletePageTag, discardCollaborationDraft, fetchPage, fetchPageHistory, fetchPageLinks, fetchPageList, fetchPageLocaleRelations, fetchPageTags, fetchPageTree, fetchPageVersion, fetchRecentPages, linkPageLocaleRelation, restorePageVersion, unlinkPageLocaleRelation, updatePage, updatePageTag, validateOkfMetadataPayload } from './pages-api.ts'
+import {
+  buildOkfMetadataPayload,
+  deletePage,
+  deletePageTag,
+  discardCollaborationDraft,
+  fetchPage,
+  fetchPageHistory,
+  fetchPageLinks,
+  fetchPageList,
+  fetchPageLocaleRelations,
+  fetchPageTags,
+  fetchPageTree,
+  fetchPageVersion,
+  fetchRecentPages,
+  linkPageLocaleRelation,
+  restorePageVersion,
+  searchPages,
+  unlinkPageLocaleRelation,
+  updatePage,
+  updatePageTag,
+  validateOkfMetadataPayload
+} from './pages-api.ts'
 
-function createJsonResponse (payload, ok = true) {
+function createJsonResponse(payload, ok = true) {
   return {
     ok,
     headers: {
@@ -15,12 +36,13 @@ const missingOkf = {
   projection: { state: 'pending', value: null }
 }
 const validProjection = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   sourceRevision: '8',
   state: 'partial',
   conceptType: null,
   summary: '',
   tags: [],
+  searchTerms: [],
   entities: [],
   relationships: [],
   openQuestions: [],
@@ -33,8 +55,8 @@ const validProjection = {
     verifiedAt: '2026-01-02T00:00:00.000Z',
     staleAfter: null
   },
-  missingFields: ['concept.type'],
-  provenance: { deterministicVersion: 'wiki-knowledge-v1', utility: null }
+  missingFields: ['concept.type', 'concept.searchTerms'],
+  provenance: { deterministicVersion: 'wiki-knowledge-v2', utility: null }
 }
 const pagePayload = (okf = missingOkf) => ({
   id: 7,
@@ -64,19 +86,19 @@ const pagePayload = (okf = missingOkf) => ({
 
 describe('pages api helper', () => {
   test('fetches and validates page links payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      {
-        id: 1,
-        path: 'en/docs/home',
-        title: 'Home',
-        links: ['en/docs/target'],
-        extra: 'ignored'
-      }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          id: 1,
+          path: 'en/docs/home',
+          title: 'Home',
+          links: ['en/docs/target'],
+          extra: 'ignored'
+        }
+      ])
+    )
 
-    expect(await fetchPageLinks(fetchImpl, 'en')).toEqual([
-      { id: 1, path: 'en/docs/home', title: 'Home', links: ['en/docs/target'] }
-    ])
+    expect(await fetchPageLinks(fetchImpl, 'en')).toEqual([{ id: 1, path: 'en/docs/home', title: 'Home', links: ['en/docs/target'] }])
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/links?locale=en', {
       credentials: 'same-origin',
@@ -107,32 +129,34 @@ describe('pages api helper', () => {
   })
 
   test('fetches and validates page detail payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      id: 7,
-      locale: 'en',
-      path: 'docs/alpha',
-      hash: 'abc123',
-      title: 'Alpha',
-      description: null,
-      visibility: 'public',
-      ownerId: null,
-      isPublished: true,
-      publishStartDate: null,
-      publishEndDate: null,
-      contentType: 'markdown',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      updatedAt: '2026-01-02T00:00:00.000Z',
-      sourceRevision: 8,
-      editor: 'markdown',
-      authorId: 2,
-      authorName: 'Author',
-      authorEmail: 'author@example.com',
-      creatorId: 1,
-      creatorName: 'Creator',
-      creatorEmail: 'creator@example.com',
-      okf: missingOkf,
-      extra: 'ignored'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        id: 7,
+        locale: 'en',
+        path: 'docs/alpha',
+        hash: 'abc123',
+        title: 'Alpha',
+        description: null,
+        visibility: 'public',
+        ownerId: null,
+        isPublished: true,
+        publishStartDate: null,
+        publishEndDate: null,
+        contentType: 'markdown',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        sourceRevision: 8,
+        editor: 'markdown',
+        authorId: 2,
+        authorName: 'Author',
+        authorEmail: 'author@example.com',
+        creatorId: 1,
+        creatorName: 'Creator',
+        creatorEmail: 'creator@example.com',
+        okf: missingOkf,
+        extra: 'ignored'
+      })
+    )
 
     expect(await fetchPage(fetchImpl, 7)).toEqual({
       id: 7,
@@ -159,7 +183,6 @@ describe('pages api helper', () => {
       creatorEmail: 'creator@example.com',
       okf: missingOkf
     })
-
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/7', {
       credentials: 'same-origin',
@@ -201,21 +224,79 @@ describe('pages api helper', () => {
     await expect(fetchPage(malformedFetch, 7, 'Bad OKF payload')).rejects.toThrow('Bad OKF payload')
   })
 
+  test('validates bounded knowledge projection search terms', async () => {
+    const current = {
+      authority: {
+        state: 'valid',
+        metadata: { type: 'Reference', status: 'stable', generated: { by: 'human:2', at: '2026-01-01T00:00:00.000Z' } },
+        trust: {
+          trustTier: 'human-reviewed',
+          verification: 'current',
+          status: 'stable',
+          stale: false,
+          generatedAt: '2026-01-01T00:00:00.000Z',
+          verifiedAt: '2026-01-02T00:00:00.000Z'
+        }
+      },
+      projection: { state: 'current', value: validProjection }
+    }
+    const malformed = structuredClone(current)
+    malformed.projection.value.searchTerms = ['x'.repeat(121)]
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(pagePayload(malformed)))
+
+    await expect(fetchPage(fetchImpl, 7, 'Bad knowledge projection')).rejects.toThrow('Bad knowledge projection')
+
+    const obsolete = structuredClone(current)
+    obsolete.projection.value.schemaVersion = 1
+    const obsoleteFetch = vi.fn().mockResolvedValue(createJsonResponse(pagePayload(obsolete)))
+    await expect(fetchPage(obsoleteFetch, 7, 'Obsolete knowledge projection')).rejects.toThrow('Obsolete knowledge projection')
+  })
+
+  test('accepts knowledge-only search matches and rejects unknown match fields', async () => {
+    const response = {
+      results: [
+        {
+          id: 7,
+          title: 'Alpha',
+          description: '',
+          path: 'docs/alpha',
+          locale: 'en',
+          visibility: 'public',
+          tags: [],
+          score: 1,
+          matchedFields: ['knowledge']
+        }
+      ],
+      suggestions: [],
+      totalHits: 1
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(response))
+
+    await expect(searchPages(fetchImpl, 'alpha')).resolves.toMatchObject({
+      results: [{ id: 7, matchedFields: ['knowledge'] }]
+    })
+
+    response.results[0].matchedFields = ['untrusted']
+    await expect(searchPages(fetchImpl, 'alpha', {}, 'Bad search response')).rejects.toThrow('Bad search response')
+  })
+
   test('strips page duplicates, actors, derived facts, and deleted sources from editable metadata', () => {
-    expect(buildOkfMetadataPayload({
-      type: 'Reference',
-      status: 'stable',
-      resource: 'https://example.test',
-      sources: [{ resource: 'https://source.test' }],
-      title: 'page title',
-      description: 'page description',
-      tags: ['page'],
-      generated: { by: 'human:2' },
-      verified: { by: 'human:2' },
-      restored_from: { revision: '1' },
-      'x-wiki': { projection: 'derived' },
-      extension: { retained: true }
-    })).toEqual({
+    expect(
+      buildOkfMetadataPayload({
+        type: 'Reference',
+        status: 'stable',
+        resource: 'https://example.test',
+        sources: [{ resource: 'https://source.test' }],
+        title: 'page title',
+        description: 'page description',
+        tags: ['page'],
+        generated: { by: 'human:2' },
+        verified: { by: 'human:2' },
+        restored_from: { revision: '1' },
+        'x-wiki': { projection: 'derived' },
+        extension: { retained: true }
+      })
+    ).toEqual({
       type: 'Reference',
       status: 'stable',
       resource: 'https://example.test',
@@ -236,21 +317,27 @@ describe('pages api helper', () => {
     })
     expect(emptySource.valid).toBe(false)
     expect(emptySource.error.message).toContain('Source 1 resource is required')
-    expect(() => buildOkfMetadataPayload({
-      type: 'Reference',
-      status: 'stable',
-      sources: [{ resource: '' }]
-    })).toThrow('Fix the Knowledge / OKF metadata before saving: Source 1 resource is required')
+    expect(() =>
+      buildOkfMetadataPayload({
+        type: 'Reference',
+        status: 'stable',
+        sources: [{ resource: '' }]
+      })
+    ).toThrow('Fix the Knowledge / OKF metadata before saving: Source 1 resource is required')
 
-    expect(() => buildOkfMetadataPayload({
-      type: 'Reference',
-      status: 'stable',
-      stale_after: 'tomorrow'
-    })).toThrow('Stale after must be a valid ISO-8601 timestamp')
-    expect(() => buildOkfMetadataPayload({
-      type: '',
-      status: 'stable'
-    })).toThrow('Type is required')
+    expect(() =>
+      buildOkfMetadataPayload({
+        type: 'Reference',
+        status: 'stable',
+        stale_after: 'tomorrow'
+      })
+    ).toThrow('Stale after must be a valid ISO-8601 timestamp')
+    expect(() =>
+      buildOkfMetadataPayload({
+        type: '',
+        status: 'stable'
+      })
+    ).toThrow('Type is required')
   })
 
   test.each([
@@ -261,11 +348,7 @@ describe('pages api helper', () => {
     '2026-08-31T12:00:00+14:00',
     '2026-08-31T12:00:00-14:00'
   ])('accepts server-valid OKF timestamps: %s', timestamp => {
-    const timestampFields = [
-      { stale_after: timestamp },
-      { generated: { by: 'machine:1', at: timestamp } },
-      { verified: { by: 'human:1', at: timestamp } }
-    ]
+    const timestampFields = [{ stale_after: timestamp }, { generated: { by: 'machine:1', at: timestamp } }, { verified: { by: 'human:1', at: timestamp } }]
 
     for (const fields of timestampFields) {
       expect(validateOkfMetadataPayload({ type: 'Reference', ...fields }).valid).toBe(true)
@@ -284,11 +367,7 @@ describe('pages api helper', () => {
     '2026-08-31T12:00:00-14:01',
     '2026-08-31T12:00:00+15:00'
   ])('blocks server-invalid OKF timestamps before save: %s', timestamp => {
-    const timestampFields = [
-      { stale_after: timestamp },
-      { generated: { by: 'machine:1', at: timestamp } },
-      { verified: { by: 'human:1', at: timestamp } }
-    ]
+    const timestampFields = [{ stale_after: timestamp }, { generated: { by: 'machine:1', at: timestamp } }, { verified: { by: 'human:1', at: timestamp } }]
 
     for (const fields of timestampFields) {
       const metadata = { type: 'Reference', ...fields }
@@ -298,22 +377,28 @@ describe('pages api helper', () => {
   })
   test('includes editable OKF metadata with canonical CAS on page update', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ page: { id: 7, updatedAt: '2026-01-03T00:00:00.000Z', sourceRevision: 9 } }))
-    await updatePage(fetchImpl, 7, {
-      content: 'body',
-      description: '',
-      editor: 'markdown',
-      visibility: 'public',
-      isPublished: true,
-      locale: 'en',
-      path: 'docs/alpha',
-      publishEndDate: '',
-      publishStartDate: '',
-      scriptCss: '',
-      scriptJs: '',
-      tags: [],
-      title: 'Alpha',
-      okfMetadata: { type: 'Reference', status: 'stable' }
-    }, '8', 4)
+    await updatePage(
+      fetchImpl,
+      7,
+      {
+        content: 'body',
+        description: '',
+        editor: 'markdown',
+        visibility: 'public',
+        isPublished: true,
+        locale: 'en',
+        path: 'docs/alpha',
+        publishEndDate: '',
+        publishStartDate: '',
+        scriptCss: '',
+        scriptJs: '',
+        tags: [],
+        title: 'Alpha',
+        okfMetadata: { type: 'Reference', status: 'stable' }
+      },
+      '8',
+      4
+    )
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
       expectedSourceRevision: '8',
       expectedCollaborationGeneration: 4,
@@ -336,23 +421,25 @@ describe('pages api helper', () => {
   })
 
   test('fetches and validates page list payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      {
-        id: 10,
-        locale: 'en',
-        path: 'docs/alpha',
-        title: null,
-        description: null,
-        isPublished: true,
-        visibility: 'public',
-        ownerId: null,
-        contentType: 'markdown',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-03T00:00:00.000Z',
-        tags: ['alpha', 'docs'],
-        extra: 'ignored'
-      }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          id: 10,
+          locale: 'en',
+          path: 'docs/alpha',
+          title: null,
+          description: null,
+          isPublished: true,
+          visibility: 'public',
+          ownerId: null,
+          contentType: 'markdown',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-03T00:00:00.000Z',
+          tags: ['alpha', 'docs'],
+          extra: 'ignored'
+        }
+      ])
+    )
 
     expect(await fetchPageList(fetchImpl)).toEqual([
       {
@@ -380,9 +467,7 @@ describe('pages api helper', () => {
   })
 
   test('rejects malformed page list rows', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', tags: ['alpha'] }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', tags: ['alpha'] }]))
 
     await expect(Promise.resolve(fetchPageList(fetchImpl, 'Bad page list payload'))).rejects.toThrow('Bad page list payload')
   })
@@ -400,23 +485,25 @@ describe('pages api helper', () => {
   })
 
   test('fetches and validates admin page tags payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      {
-        id: 1,
-        tag: 'alpha',
-        title: 'Alpha',
-        createdAt: '2026-01-01T00:00:00.000Z',
-        updatedAt: '2026-01-02T00:00:00.000Z',
-        extra: 'ignored'
-      },
-      {
-        id: 2,
-        tag: 'zeta',
-        title: null,
-        createdAt: '2026-01-03T00:00:00.000Z',
-        updatedAt: '2026-01-04T00:00:00.000Z'
-      }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          id: 1,
+          tag: 'alpha',
+          title: 'Alpha',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+          extra: 'ignored'
+        },
+        {
+          id: 2,
+          tag: 'zeta',
+          title: null,
+          createdAt: '2026-01-03T00:00:00.000Z',
+          updatedAt: '2026-01-04T00:00:00.000Z'
+        }
+      ])
+    )
 
     expect(await fetchPageTags(fetchImpl)).toEqual([
       { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' },
@@ -432,9 +519,9 @@ describe('pages api helper', () => {
   })
 
   test('accepts empty string tag values allowed by the tag update contract', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      { id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
-    ]))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(createJsonResponse([{ id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }]))
 
     expect(await fetchPageTags(fetchImpl)).toEqual([
       { id: 1, tag: '', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
@@ -442,9 +529,9 @@ describe('pages api helper', () => {
   })
 
   test('rejects malformed admin page tags rows', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      { id: 1, tag: 12, title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }
-    ]))
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(createJsonResponse([{ id: 1, tag: 12, title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z' }]))
 
     await expect(Promise.resolve(fetchPageTags(fetchImpl, 'Bad page tags payload'))).rejects.toThrow('Bad page tags payload')
   })
@@ -462,24 +549,26 @@ describe('pages api helper', () => {
   })
 
   test('fetches and validates dashboard recent-pages payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      {
-        id: 10,
-        locale: 'en',
-        path: 'docs/alpha',
-        title: 'Alpha',
-        updatedAt: '2026-01-03T00:00:00.000Z',
-        visibility: 'private'
-      },
-      {
-        id: 11,
-        locale: 'fr',
-        path: 'docs/beta',
-        title: 'Beta',
-        updatedAt: '2026-01-02T00:00:00.000Z',
-        visibility: 'public'
-      }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          id: 10,
+          locale: 'en',
+          path: 'docs/alpha',
+          title: 'Alpha',
+          updatedAt: '2026-01-03T00:00:00.000Z',
+          visibility: 'private'
+        },
+        {
+          id: 11,
+          locale: 'fr',
+          path: 'docs/beta',
+          title: 'Beta',
+          updatedAt: '2026-01-02T00:00:00.000Z',
+          visibility: 'public'
+        }
+      ])
+    )
 
     expect(await fetchRecentPages(fetchImpl)).toEqual([
       { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: '2026-01-03T00:00:00.000Z', visibility: 'private' },
@@ -495,16 +584,18 @@ describe('pages api helper', () => {
   })
 
   test('accepts empty string fields allowed by the dashboard GraphQL contract', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      {
-        id: 12,
-        locale: 'en',
-        path: '',
-        title: '',
-        updatedAt: '2026-01-01T00:00:00.000Z',
-        visibility: 'public'
-      }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          id: 12,
+          locale: 'en',
+          path: '',
+          title: '',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          visibility: 'public'
+        }
+      ])
+    )
 
     expect(await fetchRecentPages(fetchImpl)).toEqual([
       { id: 12, locale: 'en', path: '', title: '', updatedAt: '2026-01-01T00:00:00.000Z', visibility: 'public' }
@@ -512,9 +603,7 @@ describe('pages api helper', () => {
   })
 
   test('rejects malformed dashboard recent-pages rows', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([
-      { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: null }
-    ]))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: null }]))
 
     await expect(Promise.resolve(fetchRecentPages(fetchImpl, 'Bad recent pages payload'))).rejects.toThrow('Bad recent pages payload')
   })
@@ -570,13 +659,18 @@ describe('pages api helper', () => {
   })
 
   test('surfaces collaboration discard conflicts instead of treating them as success', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      error: 'Another user is actively editing this page.'
-    }, false))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse(
+        {
+          error: 'Another user is actively editing this page.'
+        },
+        false
+      )
+    )
 
-    await expect(Promise.resolve(
-      discardCollaborationDraft(fetchImpl, 7, '2026-08-15T00:00:00.000Z', '8')
-    )).rejects.toThrow('Another user is actively editing this page.')
+    await expect(Promise.resolve(discardCollaborationDraft(fetchImpl, 7, '2026-08-15T00:00:00.000Z', '8'))).rejects.toThrow(
+      'Another user is actively editing this page.'
+    )
   })
 
   test('surfaces API error messages for failed page delete requests', async () => {
@@ -668,13 +762,15 @@ describe('pages api helper', () => {
   })
 
   test('rejects revision payloads that omit canonical editor metadata', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      versionId: 9,
-      content: '# Before',
-      title: 'Before',
-      description: '',
-      path: 'before'
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        versionId: 9,
+        content: '# Before',
+        title: 'Before',
+        description: '',
+        path: 'before'
+      })
+    )
 
     await expect(Promise.resolve(fetchPageVersion(fetchImpl, 42, 9, 'Invalid revision'))).rejects.toThrow('Invalid revision')
   })
@@ -696,18 +792,22 @@ describe('pages api helper', () => {
   })
 
   test('fetches paginated revision metadata for the history timeline', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
-      total: 1,
-      trail: [{
-        versionId: 9,
-        authorId: 7,
-        authorName: 'Owner',
-        actionType: 'edit',
-        valueBefore: null,
-        valueAfter: null,
-        versionDate: '2026-08-15T00:00:00.000Z'
-      }]
-    }))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse({
+        total: 1,
+        trail: [
+          {
+            versionId: 9,
+            authorId: 7,
+            authorName: 'Owner',
+            actionType: 'edit',
+            valueBefore: null,
+            valueAfter: null,
+            versionDate: '2026-08-15T00:00:00.000Z'
+          }
+        ]
+      })
+    )
 
     expect(await fetchPageHistory(fetchImpl, 42, 0, 25)).toMatchObject({ total: 1 })
     expect(fetchImpl.mock.calls[0][0]).toBe('/_api/pages/42/history?offsetPage=0&offsetSize=25')
@@ -739,17 +839,21 @@ describe('pages api helper', () => {
   })
 
   test('rejects page tree rows without an explicit edit capability', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{
-      id: 10,
-      path: 'docs',
-      title: 'Docs',
-      isFolder: true,
-      pageId: 7,
-      parent: 0,
-      locale: 'en',
-      visibility: 'public',
-      ownerId: null
-    }]))
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          id: 10,
+          path: 'docs',
+          title: 'Docs',
+          isFolder: true,
+          pageId: 7,
+          parent: 0,
+          locale: 'en',
+          visibility: 'public',
+          ownerId: null
+        }
+      ])
+    )
 
     await expect(Promise.resolve(fetchPageTree(fetchImpl, { locale: 'en' }, 'Bad page tree'))).rejects.toThrow('Bad page tree')
   })
@@ -783,19 +887,24 @@ describe('pages api helper', () => {
     expect(await linkPageLocaleRelation(fetchImpl, 42, 7)).toEqual([])
     expect(await unlinkPageLocaleRelation(fetchImpl, 42, 7)).toEqual([])
     expect(fetchImpl.mock.calls).toEqual([
-      ['/_api/pages/42/locale-relations', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ relatedPageId: 7 })
-      }],
-      ['/_api/pages/42/locale-relations/7', {
-        method: 'DELETE',
-        credentials: 'same-origin',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      }]
+      [
+        '/_api/pages/42/locale-relations',
+        {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ relatedPageId: 7 })
+        }
+      ],
+      [
+        '/_api/pages/42/locale-relations/7',
+        {
+          method: 'DELETE',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        }
+      ]
     ])
   })
-
 })
