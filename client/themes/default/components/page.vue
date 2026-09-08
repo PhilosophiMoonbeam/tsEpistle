@@ -2880,7 +2880,7 @@ export default defineComponent({
  
 
 @media (min-width: 600px) {
-  .page-header-headings--branded {
+  .page-header-section .page-header-headings--branded {
     --page-branding-mark-size: 96px;
   }
 
@@ -2939,7 +2939,7 @@ export default defineComponent({
 }
 
 @media (min-width: 1280px) {
-  .page-header-headings--branded {
+  .page-header-section .page-header-headings--branded {
     --page-branding-mark-size: 128px;
   }
 
