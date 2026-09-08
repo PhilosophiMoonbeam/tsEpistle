@@ -12,10 +12,15 @@ const localeRelationMovePatch = vi.fn(async (_transaction: Knex.Transaction, _pa
 const writeOutboxEvent = vi.fn(async (_knex: unknown, _event: { type: string; payload: Record<string, unknown> }) => undefined)
 const redactProtectedPageForSearch = vi.fn((page: unknown) => page)
 const syncProtectedPageAssets = vi.fn(async (_knex: unknown, _pageId: number, _content: string, _render: string) => undefined)
+const protectedAssetRequiresUnlock = vi.fn(async () => false)
 
 vi.mockModule('../../helpers/page-locale-relations.ts', import.meta.url, () => ({ localeRelationMovePatch }))
 vi.mockModule('../../core/outbox.ts', import.meta.url, () => ({ writeOutboxEvent }))
-vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({ redactProtectedPageForSearch, syncProtectedPageAssets }))
+vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({
+  redactProtectedPageForSearch,
+  syncProtectedPageAssets,
+  protectedAssetRequiresUnlock
+}))
 
 const wikiGlobal = globalThis as unknown as { WIKI?: Record<string, unknown> }
 const originalWiki = wikiGlobal.WIKI

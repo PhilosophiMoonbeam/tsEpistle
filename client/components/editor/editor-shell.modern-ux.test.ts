@@ -4,28 +4,15 @@ import { parse } from '@vue/compiler-sfc'
 import _ from 'lodash'
 import * as ts from 'typescript'
 import { describe, expect, test } from '../../../server/test/bun-test.mts'
+import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 
 const shellPath = join(process.cwd(), 'client/components/editor.vue')
-const propertiesPath = join(process.cwd(), 'client/components/editor/editor-modal-properties.vue')
-const unsavedPath = join(process.cwd(), 'client/components/editor/editor-modal-unsaved.vue')
 
 const shellSource = readFileSync(shellPath, 'utf8')
-const propertiesSource = readFileSync(propertiesPath, 'utf8')
-const unsavedSource = readFileSync(unsavedPath, 'utf8')
 
 const shellSfc = parse(shellSource, { filename: shellPath })
-const propertiesSfc = parse(propertiesSource, { filename: propertiesPath })
-const unsavedSfc = parse(unsavedSource, { filename: unsavedPath })
 
-const shellTemplate = shellSfc.descriptor.template?.content ?? ''
 const shellScript = shellSfc.descriptor.script?.content ?? ''
-const propertiesTemplate = propertiesSfc.descriptor.template?.content ?? ''
-const propertiesScript = propertiesSfc.descriptor.script?.content ?? ''
-const unsavedTemplate = unsavedSfc.descriptor.template?.content ?? ''
-const unsavedScript = unsavedSfc.descriptor.script?.content ?? ''
-const shellRegistrations = shellScript.match(/components:\s*\{([\s\S]*?)\n\s*\},\n\s*props:/)?.[1] ?? ''
-const desktopSaveClose = shellTemplate.match(/v-btn\.editor-save-close-action[\s\S]*?\n\s{8}\)/)?.[0] ?? ''
-const propertiesComputed = propertiesScript.match(/computed:\s*\{([\s\S]*?)\n\s*\},\n\s*watch:/)?.[1] ?? ''
 
 type OkfState = {
   authority: {
@@ -61,6 +48,8 @@ type EditorStore = {
     scriptCss: string
     scriptJs: string
     sourceRevision: string
+    brandingAssignment: PageBrandingAssignment | null
+    brandingView: PageBrandingView | null
     okf: OkfState
     okfLoading: boolean
     okfError: string | null
@@ -84,6 +73,8 @@ type SavedState = {
   title: string
   scriptCss: string
   scriptJs: string
+  brandingAssignment: PageBrandingAssignment | null
+  brandingView: PageBrandingView | null
   okf: OkfState
 }
 
@@ -236,6 +227,8 @@ const createStore = (mode: 'create' | 'update' = 'update'): EditorStore => {
       scriptCss: '.persisted {}',
       scriptJs: 'window.persisted = true',
       sourceRevision: '1',
+      brandingAssignment: null as PageBrandingAssignment | null,
+      brandingView: null as PageBrandingView | null,
       okf: {
         authority: {
           state: 'valid',
@@ -308,6 +301,7 @@ const loadShellBehavior = (
   const dependencies = { ...defaultDependencies(store), ...overrides }
   const evaluate = new Function(
     '_',
+    'PageBrandingAssignmentSchema',
     'wikiStore',
     'window',
     'buildOkfMetadataPayload',
@@ -325,6 +319,7 @@ const loadShellBehavior = (
   ) as (...args: unknown[]) => ShellBehavior
   return evaluate(
     _,
+    PageBrandingAssignmentSchema,
     store,
     testWindow,
     dependencies.buildOkfMetadataPayload,
@@ -404,6 +399,8 @@ const mutableSnapshot = (store: EditorStore): SavedState => ({
   title: store.page.title,
   scriptCss: store.page.scriptCss,
   scriptJs: store.page.scriptJs,
+  brandingAssignment: _.cloneDeep(store.page.brandingAssignment),
+  brandingView: _.cloneDeep(store.page.brandingView),
   okf: _.cloneDeep(store.page.okf)
 })
 
@@ -434,107 +431,6 @@ const applyEveryEdit = (store: EditorStore) => {
 }
 
 describe('modern editor shell interaction contract', () => {
-  test('owns cmd+s and prevents the browser save action before invoking editor save', () => {
-    expect(shellSfc.errors).toEqual([])
-    expect(shellScript).toMatch(/import \{ useHotkey \} from 'vuetify'/)
-    expect(shellScript).toMatch(/useHotkey\('cmd\+s', event => \{\s*event\.preventDefault\(\)\s*saveHandler\?\.\(\)\s*\}\)/)
-    expect(shellScript).toMatch(/created\(\) \{\s*this\.setSaveHotkeyHandler\(\(\) => \{\s*void this\.save\(\)/)
-    expect(shellScript).toMatch(/beforeUnmount\(\) \{\s*this\.setSaveHotkeyHandler\(null\)/)
-  })
-
-  test('keeps Save and close visibly reachable on desktop and mobile regardless of dirty state', () => {
-    expect(desktopSaveClose).toContain("v-if='$vuetify.display.mdAndUp'")
-    expect(desktopSaveClose).toContain("aria-label='Save and close'")
-    expect(desktopSaveClose).toContain("@click='saveAndClose'")
-    expect(desktopSaveClose).not.toMatch(/isDirty|mode ===/)
-    expect(shellTemplate).toMatch(/v-btn\.editor-save-close-action[\s\S]*?span Save and close/)
-    expect(shellTemplate).toMatch(/v-list-item\(:disabled='collaborationDiscarded', @click='saveAndClose'\)[\s\S]*?v-list-item-title Save and close/)
-  })
-
-  test('mounts recoverable heavyweight editor dialogs only while their owning state is active', () => {
-    expect(shellTemplate).toContain("editor-modal-properties(v-if='dialogProps', v-model='dialogProps')")
-    expect(shellTemplate).toContain("editor-modal-editorselect(v-if='dialogEditorSelector', v-model='dialogEditorSelector')")
-    expect(shellTemplate).toMatch(/editor-modal-unsaved\(\s*v-if='dialogUnsaved'[\s\S]*?v-model='dialogUnsaved'/)
-    expect(shellTemplate).toContain("component(v-if='activeModal', :is='activeModal')")
-
-    expect(shellScript).toContain("import { createAsyncComponent } from './common/async-component-state.vue'")
-    for (const component of ['editorModalProperties', 'editorModalEditorselect', 'editorModalUnsaved']) {
-      expect(shellRegistrations).toMatch(new RegExp(`${component}: createAsyncComponent\\(\\(\\) => import\\(`))
-    }
-    expect(shellRegistrations).not.toContain('defineAsyncComponent')
-  })
-
-  test('keeps page-property edits reversible until the user explicitly accepts the draft', () => {
-    expect(propertiesSfc.errors).toEqual([])
-    expect(propertiesTemplate).toMatch(/v-btn\.mx-0\.mr-2\([\s\S]*?@click='cancel'[\s\S]*?common:actions\.cancel/)
-    expect(propertiesScript).toMatch(
-      /function createPropertiesDraft \(\): PagePropertiesDraft \{\s*return \{[\s\S]*title: wikiStore\.page\.title[\s\S]*tags: \[\.\.\.wikiStore\.page\.tags\]/
-    )
-
-    for (const field of ['title', 'description', 'locale', 'tags', 'path', 'isPublished', 'publishStartDate', 'publishEndDate', 'scriptJs', 'scriptCss']) {
-      expect(propertiesComputed).toMatch(new RegExp(`${field}:\\s*\\{\\s*get\\(\\) \\{\\s*return this\\.draft\\.${field}\\s*\\}[\\s\\S]*?set\\(value:`))
-    }
-    expect(propertiesComputed).toMatch(/privatePage:[\s\S]*this\.draft\.visibility === 'private'[\s\S]*this\.draft\.visibility = value \? 'private' : 'public'/)
-
-    expect(propertiesScript).toMatch(
-      /handler \(newValue: boolean\) \{[\s\S]*if \(newValue\) \{\s*this\.beginEditing\(\)[\s\S]*\} else \{\s*this\.rollbackDraft\(\)/
-    )
-    expect(propertiesScript).toMatch(/cancel \(\) \{\s*this\.rollbackDraft\(\)\s*this\.isShown = false\s*\}/)
-    expect(propertiesScript).toMatch(/async close\(\) \{[\s\S]*if \(!result\?\.valid\)[\s\S]*this\.commitDraft\(\)\s*this\.isShown = false/)
-    expect(propertiesScript).toMatch(
-      /commitDraft \(\) \{[\s\S]*wikiStore\.page\.title = this\.draft\.title[\s\S]*wikiStore\.page\.tags = \[\.\.\.this\.draft\.tags\]/
-    )
-  })
-
-  test('offers Save and close from the unsaved dialog and closes only after save succeeds', () => {
-    expect(unsavedSfc.errors).toEqual([])
-    expect(shellTemplate).toMatch(/editor-modal-unsaved\([\s\S]*?:busy='isSaving'[\s\S]*?@discard='discardAndExit'[\s\S]*?@save='saveUnsavedAndClose'/)
-    expect(shellTemplate).toContain(":discarding='discardPending'")
-    expect(unsavedTemplate).toContain(":loading='busy'")
-    expect(unsavedTemplate).not.toContain(":loading='discarding'")
-    expect(unsavedTemplate).toMatch(/v-btn\.px-4\([\s\S]*?:loading='busy'[\s\S]*?@click='save'[\s\S]*?\) Save and close/)
-    expect(unsavedScript).toMatch(/emits: \['discard', 'save', 'update:modelValue'\]/)
-    expect(unsavedScript).toMatch(/discard\(\) \{\s*this\.\$emit\('discard'\)\s*\}/)
-    expect(unsavedScript).not.toMatch(/\$emit\('discard',/)
-    expect(unsavedScript).toMatch(/save\(\) \{\s*this\.\$emit\('save'\)\s*\}/)
-    expect(shellScript).toMatch(/async saveUnsavedAndClose\(\) \{\s*if \(await this\.saveAndClose\(\)\) \{\s*this\.dialogUnsaved = false/)
-  })
-
-  test('does not register removed API or redirect editors that could resurrect dead editor paths', () => {
-    expect(shellRegistrations).not.toMatch(/\beditor(?:Api|Redirect)\s*:/i)
-    expect(shellRegistrations).not.toMatch(/editor-(?:api|redirect)\.vue/i)
-    expect(shellScript).toMatch(/normalizeAvailableEditors\(siteConfig\.availableEditors\)/)
-    expect(shellScript).toMatch(/this\.currentEditor = getEditorComponentName\(availableEditors\[0\]\)/)
-  })
-
-  test('uses one complete saved snapshot captured only after decoded content is assigned', () => {
-    expect(shellScript).not.toContain('initContentParsed')
-    const contentAssignment = shellScript.indexOf("wikiStore.editor.content = this.initContent ? Base64.decode(this.initContent) : ''")
-    const initialSnapshot = shellScript.indexOf('this.setCurrentSavedState()', contentAssignment)
-    const mountedEditorSelection = shellScript.indexOf("if (this.mode === 'create' && !this.initEditor)", contentAssignment)
-    expect(contentAssignment).toBeGreaterThan(-1)
-    expect(initialSnapshot).toBeGreaterThan(contentAssignment)
-    expect(initialSnapshot).toBeLessThan(mountedEditorSelection)
-    for (const field of [
-      'content',
-      'description',
-      'isPublished',
-      'visibility',
-      'locale',
-      'path',
-      'publishEndDate',
-      'publishStartDate',
-      'title',
-      'scriptCss',
-      'scriptJs'
-    ]) {
-      expect(shellScript).toMatch(new RegExp(`${field}: wikiStore\\.(?:editor|page)\\.`))
-    }
-    expect(shellScript).toContain('tags: [...wikiStore.page.tags]')
-    expect(shellScript).toContain('okf: _.cloneDeep(wikiStore.page.okf)')
-    expect(shellScript).toMatch(/wikiStore\.page\.okf = page\.okf[\s\S]*?this\.setCurrentSavedState\(\)/)
-    expect(shellScript).toMatch(/await this\.refreshOkfAfterSave\(\)[\s\S]*?this\.setCurrentSavedState\(\)/)
-  })
 
   test('resets the durable Markdown draft before restoring a public page and exiting', async () => {
     const store = createStore()

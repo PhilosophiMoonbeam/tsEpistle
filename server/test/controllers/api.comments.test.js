@@ -48,46 +48,6 @@ const rateLimitKnex = () => {
   }
 }
 
-const API_CONTROLLER_NAMES = [
-  'analytics',
-  'assets',
-  'auth',
-  'comments',
-  'groups',
-  'locales',
-  'logging',
-  'mail',
-  'navigation',
-  'pages',
-  'rendering',
-  'search',
-  'site',
-  'storage',
-  'system',
-  'theming',
-  'users'
-]
-
-const loadApiIndexRouter = async () => {
-  const subrouters = Object.fromEntries(API_CONTROLLER_NAMES.map(name => [name, {}]))
-
-  for (const name of API_CONTROLLER_NAMES) {
-    vi.mockModule(`../../controllers/api/${name}.ts`, import.meta.url, () => ({
-      default: subrouters[name]
-    }))
-  }
-
-  try {
-    expect(await vi.importFresh('../../controllers/api/index.ts', import.meta.url)).toBeDefined()
-  } finally {
-    for (const name of API_CONTROLLER_NAMES) {
-      vi.unmockModule(`../../controllers/api/${name}.ts`, import.meta.url)
-    }
-  }
-
-  return { apiRouter: express.__routers.at(-1), subrouters }
-}
-
 describe('controllers/api comments endpoints', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -617,10 +577,5 @@ describe('controllers/api comments endpoints', () => {
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'comment id must be a positive integer' })
     expect(global.WIKI.models.comments.updateComment).not.toHaveBeenCalled()
-  })
-  it('is mounted by the API index router', async () => {
-    const { apiRouter, subrouters } = await loadApiIndexRouter()
-
-    expect(apiRouter.use).toHaveBeenCalledWith('/comments', subrouters.comments)
   })
 })

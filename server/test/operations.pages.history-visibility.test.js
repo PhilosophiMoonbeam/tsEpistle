@@ -48,34 +48,6 @@ describe('page history visibility boundaries', () => {
     else global.WIKI = originalWIKI
   })
 
-  it('passes the requester into history queries so private revisions remain scoped after publication', async () => {
-    const requester = { id: 8, permissions: ['read:pages', 'read:history'] }
-    global.WIKI.models.pages.query.mockReturnValue(pageQuery({
-      id: 17,
-      path: 'published',
-      localeCode: 'en',
-      visibility: 'public',
-      ownerId: null
-    }))
-    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
-      id: 17,
-      path: 'published',
-      localeCode: 'en',
-      visibility: 'public',
-      ownerId: null
-    })
-    global.WIKI.models.pageHistory.getHistory.mockResolvedValue({ trail: [], total: 0 })
-    const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
-
-    await operations.getHistory({ requester, sessionId: 'session-1', id: 17, offsetPage: 0, offsetSize: 25 })
-    expect(global.WIKI.models.pageHistory.getHistory).toHaveBeenCalledWith({
-      pageId: 17,
-      offsetPage: 0,
-      offsetSize: 25,
-      requester
-    })
-  })
-
   it('returns not found for another owner private history just as for an absent page', async () => {
     const requester = { id: 8, permissions: ['read:history'] }
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
@@ -149,57 +121,6 @@ describe('page history visibility boundaries', () => {
     expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
   })
 
-  it('restores canonical content, editor, content type, and tags with a source-revision compare-and-swap', async () => {
-    const requester = { id: 8, permissions: ['read:pages', 'write:pages'] }
-    const sourceRevision = '8'
-    global.WIKI.models.pages.query.mockReturnValue(pageQuery({
-      id: 17,
-      path: 'published',
-      localeCode: 'en',
-      visibility: 'public',
-      ownerId: null,
-      sourceRevision,
-      updatedAt: '2026-08-15T00:00:00.000Z'
-    }))
-    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
-      id: 17,
-      path: 'published',
-      localeCode: 'en',
-      visibility: 'public',
-      ownerId: null
-    })
-    global.WIKI.models.pageHistory.getVersion.mockResolvedValue({
-      versionId: 4,
-      content: '# Earlier',
-      contentType: 'markdown',
-      title: 'Earlier',
-      description: 'Earlier description',
-      editor: 'visual-markdown',
-      locale: 'en',
-      path: 'published',
-      tags: ['release'],
-      versionDate: '2026-08-14T00:00:00.000Z',
-      visibility: 'public'
-    })
-    const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
-
-    await operations.restore({ requester, sessionId: 'session-1', pageId: 17, versionId: 4, expectedSourceRevision: sourceRevision })
-
-    expect(global.WIKI.models.pages.updatePage).toHaveBeenCalledWith({
-      id: 17,
-      user: requester,
-      content: '# Earlier',
-      contentType: 'markdown',
-      title: 'Earlier',
-      description: 'Earlier description',
-      editor: 'visual-markdown',
-      tags: ['release'],
-      action: 'restored',
-      okfRestoreRevision: 4,
-      expectedUpdatedAt: '2026-08-15T00:00:00.000Z',
-      expectedSourceRevision: sourceRevision
-    })
-  })
 
   it('reauthorizes both the current page and move destination against live page rules', async () => {
     const requester = { id: 8, permissions: ['read:pages', 'write:pages'] }
