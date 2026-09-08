@@ -526,6 +526,14 @@ interface PageLinkRow extends PageLinkIdentity {
   readonly pageId: number
 }
 
+const comparePageLinkIdentities = (left: PageLinkIdentity, right: PageLinkIdentity): number => {
+  if (left.localeCode < right.localeCode) return -1
+  if (left.localeCode > right.localeCode) return 1
+  if (left.path < right.path) return -1
+  if (left.path > right.path) return 1
+  return 0
+}
+
 export type PageProjectionLocation = NonNullable<PageProjectionPayload['location']>
 
 export interface PageProjectionRuntime {
@@ -641,9 +649,7 @@ const extractRenderedPageLinks = (render: string, defaultLocale: string): readon
       // The renderer already ignores malformed internal references; projection persistence does the same.
     }
   })
-  return [...links.values()].sort((left, right) =>
-    left.localeCode === right.localeCode ? left.path.localeCompare(right.path) : left.localeCode.localeCompare(right.localeCode)
-  )
+  return [...links.values()].sort(comparePageLinkIdentities)
 }
 
 class LinksProjectionSink implements PageProjectionSink {
@@ -718,9 +724,7 @@ class LinksProjectionSink implements PageProjectionSink {
       const persistedRows = await transaction<PageLinkRow>('pageLinks')
         .select('localeCode', 'path')
         .where({ pageId: payload.pageId })
-        .orderBy('localeCode')
-        .orderBy('path')
-      const persisted = persistedRows.map(row => ({ localeCode: row.localeCode, path: row.path }))
+      const persisted = persistedRows.map(row => ({ localeCode: row.localeCode, path: row.path })).sort(comparePageLinkIdentities)
       const satisfied = canonicalJson(persisted) === canonicalJson(links)
       return { superseded: false, observed: current, invalid: false, satisfied }
     })

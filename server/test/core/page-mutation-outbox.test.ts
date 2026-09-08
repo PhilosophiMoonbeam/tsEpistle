@@ -611,6 +611,91 @@ describe('production page projection lifecycle', () => {
     })
   })
 
+  it('compares punctuation-heavy persisted links with deterministic in-process ordering', async () => {
+    const expectedLinks = [
+      { pageId: 42, localeCode: 'en', path: 'fax/(212)-555-0199' },
+      { pageId: 42, localeCode: 'en', path: 'fax/[draft]_212.555.0199' },
+      { pageId: 42, localeCode: 'en', path: 'fax_212/555/0199' },
+      { pageId: 42, localeCode: 'en', path: 'fax_[archive]-212_555_0199' },
+      { pageId: 42, localeCode: 'fr', path: 'fax/[bureau]_01.23.45.67.89' }
+    ]
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 8,
+      content: '# Fax directory\n',
+      render: [
+        '<a class="is-internal-link" href="/fr/fax/%5Bbureau%5D_01.23.45.67.89">bureau</a>',
+        '<a class="is-internal-link" href="/en/fax_%5Barchive%5D-212_555_0199">archive</a>',
+        '<a class="is-internal-link" href="/en/fax_212/555/0199">digits</a>',
+        '<a class="is-internal-link" href="/en/fax/%5Bdraft%5D_212.555.0199">draft</a>',
+        '<a class="is-internal-link" href="/en/fax/(212)-555-0199">primary</a>'
+      ].join(''),
+      localeCode: 'en',
+      path: 'docs/fax',
+      visibility: 'public',
+      ownerId: null
+    })
+    await enqueue({ effects: ['render', 'links'], source: '# Fax directory\n', location: { ...location, path: 'docs/fax' } })
+    await knex('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'succeeded' })
+    await knex.raw('PRAGMA reverse_unordered_selects = ON')
+
+    const lifecycle = new PageProjectionLifecycle(knex, 'punctuation-links-worker', projectionRuntime())
+    await lifecycle.runOnce()
+
+    const linkEffect = await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'postcondition')
+    expect(linkEffect.status).toBe('succeeded')
+    expect(JSON.parse(linkEffect.postcondition)).toMatchObject({ satisfied: true, observedSourceRevision: '8' })
+    expect(await knex('pageLinks').select('pageId', 'localeCode', 'path').where({ pageId: 42 })).toEqual([...expectedLinks].reverse())
+  })
+
+  it.each([
+    {
+      caseName: 'missing',
+      triggerSql: `CREATE TRIGGER distort_page_links BEFORE INSERT ON pageLinks
+        WHEN NEW.path = 'fax/[draft]_212.555.0199'
+        BEGIN SELECT RAISE(IGNORE); END`
+    },
+    {
+      caseName: 'extra',
+      triggerSql: `CREATE TRIGGER distort_page_links AFTER INSERT ON pageLinks
+        WHEN NEW.path = 'fax/[draft]_212.555.0199'
+        BEGIN INSERT INTO pageLinks (pageId, localeCode, path) VALUES (NEW.pageId, 'en', 'fax/[extra]_212.555.0199'); END`
+    },
+    {
+      caseName: 'changed',
+      triggerSql: `CREATE TRIGGER distort_page_links AFTER INSERT ON pageLinks
+        WHEN NEW.path = 'fax/[draft]_212.555.0199'
+        BEGIN UPDATE pageLinks SET path = 'fax/[changed]_212.555.0199' WHERE id = NEW.id; END`
+    }
+  ])('fails the persisted-links postcondition when punctuation-heavy rows are $caseName', async ({ triggerSql }) => {
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 8,
+      content: '# Fax directory\n',
+      render:
+        '<a class="is-internal-link" href="/en/fax/%5Bdraft%5D_212.555.0199">draft</a>' +
+        '<a class="is-internal-link" href="/en/fax_212/555/0199">digits</a>',
+      localeCode: 'en',
+      path: 'docs/fax',
+      visibility: 'public',
+      ownerId: null
+    })
+    await enqueue({ effects: ['render', 'links'], source: '# Fax directory\n', location: { ...location, path: 'docs/fax' } })
+    await knex('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'succeeded' })
+    await knex.raw(triggerSql)
+
+    const lifecycle = new PageProjectionLifecycle(knex, 'distorted-links-worker', projectionRuntime())
+    await lifecycle.runOnce()
+
+    const linkEffect = await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'postcondition')
+    expect(linkEffect.status).toBe('failed')
+    expect(JSON.parse(linkEffect.postcondition)).toMatchObject({
+      satisfied: false,
+      observedSourceRevision: '8',
+      detail: expect.stringContaining('did not prove')
+    })
+  })
+
   it('fences superseded revisions without rendering or overwriting current links', async () => {
     await knex('pages').insert({
       id: 42,
