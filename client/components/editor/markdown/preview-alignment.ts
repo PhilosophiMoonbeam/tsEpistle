@@ -1,5 +1,39 @@
 const detailsBlockStart = /^(\s*<details)(?=[\s>])/i
 
+/** Merge cursor/click notifications, and invalidate queued work when follow is turned off. */
+export class PreviewAlignmentScheduler {
+  private revision = 0
+  private pending = false
+  private force = false
+
+  constructor(
+    private readonly canAlign: () => boolean,
+    private readonly align: (force: boolean) => void,
+    private readonly schedule: (callback: () => void) => void = callback => queueMicrotask(callback)
+  ) {}
+
+  request(force = false): void {
+    if (!this.canAlign()) return
+    this.force ||= force
+    if (this.pending) return
+    this.pending = true
+    const revision = this.revision
+    this.schedule(() => {
+      if (revision !== this.revision) return
+      this.pending = false
+      const force = this.force
+      this.force = false
+      if (this.canAlign()) this.align(force)
+    })
+  }
+
+  cancel(): void {
+    this.revision++
+    this.pending = false
+    this.force = false
+  }
+}
+
 /**
  * Gives a raw details block a stable source anchor without changing the saved Markdown.
  */

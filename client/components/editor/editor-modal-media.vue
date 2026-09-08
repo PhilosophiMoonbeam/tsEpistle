@@ -1,201 +1,196 @@
 <template lang='pug'>
   v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='`is-editor-` + editorKey', role='dialog', aria-modal='true', aria-labelledby='editor-media-title', tabindex='-1')
-    v-container.pa-3(fluid)
-      v-row
-        v-col(cols='12', lg='9')
-          v-card.radius-7.animated.fadeInLeft.wait-p1s
-            v-card-text
-              .d-flex
-                v-toolbar.radius-7(color="surface-variant", density="compact", flat, height='44')
-                  .text-body-medium#editor-media-title {{ $t('editor:assets.title') }}
-                  v-spacer
-                  v-btn.editor-media-icon-button(ref='refreshButton', variant="text", icon, aria-label='Refresh assets', @click='refresh')
-                    v-icon mdi-refresh
-                v-dialog(
-                  v-model='newFolderDialog'
-                  max-width='550'
-                  :persistent='newFolderLoading'
-                  content-class='editor-media-owned-overlay'
-                  aria-labelledby='editor-media-new-folder-title'
-                )
-                  template(v-slot:activator='{ props }')
-                    v-btn.ml-3.my-0.mr-0.radius-7(variant="tonal", size="large", color='primary', :icon='$vuetify.display.xs', :class='{ "editor-media-icon-button": $vuetify.display.xs }', aria-label='Create folder', v-bind='props')
-                      v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
-                      span.d-none.d-md-inline {{$t('editor:assets.newFolder')}}
-                  v-card(:aria-busy='newFolderLoading')
-                    .dialog-header.is-short.text-body-large#editor-media-new-folder-title {{$t('editor:assets.newFolder')}}
-                    v-card-text.pt-5
-                      v-text-field(
-                        variant="outlined"
-                        prepend-icon='mdi-folder-outline'
-                        v-model='newFolderName'
-                        :label='$t(`editor:assets.folderName`)'
-                        counter='255'
-                        maxlength='255'
-                        :disabled='newFolderLoading'
-                        @keyup.enter='createFolder'
-                        ref='folderNameIpt'
-                        )
-                      i18next.text-body-small.text-grey-darken-1.pl-5(path='editor:assets.folderNameNamingRules', tag='div')
-                        a(place='namingRules', href='https://docs-beta.requarks.io/guide/assets#naming-restrictions', target='_blank') {{$t('editor:assets.folderNameNamingRulesLink')}}
-                    v-card-chin
-                      v-spacer
-                      v-btn(variant="text", :disabled='newFolderLoading', @click='newFolderDialog = false') {{$t('common:actions.cancel')}}
-                      v-btn.px-3(color='primary', @click='createFolder', :disabled='newFolderLoading || !isFolderNameValid', :loading='newFolderLoading') {{$t('common:actions.create')}}
-              v-toolbar(flat, density="compact", color="surface")
-                template(v-if='folderTree.length > 0')
-                  .text-body-medium
-                    span.mr-1 /
-                    template(v-for='folder of folderTree', :key='folder.id')
-                      span {{folder.name}}
-                      span.mx-1 /
-                .text-body-medium(v-else) / #[em root]
-              template(v-if='folders.length > 0 || currentFolderId > 0')
-                v-btn.is-icon.mx-1(variant="outlined", aria-label='Open parent folder', @click='upFolder()', :disabled='currentFolderId === 0')
-                  v-icon mdi-folder-upload
-                v-btn.btn-normalcase.mx-1(v-for='folder of folders', :key='folder.id', variant="tonal", color="primary", @click='downFolder(folder)')
-                  v-icon(start) mdi-folder
-                  span.text-body-small(style='text-transform: none;') {{ folder.name }}
-                v-divider.mt-2
-              v-alert.mb-3(v-if='mediaLoadError', type='error', variant='tonal', role='alert')
-                .d-flex.align-center
-                  span {{mediaLoadError}}
-                  v-spacer
-                  v-btn(variant='text', size='small', @click='refresh') Retry
-              v-data-table(
-                :headers='headers'
-                :items='assets'
-                v-model:page='pagination'
-                :items-per-page='15'
-                :loading='loading'
-                must-sort,
-                :sort-by='mediaSortBy'
-                hide-default-footer,
-                density="compact"
+    .editor-media-layout
+      section.editor-media-browser(aria-labelledby='editor-media-title')
+        v-card.editor-media-panel.radius-7.animated.fadeInLeft.wait-p1s
+          v-card-text.editor-media-panel-content
+            header.editor-media-header
+              h2.editor-media-heading#editor-media-title {{ $t('editor:assets.title') }}
+              v-btn.editor-media-icon-button(ref='refreshButton', variant="text", icon, aria-label='Refresh assets', @click='refresh')
+                v-icon mdi-refresh
+              v-dialog(
+                v-model='newFolderDialog'
+                max-width='550'
+                :persistent='newFolderLoading'
+                content-class='editor-media-owned-overlay'
+                aria-labelledby='editor-media-new-folder-title'
               )
-                template(v-slot:item='props')
-                  tr.is-clickable(
-                    :key='props.item.id'
-                    tabindex='0'
-                    :aria-selected='currentFileId === props.item.id'
-                    :aria-label='currentFileId === props.item.id ? `${props.item.filename}, selected` : `Select ${props.item.filename}`'
-                    @keydown.enter.space.prevent='selectAsset(props.item.id)'
-                    @click.left='selectAsset(props.item.id)'
-                    @click.right.prevent=''
-                  )
-                    td.text-body-small(v-if='$vuetify.display.smAndUp') {{ props.item.id }}
-                    td
-                      .text-body-medium: strong(:class='currentFileId === props.item.id ? `text-primary` : ``') {{ props.item.filename }}
-                      .text-body-small.text-grey {{ props.item.description }}
-                    td.text-center(v-if='$vuetify.display.lgAndUp')
-                      v-chip.ma-0(size="x-small", variant="tonal")
-                        .text-label-small {{props.item.ext.toUpperCase().substring(1)}}
-                    td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ prettyBytes(props.item.fileSize) }}
-                    td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ $helpers.formatMoment(props.item.createdAt, 'from') }}
-                    td(v-if='$vuetify.display.smAndUp')
-                      v-menu(
-                        :model-value='actionMenuAssetId === props.item.id'
-                        min-width='200'
-                        content-class='editor-media-owned-overlay'
-                        @update:model-value='setActionMenu(props.item.id, $event)'
+                template(v-slot:activator='{ props }')
+                  v-btn.editor-media-new-folder.radius-7(variant="tonal", color='primary', :icon='$vuetify.display.xs', :class='{ "editor-media-icon-button": $vuetify.display.xs }', aria-label='Create folder', v-bind='props')
+                    v-icon(:start='$vuetify.display.mdAndUp') mdi-plus
+                    span.d-none.d-md-inline {{$t('editor:assets.newFolder')}}
+                v-card(:aria-busy='newFolderLoading')
+                  .dialog-header.is-short.text-body-large#editor-media-new-folder-title {{$t('editor:assets.newFolder')}}
+                  v-card-text.pt-5
+                    v-text-field(
+                      variant="outlined"
+                      prepend-icon='mdi-folder-outline'
+                      v-model='newFolderName'
+                      :label='$t(`editor:assets.folderName`)'
+                      counter='255'
+                      maxlength='255'
+                      :disabled='newFolderLoading'
+                      @keyup.enter='createFolder'
+                      ref='folderNameIpt'
                       )
-                        template(v-slot:activator='{ props: menuProps }')
-                          v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='0', size="small", :aria-label='`Asset actions for ${props.item.filename}`', :data-editor-media-asset-actions='props.item.id')
-                            v-icon(color="grey-darken-2") mdi-dots-horizontal
-                        v-list(nav)
-                          //- v-list-item(@click='', disabled)
-                          //-   template(v-slot:prepend)
-                          //-     v-avatar(size='24')
-                          //-       v-icon(color='teal') mdi-text-short
-                          //-   v-list-item-title {{$t('common:actions.properties')}}
-                          //- template(v-if='props.item.kind === `IMAGE`')
-                          //-   v-list-item(@click='previewDialog = true', disabled)
-                          //-     template(v-slot:prepend)
-                          //-       v-avatar(size='24')
-                          //-         v-icon(color='green') mdi-image-search-outline
-                          //-     v-list-item-title {{$t('common:actions.preview')}}
-                          //-   v-list-item(@click='', disabled)
-                          //-     template(v-slot:prepend)
-                          //-       v-avatar(size='24')
-                          //-         v-icon(color='indigo') mdi-crop-rotate
-                          //-     v-list-item-title {{$t('common:actions.edit')}}
-                          //-   v-list-item(@click='', disabled)
-                          //-     template(v-slot:prepend)
-                          //-       v-avatar(size='24')
-                          //-         v-icon(color='purple') mdi-flash-circle
-                          //-     v-list-item-title {{$t('common:actions.optimize')}}
-                          v-list-item(@click='openRenameDialog(props.item.id)')
-                            template(v-slot:prepend)
-                              v-avatar(size='24')
-                                v-icon(color='orange') mdi-keyboard-outline
-                            v-list-item-title {{$t('common:actions.rename')}}
-                          //- v-list-item(@click='', disabled)
-                          //-   template(v-slot:prepend)
-                          //-     v-avatar(size='24')
-                          //-       v-icon(color='blue') mdi-file-move
-                          //-   v-list-item-title {{$t('common:actions.move')}}
-                          v-list-item(@click='openDeleteDialog(props.item.id)')
-                            template(v-slot:prepend)
-                              v-avatar(size='24')
-                                v-icon(color='red') mdi-file-hidden
-                            v-list-item-title {{$t('common:actions.delete')}}
-                template(v-slot:no-data)
-                  v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
-              .text-center.py-2(v-if='pageTotal > 1')
-                v-pagination(v-model='pagination', :length='pageTotal', color='primary')
-              .d-flex.mt-3
-                v-toolbar.radius-7(flat, color="surface-variant", density="compact", height='44')
-                  .text-body-medium.text-medium-emphasis {{$t('editor:assets.fileCount', { count: assets.length })}}
-                v-btn.ml-3.mr-0.my-0.radius-7(variant="outlined", size="large", @click='cancel')
+                    i18next.text-body-small.text-grey-darken-1.pl-5(path='editor:assets.folderNameNamingRules', tag='div')
+                      a(place='namingRules', href='https://docs-beta.requarks.io/guide/assets#naming-restrictions', target='_blank') {{$t('editor:assets.folderNameNamingRulesLink')}}
+                  v-card-chin
+                    v-spacer
+                    v-btn(variant="text", :disabled='newFolderLoading', @click='newFolderDialog = false') {{$t('common:actions.cancel')}}
+                    v-btn.px-3(color='primary', @click='createFolder', :disabled='newFolderLoading || !isFolderNameValid', :loading='newFolderLoading') {{$t('common:actions.create')}}
+            .editor-media-path(aria-label='Current folder')
+              template(v-if='folderTree.length > 0')
+                .text-body-medium
+                  span.mr-1 /
+                  template(v-for='folder of folderTree', :key='folder.id')
+                    span {{folder.name}}
+                    span.mx-1 /
+              .text-body-medium(v-else) / #[em root]
+            .editor-media-folders(v-if='folders.length > 0 || currentFolderId > 0')
+              v-btn.editor-media-icon-button(variant="outlined", icon, aria-label='Open parent folder', @click='upFolder()', :disabled='currentFolderId === 0')
+                v-icon mdi-folder-upload
+              v-btn.editor-media-folder.btn-normalcase(v-for='folder of folders', :key='folder.id', variant="tonal", color="primary", @click='downFolder(folder)')
+                v-icon(start) mdi-folder
+                span.text-body-small {{ folder.name }}
+            v-alert.mb-3(v-if='mediaLoadError', type='error', variant='tonal', role='alert')
+              .d-flex.align-center
+                span {{mediaLoadError}}
+                v-spacer
+                v-btn(variant='text', size='small', @click='refresh') Retry
+            v-data-table.editor-media-table(
+              :headers='headers'
+              :items='assets'
+              v-model:page='pagination'
+              :items-per-page='15'
+              :loading='loading'
+              must-sort,
+              :sort-by='mediaSortBy'
+              hide-default-footer,
+              density="compact"
+            )
+              template(v-slot:item='props')
+                tr.is-clickable(
+                  :key='props.item.id'
+                  tabindex='0'
+                  :aria-selected='currentFileId === props.item.id'
+                  :aria-label='currentFileId === props.item.id ? `${props.item.filename}, selected` : `Select ${props.item.filename}`'
+                  @keydown.enter.space.prevent='selectAsset(props.item.id)'
+                  @click.left='selectAsset(props.item.id)'
+                  @click.right.prevent=''
+                )
+                  td.text-body-small(v-if='$vuetify.display.smAndUp') {{ props.item.id }}
+                  td.editor-media-filename
+                    .text-body-medium: strong(:class='currentFileId === props.item.id ? `text-primary` : ``') {{ props.item.filename }}
+                    .text-body-small.text-grey {{ props.item.description }}
+                  td.text-center(v-if='$vuetify.display.lgAndUp')
+                    v-chip.ma-0(size="x-small", variant="tonal")
+                      .text-label-small {{props.item.ext.toUpperCase().substring(1)}}
+                  td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ prettyBytes(props.item.fileSize) }}
+                  td.text-body-small(v-if='$vuetify.display.mdAndUp') {{ $helpers.formatMoment(props.item.createdAt, 'from') }}
+                  td(v-if='$vuetify.display.smAndUp')
+                    v-menu(
+                      :model-value='actionMenuAssetId === props.item.id'
+                      min-width='200'
+                      content-class='editor-media-owned-overlay'
+                      @update:model-value='setActionMenu(props.item.id, $event)'
+                    )
+                      template(v-slot:activator='{ props: menuProps }')
+                        v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='0', size="small", :aria-label='`Asset actions for ${props.item.filename}`', :data-editor-media-asset-actions='props.item.id')
+                          v-icon mdi-dots-horizontal
+                      v-list(nav)
+                        //- v-list-item(@click='', disabled)
+                        //-   template(v-slot:prepend)
+                        //-     v-avatar(size='24')
+                        //-       v-icon(color='teal') mdi-text-short
+                        //-   v-list-item-title {{$t('common:actions.properties')}}
+                        //- template(v-if='props.item.kind === `IMAGE`')
+                        //-   v-list-item(@click='previewDialog = true', disabled)
+                        //-     template(v-slot:prepend)
+                        //-       v-avatar(size='24')
+                        //-         v-icon(color='green') mdi-image-search-outline
+                        //-     v-list-item-title {{$t('common:actions.preview')}}
+                        //-   v-list-item(@click='', disabled)
+                        //-     template(v-slot:prepend)
+                        //-       v-avatar(size='24')
+                        //-         v-icon(color='indigo') mdi-crop-rotate
+                        //-     v-list-item-title {{$t('common:actions.edit')}}
+                        //-   v-list-item(@click='', disabled)
+                        //-     template(v-slot:prepend)
+                        //-       v-avatar(size='24')
+                        //-         v-icon(color='purple') mdi-flash-circle
+                        //-     v-list-item-title {{$t('common:actions.optimize')}}
+                        v-list-item(@click='openRenameDialog(props.item.id)')
+                          template(v-slot:prepend)
+                            v-avatar(size='24')
+                              v-icon(color='orange') mdi-keyboard-outline
+                          v-list-item-title {{$t('common:actions.rename')}}
+                        //- v-list-item(@click='', disabled)
+                        //-   template(v-slot:prepend)
+                        //-     v-avatar(size='24')
+                        //-       v-icon(color='blue') mdi-file-move
+                        //-   v-list-item-title {{$t('common:actions.move')}}
+                        v-list-item(@click='openDeleteDialog(props.item.id)')
+                          template(v-slot:prepend)
+                            v-avatar(size='24')
+                              v-icon(color='red') mdi-file-hidden
+                          v-list-item-title {{$t('common:actions.delete')}}
+              template(v-slot:no-data)
+                v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
+            .text-center.py-2(v-if='pageTotal > 1')
+              v-pagination(v-model='pagination', :length='pageTotal', color='primary')
+            footer.editor-media-footer
+              .editor-media-count.text-body-medium.text-medium-emphasis {{$t('editor:assets.fileCount', { count: assets.length })}}
+              .editor-media-actions
+                v-btn.radius-7(variant="outlined", @click='cancel')
                   v-icon(start) mdi-close
                   span {{$t('common:actions.cancel')}}
-                v-btn.ml-3.mr-0.my-0.radius-7(color='primary', size="large", @click='insert', :disabled='!currentFileId')
+                v-btn.radius-7(color='primary', @click='insert', :disabled='!currentFileId')
                   v-icon(start) mdi-playlist-plus
                   span {{$t('common:actions.insert')}}
 
-        v-col(cols='12', lg='3')
-          v-card.radius-7.animated.fadeInRight.wait-p3s
-            v-alert.mb-0(v-if='isPrivatePage', type='info', variant="outlined", density="compact") Assets are site-wide and cannot be uploaded as private page content.
-            v-card-text(v-if='!isPrivatePage')
-              .d-flex
-                v-toolbar.radius-7(color="surface-variant", density="compact", flat, height='44')
-                  v-icon.mr-3 mdi-cloud-upload
-                  .text-body-medium {{$t('editor:assets.uploadAssets')}}
-                v-btn.my-0.ml-3.mr-0.radius-7(variant="tonal", size="large", color='primary', aria-label='Browse files', @click='browse', v-if='$vuetify.display.mdAndUp')
-                  v-icon(start) mdi-plus-box-multiple
-                  span {{$t('common:actions.browse')}}
-              file-pond.mt-3(
-                name='mediaUpload'
-                ref='pond'
-                :label-idle='$t(`editor:assets.uploadAssetsDropZone`)'
-                allow-multiple
-                :files='files'
-                :max-files='10'
-                :server='filePondServerOpts'
-                :instant-upload='false'
-                :allow-revert='false'
-                @processfile='onFileProcessed'
-              )
-            v-divider(v-if='!isPrivatePage')
-            v-card-actions.pa-3(v-if='!isPrivatePage')
-              .text-body-small.text-medium-emphasis Max 10 files, 5 MB each
-              v-spacer
-              v-btn.px-4(color='primary', @click='upload') {{$t('common:actions.upload')}}
+      aside.editor-media-sidebar
+        v-card.editor-media-panel.radius-7.animated.fadeInRight.wait-p3s
+          v-alert.mb-0(v-if='isPrivatePage', type='info', variant="outlined", density="compact") Assets are site-wide and cannot be uploaded as private page content.
+          v-card-text.editor-media-panel-content(v-if='!isPrivatePage')
+            header.editor-media-header.editor-media-upload-header
+              h2.editor-media-heading
+                v-icon(aria-hidden='true') mdi-cloud-upload-outline
+                span {{$t('editor:assets.uploadAssets')}}
+              v-btn.editor-media-browse.radius-7(variant="tonal", color='primary', aria-label='Browse files', @click='browse')
+                v-icon(start) mdi-plus-box-multiple
+                span {{$t('common:actions.browse')}}
+            file-pond.mt-3(
+              name='mediaUpload'
+              ref='pond'
+              :label-idle='$t(`editor:assets.uploadAssetsDropZone`)'
+              allow-multiple
+              :files='files'
+              :max-files='10'
+              :server='filePondServerOpts'
+              :instant-upload='false'
+              :allow-revert='false'
+              @processfile='onFileProcessed'
+            )
+          v-divider(v-if='!isPrivatePage')
+          .editor-media-upload-footer(v-if='!isPrivatePage')
+            .text-body-small.text-medium-emphasis Max 10 files, 5 MB each
+            v-btn(color='primary', @click='upload') {{$t('common:actions.upload')}}
 
 
-          v-card.mt-3.radius-7.animated.fadeInRight.wait-p4s(v-if='currentAsset && currentAsset.kind === `IMAGE`')
-            v-card-text.pb-0
-              v-toolbar.radius-7(color="surface-variant", density="compact", flat)
-                v-icon.mr-3 mdi-format-align-top
-                .text-body-medium {{$t('editor:assets.imageAlign')}}
-              v-select.mt-3(
-                v-model='imageAlignment'
-                :items='imageAlignments'
-                variant="outlined"
-                single-line
-                color='primary'
-                placeholder='None'
-              )
+        v-card.editor-media-panel.radius-7.animated.fadeInRight.wait-p4s(v-if='currentAsset && currentAsset.kind === `IMAGE`')
+          v-card-text.editor-media-panel-content.pb-0
+            h2.editor-media-heading
+              v-icon(aria-hidden='true') mdi-format-align-top
+              span {{$t('editor:assets.imageAlign')}}
+            v-select.mt-3(
+              v-model='imageAlignment'
+              :items='imageAlignments'
+              variant="outlined"
+              single-line
+              color='primary'
+              placeholder='None'
+            )
 
     //- RENAME DIALOG
 
@@ -759,10 +754,11 @@ export default defineComponent({
 
 <style lang='scss'>
 .editor-modal-media {
+  --editor-media-bottom-clearance: calc(var(--v-layout-bottom, 0px) + 24px + env(safe-area-inset-bottom));
   background: rgb(var(--v-theme-background)) !important;
   color: rgb(var(--v-theme-on-background));
   padding-bottom: env(safe-area-inset-bottom);
-  height: calc(100dvh - 112px - 24px);
+  height: calc(100dvh - 112px - var(--editor-media-bottom-clearance));
   left: 64px;
   overflow: auto;
   position: fixed !important;
@@ -771,19 +767,18 @@ export default defineComponent({
   z-index: 10;
 
   @include until($tablet) {
-    height: calc(100dvh - 56px - 24px);
     left: 0;
     width: 100vw;
   }
 
   &.is-editor-visual-markdown {
-    height: calc(100dvh - 64px - 24px);
+    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance));
     left: 0;
     top: 64px;
     width: 100vw;
 
     @include until($tablet) {
-      height: calc(100dvh - 56px - 24px);
+      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
       top: 56px;
     }
   }
@@ -791,23 +786,23 @@ export default defineComponent({
     top: 64px;
     left: 0;
     width: 100%;
-    height: calc(100dvh - 64px - 26px);
+    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance) - 2px);
 
     @include until($tablet) {
       top: 56px;
       left: 0;
       width: 100%;
-      height: calc(100dvh - 56px - 24px);
+      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
     }
   }
 
   &.is-editor-code {
     top: 64px;
-    height: calc(100dvh - 64px - 24px);
+    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance));
 
     @include until($tablet) {
       top: 56px;
-      height: calc(100dvh - 56px - 24px);
+      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
     }
   }
 
@@ -815,28 +810,149 @@ export default defineComponent({
     top: 64px;
     left: 0;
     width: 100%;
-    height: calc(100dvh - 64px - 24px);
+    height: calc(100dvh - 64px - var(--editor-media-bottom-clearance));
 
     @include until($tablet) {
       top: 56px;
       left: 0;
       width: 100%;
-      height: calc(100dvh - 56px - 24px);
+      height: calc(100dvh - 56px - var(--editor-media-bottom-clearance));
     }
   }
 
-  .v-toolbar {
-    background: color-mix(in srgb, rgb(var(--v-theme-surface)) 94%, rgb(var(--v-theme-primary)) 6%) !important;
-    border: 1px solid rgba(var(--v-theme-on-surface), .12);
-    color: rgb(var(--v-theme-on-surface));
+  .editor-media-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--wiki-space-4);
+    align-items: start;
+    padding: clamp(.75rem, 1.4vw, 1.5rem);
   }
-  .v-toolbar {
-    .text-white,
-    .text-teal,
-    .text-teal-lighten-3,
-    .v-icon {
-      color: rgb(var(--v-theme-on-surface)) !important;
+
+  @media (min-width: 1100px) {
+    .editor-media-layout {
+      grid-template-columns: minmax(0, 1fr) clamp(18rem, 28vw, 22rem);
     }
+  }
+
+  .editor-media-browser,
+  .editor-media-sidebar,
+  .editor-media-panel,
+  .editor-media-panel-content {
+    min-width: 0;
+  }
+
+  .editor-media-sidebar {
+    display: grid;
+    gap: var(--wiki-space-4);
+  }
+
+  .editor-media-panel-content {
+    padding: clamp(.75rem, 1.4vw, 1.25rem);
+  }
+
+  .editor-media-header,
+  .editor-media-footer,
+  .editor-media-actions,
+  .editor-media-upload-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-2);
+    align-items: center;
+  }
+
+  .editor-media-header {
+    padding-bottom: var(--wiki-space-3);
+    border-bottom: 1px solid rgba(var(--v-theme-on-surface), .12);
+  }
+
+  .editor-media-heading {
+    display: flex;
+    flex: 1 1 8rem;
+    gap: var(--wiki-space-2);
+    align-items: center;
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+    font-size: 1rem;
+    font-weight: 650;
+    line-height: 1.4;
+
+    .v-icon {
+      flex: none;
+      color: rgb(var(--v-theme-primary));
+    }
+  }
+
+  .editor-media-path {
+    padding-block: var(--wiki-space-4);
+    overflow-wrap: anywhere;
+    color: rgba(var(--v-theme-on-surface), .7);
+  }
+
+  .editor-media-folders {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--wiki-space-2);
+    padding-bottom: var(--wiki-space-4);
+  }
+
+  .editor-media-layout .v-btn {
+    flex-shrink: 0;
+    min-height: 44px;
+    max-width: 100%;
+  }
+
+  .editor-media-folder {
+    height: auto;
+    min-width: 0;
+    padding-block: var(--wiki-space-2);
+    text-align: start;
+    text-transform: none;
+
+    .v-btn__content {
+      min-width: 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+  }
+
+  .editor-media-table {
+    max-width: 100%;
+
+    .v-table__wrapper {
+      overflow-x: auto;
+    }
+
+    td {
+      padding-block: var(--wiki-space-2);
+    }
+  }
+
+  .editor-media-filename {
+    min-width: 8rem;
+    max-width: 24rem;
+    overflow-wrap: anywhere;
+  }
+
+  .editor-media-footer {
+    margin-top: var(--wiki-space-3);
+    padding-top: var(--wiki-space-4);
+    border-top: 1px solid rgba(var(--v-theme-on-surface), .12);
+  }
+
+  .editor-media-count {
+    flex: 1 1 8rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .editor-media-actions {
+    margin-inline-start: auto;
+  }
+
+  .editor-media-upload-footer {
+    justify-content: space-between;
+    padding: var(--wiki-space-3) clamp(.75rem, 1.4vw, 1.25rem);
   }
 
   .v-card {
@@ -862,6 +978,7 @@ export default defineComponent({
   }
 
   .filepond--root {
+    min-width: 0;
     margin-bottom: 0;
   }
 
@@ -870,10 +987,20 @@ export default defineComponent({
     opacity: 1;
   }
 
+  .filepond--panel-root {
+    background: color-mix(in srgb, rgb(var(--v-theme-surface-variant)) 35%, rgb(var(--v-theme-surface)));
+  }
+
   .filepond--drop-label {
+    color: rgb(var(--v-theme-on-surface));
+    min-height: 8rem;
     cursor: pointer;
 
     > label {
+      max-width: 100%;
+      padding: var(--wiki-space-4);
+      overflow-wrap: anywhere;
+      line-height: 1.6;
       cursor: pointer;
     }
   }
@@ -883,7 +1010,10 @@ export default defineComponent({
   }
 
   .editor-media-icon-button {
-    padding: 0 20px;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    padding: 0;
   }
 }
 </style>

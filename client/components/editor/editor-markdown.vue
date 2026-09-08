@@ -107,9 +107,9 @@
           v-spacer
           v-tooltip(v-if='previewShown', location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn(icon, rounded='0', v-bind='props', aria-label='Align preview to cursor', @click='alignPreviewToCursor').mx-0
+              v-btn.animated.fadeIn(icon, rounded='0', v-bind='props', aria-label='Align preview to cursor', :aria-pressed='previewAlignmentEnabled', :variant='previewAlignmentEnabled ? `tonal` : `text`', @click='togglePreviewAlignment').mx-0
                 v-icon mdi-crosshairs-gps
-            span Align preview to cursor
+            span {{ previewAlignmentEnabled ? 'Preview follows cursor' : 'Preview alignment off' }}
           v-tooltip(location="bottom", color='primary', v-if='previewShown')
             template(v-slot:activator='{ props }')
               v-btn.animated.fadeIn.wait-p1s(icon, rounded='0', v-bind='props', :aria-label='$t(`editor:markup.toggleSpellcheck`)', :aria-pressed='spellModeActive', @click='spellModeActive = !spellModeActive').mx-0
@@ -124,9 +124,9 @@
           v-spacer
           v-tooltip(v-if='previewShown', location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.mx-0(icon, rounded='0', v-bind='props', aria-label='Align preview to cursor', @click='alignPreviewToCursor')
+              v-btn.mx-0(icon, rounded='0', v-bind='props', aria-label='Align preview to cursor', :aria-pressed='previewAlignmentEnabled', :variant='previewAlignmentEnabled ? `tonal` : `text`', @click='togglePreviewAlignment')
                 v-icon mdi-crosshairs-gps
-            span Align preview to cursor
+            span {{ previewAlignmentEnabled ? 'Preview follows cursor' : 'Preview alignment off' }}
           v-tooltip(location="bottom", color='primary')
             template(v-slot:activator='{ props }')
               v-btn.mx-0(
@@ -304,7 +304,7 @@ import {
   enhanceWikiMarkdownPreview,
   sanitizeWikiMarkdownHtml
 } from './markdown/preview.ts'
-import { resolveVisiblePreviewTarget, stampDetailsSourceLine } from './markdown/preview-alignment'
+import { PreviewAlignmentScheduler, resolveVisiblePreviewTarget, stampDetailsSourceLine } from './markdown/preview-alignment'
 
 type MarkdownMarkerKind = 'diagram'
 
@@ -355,7 +355,7 @@ const md = createWikiMarkdownRenderer()
 // HELPER FUNCTIONS
 // ========================================
 
-// Stamp source lines into preview roots for explicit cursor-to-preview alignment.
+// Stamp source lines into preview roots so following the cursor uses stable block anchors.
 const injectSourceLine: MarkdownItRenderRule = (tokens, idx, options, env, renderer) => {
   const token = tokens[idx]
   if (token.map && token.level === 0) {
@@ -396,8 +396,10 @@ md.renderer.rules.fence = (tokens, idx, options, env, renderer) => {
 const collaborations = new WeakMap<object, MarkdownCollaboration>()
 const sourceLinesByEditor = new WeakMap<object, number[]>()
 const previewAlignmentTargets = new WeakMap<object, HTMLElement>()
+const previewAlignmentSchedulers = new WeakMap<object, PreviewAlignmentScheduler>()
 
 function stopPreviewAlignment (editor: object) {
+  previewAlignmentSchedulers.get(editor)?.cancel()
   const target = previewAlignmentTargets.get(editor)
   if (target) Velocity(target, 'stop', true)
   previewAlignmentTargets.delete(editor)
@@ -430,8 +432,10 @@ export default defineComponent({
       cm: null as TextEditorHandle | null,
       cursorPos: { ch: 0, line: 1 } as TextPosition,
       previewShown: this.mdAndUp,
+      previewAlignmentEnabled: true,
       previewHTML: '',
       previewDirty: true,
+      previewRevision: 0,
       helpShown: false,
       spellModeActive: false,
       insertLinkDialog: false,
@@ -496,10 +500,11 @@ export default defineComponent({
           return
         }
         this.$nextTick(() => {
-          if (this.editorDisposed) return
+          if (this.editorDisposed || !this.previewShown) return
           const preview = this.$refs.editorPreview as HTMLElement | undefined
           if (preview) {
             enhanceWikiMarkdownPreview(preview, this.$vuetify.theme.current.dark)
+            this.requestPreviewAlignment(true)
           }
         })
       } else if (!newValue && oldValue) {
@@ -568,6 +573,8 @@ export default defineComponent({
     },
     onCmInput (newContent: string) {
       this.previewDirty = true
+      this.previewRevision++
+      stopPreviewAlignment(this)
       this.debouncedProcessContent?.(newContent)
     },
     onCmPaste (_ev: ClipboardEvent) {
@@ -581,14 +588,17 @@ export default defineComponent({
         return
       }
       const renderEnvironment: MarkdownRenderEnvironment = { sourceLines: [] }
+      const revision = ++this.previewRevision
+      this.previewDirty = true
       this.previewHTML = sanitizeWikiMarkdownHtml(md.render(newContent, renderEnvironment))
       sourceLinesByEditor.set(this, renderEnvironment.sourceLines)
-      this.previewDirty = false
       this.$nextTick(() => {
-        if (this.editorDisposed || !this.previewShown) return
+        if (this.editorDisposed || !this.previewShown || revision !== this.previewRevision) return
         const preview = this.$refs.editorPreview as HTMLElement | undefined
         if (!preview) return
         enhanceWikiMarkdownPreview(preview, this.$vuetify.theme.current.dark)
+        this.previewDirty = false
+        this.requestPreviewAlignment(true)
       })
     },
     /**
@@ -701,11 +711,28 @@ export default defineComponent({
         { line: termLine, ch: termStart + term.length }
       )
     },
-    /**
-     * Align the independently scrollable preview to the current selection head.
-     */
-    alignPreviewToCursor () {
-      if (this.editorDisposed || !this.previewShown || !this.cm || this.previewHTML.trim().length === 0) return
+    togglePreviewAlignment () {
+      this.previewAlignmentEnabled = !this.previewAlignmentEnabled
+      if (!this.previewAlignmentEnabled) {
+        stopPreviewAlignment(this)
+        return
+      }
+      this.$nextTick(() => this.requestPreviewAlignment(true))
+    },
+    requestPreviewAlignment (force = false) {
+      let scheduler = previewAlignmentSchedulers.get(this)
+      if (!scheduler) {
+        scheduler = new PreviewAlignmentScheduler(
+          () => !this.editorDisposed && this.previewAlignmentEnabled && this.previewShown && !this.previewDirty,
+          force => this.alignPreviewToCursor(force)
+        )
+        previewAlignmentSchedulers.set(this, scheduler)
+      }
+      scheduler.request(force)
+    },
+    /** Follow the selection head without moving or focusing the source editor. */
+    alignPreviewToCursor (force = false) {
+      if (this.editorDisposed || !this.previewAlignmentEnabled || !this.previewShown || this.previewDirty || !this.cm || this.previewHTML.trim().length === 0) return
       const preview = this.$refs.editorPreview as HTMLElement | undefined
       const previewContainer = this.$refs.editorPreviewContainer as HTMLElement | undefined
       const firstPreviewElement = preview?.firstElementChild
@@ -725,12 +752,16 @@ export default defineComponent({
       const offset = markedDestination ? '-100' : '-50'
       const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180
 
+      if (!force && previewAlignmentTargets.get(this) === destination) return
       stopPreviewAlignment(this)
       previewAlignmentTargets.set(this, destination)
       Velocity(destination, 'scroll', {
         offset,
         duration,
-        container: previewContainer
+        container: previewContainer,
+        complete: () => {
+          if (previewAlignmentTargets.get(this) === destination) previewAlignmentTargets.delete(this)
+        }
       })
     },
     toggleHelp () {
@@ -931,9 +962,10 @@ export default defineComponent({
       },
       onCursor: position => {
         this.positionSync(position)
+        this.requestPreviewAlignment()
       },
       onClick: () => {
-        this.alignPreviewToCursor()
+        this.requestPreviewAlignment()
       }
     })
     this.cm = markRaw(cm)
@@ -957,6 +989,7 @@ export default defineComponent({
     this.editorDisposed = true
     this.debouncedProcessContent?.cancel()
     stopPreviewAlignment(this)
+    previewAlignmentSchedulers.delete(this)
     offEditorInsert(this.handleEditorInsert)
     offEditorSaveConflict(this.handleEditorSaveConflict)
     offEditorContentOverwrite(this.handleEditorContentOverwrite)

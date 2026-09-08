@@ -15,6 +15,7 @@ declare module 'epic-spinners' {
 declare module 'velocity-animate' {
   type VelocityTarget = Element | Element[] | NodeListOf<Element> | null | undefined
   type VelocityOptions = {
+    complete?: () => void
     container?: Element
     duration?: number
     offset?: string | number
