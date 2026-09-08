@@ -7,6 +7,7 @@ export const CLOUD_BEAD_LIMIT = 512
 export const CLOUD_BEAD_FRACTION = 0.065
 export const CLOUD_DUST_FRACTION = 0.7
 const STEP = 1 / 120
+const DAMPING = Math.exp(-3.8 * STEP)
 const BUCKETS = 4096
 const CELL = 24
 const TAU = Math.PI * 2
@@ -24,6 +25,7 @@ export class ParticleCloud {
   readonly radius: Float32Array
   private readonly homeX: Float32Array
   private readonly homeY: Float32Array
+  private readonly phases: Float64Array
   private readonly heads = new Int32Array(BUCKETS)
   private readonly next: Int32Array
   private readonly cellX: Int32Array
@@ -59,6 +61,7 @@ export class ParticleCloud {
     this.radius = new Float32Array(this.count)
     this.homeX = new Float32Array(this.count)
     this.homeY = new Float32Array(this.count)
+    this.phases = Float64Array.from(this.indices, i => (particles.seed[i]! / 65535) * TAU)
     this.next = new Int32Array(this.count)
     this.cellX = new Int32Array(this.count)
     this.cellY = new Int32Array(this.count)
@@ -102,11 +105,15 @@ export class ParticleCloud {
       const newBurst = blast.ageSeconds < this.blastAges[slot]!
       this.blastAges[slot] = blast.ageSeconds
       if (!newBurst || blast.ageSeconds > 0.15) continue
+      const blastX = (blast.x * width) / 2
+      const blastY = (blast.y * height) / 2
+      const reach = Math.min(240, Math.max(100, longAxis * 0.3)) * blast.scale
+      const reachSquared = reach * reach
       for (let b = 0; b < this.count; b++) {
-        const dx = this.x[b]! - (blast.x * width) / 2
-        const dy = this.y[b]! - (blast.y * height) / 2
+        const dx = this.x[b]! - blastX
+        const dy = this.y[b]! - blastY
+        if (dx * dx + dy * dy >= reachSquared) continue
         const d = Math.max(1, Math.hypot(dx, dy))
-        const reach = Math.min(240, Math.max(100, longAxis * 0.3)) * blast.scale
         const force = Math.max(0, 1 - d / reach) ** 2 * 950 * blast.scale
         this.vx[b] += ((dx / d) * 0.94 - (dy / d) * 0.34) * force
         this.vy[b] += ((dy / d) * 0.94 + (dx / d) * 0.34) * force
@@ -124,10 +131,9 @@ export class ParticleCloud {
   }
 
   private step(time: number): void {
-    const damping = Math.exp(-3.8 * STEP)
     this.heads.fill(-1)
     for (let b = 0; b < this.count; b++) {
-      const phase = (this.particles.seed[this.indices[b]!]! / 65535) * TAU
+      const phase = this.phases[b]!
       const tx = this.homeX[b]! + Math.sin(time * 0.48 + phase) * 9
       const ty = this.homeY[b]! + Math.cos(time * 0.39 + phase * 1.7) * 9
       let ax = (tx - this.x[b]!) * 12
@@ -136,13 +142,15 @@ export class ParticleCloud {
       if (brush.travel > 0.01) {
         const dx = this.x[b]! - (brush.x * this.width) / 2
         const dy = this.y[b]! - (brush.y * this.height) / 2
-        const d = Math.max(1, Math.hypot(dx, dy))
-        const force = Math.max(0, 1 - d / brush.radius) ** 2 * brush.travel * 65
-        ax += (dx / d + brush.directionX * 0.65) * force
-        ay += (dy / d + brush.directionY * 0.65) * force
+        if (dx * dx + dy * dy < brush.radius * brush.radius) {
+          const d = Math.max(1, Math.hypot(dx, dy))
+          const force = Math.max(0, 1 - d / brush.radius) ** 2 * brush.travel * 65
+          ax += (dx / d + brush.directionX * 0.65) * force
+          ay += (dy / d + brush.directionY * 0.65) * force
+        }
       }
-      this.vx[b] = (this.vx[b]! + ax * STEP) * damping
-      this.vy[b] = (this.vy[b]! + ay * STEP) * damping
+      this.vx[b] = (this.vx[b]! + ax * STEP) * DAMPING
+      this.vy[b] = (this.vy[b]! + ay * STEP) * DAMPING
       this.x[b] += this.vx[b]! * STEP
       this.y[b] += this.vy[b]! * STEP
       const cx = Math.floor(this.x[b]! / CELL)
@@ -167,6 +175,7 @@ export class ParticleCloud {
             let ox = this.x[other]! - this.x[b]!
             let oy = this.y[other]! - this.y[b]!
             const separation = this.radius[b]! + this.radius[other]!
+            if (ox * ox + oy * oy >= separation * separation) continue
             let distance = Math.hypot(ox, oy)
             if (distance >= separation) continue
             if (distance < 0.001) {

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import type { Locator, Page, Request, TestInfo } from '@playwright/test'
 import { expect } from '@playwright/test'
 import sharp from 'sharp'
+import { updateParticleColors } from '../../client/components/login-logo/particle-colors'
 import { responsiveTest as test } from './helpers.ts'
 
 const LOGO_URL = `/_site-logo/${'a'.repeat(64)}/logo.png`
@@ -1657,9 +1658,38 @@ test.describe('managed login logo auth independence', () => {
 
 const particleVertexShader = readFileSync(new URL('../../client/components/login-logo/particle.vert.glsl', import.meta.url), 'utf8')
 
-test('particle cores retain source alpha and readable color on light surfaces', async ({ page }, testInfo) => {
+const particleColorReferenceShader = readFileSync(new URL('./fixtures/particle-color-reference.vert.glsl', import.meta.url), 'utf8')
+
+test('cached particle colors match the original GPU treatment and retain light contrast', async ({ page }, testInfo) => {
   requireProjectRow(testInfo, ELIGIBLE_DESKTOP_PROJECTS)
-  const result = await page.evaluate(source => {
+  const linear = (value: number) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  const colors = [[255, 255, 255], [255, 232, 173], [89, 184, 240], [242, 122, 41], [249, 161, 52], [13, 15, 26], [2, 2, 2], [0, 0, 0]]
+  const backgrounds = [[1, 1, 1], [0.96, 0.94, 0.89], [0.055, 0.065, 0.085], [0.18, 0.18, 0.18], [0.64, 0.64, 0.64]]
+  const inputs = colors.flatMap(color => [255, 140, 38, 1].flatMap(alpha => [1, 19661, 45874, 64000].map(seed => ({ color, alpha, seed }))))
+  for (let index = 0; index < 256; index++) {
+    inputs.push({
+      color: [(index * 73) & 255, (index * 151) & 255, (index * 199) & 255],
+      alpha: 1 + (index * 11) % 255,
+      seed: 1 + (index * 40503) % 65535
+    })
+  }
+  const particles = {
+    count: inputs.length,
+    rgba: Uint8Array.from(inputs.flatMap(input => [...input.color, input.alpha])),
+    seed: Uint16Array.from(inputs.map(input => input.seed))
+  }
+  const samples = backgrounds.flatMap(background => {
+    const cached = new Float32Array(particles.count * 4)
+    updateParticleColors(particles, { r: linear(background[0]!), g: linear(background[1]!), b: linear(background[2]!) }, cached)
+    return inputs.map((input, index) => ({
+      background,
+      color: input.color.map(channel => channel / 255),
+      sourceAlpha: input.alpha / 255,
+      seed: input.seed / 65535,
+      cached: Array.from(cached.subarray(index * 4, index * 4 + 4))
+    }))
+  })
+  const result = await page.evaluate(({ source, reference, samples }) => {
     const gl = document.createElement('canvas').getContext('webgl2')
     if (!gl) return null
     const compile = (type: number, code: string) => {
@@ -1669,35 +1699,25 @@ test('particle cores retain source alpha and readable color on light surfaces', 
       if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader) ?? 'Shader compile failed')
       return shader
     }
-    const vertex = compile(gl.VERTEX_SHADER, `#version 300 es
+    const fragment = compile(gl.FRAGMENT_SHADER, '#version 300 es\nprecision highp float;\nout vec4 color;\nvoid main(){color=vec4(1.0);}')
+    const shaders: WebGLShader[] = []
+    const programs = [source, reference].map(shaderSource => {
+      const vertex = compile(gl.VERTEX_SHADER, `#version 300 es
 #define CLOUD_DUST_END 0.7
 #define CLOUD_BEAD_START 0.935
-${source.replace(/attribute /g, 'in ').replace(/varying /g, 'out ').replace('precision highp float;', `precision highp float;
+${shaderSource.replace(/attribute /g, 'in ').replace(/varying /g, 'out ').replace('precision highp float;', `precision highp float;
 uniform mat4 projectionMatrix;
 uniform mat4 modelViewMatrix;`)}`)
-    const fragment = compile(gl.FRAGMENT_SHADER, '#version 300 es\nprecision highp float;\nout vec4 color;\nvoid main(){color=vec4(1.0);}')
-    const program = gl.createProgram()!
-    gl.attachShader(program, vertex)
-    gl.attachShader(program, fragment)
-    gl.transformFeedbackVaryings(program, ['vColor'], gl.INTERLEAVED_ATTRIBS)
-    gl.linkProgram(program)
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) ?? 'Shader link failed')
-    gl.useProgram(program)
-    const uniform = (name: string) => gl.getUniformLocation(program, name)
-    const attr = (name: string, x: number, y = 0, z = 0, w = 1) => {
-      const location = gl.getAttribLocation(program, name)
-      if (location >= 0) gl.vertexAttrib4f(location, x, y, z, w)
-    }
+      shaders.push(vertex)
+      const program = gl.createProgram()!
+      gl.attachShader(program, vertex)
+      gl.attachShader(program, fragment)
+      gl.transformFeedbackVaryings(program, ['vColor'], gl.INTERLEAVED_ATTRIBS)
+      gl.linkProgram(program)
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program) ?? 'Shader link failed')
+      return program
+    })
     const identity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1])
-    gl.uniformMatrix4fv(uniform('projectionMatrix'), false, identity)
-    gl.uniformMatrix4fv(uniform('modelViewMatrix'), false, identity)
-    gl.uniform1f(uniform('uAspect'), 1)
-    gl.uniform1f(uniform('uRenderedLongAxis'), 800)
-    gl.uniform1f(uniform('uDpr'), 1)
-    gl.uniform2f(uniform('uViewport'), 800, 800)
-    attr('logoSeed', 0.3) // Fine dust has no fragment sphere lighting.
-    attr('logoSize', 1)
-    attr('cloudMotion', 0, 0, 0)
     const buffer = gl.createBuffer()!
     gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER, buffer)
     gl.bufferData(gl.TRANSFORM_FEEDBACK_BUFFER, 16, gl.STREAM_READ)
@@ -1706,61 +1726,80 @@ uniform mat4 modelViewMatrix;`)}`)
     gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, buffer)
     gl.enable(gl.RASTERIZER_DISCARD)
     const linear = (value: number) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
-    const colors = [[1, 1, 1], [1, 0.91, 0.68], [0.35, 0.72, 0.94], [0.95, 0.48, 0.16]]
-    const backgrounds = [[1, 1, 1], [0.96, 0.94, 0.89], [0.055, 0.065, 0.085]]
-    const samples = []
-    for (const background of backgrounds) {
-      gl.uniform3f(uniform('uBackground'), linear(background[0]!), linear(background[1]!), linear(background[2]!))
-      for (const color of colors) {
-        for (const sourceAlpha of [1, 0.55, 0.15]) {
-          attr('logoColor', color[0]!, color[1]!, color[2]!, sourceAlpha)
-          gl.beginTransformFeedback(gl.POINTS)
-          gl.drawArrays(gl.POINTS, 0, 1)
-          gl.endTransformFeedback()
-          const output = new Float32Array(4)
-          gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER, 0, output)
-          samples.push({ background, color, sourceAlpha, output: Array.from(output) })
-        }
+    const outputs = programs.map(program => {
+      gl.useProgram(program)
+      const uniform = (name: string) => gl.getUniformLocation(program, name)
+      const attr = (name: string, x: number, y = 0, z = 0, w = 1) => {
+        const location = gl.getAttribLocation(program, name)
+        if (location >= 0) gl.vertexAttrib4f(location, x, y, z, w)
       }
-    }
+      gl.uniformMatrix4fv(uniform('projectionMatrix'), false, identity)
+      gl.uniformMatrix4fv(uniform('modelViewMatrix'), false, identity)
+      gl.uniform1f(uniform('uAspect'), 1)
+      gl.uniform1f(uniform('uRenderedLongAxis'), 800)
+      gl.uniform1f(uniform('uDpr'), 1)
+      gl.uniform2f(uniform('uViewport'), 800, 800)
+      attr('logoSize', 1)
+      attr('cloudMotion', 0, 0, 0)
+      return samples.map(sample => {
+        gl.uniform3f(uniform('uBackground'), linear(sample.background[0]!), linear(sample.background[1]!), linear(sample.background[2]!))
+        attr('logoSeed', sample.seed)
+        attr('logoColor', sample.color[0]!, sample.color[1]!, sample.color[2]!, sample.sourceAlpha)
+        attr('particleColor', sample.cached[0]!, sample.cached[1]!, sample.cached[2]!, sample.cached[3]!)
+        gl.beginTransformFeedback(gl.POINTS)
+        gl.drawArrays(gl.POINTS, 0, 1)
+        gl.endTransformFeedback()
+        const output = new Float32Array(4)
+        gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER, 0, output)
+        return Array.from(output)
+      })
+    })
     const error = gl.getError()
     gl.disable(gl.RASTERIZER_DISCARD)
     gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null)
     gl.deleteTransformFeedback(feedback)
     gl.deleteBuffer(buffer)
-    gl.deleteProgram(program)
-    gl.deleteShader(vertex)
+    for (const program of programs) gl.deleteProgram(program)
+    for (const shader of shaders) gl.deleteShader(shader)
     gl.deleteShader(fragment)
     gl.getExtension('WEBGL_lose_context')?.loseContext()
-    return { error, samples }
-  }, particleVertexShader)
+    return { error, outputs }
+  }, { source: particleVertexShader, reference: particleColorReferenceShader, samples })
   test.skip(!result, 'WebGL2 unavailable')
   if (!result) return
   expect(result.error).toBe(0)
-  const linear = (value: number) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
   const srgb = (value: number) => value <= 0.0031308 ? value * 12.92 : 1.055 * value ** (1 / 2.4) - 0.055
   const luminance = (color: number[]) => 0.2126 * linear(color[0]!) + 0.7152 * linear(color[1]!) + 0.0722 * linear(color[2]!)
-  const seedProgress = 0.3 / 0.94
-  const dustOpacity = 0.66 + 0.28 * seedProgress ** 2 * (3 - 2 * seedProgress)
-  for (const sample of result.samples) {
-    const { background, color, sourceAlpha, output } = sample
+  let maximumEncodedChannelDifference = 0
+  let maximumAlphaDifference = 0
+  for (const [index, sample] of samples.entries()) {
+    const output = result.outputs[0]![index]!
+    const reference = result.outputs[1]![index]!
     expect(output.every(Number.isFinite)).toBe(true)
-    expect(output[3]).toBeCloseTo(sourceAlpha * dustOpacity, 5)
+    expect(output[3]).toBeCloseTo(reference[3]!, 6)
+    maximumAlphaDifference = Math.max(maximumAlphaDifference, Math.abs(output[3]! - reference[3]!))
     const encoded = output.slice(0, 3).map(srgb)
-    const composited = encoded.map((channel, index) => channel * output[3]! + background[index]! * (1 - output[3]!))
-    const surface = luminance(background)
-    const foreground = luminance(composited)
-    const contrast = (Math.max(surface, foreground) + 0.05) / (Math.min(surface, foreground) + 0.05)
+    const original = reference.slice(0, 3).map(srgb)
+    for (let channel = 0; channel < 3; channel++) {
+      const difference = Math.abs(encoded[channel]! - original[channel]!)
+      maximumEncodedChannelDifference = Math.max(maximumEncodedChannelDifference, difference)
+      expect(difference).toBeLessThanOrEqual(1 / 255)
+    }
+    // Core output only: coverage, sphere glints and canvas composition stay unchanged.
+    const composited = encoded.map((channel, channelIndex) => channel * output[3]! + sample.background[channelIndex]! * (1 - output[3]!))
+    const surface = luminance(sample.background)
     if (surface > 0.5) {
-      const darkestComposite = background.map(channel => channel * (1 - output[3]!))
+      const foreground = luminance(composited)
+      const contrast = (Math.max(surface, foreground) + 0.05) / (Math.min(surface, foreground) + 0.05)
+      const darkestComposite = sample.background.map(channel => channel * (1 - output[3]!))
       const attainableContrast = (surface + 0.05) / (luminance(darkestComposite) + 0.05)
       expect(contrast).toBeGreaterThanOrEqual(Math.min(3, attainableContrast) - 0.02)
     }
-    // Opaque colors already clear on dark retain their established source treatment.
-    if (surface < 0.1 && sourceAlpha === 1) {
-      for (let channel = 0; channel < 3; channel++) expect(encoded[channel]).toBeCloseTo(color[channel]!, 4)
-    }
   }
+  await testInfo.attach('particle-color-cache-equivalence', {
+    body: Buffer.from(JSON.stringify({ samples: samples.length, maximumEncodedChannelDifference, maximumAlphaDifference })),
+    contentType: 'application/json'
+  })
 })
 
 // Read actual GPU vertex positions: screenshots alone cannot distinguish a particle's

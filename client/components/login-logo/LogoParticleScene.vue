@@ -61,6 +61,7 @@ import {
 } from 'vue'
 import type { LogoEffectDescriptor, ParsedLogoParticles } from './particle-logo'
 import { CLOUD_BEAD_FRACTION, CLOUD_DUST_FRACTION, ParticleCloud } from './particle-cloud'
+import { updateParticleColors } from './particle-colors'
 import fragmentShader from './particle.frag.glsl?raw'
 import vertexShader from './particle.vert.glsl?raw'
 import {
@@ -124,6 +125,8 @@ export interface ParticleSceneResources {
   readonly camera: OrthographicCamera
   readonly cloud: ParticleCloud
   readonly cloudMotion: BufferAttribute
+  readonly particleColor: BufferAttribute
+  readonly particles: ParsedLogoParticles
   readonly geometry: BufferGeometry
   readonly material: ShaderMaterial
   readonly motionDiagnostics: ParticleMotionDiagnostics | null
@@ -420,17 +423,21 @@ export const createParticleSceneResources = (
 
   const cloud = new ParticleCloud(particles)
   const cloudMotion = new BufferAttribute(cloud.motion, 3).setUsage(DynamicDrawUsage)
+  const background = new Color(DEFAULT_BACKGROUND)
+  const colors = new Float32Array(particles.count * 4)
+  updateParticleColors(particles, background, colors)
+  const particleColor = new BufferAttribute(colors, 4)
   const geometry = new BufferGeometry()
   geometry.setAttribute('cloudMotion', cloudMotion)
   geometry.setAttribute('logoXY', new BufferAttribute(particles.xy, 2, true))
   geometry.setAttribute('logoDepth', new BufferAttribute(particles.depth, 1, true))
-  geometry.setAttribute('logoColor', new BufferAttribute(particles.rgba, 4, true))
+  geometry.setAttribute('particleColor', particleColor)
   geometry.setAttribute('logoSize', new BufferAttribute(particles.size, 1, true))
   geometry.setAttribute('logoSeed', new BufferAttribute(particles.seed, 1, true))
   geometry.setDrawRange(0, particles.count)
   const uniforms: ParticleUniforms = {
     uAspect: { value: effect.aspect },
-    uBackground: { value: new Color(DEFAULT_BACKGROUND) },
+    uBackground: { value: background },
     uDpr: { value: 1 },
     uBrushPositionRadius: { value: new Vector4(0, 0, 18, 0) },
     uBrushDirection: { value: new Vector2(0, 0) },
@@ -482,6 +489,8 @@ export const createParticleSceneResources = (
     camera,
     cloud,
     cloudMotion,
+    particleColor,
+    particles,
     disposed: false,
     geometry,
     material,
@@ -614,7 +623,11 @@ export const updateParticleSceneBackground = (
   canvas: HTMLCanvasElement
 ): void => {
   if (resources.disposed) return
-  resources.uniforms.uBackground.value.copy(readSurfaceColor(canvas))
+  const background = readSurfaceColor(canvas)
+  if (resources.uniforms.uBackground.value.equals(background)) return
+  resources.uniforms.uBackground.value.copy(background)
+  updateParticleColors(resources.particles, background, resources.particleColor.array as Float32Array)
+  resources.particleColor.needsUpdate = true
 }
 
 const renderedLongAxis = (width: number, height: number, aspect: number): number => {

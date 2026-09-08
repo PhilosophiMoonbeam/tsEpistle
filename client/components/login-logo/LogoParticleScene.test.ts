@@ -417,14 +417,13 @@ describe('LogoParticleScene resources', () => {
     disposeParticleSceneResources(resources)
   })
 
-  it('constructs normalized zero-copy geometry attributes over the immutable SoA views', () => {
+  it('constructs zero-copy source geometry and initializes a separate color cache before rendering', () => {
     const particles = makeParticles()
     const before = new Uint8Array(particles.buffer).slice()
     const resources = createParticleSceneResources(particles, effect)
     const expected = [
       ['logoXY', particles.xy, 2],
       ['logoDepth', particles.depth, 1],
-      ['logoColor', particles.rgba, 4],
       ['logoSize', particles.size, 1],
       ['logoSeed', particles.seed, 1]
     ] as const
@@ -436,6 +435,14 @@ describe('LogoParticleScene resources', () => {
       expect(attribute.normalized).toBe(true)
       expect(attribute.count).toBe(effect.count)
     }
+    expect(resources.geometry.getAttribute('particleColor')).toBe(resources.particleColor)
+    expect(resources.particleColor.array).toBeInstanceOf(Float32Array)
+    expect(resources.particleColor.array.buffer).not.toBe(particles.buffer)
+    expect(resources.particleColor.itemSize).toBe(4)
+    expect(resources.particleColor.count).toBe(effect.count)
+    expect(resources.particleColor.normalized).toBe(false)
+    expect(resources.particleColor.array.every(Number.isFinite)).toBe(true)
+    expect(resources.particleColor.getW(0)).toBeGreaterThan(0)
     expect(resources.geometry.drawRange).toEqual({ start: 0, count: effect.count })
     expect(resources.points.geometry).toBe(resources.geometry)
     expect(resources.points.material).toBe(resources.material)
@@ -454,7 +461,7 @@ describe('LogoParticleScene resources', () => {
     const particles = makeParticles()
     const before = new Uint8Array(particles.buffer).slice()
     const resources = createParticleSceneResources(particles, effect)
-    const attributes = ['logoXY', 'logoDepth', 'logoColor', 'logoSize', 'logoSeed'].map(name => resources.geometry.getAttribute(name))
+    const attributes = ['logoXY', 'logoDepth', 'particleColor', 'logoSize', 'logoSeed'].map(name => resources.geometry.getAttribute(name))
     const arrays = attributes.map(attribute => attribute.array)
     const versions = attributes.map(attribute => attribute.version)
     const impulseDirectionUniforms = resources.uniforms.uBrushDirection.value
@@ -752,11 +759,11 @@ describe('LogoParticleScene resources', () => {
     }
   })
 
-  it('changes only the background uniform when the rendered theme surface changes', () => {
+  it('uploads cached colors only when the actual surface color changes', () => {
     const particles = makeParticles()
     const before = new Uint8Array(particles.buffer).slice()
     const resources = createParticleSceneResources(particles, effect)
-    const attributes = ['logoXY', 'logoDepth', 'logoColor', 'logoSize', 'logoSeed'].map(name => resources.geometry.getAttribute(name))
+    const attributes = ['logoXY', 'logoDepth', 'logoSize', 'logoSeed'].map(name => resources.geometry.getAttribute(name))
     const versions = attributes.map(attribute => attribute.version)
     const stableUniformValues = [
       resources.uniforms.uAspect.value,
@@ -776,8 +783,19 @@ describe('LogoParticleScene resources', () => {
     surface.style.backgroundColor = 'rgb(10, 20, 30)'
     updateParticleSceneBackground(resources, canvas)
     const darkBackground = resources.uniforms.uBackground.value.clone()
+    const colors = resources.particleColor.array
+    const darkColors = colors.slice()
+    const darkVersion = resources.particleColor.version
+    updateParticleSceneBackground(resources, canvas)
+    expect(resources.particleColor.version).toBe(darkVersion)
     surface.style.backgroundColor = 'rgb(230, 220, 210)'
     updateParticleSceneBackground(resources, canvas)
+
+    expect(resources.particleColor.array).toBe(colors)
+    expect(colors).not.toEqual(darkColors)
+    expect(resources.particleColor.version).toBe(darkVersion + 1)
+    updateParticleSceneBackground(resources, canvas)
+    expect(resources.particleColor.version).toBe(darkVersion + 1)
 
     expect(resources.uniforms.uBackground.value.equals(darkBackground)).toBe(false)
     expect([
