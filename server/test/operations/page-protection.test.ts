@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import { up as upProtection } from '../../db/migrations/2.5.134.ts'
@@ -6,6 +7,8 @@ let knex: Knex
 let page: Record<string, unknown>
 let otherPage: Record<string, unknown> | undefined
 const searchUpdated = vi.fn()
+const protectedAssetPath = 'uploads/private-plan.png'
+const protectedAssetHash = createHash('sha1').update(protectedAssetPath).digest('hex')
 
 const user = (id: number, permissions: string[]) => ({ id, email: `user-${id}@example.test`, permissions })
 
@@ -19,13 +22,25 @@ beforeEach(async () => {
     useNullAsDefault: true
   })
   await knex.schema.createTable('users', table => table.integer('id').primary())
+  await knex.schema.createTable('assets', table => {
+    table.integer('id').primary()
+    table.string('hash').notNullable()
+  })
   await knex.schema.createTable('pages', table => {
     table.integer('id').primary()
     table.text('content').notNullable()
     table.text('render').notNullable()
+    table.text('extra').notNullable().defaultTo('{}')
   })
   await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
-  await knex('pages').insert({ id: 42, content: '![Plan](/uploads/private-plan.png)', render: '<img src="/uploads/private-plan.png">' })
+  await knex('pages').insert({
+    id: 42,
+    content: '![Plan](/uploads/private-plan.png)',
+    render: '<img src="/uploads/private-plan.png">',
+    extra: '{}'
+  })
+
+  await knex('assets').insert({ id: 101, hash: protectedAssetHash })
   await upProtection(knex)
   page = {
     id: 42,
@@ -86,6 +101,31 @@ describe('password-protected pages', () => {
     ).toBe(true)
     expect(await knex('pageProtectedAssets')).toEqual([{ pageId: 42, assetPath: 'uploads/private-plan.png' }])
     expect(searchUpdated).toHaveBeenCalledWith(expect.objectContaining({ safeContent: '' }))
+  })
+
+  it('protects assets referenced only by page branding metadata', async () => {
+    const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
+    await knex('pages')
+      .where({ id: 42 })
+      .update({
+        content: 'Protected branding',
+        render: '<p>Protected branding</p>',
+        extra: JSON.stringify({ branding: { assetId: 101 } })
+      })
+    await protection.setPageProtection({
+      requester: user(7, ['write:pages']),
+      pageId: 42,
+      password: 'branding page password',
+      sessionId: 'manager-session'
+    })
+    expect(await knex('pageProtectedAssets')).toEqual([])
+    expect(
+      await protection.protectedAssetRequiresUnlock({ requester: user(8, ['read:pages']), assetPath: protectedAssetPath, sessionId: 'reader-session' })
+    ).toBe(true)
+    await protection.unlockPage({ requester: user(8, ['read:pages']), pageId: 42, password: 'branding page password', sessionId: 'reader-session' })
+    expect(
+      await protection.protectedAssetRequiresUnlock({ requester: user(8, ['read:pages']), assetPath: protectedAssetPath, sessionId: 'reader-session' })
+    ).toBe(false)
   })
 
   it('uses session-scoped expiring grants and rejects wrong passwords without disclosure', async () => {
@@ -149,7 +189,12 @@ describe('password-protected pages', () => {
 
   it('requires an unlock grant and current authorization for the same linked page', async () => {
     const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
-    await knex('pages').insert({ id: 43, content: '![Plan](/uploads/private-plan.png)', render: '<img src="/uploads/private-plan.png">' })
+    await knex('pages').insert({
+      id: 43,
+      content: '![Plan](/uploads/private-plan.png)',
+      render: '<img src="/uploads/private-plan.png">',
+      extra: '{}'
+    })
     otherPage = {
       id: 43,
       title: 'Reader plan',

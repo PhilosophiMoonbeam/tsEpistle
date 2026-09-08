@@ -1,5 +1,6 @@
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
+import { PageBrandingViewSchema, type PageBrandingView } from '../../shared/page-branding.ts'
 
 type FetchImpl = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -70,6 +71,20 @@ export async function fetchAssets(fetchImpl: FetchImpl, folderId: number, kind =
   const payload = await parseResponse(response, fallbackMessage)
   if (!Array.isArray(payload)) throw new Error(fallbackMessage)
   return payload.map(row => normalizeAsset(row, fallbackMessage))
+}
+
+export async function fetchAssetBranding(fetchImpl: FetchImpl, id: number, fallbackMessage = 'Asset branding descriptor failed'): Promise<PageBrandingView> {
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error(fallbackMessage)
+  const response = await sameOriginJsonFetch(fetchImpl, `/_api/assets/${encodeURIComponent(id)}/branding`, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { Accept: 'application/json' }
+  })
+  const payload = await parseResponse(response, fallbackMessage)
+  if (!isRecord(payload)) throw new Error(fallbackMessage)
+  const result = PageBrandingViewSchema.safeParse(payload.branding)
+  if (!result.success) throw new Error(fallbackMessage)
+  return result.data
 }
 
 export async function fetchAssetFolders(fetchImpl: FetchImpl, parentFolderId: number, fallbackMessage = 'Asset folder list failed'): Promise<AssetFolder[]> {

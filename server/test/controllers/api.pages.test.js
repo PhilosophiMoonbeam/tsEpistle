@@ -1284,7 +1284,7 @@ describe('controllers/api pages endpoints', () => {
     expect(typeof getPage).toBe('function')
   })
 
-  it('returns GraphQL-compatible page details for authorized page detail requests', async () => {
+  it('returns internal page details for authorized page detail requests', async () => {
     global.WIKI.auth.checkAccess
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
@@ -1294,8 +1294,6 @@ describe('controllers/api pages endpoints', () => {
 
     await getPage(req, res)
 
-    expect(global.WIKI.models.pages.getPageFromDb).toHaveBeenCalledWith(7)
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(1, { id: 3, permissions: ['write:pages'] }, ['read:pages'], { path: 'docs/alpha', locale: 'en', tags: undefined })
     expect(res.json).toHaveBeenCalledWith({
       id: 7,
       path: 'docs/alpha',
@@ -1313,10 +1311,12 @@ describe('controllers/api pages endpoints', () => {
       sourceRevision: '8',
       editor: 'markdown',
       locale: 'en',
+      branding: null,
       okf: {
         authority: { state: 'missing', metadata: null, trust: null },
         projection: { state: 'pending', value: null }
       },
+      brandingAssignment: null,
       authorId: 2,
       authorName: 'Author',
       authorEmail: 'author@example.com',
@@ -1326,7 +1326,10 @@ describe('controllers/api pages endpoints', () => {
     })
   })
 
-  it('omits the same field-restricted page metadata hidden by GraphQL', async () => {
+  it('omits field-restricted page metadata from reader detail responses', async () => {
+    global.WIKI.auth.checkAccess.mockImplementation((_user, permissions) =>
+      permissions.includes('read:pages') && !permissions.includes('write:pages')
+    )
     const { getPage } = await loadHandler()
     const req = { user: { id: 4, permissions: ['read:pages'] }, sessionID: 'session-read', params: { id: '7' } }
     const res = { json: vi.fn(), set: vi.fn(), status: vi.fn().mockReturnThis(), vary: vi.fn() }
@@ -1346,6 +1349,7 @@ describe('controllers/api pages endpoints', () => {
       updatedAt: '2026-01-02T00:00:00.000Z',
       sourceRevision: '8',
       locale: 'en',
+      branding: null,
       okf: {
         authority: { state: 'missing', metadata: null, trust: null },
         projection: { state: 'pending', value: null }

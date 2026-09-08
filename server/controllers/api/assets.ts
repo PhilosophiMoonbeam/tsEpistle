@@ -10,19 +10,16 @@ interface AssetRequester extends Record<string, unknown> {
   email: string
 }
 
-const isAssetRequester = (user: Express.User | undefined): user is Express.User & AssetRequester =>
+const isAssetRequester = (user: unknown): user is AssetRequester =>
   user !== undefined &&
-  typeof user.id === 'number' &&
-  Number.isInteger(user.id) &&
-  typeof user.name === 'string' &&
-  typeof user.email === 'string'
+  user !== null &&
+  typeof user === 'object' &&
+  typeof Reflect.get(user, 'id') === 'number' &&
+  Number.isInteger(Reflect.get(user, 'id')) &&
+  typeof Reflect.get(user, 'name') === 'string' &&
+  typeof Reflect.get(user, 'email') === 'string'
 
-
-const requireAccess = (
-  req: Request,
-  res: Response,
-  permissions: string[]
-): req is Request & { user: Express.User & AssetRequester } => {
+const requireAccess = (req: Request, res: Response, permissions: string[]): req is Request & { user: AssetRequester } => {
   if (!getWikiAuth().checkAccess(req.user, permissions) || !isAssetRequester(req.user)) {
     res.status(403).json({ error: 'Forbidden' })
     return false
@@ -35,8 +32,29 @@ const positiveInteger = (value: unknown, res: Response, name: string): number | 
     res.status(400).json({ error: `${name} must be a positive integer` })
     return null
   }
-  return Number(value)
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    res.status(400).json({ error: `${name} must be a positive integer` })
+    return null
+  }
+  return parsed
 }
+
+router.get('/:id/branding', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  const request = req as unknown as { user?: AssetRequester; sessionID?: string }
+  if (!isAssetRequester(request.user)) {
+    res.status(403).json({ error: 'Forbidden' })
+    return
+  }
+  const id = positiveInteger(req.params.id, res, 'id')
+  if (id === null) return
+  try {
+    res.json(await assetOperations.getBranding({ requester: request.user, id, sessionId: request.sessionID ?? '', deriveIfMissing: true }))
+  } catch (err) {
+    next(err)
+  }
+})
 
 const nonNegativeInteger = (value: unknown, res: Response, name: string): number | null => {
   if (!/^\d+$/.test(String(value))) {

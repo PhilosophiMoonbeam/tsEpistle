@@ -10,11 +10,16 @@ const writeOutboxEvent = vi.fn(async () => undefined)
 const enqueuePageMutationEffects = vi.fn(async () => undefined)
 const redactProtectedPageForSearch = vi.fn(async () => undefined)
 const syncProtectedPageAssets = vi.fn(async () => undefined)
+const protectedAssetRequiresUnlock = vi.fn(async () => false)
 
 vi.mockModule('../../helpers/page-locale-relations.ts', import.meta.url, () => ({ localeRelationMovePatch }))
 vi.mockModule('../../core/outbox.ts', import.meta.url, () => ({ writeOutboxEvent }))
 vi.mockModule('../../core/page-mutation-outbox.ts', import.meta.url, () => ({ enqueuePageMutationEffects }))
-vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({ redactProtectedPageForSearch, syncProtectedPageAssets }))
+vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({
+  redactProtectedPageForSearch,
+  syncProtectedPageAssets,
+  protectedAssetRequiresUnlock
+}))
 
 const wikiGlobal = globalThis as unknown as { WIKI?: Record<string, unknown> }
 const originalWiki = wikiGlobal.WIKI

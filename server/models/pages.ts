@@ -26,8 +26,11 @@ import { writeOutboxEvent } from '../core/outbox.ts'
 import { enqueuePageMutationEffects, type PageProjectionPayload } from '../core/page-mutation-outbox.ts'
 import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operations/page-protection.ts'
 import { mutateOkfMetadata, OkfDocumentError, type OkfMetadata } from '../okf/format.ts'
+import { PageBrandingAssignmentSchema, type PageBrandingAssignment } from '../../shared/page-branding.ts'
+import { authorizePageBrandingAssignment } from '../helpers/asset-branding.ts'
 
 type UnknownRecord = Record<string, unknown>
+const isRecord = (value: unknown): value is UnknownRecord => value !== null && typeof value === 'object' && !Array.isArray(value)
 type PageErrorConstructor = new () => Error
 
 interface PageUser extends Express.User {
@@ -44,6 +47,7 @@ interface PageExtra extends UnknownRecord {
   css?: string
   js?: string
   okf?: OkfMetadata
+  branding?: PageBrandingAssignment
 }
 
 interface CachedPage {
@@ -80,6 +84,9 @@ interface CachedPageResult extends Omit<CachedPage, 'ownerId'> {
   path: string
   localeCode: string
   ownerId: number | null
+  extra: CachedPage['extra'] & {
+    branding?: PageBrandingAssignment
+  }
 }
 
 interface PageCacheIdentityMarker {
@@ -90,6 +97,7 @@ interface PageCacheIdentityMarker {
   localeCode: string
   visibility: PageVisibility
   ownerId: number | null
+  extra?: unknown
 }
 
 interface PageLookup {
@@ -116,6 +124,11 @@ interface CreatePageOptions {
   tags?: string[]
   okfMetadata?: OkfMetadata
   okfProducer?: string
+  branding?: PageBrandingAssignment | null
+  brandingContext?: {
+    requester?: Express.User
+    sessionId: string
+  }
   skipStorage?: boolean
 }
 
@@ -143,8 +156,14 @@ interface UpdatePageOptions {
   replaceOkfMetadata?: boolean
   okfProducer?: string
   okfRestoreRevision?: string | number
+  branding?: PageBrandingAssignment | null
+  brandingContext?: {
+    requester?: Express.User
+    sessionId: string
+  }
   skipStorage?: boolean
 }
+
 interface ChangeVisibilityOptions {
   id: number
   visibility: PageVisibility
@@ -357,6 +376,36 @@ const invalidateOkfVerification = (metadata: OkfMetadata): OkfMetadata => {
   const unverified = { ...metadata }
   delete unverified.verified
   return unverified
+}
+
+const pageBrandingFromExtra = (extra: unknown): PageBrandingAssignment | undefined => {
+  let candidate = extra
+  if (typeof candidate === 'string') {
+    try {
+      candidate = JSON.parse(candidate)
+    } catch {
+      return undefined
+    }
+  }
+  if (!isRecord(candidate)) return undefined
+  const parsed = PageBrandingAssignmentSchema.safeParse(Reflect.get(candidate, 'branding'))
+  return parsed.success ? parsed.data : undefined
+}
+
+const brandingContextFor = (options: { user: PageUser; brandingContext?: { requester?: Express.User; sessionId: string } }) => ({
+  requester: options.brandingContext?.requester ?? options.user,
+  sessionId: options.brandingContext?.sessionId ?? ''
+})
+
+const authorizeBrandingAssignment = async (
+  assignment: PageBrandingAssignment | null | undefined,
+  options: { user: PageUser; brandingContext?: { requester?: Express.User; sessionId: string } }
+): Promise<void> => {
+  if (assignment === undefined || assignment === null) return
+  await authorizePageBrandingAssignment({
+    assetId: assignment.assetId,
+    ...brandingContextFor(options)
+  })
 }
 
 const writePageOutboxEvent = async (
@@ -718,7 +767,6 @@ export default class Page extends Model {
     })
   }
 
-
   /**
    * Get the page's file extension based on content type
    *
@@ -864,6 +912,8 @@ export default class Page extends Model {
       knowledgeChanged: true,
       at: new Date()
     })
+    const branding = opts.branding === undefined ? undefined : opts.branding === null ? null : PageBrandingAssignmentSchema.parse(opts.branding)
+    await authorizeBrandingAssignment(branding, opts)
 
     await wiki.models.knex.transaction(async transaction => {
       const inserted = await wiki.models.pages.query(transaction).insert({
@@ -891,7 +941,8 @@ export default class Page extends Model {
         extra: {
           js: scriptJs,
           css: scriptCss,
-          okf: okfMetadata
+          okf: okfMetadata,
+          ...(branding === undefined || branding === null ? {} : { branding })
         }
       })
       if (opts.tags && opts.tags.length > 0) {
@@ -968,9 +1019,17 @@ export default class Page extends Model {
     const editorKey = opts.editor ?? ogPage.editorKey
 
     // -> Format Extra Properties
-    if (!_.isPlainObject(ogPage.extra)) {
-      ogPage.extra = {}
-    }
+    const pageExtra: PageExtra = _.isPlainObject(ogPage.extra) ? { ...ogPage.extra } : {}
+    ogPage.extra = pageExtra
+    const hasBrandingMutation = Object.hasOwn(opts, 'branding') && opts.branding !== undefined
+    const branding = hasBrandingMutation ? (opts.branding === null ? null : PageBrandingAssignmentSchema.parse(opts.branding)) : undefined
+    const existingBranding = pageBrandingFromExtra(pageExtra)
+    const brandingChanged =
+      hasBrandingMutation &&
+      (branding === null
+        ? Object.hasOwn(pageExtra, 'branding')
+        : branding !== undefined && (existingBranding === undefined || existingBranding.assetId !== branding.assetId))
+    if (brandingChanged && branding !== null && branding !== undefined) await authorizeBrandingAssignment(branding, opts)
 
     // -> Format CSS Scripts
     let scriptCss = typeof ogPage.extra.css === 'string' ? ogPage.extra.css : ''
@@ -1054,12 +1113,7 @@ export default class Page extends Model {
       (!existingOkfIsValid || existingOkfMetadata === undefined || !_.isEqual(proposedOkfMetadata, normalizedExistingOkfMetadata))
     const willMove = destinationLocale !== ogPage.localeCode || destinationPath !== ogPage.path
     const knowledgeChanged =
-      opts.content !== undefined ||
-      opts.title !== undefined ||
-      opts.description !== undefined ||
-      opts.tags !== undefined ||
-      okfAuthorityChanged ||
-      willMove
+      opts.content !== undefined || opts.title !== undefined || opts.description !== undefined || opts.tags !== undefined || okfAuthorityChanged || willMove
     let okfMetadata = mutateOkfMetadata({
       existing: existingOkfForMutation,
       proposed: restoringOkf ? undefined : (replacementOkfMetadata ?? opts.okfMetadata),
@@ -1070,9 +1124,7 @@ export default class Page extends Model {
       ...(restoringOkf ? { restore: { revision: opts.okfRestoreRevision! } } : {})
     })
     if (okfAuthorityChanged || willMove) okfMetadata = invalidateOkfVerification(okfMetadata)
-    const metadataOnlyNoOp =
-      opts.okfMetadata !== undefined &&
-      !okfAuthorityChanged &&
+    const noNonBrandingMutation =
       opts.content === undefined &&
       opts.description === undefined &&
       opts.isPublished === undefined &&
@@ -1088,7 +1140,9 @@ export default class Page extends Model {
       opts.scriptCss === undefined &&
       opts.scriptJs === undefined &&
       opts.okfRestoreRevision === undefined
-    if (metadataOnlyNoOp) {
+    const metadataOnlyNoOp = opts.okfMetadata !== undefined && !okfAuthorityChanged && noNonBrandingMutation && !brandingChanged
+    const brandingOnlyNoOp = hasBrandingMutation && !brandingChanged && opts.okfMetadata === undefined && noNonBrandingMutation
+    if (metadataOnlyNoOp || brandingOnlyNoOp) {
       const unchangedPage = await wiki.models.pages.getPageFromDb(ogPage.id)
       if (!unchangedPage) throw new wiki.Error.PageNotFound()
       return unchangedPage
@@ -1122,6 +1176,15 @@ export default class Page extends Model {
         })
       : ogPage.hash
     const pageEventType = opts.action === 'restored' ? 'page.restored' : willMove ? 'page.moved' : 'page.updated'
+    const extraForPatch: PageExtra = {
+      ...pageExtra,
+      js: scriptJs,
+      css: scriptCss
+    }
+    if (hasBrandingMutation) {
+      if (branding === null) delete extraForPatch.branding
+      else if (branding !== undefined) extraForPatch.branding = branding
+    }
     await wiki.models.knex.transaction(async transaction => {
       if (opts.expectedCollaborationGeneration !== undefined) {
         const lockedPage = await transaction<{ id: number; sourceRevision: string | number }>('pages')
@@ -1159,9 +1222,7 @@ export default class Page extends Model {
           ...(willMove ? { path: destinationPath, localeCode: destinationLocale, hash: destinationHash } : {}),
           ...localeRelationPatch,
           extra: {
-            ...ogPage.extra,
-            js: scriptJs,
-            css: scriptCss,
+            ...extraForPatch,
             ...(okfMetadata === undefined ? {} : { okf: okfMetadata })
           }
         })
@@ -2061,7 +2122,7 @@ export default class Page extends Model {
       }
       const marker = await wiki.models
         .knex<PageCacheIdentityMarker>('pages')
-        .select('id', 'hash', 'sourceRevision', 'path', 'localeCode', 'visibility', 'ownerId')
+        .select('id', 'hash', 'sourceRevision', 'path', 'localeCode', 'visibility', 'ownerId', 'extra')
         .where({
           path: opts.path,
           localeCode: opts.locale,
@@ -2080,8 +2141,10 @@ export default class Page extends Model {
         await fs.remove(cachePath)
         return false
       }
+      const liveBranding = pageBrandingFromExtra(marker.extra)
       return {
         ...page,
+        extra: liveBranding === undefined ? page.extra : { ...page.extra, branding: liveBranding },
         path: opts.path,
         localeCode: opts.locale,
         ownerId: page.ownerId === 0 ? null : page.ownerId

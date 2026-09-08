@@ -99,4 +99,69 @@ describe('asset operations', () => {
     expect(getHierarchy).toHaveBeenCalledWith(0)
     expect(result).toEqual([{ ...asset, kind: 'BINARY' }])
   })
+
+  it('admits branding derivation only after capacity and keeps ready readers metadata-only', async () => {
+    const assetPath = 'ready.svg'
+    const sourceSha256 = 'b'.repeat(64)
+    const asset = {
+      id: 101,
+      filename: 'ready.svg',
+      folderId: null,
+      metadata: {
+        branding: {
+          version: 1,
+          sourceSha256,
+          state: 'ready',
+          width: 1,
+          height: 1,
+          accent: '#112233',
+          matte: '#FFFFFF'
+        }
+      },
+      getAssetPath: vi.fn().mockResolvedValue(assetPath)
+    }
+    const assetQuery = { findById: vi.fn().mockResolvedValue(asset) }
+    const assetDataFirst = vi.fn().mockResolvedValue(undefined)
+    const checkAccess = vi.fn().mockReturnValue(true)
+    const knex = vi.fn(table => {
+      const query = {
+        where: vi.fn(),
+        select: vi.fn().mockResolvedValue([]),
+        first: table === 'assetData' ? assetDataFirst : vi.fn().mockResolvedValue(undefined)
+      }
+      query.where.mockReturnValue(query)
+      return query
+    })
+    global.WIKI = {
+      auth: { checkAccess },
+      models: {
+        assets: { query: vi.fn().mockReturnValue(assetQuery) },
+        knex
+      }
+    }
+    const branding = await vi.importFresh('../helpers/asset-branding.ts', import.meta.url)
+    const reservations = Array.from({ length: 8 }, (_, index) => branding.reserveAssetBrandingAnalysis(index + 1))
+    try {
+      await expect(branding.refreshAssetBranding(asset.id)).rejects.toMatchObject({ status: 503, name: 'BRANDING_BUSY' })
+      expect(assetQuery.findById).not.toHaveBeenCalled()
+      expect(assetDataFirst).not.toHaveBeenCalled()
+
+      branding.releaseAssetBrandingAnalysis(reservations.shift())
+      await expect(branding.refreshAssetBranding(asset.id)).resolves.toBeNull()
+      expect(assetQuery.findById).toHaveBeenCalledOnce()
+      expect(assetDataFirst).toHaveBeenCalledOnce()
+
+      const materializationsBeforeReadyRead = assetDataFirst.mock.calls.length
+      await expect(
+        branding.resolveAssetBrandingView({
+          assetId: asset.id,
+          requester: { id: 7, permissions: ['read:assets'] },
+          sessionId: 'reader-session'
+        })
+      ).resolves.toMatchObject({ assetId: asset.id, sourceSha256, imageUrl: `/ready.svg?v=${sourceSha256}` })
+      expect(assetDataFirst).toHaveBeenCalledTimes(materializationsBeforeReadyRead)
+    } finally {
+      reservations.forEach(branding.releaseAssetBrandingAnalysis)
+    }
+  })
 })

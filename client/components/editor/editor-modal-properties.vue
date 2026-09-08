@@ -5,9 +5,16 @@
     scrollable
     width='1000'
     :fullscreen='$vuetify.display.smAndDown'
-    aria-labelledby='editor-properties-title'
+    :aria-labelledby='brandingPickerShown ? `editor-media-title` : `editor-properties-title`'
     )
-    .dialog-header
+    editor-modal-media(
+      v-if='brandingPickerShown'
+      purpose='page-branding'
+      embedded
+      @branding-selected='applyBrandingSelection'
+      @branding-cancelled='closeBrandingPicker'
+    )
+    .dialog-header(v-show='!brandingPickerShown')
       v-icon(color='primary') mdi-tag-text-outline
       .text-body-large.ml-3#editor-properties-title {{$t('editor:props.pageProperties')}}
       v-spacer
@@ -22,7 +29,7 @@
         )
         v-icon(start) mdi-check
         span {{ $t('common:actions.ok') }}
-    v-card.editor-properties-card(rounded='0')
+    v-card.editor-properties-card(v-show='!brandingPickerShown', rounded='0')
       v-tabs(v-model='currentTab', color='primary', align-tabs="center", show-arrows)
         v-tab(:value='0') {{$t('editor:props.info')}}
         v-tab(:value='1') {{$t('editor:props.scheduling')}}
@@ -52,6 +59,43 @@
               persistent-hint
               :hint='$t(`editor:props.shortDescriptionHint`)'
               )
+            section.editor-properties-branding(aria-labelledby='editor-properties-branding-title')
+              .editor-properties-branding-heading
+                .text-label-small#editor-properties-branding-title Page identity
+                v-spacer
+                .text-label-small.text-medium-emphasis Optional
+              .editor-properties-branding-preview
+                .editor-properties-branding-preview-copy
+                  .text-label-small Header preview
+                  .text-title-small {{ title || 'Untitled page' }}
+                  .text-body-small(v-if='description') {{ description }}
+                  .text-body-small.text-medium-emphasis(v-else) No short description
+                page-branding-mark(:branding='draft.brandingView')
+              .editor-properties-branding-actions
+                v-btn(
+                  ref='brandingActionButton'
+                  variant='tonal'
+                  color='primary'
+                  @click='openBrandingPicker'
+                )
+                  v-icon(start) mdi-image-multiple-outline
+                  span {{ draft.brandingAssignment ? 'Replace' : 'Select' }}
+                v-btn(
+                  v-if='draft.brandingAssignment'
+                  variant='text'
+                  color='error'
+                  @click='removeBranding'
+                )
+                  v-icon(start) mdi-image-remove-outline
+                  span Remove
+              .editor-properties-branding-status(
+                aria-live='polite'
+                :role='brandingError ? `alert` : `status`'
+              )
+                span(v-if='brandingError') {{ brandingError }}
+                span(v-else-if='draft.brandingAssignment && !draft.brandingView') Assigned image is unavailable. You can replace or remove it.
+                span(v-else-if='draft.brandingAssignment') Page identity image selected.
+                span(v-else) No page identity image selected.
             v-switch(
               ref='privatePageSwitch'
               label='Private page'
@@ -321,7 +365,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent, markRaw } from 'vue'
+import { defineComponent, markRaw, type PropType } from 'vue'
 import { useDate } from 'vuetify'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
@@ -332,6 +376,14 @@ import {
   unlinkPageLocaleRelation,
   type PageLocaleRelation
 } from '../../helpers/pages-api'
+import {
+  PageBrandingAssignmentSchema,
+  PageBrandingViewSchema,
+  type PageBrandingAssignment,
+  type PageBrandingView
+} from '../../../shared/page-branding.ts'
+import PageBrandingMark from '../common/page-branding-mark.vue'
+import { createAsyncComponent } from '../common/async-component-state.vue'
 
 import { css } from '@codemirror/lang-css'
 import { javascript } from '@codemirror/lang-javascript'
@@ -343,6 +395,7 @@ import EditorOkfPanel from './editor-okf-panel.vue'
 const filenamePattern = /^(?![\#\/\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s])(?!.*[\#\/\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s]$)[^\#\.\$\^\=\*\;\:\&\?\(\)\[\]\{\}\"\'\>\<\,\@\!\%\`\~\s]*$/
 
 type DatePickerValue = unknown
+type OkfState = typeof wikiStore.page.okf
 
 const PATH_RULES = Object.freeze([
   (value: string) => !!value || 'This field is required.',
@@ -361,9 +414,9 @@ type PagePropertiesDraft = {
   publishEndDate: string
   scriptJs: string
   scriptCss: string
+  brandingAssignment: PageBrandingAssignment | null
+  brandingView: PageBrandingView | null
 }
-
-type OkfState = typeof wikiStore.page.okf
 
 function createPropertiesDraft (): PagePropertiesDraft {
   return {
@@ -377,7 +430,9 @@ function createPropertiesDraft (): PagePropertiesDraft {
     publishStartDate: wikiStore.page.publishStartDate,
     publishEndDate: wikiStore.page.publishEndDate,
     scriptJs: wikiStore.page.scriptJs,
-    scriptCss: wikiStore.page.scriptCss
+    scriptCss: wikiStore.page.scriptCss,
+    brandingAssignment: _.cloneDeep(wikiStore.page.brandingAssignment),
+    brandingView: _.cloneDeep(wikiStore.page.brandingView)
   }
 }
 
@@ -387,9 +442,22 @@ function focusInput (ref: unknown): void {
   root?.querySelector<HTMLInputElement>('input')?.focus()
 }
 
+function normalizeBrandingAssignment (value: unknown): PageBrandingAssignment | null {
+  if (value === null || value === undefined) return null
+  const result = PageBrandingAssignmentSchema.safeParse(value)
+  return result.success ? result.data : null
+}
+
+function normalizeBrandingView (value: unknown, assignment: PageBrandingAssignment | null): PageBrandingView | null {
+  if (assignment === null || value === null || value === undefined) return null
+  const result = PageBrandingViewSchema.safeParse(value)
+  return result.success && result.data.assetId === assignment.assetId ? result.data : null
+}
 export default defineComponent({
   components: {
-    EditorOkfPanel
+    EditorOkfPanel,
+    PageBrandingMark,
+    editorModalMedia: createAsyncComponent(() => import('./editor-modal-media.vue'))
   },
   emits: ['update:modelValue'],
   props: {
@@ -430,7 +498,10 @@ export default defineComponent({
       pathRules: PATH_RULES,
       draft: createPropertiesDraft(),
       okfSnapshot: null as OkfState | null,
-      returnFocus: null as HTMLElement | null
+      returnFocus: null as HTMLElement | null,
+      brandingPickerShown: false,
+      brandingError: '',
+      brandingReturnFocus: null as HTMLElement | null
     }
   },
   computed: {
@@ -568,6 +639,9 @@ export default defineComponent({
           })
         } else {
           this.rollbackDraft()
+          this.brandingPickerShown = false
+          this.brandingError = ''
+          this.brandingReturnFocus = null
           this.isPublishStartShown = false
           this.isPublishEndShown = false
           this.pageSelectorShown = false
@@ -662,6 +736,9 @@ export default defineComponent({
     beginEditing () {
       this.draft = createPropertiesDraft()
       this.okfSnapshot = _.cloneDeep(wikiStore.page.okf)
+      this.brandingPickerShown = false
+      this.brandingError = ''
+      this.brandingReturnFocus = null
     },
     rollbackDraft () {
       if (this.okfSnapshot !== null) {
@@ -681,11 +758,53 @@ export default defineComponent({
       wikiStore.page.publishEndDate = this.draft.publishEndDate
       wikiStore.page.scriptJs = this.draft.scriptJs
       wikiStore.page.scriptCss = this.draft.scriptCss
+      const brandingAssignment = normalizeBrandingAssignment(this.draft.brandingAssignment)
+      wikiStore.page.brandingAssignment = brandingAssignment
+      wikiStore.page.brandingView = normalizeBrandingView(this.draft.brandingView, brandingAssignment)
       this.okfSnapshot = null
     },
     cancel () {
+      if (this.brandingPickerShown) this.closeBrandingPicker()
       this.rollbackDraft()
       this.isShown = false
+    },
+    openBrandingPicker () {
+      this.brandingError = ''
+      const button = (this.$refs.brandingActionButton as { $el?: unknown } | undefined)?.$el
+      this.brandingReturnFocus = button instanceof HTMLElement ? button : document.activeElement as HTMLElement | null
+      wikiStore.editor.media.currentFileId = null
+      this.brandingPickerShown = true
+    },
+    closeBrandingPicker () {
+      this.brandingPickerShown = false
+      wikiStore.editor.media.currentFileId = null
+      this.restoreBrandingFocus()
+    },
+    restoreBrandingFocus () {
+      const target = this.brandingReturnFocus
+      this.brandingReturnFocus = null
+      this.$nextTick(() => {
+        if (target?.isConnected && !target.matches(':disabled') && !target.closest('[inert], [aria-hidden="true"]')) {
+          target.focus({ preventScroll: true })
+        }
+      })
+    },
+    applyBrandingSelection (payload: { assignment?: unknown, view?: unknown } = {}) {
+      const assignment = normalizeBrandingAssignment(payload.assignment)
+      const view = normalizeBrandingView(payload.view, assignment)
+      if (assignment === null || view === null) {
+        this.brandingError = 'Choose a supported image before continuing.'
+        return
+      }
+      this.draft.brandingAssignment = assignment
+      this.draft.brandingView = view
+      this.brandingError = ''
+      this.closeBrandingPicker()
+    },
+    removeBranding () {
+      this.draft.brandingAssignment = null
+      this.draft.brandingView = null
+      this.brandingError = ''
     },
     async loadTranslations () {
       const request = ++this.translationsRequest
@@ -822,6 +941,73 @@ export default defineComponent({
 </script>
 
 <style lang='scss'>
+
+.editor-properties-branding {
+  border: 1px solid rgba(var(--v-theme-on-surface), .12);
+  border-radius: var(--wiki-radius-sm, 10px);
+  background: rgba(var(--v-theme-on-surface), .025);
+  margin-bottom: 20px;
+  padding: 14px;
+}
+
+.editor-properties-branding-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.editor-properties-branding-preview {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 72px;
+  border: 1px solid rgba(var(--v-theme-on-surface), .1);
+  border-radius: var(--wiki-radius-xs, 6px);
+  background: rgb(var(--v-theme-surface));
+  padding: 10px 12px;
+}
+
+.editor-properties-branding-preview-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.editor-properties-branding-preview-copy .text-title-small,
+.editor-properties-branding-preview-copy .text-body-small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-properties-branding-preview .page-branding-mark {
+  inline-size: 48px;
+  block-size: 48px;
+  flex-basis: 48px;
+}
+
+.editor-properties-branding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.editor-properties-branding-status {
+  min-height: 20px;
+  color: rgba(var(--v-theme-on-surface), .62);
+  font-size: .78rem;
+  line-height: 1.35;
+  margin-top: 8px;
+}
+
+.editor-properties-branding-status[role='alert'] {
+  color: rgb(var(--v-theme-error));
+}
 
 .editor-properties-card {
   background: rgb(var(--v-theme-surface));

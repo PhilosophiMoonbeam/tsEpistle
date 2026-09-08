@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs-then'
 import type { Knex } from 'knex'
 import { canReadPage, canWritePage, managesSystem, principalId, type PagePrincipal, type PageVisibilityRecord } from '../helpers/page-access.ts'
 import errors from './errors.ts'
+import assetHelper from '../helpers/asset.ts'
 
 const { ApplicationError } = errors
 const BCRYPT_COST = 12
@@ -205,15 +206,46 @@ export const assertPageUnlocked = async (input: { requester: PagePrincipal; page
 export const protectedAssetRequiresUnlock = async (input: { requester: PagePrincipal; assetPath: string; sessionId: string; now?: Date }): Promise<boolean> => {
   if (managesSystem(input.requester)) return false
   const links = await wiki.models.knex<{ pageId: number; assetPath: string }>('pageProtectedAssets').where({ assetPath: input.assetPath }).select('pageId')
-  if (links.length === 0) return false
+  const pageIds = new Set<number>(links.map(link => link.pageId))
+
+  const asset = await wiki.models.knex<{ id: number }>('assets').where('hash', assetHelper.generateHash(input.assetPath)).first('id')
+  const assetId = asset && Number.isSafeInteger(asset.id) && asset.id > 0 ? asset.id : null
+
+  if (assetId !== null) {
+    const protectedPages = await wiki.models
+      .knex<{ pageId: number; extra: unknown }>('pages')
+      .join('pageAccessPasswords', 'pageAccessPasswords.pageId', 'pages.id')
+      .select('pages.id as pageId', 'pages.extra')
+    for (const page of protectedPages) {
+      const parsedExtra =
+        typeof page.extra === 'string'
+          ? (() => {
+              try {
+                return JSON.parse(page.extra) as unknown
+              } catch {
+                return null
+              }
+            })()
+          : page.extra
+      if (!parsedExtra || typeof parsedExtra !== 'object' || Array.isArray(parsedExtra)) continue
+      const branding = Reflect.get(parsedExtra, 'branding')
+      if (!branding || typeof branding !== 'object' || Array.isArray(branding)) continue
+      const referencedId = Reflect.get(branding, 'assetId')
+      if (typeof referencedId === 'number' && Number.isSafeInteger(referencedId) && referencedId > 0 && referencedId === assetId) {
+        const pageId = Number(page.pageId)
+        if (Number.isSafeInteger(pageId) && pageId > 0) pageIds.add(pageId)
+      }
+    }
+  }
+
+  if (pageIds.size === 0) return false
   const now = input.now ?? new Date()
   await wiki.models.knex('pageUnlockGrants').where('expiresAt', '<=', now).delete()
   if (!input.sessionId) return true
-  const pageIds = links.map(link => link.pageId)
   const grants = await wiki.models
     .knex<{ pageId: number }>('pageUnlockGrants')
     .join('pageAccessPasswords', 'pageAccessPasswords.pageId', 'pageUnlockGrants.pageId')
-    .whereIn('pageUnlockGrants.pageId', pageIds)
+    .whereIn('pageUnlockGrants.pageId', [...pageIds])
     .where({
       'pageUnlockGrants.sessionId': input.sessionId,
       'pageUnlockGrants.userId': principalId(input.requester)

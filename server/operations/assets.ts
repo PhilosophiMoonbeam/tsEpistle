@@ -1,8 +1,17 @@
+declare const WIKI: Record<string, unknown>
+
 import _ from 'lodash'
 import sanitize from 'sanitize-filename'
 import type { Knex } from 'knex'
 
 import assetHelper from '../helpers/asset.ts'
+import type { PagePrincipal } from '../helpers/page-access.ts'
+
+import { resolveAssetBrandingView, stripAssetBrandingMetadata } from '../helpers/asset-branding.ts'
+import type { PageBrandingView } from '../../shared/page-branding.ts'
+import brandingErrors from './errors.ts'
+
+const { ApplicationError } = brandingErrors
 
 interface Requester extends Record<string, unknown> {
   id: number
@@ -15,9 +24,11 @@ interface Asset extends Record<string, unknown> {
   kind: string
   ext: string
   folderId: number | null
+  metadata?: unknown
   deleteAssetCache(): Promise<unknown>
   getAssetPath(): Promise<string>
 }
+
 interface Folder extends Record<string, unknown> {
   slug: string
 }
@@ -66,7 +77,27 @@ const list = async ({ requester, folderId, kind }: { requester: Requester; folde
         path: folderPath ? `${folderPath}/${asset.filename}` : asset.filename
       })
     )
-    .map(asset => ({ ...asset, kind: asset.kind.toUpperCase() }))
+    .map(asset => {
+      const projected = { ...asset, kind: asset.kind.toUpperCase() }
+      if (Object.hasOwn(asset, 'metadata')) projected.metadata = stripAssetBrandingMetadata(asset.metadata)
+      return projected
+    })
+}
+
+const getBranding = async (input: {
+  requester: Requester
+  id: number
+  sessionId: string
+  deriveIfMissing?: boolean
+}): Promise<{ branding: PageBrandingView }> => {
+  const branding = await resolveAssetBrandingView({
+    assetId: input.id,
+    requester: input.requester as PagePrincipal,
+    sessionId: input.sessionId,
+    deriveIfMissing: input.deriveIfMissing === true
+  })
+  if (!branding) throw new ApplicationError('Asset branding is unavailable', { status: 404, code: 'BRANDING_UNAVAILABLE' })
+  return { branding }
 }
 
 const listFolders = async ({ requester, parentFolderId }: { requester: Requester; parentFolderId: number }) => {
@@ -116,6 +147,7 @@ const rename = async ({ requester, id, filename: requestedFilename }: { requeste
     event: 'renamed',
     asset: {
       ...asset,
+      metadata: stripAssetBrandingMetadata(asset.metadata),
       path: sourcePath,
       destinationPath: targetPath,
       moveAuthorId: requester.id,
@@ -136,10 +168,17 @@ const remove = async ({ requester, id }: { requester: Requester; id: number }): 
   await asset.deleteAssetCache()
   await models.storage.assetEvent({
     event: 'deleted',
-    asset: { ...asset, path: assetPath, authorId: requester.id, authorName: requester.name, authorEmail: requester.email }
+    asset: {
+      ...asset,
+      metadata: stripAssetBrandingMetadata(asset.metadata),
+      path: assetPath,
+      authorId: requester.id,
+      authorName: requester.name,
+      authorEmail: requester.email
+    }
   })
 }
 
 const flushTemporaryUploads = (): unknown => models.assets.flushTempUploads()
 
-export default { createFolder, flushTemporaryUploads, list, listFolders, remove, rename }
+export default { createFolder, flushTemporaryUploads, getBranding, list, listFolders, remove, rename }

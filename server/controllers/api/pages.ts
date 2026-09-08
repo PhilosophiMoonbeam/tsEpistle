@@ -4,7 +4,7 @@ import { type Request, type Response, getTransportRuntime, getWikiAuth } from '.
 import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
 import { linkPageLocaleRelation, listPageLocaleRelations, unlinkPageLocaleRelation } from '../../operations/page-locale-relations.ts'
-import { canReadPage, principalId, type PageVisibility } from '../../helpers/page-access.ts'
+import { canReadPage, canWritePage, managesSystem, principalId, type PageVisibility } from '../../helpers/page-access.ts'
 import { getPageWatchState, listPageWatchNotifications, markPageWatchNotificationRead, unwatchPage, watchPage } from '../../operations/page-watching.ts'
 import { getPageApproval, listApprovalInbox, submitPageApproval, transitionApproval } from '../../operations/approvals.ts'
 import {
@@ -19,6 +19,7 @@ import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } 
 import type { Knex } from 'knex'
 import { OkfDocumentError } from '../../okf/format.ts'
 import { buildPageOkfView } from '../../okf/page-view.ts'
+import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 
 const router = express.Router()
 
@@ -96,8 +97,7 @@ const errorMessage = (err: unknown, fallback: string): string => {
 }
 
 const isOkfDocumentError = (value: unknown): value is OkfDocumentError =>
-  value instanceof OkfDocumentError ||
-  (value instanceof Error && value.name === 'OkfDocumentError' && 'code' in value && typeof value.code === 'string')
+  value instanceof OkfDocumentError || (value instanceof Error && value.name === 'OkfDocumentError' && 'code' in value && typeof value.code === 'string')
 
 const errorStatus = (err: unknown, fallback: number): number => {
   if (isOkfDocumentError(err)) return 400
@@ -141,9 +141,64 @@ const pageOperationContext = (req: Request): { requester?: Express.User; session
 })
 const hasRestrictedPageFieldAccess = (req: Request): boolean =>
   Array.isArray(req.user?.permissions) && req.user.permissions.some(permission => permission === 'write:pages' || permission === 'manage:system')
+
+const pageBrandingAssignment = (page: Record<string, unknown>): PageBrandingAssignment | null => {
+  const parsed = PageBrandingAssignmentSchema.safeParse(page.brandingAssignment)
+  return parsed.success ? parsed.data : null
+}
+
+const pageBrandingAssignmentFromExtra = (page: Record<string, unknown>): PageBrandingAssignment | null => {
+  const extra = page.extra
+  if (typeof extra !== 'object' || extra === null || Array.isArray(extra)) return null
+  const parsed = PageBrandingAssignmentSchema.safeParse(Reflect.get(extra, 'branding'))
+  return parsed.success ? parsed.data : null
+}
+
+const pageBrandingView = (page: Record<string, unknown>): PageBrandingView | null => {
+  const parsed = PageBrandingViewSchema.safeParse(page.branding)
+  return parsed.success ? parsed.data : null
+}
+
+const canWritePageBranding = (req: Request, page: unknown): boolean => {
+  if (typeof page !== 'object' || page === null || Array.isArray(page)) return false
+  const record = page as Record<string, unknown>
+  const visibility = record.visibility
+  const path = record.path
+  const ownerId = record.ownerId
+  if ((visibility !== 'public' && visibility !== 'private') || typeof path !== 'string' || (ownerId !== null && typeof ownerId !== 'number')) {
+    return false
+  }
+  const localeCode = typeof record.localeCode === 'string' ? record.localeCode : undefined
+  return (
+    canWritePage(req.user, {
+      visibility,
+      path,
+      ownerId,
+      ...(localeCode === undefined ? {} : { localeCode }),
+      tags: record.tags
+    }) || managesSystem(req.user)
+  )
+}
 const pageResponse = (req: Request, page: unknown): unknown => {
-  if (hasRestrictedPageFieldAccess(req) || typeof page !== 'object' || page === null) return page
-  return _.omit(page, [
+  if (typeof page !== 'object' || page === null) return page
+  const record = page as Record<string, unknown>
+  const response: Record<string, unknown> = { ...record }
+  const extra = record.extra
+  if (typeof extra === 'object' && extra !== null && !Array.isArray(extra)) {
+    const safeExtra = { ...(extra as Record<string, unknown>) }
+    delete safeExtra.branding
+    response.extra = safeExtra
+  }
+  const canonicalAssignment = Object.hasOwn(record, 'brandingAssignment') ? pageBrandingAssignment(record) : pageBrandingAssignmentFromExtra(record)
+  delete response.branding
+  delete response.brandingAssignment
+  if (canWritePageBranding(req, record)) {
+    response.brandingAssignment = canonicalAssignment
+  }
+  const resolvedBranding = pageBrandingView(record)
+  if (resolvedBranding !== null) response.branding = resolvedBranding
+  if (hasRestrictedPageFieldAccess(req)) return response
+  return _.omit(response, [
     'isPublished',
     'publishStartDate',
     'publishEndDate',
@@ -394,12 +449,16 @@ router.get('/preview', async (req, res, next) => {
   if (rawId === undefined && (!locale || locale.length > 35 || !path || path.length > 1024))
     return res.status(400).json({ error: 'A page ID or locale and path is required' })
   try {
-    res.json(await pageOperations.preview({
-      ...pageOperationContext(req),
-      ...(rawId === undefined ? { locale, path, visibility } : { id: Number(rawId) }),
-      ...(query ? { query } : {})
-    }))
-  } catch (err) { return sendOperationError(res, next, err, 'Source preview is unavailable') }
+    res.json(
+      await pageOperations.preview({
+        ...pageOperationContext(req),
+        ...(rawId === undefined ? { locale, path, visibility } : { id: Number(rawId) }),
+        ...(query ? { query } : {})
+      })
+    )
+  } catch (err) {
+    return sendOperationError(res, next, err, 'Source preview is unavailable')
+  }
 })
 
 router.get('/search', async (req, res, next) => {
@@ -413,22 +472,33 @@ router.get('/search', async (req, res, next) => {
     const cursor = optionalStringQuery(req.query.cursor)
     const paginated = req.query.paginated === 'true'
     if (cursor && !paginated) return res.status(400).json({ error: 'Cursor requires paginated search' })
-    const search = () => pageOperations.search({
-      ...requesterInput(req), query,
-      ...(locale === undefined ? {} : { locale }),
-      ...(path === undefined ? {} : { path }),
-      ...(paginated ? { limit: 1001 } : {})
-    })
-    res.json(paginated ? await paginateSearch({
-      owner: `${principalId(req.user) ?? 'guest'}:${req.sessionID}`,
-      queryKey: JSON.stringify([query, locale, path]), ...(cursor ? { cursor } : {}), search
-    }) : await search())
-  } catch (err) { return sendOperationError(res, next, err, 'Page search failed') }
+    const search = () =>
+      pageOperations.search({
+        ...requesterInput(req),
+        query,
+        ...(locale === undefined ? {} : { locale }),
+        ...(path === undefined ? {} : { path }),
+        ...(paginated ? { limit: 1001 } : {})
+      })
+    res.json(
+      paginated
+        ? await paginateSearch({
+            owner: `${principalId(req.user) ?? 'guest'}:${req.sessionID}`,
+            queryKey: JSON.stringify([query, locale, path]),
+            ...(cursor ? { cursor } : {}),
+            search
+          })
+        : await search()
+    )
+  } catch (err) {
+    return sendOperationError(res, next, err, 'Page search failed')
+  }
 })
 
 router.get('/tree', async (req, res, next) => {
   const visibility = req.query.visibility
-  if (visibility !== undefined && visibility !== 'public' && visibility !== 'private') return res.status(400).json({ error: 'visibility must be public or private' })
+  if (visibility !== undefined && visibility !== 'public' && visibility !== 'private')
+    return res.status(400).json({ error: 'visibility must be public or private' })
   const locale = _.get(req, 'query.locale')
   const rawMode: unknown = _.get(req, 'query.mode', 'ALL')
   const mode = parseTreeMode(rawMode)
@@ -471,11 +541,18 @@ router.patch('/:id/publication', async (req, res, next) => {
   if (expectedSourceRevision === null) return
   const body = requestBody(req)
   try {
-    const page = await pageOperations.setPublication({ ...pageOperationContext(req), id, expectedSourceRevision, isPublished: body.isPublished,
+    const page = await pageOperations.setPublication({
+      ...pageOperationContext(req),
+      id,
+      expectedSourceRevision,
+      isPublished: body.isPublished,
       ...(Object.hasOwn(body, 'publishStartDate') ? { publishStartDate: body.publishStartDate } : {}),
-      ...(Object.hasOwn(body, 'publishEndDate') ? { publishEndDate: body.publishEndDate } : {}) })
+      ...(Object.hasOwn(body, 'publishEndDate') ? { publishEndDate: body.publishEndDate } : {})
+    })
     res.set('Cache-Control', 'private, no-store').json({ page: pageResponse(req, page) })
-  } catch (err) { sendOperationError(res, next, err, 'Page publication update failed') }
+  } catch (err) {
+    sendOperationError(res, next, err, 'Page publication update failed')
+  }
 })
 
 router.put('/:id', async (req, res, next) => {
@@ -844,7 +921,6 @@ router.delete('/:id/collaboration/draft', async (req, res, next) => {
   }
 })
 
-
 router.get('/:id/history', async (req, res, next) => {
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
@@ -907,11 +983,11 @@ router.get('/:id', async (req, res, next) => {
       res.set('Cache-Control', 'private, no-store')
       res.vary('Cookie')
     }
-    const page = await pageOperations.get({ ...pageOperationContext(req), id })
-    if (!canReadPage(req.user, page)) {
+    const projectedPage = await pageOperations.get({ ...pageOperationContext(req), id })
+    if (!canReadPage(req.user, projectedPage)) {
       return res.status(404).json({ error: 'This page does not exist.' })
     }
-    const pageResult: Record<string, unknown> = page
+    const pageResult: Record<string, unknown> = projectedPage
     if (pageResult.visibility === 'private') {
       res.set('Cache-Control', 'private, no-store')
       res.vary('Cookie')
@@ -936,6 +1012,7 @@ router.get('/:id', async (req, res, next) => {
       updatedAt: pageResult.updatedAt,
       sourceRevision: String(pageResult.sourceRevision),
       locale: pageResult.locale,
+      branding: pageBrandingView(pageResult),
       okf,
       ...(canReadRestrictedFields
         ? {
@@ -950,7 +1027,8 @@ router.get('/:id', async (req, res, next) => {
             creatorName: pageResult.creatorName,
             creatorEmail: pageResult.creatorEmail
           }
-        : {})
+        : {}),
+      ...(Object.hasOwn(projectedPage, 'brandingAssignment') ? { brandingAssignment: pageBrandingAssignment(pageResult) } : {})
     })
   } catch (err) {
     sendOperationError(res, next, err, 'Page fetch failed')

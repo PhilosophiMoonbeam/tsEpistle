@@ -1,7 +1,7 @@
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
 import { parseCollaborationSession, type CollaborationSession } from '../../shared/collaboration'
-
+import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
 type JsonHeaders = {
   get: (name: string) => string | null
 }
@@ -357,11 +357,6 @@ const normalizePageOkf = (value: unknown, sourceRevision: string, fallbackMessag
   if (value.projection.state === 'current' && (projection === null || projection.sourceRevision !== sourceRevision)) throw new Error(fallbackMessage)
   return { authority: { state, metadata, trust }, projection: { state: value.projection.state, value: projection } }
 }
-const defaultPageOkf = (): PageOkfView => ({
-  authority: { state: 'invalid', metadata: null, trust: null },
-  projection: { state: 'pending', value: null }
-})
-
 export type PageDetails = {
   id: number
   locale: string
@@ -386,7 +381,13 @@ export type PageDetails = {
   creatorName: string
   creatorEmail: string
   okf: PageOkfView
+  branding?: PageBrandingView | null
+  brandingAssignment?: PageBrandingAssignment | null
 }
+const defaultPageOkf = (): PageOkfView => ({
+  authority: { state: 'invalid', metadata: null, trust: null },
+  projection: { state: 'pending', value: null }
+})
 
 export type PageLinkRow = {
   id: number
@@ -496,6 +497,7 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     throw new Error(fallbackMessage)
   }
 
+  const rawRow = row as Record<string, unknown>
   const page = row as Partial<PageDetails>
   const ownerId = page.ownerId
   const sourceRevision: unknown = page.sourceRevision
@@ -531,10 +533,23 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
   ) {
     throw new Error(fallbackMessage)
   }
-  const okf =
-    (row as Record<string, unknown>).okf === undefined || (row as Record<string, unknown>).okf === null
-      ? defaultPageOkf()
-      : normalizePageOkf((row as Record<string, unknown>).okf, normalizedSourceRevision, fallbackMessage)
+  const okf = rawRow.okf === undefined || rawRow.okf === null ? defaultPageOkf() : normalizePageOkf(rawRow.okf, normalizedSourceRevision, fallbackMessage)
+  const hasBranding = Object.hasOwn(rawRow, 'branding')
+  const rawBranding = rawRow.branding
+  const brandingResult = rawBranding === undefined || rawBranding === null ? null : PageBrandingViewSchema.safeParse(rawBranding)
+  if (brandingResult && !brandingResult.success) throw new Error(fallbackMessage)
+  const hasBrandingAssignment = Object.hasOwn(rawRow, 'brandingAssignment')
+  const rawBrandingAssignment = rawRow.brandingAssignment
+  const brandingAssignmentResult =
+    rawBrandingAssignment === undefined || rawBrandingAssignment === null ? null : PageBrandingAssignmentSchema.safeParse(rawBrandingAssignment)
+  if (brandingAssignmentResult && !brandingAssignmentResult.success) {
+    throw new Error(fallbackMessage)
+  }
+  const branding = brandingResult && brandingResult.success ? brandingResult.data : null
+  const brandingAssignment = brandingAssignmentResult && brandingAssignmentResult.success ? brandingAssignmentResult.data : null
+  if (brandingAssignment !== null && branding !== null && brandingAssignment.assetId !== branding.assetId) {
+    throw new Error(fallbackMessage)
+  }
 
   return {
     id: page.id!,
@@ -559,7 +574,9 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     creatorId: page.creatorId!,
     creatorName: page.creatorName,
     creatorEmail: page.creatorEmail,
-    okf
+    okf,
+    ...(hasBranding ? { branding } : {}),
+    ...(hasBrandingAssignment ? { brandingAssignment } : {})
   }
 }
 const EDITABLE_OKF_EXCLUDED_KEYS: Record<string, true> = {
@@ -922,7 +939,7 @@ export async function deletePage(
   }
 }
 
-type PageWriteInput = {
+export type PageWriteInput = {
   content: string
   description: string
   editor: string
@@ -937,6 +954,7 @@ type PageWriteInput = {
   tags: string[]
   title: string
   okfMetadata?: Record<string, unknown>
+  branding?: PageBrandingAssignment | null
 }
 
 export type PageConflictLatest = {
@@ -984,6 +1002,13 @@ export type PageSearchResult = {
   suggestions: string[]
   totalHits: number
 }
+function normalizePageWriteInput(input: PageWriteInput, fallbackMessage: string): PageWriteInput {
+  if (!isRecord(input)) throw new Error(fallbackMessage)
+  if (!Object.hasOwn(input, 'branding') || input.branding === undefined || input.branding === null) return input
+  const result = PageBrandingAssignmentSchema.safeParse(input.branding)
+  if (!result.success) throw new Error(fallbackMessage)
+  return { ...input, branding: result.data }
+}
 
 async function sendJson(fetchImpl: FetchImpl, url: string, method: string, body: unknown, fallbackMessage: string): Promise<unknown> {
   const response = await sameOriginJsonFetch(fetchImpl, url, {
@@ -1017,7 +1042,8 @@ function isNullableNumber(value: unknown): value is number | null {
 }
 
 export async function createPage(fetchImpl: FetchImpl, input: PageWriteInput, fallbackMessage = 'Page creation failed'): Promise<WrittenPage> {
-  return normalizeWrittenPage(await sendJson(fetchImpl, '/_api/pages', 'POST', input, fallbackMessage), fallbackMessage, true)
+  const normalizedInput = normalizePageWriteInput(input, fallbackMessage)
+  return normalizeWrittenPage(await sendJson(fetchImpl, '/_api/pages', 'POST', normalizedInput, fallbackMessage), fallbackMessage, true)
 }
 
 export async function updatePage(
@@ -1033,13 +1059,14 @@ export async function updatePage(
     (expectedCollaborationGeneration !== undefined && (!Number.isSafeInteger(expectedCollaborationGeneration) || expectedCollaborationGeneration < 1))
   )
     throw new Error(fallbackMessage)
+  const normalizedInput = normalizePageWriteInput(input, fallbackMessage)
   return normalizeWrittenPage(
     await sendJson(
       fetchImpl,
       `/_api/pages/${encodeURIComponent(id)}`,
       'PUT',
       {
-        ...input,
+        ...normalizedInput,
         expectedSourceRevision,
         ...(expectedCollaborationGeneration === undefined ? {} : { expectedCollaborationGeneration })
       },

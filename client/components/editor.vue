@@ -134,8 +134,9 @@
 <script lang='ts'>
 import { defineComponent, type PropType } from 'vue'
 import { useHotkey } from 'vuetify'
+import { createAsyncComponent } from './common/async-component-state.vue'
 import _ from 'lodash'
-import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, updatePage } from '../helpers/pages-api'
+import { buildOkfMetadataPayload, changePageVisibility, checkPageConflict, createPage, discardCollaborationDraft, fetchPage, updatePage, type PageDetails } from '../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
 import { Base64 } from 'js-base64'
 import StatusIndicator from '@/components/common/status-indicator.vue'
@@ -144,7 +145,12 @@ import { getErrorMessage } from '../helpers/root-ui-store'
 import { decodeBase64Json } from '../helpers/base64'
 import { getEditorComponentName } from '../helpers/editor-key.ts'
 import { normalizeAvailableEditors } from '../../shared/page-editors.ts'
-import { createAsyncComponent } from './common/async-component-state.vue'
+import {
+  PageBrandingAssignmentSchema,
+  PageBrandingViewSchema,
+  type PageBrandingAssignment,
+  type PageBrandingView
+} from '../../shared/page-branding.ts'
 
 const EDITOR_PAGE_CANVAS_SCOPE = '.editor-page-canvas'
 
@@ -172,6 +178,18 @@ function scopeEditorPageCss (css: string): string {
 function removeEditorPageCss () {
   document.querySelector('#editor-script-css')?.remove()
 }
+function normalizeEditorBrandingAssignment (value: unknown): PageBrandingAssignment | null {
+  if (value === null || value === undefined) return null
+  const result = PageBrandingAssignmentSchema.safeParse(value)
+  return result.success ? result.data : null
+}
+
+function normalizeEditorBrandingView (value: unknown, assignment: PageBrandingAssignment | null): PageBrandingView | null {
+  if (assignment === null || value === null || value === undefined) return null
+  const result = PageBrandingViewSchema.safeParse(value)
+  return result.success && result.data.assetId === assignment.assetId ? result.data : null
+}
+
 
 export default defineComponent({
   i18nOptions: { namespaces: 'editor' },
@@ -266,6 +284,14 @@ export default defineComponent({
     effectivePermissions: {
       type: String,
       default: ''
+    },
+    brandingAssignment: {
+      type: Object as PropType<PageBrandingAssignment | null>,
+      default: null
+    },
+    brandingView: {
+      type: Object as PropType<PageBrandingView | null>,
+      default: null
     }
   },
   setup () {
@@ -319,6 +345,8 @@ export default defineComponent({
         title: '',
         scriptCss: '',
         scriptJs: '',
+        brandingAssignment: null as PageBrandingAssignment | null,
+        brandingView: null as PageBrandingView | null,
         okf: _.cloneDeep(wikiStore.page.okf)
       }
     }
@@ -360,6 +388,7 @@ export default defineComponent({
         this.savedState.publishEndDate !== wikiStore.page.publishEndDate ||
         this.savedState.scriptCss !== wikiStore.page.scriptCss ||
         this.savedState.scriptJs !== wikiStore.page.scriptJs ||
+        !_.isEqual(this.savedState.brandingAssignment, wikiStore.page.brandingAssignment) ||
         !_.isEqual(this.savedState.okf, wikiStore.page.okf)
       )
     }
@@ -395,6 +424,9 @@ export default defineComponent({
     wikiStore.page.title = this.title
     wikiStore.page.scriptCss = this.scriptCss
     wikiStore.page.scriptJs = this.scriptJs
+    const brandingAssignment = normalizeEditorBrandingAssignment(this.brandingAssignment)
+    wikiStore.page.brandingAssignment = brandingAssignment
+    wikiStore.page.brandingView = normalizeEditorBrandingView(this.brandingView, brandingAssignment)
     wikiStore.page.sourceRevision = this.sourceRevision
 
     wikiStore.page.mode = 'edit'
@@ -474,13 +506,25 @@ export default defineComponent({
       if (!this.canRetryOkfAuthorityLoad) return
       await this.hydratePage()
     },
+    applyHydratedBranding (page: PageDetails, expectedAssignment?: PageBrandingAssignment | null) {
+      if (expectedAssignment !== undefined && !_.isEqual(expectedAssignment, wikiStore.page.brandingAssignment)) return
+      if (Object.hasOwn(page, 'brandingAssignment')) {
+        const assignment = normalizeEditorBrandingAssignment(page.brandingAssignment)
+        wikiStore.page.brandingAssignment = assignment
+      }
+      if (Object.hasOwn(page, 'branding')) {
+        wikiStore.page.brandingView = normalizeEditorBrandingView(page.branding, wikiStore.page.brandingAssignment)
+      }
+    },
     async hydratePage() {
       if (this.mode === 'create' || this.pageId <= 0 || wikiStore.page.okfLoading) return
+      const expectedBrandingAssignment = wikiStore.page.brandingAssignment
       wikiStore.page.okfLoading = true
       wikiStore.page.okfError = null
       try {
         const page = await fetchPage(window.fetch.bind(window), this.pageId, this.$t('common:error.unexpected'))
         if (this.isDirty) return
+        this.applyHydratedBranding(page, expectedBrandingAssignment)
         wikiStore.page.okf = page.okf
         wikiStore.page.sourceRevision = page.sourceRevision
         this.setCurrentSavedState()
@@ -490,11 +534,12 @@ export default defineComponent({
         wikiStore.page.okfLoading = false
       }
     },
-    async refreshOkfAfterSave() {
+    async refreshOkfAfterSave(expectedBrandingAssignment: PageBrandingAssignment | null = wikiStore.page.brandingAssignment) {
       wikiStore.page.okfLoading = true
       wikiStore.page.okfError = null
       try {
         const page = await fetchPage(window.fetch.bind(window), this.pageId, this.$t('common:error.unexpected'))
+        this.applyHydratedBranding(page, expectedBrandingAssignment)
         wikiStore.page.okf = page.okf
         wikiStore.page.sourceRevision = page.sourceRevision
       } catch (err) {
@@ -536,6 +581,7 @@ export default defineComponent({
 
       try {
         const pageInput = this.getPageInput()
+        const brandingAssignmentAtSave = _.cloneDeep(wikiStore.page.brandingAssignment)
         if (wikiStore.editor.mode === 'create') {
           // --------------------------------------------
           // -> CREATE PAGE
@@ -583,7 +629,7 @@ export default defineComponent({
             )
             wikiStore.page.sourceRevision = visibilityPage.sourceRevision
           }
-          await this.refreshOkfAfterSave()
+          await this.refreshOkfAfterSave(brandingAssignmentAtSave)
           this.checkoutDateActive = page.updatedAt || this.checkoutDateActive
           this.isConflict = false
           wikiStore.showNotification({
@@ -690,6 +736,18 @@ export default defineComponent({
     },
     getPageInput () {
       const okfMetadata = buildOkfMetadataPayload(wikiStore.page.okf.authority.metadata)
+      const rawBrandingAssignment = wikiStore.page.brandingAssignment
+      let brandingAssignment: PageBrandingAssignment | null = null
+      if (rawBrandingAssignment !== null) {
+        const brandingResult = PageBrandingAssignmentSchema.safeParse(rawBrandingAssignment)
+        if (!brandingResult.success) throw new Error('Page branding assignment is invalid.')
+        brandingAssignment = brandingResult.data
+      }
+      const brandingChanged = !_.isEqual(this.savedState.brandingAssignment, brandingAssignment)
+      const brandingInput =
+        this.mode === 'create'
+          ? (brandingAssignment === null ? {} : { branding: brandingAssignment })
+          : (brandingChanged ? { branding: brandingAssignment } : {})
       return {
         content: wikiStore.editor.content,
         description: wikiStore.page.description,
@@ -704,6 +762,7 @@ export default defineComponent({
         scriptJs: wikiStore.page.scriptJs,
         tags: wikiStore.page.tags,
         title: wikiStore.page.title,
+        ...brandingInput,
         ...(okfMetadata === undefined ? {} : { okfMetadata })
       }
     },
@@ -721,6 +780,8 @@ export default defineComponent({
         title: wikiStore.page.title,
         scriptCss: wikiStore.page.scriptCss,
         scriptJs: wikiStore.page.scriptJs,
+        brandingAssignment: _.cloneDeep(wikiStore.page.brandingAssignment),
+        brandingView: _.cloneDeep(wikiStore.page.brandingView),
         okf: _.cloneDeep(wikiStore.page.okf)
       }
     },
@@ -737,6 +798,8 @@ export default defineComponent({
       wikiStore.page.title = this.savedState.title
       wikiStore.page.scriptCss = this.savedState.scriptCss
       wikiStore.page.scriptJs = this.savedState.scriptJs
+      wikiStore.page.brandingAssignment = _.cloneDeep(this.savedState.brandingAssignment)
+      wikiStore.page.brandingView = _.cloneDeep(this.savedState.brandingView)
       wikiStore.page.okf = _.cloneDeep(this.savedState.okf)
     },
     injectCustomCss(css: string) {

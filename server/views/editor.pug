@@ -25,5 +25,6 @@ block body
       init-content=page.content
       checkout-date=page.updatedAt
       source-revision=page.sourceRevision
+      :branding-assignment=brandingAssignment
+      :branding-view=branding
       effective-permissions=Buffer.from(JSON.stringify(effectivePermissions)).toString('base64')
-      )

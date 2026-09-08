@@ -15,6 +15,8 @@ import { isPageEditorKey, normalizeAvailableEditors } from '../../shared/page-ed
 import { OKF_PRODUCER_CONTEXT } from '../okf/mutation-context.ts'
 import { assertPageUnlocked } from './page-protection.ts'
 import errors from './errors.ts'
+import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
+import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
 
 const { ApplicationError } = errors
 const PRIVATE_SEARCH_WINDOW_LIMIT = 50
@@ -45,7 +47,22 @@ interface PageRecord extends Record<string, unknown> {
 interface PageSourceRecord extends PageRecord {
   content: string
 }
+interface PageVersionRecord extends Record<string, unknown> {
+  pageId: number
+  content: string
+  description: string
+  editor: string
+  title: string
+  extra: unknown
+}
+interface PageVersionProjection extends PageVersionRecord {
+  extra: Record<string, unknown>
+  branding: PageBrandingView | null
+  brandingAssignment?: PageBrandingAssignment | null
+}
 interface PageDetail extends PageRecord {
+  branding: PageBrandingView | null
+  brandingAssignment?: PageBrandingAssignment | null
   editor: string
   locale: string
   scriptCss: unknown
@@ -210,11 +227,7 @@ interface WikiPageOperations {
     }
     pageHistory: {
       getHistory(input: { pageId: number; offsetPage: number; offsetSize: number; requester: Express.User | undefined }): unknown
-      getVersion(input: {
-        pageId: number
-        versionId: number
-        requester: Express.User | undefined
-      }): Promise<(Record<string, unknown> & { pageId: number }) | undefined>
+      getVersion(input: { pageId: number; versionId: number; requester: Express.User | undefined }): Promise<PageVersionRecord | undefined>
     }
   }
 }
@@ -256,17 +269,60 @@ const expectedCollaborationGeneration = (value: unknown): number | undefined => 
   }
   return value
 }
+const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const recordValue = (value: unknown, label: string): Record<string, unknown> => {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApplicationError(`${label} must be an object`, { code: 'INVALID_INPUT' })
-  return value as Record<string, unknown>
+  if (!isRecord(value)) throw new ApplicationError(`${label} must be an object`, { code: 'INVALID_INPUT' })
+  return value
 }
 const mutationPayload = (input: OperationInput, omitted: readonly string[] = []): Record<string, unknown> => {
-  const payload = _.omit(recordValue(input.input, 'input'), [...omitted, 'okfProducer', 'okfRestoreRevision', 'replaceOkfMetadata'])
+  const payload = _.omit(recordValue(input.input, 'input'), [
+    ...omitted,
+    'okfProducer',
+    'okfRestoreRevision',
+    'replaceOkfMetadata',
+    'user',
+    'requester',
+    'sessionId',
+    'brandingContext',
+    'brandingRequester',
+    'brandingSessionId'
+  ])
   const producer = input[OKF_PRODUCER_CONTEXT]
   return typeof producer === 'string' ? { ...payload, okfProducer: producer } : payload
 }
 const withRequester = (payload: Record<string, unknown>, requester: Express.User | undefined): Record<string, unknown> & { user?: Express.User } =>
   requester === undefined ? payload : { ...payload, user: requester }
+
+const resolveReaderBranding = async (input: OperationInput, page: PageRecord): Promise<PageBrandingView | null> => {
+  const assignment = PageBrandingAssignmentSchema.safeParse(_.isPlainObject(page.extra) ? page.extra.branding : undefined)
+  if (!assignment.success) return null
+  try {
+    return await resolveAssetBrandingView({
+      assetId: assignment.data.assetId,
+      requester: input.requester,
+      sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
+    })
+  } catch {
+    return null
+  }
+}
+const canonicalBrandingAssignmentFor = (
+  requester: Express.User | undefined,
+  page: Pick<PageRecord, 'path' | 'localeCode' | 'visibility' | 'ownerId'>,
+  extra: unknown
+): PageBrandingAssignment | null | undefined => {
+  if (!canWritePage(requester, page) && !managesSystem(requester)) return undefined
+  const rawBranding = isRecord(extra) ? extra.branding : undefined
+  const assignment = PageBrandingAssignmentSchema.safeParse(rawBranding)
+  return assignment.success ? assignment.data : null
+}
+
+const projectReaderPage = async <T extends PageRecord>(input: OperationInput, page: T): Promise<T & { branding: PageBrandingView | null }> => {
+  const branding = await resolveReaderBranding(input, page)
+  const extra = _.isPlainObject(page.extra) ? { ...page.extra } : {}
+  delete extra.branding
+  return { ...page, extra, branding }
+}
 
 const list = async ({ requester, ...rawArgs }: OperationInput) => {
   const args = {
@@ -530,9 +586,12 @@ const authorizedPageSource = async (input: OperationInput): Promise<PageSourceRe
 }
 
 const get = async (input: OperationInput): Promise<PageDetail> => {
-  const page = await authorizedPageSource(input)
+  const source = await authorizedPageSource(input)
+  const page = await projectReaderPage(input, source)
+  const brandingAssignment = canonicalBrandingAssignmentFor(input.requester, source, source.extra)
   return {
     ...page,
+    ...(brandingAssignment === undefined ? {} : { brandingAssignment }),
     locale: page.localeCode,
     editor: page.editorKey,
     scriptJs: _.get(page, 'extra.js'),
@@ -576,13 +635,16 @@ const getSource = async (
   description: string | null
   editor: string
   title: string
+  brandingAssignment?: PageBrandingAssignment | null
 }> => {
   const page = await authorizedPageSource(input)
+  const brandingAssignment = canonicalBrandingAssignmentFor(input.requester, page, page.extra)
   return {
     content: page.content,
     description: typeof page.description === 'string' ? page.description : null,
     editor: page.editorKey,
-    title: page.title
+    title: page.title,
+    ...(brandingAssignment === undefined ? {} : { brandingAssignment })
   }
 }
 
@@ -879,23 +941,54 @@ const getHistory = async (input: OperationInput) => {
   return wiki.models.pageHistory.getHistory({ pageId: id, offsetPage, offsetSize, requester })
 }
 
-const getVersion = async (input: OperationInput) => {
+const getVersion = async (input: OperationInput): Promise<PageVersionProjection | undefined> => {
   const requester = input.requester
   const pageId = positiveInteger(input.pageId, 'pageId')
   const versionId = positiveInteger(input.versionId, 'versionId')
-  const page = await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(pageId)
+  const page = await wiki.models.pages
+    .query()
+    .select('path', 'localeCode', 'visibility', 'ownerId')
+    .withGraphJoined('tags')
+    .modifyGraph('tags', builder => {
+      builder.select('tag')
+    })
+    .findById(pageId)
   if (!page || (page.visibility === 'private' && !canReadPage(requester, page))) throw new wiki.Error.PageNotFound()
   await assertUnlocked(input, pageId)
   if (
     page.visibility === 'public' &&
     !wiki.auth.checkAccess(requester, ['read:history'], {
       path: page.path,
-      locale: page.localeCode
+      locale: page.localeCode,
+      tags: page.tags
     })
   ) {
     throw new wiki.Error.PageHistoryForbidden()
   }
-  return wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
+  const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
+  if (!version) return version
+  const extra = isRecord(version.extra) ? { ...version.extra } : {}
+  const assignment = PageBrandingAssignmentSchema.safeParse(extra.branding)
+  const brandingAssignment = canonicalBrandingAssignmentFor(requester, page, extra)
+  let branding: PageBrandingView | null = null
+  if (assignment.success) {
+    try {
+      branding = await resolveAssetBrandingView({
+        assetId: assignment.data.assetId,
+        requester,
+        sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
+      })
+    } catch {
+      branding = null
+    }
+  }
+  delete extra.branding
+  return {
+    ...version,
+    extra,
+    branding,
+    ...(brandingAssignment === undefined ? {} : { brandingAssignment })
+  }
 }
 
 const resultTags = (value: unknown): string[] => {
@@ -1594,7 +1687,14 @@ const getByPath = async (input: OperationInput) => {
     throw new wiki.Error.PageNotFound()
   }
   await assertUnlocked(input, page.id)
-  return { ...page, locale: page.localeCode, editor: page.editorKey, scriptJs: page.extra.js, scriptCss: page.extra.css }
+  const projectedPage = await projectReaderPage(input, page)
+  return {
+    ...projectedPage,
+    locale: projectedPage.localeCode,
+    editor: projectedPage.editorKey,
+    scriptJs: projectedPage.extra.js,
+    scriptCss: projectedPage.extra.css
+  }
 }
 
 const getTreeSnapshot = async (input: OperationInput, db: Knex.Transaction) => {
@@ -1683,7 +1783,8 @@ const getConflictLatest = async (input: OperationInput) => {
   if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page)) throw new wiki.Error.PageViewForbidden()
   await assertUnlocked(input, page.id)
-  return { ...page, tags: page.tags.map(tag => tag.tag), locale: page.localeCode }
+  const projectedPage = await projectReaderPage(input, page)
+  return { ...projectedPage, tags: projectedPage.tags.map(tag => tag.tag), locale: projectedPage.localeCode }
 }
 
 const create = (input: OperationInput): unknown => {
@@ -1695,11 +1796,20 @@ const create = (input: OperationInput): unknown => {
   if (visibility !== 'public' && visibility !== 'private') {
     throw new ApplicationError('visibility must be public or private', { code: 'INVALID_INPUT' })
   }
+  const brandingContext = Object.hasOwn(payload, 'branding')
+    ? {
+        brandingContext: {
+          requester: input.requester,
+          sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
+        }
+      }
+    : {}
   return wiki.models.pages.createPage(
     withRequester(
       {
         ...payload,
-        visibility
+        visibility,
+        ...brandingContext
       },
       input.requester
     )
@@ -1711,11 +1821,20 @@ const update = async (input: OperationInput): Promise<unknown> => {
   const collaborationGeneration = expectedCollaborationGeneration(operationInput.expectedCollaborationGeneration)
   const payload = mutationPayload(input, ['visibility', 'ownerId', 'isPrivate', 'privateNS', ...(replaceOkfMetadata ? [] : ['okfMetadata'])])
   await assertUnlocked(input, positiveInteger(payload.id, 'id'))
+  const brandingContext = Object.hasOwn(payload, 'branding')
+    ? {
+        brandingContext: {
+          requester: input.requester,
+          sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
+        }
+      }
+    : {}
   return wiki.models.pages.updatePage(
     withRequester(
       {
         ...(replaceOkfMetadata ? { ...payload, replaceOkfMetadata: true } : payload),
-        ...(collaborationGeneration === undefined ? {} : { expectedCollaborationGeneration: collaborationGeneration })
+        ...(collaborationGeneration === undefined ? {} : { expectedCollaborationGeneration: collaborationGeneration }),
+        ...brandingContext
       },
       input.requester
     )
@@ -1862,6 +1981,12 @@ const restore = async (input: OperationInput): Promise<void> => {
   }
   const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
   if (!version) throw new wiki.Error.PageNotFound()
+  const versionExtra = isRecord(version.extra) ? version.extra : {}
+  const restoredBranding = Object.hasOwn(versionExtra, 'branding')
+    ? versionExtra.branding === null
+      ? null
+      : PageBrandingAssignmentSchema.parse(versionExtra.branding)
+    : null
   await wiki.models.pages.updatePage(
     withRequester(
       {
@@ -1875,11 +2000,14 @@ const restore = async (input: OperationInput): Promise<void> => {
         action: 'restored',
         expectedUpdatedAt: page.updatedAt instanceof Date ? page.updatedAt.toISOString() : page.updatedAt,
         expectedSourceRevision: String(Reflect.get(page, 'sourceRevision')),
-        ...(version.extra && typeof version.extra === 'object' && !Array.isArray(version.extra)
-          ? { okfMetadata: (version.extra as Record<string, unknown>).okf }
-          : {}),
+        ...(versionExtra.okf === undefined ? {} : { okfMetadata: versionExtra.okf }),
+        branding: restoredBranding,
         ...(typeof input[OKF_PRODUCER_CONTEXT] === 'string' ? { okfProducer: input[OKF_PRODUCER_CONTEXT] } : {}),
-        okfRestoreRevision: versionId
+        okfRestoreRevision: versionId,
+        brandingContext: {
+          requester,
+          sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
+        }
       },
       requester
     )

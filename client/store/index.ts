@@ -5,7 +5,7 @@ import { registerJsonPrincipalRefresh } from '../helpers/json-transport.ts'
 import type { PageOkfView } from '../helpers/pages-api.ts'
 import type { SystemSummary } from '../helpers/system-api.ts'
 import { normalizeUserFontFamily } from '../../shared/user-presentation.ts'
-
+import type { PageBrandingAssignment, PageBrandingView } from '../../shared/page-branding.ts'
 export type Notification = {
   message: string
   style: string
@@ -113,6 +113,8 @@ export const useWikiStore = defineStore('wiki', {
         editMenuExternalIcon: '',
         editMenuExternalUrl: ''
       },
+      brandingAssignment: null as PageBrandingAssignment | null,
+      brandingView: null as PageBrandingView | null,
       okf: defaultPageOkf(),
       okfLoading: false,
       okfError: null as string | null

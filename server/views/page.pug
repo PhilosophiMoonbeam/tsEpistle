@@ -36,8 +36,8 @@ block body
         effectivePermissions: Buffer.from(JSON.stringify(effectivePermissions)).toString('base64'),
         commentsExternal: Boolean(comments.codeTemplate),
         editShortcuts: Buffer.from(JSON.stringify(config.editShortcuts)).toString('base64'),
-        filename: pageFilename
-      }
+        filename: pageFilename,
+        branding
     }
   #root
     wiki-page(

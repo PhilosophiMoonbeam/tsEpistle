@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='`is-editor-` + editorKey', role='dialog', aria-modal='true', aria-labelledby='editor-media-title', tabindex='-1')
+  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='[`is-editor-${editorKey}`, { "is-editor-embedded": embedded, "is-page-branding": isBranding }]', :role='embedded ? undefined : `dialog`', :aria-modal='embedded ? undefined : `true`', aria-labelledby='editor-media-title', tabindex='-1')
     .editor-media-layout
       section.editor-media-browser(aria-labelledby='editor-media-title')
         v-card.editor-media-panel.radius-7.animated.fadeInLeft.wait-p1s
@@ -53,6 +53,8 @@
               v-btn.editor-media-folder.btn-normalcase(v-for='folder of folders', :key='folder.id', variant="tonal", color="primary", @click='downFolder(folder)')
                 v-icon(start) mdi-folder
                 span.text-body-small {{ folder.name }}
+            v-alert.editor-media-branding-notice.mb-3(v-if='isBranding', type='info', variant='tonal', density='compact')
+              .text-body-small Page branding accepts static PNG, JPEG, and WebP images up to 5 MB. Animated, vector, and other file types cannot be used.
             v-alert.mb-3(v-if='mediaLoadError', type='error', variant='tonal', role='alert')
               .d-flex.align-center
                 span {{mediaLoadError}}
@@ -60,7 +62,7 @@
                 v-btn(variant='text', size='small', @click='refresh') Retry
             v-data-table.editor-media-table(
               :headers='headers'
-              :items='assets'
+              :items='displayedAssets'
               v-model:page='pagination'
               :items-per-page='15'
               :loading='loading'
@@ -137,17 +139,24 @@
                           v-list-item-title {{$t('common:actions.delete')}}
               template(v-slot:no-data)
                 v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
+            v-alert.mt-3(v-if='isBranding && currentFileId !== null && brandingLoading', type='info', variant='tonal', density='compact')
+              .text-body-small Validating the selected image…
+            v-alert.mt-3(v-else-if='isBranding && brandingLoadError', type='warning', variant='tonal', density='compact', role='alert')
+              .text-body-small {{brandingLoadError}}
             .text-center.py-2(v-if='pageTotal > 1')
               v-pagination(v-model='pagination', :length='pageTotal', color='primary')
             footer.editor-media-footer
-              .editor-media-count.text-body-medium.text-medium-emphasis {{$t('editor:assets.fileCount', { count: assets.length })}}
+              .editor-media-count.text-body-medium.text-medium-emphasis {{$t('editor:assets.fileCount', { count: displayedAssets.length })}}
               .editor-media-actions
                 v-btn.radius-7(variant="outlined", @click='cancel')
                   v-icon(start) mdi-close
                   span {{$t('common:actions.cancel')}}
-                v-btn.radius-7(color='primary', @click='insert', :disabled='!currentFileId')
+                v-btn.radius-7(v-if='!isBranding', color='primary', @click='insert', :disabled='!currentFileId')
                   v-icon(start) mdi-playlist-plus
                   span {{$t('common:actions.insert')}}
+                v-btn.radius-7(v-else, color='primary', @click='confirmSelection', :disabled='!canConfirmSelection', :loading='brandingLoading')
+                  v-icon(start) mdi-image-check-outline
+                  span Use image
 
       aside.editor-media-sidebar
         v-card.editor-media-panel.radius-7.animated.fadeInRight.wait-p3s
@@ -178,7 +187,7 @@
             v-btn(color='primary', @click='upload') {{$t('common:actions.upload')}}
 
 
-        v-card.editor-media-panel.radius-7.animated.fadeInRight.wait-p4s(v-if='currentAsset && currentAsset.kind === `IMAGE`')
+        v-card.editor-media-panel.radius-7.animated.fadeInRight.wait-p4s(v-if='!isBranding && currentAsset && currentAsset.kind === `IMAGE`')
           v-card-text.editor-media-panel-content.pb-0
             h2.editor-media-heading
               v-icon(aria-hidden='true') mdi-format-align-top
@@ -252,13 +261,15 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent, markRaw, type Component } from 'vue'
+import { defineComponent, markRaw, type Component, type PropType } from 'vue'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
 import Cookies from 'js-cookie'
 import vueFilePond from 'vue-filepond'
 import 'filepond/dist/filepond.min.css'
-import { createAssetFolder, deleteAsset as deleteAssetRequest, fetchAssetFolders, fetchAssets, renameAsset as renameAssetRequest, type Asset, type AssetFolder } from '../../helpers/assets-api'
+import { createAssetFolder, deleteAsset as deleteAssetRequest, fetchAssetBranding, fetchAssetFolders, fetchAssets, renameAsset as renameAssetRequest, type Asset, type AssetFolder } from '../../helpers/assets-api'
+import { isRecord } from '../../helpers/type-guards'
+import { PageBrandingAssignmentSchema, PageBrandingViewSchema, type PageBrandingAssignment, type PageBrandingView } from '../../../shared/page-branding.ts'
 import { emitEditorInsert } from '../../helpers/editor-insert-events'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
@@ -281,8 +292,53 @@ const RENAME_ASSET_RULES = markRaw([
   (value: unknown) => (!String(value || '').includes('/') && !String(value || '').includes(String.fromCharCode(92))) || 'Filename cannot contain slashes.'
 ])
 
+export type MediaPickerPurpose = 'insert' | 'page-branding'
+
+export type BrandingSelection = {
+  assignment: PageBrandingAssignment
+  view: PageBrandingView
+}
+
+const BRANDING_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp'])
+
+function isPageBrandingAsset (asset: Asset): boolean {
+  return asset.kind.toUpperCase() === 'IMAGE' && BRANDING_IMAGE_EXTENSIONS.has(asset.ext.toLowerCase())
+}
+
+function parseAssetId (value: unknown): number | null {
+  const normalized = typeof value === 'string' ? value.trim() : value
+  if (typeof normalized === 'string' && !/^[0-9]+$/.test(normalized)) return null
+  const id = typeof normalized === 'number' ? normalized : Number(normalized)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
+}
+
+function extractUploadAssetId (response: unknown): number | null {
+  let payload = response
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload)
+    } catch {
+      return parseAssetId(payload)
+    }
+  }
+  if (isRecord(payload)) {
+    const nestedAsset = isRecord(payload.asset) ? payload.asset : null
+    for (const candidate of [payload.assetId, payload.id, nestedAsset?.assetId, nestedAsset?.id]) {
+      const id = parseAssetId(candidate)
+      if (id !== null) return id
+    }
+    return null
+  }
+  return parseAssetId(payload)
+}
+
+function isAbortError (error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
 type FilePondFile = {
   id: string
+  serverId?: unknown
   setMetadata: (metadata: Record<string, unknown>) => void
 }
 
@@ -300,6 +356,24 @@ function focusInput (ref: unknown): void {
 }
 
 export default defineComponent({
+  props: {
+    purpose: {
+      type: String as PropType<MediaPickerPurpose>,
+      default: 'insert'
+    },
+    embedded: {
+      type: Boolean,
+      default: false
+    }
+  },
+  emits: {
+    'branding-selected': (payload: BrandingSelection) => {
+      const assignment = PageBrandingAssignmentSchema.safeParse(payload?.assignment)
+      const view = PageBrandingViewSchema.safeParse(payload?.view)
+      return assignment.success && view.success && assignment.data.assetId === view.data.assetId
+    },
+    'branding-cancelled': () => true
+  },
   components: {
     FilePond
   },
@@ -324,6 +398,11 @@ export default defineComponent({
       renameAssetLoading: false,
       deleteAssetLoading: false,
       mediaLoadError: '',
+      brandingView: null as PageBrandingView | null,
+      brandingLoading: false,
+      brandingLoadError: '',
+      brandingRequest: 0,
+      brandingAbortController: null as AbortController | null,
       returnFocus: null as HTMLElement | null,
       mediaDialogReturnFocus: null as HTMLElement | null,
       focusScope: null as ModalFocusScope | null,
@@ -365,12 +444,21 @@ export default defineComponent({
         wikiStore.editor.media.currentFileId = value
       }
     },
+    isBranding(): boolean {
+      return this.purpose === 'page-branding'
+    },
+    displayedAssets(): Asset[] {
+      return this.isBranding ? this.assets.filter(isPageBrandingAsset) : this.assets
+    },
+    canConfirmSelection(): boolean {
+      return this.currentFileId !== null && !this.brandingLoading && this.brandingView?.assetId === this.currentFileId
+    },
     pageTotal () {
-      if (!this.assets) {
+      if (!this.displayedAssets) {
         return 0
       }
 
-      return Math.ceil(this.assets.length / 15)
+      return Math.ceil(this.displayedAssets.length / 15)
     },
     headers() {
       return _.compact([
@@ -386,7 +474,7 @@ export default defineComponent({
       return this.newFolderName.length > 1 && this.newFolderName.length <= 255 && !localeSegmentRegex.test(this.newFolderName) && !disallowedFolderChars.test(this.newFolderName)
     },
     currentAsset () {
-      return _.find(this.assets, ['id', this.currentFileId])
+      return _.find(this.displayedAssets, ['id', this.currentFileId])
     },
     isRenameValid (): boolean {
       const current = this.currentAsset
@@ -403,12 +491,30 @@ export default defineComponent({
           url: '/u',
           headers: {
             'Authorization': `Bearer ${jwtToken}`
+          },
+          onload: (response: unknown) => {
+            const id = extractUploadAssetId(response)
+            return id === null ? '' : String(id)
           }
         }
       }
     }
   },
   watch: {
+    purpose(newValue: MediaPickerPurpose, oldValue: MediaPickerPurpose) {
+      if (newValue === oldValue) return
+      this.invalidateBrandingSelection()
+      this.pagination = 1
+      if (!this.disposed) void this.loadMedia()
+    },
+    embedded(newValue: boolean) {
+      if (!newValue || !this.focusScope) return
+      this.focusScope.deactivate()
+      this.focusScope = null
+    },
+    currentFileId(newValue: number | null) {
+      if (this.isBranding && newValue === null) this.invalidateBrandingSelection()
+    },
     newFolderDialog(newValue: boolean) {
       if (newValue) {
         this.$nextTick(() => {
@@ -442,20 +548,22 @@ export default defineComponent({
     }
   },
   mounted() {
-    this.returnFocus = document.activeElement as HTMLElement | null
-    this.$nextTick(() => {
-      if (this.disposed) return
-      const root = this.$el instanceof HTMLElement ? this.$el : null
-      if (!root) return
-      this.focusScope = markRaw(createModalFocusScope({
-        root,
-        restoreTarget: () => this.returnFocus,
-        additionalRoots: this.mediaModalAdditionalRoots,
-        onEscape: this.handleMediaEscape
-      }))
-      const refreshButton = this.$refs.refreshButton as { $el?: unknown } | undefined
-      if (refreshButton?.$el instanceof HTMLElement) refreshButton.$el.focus()
-    })
+    if (!this.embedded) {
+      this.returnFocus = document.activeElement as HTMLElement | null
+      this.$nextTick(() => {
+        if (this.disposed || this.embedded) return
+        const root = this.$el instanceof HTMLElement ? this.$el : null
+        if (!root) return
+        this.focusScope = markRaw(createModalFocusScope({
+          root,
+          restoreTarget: () => this.returnFocus,
+          additionalRoots: this.mediaModalAdditionalRoots,
+          onEscape: this.handleMediaEscape
+        }))
+        const refreshButton = this.$refs.refreshButton as { $el?: unknown } | undefined
+        if (refreshButton?.$el instanceof HTMLElement) refreshButton.$el.focus()
+      })
+    }
     void this.loadMedia()
   },
   beforeUnmount() {
@@ -463,6 +571,9 @@ export default defineComponent({
     this.mediaRequest++
     this.mediaAbortController?.abort()
     this.mediaAbortController = null
+    this.brandingRequest++
+    this.brandingAbortController?.abort()
+    this.brandingAbortController = null
     for (const timer of this.fileRemovalTimers) window.clearTimeout(timer)
     this.fileRemovalTimers = []
     this.focusScope?.deactivate()
@@ -502,7 +613,7 @@ export default defineComponent({
       const target = this.mediaDialogReturnFocus
       this.mediaDialogReturnFocus = null
       this.$nextTick(() => {
-        if (this.disposed || this.activeModal !== 'editorModalMedia') return
+        if (this.disposed || (!this.embedded && this.activeModal !== 'editorModalMedia')) return
         if (target?.isConnected && !target.matches(':disabled')) {
           target.focus({ preventScroll: true })
           return
@@ -511,8 +622,76 @@ export default defineComponent({
         if (refreshButton?.$el instanceof HTMLElement) refreshButton.$el.focus({ preventScroll: true })
       })
     },
+    invalidateBrandingSelection () {
+      this.brandingRequest++
+      this.brandingAbortController?.abort()
+      this.brandingAbortController = null
+      this.brandingLoading = false
+      this.brandingLoadError = ''
+      this.brandingView = null
+    },
+    async loadBrandingDescriptor (id: number): Promise<void> {
+      const request = ++this.brandingRequest
+      this.brandingAbortController?.abort()
+      const abortController = markRaw(new AbortController())
+      this.brandingAbortController = abortController
+      this.brandingLoading = true
+      this.brandingLoadError = ''
+      this.brandingView = null
+      try {
+        const fetchWithSignal = (url: string, init?: RequestInit) => window.fetch(url, {
+          ...init,
+          signal: abortController.signal
+        })
+        const view = await fetchAssetBranding(fetchWithSignal, id)
+        const result = PageBrandingViewSchema.safeParse(view)
+        if (
+          this.disposed ||
+          request !== this.brandingRequest ||
+          this.currentFileId !== id ||
+          !result.success ||
+          result.data.assetId !== id
+        )
+          return
+        this.brandingView = markRaw(result.data)
+      } catch (error) {
+        if (
+          this.disposed ||
+          request !== this.brandingRequest ||
+          this.currentFileId !== id ||
+          isAbortError(error)
+        )
+          return
+        this.brandingView = null
+        this.brandingLoadError = 'This image cannot be used for page branding. Choose a static PNG, JPEG, or WebP image up to 5 MB.'
+      } finally {
+        if (this.brandingAbortController === abortController) {
+          this.brandingAbortController = null
+        }
+        if (!this.disposed && request === this.brandingRequest) {
+          this.brandingLoading = false
+        }
+      }
+    },
+    confirmSelection () {
+      if (!this.isBranding) return this.insert()
+      const assignment = PageBrandingAssignmentSchema.safeParse({ assetId: this.currentFileId })
+      const view = PageBrandingViewSchema.safeParse(this.brandingView)
+      if (!assignment.success || !view.success || view.data.assetId !== assignment.data.assetId) {
+        this.brandingView = null
+        this.brandingLoadError = 'Select a supported image before continuing.'
+        return
+      }
+      this.$emit('branding-selected', {
+        assignment: assignment.data,
+        view: view.data
+      })
+      if (!this.embedded) this.activeModal = ''
+    },
     selectAsset(id: number) {
+      if (this.isBranding && !this.displayedAssets.some(asset => asset.id === id)) return
       this.currentFileId = id
+      if (this.isBranding) void this.loadBrandingDescriptor(id)
     },
     prettyBytes(num: number) {
       if (typeof num !== 'number' || Number.isNaN(num)) {
@@ -544,6 +723,7 @@ export default defineComponent({
       }
     },
     insert () {
+      if (this.isBranding) return
       const asset = _.find(this.assets, ['id', this.currentFileId])
       if (!asset) throw new Error('No asset selected for insertion.')
       const assetPath = (this.folderTree as AssetFolder[]).map((f: AssetFolder) => f.slug).join('/')
@@ -575,8 +755,17 @@ export default defineComponent({
           folderId: this.currentFolderId
         })
       }
-      await (this.$refs.pond as FilePondRef).processFiles()
-      await this.loadMedia()
+      const processed = await (this.$refs.pond as FilePondRef).processFiles()
+      const loaded = await this.loadMedia()
+      if (!loaded || this.disposed) return
+      const processedFiles = Array.isArray(processed) ? processed : isRecord(processed) ? [processed] : []
+      for (const processedFile of processedFiles) {
+        const assetId = extractUploadAssetId(isRecord(processedFile) ? processedFile.serverId : undefined)
+        if (assetId !== null && this.assets.some(asset => asset.id === assetId)) {
+          this.selectAsset(assetId)
+          break
+        }
+      }
     },
     async onFileProcessed (err: unknown, file: FilePondFile) {
       if (err) {
@@ -586,6 +775,7 @@ export default defineComponent({
           icon: 'error'
         })
       }
+      const assetId = extractUploadAssetId(file.serverId)
       const timer = window.setTimeout(() => {
         this.fileRemovalTimers = this.fileRemovalTimers.filter(value => value !== timer)
         if (!this.disposed) {
@@ -594,7 +784,9 @@ export default defineComponent({
       }, 5000)
       this.fileRemovalTimers.push(timer)
 
-      await this.loadMedia()
+      const loaded = await this.loadMedia()
+      if (!loaded || this.disposed || assetId === null || !this.assets.some(asset => asset.id === assetId)) return
+      this.selectAsset(assetId)
     },
     downFolder(folder: AssetFolder) {
       wikiStore.pushMediaFolder(folder)
@@ -714,14 +906,18 @@ export default defineComponent({
           ...init,
           signal: abortController.signal
         })
+        const assetsPromise = this.isBranding
+          ? fetchAssets(fetchWithSignal, folderId, 'IMAGE')
+          : fetchAssets(fetchWithSignal, folderId)
         const [folders, assets] = await Promise.all([
           fetchAssetFolders(fetchWithSignal, folderId),
-          fetchAssets(fetchWithSignal, folderId)
+          assetsPromise
         ])
         if (this.disposed || request !== this.mediaRequest || folderId !== this.currentFolderId) return false
+        const visibleAssets = this.isBranding ? assets.filter(isPageBrandingAsset) : assets
         this.folders = markRaw(folders)
-        this.assets = markRaw(assets)
-        if (this.currentFileId !== null && !assets.some(asset => asset.id === this.currentFileId)) {
+        this.assets = markRaw(visibleAssets)
+        if (this.currentFileId !== null && !visibleAssets.some(asset => asset.id === this.currentFileId)) {
           this.currentFileId = null
         }
         return true
@@ -745,10 +941,16 @@ export default defineComponent({
       }
     },
     cancel () {
+      if (this.isBranding) {
+        this.invalidateBrandingSelection()
+        if (this.currentFileId !== null) this.currentFileId = null
+        this.$emit('branding-cancelled')
+        if (!this.embedded) this.activeModal = ''
+        return
+      }
       this.activeModal = ''
     }
   }
-
 })
 </script>
 
@@ -1015,5 +1217,17 @@ export default defineComponent({
     height: 44px;
     padding: 0;
   }
+  &.is-editor-embedded {
+    position: static !important;
+    inset: auto;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0;
+    overflow: visible;
+    z-index: auto;
+    background: transparent !important;
+    padding-bottom: 0;
+  }
+
 }
 </style>

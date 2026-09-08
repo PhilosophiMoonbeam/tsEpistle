@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
-import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import type AssetModel from '../../models/assets.ts'
-import type assetOperations from '../../operations/assets.ts'
+import type * as AssetBranding from '../../helpers/asset-branding.ts'
 
 const wikiGlobal = globalThis as unknown as { WIKI?: Record<string, unknown> }
 const originalWiki = wikiGlobal.WIKI
@@ -14,6 +14,7 @@ let tempRoot: string
 let Asset: typeof AssetModel
 let removeAsset: typeof assetOperations.remove
 let storageEvent = vi.fn()
+let branding: typeof AssetBranding
 
 const upload = async (source: string, contents: string, options: { skipStorage?: boolean } = {}): Promise<void> => {
   await writeFile(source, contents)
@@ -81,6 +82,7 @@ describe('asset aggregate persistence', () => {
     Asset = (await vi.importFresh('../../models/assets.ts', import.meta.url)).default
     Asset.knex(db)
     models.assets = Asset
+    branding = await import('../../helpers/asset-branding.ts')
     removeAsset = (await vi.importFresh('../../operations/assets.ts', import.meta.url)).default.remove
   })
 
@@ -103,6 +105,98 @@ describe('asset aggregate persistence', () => {
     expect(blobs).toHaveLength(1)
     expect(blobs[0].id).toBe(assets[0].id)
     expect(['first', 'second']).toContain(Buffer.from(blobs[0].data).toString())
+  })
+
+  it('preserves branded asset bytes and metadata when a queued replacement is busy', async () => {
+    await upload(path.join(tempRoot, 'initial-upload'), 'old bytes', { skipStorage: true })
+    const asset = (await db('assets').first()) as { id: number; hash: string }
+    const previousBranding = {
+      version: 1,
+      sourceSha256: 'a'.repeat(64),
+      state: 'ready',
+      width: 1,
+      height: 1,
+      accent: '#112233',
+      matte: '#FFFFFF'
+    }
+    const previousMetadata = { branding: previousBranding, revision: 4 }
+    const reservations = Array.from({ length: 8 }, (_, index) => branding.reserveAssetBrandingAnalysis(asset.id + index + 1))
+    let releaseFirstUpload!: () => void
+    const firstUploadReady = new Promise<void>(resolve => {
+      releaseFirstUpload = resolve
+    })
+    storageEvent.mockImplementationOnce(async () => {
+      await firstUploadReady
+    })
+    try {
+      const firstUpload = upload(path.join(tempRoot, 'first-queued-upload'), 'new bytes')
+      await vi.waitFor(() => expect(storageEvent).toHaveBeenCalledOnce())
+      await db('assets')
+        .where({ id: asset.id })
+        .update({ metadata: JSON.stringify(previousMetadata) })
+      const secondUpload = upload(path.join(tempRoot, 'second-queued-upload'), 'newer bytes', { skipStorage: true })
+      releaseFirstUpload()
+      await firstUpload
+      await expect(secondUpload).rejects.toMatchObject({
+        status: 503,
+        name: 'BRANDING_BUSY'
+      })
+      const currentAsset = await db('assets').where({ id: asset.id }).first()
+      const currentMetadata = typeof currentAsset.metadata === 'string' ? JSON.parse(currentAsset.metadata) : currentAsset.metadata
+      expect(currentMetadata).toEqual(previousMetadata)
+      expect(Buffer.from((await db('assetData').where({ id: asset.id }).first()).data).toString()).toBe('new bytes')
+      expect(await readFile(path.join(tempRoot, 'data', 'cache', `${asset.hash}.dat`), 'utf8')).toBe('new bytes')
+    } finally {
+      releaseFirstUpload()
+      reservations.forEach(branding.releaseAssetBrandingAnalysis)
+    }
+  })
+
+  it('does not let a stale branding merge overwrite a newer asset source', async () => {
+    await upload(path.join(tempRoot, 'race-seed'), 'seed', { skipStorage: true })
+    const asset = (await db('assets').first()) as { id: number }
+    const sourceA = Buffer.from('source A')
+    const sourceB = Buffer.from('source B')
+    await db('assetData').where({ id: asset.id }).update({ data: sourceA })
+    await db('assets')
+      .where({ id: asset.id })
+      .update({ metadata: JSON.stringify({ revision: 7 }) })
+
+    let replaced = false
+    const originalKnex = db
+    const racedKnex = Object.assign(
+      (table: string) => {
+        const query = originalKnex(table)
+        if (table === 'assetData' && !replaced) {
+          const first = query.first.bind(query)
+          Object.assign(query, {
+            first: async () => {
+              const row = await first()
+              if (!replaced) {
+                replaced = true
+                await originalKnex('assetData').where({ id: asset.id }).update({ data: sourceB })
+              }
+              return row
+            }
+          })
+        }
+        return query
+      },
+      { transaction: originalKnex.transaction.bind(originalKnex) }
+    )
+    const wiki = wikiGlobal.WIKI as { models: { knex: unknown } }
+    const previousKnex = wiki.models.knex
+    wiki.models.knex = racedKnex
+    try {
+      const result = await branding.refreshAssetBranding(asset.id)
+      expect(result).toMatchObject({ sourceSha256: branding.sourceSha256(sourceB), state: 'unavailable' })
+      const currentAsset = await db('assets').where({ id: asset.id }).first()
+      const currentMetadata = typeof currentAsset.metadata === 'string' ? JSON.parse(currentAsset.metadata) : currentAsset.metadata
+      expect(currentMetadata).toMatchObject({ revision: 7, branding: { sourceSha256: branding.sourceSha256(sourceB) } })
+      expect(Buffer.from((await db('assetData').where({ id: asset.id }).first()).data)).toEqual(sourceB)
+    } finally {
+      wiki.models.knex = previousKnex
+    }
   })
 
   it('rejects a blob failure without publishing metadata or cache state', async () => {

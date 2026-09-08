@@ -1,3 +1,5 @@
+declare const WIKI: Record<string, unknown>
+
 import { Model } from 'objection'
 import type { ModelOptions, QueryContext } from 'objection'
 import type { Response } from 'express'
@@ -9,6 +11,30 @@ import _ from 'lodash'
 import assetHelper from '../helpers/asset.ts'
 import User from './users.ts'
 import AssetFolder from './assetFolders.ts'
+import {
+  analyzeAssetBranding,
+  hasAssetBrandingMetadata,
+  type AssetBrandingAnalysisReservation,
+  releaseAssetBrandingAnalysis,
+  reserveAssetBrandingAnalysis,
+  stripAssetBrandingMetadata,
+  stripAssetBrandingMetadataRecord
+} from '../helpers/asset-branding.ts'
+import type { AssetBrandingMetadata } from '../../shared/page-branding.ts'
+
+const uploadFlights = new Map<string, Promise<void>>()
+
+const enqueueAssetUpload = (key: string, work: () => Promise<void>): Promise<void> => {
+  const previous = uploadFlights.get(key) ?? Promise.resolve()
+  const current = previous.catch(() => undefined).then(work)
+  uploadFlights.set(key, current)
+  void current
+    .finally(() => {
+      if (uploadFlights.get(key) === current) uploadFlights.delete(key)
+    })
+    .catch(() => undefined)
+  return current
+}
 
 interface AssetUser {
   id: number
@@ -86,6 +112,14 @@ export default class Asset extends Model {
       }
     }
   }
+  async getAssetPath(): Promise<string> {
+    const hierarchy = this.folderId ? await wiki.models.assetFolders.getHierarchy(this.folderId) : []
+    return this.folderId ? `${hierarchy.map(folder => folder.slug).join('/')}/${this.filename}` : this.filename
+  }
+
+  async deleteAssetCache(): Promise<void> {
+    await fs.remove(path.resolve(wiki.ROOTPATH, wiki.config.dataPath, `cache/${this.hash}.dat`))
+  }
 
   override async $beforeUpdate(opt: ModelOptions, context: QueryContext): Promise<void> {
     await super.$beforeUpdate(opt, context)
@@ -96,15 +130,6 @@ export default class Asset extends Model {
     await super.$beforeInsert(context)
     this.createdAt = moment.utc().toISOString()
     this.updatedAt = moment.utc().toISOString()
-  }
-
-  async getAssetPath(): Promise<string> {
-    const hierarchy = this.folderId ? await wiki.models.assetFolders.getHierarchy(this.folderId) : []
-    return this.folderId ? `${hierarchy.map(folder => folder.slug).join('/')}/${this.filename}` : this.filename
-  }
-
-  async deleteAssetCache(): Promise<void> {
-    await fs.remove(path.resolve(wiki.ROOTPATH, wiki.config.dataPath, `cache/${this.hash}.dat`))
   }
 
   static async upload(opts: UploadOptions): Promise<void> {
@@ -120,42 +145,62 @@ export default class Asset extends Model {
       folderId: opts.folderId
     }
 
-    if (wiki.config.uploads.scanSVG && (opts.mimetype.toLowerCase().startsWith('image/svg') || fileInfo.ext.toLowerCase() === '.svg')) {
-      const svgSanitizeJob = await wiki.scheduler.registerJob({ name: 'sanitize-svg', immediate: true, worker: true }, opts.path)
-      await svgSanitizeJob.finished
-    }
+    await enqueueAssetUpload(fileHash, async () => {
+      if (wiki.config.uploads.scanSVG && (opts.mimetype.toLowerCase().startsWith('image/svg') || fileInfo.ext.toLowerCase() === '.svg')) {
+        const svgSanitizeJob = await wiki.scheduler.registerJob({ name: 'sanitize-svg', immediate: true, worker: true }, opts.path)
+        await svgSanitizeJob.finished
+      }
 
-    const fileBuffer = await fs.readFile(opts.path)
-    const insertedRow = { ...assetRow, authorId: opts.user.id }
-    const updatedRow = { ...(opts.mode === 'upload' ? insertedRow : assetRow), updatedAt: moment.utc().toISOString() }
-    const asset = await wiki.models.knex.transaction(async transaction => {
-      const persistedAsset = await wiki.models.assets.query(transaction).insert(insertedRow).onConflict('hash').merge(updatedRow).returning('*')
-      await transaction('assetData').insert({ id: persistedAsset.id, data: fileBuffer }).onConflict('id').merge({ data: fileBuffer })
-      return persistedAsset
-    })
+      const fileBuffer = await fs.readFile(opts.path)
+      const insertedRow = { ...assetRow, authorId: opts.user.id }
+      const updatedRow = { ...(opts.mode === 'upload' ? insertedRow : assetRow), updatedAt: moment.utc().toISOString() }
+      let reservation: AssetBrandingAnalysisReservation | undefined
+      try {
+        const persisted = await wiki.models.knex.transaction(async transaction => {
+          const current = (await transaction('assets').where({ hash: fileHash }).forUpdate().first('id', 'metadata')) as
+            | { id: number; metadata?: unknown }
+            | undefined
+          let branding: AssetBrandingMetadata | undefined
+          if (current && hasAssetBrandingMetadata(current.metadata)) {
+            reservation = reserveAssetBrandingAnalysis(current.id)
+            branding = await analyzeAssetBranding(fileBuffer)
+          }
+          const persistedAsset = (await wiki.models.assets.query(transaction).insert(insertedRow).onConflict('hash').merge(updatedRow).returning('*')) as Asset
+          const metadata = stripAssetBrandingMetadataRecord(current?.metadata)
+          if (branding) metadata.branding = branding
+          await transaction('assets')
+            .where({ id: persistedAsset.id })
+            .update({ metadata: JSON.stringify(metadata) })
+          await transaction('assetData').insert({ id: persistedAsset.id, data: fileBuffer }).onConflict('id').merge({ data: fileBuffer })
+          return { asset: persistedAsset }
+        })
 
-    const cachePath = path.resolve(wiki.ROOTPATH, wiki.config.dataPath, `cache/${fileHash}.dat`)
-    if (opts.mode === 'upload') {
-      await fs.move(opts.path, cachePath, { overwrite: true })
-    } else {
-      await fs.copy(opts.path, cachePath, { overwrite: true })
-    }
-
-    if (!opts.skipStorage) {
-      await wiki.models.storage.assetEvent({
-        event: 'uploaded',
-        asset: {
-          ...asset,
-          path: await asset.getAssetPath(),
-          data: fileBuffer,
-          authorId: opts.user.id,
-          authorName: opts.user.name,
-          authorEmail: opts.user.email
+        const cachePath = path.resolve(wiki.ROOTPATH, wiki.config.dataPath, `cache/${fileHash}.dat`)
+        if (opts.mode === 'upload') {
+          await fs.move(opts.path, cachePath, { overwrite: true })
+        } else {
+          await fs.copy(opts.path, cachePath, { overwrite: true })
         }
-      })
-    }
-  }
 
+        if (!opts.skipStorage) {
+          await wiki.models.storage.assetEvent({
+            event: 'uploaded',
+            asset: {
+              ...persisted.asset,
+              metadata: stripAssetBrandingMetadata(persisted.asset.metadata),
+              path: await persisted.asset.getAssetPath(),
+              data: fileBuffer,
+              authorId: opts.user.id,
+              authorName: opts.user.name,
+              authorEmail: opts.user.email
+            }
+          })
+        }
+      } finally {
+        releaseAssetBrandingAnalysis(reservation)
+      }
+    })
+  }
   static async getAsset(assetPath: string, res: Response): Promise<void> {
     try {
       const fileInfo = assetHelper.getPathInfo(assetPath)

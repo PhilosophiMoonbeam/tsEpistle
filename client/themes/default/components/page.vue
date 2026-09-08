@@ -1,5 +1,5 @@
 <template lang="pug">
-  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus }]')
+  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus, "wiki-page--branded": hasPageBrandingAccent }]', :style='pageBrandingStyle')
     a.page-skip-link(:href='`#${pageArticleId}`', @click.prevent='focusArticle') Skip to content
     nav-header(v-if='!printView')
     .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
@@ -89,7 +89,7 @@
             cols='12'
             :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, `page-header--toc-${tocPosition}`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn) }]'
             )
-            .page-header-headings
+            .page-header-headings(:class='{ "page-header-headings--branded": pageBrandingVisible }')
               .page-document-label
                 v-icon(icon='mdi-book-open-page-variant-outline', size='15', aria-hidden='true')
                 span Knowledge / {{ locale.toUpperCase() }}
@@ -119,6 +119,12 @@
                       | {{ $t('common:page.byAuthor', { author: '' }) }}
                       bdi.page-provenance-author {{ authorName }}
                 v-btn.page-focus-control(v-if='!printView', variant='text', size='small', :prepend-icon='readerFocus ? `mdi-arrow-collapse-horizontal` : `mdi-book-open-page-variant-outline`', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t(readerFocus ? 'common:page.exitFocus' : 'common:page.focusReading') }}
+              page-branding-mark(
+                v-if='pageBranding'
+                :branding='pageBranding'
+                :failed='brandingFailureIdentity === pageBrandingIdentity'
+                @error='pageBrandingImageError'
+              )
 
             .page-edit-shortcuts(
               v-if='editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn)'
@@ -791,8 +797,16 @@ import { defineComponent, h, markRaw, mergeProps, type PropType, type VNode } fr
 import i18next from 'i18next'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
+import PageBrandingMark from '@/components/common/page-branding-mark.vue'
 import StatusIndicator from '@/components/common/status-indicator.vue'
 import { externalSourceUrl } from '../../../../shared/general-policy.ts'
+import type { PageBrandingView } from '../../../../shared/page-branding.ts'
+import type { PageBrandingTheme } from '../../../helpers/page-branding'
+import {
+  normalizePageBrandingView,
+  pageBrandingIdentity,
+  resolvePageBrandingStyle
+} from '../../../helpers/page-branding'
 import SiteBanner from '@/components/common/site-banner.vue'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
 import type { Environment as PrismEnvironment } from 'prismjs'
@@ -1063,6 +1077,7 @@ export default defineComponent({
     NavSidebar,
     StatusIndicator,
     SiteBanner,
+    PageBrandingMark,
     PageTocTree,
   },
   setup () {
@@ -1170,6 +1185,10 @@ export default defineComponent({
     filename: {
       type: String,
       default: ''
+    },
+    branding: {
+      type: Object as PropType<PageBrandingView | null>,
+      default: null
     }
   },
   data() {
@@ -1182,6 +1201,7 @@ export default defineComponent({
       expandedAnchors: new Set<string>(),
       collapsedByUser: new Set<string>(),
       preSearchExpanded: null as Set<string> | null,
+      brandingFailureIdentity: null as string | null,
       preSearchCollapsedByUser: null as Set<string> | null,
       searchOverrides: new Map<string, boolean>(),
       readerFocus: false,
@@ -1262,7 +1282,31 @@ export default defineComponent({
     pageTitleId (): string {
       return `wiki-page-shell-${this.pageId}-title`
     },
-    isAuthenticated () {
+    pageBranding (): PageBrandingView | null {
+      return normalizePageBrandingView(this.branding)
+    },
+    pageBrandingIdentity (): string | null {
+      return pageBrandingIdentity(this.pageBranding)
+    },
+    pageBrandingVisible (): boolean {
+      return this.pageBranding !== null && this.pageBrandingIdentity !== this.brandingFailureIdentity
+    },
+    pageBrandingTheme (): PageBrandingTheme {
+      const dark = this.$vuetify.theme.current.dark
+      const colors = this.$vuetify.theme.current.colors as Record<string, unknown>
+      return {
+        dark,
+        surface: typeof colors.surface === 'string' ? colors.surface : '',
+        onSurface: typeof colors['on-surface'] === 'string' ? colors['on-surface'] : ''
+      }
+    },
+    pageBrandingStyle (): Record<string, string> {
+      return resolvePageBrandingStyle(this.pageBranding, this.brandingFailureIdentity, this.pageBrandingTheme)
+    },
+    hasPageBrandingAccent (): boolean {
+      return this.pageBrandingStyle['--page-branding-surface'] !== undefined
+    },
+    isAuthenticated (): boolean {
       return wikiStore.user.authenticated
     },
     commentsPerms () {
@@ -1376,6 +1420,9 @@ export default defineComponent({
     }
   },
   watch: {
+    pageBrandingIdentity (value: string | null, previous: string | null) {
+      if (value !== previous) this.brandingFailureIdentity = null
+    },
     tocQuery (newQuery: string, oldQuery: string) {
       const hadQuery = Boolean(oldQuery?.trim())
       const hasQuery = Boolean(newQuery?.trim())
@@ -1535,6 +1582,9 @@ export default defineComponent({
   },
   methods: {
     mergeProps,
+    pageBrandingImageError (identity: string): void {
+      if (identity === this.pageBrandingIdentity) this.brandingFailureIdentity = identity
+    },
     async toggleReaderFocus(): Promise<void> {
       const container = this.$refs.container as HTMLElement
       const headerBottom = document.querySelector('.nav-header')?.getBoundingClientRect().bottom ?? 64
@@ -1590,6 +1640,7 @@ export default defineComponent({
       this.searchOverrides.clear()
 
       this.pageEditFab = false
+      this.brandingFailureIdentity = null
       this.pageWatched = false
       this.pageWatchLoading = false
       this.pageWatchEmailEnabled = true
@@ -2617,6 +2668,20 @@ export default defineComponent({
   background: rgb(var(--v-theme-surface));
 }
 
+.wiki-page--branded .page-hero {
+  background: var(--page-branding-surface);
+}
+
+.wiki-page--branded .page-header-section::after {
+  position: absolute;
+  inset-block: var(--wiki-space-4);
+  inset-inline-start: 0;
+  inline-size: 1px;
+  content: '';
+  background: var(--page-branding-divider);
+  pointer-events: none;
+}
+
 .page-hero--with-toc,
 .page-hero--with-toc .page-header-section {
   min-height: calc(var(--page-toc-empty-height) + var(--wiki-space-8));
@@ -2650,6 +2715,27 @@ export default defineComponent({
     max-width: 80rem;
     margin-inline: 0;
     text-align: start;
+  }
+
+  .page-header-headings--branded {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: var(--wiki-space-4);
+    align-items: start;
+
+    > .page-document-label,
+    > .page-title-row,
+    > .page-description,
+    > .page-document-meta {
+      grid-column: 1;
+    }
+
+    > .page-branding-mark {
+      grid-column: 2;
+      grid-row: 1 / span 4;
+      align-self: start;
+    }
   }
 
   .page-title-row {
@@ -3712,6 +3798,20 @@ export default defineComponent({
     display: none;
   }
 
+  .page-header-section::after,
+  .page-branding-mark {
+    display: none !important;
+  }
+
+  .page-header-headings--branded {
+    display: block;
+  }
+
+  .page-header-headings--branded > .page-document-label {
+    min-block-size: auto;
+    padding-inline-end: 0;
+  }
+
   .page-hero,
   .page-header-section,
   .page-header-section > .is-page-header {
@@ -3770,7 +3870,26 @@ export default defineComponent({
     border-color: CanvasText;
     box-shadow: none;
   }
+
+  .wiki-page--branded .page-hero {
+    background: Canvas !important;
+  }
+
+  .page-header-section::after,
+  .page-branding-mark {
+    display: none !important;
+  }
+
+  .page-header-headings--branded {
+    display: block;
+  }
+
+  .page-header-headings--branded > .page-document-label {
+    min-block-size: auto;
+    padding-inline-end: 0;
+  }
 }
+
 
 @media (prefers-reduced-motion: reduce) {
   .page-return-top,
@@ -3898,6 +4017,22 @@ export default defineComponent({
 
 @media (max-width: 599px) {
   .page-reading-dock-title { display: none; }
+
+  .page-header-headings--branded {
+    display: block;
+
+    > .page-document-label {
+      min-block-size: 40px;
+      padding-inline-end: calc(40px + var(--wiki-space-3));
+      align-items: center;
+    }
+
+    > .page-branding-mark {
+      position: absolute;
+      inset-block-start: 0;
+      inset-inline-end: 0;
+    }
+  }
 }
 
 @media print {

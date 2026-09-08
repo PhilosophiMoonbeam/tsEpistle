@@ -1,8 +1,9 @@
 import express from 'express'
-import { prepareReaderAnalytics } from '../helpers/reader-analytics.ts'
+import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
 import type { Knex } from 'knex'
 import { type Request, type Response } from './_types.ts'
 import pageHelper from '../helpers/page.ts'
+import { prepareReaderAnalytics } from '../helpers/reader-analytics.ts'
 import { canReadPage, canWritePage, managesSystem, pageRoute, principalId, type PageVisibility } from '../helpers/page-access.ts'
 import _ from 'lodash'
 import CleanCSS from 'clean-css'
@@ -10,8 +11,9 @@ import moment from 'moment'
 import qs from 'node:querystring'
 import { isPageProtected, pageRequiresUnlock, protectedAssetRequiresUnlock, unlockPage } from '../operations/page-protection.ts'
 import pageOperations from '../operations/pages.ts'
-import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../helpers/auth-rate-limiter.ts'
 import { encodeStoragePageDocument, type StoragePageEncodingInput } from '../modules/storage/page-document.ts'
+import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../helpers/auth-rate-limiter.ts'
+import { resolveAssetBrandingView } from '../helpers/asset-branding.ts'
 
 const tmplCreateRegex = /^[0-9]+(,[0-9]+)?$/
 interface PageTag {
@@ -30,6 +32,7 @@ interface ParsedPageArgs {
 interface PageExtraRecord extends Record<string, unknown> {
   css?: string
   js?: string
+  branding?: PageBrandingAssignment
 }
 
 interface PageDocumentRecord {
@@ -64,6 +67,8 @@ interface PageRecord extends PageDocumentRecord {
 interface PageVersionRecord extends PageDocumentRecord {
   locale: string
   editor: string
+  branding?: PageBrandingView | null
+  brandingAssignment?: PageBrandingAssignment | null
 }
 
 interface EditorPage {
@@ -209,6 +214,31 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     return i18n as RequestI18n
   }
   const requesterId = (req: Request): number => (typeof req.user?.id === 'number' ? req.user.id : 2)
+  const pageBrandingAssignmentFrom = (value: unknown): PageBrandingAssignment | null => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
+    const record = value as Record<string, unknown>
+    const candidate = Object.hasOwn(record, 'brandingAssignment')
+      ? record.brandingAssignment
+      : typeof record.extra === 'object' && record.extra !== null && !Array.isArray(record.extra)
+        ? Reflect.get(record.extra, 'branding')
+        : undefined
+    const parsed = PageBrandingAssignmentSchema.safeParse(candidate)
+    return parsed.success ? parsed.data : null
+  }
+
+  const resolvePageBranding = async (req: Request, assignment: PageBrandingAssignment | null): Promise<PageBrandingView | null> => {
+    if (assignment === null) return null
+    try {
+      return await resolveAssetBrandingView({
+        assetId: assignment.assetId,
+        requester: req.user,
+        sessionId: req.sessionID,
+        deriveIfMissing: false
+      })
+    } catch {
+      return null
+    }
+  }
 
   const parsePageArgs = (req: Request, stripExt = false): ParsedPageArgs => {
     const parsed = pageHelper.parsePath(req.path, { stripExt })
@@ -305,9 +335,18 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       body: wiki.config.theming.injectBody
     }
     const protectedPage = await isPageProtected(page.id)
-    const commentsEnabled = wiki.config.features.featurePageComments && (!wiki.data.commentProvider.codeTemplate || (page.visibility === 'public' && !protectedPage))
-    const spaNavigation = await prepareReaderAnalytics(req, res, page, Boolean(pageIsPublished), protectedPage,
-      _.isEmpty(page.extra?.css) && _.isEmpty(page.extra?.js) && !(commentsEnabled && wiki.data.commentProvider.codeTemplate))
+    const brandingAssignment = pageBrandingAssignmentFrom(page)
+    const branding = await resolvePageBranding(req, brandingAssignment)
+    const commentsEnabled =
+      wiki.config.features.featurePageComments && (!wiki.data.commentProvider.codeTemplate || (page.visibility === 'public' && !protectedPage))
+    const spaNavigation = await prepareReaderAnalytics(
+      req,
+      res,
+      page,
+      Boolean(pageIsPublished),
+      protectedPage,
+      _.isEmpty(page.extra?.css) && _.isEmpty(page.extra?.js) && !(commentsEnabled && wiki.data.commentProvider.codeTemplate)
+    )
     page.extra = page.extra || { css: '', js: '' }
     if (!_.isEmpty(page.extra.css)) injectCode.css = `${injectCode.css}\n${page.extra.css}`
     if (!_.isEmpty(page.extra.js)) injectCode.body = `${injectCode.body}\n${page.extra.js}`
@@ -315,25 +354,33 @@ export default function createCommonController(wiki: CommonWiki): express.Router
 
     const commentTmpl = {
       codeTemplate: wiki.data.commentProvider.codeTemplate,
-      head: '', body: '', main: commentsEnabled ? wiki.data.commentProvider.main : ''
+      head: '',
+      body: '',
+      main: commentsEnabled ? wiki.data.commentProvider.main : ''
     }
     if (commentsEnabled && wiki.data.commentProvider.codeTemplate) {
-      const renderForPage = Reflect.get(wiki.data.commentProvider, 'renderForPage') as ((id: number, url: string) => { head: string; body: string; main: string }) | undefined
+      const renderForPage = Reflect.get(wiki.data.commentProvider, 'renderForPage') as
+        | ((id: number, url: string) => { head: string; body: string; main: string })
+        | undefined
       if (renderForPage) Object.assign(commentTmpl, renderForPage(page.id, `${wiki.config.host}/i/${page.id}`))
     }
 
     let pageFilename = wiki.config.lang.namespacing ? `${pageArgs.locale}/${page.path}` : page.path
     pageFilename += page.contentType === 'markdown' ? '.md' : '.html'
+    const readerExtra = page.extra ? { ...page.extra } : null
+    if (readerExtra) delete readerExtra.branding
+    const readerPage = { ...page, extra: readerExtra }
     res.set('X-Wiki-Page', '1')
     return res.render('page', {
-      page,
+      page: readerPage,
       sidebar,
       injectCode,
       comments: commentTmpl,
       commentsEnabled,
       effectivePermissions,
       spaNavigation,
-      pageFilename
+      pageFilename,
+      branding
     })
   }
 
@@ -545,6 +592,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       ownerId: pageArgs.ownerId
     })
     let page: EditorPage | null = storedPage
+    let brandingAssignment: PageBrandingAssignment | null = null
+    let branding: PageBrandingView | null = null
     if (page) page.extra ??= { css: '', js: '' }
 
     pageArgs.tags = _.get(page, 'tags', [])
@@ -572,6 +621,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
         return res.status(403).render('unauthorized', { action: 'edit' })
       }
       if (!(await enforcePageUnlock(req, res, storedPage))) return
+      brandingAssignment = pageBrandingAssignmentFrom(storedPage)
+      branding = await resolvePageBranding(req, brandingAssignment)
 
       // -> Get page tags
       if (!page.$relatedQuery) throw new Error('Page relation loader is unavailable')
@@ -649,6 +700,9 @@ export default function createCommonController(wiki: CommonWiki): express.Router
               _.set(res.locals, 'pageMeta.title', 'Page Not Found')
               return res.status(404).render('notfound', { action: 'template' })
             }
+            brandingAssignment = pageBrandingAssignmentFrom(pageVersion)
+            branding = await resolvePageBranding(req, brandingAssignment)
+            if (brandingAssignment) page.extra = { ...(page.extra ?? {}), branding: brandingAssignment }
             page.content = Buffer.from(String(pageVersion.content)).toString('base64')
             page.editorKey = typeof pageVersion.editor === 'string' ? pageVersion.editor : null
             page.title = typeof pageVersion.title === 'string' ? pageVersion.title : null
@@ -660,6 +714,9 @@ export default function createCommonController(wiki: CommonWiki): express.Router
               sessionId: req.sessionID,
               id: tmplPageId
             })
+            brandingAssignment = pageBrandingAssignmentFrom(pageOriginal)
+            branding = await resolvePageBranding(req, brandingAssignment)
+            if (brandingAssignment) page.extra = { ...(page.extra ?? {}), branding: brandingAssignment }
             page.content = Buffer.from(pageOriginal.content).toString('base64')
             page.editorKey = pageOriginal.editor
             page.title = typeof pageOriginal.title === 'string' ? pageOriginal.title : null
@@ -687,7 +744,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       }
     }
 
-    res.render('editor', { page, injectCode, effectivePermissions })
+    res.render('editor', { page, injectCode, effectivePermissions, brandingAssignment, branding })
   })
 
   /**
