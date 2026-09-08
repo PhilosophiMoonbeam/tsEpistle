@@ -54,18 +54,25 @@ describe('TipTap editor layout and page-theme ownership', () => {
   test('uses accessible accent ink for headings while keeping warm accents decorative', () => {
     expect(pageSfc.errors).toEqual([])
 
-    const modernThemeStart = themeStylesheet.indexOf('// Modern reading surface')
-    expect(modernThemeStart).toBeGreaterThanOrEqual(0)
+    // Shared stylesheet owns heading typography and accessible accent ink for reader and editor
+    expect(themeStylesheet).toMatch(/h1\s*\{[^}]*color:\s*var\(--wiki-accent-ink\)/)
+    expect(themeStylesheet).not.toMatch(/h1\s*\{[^}]*color:\s*var\(--wiki-accent-warm\)/)
 
-    const modernTheme = themeStylesheet.slice(modernThemeStart)
-    expect(modernTheme).toMatch(/\.v-main \.contents\s*\{[\s\S]*?\n {2}h1\s*\{[\s\S]*?\n {4}color:\s*var\(--wiki-accent-ink\)\s*;/)
-    expect(pageStyle).toMatch(/\.wiki-page \.v-main \.contents\s*\{[\s\S]*?\n {2}h1\s*\{[\s\S]*?\n {4}color:\s*var\(--wiki-accent-ink\)\s*;/)
-    expect(modernTheme).not.toMatch(/h1\s*\{\s*color:\s*var\(--wiki-accent-warm\)\s*;/)
-    expect(pageStyle).not.toMatch(/h1\s*\{\s*margin:[^;]+;\s*color:\s*var\(--wiki-accent-warm\)\s*;/)
-    expect(modernTheme).toMatch(/h1\s*\{[\s\S]*?\n {4}strong\s*\{[\s\S]*?\n {6}color:\s*inherit\s*;/)
-    expect(pageStyle).toMatch(/h1\s*\{[\s\S]*?\n {4}strong\s*\{[\s\S]*?\n {6}color:\s*inherit\s*;/)
+    // Shared typography targets both reader scope and TipTap editor canvas
+    expect(themeStylesheet).toMatch(/\.v-main \.contents/)
+    expect(themeStylesheet).toMatch(/\.contents \.tiptap|\.editor-page-canvas|\.tiptap/)
+
+    // Authored H1 swoosh in shared theme reaches editor canvas while hero remains undecorated
+    expect(themeStylesheet).toMatch(/h1[\s\S]*?::after[\s\S]*?(?:10rem|min\(100%,\s*10rem\))/)
+    expect(pageStyle).not.toMatch(/\.page-title(?:::after|\s*::after)/)
+
+    // Ownership cutover: page-local file must NOT own heading typography
+    expect(pageStyle).not.toMatch(/\.wiki-page \.v-main \.contents\s*\{[\s\S]*?h1\s*\{/s)
+    expect(pageStyle).not.toMatch(/\.contents\s+h1\s*\{[^}]*color:/)
+
+    // TipTap editor canvas retains caret color, and list markers use decorative warm accent
     expect(tiptapStyle).toContain('caret-color: var(--wiki-accent-warm);')
-    expect(pageStyle).toMatch(/&::marker\s*\{[\s\S]*?color:\s*color-mix\(in srgb, var\(--wiki-accent-warm\)/)
+    expect(themeStylesheet).toMatch(/::marker\s*\{[^}]*color:\s*color-mix\(in srgb,\s*var\(--wiki-accent-warm/)
   })
 
   test('matches the published page reading measure without owning its theme', () => {

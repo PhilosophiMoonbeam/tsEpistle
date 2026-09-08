@@ -244,11 +244,13 @@ describe('default page focused contracts', () => {
     }
     expect(template).toMatch(/v-card\.page-toc-card\.mb-4\(v-if='tocPosition !== `off`', tag='nav', :aria-label=/)
     expect(template).toContain('v-btn.page-toc-toggle')
-    expect(template).toMatch(/v-btn\.page-toc-toggle\.text-none\([\s\S]*?:aria-expanded='tocDisclosureExpanded'[\s\S]*?aria-controls='page-toc-content'[\s\S]*?@click='toggleToc'/)
+    expect(template).toMatch(
+      /v-btn\.page-toc-toggle\.text-none\([\s\S]*?:aria-expanded='tocDisclosureExpanded'[\s\S]*?aria-controls='page-toc-content'[\s\S]*?@click='toggleToc'/
+    )
     expect(template).toContain('.text-label-small.page-toc-heading')
     expect(template).toContain('div#page-toc-content.page-toc-content')
     expect(template).toContain("v-show='tocDisclosureExpanded'")
-    expect(template).toContain(':href=\'tocItem.anchor\'')
+    expect(template).toContain(":href='tocItem.anchor'")
     expect(template).toContain("@click='tocLinkClicked($event, tocItem.anchor)'")
     expect(template).toMatch(/:style='`--toc-indent: \$\{Math\.min\(tocItem\.depth, 5\) \* 14\}px`'/)
     expect(template).toContain('v-icon.page-toc-item-marker')
@@ -271,7 +273,7 @@ describe('default page focused contracts', () => {
     const contentIndex = template.indexOf('v-col.page-col-content(', pageBodyIndex)
     const shortcutCardIndex = template.indexOf('v-card.page-shortcuts-card.mb-4')
     const tocCardIndex = template.indexOf('v-card.page-toc-card.mb-4')
-    const articleIndex = template.indexOf('article.contents(ref=\'container\'')
+    const articleIndex = template.indexOf("article.contents(ref='container'")
     const primaryTeleportIndex = template.indexOf(":to='isTocMobile ? `#page-mobile-tools` : `#page-desktop-rail`'")
     const metadataTeleportIndex = template.indexOf(":to='isTocMobile ? `#page-mobile-metadata` : `#page-desktop-rail`'")
     expect(mobileToolsIndex).toBeGreaterThan(-1)
@@ -283,8 +285,12 @@ describe('default page focused contracts', () => {
     expect(shortcutCardIndex).toBeGreaterThan(-1)
     expect(tocCardIndex).toBeGreaterThan(-1)
     expect(shortcutCardIndex).toBeLessThan(tocCardIndex)
-    expect(template).toMatch(/Teleport\([\s\S]*?defer\s*:key='isTocMobile \? `mobile-tools` : winWidth < 1280 \? `tablet-tools` : `desktop-tools`'\s*:to='isTocMobile \? `#page-mobile-tools` : `#page-desktop-rail`'[\s\S]*?:disabled='winWidth >= 600 && winWidth < 1280'[\s\S]*?v-card\.page-shortcuts-card[\s\S]*?v-card\.page-toc-card/)
-    expect(template).toMatch(/Teleport\([\s\S]*?defer\s*:key='isTocMobile \? `mobile-metadata` : winWidth < 1280 \? `tablet-metadata` : `desktop-metadata`'\s*:to='isTocMobile \? `#page-mobile-metadata` : `#page-desktop-rail`'[\s\S]*?:disabled='winWidth >= 600 && winWidth < 1280'[\s\S]*?v-card\.page-tags-card[\s\S]*?v-card\.page-comments-card[\s\S]*?v-card\.page-author-card/)
+    expect(template).toMatch(
+      /Teleport\([\s\S]*?defer\s*:key='isTocMobile \? `mobile-tools` : winWidth < 1280 \? `tablet-tools` : `desktop-tools`'\s*:to='isTocMobile \? `#page-mobile-tools` : `#page-desktop-rail`'[\s\S]*?:disabled='winWidth >= 600 && winWidth < 1280'[\s\S]*?v-card\.page-shortcuts-card[\s\S]*?v-card\.page-toc-card/
+    )
+    expect(template).toMatch(
+      /Teleport\([\s\S]*?defer\s*:key='isTocMobile \? `mobile-metadata` : winWidth < 1280 \? `tablet-metadata` : `desktop-metadata`'\s*:to='isTocMobile \? `#page-mobile-metadata` : `#page-desktop-rail`'[\s\S]*?:disabled='winWidth >= 600 && winWidth < 1280'[\s\S]*?v-card\.page-tags-card[\s\S]*?v-card\.page-comments-card[\s\S]*?v-card\.page-author-card/
+    )
     expect((template.match(/v-card\.page-(?:tags|comments|author)-card/g) ?? []).length).toBe(3)
     expect(template).toContain('page-col-sd--toc-off')
     expect(template).toContain('page-col-content--with-toc')
@@ -337,9 +343,7 @@ describe('default page focused contracts', () => {
     expect(template).toMatch(/\.page-toc-empty\(v-else\)/)
     expect(template).not.toMatch(/page-return-top--docked|:style='upBtnPosition'|location='bottom start'/)
     expect(template).toContain("@navigate='sidebarNavigationStarted'")
-    expect(script).toMatch(
-      /sidebarNavigationStarted\s*\(\)\s*\{\s*if \(this\.\$vuetify\.display\.width < 1280\) this\.navShown = false/
-    )
+    expect(script).toMatch(/sidebarNavigationStarted\s*\(\)\s*\{\s*if \(this\.\$vuetify\.display\.width < 1280\) this\.navShown = false/)
     expect(style).toMatch(/--page-toc-empty-height:\s*calc\(var\(--wiki-grid-size\) \* 2\)/)
     const navigationDrawer = template.match(/v-navigation-drawer\(([\s\S]*?)\n {6}\)/)?.[1] ?? ''
     expect(navigationDrawer).not.toBe('')
@@ -413,7 +417,6 @@ describe('default page focused contracts', () => {
       'grid-column': '3'
     })
     expect(style).toMatch(/--page-toc-desktop-lift:\s*calc\(var\(--page-toc-empty-height\) \+ var\(--wiki-space-6\)\)/)
-    expect(style).toMatch(/\.v-main \.contents[\s\S]*?h1\s*\{[^}]*color:\s*var\(--wiki-accent-ink\);/s)
     expect(style).not.toContain(':has(')
     expect(style).toMatch(/\.page-col-sd--with-toc\s*\{[^}]*margin-block-start:\s*calc\(var\(--page-toc-desktop-lift\) \* -1\)/s)
   })
@@ -435,7 +438,6 @@ describe('default page focused contracts', () => {
     const heroSystem = extractCssRule(style, '.page-title, .page-description')
     const title = extractCssRule(style, '.page-title')
     const description = extractCssRule(style, '.page-description')
-    const contents = extractCssRule(style, '.wiki-page .v-main .contents')
 
     expectDeclarations(pageRoot, {
       'font-family': 'var\\(--wiki-font-body\\)'
@@ -454,85 +456,50 @@ describe('default page focused contracts', () => {
       'font-size': '1\\.0625rem',
       'line-height': '1\\.5'
     })
-    expectDeclarations(contents, {
-      'font-family': 'var\\(--wiki-font-reader\\)',
-      'font-size': 'var\\(--wiki-reader-text-size,\\s*1\\.0625rem\\)',
-      'line-height': 'var\\(--wiki-reader-line-height,\\s*1\\.68\\)',
-      'font-optical-sizing': 'auto',
-      'font-synthesis': 'none'
-    })
 
-    const headingScale = [
-      ['h1', '2\\.375rem', '700', '1\\.1'],
-      ['h2', '1\\.8125rem', '650', '1\\.14'],
-      ['h3', '1\\.375rem', '650', '1\\.2'],
-      ['h4', '1\\.125rem', '600', '1\\.25'],
-      ['h5', '1\\.0625rem', '600', '1\\.3'],
-      ['h6', '1rem', '650', '1\\.35']
-    ]
-    for (const [selector, fontSize, fontWeight, lineHeight] of headingScale) {
-      expectDeclarations(extractCssRule(contents, selector), {
-        'font-size': fontSize,
-        'font-weight': fontWeight,
-        'line-height': lineHeight
-      })
-    }
+    // Page component retains shell layout, copy measure, heading scroll margins, and TOC navigation styling
+    expect(style).toMatch(/\.page-col-content\s*>\s*\.contents/)
+    expect(style).toMatch(/--page-reader-copy-max/)
+    expect(style).toMatch(/scroll-margin-block-start|scroll-margin-top/)
+    expect(style).toContain('.toc-anchor')
 
-    expectDeclarations(extractCssRule(contents, ':where(em, i, cite)'), {
-      'font-family': 'inherit',
-      'font-style': 'italic'
-    })
-    expectDeclarations(extractCssRule(contents, 'strong, b'), {
-      'font-weight': '650'
-    })
-    expectDeclarations(extractCssRule(contents, /:where\(\s*button,[\s\S]*?\.content-extension-media__fallback\s*\)/), {
-      'font-family': 'var\\(--wiki-font-body\\)'
-    })
-    expectDeclarations(extractCssRule(contents, ':where(code, kbd, samp, pre), .content-extension-qr__value'), {
-      'font-family': 'var\\(--wiki-font-mono\\)'
-    })
-    expectDeclarations(extractCssRule(contents, 'td.content'), {
-      'font-family': 'var\\(--wiki-font-reader\\)'
-    })
-    const iconFamilyRules = extractCssRules(contents).filter(({ selector, block }) => {
-      const targetsIconFont = /(?:^|[,(]\s*)\.(?:v-icon|icon)(?=\s*[,)]|$)/.test(selector)
-      return targetsIconFont && Object.hasOwn(extractDeclarations(block), 'font-family')
-    })
-    expect(iconFamilyRules).toEqual([])
+    // Ownership cutover: page-local file must NOT retain ordinary authored element typography
+    expect(extractCssRule(style, '.wiki-page .v-main .contents h1')).toBeNull()
+    expect(extractCssRule(style, '.contents h1')).toBeNull()
+    expect(extractCssRule(style, '.wiki-page .v-main .contents')).toBeNull()
+    const pageLocalHeadingTypography = extractCssRules(style).filter(({ selector }) =>
+      /(?:^|[,(]\s*)\.(?:wiki-page\s+)?(?:v-main\s+)?contents\s+h[1-6](?=\s*[,)]|$)/.test(selector)
+    )
+    expect(pageLocalHeadingTypography).toEqual([])
 
-    const mobile = extractCssRule(style, '@media (max-width: 599px)')
-    const mobileHeader = extractCssRule(mobile, '.page-header-section')
-    const mobileContents = extractCssRule(mobile, '.wiki-page .v-main .contents')
-    expectDeclarations(extractCssRule(mobileHeader, '.page-title'), {
-      'font-size': 'clamp\\(1\\.875rem,\\s*1\\.55rem \\+ 2vw,\\s*2\\.25rem\\)',
-      'line-height': '1\\.05'
-    })
-    expectDeclarations(extractCssRule(mobileHeader, '.page-description'), {
-      'font-size': '1rem',
-      'line-height': '1\\.5'
-    })
-    expectDeclarations(mobileContents, {
-      'font-size': '1rem',
-      'line-height': '1\\.65'
-    })
-    expectDeclarations(extractCssRule(mobileContents, 'h1'), { 'font-size': '1\\.75rem' })
-    expectDeclarations(extractCssRule(mobileContents, 'h2'), { 'font-size': '1\\.5rem' })
-    expectDeclarations(extractCssRule(mobileContents, 'h3'), { 'font-size': '1\\.25rem' })
+    // Shared styles in app.scss reach reader and editor canvas with canonical typography
+    expect(appStyle).toMatch(/\.v-main \.contents/)
+    expect(appStyle).toMatch(/--wiki-font-reader/)
 
+    // Authored H1 swoosh exists in shared styles while hero title and H2-H6 do not receive it
+    expect(appStyle).toMatch(/h1[\s\S]*?::after[\s\S]*?(?:10rem|min\(100%,\s*10rem\))/)
+    expect(appStyle).toMatch(/h1[\s\S]*?::after[\s\S]*?(?:mask|mask-image|-webkit-mask)/)
+
+    // Hero title (.page-title) must NEVER receive the swoosh decoration
+    expect(style).not.toMatch(/\.page-title(?:::after|\s*::after)/)
+    expect(appStyle).not.toMatch(/\.page-title(?:::after|\s*::after)/)
+
+    // Print chrome: hides sidebars/rail and expands printable reading surface
     const print = extractCssRule(style, '@media print')
-    const printHiddenRail = extractCssRules(print).find(({ selector }) => {
-      const selectors = selector.split(',').map(part => part.trim())
-      return [
-        '.page-col-sd',
-        '.page-mobile-tools',
-        '.page-mobile-metadata',
-        '.page-shortcuts-card',
-        '.page-toc-card',
-        '.page-tags-card',
-        '.page-comments-card',
-        '.page-author-card'
-      ].every(part => selectors.includes(part))
-    })?.block ?? null
+    const printHiddenRail =
+      extractCssRules(print).find(({ selector }) => {
+        const selectors = selector.split(',').map(part => part.trim())
+        return [
+          '.page-col-sd',
+          '.page-mobile-tools',
+          '.page-mobile-metadata',
+          '.page-shortcuts-card',
+          '.page-toc-card',
+          '.page-tags-card',
+          '.page-comments-card',
+          '.page-author-card'
+        ].every(part => selectors.includes(part))
+      })?.block ?? null
     expectDeclarations(printHiddenRail, {
       display: 'none !important'
     })
@@ -543,12 +510,6 @@ describe('default page focused contracts', () => {
     expectDeclarations(extractCssRule(print, '.page-col-content'), {
       'max-width': '100% !important',
       'flex-basis': '100% !important'
-    })
-    const printContents = extractCssRule(print, '.wiki-page .v-main .contents')
-    expectDeclarations(printContents, {
-      'font-family': 'var\\(--wiki-font-reader\\)',
-      'font-size': '11pt',
-      'line-height': '1\\.5'
     })
     expectDeclarations(extractCssRule(print, '.page-header-section .page-title'), {
       'font-size': '28pt',

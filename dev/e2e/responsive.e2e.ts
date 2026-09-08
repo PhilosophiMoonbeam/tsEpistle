@@ -35,20 +35,44 @@ test.describe('responsive UI quality matrix', () => {
       await expect(shortcutCard).toBeVisible()
       if (await tocCard.count()) {
         await expect(tocCard).toBeVisible()
+        const tocToggle = tocCard.locator('.page-toc-toggle')
+        if (await tocToggle.isVisible()) {
+          const isExpanded = await tocToggle.getAttribute('aria-expanded')
+          if (isExpanded !== 'true') {
+            await tocToggle.click()
+            await expect(tocCard.locator('#page-toc-content')).toBeVisible()
+          }
+        }
         const headingLinks = tocCard.locator('.page-toc-item')
         for (const headingLink of await headingLinks.all()) {
           await expect(headingLink).toHaveAttribute('href', /^#[^#].*$/)
         }
-        const highestAvailableHeadings = tocCard.locator('.page-toc-item-title.font-weight-bold')
+        const highestAvailableHeadings = tocCard.locator('.page-toc-item-title--depth-0')
         expect(await highestAvailableHeadings.count(), 'Page Contents emphasizes at least one highest-level heading').toBeGreaterThan(0)
         for (const heading of await highestAvailableHeadings.all()) {
           await expect(heading).toHaveCSS('font-weight', '700')
         }
-        if (path === '/en/home') {
-          const thirdLevelHeadings = tocCard.locator('.page-toc-item-title.font-italic')
-          expect(await thirdLevelHeadings.count(), 'Page Contents exposes third-level hierarchy styling').toBeGreaterThan(0)
-          for (const heading of await thirdLevelHeadings.all()) {
-            await expect(heading).toHaveCSS('font-style', 'italic')
+        const depth1Headings = tocCard.locator('.page-toc-item-title--depth-1')
+        for (const heading of await depth1Headings.all()) {
+          await expect(heading).toHaveCSS('font-weight', '550')
+        }
+
+        if (await headingLinks.count()) {
+          const firstLink = headingLinks.first()
+          const targetHref = await firstLink.getAttribute('href')
+          if (targetHref && targetHref.startsWith('#')) {
+            const targetId = targetHref.slice(1)
+            const targetHeading = page.locator(`id=${targetId}`).first()
+            if (await targetHeading.count()) {
+              await firstLink.click()
+              await expect(targetHeading).toBeVisible()
+              const headingBox = await targetHeading.boundingBox()
+              expect(headingBox).not.toBeNull()
+              if (headingBox) {
+                expect(headingBox.y, 'TOC destination heading is visible below fixed chrome').toBeGreaterThanOrEqual(0)
+                expect(headingBox.y, 'TOC destination heading is within viewport').toBeLessThan(viewport.height)
+              }
+            }
           }
         }
 
@@ -548,22 +572,130 @@ test.describe('responsive UI quality matrix', () => {
         await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
         'RTL reader has no horizontal overflow'
       ).toBeLessThanOrEqual(1)
+      const rtlH1Info = await page.evaluate(() => {
+        const h1 = document.querySelector('article.contents h1')
+        if (!h1) return null
+        const h1Style = window.getComputedStyle(h1)
+        const after = window.getComputedStyle(h1, '::after')
+        const height = parseFloat(after.height) || parseFloat(after.getPropertyValue('block-size')) || 0
+        const width = parseFloat(after.width) || parseFloat(after.getPropertyValue('inline-size')) || 0
+        const insetInlineStart = after.getPropertyValue('inset-inline-start')
+        const bg = after.backgroundImage || after.background
+        const mask = after.maskImage || after.webkitMaskImage || ''
+        return {
+          direction: h1Style.direction,
+          afterContent: after.content,
+          afterHeight: height,
+          afterWidth: width,
+          insetInlineStart,
+          afterRight: after.right,
+          background: bg,
+          maskImage: mask
+        }
+      })
+      expect(rtlH1Info, 'Authored H1 must exist in RTL reader').not.toBeNull()
+      if (rtlH1Info) {
+        expect(rtlH1Info.direction, 'RTL authored H1 inherits RTL direction').toBe('rtl')
+        expect(rtlH1Info.afterContent, 'RTL authored H1 swoosh has content').not.toMatch(/^(?:none|""|normal)$/)
+        expect(rtlH1Info.afterHeight, 'RTL authored H1 swoosh retains 3.5px height').toBeGreaterThanOrEqual(3)
+        expect(rtlH1Info.afterHeight, 'RTL authored H1 swoosh retains 3.5px height').toBeLessThanOrEqual(4)
+        expect(rtlH1Info.afterWidth, 'RTL authored H1 swoosh width is positive').toBeGreaterThan(0)
+        expect(rtlH1Info.afterWidth, 'RTL authored H1 swoosh width is bounded to 10rem').toBeLessThanOrEqual(165)
+
+        const isAnchoredAtInlineStart = rtlH1Info.insetInlineStart === '0px' || rtlH1Info.afterRight === '0px'
+        expect(isAnchoredAtInlineStart, 'RTL authored H1 swoosh is anchored at inline start (right: 0)').toBe(true)
+
+        const isGradientReversed = /to left|270deg/.test(rtlH1Info.background) && !/to right|90deg/.test(rtlH1Info.background)
+        expect(isGradientReversed, 'RTL authored H1 gradient fades toward inline end (to left)').toBe(true)
+
+        const isMaskReversed = /V35.*C70 35 40 10 0 10/i.test(rtlH1Info.maskImage) || /0 0 H100 V35/i.test(rtlH1Info.maskImage)
+        expect(isMaskReversed, 'RTL authored H1 mask silhouette mirrors taper toward inline end').toBe(true)
+      }
+
+      // Repeat with an authored H1 inside an authentic nested dir='rtl' region
+      const nestedRtlH1Info = await page.evaluate(() => {
+        const contents = document.querySelector('article.contents')
+        if (!contents) return null
+
+        const nestedRegion = document.createElement('div')
+        nestedRegion.className = 'test-nested-rtl-region'
+        nestedRegion.setAttribute('dir', 'rtl')
+
+        const nestedH1 = document.createElement('h1')
+        nestedH1.className = 'test-nested-rtl-h1'
+        nestedH1.textContent = 'Nested RTL Heading'
+        nestedRegion.appendChild(nestedH1)
+        contents.appendChild(nestedRegion)
+
+        const h1Style = window.getComputedStyle(nestedH1)
+        const after = window.getComputedStyle(nestedH1, '::after')
+        const height = parseFloat(after.height) || parseFloat(after.getPropertyValue('block-size')) || 0
+        const width = parseFloat(after.width) || parseFloat(after.getPropertyValue('inline-size')) || 0
+        const insetInlineStart = after.getPropertyValue('inset-inline-start')
+        const bg = after.backgroundImage || after.background
+        const mask = after.maskImage || after.webkitMaskImage || ''
+
+        const info = {
+          direction: h1Style.direction,
+          afterContent: after.content,
+          afterHeight: height,
+          afterWidth: width,
+          insetInlineStart,
+          afterRight: after.right,
+          background: bg,
+          maskImage: mask
+        }
+
+        nestedRegion.remove()
+        return info
+      })
+      expect(nestedRtlH1Info, 'Nested RTL H1 evaluation must succeed').not.toBeNull()
+      if (nestedRtlH1Info) {
+        expect(nestedRtlH1Info.direction, 'Nested RTL authored H1 inherits RTL direction').toBe('rtl')
+        expect(nestedRtlH1Info.afterContent, 'Nested RTL authored H1 swoosh has content').not.toMatch(/^(?:none|""|normal)$/)
+        expect(nestedRtlH1Info.afterHeight, 'Nested RTL authored H1 swoosh retains 3.5px height').toBeGreaterThanOrEqual(3)
+        expect(nestedRtlH1Info.afterHeight, 'Nested RTL authored H1 swoosh retains 3.5px height').toBeLessThanOrEqual(4)
+        expect(nestedRtlH1Info.afterWidth, 'Nested RTL authored H1 swoosh width is positive').toBeGreaterThan(0)
+        expect(nestedRtlH1Info.afterWidth, 'Nested RTL authored H1 swoosh width is bounded to 10rem').toBeLessThanOrEqual(165)
+
+        const isNestedAnchored = nestedRtlH1Info.insetInlineStart === '0px' || nestedRtlH1Info.afterRight === '0px'
+        expect(isNestedAnchored, 'Nested RTL authored H1 swoosh is anchored at inline start (right: 0)').toBe(true)
+
+        const isNestedGradientReversed = /to left|270deg/.test(nestedRtlH1Info.background) && !/to right|90deg/.test(nestedRtlH1Info.background)
+        expect(isNestedGradientReversed, 'Nested RTL authored H1 gradient fades toward inline end (to left)').toBe(true)
+
+        const isNestedMaskReversed = /V35.*C70 35 40 10 0 10/i.test(nestedRtlH1Info.maskImage) || /0 0 H100 V35/i.test(nestedRtlH1Info.maskImage)
+        expect(isNestedMaskReversed, 'Nested RTL authored H1 mask silhouette mirrors taper toward inline end').toBe(true)
+      }
     } finally {
       await page.evaluate(state => {
-        const reader = document.querySelector<HTMLElement>('.wiki-page')
-        const header = document.querySelector<HTMLElement>('.page-header-section > .is-page-header')
-        const rail = document.querySelector<HTMLElement>('.page-col-sd')
-        const article = document.querySelector<HTMLElement>('.page-col-content:not(.is-page-header)')
-        if (state.documentDirection === null) document.documentElement.removeAttribute('dir')
-        else document.documentElement.setAttribute('dir', state.documentDirection)
-        if (reader) {
-          reader.className = state.readerClass
-          if (state.readerDirection === null) reader.removeAttribute('dir')
-          else reader.setAttribute('dir', state.readerDirection)
-        }
-        if (header) header.className = state.headerClass
-        if (rail) rail.className = state.railClass
-        if (article) article.className = state.articleClass
+        try {
+          document.querySelector('.test-nested-rtl-region')?.remove()
+        } catch {}
+        try {
+          if (state.documentDirection === null) document.documentElement.removeAttribute('dir')
+          else document.documentElement.setAttribute('dir', state.documentDirection)
+        } catch {}
+        try {
+          const reader = document.querySelector<HTMLElement>('.wiki-page')
+          if (reader) {
+            if (state.readerDirection === null) reader.removeAttribute('dir')
+            else reader.setAttribute('dir', state.readerDirection)
+            reader.className = state.readerClass
+          }
+        } catch {}
+        try {
+          const header = document.querySelector<HTMLElement>('.page-header-section > .is-page-header')
+          if (header && state.headerClass) header.className = state.headerClass
+        } catch {}
+        try {
+          const rail = document.querySelector<HTMLElement>('.page-col-sd')
+          if (rail && state.railClass) rail.className = state.railClass
+        } catch {}
+        try {
+          const article = document.querySelector<HTMLElement>('.page-col-content:not(.is-page-header)')
+          if (article && state.articleClass) article.className = state.articleClass
+        } catch {}
       }, originalState)
     }
   })
@@ -885,6 +1017,231 @@ test.describe('responsive UI quality matrix', () => {
     await expect(notFound).toBeVisible()
     await expectLocatorWithinViewport(notFound, 'Not-found content')
     await expectResponsiveLayout(page, 'Not-found page')
+  })
+
+  test('decorates authored H1 with bounded swoosh while keeping hero and H2-H6 undecorated', async ({ page }) => {
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+
+    const decorations = await page.evaluate(() => {
+      const heroTitle = document.querySelector('.page-header-section .page-title')
+      const authoredH1 = document.querySelector('article.contents h1')
+      const authoredH2 = document.querySelector('article.contents h2')
+      const authoredH3 = document.querySelector('article.contents h3')
+      const authoredH4 = document.querySelector('article.contents h4')
+      const authoredH5 = document.querySelector('article.contents h5')
+      const authoredH6 = document.querySelector('article.contents h6')
+
+      const getPseudo = (el: Element | null, pseudo: string) => {
+        if (!el) return null
+        const cs = window.getComputedStyle(el, pseudo)
+        const height = parseFloat(cs.height) || parseFloat(cs.getPropertyValue('block-size')) || 0
+        const width = parseFloat(cs.width) || parseFloat(cs.getPropertyValue('inline-size')) || 0
+        return {
+          content: cs.content,
+          height,
+          width,
+          display: cs.display
+        }
+      }
+
+      const getBorder = (el: Element | null) => {
+        if (!el) return null
+        const cs = window.getComputedStyle(el)
+        const borderBottomWidth = parseFloat(cs.borderBottomWidth) || parseFloat(cs.getPropertyValue('border-block-end-width')) || 0
+        return {
+          borderBottomWidth,
+          borderBottomStyle: cs.borderBottomStyle
+        }
+      }
+
+      return {
+        hasAuthoredH1: Boolean(authoredH1),
+        heroAfter: getPseudo(heroTitle, '::after'),
+        h1After: getPseudo(authoredH1, '::after'),
+        h2After: getPseudo(authoredH2, '::after'),
+        h2Border: getBorder(authoredH2),
+        h3After: getPseudo(authoredH3, '::after'),
+        h3Border: getBorder(authoredH3),
+        h4After: getPseudo(authoredH4, '::after'),
+        h4Border: getBorder(authoredH4),
+        h5After: getPseudo(authoredH5, '::after'),
+        h5Border: getBorder(authoredH5),
+        h6After: getPseudo(authoredH6, '::after'),
+        h6Border: getBorder(authoredH6)
+      }
+    })
+
+    // Require authored H1 and nonempty/nonzero 10rem-bounded swoosh (~3.5px height, bounded width <= 10rem = 160px)
+    expect(decorations.hasAuthoredH1, 'Authored H1 must exist in article.contents').toBe(true)
+    expect(decorations.h1After, 'Authored H1 ::after must exist').not.toBeNull()
+    expect(decorations.h1After?.content, 'Authored H1 swoosh has content').not.toMatch(/^(?:none|""|normal)$/)
+    expect(decorations.h1After?.height, 'Authored H1 swoosh has ~3.5px block size').toBeGreaterThanOrEqual(3)
+    expect(decorations.h1After?.height, 'Authored H1 swoosh has ~3.5px block size').toBeLessThanOrEqual(4)
+    expect(decorations.h1After?.width, 'Authored H1 swoosh width is non-zero').toBeGreaterThan(0)
+    expect(decorations.h1After?.width, 'Authored H1 swoosh is bounded to at most 10rem').toBeLessThanOrEqual(165)
+
+    // Hero title (.page-title) must NEVER receive the swoosh decoration
+    expect(decorations.heroAfter?.content ?? 'none', 'Hero title must not have pseudo-element decoration').toMatch(/^(?:none|""|normal)$/)
+    if (decorations.heroAfter?.content && !/^(?:none|""|normal)$/.test(decorations.heroAfter.content)) {
+      expect(decorations.heroAfter.display, 'Hero title pseudo-element must be none if defined').toBe('none')
+    }
+
+    // H2 receives only a subtle border and NO swoosh
+    expect(decorations.h2After?.content ?? 'none', 'H2 must not have swoosh ::after').toMatch(/^(?:none|""|normal)$/)
+    if (decorations.h2After?.content && !/^(?:none|""|normal)$/.test(decorations.h2After.content)) {
+      expect(decorations.h2After.display, 'H2 pseudo-element must be none if defined').toBe('none')
+    }
+    expect(decorations.h2Border?.borderBottomWidth ?? 0, 'H2 has positive bottom border').toBeGreaterThan(0)
+
+    // H3-H6 receive typography only: NO swoosh, NO borders
+    const lowerHeadings = [
+      { level: 'H3', pseudo: decorations.h3After, border: decorations.h3Border },
+      { level: 'H4', pseudo: decorations.h4After, border: decorations.h4Border },
+      { level: 'H5', pseudo: decorations.h5After, border: decorations.h5Border },
+      { level: 'H6', pseudo: decorations.h6After, border: decorations.h6Border }
+    ]
+    for (const { level, pseudo, border } of lowerHeadings) {
+      expect(pseudo?.content ?? 'none', `${level} must not have swoosh ::after`).toMatch(/^(?:none|""|normal)$/)
+      if (pseudo?.content && !/^(?:none|""|normal)$/.test(pseudo.content)) {
+        expect(pseudo.display, `${level} pseudo-element must be none if defined`).toBe('none')
+      }
+      expect(border?.borderBottomWidth ?? 0, `${level} has no bottom border`).toBe(0)
+    }
+  })
+
+  test('prevents horizontal document overflow at 320px mobile viewport', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 600 })
+    for (const path of ['/en/visual-markdown-browser', '/en/home']) {
+      await openAuthenticatedPage(page, path, '.page-header-section')
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)
+      expect(overflow, `${path} document has no horizontal overflow at 320px`).toBeLessThanOrEqual(1)
+    }
+  })
+
+  test('ensures wrapped published tables and raw preview tables have exactly one scroll owner', async ({ page }) => {
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+
+    const tableEvaluation = await page.evaluate(() => {
+      const contents = document.querySelector('.contents')
+      if (!contents) throw new Error('Missing .contents container')
+
+      const createWideTable = () => {
+        const table = document.createElement('table')
+        const headers = Array.from({ length: 16 }, (_, i) => `<th style="min-width: 120px;">Header Column ${i}</th>`).join('')
+        const cells = Array.from({ length: 16 }, (_, i) => `<td>Cell Data Content ${i}</td>`).join('')
+        table.innerHTML = `<thead><tr>${headers}</tr></thead><tbody><tr>${cells}</tr></tbody>`
+        return table
+      }
+
+      // 1. Real wrapped fixtures for every supported published wrapper: .table-container, figure.table, .tableWrapper
+      const wrapperConfigs = [
+        { tag: 'div', className: 'table-container', name: '.table-container' },
+        { tag: 'figure', className: 'table', name: 'figure.table' },
+        { tag: 'div', className: 'tableWrapper', name: '.tableWrapper' }
+      ]
+
+      const wrappedHosts: HTMLElement[] = []
+      const wrappedResults = []
+
+      for (const config of wrapperConfigs) {
+        const wrapper = document.createElement(config.tag)
+        wrapper.className = config.className
+        const table = createWideTable()
+        wrapper.appendChild(table)
+        contents.appendChild(wrapper)
+        wrappedHosts.push(wrapper)
+
+        const wrapperStyle = window.getComputedStyle(wrapper)
+        const tableStyle = window.getComputedStyle(table)
+
+        // Wrapper owns overflow
+        const wrapperHasScroller = /auto|scroll/.test(wrapperStyle.overflowX) && wrapper.scrollWidth > wrapper.clientWidth
+        // Descendant table is not a second scroller
+        const tableIsSecondScroller = /auto|scroll/.test(tableStyle.overflowX) && table.scrollWidth > table.clientWidth + 1
+
+        // Verify table itself is not scrollable
+        table.scrollLeft = 50
+        const tableScrollable = table.scrollLeft > 0
+
+        // Reachability: scroll wrapper to end and check last column is reached
+        const maxScroll = wrapper.scrollWidth - wrapper.clientWidth
+        wrapper.scrollLeft = maxScroll
+        const reachedEnd = wrapper.scrollLeft > 0 && Math.abs(wrapper.scrollLeft - maxScroll) <= 2
+
+        wrappedResults.push({
+          name: config.name,
+          wrapperOverflowX: wrapperStyle.overflowX,
+          tableOverflowX: tableStyle.overflowX,
+          wrapperHasScroller,
+          tableIsSecondScroller,
+          tableScrollable,
+          lastColumnReachable: reachedEnd
+        })
+      }
+
+      // Clean up wrapped fixtures
+      for (const host of wrappedHosts) {
+        host.remove()
+      }
+
+      // 2. Separate check for unwrapped raw preview table fallback behavior
+      const rawHost = document.createElement('div')
+      rawHost.className = 'test-raw-table-host'
+      const rawTable = createWideTable()
+      rawTable.className = 'test-raw-table'
+      rawHost.appendChild(rawTable)
+      contents.appendChild(rawHost)
+
+      const rawTableStyle = window.getComputedStyle(rawTable)
+      const hostStyle = window.getComputedStyle(rawHost)
+      const rawTableScrollable = /auto|scroll/.test(rawTableStyle.overflowX) && rawTable.scrollWidth > rawTable.clientWidth
+      const hostScrollable = /auto|scroll/.test(hostStyle.overflowX) && rawHost.scrollWidth > rawHost.clientWidth
+
+      // Verify raw table local scroll reachability
+      const maxRawScroll = rawTable.scrollWidth - rawTable.clientWidth
+      rawTable.scrollLeft = maxRawScroll
+      const rawReachable = rawTable.scrollLeft > 0 && Math.abs(rawTable.scrollLeft - maxRawScroll) <= 2
+
+      // CRITICAL: Measure document overflow WHILE rawHost and rawTable are still attached!
+      const documentOverflowWithRawTable = document.documentElement.scrollWidth - document.documentElement.clientWidth
+
+      // Clean up raw table host afterward
+      rawHost.remove()
+
+      return {
+        wrappedResults,
+        rawResult: {
+          rawTableScrollable,
+          hostScrollable,
+          reachable: rawReachable,
+          rawOverflowX: rawTableStyle.overflowX,
+          documentOverflow: documentOverflowWithRawTable
+        },
+        documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth
+      }
+    })
+
+    // Assert that test cannot pass with zero wrappers
+    expect(tableEvaluation.wrappedResults.length, 'Must evaluate all supported published table wrappers').toBeGreaterThanOrEqual(3)
+
+    // Published wrapped table has wrapper as sole scroll owner, descendant table not scrollable, last column reachable
+    for (const res of tableEvaluation.wrappedResults) {
+      expect(res.wrapperHasScroller, `Published wrapper ${res.name} must own horizontal overflow`).toBe(true)
+      expect(res.tableIsSecondScroller, `Table inside ${res.name} must not be a second scroll container`).toBe(false)
+      expect(res.tableScrollable, `Table inside ${res.name} must not own scrolling`).toBe(false)
+      expect(res.lastColumnReachable, `Last column in ${res.name} must be reachable via wrapper scroll`).toBe(true)
+    }
+
+    // Unwrapped raw table scrolls locally without creating outer document overflow
+    expect(tableEvaluation.rawResult).not.toBeNull()
+    if (tableEvaluation.rawResult) {
+      expect(tableEvaluation.rawResult.rawTableScrollable, 'Raw table must own horizontal overflow locally').toBe(true)
+      expect(tableEvaluation.rawResult.hostScrollable, 'Parent container must not duplicate scroll ownership').toBe(false)
+      expect(tableEvaluation.rawResult.reachable, 'Wide raw table content is reachable via local scrolling').toBe(true)
+      expect(tableEvaluation.rawResult.documentOverflow, 'Attached wide raw table does not cause horizontal document overflow').toBeLessThanOrEqual(1)
+    }
+
+    expect(tableEvaluation.documentOverflow, 'Page document has no horizontal overflow from tables').toBeLessThanOrEqual(1)
   })
 })
 
