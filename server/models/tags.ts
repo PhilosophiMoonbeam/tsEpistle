@@ -3,6 +3,7 @@ import type { Knex } from 'knex'
 import _ from 'lodash'
 import Page from './pages.ts'
 import { tagAliasMap } from '../helpers/tag-aliases.ts'
+import { tagNames } from '../helpers/taxonomy-plan.ts'
 import errors from '../operations/errors.ts'
 
 /* global WIKI */
@@ -61,16 +62,14 @@ export default class Tag extends Model {
     this.createdAt = new Date().toISOString()
     this.updatedAt = new Date().toISOString()
   }
-  static async associateTags({ tags, page, transaction }: { tags: string[]; page: Page; transaction?: Knex.Transaction }): Promise<boolean> {
-    if (!transaction) return wiki.models.knex.transaction(tx => this.associateTags({ tags, page, transaction: tx }))
-    // Format tags
-
-    tags = _.uniq(tags.map(t => _.trim(t).toLowerCase()))
-    const existingTags = await wiki.models.tags.query(transaction).column('id', 'tag').whereIn('tag', tags)
+  static async associateTags({ tags, page, transaction }: { tags: unknown; page: Page; transaction?: Knex.Transaction }): Promise<boolean> {
+    const submittedNames = tagNames(tags)
+    if (!transaction) return wiki.models.knex.transaction(tx => this.associateTags({ tags: submittedNames, page, transaction: tx }))
+    const existingTags = await wiki.models.tags.query(transaction).column('id', 'tag').whereIn('tag', submittedNames)
 
     // Create missing tags
 
-    const newTags = _.filter(tags, t => !_.some(existingTags, ['tag', t])).map(t => ({
+    const newTags = _.filter(submittedNames, t => !_.some(existingTags, ['tag', t])).map(t => ({
       tag: t,
       title: t
     }))
@@ -82,10 +81,11 @@ export default class Tag extends Model {
 
     const identities = await wiki.models.tags.query(transaction).select('id', 'tag', 'redirectToId', 'isArchived').orderBy('id').forShare()
     const aliases = tagAliasMap(identities)
-    const archived = tags.find(tag => aliases[tag] === null)
-    if (archived) throw new errors.ApplicationError(`Tag “${archived}” is archived. Restore it in Administration → Tags, or choose an active tag.`, { status: 400 })
-    const names = _.uniq(tags.map(tag => aliases[tag] ?? tag))
-    const targetTags = await wiki.models.tags.query(transaction).column('id', 'tag').whereIn('tag', names)
+    const archived = submittedNames.find(tag => aliases[tag] === null)
+    if (archived)
+      throw new errors.ApplicationError(`Tag “${archived}” is archived. Restore it in Administration → Tags, or choose an active tag.`, { status: 400 })
+    const canonicalNames = _.uniq(submittedNames.map(tag => aliases[tag] ?? tag))
+    const targetTags = await wiki.models.tags.query(transaction).column('id', 'tag').whereIn('tag', canonicalNames)
     const currentTags = await page.$relatedQuery('tags', transaction)
 
     // Tags to relate

@@ -56,7 +56,7 @@ interface PageListItem {
   locale?: string
   title?: string | null
   description?: string | null
-  isPublished: boolean | number
+  isPublished?: boolean | number
   visibility: PageVisibility
   ownerId: number | null
   contentType: string
@@ -82,7 +82,7 @@ const isPageListItem = (page: PageOperationListItem): page is PageOperationListI
   (page.locale === undefined || typeof page.locale === 'string') &&
   (page.title === undefined || page.title === null || typeof page.title === 'string') &&
   (page.description === undefined || page.description === null || typeof page.description === 'string') &&
-  (typeof page.isPublished === 'boolean' || typeof page.isPublished === 'number') &&
+  (!Object.hasOwn(page, 'isPublished') || typeof page.isPublished === 'boolean' || typeof page.isPublished === 'number') &&
   (page.visibility === 'public' || page.visibility === 'private') &&
   (page.ownerId === null || typeof page.ownerId === 'number') &&
   typeof page.contentType === 'string' &&
@@ -323,6 +323,8 @@ const sendOperationError = (res: Response, next: express.NextFunction, value: un
 }
 
 router.get('/', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
   if (!requirePageListAccess(req, res)) {
     return
   }
@@ -352,14 +354,15 @@ router.get('/', async (req, res, next) => {
         if (!isPageListItem(page)) {
           throw new TypeError('Page list query returned an invalid selected row')
         }
+        const restricted = hasRestrictedPageFieldAccess(req)
         return {
           id: page.id,
           path: page.path,
           locale: page.locale,
           title: page.title ?? null,
           description: page.description ?? null,
-          ...(hasRestrictedPageFieldAccess(req) ? { isPublished: Boolean(page.isPublished) } : {}),
-          ...(hasRestrictedPageFieldAccess(req) ? { publishStartDate: page.publishStartDate ?? null, publishEndDate: page.publishEndDate ?? null } : {}),
+          ...(restricted && Object.hasOwn(page, 'isPublished') ? { isPublished: Boolean(page.isPublished) } : {}),
+          ...(restricted ? { publishStartDate: page.publishStartDate ?? null, publishEndDate: page.publishEndDate ?? null } : {}),
           visibility: page.visibility,
           ownerId: page.ownerId,
           contentType: page.contentType,
@@ -375,6 +378,8 @@ router.get('/', async (req, res, next) => {
 })
 
 router.get('/tags', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
   if (!requireTagsAccess(req, res)) {
     return
   }
@@ -397,6 +402,8 @@ router.get('/tags', async (req, res, next) => {
 })
 
 router.get('/recent', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
   if (!requireRecentPagesAccess(req, res)) {
     return
   }
@@ -426,6 +433,8 @@ router.get('/links', async (req, res, next) => {
 })
 
 router.get('/tags/search', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
   const query = _.get(req, 'query.query')
   if (!_.isString(query) || query.length < 1) return res.status(400).json({ error: 'query must be a non-empty string' })
   try {

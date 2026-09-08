@@ -410,7 +410,7 @@ export type PageListRow = {
   path: string
   title: string | null
   description: string | null
-  isPublished: boolean
+  isPublished?: boolean
   publishStartDate?: string | null
   publishEndDate?: string | null
   visibility: 'public' | 'private'
@@ -665,8 +665,12 @@ function normalizePageListRow(row: unknown, fallbackMessage: string): PageListRo
     throw new Error(fallbackMessage)
   }
 
+  const rawPageRow = row as Record<string, unknown>
   const pageRow = row as Partial<PageListRow>
   const ownerId = pageRow.ownerId
+  const hasIsPublished = Object.hasOwn(rawPageRow, 'isPublished')
+  const hasPublishStartDate = Object.hasOwn(rawPageRow, 'publishStartDate')
+  const hasPublishEndDate = Object.hasOwn(rawPageRow, 'publishEndDate')
   const validOwner = ownerId === null || (typeof ownerId === 'number' && Number.isSafeInteger(ownerId))
   if (
     !Number.isInteger(pageRow.id) ||
@@ -675,7 +679,9 @@ function normalizePageListRow(row: unknown, fallbackMessage: string): PageListRo
     typeof pageRow.path !== 'string' ||
     (pageRow.title !== null && typeof pageRow.title !== 'string') ||
     (pageRow.description !== null && typeof pageRow.description !== 'string') ||
-    typeof pageRow.isPublished !== 'boolean' ||
+    (hasIsPublished && typeof rawPageRow.isPublished !== 'boolean') ||
+    (hasPublishStartDate && rawPageRow.publishStartDate !== null && typeof rawPageRow.publishStartDate !== 'string') ||
+    (hasPublishEndDate && rawPageRow.publishEndDate !== null && typeof rawPageRow.publishEndDate !== 'string') ||
     (pageRow.visibility !== 'public' && pageRow.visibility !== 'private') ||
     !validOwner ||
     typeof pageRow.contentType !== 'string' ||
@@ -695,9 +701,9 @@ function normalizePageListRow(row: unknown, fallbackMessage: string): PageListRo
     path: pageRow.path,
     title: pageRow.title,
     description: pageRow.description,
-    isPublished: pageRow.isPublished,
-    ...(pageRow.publishStartDate === null || typeof pageRow.publishStartDate === 'string' ? { publishStartDate: pageRow.publishStartDate } : {}),
-    ...(pageRow.publishEndDate === null || typeof pageRow.publishEndDate === 'string' ? { publishEndDate: pageRow.publishEndDate } : {}),
+    ...(hasIsPublished ? { isPublished: rawPageRow.isPublished as boolean } : {}),
+    ...(hasPublishStartDate ? { publishStartDate: rawPageRow.publishStartDate as string | null } : {}),
+    ...(hasPublishEndDate ? { publishEndDate: rawPageRow.publishEndDate as string | null } : {}),
     visibility: pageRow.visibility,
     ownerId,
     contentType: pageRow.contentType,
@@ -847,64 +853,6 @@ export async function discardCollaborationDraft(
   })
   const payload = await parseJsonResponse(response, fallbackMessage)
   if (!isRecord(payload) || payload.discarded !== true) throw new Error(fallbackMessage)
-}
-
-export async function updatePageTag(
-  fetchImpl: FetchImpl,
-  id: number,
-  tag: string,
-  title: string | null,
-  fallbackMessage = 'Tag update failed'
-): Promise<MessageResponse> {
-  const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/tags/${encodeURIComponent(id)}`, {
-    method: 'PATCH',
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ tag, title })
-  })
-
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    Array.isArray(payload) ||
-    typeof (payload as { message?: unknown }).message !== 'string' ||
-    (payload as { message: string }).message.length < 1
-  ) {
-    throw new Error(fallbackMessage)
-  }
-
-  return {
-    message: (payload as { message: string }).message
-  }
-}
-
-export async function deletePageTag(fetchImpl: FetchImpl, id: number, fallbackMessage = 'Tag delete failed'): Promise<MessageResponse> {
-  const response = await sameOriginJsonFetch(fetchImpl, `/_api/pages/tags/${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    credentials: 'same-origin',
-    headers: {
-      Accept: 'application/json'
-    }
-  })
-
-  const payload = await parseJsonResponse(response, fallbackMessage)
-  if (
-    !payload ||
-    typeof payload !== 'object' ||
-    Array.isArray(payload) ||
-    typeof (payload as { message?: unknown }).message !== 'string' ||
-    (payload as { message: string }).message.length < 1
-  ) {
-    throw new Error(fallbackMessage)
-  }
-
-  return {
-    message: (payload as { message: string }).message
-  }
 }
 
 export async function deletePage(

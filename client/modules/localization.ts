@@ -22,15 +22,15 @@ export const fallbackLocalizationLabel = (key: string): string => {
     .replace(/\bUrl\b/g, 'URL')
 }
 
-export const localizationCacheVersion = (
-  product: { revision: string; date: string },
-  localeRevision?: string
-): string => `${product.revision}:${product.date}:${localeRevision || 'legacy'}`
+export const localizationCacheVersion = (product: { revision: string; date: string }, localeRevision?: string): string =>
+  `${product.revision}:${product.date}:${localeRevision || 'legacy'}`
 
 const plugin: Plugin = {
   install(app: App) {
     const translate = (key: string, options?: Record<string, unknown>): string => {
-      if (!i18next.isInitialized) return fallbackLocalizationLabel(key)
+      if (!i18next.isInitialized) {
+        return typeof options?.defaultValue === 'string' ? options.defaultValue : fallbackLocalizationLabel(key)
+      }
       const { namespace, path } = parseKey(key)
       return i18next.t(path, { ns: namespace, ...options })
     }
@@ -73,7 +73,7 @@ export default {
       lowerCaseLng: true,
       fallbackLng: 'en',
       ns: ['common', 'auth', 'admin', 'editor', 'history', 'profile', 'tags'],
-      parseMissingKeyHandler: fallbackLocalizationLabel
+      parseMissingKeyHandler: (key, defaultValue) => (typeof defaultValue === 'string' ? defaultValue : fallbackLocalizationLabel(key))
     })
     let timeoutId: ReturnType<typeof setTimeout> | undefined
     const initialized = await Promise.race([

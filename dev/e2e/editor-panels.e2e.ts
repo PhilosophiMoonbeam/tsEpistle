@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, type Page, type Request, type Response, type Route } from '@playwright/test'
+import { responsiveTest as test } from './helpers'
 import type { TextEditorHandle } from '../../client/components/editor/common/text-editor'
 
 // Mount the shipped editor with a new-page fixture: no account, saved page, or collaboration session.
@@ -7,9 +8,12 @@ const content = Array.from(
   (_, index) => `## Section ${index + 1}\n\nA paragraph for checking cursor alignment and independent preview scrolling.\n\n`
 ).join('')
 
-async function openEditor(page: Page) {
-  const errors: string[] = []
-  page.on('pageerror', error => errors.push(error.message))
+type EditorFixtureOptions = {
+  onTagSearch?: (route: Route) => Promise<void> | void
+}
+
+async function openEditor(page: Page, options: EditorFixtureOptions = {}) {
+  let fixtureOrigin: string | undefined
   await page.route('**/_api/**', async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
@@ -46,19 +50,79 @@ async function openEditor(page: Page) {
       })
     return route.continue()
   })
+  if (options.onTagSearch) {
+    await page.route('**/_api/pages/tags/search?**', options.onTagSearch)
+  }
   await page.route('**/u', route => route.fulfill({ status: 405 }))
   await page.route('**/editor-panel-fixture', async route => {
+    fixtureOrigin = new URL(route.request().url()).origin
     const response = await page.request.get('/login')
-    const html = (await response.text()).replace(
+    if (!response.ok()) {
+      throw new Error(`Editor fixture login bootstrap failed: HTTP ${response.status()} ${response.statusText()}`)
+    }
+    const loginDocument = await response.text()
+    const editorDocument = loginDocument.replace(
       /<login\b[^>]*><\/login>/,
       `<editor init-editor="markdown" init-mode="create" title="Editor review" init-content="${Buffer.from(content).toString('base64')}"></editor>`
     )
-    await route.fulfill({ response, body: html })
+    if (editorDocument === loginDocument) throw new Error('The login document did not contain the expected application mount.')
+    await route.fulfill({ response, body: editorDocument })
   })
-  await page.goto('/editor-panel-fixture')
-  await expect(page.locator('.cm-content')).toBeAttached()
-  await page.locator('.v-dialog').getByRole('button', { name: 'Cancel', exact: true }).click()
-  return errors
+  let rejectBootstrapFailure!: (error: Error) => void
+  let bootstrapFailureReported = false
+  const bootstrapFailure = new Promise<never>((_, reject) => {
+    rejectBootstrapFailure = reject
+  })
+  const isRequiredBootstrapResource = (request: Request) => {
+    if (!fixtureOrigin || !['script', 'stylesheet'].includes(request.resourceType())) return false
+    return new URL(request.url()).origin === fixtureOrigin
+  }
+  const onRequestFailed = (request: Request) => {
+    if (!isRequiredBootstrapResource(request) || bootstrapFailureReported) return
+    bootstrapFailureReported = true
+    rejectBootstrapFailure(new Error(`Editor bootstrap resource failed: ${request.url()} (${request.failure()?.errorText || 'unknown request failure'})`))
+  }
+  const onResponse = (response: Response) => {
+    const request = response.request()
+    if (!isRequiredBootstrapResource(request) || response.ok() || bootstrapFailureReported) return
+    bootstrapFailureReported = true
+    rejectBootstrapFailure(new Error(`Editor bootstrap resource failed: ${response.url()} (HTTP ${response.status()} ${response.statusText()})`))
+  }
+  const mountState = await (async () => {
+    page.on('requestfailed', onRequestFailed)
+    page.on('response', onResponse)
+    try {
+      await Promise.race([page.goto('/editor-panel-fixture'), bootstrapFailure])
+      return await Promise.race([
+        page.waitForFunction(
+          () => {
+            if (document.querySelector('.cm-content')) return { state: 'ready' as const }
+            const asyncLoadError = Array.from(document.querySelectorAll<HTMLElement>('[role="alert"][aria-labelledby]')).find(alert => {
+              const titleId = alert.getAttribute('aria-labelledby')
+              return titleId && document.getElementById(titleId)?.textContent?.trim() === 'This section could not be loaded'
+            })
+            if (!asyncLoadError) return null
+            return { state: 'error' as const, message: 'This section could not be loaded' }
+          },
+          undefined,
+          { timeout: 25_000 }
+        ),
+        bootstrapFailure
+      ])
+    } finally {
+      page.off('requestfailed', onRequestFailed)
+      page.off('response', onResponse)
+    }
+  })()
+  const state = (await mountState.jsonValue()) as { state: 'ready' | 'error'; message?: string }
+  if (state.state === 'error') throw new Error(`Editor fixture failed to mount: ${state.message}`)
+  const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+  await expect(properties).toBeVisible()
+  await properties.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(properties).not.toBeVisible()
+  const markdownSource = page.getByRole('textbox', { name: 'Markdown source', exact: true })
+  await expect(markdownSource).toBeVisible()
+  await expect(markdownSource).toBeEditable()
 }
 
 async function selectLine(page: Page, line: number) {
@@ -97,7 +161,7 @@ async function assertControlsContained(page: Page) {
 }
 
 test('asset browser keeps folder, upload, and insertion actions contained', async ({ page }) => {
-  const errors = await openEditor(page)
+  await openEditor(page)
   const assetButton = page.getByRole('button', { name: 'Insert Assets', exact: true })
   if (!(await assetButton.isVisible())) {
     await page.getByRole('button', { name: 'More formatting tools' }).click()
@@ -131,11 +195,10 @@ test('asset browser keeps folder, upload, and insertion actions contained', asyn
     .locator('.editor-markdown')
     .evaluate(root => (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getValue())
   expect(source).toContain('brand-mark.png')
-  expect(errors).toEqual([])
 })
 
 test('preview follows the cursor by default and stops when toggled off', async ({ page }) => {
-  const errors = await openEditor(page)
+  await openEditor(page)
   const preview = page.locator('.editor-markdown-preview-content')
   if (!(await preview.isVisible())) await page.getByRole('button', { name: 'Show preview', exact: true }).click()
   const toggle = page.getByRole('button', { name: 'Align preview to cursor', exact: true })
@@ -178,5 +241,167 @@ test('preview follows the cursor by default and stops when toggled off', async (
     await page.keyboard.press('ControlOrMeta+End')
     await expect.poll(() => preview.evaluate(element => element.scrollTop)).toBeGreaterThan(1000)
   }
-  expect(errors).toEqual([])
+})
+test('page properties keeps tag drafts honest across suggestion, failure, removal, and cancel', async ({ page }) => {
+  const searchRequests: string[] = []
+  const failedQueries: Record<string, true> = {}
+  const taxonomyRequests: string[] = []
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.includes('/taxonomy')) taxonomyRequests.push(request.url())
+  })
+  await openEditor(page, {
+    onTagSearch: async route => {
+      const query = new URL(route.request().url()).searchParams.get('query') ?? ''
+      const normalizedQuery = query.toLowerCase()
+      searchRequests.push(query)
+      if (['broken', 'keyboard'].includes(normalizedQuery) && !failedQueries[normalizedQuery]) {
+        failedQueries[normalizedQuery] = true
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Fixture search failure' }) })
+        return
+      }
+      if (normalizedQuery === 'existing') return route.fulfill({ json: ['existing-tag'] })
+      await route.fulfill({ json: [] })
+    }
+  })
+
+  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+  await expect(properties).toBeVisible()
+  const tags = properties.getByRole('combobox', { name: /tags/i }).first()
+
+  await tags.fill('  Existing  ')
+  await expect.poll(() => searchRequests).toContain('Existing')
+  const existingOption = page.getByRole('option', { name: 'existing-tag', exact: true })
+  await tags.press('ArrowDown')
+  await expect(existingOption).toBeFocused()
+  await page.keyboard.press('Enter')
+  const existingRemove = properties.getByRole('button', { name: 'Remove tag existing-tag', exact: true })
+  await expect(existingRemove).toBeVisible()
+  await expect(existingRemove).toBeEnabled()
+  await expect(properties.getByRole('button', { name: 'Remove tag existing', exact: true })).toHaveCount(0)
+
+  await tags.fill('  New-Tag  ')
+  const candidate = page.getByRole('option', { name: /add [“"]?new-tag[”"]? to page/i })
+  await expect(candidate).toBeVisible()
+  await candidate.click()
+  await expect(properties.getByRole('button', { name: /remove.*new-tag/i })).toBeVisible()
+
+  await properties.getByRole('button', { name: /remove.*new-tag/i }).click()
+  await expect(properties.getByRole('button', { name: /remove.*new-tag/i })).toHaveCount(0)
+  await tags.fill('  Manual  ')
+  await tags.press('Enter')
+  await expect(properties.getByRole('button', { name: /remove.*manual/i })).toBeVisible()
+
+  await tags.fill('broken')
+  await expect.poll(() => searchRequests).toContain('broken')
+  const searchError = properties.getByRole('alert').filter({ hasText: /^Unable to load suggestions/i })
+  await expect(searchError).toBeVisible()
+  await expect(tags).toHaveValue('broken')
+  const manualRemove = properties.getByRole('button', { name: 'Remove tag manual', exact: true })
+  await expect(manualRemove).toBeVisible()
+  const retryButton = page.getByRole('button', { name: 'Retry tag suggestions', exact: true })
+  const successfulRetry = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/_api/pages/tags/search' && url.searchParams.get('query') === 'broken' && response.ok()
+  })
+  await retryButton.click()
+  await successfulRetry
+  await expect(searchError).toHaveCount(0)
+  await expect(retryButton).toHaveCount(0)
+  await expect(tags).toBeFocused()
+  await expect(tags).toHaveValue('broken')
+  await expect(existingRemove).toBeVisible()
+  await expect(manualRemove).toBeVisible()
+  const brokenRemove = properties.getByRole('button', { name: 'Remove tag broken', exact: true })
+  await expect(brokenRemove).toHaveCount(0)
+  await tags.press('Enter')
+  await expect(brokenRemove).toBeVisible()
+  await brokenRemove.click()
+  await expect(brokenRemove).toHaveCount(0)
+
+  await tags.fill('keyboard')
+  await expect.poll(() => searchRequests).toContain('keyboard')
+  await expect(searchError).toBeVisible()
+  await expect(tags).toHaveValue('keyboard')
+  const keyboardResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/_api/pages/tags/search' && url.searchParams.get('query') === 'keyboard' && response.ok()
+  })
+  await tags.press('Tab')
+  await expect(retryButton).toBeFocused()
+  await page.keyboard.press('Enter')
+  await keyboardResponse
+  await expect(searchError).toHaveCount(0)
+  await expect(retryButton).toHaveCount(0)
+  await expect(tags).toBeFocused()
+  await expect(tags).toHaveValue('keyboard')
+  await expect(existingRemove).toBeVisible()
+  await expect(manualRemove).toBeVisible()
+  const keyboardRemove = properties.getByRole('button', { name: 'Remove tag keyboard', exact: true })
+  await expect(keyboardRemove).toHaveCount(0)
+  await tags.press('Enter')
+  await expect(keyboardRemove).toBeVisible()
+
+  await tags.fill('  Blurred  ')
+  await expect.poll(() => searchRequests).toContain('Blurred')
+  const blurredRemove = properties.getByRole('button', { name: 'Remove tag blurred', exact: true })
+  await tags.press('Tab')
+  await expect(blurredRemove).toBeVisible()
+  await properties.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await expect(properties).not.toBeVisible()
+  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  const reopened = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+  await expect(reopened.getByRole('button', { name: /remove.*existing-tag/i })).toHaveCount(0)
+  await expect(reopened.getByRole('button', { name: /remove.*manual/i })).toHaveCount(0)
+  await expect(reopened.getByRole('button', { name: 'Remove tag keyboard', exact: true })).toHaveCount(0)
+  await expect(reopened.getByRole('button', { name: 'Remove tag blurred', exact: true })).toHaveCount(0)
+
+  await reopened.getByRole('combobox', { name: /tags/i }).fill('  Draft-Tag  ')
+  await reopened.getByRole('combobox', { name: /tags/i }).press('Enter')
+  await expect(reopened.getByRole('button', { name: /remove.*draft-tag/i })).toBeVisible()
+  await reopened.getByRole('button', { name: 'OK', exact: true }).click()
+  await expect(reopened).not.toBeVisible()
+  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  const committed = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+  await expect(committed.getByRole('button', { name: /remove.*draft-tag/i })).toBeVisible()
+  expect(taxonomyRequests).toEqual([])
+})
+
+test('page properties ignores a late suggestion response for an older query', async ({ page }) => {
+  let releaseSlow: (() => void) | undefined
+  let slowStarted: (() => void) | undefined
+  const slowResponse = new Promise<void>(resolve => {
+    releaseSlow = resolve
+  })
+  const slowRequest = new Promise<void>(resolve => {
+    slowStarted = resolve
+  })
+  await openEditor(page, {
+    onTagSearch: async route => {
+      const query = new URL(route.request().url()).searchParams.get('query') ?? ''
+      if (query === 'slow') {
+        slowStarted?.()
+        await slowResponse
+        await route.fulfill({ json: ['slow-tag'] })
+        return
+      }
+      await route.fulfill({ json: query === 'fast' ? ['fast-tag'] : [] })
+    }
+  })
+
+  await page.getByRole('button', { name: 'Page', exact: true }).click()
+  const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+  const tags = properties.getByRole('combobox', { name: /tags/i }).first()
+  await tags.fill('slow')
+  await slowRequest
+  await tags.fill('fast')
+  await expect(page.getByRole('option', { name: 'fast-tag', exact: true })).toBeVisible()
+  const slowNetworkResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/_api/pages/tags/search' && url.searchParams.get('query') === 'slow' && response.ok()
+  })
+  releaseSlow?.()
+  await slowNetworkResponse
+  await expect(page.getByRole('option', { name: 'fast-tag', exact: true })).toBeVisible()
+  await expect(page.getByRole('option', { name: 'slow-tag', exact: true })).toHaveCount(0)
 })

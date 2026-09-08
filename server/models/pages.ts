@@ -5,6 +5,7 @@ import _ from 'lodash'
 import { Type as JSBinType } from 'js-binary'
 import pageHelper from '../helpers/page.ts'
 import { canDeletePage, canWritePage, managesSystem, principalId, type PageVisibility } from '../helpers/page-access.ts'
+import { tagNames } from '../helpers/taxonomy-plan.ts'
 import { localeRelationMovePatch } from '../helpers/page-locale-relations.ts'
 import path from 'node:path'
 import fs from 'fs-extra'
@@ -23,6 +24,7 @@ import Editor from './editors.ts'
 import Locale from './locales.ts'
 import type Comment from './comments.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
+import errors from '../operations/errors.ts'
 import { enqueuePageMutationEffects, type PageProjectionPayload } from '../core/page-mutation-outbox.ts'
 import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operations/page-protection.ts'
 import { mutateOkfMetadata, OkfDocumentError, type OkfMetadata } from '../okf/format.ts'
@@ -41,6 +43,7 @@ interface PageUser extends Express.User {
 interface PageAccessTarget {
   locale?: string | undefined
   path?: string | undefined
+  tags?: Array<{ tag: string }> | undefined
 }
 
 interface PageExtra extends UnknownRecord {
@@ -121,7 +124,7 @@ interface CreatePageOptions {
   publishStartDate?: string | null
   scriptCss?: string
   scriptJs?: string
-  tags?: string[]
+  tags?: unknown
   okfMetadata?: OkfMetadata
   okfProducer?: string
   branding?: PageBrandingAssignment | null
@@ -826,6 +829,26 @@ export default class Page extends Model {
     }
   }
 
+  static assertCreateAccess(opts: { path: string; locale: string; visibility: PageVisibility; tags?: unknown; user: PageUser }): string[] {
+    const names = opts.tags === undefined ? [] : tagNames(opts.tags)
+    if (opts.visibility === 'private') {
+      if (principalId(opts.user) === null) {
+        throw new errors.ApplicationError('You must be authenticated to create a private page.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
+      }
+      return names
+    }
+    if (
+      !wiki.auth.checkAccess(opts.user, ['write:pages'], {
+        locale: opts.locale,
+        path: opts.path,
+        tags: names.map(tag => ({ tag }))
+      })
+    ) {
+      throw new errors.ApplicationError('You do not have permission to create this page.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
+    }
+    return names
+  }
+
   /**
    * Create a New Page
    *
@@ -848,19 +871,9 @@ export default class Page extends Model {
       opts.path = opts.path.slice(1)
     }
 
+    const normalizedTags = Page.assertCreateAccess(opts)
+    opts.tags = normalizedTags
     const ownerId = opts.visibility === 'private' ? principalId(opts.user) : null
-    if (opts.visibility === 'private' && ownerId === null) {
-      throw new wiki.Error.PageDeleteForbidden()
-    }
-    if (
-      opts.visibility === 'public' &&
-      !wiki.auth.checkAccess(opts.user, ['write:pages'], {
-        locale: opts.locale,
-        path: opts.path
-      })
-    ) {
-      throw new wiki.Error.PageDeleteForbidden()
-    }
 
     const dupCheck = await wiki.models.pages
       .query()
@@ -882,11 +895,13 @@ export default class Page extends Model {
     }
 
     // -> Format CSS Scripts
+    const tagContext = normalizedTags.map(tag => ({ tag }))
     let scriptCss = ''
     if (
       wiki.auth.checkAccess(opts.user, ['write:styles'], {
         locale: opts.locale,
-        path: opts.path
+        path: opts.path,
+        tags: tagContext
       })
     ) {
       if (typeof opts.scriptCss === 'string' && !_.isEmpty(opts.scriptCss)) {
@@ -901,7 +916,8 @@ export default class Page extends Model {
     if (
       wiki.auth.checkAccess(opts.user, ['write:scripts'], {
         locale: opts.locale,
-        path: opts.path
+        path: opts.path,
+        tags: tagContext
       })
     ) {
       scriptJs = opts.scriptJs || ''
@@ -945,8 +961,18 @@ export default class Page extends Model {
           ...(branding === undefined || branding === null ? {} : { branding })
         }
       })
-      if (opts.tags && opts.tags.length > 0) {
-        await wiki.models.tags.associateTags({ tags: opts.tags, page: inserted, transaction })
+      if (normalizedTags.length > 0) {
+        await wiki.models.tags.associateTags({ tags: normalizedTags, page: inserted, transaction })
+      }
+      if (
+        opts.visibility === 'public' &&
+        !wiki.auth.checkAccess(opts.user, ['write:pages'], {
+          locale: inserted.localeCode,
+          path: inserted.path,
+          tags: (inserted.tags ?? []).map(tag => ({ tag: tag.tag }))
+        })
+      ) {
+        throw new errors.ApplicationError('You do not have permission to create this page.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
       }
       await enqueueCurrentPageProjections(transaction, inserted.id, 'create')
       await writePageOutboxEvent(transaction, 'page.created', inserted, opts.user)

@@ -128,5 +128,27 @@ suite('PostgreSQL tag association', () => {
     await expect(Tag.associateTags({ tags: ['retired'], page })).rejects.toThrow('archived')
     expect(await db('pageTags').where('pageId', 1).pluck('tagId')).toEqual([canonical.id])
   })
+  it('rejects invalid tag containers atomically and accepts exactly 100 canonical entries', async () => {
+    const page = await Page.query().findById(2).throwIfNotFound()
+    await Tag.associateTags({ tags: ['Keep'], page })
+    const invalidInputs = [null, 'tag', ['valid', 1], [''], ['\u0000'], ['x'.repeat(256)]]
+    for (const tags of invalidInputs) {
+      await expect(Tag.associateTags({ tags, page })).rejects.toMatchObject({ status: 400 })
+    }
+    expect(await db('pageTags').where('pageId', 2)).toHaveLength(1)
 
+    const hundred = Array.from({ length: 100 }, (_, index) => `Bounded-${index}`)
+    await Tag.associateTags({ tags: hundred, page })
+    expect(await db('pageTags').where('pageId', 2)).toHaveLength(100)
+    await expect(
+      Tag.associateTags({
+        tags: [...hundred, 'one-too-many'],
+        page
+      })
+    ).rejects.toMatchObject({ status: 400 })
+    expect(await db('pageTags').where('pageId', 2)).toHaveLength(100)
+
+    await Tag.associateTags({ tags: [], page })
+    expect(await db('pageTags').where('pageId', 2)).toHaveLength(0)
+  })
 })

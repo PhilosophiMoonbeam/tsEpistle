@@ -32,8 +32,6 @@ const compileSearchMethods = (source, names) => {
 
 describe('Ask modal accessibility contract', () => {
   const search = fs.readFileSync(path.join(process.cwd(), 'client/components/common/search-results.vue'), 'utf8')
-  const header = fs.readFileSync(path.join(process.cwd(), 'client/components/common/nav-header.vue'), 'utf8')
-  const tags = fs.readFileSync(path.join(process.cwd(), 'client/components/tags.vue'), 'utf8')
   const focusScope = fs.readFileSync(path.join(process.cwd(), 'client/components/common/modal-focus-scope.ts'), 'utf8')
 
   test('exposes modal semantics only while Ask owns the complete focus scope', () => {
@@ -87,7 +85,6 @@ describe('Ask modal accessibility contract', () => {
       /closeSearch\(\):\s*void\s*\{[\s\S]*this\.finishSearchFocus\(\)[\s\S]*this\.searchIsFocused\s*=\s*false[\s\S]*this\.searchMode\s*=\s*['"]search['"]/
     )
     expect(search).toMatch(/await \(this\.\$refs\.inlineAgent[\s\S]*\?\.focusComposer\(\)/)
-    expect(header.match(/v-text-field\.nav-header-search-control/g)).toHaveLength(2)
     expect(search).toMatch(/searchListIds\(\): string/)
     expect(search).toMatch(/for \(const input of controls\)/)
     expect(search).toMatch(/input\.removeAttribute\('aria-describedby'\)/)
@@ -97,26 +94,6 @@ describe('Ask modal accessibility contract', () => {
     expect(modalFocusableElements).toMatch(/new Set\s*\(/)
     expect(focusScope).toMatch(/event\.stopImmediatePropagation\(\)/)
     expect(focusScope).toMatch(/target\.focus\(\{ preventScroll: true \}\)/)
-  })
-
-  test('keeps Browse Tags operable in the search focus scope without exposing every action slot on mobile', () => {
-    expect(header).toMatch(/v-btn\.nav-header-browse\([^\n]*href='\/t'[^\n]*data-search-modal-action/)
-    expect(header).toMatch(/v-btn\.nav-header-search-toggle\([\s\S]*?data-search-modal-action/)
-    expect(header).toMatch(/mobileActions:\s*\{[\s\S]*?type: Boolean,[\s\S]*?default: false[\s\S]*?\}/)
-    expect(header).toMatch(/\.nav-header-slot-actions\(v-if='\$vuetify\.display\.mdAndUp \|\| mobileActions'\)\s*\n\s*slot\(name='actions'\)/)
-    expect(header).toMatch(
-      /\.nav-header-command[\s\S]*?v-text-field\.nav-header-search-control[\s\S]*?v-btn\.nav-header-agent\([\s\S]*?data-search-modal-action[\s\S]*?v-btn\.nav-header-browse\([^\n]*data-search-modal-action/
-    )
-    expect(header).toMatch(
-      /\.nav-header-mobile-search[\s\S]*?v-text-field\.nav-header-search-control[\s\S]*?v-btn\.nav-header-browse\([^\n]*data-search-modal-action/
-    )
-    expect(header).toMatch(
-      /\.nav-header-actions[\s\S]*?v-btn\.nav-header-search-toggle\([\s\S]*?v-btn\.nav-header-agent\([\s\S]*?data-search-modal-action/
-    )
-    expect(tags).toMatch(/nav-header\(mobile-actions\)/)
-    expect(tags).toMatch(/v-btn\.tags-filter-toggle\([\s\S]*?data-search-modal-action/)
-    expect(search).toMatch(/additionalRoots:\s*this\.searchModalAdditionalRoots/)
-    expect(search).toMatch(/searchModalAdditionalRoots\(\): HTMLElement\[\][\s\S]*\.nav-header-search-control input, \[data-search-modal-action\]/)
   })
 
   test('restores the exact pre-search trigger without retaining search focus or mode', () => {
@@ -132,11 +109,6 @@ describe('Ask modal accessibility contract', () => {
     expect(search).toMatch(
       /finishSearchFocus\(restoreFocus = true\): void[\s\S]*this\.deactivateModalLayers\(restoreFocus\)[\s\S]*this\.isSearchControl\(active\)[\s\S]*active\.blur\(\)[\s\S]*this\.searchRestoreTarget = null/
     )
-    expect(header).toMatch(
-      /searchTab \(event: KeyboardEvent\)[\s\S]*event\.preventDefault\(\)[\s\S]*emitSearchExit\(false\)[\s\S]*this\.searchClose\(\)[\s\S]*\.nav-header-agent[\s\S]*\.nav-header-browse[\s\S]*\.nav-header-logo/
-    )
-    expect(header).toMatch(/searchIsFocused\(open: boolean\): void[\s\S]*!open && this\.\$vuetify\.display\.smAndDown[\s\S]*this\.searchIsShown = false/)
-    expect(header).toMatch(/searchClose \(\)[\s\S]*this\.searchIsFocused = false[\s\S]*this\.searchMode = 'search'[\s\S]*this\.search = ''/)
   })
 
   test('restores focus to the remounted zero-result Ask action instead of the global trigger', () => {

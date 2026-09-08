@@ -127,6 +127,9 @@ interface QueryBuilder {
   where(criteria: Record<string, unknown>): QueryBuilder
   whereNull(column: string): QueryBuilder
   whereIn(column: string, values: readonly unknown[]): QueryBuilder
+  whereExists(callback: (builder: QueryBuilder) => void): QueryBuilder
+  from(table: string): QueryBuilder
+  join(table: string, first: string, second: string): QueryBuilder
   orWhere(column: string, operatorOrValue: unknown, value?: unknown): QueryBuilder
   orWhere(criteria: Record<string, unknown>): QueryBuilder
   orWhereIn(column: string, values: readonly unknown[]): QueryBuilder
@@ -141,6 +144,7 @@ interface QueryBuilder {
 interface PageQuery extends PromiseLike<PageRecord[]> {
   column(columns: unknown[]): PageQuery
   select(...columns: string[]): PageQuery
+  withGraphFetched(relation: string): PageQuery
   withGraphJoined(relation: string): PageQuery
   modifyGraph(relation: string, callback: (builder: PageQuery) => void): PageQuery
   modify(callback: (builder: QueryBuilder) => void): PageQuery
@@ -203,6 +207,7 @@ interface WikiPageOperations {
     knex: Knex
     pages: {
       query(): PageQuery
+      assertCreateAccess(input: { path: string; locale: string; visibility: PageVisibility; tags?: unknown; user: Express.User }): string[]
       relatedQuery(relation: 'tags'): RelatedTagQuery
       getPageFromDb(input: number | { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageSourceRecord | undefined>
       deletePage(input: { id: number; expectedSourceRevision?: string; user?: Express.User }): unknown
@@ -363,7 +368,7 @@ const list = async ({ requester, ...rawArgs }: OperationInput) => {
       'createdAt',
       'updatedAt'
     ])
-    .withGraphJoined('tags')
+    .withGraphFetched('tags')
     .modifyGraph('tags', builder => {
       builder.select('tag')
     })
@@ -373,21 +378,28 @@ const list = async ({ requester, ...rawArgs }: OperationInput) => {
       if (args.offset > 0) queryBuilder.offset(args.offset)
       if (args.locale) queryBuilder.where('localeCode', args.locale)
       if (args.creatorId && args.authorId && args.creatorId > 0 && args.authorId > 0) {
-        queryBuilder.where('creatorId', args.creatorId).orWhere('authorId', args.authorId)
+        queryBuilder.where(builder => {
+          builder.where('creatorId', args.creatorId).orWhere('authorId', args.authorId)
+        })
       } else {
         if (args.creatorId && args.creatorId > 0) queryBuilder.where('creatorId', args.creatorId)
         if (args.authorId && args.authorId > 0) queryBuilder.where('authorId', args.authorId)
       }
       if (args.tags && args.tags.length > 0) {
-        queryBuilder.whereIn(
-          'tags.tag',
-          args.tags.map(tag => _.trim(tag).toLowerCase())
-        )
+        queryBuilder.whereExists(builder => {
+          builder
+            .select('pageTags.pageId')
+            .from('pageTags')
+            .join('tags', 'tags.id', 'pageTags.tagId')
+            .whereRaw('?? = ??', ['pageTags.pageId', 'pages.id'])
+            .whereIn('tags.tag', args.tags!)
+        })
       }
       const orderDirection = args.orderByDirection === 'DESC' ? 'desc' : 'asc'
-      const orderColumns = { CREATED: 'createdAt', PATH: 'path', TITLE: 'title', UPDATED: 'updatedAt' }
+      const orderColumns = { CREATED: 'pages.createdAt', PATH: 'pages.path', TITLE: 'pages.title', UPDATED: 'pages.updatedAt' }
       const orderColumn = orderColumns[args.orderBy as keyof typeof orderColumns] ?? 'pages.id'
       queryBuilder.orderBy(orderColumn, orderDirection)
+      if (orderColumn !== 'pages.id') queryBuilder.orderBy('pages.id', 'asc')
     })
 
   const accessiblePages = pages.filter(page => canReadPage(requester, page)).map(page => ({ ...page, tags: page.tags.map(tag => tag.tag) }))
@@ -536,18 +548,19 @@ const listRecent = async (requester?: Express.User) => {
     .modify(queryBuilder => {
       scopePageQuery(queryBuilder, requester, { table: 'pages' })
     })
-    .withGraphJoined('tags')
+    .withGraphFetched('tags')
     .modifyGraph('tags', builder => {
       builder.select('tag')
     })
-    .orderBy('updatedAt', 'desc')
+    .orderBy('pages.updatedAt', 'desc')
+    .orderBy('pages.id', 'asc')
     .limit(10)
   return pages.filter(page => canReadPage(requester, page)).map(page => _.pick(page, ['id', 'locale', 'path', 'title', 'updatedAt', 'visibility']))
 }
 
 const searchTags = async (input: OperationInput) => {
   const requester = input.requester
-  const normalizedQuery = _.trim(stringValue(input.query, 'query'))
+  const normalizedQuery = _.trim(stringValue(input.query, 'query')).toLowerCase()
   const limit = input.limit === undefined ? 5 : positiveInteger(input.limit, 'limit')
   if (!normalizedQuery) throw new ApplicationError('query must not be empty', { code: 'INVALID_INPUT', status: 400 })
   if (limit > 20) throw new ApplicationError('limit must not exceed 20', { code: 'INVALID_INPUT', status: 400 })
@@ -560,9 +573,13 @@ const searchTags = async (input: OperationInput) => {
     })
     .modify(queryBuilder => {
       scopePageQuery(queryBuilder, requester, { table: 'pages' })
-      queryBuilder.andWhere(builder => {
-        if (wiki.config.db.type === 'postgres') builder.where('tags.tag', 'ILIKE', `%${normalizedQuery}%`)
-        else builder.where('tags.tag', 'LIKE', `%${normalizedQuery}%`)
+      queryBuilder.whereExists(builder => {
+        builder
+          .select('pageTags.pageId')
+          .from('pageTags')
+          .join('tags', 'tags.id', 'pageTags.tagId')
+          .whereRaw('?? = ??', ['pageTags.pageId', 'pages.id'])
+          .whereRaw('LOWER(??) LIKE ?', ['tags.tag', `%${normalizedQuery}%`])
       })
     })
   return _.uniq(
@@ -570,6 +587,7 @@ const searchTags = async (input: OperationInput) => {
       .filter(page => canReadPage(requester, page))
       .flatMap(page => page.tags)
       .map(tag => tag.tag)
+      .filter(tag => tag.toLowerCase().includes(normalizedQuery))
   )
     .sort((left, right) => left.localeCompare(right))
     .slice(0, limit)
@@ -1900,9 +1918,13 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
   if (kind === 'create') {
     const path = stringValue(operationInput.path, 'path')
     const locale = stringValue(operationInput.locale, 'locale')
-    if (!wiki.auth.checkAccess(requester, ['write:pages', 'manage:pages', 'manage:system'], { path, locale, tags: operationInput.tags })) {
-      throw new wiki.Error.PageUpdateForbidden()
-    }
+    wiki.models.pages.assertCreateAccess({
+      path,
+      locale,
+      visibility: 'public',
+      tags: operationInput.tags,
+      user: requester as Express.User
+    })
     return
   }
   const rawId = kind === 'restore' ? operationInput.pageId : operationInput.id

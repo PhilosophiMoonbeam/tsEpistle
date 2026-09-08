@@ -136,20 +136,92 @@
           v-card-text.editor-properties-subsection.pt-5
             .text-label-small.pb-5 {{$t('editor:props.categorization')}}
             v-combobox(
+              ref='tagInput'
               :label='$t(`editor:props.tags`)'
               variant="outlined"
               v-model='tags'
               v-model:search='newTagSearch'
+              v-model:menu='tagMenuOpen'
               :hint='$t(`editor:props.tagsHint`)'
-              :items='newTagSuggestions'
+              :items='tagItems'
               :loading='tagSearchLoading'
+              :menu-props='{ maxHeight: 280 }'
+              :aria-busy='tagSearchLoading'
               multiple
               chips
               closable-chips
               hide-selected
-              persistent-hint
-              hide-no-data
+              no-filter
+              :hide-no-data='false'
+              :return-object='false'
+              @keydown.capture='handleTagSearchKeydown'
               )
+              template(v-slot:item='{ props, item, internalItem }')
+                v-list-item(
+                  v-bind='props'
+                  role='option'
+                  :data-tag-value='internalItem.value'
+                )
+                  template(v-slot:prepend)
+                    v-icon(:icon='item === candidateTag ? `mdi-plus` : `mdi-tag-outline`', size='18')
+                  template(v-slot:title)
+                    span(v-if='item === candidateTag') Add “{{item}}” to page
+                    span(v-else) {{item}}
+                  template(v-slot:subtitle v-if='item === candidateTag')
+                    | New names are created when the page is saved.
+              template(v-slot:chip='{ props, item }')
+                v-chip(
+                  v-bind='props'
+                  closable
+                  size='small'
+                  :close-label='`Remove tag ${item}`'
+                ) {{item}}
+              template(v-slot:no-data)
+                v-list-item(title='Type to search for suggestions or enter a name.')
+              template(v-slot:menu-footer)
+                v-btn.editor-properties-tag-retry(
+                  v-if='tagSearchError'
+                  ref='tagRetryButton'
+                  type='button'
+                  size='small'
+                  variant='text'
+                  prepend-icon='mdi-refresh'
+                  aria-label='Retry tag suggestions'
+                  @click='retryTagSearch'
+                ) Retry
+            .editor-properties-tags-persistence-hint
+              | Choose an existing suggestion or enter a name. New names are created when the page is saved.
+            .editor-properties-tag-search-state(
+              v-if='tagSearchLoading'
+              role='status'
+              aria-live='polite'
+              aria-atomic='true'
+            ) Finding matching tag suggestions…
+            v-alert.editor-properties-tag-search-error(
+              v-else-if='tagSearchError'
+              type='error'
+              variant='tonal'
+              role='alert'
+              density='compact'
+            ) {{tagSearchError}}
+            .editor-properties-tag-search-state(
+              v-else-if='tagSearchAlreadySelected'
+              role='status'
+              aria-live='polite'
+              aria-atomic='true'
+            ) Already selected.
+            .editor-properties-tag-search-state(
+              v-else-if='tagSearchNoResults'
+              role='status'
+              aria-live='polite'
+              aria-atomic='true'
+            ) No matching suggestions. You can still add this name to the page.
+            .editor-properties-tag-status(
+              v-if='tagStatus'
+              role='status'
+              aria-live='polite'
+              aria-atomic='true'
+            ) {{tagStatus}}
         v-tabs-window-item(:value='1', transition='fade-transition', reverse-transition='fade-transition')
           v-card-text
             .text-label-small {{$t('editor:props.publishState')}}
@@ -488,6 +560,10 @@ export default defineComponent({
       newTagSearch: '',
       tagSearchTimer: null as number | null,
       tagSearchLoading: false,
+      tagSearchError: '',
+      tagSearchFailedQuery: '',
+      tagMenuOpen: false,
+      tagStatus: '',
       currentTab: 0,
       privatePageConfirm: false,
       cm: null as TextEditorHandle | null,
@@ -541,8 +617,52 @@ export default defineComponent({
         return this.draft.tags
       },
       set(value: string[]) {
-        this.draft.tags = _.uniq(value.map(tag => _.trim(tag).toLowerCase()).filter(Boolean))
+        const previous = this.draft.tags
+        const normalized = _.uniq(value.map(tag => _.trim(tag).toLowerCase()).filter(Boolean))
+        this.draft.tags = normalized
+        if (this.modelValue && !_.isEqual(previous, normalized)) {
+          const added = normalized.find(tag => !previous.includes(tag))
+          const removed = previous.find(tag => !normalized.includes(tag))
+          this.tagStatus = added
+            ? `Added ${added} to this page.`
+            : removed
+              ? `Removed ${removed} from this page.`
+              : ''
+        }
       }
+    },
+    candidateTag (): string {
+      const candidate = _.trim(this.newTagSearch).toLowerCase()
+      if (!candidate || this.tags.includes(candidate)) return ''
+      if (this.newTagSuggestions.some(tag => _.trim(tag).toLowerCase() === candidate)) return ''
+      return candidate
+    },
+    tagItems (): string[] {
+      const selected = new Set(this.tags)
+      const seen = new Set<string>()
+      const items = this.newTagSuggestions.filter(tag => {
+        const normalized = _.trim(tag).toLowerCase()
+        if (!normalized || selected.has(normalized) || seen.has(normalized)) return false
+        seen.add(normalized)
+        return true
+      })
+      const candidate = this.candidateTag
+      if (candidate && !seen.has(candidate)) items.push(candidate)
+      return items
+    },
+    tagSearchHasSuggestions (): boolean {
+      const selected = new Set(this.tags)
+      return this.newTagSuggestions.some(tag => {
+        const normalized = _.trim(tag).toLowerCase()
+        return Boolean(normalized && !selected.has(normalized))
+      })
+    },
+    tagSearchAlreadySelected (): boolean {
+      const query = _.trim(this.newTagSearch).toLowerCase()
+      return Boolean(query && !this.tagSearchLoading && !this.tagSearchError && this.tags.includes(query))
+    },
+    tagSearchNoResults (): boolean {
+      return Boolean(_.trim(this.newTagSearch) && !this.tagSearchLoading && !this.tagSearchError && !this.tagSearchHasSuggestions && !this.tagSearchAlreadySelected)
     },
     path: {
       get() {
@@ -649,6 +769,10 @@ export default defineComponent({
           this.privatePageConfirm = false
           this.newTagSearch = ''
           this.newTagSuggestions = []
+          this.tagSearchError = ''
+          this.tagSearchFailedQuery = ''
+          this.tagMenuOpen = false
+          this.tagStatus = ''
           if (this.tagSearchTimer !== null) {
             window.clearTimeout(this.tagSearchTimer)
             this.tagSearchTimer = null
@@ -666,32 +790,25 @@ export default defineComponent({
         }
       }
     },
-    isPublishStartShown (newValue: boolean) {
-      if (newValue) {
-        this.publishMinDate = this.dateAdapter.startOfDay(this.dateAdapter.date())
-        this.publishStartDraft = this.publishStartDate ? this.dateAdapter.parseISO(this.publishStartDate) : null
-      }
-    },
-    isPublishEndShown (newValue: boolean) {
-      if (newValue) {
-        this.publishMinDate = this.dateAdapter.startOfDay(this.dateAdapter.date())
-        this.publishEndDraft = this.publishEndDate ? this.dateAdapter.parseISO(this.publishEndDate) : null
-      }
-    },
     newTagSearch (newValue: string) {
       if (this.tagSearchTimer !== null) {
         window.clearTimeout(this.tagSearchTimer)
         this.tagSearchTimer = null
       }
-      this.tagSearchRequest++
-      if (!this.modelValue || _.isEmpty(newValue)) {
+      const request = ++this.tagSearchRequest
+      const query = _.trim(newValue)
+      this.tagSearchError = ''
+      this.tagSearchFailedQuery = ''
+      this.newTagSuggestions = []
+      if (!this.modelValue || !query) {
         this.tagSearchLoading = false
-        this.newTagSuggestions = []
         return
       }
+      this.tagSearchLoading = true
       this.tagSearchTimer = window.setTimeout(() => {
         this.tagSearchTimer = null
-        void this.loadTagSuggestions(newValue)
+        if (this.editorDisposed || request !== this.tagSearchRequest || !this.modelValue) return
+        void this.loadTagSuggestions(query)
       }, 500)
     },
     currentTab (newValue: number) {
@@ -739,6 +856,9 @@ export default defineComponent({
       this.brandingPickerShown = false
       this.brandingError = ''
       this.brandingReturnFocus = null
+      this.tagSearchError = ''
+      this.tagSearchFailedQuery = ''
+      this.tagMenuOpen = false
     },
     rollbackDraft () {
       if (this.okfSnapshot !== null) {
@@ -896,17 +1016,66 @@ export default defineComponent({
       this.locale = locale
       this.path = path
     },
+    handleTagSearchKeydown (event: KeyboardEvent) {
+      if (
+        event.key !== 'Tab' ||
+        event.shiftKey ||
+        event.isComposing ||
+        !this.tagSearchError ||
+        !(event.target instanceof HTMLInputElement)
+      ) return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      this.tagMenuOpen = true
+      const focusRetry = (): boolean => {
+        const retryRoot = (this.$refs.tagRetryButton as { $el?: unknown } | undefined)?.$el
+        if (
+          !(retryRoot instanceof HTMLElement) ||
+          !retryRoot.isConnected ||
+          retryRoot.getClientRects().length === 0 ||
+          retryRoot.matches(':disabled, [inert], [aria-hidden="true"]')
+        ) return false
+        retryRoot.focus({ preventScroll: true })
+        return true
+      }
+      if (focusRetry()) return
+      this.$nextTick(() => {
+        if (!this.editorDisposed && this.modelValue && this.tagSearchError) focusRetry()
+      })
+    },
+    retryTagSearch () {
+      const query = _.trim(this.tagSearchFailedQuery)
+      if (!query || this.editorDisposed || !this.modelValue) return
+      focusInput(this.$refs.tagInput)
+      this.tagMenuOpen = true
+      if (this.tagSearchTimer !== null) {
+        window.clearTimeout(this.tagSearchTimer)
+        this.tagSearchTimer = null
+      }
+      this.tagSearchError = ''
+      this.tagSearchFailedQuery = ''
+      this.newTagSuggestions = []
+      void this.loadTagSuggestions(query)
+    },
     async loadTagSuggestions(query: string) {
+      const normalizedQuery = _.trim(query)
+      if (!normalizedQuery || this.editorDisposed || !this.modelValue) {
+        this.tagSearchLoading = false
+        return
+      }
       const request = ++this.tagSearchRequest
       this.tagSearchLoading = true
+      this.tagSearchError = ''
+      this.tagSearchFailedQuery = ''
       try {
-        const suggestions = await searchPageTags(window.fetch.bind(window), query)
+        const suggestions = await searchPageTags(window.fetch.bind(window), normalizedQuery)
         if (this.editorDisposed || request !== this.tagSearchRequest || !this.modelValue) return
         this.newTagSuggestions = suggestions
-      } catch (err) {
+      } catch {
         if (this.editorDisposed || request !== this.tagSearchRequest || !this.modelValue) return
-        console.warn(err)
         this.newTagSuggestions = []
+        this.tagSearchError = `Unable to load suggestions for “${normalizedQuery}”. You can still add this name to the page.`
+        this.tagSearchFailedQuery = normalizedQuery
       } finally {
         if (!this.editorDisposed && request === this.tagSearchRequest) {
           this.tagSearchLoading = false
@@ -1008,6 +1177,25 @@ export default defineComponent({
 .editor-properties-branding-status[role='alert'] {
   color: rgb(var(--v-theme-error));
 }
+.editor-properties-tags-persistence-hint,
+.editor-properties-tag-search-state,
+.editor-properties-tag-status {
+  color: rgba(var(--v-theme-on-surface), .68);
+  font-size: .8rem;
+  line-height: 1.4;
+  margin-top: 8px;
+}
+
+.editor-properties-tag-search-state,
+.editor-properties-tag-status {
+  min-height: 20px;
+}
+
+.editor-properties-tag-search-error {
+  margin-top: 8px;
+}
+
+
 
 .editor-properties-card {
   background: rgb(var(--v-theme-surface));

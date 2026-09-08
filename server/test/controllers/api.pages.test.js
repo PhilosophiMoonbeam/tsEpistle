@@ -254,7 +254,18 @@ describe('controllers/api pages endpoints', () => {
               andWhere: vi.fn(),
               limit: vi.fn().mockResolvedValue(rows),
               orWhere: vi.fn(),
-              where: vi.fn()
+              where: vi.fn(),
+              whereExists: vi.fn(callback => {
+                callback({
+                  select: vi.fn().mockReturnThis(),
+                  from: vi.fn().mockReturnThis(),
+                  join: vi.fn().mockReturnThis(),
+                  where: vi.fn().mockReturnThis(),
+                  whereIn: vi.fn().mockReturnThis(),
+                  whereRaw: vi.fn().mockReturnThis()
+                })
+                return queryBuilder
+              })
             }
             const chain = {
               column: vi.fn(),
@@ -262,6 +273,7 @@ describe('controllers/api pages endpoints', () => {
               modify: vi.fn(),
               modifyGraph: vi.fn(),
               orderBy: vi.fn(),
+              withGraphFetched: vi.fn(),
               withGraphJoined: vi.fn(),
               __tagBuilder: { select: vi.fn() }
             }
@@ -270,7 +282,7 @@ describe('controllers/api pages endpoints', () => {
               applyModifier(queryBuilder)
               return chain
             })
-            chain.withGraphJoined.mockReturnValue(chain)
+            chain.withGraphFetched.mockReturnValue(chain)
             chain.modifyGraph.mockImplementation((relation, applyGraphModifier) => {
               applyGraphModifier(chain.__tagBuilder)
               return chain
@@ -294,6 +306,7 @@ describe('controllers/api pages endpoints', () => {
       links: express.__router.get.mock.calls.find(([path]) => path === '/links')[1],
       listPages: express.__router.get.mock.calls.find(([path]) => path === '/')[1],
       listTags: express.__router.get.mock.calls.find(([path]) => path === '/tags')[1],
+      searchTags: express.__router.get.mock.calls.find(([path]) => path === '/tags/search')[1],
       recent: express.__router.get.mock.calls.find(([path]) => path === '/recent')[1],
       updateTag: express.__router.patch.mock.calls.find(([path]) => path === '/tags/:id')[1],
       visibility: express.__router.patch.mock.calls.find(([path]) => path === '/:id/visibility')[1],
@@ -806,10 +819,21 @@ describe('controllers/api pages endpoints', () => {
         tags: [{ tag: 'beta' }]
       }
     ]
+    const existsBuilder = {
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      join: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      whereIn: vi.fn().mockReturnThis(),
+      whereRaw: vi.fn().mockReturnThis()
+    }
     const queryBuilder = {
       limit: vi.fn(),
       where: vi.fn(),
-      whereIn: vi.fn(),
+      whereExists: vi.fn(callback => {
+        callback(existsBuilder)
+        return queryBuilder
+      }),
       orderBy: vi.fn()
     }
     const modify = vi.fn((applyQueryModifier) => {
@@ -821,8 +845,8 @@ describe('controllers/api pages endpoints', () => {
       applyGraphModifier(tagBuilder)
       return { modify }
     })
-    const withGraphJoined = vi.fn().mockReturnValue({ modifyGraph })
-    const column = vi.fn().mockReturnValue({ withGraphJoined })
+    const withGraphFetched = vi.fn().mockReturnValue({ modifyGraph })
+    const column = vi.fn().mockReturnValue({ withGraphFetched })
     global.WIKI.models.pages.query.mockReturnValueOnce({ column })
     global.WIKI.auth.checkAccess
       .mockReturnValueOnce(true)
@@ -832,7 +856,7 @@ describe('controllers/api pages endpoints', () => {
     const { listPages } = await loadHandler()
     global.WIKI.models.knex.mockReturnValue({ select: vi.fn().mockResolvedValue([{ id: 1, tag: 'old-alpha', redirectToId: 2 }, { id: 2, tag: 'alpha' }, { id: 3, tag: 'docs' }]) })
     const req = { user: { permissions: ['read:pages'] }, query: { locale: 'en', limit: '50', orderBy: 'UPDATED', orderByDirection: 'DESC', tags: 'old-alpha, docs' } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
     await listPages(req, res, vi.fn())
 
@@ -852,12 +876,19 @@ describe('controllers/api pages endpoints', () => {
       'createdAt',
       'updatedAt'
     ])
-    expect(withGraphJoined).toHaveBeenCalledWith('tags')
+    expect(withGraphFetched).toHaveBeenCalledWith('tags')
     expect(modifyGraph).toHaveBeenCalledWith('tags', expect.any(Function))
     expect(tagBuilder.select).toHaveBeenCalledWith('tag')
     expect(queryBuilder.limit).toHaveBeenCalledWith(50)
     expect(queryBuilder.where).toHaveBeenCalledWith('localeCode', 'en')
-    expect(queryBuilder.whereIn).toHaveBeenCalledWith('tags.tag', ['alpha', 'docs'])
+    expect(queryBuilder.whereExists).toHaveBeenCalledWith(expect.any(Function))
+    expect(existsBuilder.select).toHaveBeenCalledWith('pageTags.pageId')
+    expect(existsBuilder.from).toHaveBeenCalledWith('pageTags')
+    expect(existsBuilder.join).toHaveBeenCalledWith('tags', 'tags.id', 'pageTags.tagId')
+    expect(existsBuilder.whereRaw).toHaveBeenCalledWith('?? = ??', ['pageTags.pageId', 'pages.id'])
+    expect(existsBuilder.whereIn).toHaveBeenCalledWith('tags.tag', ['alpha', 'docs'])
+    expect(queryBuilder.orderBy).toHaveBeenNthCalledWith(1, 'pages.updatedAt', 'desc')
+    expect(queryBuilder.orderBy).toHaveBeenNthCalledWith(2, 'pages.id', 'asc')
     expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, { permissions: ['read:pages'] }, ['read:pages'], { path: 'docs/alpha', locale: 'en', tags: [{ tag: 'alpha' }, { tag: 'docs' }] })
     expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, { permissions: ['read:pages'] }, ['manage:system'])
     expect(res.json).toHaveBeenCalledWith([
@@ -875,6 +906,200 @@ describe('controllers/api pages endpoints', () => {
         tags: ['alpha', 'docs']
       }
     ])
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
+  })
+  it('accepts reader-shaped list rows without restricted publication metadata', async () => {
+    const row = {
+      id: 42,
+      locale: 'en',
+      path: 'docs/reader',
+      title: 'Reader page',
+      description: 'Visible description',
+      visibility: 'public',
+      ownerId: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      tags: [{ tag: 'docs' }]
+    }
+    const expected = { ...row, tags: ['docs'] }
+    const queryBuilder = { where: vi.fn(), orderBy: vi.fn() }
+    const modify = vi.fn(applyQueryModifier => {
+      applyQueryModifier(queryBuilder)
+      return Promise.resolve([row])
+    })
+    const modifyGraph = vi.fn((_relation, applyGraphModifier) => {
+      applyGraphModifier({ select: vi.fn() })
+      return { modify }
+    })
+    global.WIKI.models.pages.query.mockReturnValueOnce({
+      column: vi.fn().mockReturnValue({
+        withGraphFetched: vi.fn().mockReturnValue({ modifyGraph })
+      })
+    })
+    const { listPages } = await loadHandler()
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
+
+    await listPages({ user: { id: 7, permissions: ['read:pages'] }, query: {} }, res, vi.fn())
+
+    expect(res.json).toHaveBeenCalledWith([expected])
+    expect(res.json.mock.calls[0][0][0]).not.toHaveProperty('isPublished')
+    expect(res.json.mock.calls[0][0][0]).not.toHaveProperty('publishStartDate')
+    expect(res.json.mock.calls[0][0][0]).not.toHaveProperty('publishEndDate')
+  })
+
+  it('retains boolean publication metadata for privileged page list rows', async () => {
+    const row = {
+      id: 43,
+      locale: 'en',
+      path: 'docs/admin',
+      title: 'Admin page',
+      description: null,
+      isPublished: false,
+      publishStartDate: null,
+      publishEndDate: null,
+      visibility: 'public',
+      ownerId: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      tags: []
+    }
+    const queryBuilder = { where: vi.fn(), orderBy: vi.fn() }
+    const modify = vi.fn(applyQueryModifier => {
+      applyQueryModifier(queryBuilder)
+      return Promise.resolve([row])
+    })
+    const modifyGraph = vi.fn((_relation, applyGraphModifier) => {
+      applyGraphModifier({ select: vi.fn() })
+      return { modify }
+    })
+    global.WIKI.models.pages.query.mockReturnValueOnce({
+      column: vi.fn().mockReturnValue({
+        withGraphFetched: vi.fn().mockReturnValue({ modifyGraph })
+      })
+    })
+    const { listPages } = await loadHandler()
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
+
+    await listPages({ user: { id: 1, permissions: ['manage:system'] }, query: {} }, res, vi.fn())
+
+    expect(res.json).toHaveBeenCalledWith([{
+      id: 43,
+      path: 'docs/admin',
+      locale: 'en',
+      title: 'Admin page',
+      description: null,
+      isPublished: false,
+      publishStartDate: null,
+      publishEndDate: null,
+      visibility: 'public',
+      ownerId: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      tags: []
+    }])
+  })
+
+  it('rejects malformed publication metadata rather than exposing it', async () => {
+    const row = {
+      id: 44,
+      locale: 'en',
+      path: 'docs/malformed',
+      title: 'Malformed page',
+      description: null,
+      isPublished: 'false',
+      visibility: 'public',
+      ownerId: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      tags: []
+    }
+    const queryBuilder = { where: vi.fn(), orderBy: vi.fn() }
+    const modify = vi.fn(applyQueryModifier => {
+      applyQueryModifier(queryBuilder)
+      return Promise.resolve([row])
+    })
+    const modifyGraph = vi.fn((_relation, applyGraphModifier) => {
+      applyGraphModifier({ select: vi.fn() })
+      return { modify }
+    })
+    global.WIKI.models.pages.query.mockReturnValueOnce({
+      column: vi.fn().mockReturnValue({
+        withGraphFetched: vi.fn().mockReturnValue({ modifyGraph })
+      })
+    })
+    const { listPages } = await loadHandler()
+    const next = vi.fn()
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
+
+    await listPages({ user: { id: 7, permissions: ['read:pages'] }, query: {} }, res, next)
+
+    expect(next).toHaveBeenCalledWith(expect.any(TypeError))
+    expect(res.json).not.toHaveBeenCalled()
+  })
+
+  it('returns permission-filtered tag suggestions through a correlated candidate query', async () => {
+    const rows = [{
+      path: 'docs/alpha',
+      locale: 'en',
+      visibility: 'public',
+      ownerId: null,
+      tags: [{ tag: 'alpha' }]
+    }]
+    const existsBuilder = {
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      join: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      whereRaw: vi.fn().mockReturnThis()
+    }
+    const queryBuilder = {
+      where: vi.fn(),
+      whereExists: vi.fn(callback => {
+        callback(existsBuilder)
+        return queryBuilder
+      })
+    }
+    const modify = vi.fn(applyQueryModifier => {
+      applyQueryModifier(queryBuilder)
+      return Promise.resolve(rows)
+    })
+    const modifyGraph = vi.fn((_relation, applyGraphModifier) => {
+      applyGraphModifier({ select: vi.fn() })
+      return { modify }
+    })
+    global.WIKI.models.pages.query.mockReturnValueOnce({
+      column: vi.fn().mockReturnValue({
+        withGraphJoined: vi.fn().mockReturnValue({ modifyGraph })
+      })
+    })
+    const { searchTags } = await loadHandler()
+    const req = { user: { id: 7, permissions: ['read:pages'] }, query: { query: 'ALP' } }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
+
+    await searchTags(req, res, vi.fn())
+
+    expect(queryBuilder.whereExists).toHaveBeenCalledWith(expect.any(Function))
+    expect(existsBuilder.select).toHaveBeenCalledWith('pageTags.pageId')
+    expect(existsBuilder.from).toHaveBeenCalledWith('pageTags')
+    expect(existsBuilder.join).toHaveBeenCalledWith('tags', 'tags.id', 'pageTags.tagId')
+    expect(res.json).toHaveBeenCalledWith(['alpha'])
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
+  })
+  it('sets private cache headers before rejecting an invalid tag suggestion query', async () => {
+    const { searchTags } = await loadHandler()
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
+
+    await searchTags({ query: { query: '' } }, res, vi.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
   })
 
   it('routes publication through the protected mutation with server-controlled identity and strips unrelated edits', async () => {
@@ -892,12 +1117,14 @@ describe('controllers/api pages endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
     const { listPages } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] }, query: {} }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
     await listPages(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or read:pages is required' })
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
     expect(global.WIKI.models.pages.query).not.toHaveBeenCalled()
   })
 
@@ -905,7 +1132,7 @@ describe('controllers/api pages endpoints', () => {
     const next = vi.fn()
     global.WIKI.models.pages.query.mockReturnValueOnce({
       column: vi.fn().mockReturnValue({
-        withGraphJoined: vi.fn().mockReturnValue({
+        withGraphFetched: vi.fn().mockReturnValue({
           modifyGraph: vi.fn((relation, applyGraphModifier) => {
             applyGraphModifier({ select: vi.fn() })
             return {
@@ -917,7 +1144,7 @@ describe('controllers/api pages endpoints', () => {
     })
     const { listPages } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] }, query: {} }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
     await listPages(req, res, next)
 
@@ -975,7 +1202,7 @@ describe('controllers/api pages endpoints', () => {
       .mockReturnValueOnce(true)
     const { listTags } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
     await listTags(req, res, vi.fn())
 
@@ -994,18 +1221,22 @@ describe('controllers/api pages endpoints', () => {
       { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-04T00:00:00.000Z' },
       { id: 2, tag: 'zeta', title: 'Zeta', createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-03T00:00:00.000Z' }
     ])
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
   })
 
   it('returns 403 for unauthorized page tag list requests', async () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
     const { listTags } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
     await listTags(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or read:pages is required' })
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
     expect(global.WIKI.models.pages.query).not.toHaveBeenCalled()
   })
 
@@ -1017,7 +1248,7 @@ describe('controllers/api pages endpoints', () => {
     global.WIKI.models.pages.query.mockReturnValueOnce({ column })
     const { listTags } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
     await listTags(req, res, next)
 
@@ -1034,7 +1265,7 @@ describe('controllers/api pages endpoints', () => {
   it('returns the minimal dashboard recent-pages payload for authorized requests', async () => {
     const { recent } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
     await recent(req, res, vi.fn())
 
@@ -1042,15 +1273,18 @@ describe('controllers/api pages endpoints', () => {
     const queryBuilder = global.WIKI.models.pages.query.mock.results[0].value
     expect(queryBuilder.column).toHaveBeenCalledWith(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'updatedAt', 'visibility', 'ownerId'])
     expect(queryBuilder.modify).toHaveBeenCalledWith(expect.any(Function))
-    expect(queryBuilder.withGraphJoined).toHaveBeenCalledWith('tags')
+    expect(queryBuilder.withGraphFetched).toHaveBeenCalledWith('tags')
     expect(queryBuilder.modifyGraph).toHaveBeenCalledWith('tags', expect.any(Function))
     expect(queryBuilder.__tagBuilder.select).toHaveBeenCalledWith('tag')
-    expect(queryBuilder.orderBy).toHaveBeenCalledWith('updatedAt', 'desc')
+    expect(queryBuilder.orderBy).toHaveBeenNthCalledWith(1, 'pages.updatedAt', 'desc')
+    expect(queryBuilder.orderBy).toHaveBeenNthCalledWith(2, 'pages.id', 'asc')
     expect(queryBuilder.limit).toHaveBeenCalledWith(10)
     expect(res.json).toHaveBeenCalledWith([
       { id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', updatedAt: '2026-01-03T00:00:00.000Z', visibility: 'public' },
       { id: 11, locale: 'fr', path: 'docs/beta', title: 'Beta', updatedAt: '2026-01-02T00:00:00.000Z', visibility: 'public' }
     ])
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
   })
 
   it('filters pages that fail per-row page access checks', async () => {
@@ -1060,7 +1294,7 @@ describe('controllers/api pages endpoints', () => {
       .mockReturnValueOnce(false)
     const { recent } = await loadHandler()
     const req = { user: { permissions: ['read:pages'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
     await recent(req, res, vi.fn())
 
@@ -1073,12 +1307,14 @@ describe('controllers/api pages endpoints', () => {
     global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
     const { recent } = await loadHandler()
     const req = { user: { permissions: ['manage:api'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
     await recent(req, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or read:pages is required' })
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
     expect(global.WIKI.models.pages.query).not.toHaveBeenCalled()
   })
 
@@ -1087,12 +1323,14 @@ describe('controllers/api pages endpoints', () => {
     global.WIKI.models.pages.query.mockReturnValueOnce({
       column: vi.fn().mockReturnValue({
         modify: vi.fn().mockReturnValue({
-          withGraphJoined: vi.fn().mockReturnValue({
+          withGraphFetched: vi.fn().mockReturnValue({
             modifyGraph: vi.fn((relation, applyGraphModifier) => {
               applyGraphModifier({ select: vi.fn() })
               return {
                 orderBy: vi.fn().mockReturnValue({
-                  limit: vi.fn().mockRejectedValue(new Error('pages db down'))
+                  orderBy: vi.fn().mockReturnValue({
+                    limit: vi.fn().mockRejectedValue(new Error('pages db down'))
+                  })
                 })
               }
             })
@@ -1102,7 +1340,7 @@ describe('controllers/api pages endpoints', () => {
     })
     const { recent } = await loadHandler()
     const req = { user: { permissions: ['manage:system'] } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
 
     await recent(req, res, next)
 

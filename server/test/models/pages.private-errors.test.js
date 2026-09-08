@@ -655,6 +655,128 @@ describe('private page mutation existence isolation', () => {
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledWith(expect.objectContaining({ extra: originalExtra }))
   })
 
+  it('authorizes public creation against normalized object-shaped tag context', () => {
+    const user = { id: 7, permissions: [] }
+    global.WIKI.auth.checkAccess.mockReturnValue(true)
+
+    expect(Page.assertCreateAccess({
+      path: 'docs',
+      locale: 'en',
+      visibility: 'public',
+      tags: ['  Restricted ', 'restricted', 'Other'],
+      user
+    })).toEqual(['restricted', 'other'])
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(user, ['write:pages'], {
+      path: 'docs',
+      locale: 'en',
+      tags: [{ tag: 'restricted' }, { tag: 'other' }]
+    })
+
+    global.WIKI.auth.checkAccess.mockClear()
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    let denied
+    try {
+      Page.assertCreateAccess({ path: 'docs', locale: 'en', visibility: 'public', tags: ['restricted'], user })
+    } catch (error) {
+      denied = error
+    }
+    expect(denied).toMatchObject({ status: 403 })
+  })
+
+  it('keeps private creation owner semantics without applying public tag rules', () => {
+    const owner = { id: 7, permissions: [] }
+    global.WIKI.auth.checkAccess.mockClear()
+    global.WIKI.auth.checkAccess.mockReturnValue(false)
+
+    expect(Page.assertCreateAccess({
+      path: 'secret',
+      locale: 'en',
+      visibility: 'private',
+      tags: ['  Internal '],
+      user: owner
+    })).toEqual(['internal'])
+    expect(global.WIKI.auth.checkAccess).not.toHaveBeenCalled()
+
+    let denied
+    try {
+      Page.assertCreateAccess({ path: 'secret', locale: 'en', visibility: 'private', tags: [], user: { id: 2, permissions: [] } })
+    } catch (error) {
+      denied = error
+    }
+    expect(denied).toMatchObject({ status: 403 })
+  })
+
+  it('rechecks canonical post-association tags before projections or outbox effects', async () => {
+    const user = { id: 7, permissions: [] }
+    const createdPage = { id: 18, localeCode: 'en', ownerId: null, path: 'docs', visibility: 'public', tags: [] }
+    const duplicateQuery = {
+      select: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
+      })
+    }
+    const insert = vi.fn().mockResolvedValue(createdPage)
+    const query = vi.fn()
+      .mockReturnValueOnce(duplicateQuery)
+      .mockReturnValueOnce({ insert })
+    const associateTags = vi.fn(({ page }) => {
+      page.tags = [{ tag: 'canonical' }]
+    })
+    global.WIKI.models.tags = { associateTags }
+    global.WIKI.models.pages = {
+      query,
+      getPageFromDb: vi.fn(),
+      renderPage: vi.fn(),
+      rebuildTree: vi.fn()
+    }
+    const knex = global.WIKI.models.knex
+    let rolledBack = false
+    knex.transaction = vi.fn(async callback => {
+      try {
+        return await callback(knex)
+      } catch (error) {
+        rolledBack = true
+        throw error
+      }
+    })
+    global.WIKI.auth.checkAccess
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false)
+
+    await expect(Page.createPage({
+      content: 'Content',
+      description: '',
+      editor: 'markdown',
+      isPublished: true,
+      locale: 'en',
+      path: 'docs',
+      tags: [' Canonical '],
+      title: 'Docs',
+      user,
+      visibility: 'public'
+    })).rejects.toMatchObject({ status: 403 })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, user, ['write:styles'], {
+      path: 'docs',
+      locale: 'en',
+      tags: [{ tag: 'canonical' }]
+    })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, user, ['write:scripts'], {
+      path: 'docs',
+      locale: 'en',
+      tags: [{ tag: 'canonical' }]
+    })
+    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(4, user, ['write:pages'], {
+      path: 'docs',
+      locale: 'en',
+      tags: [{ tag: 'canonical' }]
+    })
+
+    expect(associateTags).toHaveBeenCalledWith({ tags: ['canonical'], page: createdPage, transaction: knex })
+    expect(rolledBack).toBe(true)
+    expect(knex.mock.calls.some(([table]) => table === 'pageMutationOutbox')).toBe(false)
+  })
+
   it('creates a page at a path already represented by a virtual folder', async () => {
     const owner = { id: 7, permissions: [] }
     const createdPage = {

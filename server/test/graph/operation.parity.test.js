@@ -59,7 +59,9 @@ vi.mockModule('express', import.meta.url, () => {
 })
 
 const makeResponse = () => ({
+  set: vi.fn().mockReturnThis(),
   status: vi.fn().mockReturnThis(),
+  vary: vi.fn().mockReturnThis(),
   json: vi.fn().mockReturnThis()
 })
 

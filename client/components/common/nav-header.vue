@@ -23,8 +23,6 @@
           @keydown.up.prevent='searchMove(`up`)'
           autocomplete='off'
         )
-        v-btn.nav-header-browse(icon, href='/t', data-search-modal-action, :aria-label='$t(`common:header.browseTags`)')
-          v-icon mdi-tag-multiple
     v-row.nav-header-layout(:gap='0')
       v-col.nav-header-brand-col(cols='5', md='4')
         .nav-header-inner.nav-header-brand
@@ -81,8 +79,16 @@
 
             v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
-                v-btn.nav-header-browse(icon, v-bind='props', href='/t', data-search-modal-action, :aria-label='$t(`common:header.browseTags`)')
-                  v-icon mdi-tag-multiple
+                v-btn.nav-header-browse(
+                  v-bind='props'
+                  href='/t'
+                  data-search-modal-action
+                  variant='outlined'
+                  :aria-current='mode === `tags` ? `page` : undefined'
+                  :aria-label='$t(`common:header.browseTags`)'
+                )
+                  v-icon(size='18') mdi-tag-outline
+                  span.nav-header-browse-label {{$t('common:header.browseTags')}}
               span {{$t('common:header.browseTags')}}
       v-col.nav-header-actions-col(cols='7', md='4')
         .nav-header-inner.nav-header-actions
@@ -104,6 +110,18 @@
             :aria-label='searchIsShown ? `Close search` : `Open search`'
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
+          v-tooltip.nav-header-mobile-browse(v-if='$vuetify.display.smAndDown', location='bottom')
+            template(v-slot:activator='{ props }')
+              v-btn.nav-header-browse(
+                v-bind='props'
+                icon
+                href='/t'
+                data-search-modal-action
+                :aria-current='mode === `tags` ? `page` : undefined'
+                :aria-label='$t(`common:header.browseTags`)'
+              )
+                v-icon mdi-tag-outline
+            span {{$t('common:header.browseTags')}}
           v-btn.nav-header-agent(
             v-if='canUseAgent && !hideSearch && mode !== `edit` && $vuetify.display.smAndDown'
             icon
@@ -917,10 +935,43 @@ export default defineComponent({
       max-width: none;
     }
 
-    .nav-header-agent,
-    .nav-header-browse {
+    .nav-header-agent {
       flex: 0 0 auto;
       margin-inline-start: var(--wiki-space-1);
+    }
+  }
+
+  .nav-header-mobile-browse {
+    display: none;
+  }
+
+
+  .nav-header-browse-label {
+    display: none;
+  }
+
+
+  @media (min-width: 1280px) {
+    .nav-header-command .nav-header-browse-label {
+      display: inline;
+    }
+
+    .nav-header-command .nav-header-browse {
+      padding-inline: var(--wiki-space-3);
+    }
+  }
+  @media (min-width: 960px) and (max-width: 1279.98px) {
+    .nav-header-command .nav-header-browse {
+      width: var(--wiki-control-height);
+      min-width: var(--wiki-control-height);
+      padding-inline: var(--wiki-space-2);
+    }
+  }
+
+  @media (max-width: 959.98px) {
+    .nav-header-mobile-browse {
+      display: block;
+      flex: 0 0 auto;
     }
   }
 
@@ -983,6 +1034,9 @@ export default defineComponent({
       opacity: .38;
       transform: none;
     }
+  }
+  .nav-header-command .nav-header-browse:hover {
+    transform: none;
   }
 
   .nav-header-browse {

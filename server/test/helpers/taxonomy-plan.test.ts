@@ -1,20 +1,60 @@
 import { describe, expect, it } from '../bun-test.mts'
-import { planTaxonomy, tagDefinition, taxonomyInventory, type TaxonomySnapshot } from '../../helpers/taxonomy-plan.ts'
+import { planTaxonomy, tagDefinition, tagName, tagNames, taxonomyInventory, type TaxonomySnapshot } from '../../helpers/taxonomy-plan.ts'
 import { tagAliasMap, resolveTagName } from '../../helpers/tag-aliases.ts'
 const snapshot = (): TaxonomySnapshot => ({
   tags: [
-    { id: 1, tag: 'knowledge', title: 'Knowledge', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', redirectToId: null, isArchived: false },
+    {
+      id: 1,
+      tag: 'knowledge',
+      title: 'Knowledge',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      redirectToId: null,
+      isArchived: false
+    },
     { id: 2, tag: 'memory', title: 'Memory', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', redirectToId: null, isArchived: false },
-    { id: 3, tag: 'old-knowledge', title: 'Old knowledge', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', redirectToId: 1, isArchived: false },
+    {
+      id: 3,
+      tag: 'old-knowledge',
+      title: 'Old knowledge',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+      redirectToId: 1,
+      isArchived: false
+    },
     { id: 4, tag: 'unused', title: '', createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z', redirectToId: null, isArchived: false }
   ],
-  assignments: [{ pageId: 1, tagId: 1 }, { pageId: 2, tagId: 2 }, { pageId: 3, tagId: 1 }, { pageId: 3, tagId: 2 }, { pageId: 4, tagId: 1 }],
-  pages: [1, 2, 3, 4].map(id => ({ id, title: `Page ${id}`, path: `p${id}`, locale: id === 3 ? 'fr' : 'en', visibility: id === 4 ? 'private' : 'public', sourceRevision: '1' })),
-  groups: [{ id: 1, name: 'Readers', permissions: ['read:pages'], pageRules: [
-    { match: 'TAG', path: 'knowledge', deny: false, roles: ['read:pages'] },
-    { match: 'TAG', path: 'memory', deny: true, roles: ['write:pages'], locales: ['en'] },
-    { match: 'TAG', path: 'old-knowledge', deny: false, roles: ['read:pages'], locales: ['fr'] }
-  ] }], history: [{ tagId: 1, count: 5 }, { tagId: 3, count: 2 }]
+  assignments: [
+    { pageId: 1, tagId: 1 },
+    { pageId: 2, tagId: 2 },
+    { pageId: 3, tagId: 1 },
+    { pageId: 3, tagId: 2 },
+    { pageId: 4, tagId: 1 }
+  ],
+  pages: [1, 2, 3, 4].map(id => ({
+    id,
+    title: `Page ${id}`,
+    path: `p${id}`,
+    locale: id === 3 ? 'fr' : 'en',
+    visibility: id === 4 ? 'private' : 'public',
+    sourceRevision: '1'
+  })),
+  groups: [
+    {
+      id: 1,
+      name: 'Readers',
+      permissions: ['read:pages'],
+      pageRules: [
+        { match: 'TAG', path: 'knowledge', deny: false, roles: ['read:pages'] },
+        { match: 'TAG', path: 'memory', deny: true, roles: ['write:pages'], locales: ['en'] },
+        { match: 'TAG', path: 'old-knowledge', deny: false, roles: ['read:pages'], locales: ['fr'] }
+      ]
+    }
+  ],
+  history: [
+    { tagId: 1, count: 5 },
+    { tagId: 3, count: 2 }
+  ]
 })
 describe('taxonomy lifecycle impact', () => {
   it('includes unused names, inherited alias usage and immutable historical references in the inventory', () => {
@@ -27,7 +67,10 @@ describe('taxonomy lifecycle impact', () => {
     const original = snapshot()
     const { after, preview, changedPageIds } = planTaxonomy(original, { action: 'edit', tagId: 1, tag: '  Encyclopedia ', title: 'Reference' })
     expect(preview.accessChanges).toBe(false)
-    expect(preview.rules.map(r => [r.before, r.after, r.added, r.removed])).toEqual([[2, 2, 0, 0], [1, 1, 0, 0]])
+    expect(preview.rules.map(r => [r.before, r.after, r.added, r.removed])).toEqual([
+      [2, 2, 0, 0],
+      [1, 1, 0, 0]
+    ])
     expect(changedPageIds).toEqual([1, 3, 4])
     expect(after.tags.find(t => t.id === 1)).toMatchObject({ tag: 'knowledge', redirectToId: -1 })
     expect(after.tags.find(t => t.id === 3)?.redirectToId).toBe(-1)
@@ -73,19 +116,39 @@ describe('taxonomy lifecycle impact', () => {
     expect(() => planTaxonomy(snapshot(), { action: 'edit', tagId: 1, tag: 'knowledge', title: 'Knowledge' })).toThrow('no changes')
   })
   it('expires a review when page revisions, group rules or taxonomy definitions change', () => {
-    const data = snapshot(), change = { action: 'archive', tagId: 1 }
+    const data = snapshot(),
+      change = { action: 'archive', tagId: 1 }
     const token = planTaxonomy(data, change).preview.fingerprint
     expect(planTaxonomy(snapshot(), change).preview.fingerprint).toBe(token)
     data.pages[0]!.sourceRevision = '2'
     expect(planTaxonomy(data, change).preview.fingerprint).not.toBe(token)
-    const groups = snapshot(); groups.groups[0]!.pageRules[0]!.deny = true
+    const groups = snapshot()
+    groups.groups[0]!.pageRules[0]!.deny = true
     expect(planTaxonomy(groups, change).preview.fingerprint).not.toBe(token)
   })
   it('fails closed on invalid alias graphs and never resolves archived cached labels', () => {
     expect(() => tagAliasMap([{ id: 1, tag: 'a', redirectToId: 1 }])).toThrow('cycle')
     expect(() => tagAliasMap([{ id: 1, tag: 'a', redirectToId: 2 }])).toThrow('destination')
-    const map = tagAliasMap([{ id: 1, tag: '__proto__' }, { id: 2, tag: 'retired', isArchived: true }])
+    const map = tagAliasMap([
+      { id: 1, tag: '__proto__' },
+      { id: 2, tag: 'retired', isArchived: true }
+    ])
     expect(resolveTagName(map, '__proto__')).toBe('__proto__')
     expect(resolveTagName(map, 'retired')).toBeNull()
+  })
+  it('normalizes scalar names and rejects invalid boundaries with client errors', () => {
+    expect(tagName('  MiXeD Label  ')).toBe('mixed label')
+    expect(tagName('x'.repeat(255))).toHaveLength(255)
+    for (const value of ['', '   ', '\u0000', 'line\nbreak', '\u007f', 'x'.repeat(256), 42, null, undefined, ['tag']]) {
+      expect(() => tagName(value)).toThrow('tag name')
+    }
+  })
+  it('normalizes arrays in insertion order, deduplicates canonical names and enforces the raw limit', () => {
+    expect(tagNames([])).toEqual([])
+    expect(tagNames(['  Foo ', 'foo', 'BAR', ' bar '])).toEqual(['foo', 'bar'])
+    expect(tagNames(Array.from({ length: 100 }, (_, index) => `tag-${index}`))).toHaveLength(100)
+    expect(() => tagNames(Array.from({ length: 101 }, (_, index) => `tag-${index}`))).toThrow('100')
+    expect(() => tagNames('tag')).toThrow('array')
+    expect(() => tagNames(['valid', 1])).toThrow('tag name')
   })
 })

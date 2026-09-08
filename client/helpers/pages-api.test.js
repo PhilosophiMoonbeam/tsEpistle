@@ -1,12 +1,12 @@
 import {
   buildOkfMetadataPayload,
   deletePage,
-  deletePageTag,
   discardCollaborationDraft,
   fetchPage,
   fetchPageHistory,
   fetchPageLinks,
   fetchPageList,
+  fetchPages,
   fetchPageLocaleRelations,
   fetchPageTags,
   fetchPageTree,
@@ -17,7 +17,6 @@ import {
   searchPages,
   unlinkPageLocaleRelation,
   updatePage,
-  updatePageTag,
   validateOkfMetadataPayload
 } from './pages-api.ts'
 
@@ -465,6 +464,73 @@ describe('pages api helper', () => {
       }
     })
   })
+  test('accepts reader-shaped page rows without publication metadata and retains the omission', async () => {
+    const readerRow = {
+      id: 10,
+      locale: 'en',
+      path: 'docs/alpha',
+      title: null,
+      description: null,
+      visibility: 'public',
+      ownerId: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+      tags: ['alpha', 'docs']
+    }
+    const listFetch = vi.fn().mockResolvedValue(createJsonResponse([readerRow]))
+    const pagesFetch = vi.fn().mockResolvedValue(createJsonResponse([readerRow]))
+
+    const listRows = await fetchPageList(listFetch)
+    expect(listRows).toEqual([readerRow])
+    expect(listRows[0]).not.toHaveProperty('isPublished')
+    await expect(fetchPages(pagesFetch)).resolves.toEqual([readerRow])
+  })
+
+  test.each([undefined, null, 1, 'true'])('rejects malformed publication metadata when isPublished is present as %p', async isPublished => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      createJsonResponse([
+        {
+          id: 10,
+          locale: 'en',
+          path: 'docs/alpha',
+          title: 'Alpha',
+          description: null,
+          isPublished,
+          visibility: 'public',
+          ownerId: null,
+          contentType: 'markdown',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-03T00:00:00.000Z',
+          tags: ['alpha']
+        }
+      ])
+    )
+
+    await expect(fetchPageList(fetchImpl, 'Bad page list publication metadata')).rejects.toThrow('Bad page list publication metadata')
+  })
+
+  test('preserves privileged publication booleans', async () => {
+    const rows = [true, false].map((isPublished, index) => ({
+      id: index + 10,
+      locale: 'en',
+      path: `docs/${isPublished ? 'published' : 'draft'}`,
+      title: null,
+      description: null,
+      isPublished,
+      publishStartDate: null,
+      publishEndDate: null,
+      visibility: 'public',
+      ownerId: null,
+      contentType: 'markdown',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+      tags: []
+    }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(rows))
+
+    await expect(fetchPageList(fetchImpl)).resolves.toEqual(rows)
+  })
 
   test('rejects malformed page list rows', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse([{ id: 10, locale: 'en', path: 'docs/alpha', title: 'Alpha', tags: ['alpha'] }]))
@@ -685,59 +751,6 @@ describe('pages api helper', () => {
     await expect(Promise.resolve(deletePage(fetchImpl, 7, '8', 'Bad page delete response'))).rejects.toThrow('Bad page delete response')
   })
 
-  test('updates page tags with same-origin JSON PATCH', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Tag has been updated successfully.' }))
-
-    expect(await updatePageTag(fetchImpl, 7, '  News  ', '  Current News  ')).toEqual({ message: 'Tag has been updated successfully.' })
-
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/tags/7', {
-      method: 'PATCH',
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ tag: '  News  ', title: '  Current News  ' })
-    })
-  })
-
-  test('surfaces API error messages for failed tag update requests', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'This tag does not exist.' }, false))
-
-    await expect(Promise.resolve(updatePageTag(fetchImpl, 7, 'News', 'News'))).rejects.toThrow('This tag does not exist.')
-  })
-
-  test('rejects malformed successful tag update responses', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
-
-    await expect(Promise.resolve(updatePageTag(fetchImpl, 7, 'News', 'News', 'Bad tag update response'))).rejects.toThrow('Bad tag update response')
-  })
-
-  test('deletes page tags with same-origin JSON DELETE', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Tag has been deleted.' }))
-
-    expect(await deletePageTag(fetchImpl, 7)).toEqual({ message: 'Tag has been deleted.' })
-
-    expect(fetchImpl).toHaveBeenCalledWith('/_api/pages/tags/7', {
-      method: 'DELETE',
-      credentials: 'same-origin',
-      headers: {
-        Accept: 'application/json'
-      }
-    })
-  })
-
-  test('surfaces API error messages for failed tag delete requests', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ error: 'This tag does not exist.' }, false))
-
-    await expect(Promise.resolve(deletePageTag(fetchImpl, 7))).rejects.toThrow('This tag does not exist.')
-  })
-
-  test('rejects malformed successful tag delete responses', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({}))
-
-    await expect(Promise.resolve(deletePageTag(fetchImpl, 7, 'Bad tag delete response'))).rejects.toThrow('Bad tag delete response')
-  })
   test('validates complete immutable revision metadata', async () => {
     const version = {
       versionId: 9,

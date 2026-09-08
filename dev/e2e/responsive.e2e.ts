@@ -1,4 +1,4 @@
-import { expect } from '@playwright/test'
+import { expect, type Dialog, type Locator } from '@playwright/test'
 import {
   authenticateAsAdmin,
   expectLocatorWithinViewport,
@@ -845,6 +845,225 @@ test.describe('responsive UI quality matrix', () => {
     await expect(page).toHaveURL('/a/pages')
   })
 
+  test('keeps tag taxonomy lifecycle review and navigation safe', async ({ page }) => {
+    const viewport = page.viewportSize()
+    if (!viewport) throw new Error('This responsive test requires a configured viewport.')
+    if (viewport.width < 960) await page.setViewportSize({ width: 320, height: viewport.height })
+
+    await page.emulateMedia({ colorScheme: 'light' })
+    await authenticateAsAdmin(page)
+
+    const projectSuffix = test
+      .info()
+      .project.name.replace(/[^a-z0-9]+/gi, '-')
+      .toLowerCase()
+      .slice(0, 20)
+    const suffix = `${projectSuffix}-${Date.now().toString(36)}`
+    const canonicalTag = `e2e-lifecycle-canonical-${suffix}`
+    const canonicalTitle = `E2E lifecycle canonical ${suffix}`
+    const aliasSourceTag = `e2e-lifecycle-source-${suffix}`
+    const aliasSourceTitle = `E2E lifecycle source ${suffix}`
+    const aliasDestinationTag = `e2e-lifecycle-destination-${suffix}`
+    const aliasDestinationTitle = `E2E lifecycle destination ${suffix}`
+    const successMessage = 'Taxonomy updated. The change has been saved.'
+    const accessAcknowledgement = 'I understand that these tag-based access rules will match different pages.'
+
+    const createTag = async (tag: string, title: string): Promise<number> => {
+      const response = await page.request.post('/_api/taxonomy', { data: { tag, title } })
+      expect(response.ok(), `Creating disposable taxonomy tag ${tag}`).toBe(true)
+      const payload = (await response.json()) as { id?: unknown }
+      expect(typeof payload.id, `Creating disposable taxonomy tag ${tag} returns an id`).toBe('number')
+      return payload.id as number
+    }
+
+    const canonicalId = await createTag(canonicalTag, canonicalTitle)
+    const aliasSourceId = await createTag(aliasSourceTag, aliasSourceTitle)
+    const aliasDestinationId = await createTag(aliasDestinationTag, aliasDestinationTitle)
+
+    const showLifecycle = async (): Promise<Locator> => {
+      const lifecycleTab = page.getByRole('tab', { name: 'Lifecycle', exact: true })
+      await expect(lifecycleTab).toBeVisible()
+      await lifecycleTab.click()
+      const panel = page.locator('#taxonomy-panel-lifecycle')
+      await expect(panel).toBeVisible()
+      return panel
+    }
+
+    const selectVocabularyView = async (name: string): Promise<void> => {
+      const view = page.getByRole('combobox', { name: 'Vocabulary view', exact: true })
+      await expect(view).toBeVisible()
+      await view.focus()
+      await view.press('Enter')
+      const option = page.getByRole('option', { name, exact: true })
+      await expect(option).toBeVisible()
+      await option.click()
+    }
+
+    const openLifecycle = async (id: number): Promise<Locator> => {
+      await page.goto(`/a/tags?tag=${id}`, { waitUntil: 'domcontentloaded' })
+      return showLifecycle()
+    }
+
+    const acknowledgeAccessIfNeeded = async (dialog: Locator): Promise<void> => {
+      const checkbox = dialog.getByRole('checkbox', { name: accessAcknowledgement, exact: true })
+      if (await checkbox.count()) {
+        await checkbox.check()
+        await expect(checkbox).toBeChecked()
+      }
+    }
+
+    const applyReview = async (action: 'retirement' | 'restoration' | 'merge'): Promise<void> => {
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
+      await acknowledgeAccessIfNeeded(dialog)
+      await dialog.getByRole('button', { name: `Apply ${action}`, exact: true }).click()
+      await expect(page.getByText(successMessage, { exact: true })).toBeVisible()
+    }
+
+    await openAuthenticatedPage(page, '/a/dashboard', '.admin-main')
+    const tagsLink = page.getByRole('link', { name: /Tags\. Topics connecting knowledge\.$/i })
+    await expect(tagsLink).toHaveAttribute('href', '/a/tags')
+    await tagsLink.click()
+    await expect(page).toHaveURL('/a/tags')
+
+    const directorySearch = page.getByRole('textbox', { name: 'Find a tag or label', exact: true })
+    await directorySearch.fill(canonicalTag)
+    const canonicalRow = page.getByRole('button', { name: `${canonicalTitle}, active`, exact: true })
+    await expect(canonicalRow).toBeVisible()
+    await canonicalRow.click()
+    await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
+
+    const displayLabel = page.getByRole('textbox', { name: 'Display label', exact: true })
+    const draftLabel = `${canonicalTitle} draft`
+    await displayLabel.fill(draftLabel)
+    await page.getByRole('button', { name: 'Review changes', exact: true }).click()
+    const draftReview = page.getByRole('dialog')
+    await expect(draftReview).toContainText('Update the display label')
+    await expect(draftReview).toContainText(draftLabel)
+
+    const navigationPrompts = new Promise<void>(resolve => {
+      const acceptReviewPrompt = async (dialog: Dialog) => {
+        page.off('dialog', acceptReviewPrompt)
+        const rejectDraftPrompt = async (nextDialog: Dialog) => {
+          page.off('dialog', rejectDraftPrompt)
+          expect(nextDialog.message()).toContain('Discard the unsaved tag changes?')
+          await nextDialog.dismiss()
+          resolve()
+        }
+        page.on('dialog', rejectDraftPrompt)
+        expect(dialog.message()).toContain('Discard the unapplied taxonomy review?')
+        await dialog.accept()
+      }
+      page.on('dialog', acceptReviewPrompt)
+    })
+    await page.evaluate(() => window.history.back())
+    await navigationPrompts
+    await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
+    await expect(draftReview).toBeVisible()
+    await expect(draftReview).toContainText(draftLabel)
+    await expect(displayLabel).toHaveValue(draftLabel)
+    await draftReview.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await page.getByRole('button', { name: 'Reset', exact: true }).click()
+    await expect(displayLabel).toHaveValue(canonicalTitle)
+
+    const ordinaryDraftLabel = `${canonicalTitle} ordinary draft`
+    await displayLabel.fill(ordinaryDraftLabel)
+    const rejectedDirtyNavigation = page.waitForEvent('dialog').then(async dialog => {
+      expect(dialog.type()).toBe('confirm')
+      expect(dialog.message()).toContain('Discard the unsaved tag changes?')
+      await dialog.dismiss()
+    })
+    await page.evaluate(() => window.history.back())
+    await rejectedDirtyNavigation
+    await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
+    await expect(displayLabel).toHaveValue(ordinaryDraftLabel)
+    await page.getByRole('button', { name: 'Reset', exact: true }).click()
+
+    const canonicalPanel = await showLifecycle()
+    await canonicalPanel.getByRole('button', { name: 'Review retirement', exact: true }).click()
+    const canonicalReview = page.getByRole('dialog')
+    await expect(canonicalReview).toContainText('Retire this name')
+    await acknowledgeAccessIfNeeded(canonicalReview)
+
+    const rejectedReviewNavigation = page.waitForEvent('dialog').then(async dialog => {
+      expect(dialog.type()).toBe('confirm')
+      expect(dialog.message()).toContain('Discard the unapplied taxonomy review?')
+      await dialog.dismiss()
+    })
+    await page.evaluate(() => window.history.back())
+    await rejectedReviewNavigation
+    await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
+    await expect(canonicalReview).toBeVisible()
+    const preservedAcknowledgement = canonicalReview.getByRole('checkbox', { name: accessAcknowledgement, exact: true })
+    if (await preservedAcknowledgement.count()) await expect(preservedAcknowledgement).toBeChecked()
+
+    await applyReview('retirement')
+    await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    const archivedCanonicalPanel = await showLifecycle()
+    await expect(archivedCanonicalPanel.getByRole('button', { name: 'Review restoration', exact: true })).toBeVisible()
+    await selectVocabularyView('Archived names')
+    const archivedCanonicalSearch = page.getByRole('textbox', { name: 'Find a tag or label', exact: true })
+    await archivedCanonicalSearch.fill(canonicalTag)
+    await expect(page.getByRole('button', { name: `${canonicalTitle}, archived, selected`, exact: true })).toBeVisible()
+
+    const aliasPanel = await openLifecycle(aliasSourceId)
+    const destinationInput = aliasPanel.getByRole('combobox', { name: 'Canonical destination', exact: true })
+    await destinationInput.fill(aliasDestinationTag)
+    const destinationOption = page.getByRole('option', { name: aliasDestinationTag, exact: true })
+    await expect(destinationOption).toBeVisible()
+    await destinationOption.click()
+    await aliasPanel.getByRole('button', { name: 'Review merge', exact: true }).click()
+    await expect(page.getByRole('dialog')).toContainText('Bring two concepts together')
+    await applyReview('merge')
+    await expect(page).toHaveURL(`/a/tags?tag=${aliasDestinationId}`)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    const mergedDestinationPanel = await showLifecycle()
+    await expect(mergedDestinationPanel.getByRole('button', { name: 'Review retirement', exact: true })).toBeVisible()
+
+    const activeAliasPanel = await openLifecycle(aliasSourceId)
+    await expect(page.getByText(`Loaded ${aliasSourceTitle}`, { exact: true })).toBeVisible()
+    await expect(activeAliasPanel.getByRole('button', { name: 'Review retirement', exact: true })).toBeVisible()
+    await selectVocabularyView('Aliases')
+    const aliasSearch = page.getByRole('textbox', { name: 'Find a tag or label', exact: true })
+    await aliasSearch.fill(aliasSourceTag)
+    await expect(page.getByRole('button', { name: `${aliasSourceTitle}, alias, selected`, exact: true })).toBeVisible()
+    await activeAliasPanel.getByRole('button', { name: 'Review retirement', exact: true }).click()
+    await expect(page.getByRole('dialog')).toContainText('Retire this name')
+    await applyReview('retirement')
+    await expect(page).toHaveURL(`/a/tags?tag=${aliasSourceId}`)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    const archivedAliasPanel = await showLifecycle()
+    await expect(archivedAliasPanel.getByRole('button', { name: 'Review restoration', exact: true })).toBeVisible()
+    await selectVocabularyView('Archived names')
+    const archivedAliasSearch = page.getByRole('textbox', { name: 'Find a tag or label', exact: true })
+    await archivedAliasSearch.fill(aliasSourceTag)
+    await expect(page.getByRole('button', { name: `${aliasSourceTitle}, archived, selected`, exact: true })).toBeVisible()
+
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.goto(`/a/tags?tag=${canonicalId}`, { waitUntil: 'domcontentloaded' })
+    const restorationPanel = await showLifecycle()
+    await restorationPanel.getByRole('button', { name: 'Review restoration', exact: true }).click()
+    await expect(page.getByRole('dialog')).toContainText('Restore this name')
+    await applyReview('restoration')
+    await expect(page).toHaveURL(`/a/tags?tag=${canonicalId}`)
+    await page.reload({ waitUntil: 'domcontentloaded' })
+    const restoredPanel = await showLifecycle()
+    await expect(restoredPanel.getByRole('button', { name: 'Review retirement', exact: true })).toBeVisible()
+    await expect(page.locator('.taxonomy-detail')).toHaveAttribute('aria-busy', 'false')
+    await page.evaluate(async () => {
+      await document.fonts.ready
+      const animations = (document.querySelector('.admin-main')?.getAnimations({ subtree: true }) ?? []).filter(animation => {
+        if (animation.playState !== 'running') return false
+        const endTime = animation.effect?.getComputedTiming().endTime
+        return typeof endTime === 'number' && Number.isFinite(endTime)
+      })
+      await Promise.allSettled(animations.map(animation => animation.finished))
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    })
+    await expectResponsiveLayout(page, 'Admin taxonomy lifecycle')
+  })
+
   test('keeps GraphQL documentation usable without losing the current query', async ({ page }) => {
     await authenticateAsAdmin(page)
     await page.goto('/graphql', { waitUntil: 'domcontentloaded' })
@@ -1078,10 +1297,7 @@ test.describe('responsive UI quality matrix', () => {
         heroAfter: getPseudo(heroTitle, '::after'),
         h1After: getPseudo(authoredH1, '::after'),
         h1Width: h1Bounds?.width ?? 0,
-        h1AnchorContained: !h1AnchorBounds || !articleBounds || (
-          h1AnchorBounds.left >= articleBounds.left &&
-          h1AnchorBounds.right <= articleBounds.right
-        ),
+        h1AnchorContained: !h1AnchorBounds || !articleBounds || (h1AnchorBounds.left >= articleBounds.left && h1AnchorBounds.right <= articleBounds.right),
         shortH1: measureSyntheticH1('FAQ'),
         longH1: measureSyntheticH1('Comprehensive Technical Documentation and Guidelines'),
         rtlH1: measureSyntheticH1('الأسئلة الشائعة', 'rtl'),
@@ -1107,7 +1323,9 @@ test.describe('responsive UI quality matrix', () => {
     expect(Math.abs((decorations.h1After?.width ?? 0) - decorations.h1Width), 'Swoosh matches authored H1 text-block width').toBeLessThanOrEqual(1)
     expect(decorations.shortH1, 'Synthetic short H1 must be measurable').not.toBeNull()
     expect(decorations.longH1, 'Synthetic long H1 must be measurable').not.toBeNull()
-    expect(Math.abs((decorations.shortH1?.pseudoWidth ?? 0) - (decorations.shortH1?.width ?? 0)), 'Short H1 swoosh matches its text block').toBeLessThanOrEqual(1)
+    expect(Math.abs((decorations.shortH1?.pseudoWidth ?? 0) - (decorations.shortH1?.width ?? 0)), 'Short H1 swoosh matches its text block').toBeLessThanOrEqual(
+      1
+    )
     expect(Math.abs((decorations.longH1?.pseudoWidth ?? 0) - (decorations.longH1?.width ?? 0)), 'Long H1 swoosh matches its text block').toBeLessThanOrEqual(1)
     expect(decorations.longH1?.width ?? 0, 'Long H1 swoosh grows beyond short H1 swoosh').toBeGreaterThan((decorations.shortH1?.width ?? 0) + 100)
     expect(decorations.rtlH1?.transform ?? 'none', 'RTL H1 mirrors the swoosh').toMatch(/^matrix\(-1,\s*0,\s*0,\s*1,/)
