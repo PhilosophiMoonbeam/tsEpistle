@@ -1,5 +1,5 @@
 import { applyReaderLayout } from './helpers/reader-layout.ts'
-import { createApp, watch } from 'vue'
+import { createApp } from 'vue'
 import type { AsyncComponentLoader } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as vuetifyLocaleMessages from 'vuetify/locale'
@@ -47,13 +47,6 @@ const registrations = [
 
 applyReaderLayout(siteConfig.readerLayout)
 wikiStore.refreshAuth()
-watch(
-  () => wikiStore.user.fontFamily,
-  fontFamily => {
-    document.documentElement.dataset.wikiFont = fontFamily
-  },
-  { immediate: true }
-)
 
 const resolveVuetifyMessageLocale = (language: string): keyof typeof vuetifyLocaleMessages | undefined => {
   const languageParts = language.trim().toLowerCase().replaceAll('_', '-').split('-')

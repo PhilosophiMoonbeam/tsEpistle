@@ -23,6 +23,8 @@
           @keydown.up.prevent='searchMove(`up`)'
           autocomplete='off'
         )
+        v-btn.nav-header-browse(icon, href='/t', data-search-modal-action, :aria-label='$t(`common:header.browseTags`)')
+          v-icon mdi-tag-multiple
     v-row.nav-header-layout(:gap='0')
       v-col.nav-header-brand-col(cols='5', md='4')
         .nav-header-inner.nav-header-brand
@@ -64,6 +66,19 @@
                 template(v-slot:append-inner)
                   kbd.nav-header-search-key(v-if='!search && !searchIsFocused', aria-hidden='true') {{ searchShortcutLabel }}
 
+            v-btn.nav-header-agent(
+              v-if='canUseAgent && !hideSearch && mode !== `edit`'
+              prepend-icon='mdi-book-open-page-variant-outline'
+              aria-label='Open Wiki Agent'
+              title='Wiki Agent · Ctrl/⌘ + Shift + A'
+              variant='tonal'
+              color='primary'
+              size='small'
+              data-search-modal-action
+              @click='openAgent'
+            )
+              span Wiki Agent
+
             v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
                 v-btn.nav-header-browse(icon, v-bind='props', href='/t', data-search-modal-action, :aria-label='$t(`common:header.browseTags`)')
@@ -89,12 +104,9 @@
             :aria-label='searchIsShown ? `Close search` : `Open search`'
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
-          .nav-header-slot-actions(v-if='$vuetify.display.mdAndUp || mobileActions')
-            slot(name='actions')
           v-btn.nav-header-agent(
-            v-if='canUseAgent && !hideSearch && mode !== `edit`'
-            :prepend-icon='$vuetify.display.mdAndUp ? `mdi-book-open-page-variant-outline` : undefined'
-            :icon='$vuetify.display.smAndDown'
+            v-if='canUseAgent && !hideSearch && mode !== `edit` && $vuetify.display.smAndDown'
+            icon
             aria-label='Open Wiki Agent'
             title='Wiki Agent · Ctrl/⌘ + Shift + A'
             variant='tonal'
@@ -103,8 +115,9 @@
             data-search-modal-action
             @click='openAgent'
           )
-            v-icon(v-if='$vuetify.display.smAndDown' icon='mdi-book-open-page-variant-outline')
-            span(v-else) Wiki Agent
+            v-icon(icon='mdi-book-open-page-variant-outline')
+          .nav-header-slot-actions(v-if='$vuetify.display.mdAndUp || mobileActions')
+            slot(name='actions')
           //- LANGUAGES
 
           template(v-if='mode === `view` && locales.length > 0 && $vuetify.display.mdAndUp')
@@ -276,9 +289,8 @@
                 template(v-slot:append): v-icon(color='secondary') mdi-face-profile
               v-divider
               section.account-menu__preferences(role='region' aria-labelledby='account-preferences-title')
-                h2#account-preferences-title.account-menu__preferences-title Presentation preferences
+                h2#account-preferences-title.account-menu__preferences-title Appearance preferences
                 appearance-selector
-                presentation-selector
               v-divider
               v-list-item(role='button', link, @click='logout')
                 template(v-slot:append): v-icon(color='error') mdi-logout
@@ -348,7 +360,6 @@ const ADMIN_PERMISSION_NAMES = new Set([
 export default defineComponent({
   components: {
     AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
-    PresentationSelector: defineAsyncComponent(() => import('./presentation-selector.vue')),
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
     PageConvert: defineAsyncComponent(() => import('./page-convert.vue'))
   },
@@ -548,7 +559,8 @@ export default defineComponent({
       emitSearchExit(false)
       this.searchClose()
       await this.$nextTick()
-      const target = document.querySelector<HTMLElement>(event.shiftKey ? '.nav-header-logo' : '.nav-header-browse')
+      const forwardTarget = document.querySelector<HTMLElement>('.nav-header-agent') ?? document.querySelector<HTMLElement>('.nav-header-browse')
+      const target = event.shiftKey ? document.querySelector<HTMLElement>('.nav-header-logo') : forwardTarget
       target?.focus({ preventScroll: true })
     },
     searchClose () {
@@ -706,7 +718,7 @@ export default defineComponent({
   font-size: .6875rem;
   white-space: nowrap;
 }
-.nav-header-agent { margin-inline: .375rem; }
+.nav-header-agent { flex: 0 0 auto; margin-inline: .375rem; }
 
 .nav-header {
   --nav-header-accent-direction: 90deg;
@@ -904,6 +916,12 @@ export default defineComponent({
     .nav-header-search-control {
       max-width: none;
     }
+
+    .nav-header-agent,
+    .nav-header-browse {
+      flex: 0 0 auto;
+      margin-inline-start: var(--wiki-space-1);
+    }
   }
 
   .nav-header-actions {
@@ -1095,11 +1113,6 @@ export default defineComponent({
   min-width: 0;
   gap: var(--wiki-space-4);
   padding: var(--wiki-space-2) var(--wiki-space-3);
-
-  > .presentation-selector {
-    padding-block-start: var(--wiki-space-4);
-    border-block-start: 1px solid var(--wiki-surface-border);
-  }
 }
 
 .account-menu__preferences-title {

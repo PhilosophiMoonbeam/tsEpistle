@@ -21,8 +21,14 @@ describe('global footer edge and attribution contract', () => {
 
   test('keeps the footer viewport-safe without viewport-width compensation', () => {
     expect(errors).toEqual([])
-    expect(style).toMatch(/\.nav-footer\s*\{[\s\S]*?padding:\s*var\(--wiki-space-1\) var\(--wiki-page-gutter\)/)
+    expect(style).toContain('safe-area-inset-bottom')
     expect(style).not.toMatch(/(?:inline-size|width)\s*:\s*(?:100vw|calc\([^;]*100vw)/)
+    expect(style).toMatch(/height:\s*auto;/)
+    expect(style).toMatch(/min-height:\s*var\(--wiki-footer-height\);/)
+  })
+
+  test('defines the 24px single-line footer height token', () => {
+    expect(baseSource).toMatch(/--wiki-footer-height:\s*1\.5rem;/)
   })
 
   test('preserves configured legal copy and its override precedence', () => {
@@ -37,6 +43,11 @@ describe('global footer edge and attribution contract', () => {
   test('keeps project source attribution accessible without the Wiki.js derivation notice', () => {
     expect(template).toContain('span.footer-attribution__product {{ product.name }} {{ product.version }}')
     expect(template).toContain("a(:href='product.sourceRepository', target='_blank', rel='noopener noreferrer') {{ $t('common:footer.sourceCode') }}")
+    expect(template).toMatch(/p\.footer-attribution__meta/)
     expect(template).not.toMatch(/Derived from|Requarks\/wiki|Wiki\.js/)
+  })
+
+  test('retains attribution in normal flow when printing', () => {
+    expect(style).toMatch(/@media print[\s\S]*?\.nav-footer[\s\S]*?position:\s*static/)
   })
 })

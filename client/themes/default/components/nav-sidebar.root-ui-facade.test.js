@@ -125,5 +125,14 @@ describe('default nav-sidebar navigation mode and fixed Home behavior', () => {
     expect(source).toContain('common:sidebar.emptyNavigationHint')
     expect(source).toMatch(/v-if='currentMode === `custom`'/)
     expect(source).toMatch(/v-else-if='currentMode === `browse`'/)
+    expect(source).toMatch(
+      /\.nav-sidebar-modes\s*\{[\s\S]*?border:\s*1px solid var\(--wiki-surface-border-strong\);[\s\S]*?background:\s*var\(--wiki-surface-sunken\);[\s\S]*?box-shadow:\s*inset 0 1px 2px/
+    )
+    expect(source).toMatch(
+      /\.nav-sidebar-mode\s*\{[\s\S]*?border:\s*1px solid var\(--wiki-surface-border\);[\s\S]*?background:\s*color-mix\(in srgb, var\(--wiki-surface-raised\)/
+    )
+    expect(source).toMatch(
+      /&\[aria-pressed='true'\]\s*\{[\s\S]*?border-color: color-mix\(in srgb, var\(--wiki-ambient-accent\) 45%, var\(--wiki-surface-border-strong\)\);[\s\S]*?box-shadow:\s*0 2px 4px/
+    )
   })
 })

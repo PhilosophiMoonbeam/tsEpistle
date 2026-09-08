@@ -4,9 +4,11 @@ import { parse } from '@vue/compiler-sfc'
 import { describe, expect, test } from '../../../../server/test/bun-test.mts'
 
 const tiptapPath = join(process.cwd(), 'client/components/editor/tiptap/editor.vue')
+const asciidocPath = join(process.cwd(), 'client/components/editor/editor-asciidoc.vue')
 const shellPath = join(process.cwd(), 'client/components/editor.vue')
 const themeStylesheetPath = join(process.cwd(), 'client/themes/default/scss/app.scss')
 const pagePath = join(process.cwd(), 'client/themes/default/components/page.vue')
+const asciidocSource = readFileSync(asciidocPath, 'utf8')
 const tiptapSource = readFileSync(tiptapPath, 'utf8')
 const shellSource = readFileSync(shellPath, 'utf8')
 const themeStylesheet = readFileSync(themeStylesheetPath, 'utf8')
@@ -14,7 +16,9 @@ const pageSource = readFileSync(pagePath, 'utf8')
 const tiptapSfc = parse(tiptapSource, { filename: tiptapPath })
 const shellSfc = parse(shellSource, { filename: shellPath })
 const pageSfc = parse(pageSource, { filename: pagePath })
+const asciidocSfc = parse(asciidocSource, { filename: asciidocPath })
 const tiptapTemplate = tiptapSfc.descriptor.template?.content ?? ''
+const asciidocTemplate = asciidocSfc.descriptor.template?.content ?? ''
 const tiptapScript = tiptapSfc.descriptor.script?.content ?? ''
 const tiptapStyle = tiptapSfc.descriptor.styles.map(style => style.content).join('\n')
 const pageStyle = pageSfc.descriptor.styles.map(style => style.content).join('\n')
@@ -63,7 +67,7 @@ describe('TipTap editor layout and page-theme ownership', () => {
     expect(themeStylesheet).toMatch(/\.contents \.tiptap|\.editor-page-canvas|\.tiptap/)
 
     // Authored H1 swoosh in shared theme reaches editor canvas while hero remains undecorated
-    expect(themeStylesheet).toMatch(/h1[\s\S]*?::after[\s\S]*?(?:10rem|min\(100%,\s*10rem\))/)
+    expect(themeStylesheet).toMatch(/h1[\s\S]*?::after[\s\S]*?(?:mask|mask-image|-webkit-mask)/)
     expect(pageStyle).not.toMatch(/\.page-title(?:::after|\s*::after)/)
 
     // Ownership cutover: page-local file must NOT own heading typography
@@ -77,6 +81,11 @@ describe('TipTap editor layout and page-theme ownership', () => {
 
   test('matches the published page reading measure without owning its theme', () => {
     expect(tiptapStyle).toMatch(/\.tiptap\s*\{[\s\S]*?max-width:\s*76ch;[\s\S]*?margin-inline:\s*auto;/)
+  })
+
+  test('uses the shared page canvas contract for AsciiDoc preview', () => {
+    expect(asciidocSfc.errors).toEqual([])
+    expect(asciidocTemplate).toContain('.editor-asciidoc-preview-content.editor-page-canvas.contents')
   })
 
   test('parses and scopes page CSS to the canvas instead of editor chrome', () => {

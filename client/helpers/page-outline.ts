@@ -1,5 +1,10 @@
 export type OutlineEntry = { anchor: string; title: string; depth: number }
 
+export type OutlineNode = OutlineEntry & {
+  children: OutlineNode[]
+  parentAnchor: string | null
+}
+
 /** Keep matching headings and their ancestors so filtered results retain context. */
 export function filterOutline<T extends OutlineEntry>(entries: T[], query: string): T[] {
   const term = query.trim().toLocaleLowerCase()
@@ -17,21 +22,169 @@ export function filterOutline<T extends OutlineEntry>(entries: T[], query: strin
   return entries.filter((_, index) => included.has(index))
 }
 
-/** An overview retains major sections and the current subsection's ancestry. */
-export function overviewOutline<T extends OutlineEntry>(entries: T[], activeAnchor: string): T[] {
-  const activeIndex = entries.findIndex(entry => entry.anchor === activeAnchor)
-  const included = new Set<number>()
-  if (activeIndex >= 0) {
-    included.add(activeIndex)
-    let depth = entries[activeIndex].depth
-    for (let index = activeIndex - 1; index >= 0 && depth > 0; index -= 1) {
-      if (entries[index].depth < depth) {
-        included.add(index)
-        depth = entries[index].depth
+/**
+ * Builds a hierarchical outline tree preserving arbitrary heading depths,
+ * resolving parent anchors and child lists.
+ */
+export function buildOutlineTree(entries: OutlineEntry[]): OutlineNode[] {
+  const root: OutlineNode[] = []
+  const stack: OutlineNode[] = []
+
+  for (const entry of entries) {
+    const node: OutlineNode = {
+      anchor: entry.anchor,
+      title: entry.title,
+      depth: entry.depth,
+      children: [],
+      parentAnchor: null
+    }
+
+    while (stack.length > 0 && stack[stack.length - 1].depth >= entry.depth) {
+      stack.pop()
+    }
+
+    if (stack.length === 0) {
+      root.push(node)
+    } else {
+      const parent = stack[stack.length - 1]
+      node.parentAnchor = parent.anchor
+      parent.children.push(node)
+    }
+
+    stack.push(node)
+  }
+
+  return root
+}
+
+/**
+ * Filters the outline tree while retaining matching paths and their ancestors.
+ */
+export function filterOutlineTree(nodes: OutlineNode[], query: string): OutlineNode[] {
+  const term = query.trim().toLocaleLowerCase()
+  if (!term) return nodes
+
+  function filterNodes(list: OutlineNode[]): OutlineNode[] {
+    const result: OutlineNode[] = []
+    for (const node of list) {
+      const filteredChildren = filterNodes(node.children)
+      const matches = node.title.toLocaleLowerCase().includes(term)
+      if (matches || filteredChildren.length > 0) {
+        result.push({
+          ...node,
+          children: filteredChildren
+        })
+      }
+    }
+    return result
+  }
+
+  return filterNodes(nodes)
+}
+
+/**
+ * Returns the array of ancestor anchors for a given anchor in hierarchical order.
+ */
+export function getAncestorAnchors(entries: OutlineEntry[], targetAnchor: string): string[] {
+  const ancestors: string[] = []
+  const targetIndex = entries.findIndex(e => e.anchor === targetAnchor)
+  if (targetIndex <= 0) return ancestors
+
+  let currentDepth = entries[targetIndex].depth
+  for (let i = targetIndex - 1; i >= 0; i--) {
+    if (entries[i].depth < currentDepth) {
+      ancestors.unshift(entries[i].anchor)
+      currentDepth = entries[i].depth
+      if (currentDepth === 0) break
+    }
+  }
+
+  return ancestors
+}
+
+/**
+ * Initial branch expansion: top-level branches (depth 0 with children) start open,
+ * second-level branches closed.
+ */
+export function getInitialExpandedAnchors(entries: OutlineEntry[]): Set<string> {
+  const expanded = new Set<string>()
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    if (entry.depth === 0) {
+      if (i + 1 < entries.length && entries[i + 1].depth > entry.depth) {
+        expanded.add(entry.anchor)
       }
     }
   }
-  return entries.filter((entry, index) => entry.depth <= 1 || included.has(index))
+
+  return expanded
+}
+
+/**
+ * During search, expands all ancestor paths leading to matching headings
+ * so matching results are immediately visible without hidden matches.
+ */
+export function getSearchExpandedAnchors(entries: OutlineEntry[], query: string): Set<string> {
+  const expanded = new Set<string>()
+  const term = query.trim().toLocaleLowerCase()
+  if (!term) return expanded
+
+  for (const entry of entries) {
+    if (entry.title.toLocaleLowerCase().includes(term)) {
+      const ancestors = getAncestorAnchors(entries, entry.anchor)
+      for (const anchor of ancestors) {
+        expanded.add(anchor)
+      }
+    }
+  }
+
+  return expanded
+}
+
+/**
+ * Generates a deterministic, collision-free DOM id from an anchor string
+ * suitable for aria-controls and sublist containers.
+ */
+export function outlineSublistId(anchor: string): string {
+  const normalized = anchor.startsWith('#') ? anchor.slice(1) : anchor
+  if (!normalized) {
+    return 'page-toc-sub-_empty_'
+  }
+  const encoded = Array.from(normalized)
+    .map(char => {
+      const code = char.codePointAt(0)!
+      if (
+        (code >= 0x30 && code <= 0x39) || // 0-9
+        (code >= 0x41 && code <= 0x5a) || // A-Z
+        (code >= 0x61 && code <= 0x7a) || // a-z
+        code === 0x2d // -
+      ) {
+        return char
+      }
+      return `_${code.toString(16)}_`
+    })
+    .join('')
+  return `page-toc-sub-${encoded}`
+}
+
+/**
+ * Determines if a branch is effectively expanded given the baseline expansion,
+ * active search matches, and search-specific user overrides.
+ */
+export function isBranchEffectivelyExpanded(
+  anchor: string,
+  baselineExpanded: Set<string>,
+  searchExpanded?: Set<string> | null,
+  searchOverrides?: Map<string, boolean> | null
+): boolean {
+  if (searchOverrides && searchOverrides.has(anchor)) {
+    return Boolean(searchOverrides.get(anchor))
+  }
+  if (searchExpanded && searchExpanded.has(anchor)) {
+    return true
+  }
+  return baselineExpanded.has(anchor)
 }
 
 export function activeOutlineIndex(positions: number[], scrollTop: number): number {
@@ -49,7 +202,12 @@ export function activeOutlineIndex(positions: number[], scrollTop: number): numb
 }
 
 /** Cache geometry on layout changes; scrolling only performs a binary search. */
-export function trackPageOutline(container: HTMLElement, entries: OutlineEntry[], onActive: (anchor: string) => void, onProgress?: (progress: number) => void): () => void {
+export function trackPageOutline(
+  container: HTMLElement,
+  entries: OutlineEntry[],
+  onActive: (anchor: string) => void,
+  onProgress?: (progress: number) => void
+): () => void {
   let headings: { anchor: string; element: HTMLElement }[] = []
   let positions: number[] = []
   let frame: number | null = null

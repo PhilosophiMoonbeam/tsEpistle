@@ -1,12 +1,12 @@
-import _ from 'lodash'
-import chalk from 'chalk'
-import cfgHelper from '../helpers/config.ts'
 import fs from 'node:fs'
 import path from 'node:path'
+import chalk from 'chalk'
 import * as yaml from 'js-yaml'
-import regex from '../app/regex.ts'
-import { loadProductMetadata } from './product.ts'
+import _ from 'lodash'
 import type { ProductMetadata } from '../../shared/product.ts'
+import regex from '../app/regex.ts'
+import cfgHelper from '../helpers/config.ts'
+import { loadProductMetadata } from './product.ts'
 
 interface AppConfig {
   [key: string]: unknown
@@ -78,6 +78,15 @@ function errorMessage(error: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+const INSTALLATION_CONFIGURATION_KEYS = ['auth', 'certs', 'sessionSecret', 'title'] as const
+
+function hasSigningConfiguration(config: Record<string, unknown>): boolean {
+  if (typeof config.sessionSecret !== 'string' || config.sessionSecret.length === 0 || !isRecord(config.certs)) return false
+  return (
+    typeof config.certs.public === 'string' && config.certs.public.length > 0 && typeof config.certs.private === 'string' && config.certs.private.length > 0
+  )
 }
 
 function isAppConfig(value: unknown): value is AppConfig {
@@ -186,7 +195,10 @@ const configService: ConfigService = {
   async loadFromDb() {
     const wiki = getWiki()
     const conf = await wiki.models.settings.getConfig()
-    if (conf) {
+    if (conf && INSTALLATION_CONFIGURATION_KEYS.some(key => Object.hasOwn(conf, key))) {
+      if (!hasSigningConfiguration(conf)) {
+        throw new Error('Database configuration is incomplete: authentication signing material is missing.')
+      }
       const canonicalConfig = wiki.config
       const reloadedConfig = mergeSavedConfiguration(conf, canonicalConfig) as AppConfig
       // An omitted publication-window field means no schedule, not the previous notice’s window.

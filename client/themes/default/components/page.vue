@@ -80,6 +80,7 @@
             status-indicator.ml-3(negative, pulse)
         v-divider
       v-container.page-hero(
+        ref='pageHero'
         fluid
         :class='{ "page-hero--with-toc": tocPosition !== `off` }'
       )
@@ -97,9 +98,26 @@
                 v-chip.page-visibility.ml-3(v-if="visibility === 'private'", size="small", color='warning', variant='tonal') {{$t('common:page.private')}}
               p.page-description(v-if='description') {{description}}
               .page-document-meta
-                template(v-if='updatedAt')
-                  v-icon(icon='mdi-clock-outline', size='14', aria-hidden='true')
-                  span Updated {{ $helpers.formatMoment(updatedAt, 'calendar') }}
+                .page-document-provenance
+                  .page-document-row.page-document-row--date(v-if='updatedAt')
+                    v-tooltip(location='top', v-if='canViewHistory')
+                      template(v-slot:activator='{ props }')
+                        v-btn.page-history-btn(
+                          v-bind='props'
+                          :href='pageHistoryUrl'
+                          @click='historyLinkClicked($event)'
+                          :aria-label='$t(`common:page.viewHistory`)'
+                          icon='mdi-history'
+                          variant='text'
+                          size='x-small'
+                          density='compact'
+                        )
+                      span {{ $t('common:page.viewHistory') }}
+                    time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt }) }}
+                  .page-document-row.page-document-row--author(v-if='hasAuthor')
+                    span.page-document-author
+                      | {{ $t('common:page.byAuthor', { author: '' }) }}
+                      bdi.page-provenance-author {{ authorName }}
                 v-btn.page-focus-control(v-if='!printView', variant='text', size='small', :prepend-icon='readerFocus ? `mdi-arrow-collapse-horizontal` : `mdi-book-open-page-variant-outline`', :aria-pressed='readerFocus', @click='toggleReaderFocus') {{ $t(readerFocus ? 'common:page.exitFocus' : 'common:page.focusReading') }}
 
             .page-edit-shortcuts(
@@ -130,10 +148,11 @@
           #page-mobile-tools.page-mobile-tools
 
           v-col.page-col-sd(
+            ref='desktopRailCol'
             cols='12'
             :class='[tocPosition === `right` ? `page-col-sd--toc-right` : `page-col-sd--toc-left`, { "page-col-sd--with-toc": tocPosition !== `off`, "page-col-sd--toc-off": tocPosition === `off` }]'
             )
-            #page-desktop-rail.page-desktop-rail
+            #page-desktop-rail.page-desktop-rail(ref='desktopRail')
 
             //- v-card.mb-5
             //-   .pa-5
@@ -280,7 +299,7 @@
             v-alert.page-page-context.mb-5(v-if='!isPublished', color='warning', variant="outlined", icon='mdi-minus-circle', density="compact")
               .text-body-small {{$t('common:page.unpublishedWarning')}}
             site-banner.page-page-context(:banner='siteBanner')
-            article.contents(ref='container', :id='pageArticleId', tabindex='-1', :aria-labelledby='pageTitleId')
+            article.contents(ref='container', :id='pageArticleId', tabindex='-1', :aria-labelledby='pageTitleId', :dir='$vuetify.locale.isRtl ? `rtl` : `ltr`')
               template(v-if='$slots.contents')
                 slot(name='contents')
               async-state(
@@ -520,25 +539,18 @@
                   clearable
                   @keydown.esc.stop='tocQuery = ``'
                 )
-                .page-outline-density(v-if='hasDetailedOutline && !tocQuery?.trim()', role='group', :aria-label='$t(`common:page.outlineDetail`)')
-                  button(type='button', :aria-pressed='!tocShowAll', @click='tocShowAll = false') {{$t('common:page.outlineOverview')}}
-                  button(type='button', :aria-pressed='tocShowAll', @click='tocShowAll = true') {{$t('common:page.outlineAll')}}
-                .page-toc-filter-empty(v-if='tocQuery && !tocVisible.length', role='status') {{$t('common:page.noMatchingSections')}}
-                v-list.py-2(v-if='tocFlattened.length', density="compact", nav, role='group', tabindex='0', :aria-label='$t(`common:page.toc`)')
-                  v-list-item.page-toc-item(
-                    v-for='tocItem in tocVisible'
-                    :key='tocItem.anchor'
-                    :href='tocItem.anchor'
-                    :active='activeAnchor === tocItem.anchor'
-                    :aria-current='activeAnchor === tocItem.anchor ? `location` : undefined'
-                    :style='`--toc-indent: ${Math.min(tocItem.depth, 5) * 14}px`'
-                    @click='tocLinkClicked($event, tocItem.anchor)'
-                    )
-                    template(v-slot:prepend)
-                      v-icon.page-toc-item-marker(size="x-small") {{ $vuetify.locale.isRtl ? `mdi-chevron-left` : `mdi-chevron-right` }}
-                    v-list-item-title.page-toc-item-title(
-                      :class='tocItem.depth === 0 ? `page-toc-item-title--depth-0` : tocItem.depth === 1 ? `page-toc-item-title--depth-1` : `page-toc-item-title--depth-2-plus`'
-                      ) {{tocItem.title}}
+                .page-toc-filter-empty(v-if='tocQuery && !tocTreeVisible.length', role='status') {{$t('common:page.noMatchingSections')}}
+                .page-toc-tree-wrap(v-else-if='tocTreeVisible.length')
+                  page-toc-tree(
+                    :nodes='tocTreeVisible'
+                    :active-anchor='activeAnchor'
+                    :is-expanded='isBranchExpanded'
+                    :has-active-descendant='hasActiveDescendant'
+                    :on-toggle='toggleBranch'
+                    :on-navigate='tocLinkClicked'
+                    :is-rtl='$vuetify.locale.isRtl'
+                    :t='$t'
+                  )
                 .page-toc-empty(v-else)
                   v-icon(aria-hidden='true', size='small') mdi-format-list-bulleted
                   span.text-body-small {{$t('common:page.noSections')}}
@@ -606,25 +618,6 @@
                         v-icon(size="small") mdi-comment-plus
                     span {{$t('common:comments.newComment')}}
 
-            v-card.page-author-card.mb-5
-              .pa-5
-                .text-label-small.d-flex
-                  span {{$t('common:page.lastEditedBy')}}
-                  v-spacer
-                  v-tooltip(location="right", v-if='isAuthenticated')
-                    template(v-slot:activator='{ props }')
-                      v-btn.btn-animate-edit(
-                        icon
-                        :href='(visibility === `private` ? `/h/_private` : `/h`) + `/` + locale + `/` + path'
-                        v-bind='props'
-                        size="x-small"
-                        v-if='hasReadHistoryPermission'
-                        :aria-label='$t(`common:header.history`)'
-                        )
-                        v-icon(color='accent', size="small") mdi-history
-                    span {{$t('common:header.history')}}
-                .page-author-card-name.text-body-medium {{ authorName }}
-                .page-author-card-date.text-body-small.text-medium-emphasis {{ $helpers.formatMoment(updatedAt, 'calendar') }}
     nav-footer
     notify
     search-results
@@ -794,7 +787,7 @@
 </template>
 
 <script lang='ts'>
-import { defineComponent, markRaw, mergeProps, type PropType } from 'vue'
+import { defineComponent, h, markRaw, mergeProps, type PropType, type VNode } from 'vue'
 import i18next from 'i18next'
 import { useGoTo } from 'vuetify'
 import AsyncState from '@/components/common/async-state.vue'
@@ -807,7 +800,17 @@ import Prism from '../../../libs/prism/setup'
 import mermaid from 'mermaid'
 import { wikiStore } from '@/store/index.ts'
 import _ from 'lodash'
-import { filterOutline, overviewOutline, trackPageOutline } from '@/helpers/page-outline'
+import {
+  type OutlineNode,
+  buildOutlineTree,
+  filterOutlineTree,
+  getAncestorAnchors,
+  getInitialExpandedAnchors,
+  getSearchExpandedAnchors,
+  isBranchEffectivelyExpanded,
+  outlineSublistId,
+  trackPageOutline
+} from '@/helpers/page-outline'
 import ClipboardJS from 'clipboard'
 import boot from '../../../modules/boot.ts'
 import {
@@ -922,12 +925,145 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
   }
 })
 
+const PageTocTree = defineComponent({
+  name: 'PageTocTree',
+  props: {
+    nodes: { type: Array as PropType<OutlineNode[]>, required: true },
+    activeAnchor: { type: String, default: '' },
+    isExpanded: { type: Function as PropType<(anchor: string) => boolean>, required: true },
+    hasActiveDescendant: { type: Function as PropType<(anchor: string) => boolean>, required: true },
+    onToggle: { type: Function as PropType<(anchor: string) => void>, required: true },
+    onNavigate: { type: Function as PropType<(event: MouseEvent, anchor: string) => void>, required: true },
+    isRtl: { type: Boolean, default: false },
+    t: { type: Function as PropType<(key: string, params?: Record<string, unknown>) => string>, required: true }
+  },
+  setup(props) {
+    const renderNode = (node: OutlineNode): VNode => {
+      const hasChildren = Boolean(node.children && node.children.length > 0)
+      const expanded = hasChildren && props.isExpanded(node.anchor)
+      const isActive = props.activeAnchor === node.anchor
+      const isDescendantActive = !expanded && props.hasActiveDescendant(node.anchor)
+      const sublistId = outlineSublistId(node.anchor)
+
+      const chevronIcon = expanded
+        ? 'mdi-chevron-down'
+        : props.isRtl
+        ? 'mdi-chevron-left'
+        : 'mdi-chevron-right'
+
+      const visualDepth = Math.min(node.depth, 2)
+      const titleClass =
+        visualDepth === 0
+          ? 'page-toc-item-title--depth-0'
+          : visualDepth === 1
+          ? 'page-toc-item-title--depth-1'
+          : 'page-toc-item-title--depth-2-plus'
+
+      const disclosureControl = hasChildren
+        ? h(
+            'button',
+            {
+              type: 'button',
+              class: 'page-toc-branch-toggle',
+              'aria-expanded': String(expanded),
+              'aria-controls': sublistId,
+              'aria-label': props.t(
+                expanded ? 'common:page.collapseSection' : 'common:page.expandSection',
+                { title: node.title }
+              ),
+              onClick: (e: MouseEvent) => {
+                e.stopPropagation()
+                props.onToggle(node.anchor)
+              },
+              onKeydown: (e: KeyboardEvent) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.stopPropagation()
+                  e.preventDefault()
+                  props.onToggle(node.anchor)
+                }
+              }
+            },
+            [h('i', { class: ['v-icon', 'notranslate', 'mdi', chevronIcon, 'page-toc-chevron'], 'aria-hidden': 'true' })]
+          )
+        : h('span', { class: 'page-toc-leaf-spacer', 'aria-hidden': 'true' })
+
+      const link = h(
+        'a',
+        {
+          href: node.anchor,
+          class: [
+            'page-toc-item',
+            isActive ? 'page-toc-item--active' : '',
+            isDescendantActive ? 'page-toc-item--descendant-active' : ''
+          ],
+          'aria-current': isActive ? 'location' : undefined,
+          onClick: (e: MouseEvent) => props.onNavigate(e, node.anchor)
+        },
+        [
+          h(
+            'span',
+            {
+              class: ['page-toc-item-title', titleClass]
+            },
+            node.title
+          )
+        ]
+      )
+
+      const row = h(
+        'div',
+        {
+          class: 'page-toc-row',
+          style: {
+            '--toc-indent': `${visualDepth * 14}px`
+          }
+        },
+        [disclosureControl, link]
+      )
+
+      const sublist: VNode | null = hasChildren
+        ? h(
+            'ul',
+            {
+              id: sublistId,
+              class: 'page-toc-sublist',
+              style: { display: expanded ? undefined : 'none' },
+              'aria-hidden': String(!expanded)
+            },
+            node.children.map(renderNode)
+          )
+        : null
+
+      return h(
+        'li',
+        {
+          key: node.anchor,
+          class: 'page-toc-node'
+        },
+        [row, sublist]
+      )
+    }
+
+    return () =>
+      h(
+        'ul',
+        {
+          class: 'page-toc-list',
+          role: 'list',
+          'aria-label': props.t('common:page.toc')
+        },
+        props.nodes.map(renderNode)
+      )
+  }
+})
+
 export default defineComponent({
   components: {
     AsyncState,
     NavSidebar,
     StatusIndicator,
     SiteBanner,
+    PageTocTree,
   },
   setup () {
     return {
@@ -1043,7 +1179,11 @@ export default defineComponent({
       navShown: initialWidth >= 1280,
       tocExpanded: initialWidth >= 1280,
       tocQuery: '',
-      tocShowAll: false,
+      expandedAnchors: new Set<string>(),
+      collapsedByUser: new Set<string>(),
+      preSearchExpanded: null as Set<string> | null,
+      preSearchCollapsedByUser: null as Set<string> | null,
+      searchOverrides: new Map<string, boolean>(),
       readerFocus: false,
       readingProgress: 0,
       activeAnchor: '',
@@ -1088,11 +1228,27 @@ export default defineComponent({
       winWidth: initialWidth,
       resizeHandler: null as (() => void) | null,
       loadHandler: null as (() => void) | null,
+      beforePrintHandler: null as (() => void) | null,
       afterPrintHandler: null as (() => void) | null,
       printViewBeforePrint: null as boolean | null,
+      printDetailsState: null as Map<HTMLDetailsElement, boolean> | null,
       contentExtensionCleanup: null as (() => void) | null,
       routeAnimationAbortController: null as AbortController | null,
-      scrollAnimationFrame: null as number | null
+      scrollAnimationFrame: null as number | null,
+      railScrollHandler: null as (() => void) | null,
+      railRafId: 0,
+      railSettleRafId: 0,
+      railSettleFrameCount: 0,
+      railSettleStableFrames: 0,
+      lastSampledRailTop: -1,
+      railSettleHandler: null as (() => void) | null,
+      lastRailMaxHeight: -1,
+      railStickyTop: 80,
+      railSpacingGap: 8,
+      cachedRailEl: null as HTMLElement | null,
+      navFooterEl: null as HTMLElement | null,
+      cachedHeaderEl: null as HTMLElement | null,
+      railResizeObserver: null as ResizeObserver | null
     }
   },
   computed: {
@@ -1137,16 +1293,33 @@ export default defineComponent({
       return decodeBase64Json<TableOfContentsNode[]>(this.toc)
     },
     tocFlattened (): FlattenedTableOfContentsNode[] {
-      return flattenTableOfContents(this.tocDecoded)
+      return flattenTableOfContents(this.tocDecoded).filter(node => node.depth <= 1)
     },
-    tocVisible (): FlattenedTableOfContentsNode[] {
-      if (this.tocQuery?.trim()) return filterOutline(this.tocFlattened, this.tocQuery)
-      return this.hasDetailedOutline && !this.tocShowAll
-        ? overviewOutline(this.tocFlattened, this.activeAnchor)
-        : this.tocFlattened
+    tocTree (): OutlineNode[] {
+      return buildOutlineTree(this.tocFlattened)
     },
-    hasDetailedOutline (): boolean {
-      return this.tocFlattened.length > 20 && this.tocFlattened.some(entry => entry.depth > 1)
+    tocTreeVisible (): OutlineNode[] {
+      if (this.tocQuery?.trim()) return filterOutlineTree(this.tocTree, this.tocQuery)
+      return this.tocTree
+    },
+    formattedUpdatedAt (): string {
+      if (!this.updatedAt) return ''
+      const formatted = this.$helpers.formatMoment(this.updatedAt, 'calendar')
+      return typeof formatted === 'string' ? formatted : String(formatted ?? '')
+    },
+    accessibleUpdatedAt (): string {
+      if (!this.updatedAt) return ''
+      const formatted = this.$helpers.formatMoment(this.updatedAt, 'LLLL')
+      return typeof formatted === 'string' ? formatted : String(formatted ?? '')
+    },
+    hasAuthor (): boolean {
+      return Boolean(this.authorName && this.authorName.trim() && this.authorName.toLowerCase() !== 'unknown')
+    },
+    canViewHistory (): boolean {
+      return Boolean(this.isAuthenticated && this.hasReadHistoryPermission)
+    },
+    pageHistoryUrl (): string {
+      return (this.visibility === 'private' ? '/h/_private' : '/h') + '/' + this.locale + '/' + this.path
     },
     isTocMobile (): boolean {
       return this.winWidth <= 599
@@ -1203,6 +1376,43 @@ export default defineComponent({
     }
   },
   watch: {
+    tocQuery (newQuery: string, oldQuery: string) {
+      const hadQuery = Boolean(oldQuery?.trim())
+      const hasQuery = Boolean(newQuery?.trim())
+      if (hasQuery && !hadQuery) {
+        this.preSearchExpanded = new Set(this.expandedAnchors)
+        this.preSearchCollapsedByUser = new Set(this.collapsedByUser)
+        this.searchOverrides.clear()
+      } else if (!hasQuery && hadQuery) {
+        this.searchOverrides.clear()
+        if (this.preSearchExpanded) {
+          this.expandedAnchors = new Set(this.preSearchExpanded)
+          this.preSearchExpanded = null
+        }
+        if (this.preSearchCollapsedByUser) {
+          this.collapsedByUser = new Set(this.preSearchCollapsedByUser)
+          this.preSearchCollapsedByUser = null
+        }
+      } else if (hasQuery && hadQuery && newQuery !== oldQuery) {
+        this.searchOverrides.clear()
+      }
+    },
+    tocFlattened: {
+      immediate: true,
+      handler (entries: FlattenedTableOfContentsNode[]) {
+        this.expandedAnchors = getInitialExpandedAnchors(entries)
+        this.collapsedByUser = new Set()
+        this.preSearchExpanded = null
+        this.preSearchCollapsedByUser = null
+        this.searchOverrides.clear()
+      }
+    },
+    tocPosition () {
+      this.$nextTick(() => {
+        this.updateDesktopRailMeasurements(true)
+        this.startDesktopRailSettling()
+      })
+    },
     navigationKey: {
       flush: 'post',
       async handler(value: number, previous: number) {
@@ -1211,6 +1421,8 @@ export default defineComponent({
         this.resetPageRouteState()
         await this.$nextTick()
         this.refreshPageContent()
+        this.updateDesktopRailMeasurements(true)
+        this.startDesktopRailSettling()
         this.animatePageRoute()
         this.focusPageTitle()
         if (this.isAuthenticated) {
@@ -1244,10 +1456,36 @@ export default defineComponent({
 
     // -> Check side navigation visibility
     this.handleSideNavVisibility()
-    this.resizeHandler = () => this.handleSideNavVisibility()
+    this.resizeHandler = () => {
+      this.handleSideNavVisibility()
+      this.updateDesktopRailMeasurements(true)
+      this.startDesktopRailSettling()
+    }
     window.addEventListener('resize', this.resizeHandler)
 
+    this.railScrollHandler = () => this.onDesktopRailScroll()
+    window.addEventListener('scroll', this.railScrollHandler, { passive: true })
+
+    this.setupDesktopRailObserver()
+
     this.refreshPageContent()
+    this.$nextTick(() => {
+      this.setupDesktopRailObserver()
+      this.updateDesktopRailMeasurements(true)
+      this.startDesktopRailSettling()
+    })
+
+    if (typeof document !== 'undefined' && 'fonts' in document && document.fonts?.ready) {
+      document.fonts.ready.then(() => {
+        this.updateDesktopRailMeasurements(true)
+        this.startDesktopRailSettling()
+      }).catch(() => {})
+    }
+
+    this.beforePrintHandler = () => this.preparePrintView()
+    this.afterPrintHandler = () => this.restorePrintView()
+    window.addEventListener('beforeprint', this.beforePrintHandler)
+    window.addEventListener('afterprint', this.afterPrintHandler)
 
     // -> Handle anchor scrolling
     if (window.location.hash && window.location.hash.length > 1) {
@@ -1266,7 +1504,27 @@ export default defineComponent({
   },
   beforeUnmount () {
     if (this.resizeHandler) window.removeEventListener('resize', this.resizeHandler)
+    if (this.railScrollHandler) window.removeEventListener('scroll', this.railScrollHandler)
+    this.railScrollHandler = null
+    if (this.railRafId) {
+      window.cancelAnimationFrame(this.railRafId)
+      this.railRafId = 0
+    }
+    this.cancelDesktopRailSettling()
+    this.railSettleHandler = null
+    if (this.cachedRailEl) {
+      this.cachedRailEl.style.removeProperty('--page-desktop-rail-max-height')
+      this.cachedRailEl = null
+    }
+    this.navFooterEl = null
+    if (this.railResizeObserver) {
+      this.railResizeObserver.disconnect()
+      this.railResizeObserver = null
+    }
+    this.cachedHeaderEl = null
     if (this.loadHandler) window.removeEventListener('load', this.loadHandler)
+    if (this.beforePrintHandler) window.removeEventListener('beforeprint', this.beforePrintHandler)
+    if (this.afterPrintHandler) window.removeEventListener('afterprint', this.afterPrintHandler)
     this.outlineCleanup?.()
     this.restorePrintView()
     this.routeAnimationAbortController?.abort()
@@ -1323,9 +1581,13 @@ export default defineComponent({
       this.cancelScheduledScroll()
       this.tocExpanded = !this.isTocCompact
       this.tocQuery = ''
-      this.tocShowAll = false
       this.readingProgress = 0
       this.activeAnchor = ''
+      this.expandedAnchors = getInitialExpandedAnchors(this.tocFlattened)
+      this.collapsedByUser = new Set()
+      this.preSearchExpanded = null
+      this.preSearchCollapsedByUser = null
+      this.searchOverrides.clear()
 
       this.pageEditFab = false
       this.pageWatched = false
@@ -1376,7 +1638,7 @@ export default defineComponent({
         this.activeAnchor = anchor
         void this.$nextTick(() => {
           const active = this.$el.querySelector('.page-toc-item[aria-current="location"]') as HTMLElement | null
-          const list = active?.closest('.v-list') as HTMLElement | null
+          const list = (active?.closest('.page-toc-list') || active?.closest('.page-toc-content')) as HTMLElement | null
           if (!active || !list || list.contains(document.activeElement)) return
           const row = active.getBoundingClientRect()
           const viewport = list.getBoundingClientRect()
@@ -1412,9 +1674,42 @@ export default defineComponent({
     toggleToc () {
       this.tocExpanded = !this.tocExpanded
     },
+    isBranchExpanded (anchor: string): boolean {
+      const searchExpanded = this.tocQuery?.trim()
+        ? getSearchExpandedAnchors(this.tocFlattened, this.tocQuery)
+        : null
+      return isBranchEffectivelyExpanded(
+        anchor,
+        this.expandedAnchors,
+        searchExpanded,
+        this.tocQuery?.trim() ? this.searchOverrides : null
+      )
+    },
+    hasActiveDescendant (anchor: string): boolean {
+      if (!this.activeAnchor || this.isBranchExpanded(anchor)) return false
+      const ancestors = getAncestorAnchors(this.tocFlattened, this.activeAnchor)
+      return ancestors.includes(anchor)
+    },
+    toggleBranch (anchor: string) {
+      const currentlyExpanded = this.isBranchExpanded(anchor)
+      const nextExpanded = !currentlyExpanded
+      if (this.tocQuery?.trim()) {
+        this.searchOverrides.set(anchor, nextExpanded)
+      } else {
+        if (currentlyExpanded) {
+          this.expandedAnchors.delete(anchor)
+          this.collapsedByUser.add(anchor)
+        } else {
+          this.expandedAnchors.add(anchor)
+          this.collapsedByUser.delete(anchor)
+        }
+      }
+    },
     tocLinkClicked (event: MouseEvent, anchor: string) {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-      this.tocExpanded = false
+      if (this.isTocCompact) {
+        this.tocExpanded = false
+      }
       event.preventDefault()
       this.scrollToPageAnchor(anchor)
     },
@@ -1782,20 +2077,29 @@ export default defineComponent({
         })
       }
     },
+    preparePrintView () {
+      if (this.printViewBeforePrint === null) {
+        this.printViewBeforePrint = this.printView
+      }
+      this.printView = true
+      if (this.printDetailsState === null) {
+        const container = this.$refs.container as HTMLElement | undefined
+        const details = Array.from(container?.querySelectorAll<HTMLDetailsElement>('details') ?? [])
+        this.printDetailsState = markRaw(new Map(details.map(detail => [detail, detail.open])))
+        for (const detail of details) detail.open = true
+      }
+    },
     print () {
       this.restorePrintView()
-      this.printViewBeforePrint = this.printView
-      this.printView = true
-      this.afterPrintHandler = () => this.restorePrintView()
-      window.addEventListener('afterprint', this.afterPrintHandler, { once: true })
+      this.preparePrintView()
       this.$nextTick(() => {
         window.print()
       })
     },
     restorePrintView () {
-      if (this.afterPrintHandler) {
-        window.removeEventListener('afterprint', this.afterPrintHandler)
-        this.afterPrintHandler = null
+      if (this.printDetailsState !== null) {
+        for (const [detail, open] of this.printDetailsState) detail.open = open
+        this.printDetailsState = null
       }
       if (this.printViewBeforePrint !== null) {
         this.printView = this.printViewBeforePrint
@@ -1804,6 +2108,11 @@ export default defineComponent({
     },
     pageEdit () {
       emitPageEdit()
+    },
+    historyLinkClicked (event: MouseEvent) {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      event.preventDefault()
+      this.pageHistory()
     },
     pageHistory () {
       emitPageHistory()
@@ -1843,7 +2152,186 @@ export default defineComponent({
       if (focusNewComment) {
         document.querySelector<HTMLElement>('#discussion-new')?.focus()
       }
-    }
+    },
+    getPageHeaderElement(): HTMLElement | null {
+      const heroRef = this.$refs.pageHero as { $el?: HTMLElement } | HTMLElement | undefined
+      if (heroRef && '$el' in heroRef && heroRef.$el instanceof HTMLElement) {
+        return heroRef.$el
+      }
+      if (heroRef instanceof HTMLElement) {
+        return heroRef
+      }
+      if (typeof document !== 'undefined') {
+        return (document.querySelector('.page-hero') as HTMLElement | null)
+          ?? (document.querySelector('.page-header-section') as HTMLElement | null)
+      }
+      return null
+    },
+    setupDesktopRailObserver(): void {
+      if (typeof window === 'undefined' || typeof ResizeObserver === 'undefined') return
+
+      if (!this.railResizeObserver) {
+        this.railResizeObserver = new ResizeObserver(() => {
+          this.updateDesktopRailMeasurements(true)
+          this.startDesktopRailSettling()
+        })
+      }
+
+      const headerEl = (this.cachedHeaderEl && this.cachedHeaderEl.isConnected)
+        ? this.cachedHeaderEl
+        : this.getPageHeaderElement()
+
+      if (headerEl && headerEl !== this.cachedHeaderEl) {
+        if (this.cachedHeaderEl) {
+          try {
+            this.railResizeObserver.unobserve(this.cachedHeaderEl)
+          } catch {}
+        }
+        this.cachedHeaderEl = headerEl
+        this.railResizeObserver.observe(headerEl)
+      }
+    },
+    getDesktopRailElement(): HTMLElement | null {
+      const colRef = this.$refs.desktopRailCol as { $el?: HTMLElement } | HTMLElement | undefined
+      if (colRef && '$el' in colRef && colRef.$el instanceof HTMLElement) {
+        return colRef.$el
+      }
+      if (colRef instanceof HTMLElement) {
+        return colRef
+      }
+      const innerRef = this.$refs.desktopRail as HTMLElement | undefined
+      if (innerRef instanceof HTMLElement) {
+        return innerRef.closest('.page-col-sd') ?? innerRef.parentElement
+      }
+      if (typeof document !== 'undefined') {
+        return document.querySelector('.page-col-sd')
+      }
+      return null
+    },
+    onDesktopRailScroll(): void {
+      if (this.railRafId) return
+      this.railRafId = window.requestAnimationFrame(() => {
+        this.railRafId = 0
+        this.updateDesktopRailMeasurements(false)
+      })
+    },
+    cancelDesktopRailSettling(): void {
+      if (this.railSettleRafId) {
+        window.cancelAnimationFrame(this.railSettleRafId)
+        this.railSettleRafId = 0
+      }
+    },
+    startDesktopRailSettling(): void {
+      if (typeof window === 'undefined') return
+      if (window.innerWidth < 1280 || this.tocPosition === 'off') {
+        this.cancelDesktopRailSettling()
+        return
+      }
+
+      this.cancelDesktopRailSettling()
+      this.railSettleFrameCount = 0
+      this.railSettleStableFrames = 0
+      this.lastSampledRailTop = -1
+
+      if (!this.railSettleHandler) {
+        this.railSettleHandler = () => this.stepDesktopRailSettling()
+      }
+      this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler)
+    },
+    stepDesktopRailSettling(): void {
+      this.railSettleRafId = 0
+      if (typeof window === 'undefined') return
+      if (window.innerWidth < 1280 || this.tocPosition === 'off') return
+
+      const railEl = (this.cachedRailEl && this.cachedRailEl.isConnected)
+        ? this.cachedRailEl
+        : this.getDesktopRailElement()
+      this.cachedRailEl = railEl
+      if (!railEl) {
+        this.railSettleFrameCount++
+        if (this.railSettleFrameCount < 120) {
+          this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler!)
+        }
+        return
+      }
+
+      const currentTop = railEl.getBoundingClientRect().top
+      this.railSettleFrameCount++
+
+      const topChanged = this.lastSampledRailTop === -1 || Math.abs(currentTop - this.lastSampledRailTop) >= 0.5
+      if (topChanged) {
+        this.lastSampledRailTop = currentTop
+        this.railSettleStableFrames = 0
+        this.updateDesktopRailMeasurements(true)
+      } else {
+        this.railSettleStableFrames++
+      }
+
+      const MAX_SETTLE_FRAMES = 120
+      const MIN_SETTLE_FRAMES = 60
+      const STABLE_FRAMES_NEEDED = 15
+
+      const isStable = this.railSettleFrameCount >= MIN_SETTLE_FRAMES && this.railSettleStableFrames >= STABLE_FRAMES_NEEDED
+      const reachedMax = this.railSettleFrameCount >= MAX_SETTLE_FRAMES
+
+      if (!isStable && !reachedMax) {
+        this.railSettleRafId = window.requestAnimationFrame(this.railSettleHandler!)
+      } else {
+        this.updateDesktopRailMeasurements(true)
+      }
+    },
+    updateDesktopRailMeasurements(isResize = false): void {
+      if (typeof window === 'undefined') return
+
+      const railEl = (this.cachedRailEl && this.cachedRailEl.isConnected)
+        ? this.cachedRailEl
+        : this.getDesktopRailElement()
+      this.cachedRailEl = railEl
+      if (!railEl) return
+
+      if (window.innerWidth < 1280 || this.tocPosition === 'off') {
+        if (this.lastRailMaxHeight !== -1) {
+          railEl.style.removeProperty('--page-desktop-rail-max-height')
+          this.lastRailMaxHeight = -1
+        }
+        return
+      }
+
+      if (isResize || !this.navFooterEl || !this.navFooterEl.isConnected) {
+        this.navFooterEl = document.querySelector('.nav-footer')
+        const computed = getComputedStyle(railEl)
+        const parsedTop = parseFloat(computed.top)
+        this.railStickyTop = Number.isFinite(parsedTop) ? parsedTop : 80
+        const rawGap = computed.getPropertyValue('--wiki-space-2').trim()
+        let resolvedGap = 8
+        if (rawGap.endsWith('px')) {
+          const parsed = parseFloat(rawGap)
+          if (Number.isFinite(parsed) && parsed > 0) resolvedGap = parsed
+        } else if (rawGap.endsWith('rem')) {
+          const remVal = parseFloat(rawGap)
+          if (Number.isFinite(remVal) && remVal > 0) {
+            const rootFontSize = typeof document !== 'undefined'
+              ? (parseFloat(getComputedStyle(document.documentElement).fontSize) || 16)
+              : 16
+            const derived = remVal * rootFontSize
+            if (Number.isFinite(derived) && derived > 0) resolvedGap = derived
+          }
+        }
+        this.railSpacingGap = Number.isFinite(resolvedGap) && resolvedGap > 0 ? resolvedGap : 8
+      }
+
+      const footerTop = this.navFooterEl
+        ? this.navFooterEl.getBoundingClientRect().top
+        : (window.innerHeight - 24)
+      const railRect = railEl.getBoundingClientRect()
+      const effectiveRailTop = Math.max(railRect.top, this.railStickyTop)
+      const calculatedMaxHeight = Math.max(0, Math.floor(footerTop - effectiveRailTop - this.railSpacingGap))
+
+      if (this.lastRailMaxHeight !== calculatedMaxHeight) {
+        this.lastRailMaxHeight = calculatedMaxHeight
+        railEl.style.setProperty('--page-desktop-rail-max-height', `${calculatedMaxHeight}px`)
+      }
+    },
   }
 })
 </script>
@@ -1891,9 +2379,48 @@ export default defineComponent({
 }
 
 .page-document-meta {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
   margin-block-start: .875rem;
   font-size: .75rem;
+  line-height: 1.4;
+  gap: var(--wiki-space-3);
+}
+
+.page-document-provenance {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.page-document-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.page-document-row--date {
+  color: rgb(var(--v-theme-on-surface));
+  font-weight: 550;
+}
+
+.page-document-row--author {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 68%, transparent);
+}
+
+.page-history-btn {
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+  padding: 0 !important;
+  color: var(--wiki-accent-ink) !important;
+  margin-inline-end: 2px;
+
+  .v-icon {
+    font-size: 15px !important;
+  }
 }
 
 .page-toc-heading {
@@ -2002,8 +2529,10 @@ export default defineComponent({
 }
 
 .page-nav-toggle {
-  inset-block-end: calc(var(--wiki-footer-height) + env(safe-area-inset-bottom) + var(--wiki-space-4)) !important;
-  inset-inline-start: var(--wiki-space-5) !important;
+  inset-block-start: auto !important;
+  inset-inline-end: auto !important;
+  inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + var(--wiki-grid-size) + 24px) !important;
+  inset-inline-start: calc(env(safe-area-inset-left) + var(--wiki-space-5)) !important;
 }
 
 .page-nav-toggle--open {
@@ -2011,9 +2540,19 @@ export default defineComponent({
 }
 
 .page-return-top {
-  right: calc(env(safe-area-inset-right) + var(--wiki-space-5)) !important;
-  bottom: calc(var(--v-layout-bottom, 0px) + var(--wiki-grid-size) + var(--wiki-space-6)) !important;
-  left: auto !important;
+  inset-block-start: auto !important;
+  inset-inline-start: auto !important;
+  inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + var(--wiki-grid-size) + 24px) !important;
+  inset-inline-end: calc(env(safe-area-inset-right) + var(--wiki-space-5)) !important;
+}
+
+.is-rtl {
+  .page-nav-toggle {
+    inset-inline-start: calc(env(safe-area-inset-right) + var(--wiki-space-5)) !important;
+  }
+  .page-return-top {
+    inset-inline-end: calc(env(safe-area-inset-left) + var(--wiki-space-5)) !important;
+  }
 }
 
 .page-breadcrumb-bar {
@@ -2071,7 +2610,8 @@ export default defineComponent({
 
 .page-hero {
   position: relative;
-  overflow: hidden;
+  z-index: 2;
+  overflow: visible;
   min-height: 0;
   padding: 0 !important;
   background: rgb(var(--v-theme-surface));
@@ -2084,12 +2624,15 @@ export default defineComponent({
 
 .page-header-section {
   position: relative;
+  z-index: 2;
+  overflow: visible;
   width: min(100%, var(--page-reader-shell-max));
   min-height: 0;
   margin-inline: auto;
 
   > .is-page-header {
     position: relative;
+    overflow: visible;
     display: grid;
     min-width: 0;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -2153,7 +2696,7 @@ export default defineComponent({
   }
 
   .page-edit-shortcuts {
-    position: static;
+    position: relative;
     z-index: 2;
     display: flex;
     justify-content: flex-end;
@@ -2209,24 +2752,27 @@ export default defineComponent({
     }
 
     .has-edit-shortcuts .page-edit-shortcuts {
+      position: relative;
+      z-index: 2;
       display: flex;
       width: min(100%, var(--page-header-action-reserve));
       min-width: 0;
       max-width: var(--page-header-action-reserve);
       grid-column: 2;
       justify-self: end;
-
+      transform: translateY(calc(var(--wiki-space-4) + 50%));
+      overflow: visible;
       .v-btn {
         min-width: 0;
         max-width: 100%;
         flex: 0 1 auto;
-        overflow: hidden;
+        overflow: visible;
       }
 
       .v-btn__content {
         min-width: 0;
         max-width: 100%;
-        overflow: hidden;
+        overflow: visible;
       }
 
       .v-btn .text-none {
@@ -2304,7 +2850,7 @@ export default defineComponent({
   position: sticky;
   top: calc(var(--v-layout-top, var(--wiki-grid-size)) + var(--wiki-space-4));
   align-self: flex-start;
-  max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - var(--wiki-space-12));
+  max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) - var(--wiki-space-6));
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-color: color-mix(in srgb, var(--wiki-accent-warm) 54%, transparent) transparent;
@@ -2373,6 +2919,66 @@ export default defineComponent({
 
 
 @media (min-width: 1280px) {
+  .page-col-sd {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    max-height: var(--page-desktop-rail-max-height, calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) - var(--wiki-space-6)));
+  }
+
+  .page-desktop-rail {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .page-shortcuts-card {
+    flex: 0 0 auto;
+  }
+
+  .page-toc-card {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .page-toc-heading,
+  .page-toc-filter,
+  .page-toc-filter-empty {
+    flex: 0 0 auto;
+  }
+
+  .page-toc-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .page-toc-tree-wrap {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .page-toc-content .page-toc-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .page-tags-card,
+  .page-comments-card {
+    flex: 0 0 auto;
+  }
+
   .page-col-sd--toc-left,
   .page-col-content--toc-right {
     order: 1;
@@ -2420,65 +3026,114 @@ export default defineComponent({
 
   .page-toc-content {
     min-width: 0;
-    .v-list {
-      max-height: min(52dvh, 32rem);
-      overflow-y: auto;
-      overscroll-behavior: contain;
-    }
-  }
-
-  .v-list {
-    padding:
-      var(--wiki-space-1)
-      var(--wiki-space-1)
-      var(--wiki-space-3);
-    background: transparent;
   }
 }
 
-.page-toc-empty {
-  display: grid;
-  min-height: var(--wiki-grid-size);
-  flex: 1 1 auto;
-  place-content: center;
-  justify-items: center;
-  gap: var(--wiki-space-2);
-  padding: var(--wiki-space-4);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
-  text-align: center;
+.page-toc-list,
+.page-toc-sublist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.page-toc-content .page-toc-list {
+  max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size)) - max(var(--v-layout-bottom, 0px), var(--wiki-footer-height)) - var(--wiki-space-12));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--wiki-space-1) var(--wiki-space-2) var(--wiki-space-2);
+}
+
+.page-toc-node {
+  margin: 0;
+  padding: 0;
+}
+
+.page-toc-row {
+  display: flex;
+  align-items: center;
+  min-height: 2rem;
+  padding-inline-start: var(--toc-indent, 0px);
+  gap: 2px;
+}
+
+.page-toc-branch-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--wiki-radius-xs);
+  background: transparent;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  cursor: pointer;
+  flex: 0 0 28px;
+
+  &:hover {
+    background: color-mix(in srgb, var(--wiki-accent-warm) 12%, transparent);
+    color: var(--wiki-accent-ink);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
+    outline-offset: 1px;
+  }
+
+  .v-icon,
+  .page-toc-chevron {
+    font-size: 16px !important;
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.page-toc-leaf-spacer {
+  display: inline-block;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
 }
 
 .page-toc-item {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
   min-height: calc(var(--wiki-control-height) - var(--wiki-space-2)) !important;
-  padding-inline:
-    calc(var(--wiki-space-1) + var(--toc-indent))
-    var(--wiki-space-2) !important;
-  border-inline-start: .125rem solid transparent;
+  padding: 2px var(--wiki-space-2);
+  border-inline-start: 2px solid transparent;
   border-radius: var(--wiki-radius-xs);
+  color: rgb(var(--v-theme-on-surface));
+  text-decoration: none;
   transition:
     background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
     border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
     color var(--wiki-motion-fast) var(--wiki-motion-ease);
 
-  &:hover,
-  &:focus-within {
-    border-inline-start-color: color-mix(in srgb, var(--wiki-accent-warm) 58%, transparent);
+  &:hover {
     background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
     color: var(--wiki-accent-ink);
   }
 
-  .v-list-item__prepend {
-    align-self: center;
+  &:focus-visible {
+    outline: 2px solid var(--wiki-focus-color, var(--wiki-accent-ink));
+    outline-offset: 1px;
   }
 
-  .v-list-item__prepend > .v-icon {
-    margin-inline-end: var(--wiki-space-1);
-    color: var(--wiki-accent-warm);
-    opacity: .58;
+  &[aria-current='location'],
+  &.page-toc-item--active {
+    border-inline-start-color: rgb(var(--v-theme-primary));
+    background: color-mix(in srgb, var(--wiki-accent-warm) 10%, transparent);
+    color: var(--wiki-accent-ink);
+    font-weight: 600;
   }
 
-  .v-list-item__prepend > .v-list-item__spacer {
-    width: var(--wiki-space-1);
+  &.page-toc-item--descendant-active {
+    border-inline-start-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 40%, transparent);
   }
 }
 
@@ -2486,8 +3141,7 @@ export default defineComponent({
   padding-inline: 0 !important;
   font-size: .8125rem;
   line-height: 1.4;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 .page-toc-item-title--depth-0 {
@@ -2503,8 +3157,7 @@ export default defineComponent({
 }
 
 .page-tags-card,
-.page-comments-card,
-.page-author-card {
+.page-comments-card {
   .pa-5 {
     padding: var(--wiki-space-4) !important;
   }
@@ -2534,49 +3187,63 @@ export default defineComponent({
   }
 }
 
-.page-author-card-name {
-  margin-top: var(--wiki-space-3);
-  color: rgb(var(--v-theme-on-surface));
-  font-weight: 650;
-  overflow-wrap: anywhere;
-}
-
-.page-author-card-date {
-  margin-top: var(--wiki-space-1);
-  line-height: 1.45;
-}
-
 .page-shortcuts-card {
-  --page-shortcut-target: calc(var(--wiki-control-height) - var(--wiki-space-1));
+  --page-shortcut-target: 28px;
 
   border: 1px solid var(--wiki-surface-border) !important;
   overflow: visible !important;
+  min-height: 32px;
 
   .v-toolbar {
     height: auto !important;
-    min-height: var(--page-shortcut-target);
+    min-height: 32px;
     background: transparent !important;
+    overflow: visible !important;
+    padding: 2px 4px !important;
   }
 
   .v-toolbar__content {
     display: flex;
     height: auto !important;
-    min-height: var(--page-shortcut-target);
-    flex-wrap: wrap;
-    gap: var(--wiki-space-1);
+    min-height: 28px;
+    flex-wrap: nowrap;
+    gap: 0;
     justify-content: center;
-    padding-inline: var(--wiki-space-1);
+    align-items: center;
+    padding: 0 !important;
+    overflow: visible !important;
   }
 
   .v-spacer {
     display: none;
   }
 
+  .v-badge {
+    display: inline-flex;
+    flex: 0 0 auto;
+    overflow: visible;
+
+    .v-badge__wrapper {
+      overflow: visible;
+    }
+  }
+
   .v-btn {
-    width: var(--page-shortcut-target);
-    min-width: var(--page-shortcut-target);
-    height: var(--page-shortcut-target);
+    width: 28px !important;
+    min-width: 28px !important;
+    max-width: 28px !important;
+    height: 28px !important;
+    min-height: 28px !important;
+    max-height: 28px !important;
+    padding: 0 !important;
     border-radius: var(--wiki-radius-xs) !important;
+    flex: 0 0 28px !important;
+
+    .v-icon {
+      font-size: 18px !important;
+      width: 18px !important;
+      height: 18px !important;
+    }
 
     &:hover {
       background: color-mix(in srgb, var(--wiki-accent-warm) 8%, transparent);
@@ -2638,6 +3305,11 @@ export default defineComponent({
       opacity: .72;
     }
   }
+
+  :where(.footnote-item, .footnote-ref > [id]) {
+    scroll-margin-block-start: calc(max(var(--v-layout-top, 0px), var(--wiki-grid-size, 64px)) + var(--wiki-space-8));
+  }
+
 }
 
 .comments-container {
@@ -2701,21 +3373,56 @@ export default defineComponent({
 
 
   .page-toc-card {
+    display: flex;
+    flex-direction: column;
     min-height: var(--wiki-control-height);
     max-height: calc(var(--wiki-grid-size) * 5);
-    overflow-y: auto !important;
+  }
+
+  .page-toc-row,
+  .page-toc-item {
+    min-height: 2.5rem;
   }
 
   .page-toc-card > .page-toc-heading { display: none; }
 
   .page-toc-card .page-toc-toggle {
     display: flex;
+    flex: 0 0 auto;
     min-height: var(--wiki-control-height);
     justify-content: space-between;
     padding-inline: var(--wiki-space-4) !important;
     .v-btn__content { width: 100%; justify-content: space-between; }
   }
 
+  .page-toc-content {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .page-toc-filter,
+  .page-toc-filter-empty {
+    flex: 0 0 auto;
+  }
+
+  .page-toc-tree-wrap {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .page-toc-content .page-toc-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
   .page-col-content:not(.is-page-header),
   .page-col-content--toc-right:not(.is-page-header) {
     padding-inline: 0;
@@ -2737,8 +3444,7 @@ export default defineComponent({
   .page-body > .v-row > .page-shortcuts-card,
   .page-body > .v-row > .page-toc-card,
   .page-body > .v-row > .page-tags-card,
-  .page-body > .v-row > .page-comments-card,
-  .page-body > .v-row > .page-author-card {
+  .page-body > .v-row > .page-comments-card {
     order: 2;
     width: calc(50% - var(--wiki-space-4) / 2);
     max-width: calc(50% - var(--wiki-space-4) / 2);
@@ -2749,8 +3455,10 @@ export default defineComponent({
 }
 
 @media (max-width: 959px) {
+  .page-nav-toggle,
   .page-return-top {
-    bottom: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-4)) !important;
+    inset-block-start: auto !important;
+    inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + 16px) !important;
   }
 
   .page-col-sd {
@@ -2882,6 +3590,7 @@ export default defineComponent({
 
   .page-toc-card .page-toc-toggle {
     display: flex;
+    flex: 0 0 auto;
     min-height: var(--wiki-control-height);
     align-items: center;
     justify-content: space-between;
@@ -2903,7 +3612,10 @@ export default defineComponent({
       var(--wiki-space-8);
     border-radius: var(--wiki-panel-radius);
 
-    h1,
+    h1 .toc-anchor {
+      opacity: .48;
+    }
+
     h2,
     h3,
     h4,
@@ -2936,15 +3648,35 @@ export default defineComponent({
     inset-inline-end: calc(var(--wiki-space-4) + var(--wiki-control-height) + var(--wiki-space-3));
   }
 
+  .page-nav-toggle,
+  .page-return-top {
+    width: 40px !important;
+    min-width: 40px !important;
+    max-width: 40px !important;
+    height: 40px !important;
+    min-height: 40px !important;
+    max-height: 40px !important;
+    inset-block-start: auto !important;
+    inset-block-end: calc(max(var(--v-layout-bottom, 0px), calc(var(--wiki-footer-height) + env(safe-area-inset-bottom, 0px))) + 12px) !important;
+  }
+
   .page-nav-toggle {
-    inset-block-end: calc(var(--wiki-footer-height) + env(safe-area-inset-bottom) + var(--wiki-space-3)) !important;
-    inset-inline-start: var(--wiki-space-4) !important;
+    inset-inline-end: auto !important;
+    inset-inline-start: calc(env(safe-area-inset-left) + var(--wiki-space-4)) !important;
   }
 
   .page-return-top {
-    right: calc(env(safe-area-inset-right) + var(--wiki-space-4)) !important;
-    bottom: calc(var(--v-layout-bottom, 0px) + var(--wiki-space-3)) !important;
-    left: auto !important;
+    inset-inline-start: auto !important;
+    inset-inline-end: calc(env(safe-area-inset-right) + var(--wiki-space-4)) !important;
+  }
+
+  .is-rtl {
+    .page-nav-toggle {
+      inset-inline-start: calc(env(safe-area-inset-right) + var(--wiki-space-4)) !important;
+    }
+    .page-return-top {
+      inset-inline-end: calc(env(safe-area-inset-left) + var(--wiki-space-4)) !important;
+    }
   }
 }
 
@@ -2962,7 +3694,7 @@ export default defineComponent({
   .page-toc-card,
   .page-tags-card,
   .page-comments-card,
-  .page-author-card,
+  .page-history-btn,
   .comments-container {
     display: none !important;
   }
@@ -3079,43 +3811,14 @@ export default defineComponent({
 .is-rtl .page-position-fill { transform-origin: right; }
 
 .page-focus-control {
-  margin-inline-start: .25rem;
+  margin-inline-start: var(--wiki-space-1);
   border-inline-start: 1px solid var(--wiki-surface-border);
+  padding-inline-start: var(--wiki-space-3);
   border-radius: 0;
   color: var(--wiki-accent-ink);
   letter-spacing: 0;
 }
 
-.page-outline-density {
-  display: flex;
-  gap: .25rem;
-  margin: .75rem;
-  padding: .25rem;
-  border: 1px solid var(--wiki-surface-border);
-  border-radius: .5rem;
-  background: var(--wiki-surface-sunken);
-
-  button {
-    flex: 1;
-    min-height: 36px;
-    padding: .375rem;
-    border: 0;
-    border-radius: .25rem;
-    color: rgb(var(--v-theme-on-surface));
-    font: inherit;
-    font-size: .75rem;
-    cursor: pointer;
-
-    &[aria-pressed='true'] {
-      background: rgb(var(--v-theme-surface));
-      box-shadow: var(--wiki-shadow-xs);
-      font-weight: 650;
-    }
-
-    &:focus-visible { outline: 2px solid var(--wiki-accent-ink); outline-offset: 2px; }
-    &:hover { color: var(--wiki-accent-ink); }
-  }
-}
 
 .page-reading-dock {
   position: fixed;
@@ -3194,12 +3897,12 @@ export default defineComponent({
 
 @media (max-width: 599px) {
   .page-reading-dock-title { display: none; }
-  .page-outline-density button { min-height: 44px; }
 }
 
 @media print {
   .page-position,
   .page-focus-control,
+  .page-history-btn,
   .page-reading-dock { display: none !important; }
 }
 

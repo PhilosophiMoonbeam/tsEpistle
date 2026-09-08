@@ -1019,45 +1019,73 @@ test.describe('responsive UI quality matrix', () => {
     await expectResponsiveLayout(page, 'Not-found page')
   })
 
-  test('decorates authored H1 with bounded swoosh while keeping hero and H2-H6 undecorated', async ({ page }) => {
+  test('sizes the authored H1 swoosh to its text block while preserving heading hierarchy', async ({ page }) => {
     await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
 
     const decorations = await page.evaluate(() => {
+      const article = document.querySelector<HTMLElement>('article.contents')
       const heroTitle = document.querySelector('.page-header-section .page-title')
-      const authoredH1 = document.querySelector('article.contents h1')
-      const authoredH2 = document.querySelector('article.contents h2')
-      const authoredH3 = document.querySelector('article.contents h3')
-      const authoredH4 = document.querySelector('article.contents h4')
-      const authoredH5 = document.querySelector('article.contents h5')
-      const authoredH6 = document.querySelector('article.contents h6')
+      const authoredH1 = article?.querySelector('h1') ?? null
+      const authoredH2 = article?.querySelector('h2') ?? null
+      const authoredH3 = article?.querySelector('h3') ?? null
+      const authoredH4 = article?.querySelector('h4') ?? null
+      const authoredH5 = article?.querySelector('h5') ?? null
+      const authoredH6 = article?.querySelector('h6') ?? null
 
       const getPseudo = (el: Element | null, pseudo: string) => {
         if (!el) return null
         const cs = window.getComputedStyle(el, pseudo)
-        const height = parseFloat(cs.height) || parseFloat(cs.getPropertyValue('block-size')) || 0
-        const width = parseFloat(cs.width) || parseFloat(cs.getPropertyValue('inline-size')) || 0
         return {
           content: cs.content,
-          height,
-          width,
-          display: cs.display
+          height: parseFloat(cs.height) || parseFloat(cs.getPropertyValue('block-size')) || 0,
+          width: parseFloat(cs.width) || parseFloat(cs.getPropertyValue('inline-size')) || 0,
+          display: cs.display,
+          transform: cs.transform
         }
       }
 
       const getBorder = (el: Element | null) => {
         if (!el) return null
         const cs = window.getComputedStyle(el)
-        const borderBottomWidth = parseFloat(cs.borderBottomWidth) || parseFloat(cs.getPropertyValue('border-block-end-width')) || 0
         return {
-          borderBottomWidth,
-          borderBottomStyle: cs.borderBottomStyle
+          borderBottomWidth: parseFloat(cs.borderBottomWidth) || parseFloat(cs.getPropertyValue('border-block-end-width')) || 0
         }
       }
+
+      const measureSyntheticH1 = (text: string, dir: 'ltr' | 'rtl' = 'ltr') => {
+        if (!article) return null
+        const heading = document.createElement('h1')
+        heading.dir = dir
+        heading.textContent = text
+        article.append(heading)
+        const bounds = heading.getBoundingClientRect()
+        const pseudo = getPseudo(heading, '::after')
+        heading.remove()
+        return { width: bounds.width, pseudoWidth: pseudo?.width ?? 0, transform: pseudo?.transform ?? 'none' }
+      }
+
+      const h1Bounds = authoredH1?.getBoundingClientRect() ?? null
+      const articleBounds = article?.getBoundingClientRect() ?? null
+      const h1AnchorBounds = authoredH1?.querySelector('.toc-anchor')?.getBoundingClientRect() ?? null
+      const footnoteTarget = document.createElement('li')
+      footnoteTarget.className = 'footnote-item'
+      article?.append(footnoteTarget)
+      const footnoteScrollMargin = parseFloat(window.getComputedStyle(footnoteTarget).scrollMarginBlockStart) || 0
+      footnoteTarget.remove()
 
       return {
         hasAuthoredH1: Boolean(authoredH1),
         heroAfter: getPseudo(heroTitle, '::after'),
         h1After: getPseudo(authoredH1, '::after'),
+        h1Width: h1Bounds?.width ?? 0,
+        h1AnchorContained: !h1AnchorBounds || !articleBounds || (
+          h1AnchorBounds.left >= articleBounds.left &&
+          h1AnchorBounds.right <= articleBounds.right
+        ),
+        shortH1: measureSyntheticH1('FAQ'),
+        longH1: measureSyntheticH1('Comprehensive Technical Documentation and Guidelines'),
+        rtlH1: measureSyntheticH1('الأسئلة الشائعة', 'rtl'),
+        footnoteScrollMargin,
         h2After: getPseudo(authoredH2, '::after'),
         h2Border: getBorder(authoredH2),
         h3After: getPseudo(authoredH3, '::after'),
@@ -1071,29 +1099,26 @@ test.describe('responsive UI quality matrix', () => {
       }
     })
 
-    // Require authored H1 and nonempty/nonzero 10rem-bounded swoosh (~3.5px height, bounded width <= 10rem = 160px)
     expect(decorations.hasAuthoredH1, 'Authored H1 must exist in article.contents').toBe(true)
     expect(decorations.h1After, 'Authored H1 ::after must exist').not.toBeNull()
-    expect(decorations.h1After?.content, 'Authored H1 swoosh has content').not.toMatch(/^(?:none|""|normal)$/)
+    expect(decorations.h1After?.display, 'Authored H1 swoosh must render').not.toBe('none')
     expect(decorations.h1After?.height, 'Authored H1 swoosh has ~3.5px block size').toBeGreaterThanOrEqual(3)
     expect(decorations.h1After?.height, 'Authored H1 swoosh has ~3.5px block size').toBeLessThanOrEqual(4)
-    expect(decorations.h1After?.width, 'Authored H1 swoosh width is non-zero').toBeGreaterThan(0)
-    expect(decorations.h1After?.width, 'Authored H1 swoosh is bounded to at most 10rem').toBeLessThanOrEqual(165)
+    expect(Math.abs((decorations.h1After?.width ?? 0) - decorations.h1Width), 'Swoosh matches authored H1 text-block width').toBeLessThanOrEqual(1)
+    expect(decorations.shortH1, 'Synthetic short H1 must be measurable').not.toBeNull()
+    expect(decorations.longH1, 'Synthetic long H1 must be measurable').not.toBeNull()
+    expect(Math.abs((decorations.shortH1?.pseudoWidth ?? 0) - (decorations.shortH1?.width ?? 0)), 'Short H1 swoosh matches its text block').toBeLessThanOrEqual(1)
+    expect(Math.abs((decorations.longH1?.pseudoWidth ?? 0) - (decorations.longH1?.width ?? 0)), 'Long H1 swoosh matches its text block').toBeLessThanOrEqual(1)
+    expect(decorations.longH1?.width ?? 0, 'Long H1 swoosh grows beyond short H1 swoosh').toBeGreaterThan((decorations.shortH1?.width ?? 0) + 100)
+    expect(decorations.rtlH1?.transform ?? 'none', 'RTL H1 mirrors the swoosh').toMatch(/^matrix\(-1,\s*0,\s*0,\s*1,/)
+    expect(decorations.footnoteScrollMargin, 'Footnote target clears fixed page chrome').toBeGreaterThanOrEqual(64)
+    expect(decorations.h1AnchorContained, 'H1 permalink remains inside the article').toBe(true)
 
-    // Hero title (.page-title) must NEVER receive the swoosh decoration
-    expect(decorations.heroAfter?.content ?? 'none', 'Hero title must not have pseudo-element decoration').toMatch(/^(?:none|""|normal)$/)
-    if (decorations.heroAfter?.content && !/^(?:none|""|normal)$/.test(decorations.heroAfter.content)) {
-      expect(decorations.heroAfter.display, 'Hero title pseudo-element must be none if defined').toBe('none')
-    }
+    expect(decorations.heroAfter?.content ?? 'none', 'Hero title must not have pseudo-element decoration').toMatch(/^(?:none|normal)$/)
 
-    // H2 receives only a subtle border and NO swoosh
-    expect(decorations.h2After?.content ?? 'none', 'H2 must not have swoosh ::after').toMatch(/^(?:none|""|normal)$/)
-    if (decorations.h2After?.content && !/^(?:none|""|normal)$/.test(decorations.h2After.content)) {
-      expect(decorations.h2After.display, 'H2 pseudo-element must be none if defined').toBe('none')
-    }
+    expect(decorations.h2After?.display ?? 'none', 'H2 must not have swoosh ::after').toBe('none')
     expect(decorations.h2Border?.borderBottomWidth ?? 0, 'H2 has positive bottom border').toBeGreaterThan(0)
 
-    // H3-H6 receive typography only: NO swoosh, NO borders
     const lowerHeadings = [
       { level: 'H3', pseudo: decorations.h3After, border: decorations.h3Border },
       { level: 'H4', pseudo: decorations.h4After, border: decorations.h4Border },
@@ -1101,12 +1126,40 @@ test.describe('responsive UI quality matrix', () => {
       { level: 'H6', pseudo: decorations.h6After, border: decorations.h6Border }
     ]
     for (const { level, pseudo, border } of lowerHeadings) {
-      expect(pseudo?.content ?? 'none', `${level} must not have swoosh ::after`).toMatch(/^(?:none|""|normal)$/)
-      if (pseudo?.content && !/^(?:none|""|normal)$/.test(pseudo.content)) {
-        expect(pseudo.display, `${level} pseudo-element must be none if defined`).toBe('none')
-      }
+      expect(pseudo?.display ?? 'none', `${level} must not have swoosh ::after`).toBe('none')
       expect(border?.borderBottomWidth ?? 0, `${level} has no bottom border`).toBe(0)
     }
+  })
+
+  test('opens native disclosures only for printing and restores their state', async ({ page }) => {
+    await openAuthenticatedPage(page, '/en/visual-markdown-browser', '.page-header-section')
+
+    const states = await page.evaluate(() => {
+      const article = document.querySelector<HTMLElement>('article.contents')
+      if (!article) return null
+
+      const closed = document.createElement('details')
+      closed.innerHTML = '<summary>Closed disclosure</summary><p>Printable content</p>'
+      const nested = document.createElement('details')
+      nested.open = true
+      nested.innerHTML = '<summary>Nested disclosure</summary><p>Nested printable content</p>'
+      closed.append(nested)
+      const opened = document.createElement('details')
+      opened.open = true
+      opened.innerHTML = '<summary>Open disclosure</summary><p>Printable content</p>'
+      article.append(closed, opened)
+
+      window.dispatchEvent(new Event('beforeprint'))
+      const duringPrint = { closed: closed.open, nested: nested.open, opened: opened.open }
+      window.dispatchEvent(new Event('afterprint'))
+      const afterPrint = { closed: closed.open, nested: nested.open, opened: opened.open }
+      closed.remove()
+      opened.remove()
+      return { duringPrint, afterPrint }
+    })
+
+    expect(states?.duringPrint).toEqual({ closed: true, nested: true, opened: true })
+    expect(states?.afterPrint).toEqual({ closed: false, nested: true, opened: true })
   })
 
   test('prevents horizontal document overflow at 320px mobile viewport', async ({ page }) => {

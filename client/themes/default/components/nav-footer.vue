@@ -6,7 +6,7 @@
       .footer-attribution__legal(v-else-if='company && company.length > 0 && contentLicense !== ``')
         span(v-if='contentLicense === `alr`') {{ $t('common:footer.copyright', { company: company, year: currentYear, interpolation: { escapeValue: false } }) }}
         span(v-else) {{ $t('common:footer.license', { company: company, license: $t('common:license.' + contentLicense), interpolation: { escapeValue: false } }) }}
-      .footer-attribution__meta
+      p.footer-attribution__meta
         span.footer-attribution__product {{ product.name }} {{ product.version }}
         span.footer-attribution__separator(aria-hidden='true')
         a(:href='product.sourceRepository', target='_blank', rel='noopener noreferrer') {{ $t('common:footer.sourceCode') }}
@@ -67,7 +67,7 @@ export default defineComponent({
   overflow: visible;
   height: auto;
   min-height: var(--wiki-footer-height);
-  padding: var(--wiki-space-1) var(--wiki-page-gutter) calc(var(--wiki-space-1) + env(safe-area-inset-bottom));
+  padding: 2px var(--wiki-page-gutter) calc(2px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--wiki-surface-border);
   background:
     linear-gradient(
@@ -103,17 +103,18 @@ export default defineComponent({
   min-width: 0;
   align-items: center;
   justify-content: center;
-  gap: var(--wiki-space-3);
+  flex-wrap: wrap;
+  gap: 8px;
   margin-inline: auto;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 64%, transparent);
   font-family: var(--wiki-font-body);
-  font-size: var(--wiki-label-size);
-  line-height: 1.5;
+  font-size: .625rem;
+  line-height: 1.4;
   text-align: center;
 
   &__legal {
     min-width: 0;
-    padding-inline-end: var(--wiki-space-3);
+    padding-inline-end: 8px;
     border-inline-end: 1px solid var(--wiki-surface-border);
     color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
     overflow-wrap: anywhere;
@@ -125,13 +126,15 @@ export default defineComponent({
     flex-wrap: wrap;
     align-items: center;
     justify-content: center;
-    gap: var(--wiki-space-2);
+    column-gap: 6px;
+    row-gap: 2px;
+    margin: 0;
   }
 
   &__product {
     color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent);
     font-family: var(--wiki-font-mono);
-    font-size: var(--wiki-label-size);
+    font-size: .625rem;
     font-weight: var(--wiki-label-weight);
     letter-spacing: .025em;
   }
@@ -139,7 +142,7 @@ export default defineComponent({
   &__separator {
     display: inline-block;
     width: 1px;
-    height: .875rem;
+    height: 10px;
     background: var(--wiki-surface-border-strong);
   }
 
@@ -179,7 +182,7 @@ export default defineComponent({
 @media (max-width: 959px) {
   .footer-attribution {
     flex-direction: column;
-    gap: var(--wiki-space-1);
+    gap: 2px;
 
     &__legal {
       padding-inline-end: 0;
@@ -190,21 +193,7 @@ export default defineComponent({
 
 @media (max-width: 599px) {
   .nav-footer {
-    padding: var(--wiki-space-1) var(--wiki-space-4) calc(var(--wiki-space-1) + env(safe-area-inset-bottom));
-  }
-
-  .footer-attribution {
-    font-size: var(--wiki-label-size);
-    line-height: 1.45;
-
-    &__meta {
-      column-gap: var(--wiki-space-2);
-      row-gap: var(--wiki-space-1);
-    }
-
-    &__separator {
-      height: var(--wiki-space-3);
-    }
+    padding: 2px var(--wiki-space-4) calc(2px + env(safe-area-inset-bottom));
   }
 }
 
@@ -225,6 +214,42 @@ export default defineComponent({
 
   .footer-attribution__separator {
     background: CanvasText;
+  }
+}
+
+@media print {
+  .nav-footer {
+    position: static !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    border-top: 1px solid currentColor;
+    padding-block: 2px !important;
+
+    &::before {
+      display: none;
+    }
+  }
+
+  .footer-attribution {
+    color: inherit;
+
+    &__legal {
+      border-inline-end-color: currentColor;
+      color: inherit;
+    }
+
+    &__product {
+      color: inherit;
+    }
+
+    &__separator {
+      background: currentColor;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: underline;
+    }
   }
 }
 

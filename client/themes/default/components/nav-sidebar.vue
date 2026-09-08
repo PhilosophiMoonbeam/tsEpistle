@@ -15,15 +15,13 @@
         span.nav-sidebar-home-label.text-body-medium.text-none(v-if='navMode === `STATIC`') {{$t('common:header.home')}}
       .nav-sidebar-modes(v-if='navMode === `MIXED`', role='group', :aria-label='$t(`common:sidebar.navigationMode`)')
         v-btn.nav-sidebar-mode(
-          :variant='currentMode === `custom` ? `tonal` : `text`'
-          :color='currentMode === `custom` ? `primary` : undefined'
+          variant="text"
           :aria-pressed='currentMode === `custom`'
           @click='switchMode(`custom`)'
           )
           span {{$t('common:sidebar.mainMenu')}}
         v-btn.nav-sidebar-mode(
-          :variant='currentMode === `browse` ? `tonal` : `text`'
-          :color='currentMode === `browse` ? `primary` : undefined'
+          variant="text"
           :aria-pressed='currentMode === `browse`'
           @click='switchMode(`browse`)'
           )
@@ -697,27 +695,92 @@ export default defineComponent({
     display: flex;
     flex: 1 1 auto;
     min-width: 0;
+    min-height: var(--wiki-control-height);
     gap: var(--wiki-space-1);
     margin-inline-start: var(--wiki-space-2);
+    align-items: stretch;
+    padding: 3px;
+    border: 1px solid var(--wiki-surface-border-strong);
+    border-radius: var(--wiki-control-radius);
+    background: var(--wiki-surface-sunken);
+    box-shadow:
+      inset 0 1px 2px color-mix(in srgb, var(--wiki-shadow-color) 45%, transparent),
+      var(--wiki-shadow-inset);
+    box-sizing: border-box;
   }
 
   .nav-sidebar-mode {
     flex: 1 1 0;
     min-width: 0;
     height: auto;
-    padding: var(--wiki-space-2);
-    border-color: transparent;
+    min-height: 0;
+    padding: var(--wiki-space-1) var(--wiki-space-2);
+    border: 1px solid var(--wiki-surface-border);
+    border-radius: calc(var(--wiki-control-radius) - 3px);
+    background: color-mix(in srgb, var(--wiki-surface-raised) 70%, transparent);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 80%, transparent);
     font-size: .75rem;
+    font-weight: 550;
+    letter-spacing: .005em;
     box-shadow: none;
+    transition:
+      border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      background var(--wiki-motion-fast) var(--wiki-motion-ease),
+      color var(--wiki-motion-fast) var(--wiki-motion-ease),
+      box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
+
+    .v-btn__overlay,
+    .v-btn__underlay {
+      display: none;
+    }
 
     .v-btn__content {
       white-space: normal;
       line-height: 1.3;
+      text-align: center;
+    }
+
+    &:hover {
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 36%, var(--wiki-surface-border-strong));
+      background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, var(--wiki-surface-raised));
+      box-shadow: var(--wiki-shadow-xs);
+      color: rgb(var(--v-theme-on-surface));
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--wiki-focus-color);
+      outline-offset: 1px;
     }
 
     &[aria-pressed='true'] {
-      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 28%, transparent);
-      box-shadow: var(--wiki-shadow-xs);
+      border-color: color-mix(in srgb, var(--wiki-ambient-accent) 45%, var(--wiki-surface-border-strong));
+      background:
+        linear-gradient(
+          var(--nav-active-direction, 90deg),
+          color-mix(in srgb, var(--wiki-accent-warm) 14%, var(--wiki-surface-raised)),
+          color-mix(in srgb, var(--wiki-accent-spectral) 9%, var(--wiki-surface-raised))
+        );
+      color: var(--wiki-accent-ink);
+      font-weight: 700;
+      box-shadow:
+        0 2px 4px color-mix(in srgb, var(--wiki-shadow-color) 45%, transparent),
+        0 1px 2px color-mix(in srgb, var(--wiki-shadow-color) 30%, transparent),
+        var(--wiki-shadow-inset);
+
+      &:hover {
+        border-color: color-mix(in srgb, var(--wiki-ambient-accent) 65%, var(--wiki-surface-border-strong));
+        background:
+          linear-gradient(
+            var(--nav-active-direction, 90deg),
+            color-mix(in srgb, var(--wiki-accent-warm) 18%, var(--wiki-surface-raised)),
+            color-mix(in srgb, var(--wiki-accent-spectral) 12%, var(--wiki-surface-raised))
+          );
+        color: var(--wiki-accent-ink);
+        box-shadow:
+          0 3px 6px color-mix(in srgb, var(--wiki-shadow-color) 50%, transparent),
+          0 1px 2px color-mix(in srgb, var(--wiki-shadow-color) 35%, transparent),
+          var(--wiki-shadow-inset);
+      }
     }
   }
 }
@@ -731,15 +794,65 @@ export default defineComponent({
 }
 
 .v-theme--dark .nav-sidebar {
+  .nav-sidebar-modes {
+    background: color-mix(in srgb, var(--wiki-surface-sunken) 85%, rgb(var(--v-theme-background)));
+    border-color: var(--wiki-surface-border-strong);
+    box-shadow:
+      inset 0 1px 3px color-mix(in srgb, rgb(0 0 0) 55%, transparent),
+      inset 0 0 0 1px color-mix(in srgb, rgb(255 255 255) 3%, transparent);
+  }
+
+  .nav-sidebar-mode {
+    border-color: color-mix(in srgb, var(--wiki-surface-border-strong) 70%, transparent);
+    background: color-mix(in srgb, var(--wiki-surface-raised) 50%, transparent);
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 78%, transparent);
+
+    &:hover {
+      border-color: color-mix(in srgb, var(--wiki-accent-spectral) 35%, var(--wiki-surface-border-strong));
+      background: color-mix(in srgb, var(--wiki-ambient-accent) 14%, var(--wiki-surface-raised));
+      color: rgb(var(--v-theme-on-surface));
+    }
+  }
+
   .v-list-item.v-list-item--active,
   .v-list-item[aria-current='page'] {
     border-color: color-mix(in srgb, var(--wiki-accent-spectral) 26%, transparent);
     background:
       linear-gradient(
-        var(--nav-active-direction),
+        var(--nav-active-direction, 90deg),
         color-mix(in srgb, var(--wiki-accent-warm) 15%, transparent),
         color-mix(in srgb, var(--wiki-accent-spectral) 10%, transparent)
       );
+  }
+
+  .nav-sidebar-mode[aria-pressed='true'] {
+    border-color: color-mix(in srgb, var(--wiki-accent-spectral) 40%, var(--wiki-surface-border-strong));
+    background:
+      linear-gradient(
+        var(--nav-active-direction, 90deg),
+        color-mix(in srgb, var(--wiki-accent-warm) 18%, var(--wiki-surface-raised)),
+        color-mix(in srgb, var(--wiki-accent-spectral) 13%, var(--wiki-surface-raised))
+      );
+    color: rgb(var(--v-theme-on-surface));
+    box-shadow:
+      0 2px 5px color-mix(in srgb, rgb(0 0 0) 60%, transparent),
+      0 1px 2px color-mix(in srgb, rgb(0 0 0) 45%, transparent),
+      var(--wiki-shadow-inset);
+
+    &:hover {
+      border-color: color-mix(in srgb, var(--wiki-accent-spectral) 55%, var(--wiki-surface-border-strong));
+      background:
+        linear-gradient(
+          var(--nav-active-direction, 90deg),
+          color-mix(in srgb, var(--wiki-accent-warm) 22%, var(--wiki-surface-raised)),
+          color-mix(in srgb, var(--wiki-accent-spectral) 17%, var(--wiki-surface-raised))
+        );
+      color: rgb(var(--v-theme-on-surface));
+      box-shadow:
+        0 3px 7px color-mix(in srgb, rgb(0 0 0) 70%, transparent),
+        0 1px 3px color-mix(in srgb, rgb(0 0 0) 50%, transparent),
+        var(--wiki-shadow-inset);
+    }
   }
 }
 
@@ -775,7 +888,8 @@ export default defineComponent({
 
 @media (forced-colors: active) {
   .nav-sidebar .v-list-item,
-  .nav-sidebar-switcher .v-btn {
+  .nav-sidebar-switcher .v-btn,
+  .nav-sidebar-modes {
     border-color: CanvasText;
   }
 
@@ -784,8 +898,9 @@ export default defineComponent({
   }
 
   .nav-sidebar-mode[aria-pressed='true'] {
+    border-color: Highlight;
     outline: 2px solid Highlight;
-    outline-offset: -4px;
+    outline-offset: -2px;
   }
 }
 

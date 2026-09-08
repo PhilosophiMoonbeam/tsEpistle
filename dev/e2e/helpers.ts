@@ -2,7 +2,7 @@ import { expect, test as base } from '@playwright/test'
 import type { Locator, Page } from '@playwright/test'
 
 export const adminEmail = 'test@example.com'
-export const adminPassword = '12345678'
+export const adminPassword = 'TestPassword123!'
 
 export async function authenticateAsAdmin(page: Page) {
   const response = await page.request.post('/_api/auth/login', {

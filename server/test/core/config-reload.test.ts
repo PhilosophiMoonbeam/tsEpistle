@@ -1,5 +1,12 @@
-import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
 import type * as ConfigModule from '../../core/config.ts'
+import { afterEach, describe, expect, it, vi } from '../bun-test.mts'
+
+const signingConfiguration = {
+  certs: { private: 'fixture-private-key', public: 'fixture-public-key' },
+  sessionSecret: 'fixture-session-secret'
+}
+
+const configured = (value: Record<string, unknown>): Record<string, unknown> => ({ ...signingConfiguration, ...value })
 
 describe('distributed config reload', () => {
   const previousWiki = globalThis.WIKI
@@ -7,6 +14,33 @@ describe('distributed config reload', () => {
   afterEach(() => {
     globalThis.WIKI = previousWiki
     vi.restoreAllMocks()
+  })
+
+  it('keeps a migration-seeded empty database in first-run setup mode', async () => {
+    vi.resetModules()
+    const canonicalConfig = { db: { pass: 'fixture' }, flags: { ldapdebug: false, sqllog: false }, port: 3000 }
+    const warn = vi.fn()
+    globalThis.WIKI = {
+      config: canonicalConfig,
+      logger: { error: vi.fn(), warn },
+      models: {
+        settings: {
+          getConfig: vi.fn().mockResolvedValue({
+            analyticsAdministration: {},
+            mailAdministration: {},
+            sslAdministration: {},
+            storageAdministration: {}
+          })
+        }
+      }
+    } as typeof globalThis.WIKI
+
+    const { default: configService } = await vi.importFresh<typeof ConfigModule>('../../core/config.ts', import.meta.url)
+    await configService.loadFromDb()
+
+    expect(canonicalConfig.setup).toBe(true)
+    expect(canonicalConfig).not.toHaveProperty('sslAdministration')
+    expect(warn).toHaveBeenCalledWith('DB Configuration is empty or incomplete. Switching to Setup mode...')
   })
 
   it.each([
@@ -30,18 +64,20 @@ describe('distributed config reload', () => {
     const appLocals = { config: canonicalConfig }
     const setAppSetting = vi.fn()
     const knexConfig = { debug: false }
-    const getConfig = vi.fn().mockResolvedValue({
-      db: { pass: 'reloaded-secret' },
-      flags: { ldapdebug: true, sqllog: true },
-      security: { securityTrustProxy },
-      port: 4000,
-      title: 'After reload',
-      host: 'https://after.example.com',
-      banner: { isEnabled: false, title: '', content: '' },
-      auth: { audience: 'new-audience' },
-      pageExtensions: ['md'],
-      seo: { robots: [] }
-    })
+    const getConfig = vi.fn().mockResolvedValue(
+      configured({
+        db: { pass: 'reloaded-secret' },
+        flags: { ldapdebug: true, sqllog: true },
+        security: { securityTrustProxy },
+        port: 4000,
+        title: 'After reload',
+        host: 'https://after.example.com',
+        banner: { isEnabled: false, title: '', content: '' },
+        auth: { audience: 'new-audience' },
+        pageExtensions: ['md'],
+        seo: { robots: [] }
+      })
+    )
 
     const auth = {
       jwtAudience: 'old-audience',
@@ -122,12 +158,14 @@ describe('distributed config reload', () => {
       models: {
         knex: { client: { config: knexConfig } },
         settings: {
-          getConfig: vi.fn().mockResolvedValue({
-            db: { pass: 'reloaded-secret' },
-            flags: { ldapdebug: false, sqllog: false },
-            developerFlagsAdministration: { policy: { ldapdebug: true, sqllog: true } },
-            port: 3000
-          }),
+          getConfig: vi.fn().mockResolvedValue(
+            configured({
+              db: { pass: 'reloaded-secret' },
+              flags: { ldapdebug: false, sqllog: false },
+              developerFlagsAdministration: { policy: { ldapdebug: true, sqllog: true } },
+              port: 3000
+            })
+          ),
           query: vi.fn()
         }
       },
@@ -156,7 +194,7 @@ describe('distributed config reload', () => {
     const getConfig = vi
       .fn()
       .mockImplementationOnce(() => firstRead)
-      .mockResolvedValueOnce({ db: { pass: 'next-secret' }, flags: { ldapdebug: false, sqllog: true }, port: 3000 })
+      .mockResolvedValueOnce(configured({ db: { pass: 'next-secret' }, flags: { ldapdebug: false, sqllog: true }, port: 3000 }))
     globalThis.WIKI = {
       config: canonicalConfig,
       events: {
@@ -184,7 +222,7 @@ describe('distributed config reload', () => {
     await Promise.resolve()
     const second = reloadListener()
     expect(getConfig).toHaveBeenCalledTimes(1)
-    resolveFirstRead({ db: { pass: 'stale-secret' }, flags: { ldapdebug: true, sqllog: false }, port: 3000 })
+    resolveFirstRead(configured({ db: { pass: 'stale-secret' }, flags: { ldapdebug: true, sqllog: false }, port: 3000 }))
     await Promise.all([first, second])
 
     expect(getConfig).toHaveBeenCalledTimes(2)

@@ -157,7 +157,7 @@
         div(ref='cm')
       transition(name='editor-asciidoc-preview')
         .editor-asciidoc-preview(v-if='previewShown')
-          .editor-asciidoc-preview-content.contents(ref='editorPreviewContainer', :aria-busy='previewLoading')
+          .editor-asciidoc-preview-content.editor-page-canvas.contents(ref='editorPreviewContainer', :aria-busy='previewLoading')
             v-alert(v-if='previewError', type='error', variant='tonal', density='compact', role='alert')
               span {{previewError}}
               v-btn.ml-2(size='small', variant='text', @click='retryPreview') Retry

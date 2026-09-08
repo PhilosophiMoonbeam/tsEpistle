@@ -9,6 +9,8 @@
   "files": {
     "includes": [
       "**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}",
+      "client/themes/default/**/*.vue",
+      "client/components/editor/editor-asciidoc.vue",
       "!**/*.min.js",
       "!!assets",
       "!!client/libs",
@@ -20,6 +22,9 @@
       "!server/test/**/*.js"
     ],
     "ignoreUnknown": true
+  },
+  "html": {
+    "experimentalFullSupportEnabled": true
   },
   "formatter": {
     "enabled": true,
@@ -60,6 +65,18 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["**/*.vue"],
+      "linter": {
+        "rules": {
+          "style": {
+            "useConst": "off"
+          }
+        }
+      }
+    }
+  ],
   "javascript": {
     "formatter": {
       "arrowParentheses": "asNeeded",

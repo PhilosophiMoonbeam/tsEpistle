@@ -6,3 +6,8 @@
 - Prohibit the orchestrator from silently redesigning or making unilateral architecture changes.
 - Return verification failures and contract gaps to the planner or assigned implementation agents for directed correction.
 - Ensure scouts only gather evidence and do not make technical decisions.
+
+## Goal Budgets
+
+- Set goal token budgets generously so budget pressure never narrows the requested work.
+- Use an unlimited goal budget for open-ended work.

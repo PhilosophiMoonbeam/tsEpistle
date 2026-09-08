@@ -14,8 +14,16 @@
           v-icon(v-if='$vuetify.display.smAndDown') mdi-close
           span(v-else) Return to Live Version
       v-container.history-shell(fluid)
-        v-row
-          v-col.history-trail-column(cols='12', md='4')
+        v-row.history-shell-row
+          v-col.history-trail-column(
+            cols='12'
+            md='4'
+            ref='trailContainer'
+            tabindex='0'
+            role='region'
+            aria-label='Revision timeline'
+            @scroll.passive='onTrailScroll'
+          )
             v-chip.history-live-chip.my-0(
               label
               size="small"
@@ -339,6 +347,7 @@ export default {
       offsetPage: 0,
       total: 0,
       viewMode: 'line-by-line' as 'line-by-line' | 'side-by-side',
+      trailScrollTop: 0,
       cache: [] as PageVersion[],
       restoreTarget: {
         versionId: 0,
@@ -402,6 +411,9 @@ export default {
         this.diffSource = newValue[0]!.versionId
       }
     },
+    viewMode () {
+      this.preserveTrailScroll()
+    },
     async diffSource (
       newValue: number,
       _oldValue: number,
@@ -425,6 +437,7 @@ export default {
       const page = this.cache.find(page => page.versionId === newValue) ?? await this.loadVersion(newValue)
       if (!cancelled && this.diffSource === newValue) {
         this.source = page
+        this.preserveTrailScroll()
       }
     },
     async diffTarget (
@@ -441,6 +454,7 @@ export default {
       const page = this.cache.find(page => page.versionId === newValue) ?? await this.loadVersion(newValue)
       if (!cancelled && this.diffTarget === newValue) {
         this.target = page
+        this.preserveTrailScroll()
       }
     }
   },
@@ -575,6 +589,7 @@ export default {
     },
     toggleViewMode () {
       this.viewMode = (this.viewMode === 'line-by-line') ? 'side-by-side' : 'line-by-line'
+      this.preserveTrailScroll()
     },
     goLive () {
       const privatePrefix = this.visibility === 'private' ? '/_private' : ''
@@ -602,22 +617,66 @@ export default {
         return
       }
       this.diffTarget = target.versionId
-      if (this.$vuetify.display.smAndDown) {
-        this.$nextTick(() => {
-          const heading = this.$refs.comparisonHeading as HTMLElement | undefined
-          heading?.scrollIntoView({
-            behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-            block: 'start'
-          })
-          heading?.focus({ preventScroll: true })
-        })
+      this.preserveTrailScroll()
+      if (this.isMobileViewport()) {
+        this.scrollToComparison()
       }
+    },
+    isMobileViewport (): boolean {
+      if (this.$vuetify?.display?.smAndDown) return true
+      if (typeof window !== 'undefined' && window.innerWidth < 840) return true
+      return false
+    },
+    scrollToComparison () {
+      this.$nextTick(() => {
+        const heading = this.$refs.comparisonHeading as HTMLElement | undefined
+        if (!heading) return
+        const trailEl = (this.$refs.trailContainer as HTMLElement | undefined) ??
+          ((this.$el as HTMLElement | undefined)?.querySelector?.('.history-trail-column') as HTMLElement | null)
+        const trailHeight = trailEl ? trailEl.getBoundingClientRect().height : 0
+        const rootStyles = typeof window !== 'undefined' && typeof document !== 'undefined'
+          ? window.getComputedStyle(document.documentElement)
+          : null
+        const layoutTopRaw = rootStyles ? parseFloat(rootStyles.getPropertyValue('--v-layout-top')) : 0
+        const layoutTop = Number.isNaN(layoutTopRaw) ? 0 : layoutTopRaw
+        const pinnedTrailTop = layoutTop + 8
+        const clearance = pinnedTrailTop + trailHeight + 12
+        const headingTop = heading.getBoundingClientRect().top + (typeof window !== 'undefined' ? window.scrollY : 0)
+        const targetY = Math.max(0, headingTop - clearance)
+        if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+          window.scrollTo({
+            top: targetY,
+            behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ? 'auto' : 'smooth'
+          })
+        }
+        if (typeof heading.focus === 'function') {
+          heading.focus({ preventScroll: true })
+        }
+        this.preserveTrailScroll()
+      })
+    },
+    onTrailScroll (event: Event) {
+      const target = event.target as HTMLElement | null
+      if (target) {
+        this.trailScrollTop = target.scrollTop
+      }
+    },
+    preserveTrailScroll () {
+      this.$nextTick(() => {
+        const trailEl = (this.$refs.trailContainer as HTMLElement | undefined) ??
+          ((this.$el as HTMLElement | undefined)?.querySelector?.('.history-trail-column') as HTMLElement | null)
+        if (trailEl && typeof this.trailScrollTop === 'number' && trailEl.scrollTop !== this.trailScrollTop) {
+          trailEl.scrollTop = this.trailScrollTop
+        }
+      })
     },
     setDiffSource (versionId: number) {
       this.diffSource = versionId
+      this.preserveTrailScroll()
     },
     setDiffTarget (versionId: number) {
       this.diffTarget = versionId
+      this.preserveTrailScroll()
     },
     async loadMore () {
       const nextOffsetPage = this.offsetPage + 1
@@ -625,6 +684,7 @@ export default {
       if (!result) return
       this.offsetPage = nextOffsetPage
       this.trail = [...this.trail, ...result.trail]
+      this.preserveTrailScroll()
     },
     async loadHistory () {
       const result = await this.fetchHistoryPage(0)
@@ -775,9 +835,54 @@ export default {
   padding: var(--wiki-space-6) var(--wiki-page-gutter) var(--wiki-space-12) !important;
 }
 
-.history-trail-column,
+.history-trail-column {
+  min-width: 0;
+  position: sticky;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--wiki-accent-warm) 54%, transparent) transparent;
+
+  &:focus-visible {
+    outline: .125rem solid var(--wiki-focus-color);
+    outline-offset: calc(var(--wiki-focus-offset) * -1);
+    box-shadow: inset var(--wiki-focus-ring);
+  }
+
+  @media (min-width: 840px) {
+    align-self: flex-start;
+    top: calc(var(--v-layout-top, var(--wiki-grid-size, 64px)) + 16px);
+    max-height: calc(100vh - var(--v-layout-top, var(--wiki-grid-size, 64px)) - var(--v-layout-bottom, 0px) - 32px);
+    max-height: calc(100dvh - var(--v-layout-top, var(--wiki-grid-size, 64px)) - var(--v-layout-bottom, 0px) - 32px);
+    min-height: 0;
+    background: transparent;
+    border-bottom: 0;
+    box-shadow: none;
+    z-index: 1;
+  }
+
+  @media (max-width: 839.98px) {
+    top: calc(var(--v-layout-top, 0px) + 8px);
+    max-height: min(30vh, 224px, calc((100vh - var(--v-layout-top, 0px) - var(--v-layout-bottom, 0px)) * .5));
+    max-height: min(30dvh, 224px, calc((100dvh - var(--v-layout-top, 0px) - var(--v-layout-bottom, 0px)) * .5));
+    min-height: 0;
+    background: var(--wiki-surface-raised);
+    border-bottom: 1px solid var(--wiki-surface-border);
+    box-shadow: var(--wiki-shadow-xs);
+    z-index: 5;
+    padding-bottom: var(--wiki-space-2);
+  }
+}
+
 .history-comparison-column {
   min-width: 0;
+}
+
+@media (max-width: 839.98px) {
+  .history-comparison-card {
+    margin-top: var(--wiki-space-2);
+  }
 }
 
 .history-live-chip {
@@ -1019,9 +1124,6 @@ export default {
     padding: var(--wiki-space-4) var(--wiki-space-3) var(--wiki-space-10) !important;
   }
 
-  .history-comparison-card {
-    margin-top: var(--wiki-space-2);
-  }
 
   .history .d2h-file-side-diff {
     min-width: 32rem;
@@ -1077,6 +1179,28 @@ export default {
 @media (prefers-reduced-motion: reduce) {
   .history-revision-card {
     transform: none !important;
+  }
+}
+
+@media print {
+  .history-trail-column {
+    position: static !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: transparent !important;
+    border-bottom: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .history-diff {
+    overflow: visible !important;
+  }
+
+  .history-live-action,
+  .history-view-toggle,
+  .history-revision-actions,
+  .history-load-more {
+    display: none !important;
   }
 }
 </style>

@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from '../../../../server/test/bun-test.mts'
 
 const source = fs.readFileSync(new URL('./nav-sidebar.vue', import.meta.url), 'utf8')
 const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)[1]
-const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(
-  script.replace(/^import .*$/gm, '')
-).replace('export default defineComponent(', 'return defineComponent(')
+const executable = new Bun.Transpiler({ loader: 'ts' })
+  .transformSync(script.replace(/^import .*$/gm, ''))
+  .replace('export default defineComponent(', 'return defineComponent(')
 const storage = preference => {
   const values = new Map(preference === null ? [] : [['navPref', preference]])
   return {
@@ -14,9 +14,7 @@ const storage = preference => {
   }
 }
 const mountSidebar = ({ localStorage = storage(null), items = [], navMode = 'MIXED', expandParentByDefault = false } = {}) => {
-  const component = new Function('defineComponent', 'AsyncState', 'window', executable)(
-    options => options, {}, { localStorage }
-  )
+  const component = new Function('defineComponent', 'AsyncState', 'window', executable)(options => options, {}, { localStorage })
   const sidebar = { ...component.data(), items, navMode, expandParentByDefault, $t: key => key }
   for (const [name, method] of Object.entries(component.methods)) sidebar[name] = method.bind(sidebar)
   Object.defineProperty(sidebar, 'customItems', { get: () => component.computed.customItems.call(sidebar) })
@@ -29,13 +27,16 @@ const home = { k: 'link', y: 'home', t: '/', l: 'Home', c: 'mdi-home' }
 const guide = { k: 'link', y: 'page', t: '/en/guide', l: 'Guide', c: 'mdi-book' }
 
 describe('Custom Navigation preserves its two views', () => {
-  for (const [label, items] of [['empty or permission-filtered', []], ['home only', [home]], ['populated', [home, guide]]]) {
+  for (const [label, items] of [
+    ['empty or permission-filtered', []],
+    ['home only', [home]],
+    ['populated', [home, guide]]
+  ]) {
     for (const preference of ['custom', 'browse', null, 'invalid']) {
       it(`respects ${preference ?? 'unset'} preference with a ${label} menu`, () => {
         const localStorage = storage(preference)
         const sidebar = mountSidebar({ items, localStorage })
-        const expected = preference === 'browse' || preference === 'custom'
-          ? preference : items.includes(guide) ? 'custom' : 'browse'
+        const expected = preference === 'browse' || preference === 'custom' ? preference : items.includes(guide) ? 'custom' : 'browse'
         expect(sidebar.currentMode).toBe(expected)
         expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(expected === 'browse' ? 1 : 0)
         expect(localStorage.setItem).not.toHaveBeenCalled()
@@ -57,7 +58,10 @@ describe('Custom Navigation preserves its two views', () => {
     })
   }
 
-  for (const [navMode, expected] of [['STATIC', 'custom'], ['TREE', 'browse']]) {
+  for (const [navMode, expected] of [
+    ['STATIC', 'custom'],
+    ['TREE', 'browse']
+  ]) {
     it(`${navMode} uses its configured view regardless of the saved preference`, () => {
       const localStorage = storage(expected === 'custom' ? 'browse' : 'custom')
       const sidebar = mountSidebar({ navMode, localStorage })
@@ -75,7 +79,9 @@ describe('Custom Navigation preserves its two views', () => {
   })
 
   it('keeps both views usable when storage reads and writes fail', () => {
-    const unavailable = () => { throw new Error('Storage unavailable') }
+    const unavailable = () => {
+      throw new Error('Storage unavailable')
+    }
     const sidebar = mountSidebar({ localStorage: { getItem: unavailable, setItem: unavailable } })
     expect(sidebar.currentMode).toBe('browse')
     sidebar.loadedCache = [0]
@@ -84,5 +90,28 @@ describe('Custom Navigation preserves its two views', () => {
     expect(sidebar.fetchBrowseItems).toHaveBeenCalledTimes(1)
     sidebar.switchMode('custom')
     expect(sidebar.currentMode).toBe('custom')
+  })
+
+  it('leaves exactly one control selected and does not deselect when selecting the active mode', () => {
+    const sidebar = mountSidebar({ items: [guide] })
+    const isPressed = mode => sidebar.currentMode === mode
+
+    expect(isPressed('custom')).toBe(true)
+    expect(isPressed('browse')).toBe(false)
+
+    // Selecting the active mode does not deselect
+    sidebar.switchMode('custom')
+    expect(isPressed('custom')).toBe(true)
+    expect(isPressed('browse')).toBe(false)
+
+    // Switching to browse leaves only browse selected
+    sidebar.switchMode('browse')
+    expect(isPressed('custom')).toBe(false)
+    expect(isPressed('browse')).toBe(true)
+
+    // Re-selecting browse does not deselect
+    sidebar.switchMode('browse')
+    expect(isPressed('custom')).toBe(false)
+    expect(isPressed('browse')).toBe(true)
   })
 })

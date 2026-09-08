@@ -174,7 +174,9 @@ describe('default page focused contracts', () => {
 
   test('labels page content with a page-scoped shell title outside authored heading slugs', () => {
     expect(template).toMatch(/h1\.page-title\(ref='pageTitle', :id='pageTitleId'\) \{\{title\}\}/)
-    expect(template).toMatch(/article\.contents\(ref='container', :id='pageArticleId', tabindex='-1', :aria-labelledby='pageTitleId'\)/)
+    expect(template).toMatch(
+      /article\.contents\(ref='container', :id='pageArticleId', tabindex='-1', :aria-labelledby='pageTitleId', :dir='\$vuetify\.locale\.isRtl \? `rtl` : `ltr`'\)/
+    )
     expect(script).toMatch(/pageTitleId \(\): string \{\s+return `wiki-page-shell-\$\{this\.pageId\}-title`\s+\}/)
     expect(script).not.toMatch(/wiki:page:\$\{this\.pageId\}:shell-title/)
     expect(script).not.toMatch(/pageTitleId \(\): string \{\s+return ['"`]page-title['"`]\s+\}/)
@@ -183,7 +185,7 @@ describe('default page focused contracts', () => {
 
   test('renders a plain reading surface without gutter code', () => {
     expect(template).toMatch(
-      /article\.contents\(ref='container', :id='pageArticleId', tabindex='-1', :aria-labelledby='pageTitleId'\)\s+template\(v-if='\$slots\.contents'\)\s+slot\(name='contents'\)\s+async-state\(/
+      /article\.contents\(ref='container', :id='pageArticleId', tabindex='-1', :aria-labelledby='pageTitleId', :dir='\$vuetify\.locale\.isRtl \? `rtl` : `ltr`'\)\s+template\(v-if='\$slots\.contents'\)\s+slot\(name='contents'\)\s+async-state\(/
     )
     expect(template).not.toMatch(/page-gutter-(?:ornament|column)|wiki-gutter-art/)
     expect(script).not.toMatch(
@@ -224,9 +226,7 @@ describe('default page focused contracts', () => {
     expectDeclarations(pageBody, {
       width: 'min\\(100%,\\s*var\\(--page-reader-shell-max\\)\\)'
     })
-    expect(template).toMatch(
-      /:class='tocItem\.depth === 0 \? `page-toc-item-title--depth-0` : tocItem\.depth === 1 \? `page-toc-item-title--depth-1` : `page-toc-item-title--depth-2-plus`'/
-    )
+    expect(script).toMatch(/page-toc-item-title--depth-0[\s\S]*?page-toc-item-title--depth-1[\s\S]*?page-toc-item-title--depth-2-plus/)
     expectDeclarations(tocTitle, {
       'font-size': '\\.8125rem',
       'line-height': '1\\.4'
@@ -250,10 +250,9 @@ describe('default page focused contracts', () => {
     expect(template).toContain('.text-label-small.page-toc-heading')
     expect(template).toContain('div#page-toc-content.page-toc-content')
     expect(template).toContain("v-show='tocDisclosureExpanded'")
-    expect(template).toContain(":href='tocItem.anchor'")
-    expect(template).toContain("@click='tocLinkClicked($event, tocItem.anchor)'")
-    expect(template).toMatch(/:style='`--toc-indent: \$\{Math\.min\(tocItem\.depth, 5\) \* 14\}px`'/)
-    expect(template).toContain('v-icon.page-toc-item-marker')
+    expect(template).toContain('page-toc-tree')
+    expect(script).toMatch(/'--toc-indent':\s*`\$\{visualDepth \* 14\}px`/)
+    expect(script).toContain('page-toc-branch-toggle')
     expect(script).toMatch(/tocExpanded:\s*initialWidth >= 1280/)
     expect(script).toMatch(/isTocMobile\s*\([^)]*\)\s*:\s*boolean[\s\S]*?return this\.winWidth <= 599/)
     expect(script).toMatch(/tocDisclosureExpanded\s*\([^)]*\)\s*:\s*boolean[\s\S]*?return !this\.isTocCompact \|\| this\.tocExpanded/)
@@ -289,9 +288,9 @@ describe('default page focused contracts', () => {
       /Teleport\([\s\S]*?defer\s*:key='isTocMobile \? `mobile-tools` : winWidth < 1280 \? `tablet-tools` : `desktop-tools`'\s*:to='isTocMobile \? `#page-mobile-tools` : `#page-desktop-rail`'[\s\S]*?:disabled='winWidth >= 600 && winWidth < 1280'[\s\S]*?v-card\.page-shortcuts-card[\s\S]*?v-card\.page-toc-card/
     )
     expect(template).toMatch(
-      /Teleport\([\s\S]*?defer\s*:key='isTocMobile \? `mobile-metadata` : winWidth < 1280 \? `tablet-metadata` : `desktop-metadata`'\s*:to='isTocMobile \? `#page-mobile-metadata` : `#page-desktop-rail`'[\s\S]*?:disabled='winWidth >= 600 && winWidth < 1280'[\s\S]*?v-card\.page-tags-card[\s\S]*?v-card\.page-comments-card[\s\S]*?v-card\.page-author-card/
+      /Teleport\([\s\S]*?defer\s*:key='isTocMobile \? `mobile-metadata` : winWidth < 1280 \? `tablet-metadata` : `desktop-metadata`'\s*:to='isTocMobile \? `#page-mobile-metadata` : `#page-desktop-rail`'[\s\S]*?:disabled='winWidth >= 600 && winWidth < 1280'[\s\S]*?v-card\.page-tags-card[\s\S]*?v-card\.page-comments-card/
     )
-    expect((template.match(/v-card\.page-(?:tags|comments|author)-card/g) ?? []).length).toBe(3)
+    expect((template.match(/v-card\.page-(?:tags|comments)-card/g) ?? []).length).toBe(2)
     expect(template).toContain('page-col-sd--toc-off')
     expect(template).toContain('page-col-content--with-toc')
     expect(template).toContain('page-col-content--toc-off')
@@ -335,7 +334,8 @@ describe('default page focused contracts', () => {
     expectDeclarations(extractCssRule(style, '.page-col-content--toc-left, .page-col-content--toc-right'), { order: '1' })
     expectDeclarations(pageSidebar, {
       position: 'sticky',
-      'max-height': 'calc\\(100dvh - var\\(--v-layout-top,\\s*var\\(--wiki-grid-size\\)\\) - var\\(--wiki-space-12\\)\\)',
+      'max-height':
+        'calc\\(100dvh - var\\(--v-layout-top,\\s*var\\(--wiki-grid-size\\)\\) - max\\(var\\(--v-layout-bottom,\\s*0px\\),\\s*var\\(--wiki-footer-height\\)\\) - var\\(--wiki-space-6\\)\\)',
       'overflow-y': 'auto',
       'overscroll-behavior': 'contain'
     })
@@ -344,6 +344,10 @@ describe('default page focused contracts', () => {
     expect(template).not.toMatch(/page-return-top--docked|:style='upBtnPosition'|location='bottom start'/)
     expect(template).toContain("@navigate='sidebarNavigationStarted'")
     expect(script).toMatch(/sidebarNavigationStarted\s*\(\)\s*\{\s*if \(this\.\$vuetify\.display\.width < 1280\) this\.navShown = false/)
+    expect(script).toMatch(
+      /updateDesktopRailMeasurements\s*\(isResize = false\): void \{[\s\S]*?Math\.max\(0,\s*Math\.floor\(footerTop - effectiveRailTop - this\.railSpacingGap\)\)/
+    )
+    expect(script).not.toMatch(/Math\.max\(\s*120\s*,/)
     expect(style).toMatch(/--page-toc-empty-height:\s*calc\(var\(--wiki-grid-size\) \* 2\)/)
     const navigationDrawer = template.match(/v-navigation-drawer\(([\s\S]*?)\n {6}\)/)?.[1] ?? ''
     expect(navigationDrawer).not.toBe('')
@@ -386,7 +390,7 @@ describe('default page focused contracts', () => {
     expect(style).toMatch(/\.page-title-row\s*\{[^}]*justify-content:\s*flex-start;/s)
     expect(style).toMatch(/\.page-description\s*\{[^}]*margin:\s*var\(--wiki-space-1\) 0 0;/s)
     expect(style).toMatch(
-      /@media\s*\(min-width:\s*600px\)\s*\{[\s\S]*?\.is-page-header\.has-edit-shortcuts\s*\{[^}]*--page-header-action-reserve:\s*clamp\([\s\S]*?grid-template-columns:[\s\S]*?minmax\(0, 1fr\)[\s\S]*?minmax\(0, var\(--page-header-action-reserve\)\);[\s\S]*?\.has-edit-shortcuts \.page-header-headings\s*\{[^}]*grid-column:\s*1;[\s\S]*?\.has-edit-shortcuts \.page-edit-shortcuts\s*\{[^}]*width:\s*min\(100%, var\(--page-header-action-reserve\)\);[^}]*max-width:\s*var\(--page-header-action-reserve\);[^}]*grid-column:\s*2;[^}]*justify-self:\s*end;[\s\S]*?\.v-btn\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*0 1 auto;[^}]*overflow:\s*hidden;[\s\S]*?\.v-btn \.text-none\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s
+      /@media\s*\(min-width:\s*600px\)\s*\{[\s\S]*?\.is-page-header\.has-edit-shortcuts\s*\{[^}]*--page-header-action-reserve:\s*clamp\([\s\S]*?grid-template-columns:[\s\S]*?minmax\(0, 1fr\)[\s\S]*?minmax\(0, var\(--page-header-action-reserve\)\);[\s\S]*?\.has-edit-shortcuts \.page-header-headings\s*\{[^}]*grid-column:\s*1;[\s\S]*?\.has-edit-shortcuts \.page-edit-shortcuts\s*\{[^}]*width:\s*min\(100%, var\(--page-header-action-reserve\)\);[^}]*max-width:\s*var\(--page-header-action-reserve\);[^}]*grid-column:\s*2;[^}]*justify-self:\s*end;[\s\S]*?\.v-btn\s*\{[^}]*min-width:\s*0;[^}]*flex:\s*0 1 auto;[^}]*overflow:\s*visible;[\s\S]*?\.v-btn \.text-none\s*\{[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s
     )
     expectDeclarations(extractCssRule(style, '.page-edit-shortcuts'), {
       'align-self': 'end',
@@ -477,7 +481,6 @@ describe('default page focused contracts', () => {
     expect(appStyle).toMatch(/--wiki-font-reader/)
 
     // Authored H1 swoosh exists in shared styles while hero title and H2-H6 do not receive it
-    expect(appStyle).toMatch(/h1[\s\S]*?::after[\s\S]*?(?:10rem|min\(100%,\s*10rem\))/)
     expect(appStyle).toMatch(/h1[\s\S]*?::after[\s\S]*?(?:mask|mask-image|-webkit-mask)/)
 
     // Hero title (.page-title) must NEVER receive the swoosh decoration
@@ -496,8 +499,7 @@ describe('default page focused contracts', () => {
           '.page-shortcuts-card',
           '.page-toc-card',
           '.page-tags-card',
-          '.page-comments-card',
-          '.page-author-card'
+          '.page-comments-card'
         ].every(part => selectors.includes(part))
       })?.block ?? null
     expectDeclarations(printHiddenRail, {

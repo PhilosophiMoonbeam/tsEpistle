@@ -2,11 +2,18 @@
 
 @use "sass:math";
 
+:where([dir="rtl"]) {
+  --wiki-heading-swoosh-scale: -1;
+}
+
+:where([dir="ltr"]) {
+  --wiki-heading-swoosh-scale: 1;
+}
+
 // Modern reading surface
 .v-main .contents,
 .editor-page-canvas.contents,
-.contents .tiptap,
-.editor-asciidoc-preview-content.contents {
+.contents .tiptap {
   padding: 0;
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 88%, transparent);
   font-family: var(--wiki-font-reader);
@@ -92,25 +99,6 @@
       margin-block-start: 0;
     }
 
-    .toc-anchor {
-      position: absolute;
-      inset-block-end: .08em;
-      inset-inline-start: calc(100% + var(--wiki-space-2, .5rem));
-      display: inline-flex;
-      color: var(--wiki-accent-ink);
-      font-size: .72em;
-      opacity: 0;
-      transition:
-        color var(--wiki-motion-fast, .14s) var(--wiki-motion-ease, ease),
-        opacity var(--wiki-motion-fast, .14s) var(--wiki-motion-ease, ease);
-    }
-
-    &:hover .toc-anchor,
-    .toc-anchor:focus-visible {
-      display: inline-flex;
-      color: var(--wiki-accent-ink);
-      opacity: .72;
-    }
 
     & + hr.footnotes-sep {
       display: none;
@@ -120,6 +108,8 @@
   h1 {
     margin: 0 0 var(--wiki-space-6, 1.5rem);
     padding: 0 0 var(--wiki-space-3, .75rem) 0;
+    inline-size: fit-content;
+    max-inline-size: calc(100% - var(--wiki-heading-permalink-lane, 2rem));
     color: var(--wiki-accent-ink);
     font-size: 2.375rem;
     font-weight: 700;
@@ -137,9 +127,11 @@
       position: absolute;
       inset-block-end: 0;
       inset-inline-start: 0;
-      inline-size: min(100%, 10rem);
+      inline-size: 100%;
       block-size: 3.5px;
       background: linear-gradient(to right, rgb(var(--v-theme-primary)), transparent);
+      transform: scaleX(var(--wiki-heading-swoosh-scale, 1));
+      transform-origin: center;
       mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 35' preserveAspectRatio='none'%3E%3Cpath d='M0 0 H100 V10 C60 10 30 35 0 35 Z' fill='%23000'/%3E%3C/svg%3E");
       mask-size: 100% 100%;
       mask-repeat: no-repeat;
@@ -148,17 +140,6 @@
       -webkit-mask-repeat: no-repeat;
     }
 
-    &:dir(rtl)::after,
-    &[dir="rtl"]::after,
-    :where([dir="rtl"]) &::after,
-    [dir="rtl"] &::after,
-    .is-rtl &::after,
-    .v-locale--is-rtl &::after,
-    &:where([dir="rtl"] *, .is-rtl *, .v-locale--is-rtl *, [dir="rtl"])::after {
-      background: linear-gradient(to left, rgb(var(--v-theme-primary)), transparent);
-      mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 35' preserveAspectRatio='none'%3E%3Cpath d='M0 0 H100 V35 C70 35 40 10 0 10 Z' fill='%23000'/%3E%3C/svg%3E");
-      -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 35' preserveAspectRatio='none'%3E%3Cpath d='M0 0 H100 V35 C70 35 40 10 0 10 Z' fill='%23000'/%3E%3C/svg%3E");
-    }
   }
 
   h2 {
@@ -1567,18 +1548,6 @@
       font-size: 1.05rem;
     }
 
-    h1,
-    h2,
-    h3,
-    h4,
-    h5,
-    h6 {
-      .toc-anchor {
-        position: static;
-        margin-inline-start: var(--wiki-space-1, .25rem);
-        opacity: .48;
-      }
-    }
 
     // Cancel floating images and infoboxes on mobile to prevent document overflow
     img:not(.emoji),
@@ -1661,7 +1630,7 @@
       border: 0 !important;
       border-block-end: 1px solid currentColor !important;
       block-size: 1px !important;
-      inline-size: min(100%, 10rem) !important;
+      inline-size: 100% !important;
     }
 
     h2 {
@@ -1758,7 +1727,7 @@
       border: 0 !important;
       border-block-end: 1px solid currentColor !important;
       block-size: 1px !important;
-      inline-size: min(100%, 10rem) !important;
+      inline-size: 100% !important;
     }
 
     h2 {

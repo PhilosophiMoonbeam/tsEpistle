@@ -87,31 +87,30 @@ describe('self-hosted typography contracts', () => {
   const fontFaces = extractBlocks(fontSource, '@font-face').map(declarations)
   const assetNames = fs.readdirSync(path.join(root, 'client/fonts/default'))
 
-  test('blends display type by default and restores uniform roles for explicit fonts', () => {
+  test('retains fixed root Editorial Blend tokens with no dynamic data-wiki-font overrides', () => {
     const rootTokens = declarations(extractBlocks(base, ':root')[0])
-    const newsreaderTokens = declarations(extractBlocks(base, "html[data-wiki-font='newsreader']")[0])
 
     expect(rootTokens['--wiki-font-newsreader']).toBe("'Newsreader', ui-serif, Georgia, Cambria, 'Times New Roman', serif")
     expect(rootTokens['--wiki-font-roboto-flex']).toBe("'Roboto Flex', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif")
     expect(rootTokens['--wiki-font-selected']).toBe('var(--wiki-font-roboto-flex)')
     expect(rootTokens['--wiki-font-display']).toBe('var(--wiki-font-newsreader)')
-    expect(newsreaderTokens['--wiki-font-display']).toBe('var(--wiki-font-selected)')
-    const robotoTokens = declarations(extractBlocks(base, "html[data-wiki-font='roboto-flex']")[0])
-    expect(robotoTokens['--wiki-font-display']).toBe('var(--wiki-font-selected)')
-    expect(read('client/themes/default/components/page.vue')).toMatch(/\.page-title \{\s*font-family: var\(--wiki-font-display\)/)
-    expect(read('client/components/agents/inline-agent-chat.vue')).toMatch(/\.inline-agent__welcome h2 \{[^}]*font-family: var\(--wiki-font-display\)/)
 
     for (const token of ['--wiki-font-body', '--wiki-font-heading', '--wiki-font-reader']) {
       expect(rootTokens[token]).toBe('var(--wiki-font-selected)')
     }
     expect(rootTokens['--v-font-body']).toBe('var(--wiki-font-body)')
     expect(rootTokens['--v-font-heading']).toBe('var(--wiki-font-heading)')
-    expect(newsreaderTokens['--wiki-font-selected']).toBe('var(--wiki-font-newsreader)')
     expect(rootTokens['--wiki-font-mono']).toBe("'Roboto Mono', 'SFMono-Regular', 'Cascadia Code', 'Liberation Mono', monospace")
     expect(base).not.toMatch(/font-feature-settings\s*:/)
+    expect(base).not.toMatch(/data-wiki-font/)
+    expect(extractBlocks(base, "html[data-wiki-font='newsreader']")).toHaveLength(0)
+    expect(extractBlocks(base, "html[data-wiki-font='roboto-flex']")).toHaveLength(0)
+
+    expect(read('client/themes/default/components/page.vue')).toMatch(/\.page-title \{\s*font-family: var\(--wiki-font-display\)/)
+    expect(read('client/components/agents/inline-agent-chat.vue')).toMatch(/\.inline-agent__welcome h2 \{[^}]*font-family: var\(--wiki-font-display\)/)
   })
 
-  test('hydrates the font claim without gutter state or legacy token refreshes', () => {
+  test('hydrates the font claim without gutter state, legacy token refreshes, or runtime data-wiki-font writes', () => {
     expect(wikiStoreSource).toContain("import { normalizeUserFontFamily } from '../../shared/user-presentation.ts'")
     expect(wikiStoreSource).toMatch(/fontFamily:\s*normalizeUserFontFamily\(undefined\)/)
     expect(wikiStoreSource).toMatch(/this\.user\.fontFamily\s*=\s*normalizeUserFontFamily\(payload\.ff\)/)
@@ -122,10 +121,11 @@ describe('self-hosted typography contracts', () => {
     expect(clientApp).not.toContain("import Cookies from 'js-cookie'")
     expect(clientApp).not.toContain('ProfileAppearanceSchema')
     expect(clientApp).not.toContain('updateProfilePreferences')
-    expect(clientApp).toMatch(/import\s+\{\s*createApp,\s*watch\s*\}\s+from\s+'vue'/)
-    expect(clientApp).toMatch(
-      /watch\(\s*\(\)\s*=>\s*wikiStore\.user\.fontFamily,\s*fontFamily\s*=>\s*\{\s*document\.documentElement\.dataset\.wikiFont\s*=\s*fontFamily\s*\},\s*\{\s*immediate:\s*true\s*\}\s*\)/s
-    )
+    expect(clientApp).toMatch(/import\s+\{\s*createApp\s*\}\s+from\s+'vue'/)
+    expect(clientApp).not.toMatch(/document\.documentElement\.dataset\.wikiFont/)
+    expect(clientApp).not.toMatch(/data-wiki-font/)
+    expect(clientApp).not.toMatch(/wikiFont/)
+    expect(clientApp).not.toMatch(/watch\(\s*\(\)\s*=>\s*wikiStore\.user\.fontFamily/)
   })
 
   test('declares the exact local variable faces and real Newsreader italics', () => {

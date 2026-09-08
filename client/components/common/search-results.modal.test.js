@@ -104,6 +104,15 @@ describe('Ask modal accessibility contract', () => {
     expect(header).toMatch(/v-btn\.nav-header-search-toggle\([\s\S]*?data-search-modal-action/)
     expect(header).toMatch(/mobileActions:\s*\{[\s\S]*?type: Boolean,[\s\S]*?default: false[\s\S]*?\}/)
     expect(header).toMatch(/\.nav-header-slot-actions\(v-if='\$vuetify\.display\.mdAndUp \|\| mobileActions'\)\s*\n\s*slot\(name='actions'\)/)
+    expect(header).toMatch(
+      /\.nav-header-command[\s\S]*?v-text-field\.nav-header-search-control[\s\S]*?v-btn\.nav-header-agent\([\s\S]*?data-search-modal-action[\s\S]*?v-btn\.nav-header-browse\([^\n]*data-search-modal-action/
+    )
+    expect(header).toMatch(
+      /\.nav-header-mobile-search[\s\S]*?v-text-field\.nav-header-search-control[\s\S]*?v-btn\.nav-header-browse\([^\n]*data-search-modal-action/
+    )
+    expect(header).toMatch(
+      /\.nav-header-actions[\s\S]*?v-btn\.nav-header-search-toggle\([\s\S]*?v-btn\.nav-header-agent\([\s\S]*?data-search-modal-action/
+    )
     expect(tags).toMatch(/nav-header\(mobile-actions\)/)
     expect(tags).toMatch(/v-btn\.tags-filter-toggle\([\s\S]*?data-search-modal-action/)
     expect(search).toMatch(/additionalRoots:\s*this\.searchModalAdditionalRoots/)
@@ -124,7 +133,7 @@ describe('Ask modal accessibility contract', () => {
       /finishSearchFocus\(restoreFocus = true\): void[\s\S]*this\.deactivateModalLayers\(restoreFocus\)[\s\S]*this\.isSearchControl\(active\)[\s\S]*active\.blur\(\)[\s\S]*this\.searchRestoreTarget = null/
     )
     expect(header).toMatch(
-      /searchTab \(event: KeyboardEvent\)[\s\S]*event\.preventDefault\(\)[\s\S]*emitSearchExit\(false\)[\s\S]*this\.searchClose\(\)[\s\S]*nav-header-browse/
+      /searchTab \(event: KeyboardEvent\)[\s\S]*event\.preventDefault\(\)[\s\S]*emitSearchExit\(false\)[\s\S]*this\.searchClose\(\)[\s\S]*\.nav-header-agent[\s\S]*\.nav-header-browse[\s\S]*\.nav-header-logo/
     )
     expect(header).toMatch(/searchIsFocused\(open: boolean\): void[\s\S]*!open && this\.\$vuetify\.display\.smAndDown[\s\S]*this\.searchIsShown = false/)
     expect(header).toMatch(/searchClose \(\)[\s\S]*this\.searchIsFocused = false[\s\S]*this\.searchMode = 'search'[\s\S]*this\.search = ''/)
