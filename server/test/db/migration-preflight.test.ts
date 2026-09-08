@@ -3,9 +3,11 @@ import fs from 'node:fs'
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 
+import type { DurableJob } from '../../core/durable-jobs.ts'
 import { MigrationPreflightError, preflightMigrations } from '../../db/migration-preflight.ts'
 import { MIGRATION_LINEAGE_V1 } from '../../db/migration-contract.ts'
 import { up as createSiteLogoAuthority } from '../../db/migrations/tsepistle-000013-site-logo-authority.ts'
+import { cleanupSiteLogoRevisions } from '../../jobs/site-logo-process.ts'
 
 type MigrationSpec = { name: string }
 
@@ -354,6 +356,46 @@ siteLogoMigrationSuite('PostgreSQL managed site-logo migration contract', () => 
     expect(await postgres.schema.hasTable('siteLogoObjects')).toBe(false)
     expect(await postgres.schema.hasTable('siteLogoState')).toBe(false)
     expect(await postgres.schema.hasTable('siteLogoRevisions')).toBe(true)
+  })
+
+  it('keeps a fresh migration-13 site-logo authority unchanged when cleanup runs with null singleton pointers', async () => {
+    await createSiteLogoAuthority(postgres)
+
+    const stateBefore = await postgres('siteLogoState').orderBy('id')
+    const revisionsBefore = await postgres('siteLogoRevisions').orderBy('id')
+    const objectsBefore = await postgres('siteLogoObjects').orderBy(['kind', 'sha256'])
+    const now = new Date('2026-09-08T00:00:00.000Z')
+    const cleanupJob: DurableJob = {
+      id: '00000000-0000-4000-8000-000000000013',
+      type: 'cleanup-site-logo',
+      version: 1,
+      payload: {},
+      state: 'running',
+      attempts: 1,
+      maxAttempts: 1,
+      nextRunAt: now,
+      leaseOwner: 'migration-preflight-test',
+      leaseToken: 'migration-preflight-test',
+      leaseExpiresAt: new Date('2026-09-08T00:01:00.000Z'),
+      lastError: null,
+      deduplicationKey: null,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null
+    }
+
+    expect(stateBefore).toEqual([
+      expect.objectContaining({
+        id: 1,
+        generation: 0,
+        desiredRevisionId: null,
+        activeRevisionId: null
+      })
+    ])
+    await expect(cleanupSiteLogoRevisions(cleanupJob, { knex: postgres, signal: new AbortController().signal })).resolves.toBeUndefined()
+    expect(await postgres('siteLogoState').orderBy('id')).toEqual(stateBefore)
+    expect(await postgres('siteLogoRevisions').orderBy('id')).toEqual(revisionsBefore)
+    expect(await postgres('siteLogoObjects').orderBy(['kind', 'sha256'])).toEqual(objectsBefore)
   })
 
   it('allows nullable pre-ready metadata and atomically requires one validated ready bundle', async () => {

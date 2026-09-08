@@ -358,19 +358,20 @@ export const claimPageMutationEffects = async (
         .where(builder =>
           builder
             .whereNot('effectKind', 'links')
-            .orWhereNotExists(function () {
+            .orWhereNot('desiredState', 'present')
+            .orWhereExists(function () {
               this.select(transaction.raw('1'))
                 .from('pageMutationOutbox as renderDependency')
                 .whereRaw('?? = ??', ['renderDependency.pageId', 'pageMutationOutbox.pageId'])
                 .whereRaw('?? = ??', ['renderDependency.sourceRevision', 'pageMutationOutbox.sourceRevision'])
                 .where('renderDependency.effectKind', 'render')
-                .whereIn('renderDependency.status', ['pending', 'running', 'retry'])
+                .where('renderDependency.status', 'succeeded')
             })
-            .orWhereExists(function () {
+            .orWhereNotExists(function () {
               this.select(transaction.raw('1'))
                 .from('pages as currentPage')
                 .whereRaw('?? = ??', ['currentPage.id', 'pageMutationOutbox.pageId'])
-                .whereRaw('?? <> ??', ['currentPage.sourceRevision', 'pageMutationOutbox.sourceRevision'])
+                .whereRaw('?? = ??', ['currentPage.sourceRevision', 'pageMutationOutbox.sourceRevision'])
             })
         )
         .where(builder =>

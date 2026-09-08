@@ -682,13 +682,13 @@ export const cleanupSiteLogoRevisions: DurableJobHandler = async (_job, { knex, 
     const cutoff = new Date(now.getTime() - RETENTION_MS)
     const state = await lockState(transaction)
 
-    const retired = await transaction<RevisionRow>('siteLogoRevisions')
+    const retiredQuery = transaction<RevisionRow>('siteLogoRevisions')
       .whereIn('status', ['ready', 'failed'])
       .whereNotNull('retiredAt')
       .where('retiredAt', '<=', cutoff)
-      .whereNot({ id: state.activeRevisionId ?? '' })
-      .whereNot({ id: state.desiredRevisionId ?? '' })
-      .forUpdate()
+    if (state.activeRevisionId !== null) retiredQuery.whereNot({ id: state.activeRevisionId })
+    if (state.desiredRevisionId !== null) retiredQuery.whereNot({ id: state.desiredRevisionId })
+    const retired = await retiredQuery.forUpdate()
 
     let expiredDesired: RevisionRow | undefined
     if (state.desiredRevisionId && state.desiredRevisionId !== state.activeRevisionId) {

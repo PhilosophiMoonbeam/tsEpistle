@@ -301,7 +301,7 @@ describe('page mutation projection outbox', () => {
     expect(poison.result.length).toBeLessThan(1_300)
   })
 
-  it('defers links behind pending, running, or retrying current render work without consuming attempts', async () => {
+  it('claims present links only after exact render success without consuming attempts while blocked', async () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
@@ -312,9 +312,11 @@ describe('page mutation projection outbox', () => {
       visibility: 'public',
       ownerId: null
     })
-    await enqueue({ effects: ['render', 'links'] })
+    await enqueue({ effects: ['links'] })
     const now = new Date('2100-08-17T00:00:00.000Z')
 
+    expect(await claimPageMutationEffects(knex, { leaseOwner: 'links-missing-render', effects: ['links'], now })).toEqual([])
+    await enqueue({ effects: ['render'] })
     expect(await claimPageMutationEffects(knex, { leaseOwner: 'links-pending', effects: ['links'], now })).toEqual([])
     const [renderClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'render', effects: ['render'], now })
     if (!renderClaim) throw new Error('render claim missing')
@@ -336,9 +338,41 @@ describe('page mutation projection outbox', () => {
     expect(await claimPageMutationEffects(knex, { leaseOwner: 'links-retry', effects: ['links'], now })).toEqual([])
     expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('attempts')).toMatchObject({ attempts: 0 })
 
+    await knex('pageMutationOutbox').where({ id: renderClaim.id }).update({ status: 'failed' })
+    expect(await claimPageMutationEffects(knex, { leaseOwner: 'links-failed', effects: ['links'], now })).toEqual([])
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('attempts')).toMatchObject({ attempts: 0 })
+
     await knex('pageMutationOutbox').where({ id: renderClaim.id }).update({ status: 'succeeded' })
     const [linkClaim] = await claimPageMutationEffects(knex, { leaseOwner: 'links-ready', effects: ['links'], now })
     expect(linkClaim).toMatchObject({ attempts: 1, payload: { effectKind: 'links' } })
+  })
+
+  it('claims absent link cleanup independently of render state', async () => {
+    await knex('pageLinks').insert({ pageId: 42, localeCode: 'en', path: 'stale' })
+    await enqueue({
+      desiredState: 'absent',
+      action: 'delete',
+      source: undefined,
+      location: undefined,
+      previousLocation: location,
+      effects: ['links']
+    })
+
+    const [claim] = await claimPageMutationEffects(knex, { leaseOwner: 'absent-links', effects: ['links'] })
+    if (!claim) throw new Error('absent links claim missing')
+    expect(claim).toMatchObject({ attempts: 1, payload: { effectKind: 'links', desiredState: 'absent' } })
+
+    const lifecycle = new PageProjectionLifecycle(knex, 'absent-links-worker', projectionRuntime())
+    await knex('pageMutationOutbox').where({ id: claim.id }).update({
+      status: 'pending',
+      attempts: 0,
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null
+    })
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
+    expect(await knex('pageLinks').where({ pageId: 42 })).toEqual([])
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status')).toEqual({ status: 'succeeded' })
   })
 
   it('waits for exact render success before claiming current search work without consuming attempts', async () => {
@@ -546,6 +580,37 @@ describe('production page projection lifecycle', () => {
     ])
   })
 
+  it('rearms failed link work after exact render success and proves the persisted-links postcondition', async () => {
+    await knex('pages').insert({
+      id: 42,
+      sourceRevision: 8,
+      content: '# Start\n',
+      render: '<p><a class="is-internal-link" href="/en/recovered">recovered</a></p>',
+      localeCode: 'en',
+      path: 'docs/start',
+      visibility: 'public',
+      ownerId: null
+    })
+    await enqueue({ effects: ['render', 'links'] })
+    await knex('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'succeeded' })
+    await knex('pageMutationOutbox').where({ effectKind: 'links' }).update({ status: 'failed', attempts: 5 })
+    const linksEffect = await knex('pageMutationOutbox').where({ effectKind: 'links' }).first()
+    if (!linksEffect) throw new Error('links effect missing')
+
+    await expect(rearmPageMutationEffect(knex, { id: linksEffect.id, payload: JSON.parse(linksEffect.payload) })).resolves.toBe(true)
+    const lifecycle = new PageProjectionLifecycle(knex, 'rearmed-links-worker', projectionRuntime())
+    await lifecycle.runOnce()
+
+    expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 42, localeCode: 'en', path: 'recovered' }])
+    const settled = await knex('pageMutationOutbox').where({ id: linksEffect.id }).first('status', 'postcondition')
+    expect(settled.status).toBe('succeeded')
+    expect(JSON.parse(settled.postcondition)).toMatchObject({
+      satisfied: true,
+      observedSourceRevision: '8',
+      detail: expect.stringContaining('Persisted links exactly match')
+    })
+  })
+
   it('fences superseded revisions without rendering or overwriting current links', async () => {
     await knex('pages').insert({
       id: 42,
@@ -588,7 +653,7 @@ describe('production page projection lifecycle', () => {
     })
   })
 
-  it('retries link publication until the immutable render effect is terminal', async () => {
+  it('does not spend link attempts before an exact render effect succeeds', async () => {
     await knex('pages').insert({
       id: 42,
       sourceRevision: 8,
@@ -602,10 +667,16 @@ describe('production page projection lifecycle', () => {
     await enqueue({ effects: ['links'] })
     const lifecycle = new PageProjectionLifecycle(knex, 'retry-worker', projectionRuntime())
 
-    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 2 })
-    expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'attempts')).toMatchObject({ status: 'retry', attempts: 1 })
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'attempts')).toMatchObject({ status: 'pending', attempts: 0 })
     expect(await knex('pageMutationOutbox').where({ effectKind: 'search' }).first('status')).toEqual({ status: 'succeeded' })
     expect(await knex('pageLinks')).toHaveLength(0)
+
+    await enqueue({ effects: ['render'] })
+    await knex('pageMutationOutbox').where({ effectKind: 'render' }).update({ status: 'succeeded' })
+    await expect(lifecycle.runOnce()).resolves.toEqual({ processed: 1 })
+    expect(await knex('pageMutationOutbox').where({ effectKind: 'links' }).first('status', 'attempts')).toMatchObject({ status: 'succeeded', attempts: 1 })
+    expect(await knex('pageLinks').select('pageId', 'localeCode', 'path')).toEqual([{ pageId: 42, localeCode: 'en', path: 'target' }])
   })
 
   it('removes both search tables for private, unpublished, and deleted pages', async () => {
