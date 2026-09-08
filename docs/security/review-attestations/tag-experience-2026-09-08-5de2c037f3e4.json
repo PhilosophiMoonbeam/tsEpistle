@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "id": "tag-experience-2026-09-08-5de2c037f3e4",
+  "kind": "source-review",
+  "repository": "PhilosophiMoonbeam/tsEpistle",
+  "policyVersion": 1,
+  "threatModelDigest": "e873cd500c8e8fca2a9e8292b3fa62b293cc4a2664e763857f03c3d81024ab16",
+  "reviewer": {
+    "identity": "tsEpistle maintainers",
+    "independent": false,
+    "reviewedAt": "2026-09-08"
+  },
+  "releaseEligible": false,
+  "source": {
+    "revision": "5de2c037f3e40b486b9c239ba9b8189fafc35131",
+    "baseRevision": "6629be442d5e917e823a7377f05146aaa850de94",
+    "coveredTreeDigest": "04952f4bef969679e8de1d733c2f241a588b3f98d1fbe898ca0e4fe54b4594f4"
+  },
+  "findings": [
+    {
+      "id": "SEC-EXT-001",
+      "severity": "Release blocker",
+      "disposition": "blocking",
+      "evidencePaths": [
+        "docs/security/review-history.md"
+      ]
+    },
+    {
+      "id": "SEC-ADAPTER-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/threat-model.md"
+      ]
+    },
+    {
+      "id": "SEC-DEP-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/threat-model.md"
+      ]
+    },
+    {
+      "id": "SEC-AUTH-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "dev/e2e/setup.e2e.ts"
+      ]
+    },
+    {
+      "id": "SEC-OPS-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "dev/e2e/multi-instance-smoke.sh",
+        "server/test/core/durable-jobs.test.ts"
+      ]
+    },
+    {
+      "id": "SEC-MCP-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "server/test/core/auth.api-access.test.ts"
+      ]
+    },
+    {
+      "id": "SEC-MCP-002",
+      "severity": "Low",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "server/test/core/auth.api-access.test.ts"
+      ]
+    },
+    {
+      "id": "SEC-COVERAGE-001",
+      "severity": "Release blocker",
+      "disposition": "blocking",
+      "evidencePaths": [
+        "docs/security/tag-experience-2026-09-08-5de2c037f3e4-evidence.md"
+      ]
+    },
+    {
+      "id": "TAG-ACL-001",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/tag-experience-2026-09-08-5de2c037f3e4-evidence.md"
+      ]
+    },
+    {
+      "id": "TAG-ACL-002",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/tag-experience-2026-09-08-5de2c037f3e4-evidence.md"
+      ]
+    },
+    {
+      "id": "TAG-DISCLOSURE-003",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/tag-experience-2026-09-08-5de2c037f3e4-evidence.md"
+      ]
+    },
+    {
+      "id": "TAG-INPUT-005",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/tag-experience-2026-09-08-5de2c037f3e4-evidence.md"
+      ]
+    },
+    {
+      "id": "TAG-SQL-006",
+      "severity": "Low",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/tag-experience-2026-09-08-5de2c037f3e4-evidence.md"
+      ]
+    }
+  ],
+  "evidencePaths": [
+    "docs/security/review-history.md",
+    "docs/security/threat-model.md",
+    "docs/security/tag-experience-2026-09-08-5de2c037f3e4-evidence.md"
+  ]
+}
