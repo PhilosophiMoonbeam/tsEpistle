@@ -111,13 +111,12 @@ describe('asset aggregate persistence', () => {
     await upload(path.join(tempRoot, 'initial-upload'), 'old bytes', { skipStorage: true })
     const asset = (await db('assets').first()) as { id: number; hash: string }
     const previousBranding = {
-      version: 1,
+      version: 2,
       sourceSha256: 'a'.repeat(64),
       state: 'ready',
       width: 1,
       height: 1,
-      accent: '#112233',
-      matte: '#FFFFFF'
+      accent: '#112233'
     }
     const previousMetadata = { branding: previousBranding, revision: 4 }
     const reservations = Array.from({ length: 8 }, (_, index) => branding.reserveAssetBrandingAnalysis(asset.id + index + 1))

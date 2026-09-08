@@ -109,13 +109,12 @@ describe('asset operations', () => {
       folderId: null,
       metadata: {
         branding: {
-          version: 1,
+          version: 2,
           sourceSha256,
           state: 'ready',
           width: 1,
           height: 1,
-          accent: '#112233',
-          matte: '#FFFFFF'
+          accent: '#112233'
         }
       },
       getAssetPath: vi.fn().mockResolvedValue(assetPath)

@@ -13,8 +13,7 @@ const brandingView = {
   sourceSha256,
   width: 320,
   height: 180,
-  accent: '#AABBCC',
-  matte: '#FFFFFF'
+  accent: '#AABBCC'
 }
 
 const baseLocals = {

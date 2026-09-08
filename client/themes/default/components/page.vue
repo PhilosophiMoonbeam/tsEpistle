@@ -1,5 +1,5 @@
 <template lang="pug">
-  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus, "wiki-page--branded": hasPageBrandingAccent }]', :style='pageBrandingStyle')
+  v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus }]')
     a.page-skip-link(:href='`#${pageArticleId}`', @click.prevent='focusArticle') Skip to content
     nav-header(v-if='!printView')
     .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
@@ -89,7 +89,10 @@
             cols='12'
             :class='[$vuetify.locale.isRtl ? `pr-4` : `pl-4`, `page-header--toc-${tocPosition}`, { "has-edit-shortcuts": editShortcutsObj.editMenuBar && (editShortcutsObj.editMenuBtn || editShortcutsObj.editMenuExternalBtn) }]'
             )
-            .page-header-headings(:class='{ "page-header-headings--branded": pageBrandingVisible }')
+            .page-header-headings(
+              :class='{ "page-header-headings--branded": pageBrandingVisible, "page-header-headings--accent-present": hasPageBrandingAccent }'
+              :style='pageBrandingStyle'
+            )
               .page-document-label
                 v-icon(icon='mdi-book-open-page-variant-outline', size='15', aria-hidden='true')
                 span Knowledge / {{ locale.toUpperCase() }}
@@ -801,7 +804,6 @@ import PageBrandingMark from '@/components/common/page-branding-mark.vue'
 import StatusIndicator from '@/components/common/status-indicator.vue'
 import { externalSourceUrl } from '../../../../shared/general-policy.ts'
 import type { PageBrandingView } from '../../../../shared/page-branding.ts'
-import type { PageBrandingTheme } from '../../../helpers/page-branding'
 import {
   normalizePageBrandingView,
   pageBrandingIdentity,
@@ -1291,20 +1293,11 @@ export default defineComponent({
     pageBrandingVisible (): boolean {
       return this.pageBranding !== null && this.pageBrandingIdentity !== this.brandingFailureIdentity
     },
-    pageBrandingTheme (): PageBrandingTheme {
-      const dark = this.$vuetify.theme.current.dark
-      const colors = this.$vuetify.theme.current.colors as Record<string, unknown>
-      return {
-        dark,
-        surface: typeof colors.surface === 'string' ? colors.surface : '',
-        onSurface: typeof colors['on-surface'] === 'string' ? colors['on-surface'] : ''
-      }
-    },
     pageBrandingStyle (): Record<string, string> {
-      return resolvePageBrandingStyle(this.pageBranding, this.brandingFailureIdentity, this.pageBrandingTheme)
+      return resolvePageBrandingStyle(this.pageBranding, this.brandingFailureIdentity, this.$vuetify.theme.current.dark)
     },
     hasPageBrandingAccent (): boolean {
-      return this.pageBrandingStyle['--page-branding-surface'] !== undefined
+      return this.pageBrandingStyle['--page-branding-rgb'] !== undefined
     },
     isAuthenticated (): boolean {
       return wikiStore.user.authenticated
@@ -2668,19 +2661,6 @@ export default defineComponent({
   background: rgb(var(--v-theme-surface));
 }
 
-.wiki-page--branded .page-hero {
-  background: var(--page-branding-surface);
-}
-
-.wiki-page--branded .page-header-section::after {
-  position: absolute;
-  inset-block: var(--wiki-space-4);
-  inset-inline-start: 0;
-  inline-size: 1px;
-  content: '';
-  background: var(--page-branding-divider);
-  pointer-events: none;
-}
 
 .page-hero--with-toc,
 .page-hero--with-toc .page-header-section {
@@ -2718,24 +2698,50 @@ export default defineComponent({
   }
 
   .page-header-headings--branded {
+    --page-branding-mark-size: 80px;
     position: relative;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) var(--page-branding-mark-size);
     column-gap: var(--wiki-space-4);
     align-items: start;
+    isolation: isolate;
 
-    > .page-document-label,
+    > .page-document-label {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
     > .page-title-row,
     > .page-description,
     > .page-document-meta {
-      grid-column: 1;
+      grid-column: 1 / -1;
     }
 
     > .page-branding-mark {
       grid-column: 2;
-      grid-row: 1 / span 4;
+      grid-row: 1;
       align-self: start;
     }
+  }
+
+  .page-header-headings--accent-present::before {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: stretch;
+    justify-self: stretch;
+    min-width: 0;
+    min-height: 0;
+    content: '';
+    background: linear-gradient(
+      to bottom left,
+      rgb(var(--page-branding-rgb) / var(--page-branding-alpha)) 0%,
+      rgb(var(--page-branding-rgb) / calc(var(--page-branding-alpha) * .6)) 18%,
+      rgb(var(--page-branding-rgb) / calc(var(--page-branding-alpha) * .2)) 34%,
+      rgb(var(--page-branding-rgb) / 0) 48%,
+      rgb(var(--page-branding-rgb) / 0) 100%
+    );
+    pointer-events: none;
+    z-index: 0;
   }
 
   .page-title-row {
@@ -2814,9 +2820,70 @@ export default defineComponent({
     }
   }
 }
+.is-rtl .page-header-headings--branded {
+  grid-template-columns: var(--page-branding-mark-size) minmax(0, 1fr);
+
+  > .page-document-label {
+    grid-column: 2;
+  }
+
+  > .page-branding-mark {
+    grid-column: 1;
+  }
+}
+
+.is-rtl .page-header-headings--accent-present::before {
+  grid-column: 1;
+}
+
+@media (min-width: 960px) {
+  .page-header-headings--branded {
+    grid-template-rows: repeat(4, auto);
+
+    > .page-document-label,
+    > .page-title-row,
+    > .page-description,
+    > .page-document-meta {
+      grid-column: 1;
+    }
+
+    > .page-branding-mark {
+      grid-column: 2;
+      grid-row: 1 / span 4;
+    }
+  }
+
+  .page-header-headings--accent-present::before {
+    grid-column: 2;
+    grid-row: 1 / span 4;
+  }
+
+  .is-rtl .page-header-headings--branded {
+    > .page-document-label,
+    > .page-title-row,
+    > .page-description,
+    > .page-document-meta {
+      grid-column: 2;
+    }
+
+    > .page-branding-mark {
+      grid-column: 1;
+    }
+  }
+
+  .is-rtl .page-header-headings--accent-present::before {
+    grid-column: 1;
+  }
+}
+
+
  
 
 @media (min-width: 600px) {
+  .page-header-headings--branded {
+    --page-branding-mark-size: 96px;
+  }
+
   .page-header-section {
     > .is-page-header {
       grid-template-columns: minmax(0, 1fr);
@@ -2872,6 +2939,10 @@ export default defineComponent({
 }
 
 @media (min-width: 1280px) {
+  .page-header-headings--branded {
+    --page-branding-mark-size: 128px;
+  }
+
   .page-header-section {
     > .is-page-header {
       min-height: inherit;
@@ -3798,18 +3869,13 @@ export default defineComponent({
     display: none;
   }
 
-  .page-header-section::after,
+  .page-header-headings--accent-present::before,
   .page-branding-mark {
     display: none !important;
   }
 
   .page-header-headings--branded {
     display: block;
-  }
-
-  .page-header-headings--branded > .page-document-label {
-    min-block-size: auto;
-    padding-inline-end: 0;
   }
 
   .page-hero,
@@ -3871,22 +3937,13 @@ export default defineComponent({
     box-shadow: none;
   }
 
-  .wiki-page--branded .page-hero {
-    background: Canvas !important;
-  }
-
-  .page-header-section::after,
+  .page-header-headings--accent-present::before,
   .page-branding-mark {
     display: none !important;
   }
 
   .page-header-headings--branded {
     display: block;
-  }
-
-  .page-header-headings--branded > .page-document-label {
-    min-block-size: auto;
-    padding-inline-end: 0;
   }
 }
 
@@ -4018,21 +4075,6 @@ export default defineComponent({
 @media (max-width: 599px) {
   .page-reading-dock-title { display: none; }
 
-  .page-header-headings--branded {
-    display: block;
-
-    > .page-document-label {
-      min-block-size: 40px;
-      padding-inline-end: calc(40px + var(--wiki-space-3));
-      align-items: center;
-    }
-
-    > .page-branding-mark {
-      position: absolute;
-      inset-block-start: 0;
-      inset-inline-end: 0;
-    }
-  }
 }
 
 @media print {

@@ -198,19 +198,6 @@ const sampleRaster = async (bytes: Buffer, format: 'png' | 'jpeg' | 'webp'): Pro
   }
 }
 
-const deterministicMatte = (raster: RgbaRaster): '#FFFFFF' | '#181A1C' | null => {
-  let weight = 0
-  let luminance = 0
-  for (let index = 0; index < raster.width * raster.height; index += 1) {
-    const offset = index * 4
-    const alpha = raster.data[offset + 3]! / 255
-    if (alpha <= 0) continue
-    weight += alpha
-    luminance += alpha * (0.2126 * raster.data[offset]! + 0.7152 * raster.data[offset + 1]! + 0.0722 * raster.data[offset + 2]!)
-  }
-  if (weight <= 0) return null
-  return luminance / weight >= 128 ? '#181A1C' : '#FFFFFF'
-}
 const toBufferView = (value: unknown): Buffer | null => {
   if (Buffer.isBuffer(value)) return value
   if (!(value instanceof Uint8Array)) return null
@@ -234,15 +221,13 @@ export const analyzeAssetBranding = async (source: Buffer | Uint8Array): Promise
   try {
     const decoded = await sampleRaster(bytes, format)
     const accent = deriveAuraColor(decoded.raster)?.toUpperCase() ?? null
-    const matte = deterministicMatte(decoded.raster)
     return AssetBrandingMetadataSchema.parse({
       version: PAGE_BRANDING_VERSION,
       sourceSha256,
       state: 'ready',
       width: decoded.width,
       height: decoded.height,
-      accent,
-      matte
+      accent
     })
   } catch (error: unknown) {
     if (error instanceof BrandingInputError) return unavailable(sourceSha256, error.reason)
@@ -426,8 +411,9 @@ export const resolveAssetBrandingView = async (input: {
   if (!Number.isSafeInteger(input.assetId) || input.assetId < 1) throw new ApplicationError('Asset not found', { status: 404, code: 'ASSET_NOT_FOUND' })
   const { asset, assetPath } = await assetPathForAuthorization(input.assetId)
   await authorizeAssetPath({ assetPath, requester: input.requester, sessionId: input.sessionId })
-  let branding = currentReadyBranding(asset)
-  if (!branding && input.deriveIfMissing === true) {
+  const cachedBranding = brandingFromMetadata(asset.metadata)
+  let branding = cachedBranding?.state === 'ready' ? cachedBranding : null
+  if (!branding && cachedBranding === null && (hasBrandingMember(asset.metadata) || input.deriveIfMissing === true)) {
     const refreshed = await refreshAssetBranding(input.assetId)
     branding = refreshed?.state === 'ready' ? refreshed : null
   }
@@ -439,8 +425,7 @@ export const resolveAssetBrandingView = async (input: {
     sourceSha256: branding.sourceSha256,
     width: branding.width,
     height: branding.height,
-    accent: branding.accent,
-    matte: branding.matte
+    accent: branding.accent
   })
   return view.success ? view.data : null
 }
@@ -449,7 +434,12 @@ export const authorizePageBrandingAssignment = async (input: { assetId: number; 
   if (!Number.isSafeInteger(input.assetId) || input.assetId < 1) throw new ApplicationError('Asset not found', { status: 404, code: 'ASSET_NOT_FOUND' })
   const { asset, assetPath } = await assetPathForAuthorization(input.assetId)
   await authorizeAssetPath({ assetPath, requester: input.requester, sessionId: input.sessionId })
-  if (!currentReadyBranding(asset)) throw new ApplicationError('Asset branding is unavailable', { status: 422, code: 'BRANDING_UNAVAILABLE' })
+  let branding = currentReadyBranding(asset)
+  if (!branding && brandingFromMetadata(asset.metadata) === null && hasBrandingMember(asset.metadata)) {
+    const refreshed = await refreshAssetBranding(input.assetId)
+    branding = refreshed?.state === 'ready' ? refreshed : null
+  }
+  if (!branding) throw new ApplicationError('Asset branding is unavailable', { status: 422, code: 'BRANDING_UNAVAILABLE' })
 }
 
 export const stripAssetBrandingMetadataRecord = (value: unknown): Record<string, unknown> => {

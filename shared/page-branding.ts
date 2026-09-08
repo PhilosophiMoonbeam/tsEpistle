@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export const PAGE_BRANDING_VERSION = 1
+export const PAGE_BRANDING_VERSION = 2
 export const PAGE_BRANDING_MAX_SOURCE_BYTES = 5_242_880
 export const PAGE_BRANDING_MAX_INPUT_DIMENSION = 4_096
 export const PAGE_BRANDING_MAX_INPUT_PIXELS = 16_777_216
@@ -13,7 +13,7 @@ const BrandingColorSchema = z
   .string()
   .regex(/^#[0-9a-f]{6}$/i)
   .transform(value => value.toUpperCase())
-const BrandingMatteSchema = BrandingColorSchema.refine(value => value === '#FFFFFF' || value === '#181A1C')
+const BrandingAccentSchema = BrandingColorSchema.nullable().catch(null)
 
 const hasControlCharacter = (value: string): boolean => {
   for (let index = 0; index < value.length; index += 1) {
@@ -67,8 +67,7 @@ export const AssetBrandingReadySchema = z
     state: z.literal('ready'),
     width: BrandingDimensionSchema,
     height: BrandingDimensionSchema,
-    accent: BrandingColorSchema.nullable(),
-    matte: BrandingMatteSchema.nullable()
+    accent: BrandingAccentSchema
   })
   .superRefine((value, context) => {
     if (value.width * value.height > PAGE_BRANDING_MAX_INPUT_PIXELS) {
@@ -94,8 +93,7 @@ export const PageBrandingViewSchema = z
     sourceSha256: SourceSha256Schema,
     width: BrandingDimensionSchema,
     height: BrandingDimensionSchema,
-    accent: BrandingColorSchema.nullable(),
-    matte: BrandingMatteSchema.nullable()
+    accent: BrandingAccentSchema
   })
   .superRefine((value, context) => {
     if (value.width * value.height > PAGE_BRANDING_MAX_INPUT_PIXELS) {

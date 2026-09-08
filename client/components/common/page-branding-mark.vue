@@ -3,7 +3,6 @@ span.page-branding-mark(
   v-if='safeBranding && !failed'
   :key='identity'
   aria-hidden='true'
-  :style='markStyle'
 )
   img.page-branding-mark__image(
     :data-branding-source='identity'
@@ -18,12 +17,11 @@ span.page-branding-mark(
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount } from 'vue'
 import type { PageBrandingView } from '../../../shared/page-branding.ts'
 import {
   normalizePageBrandingView,
-  pageBrandingIdentity,
-  resolvePageBrandingMarkStyle
+  pageBrandingIdentity
 } from '../../helpers/page-branding.ts'
 
 const props = withDefaults(defineProps<{
@@ -39,36 +37,45 @@ const emit = defineEmits<{
 
 const safeBranding = computed(() => normalizePageBrandingView(props.branding))
 const identity = computed(() => pageBrandingIdentity(safeBranding.value))
-const markStyle = computed(() => resolvePageBrandingMarkStyle(safeBranding.value))
+
+let mounted = true
+onBeforeUnmount(() => {
+  mounted = false
+})
 
 const imageFailed = (event: Event): void => {
-  const branding = safeBranding.value
-  const currentIdentity = identity.value
   const image = event.currentTarget
-  if (!branding || !currentIdentity || !(image instanceof HTMLImageElement)) return
-  if (image.dataset.brandingSource !== currentIdentity) return
+  if (!(image instanceof HTMLImageElement)) return
 
-  const expectedUrl = new URL(branding.imageUrl, window.location.href).href
-  const actualUrl = new URL(image.currentSrc || image.src, window.location.href).href
-  if (actualUrl !== expectedUrl) return
-  emit('error', currentIdentity)
+  void nextTick(() => {
+    if (!mounted) return
+
+    const branding = safeBranding.value
+    const currentIdentity = identity.value
+    if (!branding || !currentIdentity) return
+    if (image.dataset.brandingSource !== currentIdentity) return
+
+    const expectedUrl = new URL(branding.imageUrl, window.location.href).href
+    const actualUrl = new URL(image.currentSrc || image.src, window.location.href).href
+    if (actualUrl !== expectedUrl) return
+    emit('error', currentIdentity)
+  })
 }
 </script>
 
 <style scoped>
 .page-branding-mark {
-  --page-branding-mark-matte: rgb(var(--v-theme-surface));
   display: inline-flex;
-  inline-size: 64px;
-  block-size: 64px;
-  flex: 0 0 64px;
+  inline-size: var(--page-branding-mark-size, 64px);
+  block-size: var(--page-branding-mark-size, 64px);
+  flex: 0 0 var(--page-branding-mark-size, 64px);
   align-items: center;
   justify-content: center;
   overflow: visible;
-  border-radius: var(--wiki-radius-xs);
-  background-color: var(--page-branding-mark-matte);
   pointer-events: none;
+  position: relative;
   user-select: none;
+  z-index: 1;
 }
 
 .page-branding-mark__image {
@@ -78,14 +85,7 @@ const imageFailed = (event: Event): void => {
   max-inline-size: 100%;
   max-block-size: 100%;
   object-fit: contain;
-}
-
-@media (max-width: 599px) {
-  .page-branding-mark {
-    inline-size: 40px;
-    block-size: 40px;
-    flex-basis: 40px;
-  }
+  object-position: center;
 }
 
 @media (forced-colors: active), print {
