@@ -8,7 +8,7 @@ import type { Component } from 'vue'
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { ParticleSceneEventFence as ParticleSceneEventFenceClass, ParticleSceneFrame, ParticleSceneResources } from './LogoParticleScene.vue'
 import type { LogoEffectDescriptor, ParsedLogoParticles } from './particle-logo.ts'
-import type { LogoPointerState } from './useLogoPointer.ts'
+import { LOGO_POINTER_MAX_TRAVEL_CSS, type LogoPointerState } from './useLogoPointer.ts'
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>', {
   pretendToBeVisual: true,
@@ -495,7 +495,7 @@ describe('LogoParticleScene resources', () => {
     expect(resources.uniforms.uBrushPositionRadius.value.x).toBeCloseTo(-0.25)
     expect(resources.uniforms.uBrushPositionRadius.value.y).toBeCloseTo(0.5)
     expect(resources.uniforms.uBrushPositionRadius.value.w).toBeGreaterThan(0)
-    expect(resources.uniforms.uBrushPositionRadius.value.w).toBeLessThanOrEqual(32)
+    expect(resources.uniforms.uBrushPositionRadius.value.w).toBeLessThanOrEqual(LOGO_POINTER_MAX_TRAVEL_CSS)
     expect(resources.uniforms.uExplosionPositionAge.value.map(value => value.toArray())).toEqual([
       [0.25, -0.5, 0.24, 1],
       [-0.25, 0.5, 0.1, 1],

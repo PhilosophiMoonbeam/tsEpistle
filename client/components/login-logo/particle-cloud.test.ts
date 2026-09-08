@@ -1,7 +1,7 @@
 import { describe, expect, it } from '../../../server/test/bun-test.mts'
 import type { ParsedLogoParticles } from './particle-logo'
 import { CLOUD_BEAD_LIMIT, ParticleCloud } from './particle-cloud'
-import { LogoPointerController } from './useLogoPointer'
+import { LOGO_POINTER_MAX_TRAVEL_CSS, LogoPointerController } from './useLogoPointer'
 
 const particles = (count: number, allBeads = false): ParsedLogoParticles => {
   const buffer = new ArrayBuffer(count * 12)
@@ -100,6 +100,19 @@ describe('particle cloud physics', () => {
 
 // Brush state is bounded independently of event rate and particle count.
 describe('continuous particle brush', () => {
+  it('makes ordinary strokes stronger with a modestly wider, bounded reach', () => {
+    const cloud = new ParticleCloud(particles(0))
+    const state = pointer()
+    Object.assign(state.impulses[0], { active: true, travelCss: 10, strength: 2, radiusCss: 40 })
+    for (let i = 0; i <= 120; i++) cloud.update(i / 120, 800, 800, state)
+    expect(cloud.brush.travel).toBeCloseTo(26.25, 4)
+    expect(cloud.brush.radius).toBeCloseTo(44.8, 4)
+    Object.assign(state.impulses[0], { travelCss: 20, strength: 3.2, radiusCss: 72 })
+    for (let i = 121; i <= 240; i++) cloud.update(i / 120, 800, 800, state)
+    expect(cloud.brush.travel).toBeCloseTo(LOGO_POINTER_MAX_TRAVEL_CSS, 4)
+    expect(cloud.brush.radius).toBeLessThanOrEqual(72)
+  })
+
   it('preserves continuity when a saturated pointer ring is replaced or reversed', () => {
     const cloud = new ParticleCloud(particles(0))
     const state = pointer()
@@ -116,7 +129,7 @@ describe('continuous particle brush', () => {
     expect(cloud.brush.x).toBeGreaterThan(before.x)
     expect(cloud.brush.x).toBeLessThan(-0.2)
     expect(cloud.brush.directionX).toBeGreaterThan(0.7)
-    expect(cloud.brush.travel).toBeLessThanOrEqual(32)
+    expect(cloud.brush.travel).toBeLessThanOrEqual(LOGO_POINTER_MAX_TRAVEL_CSS)
     impulse.active = false
     cloud.update(0.52, 800, 800, state)
     expect(cloud.brush.travel).toBeGreaterThan(20)

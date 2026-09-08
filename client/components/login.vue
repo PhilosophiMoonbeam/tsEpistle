@@ -4,7 +4,7 @@
       main.login-sd(:aria-busy='isLoading', aria-labelledby='login-site-title')
         .login-brand
           .login-logo
-            v-avatar(rounded='0', size='34')
+            v-avatar(rounded='0', size='34', variant='text')
               img(:src='logoUrl', alt='')
           .login-title
             .login-eyebrow {{ $t('auth:loginRequired') }}
@@ -904,10 +904,6 @@ export default defineComponent({
     width: 3.25rem;
     height: 3.25rem;
     place-items: center;
-    border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 24%, transparent);
-    border-radius: var(--wiki-panel-radius);
-    background: color-mix(in srgb, var(--wiki-accent-warm) 10%, var(--wiki-surface-raised));
-    box-shadow: var(--wiki-shadow-sm);
 
     > .v-avatar > img {
       display: block;
@@ -1190,7 +1186,6 @@ export default defineComponent({
       flex-basis: 2.5rem;
       width: 2.5rem;
       height: 2.5rem;
-      border-radius: var(--wiki-control-radius);
     }
 
     &-subtitle {
