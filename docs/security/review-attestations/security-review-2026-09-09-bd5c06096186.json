@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 2,
+  "id": "security-review-2026-09-09-bd5c06096186",
+  "kind": "source-review",
+  "repository": "PhilosophiMoonbeam/tsEpistle",
+  "policyVersion": 1,
+  "threatModelDigest": "2cc7db424ec5826924f31d5f0fb0917ef21f5e5823a03547ca028c9d9bb1c364",
+  "reviewer": {
+    "identity": "tsEpistle maintainers (Main; UpdatedDateSecurityReview; FinalUpdatedDateReview)",
+    "reviewedAt": "2026-09-09"
+  },
+  "releaseEligible": true,
+  "source": {
+    "revision": "bd5c0609618605f9181220958e07a42ce63a991a",
+    "baseRevision": "70a2d2f8b14e0d31bb43008d79809b120f27fbbf",
+    "coveredTreeDigest": "7d86c2830ae0957403723b99624c89c8c6cff87e569740e244e75bba9e21ce26"
+  },
+  "findings": [
+    {
+      "id": "AUTH-APIKEY-HUMAN-IMPERSONATION",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/core/auth.api-access.test.ts",
+        "server/test/graph/api-key-mutations.test.ts"
+      ]
+    },
+    {
+      "id": "AUTH-CALLBACK-INITIATION-BINDING",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/authentication/cas/cas-strategy.test.ts",
+        "server/modules/authentication/saml/authentication.test.ts",
+        "server/test/controllers/auth.test.js"
+      ]
+    },
+    {
+      "id": "AUTH-OAUTH-STATE-LIFECYCLE",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/authentication/oauth-state.test.ts",
+        "server/test/repositories/federated-login.postgres.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-ASSET-001",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/models/assets.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-IMPORT-002",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/storage/git/admission.test.ts",
+        "server/modules/storage/git/bounded-process.test.ts",
+        "server/modules/storage/git/repository.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-BACKUP-003",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/modules/storage.disk.test.js"
+      ]
+    },
+    {
+      "id": "SEC-STORAGE-NATIVE-BOUND-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "docs/security/threat-model.md",
+        "server/modules/storage/git/bounded-process.test.ts"
+      ]
+    },
+    {
+      "id": "SEC-ADAPTER-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "docs/security/threat-model.md"
+      ]
+    },
+    {
+      "id": "SEC-CACHE-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-54949bf6d081-evidence.md",
+        "docs/security/threat-model.md",
+        "server/controllers/api/pages.ts",
+        "server/test/controllers/api.pages.test.js",
+        "server/test/operations/pages-tree.postgres.test.ts"
+      ]
+    }
+  ],
+  "evidencePaths": [
+    "docs/security/security-review-2026-09-09-bd5c06096186-evidence.md",
+    "docs/security/security-review-2026-09-09-54949bf6d081-evidence.md",
+    "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+    "docs/security/threat-model.md"
+  ]
+}
