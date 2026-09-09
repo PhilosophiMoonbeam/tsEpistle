@@ -356,17 +356,15 @@ describe('controllers/api pages endpoints', () => {
     global.WIKI.models.knex = vi.fn().mockReturnValue({
       where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
     })
-    global.WIKI.models.pages.query = vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        findById: vi.fn().mockResolvedValue({
-          id: 7,
-          path: 'docs/alpha',
-          localeCode: 'en',
-          sourceRevision,
-          visibility: 'public',
-          ownerId: null
-        })
-      })
+    global.WIKI.models.pages.getPageFromDb.mockResolvedValue({
+      id: 7,
+      path: 'docs/alpha',
+      localeCode: 'en',
+      sourceRevision,
+      updatedAt: '2026-01-02T00:00:00.000Z',
+      visibility: 'public',
+      ownerId: null,
+      tags: []
     })
     global.WIKI.models.pages.updatePage = vi.fn().mockResolvedValue(undefined)
     global.WIKI.models.pageHistory = {

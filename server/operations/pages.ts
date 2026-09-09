@@ -262,11 +262,6 @@ const assertUnlocked = (input: OperationInput, pageId: number): Promise<void> =>
     sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
   })
 const wiki = WIKI as unknown as WikiPageOperations
-const completePageForAuthorization = async (page: PageRecord | undefined): Promise<PageRecord | undefined> => {
-  if (!page || Array.isArray(page.tags)) return page
-  const hydrated = await wiki.models.pages.getPageFromDb(page.id)
-  return hydrated as PageRecord | undefined
-}
 const positiveInteger = (value: unknown, label: string): number => {
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw new ApplicationError(`${label} must be a positive integer`, { code: 'INVALID_INPUT' })
   return value as number
@@ -990,9 +985,7 @@ const getHistory = async (input: OperationInput) => {
   const id = positiveInteger(input.id, 'id')
   const offsetPage = input.offsetPage === undefined ? 0 : nonNegativeInteger(input.offsetPage, 'offsetPage')
   const offsetSize = input.offsetSize === undefined ? 100 : positiveInteger(input.offsetSize, 'offsetSize')
-  const page = await completePageForAuthorization(
-    await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(id)
-  )
+  const page = await wiki.models.pages.getPageFromDb(id)
   if (!page || (page.visibility === 'private' && !canReadPage(requester, page, authority))) throw new wiki.Error.PageNotFound()
   await assertUnlocked(input, id)
   if (
@@ -1846,9 +1839,7 @@ const checkConflict = async (input: OperationInput) => {
   const authority = await authorityFor(input)
   const id = positiveInteger(input.id, 'id')
   if (!(input.checkoutDate instanceof Date)) throw new ApplicationError('checkoutDate must be a Date', { code: 'INVALID_INPUT' })
-  const page = await completePageForAuthorization(
-    await wiki.models.pages.query().select('path', 'localeCode', 'updatedAt', 'visibility', 'ownerId').findById(id)
-  )
+  const page = await wiki.models.pages.getPageFromDb(id)
   if (!page || (page.visibility === 'private' && !canWritePage(requester, page, authority))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page, authority)) throw new wiki.Error.PageUpdateForbidden()
   return page.updatedAt > input.checkoutDate
@@ -1991,7 +1982,7 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
   }
   const rawId = kind === 'restore' ? operationInput.pageId : operationInput.id
   const pageId = positiveInteger(rawId, kind === 'restore' ? 'pageId' : 'id')
-  const page = await completePageForAuthorization(await wiki.models.pages.query().findById(pageId))
+  const page = await wiki.models.pages.getPageFromDb(pageId)
   if (!page) throw new wiki.Error.PageNotFound()
   const canMutate = kind === 'delete' ? canDeletePage(requester, page, authority) : canWritePage(requester, page, authority)
   if (page.visibility === 'private' && !canMutate) throw new wiki.Error.PageNotFound()
@@ -2074,9 +2065,7 @@ const restore = async (input: OperationInput): Promise<void> => {
   const versionId = positiveInteger(input.versionId, 'versionId')
   const expected = expectedSourceRevision(input.expectedSourceRevision)
   if (expected === undefined) throw new ApplicationError('expectedSourceRevision must be a non-empty string', { code: 'INVALID_INPUT' })
-  const page = await completePageForAuthorization(
-    await wiki.models.pages.query().select('path', 'localeCode', 'sourceRevision', 'updatedAt', 'visibility', 'ownerId').findById(pageId)
-  )
+  const page = await wiki.models.pages.getPageFromDb(pageId)
   if (!page || (page.visibility === 'private' && !canWritePage(requester, page, authority))) throw new wiki.Error.PageNotFound()
   if (!canWritePage(requester, page, authority)) throw new wiki.Error.PageRestoreForbidden()
   if (String(Reflect.get(page, 'sourceRevision')) !== expected) {
