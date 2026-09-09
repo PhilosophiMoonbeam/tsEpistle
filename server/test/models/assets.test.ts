@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
@@ -15,6 +15,81 @@ let Asset: typeof AssetModel
 let removeAsset: typeof assetOperations.remove
 let storageEvent = vi.fn()
 let branding: typeof AssetBranding
+let localLookup = vi.fn()
+
+interface AssetResponse {
+  req: { method: string; headers: Record<string, string> }
+  headersSent: boolean
+  statusCode: number
+  body?: unknown
+  headers: Record<string, string>
+  status: (statusCode: number) => AssetResponse
+  set: (name: string, value: string) => AssetResponse
+  type: (value: string) => AssetResponse
+  sendStatus: (statusCode: number) => AssetResponse
+  send: (body: unknown) => AssetResponse
+  end: (body?: unknown) => AssetResponse
+}
+
+const responseForAsset = (method = 'GET', range?: string): AssetResponse => {
+  const response = {} as AssetResponse
+  response.req = { method, headers: range === undefined ? {} : { range } }
+  response.headersSent = false
+  response.statusCode = 200
+  response.headers = {}
+  response.status = vi.fn((statusCode: number) => {
+    response.statusCode = statusCode
+    return response
+  })
+  response.set = vi.fn((name: string, value: string) => {
+    response.headers[name] = value
+    return response
+  })
+  response.type = vi.fn((value: string) => {
+    response.headers['Content-Type'] = value
+    return response
+  })
+  response.sendStatus = vi.fn((statusCode: number) => {
+    response.statusCode = statusCode
+    response.headersSent = true
+    return response
+  })
+  response.send = vi.fn((body: unknown) => {
+    response.body = body
+    response.headersSent = true
+    return response
+  })
+  response.end = vi.fn((body?: unknown) => {
+    response.body = body
+    response.headersSent = true
+    return response
+  })
+  return response
+}
+
+const insertAsset = async (assetPath: string, data: Buffer, overrides: Record<string, unknown> = {}): Promise<{ id: number; hash: string }> => {
+  const hash = createHash('sha1').update(assetPath).digest('hex')
+  await db('assets').insert({
+    filename: path.posix.basename(assetPath),
+    hash,
+    ext: path.posix.extname(assetPath),
+    kind: 'binary',
+    mime: 'application/octet-stream',
+    fileSize: data.byteLength,
+    metadata: JSON.stringify({}),
+    authorId: 7,
+    folderId: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...overrides
+  })
+  const row = await db('assets').where({ hash }).first()
+  if (!row || !Number.isSafeInteger(row.id)) throw new Error('Asset fixture was not persisted')
+  await db('assetData').insert({ id: row.id, data })
+  return { id: row.id, hash }
+}
+
+const asResponse = (response: AssetResponse): Response => response as unknown as Response
 
 const upload = async (source: string, contents: string, options: { skipStorage?: boolean } = {}): Promise<void> => {
   await writeFile(source, contents)
@@ -62,17 +137,27 @@ describe('asset aggregate persistence', () => {
     })
 
     storageEvent = vi.fn().mockResolvedValue(undefined)
+    localLookup = vi.fn().mockResolvedValue([])
     const models: Record<string, unknown> = {
       knex: db,
       assetFolders: { getHierarchy: vi.fn().mockResolvedValue([]) },
-      storage: { assetEvent: storageEvent, getLocalLocations: vi.fn().mockResolvedValue([]) }
+      storage: { assetEvent: storageEvent, getLocalLocations: localLookup }
     }
     wikiGlobal.WIKI = {
       ROOTPATH: tempRoot,
-      config: { dataPath: 'data', uploads: { scanSVG: false, forceDownload: false } },
+      config: { dataPath: 'data', uploads: { maxFileSize: 5 * 1024 * 1024, scanSVG: false, forceDownload: false } },
       logger: { warn: vi.fn(), error: vi.fn() },
       scheduler: { registerJob: vi.fn() },
-      auth: { checkAccess: vi.fn().mockReturnValue(true) },
+      auth: {
+        checkAccess: vi.fn().mockReturnValue(true),
+        checkPageAccess: vi.fn().mockReturnValue(true),
+        loadPageRuleAuthority: vi.fn(async requester => ({
+          requester,
+          permissions: ['manage:system', 'manage:assets'],
+          groups: [],
+          tagAliases: {}
+        }))
+      },
       Error: {
         AssetInvalid: class extends Error {},
         AssetDeleteForbidden: class extends Error {}
@@ -224,5 +309,103 @@ describe('asset aggregate persistence', () => {
     expect(await db('assetData')).toEqual([])
     await expect(access(path.join(tempRoot, 'data', 'cache', `${asset.hash}.dat`))).rejects.toThrow()
     expect(storageEvent).toHaveBeenCalledWith(expect.objectContaining({ event: 'deleted' }))
+  })
+
+  it('requires a persisted identity before consulting stale cache or local storage', async () => {
+    const orphanPath = 'orphan.bin'
+    const staleCachePath = path.join(tempRoot, 'data', 'cache', `${createHash('sha1').update(orphanPath).digest('hex')}.dat`)
+    await mkdir(path.dirname(staleCachePath), { recursive: true })
+    await writeFile(staleCachePath, 'stale bytes')
+
+    const orphanResponse = responseForAsset()
+    await Asset.getAsset(orphanPath, asResponse(orphanResponse))
+    expect(orphanResponse.statusCode).toBe(404)
+    expect(localLookup).not.toHaveBeenCalled()
+    expect(await readFile(staleCachePath, 'utf8')).toBe('stale bytes')
+
+    const internalResponse = responseForAsset()
+    await Asset.getAsset('.git/config', asResponse(internalResponse))
+    expect(internalResponse.statusCode).toBe(404)
+    expect(localLookup).not.toHaveBeenCalled()
+  })
+
+  it('rejects persisted internal paths and canonical path mismatches before local delivery', async () => {
+    await insertAsset('.git/config', Buffer.from('private'), { filename: '.git/config' })
+    const internalResponse = responseForAsset()
+    await Asset.getAsset('.git/config', asResponse(internalResponse))
+    expect(internalResponse.statusCode).toBe(404)
+    expect(localLookup).not.toHaveBeenCalled()
+
+    await insertAsset('registered.txt', Buffer.from('private'), { filename: 'renamed.txt' })
+    const mismatchResponse = responseForAsset()
+    await Asset.getAsset('registered.txt', asResponse(mismatchResponse))
+    expect(mismatchResponse.statusCode).toBe(404)
+    expect(localLookup).not.toHaveBeenCalled()
+  })
+
+  it('delivers only the registered asset data and preserves HEAD and range semantics', async () => {
+    const data = Buffer.from('0123456789')
+    const asset = await insertAsset('registered.txt', data)
+    const cachePath = path.join(tempRoot, 'data', 'cache', `${asset.hash}.dat`)
+
+    const getResponse = responseForAsset()
+    await Asset.getAsset('registered.txt', asResponse(getResponse))
+    expect(Buffer.from(getResponse.body as Uint8Array)).toEqual(data)
+    expect(localLookup).toHaveBeenCalledWith({
+      asset: {
+        id: asset.id,
+        hash: asset.hash,
+        path: 'registered.txt',
+        filename: 'registered.txt',
+        folderId: null
+      }
+    })
+
+    await rm(cachePath, { force: true })
+    const headResponse = responseForAsset('HEAD')
+    await Asset.getAsset('registered.txt', asResponse(headResponse))
+    expect(headResponse.statusCode).toBe(200)
+    expect(headResponse.end).toHaveBeenCalled()
+    expect(headResponse.body).toBeUndefined()
+
+    await rm(cachePath, { force: true })
+    const rangeResponse = responseForAsset('GET', 'bytes=2-5')
+    await Asset.getAsset('registered.txt', asResponse(rangeResponse))
+    expect(rangeResponse.statusCode).toBe(206)
+    expect(rangeResponse.headers['Content-Range']).toBe('bytes 2-5/10')
+    expect(Buffer.from(rangeResponse.body as Uint8Array)).toEqual(Buffer.from('2345'))
+
+    await rm(cachePath, { force: true })
+    const invalidRangeResponse = responseForAsset('GET', 'bytes=50-60')
+    await Asset.getAsset('registered.txt', asResponse(invalidRangeResponse))
+    expect(invalidRangeResponse.statusCode).toBe(416)
+    expect(invalidRangeResponse.end).toHaveBeenCalled()
+  })
+
+  it('opens a registered local location with the persisted identity', async () => {
+    const asset = await insertAsset('local.txt', Buffer.from('local bytes'))
+    await db('assetData').where({ id: asset.id }).del()
+    const source = {
+      stats: { size: 10 },
+      handle: { createReadStream: vi.fn() },
+      close: vi.fn().mockResolvedValue(undefined)
+    }
+    const open = vi.fn().mockResolvedValue(source)
+    localLookup.mockResolvedValue([{ key: 'disk', location: { open } }])
+
+    const response = responseForAsset('HEAD')
+    await Asset.getAsset('local.txt', asResponse(response))
+    expect(open).toHaveBeenCalledOnce()
+    expect(response.statusCode).toBe(200)
+    expect(response.end).toHaveBeenCalled()
+    expect(localLookup).toHaveBeenCalledWith({
+      asset: {
+        id: asset.id,
+        hash: asset.hash,
+        path: 'local.txt',
+        filename: 'local.txt',
+        folderId: null
+      }
+    })
   })
 })

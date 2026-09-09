@@ -11,6 +11,12 @@ let revision = 0
 const searchUpdated = vi.fn()
 
 const user = (id: number, permissions: string[]) => ({ id, email: `user-${id}@example.test`, name: `User ${id}`, permissions })
+const authorityFor = (requester: { permissions?: string[] } | undefined) => ({
+  requester,
+  permissions: requester?.permissions ?? [],
+  groups: [],
+  tagAliases: {}
+})
 
 beforeEach(async () => {
   vi.resetModules()
@@ -25,6 +31,8 @@ beforeEach(async () => {
   await knex.schema.createTable('users', table => table.integer('id').primary())
   await knex.schema.createTable('pages', table => {
     table.integer('id').primary()
+    table.string('title').notNullable()
+    table.dateTime('updatedAt').notNullable()
     table.boolean('isPublished').notNullable()
     table.text('render').nullable()
     table.integer('authorId').notNullable()
@@ -35,6 +43,14 @@ beforeEach(async () => {
     table.string('visibility').notNullable()
     table.integer('ownerId').nullable()
   })
+  await knex.schema.createTable('tags', table => {
+    table.integer('id').primary()
+    table.string('tag').notNullable()
+  })
+  await knex.schema.createTable('pageTags', table => {
+    table.integer('pageId').notNullable()
+    table.integer('tagId').notNullable()
+  })
   await knex.schema.createTable('pageHistory', table => {
     table.increments('id').primary()
     table.integer('pageId').notNullable()
@@ -44,6 +60,8 @@ beforeEach(async () => {
   await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
   await knex('pages').insert({
     id: 42,
+    title: 'Review me',
+    updatedAt: new Date('2026-08-15T00:00:00.000Z'),
     isPublished: false,
     authorId: 7,
     sourceRevision: 1,
@@ -108,7 +126,10 @@ beforeEach(async () => {
   const getPage = async () => ({ ...page, ...(await knex('pages').where({ id: 42 }).first()) })
   Reflect.set(global, 'WIKI', {
     auth: {
-      checkAccess: (principal: { permissions?: string[] }, permissions: string[]) => permissions.some(permission => principal.permissions?.includes(permission))
+      checkAccess: (principal: { permissions?: string[] }, permissions: string[]) => permissions.some(permission => principal.permissions?.includes(permission)),
+      checkPageAccess: (principal: { permissions?: string[] }, permissions: string[], _context: unknown, authority: { requester: unknown; permissions: string[] }) =>
+        authority.requester === principal && permissions.some(permission => authority.permissions.includes(permission)),
+      loadPageRuleAuthority: async (requester: { permissions?: string[] } | undefined) => authorityFor(requester)
     },
     data: { searchEngine: { updated: searchUpdated } },
     models: {
@@ -216,6 +237,7 @@ describe('page approval workflow', () => {
       assigneeId: 8
     })
     page.updatedAt = new Date('2026-08-15T00:01:00.000Z')
+    await knex('pages').where({ id: 42 }).update({ updatedAt: page.updatedAt })
     await expect(
       Promise.resolve(operations.transitionApproval({ requester: user(8, ['read:pages', 'manage:pages']), requestId: submitted.id, action: 'approve' }))
     ).rejects.toMatchObject({ status: 409, name: 'APPROVAL_STALE' })

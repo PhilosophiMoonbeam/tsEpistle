@@ -30,7 +30,7 @@ describe('HTTP session authority and safe renewal', () => {
   })
   it('verifies an expired token and carries its generation into the renewal transaction boundary', async () => {
     principal = false; info = { name: 'TokenExpiredError', expiredAt: new Date(Date.now() - 10000) }; verify.mockReturnValue(currentClaims())
-    const { req, res } = await run(); expect(verify).toHaveBeenCalledWith('signed-token', 'PUBLIC-KEY', { audience: 'urn:test', issuer: 'urn:wiki.js', algorithms: ['RS256'], ignoreExpiration: true }); expect(refreshToken).toHaveBeenCalledWith(7, { expectedAuthVersion: 0 }); expect(res.set).toHaveBeenCalledWith('new-jwt', 'replacement'); expect(req.authContext).toMatchObject({ kind: 'user' })
+    const { req, res } = await run(); expect(verify).toHaveBeenCalledWith('signed-token', 'PUBLIC-KEY', { audience: 'urn:test', issuer: 'urn:wiki.js', algorithms: ['RS256'], ignoreExpiration: true }); expect(refreshToken).toHaveBeenCalledWith(7, { expectedAuthVersion: 0 }); expect(res.cookie).toHaveBeenCalledWith('jwt', 'replacement', expect.any(Object)); expect(res.set).toHaveBeenCalledWith('x-wiki-auth-refreshed', '1'); expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store'); expect(req.authContext).toMatchObject({ kind: 'user' })
   })
   it('does not renew a token whose signature fails or whose generation was revoked', async () => {
     principal = false; info = { name: 'TokenExpiredError', expiredAt: new Date(Date.now() - 10000) }; verify.mockImplementationOnce(() => { throw new Error('invalid signature') })

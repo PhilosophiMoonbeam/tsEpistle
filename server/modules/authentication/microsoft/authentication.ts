@@ -1,4 +1,5 @@
 import { asError, wiki, type AuthenticationPlugin } from '../../types.ts'
+import { oauth2StateOptions } from '../oauth-state.ts'
 
 // ------------------------------------
 // Microsoft Account
@@ -15,6 +16,7 @@ const plugin: AuthenticationPlugin = {
         clientID: conf.clientId,
         clientSecret: conf.clientSecret,
         callbackURL: conf.callbackURL,
+        ...oauth2StateOptions(conf),
         scope: ['User.Read', 'email', 'openid', 'profile'],
         passReqToCallback: true
       }, async (req, accessToken, refreshToken, profile, cb) => {

@@ -38,8 +38,6 @@ jobs:
     - name: Install Dependencies
       run: bun install --frozen-lockfile
     - name: Run Static Contract
-      env:
-        THREAT_REVIEW_TRUSTED_KEYS_JSON: ${{ vars.THREAT_REVIEW_TRUSTED_KEYS_JSON }}
       run: bun run ci:static
     - name: Detect Helm Chart Changes
       id: chart-changes
@@ -92,8 +90,6 @@ jobs:
       run: bun install --frozen-lockfile
 
     - name: Run Static Contract
-      env:
-        THREAT_REVIEW_TRUSTED_KEYS_JSON: ${{ vars.THREAT_REVIEW_TRUSTED_KEYS_JSON }}
       run: bun run ci:static
 
     - name: Upload License Inventory
@@ -1158,6 +1154,9 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Enforce Threat Model Release State
+      run: bun server/scripts/check-threat-model.ts --release
+
     - name: Set Build Metadata
       run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
 
@@ -1183,11 +1182,6 @@ jobs:
       with:
         name: gated-arm64-image-descriptors
         path: image-descriptors
-
-    - name: Enforce Threat Model Release State
-      env:
-        THREAT_REVIEW_TRUSTED_KEYS_JSON: ${{ vars.THREAT_REVIEW_TRUSTED_KEYS_JSON }}
-      run: bun server/scripts/check-threat-model.ts --release
 
     - name: Verify Descriptors and Push Preview Manifests
       shell: bash
@@ -1246,6 +1240,9 @@ jobs:
       with:
         fetch-depth: 0
 
+    - name: Enforce Threat Model Release State
+      run: bun server/scripts/check-threat-model.ts --release
+
     - name: Set Build Metadata
       shell: bash
       run: bun server/scripts/export-build-environment.ts >> "$GITHUB_ENV"
@@ -1269,11 +1266,6 @@ jobs:
       with:
         name: release-image-descriptors
         path: image-descriptors
-
-    - name: Enforce Threat Model Release State
-      env:
-        THREAT_REVIEW_TRUSTED_KEYS_JSON: ${{ vars.THREAT_REVIEW_TRUSTED_KEYS_JSON }}
-      run: bun server/scripts/check-threat-model.ts --release
 
     - name: Verify Descriptors and Push Release Manifests
       shell: bash

@@ -264,7 +264,6 @@
 import { defineComponent, markRaw, type Component, type PropType } from 'vue'
 import _ from 'lodash'
 import { wikiStore } from '@/store/index.ts'
-import Cookies from 'js-cookie'
 import vueFilePond from 'vue-filepond'
 import 'filepond/dist/filepond.min.css'
 import { createAssetFolder, deleteAsset as deleteAssetRequest, fetchAssetBranding, fetchAssetFolders, fetchAssets, renameAsset as renameAssetRequest, type Asset, type AssetFolder } from '../../helpers/assets-api'
@@ -485,13 +484,10 @@ export default defineComponent({
       return wikiStore.page.visibility === 'private'
     },
     filePondServerOpts () {
-      const jwtToken = Cookies.get('jwt')
       return {
         process: {
           url: '/u',
-          headers: {
-            'Authorization': `Bearer ${jwtToken}`
-          },
+          withCredentials: true,
           onload: (response: unknown) => {
             const id = extractUploadAssetId(response)
             return id === null ? '' : String(id)

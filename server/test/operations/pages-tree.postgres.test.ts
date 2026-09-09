@@ -34,13 +34,17 @@ suite('PostgreSQL Browse page access', () => {
     })
     await db.schema.createTable('tags', t => { t.integer('id').primary(); t.string('tag') })
     await db.schema.createTable('pageTags', t => { t.integer('pageId'); t.integer('tagId') })
+    const checkAccess = (_user: unknown, permissions: string[], page?: { path: string; tags?: unknown[] }) => {
+      if (!page) return false
+      if (permissions.includes('read:pages')) {
+        return readPaths.has(page.path) || (page.tags ?? []).some(tag => readTags.has(typeof tag === 'string' ? tag : tag !== null && typeof tag === 'object' ? Reflect.get(tag, 'tag') : undefined))
+      }
+      return permissions.includes('write:pages') && writePaths.has(page.path)
+    }
+    const loadPageRuleAuthority = async (requester: unknown) => ({ requester, permissions: [], groups: [], tagAliases: {} })
     globalThis.WIKI = {
-      config: { db: { type: 'postgres' }, lang: { code: 'en' } }, models: { knex: db },
-      auth: { checkAccess: (_user: unknown, permissions: string[], page?: { path: string; tags?: string[] }) => {
-        if (!page) return false
-        if (permissions.includes('read:pages')) return readPaths.has(page.path) || (page.tags ?? []).some(tag => readTags.has(tag))
-        return permissions.includes('write:pages') && writePaths.has(page.path)
-      } }
+      config: { db: { type: 'postgres' }, models: { knex: db } },
+      auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority }
     } as never
     operations = (await vi.importFresh('../../operations/pages.ts', import.meta.url)).default
   })

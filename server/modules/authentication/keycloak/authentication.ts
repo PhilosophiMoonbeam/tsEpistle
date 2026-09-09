@@ -1,4 +1,5 @@
 import { asError, wiki, type AuthenticationConfig, type AuthenticationPlugin } from '../../types.ts'
+import { oauth2StateOptions } from '../oauth-state.ts'
 import _ from 'lodash'
 
 
@@ -32,6 +33,7 @@ const plugin: KeycloakPlugin = {
         clientID: conf.clientId,
         clientSecret: conf.clientSecret,
         callbackURL: conf.callbackURL,
+        ...oauth2StateOptions(conf),
         passReqToCallback: true
       }, async (req, accessToken, refreshToken, results, profile, cb) => {
         let displayName = profile.username

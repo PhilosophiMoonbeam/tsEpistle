@@ -31,7 +31,7 @@ describe('page administration workflows', () => {
         return new Response(JSON.stringify({ error: 'Page changed; review it again' }), { status: 409, headers: { 'content-type': 'application/json' } })
       }
     } as unknown as Window & typeof globalThis
-    const row = { id: 5, title: 'Page', status: 'ready', page: { sourceRevision: '7', isPublished: true }, error: '' } as PublicationReview
+    const row = { id: 5, title: 'Page', status: 'ready', page: { sourceRevision: '7', capabilities: { viewStewardContacts: true }, isPublished: true, publishStartDate: null, publishEndDate: null }, error: '' } as PublicationReview
     await applyPublication(row, false)
     expect(row.status).toBe('error')
     expect(row.error).toContain('Page changed')
@@ -39,7 +39,7 @@ describe('page administration workflows', () => {
     expect(requests).toEqual([{ isPublished: false, expectedSourceRevision: '7' }])
   })
   it('skips unchanged publication without writing and clears old snapshots when review fails', async () => {
-    const row = { id: 5, title: 'Page', status: 'ready', page: { sourceRevision: '7', isPublished: true }, error: '' } as PublicationReview
+    const row = { id: 5, title: 'Page', status: 'ready', page: { sourceRevision: '7', capabilities: { viewStewardContacts: true }, isPublished: true, publishStartDate: null, publishEndDate: null }, error: '' } as PublicationReview
     await applyPublication(row, true)
     expect(row.status).toBe('unchanged')
     globalThis.window = {
@@ -51,5 +51,13 @@ describe('page administration workflows', () => {
     expect(row.page).toBeNull()
     expect(row.status).toBe('error')
     expect(row.error).toBe('Access changed')
+  })
+  it('refuses publication writes when the detail omits restricted schedule fields', async () => {
+    const row = { id: 5, title: 'Page', status: 'ready', page: { sourceRevision: '7' }, error: '' } as PublicationReview
+
+    await applyPublication(row, false)
+
+    expect(row.status).toBe('error')
+    expect(row.error).toContain('unavailable')
   })
 })

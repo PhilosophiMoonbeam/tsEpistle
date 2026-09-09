@@ -271,16 +271,36 @@ router.get('/last-logins', async (req, res, next) => {
   }
 })
 
-router.get('/whoami', async (req, res) => {
+router.get('/whoami', async (req, res, next) => {
+  res.set('Cache-Control', 'no-store')
   const userId = req.user?.id
   if (typeof userId !== 'number' || userId < 1 || userId === 2) {
-    return res.json({ authenticated: false, user: null })
+    res.json({ authenticated: false, user: null })
+    return
   }
 
-  return res.json({
-    authenticated: true,
-    user: _.pick(req.user, ['id', 'name', 'email', 'providerKey', 'permissions'])
-  })
+  try {
+    const user = await userOperations.getProfile(req.user)
+    res.json({
+      authenticated: true,
+      user: _.pick(user, [
+        'id',
+        'name',
+        'email',
+        'providerKey',
+        'pictureUrl',
+        'localeCode',
+        'defaultEditor',
+        'timezone',
+        'dateFormat',
+        'appearance',
+        'fontFamily',
+        'permissions'
+      ])
+    })
+  } catch (err) {
+    next(err)
+  }
 })
 
 router.get('/profile', async (req, res, next) => {
@@ -320,8 +340,8 @@ router.patch('/profile', async (req, res, next) => {
     return res.status(400).json({ error: 'Profile fields must be strings' })
   }
   try {
-    const token = await userOperations.updateProfile({ requester: req.user, input })
-    res.json({ token })
+    await userOperations.updateProfile({ requester: req.user, input, response: res })
+    res.json({ message: 'Profile updated successfully.' })
   } catch (err) {
     next(err)
   }
@@ -332,8 +352,8 @@ router.patch('/profile/preferences', async (req, res, next) => {
     return res.status(400).json({ error: 'Profile preferences are invalid' })
   }
   try {
-    const token = await userOperations.updateProfilePreferences({ requester: req.user, input: result.data })
-    return res.json({ token })
+    await userOperations.updateProfilePreferences({ requester: req.user, input: result.data, response: res })
+    return res.json({ message: 'Profile preferences updated successfully.' })
   } catch (err) {
     return next(err)
   }
@@ -346,8 +366,8 @@ router.post('/profile/password', async (req, res, next) => {
     return res.status(400).json({ error: 'current and newPassword must be strings' })
   }
   try {
-    const token = await userOperations.changePassword({ requester: req.user, current, newPassword })
-    res.json({ token })
+    await userOperations.changePassword({ requester: req.user, current, newPassword, response: res })
+    res.json({ message: 'Password changed successfully.' })
   } catch (err) {
     next(err)
   }

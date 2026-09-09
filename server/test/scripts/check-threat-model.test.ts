@@ -1,5 +1,4 @@
 import { execFileSync } from 'node:child_process'
-import crypto from 'node:crypto'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -10,18 +9,14 @@ import {
   CANONICAL_FINGERPRINT_ALGORITHM,
   CANONICAL_IGNORED_BUILD_METADATA_PATH,
   CANONICAL_REPOSITORY,
-  CANONICAL_THREAT_MODEL_PATH,
   checkThreatModel,
   computeCoveredTreeDigest,
-  computeRecordSigningPayload,
   computeThreatModelDigest,
   isSecurityBoundaryPath,
-  isValidCalendarDate,
   isValidIsoTimestamp,
   parseThreatModel,
   type ReviewRecord,
-  type SourceReviewRecord,
-  type TrustedKeysConfig
+  type SourceReviewRecord
 } from '../../scripts/check-threat-model.ts'
 
 const temporaryDirectories: string[] = []
@@ -70,55 +65,13 @@ function commit(rootPath: string, message: string): string {
   return runGit(rootPath, ['rev-parse', 'HEAD'])
 }
 
-type TestKeyPair = {
-  keyId: string
-  identity: string
-  publicKeyPem: string
-  privateKey: crypto.KeyObject
-}
-
-function generateTestKeyPair(keyId = 'test-reviewer-key-1', identity = 'Independent Security LLC'): TestKeyPair {
-  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519')
-  const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }) as string
-  return { keyId, identity, publicKeyPem, privateKey }
-}
-
-function signReviewRecord(record: Record<string, unknown>, keyPair: TestKeyPair): ReviewRecord {
-  const payload = computeRecordSigningPayload(record)
-  const sig = crypto.sign(null, payload, keyPair.privateKey)
-  return {
-    ...record,
-    signature: {
-      algorithm: 'ed25519',
-      keyId: keyPair.keyId,
-      value: sig.toString('hex')
-    }
-  } as ReviewRecord
-}
-
-function makeTrustedKeysConfig(keyPair: TestKeyPair): TrustedKeysConfig {
-  return {
-    schemaVersion: 1,
-    repository: CANONICAL_REPOSITORY,
-    keys: [
-      {
-        id: keyPair.keyId,
-        identity: keyPair.identity,
-        algorithm: 'ed25519',
-        publicKey: keyPair.publicKeyPem
-      }
-    ]
-  }
-}
 
 type RepositoryFixtureOptions = {
-  independent?: boolean
   releaseEligible?: boolean
+  reviewerIdentity?: string
   findings?: ReviewRecord['findings']
   extraEvidence?: string
   commands?: string[]
-  signed?: boolean
-  keyPair?: TestKeyPair
 }
 
 function createRepository(options: RepositoryFixtureOptions = {}): {
@@ -126,7 +79,6 @@ function createRepository(options: RepositoryFixtureOptions = {}): {
   reviewedRevision: string
   treeDigest: string
   threatModelDigest: string
-  keyPair?: TestKeyPair
 } {
   const rootPath = mkdtempSync(path.join(tmpdir(), 'wiki-threat-model-'))
   temporaryDirectories.push(rootPath)
@@ -142,7 +94,7 @@ function createRepository(options: RepositoryFixtureOptions = {}): {
       'test:security': 'bun security-tests.ts',
       'typecheck:server': 'bun --bun tsc --noEmit',
       'threat-model:check': 'bun server/scripts/check-threat-model.ts',
-      'ci:static': 'bun run dependencies:check && bun run threat-model:check'
+      'ci:static': 'bun run dependencies:check && bun run licenses:check && bun audit --production && bun run threat-model:check'
     }
   }
   write(rootPath, 'package.json', `${JSON.stringify(baseManifest, null, 2)}\n`)
@@ -162,28 +114,22 @@ function createRepository(options: RepositoryFixtureOptions = {}): {
   const treeDigest = computeCoveredTreeDigest(rootPath, reviewedRevision)
   const threatModelDigest = computeThreatModelDigest(tmContent)
 
-  const signed = options.signed ?? false
-  const keyPair = options.keyPair ?? (signed ? generateTestKeyPair() : undefined)
-  const independent = options.independent ?? signed
-  const releaseEligible = options.releaseEligible ?? signed
-
-  let baselineRecord: ReviewRecord = {
-    schemaVersion: 1,
+  const baselineRecord: SourceReviewRecord = {
+    schemaVersion: 2,
     id: 'baseline-review',
     kind: 'source-review',
     repository: CANONICAL_REPOSITORY,
     policyVersion: 1,
     threatModelDigest,
     reviewer: {
-      identity: keyPair?.identity ?? (independent ? 'Independent Security LLC' : 'tsEpistle maintainers'),
-      independent,
+      identity: options.reviewerIdentity ?? 'tsEpistle maintainers',
       reviewedAt: '2026-09-04'
     },
-    releaseEligible,
+    releaseEligible: options.releaseEligible ?? false,
     findings: options.findings ?? [
       {
-        id: 'SEC-EXT-001',
-        severity: 'High',
+        id: 'SEC-BASELINE-001',
+        severity: 'Low',
         disposition: 'resolved',
         evidencePaths: ['server/core/auth.ts']
       }
@@ -196,17 +142,13 @@ function createRepository(options: RepositoryFixtureOptions = {}): {
     }
   }
 
-  if (keyPair && signed) {
-    baselineRecord = signReviewRecord(baselineRecord, keyPair)
-  }
-
   write(rootPath, 'docs/security/review-attestations/baseline-review.json', `${JSON.stringify(baselineRecord, null, 2)}\n`)
   write(
     rootPath,
     'docs/security/review-attestations.json',
     `${JSON.stringify(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         policyVersion: 1,
         threatModelPath: 'docs/security/threat-model.md',
         activeReviewId: 'baseline-review',
@@ -223,21 +165,15 @@ function createRepository(options: RepositoryFixtureOptions = {}): {
   )
 
   commit(rootPath, 'add review attestations')
-  return { rootPath, reviewedRevision, treeDigest, threatModelDigest, keyPair }
+  return { rootPath, reviewedRevision, treeDigest, threatModelDigest }
 }
 
-const originalEnvKeys = process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON
-
 afterEach(() => {
-  if (originalEnvKeys !== undefined) {
-    process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON = originalEnvKeys
-  } else {
-    delete process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON
-  }
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
 
 describe('canonical policy-v1 path classification and digest', () => {
   it('covers server, client, shared, deploy, patches, workflows, actions, entire dev prefix, and config files', () => {
@@ -363,6 +299,46 @@ describe('normative threat-model markdown parser', () => {
   })
 })
 
+describe('release gate wiring', () => {
+  it('rejects an empty threat model even when its empty-byte digest is bound', async () => {
+    const { rootPath } = createRepository({ releaseEligible: true })
+    const recordPath = 'docs/security/review-attestations/baseline-review.json'
+    const record = JSON.parse(readFileSync(path.join(rootPath, recordPath), 'utf8'))
+    record.threatModelDigest = computeThreatModelDigest('')
+    write(rootPath, 'docs/security/threat-model.md', '')
+    write(rootPath, recordPath, `${JSON.stringify(record, null, 2)}\n`)
+
+    const ordinaryFailures = await checkThreatModel(rootPath)
+    expect(ordinaryFailures).toContain('Threat model parsing failed: Threat model must contain a Status and review contract section')
+
+    const releaseFailures = await checkThreatModel(rootPath, { release: true })
+    expect(releaseFailures).toContain('Threat model parsing failed: Threat model must contain a Status and review contract section')
+  })
+
+  it('requires an exact unsuppressed audit segment in the canonical ci:static chain', async () => {
+    const invalidChains = [
+      'bun run dependencies:check && bun run licenses:check && bun run threat-model:check',
+      'bun run dependencies:check && bun run licenses:check && echo "bun audit --production" && bun run threat-model:check',
+      'bun run dependencies:check && bun run licenses:check && bun audit --production && bun run threat-model:check || true',
+      'bun run dependencies:check && bun run licenses:check && bun audit --production --audit-level=high && bun run threat-model:check',
+      'bun run dependencies:check && bun run licenses:check && bun audit --production & bun run threat-model:check'
+    ]
+
+    for (const ciStatic of invalidChains) {
+      const { rootPath } = createRepository()
+      const packagePath = path.join(rootPath, 'package.json')
+      const manifest = JSON.parse(readFileSync(packagePath, 'utf8'))
+      manifest.scripts['ci:static'] = ciStatic
+      write(rootPath, 'package.json', `${JSON.stringify(manifest, null, 2)}\n`)
+
+      const failures = await checkThreatModel(rootPath)
+      expect(failures).toContain(
+        'ci:static must execute exact unconditional bun audit --production after dependencies:check and licenses:check and before threat-model:check'
+      )
+    }
+  })
+})
+
 describe('manifest and review record structure and integrity', () => {
   it('rejects malformed manifest JSON', async () => {
     const { rootPath } = createRepository()
@@ -388,7 +364,7 @@ describe('manifest and review record structure and integrity', () => {
       rootPath,
       manifestPath,
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         policyVersion: 1,
         threatModelPath: 'docs/security/threat-model.md',
         activeReviewId: 'baseline-review',
@@ -408,7 +384,7 @@ describe('manifest and review record structure and integrity', () => {
     write(rootPath, recordPath, 'null\n')
     expect(await checkThreatModel(rootPath)).toContain('Record baseline-review must be a JSON object')
 
-    write(rootPath, recordPath, JSON.stringify({ schemaVersion: 1, id: 'baseline-review' }))
+    write(rootPath, recordPath, JSON.stringify({ schemaVersion: 2, id: 'baseline-review' }))
     const failures = await checkThreatModel(rootPath)
     expect(failures.some(f => f.includes('repository must be "PhilosophiMoonbeam/tsEpistle"'))).toBe(true)
     expect(failures.some(f => f.includes('must declare reviewer object'))).toBe(true)
@@ -421,9 +397,11 @@ describe('manifest and review record structure and integrity', () => {
     const manifestPath = 'docs/security/review-attestations.json'
     const valid = JSON.parse(readFileSync(path.join(rootPath, manifestPath), 'utf8'))
 
-    write(rootPath, manifestPath, JSON.stringify({ ...valid, schemaVersion: 2 }))
-    expect(await checkThreatModel(rootPath)).toContain('Unsupported manifest schemaVersion: expected 1, received 2')
+    write(rootPath, manifestPath, JSON.stringify({ ...valid, schemaVersion: 1 }))
+    expect(await checkThreatModel(rootPath)).toContain('Unsupported manifest schemaVersion: expected 2, received 1')
 
+    write(rootPath, manifestPath, JSON.stringify({ ...valid, schemaVersion: 3 }))
+    expect(await checkThreatModel(rootPath)).toContain('Unsupported manifest schemaVersion: expected 2, received 3')
     write(rootPath, manifestPath, JSON.stringify({ ...valid, policyVersion: 2 }))
     expect(await checkThreatModel(rootPath)).toContain('Unsupported manifest policyVersion: expected 1, received 2')
   })
@@ -520,10 +498,10 @@ describe('manifest and review record structure and integrity', () => {
     expect(failures).toContain('Active review ID "nonexistent-id" is not present in manifest records')
   })
 
-  it('enforces working-tree-audit false/false/no-signature/canonical algorithm (TMG-006)', async () => {
+  it('enforces working-tree-audit ineligibility and canonical algorithm (TMG-006)', async () => {
     const { rootPath, reviewedRevision, threatModelDigest } = createRepository()
     const stagedRecord = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: 'staged-audit',
       kind: 'working-tree-audit',
       repository: CANONICAL_REPOSITORY,
@@ -531,22 +509,15 @@ describe('manifest and review record structure and integrity', () => {
       threatModelDigest,
       reviewer: {
         identity: 'Maintainer Staged Audit',
-        independent: true, // violation
         reviewedAt: '2026-09-08'
       },
-      releaseEligible: true, // violation
-      signature: {
-        // violation
-        algorithm: 'ed25519',
-        keyId: 'fake',
-        value: 'aabb'
-      },
+      releaseEligible: true,
       findings: [],
-      evidencePaths: [],
+      evidencePaths: ['server/core/auth.ts'],
       source: {
         baseRevision: reviewedRevision,
         fingerprint: '3adffcba7255a3f88ec490ceffefe6f826e9508a',
-        fingerprintAlgorithm: 'sha256' // violation
+        fingerprintAlgorithm: 'sha256'
       }
     }
     write(rootPath, 'docs/security/review-attestations/staged-audit.json', `${JSON.stringify(stagedRecord, null, 2)}\n`)
@@ -554,7 +525,7 @@ describe('manifest and review record structure and integrity', () => {
       rootPath,
       'docs/security/review-attestations.json',
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         policyVersion: 1,
         threatModelPath: 'docs/security/threat-model.md',
         activeReviewId: 'baseline-review',
@@ -566,9 +537,7 @@ describe('manifest and review record structure and integrity', () => {
     )
 
     const failures = await checkThreatModel(rootPath)
-    expect(failures).toContain('Working-tree-audit record staged-audit must declare reviewer.independent as false')
     expect(failures).toContain('Working-tree-audit record staged-audit must declare releaseEligible as false')
-    expect(failures).toContain('Working-tree-audit record staged-audit must not have a signature')
     expect(failures).toContain(
       `Working-tree-audit record staged-audit source.fingerprintAlgorithm must be "${CANONICAL_FINGERPRINT_ALGORITHM}", received: sha256`
     )
@@ -973,236 +942,167 @@ describe('working-tree dirty boundary drift, ignored files, and index flags (TMG
     expect(await checkThreatModel(rootPath)).toEqual([])
   })
 })
-
-describe('adversarial release signature and provenance enforcement (TMG-001)', () => {
-  it('blocks forged unsigned two-commit release attempt', async () => {
-    // Commit 1: attacker modifies boundary code
-    const { rootPath } = createRepository()
-    write(rootPath, 'server/core/auth.ts', 'export const backdoor = true\n')
-    const maliciousRevision = commit(rootPath, 'attacker malicious commit 1')
-
-    const newTreeDigest = computeCoveredTreeDigest(rootPath, maliciousRevision)
-    const tmContent = readFileSync(path.join(rootPath, 'docs/security/threat-model.md'), 'utf8')
-    const tmDigest = computeThreatModelDigest(tmContent)
-
-    // Commit 2: attacker creates forged unsigned record claiming independent: true, releaseEligible: true
-    const forgedRecord: SourceReviewRecord = {
-      schemaVersion: 1,
-      id: 'forged-review',
-      kind: 'source-review',
-      repository: CANONICAL_REPOSITORY,
-      policyVersion: 1,
-      threatModelDigest: tmDigest,
-      reviewer: {
-        identity: 'Fake External Auditor LLC',
-        independent: true,
-        reviewedAt: '2026-09-08'
-      },
-      releaseEligible: true,
-      findings: [],
-      evidencePaths: [],
-      source: {
-        revision: maliciousRevision,
-        baseRevision: maliciousRevision,
-        coveredTreeDigest: newTreeDigest
-      }
-    }
-
-    write(rootPath, 'docs/security/review-attestations/forged-review.json', `${JSON.stringify(forgedRecord, null, 2)}\n`)
-    write(
-      rootPath,
-      'docs/security/review-attestations.json',
-      JSON.stringify({
-        schemaVersion: 1,
-        policyVersion: 1,
-        threatModelPath: 'docs/security/threat-model.md',
-        activeReviewId: 'forged-review',
-        records: [{ id: 'forged-review', path: 'docs/security/review-attestations/forged-review.json' }]
-      })
-    )
-    commit(rootPath, 'attacker forged review commit 2')
-
-    // Release check must FAIL because record is unsigned
-    const failures = await checkThreatModel(rootPath, { release: true })
-    expect(failures).toContain('Active review record must have a valid detached signature for release')
+describe('maintainer release integrity enforcement (TMG-001)', () => {
+  it('passes release check for a schema-2 maintainer record without external authority', async () => {
+    const { rootPath } = createRepository({ releaseEligible: true })
+    expect(await checkThreatModel(rootPath, { release: true })).toEqual([])
   })
 
-  it('rejects manifest record claiming independent=true or releaseEligible=true without signature during ordinary check', async () => {
+  it('rejects schema-1 records without conversion', async () => {
     const { rootPath } = createRepository()
     const recordPath = 'docs/security/review-attestations/baseline-review.json'
-    const original = JSON.parse(readFileSync(path.join(rootPath, recordPath), 'utf8'))
-
-    // Claim independent: true without signature
-    write(rootPath, recordPath, JSON.stringify({ ...original, reviewer: { ...original.reviewer, independent: true } }))
-    let failures = await checkThreatModel(rootPath)
-    expect(failures).toContain('Active review record claims independent=true but has no signature')
-    expect(failures).toContain('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required to verify trusted review records')
-
-    // Claim releaseEligible: true without signature
-    write(rootPath, recordPath, JSON.stringify({ ...original, releaseEligible: true }))
-    failures = await checkThreatModel(rootPath)
-    expect(failures).toContain('Active review record claims releaseEligible=true but has no signature')
+    const record = JSON.parse(readFileSync(path.join(rootPath, recordPath), 'utf8'))
+    record.schemaVersion = 1
+    write(rootPath, recordPath, `${JSON.stringify(record, null, 2)}\n`)
+    const failures = await checkThreatModel(rootPath)
+    expect(failures).toContain('Record baseline-review has unsupported schemaVersion: 1')
   })
 
-  it('rejects historical review records claiming releaseEligible or independence without signature or trusted key', async () => {
-    const { rootPath, reviewedRevision, treeDigest, threatModelDigest } = createRepository()
-    const historicalPath = 'docs/security/review-attestations/historical-audit.json'
-    const manifestPath = 'docs/security/review-attestations.json'
+  it('rejects tampered covered digest and escaping evidence', async () => {
+    const { rootPath } = createRepository({ releaseEligible: true })
+    const recordPath = 'docs/security/review-attestations/baseline-review.json'
+    const record = JSON.parse(readFileSync(path.join(rootPath, recordPath), 'utf8'))
+    record.source.coveredTreeDigest = '0'.repeat(64)
+    record.evidencePaths = ['../outside-evidence.txt']
+    write(rootPath, recordPath, `${JSON.stringify(record, null, 2)}\n`)
+    const failures = await checkThreatModel(rootPath)
+    expect(failures.some(f => f.includes('coveredTreeDigest does not match reviewed revision tree'))).toBe(true)
+    expect(failures).toContain('Active record evidence path escapes repository: ../outside-evidence.txt')
+  })
 
-    const historicalRecord: SourceReviewRecord = {
-      schemaVersion: 1,
-      id: 'historical-audit',
-      kind: 'source-review',
+  it('requires active record evidence and rejects an active working-tree audit', async () => {
+    const { rootPath, reviewedRevision, threatModelDigest } = createRepository({ releaseEligible: true })
+    const recordPath = 'docs/security/review-attestations/baseline-review.json'
+    const auditRecord = {
+      schemaVersion: 2,
+      id: 'baseline-review',
+      kind: 'working-tree-audit',
       repository: CANONICAL_REPOSITORY,
       policyVersion: 1,
       threatModelDigest,
       reviewer: {
-        identity: 'Past Independent Auditor LLC',
-        independent: true,
-        reviewedAt: '2026-09-01'
+        identity: 'Maintainer audit',
+        reviewedAt: '2026-09-08'
       },
-      releaseEligible: true,
+      releaseEligible: false,
       findings: [],
-      evidencePaths: [],
+      evidencePaths: ['server/core/auth.ts'],
+      source: {
+        baseRevision: reviewedRevision,
+        fingerprint: '3adffcba7255a3f88ec490ceffefe6f826e9508a',
+        fingerprintAlgorithm: CANONICAL_FINGERPRINT_ALGORITHM
+      }
+    }
+    write(rootPath, recordPath, `${JSON.stringify(auditRecord, null, 2)}\n`)
+    const failures = await checkThreatModel(rootPath)
+    expect(failures).toContain('Active review record must have kind "source-review", found: "working-tree-audit"')
+
+    const sourceRecord = {
+      ...auditRecord,
+      kind: 'source-review',
+      releaseEligible: true,
       source: {
         revision: reviewedRevision,
         baseRevision: reviewedRevision,
-        coveredTreeDigest: treeDigest
-      }
+        coveredTreeDigest: computeCoveredTreeDigest(rootPath, reviewedRevision)
+      },
+      evidencePaths: []
     }
-
-    write(rootPath, historicalPath, `${JSON.stringify(historicalRecord, null, 2)}\n`)
-    const manifest = JSON.parse(readFileSync(path.join(rootPath, manifestPath), 'utf8'))
-    write(
-      rootPath,
-      manifestPath,
-      JSON.stringify({
-        ...manifest,
-        records: [...manifest.records, { id: 'historical-audit', path: historicalPath }]
-      })
-    )
-
-    // 1. Unsigned historical record claiming independent + releaseEligible fails ordinary check
-    let failures = await checkThreatModel(rootPath)
-    expect(failures).toContain('Record historical-audit claims independent=true and releaseEligible=true but has no signature')
-    expect(failures).toContain('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required to verify trusted review records')
-
-    // 2. Signed with unknown/untrusted key fails closed
-    const keyPair = generateTestKeyPair('historical-key-1', 'Past Independent Auditor LLC')
-    const signedHistorical = signReviewRecord(historicalRecord, keyPair)
-    write(rootPath, historicalPath, `${JSON.stringify(signedHistorical, null, 2)}\n`)
-
-    const otherKeyPair = generateTestKeyPair('other-key', 'Other Auditor LLC')
-    process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON = JSON.stringify(makeTrustedKeysConfig(otherKeyPair))
-
-    failures = await checkThreatModel(rootPath)
-    expect(failures).toContain('Record historical-audit signature keyId "historical-key-1" is not in trusted keys')
-
-    // 3. Signed with trusted key passes
-    process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON = JSON.stringify(makeTrustedKeysConfig(keyPair))
-    failures = await checkThreatModel(rootPath)
-    expect(failures).toEqual([])
+    write(rootPath, recordPath, `${JSON.stringify(sourceRecord, null, 2)}\n`)
+    const evidenceFailures = await checkThreatModel(rootPath)
+    expect(evidenceFailures).toContain('Active review record must declare at least one evidence path')
   })
-
-  it('passes release check with valid externally trusted Ed25519 signature', async () => {
-    const keyPair = generateTestKeyPair('release-key-1', 'Independent Security LLC')
-    const { rootPath } = createRepository({
-      independent: true,
-      releaseEligible: true,
-      signed: true,
-      keyPair
-    })
-
-    const trustedConfig = makeTrustedKeysConfig(keyPair)
-    process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON = JSON.stringify(trustedConfig)
-
-    const failures = await checkThreatModel(rootPath, { release: true })
-    expect(failures).toEqual([])
-  })
-
-  it('rejects wrong key ID, mismatched reviewer identity, and tampered payload', async () => {
-    const keyPair = generateTestKeyPair('release-key-1', 'Independent Security LLC')
-    const { rootPath } = createRepository({
-      independent: true,
-      releaseEligible: true,
-      signed: true,
-      keyPair
-    })
-
+  it('rejects a directory as active-record evidence', async () => {
+    const { rootPath } = createRepository({ releaseEligible: true })
     const recordPath = 'docs/security/review-attestations/baseline-review.json'
-    const originalRecord = JSON.parse(readFileSync(path.join(rootPath, recordPath), 'utf8'))
+    const record = JSON.parse(readFileSync(path.join(rootPath, recordPath), 'utf8'))
+    record.evidencePaths = ['docs/security']
+    write(rootPath, recordPath, `${JSON.stringify(record, null, 2)}\n`)
 
-    // 1. Wrong key ID in signature
-    const wrongKeyRecord = {
-      ...originalRecord,
-      signature: {
-        ...originalRecord.signature,
-        keyId: 'unknown-key-id'
-      }
-    }
-    write(rootPath, recordPath, JSON.stringify(wrongKeyRecord))
-    process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON = JSON.stringify(makeTrustedKeysConfig(keyPair))
+    const failures = await checkThreatModel(rootPath)
+    expect(failures).toContain('Active record evidence path must be a regular file: docs/security')
+  })
 
-    let failures = await checkThreatModel(rootPath, { release: true })
-    expect(failures).toContain('Active review record signature keyId "unknown-key-id" is not in trusted keys')
-
-    // 2. Mismatched reviewer identity
-    const wrongIdentityRecord = {
-      ...originalRecord,
-      reviewer: {
-        ...originalRecord.reviewer,
-        identity: 'Impostor Reviewer'
-      }
-    }
-    write(rootPath, recordPath, JSON.stringify(wrongIdentityRecord))
-    failures = await checkThreatModel(rootPath, { release: true })
-    expect(failures).toContain('Active review record reviewer identity "Impostor Reviewer" does not match trusted key identity "Independent Security LLC"')
-
-    // 3. Tampered payload (signature was computed for original, but we changed findings)
-    const tamperedRecord = {
-      ...originalRecord,
+  it('rejects a directory as finding evidence', async () => {
+    const { rootPath } = createRepository({
+      releaseEligible: true,
       findings: [
         {
-          id: 'SEC-TAMPERED-001',
+          id: 'SEC-DIRECTORY-001',
+          severity: 'Low',
+          disposition: 'resolved',
+          evidencePaths: ['docs/security']
+        }
+      ]
+    })
+
+    const failures = await checkThreatModel(rootPath)
+    expect(failures).toContain('Finding SEC-DIRECTORY-001 evidence path must be a regular file: docs/security')
+  })
+
+  it('rejects an in-repository symlink as active-record evidence', async () => {
+    const { rootPath } = createRepository({ releaseEligible: true })
+    const evidencePath = 'docs/security/active-evidence-link'
+    symlinkSync(path.join(rootPath, 'server/core/auth.ts'), path.join(rootPath, evidencePath))
+    const recordPath = 'docs/security/review-attestations/baseline-review.json'
+    const record = JSON.parse(readFileSync(path.join(rootPath, recordPath), 'utf8'))
+    record.evidencePaths = [evidencePath]
+    write(rootPath, recordPath, `${JSON.stringify(record, null, 2)}\n`)
+
+    const failures = await checkThreatModel(rootPath)
+    expect(failures).toContain(`Active record evidence path must not be a symbolic link: ${evidencePath}`)
+  })
+
+  it('rejects an in-repository symlink as finding evidence', async () => {
+    const { rootPath } = createRepository({
+      releaseEligible: true,
+      findings: [
+        {
+          id: 'SEC-SYMLINK-001',
           severity: 'Low',
           disposition: 'resolved',
           evidencePaths: ['server/core/auth.ts']
         }
       ]
-    }
-    write(rootPath, recordPath, JSON.stringify(tamperedRecord))
-    failures = await checkThreatModel(rootPath, { release: true })
-    expect(failures).toContain('Active review record signature verification failed')
+    })
+    const evidencePath = 'docs/security/finding-evidence-link'
+    symlinkSync(path.join(rootPath, 'server/core/auth.ts'), path.join(rootPath, evidencePath))
+    const recordPath = 'docs/security/review-attestations/baseline-review.json'
+    const record = JSON.parse(readFileSync(path.join(rootPath, recordPath), 'utf8'))
+    record.findings[0].evidencePaths = [evidencePath]
+    write(rootPath, recordPath, `${JSON.stringify(record, null, 2)}\n`)
+
+    const failures = await checkThreatModel(rootPath)
+    expect(failures).toContain(`Finding SEC-SYMLINK-001 evidence path must not be a symbolic link: ${evidencePath}`)
   })
 
-  it('rejects malformed THREAT_REVIEW_TRUSTED_KEYS_JSON', async () => {
-    const keyPair = generateTestKeyPair('release-key-1', 'Independent Security LLC')
+  it('accepts regular files as active-record and finding evidence', async () => {
     const { rootPath } = createRepository({
-      independent: true,
       releaseEligible: true,
-      signed: true,
-      keyPair
+      findings: [
+        {
+          id: 'SEC-REGULAR-001',
+          severity: 'Low',
+          disposition: 'resolved',
+          evidencePaths: ['server/core/auth.ts']
+        }
+      ]
     })
 
-    process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON = '{ not json'
-    let failures = await checkThreatModel(rootPath, { release: true })
-    expect(failures.some(f => f.includes('Malformed THREAT_REVIEW_TRUSTED_KEYS_JSON'))).toBe(true)
+    expect(await checkThreatModel(rootPath)).toEqual([])
+  })
 
-    process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON = JSON.stringify({
-      schemaVersion: 1,
-      repository: 'Wrong/Repository',
-      keys: []
-    })
-    failures = await checkThreatModel(rootPath, { release: true })
-    expect(failures).toContain('THREAT_REVIEW_TRUSTED_KEYS_JSON repository must be "PhilosophiMoonbeam/tsEpistle", received: Wrong/Repository')
+  it('accepts an existing directory as a threat-model citation', async () => {
+    const { rootPath } = createRepository({ extraEvidence: ', `docs/security`' })
+
+    expect(await checkThreatModel(rootPath)).toEqual([])
   })
 })
 
+
 describe('release mode enforcement', () => {
   it('rejects untracked non-boundary file during release check', async () => {
-    const keyPair = generateTestKeyPair()
-    const { rootPath } = createRepository({ signed: true, keyPair })
-    process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON = JSON.stringify(makeTrustedKeysConfig(keyPair))
+    const { rootPath } = createRepository({ releaseEligible: true })
 
     write(rootPath, 'docs/scratchpad.md', '# Scratchpad notes\n')
 
@@ -1211,29 +1111,18 @@ describe('release mode enforcement', () => {
     expect(failures.some(f => f.includes('Untracked files:\n- docs/scratchpad.md'))).toBe(true)
   })
 
-  it('enforces independent reviewer and releaseEligible flag during release check', async () => {
-    const keyPair = generateTestKeyPair()
-    process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON = JSON.stringify(makeTrustedKeysConfig(keyPair))
-
-    const { rootPath: nonIndependentRoot } = createRepository({ independent: false, signed: true, keyPair })
-    const nonIndepFailures = await checkThreatModel(nonIndependentRoot, { release: true })
-    expect(nonIndepFailures).toContain('Active review record reviewer must be independent for release: Independent Security LLC')
-
-    const { rootPath: ineligibleRoot } = createRepository({ releaseEligible: false, signed: true, keyPair })
-    const ineligFailures = await checkThreatModel(ineligibleRoot, { release: true })
-    expect(ineligFailures).toContain('Active review record is not marked releaseEligible')
+  it('enforces the releaseEligible flag during release check', async () => {
+    const { rootPath } = createRepository({ releaseEligible: false })
+    const failures = await checkThreatModel(rootPath, { release: true })
+    expect(failures).toContain('Active review record is not marked releaseEligible')
   })
 
   it('rejects unresolved blocking findings during release check while ordinary check succeeds', async () => {
-    const keyPair = generateTestKeyPair()
-    process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON = JSON.stringify(makeTrustedKeysConfig(keyPair))
-
     const { rootPath } = createRepository({
-      signed: true,
-      keyPair,
+      releaseEligible: true,
       findings: [
         {
-          id: 'SEC-EXT-001',
+          id: 'SEC-RELEASE-001',
           severity: 'Release blocker',
           disposition: 'blocking',
           evidencePaths: ['server/core/auth.ts']
@@ -1249,24 +1138,7 @@ describe('release mode enforcement', () => {
 
     expect(await checkThreatModel(rootPath)).toEqual([])
     const releaseFailures = await checkThreatModel(rootPath, { release: true })
-    expect(releaseFailures).toContain('Release blocked by unresolved findings: SEC-EXT-001')
+    expect(releaseFailures).toContain('Release blocked by unresolved findings: SEC-RELEASE-001')
   })
 })
 
-describe('release workflow threat-model boundary', () => {
-  it('runs strict release checks with the public trusted-key variable after full-history checkout', () => {
-    const workflow = readFileSync(path.join(process.cwd(), '.github/workflows/build.yml'), 'utf8')
-    expect(workflow.match(/run: bun server\/scripts\/check-threat-model\.ts --release/g)).toHaveLength(2)
-    expect(workflow.match(/THREAT_REVIEW_TRUSTED_KEYS_JSON: \$\{\{ vars\.THREAT_REVIEW_TRUSTED_KEYS_JSON \}\}/g)?.length).toBeGreaterThanOrEqual(4)
-    expect(workflow.match(/fetch-depth: 0/g)?.length).toBeGreaterThanOrEqual(4)
-    expect(workflow).toMatch(/beta:[\s\S]*?permissions:\s*\n\s*contents: read\s*\n\s*packages: write[\s\S]*?fetch-depth: 0/)
-
-    for (const publication of ['Preview', 'Release']) {
-      expect(workflow).toMatch(
-        new RegExp(
-          `- name: Enforce Threat Model Release State[\\s\\S]*?run: bun server/scripts/check-threat-model\\.ts --release[\\s\\S]*?- name: Verify Descriptors and Push ${publication} Manifests`
-        )
-      )
-    }
-  })
-})

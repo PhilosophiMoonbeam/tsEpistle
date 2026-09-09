@@ -68,9 +68,13 @@ export default {
     }
   },
   AssetMutation: {
-    async createFolder(_obj: unknown, args: CreateFolderArgs) {
+    async createFolder(_obj: unknown, args: CreateFolderArgs, context: ResolverContext) {
       try {
-        await assetOperations.createFolder({ slug: args.slug, parentFolderId: args.parentFolderId })
+        await assetOperations.createFolder({
+          requester: normalizeRequester(context.req.user),
+          slug: args.slug,
+          parentFolderId: args.parentFolderId
+        })
         return { responseResult: graphHelper.generateSuccess('Asset Folder has been created successfully.') }
       } catch (err: unknown) {
         return graphHelper.generateError(err)

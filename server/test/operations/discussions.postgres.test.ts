@@ -11,13 +11,25 @@ const connection = database.endsWith('_discussion_test') && password ? { host: p
 const suite = connection ? describe : describe.skip
 const definitions: DiscussionDefinition[] = [{ key: 'default', title: 'Default', isAvailable: true, props: { akismet: { type: 'string', sensitive: true }, minDelay: { type: 'number' } } }, { key: 'commento', title: 'Commento', isAvailable: true, codeTemplate: true, props: { instanceUrl: { type: 'string' } } }]
 const permissions = (user: unknown): string[] => { const value = user && typeof user === 'object' ? Reflect.get(user, 'permissions') : undefined; return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [] }
+const authorityFor = (requester: unknown) => ({
+  requester,
+  permissions: permissions(requester),
+  groups: [],
+  tagAliases: {}
+})
 const admin = { id: 1, permissions: ['manage:system', 'read:pages', 'write:comments'] } as never
 suite('PostgreSQL discussion lifecycle and policy', () => {
   let db: Knex, settings: ReturnType<typeof createDiscussionSettingsStore>, moderation: ReturnType<typeof createDiscussionModerationStore>, posts: ReturnType<typeof createDiscussionPostingStore>, failActivation = false, spamChecks: number[] = [], oldWiki: unknown
   const post = (overrides: Partial<DiscussionPostInput> = {}): DiscussionPostInput => ({ pageId: 1, replyTo: 0, content: 'A useful contribution', render: '<p>A useful contribution</p>', user: { id: 1, name: 'Reader', email: 'reader@example.invalid', ip: '192.0.2.1' }, requester: admin, sessionId: 'test-session', ...overrides })
   beforeAll(async () => {
-    oldWiki = globalThis.WIKI
-    globalThis.WIKI = { auth: { checkAccess: (user: unknown, requested: string[]) => requested.some(p => permissions(user).includes(p)) } } as never
+    globalThis.WIKI = {
+      auth: {
+        checkAccess: (user: unknown, requested: string[]) => requested.some(p => permissions(user).includes(p)),
+        checkPageAccess: (user: unknown, requested: string[], _context: unknown, authority: { requester: unknown; permissions: string[] }) =>
+          authority.requester === user && requested.some(p => authority.permissions.includes(p)),
+        loadPageRuleAuthority: async (requester: unknown) => authorityFor(requester)
+      }
+    } as never
     db = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 8 } })
     await db.schema.createTable('settings', table => { table.string('key').primary(); table.jsonb('value'); table.string('updatedAt') })
     await db.schema.createTable('commentProviders', table => { table.string('key').primary(); table.boolean('isEnabled'); table.jsonb('config') })
@@ -30,7 +42,13 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
     await up(db)
     settings = createDiscussionSettingsStore({ db, definitions: () => definitions, fallbackFeatures: () => ({ featurePageComments: true, custom: 'keep' }), async activate() { if (failActivation) throw new Error('runtime unavailable'); return [] } })
     moderation = createDiscussionModerationStore(db)
-    posts = createDiscussionPostingStore({ db, fallbackFeatures: () => ({ featurePageComments: true }), canPost: user => permissions(user).includes('write:comments'), async checkSpam({ page }) { spamChecks.push(Number(page.id)) } })
+    posts = createDiscussionPostingStore({
+      db,
+      fallbackFeatures: () => ({ featurePageComments: true }),
+      loadPageRuleAuthority: async requester => authorityFor(requester),
+      canPost: (_user, _page, authority) => authority.permissions.includes('write:comments'),
+      async checkSpam({ page }) { spamChecks.push(Number(page.id)) }
+    })
   })
   beforeEach(async () => {
     for (const table of ['discussionModerationHistory', 'pageDiscussionPolicy', 'comments', 'pageAccessPasswords', 'pageUnlockGrants', 'pageTags', 'tags', 'pages', 'commentProviders', 'settings']) await db(table).delete()
@@ -133,7 +151,13 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
   it('holds the page closure boundary until an in-flight accepted post is persisted', async () => {
     let release!: () => void, entered!: () => void
     const ready = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<void>(resolve => { release = resolve })
-    const slow = createDiscussionPostingStore({ db, fallbackFeatures: () => ({ featurePageComments: true }), canPost: () => true, async checkSpam() { entered(); await gate } })
+    const slow = createDiscussionPostingStore({
+      db,
+      fallbackFeatures: () => ({ featurePageComments: true }),
+      loadPageRuleAuthority: async requester => authorityFor(requester),
+      canPost: () => true,
+      async checkSpam() { entered(); await gate }
+    })
     const posting = slow.post(post()); await ready
     const initial = await moderation.policy(admin, 1); let closed = false
     const closing = moderation.setPolicy(admin, 1, { closed: true, reason: 'End this conversation', fingerprint: initial.fingerprint }).then(value => { closed = true; return value })
@@ -143,7 +167,13 @@ suite('PostgreSQL discussion lifecycle and policy', () => {
   it('serializes a first persisted global pause against a post using fallback feature settings', async () => {
     let release!: () => void, entered!: () => void
     const ready = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<void>(resolve => { release = resolve })
-    const slow = createDiscussionPostingStore({ db, fallbackFeatures: () => ({ featurePageComments: true }), canPost: () => true, async checkSpam() { entered(); await gate } })
+    const slow = createDiscussionPostingStore({
+      db,
+      fallbackFeatures: () => ({ featurePageComments: true }),
+      loadPageRuleAuthority: async requester => authorityFor(requester),
+      canPost: () => true,
+      async checkSpam() { entered(); await gate }
+    })
     const posting = slow.post(post()); await ready; let paused = false
     const pausing = settings.patchFeatures({ featurePageComments: false }).then(() => { paused = true })
     await new Promise(resolve => setTimeout(resolve, 60)); expect(paused).toBe(false); release(); await posting; await pausing

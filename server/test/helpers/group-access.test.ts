@@ -1,5 +1,6 @@
 import { describe, expect, it } from '../bun-test.mts'
-import { evaluateGroupAccess, type AccessRule } from '../../helpers/group-access.ts'
+import { createApiPrincipal, isApiPrincipal } from '../../helpers/api-principal.ts'
+import { evaluateGroupAccess, pageRuleRequesterBinding, type AccessRule } from '../../helpers/group-access.ts'
 const rule = (id: string, path: string, match: AccessRule['match'] = 'START', deny = false, values: Partial<AccessRule> = {}): AccessRule => ({
   id,
   path,
@@ -12,6 +13,15 @@ const rule = (id: string, path: string, match: AccessRule['match'] = 'START', de
 const evaluate = (rules: AccessRule[], path = 'guides/start') =>
   evaluateGroupAccess(['read:pages'], ['read:pages'], [{ id: 3, name: 'Readers', pageRules: rules }], { path, locale: 'en' })
 describe('Group access explanation and enforcement', () => {
+  it('binds explicit API principals to their exact key and group without a human owner', () => {
+    const first = createApiPrincipal(7, 3, ['read:pages'])
+    const second = createApiPrincipal(8, 3, ['read:pages'])
+    expect(isApiPrincipal(first)).toBe(true)
+    expect(first).not.toHaveProperty('id')
+    expect(pageRuleRequesterBinding(first)).toEqual({ kind: 'apiKey', apiKeyId: 7, groupId: 3 })
+    expect(pageRuleRequesterBinding(second)).toEqual({ kind: 'apiKey', apiKeyId: 8, groupId: 3 })
+    expect(pageRuleRequesterBinding({ id: 1, api: 7, grp: 3, ownershipUserId: null, groups: [3] })).toEqual({ kind: 'anonymous' })
+  })
   it('requires both global permission and a matching page grant', () => {
     expect(evaluate([]).allowed).toBe(false)
     expect(evaluate([rule('all', '')]).allowed).toBe(true)

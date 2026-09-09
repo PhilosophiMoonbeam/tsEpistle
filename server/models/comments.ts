@@ -1,10 +1,14 @@
 import { Model } from 'objection'
+import type { Knex } from 'knex'
 import validateValues from '../../shared/validation.ts'
+
 import _ from 'lodash'
 import User from './users.ts'
 import Page from './pages.ts'
-import { canReadPage } from '../helpers/page-access.ts'
+import { canReadPage, pageAuthorizationContext } from '../helpers/page-access.ts'
+import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import { assertPageUnlocked } from '../operations/page-protection.ts'
+import { rejectApiPrincipalMutation } from '../helpers/api-principal.ts'
 
 interface CommentUser extends Record<string, unknown> {
   id: number
@@ -86,6 +90,7 @@ export default class Comment extends Model {
   }
 
   static async postNewComment ({ pageId, replyTo, content, guestName, guestEmail, user, ip, sessionId = '' }: PostCommentOptions): Promise<unknown> {
+    rejectApiPrincipalMutation(user)
     if (user.id === 2) {
       const validation = validateValues({ email: _.toLower(guestEmail), name: guestName }, {
         email: { email: true, length: { maximum: 255 } },
@@ -98,11 +103,17 @@ export default class Comment extends Model {
     if (content.length < 2) throw Object.assign(new wiki.Error.CommentContentMissing(), { status: 400 })
     const page = await wiki.models.pages.getPageFromDb(pageId)
     if (!page) throw Object.assign(new wiki.Error.PageNotFound(), { status: 404 })
-    if (page.visibility === 'private' && !canReadPage(user, page)) throw Object.assign(new wiki.Error.PageNotFound(), { status: 404 })
-    if (!canReadPage(user, page) || !wiki.auth.checkAccess(user, ['write:comments'], { path: page.path, locale: page.localeCode, tags: page.tags })) {
+    const authority = await wiki.auth.loadPageRuleAuthority(user)
+    const pageContext = pageAuthorizationContext(page)
+    if (page.visibility === 'private' && !canReadPage(user, page, authority)) throw Object.assign(new wiki.Error.PageNotFound(), { status: 404 })
+    if (
+      !canReadPage(user, page, authority) ||
+      pageContext === null ||
+      !wiki.auth.checkPageAccess(user, ['write:comments'], pageContext, authority)
+    ) {
       throw Object.assign(new wiki.Error.CommentPostForbidden(), { status: 403 })
     }
-    await assertPageUnlocked({ requester: user, pageId, sessionId })
+    await assertPageUnlocked({ requester: user, pageId, sessionId, authority })
     if (typeof wiki.data.commentProvider.create !== 'function') throw new wiki.Error.InputInvalid('Built-in discussions are not the active provider.')
     return wiki.data.commentProvider.create({
       requester: user,
@@ -115,15 +126,22 @@ export default class Comment extends Model {
   }
 
   static async updateComment ({ id, content, user, ip, sessionId = '' }: UpdateCommentOptions): Promise<unknown> {
+    rejectApiPrincipalMutation(user)
     const pageId = (await this.query().findById(id).select('pageId'))?.pageId
     if (!pageId) throw Object.assign(new wiki.Error.CommentNotFound(), { status: 404 })
     const page = await wiki.models.pages.getPageFromDb(pageId)
     if (!page) throw Object.assign(new wiki.Error.PageNotFound(), { status: 404 })
-    if (page.visibility === 'private' && !canReadPage(user, page)) throw Object.assign(new wiki.Error.CommentNotFound(), { status: 404 })
-    if (!canReadPage(user, page) || !wiki.auth.checkAccess(user, ['manage:comments'], { path: page.path, locale: page.localeCode, tags: page.tags })) {
+    const authority = await wiki.auth.loadPageRuleAuthority(user)
+    const pageContext = pageAuthorizationContext(page)
+    if (page.visibility === 'private' && !canReadPage(user, page, authority)) throw Object.assign(new wiki.Error.CommentNotFound(), { status: 404 })
+    if (
+      !canReadPage(user, page, authority) ||
+      pageContext === null ||
+      !wiki.auth.checkPageAccess(user, ['manage:comments'], pageContext, authority)
+    ) {
       throw Object.assign(new wiki.Error.CommentManageForbidden(), { status: 403 })
     }
-    await assertPageUnlocked({ requester: user, pageId, sessionId })
+    await assertPageUnlocked({ requester: user, pageId, sessionId, authority })
     content = _.trim(content)
     if (content.length < 2 || content.length > 50000) throw new wiki.Error.InputInvalid('Comments must be 2 to 50,000 characters.')
     const { default: native } = await import('../modules/comments/default/comment.ts')
@@ -132,15 +150,22 @@ export default class Comment extends Model {
   }
 
   static async deleteComment ({ id, user, ip, sessionId = '' }: DeleteCommentOptions): Promise<void> {
+    rejectApiPrincipalMutation(user)
     const pageId = (await this.query().findById(id).select('pageId'))?.pageId
     if (!pageId) throw Object.assign(new wiki.Error.CommentNotFound(), { status: 404 })
     const page = await wiki.models.pages.getPageFromDb(pageId)
     if (!page) throw Object.assign(new wiki.Error.PageNotFound(), { status: 404 })
-    if (page.visibility === 'private' && !canReadPage(user, page)) throw Object.assign(new wiki.Error.CommentNotFound(), { status: 404 })
-    if (!canReadPage(user, page) || !wiki.auth.checkAccess(user, ['manage:comments'], { path: page.path, locale: page.localeCode, tags: page.tags })) {
+    const authority = await wiki.auth.loadPageRuleAuthority(user)
+    const pageContext = pageAuthorizationContext(page)
+    if (page.visibility === 'private' && !canReadPage(user, page, authority)) throw Object.assign(new wiki.Error.CommentNotFound(), { status: 404 })
+    if (
+      !canReadPage(user, page, authority) ||
+      pageContext === null ||
+      !wiki.auth.checkPageAccess(user, ['manage:comments'], pageContext, authority)
+    ) {
       throw Object.assign(new wiki.Error.CommentManageForbidden(), { status: 403 })
     }
-    await assertPageUnlocked({ requester: user, pageId, sessionId })
+    await assertPageUnlocked({ requester: user, pageId, sessionId, authority })
     void ip
     await this.query().deleteById(id)
   }
@@ -162,7 +187,11 @@ const wiki = WIKI as unknown as {
     CommentManageForbidden: new () => Error
     PageNotFound: new () => Error
   }
-  auth: { checkAccess: (user: CommentUser, permissions: string[], target: { path: string, locale: string, tags: unknown[] }) => boolean }
+  auth: {
+    checkAccess: (user: CommentUser, permissions: readonly string[]) => boolean
+    checkPageAccess: (user: CommentUser, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority) => boolean
+    loadPageRuleAuthority: (requester: CommentUser, transaction?: Knex.Transaction) => Promise<PageRuleAuthority>
+  }
   data: { commentProvider: CommentProvider }
   models: { pages: { getPageFromDb: (id: number) => Promise<CommentPage | null> } }
 }

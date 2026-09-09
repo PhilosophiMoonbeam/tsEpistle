@@ -88,11 +88,11 @@ const installSearchWiki = ({
     return { rows: privateRanks.slice(0, Number.isSafeInteger(limit) ? limit : privateRanks.length) }
   })
   const query = vi.fn().mockResolvedValue(engineResponse ?? { results: [], suggestions: [], totalHits: 0 })
+  const checkAccess = vi.fn((_requester, permissions) => (permissions.includes('manage:system') ? isManager : true))
+  const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
   global.WIKI = {
     Error: { PageNotFound: class PageNotFound extends Error {} },
-    auth: {
-      checkAccess: vi.fn((_requester, permissions) => (permissions.includes('manage:system') ? isManager : true))
-    },
+    auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
     config: { db: { type: 'postgres' }, lang: { code: 'en' }, search: { maxHits: 100 } },
     data: { searchEngine: { supportsPageFilters: true, query } },
     models: { knex, pages }

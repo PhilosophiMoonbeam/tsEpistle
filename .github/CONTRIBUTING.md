@@ -26,9 +26,11 @@ It is also always helpful to have some context for your pull request. What was t
 
 ## Security review and attestation workflow
 
-tsEpistle gates release qualification through an executable, manifest-driven attestation gate (`bun run threat-model:check` and `bun server/scripts/check-threat-model.ts --release`). Historical release models relied on a monolithic markdown table row (`Covered source`) inside the threat model; this has been replaced by immutable, versioned review records cataloged in `docs/security/review-attestations.json`.
+tsEpistle gates release qualification through an executable, manifest-driven integrity gate (`bun run threat-model:check` and `bun server/scripts/check-threat-model.ts --release`). Historical release models relied on a monolithic markdown table row (`Covered source`) inside the threat model; current records are cataloged in `docs/security/review-attestations.json`.
 
-Release attestation requires an independent, release-eligible `source-review` record that certifies the exact Git commit of the codebase and includes a valid detached Ed25519 signature verified against an external trusted-key set. Every `source-review` record asserting `reviewer.independent: true` OR `releaseEligible: true`—whether active or historical—strictly requires a valid detached Ed25519 signature verified against an externally trusted key. In-repository booleans alone do not authorize release. Working-tree audits and content fingerprints (such as the staged search foundation audit) capture transient verification state during development, but they are strictly staged evidence (`releaseEligible: false`, `independent: false`), never releasable attestations.
+The governing record and manifest format is `schemaVersion: 2`. Release authority is maintainer-owned: a maintainer or delegated agent performs and records the source review, and the reviewer's identity is attribution rather than a separate trust root. The former schemaVersion 1 external-review, detached-signature, and trusted-key process is superseded historical policy, not a current release prerequisite. Historical records are migrated for representation only, remain `releaseEligible: false`, and preserve their original findings and evidence.
+The static prerequisite is intentionally executable rather than descriptive: `package.json` defines `ci:static` with the exact unconditional `bun audit --production` segment after dependency and license checks and before broader gates, followed by `bun run threat-model:check`. Both the pull-request `pr-quality` job and the shared `quality` job invoke `bun run ci:static`; do not replace the audit with an echo, add `--ignore`/`--audit-level` variants, background it, or suppress it with `|| true`. The checker also parses and hashes a successfully read zero-byte threat model, so an empty model cannot pass by sentinel omission. A failed audit or reported production vulnerability blocks later workflow stages.
+
 
 ### Canonical security boundary and digests
 
@@ -40,9 +42,9 @@ The canonical security boundary (policy version 1) includes:
 - Root packaging, repository attribute, and legal compliance files: `.dockerignore`, `.gitattributes`, `LICENSE`, and `NOTICE`. Inclusion is essential for Docker and distribution archive integrity: `.dockerignore` establishes the container build context boundary (preventing unreviewed files or secrets from entering Docker images), `.gitattributes` governs release archive export filtering (`export-ignore`) and line endings for source distributions and release archives, and `LICENSE`/`NOTICE` establish mandatory licensing terms and attribution for container images and archives.
 The gate computes a canonical `coveredTreeDigest` over every non-tree Git entry within this boundary (including files, executables, symlinks, and gitlinks/submodules) using the SHA-256 stream prefix `tsepistle-security-boundary-v1\0`, followed by entries sorted lexicographically by path formatted as `path\0mode\0type\0objectId\0`.
 
-Documentation files (including `docs/`, `docs/security/review-attestations.json`, `docs/security/review-attestations/*.json`, and `docs/security/threat-model.md`) are intentionally excluded from the `coveredTreeDigest`. The threat model itself is validated separately by its 64-character lowercase SHA-256 content digest (`threatModelDigest`).
+Documentation files (including `docs/`, `docs/security/review-attestations.json`, `docs/security/review-attestations/*.json`, and `docs/security/threat-model.md`) are intentionally excluded from the `coveredTreeDigest`. The threat model itself is validated separately by its 64-character lowercase SHA-256 content digest (`threatModelDigest`). The normative threat-model document remains model version 1; changing the record representation to schema 2 does not change the boundary or model digest algorithm.
 
-This deliberate boundary definition makes the attestation process strictly **non-circular**: reviewers can freeze and commit source changes, calculate canonical digests, produce an attestation document commit under `docs/security/`, and verify that the `coveredTreeDigest` remains completely unchanged between the reviewed commit and HEAD.
+This deliberate boundary definition is non-circular: freeze and review source commit **S**, calculate its canonical digests, then commit only the review record and manifest as documentation successor **A**. The checker requires **S** to be an existing ancestor of **A** and proves that the declared `coveredTreeDigest` equals the reviewed source boundary and the current `HEAD` boundary. It does not require a literal `source.revision === HEAD` field equality.
 
 #### Generated build metadata exception
 
@@ -53,40 +55,38 @@ The security boundary checks fail closed on any uncommitted boundary changes, un
 - **Separate governance**: Because this file is gitignored to avoid repository pollution during local builds, it appears in `git status --ignored`. It is separately governed by build provenance and release artifact verification rather than working-tree source control.
 - **Not a general server-prefix exemption**: This exception is strictly limited to the exact path `server/.build-metadata.json`. It does not create a wildcard, directory-level, or general `server/` prefix exemption. Any other ignored file under `server/` or elsewhere within the canonical security boundary is treated as unauthorized boundary drift and fails both ordinary and release gate checks.
 - **Tracked content remains covered**: The path `server/.build-metadata.json` is not excluded from the security boundary definition (`isSecurityBoundaryPath`). If a file at `server/.build-metadata.json` is ever tracked in Git, it remains fully covered by the security boundary and is included in the canonical `coveredTreeDigest`.
-### Step-by-step reviewer and release procedure
+
+### Step-by-step maintainer review and release procedure
 
 To perform a security review and advance a release candidate:
 
 1. **Freeze and commit source:**
-   Ensure all changes within the security boundary are committed to Git. Note the target commit SHA (`<revision>`). A release candidate cannot be certified from an uncommitted working tree.
+   Ensure all changes within the security boundary are committed to Git. Note the target source commit SHA **S**. A release candidate cannot be certified from an uncommitted working tree.
 
 2. **Calculate canonical digests:**
-   Run the gate helper against the target revision to compute the covered-tree digest and threat-model digest:
+   Run the gate helper against **S**:
    ```console
-   bun server/scripts/check-threat-model.ts --digest <revision>
+   bun server/scripts/check-threat-model.ts --digest <source-revision>
    ```
-   This outputs:
-   - `coveredTreeDigest`: The canonical SHA-256 digest of the security boundary tree at `<revision>`.
-   - `threatModelDigest`: The SHA-256 content digest of `docs/security/threat-model.md`.
+   Record the `coveredTreeDigest` for the security boundary and the current `threatModelDigest`.
 
-3. **Author an immutable structured review record:**
-   Create a new review record file `docs/security/review-attestations/<id>.json` conforming to `schemaVersion: 1`:
+3. **Perform and document the maintainer review:**
+   Review the changed and inherited security-boundary scope, reconcile evidence and residual risks, and create `docs/security/review-attestations/<id>.json` conforming to `schemaVersion: 2`:
    ```json
    {
-     "schemaVersion": 1,
+     "schemaVersion": 2,
      "id": "<id>",
      "repository": "PhilosophiMoonbeam/tsEpistle",
      "kind": "source-review",
      "policyVersion": 1,
      "threatModelDigest": "<64-hex-sha256-of-threat-model>",
      "reviewer": {
-       "identity": "Reviewer Name <reviewer@example.com>",
-       "independent": true,
+       "identity": "Maintainer or delegated agent",
        "reviewedAt": "2026-09-08"
      },
      "releaseEligible": true,
      "source": {
-       "revision": "<commit-sha>",
+       "revision": "<source-commit-S>",
        "baseRevision": "<base-commit-sha>",
        "coveredTreeDigest": "<64-hex-covered-tree-digest>"
      },
@@ -102,73 +102,37 @@ To perform a security review and advance a release candidate:
      ],
      "evidencePaths": [
        "docs/security/evidence/..."
-     ],
-     "signature": {
-       "algorithm": "ed25519",
-       "keyId": "<key-id>",
-       "value": "<detached-ed25519-signature>"
-     }
+     ]
    }
    ```
    - **Repository binding:** Every review record must declare `"repository": "PhilosophiMoonbeam/tsEpistle"`.
-   - **Reviewer and timestamp:** The reviewer object defines `identity`, `independent` boolean, and `reviewedAt` in exact UTC calendar date format `YYYY-MM-DD` (e.g., `"2026-09-08"`). Timestamps containing time of day or fractional seconds are rejected by the schema.
-   - **Independence & release eligibility assertions:** Setting `"independent": true` and `"releaseEligible": true` is a required schema assertion for official release candidates, but repository booleans alone never authorize release. Every `source-review` record declaring `"independent": true` OR `"releaseEligible": true`—whether active or a historical entry in the manifest—strictly requires a structurally valid detached Ed25519 signature verified against an externally trusted key in `THREAT_REVIEW_TRUSTED_KEYS_JSON`. An unsigned or unverified claim in any source-review record fails verification and blocks the gate. Maintainer self-reviews or internal baselines must specify `"independent": false` and `"releaseEligible": false`.
-   - **Structured findings:** Findings must specify a disposition of `"resolved"`, `"accepted"` (with written justification in the cited evidence), or `"blocking"`. Any record containing an open `"blocking"` finding cannot be release-eligible.
-   - **Immutability:** Once committed, review records must never be modified in-place; subsequent reviews or status changes require creating a new record.
+   - **Reviewer and timestamp:** `reviewer.identity` records the responsible maintainer or agent, and `reviewedAt` is an exact UTC calendar date in `YYYY-MM-DD` format. This attribution does not assert a separate reviewer or external authority.
+   - **Release eligibility:** Set `releaseEligible: true` only after the maintainer review is complete, the active source record binds the current model and exact boundary digest, all evidence paths are real and contained in the repository, and no finding has disposition `blocking`. In-repository integrity checks, clean-tree checks, ancestry, provenance, and protected release environments remain mandatory.
+   - **Structured findings:** Findings must specify `resolved`, `accepted` (with written justification in cited evidence), or `blocking`. Any active record containing an open `blocking` finding is ineligible for release.
+   - **Record immutability:** After the schema-2 migration, do not modify a review record in place; create a successor for a new review or status change. The one-time schema-1-to-schema-2 representation migration is historical bookkeeping, not a new approval.
 
-4. **Detached Ed25519 signing procedure:**
-   Every `source-review` record claiming `reviewer.independent: true` or `releaseEligible: true` (including non-active historical entries) requires a detached Ed25519 signature:
-   - **Canonical payload:** Construct the payload by taking the entire record JSON object with the `"signature"` property omitted, encoding it into compact JSON with recursively key-sorted keys at every nesting level (no insignificant whitespace), and prepending the UTF-8 domain prefix `tsepistle-threat-review-attestation-v1\0`.
-   - **Signature generation:** The reviewer signs the canonical payload bytes using their Ed25519 private key.
-   - **Signature attachment:** Attach the detached signature object to the record:
-     ```json
-     "signature": {
-       "algorithm": "ed25519",
-       "keyId": "<key-id>",
-       "value": "<ed25519-signature-hex-or-base64>"
-     }
-     ```
-
-5. **External trusted-key set and signer identity binding:**
-   To prevent repository self-authorization, trusted signing keys **must not be stored in this repository**.
-   - In CI and publication workflows (including pull-request quality checks and beta/release publication gates), the threat checker receives trusted public keys via the external environment variable `THREAT_REVIEW_TRUSTED_KEYS_JSON`, populated from the GitHub public repository variable `vars.THREAT_REVIEW_TRUSTED_KEYS_JSON`. Because this repository variable contains only public verification keys rather than private signing keys, it is PR-safe and accessible across unprivileged pull-request static checks (`pr-quality`), branch quality checks (`quality`), and protected release gates (`beta`, `release`).
-   - The external trusted-key JSON payload has the schema:
-     ```json
-     {
-       "schemaVersion": 1,
-       "repository": "PhilosophiMoonbeam/tsEpistle",
-       "keys": [
-         {
-           "id": "<key-id>",
-           "identity": "Reviewer Name <reviewer@example.com>",
-           "algorithm": "ed25519",
-           "publicKey": "<ed25519-public-key-hex-or-base64>"
-         }
-       ]
-     }
-     ```
-   - **Signer identity binding:** The key ID specified in `record.signature.keyId` must exist in the trusted key set for `"repository": "PhilosophiMoonbeam/tsEpistle"`, and the trusted key's `identity` MUST strictly match `record.reviewer.identity`. The signature is verified against the trusted public key over the canonical payload.
-   - If `THREAT_REVIEW_TRUSTED_KEYS_JSON` is missing, or the key is missing/untrusted, or the signer identity does not match, or the signature fails verification, the release gate strictly fails and blocks publication.
-
-6. **Select the record in the manifest:**
+4. **Select the record in the manifest:**
    Update `docs/security/review-attestations.json`:
+   - Set `"schemaVersion": 2`.
    - Set `"activeReviewId"` to `"<id>"`.
    - Append `{ "id": "<id>", "path": "docs/security/review-attestations/<id>.json" }` to the `"records"` array.
+   The manifest and every registered record must use schema 2; schema 1 and obsolete review properties are rejected rather than treated as a compatibility lane.
 
-7. **Commit the attestation documentation:**
-   Commit the new review record and updated manifest in `docs/security/`. Because documentation is excluded from the security boundary, this commit leaves the `coveredTreeDigest` unchanged. If any file inside the security boundary was modified, the covered digest will change and the release gate will fail.
+5. **Commit the attestation documentation:**
+   Commit the new review record and updated manifest in `docs/security/` as documentation successor **A** after source **S**. Documentation is excluded from the security boundary, so this commit leaves `coveredTreeDigest` unchanged. If any file inside the security boundary was modified, the digest changes and the release gate fails.
 
-8. **Execute gate validation:**
-   - **Ordinary gate (`bun run threat-model:check`):**
-     Verifies manifest structure, checks that `threatModelDigest` matches `docs/security/threat-model.md`, confirms the Git commit exists and is reachable, matches `coveredTreeDigest` against the current tree, and reports any staged, unstaged, untracked, or ignored boundary drift (with the sole canonical exception of the non-symlink regular file `server/.build-metadata.json` matching current HEAD and valid ISO timestamp).
-   - **Release gate (`bun server/scripts/check-threat-model.ts --release`):**
-     Strict enforcement for release candidates. Fails if the working tree has any uncommitted or untracked boundary changes, or ignored boundary files (with the sole canonical exception of a non-symlink regular file `server/.build-metadata.json` containing exact canonical JSON whose `revision` matches HEAD and whose `date` is a valid ISO timestamp in exact JavaScript `Date.toISOString()` canonical form `YYYY-MM-DDTHH:mm:ss.sssZ`; any malformed JSON, symlink, or revision mismatch fails closed), requires an exact match between the active record's `coveredTreeDigest` and HEAD, ensures zero blocking findings, checks in-record schema assertions, and verifies the Ed25519 signature against `THREAT_REVIEW_TRUSTED_KEYS_JSON` for all independent or release-eligible source reviews, strictly enforcing signer identity binding. Repository booleans alone never authorize release.
+6. **Execute gate validation:**
+   - **Ordinary gate (`bun run threat-model:check`):** Verifies schema and manifest structure, checks that `threatModelDigest` matches `docs/security/threat-model.md`, confirms source and base commits exist with valid ancestry, matches `coveredTreeDigest` against the reviewed source and current tree, validates contained evidence, and reports staged, unstaged, untracked, ignored, index, or submodule boundary drift (with only the canonical `server/.build-metadata.json` exception above).
+   - **Release gate (`bun server/scripts/check-threat-model.ts --release`):** Adds strict clean-tree requirements for all tracked and untracked paths, requires the active record to be a release-eligible schema-2 `source-review`, requires exact reviewed-source/current-`HEAD` boundary digest equality and the current model digest, and requires zero active blocking findings. Historical release-ineligible records and their historical findings remain parseable but do not authorize or block the active release.
+
 ### Staged working-tree evidence vs. releasable source reviews
 
 During development, specialized audits may evaluate uncommitted working-tree changes (such as the search foundation audit). These use `kind: "working-tree-audit"` and record `source: { baseRevision, fingerprint, fingerprintAlgorithm }`.
-- **Staged-audit restrictions:** Working-tree audits capture transient verification state during development. They must have `reviewer.independent: false`, `releaseEligible: false`, no signature (`signature` omitted), and `source.fingerprintAlgorithm` set exactly to `"tsepistle-isolated-preview-v1"`.
-- Working-tree audits are **strictly release-ineligible** and cannot be used as release attestations or authorize deployment.
-- Releasing any feature or refactor requires committing the source code within the canonical security boundary, calculating canonical digests, completing a formal `source-review`, and signing the record with an external trusted Ed25519 key.
+- Working-tree audits must use `releaseEligible: false`, cannot be selected as the active record, and cannot authorize deployment.
+- A content fingerprint is transient evidence, not a Git commit or a substitute for a canonical `coveredTreeDigest`.
+- Historical records retain their original scope, findings, and evidence after representation migration. They are explicitly superseded by the current maintainer-owned schema-2 review policy; do not reinterpret their historical limitations as current release requirements.
+
+Releasing any feature or refactor requires committed source, a completed maintainer/agent source review, current canonical digests, real contained evidence, a clean checkout, zero active blocking findings, and the existing artifact/provenance and protected-environment checks.
 ## Requesting new features / enhancements
 
 Use the feature request board to submit new ideas and vote on which ideas should be integrated first.

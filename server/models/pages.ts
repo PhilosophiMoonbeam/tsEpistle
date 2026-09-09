@@ -4,8 +4,9 @@ import type { EventEmitter } from 'node:events'
 import _ from 'lodash'
 import { Type as JSBinType } from 'js-binary'
 import pageHelper from '../helpers/page.ts'
-import { canDeletePage, canWritePage, managesSystem, principalId, type PageVisibility } from '../helpers/page-access.ts'
 import { tagNames } from '../helpers/taxonomy-plan.ts'
+import { canDeletePage, canWritePage, managesSystem, pageAuthorizationContext, principalId, type PageAuthorizationContext, type PageVisibility } from '../helpers/page-access.ts'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { localeRelationMovePatch } from '../helpers/page-locale-relations.ts'
 import path from 'node:path'
 import fs from 'fs-extra'
@@ -30,6 +31,7 @@ import { redactProtectedPageForSearch, syncProtectedPageAssets } from '../operat
 import { mutateOkfMetadata, OkfDocumentError, type OkfMetadata } from '../okf/format.ts'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment } from '../../shared/page-branding.ts'
 import { authorizePageBrandingAssignment } from '../helpers/asset-branding.ts'
+import { rejectApiPrincipalMutation } from '../helpers/api-principal.ts'
 
 type UnknownRecord = Record<string, unknown>
 const isRecord = (value: unknown): value is UnknownRecord => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -39,11 +41,6 @@ interface PageUser extends Express.User {
   id: number
   name: string
   email: string
-}
-interface PageAccessTarget {
-  locale?: string | undefined
-  path?: string | undefined
-  tags?: Array<{ tag: string }> | undefined
 }
 
 interface PageExtra extends UnknownRecord {
@@ -321,7 +318,8 @@ interface PagesWikiContext {
   }
   collaboration?: { pageChanged(pageId: number, forceConflict?: boolean): Promise<void> }
   auth: {
-    checkAccess(user: PageUser | undefined, permissions: string[], page: PageAccessTarget): boolean
+    checkPageAccess(user: PageUser | undefined, permissions: readonly string[], context: PageAuthorizationContext, authority: PageRuleAuthority): boolean
+    loadPageRuleAuthority(requester: PageUser | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
   }
   config: {
     dataPath: string
@@ -380,6 +378,57 @@ const invalidateOkfVerification = (metadata: OkfMetadata): OkfMetadata => {
   delete unverified.verified
   return unverified
 }
+
+const loadPageTags = async (page: Page, transaction?: Knex.Transaction, reload = false): Promise<Tag[] | undefined> => {
+  if (!reload && Array.isArray(page.tags)) return page.tags
+  const relatedQuery = Reflect.get(page, '$relatedQuery')
+  if (typeof relatedQuery !== 'function') return Array.isArray(page.tags) ? page.tags : undefined
+  const tags = await relatedQuery.call(page, 'tags', transaction)
+  if (!Array.isArray(tags)) return undefined
+  page.tags = tags as Tag[]
+  return page.tags
+}
+
+const pageAccessContext = (
+  page: Pick<Page, 'path' | 'localeCode' | 'visibility' | 'ownerId' | 'tags'>,
+  overrides: Partial<Pick<Page, 'path' | 'localeCode' | 'visibility' | 'ownerId' | 'tags'>> = {}
+): PageAuthorizationContext | null =>
+  pageAuthorizationContext({
+    path: overrides.path ?? page.path,
+    localeCode: overrides.localeCode ?? page.localeCode,
+    visibility: overrides.visibility ?? page.visibility,
+    ownerId: overrides.ownerId ?? page.ownerId,
+    tags: overrides.tags ?? page.tags
+  })
+
+const lockPageForMutation = async (transaction: Knex.Transaction, page: Page): Promise<Tag[] | undefined> => {
+  const locked = (await transaction('pages').where({ id: page.id }).forUpdate().first()) as
+    | { sourceRevision?: string | number; updatedAt?: string | Date }
+    | undefined
+  if (!locked) throw new wiki.Error.PageNotFound()
+  if (
+    page.sourceRevision !== undefined &&
+    (locked.sourceRevision === undefined || String(locked.sourceRevision) !== String(page.sourceRevision))
+  ) {
+    throw pageUpdateConflict()
+  }
+  if (
+    typeof page.updatedAt !== 'undefined' &&
+    locked.updatedAt !== undefined &&
+    new Date(locked.updatedAt).valueOf() !== new Date(page.updatedAt).valueOf()
+  ) {
+    throw pageUpdateConflict()
+  }
+  return loadPageTags(page, transaction, true)
+}
+
+const hasPagePermission = (
+  user: PageUser,
+  permissions: readonly string[],
+  context: PageAuthorizationContext | null,
+  authority: PageRuleAuthority
+): boolean => context !== null && wiki.auth.checkPageAccess(user, [...permissions], context, authority)
+
 
 const pageBrandingFromExtra = (extra: unknown): PageBrandingAssignment | undefined => {
   let candidate = extra
@@ -829,7 +878,14 @@ export default class Page extends Model {
     }
   }
 
-  static assertCreateAccess(opts: { path: string; locale: string; visibility: PageVisibility; tags?: unknown; user: PageUser }): string[] {
+  static assertCreateAccess(opts: {
+    path: string
+    locale: string
+    visibility: PageVisibility
+    tags?: unknown
+    user: PageUser
+    authority: PageRuleAuthority
+  }): string[] {
     const names = opts.tags === undefined ? [] : tagNames(opts.tags)
     if (opts.visibility === 'private') {
       if (principalId(opts.user) === null) {
@@ -838,11 +894,14 @@ export default class Page extends Model {
       return names
     }
     if (
-      !wiki.auth.checkAccess(opts.user, ['write:pages'], {
-        locale: opts.locale,
+      !wiki.auth.checkPageAccess(opts.user, ['write:pages'], {
         path: opts.path,
+        locale: opts.locale,
+        localeCode: opts.locale,
+        visibility: 'public',
+        ownerId: null,
         tags: names.map(tag => ({ tag }))
-      })
+      }, opts.authority)
     ) {
       throw new errors.ApplicationError('You do not have permission to create this page.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
     }
@@ -856,6 +915,7 @@ export default class Page extends Model {
    * @returns {Promise} Promise of the Page Model Instance
    */
   static async createPage(opts: CreatePageOptions): Promise<Page> {
+    rejectApiPrincipalMutation(opts.user)
     // -> Validate path
     if (opts.path.includes('.') || opts.path.includes(' ') || opts.path.includes('\\') || opts.path.includes('//')) {
       throw new wiki.Error.PageIllegalPath()
@@ -871,7 +931,8 @@ export default class Page extends Model {
       opts.path = opts.path.slice(1)
     }
 
-    const normalizedTags = Page.assertCreateAccess(opts)
+    const preflightAuthority = await wiki.auth.loadPageRuleAuthority(opts.user)
+    const normalizedTags = Page.assertCreateAccess({ ...opts, authority: preflightAuthority })
     opts.tags = normalizedTags
     const ownerId = opts.visibility === 'private' ? principalId(opts.user) : null
 
@@ -894,34 +955,13 @@ export default class Page extends Model {
       throw new wiki.Error.PageEmptyContent()
     }
 
-    // -> Format CSS Scripts
-    const tagContext = normalizedTags.map(tag => ({ tag }))
-    let scriptCss = ''
-    if (
-      wiki.auth.checkAccess(opts.user, ['write:styles'], {
-        locale: opts.locale,
-        path: opts.path,
-        tags: tagContext
-      })
-    ) {
-      if (typeof opts.scriptCss === 'string' && !_.isEmpty(opts.scriptCss)) {
-        scriptCss = new CleanCSS({ inline: false }).minify(opts.scriptCss).styles
-      } else {
-        scriptCss = ''
-      }
-    }
-
-    // -> Format JS Scripts
-    let scriptJs = ''
-    if (
-      wiki.auth.checkAccess(opts.user, ['write:scripts'], {
-        locale: opts.locale,
-        path: opts.path,
-        tags: tagContext
-      })
-    ) {
-      scriptJs = opts.scriptJs || ''
-    }
+    // -> Format CSS and JS values before opening the transaction. Authorization
+    // is repeated against the canonical post-association context below.
+    const requestedScriptCss =
+      opts.scriptCss === undefined ? undefined : _.isEmpty(opts.scriptCss) ? '' : new CleanCSS({ inline: false }).minify(opts.scriptCss).styles
+    const scriptCss = requestedScriptCss ?? ''
+    const requestedScriptJs = opts.scriptJs
+    const scriptJs = requestedScriptJs ?? ''
     const okfMetadata = mutateOkfMetadata({
       proposed: opts.okfMetadata,
       producer: opts.okfProducer ?? `human:${opts.user.id}`,
@@ -961,17 +1001,27 @@ export default class Page extends Model {
           ...(branding === undefined || branding === null ? {} : { branding })
         }
       })
-      if (normalizedTags.length > 0) {
-        await wiki.models.tags.associateTags({ tags: normalizedTags, page: inserted, transaction })
+      await wiki.models.tags.associateTags({ tags: normalizedTags, page: inserted, transaction })
+      const authority = await wiki.auth.loadPageRuleAuthority(opts.user, transaction)
+      const canonicalContext = pageAccessContext(inserted)
+      if (canonicalContext === null) {
+        throw new errors.ApplicationError('Unable to resolve canonical page tags.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
       }
       if (
-        opts.visibility === 'public' &&
-        !wiki.auth.checkAccess(opts.user, ['write:pages'], {
-          locale: inserted.localeCode,
-          path: inserted.path,
-          tags: (inserted.tags ?? []).map(tag => ({ tag: tag.tag }))
-        })
+        requestedScriptCss !== undefined &&
+        requestedScriptCss !== '' &&
+        !hasPagePermission(opts.user, ['write:styles'], canonicalContext, authority)
       ) {
+        throw new errors.ApplicationError('You do not have permission to add page styles.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
+      }
+      if (
+        requestedScriptJs !== undefined &&
+        requestedScriptJs !== '' &&
+        !hasPagePermission(opts.user, ['write:scripts'], canonicalContext, authority)
+      ) {
+        throw new errors.ApplicationError('You do not have permission to add page scripts.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
+      }
+      if (opts.visibility === 'public' && !hasPagePermission(opts.user, ['write:pages'], canonicalContext, authority)) {
         throw new errors.ApplicationError('You do not have permission to create this page.', { status: 403, code: 'PAGE_CREATE_FORBIDDEN' })
       }
       await enqueueCurrentPageProjections(transaction, inserted.id, 'create')
@@ -1025,12 +1075,15 @@ export default class Page extends Model {
    * @returns {Promise} Promise of the Page Model Instance
    */
   static async updatePage(opts: UpdatePageOptions): Promise<Page> {
+    rejectApiPrincipalMutation(opts.user)
     // -> Fetch original page
     const ogPage = await wiki.models.pages.query().findById(opts.id)
-    if (!ogPage || (ogPage.visibility === 'private' && !canWritePage(opts.user, ogPage))) {
+    if (ogPage && ogPage.visibility === 'public') await loadPageTags(ogPage)
+    const preflightAuthority = await wiki.auth.loadPageRuleAuthority(opts.user)
+    if (!ogPage || (ogPage.visibility === 'private' && !canWritePage(opts.user, ogPage, preflightAuthority))) {
       throw new wiki.Error.PageNotFound()
     }
-    if (!canWritePage(opts.user, ogPage)) {
+    if (!canWritePage(opts.user, ogPage, preflightAuthority)) {
       throw new wiki.Error.PageUpdateForbidden()
     }
     if (opts.expectedUpdatedAt && new Date(ogPage.updatedAt).valueOf() !== new Date(opts.expectedUpdatedAt).valueOf()) {
@@ -1058,33 +1111,13 @@ export default class Page extends Model {
     if (brandingChanged && branding !== null && branding !== undefined) await authorizeBrandingAssignment(branding, opts)
 
     // -> Format CSS Scripts
-    let scriptCss = typeof ogPage.extra.css === 'string' ? ogPage.extra.css : ''
-    if (
-      wiki.auth.checkAccess(opts.user, ['write:styles'], {
-        locale: opts.locale ?? ogPage.localeCode,
-        path: opts.path ?? ogPage.path
-      }) &&
-      opts.scriptCss !== undefined
-    ) {
-      if (!_.isEmpty(opts.scriptCss)) {
-        scriptCss = new CleanCSS({ inline: false }).minify(opts.scriptCss).styles
-      } else {
-        scriptCss = ''
-      }
-    }
-
-    // -> Format JS Scripts
-    let scriptJs = typeof ogPage.extra.js === 'string' ? ogPage.extra.js : ''
-    if (
-      wiki.auth.checkAccess(opts.user, ['write:scripts'], {
-        locale: opts.locale ?? ogPage.localeCode,
-        path: opts.path ?? ogPage.path
-      }) &&
-      opts.scriptJs !== undefined
-    ) {
-      scriptJs = opts.scriptJs
-    }
-
+    const existingScriptCss = typeof ogPage.extra.css === 'string' ? ogPage.extra.css : ''
+    const requestedScriptCss =
+      opts.scriptCss === undefined ? undefined : _.isEmpty(opts.scriptCss) ? '' : new CleanCSS({ inline: false }).minify(opts.scriptCss).styles
+    let scriptCss = existingScriptCss
+    const existingScriptJs = typeof ogPage.extra.js === 'string' ? ogPage.extra.js : ''
+    const requestedScriptJs = opts.scriptJs
+    let scriptJs = existingScriptJs
     const destinationLocale = opts.locale ?? ogPage.localeCode
     let destinationPath = opts.path ?? ogPage.path
     if (destinationPath.includes('.') || destinationPath.includes(' ') || destinationPath.includes('\\') || destinationPath.includes('//')) {
@@ -1173,24 +1206,6 @@ export default class Page extends Model {
       if (!unchangedPage) throw new wiki.Error.PageNotFound()
       return unchangedPage
     }
-    if (
-      willMove &&
-      ogPage.visibility === 'public' &&
-      !wiki.auth.checkAccess(opts.user, ['write:pages'], {
-        locale: destinationLocale,
-        path: destinationPath
-      })
-    )
-      throw new wiki.Error.PageMoveForbidden()
-    if (willMove) {
-      const collision = await wiki.models.pages.query().findOne({
-        path: destinationPath,
-        localeCode: destinationLocale,
-        visibility: ogPage.visibility,
-        ownerId: ogPage.ownerId
-      })
-      if (collision && collision.id !== ogPage.id) throw new wiki.Error.PagePathCollision()
-    }
     const destinationTitle =
       opts.title ?? (willMove && ogPage.title === _.last(ogPage.path.split('/')) ? (_.last(destinationPath.split('/')) ?? ogPage.title) : ogPage.title)
     const destinationHash = willMove
@@ -1202,22 +1217,77 @@ export default class Page extends Model {
         })
       : ogPage.hash
     const pageEventType = opts.action === 'restored' ? 'page.restored' : willMove ? 'page.moved' : 'page.updated'
-    const extraForPatch: PageExtra = {
-      ...pageExtra,
-      js: scriptJs,
-      css: scriptCss
-    }
-    if (hasBrandingMutation) {
-      if (branding === null) delete extraForPatch.branding
-      else if (branding !== undefined) extraForPatch.branding = branding
-    }
     await wiki.models.knex.transaction(async transaction => {
+      const authorizationTags = await lockPageForMutation(transaction, ogPage)
+      if (authorizationTags === undefined) {
+        if (ogPage.visibility === 'private') throw new wiki.Error.PageNotFound()
+        throw new wiki.Error.PageUpdateForbidden()
+      }
+      const originalTags = [...authorizationTags]
+      let tagsChanged = false
+      if (opts.tags !== undefined) {
+        tagsChanged = await wiki.models.tags.associateTags({ tags: opts.tags, page: ogPage, transaction })
+      } else {
+        ogPage.tags = originalTags
+      }
+      const authority = await wiki.auth.loadPageRuleAuthority(opts.user, transaction)
+      const currentContext = pageAccessContext({ ...ogPage, tags: authorizationTags })
+      const proposedContext = pageAccessContext(ogPage, {
+        path: destinationPath,
+        localeCode: destinationLocale,
+        tags: ogPage.tags
+      })
+      if (currentContext === null || !canWritePage(opts.user, currentContext, authority)) {
+        if (ogPage.visibility === 'private') throw new wiki.Error.PageNotFound()
+        throw new wiki.Error.PageUpdateForbidden()
+      }
+      if (proposedContext === null || !canWritePage(opts.user, proposedContext, authority)) {
+        if (willMove) throw new wiki.Error.PageMoveForbidden()
+        throw new wiki.Error.PageUpdateForbidden()
+      }
+      if (willMove && ogPage.visibility === 'public' && !hasPagePermission(opts.user, ['write:pages'], proposedContext, authority)) {
+        throw new wiki.Error.PageMoveForbidden()
+      }
+      if (
+        requestedScriptCss !== undefined &&
+        requestedScriptCss !== existingScriptCss &&
+        (!hasPagePermission(opts.user, ['write:styles'], currentContext, authority) || !hasPagePermission(opts.user, ['write:styles'], proposedContext, authority))
+      ) {
+        throw new wiki.Error.PageUpdateForbidden()
+      }
+      if (
+        requestedScriptJs !== undefined &&
+        requestedScriptJs !== existingScriptJs &&
+        (!hasPagePermission(opts.user, ['write:scripts'], currentContext, authority) || !hasPagePermission(opts.user, ['write:scripts'], proposedContext, authority))
+      ) {
+        throw new wiki.Error.PageUpdateForbidden()
+      }
+      scriptCss = requestedScriptCss === undefined ? existingScriptCss : requestedScriptCss
+      scriptJs = requestedScriptJs === undefined ? existingScriptJs : requestedScriptJs
+      const extraForPatch: PageExtra = {
+        ...pageExtra,
+        js: scriptJs,
+        css: scriptCss
+      }
+      if (hasBrandingMutation) {
+        if (branding === null) delete extraForPatch.branding
+        else if (branding !== undefined) extraForPatch.branding = branding
+      }
+      if (willMove) {
+        const collision = await wiki.models.pages.query(transaction).findOne({
+          path: destinationPath,
+          localeCode: destinationLocale,
+          visibility: ogPage.visibility,
+          ownerId: ogPage.ownerId
+        })
+        if (collision && collision.id !== ogPage.id) throw new wiki.Error.PagePathCollision()
+      }
+      const historyPage = {
+        ...ogPage,
+        tags: authorizationTags,
+        isPublished: ogPage.isPublished === true || ogPage.isPublished === 1
+      }
       if (opts.expectedCollaborationGeneration !== undefined) {
-        const lockedPage = await transaction<{ id: number; sourceRevision: string | number }>('pages')
-          .where({ id: ogPage.id })
-          .forUpdate()
-          .first('sourceRevision')
-        if (!lockedPage || String(lockedPage.sourceRevision) !== String(ogPage.sourceRevision)) throw pageUpdateConflict()
         const room = await transaction<{ pageId: number; generation: number }>('pageCollaborationRooms')
           .where({ pageId: ogPage.id })
           .forUpdate()
@@ -1225,8 +1295,7 @@ export default class Page extends Model {
         if (!room || room.generation !== opts.expectedCollaborationGeneration) throw collaborationDraftDiscardedConflict()
       }
       await wiki.models.pageHistory.addVersion({
-        ...ogPage,
-        isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
+        ...historyPage,
         action: opts.action ? opts.action : 'updated',
         versionDate: ogPage.updatedAt,
         transaction
@@ -1257,12 +1326,13 @@ export default class Page extends Model {
       if (ogPage.sourceRevision !== undefined) pagePatch.where('sourceRevision', ogPage.sourceRevision)
       const updatedRows = await pagePatch
       if (updatedRows !== 1) throw pageUpdateConflict()
-      if (opts.tags !== undefined) {
-        const tagsChanged = await wiki.models.tags.associateTags({ tags: opts.tags, page: ogPage, transaction })
-        if (tagsChanged && ogPage.sourceRevision !== undefined) {
-          await transaction('pages')
+      if (tagsChanged && ogPage.sourceRevision !== undefined) {
+        const revisionRow = await transaction('pages').select('sourceRevision').where({ id: ogPage.id }).forUpdate().first()
+        if (revisionRow && String(revisionRow.sourceRevision) === String(ogPage.sourceRevision)) {
+          const bumpedRows = await transaction('pages')
             .where({ id: ogPage.id, sourceRevision: ogPage.sourceRevision })
             .update({ sourceRevision: transaction.raw('"sourceRevision" + 1') })
+          if (bumpedRows !== 1) throw pageUpdateConflict()
         }
       }
       await writePageOutboxEvent(
@@ -1357,8 +1427,10 @@ export default class Page extends Model {
     return page
   }
   static async changeVisibility(opts: ChangeVisibilityOptions): Promise<Page> {
+    rejectApiPrincipalMutation(opts.user)
     const page = await wiki.models.pages.getPageFromDb(opts.id)
-    if (!page || !canWritePage(opts.user, page)) {
+    const preflightAuthority = await wiki.auth.loadPageRuleAuthority(opts.user)
+    if (!page || !canWritePage(opts.user, page, preflightAuthority)) {
       throw new wiki.Error.PageNotFound()
     }
     if (page.visibility === opts.visibility) return page
@@ -1368,24 +1440,6 @@ export default class Page extends Model {
     if (opts.visibility === 'private' && ownerId === null) {
       throw new wiki.Error.PageUpdateForbidden()
     }
-    if (opts.visibility === 'public') {
-      if (
-        !opts.confirmPublication ||
-        !wiki.auth.checkAccess(opts.user, ['write:pages'], {
-          locale: page.localeCode,
-          path: page.path
-        })
-      ) {
-        throw new wiki.Error.PageUpdateForbidden()
-      }
-    }
-    const collision = await wiki.models.pages.query().findOne({
-      visibility: opts.visibility,
-      ownerId,
-      localeCode: page.localeCode,
-      path: page.path
-    })
-    if (collision) throw new wiki.Error.PagePathCollision()
 
     const hash = pageHelper.generateHash({
       path: page.path,
@@ -1394,8 +1448,37 @@ export default class Page extends Model {
       ownerId
     })
     await wiki.models.knex.transaction(async transaction => {
-      await wiki.models.pageHistory.addVersion({
+      const authorizationTags = await lockPageForMutation(transaction, page)
+      if (authorizationTags === undefined) throw new wiki.Error.PageUpdateForbidden()
+      const authority = await wiki.auth.loadPageRuleAuthority(opts.user, transaction)
+      const currentContext = pageAccessContext({ ...page, tags: authorizationTags })
+      const proposedContext = pageAccessContext(page, {
+        visibility: opts.visibility,
+        ownerId,
+        tags: authorizationTags
+      })
+      if (currentContext === null || !canWritePage(opts.user, currentContext, authority)) throw new wiki.Error.PageUpdateForbidden()
+      if (proposedContext === null || !canWritePage(opts.user, proposedContext, authority)) throw new wiki.Error.PageUpdateForbidden()
+      if (
+        opts.visibility === 'public' &&
+        (!opts.confirmPublication || !hasPagePermission(opts.user, ['write:pages'], proposedContext, authority))
+      ) {
+        throw new wiki.Error.PageUpdateForbidden()
+      }
+      const collision = await wiki.models.pages.query(transaction).findOne({
+        visibility: opts.visibility,
+        ownerId,
+        localeCode: page.localeCode,
+        path: page.path
+      })
+      if (collision) throw new wiki.Error.PagePathCollision()
+      const historyPage = {
         ...page,
+        tags: authorizationTags,
+        isPublished: page.isPublished === true || page.isPublished === 1
+      }
+      await wiki.models.pageHistory.addVersion({
+        ...historyPage,
         action: opts.visibility === 'private' ? 'made-private' : 'published',
         versionDate: page.updatedAt,
         transaction
@@ -1452,6 +1535,7 @@ export default class Page extends Model {
   }
 
   static async transferOwnership(opts: TransferOwnershipOptions): Promise<Page> {
+    rejectApiPrincipalMutation(opts.user)
     if (!managesSystem(opts.user)) throw new wiki.Error.PageNotFound()
     const page = await wiki.models.pages.getPageFromDb(opts.id)
     if (!page || page.visibility !== 'private') throw new wiki.Error.PageNotFound()
@@ -1502,13 +1586,16 @@ export default class Page extends Model {
    * @returns {Promise} Promise of the Page Model Instance
    */
   static async convertPage(opts: ConvertPageOptions): Promise<void> {
+    rejectApiPrincipalMutation(opts.user)
     // -> Fetch original page
     const ogPage = await wiki.models.pages.query().findById(opts.id)
-    if (!ogPage || (ogPage.visibility === 'private' && !canWritePage(opts.user, ogPage))) {
+    if (ogPage && ogPage.visibility === 'public') await loadPageTags(ogPage)
+    const preflightAuthority = await wiki.auth.loadPageRuleAuthority(opts.user)
+    if (!ogPage || (ogPage.visibility === 'private' && !canWritePage(opts.user, ogPage, preflightAuthority))) {
       throw new wiki.Error.PageNotFound()
     }
     if (opts.expectedSourceRevision && String(ogPage.sourceRevision) !== opts.expectedSourceRevision) throw pageUpdateConflict()
-    if (!canWritePage(opts.user, ogPage)) {
+    if (!canWritePage(opts.user, ogPage, preflightAuthority)) {
       throw new wiki.Error.PageUpdateForbidden()
     }
     if (ogPage.editorKey === opts.editor) {
@@ -1652,10 +1739,25 @@ export default class Page extends Model {
     })
 
     await wiki.models.knex.transaction(async transaction => {
+      const authorizationTags = await lockPageForMutation(transaction, ogPage)
+      if (authorizationTags === undefined) {
+        if (ogPage.visibility === 'private') throw new wiki.Error.PageNotFound()
+        throw new wiki.Error.PageUpdateForbidden()
+      }
+      const authority = await wiki.auth.loadPageRuleAuthority(opts.user, transaction)
+      const context = pageAccessContext({ ...ogPage, tags: authorizationTags })
+      if (context === null || !canWritePage(opts.user, context, authority)) {
+        if (ogPage.visibility === 'private') throw new wiki.Error.PageNotFound()
+        throw new wiki.Error.PageUpdateForbidden()
+      }
+      const historyPage = {
+        ...ogPage,
+        tags: authorizationTags,
+        isPublished: ogPage.isPublished === true || ogPage.isPublished === 1
+      }
       if (shouldConvert) {
         await wiki.models.pageHistory.addVersion({
-          ...ogPage,
-          isPublished: ogPage.isPublished === true || ogPage.isPublished === 1,
+          ...historyPage,
           action: 'updated',
           versionDate: ogPage.updatedAt,
           transaction
@@ -1705,6 +1807,7 @@ export default class Page extends Model {
    * @returns {Promise} Promise with no value
    */
   static async movePage(opts: MovePageOptions): Promise<void> {
+    rejectApiPrincipalMutation(opts.user)
     let page: Page | undefined
     if (opts.id !== undefined) {
       page = await wiki.models.pages.query().findById(opts.id)
@@ -1719,11 +1822,13 @@ export default class Page extends Model {
     if (!page) {
       throw new wiki.Error.PageNotFound()
     }
-    if (page.visibility === 'private' && !canWritePage(opts.user, page)) {
+    if (page.visibility === 'public') await loadPageTags(page)
+    const preflightAuthority = await wiki.auth.loadPageRuleAuthority(opts.user)
+    if (page.visibility === 'private' && !canWritePage(opts.user, page, preflightAuthority)) {
       throw new wiki.Error.PageNotFound()
     }
     if (opts.expectedSourceRevision && String(page.sourceRevision) !== opts.expectedSourceRevision) throw pageUpdateConflict()
-    if (!canWritePage(opts.user, page)) {
+    if (!canWritePage(opts.user, page, preflightAuthority)) {
       throw new wiki.Error.PageMoveForbidden()
     }
 
@@ -1742,25 +1847,6 @@ export default class Page extends Model {
       opts.destinationPath = opts.destinationPath.slice(1)
     }
 
-    if (
-      page.visibility === 'public' &&
-      !wiki.auth.checkAccess(opts.user, ['write:pages'], {
-        locale: opts.destinationLocale,
-        path: opts.destinationPath
-      })
-    ) {
-      throw new wiki.Error.PageMoveForbidden()
-    }
-
-    const destinationPage = await wiki.models.pages.query().findOne({
-      path: opts.destinationPath,
-      localeCode: opts.destinationLocale,
-      visibility: page.visibility,
-      ownerId: page.ownerId
-    })
-    if (destinationPage) {
-      throw new wiki.Error.PagePathCollision()
-    }
 
     const destinationHash = pageHelper.generateHash({
       path: opts.destinationPath,
@@ -1779,8 +1865,37 @@ export default class Page extends Model {
       })
     )
     await wiki.models.knex.transaction(async transaction => {
-      await wiki.models.pageHistory.addVersion({
+      const authorizationTags = await lockPageForMutation(transaction, page)
+      if (authorizationTags === undefined) throw new wiki.Error.PageMoveForbidden()
+      const authority = await wiki.auth.loadPageRuleAuthority(opts.user, transaction)
+      const currentContext = pageAccessContext({ ...page, tags: authorizationTags })
+      const proposedContext = pageAccessContext(page, {
+        path: opts.destinationPath,
+        localeCode: opts.destinationLocale,
+        tags: authorizationTags
+      })
+      if (currentContext === null || !canWritePage(opts.user, currentContext, authority)) {
+        if (page.visibility === 'private') throw new wiki.Error.PageNotFound()
+        throw new wiki.Error.PageMoveForbidden()
+      }
+      if (proposedContext === null || !canWritePage(opts.user, proposedContext, authority)) throw new wiki.Error.PageMoveForbidden()
+      if (page.visibility === 'public' && !hasPagePermission(opts.user, ['write:pages'], proposedContext, authority)) {
+        throw new wiki.Error.PageMoveForbidden()
+      }
+      const destinationPage = await wiki.models.pages.query(transaction).findOne({
+        path: opts.destinationPath,
+        localeCode: opts.destinationLocale,
+        visibility: page.visibility,
+        ownerId: page.ownerId
+      })
+      if (destinationPage) throw new wiki.Error.PagePathCollision()
+      const historyPage = {
         ...page,
+        tags: authorizationTags,
+        isPublished: page.isPublished === true || page.isPublished === 1
+      }
+      await wiki.models.pageHistory.addVersion({
+        ...historyPage,
         action: 'moved',
         versionDate: page.updatedAt,
         transaction
@@ -1856,6 +1971,7 @@ export default class Page extends Model {
   }
 
   static async deletePage(opts: DeletePageOptions): Promise<void> {
+    rejectApiPrincipalMutation(opts.user)
     const page = await wiki.models.pages.getPageFromDb(
       opts.id !== undefined
         ? opts.id
@@ -1866,10 +1982,11 @@ export default class Page extends Model {
             ownerId: null
           }
     )
-    if (!page || (page.visibility === 'private' && !canDeletePage(opts.user, page))) {
+    const preflightAuthority = await wiki.auth.loadPageRuleAuthority(opts.user)
+    if (!page || (page.visibility === 'private' && !canDeletePage(opts.user, page, preflightAuthority))) {
       throw new wiki.Error.PageNotFound()
     }
-    if (!canDeletePage(opts.user, page)) {
+    if (!canDeletePage(opts.user, page, preflightAuthority)) {
       throw new wiki.Error.PageDeleteForbidden()
     }
     if (opts.expectedSourceRevision && String(page.sourceRevision) !== opts.expectedSourceRevision) throw pageUpdateConflict()
@@ -1879,6 +1996,10 @@ export default class Page extends Model {
     const user = opts.user
 
     await wiki.models.knex.transaction(async transaction => {
+      const authorizationTags = await lockPageForMutation(transaction, page)
+      if (authorizationTags === undefined) throw new wiki.Error.PageNotFound()
+      const authority = await wiki.auth.loadPageRuleAuthority(user, transaction)
+      if (!canDeletePage(user, { ...page, tags: authorizationTags }, authority)) throw new wiki.Error.PageDeleteForbidden()
       await wiki.models.pageHistory.addVersion({
         ...page,
         action: 'deleted',
@@ -2198,6 +2319,7 @@ export default class Page extends Model {
   }
 
   static async migrateToLocale({ sourceLocale, targetLocale, user }: { sourceLocale: string; targetLocale: string; user: PageUser }): Promise<number> {
+    rejectApiPrincipalMutation(user)
     const migration = await wiki.models.knex.transaction(async transaction => {
       await wiki.models.pages.acquireLocaleMigrationLocks(transaction)
       const pages = await wiki.models.pages

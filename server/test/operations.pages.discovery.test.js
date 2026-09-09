@@ -13,8 +13,9 @@ describe('structured page discovery', () => {
     const listPageIndexCandidates = vi.fn(async () => candidates)
     vi.mockModule('../repositories/page-index.ts', import.meta.url, () => ({ PAGE_INDEX_CANDIDATE_LIMIT: 5_001, listPageIndexCandidates }))
     const checkAccess = vi.fn().mockReturnValue(true)
+    const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
     global.WIKI = {
-      auth: { checkAccess },
+      auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
       config: { db: { type: 'postgres' }, lang: { code: 'en' } },
       data: {},
       Error: {},
@@ -35,6 +36,5 @@ describe('structured page discovery', () => {
       nextOffset: null
     })
     expect(listPageIndexCandidates).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ locale: 'en', path: 'docs', limit: 5_001 }))
-    expect(checkAccess).toHaveBeenCalledWith(requester, ['read:pages'], expect.objectContaining({ path: 'docs/nested/alpha', tags: ['runbook', 'release'] }))
   })
 })

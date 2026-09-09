@@ -6,6 +6,7 @@ import { up as createProjectionStore } from '../db/migrations/2.5.152.ts'
 import { up as createMaintenanceStore } from '../db/migrations/tsfranki-000006-knowledge-maintenance.ts'
 import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
 import { PageKnowledgeLifecycle, PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 
 let db: Knex
 
@@ -118,6 +119,13 @@ const page = (overrides: Record<string, unknown> = {}) => ({
   authorId: 5,
   extra: JSON.stringify({ okf: { type: 'Procedure', status: 'stable' } }),
   ...overrides
+})
+
+const pageRuleAuthority = (requester: Express.User): PageRuleAuthority => ({
+  requester,
+  permissions: ['read:pages'],
+  groups: [],
+  tagAliases: {}
 })
 
 const enqueueKnowledge = async (sourceRevision: string, content: string, action: 'create' | 'update') =>
@@ -909,12 +917,15 @@ describe('page knowledge lifecycle', () => {
       })
     }
     await new PageKnowledgeLifecycle(db, 'search-worker').runOnce()
-    vi.stubGlobal('WIKI', { auth: { checkAccess: vi.fn().mockReturnValue(true) } })
+    const requester = { id: 5 } as Express.User
+    const authority = pageRuleAuthority(requester)
+    vi.stubGlobal('WIKI', { auth: { checkAccess: vi.fn().mockReturnValue(true), checkPageAccess: vi.fn().mockReturnValue(true) } })
     try {
       expect(
         await new PageKnowledgeRepository(db).searchVisible({
           query: '%',
-          requester: { id: 5 } as Express.User,
+          requester,
+          authority,
           limit: 10
         })
       ).toMatchObject([{ id: 1, path: 'literal-percent' }])
@@ -949,12 +960,15 @@ describe('page knowledge lifecycle', () => {
     }
     await db('pageAccessPasswords').insert({ pageId: 1 })
     await new PageKnowledgeLifecycle(db, 'search-worker').runOnce()
-    vi.stubGlobal('WIKI', { auth: { checkAccess: vi.fn().mockReturnValue(true) } })
+    const requester = { id: 5 } as Express.User
+    const authority = pageRuleAuthority(requester)
+    vi.stubGlobal('WIKI', { auth: { checkAccess: vi.fn().mockReturnValue(true), checkPageAccess: vi.fn().mockReturnValue(true) } })
     try {
       expect(
         await new PageKnowledgeRepository(db).searchVisible({
           query: 'common',
-          requester: { id: 5 } as Express.User,
+          requester,
+          authority,
           limit: 2,
           filter: { conceptType: 'Procedure' }
         })

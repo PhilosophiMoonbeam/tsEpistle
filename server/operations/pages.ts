@@ -1,5 +1,7 @@
 import taxonomy from './taxonomy.ts'
-import { tagAliasMap, resolveTagName } from '../helpers/tag-aliases.ts'
+import { resolveTagName } from '../helpers/tag-aliases.ts'
+import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
+import { tagNames } from '../helpers/taxonomy-plan.ts'
 import _ from 'lodash'
 import { searchExcerpt } from '../helpers/search-excerpt.ts'
 import { isStructuredSearchQuery } from '../helpers/search-query.ts'
@@ -8,7 +10,7 @@ import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
 import type { Knex } from 'knex'
 import type { SearchResult as ProviderSearchResult } from '../modules/types.ts'
-import { canDeletePage, canReadPage, canWritePage, managesSystem, pageRoute, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
+import { canDeletePage, canReadPage, canWritePage, managesSystem, pageAuthorizationContext, pageRoute, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
 import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../repositories/page-index.ts'
 import { pageTreeAccess, treeAncestorIds } from '../repositories/page-tree-access.ts'
 import { isPageEditorKey, normalizeAvailableEditors } from '../../shared/page-editors.ts'
@@ -200,14 +202,17 @@ interface WikiPageOperations {
     PageDeleteForbidden: new () => Error
     PageMoveForbidden: new () => Error
   }
-  auth: { checkAccess(user: Express.User | undefined, permissions: readonly string[], context: Record<string, unknown>): boolean }
+  auth: {
+    checkPageAccess(user: Express.User | undefined, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
+    loadPageRuleAuthority(requester: Express.User | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+  }
   config: { db: { type: string }; editors?: { available?: unknown }; lang: { code: string }; search?: { maxHits?: number } }
   data: { searchEngine?: { supportsPageFilters?: boolean; query(query: string, options: Record<string, unknown>): Promise<SearchResponse> } }
   models: {
     knex: Knex
     pages: {
       query(): PageQuery
-      assertCreateAccess(input: { path: string; locale: string; visibility: PageVisibility; tags?: unknown; user: Express.User }): string[]
+      assertCreateAccess(input: { path: string; locale: string; visibility: PageVisibility; tags?: unknown; user: Express.User; authority: PageRuleAuthority }): string[]
       relatedQuery(relation: 'tags'): RelatedTagQuery
       getPageFromDb(input: number | { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageSourceRecord | undefined>
       deletePage(input: { id: number; expectedSourceRevision?: string; user?: Express.User }): unknown
@@ -237,11 +242,19 @@ interface WikiPageOperations {
   }
 }
 
-interface OperationInput extends Record<string, unknown> {
+export interface PageOperationInput extends Record<string, unknown> {
   requester?: Express.User
+  authority?: PageRuleAuthority
   sessionId?: string
   readonly [OKF_PRODUCER_CONTEXT]?: string
 }
+type OperationInput = PageOperationInput
+const authorityFor = async (input: OperationInput, transaction?: Knex.Transaction): Promise<PageRuleAuthority> => {
+  if (!transaction && input.authority !== undefined && input.authority.requester === input.requester) return input.authority
+  return wiki.auth.loadPageRuleAuthority(input.requester, transaction)
+}
+const authorityForInput = async (input: OperationInput, supplied?: PageRuleAuthority): Promise<PageRuleAuthority> =>
+  supplied !== undefined && supplied.requester === input.requester ? supplied : authorityFor(input)
 const assertUnlocked = (input: OperationInput, pageId: number): Promise<void> =>
   assertPageUnlocked({
     requester: input.requester,
@@ -249,6 +262,11 @@ const assertUnlocked = (input: OperationInput, pageId: number): Promise<void> =>
     sessionId: typeof input.sessionId === 'string' ? input.sessionId : ''
   })
 const wiki = WIKI as unknown as WikiPageOperations
+const completePageForAuthorization = async (page: PageRecord | undefined): Promise<PageRecord | undefined> => {
+  if (!page || Array.isArray(page.tags)) return page
+  const hydrated = await wiki.models.pages.getPageFromDb(page.id)
+  return hydrated as PageRecord | undefined
+}
 const positiveInteger = (value: unknown, label: string): number => {
   if (!Number.isSafeInteger(value) || (value as number) < 1) throw new ApplicationError(`${label} must be a positive integer`, { code: 'INVALID_INPUT' })
   return value as number
@@ -313,10 +331,11 @@ const resolveReaderBranding = async (input: OperationInput, page: PageRecord): P
 }
 const canonicalBrandingAssignmentFor = (
   requester: Express.User | undefined,
-  page: Pick<PageRecord, 'path' | 'localeCode' | 'visibility' | 'ownerId'>,
-  extra: unknown
+  page: Pick<PageRecord, 'path' | 'localeCode' | 'visibility' | 'ownerId' | 'tags'>,
+  extra: unknown,
+  authority: PageRuleAuthority
 ): PageBrandingAssignment | null | undefined => {
-  if (!canWritePage(requester, page) && !managesSystem(requester)) return undefined
+  if (!canWritePage(requester, page, authority) && !managesSystem(requester)) return undefined
   const rawBranding = isRecord(extra) ? extra.branding : undefined
   const assignment = PageBrandingAssignmentSchema.safeParse(rawBranding)
   return assignment.success ? assignment.data : null
@@ -329,7 +348,9 @@ const projectReaderPage = async <T extends PageRecord>(input: OperationInput, pa
   return { ...page, extra, branding }
 }
 
-const list = async ({ requester, ...rawArgs }: OperationInput) => {
+const list = async (input: OperationInput) => {
+  const { requester, ...rawArgs } = input
+  const authority = await authorityFor(input)
   const args = {
     limit: rawArgs.limit === undefined ? undefined : positiveInteger(rawArgs.limit, 'limit'),
     offset: rawArgs.offset === undefined ? 0 : nonNegativeInteger(rawArgs.offset, 'offset'),
@@ -346,7 +367,7 @@ const list = async ({ requester, ...rawArgs }: OperationInput) => {
     orderByDirection: typeof rawArgs.orderByDirection === 'string' ? rawArgs.orderByDirection : ''
   }
   if (args.tags?.length) {
-    const aliases = tagAliasMap(await wiki.models.knex('tags').select('id', 'tag', 'redirectToId', 'isArchived'))
+    const aliases = authority.tagAliases
     const resolved = args.tags.map(tag => resolveTagName(aliases, tag.trim().toLowerCase()))
     if (resolved.some(tag => tag === null)) return []
     args.tags = resolved as string[]
@@ -402,7 +423,7 @@ const list = async ({ requester, ...rawArgs }: OperationInput) => {
       if (orderColumn !== 'pages.id') queryBuilder.orderBy('pages.id', 'asc')
     })
 
-  const accessiblePages = pages.filter(page => canReadPage(requester, page)).map(page => ({ ...page, tags: page.tags.map(tag => tag.tag) }))
+  const accessiblePages = pages.filter(page => canReadPage(requester, page, authority)).map(page => ({ ...page, tags: page.tags.map(tag => tag.tag) }))
   if (args.tags && args.tags.length > 0) {
     return accessiblePages.filter(page => _.every(args.tags, tag => _.includes(page.tags, tag)))
   }
@@ -418,7 +439,9 @@ export interface PageIndexItem {
   updatedAt: string
 }
 
-const listIndex = async ({ requester, ...rawArgs }: OperationInput): Promise<PageIndexItem[]> => {
+const listIndex = async (input: OperationInput): Promise<PageIndexItem[]> => {
+  const { requester, ...rawArgs } = input
+  const authority = await authorityFor(input)
   const path = stringValue(rawArgs.path, 'path')
   const locale = stringValue(rawArgs.locale, 'locale')
   const depth = nonNegativeInteger(rawArgs.depth, 'depth')
@@ -447,7 +470,7 @@ const listIndex = async ({ requester, ...rawArgs }: OperationInput): Promise<Pag
       const relativePath = page.path.slice(prefix.length)
       return relativePath.length > 0 && relativePath.split('/').length <= depth + 1
     })
-    .filter(page => canReadPage(requester, { ...page, tags: page.tags.map(tag => tag.tag) }))
+    .filter(page => canReadPage(requester, { ...page, tags: page.tags.map(tag => tag.tag) }, authority))
   accessible.sort((left, right) => {
     if (order === 'title') return left.title.localeCompare(right.title) || left.path.localeCompare(right.path)
     if (order === 'updated') return new Date(right.updatedAt).valueOf() - new Date(left.updatedAt).valueOf() || left.path.localeCompare(right.path)
@@ -463,7 +486,9 @@ const listIndex = async ({ requester, ...rawArgs }: OperationInput): Promise<Pag
   }))
 }
 
-const discover = async ({ requester, ...rawArgs }: OperationInput) => {
+const discover = async (input: OperationInput) => {
+  const { requester, ...rawArgs } = input
+  const authority = await authorityFor(input)
   const locale = stringValue(rawArgs.locale, 'locale')
   const path = rawArgs.path === undefined ? '' : stringValue(rawArgs.path, 'path')
   const depth = rawArgs.depth === undefined ? 1 : nonNegativeInteger(rawArgs.depth, 'depth')
@@ -503,7 +528,7 @@ const discover = async ({ requester, ...rawArgs }: OperationInput) => {
       relativePath.length > 0 &&
       relativePath.split('/').length <= depth + 1 &&
       tags.every(tag => pageTags.includes(tag)) &&
-      canReadPage(requester, { ...page, tags: pageTags })
+      canReadPage(requester, { ...page, tags: pageTags }, authority)
     )
   })
   pages.sort((left, right) => {
@@ -529,7 +554,12 @@ const discover = async ({ requester, ...rawArgs }: OperationInput) => {
   }
 }
 
-const listTags = async (requester?: Express.User) => {
+const listTags = async (requester?: Express.User, suppliedAuthority?: PageRuleAuthority) => {
+  const authorityInput: OperationInput = {
+    ...(requester === undefined ? {} : { requester }),
+    ...(suppliedAuthority === undefined ? {} : { authority: suppliedAuthority })
+  }
+  const authority = await authorityFor(authorityInput)
   const pages = await wiki.models.pages
     .query()
     .column(['path', { locale: 'localeCode' }, 'visibility', 'ownerId'])
@@ -537,11 +567,16 @@ const listTags = async (requester?: Express.User) => {
       scopePageQuery(queryBuilder, requester, { table: 'pages' })
     })
     .withGraphJoined('tags')
-  const tags = pages.filter(page => canReadPage(requester, page)).flatMap(page => page.tags)
+  const tags = pages.filter(page => canReadPage(requester, page, authority)).flatMap(page => page.tags)
   return _.orderBy(_.uniqBy(tags, 'id'), ['tag'], ['asc'])
 }
 
-const listRecent = async (requester?: Express.User) => {
+const listRecent = async (requester?: Express.User, suppliedAuthority?: PageRuleAuthority) => {
+  const authorityInput: OperationInput = {
+    ...(requester === undefined ? {} : { requester }),
+    ...(suppliedAuthority === undefined ? {} : { authority: suppliedAuthority })
+  }
+  const authority = await authorityFor(authorityInput)
   const pages = await wiki.models.pages
     .query()
     .column(['pages.id', 'path', { locale: 'localeCode' }, 'title', 'updatedAt', 'visibility', 'ownerId'])
@@ -555,11 +590,12 @@ const listRecent = async (requester?: Express.User) => {
     .orderBy('pages.updatedAt', 'desc')
     .orderBy('pages.id', 'asc')
     .limit(10)
-  return pages.filter(page => canReadPage(requester, page)).map(page => _.pick(page, ['id', 'locale', 'path', 'title', 'updatedAt', 'visibility']))
+  return pages.filter(page => canReadPage(requester, page, authority)).map(page => _.pick(page, ['id', 'locale', 'path', 'title', 'updatedAt', 'visibility']))
 }
 
 const searchTags = async (input: OperationInput) => {
   const requester = input.requester
+  const authority = await authorityFor(input)
   const normalizedQuery = _.trim(stringValue(input.query, 'query')).toLowerCase()
   const limit = input.limit === undefined ? 5 : positiveInteger(input.limit, 'limit')
   if (!normalizedQuery) throw new ApplicationError('query must not be empty', { code: 'INVALID_INPUT', status: 400 })
@@ -584,7 +620,7 @@ const searchTags = async (input: OperationInput) => {
     })
   return _.uniq(
     pages
-      .filter(page => canReadPage(requester, page))
+      .filter(page => canReadPage(requester, page, authority))
       .flatMap(page => page.tags)
       .map(tag => tag.tag)
       .filter(tag => tag.toLowerCase().includes(normalizedQuery))
@@ -593,20 +629,22 @@ const searchTags = async (input: OperationInput) => {
     .slice(0, limit)
 }
 
-const authorizedPageSource = async (input: OperationInput): Promise<PageSourceRecord> => {
+const authorizedPageSource = async (input: OperationInput, suppliedAuthority?: PageRuleAuthority): Promise<PageSourceRecord> => {
   const requester = input.requester
+  const authority = await authorityForInput(input, suppliedAuthority)
   const page = await wiki.models.pages.getPageFromDb(positiveInteger(input.id, 'id'))
-  if (!page || !canAccessCurrentPageSource(requester, page)) {
+  if (!page || !canAccessCurrentPageSource(requester, page, authority)) {
     throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
   }
   await assertUnlocked(input, page.id)
   return page
 }
 
-const get = async (input: OperationInput): Promise<PageDetail> => {
-  const source = await authorizedPageSource(input)
+const get = async (input: OperationInput, suppliedAuthority?: PageRuleAuthority): Promise<PageDetail> => {
+  const authority = await authorityForInput(input, suppliedAuthority)
+  const source = await authorizedPageSource(input, authority)
   const page = await projectReaderPage(input, source)
-  const brandingAssignment = canonicalBrandingAssignmentFor(input.requester, source, source.extra)
+  const brandingAssignment = canonicalBrandingAssignmentFor(input.requester, source, source.extra, authority)
   return {
     ...page,
     ...(brandingAssignment === undefined ? {} : { brandingAssignment }),
@@ -622,13 +660,14 @@ const publicationWindowOpen = (page: Record<string, unknown>, now = Date.now()):
   const end = page.publishEndDate
   return (!start || new Date(String(start)).valueOf() <= now) && (!end || new Date(String(end)).valueOf() >= now)
 }
-const canAccessCurrentPageSource = (requester: Express.User | undefined, page: PageRecord): boolean =>
-  page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page)) ? canReadPage(requester, page) : canWritePage(requester, page)
+const canAccessCurrentPageSource = (requester: Express.User | undefined, page: PageRecord, authority: PageRuleAuthority): boolean =>
+  page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page)) ? canReadPage(requester, page, authority) : canWritePage(requester, page, authority)
 
 const preview = async (input: OperationInput): Promise<WikiSource> => {
   // Both readers enforce current ownership, page rules, publication, and password unlock.
-  const page = input.id === undefined ? await getByPath(input) : await get(input)
-  if (page.visibility === 'public' && (!page.isPublished || !publicationWindowOpen(page)) && !canWritePage(input.requester, page))
+  const authority = await authorityFor(input)
+  const page = input.id === undefined ? await getByPath(input, authority) : await get(input, authority)
+  if (page.visibility === 'public' && (!page.isPublished || !publicationWindowOpen(page)) && !canWritePage(input.requester, page, authority))
     throw new ApplicationError('This page does not exist.', { code: 'PAGE_NOT_FOUND', status: 404 })
   const render = Reflect.get(page, 'render')
   const rendered = typeof render === 'string' ? render : ''
@@ -645,9 +684,9 @@ const preview = async (input: OperationInput): Promise<WikiSource> => {
     ...searchExcerpt(rendered, query)
   }
 }
-
 const getSource = async (
-  input: OperationInput
+  input: OperationInput,
+  suppliedAuthority?: PageRuleAuthority
 ): Promise<{
   content: string
   description: string | null
@@ -655,8 +694,9 @@ const getSource = async (
   title: string
   brandingAssignment?: PageBrandingAssignment | null
 }> => {
-  const page = await authorizedPageSource(input)
-  const brandingAssignment = canonicalBrandingAssignmentFor(input.requester, page, page.extra)
+  const authority = await authorityForInput(input, suppliedAuthority)
+  const page = await authorizedPageSource(input, authority)
+  const brandingAssignment = canonicalBrandingAssignmentFor(input.requester, page, page.extra, authority)
   return {
     content: page.content,
     description: typeof page.description === 'string' ? page.description : null,
@@ -665,8 +705,15 @@ const getSource = async (
     ...(brandingAssignment === undefined ? {} : { brandingAssignment })
   }
 }
-
-const graphEligiblePages = async (requester: Express.User | undefined): Promise<Map<number, PageRecord>> => {
+const graphEligiblePages = async (
+  requester: Express.User | undefined,
+  suppliedAuthority?: PageRuleAuthority
+): Promise<Map<number, PageRecord>> => {
+  const authorityInput: OperationInput = {
+    ...(requester === undefined ? {} : { requester }),
+    ...(suppliedAuthority === undefined ? {} : { authority: suppliedAuthority })
+  }
+  const authority = await authorityForInput(authorityInput, suppliedAuthority)
   const [pages, protectedIds] = await Promise.all([
     wiki.models.pages
       .query()
@@ -695,7 +742,7 @@ const graphEligiblePages = async (requester: Express.User | undefined): Promise<
     protectedPageIds()
   ])
   return new Map<number, PageRecord>(
-    pages.filter(page => publicationWindowOpen(page) && canReadPage(requester, page) && !protectedIds.has(page.id)).map(page => [page.id, page] as const)
+    pages.filter(page => publicationWindowOpen(page) && canReadPage(requester, page, authority) && !protectedIds.has(page.id)).map(page => [page.id, page] as const)
   )
 }
 
@@ -730,8 +777,9 @@ const graphPageSnapshotMatches = (rawId: unknown, rawRevision: unknown, rawPath:
 
 const listLinks = async (input: OperationInput) => {
   const requester = input.requester
+  const authority = await authorityFor(input)
   const locale = stringValue(input.locale, 'locale')
-  const pagesById = await graphEligiblePages(requester)
+  const pagesById = await graphEligiblePages(requester, authority)
   // Do not list an edge if either endpoint became protected after the metadata snapshot.
   for (const protectedId of await protectedPageIds()) pagesById.delete(protectedId)
   const pagesByRoute = new Map<string, PageRecord>([...pagesById.values()].map(page => [`${page.localeCode}/${page.path}`, page] as const))
@@ -797,6 +845,7 @@ const relatedPageOrder = (left: PageRecord, right: PageRecord): number =>
 
 const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> => {
   const requester = input.requester
+  const authority = await authorityFor(input)
   const pageId = positiveInteger(input.pageId, 'pageId')
   const limit = input.limit === undefined ? 20 : positiveInteger(input.limit, 'limit')
   const offset = input.offset === undefined ? 0 : nonNegativeInteger(input.offset, 'offset')
@@ -806,14 +855,10 @@ const listRelated = async (input: OperationInput): Promise<RelatedPagesResult> =
     throw new ApplicationError('offset and limit exceed the safe traversal range', { code: 'INVALID_INPUT', status: 400 })
   if (maxDepth !== undefined && maxDepth > 32) throw new ApplicationError('maxDepth must not exceed 32', { code: 'INVALID_INPUT', status: 400 })
 
-  const source = await get({
-    id: pageId,
-    ...(requester === undefined ? {} : { requester }),
-    ...(typeof input.sessionId === 'string' ? { sessionId: input.sessionId } : {})
-  })
+  const source = await get({ ...input, id: pageId }, authority)
   if (source.visibility !== 'public' || source.isPublished === false) return { pages: [], truncated: false, nextOffset: null }
 
-  const pagesById = await graphEligiblePages(requester)
+  const pagesById = await graphEligiblePages(requester, authority)
   if (!pagesById.has(pageId)) return { pages: [], truncated: false, nextOffset: null }
 
   // Exclude pages protected after the metadata snapshot before their edges can enter the traversal.
@@ -941,18 +986,22 @@ const removeTag = async (value: unknown, context: OperationInput = {}): Promise<
 
 const getHistory = async (input: OperationInput) => {
   const requester = input.requester
+  const authority = await authorityFor(input)
   const id = positiveInteger(input.id, 'id')
   const offsetPage = input.offsetPage === undefined ? 0 : nonNegativeInteger(input.offsetPage, 'offsetPage')
   const offsetSize = input.offsetSize === undefined ? 100 : positiveInteger(input.offsetSize, 'offsetSize')
-  const page = await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(id)
-  if (!page || (page.visibility === 'private' && !canReadPage(requester, page))) throw new wiki.Error.PageNotFound()
+  const page = await completePageForAuthorization(
+    await wiki.models.pages.query().select('path', 'localeCode', 'visibility', 'ownerId').findById(id)
+  )
+  if (!page || (page.visibility === 'private' && !canReadPage(requester, page, authority))) throw new wiki.Error.PageNotFound()
   await assertUnlocked(input, id)
   if (
     page.visibility === 'public' &&
-    !wiki.auth.checkAccess(requester, ['read:history'], {
+    !wiki.auth.checkPageAccess(requester, ['read:history'], {
       path: page.path,
-      locale: page.localeCode
-    })
+      locale: page.localeCode,
+      tags: page.tags
+    }, authority)
   ) {
     throw new wiki.Error.PageHistoryForbidden()
   }
@@ -961,6 +1010,7 @@ const getHistory = async (input: OperationInput) => {
 
 const getVersion = async (input: OperationInput): Promise<PageVersionProjection | undefined> => {
   const requester = input.requester
+  const authority = await authorityFor(input)
   const pageId = positiveInteger(input.pageId, 'pageId')
   const versionId = positiveInteger(input.versionId, 'versionId')
   const page = await wiki.models.pages
@@ -971,15 +1021,15 @@ const getVersion = async (input: OperationInput): Promise<PageVersionProjection 
       builder.select('tag')
     })
     .findById(pageId)
-  if (!page || (page.visibility === 'private' && !canReadPage(requester, page))) throw new wiki.Error.PageNotFound()
+  if (!page || (page.visibility === 'private' && !canReadPage(requester, page, authority))) throw new wiki.Error.PageNotFound()
   await assertUnlocked(input, pageId)
   if (
     page.visibility === 'public' &&
-    !wiki.auth.checkAccess(requester, ['read:history'], {
+    !wiki.auth.checkPageAccess(requester, ['read:history'], {
       path: page.path,
       locale: page.localeCode,
       tags: page.tags
-    })
+    }, authority)
   ) {
     throw new wiki.Error.PageHistoryForbidden()
   }
@@ -987,7 +1037,7 @@ const getVersion = async (input: OperationInput): Promise<PageVersionProjection 
   if (!version) return version
   const extra = isRecord(version.extra) ? { ...version.extra } : {}
   const assignment = PageBrandingAssignmentSchema.safeParse(extra.branding)
-  const brandingAssignment = canonicalBrandingAssignmentFor(requester, page, extra)
+  const brandingAssignment = canonicalBrandingAssignmentFor(requester, page, extra, authority)
   let branding: PageBrandingView | null = null
   if (assignment.success) {
     try {
@@ -1366,6 +1416,7 @@ const matchesKnowledgeFilter = (knowledge: KnowledgeProjectionView, filter: Know
 
 const search = async (input: OperationInput) => {
   const requester = input.requester
+  const authority = await authorityFor(input)
   const query = stringValue(input.query, 'query')
   const locale = input.locale === undefined ? undefined : stringValue(input.locale, 'locale')
   const path = input.path === undefined ? undefined : stringValue(input.path, 'path')
@@ -1435,7 +1486,7 @@ const search = async (input: OperationInput) => {
   )
   const authorizedPublicRevisionById = new Map<number, string>()
   for (const page of eligiblePublicPages) {
-    if (!publicationWindowOpen(page) || !canReadPage(requester, page)) continue
+    if (!publicationWindowOpen(page) || !canReadPage(requester, page, authority)) continue
     if (initialProtectedPageIds.has(page.id) && !metadataEligibleProtectedIds.has(page.id)) continue
     const sourceRevision = currentSourceRevision(page.sourceRevision)
     if (sourceRevision !== undefined) authorizedPublicRevisionById.set(page.id, sourceRevision)
@@ -1450,12 +1501,14 @@ const search = async (input: OperationInput) => {
             requester,
             pageIds: authorizedPublicIds,
             authorizedPageIds: authorizedPublicIds,
-            filter
+            filter,
+            authority
           }),
           knowledgeRepository.filterVisibleCurrentIds({
             requester,
             authorizedPageIds: authorizedPublicIds,
-            filter
+            filter,
+            authority
           })
         ])
   const filteredPublicIds = filteredPublicIdsRaw.filter(pageId => authorizedPublicRevisionById.has(pageId))
@@ -1493,7 +1546,8 @@ const search = async (input: OperationInput) => {
       ...(path === undefined ? {} : { path }),
       ...(selectedPageIds === undefined ? {} : { pageIds: selectedPageIds }),
       authorizedPageIds: filteredPublicIds,
-      ...(filter === undefined ? {} : { filter })
+      ...(filter === undefined ? {} : { filter }),
+      authority
     })
   ])
 
@@ -1549,7 +1603,7 @@ const search = async (input: OperationInput) => {
       indexedRevision !== liveRevision ||
       !page.isPublished ||
       !publicationWindowOpen(page) ||
-      !canReadPage(requester, page) ||
+      !canReadPage(requester, page, authority) ||
       (currentProtectedPageIds.has(page.id) && !currentProtectedMetadataIds.has(page.id))
     ) {
       return []
@@ -1572,7 +1626,7 @@ const search = async (input: OperationInput) => {
   const privateResults = privatePages.flatMap(page => {
     const sourceRevision = currentSourceRevision(page.sourceRevision)
     const metadataOnly = currentProtectedPageIds.has(page.id)
-    if (sourceRevision === undefined || (metadataOnly && !currentPrivateMetadataIds.has(page.id)) || !canReadPage(requester, page)) {
+    if (sourceRevision === undefined || (metadataOnly && !currentPrivateMetadataIds.has(page.id)) || !canReadPage(requester, page, authority)) {
       return []
     }
     return [
@@ -1599,7 +1653,7 @@ const search = async (input: OperationInput) => {
       pageRevision !== candidate.sourceRevision ||
       (selectedPageIds !== undefined && !selectedPageIds.includes(page.id)) ||
       currentProtectedPageIds.has(page.id) ||
-      !canReadPage(requester, page) ||
+      !canReadPage(requester, page, authority) ||
       (page.visibility === 'public' && (!page.isPublished || !publicationWindowOpen(page)))
     ) {
       return []
@@ -1676,8 +1730,9 @@ const search = async (input: OperationInput) => {
   }
 }
 
-const getByPath = async (input: OperationInput) => {
+const getByPath = async (input: OperationInput, suppliedAuthority?: PageRuleAuthority) => {
   const requester = input.requester
+  const authority = await authorityForInput(input, suppliedAuthority)
   const path = stringValue(input.path, 'path')
   const locale = stringValue(input.locale, 'locale')
   const visibility: PageVisibility = input.visibility === 'private' ? 'private' : 'public'
@@ -1696,12 +1751,12 @@ const getByPath = async (input: OperationInput) => {
       })
       .limit(2)
     const [candidate] = candidates
-    if (candidates.length === 1 && candidate !== undefined && canReadPage(requester, candidate)) page = await wiki.models.pages.getPageFromDb(candidate.id)
+    if (candidates.length === 1 && candidate !== undefined && canReadPage(requester, candidate, authority)) page = await wiki.models.pages.getPageFromDb(candidate.id)
   } else {
     const ownerId = visibility === 'private' ? principalId(requester) : null
     page = await wiki.models.pages.getPageFromDb({ path, locale, visibility, ownerId })
   }
-  if (!page || page.path !== path || page.localeCode !== locale || page.visibility !== visibility || !canAccessCurrentPageSource(requester, page)) {
+  if (!page || page.path !== path || page.localeCode !== locale || page.visibility !== visibility || !canAccessCurrentPageSource(requester, page, authority)) {
     throw new wiki.Error.PageNotFound()
   }
   await assertUnlocked(input, page.id)
@@ -1715,14 +1770,14 @@ const getByPath = async (input: OperationInput) => {
   }
 }
 
-const getTreeSnapshot = async (input: OperationInput, db: Knex.Transaction) => {
+const getTreeSnapshot = async (input: OperationInput, db: Knex.Transaction, authority: PageRuleAuthority) => {
   const requester = input.requester
   const locale = input.locale === undefined ? wiki.config.lang.code : stringValue(input.locale, 'locale')
   const path = input.path === undefined ? undefined : stringValue(input.path, 'path')
   let parentId = input.parent === undefined ? undefined : nonNegativeInteger(input.parent, 'parent')
   const mode = typeof input.mode === 'string' ? input.mode : ''
   const includeAncestors = input.includeAncestors === true
-  const access = await pageTreeAccess(db, requester, locale)
+  const access = await pageTreeAccess(db, requester, locale, authority)
   let currentPage: PageTreeRecord | undefined
   if (path && !parentId) {
     currentPage = await db('pageTree')
@@ -1776,7 +1831,8 @@ const getTreeSnapshot = async (input: OperationInput, db: Knex.Transaction) => {
 const getTree = async (input: OperationInput) => {
   const tx = await wiki.models.knex.transaction({ isolationLevel: 'repeatable read', readOnly: true })
   try {
-    const result = await getTreeSnapshot(input, tx)
+    const authority = await authorityFor(input, tx)
+    const result = await getTreeSnapshot(input, tx, authority)
     await tx.commit()
     return result
   } catch (error) {
@@ -1787,19 +1843,23 @@ const getTree = async (input: OperationInput) => {
 
 const checkConflict = async (input: OperationInput) => {
   const requester = input.requester
+  const authority = await authorityFor(input)
   const id = positiveInteger(input.id, 'id')
   if (!(input.checkoutDate instanceof Date)) throw new ApplicationError('checkoutDate must be a Date', { code: 'INVALID_INPUT' })
-  const page = await wiki.models.pages.query().select('path', 'localeCode', 'updatedAt', 'visibility', 'ownerId').findById(id)
-  if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
-  if (!canWritePage(requester, page)) throw new wiki.Error.PageUpdateForbidden()
+  const page = await completePageForAuthorization(
+    await wiki.models.pages.query().select('path', 'localeCode', 'updatedAt', 'visibility', 'ownerId').findById(id)
+  )
+  if (!page || (page.visibility === 'private' && !canWritePage(requester, page, authority))) throw new wiki.Error.PageNotFound()
+  if (!canWritePage(requester, page, authority)) throw new wiki.Error.PageUpdateForbidden()
   return page.updatedAt > input.checkoutDate
 }
 
 const getConflictLatest = async (input: OperationInput) => {
   const requester = input.requester
+  const authority = await authorityFor(input)
   const page = await wiki.models.pages.getPageFromDb(positiveInteger(input.id, 'id'))
-  if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
-  if (!canWritePage(requester, page)) throw new wiki.Error.PageViewForbidden()
+  if (!page || (page.visibility === 'private' && !canWritePage(requester, page, authority))) throw new wiki.Error.PageNotFound()
+  if (!canWritePage(requester, page, authority)) throw new wiki.Error.PageViewForbidden()
   await assertUnlocked(input, page.id)
   const projectedPage = await projectReaderPage(input, page)
   return { ...projectedPage, tags: projectedPage.tags.map(tag => tag.tag), locale: projectedPage.localeCode }
@@ -1915,6 +1975,7 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
   const requester = input.requester
   const kind = stringValue(input.kind, 'kind')
   const operationInput = recordValue(input.input, 'input')
+  const authority = await authorityFor(input)
   if (kind === 'create') {
     const path = stringValue(operationInput.path, 'path')
     const locale = stringValue(operationInput.locale, 'locale')
@@ -1923,14 +1984,16 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
       locale,
       visibility: 'public',
       tags: operationInput.tags,
-      user: requester as Express.User
+      user: requester as Express.User,
+      authority
     })
     return
   }
   const rawId = kind === 'restore' ? operationInput.pageId : operationInput.id
-  const page = await wiki.models.pages.query().findById(positiveInteger(rawId, kind === 'restore' ? 'pageId' : 'id'))
+  const pageId = positiveInteger(rawId, kind === 'restore' ? 'pageId' : 'id')
+  const page = await completePageForAuthorization(await wiki.models.pages.query().findById(pageId))
   if (!page) throw new wiki.Error.PageNotFound()
-  const canMutate = kind === 'delete' ? canDeletePage(requester, page) : canWritePage(requester, page)
+  const canMutate = kind === 'delete' ? canDeletePage(requester, page, authority) : canWritePage(requester, page, authority)
   if (page.visibility === 'private' && !canMutate) throw new wiki.Error.PageNotFound()
   if (!canMutate) {
     if (kind === 'delete') throw new wiki.Error.PageDeleteForbidden()
@@ -1939,18 +2002,34 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
     throw new wiki.Error.PageUpdateForbidden()
   }
   await assertUnlocked(input, page.id)
+  let proposedTags: unknown = page.tags
+  if (kind === 'update' && operationInput.tags !== undefined) proposedTags = tagNames(operationInput.tags).map(tag => ({ tag }))
+  if (kind === 'restore') {
+    const versionId = positiveInteger(operationInput.versionId, 'versionId')
+    const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
+    if (!version) throw new wiki.Error.PageNotFound()
+    proposedTags = version.tags
+  }
   if (kind === 'move') {
     const destinationPath = stringValue(operationInput.destinationPath, 'destinationPath')
     const destinationLocale = stringValue(operationInput.destinationLocale, 'destinationLocale')
-    if (
-      page.visibility === 'public' &&
-      !wiki.auth.checkAccess(requester, ['write:pages', 'manage:pages', 'manage:system'], {
-        path: destinationPath,
-        locale: destinationLocale,
-        tags: page.tags
-      })
-    )
+    const proposed = pageAuthorizationContext({
+      path: destinationPath,
+      localeCode: destinationLocale,
+      visibility: page.visibility,
+      ownerId: page.ownerId,
+      tags: proposedTags
+    })
+    if (proposed === null) throw new wiki.Error.PageMoveForbidden()
+    if (!canWritePage(requester, proposed, authority)) throw new wiki.Error.PageMoveForbidden()
+    if (page.visibility === 'public' && !wiki.auth.checkPageAccess(requester, ['write:pages'], proposed, authority))
       throw new wiki.Error.PageMoveForbidden()
+  } else if (kind === 'restore' || kind === 'update') {
+    const proposed = { ...page, tags: proposedTags }
+    if (!canWritePage(requester, proposed, authority)) {
+      if (kind === 'restore') throw new wiki.Error.PageRestoreForbidden()
+      throw new wiki.Error.PageUpdateForbidden()
+    }
   }
 }
 
@@ -1990,19 +2069,22 @@ const transferOwnership = async (input: OperationInput): Promise<unknown> => {
 
 const restore = async (input: OperationInput): Promise<void> => {
   const requester = input.requester
+  const authority = await authorityFor(input)
   const pageId = positiveInteger(input.pageId, 'pageId')
   const versionId = positiveInteger(input.versionId, 'versionId')
   const expected = expectedSourceRevision(input.expectedSourceRevision)
   if (expected === undefined) throw new ApplicationError('expectedSourceRevision must be a non-empty string', { code: 'INVALID_INPUT' })
-  const page = await wiki.models.pages.query().select('path', 'localeCode', 'sourceRevision', 'visibility', 'ownerId').findById(pageId)
-  if (!page || (page.visibility === 'private' && !canWritePage(requester, page))) throw new wiki.Error.PageNotFound()
-  if (!canWritePage(requester, page)) throw new wiki.Error.PageRestoreForbidden()
-  await assertUnlocked(input, pageId)
+  const page = await completePageForAuthorization(
+    await wiki.models.pages.query().select('path', 'localeCode', 'sourceRevision', 'updatedAt', 'visibility', 'ownerId').findById(pageId)
+  )
+  if (!page || (page.visibility === 'private' && !canWritePage(requester, page, authority))) throw new wiki.Error.PageNotFound()
+  if (!canWritePage(requester, page, authority)) throw new wiki.Error.PageRestoreForbidden()
   if (String(Reflect.get(page, 'sourceRevision')) !== expected) {
     throw new ApplicationError('The page changed after history was opened. Reload history before restoring.', { code: 'PAGE_RESTORE_CONFLICT', status: 409 })
   }
   const version = await wiki.models.pageHistory.getVersion({ pageId, versionId, requester })
   if (!version) throw new wiki.Error.PageNotFound()
+  if (!canWritePage(requester, { ...page, tags: version.tags }, authority)) throw new wiki.Error.PageRestoreForbidden()
   const versionExtra = isRecord(version.extra) ? version.extra : {}
   const restoredBranding = Object.hasOwn(versionExtra, 'branding')
     ? versionExtra.branding === null

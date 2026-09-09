@@ -1,7 +1,11 @@
 import { createRequire } from 'node:module'
+import { randomBytes } from 'node:crypto'
 import { XMLParser } from 'fast-xml-parser'
 import type { Request } from 'express'
 import type { Strategy as PassportStrategyContract } from 'passport'
+
+import { persistFederatedLoginSession } from '../../../helpers/federated-login.ts'
+import type { FederatedLoginConsumed, FederatedLoginIssueInput } from '../../../repositories/federated-login.ts'
 
 const require = createRequire(import.meta.url)
 const PassportStrategy = require('passport-strategy') as new () => PassportStrategyContract & {
@@ -25,12 +29,30 @@ type CasRequest = Request & {
 type VerifyDone = (error: Error | null, user?: Record<string, unknown> | false, info?: unknown) => void
 type Verify = (request: CasRequest, profile: CasProfile, done: VerifyDone) => Promise<void> | void
 
+type CasFederatedStore = {
+  issue(input: FederatedLoginIssueInput): Promise<{ attemptId: string; state: string; issuedAt: Date; expiresAt: Date }>
+  consume(input: {
+    providerKey: string
+    protocol: 'cas'
+    providerRevision: string
+    requestId?: string
+    sessionId?: string
+  }): Promise<FederatedLoginConsumed | null>
+}
+
+type CasFederationOptions = {
+  providerKey: string
+  providerRevision: string
+  store: CasFederatedStore
+}
+
 type CasStrategyOptions = {
   version: string
   ssoBaseURL: string
   serverBaseURL: string
   serviceURL: string
   passReqToCallback: true
+  federation: CasFederationOptions
 }
 
 type AuthenticateOptions = {
@@ -68,6 +90,7 @@ class CasStrategy extends PassportStrategy {
   readonly ssoBaseURL: string
   readonly serverBaseURL: string
   readonly serviceURL: string
+  readonly federation: CasFederationOptions
   readonly verify: Verify
   readonly parser = new XMLParser({
     ignoreAttributes: false,
@@ -88,38 +111,39 @@ class CasStrategy extends PassportStrategy {
     if (casUrl.protocol !== 'https:' && casUrl.protocol !== 'http:') {
       throw new TypeError('CAS server URL must use HTTP or HTTPS.')
     }
+    if (!options.federation || !options.federation.providerKey || !options.federation.providerRevision) {
+      throw new TypeError('CAS authentication requires durable federation correlation.')
+    }
     this.version = options.version
     this.ssoBaseURL = options.ssoBaseURL
     this.serverBaseURL = options.serverBaseURL
     this.serviceURL = options.serviceURL
     this.verify = verify
+    this.federation = options.federation
   }
 
-  service (request: Request): string {
+  service (request: Request, requestId?: string): string {
     const service = new URL(this.serviceURL || request.originalUrl, this.serverBaseURL)
     service.searchParams.delete('ticket')
+    service.searchParams.delete('state')
+    const callbackRequestId = firstValue(request.query?.state)
+    const nonce = requestId ?? (typeof callbackRequestId === 'string' && callbackRequestId ? callbackRequestId : undefined)
+    if (nonce) service.searchParams.set('state', nonce)
     return service.toString()
   }
 
   override authenticate (request: CasRequest, options: AuthenticateOptions = {}): void {
-    const relayState = firstValue(request.query.RelayState)
-    if (typeof relayState === 'string' && relayState) {
-      request.logout(error => {
-        if (error) {
-          this.error(error)
-          return
-        }
-        const logout = this.casUrl('/logout')
-        logout.searchParams.set('_eventId', 'next')
-        logout.searchParams.set('RelayState', relayState)
-        this.redirect(logout.toString())
-      })
-      return
-    }
+    void this.authenticateRequest(request, options).catch(error => {
+      this.error(error instanceof Error ? error : new Error(String(error)))
+    })
+  }
 
-    const service = this.service(request)
+  private async authenticateRequest (request: CasRequest, options: AuthenticateOptions): Promise<void> {
     const ticket = firstValue(request.query.ticket)
     if (typeof ticket !== 'string' || !ticket) {
+      const requestId = randomBytes(32).toString('base64url')
+      const service = this.service(request, requestId)
+      await this.issue(request, service, requestId)
       const login = this.casUrl('/login')
       login.searchParams.set('service', service)
       for (const [key, value] of Object.entries(options.loginParams ?? {})) {
@@ -129,17 +153,58 @@ class CasStrategy extends PassportStrategy {
       return
     }
 
-    void this.validate(ticket, service)
-      .then(profile => this.verify(request, profile, (error, user, info) => {
-        if (error) {
-          this.error(error)
-        } else if (!user) {
-          this.fail(info, 401)
-        } else {
-          this.success(user, info)
-        }
-      }))
-      .catch(error => this.error(error instanceof Error ? error : new Error(String(error))))
+    const requestId = firstValue(request.query.state)
+    if (typeof requestId !== 'string' || !requestId) {
+      this.fail(null, 403)
+      return
+    }
+    const service = this.service(request, requestId)
+    const consumed = await this.consume(request, requestId)
+    if (!consumed || !this.matchesService(consumed, requestId, service)) {
+      this.fail(null, 403)
+      return
+    }
+
+    const profile = await this.validate(ticket, service)
+    await this.verify(request, profile, (error, user, info) => {
+      if (error) {
+        this.error(error)
+      } else if (!user) {
+        this.fail(info, 401)
+      } else {
+        this.success(user, info)
+      }
+    })
+  }
+
+  private async issue (request: CasRequest, serviceUrl: string, requestId: string): Promise<void> {
+    const sessionId = await persistFederatedLoginSession(request)
+    await this.federation.store.issue({
+      sessionId,
+      providerKey: this.federation.providerKey,
+      protocol: 'cas',
+      providerRevision: this.federation.providerRevision,
+      payload: { serviceUrl, requestId }
+    })
+  }
+
+  private async consume (request: CasRequest, requestId: string): Promise<FederatedLoginConsumed | null> {
+    return await this.federation.store.consume({
+      providerKey: this.federation.providerKey,
+      protocol: 'cas',
+      providerRevision: this.federation.providerRevision,
+      requestId,
+      ...(typeof request.sessionID === 'string' && request.sessionID ? { sessionId: request.sessionID } : {})
+    })
+  }
+
+  private matchesService (consumed: FederatedLoginConsumed, requestId: string, serviceUrl: string): boolean {
+    const payload = consumed.payload
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return false
+    return 'serviceUrl' in payload &&
+      payload.serviceUrl === serviceUrl &&
+      'requestId' in payload &&
+      payload.requestId === requestId
   }
 
   private casUrl (path: string): URL {
@@ -214,4 +279,4 @@ class CasStrategy extends PassportStrategy {
   }
 }
 
-export { CasStrategy, type CasProfile, type CasRequest, type CasStrategyOptions, type VerifyDone }
+export { CasStrategy, type CasFederationOptions, type CasProfile, type CasRequest, type CasStrategyOptions, type VerifyDone }

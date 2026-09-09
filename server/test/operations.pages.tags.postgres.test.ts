@@ -137,35 +137,42 @@ suite('PostgreSQL page tag authorization candidates', () => {
       );
     `)
 
+    const checkAccess = (candidate: unknown, permissions: readonly string[], context: Record<string, unknown> = {}) => {
+      if (permissions.includes('manage:system')) {
+        return (
+          candidate !== null &&
+          typeof candidate === 'object' &&
+          Array.isArray(Reflect.get(candidate, 'permissions')) &&
+          Reflect.get(candidate, 'permissions').includes('manage:system')
+        )
+      }
+      if (!permissions.includes('read:pages')) return false
+      const path = typeof context.path === 'string' ? context.path : ''
+      const names = Array.isArray(context.tags)
+        ? context.tags
+            .map(tag => (typeof tag === 'string' ? tag : tag !== null && typeof tag === 'object' ? Reflect.get(tag, 'tag') : undefined))
+            .filter((tag): tag is string => typeof tag === 'string')
+        : []
+      const allowed =
+        path === 'docs/topic-denied'
+          ? names.includes('topic') && !names.includes('deny-access')
+          : path === 'docs/topic-allow-needed'
+            ? names.includes('allow-access')
+            : names.includes('topic') || names.includes('allow-access')
+      accessCalls.push({ path, tags: names, allowed })
+      return allowed
+    }
+    const loadPageRuleAuthority = async (requester: unknown) => {
+      const tags = await db('tags').select('id', 'tag', 'redirectToId', 'isArchived')
+      const byId = new Map(tags.map(tag => [tag.id, tag]))
+      const tagAliases = Object.fromEntries(
+        tags.map(tag => [tag.tag, tag.redirectToId === null ? tag.tag : byId.get(tag.redirectToId)?.tag ?? null])
+      )
+      return { requester, permissions: [], groups: [], tagAliases }
+    }
     const wiki = {
       config: { db: { type: 'postgres' }, lang: { code: 'en' } },
-      auth: {
-        checkAccess: (candidate: unknown, permissions: readonly string[], context: Record<string, unknown> = {}) => {
-          if (permissions.includes('manage:system')) {
-            return (
-              candidate !== null &&
-              typeof candidate === 'object' &&
-              Array.isArray(Reflect.get(candidate, 'permissions')) &&
-              Reflect.get(candidate, 'permissions').includes('manage:system')
-            )
-          }
-          if (!permissions.includes('read:pages')) return false
-          const path = typeof context.path === 'string' ? context.path : ''
-          const names = Array.isArray(context.tags)
-            ? context.tags
-                .map(tag => (typeof tag === 'string' ? tag : tag !== null && typeof tag === 'object' ? Reflect.get(tag, 'tag') : undefined))
-                .filter((tag): tag is string => typeof tag === 'string')
-            : []
-          const allowed =
-            path === 'docs/topic-denied'
-              ? names.includes('topic') && !names.includes('deny-access')
-              : path === 'docs/topic-allow-needed'
-                ? names.includes('allow-access')
-                : names.includes('topic') || names.includes('allow-access')
-          accessCalls.push({ path, tags: names, allowed })
-          return allowed
-        }
-      },
+      auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
       models: { knex: db, pages: {} as unknown }
     }
     globalThis.WIKI = wiki as never

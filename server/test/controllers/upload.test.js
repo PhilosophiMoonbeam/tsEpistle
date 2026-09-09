@@ -8,9 +8,18 @@ const uploadMocks = vi.hoisted(() => {
   }
   const arrayHandler = vi.fn((req, res, next) => next())
   const array = vi.fn(() => arrayHandler)
+  class MulterError extends Error {
+    constructor(code, field) {
+      super(code)
+      this.name = 'MulterError'
+      this.code = code
+      this.field = field
+    }
+  }
   const multer = vi.fn(() => ({ array }))
+  multer.MulterError = MulterError
 
-  return { router, arrayHandler, array, multer }
+  return { router, arrayHandler, array, multer, MulterError }
 })
 
 vi.mockModule('express', import.meta.url, () => {
@@ -25,6 +34,7 @@ vi.mockModule('multer', import.meta.url, () => ({
 }))
 
 const originalWIKI = global.WIKI
+const uploadAuthority = { permissions: ['write:assets', 'manage:system'], groups: [], tagAliases: {} }
 
 const makeRes = () => ({
   status: vi.fn().mockReturnThis(),
@@ -88,7 +98,9 @@ describe('controllers/upload endpoints', () => {
         }
       },
       auth: {
-        checkAccess: vi.fn().mockReturnValue(true)
+        checkAccess: vi.fn().mockReturnValue(true),
+        checkPageAccess: vi.fn().mockReturnValue(true),
+        loadPageRuleAuthority: vi.fn().mockResolvedValue(uploadAuthority)
       },
       models: {
         assetFolders: {
@@ -137,7 +149,13 @@ describe('controllers/upload endpoints', () => {
       dest: path.resolve('/wiki/root', 'data', 'uploads'),
       limits: {
         fileSize: 12345,
-        files: 7
+        files: 1,
+        fields: 1,
+        parts: 3,
+        fieldSize: 1024,
+        fieldNameSize: 11,
+        fieldNestingDepth: 0,
+        fieldArrayIndexLimit: 0
       },
       defParamCharset: 'utf8'
     })
@@ -170,6 +188,24 @@ describe('controllers/upload endpoints', () => {
     expect(next).not.toHaveBeenCalled()
     expect(global.WIKI.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
     expect(global.WIKI.models.assets.upload).not.toHaveBeenCalled()
+  })
+
+  it('rejects non-positive file capacity before invoking multer', async () => {
+    global.WIKI.config.uploads.maxFiles = 0
+    const { uploadMiddleware } = await loadHandlers()
+    const req = makeReq()
+    const res = makeRes()
+    const next = vi.fn()
+
+    await uploadMiddleware(req, res, next)
+
+    expect(res.status).toHaveBeenCalledWith(403)
+    expect(res.json).toHaveBeenCalledWith({
+      succeeded: false,
+      message: 'File uploads are disabled by workspace policy.'
+    })
+    expect(uploadMocks.arrayHandler).not.toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
   })
 
   it('rejects empty upload payloads', async () => {
@@ -237,9 +273,9 @@ describe('controllers/upload endpoints', () => {
     await uploadHandler(req, res, vi.fn())
 
     expect(global.WIKI.models.assetFolders.getHierarchy).not.toHaveBeenCalled()
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['write:assets', 'manage:system'], {
+    expect(global.WIKI.auth.checkPageAccess).toHaveBeenCalledWith(req.user, ['write:assets', 'manage:system'], {
       path: 'my_file_name_v1.png'
-    })
+    }, uploadAuthority)
     expect(global.WIKI.models.assets.upload).toHaveBeenCalledWith(expect.objectContaining({
       originalname: 'my_file_name_v1.png',
       mode: 'upload',
@@ -267,9 +303,9 @@ describe('controllers/upload endpoints', () => {
     await uploadHandler(req, res, vi.fn())
 
     expect(global.WIKI.models.assetFolders.getHierarchy).toHaveBeenCalledWith(42)
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['write:assets', 'manage:system'], {
+    expect(global.WIKI.auth.checkPageAccess).toHaveBeenCalledWith(req.user, ['write:assets', 'manage:system'], {
       path: 'docs/images/report_q1.pdf'
-    })
+    }, uploadAuthority)
     expect(global.WIKI.models.assets.upload).toHaveBeenCalledWith(expect.objectContaining({
       originalname: 'report_q1.pdf',
       mode: 'upload',
@@ -303,7 +339,7 @@ describe('controllers/upload endpoints', () => {
   })
 
   it('rejects uploads when path-level asset access fails', async () => {
-    global.WIKI.auth.checkAccess.mockReturnValueOnce(false)
+    global.WIKI.auth.checkPageAccess.mockReturnValueOnce(false)
 
     const { uploadHandler } = await loadHandlers()
     const req = makeReq()

@@ -1,7 +1,5 @@
 import { createPinia, defineStore } from 'pinia'
-import Cookies from 'js-cookie'
-import { decodeJwtPayload } from '../helpers/jwt.ts'
-import { registerJsonPrincipalRefresh } from '../helpers/json-transport.ts'
+import { sameOriginJsonFetch } from '../helpers/json-transport.ts'
 import type { PageOkfView } from '../helpers/pages-api.ts'
 import type { SystemSummary } from '../helpers/system-api.ts'
 import { normalizeUserFontFamily } from '../../shared/user-presentation.ts'
@@ -44,6 +42,12 @@ const defaultPageOkf = (): PageOkfView => ({
 
 export const pinia = createPinia()
 
+type WhoAmIResponse = {
+  ok: boolean
+  json(): Promise<unknown>
+}
+
+let authRefresh: Promise<void> | undefined
 export const useWikiStore = defineStore('wiki', {
   state: () => ({
     loadingCounts: {} as Record<string, number>,
@@ -179,35 +183,55 @@ export const useWikiStore = defineStore('wiki', {
       }
       this.showNotification({ style: 'red', message, icon: 'alert' })
     },
-    refreshAuth() {
-      this.user = defaultUser()
-      const token = Cookies.get('jwt')
-      if (!token) return
-      try {
-        const payload = decodeJwtPayload(token)
-        if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp) || payload.exp <= Date.now() / 1000) {
-          Cookies.remove('jwt')
-          return
+    async refreshAuth(): Promise<void> {
+      if (authRefresh) return authRefresh
+
+      const refresh = (async () => {
+        try {
+          const response = await sameOriginJsonFetch(
+            window.fetch.bind(window),
+            '/_api/users/whoami',
+            { credentials: 'same-origin', cache: 'no-store' }
+          ) as WhoAmIResponse
+          const payload = await response.json()
+          if (!response.ok || !payload || typeof payload !== 'object') {
+            this.user = defaultUser()
+            return
+          }
+          const record = payload as Record<string, unknown>
+          const user = record.user
+          if (record.authenticated !== true || !user || typeof user !== 'object') {
+            this.user = defaultUser()
+            return
+          }
+          const profile = user as Record<string, unknown>
+          this.user = {
+            ...defaultUser(),
+            id: typeof profile.id === 'number' ? profile.id : 0,
+            email: typeof profile.email === 'string' ? profile.email : '',
+            name: typeof profile.name === 'string' ? profile.name : '',
+            pictureUrl: typeof profile.pictureUrl === 'string' ? profile.pictureUrl : '',
+            localeCode: typeof profile.localeCode === 'string' ? profile.localeCode : '',
+            defaultEditor: typeof profile.defaultEditor === 'string' ? profile.defaultEditor : '',
+            timezone: typeof profile.timezone === 'string' ? profile.timezone : '',
+            dateFormat: typeof profile.dateFormat === 'string' ? profile.dateFormat : '',
+            appearance: typeof profile.appearance === 'string' ? profile.appearance : '',
+            fontFamily: normalizeUserFontFamily(profile.fontFamily),
+            permissions: Array.isArray(profile.permissions)
+              ? profile.permissions.filter((permission): permission is string => typeof permission === 'string')
+              : [],
+            authenticated: true
+          }
+        } catch {
+          this.user = defaultUser()
         }
-        this.user.id = typeof payload.id === 'number' ? payload.id : 0
-        this.user.email = typeof payload.email === 'string' ? payload.email : ''
-        this.user.name = typeof payload.name === 'string' ? payload.name : ''
-        this.user.pictureUrl = typeof payload.av === 'string' ? payload.av : ''
-        this.user.localeCode = typeof payload.lc === 'string' ? payload.lc : ''
-        this.user.timezone = typeof payload.tz === 'string' ? payload.tz : Intl.DateTimeFormat().resolvedOptions().timeZone || ''
-        this.user.dateFormat = typeof payload.df === 'string' ? payload.df : ''
-        this.user.appearance = typeof payload.ap === 'string' ? payload.ap : ''
-        this.user.permissions = Array.isArray(payload.permissions)
-          ? payload.permissions.filter((permission): permission is string => typeof permission === 'string')
-          : []
-        this.user.fontFamily = normalizeUserFontFamily(payload.ff)
-        this.user.iat = typeof payload.iat === 'number' ? payload.iat : 0
-        this.user.exp = payload.exp
-        this.user.authenticated = true
-      } catch {
-        Cookies.remove('jwt')
-        console.debug('Invalid JWT. Silent authentication skipped.')
-      }
+      })()
+
+      const inFlight = refresh.finally(() => {
+        if (authRefresh === inFlight) authRefresh = undefined
+      })
+      authRefresh = inFlight
+      return inFlight
     },
     pushMediaFolder(folder: unknown) {
       this.editor.media.folderTree.push(folder)
@@ -219,6 +243,5 @@ export const useWikiStore = defineStore('wiki', {
 })
 
 export const wikiStore = useWikiStore(pinia)
-registerJsonPrincipalRefresh(() => wikiStore.refreshAuth())
 
 export type WikiStore = typeof wikiStore

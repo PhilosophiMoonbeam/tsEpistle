@@ -6,6 +6,12 @@ class CommentNotFound extends Error {}
 class CommentViewForbidden extends Error {}
 class CommentGenericError extends Error {}
 class BruteTooManyAttempts extends Error {}
+const authorityFor = requester => ({
+  requester,
+  permissions: requester?.permissions ?? [],
+  groups: [],
+  tagAliases: {}
+})
 
 const rateLimitKnex = () => {
   const rows = new Map()
@@ -40,7 +46,11 @@ describe('comment page identity and private existence isolation', () => {
     vi.resetModules()
     global.WIKI = {
       auth: {
-        checkAccess: vi.fn((user, permissions) => permissions.some(permission => user?.permissions?.includes(permission)))
+        checkAccess: vi.fn((user, permissions) => permissions.some(permission => user?.permissions?.includes(permission))),
+        checkPageAccess: vi.fn((user, permissions, _context, authority) =>
+          authority?.requester === user && permissions.some(permission => authority.permissions.includes(permission))
+        ),
+        loadPageRuleAuthority: vi.fn(async requester => authorityFor(requester))
       },
       Error: { BruteTooManyAttempts, CommentNotFound, CommentViewForbidden, CommentGenericError },
       data: {
@@ -85,7 +95,12 @@ describe('comment page identity and private existence isolation', () => {
 
     expect(await operations.list({ requester: { id: 7, permissions: ['read:comments'] }, pageId: 17, sessionId: 'reader-session' })).toEqual([expect.objectContaining({ id: 31, authorName: 'Owner' })])
     expect(query.findById).toHaveBeenCalledWith(17)
-    expect(assertUnlocked).toHaveBeenCalledWith({ requester: { id: 7, permissions: ['read:comments'] }, pageId: 17, sessionId: 'reader-session' })
+    expect(assertUnlocked).toHaveBeenCalledWith(expect.objectContaining({
+      requester: { id: 7, permissions: ['read:comments'] },
+      pageId: 17,
+      sessionId: 'reader-session',
+      authority: expect.objectContaining({ requester: expect.anything() })
+    }))
   })
 
   it('returns the same not-found error for an absent page and another owner private page', async () => {

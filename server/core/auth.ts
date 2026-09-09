@@ -17,8 +17,18 @@ import { DateTime } from 'luxon'
 import commonHelper from '../helpers/common.ts'
 import securityHelper from '../helpers/security.ts'
 import cache from './cache.ts'
+import { createApiPrincipal, isApiPrincipal } from '../helpers/api-principal.ts'
 import { apiAccessContract, isApiKeyTransportPath } from '../../shared/api-access.ts'
-import { evaluateGroupAccess } from '../helpers/group-access.ts'
+import {
+  evaluateGroupAccess,
+  pageRuleAuthorityMatchesRequester,
+  pageRuleRequesterBinding,
+  type AccessGroup,
+  type AccessPage,
+  type PageRuleAuthority
+} from '../helpers/group-access.ts'
+
+export type { PageRuleAuthority, PageRuleRequesterBinding } from '../helpers/group-access.ts'
 
 type UnknownRecord = Record<string, unknown>
 type PageRuleMatch = 'START' | 'END' | 'REGEX' | 'TAG' | 'EXACT'
@@ -37,10 +47,20 @@ interface PageRule {
   roles: string[]
 }
 
-interface PageContext {
-  locale?: string
-  path: string
-  tags?: Array<{ tag: string }>
+type PageContext = AccessPage
+
+interface AuthorityGroupRow extends UnknownRecord {
+  id: unknown
+  name?: unknown
+  permissions: unknown
+  pageRules: unknown
+}
+
+interface AuthorityTagRow extends UnknownRecord {
+  id: unknown
+  tag: unknown
+  redirectToId?: unknown
+  isArchived?: unknown
 }
 
 interface AccessUser extends Express.User {
@@ -75,13 +95,6 @@ interface JwtUser extends Express.User {
   permissions?: string[]
 }
 
-interface ApiPrincipal extends Express.User {
-  api: number
-  grp: number
-  exp?: number
-  mcpResource?: string
-  mcpResourceVersion?: number
-}
 
 interface AuthenticationError extends Error {
   code: string
@@ -89,6 +102,7 @@ interface AuthenticationError extends Error {
 }
 interface StrategyConfig extends UnknownRecord {
   audience?: string
+  adminRevision?: string
   callbackURL?: string
   cookieName?: string
   key?: string
@@ -202,27 +216,29 @@ interface RuleApplication {
   rule: PageRule
 }
 
+interface EffectivePermissions {
+  comments: { read: boolean; write: boolean; manage: boolean }
+  pages: { read: boolean; write: boolean; manage: boolean; delete: boolean; script: boolean; style: boolean }
+  history: { read: boolean }
+  source: { read: boolean }
+  system: { manage: boolean }
+}
+
 interface RevokeRequest {
   id: number
   kind?: string
-}
-
-interface EffectivePermissions {
-  comments: { manage: boolean; read: boolean; write: boolean }
-  history: { read: boolean }
-  pages: { delete: boolean; manage: boolean; read: boolean; script: boolean; style: boolean; write: boolean }
-  source: { read: boolean }
-  system: { manage: boolean }
 }
 
 interface AuthService {
   activateStrategies(strict?: boolean): Promise<void>
   authenticateUserToken(token: string): Promise<StoredUser | null>
   authenticate(req: Request, res: Response, next: NextFunction): void
-  checkAccess(user: AccessUser | undefined, permissions?: string[], page?: PageContext | false): boolean
+  checkAccess(user: AccessUser | undefined, permissions: readonly string[]): boolean
+  checkPageAccess(user: AccessUser | undefined, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
+  loadPageRuleAuthority(requester: AccessUser | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
   checkAssignUserToGroupAccess(requester: AccessUser, groupIds?: number[]): Promise<boolean>
   checkExclusiveAccess(user: AccessUser, includePermissions?: string[], excludePermissions?: string[]): boolean
-  getEffectivePermissions(req: Request, page: PageContext): EffectivePermissions
+  getEffectivePermissions(req: Request, page: PageContext, authority: PageRuleAuthority): EffectivePermissions
   tagAliases: Record<string, string | null>
   groups: Record<string, GroupRecord>
   guest: GuestState
@@ -272,7 +288,6 @@ const isJwtUser = (value: unknown): value is JwtUser =>
   typeof value.iat === 'number' &&
   Array.isArray(value.groups) &&
   value.groups.every(group => typeof group === 'number')
-const isApiPrincipal = (value: unknown): value is ApiPrincipal => isRecord(value) && typeof value.api === 'number' && typeof value.grp === 'number'
 const isAccessUser = (value: unknown): value is AccessUser =>
   isRecord(value) &&
   (value.permissions === undefined || (Array.isArray(value.permissions) && value.permissions.every(permission => typeof permission === 'string'))) &&
@@ -282,10 +297,6 @@ const getPermissions = (user: AccessUser | undefined): string[] => {
   if (!user) return []
   if (Array.isArray(user.permissions)) return user.permissions
   return user.getGlobalPermissions?.() ?? []
-}
-const getGroupId = (group: number | { id?: unknown }): number | null => {
-  if (typeof group === 'number') return group
-  return typeof group.id === 'number' ? group.id : null
 }
 const getPassportStrategyNames = (): string[] => {
   const passportObject: object = passport
@@ -319,6 +330,182 @@ const loadCurrentUser = (wiki: WikiContext, id: unknown): UserLookup =>
     .modifyGraph('groups', builder => {
       builder.select('groups.id', 'permissions')
     })
+const authorityMatches = (value: unknown): value is PageRuleMatch =>
+  value === 'START' || value === 'END' || value === 'REGEX' || value === 'TAG' || value === 'EXACT'
+
+const authorityArray = (value: unknown, field: string): unknown[] => {
+  if (Array.isArray(value)) return value
+  if (typeof value !== 'string') throw new Error(`Authentication authority ${field} is invalid`)
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!Array.isArray(parsed)) throw new Error()
+    return parsed
+  } catch {
+    throw new Error(`Authentication authority ${field} is invalid`)
+  }
+}
+
+const authorityStrings = (value: unknown, field: string): string[] => {
+  const values = authorityArray(value, field)
+  if (!values.every(item => typeof item === 'string')) throw new Error(`Authentication authority ${field} is invalid`)
+  return values as string[]
+}
+
+const authorityRule = (value: unknown): PageRule => {
+  if (!isRecord(value) || Array.isArray(value)) throw new Error('Authentication authority page rule is invalid')
+  const id = value.id,
+    match = value.match,
+    path = value.path,
+    deny = value.deny,
+    roles = value.roles,
+    locales = value.locales
+  if (
+    (id !== undefined && typeof id !== 'string') ||
+    !authorityMatches(match) ||
+    typeof path !== 'string' ||
+    typeof deny !== 'boolean'
+  )
+    throw new Error('Authentication authority page rule is invalid')
+  const parsedRoles = authorityStrings(roles, 'page rule roles'),
+    parsedLocales = locales === undefined ? [] : authorityStrings(locales, 'page rule locales')
+  return {
+    ...(id === undefined ? {} : { id }),
+    match,
+    path,
+    deny,
+    roles: parsedRoles,
+    locales: parsedLocales
+  }
+}
+
+const authorityGroup = (value: AuthorityGroupRow): AccessGroup => {
+  const id = value.id
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1) throw new Error('Authentication authority group is invalid')
+  if (value.name !== undefined && typeof value.name !== 'string') throw new Error('Authentication authority group is invalid')
+  const permissions = authorityStrings(value.permissions, `group ${String(id)} permissions`),
+    rules = authorityArray(value.pageRules, `group ${String(id)} page rules`).map(authorityRule)
+  return Object.freeze({
+    id,
+    ...(value.name === undefined ? {} : { name: value.name }),
+    permissions: Object.freeze(permissions),
+    pageRules: Object.freeze(rules.map(rule => Object.freeze({ ...rule, roles: Object.freeze(rule.roles), locales: Object.freeze(rule.locales ?? []) })))
+  })
+}
+
+const authorityTag = (value: AuthorityTagRow): TagIdentity => {
+  const id = value.id,
+    tag = value.tag,
+    redirectToId = value.redirectToId,
+    isArchived = value.isArchived
+  if (
+    typeof id !== 'number' ||
+    !Number.isSafeInteger(id) ||
+    id < 1 ||
+    typeof tag !== 'string' ||
+    tag.length < 1 ||
+    (redirectToId !== undefined && redirectToId !== null && (typeof redirectToId !== 'number' || !Number.isSafeInteger(redirectToId) || redirectToId < 1)) ||
+    (isArchived !== undefined && isArchived !== true && isArchived !== false && isArchived !== 0 && isArchived !== 1)
+  )
+    throw new Error('Authentication authority tag is invalid')
+  return {
+    id,
+    tag,
+    redirectToId: redirectToId === undefined ? null : redirectToId,
+    isArchived: isArchived === true || isArchived === 1
+  }
+}
+
+const authoritySnapshot = (requester: AccessUser | undefined, rows: AuthorityGroupRow[], tags: AuthorityTagRow[]): PageRuleAuthority => {
+  const seenTagIds = new Set<number>(),
+    seenTagNames = new Set<string>(),
+    identities = tags.map(authorityTag)
+  for (const tag of identities) {
+    if (seenTagIds.has(tag.id) || seenTagNames.has(tag.tag)) throw new Error('Authentication authority contains duplicate tags')
+    seenTagIds.add(tag.id)
+    seenTagNames.add(tag.tag)
+  }
+  const aliases = tagAliasMap(identities),
+    groups = rows.map(authorityGroup),
+    permissions = [...new Set(groups.flatMap(group => group.permissions ?? []))]
+  return Object.freeze({
+    requester,
+    permissions: Object.freeze(permissions),
+    groups: Object.freeze(groups),
+    tagAliases: Object.freeze(aliases)
+  })
+}
+
+const selectedGroupIds = async (requester: AccessUser | undefined, transaction: Knex.Transaction): Promise<number[]> => {
+  const binding = pageRuleRequesterBinding(requester)
+  if (binding.kind === 'anonymous') return []
+  if (binding.kind === 'apiKey') return [binding.groupId]
+  const rows = await transaction<{ groupId: unknown }>('userGroups')
+    .select('groupId')
+    .where('userId', binding.userId)
+    .orderBy('groupId')
+  const ids = rows.map(row => row.groupId)
+  if (!ids.every((id): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0)) throw new Error('Authentication authority membership is invalid')
+  return [...new Set(ids)].sort((left, right) => left - right)
+}
+
+const loadPageRuleAuthorityInTransaction = async (requester: AccessUser | undefined, transaction: Knex.Transaction): Promise<PageRuleAuthority> => {
+  const groupIds = await selectedGroupIds(requester, transaction)
+  const tagRows = await transaction<AuthorityTagRow>('tags')
+    .select('id', 'tag', 'redirectToId', 'isArchived')
+    .orderBy('id')
+    .forShare()
+  const groupRows =
+    groupIds.length === 0
+      ? []
+      : await transaction<AuthorityGroupRow>('groups')
+          .select('id', 'name', 'permissions', 'pageRules')
+          .whereIn('id', groupIds)
+          .orderBy('id')
+          .forShare()
+  return authoritySnapshot(requester, groupRows, tagRows)
+}
+
+export const loadPageRuleAuthority = async (
+  requester: AccessUser | undefined,
+  transaction?: Knex.Transaction
+): Promise<PageRuleAuthority> => {
+  const wiki = getWiki()
+  if (transaction) return loadPageRuleAuthorityInTransaction(requester, transaction)
+  return wiki.models.knex.transaction(
+    current => loadPageRuleAuthorityInTransaction(requester, current),
+    { isolationLevel: 'repeatable read' }
+  )
+}
+
+
+const validAuthority = (value: unknown): value is PageRuleAuthority => {
+  if (!isRecord(value) || Array.isArray(value)) return false
+  if (value.requester !== undefined && (!isRecord(value.requester) || Array.isArray(value.requester))) return false
+  if (!Array.isArray(value.permissions) || !value.permissions.every(permission => typeof permission === 'string')) return false
+  if (!Array.isArray(value.groups) || !value.groups.every(group => {
+    if (!isRecord(group) || Array.isArray(group) || typeof group.id !== 'number' || !Number.isSafeInteger(group.id) || group.id < 1) return false
+    if (group.name !== undefined && typeof group.name !== 'string') return false
+    if (group.permissions !== undefined && (!Array.isArray(group.permissions) || !group.permissions.every(permission => typeof permission === 'string'))) return false
+    return Array.isArray(group.pageRules) && group.pageRules.every(rule => {
+      if (!isRecord(rule) || Array.isArray(rule) || !authorityMatches(rule.match) || typeof rule.path !== 'string' || typeof rule.deny !== 'boolean') return false
+      if (rule.id !== undefined && typeof rule.id !== 'string') return false
+      if (!Array.isArray(rule.roles) || !rule.roles.every(role => typeof role === 'string')) return false
+      return rule.locales === undefined || (Array.isArray(rule.locales) && rule.locales.every(locale => typeof locale === 'string'))
+    })
+  })) return false
+  const aliases = value.tagAliases
+  return isRecord(aliases) && !Array.isArray(aliases) && Object.values(aliases).every(alias => alias === null || typeof alias === 'string')
+}
+
+const validAccessPage = (value: unknown): value is AccessPage => {
+  if (!isRecord(value) || Array.isArray(value) || typeof value.path !== 'string' || value.path.length < 1) return false
+  if (value.locale !== undefined && typeof value.locale !== 'string') return false
+  return (
+    value.tags === undefined ||
+    (Array.isArray(value.tags) &&
+      value.tags.every(tag => isRecord(tag) && !Array.isArray(tag) && typeof tag.tag === 'string' && tag.tag.length > 0))
+  )
+}
 const verifyUserToken = (wiki: WikiContext, token: string, allowExpired = false): JwtUser | null => {
   try {
     const user = jwt.verify(token, wiki.config.certs.public, {
@@ -421,7 +608,8 @@ const auth: AuthService = {
               cookieName: 'jwt',
               key: strategyRecord.key,
               redirectUri: callbackURL,
-              sessionNamespace: 'wiki'
+              sessionNamespace: 'wiki',
+              adminRevision: strategyRecord.adminRevision ?? ''
             }
             await strategy.init(passport, config)
             this.strategies[strategyRecord.key] = { ...strategy, ...strategyRecord, config }
@@ -497,8 +685,8 @@ const auth: AuthService = {
           refreshed.user.permissions = refreshed.user.getGlobalPermissions?.() ?? []
           refreshed.user.groups = refreshed.user.getGroups?.() ?? []
           req.user = refreshed.user
-          if (req.get('content-type') === 'application/json') res.set('new-jwt', refreshed.token)
-          else res.cookie('jwt', refreshed.token, commonHelper.getCookieOpts())
+          res.cookie('jwt', refreshed.token, commonHelper.getCookieOpts())
+          res.set('x-wiki-auth-refreshed', '1')
           res.set('Cache-Control', 'no-store')
         } catch (refreshError: unknown) {
           wiki.logger.warn(refreshError)
@@ -534,20 +722,7 @@ const auth: AuthService = {
           return next(createAuthenticationError('API key is invalid or was revoked.', 401, 'API_KEY_INVALID'))
         }
         const permissions = this.groups[String(user.grp)]?.permissions ?? []
-        const groups = [user.grp]
-        const principal: Express.User = {
-          id: 1,
-          email: 'api@localhost',
-          name: 'API',
-          pictureUrl: null,
-          timezone: 'America/New_York',
-          localeCode: 'en',
-          permissions,
-          groups,
-          getGlobalPermissions: () => permissions,
-          ownershipUserId: null,
-          getGroups: () => groups
-        }
+        const principal = createApiPrincipal(user.api, user.grp, permissions)
         req.user = principal
         req.authContext = {
           kind: 'apiKey',
@@ -593,20 +768,28 @@ const auth: AuthService = {
     return user
   },
 
-  checkAccess(user, permissions = [], page = false) {
-    if (!user) return false
+  checkAccess(user, permissions) {
+    if (!user || !Array.isArray(permissions) || !permissions.every(permission => typeof permission === 'string')) return false
     const userPermissions = getPermissions(user)
     if (userPermissions.includes('manage:system')) return true
-    if (!permissions.some(permission => userPermissions.includes(permission))) return false
-    if (!page) return true
-    if (!user.groups) return false
+    return permissions.some(permission => userPermissions.includes(permission))
+  },
 
-    const groups = user.groups.flatMap(group => {
-      const id = getGroupId(group)
-      const record = id === null ? undefined : this.groups[String(id)]
-      return record ? [record] : []
-    })
-    return evaluateGroupAccess(userPermissions, permissions, groups, page, this.tagAliases, false).allowed
+  checkPageAccess(user, permissions, context, authority) {
+    if (
+      !isAccessUser(user) ||
+      !Array.isArray(permissions) ||
+      !permissions.every(permission => typeof permission === 'string') ||
+      !validAccessPage(context) ||
+      !validAuthority(authority) ||
+      !pageRuleAuthorityMatchesRequester(user, authority)
+    )
+      return false
+    return evaluateGroupAccess(authority.permissions, permissions, authority.groups, context, authority.tagAliases, false).allowed
+  },
+
+  loadPageRuleAuthority(requester, transaction) {
+    return loadPageRuleAuthority(requester, transaction)
   },
 
   checkExclusiveAccess(user, includePermissions = [], excludePermissions = []) {
@@ -746,26 +929,26 @@ const auth: AuthService = {
     })
   },
 
-  getEffectivePermissions(req, page) {
+  getEffectivePermissions(req, page, authority) {
     if (!isAccessUser(req.user)) throw new Error('Authenticated user is unavailable')
     const commentsEnabled = getWiki().config.features.featurePageComments
     return {
       comments: {
-        read: commentsEnabled && this.checkAccess(req.user, ['read:comments'], page),
-        write: commentsEnabled && this.checkAccess(req.user, ['write:comments'], page),
-        manage: commentsEnabled && this.checkAccess(req.user, ['manage:comments'], page)
+        read: commentsEnabled && this.checkPageAccess(req.user, ['read:comments'], page, authority),
+        write: commentsEnabled && this.checkPageAccess(req.user, ['write:comments'], page, authority),
+        manage: commentsEnabled && this.checkPageAccess(req.user, ['manage:comments'], page, authority)
       },
-      history: { read: this.checkAccess(req.user, ['read:history'], page) },
-      source: { read: this.checkAccess(req.user, ['read:source'], page) },
+      history: { read: this.checkPageAccess(req.user, ['read:history'], page, authority) },
+      source: { read: this.checkPageAccess(req.user, ['read:source'], page, authority) },
       pages: {
-        read: this.checkAccess(req.user, ['read:pages'], page),
-        write: this.checkAccess(req.user, ['write:pages'], page),
-        manage: this.checkAccess(req.user, ['manage:pages'], page),
-        delete: this.checkAccess(req.user, ['delete:pages'], page),
-        script: this.checkAccess(req.user, ['write:scripts'], page),
-        style: this.checkAccess(req.user, ['write:styles'], page)
+        read: this.checkPageAccess(req.user, ['read:pages'], page, authority),
+        write: this.checkPageAccess(req.user, ['write:pages'], page, authority),
+        manage: this.checkPageAccess(req.user, ['manage:pages'], page, authority),
+        delete: this.checkPageAccess(req.user, ['delete:pages'], page, authority),
+        script: this.checkPageAccess(req.user, ['write:scripts'], page, authority),
+        style: this.checkPageAccess(req.user, ['write:styles'], page, authority)
       },
-      system: { manage: this.checkAccess(req.user, ['manage:system'], page) }
+      system: { manage: this.checkPageAccess(req.user, ['manage:system'], page, authority) }
     }
   },
 

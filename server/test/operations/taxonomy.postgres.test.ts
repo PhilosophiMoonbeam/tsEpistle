@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import knexModule, { type Knex } from 'knex'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
+import auth, { loadPageRuleAuthority, type PageRuleAuthority } from '../../core/auth.ts'
 import { createTaxonomyService, type TaxonomyActor } from '../../operations/taxonomy.ts'
 import { up as migrateTaxonomy, down as rollbackTaxonomy } from '../../db/migrations/tsepistle-000015-taxonomy-lifecycle.ts'
 const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
@@ -9,12 +10,36 @@ const connection = database.endsWith('_taxonomy_test') && password ? { host: pro
 const suite = connection ? describe : describe.skip
 const actor: TaxonomyActor = { requester: { id: 1, permissions: ['manage:system'] }, sessionId: 'taxonomy-test' }
 const now = '2026-09-01T00:00:00.000Z'
+const authorityRequester = { id: 1, ownershipUserId: null, groups: [1], api: 41, permissions: ['read:pages'] }
+const originalWiki = globalThis.WIKI
+const denyRuleSet = [
+  { match: 'START', path: '', deny: false, roles: ['read:pages'] },
+  { match: 'TAG', path: 'source', deny: true, roles: ['read:pages'] }
+]
 suite('PostgreSQL taxonomy transactions', () => {
   let db: Knex
+  let peerDb: Knex
   let service: ReturnType<typeof createTaxonomyService>
   let locked = false, failHistory = false, failRefresh = false
+  const runtime = (knex: Knex) => ({
+    config: {}, configSvc: {}, events: { inbound: {}, outbound: {} }, lang: {}, logger: {}, models: { knex }, startedAt: {}
+  })
+  const loadAuthority = async (knex: Knex): Promise<PageRuleAuthority> => {
+    const previous = globalThis.WIKI
+    globalThis.WIKI = runtime(knex) as never
+    try { return await loadPageRuleAuthority(authorityRequester) } finally { globalThis.WIKI = previous }
+  }
+  const pageContext = async (knex: Knex) => ({
+    path: 'p1',
+    locale: 'en',
+    tags: await knex('pageTags').join('tags', 'tags.id', 'pageTags.tagId').where('pageTags.pageId', 1).select('tags.tag')
+  })
+  const pageAllowed = async (knex: Knex, authority: PageRuleAuthority) =>
+    auth.checkPageAccess(authorityRequester, ['read:pages'], await pageContext(knex), authority)
   beforeAll(async () => {
     db = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 8 } })
+    peerDb = knexModule({ client: 'pg', connection: connection ?? undefined, pool: { min: 0, max: 8 } })
+    globalThis.WIKI = runtime(db) as never
     await db.schema.createTable('tags', t => { t.increments('id'); t.string('tag').unique().notNullable(); t.string('title'); t.timestamp('createdAt'); t.timestamp('updatedAt') })
     await migrateTaxonomy(db)
     await db.schema.createTable('pages', t => {
@@ -46,7 +71,14 @@ suite('PostgreSQL taxonomy transactions', () => {
     await db('pageTags').insert([{ pageId: 1, tagId: 1 }, { pageId: 2, tagId: 2 }, { pageId: 3, tagId: 1 }, { pageId: 3, tagId: 2 }])
     await db('groups').insert({ id: 1, name: 'Readers', permissions: JSON.stringify(['read:pages']), pageRules: JSON.stringify([{ match: 'TAG', path: 'source', deny: false, roles: ['read:pages'] }]) })
   })
-  afterAll(async () => { if (db) { for (const table of ['outboxEvents', 'pageMutationOutbox', 'pageHistoryTags', 'pageHistory', 'pageTags', 'groups', 'pages', 'tags']) await db.schema.dropTableIfExists(table); await db.destroy() } })
+  afterAll(async () => {
+    if (db) {
+      for (const table of ['outboxEvents', 'pageMutationOutbox', 'pageHistoryTags', 'pageHistory', 'pageTags', 'groups', 'pages', 'tags']) await db.schema.dropTableIfExists(table)
+      await db.destroy()
+    }
+    if (peerDb) await peerDb.destroy()
+    globalThis.WIKI = originalWiki
+  })
   it('persists rename aliases, exact historical assignments and durable projections while preserving visibility and ownership', async () => {
     const preview = await service.preview(actor, { action: 'edit', tagId: 1, tag: 'Renamed', title: 'New label' })
     expect(preview.accessChanges).toBe(false)
@@ -61,6 +93,39 @@ suite('PostgreSQL taxonomy transactions', () => {
     expect(await db('pages').where('id', 3).first()).toMatchObject({ sourceRevision: '10', visibility: 'private', ownerId: 7, content: '# Page 3', isPublished: false })
     expect(await db('groups').where('id', 1).first()).toMatchObject({ pageRules: [{ match: 'TAG', path: 'source', deny: false, roles: ['read:pages'] }] })
     await expect(rollbackTaxonomy(db)).rejects.toThrow('lifecycle data')
+  })
+  it('uses fresh database authority after a rename when reloadGroups is not delivered', async () => {
+    await db('groups').where('id', 1).update({ pageRules: JSON.stringify(denyRuleSet) })
+    const stale = await loadAuthority(db)
+    expect(stale.tagAliases).toMatchObject({ source: 'source' })
+    expect(await pageAllowed(db, stale)).toBe(false)
+    const preview = await service.preview(actor, { action: 'edit', tagId: 1, tag: 'renamed', title: '' })
+    await service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint })
+    expect(await db('groups').where('id', 1).first()).toMatchObject({ pageRules: denyRuleSet })
+    // Keep the pre-commit snapshot to model a peer that missed the notification.
+    expect(await pageAllowed(peerDb, stale)).toBe(true)
+    const freshA = await loadAuthority(db), freshB = await loadAuthority(peerDb)
+    expect(freshA.tagAliases).toMatchObject({ source: 'renamed' })
+    expect(freshB.tagAliases).toMatchObject({ source: 'renamed' })
+    expect(await pageAllowed(db, freshA)).toBe(false)
+    expect(await pageAllowed(peerDb, freshB)).toBe(false)
+  })
+  it('uses fresh database authority after a merge to an existing canonical tag when reloadGroups is not delivered', async () => {
+    await db('groups').where('id', 1).update({ pageRules: JSON.stringify(denyRuleSet) })
+    const stale = await loadAuthority(db)
+    expect(stale.tagAliases).toMatchObject({ source: 'source' })
+    expect(await pageAllowed(db, stale)).toBe(false)
+    const preview = await service.preview(actor, { action: 'merge', tagId: 1, targetId: 2 })
+    await service.apply(actor, { change: preview.change, fingerprint: preview.fingerprint, acknowledgeAccess: true })
+    expect(await db('groups').where('id', 1).first()).toMatchObject({ pageRules: denyRuleSet })
+    expect(await db('pageTags').where('pageId', 1).pluck('tagId')).toEqual([2])
+    // Keep the pre-commit snapshot to model a peer that missed the notification.
+    expect(await pageAllowed(peerDb, stale)).toBe(true)
+    const freshA = await loadAuthority(db), freshB = await loadAuthority(peerDb)
+    expect(freshA.tagAliases).toMatchObject({ source: 'target' })
+    expect(freshB.tagAliases).toMatchObject({ source: 'target' })
+    expect(await pageAllowed(db, freshA)).toBe(false)
+    expect(await pageAllowed(peerDb, freshB)).toBe(false)
   })
   it('requires acknowledgement for merge access changes and deduplicates page assignments', async () => {
     const preview = await service.preview(actor, { action: 'merge', tagId: 1, targetId: 2 })

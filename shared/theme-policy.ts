@@ -58,5 +58,6 @@ export interface ThemeWorkspace {
   fingerprint: string
   history: ThemePolicyEvent[]
   runtime: { state: 'applied' | 'needs-attention'; observedAt: string }
+  capabilities: { editCustomCode: boolean }
 }
 export interface ThemeWriteResult { activation: 'applied' | 'needs-attention' }

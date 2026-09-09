@@ -1,10 +1,32 @@
 import type { WikiAuth } from '../controllers/_types.ts'
+import { pageRuleAuthorityMatchesRequester, type PageRuleAuthority } from './group-access.ts'
 
 const getWikiAuth = (): WikiAuth => WIKI.auth as WikiAuth
 
 export type PagePrincipal = Parameters<WikiAuth['checkAccess']>[0]
 
 export type PageVisibility = 'public' | 'private'
+
+export interface PageAuthorizationTag {
+  tag: string
+}
+
+/**
+ * The only page shape that may be used for page-rule authorization.
+ *
+ * `tags` is deliberately required here. A caller that has not loaded the
+ * complete relation must not accidentally turn an unknown tag set into an
+ * untagged page; callers should treat a `null` projection as unavailable
+ * authority and fail closed.
+ */
+export interface PageAuthorizationContext {
+  path: string
+  locale: string
+  localeCode: string
+  visibility: PageVisibility
+  ownerId: number | null
+  tags: PageAuthorizationTag[]
+}
 
 export interface PageVisibilityRecord {
   visibility: PageVisibility
@@ -13,6 +35,50 @@ export interface PageVisibilityRecord {
   localeCode?: string
   locale?: string
   tags?: unknown
+}
+
+const normalizedTagName = (value: unknown): string | null => {
+  const raw = typeof value === 'string' ? value : value !== null && typeof value === 'object' ? Reflect.get(value, 'tag') : undefined
+  if (typeof raw !== 'string') return null
+  const tag = raw.trim().toLowerCase()
+  return tag.length > 0 ? tag : null
+}
+
+/**
+ * Convert a page row/list/detail projection to one complete authorization
+ * context. `null` means that the caller did not provide enough information
+ * to make a safe page-rule decision.
+ */
+export const pageAuthorizationContext = (page: PageVisibilityRecord): PageAuthorizationContext | null => {
+  const locale = typeof page.localeCode === 'string' ? page.localeCode : typeof page.locale === 'string' ? page.locale : null
+  if (
+    typeof page.path !== 'string' ||
+    page.path.length === 0 ||
+    locale === null ||
+    (page.visibility !== 'public' && page.visibility !== 'private') ||
+    (page.ownerId !== null && (!Number.isSafeInteger(page.ownerId) || page.ownerId < 1)) ||
+    !Array.isArray(page.tags)
+  ) {
+    return null
+  }
+  const tags: PageAuthorizationTag[] = []
+  const seen = new Set<string>()
+  for (const value of page.tags) {
+    const tag = normalizedTagName(value)
+    if (tag === null) return null
+    if (!seen.has(tag)) {
+      seen.add(tag)
+      tags.push({ tag })
+    }
+  }
+  return {
+    path: page.path,
+    locale,
+    localeCode: locale,
+    visibility: page.visibility,
+    ownerId: page.ownerId,
+    tags
+  }
 }
 
 interface VisibilityQuery {
@@ -57,31 +123,34 @@ export const managesSystem = (user: PagePrincipal): boolean =>
 export const ownsPrivatePage = (user: PagePrincipal, page: Pick<PageVisibilityRecord, 'visibility' | 'ownerId'>): boolean =>
   page.visibility === 'private' && principalId(user) === page.ownerId
 
-export const canReadPage = (user: PagePrincipal, page: PageVisibilityRecord): boolean => {
+export const canReadPage = (user: PagePrincipal, page: PageVisibilityRecord, authority: PageRuleAuthority): boolean => {
+  if (!pageRuleAuthorityMatchesRequester(user, authority)) return false
   if (page.visibility === 'private') return ownsPrivatePage(user, page) || managesSystem(user)
-  return getWikiAuth().checkAccess(user, ['read:pages'], {
-    path: page.path,
-    locale: page.localeCode ?? page.locale,
-    tags: page.tags
-  })
+  const context = pageAuthorizationContext(page)
+  return context !== null && getWikiAuth().checkPageAccess(user, ['read:pages'], context, authority)
 }
 
-export const canWritePage = (user: PagePrincipal, page: PageVisibilityRecord): boolean => {
+export const canWritePage = (user: PagePrincipal, page: PageVisibilityRecord, authority: PageRuleAuthority): boolean => {
+  if (!pageRuleAuthorityMatchesRequester(user, authority)) return false
   if (page.visibility === 'private') return ownsPrivatePage(user, page) || managesSystem(user)
-  return getWikiAuth().checkAccess(user, ['write:pages', 'manage:pages', 'manage:system'], {
-    path: page.path,
-    locale: page.localeCode ?? page.locale,
-    tags: page.tags
-  })
+  const context = pageAuthorizationContext(page)
+  return context !== null && getWikiAuth().checkPageAccess(user, ['write:pages', 'manage:pages', 'manage:system'], context, authority)
 }
 
-export const canDeletePage = (user: PagePrincipal, page: PageVisibilityRecord): boolean => {
+/**
+ * Steward contacts are part of the restricted author/editor projection. They
+ * are visible only to the same effective page writers (including the system
+ * bypass), never merely to a global permission holder whose page rule denies
+ * this canonical page.
+ */
+export const canViewStewardContacts = (user: PagePrincipal, page: PageVisibilityRecord, authority: PageRuleAuthority): boolean =>
+  canWritePage(user, page, authority)
+
+export const canDeletePage = (user: PagePrincipal, page: PageVisibilityRecord, authority: PageRuleAuthority): boolean => {
+  if (!pageRuleAuthorityMatchesRequester(user, authority)) return false
   if (page.visibility === 'private') return ownsPrivatePage(user, page) || managesSystem(user)
-  return getWikiAuth().checkAccess(user, ['delete:pages', 'manage:system'], {
-    path: page.path,
-    locale: page.localeCode ?? page.locale,
-    tags: page.tags
-  })
+  const context = pageAuthorizationContext(page)
+  return context !== null && getWikiAuth().checkPageAccess(user, ['delete:pages', 'manage:system'], context, authority)
 }
 
 export const scopePageQueryForOwner = <T extends VisibilityQuery>(

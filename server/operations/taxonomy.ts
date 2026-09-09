@@ -19,7 +19,7 @@ interface TaxonomyDependencies {
   authorize(actor: TaxonomyActor): number
   assertUnlocked(actor: TaxonomyActor, pageId: number): Promise<void>
   snapshotPage(input: VersionInput): Promise<unknown>
-  refresh(tags: TagRow[], pages: { id: number; hash: string }[]): Promise<string[]>
+  refresh(pages: { id: number; hash: string }[]): Promise<string[]>
 }
 const conflict = (): never => { throw new ApplicationError('The taxonomy, page assignments or access rules changed after this review. Review the change again.', { status: 409, code: 'TAXONOMY_REVIEW_EXPIRED' }) }
 const positiveId = (id: number): number => {
@@ -81,7 +81,7 @@ export const createTaxonomyService = (deps: TaxonomyDependencies) => ({
   async apply(actor: TaxonomyActor, input: { change: unknown; fingerprint: unknown; acknowledgeAccess?: unknown }): Promise<TaxonomyResult> {
     const authorId = deps.authorize(actor)
     if (typeof input.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(input.fingerprint)) throw new ApplicationError('A current impact review is required.', { status: 400 })
-    let committed: { tagId: number; pageCount: number; tags: TagRow[]; pages: { id: number; hash: string }[] }
+    let committed: { tagId: number; pageCount: number; pages: { id: number; hash: string }[] }
     try {
       committed = await deps.db.transaction(async tx => {
         const initial = planTaxonomy(await readTaxonomySnapshot(tx), input.change)
@@ -140,14 +140,14 @@ export const createTaxonomyService = (deps: TaxonomyDependencies) => ({
           const ids = before.assignments.filter(a => a.tagId === tagId).map(a => a.pageId)
           if (ids.length) pages.push(...await tx('pages').select('id', 'hash').whereIn('id', ids))
         }
-        return { tagId, pageCount: plan.changedPageIds.length, tags: plan.after.tags, pages }
+        return { tagId, pageCount: plan.changedPageIds.length, pages }
       })
     } catch (error) {
       if (error && typeof error === 'object' && ['23505', '40001', '40P01'].includes(String(Reflect.get(error, 'code')))) return conflict()
       throw error
     }
     let refreshWarnings: string[]
-    try { refreshWarnings = await deps.refresh(committed.tags, committed.pages) } catch { refreshWarnings = ['Saved. Cache refresh could not finish; reload the workspace or check server logs.'] }
+    try { refreshWarnings = await deps.refresh(committed.pages) } catch { refreshWarnings = ['Saved. Cache refresh could not finish; reload the workspace or check server logs.'] }
     return { tagId: committed.tagId, pageCount: committed.pageCount, refreshWarnings }
   },
   async legacyChange(actor: TaxonomyActor, change: TaxonomyChange) {
@@ -159,7 +159,6 @@ export const createTaxonomyService = (deps: TaxonomyDependencies) => ({
 
 interface TaxonomyRuntime {
   models: { knex: Knex; pageHistory: typeof PageHistory; pages: { deletePageFromCache(hash: string): Promise<unknown> } }
-  auth: { tagAliases: Record<string, string | null> }
   events: { outbound: { emit(event: string, value?: unknown): void } }
   collaboration?: { pageChanged(pageId: number): Promise<void> }
   logger: { warn(error: unknown): void }
@@ -175,12 +174,10 @@ const service = () => createTaxonomyService({
   },
   assertUnlocked: (actor, pageId) => assertPageUnlocked({ ...actor, pageId }),
   snapshotPage: input => runtime().models.pageHistory.addVersion(input),
-  async refresh(tags, pages) {
+  async refresh(pages) {
     const wiki = runtime()
-    // Publish the exact committed alias state locally before any asynchronous
-    // cache work. Group rule strings themselves have not been rewritten.
-    wiki.auth.tagAliases = tagAliasMap(tags)
     const warnings: string[] = []
+    // Keep notification as a best-effort presentation refresh; it is not an authorization dependency.
     try { wiki.events.outbound.emit('reloadGroups') } catch (error) { wiki.logger.warn(error); warnings.push('Saved. Other server processes could not be notified; check server logs.') }
     for (const page of pages) {
       const results = await Promise.allSettled([

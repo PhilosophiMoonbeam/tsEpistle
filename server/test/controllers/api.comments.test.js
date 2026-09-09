@@ -32,6 +32,12 @@ class BruteTooManyAttempts extends Error {
 }
 class CommentNotFound extends Error {}
 class CommentViewForbidden extends Error {}
+const authorityFor = requester => ({
+  requester,
+  permissions: requester?.permissions ?? [],
+  groups: [],
+  tagAliases: {}
+})
 
 const rateLimitKnex = () => {
   const rows = new Map()
@@ -59,7 +65,11 @@ describe('controllers/api comments endpoints', () => {
       auth: {
         checkAccess: vi.fn((requester, permissions) =>
           permissions.some(permission => requester?.permissions?.includes(permission))
-        )
+        ),
+        checkPageAccess: vi.fn((requester, permissions, _context, authority) =>
+          authority?.requester === requester && permissions.some(permission => authority.permissions.includes(permission))
+        ),
+        loadPageRuleAuthority: vi.fn(async requester => authorityFor(requester))
       },
       Error: { BruteTooManyAttempts, CommentNotFound, CommentViewForbidden },
       data: {

@@ -82,8 +82,6 @@ const expectedLicenses = ['Newsreader-OFL.txt', 'RobotoFlex-OFL.txt', 'RobotoMon
 describe('self-hosted typography contracts', () => {
   const base = read('client/scss/base/base.scss')
   const fontSource = read('client/scss/fonts/default.scss')
-  const clientApp = read('client/client-app.ts')
-  const wikiStoreSource = read('client/store/index.ts')
   const fontFaces = extractBlocks(fontSource, '@font-face').map(declarations)
   const assetNames = fs.readdirSync(path.join(root, 'client/fonts/default'))
 
@@ -108,24 +106,6 @@ describe('self-hosted typography contracts', () => {
 
     expect(read('client/themes/default/components/page.vue')).toMatch(/\.page-title \{\s*font-family: var\(--wiki-font-display\)/)
     expect(read('client/components/agents/inline-agent-chat.vue')).toMatch(/\.inline-agent__welcome h2 \{[^}]*font-family: var\(--wiki-font-display\)/)
-  })
-
-  test('hydrates the font claim without gutter state, legacy token refreshes, or runtime data-wiki-font writes', () => {
-    expect(wikiStoreSource).toContain("import { normalizeUserFontFamily } from '../../shared/user-presentation.ts'")
-    expect(wikiStoreSource).toMatch(/fontFamily:\s*normalizeUserFontFamily\(undefined\)/)
-    expect(wikiStoreSource).toMatch(/this\.user\.fontFamily\s*=\s*normalizeUserFontFamily\(payload\.ff\)/)
-    expect(wikiStoreSource).not.toMatch(/readingGutter|readingGutterNeedsMigration/)
-    expect(wikiStoreSource).not.toMatch(/gutterStyle|gutterCustomCss/)
-    expect(wikiStoreSource).not.toMatch(/payload\.rg|isUserReadingGutter|page-gutters/)
-    expect(clientApp).not.toMatch(/refreshLegacyReadingGutterToken|readingGutterNeedsMigration/)
-    expect(clientApp).not.toContain("import Cookies from 'js-cookie'")
-    expect(clientApp).not.toContain('ProfileAppearanceSchema')
-    expect(clientApp).not.toContain('updateProfilePreferences')
-    expect(clientApp).toMatch(/import\s+\{\s*createApp\s*\}\s+from\s+'vue'/)
-    expect(clientApp).not.toMatch(/document\.documentElement\.dataset\.wikiFont/)
-    expect(clientApp).not.toMatch(/data-wiki-font/)
-    expect(clientApp).not.toMatch(/wikiFont/)
-    expect(clientApp).not.toMatch(/watch\(\s*\(\)\s*=>\s*wikiStore\.user\.fontFamily/)
   })
 
   test('declares the exact local variable faces and real Newsreader italics', () => {

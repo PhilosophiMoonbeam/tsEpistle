@@ -99,6 +99,45 @@ suite('PostgreSQL reviewed Theme settings', () => {
     await db('users').where('id', 1).update({ authVersion: 0, isActive: false })
     await expect(read()).rejects.toMatchObject({ status: 403 })
   })
+  it('allows delegated appearance saves while rejecting every custom source change atomically', async () => {
+    await db('groups').where('id', 2).update({ permissions: '["manage:theme"]' })
+    const delegated = { id: 3, authVersion: 0 } as never
+    await write({
+      injectCSS: '/* trusted */\n.contents { color: red; }\n',
+      injectHead: '<meta name="trusted" content="head">',
+      injectBody: '<div data-trusted="body"></div>'
+    })
+    const beforeAppearance = await store.inspect(delegated)
+    expect(beforeAppearance.capabilities).toEqual({ editCustomCode: false })
+    await store.save(delegated, {
+      policy: { ...beforeAppearance.policy, tocPosition: 'right' },
+      fingerprint: beforeAppearance.fingerprint,
+      reason: 'Publish a delegated appearance change'
+    })
+    const afterAppearance = await store.inspect(delegated)
+    expect(afterAppearance.policy.tocPosition).toBe('right')
+    const settingsBefore = await db('settings').orderBy('key')
+    for (const field of ['injectCSS', 'injectHead', 'injectBody'] as const) {
+      const review = await store.inspect(delegated)
+      await expect(store.save(delegated, {
+        policy: { ...review.policy, [field]: '' },
+        fingerprint: review.fingerprint,
+        reason: `Clear ${field} without system authority`
+      })).rejects.toMatchObject({ status: 403 })
+      const after = await store.inspect(delegated)
+      expect(after.policy[field]).toBe(review.policy[field])
+      expect(after.history).toEqual(review.history)
+      expect(after.runtime.state).toBe(review.runtime.state)
+      expect(await db('settings').orderBy('key')).toEqual(settingsBefore)
+    }
+    const stale = await store.inspect(delegated)
+    await db('groups').where('id', 2).update({ permissions: '["manage:users"]' })
+    await expect(store.save(delegated, {
+      policy: { ...stale.policy, tocPosition: 'left' },
+      fingerprint: stale.fingerprint,
+      reason: 'Publish after delegated authority was removed'
+    })).rejects.toMatchObject({ status: 403 })
+  })
   it('checks API group grants and rejects malformed principals', async () => {
     expect((await store.inspect({ id: 1, ownershipUserId: null, groups: [1] } as never)).policy.theme).toBe('default')
     await expect(store.inspect({ id: 1, ownershipUserId: null, groups: [2] } as never)).rejects.toMatchObject({ status: 403 })

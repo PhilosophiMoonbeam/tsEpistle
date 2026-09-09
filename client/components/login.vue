@@ -773,11 +773,9 @@ export default defineComponent({
           this.focusTimer = null
         }, 500)
         this.isLoading = false
-      } else {
+      } else if (respObj.authenticated === true) {
         this.loaderColor = 'green-darken-1'
         this.loaderTitle = this.$t('auth:loginSuccess')
-        if (!respObj.jwt) throw new Error('Authentication response did not include a token.')
-        Cookies.set('jwt', respObj.jwt, { expires: 365, secure: window.location.protocol === 'https:' })
         if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)
         this.redirectTimer = window.setTimeout(() => {
           const loginRedirect = Cookies.get('loginRedirect')
@@ -800,6 +798,9 @@ export default defineComponent({
           }
           this.redirectTimer = null
         }, 1000)
+      } else {
+        this.isLoading = false
+        this.showError(this.$t('auth:genericError'))
       }
     }
   }

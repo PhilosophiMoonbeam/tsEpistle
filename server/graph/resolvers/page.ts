@@ -1,15 +1,39 @@
+import type { GraphQLResolveInfo } from 'graphql'
 import graphHelper from '../../helpers/graph.ts'
-import pageOperations from '../../operations/pages.ts'
+import { canViewRestrictedPageFields } from '../../helpers/page-field-projection.ts'
+import { requestPageRuleAuthority } from '../directives/auth.ts'
+import pageOperations, { type PageOperationInput } from '../../operations/pages.ts'
 
 type ResolverArgs = Record<string, unknown>
 interface ResolverContext {
-  req: { user: Express.User; sessionID: string }
+  req: { user?: Express.User; sessionID?: string }
 }
 
-const operationContext = (context: ResolverContext): { requester: Express.User; sessionId: string } => ({
-  requester: context.req.user,
-  sessionId: context.req.sessionID
+const operationContext = (context: ResolverContext): Pick<PageOperationInput, 'requester' | 'sessionId'> => ({
+  ...(context.req.user === undefined ? {} : { requester: context.req.user }),
+  ...(context.req.sessionID === undefined ? {} : { sessionId: context.req.sessionID })
 })
+
+const canViewPageContacts = async (
+  page: unknown,
+  context: ResolverContext,
+  operation?: GraphQLResolveInfo['operation']
+): Promise<boolean> => {
+  if (!context.req.user) return false
+  const authority = await requestPageRuleAuthority(context, context.req.user, operation)
+  return canViewRestrictedPageFields({ requester: context.req.user, page, authority })
+}
+
+const pageContact = async (
+  page: unknown,
+  field: 'authorEmail' | 'creatorEmail',
+  context: ResolverContext,
+  info?: GraphQLResolveInfo
+): Promise<string | null> => {
+  if (!(await canViewPageContacts(page, context, info?.operation))) return null
+  const value = Reflect.get(page as object, field)
+  return typeof value === 'string' ? value : null
+}
 
 export default {
   Query: {
@@ -30,10 +54,10 @@ export default {
       return pageOperations.getVersion({ ...operationContext(context), ...args })
     },
     search(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
-      return pageOperations.search({ requester: context.req.user, ...args })
+      return pageOperations.search({ ...operationContext(context), ...args })
     },
     list(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
-      return pageOperations.list({ requester: context.req.user, ...args })
+      return pageOperations.list({ ...operationContext(context), ...args })
     },
     single(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       return pageOperations.get({ ...operationContext(context), id: args.id })
@@ -45,16 +69,16 @@ export default {
       return pageOperations.listTags(context.req.user)
     },
     searchTags(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
-      return pageOperations.searchTags({ requester: context.req.user, query: args.query })
+      return pageOperations.searchTags({ ...operationContext(context), query: args.query })
     },
     tree(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
-      return pageOperations.getTree({ requester: context.req.user, ...args })
+      return pageOperations.getTree({ ...operationContext(context), ...args })
     },
     links(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
-      return pageOperations.listLinks({ requester: context.req.user, locale: args.locale })
+      return pageOperations.listLinks({ ...operationContext(context), locale: args.locale })
     },
     checkConflicts(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
-      return pageOperations.checkConflict({ requester: context.req.user, ...args })
+      return pageOperations.checkConflict({ ...operationContext(context), ...args })
     },
     conflictLatest(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       return pageOperations.getConflictLatest({ ...operationContext(context), id: args.id })
@@ -95,7 +119,11 @@ export default {
     },
     async delete(_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
-        await pageOperations.remove({ ...operationContext(context), id: args.id, expectedSourceRevision: args.expectedSourceRevision })
+        await pageOperations.remove({
+          ...operationContext(context),
+          id: args.id,
+          ...(args.expectedSourceRevision === undefined ? {} : { expectedSourceRevision: args.expectedSourceRevision })
+        })
         return { responseResult: graphHelper.generateSuccess('Page has been deleted.') }
       } catch (err: unknown) {
         return graphHelper.generateError(err)
@@ -129,6 +157,12 @@ export default {
   Page: {
     tags(page: { id: number }) {
       return pageOperations.getPageTags(page.id)
+    },
+    authorEmail(page: unknown, _args: ResolverArgs, context: ResolverContext, info: GraphQLResolveInfo) {
+      return pageContact(page, 'authorEmail', context, info)
+    },
+    creatorEmail(page: unknown, _args: ResolverArgs, context: ResolverContext, info: GraphQLResolveInfo) {
+      return pageContact(page, 'creatorEmail', context, info)
     }
   }
 }

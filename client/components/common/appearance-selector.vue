@@ -41,7 +41,6 @@ section.appearance-selector(:aria-busy='saving ? `true` : `false`')
 
 <script setup lang='ts'>
 import { computed, ref, useId } from 'vue'
-import Cookies from 'js-cookie'
 import { useTheme } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
 import { updateProfilePreferences } from '../../helpers/users-api.ts'
@@ -94,13 +93,12 @@ async function selectAppearance (next: Appearance): Promise<void> {
   try {
     wikiStore.user.appearance = next
     await theme.change(next, false)
-    const token = await updateProfilePreferences(
+    await updateProfilePreferences(
       window.fetch.bind(window),
       { appearance: next },
       'Appearance update failed'
     )
-    Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
-    wikiStore.refreshAuth()
+    await wikiStore.refreshAuth()
     const effectiveAppearance = normalizeAppearance(wikiStore.user.appearance)
     await theme.change(effectiveAppearance, false)
     statusMessage.value = `${selectedOption.label} appearance saved.`

@@ -16,7 +16,9 @@ Preview releases are not recommended for deployments whose availability, confide
 
 The maintained [security threat model](docs/security/threat-model.md) defines assets, trust boundaries, executable control evidence, residual risks, and release-blocking findings. Every authentication, authorization, renderer, extension, worker, import/export, migration, or deployment-boundary change must update that model and its regression evidence.
 
-Passing automated tests is not an independent security review. The first external release remains blocked until the threat model's external-review record is completed for a frozen revision.
+Release qualification is maintainer-owned and uses the schema-2 manifest-driven source review: a maintainer or delegated agent records the reviewed source boundary, current model digest, contained evidence, and finding dispositions. Automated tests are evidence for that review, not a substitute for it. The former external-review and detached-signature process is explicitly superseded historical policy; migrated historical records remain release-ineligible and retain their historical findings.
+The executable dependency gate is a fail-closed prerequisite: `ci:static` runs `bun run dependencies:check && bun run licenses:check && bun audit --production` before its broader checks and ends with `bun run threat-model:check`. The pull-request and common quality workflow paths both invoke that script. The release checker parses and hashes the threat model even when the file is empty, and rejects audit text that is echoed, option-modified, backgrounded, or suppressed with `|| true`; a registry failure or reported production vulnerability stops the chain. This implementation does not add an external approval, detached signature, or coverage prerequisite.
+
 
 
 ## Reporting a vulnerability

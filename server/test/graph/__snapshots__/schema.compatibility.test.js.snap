@@ -124,8 +124,8 @@ type AuthenticationActiveStrategy {
 }
 
 type AuthenticationLoginResponse {
+  authenticated: Boolean!
   continuationToken: String
-  jwt: String
   mustChangePwd: Boolean
   mustProvideTFA: Boolean
   mustSetupTFA: Boolean
@@ -151,7 +151,6 @@ type AuthenticationQuery {
 }
 
 type AuthenticationRegisterResponse {
-  jwt: String
   responseResult: ResponseStatus
 }
 
@@ -363,13 +362,13 @@ type Mutation {
 }
 
 type Page {
-  authorEmail: String!
+  authorEmail: String
   authorId: Int!
   authorName: String!
   content: String!
   contentType: String!
   createdAt: Date!
-  creatorEmail: String!
+  creatorEmail: String
   creatorId: Int!
   creatorName: String!
   description: String!
@@ -893,7 +892,7 @@ type UserMinimal {
 
 type UserMutation {
   activate(id: Int!): DefaultResponse
-  changePassword(current: String!, new: String!): UserTokenResponse
+  changePassword(current: String!, new: String!): DefaultResponse
   create(email: String!, groups: [Int]!, mustChangePassword: Boolean, name: String!, passwordRaw: String, providerKey: String!, sendWelcomeEmail: Boolean): UserResponse
   deactivate(id: Int!): DefaultResponse
   delete(id: Int!, replaceId: Int!): DefaultResponse
@@ -901,7 +900,7 @@ type UserMutation {
   enableTFA(id: Int!): DefaultResponse
   resetPassword(id: Int!): DefaultResponse
   update(appearance: String, dateFormat: String, email: String, groups: [Int], id: Int!, jobTitle: String, location: String, name: String, newPassword: String, timezone: String): DefaultResponse
-  updateProfile(appearance: String!, dateFormat: String!, jobTitle: String!, location: String!, name: String!, timezone: String!): UserTokenResponse
+  updateProfile(appearance: String!, dateFormat: String!, jobTitle: String!, location: String!, name: String!, timezone: String!): DefaultResponse
   verify(id: Int!): DefaultResponse
 }
 
@@ -941,11 +940,6 @@ type UserResponse {
 type UserResults {
   total: Int!
   users: [UserMinimal]!
-}
-
-type UserTokenResponse {
-  jwt: String
-  responseResult: ResponseStatus!
 }"
 `;
 

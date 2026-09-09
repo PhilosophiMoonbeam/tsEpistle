@@ -98,6 +98,7 @@ interface UsersWikiContext extends Record<string, unknown> {
     AuthRegistrationDomainUnauthorized: new () => Error
     AuthTFAFailed: new () => Error
     AuthTFAInvalid: new () => Error
+    AuthValidationTokenInvalid: new () => Error
     InputInvalid: new (message?: string) => Error
     UserNotFound: new () => Error
   }
@@ -412,8 +413,9 @@ export default class User extends Model {
     }
   }
 
-  async enableTFA(): Promise<number> {
-    return wiki.models.users.query().findById(this.id).patch({
+  async enableTFA(transaction?: Knex.Transaction): Promise<number> {
+    const query = transaction === undefined ? wiki.models.users.query() : wiki.models.users.query(transaction)
+    return query.findById(this.id).patch({
       tfaIsActive: true
     })
   }
@@ -820,16 +822,26 @@ export default class User extends Model {
    */
   static async loginTFA({ securityCode, continuationToken, setup }: LoginTfaOptions, context: AuthenticationContext): Promise<AfterLoginResult> {
     if (securityCode.length === 6 && continuationToken.length > 1) {
+      if (setup) {
+        const user = await wiki.models.knex.transaction(async trx => {
+          const setupUser = await wiki.models.userKeys.validateToken({
+            kind: 'tfaSetup',
+            token: continuationToken
+          }, trx)
+          if (setupUser.tfaIsActive) throw new wiki.Error.AuthValidationTokenInvalid()
+          if (!setupUser.verifyTFA(securityCode)) throw new wiki.Error.AuthTFAFailed()
+          await setupUser.enableTFA(trx)
+          return setupUser
+        })
+        return wiki.models.users.afterLoginChecks(user, context, { skipTFA: true })
+      }
+
       const user = await wiki.models.userKeys.validateToken({
-        kind: setup ? 'tfaSetup' : 'tfa',
-        token: continuationToken,
-        skipDelete: setup
+        kind: 'tfa',
+        token: continuationToken
       })
       if (user) {
         if (user.verifyTFA(securityCode)) {
-          if (setup) {
-            await user.enableTFA()
-          }
           return wiki.models.users.afterLoginChecks(user, context, { skipTFA: true })
         } else {
           throw new wiki.Error.AuthTFAFailed()

@@ -82,7 +82,11 @@ export default defineComponent({
         const location = await resolveTemplateEditorPath(
           { locale: this.locale, path: this.path, visibility: wikiStore.page.visibility, templateId: id },
           this.availableEditors.map(editor => editor.key),
-          templateId => fetchPage(window.fetch.bind(window), templateId)
+          async templateId => {
+            const template = await fetchPage(window.fetch.bind(window), templateId)
+            if (template.editor === undefined) throw new Error('This template does not expose its editor to your current page access.')
+            return { editor: template.editor }
+          }
         )
         if (sequence !== this.templateSequence) return false
         window.location.assign(location)

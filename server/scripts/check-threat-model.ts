@@ -1,12 +1,11 @@
 import { spawnSync } from 'node:child_process'
-import crypto, { createHash } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { access, lstat, readFile, realpath } from 'node:fs/promises'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
 const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/
-const ED25519_PREFIX_DER = Buffer.from('302a300506032b6570032100', 'hex')
 
 const REQUIRED_COMMANDS = [
   'bun run dependencies:check',
@@ -18,11 +17,11 @@ const REQUIRED_COMMANDS = [
 
 const THREAT_MODEL_SCRIPT = 'bun server/scripts/check-threat-model.ts'
 const THREAT_MODEL_CI_COMMAND = 'bun run threat-model:check'
+const THREAT_MODEL_AUDIT_COMMAND = 'bun audit --production'
 
 export const CANONICAL_REPOSITORY = 'PhilosophiMoonbeam/tsEpistle'
 export const CANONICAL_FINGERPRINT_ALGORITHM = 'tsepistle-isolated-preview-v1'
 export const SECURITY_BOUNDARY_DIGEST_PREFIX = 'tsepistle-security-boundary-v1\0'
-export const ATTESTATION_SIGNING_PREFIX = 'tsepistle-threat-review-attestation-v1\0'
 export const CANONICAL_THREAT_MODEL_PATH = 'docs/security/threat-model.md'
 
 export const CANONICAL_POLICY_V1_PREFIXES = ['server/', 'client/', 'shared/', 'deploy/', 'patches/', '.github/workflows/', '.github/actions/', 'dev/'] as const
@@ -69,7 +68,6 @@ export type ReviewFinding = {
 
 export type ReviewerInfo = {
   identity: string
-  independent: boolean
   reviewedAt: string
 }
 
@@ -85,18 +83,13 @@ export type WorkingTreeAuditSource = {
   fingerprintAlgorithm: string
 }
 
-export type SourceReviewSignature = {
-  algorithm: 'ed25519'
-  keyId: string
-  value: string
-}
 
 export type BaseReviewRecord = {
-  schemaVersion: number
+  schemaVersion: 2
   id: string
   kind: 'source-review' | 'working-tree-audit'
   repository: string
-  policyVersion: number
+  policyVersion: 1
   threatModelDigest: string
   reviewer: ReviewerInfo
   releaseEligible: boolean
@@ -107,20 +100,18 @@ export type BaseReviewRecord = {
 export type SourceReviewRecord = BaseReviewRecord & {
   kind: 'source-review'
   source: SourceReviewSource
-  signature?: SourceReviewSignature
 }
 
 export type WorkingTreeAuditRecord = BaseReviewRecord & {
   kind: 'working-tree-audit'
   source: WorkingTreeAuditSource
-  signature?: never
 }
 
 export type ReviewRecord = SourceReviewRecord | WorkingTreeAuditRecord
 
 export type ReviewAttestationsManifest = {
-  schemaVersion: number
-  policyVersion: number
+  schemaVersion: 2
+  policyVersion: 1
   threatModelPath: string
   activeReviewId: string
   records: Array<{
@@ -139,18 +130,6 @@ export type ThreatModelCheckOptions = {
   release?: boolean
 }
 
-export type TrustedKey = {
-  id: string
-  identity: string
-  algorithm: 'ed25519'
-  publicKey: string
-}
-
-export type TrustedKeysConfig = {
-  schemaVersion: 1
-  repository: string
-  keys: TrustedKey[]
-}
 
 function runGit(rootPath: string, args: string[]) {
   return spawnSync('git', args, {
@@ -163,6 +142,10 @@ function runGit(rootPath: string, args: string[]) {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+function unsupportedKeys(value: Record<string, unknown>, allowed: readonly string[]): string[] {
+  const allowedSet = new Set(allowed)
+  return Object.keys(value).filter(key => !allowedSet.has(key))
 }
 
 export function isSecurityBoundaryPath(changedPath: string): boolean {
@@ -209,59 +192,6 @@ export function computeThreatModelDigest(content: string | Buffer): string {
   return createHash('sha256').update(content).digest('hex')
 }
 
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') {
-    return JSON.stringify(value)
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(',')}]`
-  }
-  const obj = value as Record<string, unknown>
-  const keys = Object.keys(obj).sort()
-  const entries = keys.map(key => `${JSON.stringify(key)}:${canonicalJson(obj[key])}`)
-  return `{${entries.join(',')}}`
-}
-
-export function computeRecordSigningPayload(record: Record<string, unknown>): Buffer {
-  const { signature: _omitted, ...rest } = record
-  const json = canonicalJson(rest)
-  const prefix = Buffer.from(ATTESTATION_SIGNING_PREFIX, 'utf8')
-  return Buffer.concat([prefix, Buffer.from(json, 'utf8')])
-}
-
-export function parseEd25519PublicKey(rawKey: string): crypto.KeyObject {
-  const trimmed = rawKey.trim()
-  if (trimmed.startsWith('-----BEGIN')) {
-    return crypto.createPublicKey(trimmed)
-  }
-  if (/^[0-9a-fA-F]{64}$/.test(trimmed)) {
-    const rawBytes = Buffer.from(trimmed, 'hex')
-    const der = Buffer.concat([ED25519_PREFIX_DER, rawBytes])
-    return crypto.createPublicKey({ key: der, format: 'der', type: 'spki' })
-  }
-  try {
-    const buf = Buffer.from(trimmed, 'base64')
-    if (buf.length === 32) {
-      const der = Buffer.concat([ED25519_PREFIX_DER, buf])
-      return crypto.createPublicKey({ key: der, format: 'der', type: 'spki' })
-    }
-    return crypto.createPublicKey({ key: buf, format: 'der', type: 'spki' })
-  } catch (err) {
-    throw new Error(`Invalid Ed25519 public key: ${err instanceof Error ? err.message : String(err)}`)
-  }
-}
-
-export function parseSignatureValue(value: string): Buffer {
-  const trimmed = value.trim()
-  if (/^[0-9a-fA-F]{128}$/.test(trimmed)) {
-    return Buffer.from(trimmed, 'hex')
-  }
-  const buf = Buffer.from(trimmed, 'base64')
-  if (buf.length === 64) {
-    return buf
-  }
-  throw new Error(`Ed25519 signature must be 64 bytes (128 hex chars or 64-byte base64), received ${buf.length} bytes`)
-}
 
 export function isValidCalendarDate(year: number, month: number, day: number): boolean {
   if (month < 1 || month > 12) return false
@@ -276,60 +206,6 @@ export function isValidIsoTimestamp(value: string): boolean {
   return Number.isFinite(parsed.valueOf()) && parsed.toISOString() === value
 }
 
-export function parseTrustedKeysConfig(raw: string): { config?: TrustedKeysConfig; error?: string } {
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch (err) {
-    return { error: `Malformed THREAT_REVIEW_TRUSTED_KEYS_JSON: ${err instanceof Error ? err.message : String(err)}` }
-  }
-  if (!isPlainObject(parsed)) {
-    return { error: 'THREAT_REVIEW_TRUSTED_KEYS_JSON must be a JSON object' }
-  }
-  if (parsed.schemaVersion !== 1) {
-    return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON schemaVersion must be 1, received: ${String(parsed.schemaVersion)}` }
-  }
-  if (parsed.repository !== CANONICAL_REPOSITORY) {
-    return {
-      error: `THREAT_REVIEW_TRUSTED_KEYS_JSON repository must be "${CANONICAL_REPOSITORY}", received: ${String(parsed.repository)}`
-    }
-  }
-  if (!Array.isArray(parsed.keys)) {
-    return { error: 'THREAT_REVIEW_TRUSTED_KEYS_JSON keys must be an array' }
-  }
-  const keys: TrustedKey[] = []
-  for (let idx = 0; idx < parsed.keys.length; idx++) {
-    const k = parsed.keys[idx]
-    if (!isPlainObject(k)) {
-      return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON keys[${idx}] must be an object` }
-    }
-    if (typeof k.id !== 'string' || !k.id.trim()) {
-      return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON keys[${idx}].id must be a non-empty string` }
-    }
-    if (typeof k.identity !== 'string' || !k.identity.trim()) {
-      return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON keys[${idx}].identity must be a non-empty string` }
-    }
-    if (k.algorithm !== 'ed25519') {
-      return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON keys[${idx}].algorithm must be "ed25519", received: ${String(k.algorithm)}` }
-    }
-    if (typeof k.publicKey !== 'string' || !k.publicKey.trim()) {
-      return { error: `THREAT_REVIEW_TRUSTED_KEYS_JSON keys[${idx}].publicKey must be a non-empty string` }
-    }
-    keys.push({
-      id: k.id.trim(),
-      identity: k.identity.trim(),
-      algorithm: 'ed25519',
-      publicKey: k.publicKey.trim()
-    })
-  }
-  return {
-    config: {
-      schemaVersion: 1,
-      repository: parsed.repository as string,
-      keys
-    }
-  }
-}
 
 function isRepoRelativePath(relativePath: string): boolean {
   if (typeof relativePath !== 'string' || !relativePath.trim()) return false
@@ -366,17 +242,22 @@ async function checkRealpathContained(realRoot: string, resolvedPath: string, re
   }
 }
 
-async function checkNotSymlink(resolvedPath: string, relativePath: string, label: string): Promise<string | null> {
+async function checkRegularFile(resolvedPath: string, relativePath: string, label: string): Promise<string | null> {
   try {
     const st = await lstat(resolvedPath)
     if (st.isSymbolicLink()) {
       return `${label} must not be a symbolic link: ${relativePath}`
     }
-  } catch {
-    // missing or unreadable handled elsewhere
+    if (!st.isFile()) {
+      return `${label} must be a regular file: ${relativePath}`
+    }
+  } catch (error) {
+    return `${label} could not be inspected: ${relativePath}${error instanceof Error ? `: ${error.message}` : `: ${String(error)}`}`
   }
   return null
 }
+
+type ContainedPathPolicy = 'existing-path' | 'regular-file'
 
 function extractRepositoryCitations(markdown: string): string[] {
   const citations = new Set<string>()
@@ -597,7 +478,14 @@ function packageManagerName(manifest: PackageManifest): string | undefined {
   return manifest.packageManager.match(/^([^@]+)@/)?.[1]
 }
 
-async function validateContainedPaths(rootPath: string, realRoot: string, paths: string[], label: string, failures: string[]) {
+async function validateContainedPaths(
+  rootPath: string,
+  realRoot: string,
+  paths: string[],
+  label: string,
+  policy: ContainedPathPolicy,
+  failures: string[]
+) {
   for (const p of paths) {
     if (!isRepoRelativePath(p)) {
       failures.push(`${label} escapes repository: ${p}`)
@@ -607,6 +495,13 @@ async function validateContainedPaths(rootPath: string, realRoot: string, paths:
     const escapeError = await checkRealpathContained(realRoot, resolved, p, label)
     if (escapeError) {
       failures.push(escapeError)
+      continue
+    }
+    if (policy === 'regular-file') {
+      const fileError = await checkRegularFile(resolved, p, label)
+      if (fileError) {
+        failures.push(fileError)
+      }
       continue
     }
     try {
@@ -630,9 +525,9 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
   const manifestRel = 'docs/security/review-attestations.json'
   const manifestPath = path.resolve(rootPath, manifestRel)
 
-  const manifestSymlinkErr = await checkNotSymlink(manifestPath, manifestRel, 'Manifest file')
-  if (manifestSymlinkErr) {
-    failures.push(manifestSymlinkErr)
+  const manifestFileErr = await checkRegularFile(manifestPath, manifestRel, 'Manifest file')
+  if (manifestFileErr) {
+    failures.push(manifestFileErr)
     return failures
   }
 
@@ -660,11 +555,15 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
     return ['Manifest must be a JSON object']
   }
 
-  if (manifestParsed.schemaVersion !== 1) {
-    failures.push(`Unsupported manifest schemaVersion: expected 1, received ${String(manifestParsed.schemaVersion)}`)
+  if (manifestParsed.schemaVersion !== 2) {
+    failures.push(`Unsupported manifest schemaVersion: expected 2, received ${String(manifestParsed.schemaVersion)}`)
   }
   if (manifestParsed.policyVersion !== 1) {
     failures.push(`Unsupported manifest policyVersion: expected 1, received ${String(manifestParsed.policyVersion)}`)
+  }
+  const manifestExtraKeys = unsupportedKeys(manifestParsed, ['schemaVersion', 'policyVersion', 'threatModelPath', 'activeReviewId', 'records'])
+  if (manifestExtraKeys.length > 0) {
+    failures.push(`Manifest contains unsupported fields: ${manifestExtraKeys.join(', ')}`)
   }
 
   if (typeof manifestParsed.threatModelPath !== 'string' || !manifestParsed.threatModelPath.trim()) {
@@ -700,6 +599,10 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
     if (!isPlainObject(recordRef)) {
       failures.push(`Manifest record reference at index ${idx} must be an object`)
       continue
+    }
+    const recordRefExtraKeys = unsupportedKeys(recordRef, ['id', 'path'])
+    if (recordRefExtraKeys.length > 0) {
+      failures.push(`Manifest record reference contains unsupported fields: ${recordRefExtraKeys.join(', ')}`)
     }
     if (typeof recordRef.id !== 'string' || !recordRef.id.trim()) {
       failures.push(`Manifest record reference id at index ${idx} must be a non-empty string`)
@@ -737,27 +640,28 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
     failures.push(`Active review ID "${manifestActiveReviewId}" is not present in manifest records`)
   }
 
-  let threatModelRaw = ''
+  let threatModelRaw: string | undefined
   if (manifestThreatModelPath === CANONICAL_THREAT_MODEL_PATH && isRepoRelativePath(manifestThreatModelPath)) {
     const resolvedThreatModel = path.resolve(rootPath, manifestThreatModelPath)
-    const tmSymlinkErr = await checkNotSymlink(resolvedThreatModel, manifestThreatModelPath, 'Threat model file')
-    if (tmSymlinkErr) {
-      failures.push(tmSymlinkErr)
-    }
-    const tmEscapeErr = await checkRealpathContained(realRoot, resolvedThreatModel, manifestThreatModelPath, 'Threat model file')
-    if (tmEscapeErr) {
-      failures.push(tmEscapeErr)
+    const tmFileErr = await checkRegularFile(resolvedThreatModel, manifestThreatModelPath, 'Threat model file')
+    if (tmFileErr) {
+      failures.push(tmFileErr)
     } else {
-      try {
-        threatModelRaw = await readFile(resolvedThreatModel, 'utf8')
-      } catch (error) {
-        failures.push(`Cannot read threat model at ${manifestThreatModelPath}: ${error instanceof Error ? error.message : String(error)}`)
+      const tmEscapeErr = await checkRealpathContained(realRoot, resolvedThreatModel, manifestThreatModelPath, 'Threat model file')
+      if (tmEscapeErr) {
+        failures.push(tmEscapeErr)
+      } else {
+        try {
+          threatModelRaw = await readFile(resolvedThreatModel, 'utf8')
+        } catch (error) {
+          failures.push(`Cannot read threat model at ${manifestThreatModelPath}: ${error instanceof Error ? error.message : String(error)}`)
+        }
       }
     }
   }
 
   let threatModelContract: ThreatModelContract | undefined
-  if (threatModelRaw) {
+  if (threatModelRaw !== undefined) {
     try {
       threatModelContract = parseThreatModel(threatModelRaw)
     } catch (error) {
@@ -766,13 +670,12 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
   }
 
   const recordsById = new Map<string, ReviewRecord>()
-  const rawRecordsById = new Map<string, Record<string, unknown>>()
 
   for (const recordRef of validRecordRefs) {
     const resolvedRecordPath = path.resolve(rootPath, recordRef.path)
-    const recSymlinkErr = await checkNotSymlink(resolvedRecordPath, recordRef.path, 'Record file')
-    if (recSymlinkErr) {
-      failures.push(recSymlinkErr)
+    const recFileErr = await checkRegularFile(resolvedRecordPath, recordRef.path, 'Record file')
+    if (recFileErr) {
+      failures.push(recFileErr)
       continue
     }
     const recEscapeErr = await checkRealpathContained(realRoot, resolvedRecordPath, recordRef.path, 'Record file')
@@ -804,8 +707,25 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
 
     let hasRecordStructuralError = false
 
-    if (recordRaw.schemaVersion !== 1) {
+    if (recordRaw.schemaVersion !== 2) {
       failures.push(`Record ${recordRef.id} has unsupported schemaVersion: ${String(recordRaw.schemaVersion)}`)
+      hasRecordStructuralError = true
+    }
+    const recordExtraKeys = unsupportedKeys(recordRaw, [
+      'schemaVersion',
+      'id',
+      'kind',
+      'repository',
+      'policyVersion',
+      'threatModelDigest',
+      'reviewer',
+      'releaseEligible',
+      'findings',
+      'evidencePaths',
+      'source'
+    ])
+    if (recordExtraKeys.length > 0) {
+      failures.push(`Record ${recordRef.id} contains unsupported fields: ${recordExtraKeys.join(', ')}`)
       hasRecordStructuralError = true
     }
     if (recordRaw.id !== recordRef.id) {
@@ -835,12 +755,13 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
       failures.push(`Record ${recordRef.id} must declare reviewer object`)
       hasRecordStructuralError = true
     } else {
-      if (typeof recordRaw.reviewer.identity !== 'string' || !recordRaw.reviewer.identity.trim()) {
-        failures.push(`Record ${recordRef.id} reviewer must have non-empty identity`)
+      const reviewerExtraKeys = unsupportedKeys(recordRaw.reviewer, ['identity', 'reviewedAt'])
+      if (reviewerExtraKeys.length > 0) {
+        failures.push(`Record ${recordRef.id} reviewer contains unsupported fields: ${reviewerExtraKeys.join(', ')}`)
         hasRecordStructuralError = true
       }
-      if (typeof recordRaw.reviewer.independent !== 'boolean') {
-        failures.push(`Record ${recordRef.id} reviewer independent field must be a boolean`)
+      if (typeof recordRaw.reviewer.identity !== 'string' || !recordRaw.reviewer.identity.trim()) {
+        failures.push(`Record ${recordRef.id} reviewer must have non-empty identity`)
         hasRecordStructuralError = true
       }
       if (typeof recordRaw.reviewer.reviewedAt !== 'string' || !recordRaw.reviewer.reviewedAt.trim()) {
@@ -880,6 +801,11 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
           failures.push(`Record ${recordRef.id} finding at index ${fIdx} must be an object`)
           hasRecordStructuralError = true
           continue
+        }
+        const findingExtraKeys = unsupportedKeys(finding, ['id', 'severity', 'disposition', 'evidencePaths'])
+        if (findingExtraKeys.length > 0) {
+          failures.push(`Record ${recordRef.id} finding at index ${fIdx} contains unsupported fields: ${findingExtraKeys.join(', ')}`)
+          hasRecordStructuralError = true
         }
         if (typeof finding.id !== 'string' || !finding.id.trim()) {
           failures.push(`Record ${recordRef.id} finding at index ${fIdx} id must be a non-empty string`)
@@ -941,6 +867,11 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
         failures.push(`Record ${recordRef.id} source-review must have source object`)
         hasRecordStructuralError = true
       } else {
+        const sourceExtraKeys = unsupportedKeys(src, ['revision', 'baseRevision', 'coveredTreeDigest'])
+        if (sourceExtraKeys.length > 0) {
+          failures.push(`Record ${recordRef.id} source contains unsupported fields: ${sourceExtraKeys.join(', ')}`)
+          hasRecordStructuralError = true
+        }
         if (typeof src.revision !== 'string' || !FULL_SHA_PATTERN.test(src.revision)) {
           failures.push(`Record ${recordRef.id} source.revision must be a 40-character lowercase hex Git commit`)
           hasRecordStructuralError = true
@@ -954,38 +885,9 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
           hasRecordStructuralError = true
         }
       }
-
-      if (recordRaw.signature !== undefined) {
-        const sig = recordRaw.signature
-        if (!isPlainObject(sig)) {
-          failures.push(`Record ${recordRef.id} signature must be an object`)
-          hasRecordStructuralError = true
-        } else {
-          if (sig.algorithm !== 'ed25519') {
-            failures.push(`Record ${recordRef.id} signature.algorithm must be "ed25519", received: ${String(sig.algorithm)}`)
-            hasRecordStructuralError = true
-          }
-          if (typeof sig.keyId !== 'string' || !sig.keyId.trim()) {
-            failures.push(`Record ${recordRef.id} signature.keyId must be a non-empty string`)
-            hasRecordStructuralError = true
-          }
-          if (typeof sig.value !== 'string' || !sig.value.trim()) {
-            failures.push(`Record ${recordRef.id} signature.value must be a non-empty string`)
-            hasRecordStructuralError = true
-          }
-        }
-      }
     } else if (recordKind === 'working-tree-audit') {
-      if (isPlainObject(recordRaw.reviewer) && recordRaw.reviewer.independent !== false) {
-        failures.push(`Working-tree-audit record ${recordRef.id} must declare reviewer.independent as false`)
-        hasRecordStructuralError = true
-      }
       if (recordRaw.releaseEligible !== false) {
         failures.push(`Working-tree-audit record ${recordRef.id} must declare releaseEligible as false`)
-        hasRecordStructuralError = true
-      }
-      if (recordRaw.signature !== undefined) {
-        failures.push(`Working-tree-audit record ${recordRef.id} must not have a signature`)
         hasRecordStructuralError = true
       }
       const src = recordRaw.source
@@ -993,6 +895,11 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
         failures.push(`Record ${recordRef.id} working-tree-audit must have source object`)
         hasRecordStructuralError = true
       } else {
+        const sourceExtraKeys = unsupportedKeys(src, ['baseRevision', 'fingerprint', 'fingerprintAlgorithm'])
+        if (sourceExtraKeys.length > 0) {
+          failures.push(`Record ${recordRef.id} source contains unsupported fields: ${sourceExtraKeys.join(', ')}`)
+          hasRecordStructuralError = true
+        }
         if (typeof src.baseRevision !== 'string' || !FULL_SHA_PATTERN.test(src.baseRevision)) {
           failures.push(`Record ${recordRef.id} source.baseRevision must be a 40-character lowercase hex Git commit`)
           hasRecordStructuralError = true
@@ -1009,17 +916,13 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
         }
       }
     }
-
     if (!hasRecordStructuralError) {
       recordsById.set(recordRef.id, recordRaw as unknown as ReviewRecord)
-      rawRecordsById.set(recordRef.id, recordRaw)
     }
   }
 
   const activeRecord = recordsById.get(manifestActiveReviewId)
-  const activeRecordRaw = rawRecordsById.get(manifestActiveReviewId)
-
-  if (!activeRecord || !activeRecordRaw) {
+  if (!activeRecord) {
     failures.push(`Active review record "${manifestActiveReviewId}" could not be loaded`)
     return failures
   }
@@ -1028,8 +931,16 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
     failures.push(`Active review record must have kind "source-review", found: "${activeRecord.kind}"`)
     return failures
   }
+  if (activeRecord.evidencePaths.length === 0) {
+    failures.push('Active review record must declare at least one evidence path')
+  }
+  for (const finding of activeRecord.findings) {
+    if (finding.evidencePaths.length === 0) {
+      failures.push(`Active finding ${finding.id} must declare at least one evidence path`)
+    }
+  }
 
-  if (threatModelRaw) {
+  if (threatModelRaw !== undefined) {
     const computedDigest = computeThreatModelDigest(threatModelRaw)
     if (activeRecord.threatModelDigest !== computedDigest) {
       failures.push(`Threat-model content digest does not match active review record: expected ${activeRecord.threatModelDigest}, computed ${computedDigest}`)
@@ -1037,12 +948,12 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
   }
 
   if (threatModelContract) {
-    await validateContainedPaths(rootPath, realRoot, threatModelContract.citedPaths, 'Cited path', failures)
+    await validateContainedPaths(rootPath, realRoot, threatModelContract.citedPaths, 'Cited path', 'existing-path', failures)
   }
 
-  await validateContainedPaths(rootPath, realRoot, activeRecord.evidencePaths, 'Active record evidence path', failures)
+  await validateContainedPaths(rootPath, realRoot, activeRecord.evidencePaths, 'Active record evidence path', 'regular-file', failures)
   for (const finding of activeRecord.findings) {
-    await validateContainedPaths(rootPath, realRoot, finding.evidencePaths, `Finding ${finding.id} evidence path`, failures)
+    await validateContainedPaths(rootPath, realRoot, finding.evidencePaths, `Finding ${finding.id} evidence path`, 'regular-file', failures)
   }
 
   let packageManifest: PackageManifest | undefined
@@ -1077,8 +988,32 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
         failures.push(`package.json must define threat-model:check as ${THREAT_MODEL_SCRIPT}`)
       }
       const ciStatic = scripts['ci:static']
-      if (typeof ciStatic !== 'string' || !ciStatic.split(' && ').includes(THREAT_MODEL_CI_COMMAND)) {
-        failures.push('ci:static must execute bun run threat-model:check')
+      if (typeof ciStatic !== 'string') {
+        failures.push('ci:static must be a canonical && command chain')
+      } else {
+        const chain = ciStatic.split(' && ')
+        const dependencyCheckIndex = chain.indexOf('bun run dependencies:check')
+        const licenseCheckIndex = chain.indexOf('bun run licenses:check')
+        const auditIndex = chain.indexOf(THREAT_MODEL_AUDIT_COMMAND)
+        const threatModelIndex = chain.indexOf(THREAT_MODEL_CI_COMMAND)
+        const hasSuppressedFailure = /\|\|/.test(ciStatic) || /(^|[^&])&([^&]|$)/.test(ciStatic)
+
+        if (threatModelIndex === -1) {
+          failures.push('ci:static must execute bun run threat-model:check as an exact && segment')
+        }
+        if (
+          auditIndex === -1 ||
+          hasSuppressedFailure ||
+          dependencyCheckIndex === -1 ||
+          licenseCheckIndex === -1 ||
+          auditIndex <= dependencyCheckIndex ||
+          auditIndex <= licenseCheckIndex ||
+          (threatModelIndex !== -1 && auditIndex >= threatModelIndex)
+        ) {
+          failures.push(
+            'ci:static must execute exact unconditional bun audit --production after dependencies:check and licenses:check and before threat-model:check'
+          )
+        }
       }
     }
   }
@@ -1297,80 +1232,6 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
     failures.push(`Working tree has dirty security-boundary drift:\n${boundaryDriftSections.join('\n')}`)
   }
 
-  const trustedKeysEnv = process.env.THREAT_REVIEW_TRUSTED_KEYS_JSON
-  let trustedKeysConfig: TrustedKeysConfig | undefined
-
-  if (trustedKeysEnv && trustedKeysEnv.trim()) {
-    const parseRes = parseTrustedKeysConfig(trustedKeysEnv)
-    if (parseRes.error) {
-      failures.push(parseRes.error)
-    } else {
-      trustedKeysConfig = parseRes.config
-    }
-  }
-
-  for (const recordRef of validRecordRefs) {
-    const record = recordsById.get(recordRef.id)
-    const recordRaw = rawRecordsById.get(recordRef.id)
-    if (!record || !recordRaw) continue
-
-    if (record.kind === 'source-review') {
-      const claimsIndependent = record.reviewer.independent === true
-      const claimsReleaseEligible = record.releaseEligible === true
-      const claimsIndependenceOrRelease = claimsIndependent || claimsReleaseEligible
-      const recordLabel = record.id === manifestActiveReviewId ? 'Active review record' : `Record ${record.id}`
-
-      if (claimsIndependenceOrRelease) {
-        if (!record.signature) {
-          const claims: string[] = []
-          if (claimsIndependent) claims.push('independent=true')
-          if (claimsReleaseEligible) claims.push('releaseEligible=true')
-          failures.push(`${recordLabel} claims ${claims.join(' and ')} but has no signature`)
-        }
-        if (!trustedKeysConfig) {
-          if (!trustedKeysEnv || !trustedKeysEnv.trim()) {
-            if (!failures.some(f => f.includes('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required'))) {
-              failures.push(
-                options.release
-                  ? 'THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required for release verification'
-                  : 'THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required to verify trusted review records'
-              )
-            }
-          }
-        }
-      }
-
-      if (record.signature) {
-        if (!trustedKeysConfig) {
-          if (!trustedKeysEnv || !trustedKeysEnv.trim()) {
-            if (options.release && !failures.some(f => f.includes('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required'))) {
-              failures.push('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required for release verification')
-            }
-          }
-        } else {
-          const sigKeyId = record.signature.keyId
-          const trustedKey = trustedKeysConfig.keys.find(k => k.id === sigKeyId)
-          if (!trustedKey) {
-            failures.push(`${recordLabel} signature keyId "${sigKeyId}" is not in trusted keys`)
-          } else if (record.reviewer.identity !== trustedKey.identity) {
-            failures.push(`${recordLabel} reviewer identity "${record.reviewer.identity}" does not match trusted key identity "${trustedKey.identity}"`)
-          } else {
-            try {
-              const keyObj = parseEd25519PublicKey(trustedKey.publicKey)
-              const sigBytes = parseSignatureValue(record.signature.value)
-              const payload = computeRecordSigningPayload(recordRaw)
-              const isValid = crypto.verify(null, payload, keyObj, sigBytes)
-              if (!isValid) {
-                failures.push(`${recordLabel} signature verification failed`)
-              }
-            } catch (error) {
-              failures.push(`${recordLabel} signature verification error: ${error instanceof Error ? error.message : String(error)}`)
-            }
-          }
-        }
-      }
-    }
-  }
 
   if (options.release) {
     const allDirtySections: string[] = []
@@ -1389,21 +1250,10 @@ export async function checkThreatModel(rootPath = process.cwd(), options: Threat
     if (allDirtySections.length > 0) {
       failures.push(`Release check requires a clean repository, but dirty paths were found:\n${allDirtySections.join('\n')}`)
     }
-
-    if (!activeRecord.reviewer.independent) {
-      failures.push(`Active review record reviewer must be independent for release: ${activeRecord.reviewer.identity}`)
-    }
     if (!activeRecord.releaseEligible) {
       failures.push('Active review record is not marked releaseEligible')
     }
-    if (!activeRecord.signature) {
-      failures.push('Active review record must have a valid detached signature for release')
-    }
-    if (!trustedKeysEnv || !trustedKeysEnv.trim()) {
-      if (!failures.some(f => f.includes('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required'))) {
-        failures.push('THREAT_REVIEW_TRUSTED_KEYS_JSON environment variable is required for release verification')
-      }
-    }
+
     const blockingFindings = activeRecord.findings.filter(finding => finding.disposition === 'blocking')
     if (blockingFindings.length > 0) {
       failures.push(`Release blocked by unresolved findings: ${blockingFindings.map(f => f.id).join(', ')}`)

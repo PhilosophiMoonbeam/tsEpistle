@@ -46,7 +46,7 @@ const registrations = [
 ]
 
 applyReaderLayout(siteConfig.readerLayout)
-wikiStore.refreshAuth()
+await wikiStore.refreshAuth()
 
 const resolveVuetifyMessageLocale = (language: string): keyof typeof vuetifyLocaleMessages | undefined => {
   const languageParts = language.trim().toLowerCase().replaceAll('_', '-').split('-')

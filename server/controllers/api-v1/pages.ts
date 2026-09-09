@@ -2,7 +2,8 @@ import express from 'express'
 import type { Request } from 'express'
 
 import { getWikiAuth, objectValue } from '../_types.ts'
-import { principalId } from '../../helpers/page-access.ts'
+import { canViewRestrictedPageFields } from '../../helpers/page-field-projection.ts'
+import { pageRuleAuthorityMatchesRequester, type PageRuleAuthority } from '../../helpers/group-access.ts'
 import pageOperations from '../../operations/pages.ts'
 
 const router = express.Router()
@@ -25,37 +26,50 @@ const nonNegativeInteger = (value: unknown): number | null => {
 
 const requesterInput = (req: Request): { requester?: Express.User } => (req.user === undefined ? {} : { requester: req.user })
 
-const canRequestPages = (req: Request): boolean => principalId(req.user) !== null || getWikiAuth().checkAccess(req.user, ['read:pages', 'manage:system'])
+const canRequestPages = (req: Request, authority: PageRuleAuthority): boolean => {
+  if (!pageRuleAuthorityMatchesRequester(req.user, authority) || !Array.isArray(authority.permissions)) return false
+  return (
+    authority.permissions.includes('manage:system') ||
+    (authority.permissions.includes('read:pages') &&
+      (authority.permissions.includes('write:pages') || authority.permissions.includes('manage:pages')))
+  )
+}
 
 router.get('/', async (req, res, next) => {
-  if (!canRequestPages(req)) return res.status(403).json({ error: 'read:pages or manage:system is required' })
-
-  const parsedLimit = req.query.limit === undefined ? DEFAULT_LIMIT : positiveInteger(req.query.limit)
-  const parsedOffset = req.query.offset === undefined ? 0 : nonNegativeInteger(req.query.offset)
-  if (parsedLimit === null || parsedLimit > MAX_LIMIT) {
-    return res.status(400).json({ error: `limit must be an integer from 1 through ${MAX_LIMIT}` })
-  }
-  if (parsedOffset === null) return res.status(400).json({ error: 'offset must be a non-negative integer' })
-
-  const locale = typeof req.query.locale === 'string' && req.query.locale.length > 0 ? req.query.locale : undefined
-  const tags =
-    typeof req.query.tags === 'string'
-      ? req.query.tags
-          .split(',')
-          .map(tag => tag.trim().toLowerCase())
-          .filter(Boolean)
-      : []
-
   try {
+    const authority = await getWikiAuth().loadPageRuleAuthority(req.user)
+    if (!canRequestPages(req, authority)) return res.status(403).json({ error: 'Forbidden' })
+
+    const parsedLimit = req.query.limit === undefined ? DEFAULT_LIMIT : positiveInteger(req.query.limit)
+    const parsedOffset = req.query.offset === undefined ? 0 : nonNegativeInteger(req.query.offset)
+    if (parsedLimit === null || parsedLimit > MAX_LIMIT) {
+      return res.status(400).json({ error: `limit must be an integer from 1 through ${MAX_LIMIT}` })
+    }
+    if (parsedOffset === null) return res.status(400).json({ error: 'offset must be a non-negative integer' })
+
+    const locale = typeof req.query.locale === 'string' && req.query.locale.length > 0 ? req.query.locale : undefined
+    const tags =
+      typeof req.query.tags === 'string'
+        ? req.query.tags
+            .split(',')
+            .map(tag => tag.trim().toLowerCase())
+            .filter(Boolean)
+        : []
+
     const rows = await pageOperations.list({
       ...requesterInput(req),
+      authority,
       limit: parsedLimit + 1,
       offset: parsedOffset,
       tags,
       ...(locale === undefined ? {} : { locale })
     })
+    const emittedRows = rows.slice(0, parsedLimit)
+    if (emittedRows.some(page => !canViewRestrictedPageFields({ requester: req.user, page, authority }))) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
     const hasMore = rows.length > parsedLimit
-    const items = rows.slice(0, parsedLimit).map(page => {
+    const items = emittedRows.map(page => {
       const row = page as unknown as Record<string, unknown>
       return {
         contentType: objectValue(row, 'contentType'),
@@ -86,12 +100,17 @@ router.get('/', async (req, res, next) => {
 })
 
 router.get('/:id', async (req, res, next) => {
-  if (!canRequestPages(req)) return res.status(403).json({ error: 'read:pages or manage:system is required' })
-  const id = positiveInteger(req.params.id)
-  if (id === null) return res.status(400).json({ error: 'id must be a positive integer' })
-
   try {
-    const page = await pageOperations.get({ ...requesterInput(req), sessionId: req.sessionID, id })
+    const authority = await getWikiAuth().loadPageRuleAuthority(req.user)
+    if (!canRequestPages(req, authority)) return res.status(403).json({ error: 'Forbidden' })
+
+    const id = positiveInteger(req.params.id)
+    if (id === null) return res.status(400).json({ error: 'id must be a positive integer' })
+
+    const page = await pageOperations.get({ ...requesterInput(req), authority, sessionId: req.sessionID, id })
+    if (!canViewRestrictedPageFields({ requester: req.user, page, authority })) {
+      return res.status(403).json({ error: 'Forbidden' })
+    }
     const row = page as unknown as Record<string, unknown>
     return res.json({
       authorId: objectValue(row, 'authorId') ?? null,
@@ -108,7 +127,11 @@ router.get('/:id', async (req, res, next) => {
       ownerId: page.ownerId ?? null,
       path: page.path,
       publishEndDate: objectValue(row, 'publishEndDate') || null,
-      tags: page.tags.map(tag => tag.tag),
+      tags: Array.isArray(page.tags)
+        ? page.tags
+            .map(tag => (typeof tag === 'string' ? tag : objectValue(tag, 'tag')))
+            .filter((tag): tag is string => typeof tag === 'string')
+        : [],
       publishStartDate: objectValue(row, 'publishStartDate') || null,
       title: page.title,
       updatedAt: page.updatedAt,

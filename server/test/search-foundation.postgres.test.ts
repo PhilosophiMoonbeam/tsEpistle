@@ -145,23 +145,23 @@ suite('PostgreSQL shared search foundation', () => {
     await createKnowledgeSearchIndex(db)
 
     originalWiki = wikiRuntime.WIKI
+    const checkAccess = (requester: unknown, permissions: readonly string[], context: Record<string, unknown> = {}) => {
+      if (permissions.includes('manage:system')) {
+        return (
+          typeof requester === 'object' &&
+          requester !== null &&
+          Array.isArray(Reflect.get(requester, 'permissions')) &&
+          Reflect.get(requester, 'permissions').includes('manage:system')
+        )
+      }
+      const tags = Array.isArray(context.tags) ? context.tags : []
+      return !tags.some(
+        tag => (typeof tag === 'string' ? tag : tag !== null && typeof tag === 'object' ? Reflect.get(tag, 'tag') : undefined) === 'graph-denied'
+      )
+    }
+    const loadPageRuleAuthority = async (requester: unknown) => ({ requester, permissions: [], groups: [], tagAliases: {} })
     const wiki = {
-      auth: {
-        checkAccess: (requester: unknown, permissions: readonly string[], context: Record<string, unknown> = {}) => {
-          if (permissions.includes('manage:system')) {
-            return (
-              typeof requester === 'object' &&
-              requester !== null &&
-              Array.isArray(Reflect.get(requester, 'permissions')) &&
-              Reflect.get(requester, 'permissions').includes('manage:system')
-            )
-          }
-          const tags = Array.isArray(context.tags) ? context.tags : []
-          return !tags.some(
-            tag => (typeof tag === 'string' ? tag : tag !== null && typeof tag === 'object' ? Reflect.get(tag, 'tag') : undefined) === 'graph-denied'
-          )
-        }
-      },
+      auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
       config: { db: { type: 'postgres' }, search: { maxHits: 100 }, lang: { code: 'en' } },
       data: { searchEngine: undefined as unknown },
       Error: { SearchActivationFailed: class SearchActivationFailed extends Error {} },

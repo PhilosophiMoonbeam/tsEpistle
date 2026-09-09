@@ -81,7 +81,23 @@ describe('common page downloads', () => {
     global.WIKI = {
       auth: {
         checkAccess: vi.fn((user, permissions) => permissions.every(permission => user?.permissions?.includes(permission))),
-        getEffectivePermissions: vi.fn()
+        checkPageAccess: vi.fn((user, permissions, _page, authority) =>
+          authority?.requester === user && permissions.some(permission => user?.permissions?.includes(permission))
+        ),
+        loadPageRuleAuthority: vi.fn(async requester => ({
+          requester,
+          permissions: requester?.permissions ?? [],
+          groups: [],
+          tagAliases: {}
+        })),
+        getEffectivePermissions: vi.fn((req, _page, authority) => {
+          const allowed = permissions => authority?.requester === req.user && permissions.some(permission => req.user?.permissions?.includes(permission))
+          return {
+            pages: { read: allowed(['read:pages']), write: allowed(['write:pages']), manage: allowed(['manage:pages']) },
+            history: { read: allowed(['read:history']) },
+            source: { read: allowed(['read:source']) }
+          }
+        })
       },
       config: {
         seo: { robots: [] },

@@ -1,6 +1,6 @@
-import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile, rename, unlink } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
+import { openStorageRoot } from '../local-filesystem.ts'
 
 const shellArgument = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
@@ -25,18 +25,17 @@ export const gitStorageHttpRemote = (address: string, username: string, password
   return url.toString()
 }
 
-export const writeGitStorageConnectionFile = async (dataPath: string, name: 'git-ssh.pem' | 'git-known-hosts', contents: string): Promise<string> => {
-  const folder = path.resolve(dataPath, 'secure'),
-    destination = path.join(folder, name),
-    temporary = `${destination}.${randomUUID()}.tmp`
-  await mkdir(folder, { recursive: true, mode: 0o700 })
+export const writeGitStorageConnectionFile = async (
+  dataPath: string,
+  name: 'git-ssh.pem' | 'git-known-hosts',
+  contents: string
+): Promise<string> => {
+  await mkdir(dataPath, { recursive: true, mode: 0o700 })
+  const root = await openStorageRoot(dataPath)
   try {
-    await writeFile(temporary, contents.endsWith('\n') ? contents : `${contents}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
-    await rename(temporary, destination)
-    return destination
+    await root.writeAtomic(`secure/${name}`, contents.endsWith('\n') ? contents : `${contents}\n`)
   } finally {
-    await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error
-    })
+    await root.close()
   }
+  return path.resolve(dataPath, 'secure', name)
 }

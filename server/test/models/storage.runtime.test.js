@@ -58,6 +58,24 @@ describe('Storage runtime replacement and synchronization', () => {
     expect(second.runtimeGeneration).not.toBe(first.runtimeGeneration)
     expect(template.deactivated).toHaveBeenCalledTimes(1)
   })
+
+  it('forwards the persisted asset identity to active local providers', async () => {
+    await Storage.initTargets()
+    const identity = {
+      id: 19,
+      hash: 'asset-hash',
+      path: 'docs/guide.txt',
+      filename: 'guide.txt',
+      folderId: 3
+    }
+    const location = { open: vi.fn() }
+    template.getLocalLocation.mockResolvedValue(location)
+
+    const locations = await Storage.getLocalLocations({ asset: identity })
+
+    expect(template.getLocalLocation).toHaveBeenCalledWith(identity)
+    expect(locations).toEqual([{ location, key: 'disk' }])
+  })
   it('preserves the latest manual receipt during scheduled success and failure and ignores stale generations', async () => {
     await Storage.initTargets()
     const target = Storage.targets[0],

@@ -613,10 +613,10 @@ async function sendProfileRequest(fetchImpl: FetchImpl, path: string, method: st
     body: JSON.stringify(body)
   })
   const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || typeof payload.token !== 'string' || payload.token.length < 1) {
+  if (!isRecord(payload) || typeof payload.message !== 'string' || payload.message.length < 1 || 'token' in payload || 'jwt' in payload) {
     throw new Error(fallbackMessage)
   }
-  return payload.token
+  return payload.message
 }
 
 export function updateProfile(fetchImpl: FetchImpl, input: ProfileUpdateInput, fallbackMessage = 'Profile update failed'): Promise<string> {

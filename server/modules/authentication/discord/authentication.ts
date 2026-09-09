@@ -1,4 +1,5 @@
 import { asError, wiki, type AuthenticationPlugin } from '../../types.ts'
+import { discordOauth2StateOptions } from '../oauth-state.ts'
 
 // ------------------------------------
 // Discord Account
@@ -17,6 +18,7 @@ const plugin: AuthenticationPlugin = {
         clientSecret: conf.clientSecret,
         authorizationURL: 'https://discord.com/api/oauth2/authorize?prompt=none',
         callbackURL: conf.callbackURL,
+        ...discordOauth2StateOptions(conf),
         scope: [
           DiscordScope.Identify,
           DiscordScope.Email,

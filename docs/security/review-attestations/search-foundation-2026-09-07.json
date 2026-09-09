@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "search-foundation-2026-09-07",
   "kind": "working-tree-audit",
   "repository": "PhilosophiMoonbeam/tsEpistle",
@@ -7,7 +7,6 @@
   "threatModelDigest": "e873cd500c8e8fca2a9e8292b3fa62b293cc4a2664e763857f03c3d81024ab16",
   "reviewer": {
     "identity": "tsEpistle maintainers",
-    "independent": false,
     "reviewedAt": "2026-09-07"
   },
   "releaseEligible": false,

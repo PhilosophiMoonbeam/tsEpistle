@@ -97,7 +97,7 @@ router.post('/folders', async (req, res, next) => {
   const slug = objectValue(req.body, 'slug')
   if (typeof slug !== 'string' || slug.length < 1) return res.status(400).json({ error: 'slug must be a non-empty string' })
   try {
-    await assetOperations.createFolder({ parentFolderId, slug })
+    await assetOperations.createFolder({ requester: req.user, parentFolderId, slug })
     res.status(201).json({ message: 'Asset folder created successfully.' })
   } catch (err) {
     next(err)

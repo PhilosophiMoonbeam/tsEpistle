@@ -2,7 +2,7 @@
   <v-container fluid class="admin-api api-workspace">
     <admin-hero title="API access" description="Give every application and agent a clear identity in your wiki." eyebrow="Intelligence & connections" icon="mdi-api">
       <template #status><v-chip v-if="loadState === 'success'" size="small" :color="enabled ? 'success' : 'warning'">{{ enabled ? 'API-key access enabled' : 'API-key access disabled' }}</v-chip></template>
-      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loadState === 'loading'" :disabled="adminApiBusy" @click="refresh()">Refresh</v-btn><v-btn color="primary" prepend-icon="mdi-plus" :disabled="loadState !== 'success' || adminApiBusy" @click="newKey()">Create key</v-btn></template>
+      <template #actions><v-btn variant="text" prepend-icon="mdi-refresh" :loading="loadState === 'loading'" :disabled="adminApiBusy" @click="refresh()">Refresh</v-btn><v-btn color="primary" prepend-icon="mdi-plus" :disabled="loadState !== 'success' || adminApiBusy || (!createFullAccess && !assignableGroups.length)" @click="newKey()">Create key</v-btn></template>
     </admin-hero>
     <v-alert v-if="loadState === 'error'" type="error" variant="tonal" class="mb-4">Credential inventory could not be loaded. <v-btn variant="text" @click="refresh(false)">Retry</v-btn></v-alert>
     <v-alert v-if="loadState === 'success' && !enabled" type="warning" variant="tonal" class="mb-4">API-key authentication is disabled. You can prepare credentials here; applications and MCP clients can use them after access is enabled. Browser sessions remain separate.</v-alert>
@@ -24,7 +24,7 @@
               <v-alert v-if="key.grant.mcpResource && (key.grant.mcpResourceVersion !== 1 || (connections && key.grant.mcpResource !== connections.mcpResource))" type="warning" variant="tonal" class="mb-3">This binding does not match the current MCP resource contract. Create a replacement key for this deployment.</v-alert>
               <p>{{ key.grant.groupId === 1 ? 'This key carries system-administrator authority. Use a scoped group when the integration needs less access.' : !key.grant.groupId ? 'The issued grant could not be read. Create a replacement with an explicit permission source before using this integration.' : 'The group’s current permissions and page rules apply to every request. Changing the group changes what this key can do.' }}</p>
               <p v-if="keyState(key) === 'active' && !enabled" class="api-note">This credential has not expired or been revoked, but API-key authentication is currently disabled.</p>
-              <div class="api-record-actions"><v-btn variant="outlined" :disabled="adminApiBusy" prepend-icon="mdi-key-plus" @click="newKey(key)">Create replacement</v-btn><v-btn v-if="!key.isRevoked" variant="text" color="error" :disabled="adminApiBusy" @click="revoke(key)">Revoke key</v-btn></div>
+              <div class="api-record-actions"><v-btn variant="outlined" :disabled="adminApiBusy" prepend-icon="mdi-key-plus" @click="newKey(key)">Create replacement</v-btn><v-btn v-if="!key.isRevoked && key.canRevoke" variant="text" color="error" :disabled="adminApiBusy" @click="revoke(key)">Revoke key</v-btn></div>
             </div>
           </details>
         </div>
@@ -38,7 +38,7 @@
       <div class="api-explorer-intro"><div><span class="api-kicker">An interactive schema</span><h2>Explore the shape of your wiki.</h2><p>Use the GraphQL workspace to inspect schema documentation, compose queries, and examine real responses. Start with a small page inventory and expand from there.</p><v-btn color="primary" prepend-icon="mdi-code-braces" href="/graphql" target="_blank" rel="noopener">Open GraphQL workspace<v-icon end size="16">mdi-open-in-new</v-icon></v-btn></div><aside><h3>Your session is the starting point</h3><p>The explorer uses your signed-in browser session. Permissions and page rules still apply. API-key enablement does not control session access.</p><p>To evaluate a key, use its bearer token in the request headers. Header values are not intentionally persisted by the workspace. Mutations change real data.</p></aside></div>
       <div class="api-explorer-principles"><div><span>01</span><h3>Discover</h3><p>Browse types, fields and arguments in the schema documentation.</p></div><div><span>02</span><h3>Compose</h3><p>Use variables and autocomplete to build a precise request.</p></div><div><span>03</span><h3>Inspect</h3><p>Review returned data and permission errors before putting the query into an integration.</p></div></div>
     </section>
-    <create-api-key v-model="isCreateDialogShown" :refresh-api-keys="refresh" :connections="connections" :seed="replacementKey" @sensitive-state="credentialFlowProtected = $event" @retry-connections="loadConnections" />
+    <create-api-key v-model="isCreateDialogShown" :refresh-api-keys="refresh" :connections="connections" :assignable-groups="assignableGroups" :create-full-access="createFullAccess" :seed="replacementKey" @sensitive-state="credentialFlowProtected = $event" @retry-connections="loadConnections" />
     <v-dialog v-model="isRevokeConfirmDialogShown" max-width="520" persistent aria-labelledby="revoke-api-key-dialog-title"><v-card><v-card-title id="revoke-api-key-dialog-title">Revoke this key?</v-card-title><v-card-text><strong>{{ current?.name }}</strong> will stop authenticating new requests. Revocation cannot be undone. If replacing a key, configure and verify the new credential first.</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="revokeLoading" @click="isRevokeConfirmDialogShown = false">Keep key</v-btn><v-btn color="error" :loading="revokeLoading" @click="revokeConfirm">Revoke key</v-btn></v-card-actions></v-card></v-dialog>
     <v-dialog v-model="disableDialog" max-width="520" persistent aria-labelledby="disable-api-title"><v-card><v-card-title id="disable-api-title">Disable API-key access?</v-card-title><v-card-text>All API-key integrations, including external MCP clients, will lose authentication. Existing keys remain stored. Your browser session remains available to turn access back on.</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="isToggleLoading" @click="disableDialog = false">Keep enabled</v-btn><v-btn color="error" :loading="isToggleLoading" @click="disableApi">Disable access</v-btn></v-card-actions></v-card></v-dialog>
   </v-container>
@@ -50,7 +50,7 @@ import { wikiStore } from '@/store/index.ts'
 
 import CreateApiKey from './admin-api-create.vue'
 import AdminApiConnect from './admin-api-connect.vue'
-import { apiKeyState, type ApiConnectionInfo } from '../../../shared/api-admin.ts'
+import { apiKeyState, type ApiAssignableGroup, type ApiConnectionInfo } from '../../../shared/api-admin.ts'
 import { fetchApiConnections, fetchAdminApiBootstrap, revokeAdminApiKey, setAdminApiState, type AdminApiKey } from '../../helpers/auth-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { apiAccessContract } from '../../../shared/api-access.ts'
@@ -70,6 +70,8 @@ export default {
       clock: Date.now(),
       clockTimer: null as ReturnType<typeof setInterval> | null,
       enabled: false,
+      createFullAccess: false,
+      assignableGroups: [] as ApiAssignableGroup[],
       isToggleLoading: false,
       keys: [] as AdminApiKey[],
       keySearch: '',
@@ -98,7 +100,6 @@ export default {
     apiAccessContract() {
       return apiAccessContract
     },
-    canManageAgents() { return wikiStore.user.permissions.includes('manage:system') },
     mcpEndpoint() { return `${window.location.origin}${apiAccessContract.mcpPath}` },
     graphqlEndpoint() {
       return `${window.location.origin}${apiAccessContract.graphqlPath}`
@@ -149,6 +150,8 @@ export default {
         const bootstrap = await fetchAdminApiBootstrap(window.fetch.bind(window), 'Admin API bootstrap response is invalid')
         if (this.isDisposed) return false
         this.enabled = bootstrap.enabled
+        this.createFullAccess = bootstrap.createFullAccess
+        this.assignableGroups = markRaw(bootstrap.assignableGroups)
         this.keys = markRaw(bootstrap.keys)
         this.loadState = 'success'
         return true
@@ -206,12 +209,12 @@ export default {
       await this.globalSwitch()
     },
     newKey (key?: AdminApiKey) {
-      if (this.isDisposed || this.adminApiBusy) return
+      if (this.isDisposed || this.adminApiBusy || (!key && !this.createFullAccess && !this.assignableGroups.length)) return
       this.replacementKey = key || null
       this.isCreateDialogShown = true
     },
     revoke (key: AdminApiKey) {
-      if (this.isDisposed || this.adminApiBusy || key.isRevoked) return
+      if (this.isDisposed || this.adminApiBusy || key.isRevoked || !key.canRevoke) return
       this.current = key
       this.isRevokeConfirmDialogShown = true
     },

@@ -18,6 +18,7 @@ import system from './core/system.ts'
 import viteAssets from './helpers/vite-assets.ts'
 import { sessionCookieOptions } from './helpers/session-cookie.ts'
 import securityMiddleware from './middlewares/security.ts'
+import createOriginMiddleware from './middlewares/origin.ts'
 import seoMiddleware from './middlewares/seo.ts'
 import createAuthController, { normalizeFaviconUrl, type AuthWiki } from './controllers/auth.ts'
 import createSiteLogoController from './controllers/site-logo.ts'
@@ -51,6 +52,7 @@ import { BrowserWorkerClient } from './agents/browser/client.ts'
 import { createWikiMcpController } from './agents/mcp.ts'
 import { parseAgentOperationalLimits, type AgentOperationalLimits } from './agents/config.ts'
 import { loadWikiAgentUser } from './agents/providers/wiki-actions.ts'
+import { createApiPrincipal } from './helpers/api-principal.ts'
 import pageOperations from './operations/pages.ts'
 import { PageKnowledgeLifecycle } from './knowledge/lifecycle.ts'
 import { PageProjectionLifecycle } from './core/page-mutation-outbox.ts'
@@ -285,19 +287,9 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
         knex: wiki.models.knex,
         operations: pageOperations,
         authenticate: wiki.auth.authenticate.bind(wiki.auth),
-        resolvePrincipal: async (_apiKeyId, groupId) => {
+        resolvePrincipal: async (apiKeyId, groupId) => {
           const permissions = wiki.auth.groups[String(groupId)]?.permissions ?? []
-          const groups = [groupId]
-          return {
-            id: 1,
-            email: 'api@localhost',
-            name: 'API',
-            permissions,
-            groups,
-            ownershipUserId: null,
-            getGlobalPermissions: () => permissions,
-            getGroups: () => groups
-          }
+          return createApiPrincipal(apiKeyId, groupId, permissions)
         },
         resolveUser: loadWikiAgentUser,
         config: {
@@ -480,6 +472,7 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   })
   if (mcpController) app.all('/mcp', wiki.auth.authenticate.bind(wiki.auth), mcpController)
   app.use(wiki.auth.authenticate.bind(wiki.auth))
+  app.use(createOriginMiddleware(() => wiki.config.host))
   app.use(agentsController)
 
   await wiki.servers.startGraphQL()

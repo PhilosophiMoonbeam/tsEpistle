@@ -1,10 +1,14 @@
+import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
+import type { Knex } from 'knex'
 import type { NextFunction, Request, Response } from 'express'
 
 export type { NextFunction, Request, Response }
 
 export interface WikiAuth {
-  checkAccess(user: Express.User | undefined, permissions: string[], context?: unknown): boolean
-  getEffectivePermissions(request: Request, context: unknown): unknown
+  checkAccess(user: Express.User | undefined, permissions: readonly string[]): boolean
+  checkPageAccess(user: Express.User | undefined, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
+  loadPageRuleAuthority(requester: Express.User | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+  getEffectivePermissions(request: Request, context: AccessPage, authority: PageRuleAuthority): unknown
 }
 
 export interface OperationError extends Error {

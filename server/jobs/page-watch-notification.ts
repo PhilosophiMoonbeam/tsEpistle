@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import type { Knex } from 'knex'
 import type { DurableJobHandler } from '../core/durable-jobs.ts'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { canReadPage, pageRoute } from '../helpers/page-access.ts'
+import type { PageVisibilityRecord } from '../helpers/page-access.ts'
 
 interface PageWatchPayload {
   deliveryId: string
@@ -25,6 +28,9 @@ interface PageEventPayload {
 export interface PageWatchWikiContext {
   config: { host: string }
   mail: { send(options: { template: string; to: string; subject: string; text: string; messageId: string; data: Record<string, unknown> }): Promise<unknown> }
+  auth: {
+    loadPageRuleAuthority(requester: Express.User | undefined): Promise<PageRuleAuthority>
+  }
   models: {
     pages: { getPageFromDb(id: number): Promise<Record<string, unknown> | undefined> }
     users: {
@@ -105,6 +111,30 @@ const loadUser = async (wiki: PageWatchWikiContext, userId: number): Promise<Rec
   return user
 }
 
+interface CurrentPage extends PageVisibilityRecord, Record<string, unknown> {
+  title: string
+  path: string
+  localeCode: string
+}
+
+const loadCurrentPage = async (wiki: PageWatchWikiContext, knex: Knex, pageId: number): Promise<CurrentPage | undefined> => {
+  const page = await wiki.models.pages.getPageFromDb(pageId)
+  if (!page) return undefined
+  const tags = Reflect.get(page, 'tags')
+  if (Array.isArray(tags)) return page as CurrentPage
+  const tagRows = await knex<{ tag: string }>('pageTags')
+    .innerJoin('tags', 'tags.id', 'pageTags.tagId')
+    .where('pageTags.pageId', pageId)
+    .orderBy('tags.tag', 'asc')
+    .select('tags.tag')
+  return { ...page, tags: tagRows.map(row => ({ tag: row.tag })) } as CurrentPage
+}
+
+const purgeRecipientPage = async (knex: Knex, pageId: number, userId: number): Promise<void> => {
+  await knex('pageWatchNotifications').where({ pageId, userId }).delete()
+  await knex('pageWatchers').where({ pageId, userId }).delete()
+}
+
 export const createPageWatchNotificationHandler = (wiki: PageWatchWikiContext): DurableJobHandler => async (job, { knex, signal }) => {
   signal.throwIfAborted()
   const payload = parseJobPayload(job.payload)
@@ -118,31 +148,35 @@ export const createPageWatchNotificationHandler = (wiki: PageWatchWikiContext): 
   const email = user && Reflect.get(user, 'email')
   if (!isActive || typeof email !== 'string' || email.length === 0) {
     signal.throwIfAborted()
-    await knex('pageWatchers').where({ pageId: eventPayload.pageId, userId: payload.userId }).delete()
+    await purgeRecipientPage(knex, eventPayload.pageId, payload.userId)
     signal.throwIfAborted()
     await knex('pageWatchDeliveries').where({ id: payload.deliveryId }).update({ deliveredAt: new Date(), lastError: 'Recipient is unavailable' })
     return
   }
-  const page = await wiki.models.pages.getPageFromDb(eventPayload.pageId)
-  const accessTarget = page ?? eventPayload
-  if (!canReadPage(user, accessTarget as never)) {
+  const page = await loadCurrentPage(wiki, knex, eventPayload.pageId)
+  const authority = await wiki.auth.loadPageRuleAuthority(user as Express.User)
+  const hasCurrentMetadata = Boolean(
+    page &&
+    typeof page.title === 'string' &&
+    page.title.length > 0 &&
+    typeof page.path === 'string' &&
+    page.path.length > 0 &&
+    typeof page.localeCode === 'string' &&
+    page.localeCode.length > 0 &&
+    (page.visibility === 'public' || page.visibility === 'private')
+  )
+  if (!page || !hasCurrentMetadata || !canReadPage(user as Express.User, page, authority)) {
     signal.throwIfAborted()
-    await knex('pageWatchers').where({ pageId: eventPayload.pageId, userId: payload.userId }).delete()
+    await purgeRecipientPage(knex, eventPayload.pageId, payload.userId)
     signal.throwIfAborted()
     await knex('pageWatchDeliveries').where({ id: payload.deliveryId }).update({ deliveredAt: new Date(), lastError: 'Page access was revoked' })
     return
   }
 
-  const currentTitle = page && Reflect.get(page, 'title')
-  const currentPath = page && Reflect.get(page, 'path')
-  const currentLocaleCode = page && Reflect.get(page, 'localeCode')
-  const currentVisibility = page && Reflect.get(page, 'visibility')
-  const notificationTitle = typeof currentTitle === 'string' ? currentTitle : eventPayload.title
-  const notificationPath = typeof currentPath === 'string' ? currentPath : eventPayload.path
-  const notificationLocaleCode = typeof currentLocaleCode === 'string' ? currentLocaleCode : eventPayload.localeCode
-  const notificationVisibility = currentVisibility === 'public' || currentVisibility === 'private'
-    ? currentVisibility
-    : eventPayload.visibility
+  const notificationTitle = page.title
+  const notificationPath = page.path
+  const notificationLocaleCode = page.localeCode
+  const notificationVisibility = page.visibility
   const action = eventAction(String(event.type))
   const route = pageRoute({ visibility: notificationVisibility, localeCode: notificationLocaleCode, path: notificationPath })
   const url = `${wiki.config.host.replace(/\/$/, '')}${route}`

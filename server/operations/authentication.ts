@@ -1,4 +1,4 @@
-import type { Request } from 'express'
+import type { Request, Response } from 'express'
 import type { Knex } from 'knex'
 
 import _ from 'lodash'
@@ -10,6 +10,7 @@ import type { PagePrincipal } from '../helpers/page-access.ts'
 import type { SystemRequester } from '../helpers/system-authority.ts'
 import errors from './errors.ts'
 import { createAuthRateLimiter, type AuthRateLimiter } from '../helpers/auth-rate-limiter.ts'
+import commonHelper from '../helpers/common.ts'
 
 const { parseConfig, serializeConfig } = configuration
 const { ApplicationError } = errors
@@ -64,8 +65,13 @@ interface AuthService {
   resetGuestUser(requester?: SystemRequester): Promise<void>
   revokeUserTokens(input: { id: number; kind: 'u' }): void
 }
+interface AuthenticationContext {
+  req: Request
+  res: Response
+}
 interface RegistrationContext {
   req: Request
+  res?: Response
 }
 interface AuthenticationErrors {
   BruteTooManyAttempts: new () => Error
@@ -90,6 +96,30 @@ const getAuthenticationErrors = (): AuthenticationErrors => WIKI.Error as Authen
 const revokeUser = (id: number): void => {
   getAuth().revokeUserTokens({ id, kind: 'u' })
   getOutboundEvents().emit('addAuthRevoke', { id, kind: 'u' })
+}
+const completeAuthentication = (context: AuthenticationContext, value: unknown): Record<string, unknown> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new TypeError('Authentication operation must return an object')
+  const result = value as Record<string, unknown>
+  const token = result.jwt
+  const hasChallenge =
+    result.mustProvideTFA === true ||
+    result.mustSetupTFA === true ||
+    result.mustChangePwd === true
+  const continuationToken = result.continuationToken
+  const hasContinuation = typeof continuationToken === 'string' && continuationToken.length > 0
+  if (hasChallenge) {
+    if (!hasContinuation || (token !== undefined && token !== null)) throw new Error('Authentication token is invalid')
+    const response = { ...result, authenticated: false }
+    Reflect.deleteProperty(response, 'jwt')
+    Reflect.deleteProperty(response, 'userId')
+    return response
+  }
+  if (typeof token !== 'string' || token.length === 0) throw new Error('Authentication token is invalid')
+  context.res.cookie('jwt', token, commonHelper.getCookieOpts())
+  const response = { ...result, authenticated: true }
+  Reflect.deleteProperty(response, 'jwt')
+  Reflect.deleteProperty(response, 'userId')
+  return response
 }
 
 const registrationLimiters = new WeakMap<Knex, AuthRateLimiter>()
@@ -240,8 +270,12 @@ const updateStrategies = async (strategies: unknown, requester: PagePrincipal): 
   await store.save(requester, { providers, fingerprint: saved.fingerprint, reason: 'Updated through the legacy authentication configuration API' })
 }
 
-const login = (args: unknown, context: unknown): unknown => getUserModel().login(args, context)
-const loginForm = (input: { strategyKey: string; username: unknown; password: unknown }, context: unknown): unknown => {
+const login = async (args: unknown, context: AuthenticationContext): Promise<Record<string, unknown>> =>
+  completeAuthentication(context, await getUserModel().login(args, context))
+const loginForm = async (
+  input: { strategyKey: string; username: unknown; password: unknown },
+  context: AuthenticationContext
+): Promise<Record<string, unknown>> => {
   const { strategyKey, username, password } = input
   const strategy = getAuth().strategies[strategyKey]
   const definition = strategy && _.find(getDefinitions(), ['key', strategy.strategyKey])
@@ -253,11 +287,12 @@ const loginForm = (input: { strategyKey: string; username: unknown; password: un
     throw new ApplicationError('username and password must be strings', { code: 'INVALID_AUTHENTICATION_CREDENTIALS' })
   return login({ strategy: strategyKey, username, password }, context)
 }
-const loginTfa = (args: unknown, context: unknown): unknown => getUserModel().loginTFA(args, context)
-const loginChangePassword = async (args: unknown, context: unknown): Promise<{ jwt: string }> => {
+const loginTfa = async (args: unknown, context: AuthenticationContext): Promise<Record<string, unknown>> =>
+  completeAuthentication(context, await getUserModel().loginTFA(args, context))
+const loginChangePassword = async (args: unknown, context: AuthenticationContext): Promise<Record<string, unknown>> => {
   const result = await getUserModel().loginChangePassword(args, context)
   revokeUser(result.userId)
-  return { jwt: result.jwt }
+  return completeAuthentication(context, result)
 }
 const forgotPassword = (args: unknown, context: unknown): unknown => getUserModel().loginForgotPassword(args, context)
 const regenerateCertificates = (requester?: SystemRequester): Promise<{ revokedApiKeys: number }> => getAuth().regenerateCertificates(requester)

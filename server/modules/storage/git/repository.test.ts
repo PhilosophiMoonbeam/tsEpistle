@@ -68,6 +68,8 @@ describe('Git storage repository recovery', () => {
 
     await commitFile(writer, writerDir, 'page.md', 'remote\n', 'remote edit')
     await writer.push('origin', 'main')
+    // Reconciliation consumes an already-fetched object; it must not fetch itself.
+    await local.fetch('origin', 'main')
 
     const logger = { warn: vi.fn() }
     expect(await pullRemoteAuthoritative(local, 'main', logger)).toEqual(['page.md'])

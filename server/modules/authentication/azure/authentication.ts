@@ -1,7 +1,8 @@
 import { synchronizeProviderGroups } from '../../../helpers/authentication-provisioning.ts'
 import { asError, wiki, type AuthenticationPlugin } from '../../types.ts'
 import { discovery } from 'openid-client'
-import { Strategy } from 'openid-client/passport'
+import { OpenIDClientStrategy } from '../openid-client-strategy.ts'
+import { providerRevisionFromConfig } from '../oauth-state.ts'
 import _ from 'lodash'
 
 const DISCOVERY_PATH = '/.well-known/openid-configuration'
@@ -23,15 +24,25 @@ const getClaimGroups = (claims: AzureClaims): string[] | undefined =>
 
 const plugin: AuthenticationPlugin = {
   async init(passport, conf) {
-    const config = await discovery(getIssuerUrl(conf.entryPoint), conf.clientId)
+    const clientMetadata = typeof conf.clientSecret === 'string' && conf.clientSecret.length > 0
+      ? { client_secret: conf.clientSecret }
+      : undefined
+    const config = await discovery(
+      getIssuerUrl(conf.entryPoint),
+      conf.clientId,
+      clientMetadata
+    )
     passport.use(
       conf.key,
-      new Strategy(
+      new OpenIDClientStrategy(
         {
           config,
           callbackURL: conf.callbackURL,
+          providerKey: conf.key,
+          providerRevision: providerRevisionFromConfig(conf),
           scope: 'openid profile email',
-          passReqToCallback: true
+          passReqToCallback: true,
+          name: 'azure'
         },
         async (req, tokens, cb) => {
           const claims = getClaims(tokens.claims())

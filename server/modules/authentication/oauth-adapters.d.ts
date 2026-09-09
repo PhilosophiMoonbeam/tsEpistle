@@ -3,95 +3,22 @@ declare namespace OAuthAdapterContracts {
   type BaseProfile = import('passport').Profile
   type VerifyDone = (error: Error | null, user?: Express.User | false | null) => void
 
+  type StateStore = import('./oauth-state.ts').OAuthStateStore
+
   interface RequestOptions {
     clientID: string
     clientSecret: string
     callbackURL: string
     passReqToCallback: true
+    state?: boolean
+    pkce?: boolean
+    store?: StateStore
+    sessionKey?: string
   }
 
   type RequestVerify<Profile extends BaseProfile> = (request: Request, accessToken: string, refreshToken: string, profile: Profile, done: VerifyDone) => void
 }
 
-declare module 'passport-auth0' {
-  interface StrategyOptions extends OAuthAdapterContracts.RequestOptions {
-    domain: string
-  }
-
-  type Profile = OAuthAdapterContracts.BaseProfile & {
-    readonly _json: Record<string, unknown>
-    readonly _raw: string
-    readonly picture?: string
-    readonly user_id: string
-  }
-
-  type Verify = (
-    request: OAuthAdapterContracts.Request,
-    accessToken: string,
-    refreshToken: string,
-    extraParams: Record<string, unknown>,
-    profile: Profile,
-    done: OAuthAdapterContracts.VerifyDone
-  ) => void
-
-  export class Strategy {
-    constructor(options: StrategyOptions, verify: Verify)
-  }
-
-  interface Auth0Module {
-    Strategy: typeof Strategy
-  }
-
-  const auth0: Auth0Module
-  export default auth0
-}
-
-declare module 'passport-azure-ad' {
-  interface CookieEncryptionKey {
-    key: string
-    iv: string
-  }
-
-  interface OIDCStrategyOptions {
-    identityMetadata: string
-    clientID: string
-    redirectUrl: string
-    responseType: 'id_token'
-    responseMode: 'form_post'
-    scope: string[]
-    allowHttpForRedirectUrl: boolean
-    passReqToCallback: true
-    cookieSameSite: boolean
-    useCookieInsteadOfSession: boolean
-    cookieEncryptionKeys: CookieEncryptionKey[]
-  }
-
-  type Profile = OAuthAdapterContracts.BaseProfile & {
-    readonly oid: string
-    readonly sub: string
-    readonly upn?: string
-    readonly _json: {
-      readonly email?: string
-      readonly preferred_username?: string
-      readonly groups?: string[]
-      readonly [claim: string]: unknown
-    }
-    readonly _raw: string
-  }
-
-  type Verify = (request: OAuthAdapterContracts.Request, issuer: string, subject: string, profile: Profile, done: OAuthAdapterContracts.VerifyDone) => void
-
-  export class OIDCStrategy {
-    constructor(options: OIDCStrategyOptions, verify: Verify)
-  }
-
-  interface AzureAdModule {
-    OIDCStrategy: typeof OIDCStrategy
-  }
-
-  const azureAd: AzureAdModule
-  export default azureAd
-}
 
 declare module 'discord-strategy' {
   export enum DiscordScope {

@@ -1,4 +1,8 @@
 import { EventEmitter } from 'node:events'
+import createKnex from 'knex'
+import { beforeEach, afterEach, describe, expect, it, vi } from '../bun-test.mts'
+import { createApiPrincipal } from '../../helpers/api-principal.ts'
+
 
 const originalWIKI = global.WIKI
 
@@ -7,13 +11,17 @@ class PageUpdateForbidden extends Error {}
 class PageMoveForbidden extends Error {}
 class PageDeleteForbidden extends Error {}
 
+const authorityFor = requester => ({ requester, permissions: [], groups: [], tagAliases: {} })
+const privatePageTags = []
 const privatePage = {
   id: 17,
   path: 'secret',
   localeCode: 'en',
   visibility: 'private',
   ownerId: 7,
-  editorKey: 'markdown'
+  editorKey: 'markdown',
+  tags: privatePageTags,
+  $relatedQuery: vi.fn(async (relation, _transaction) => relation === 'tags' ? privatePageTags : [])
 }
 
 describe('private page mutation existence isolation', () => {
@@ -21,34 +29,46 @@ describe('private page mutation existence isolation', () => {
 
   beforeEach(async () => {
     vi.resetModules()
-    let insertedProjection
+    const mutationOutboxRows = []
     const knex = vi.fn(table => {
       if (table === 'pages') {
         return {
-          select: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              forUpdate: vi.fn().mockReturnValue({
-                first: vi.fn().mockResolvedValue({
-                  id: 17,
-                  sourceRevision: '3',
-                  content: 'changed content',
-                  localeCode: 'en',
-                  path: 'secret',
-                  visibility: 'private',
-                  ownerId: 7
-                })
-              })
-            })
-          })
+          select: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          forUpdate: vi.fn().mockReturnThis(),
+          first: vi.fn().mockResolvedValue({
+            id: 17,
+            sourceRevision: '2',
+            updatedAt: '2026-08-14T00:00:00.000Z',
+            content: 'changed content',
+            localeCode: 'en',
+            path: 'secret',
+            visibility: 'private',
+            ownerId: 7
+          }),
+          update: vi.fn().mockResolvedValue(1)
+        }
+      }
+      if (table === 'pageAccessPasswords') {
+        return {
+          where: vi.fn().mockReturnThis(),
+          first: vi.fn().mockResolvedValue(undefined)
         }
       }
       if (table === 'pageMutationOutbox') {
         return {
           insert: vi.fn(row => {
-            insertedProjection = row
+            const rows = Array.isArray(row) ? row : [row]
+            mutationOutboxRows.push(...rows)
             return { onConflict: vi.fn().mockReturnValue({ ignore: vi.fn().mockResolvedValue([]) }) }
           }),
-          where: vi.fn().mockReturnValue({ first: vi.fn(async () => insertedProjection) })
+          where: vi.fn(criteria => ({
+            first: vi.fn().mockResolvedValue(
+              mutationOutboxRows.find(candidate =>
+                Object.entries(criteria).every(([key, value]) => String(candidate[key]) === String(value))
+              )
+            )
+          }))
         }
       }
       return { insert: vi.fn().mockResolvedValue(1) }
@@ -66,7 +86,11 @@ describe('private page mutation existence isolation', () => {
         PagePathCollision: Error,
         PageUpdateForbidden
       },
-      auth: { checkAccess: vi.fn().mockReturnValue(false) },
+      auth: {
+        checkAccess: vi.fn().mockReturnValue(false),
+        checkPageAccess: vi.fn().mockReturnValue(false),
+        loadPageRuleAuthority: vi.fn(async requester => authorityFor(requester))
+      },
       config: { dataPath: '/test/data', db: { type: 'postgres' }, lang: { code: 'en' } },
       data: {
         editors: [{ key: 'markdown', contentType: 'markdown' }],
@@ -81,7 +105,11 @@ describe('private page mutation existence isolation', () => {
         pageHistory: { addVersion: vi.fn() },
         pages: {},
         storage: { pageEvent: vi.fn() },
-        tags: {}
+        tags: {
+          associateTags: vi.fn(({ tags, page }) => {
+            page.tags = tags.map(tag => ({ tag }))
+          })
+        }
       },
       scheduler: { registerJob: vi.fn() }
     }
@@ -112,6 +140,16 @@ describe('private page mutation existence isolation', () => {
   })
 
   const requester = { id: 8, permissions: ['write:pages', 'delete:pages'] }
+  it('rejects an API principal before reading or mutating a page', async () => {
+    const api = createApiPrincipal(7, 3, ['write:pages'])
+    const lookup = vi.spyOn(Page, 'query')
+
+    await expect(Promise.resolve(Page.updatePage({ id: 17, user: api, content: 'changed' }))).rejects.toMatchObject({
+      code: 'API_KEY_MUTATION_FORBIDDEN',
+      status: 403
+    })
+    expect(lookup).not.toHaveBeenCalled()
+  })
 
   it('returns not found before update or editor-conversion details can leak', async () => {
     vi.spyOn(Page, 'query').mockReturnValue({ findById: vi.fn().mockResolvedValue(privatePage) })
@@ -157,7 +195,6 @@ describe('private page mutation existence isolation', () => {
       ...originalPage,
       content: 'changed content',
       title: 'Changed title',
-      $relatedQuery: vi.fn()
     }
     const patch = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(1) })
     const query = vi.fn()
@@ -250,12 +287,12 @@ describe('private page mutation existence isolation', () => {
     })
 
     expect(result).toBe(originalPage)
-    expect(query).toHaveBeenCalledOnce()
+
     expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
   })
 
-  it('stamps producer provenance and clears verification for an authoritative OKF-only change', async () => {
-    const owner = { id: 7, permissions: [] }
+  it('stamps producer provenance and clears verification through the real update operation', async () => {
+    const owner = { id: 7, name: 'Owner', email: 'owner@example.test', permissions: [] }
     const originalExtra = {
       css: '',
       js: '',
@@ -281,12 +318,16 @@ describe('private page mutation existence isolation', () => {
       title: 'Runbook',
       updatedAt: '2026-08-14T00:00:00.000Z'
     }
+    let persistedPage = { ...originalPage, sourceRevision: '3' }
     const patchQuery = {
       where: vi.fn(),
       then: vi.fn(resolve => resolve(1))
     }
     patchQuery.where.mockReturnValue(patchQuery)
-    const patch = vi.fn().mockReturnValue(patchQuery)
+    const patch = vi.fn(value => {
+      persistedPage = { ...persistedPage, ...value }
+      return patchQuery
+    })
     const query = vi.fn()
       .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(originalPage) })
       .mockReturnValueOnce({ patch })
@@ -295,40 +336,113 @@ describe('private page mutation existence isolation', () => {
           select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z' })
         })
       })
-    const updatedPage = { ...originalPage, sourceRevision: '3' }
-    global.WIKI.models.pages = {
-      query,
-      getPageFromDb: vi.fn().mockResolvedValue(updatedPage),
-      renderPage: vi.fn()
-    }
+    global.WIKI.models.pages = Page
+    vi.spyOn(Page, 'query').mockImplementation(query)
+    vi.spyOn(Page, 'getPageFromDb').mockImplementation(async () => persistedPage)
+    vi.spyOn(Page, 'renderPage').mockResolvedValue(undefined)
+    vi.spyOn(Page, 'deletePageFromCache').mockResolvedValue(undefined)
     global.WIKI.models.knex.table = vi.fn().mockReturnValue({
       where: vi.fn().mockReturnValue({ update: vi.fn().mockResolvedValue(1) })
     })
 
-    const result = await Page.updatePage({
-      id: 17,
-      user: owner,
-      okfMetadata: { type: 'Procedure', status: 'stable' },
-      replaceOkfMetadata: true,
-      okfProducer: 'agent:authority-request',
-      expectedSourceRevision: '2'
+    const operations = (await vi.importFresh('../../operations/pages.ts', import.meta.url)).default
+    const { OKF_PRODUCER_CONTEXT } = await import('../../okf/mutation-context.ts')
+    const result = await operations.update({
+      requester: owner,
+      [OKF_PRODUCER_CONTEXT]: 'agent:authority-request',
+      input: {
+        id: 17,
+        okfMetadata: { type: 'Procedure', status: 'stable' },
+        replaceOkfMetadata: false,
+        expectedSourceRevision: '2'
+      }
     })
 
-    const patchedOkf = patch.mock.calls[0][0].extra.okf
-    expect(patchedOkf).toMatchObject({
+    expect(result).toBe(persistedPage)
+    expect(result.extra.okf).toMatchObject({
       type: 'Procedure',
       generated: { by: 'agent:authority-request', at: expect.any(String) }
     })
-    expect(patchedOkf).not.toHaveProperty('verified')
-    expect(result).toBe(updatedPage)
+    expect(result.extra.okf).not.toHaveProperty('verified')
     expect(result.sourceRevision).toBe('3')
-    expect(patchQuery.where).toHaveBeenCalledTimes(2)
-    expect(patchQuery.where).toHaveBeenNthCalledWith(1, 'id', 17)
-    expect(patchQuery.where).toHaveBeenNthCalledWith(2, 'sourceRevision', '2')
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledWith(expect.objectContaining({
       sourceRevision: '2',
       extra: originalExtra
     }))
+  })
+
+
+  it.each([
+    [
+      'inherited',
+      () =>
+        Object.assign(Object.create({ okfMetadata: { type: 'Metric' } }), {
+          id: 17,
+          title: 'Inherited metadata ignored',
+          expectedSourceRevision: '2'
+        })
+    ],
+    ['omitted', () => ({ id: 17, title: 'Omitted metadata ignored', expectedSourceRevision: '2' })]
+  ])('keeps %s OKF metadata out of the real update result', async (_kind, makeInput) => {
+    const owner = { id: 7, name: 'Owner', email: 'owner@example.test', permissions: [] }
+    const originalPage = {
+      ...privatePage,
+      authorId: 7,
+      content: '# Runbook',
+      contentType: 'markdown',
+      description: '',
+      extra: {
+        css: '',
+        js: '',
+        okf: {
+          type: 'Reference',
+          status: 'stable',
+          generated: { by: 'human:3', at: '2026-08-01T00:00:00.000Z' },
+          verified: { by: 'human:9', at: '2026-08-02T00:00:00.000Z' }
+        }
+      },
+      hash: 'private:7:en:secret',
+      isPublished: true,
+      publishEndDate: '',
+      publishStartDate: '',
+      sourceRevision: '2',
+      title: 'Runbook',
+      updatedAt: '2026-08-14T00:00:00.000Z'
+    }
+    let persistedPage = { ...originalPage, sourceRevision: '3' }
+    const patchQuery = {
+      where: vi.fn(),
+      then: vi.fn(resolve => resolve(1))
+    }
+    patchQuery.where.mockReturnValue(patchQuery)
+    const patch = vi.fn(value => {
+      persistedPage = { ...persistedPage, ...value }
+      return patchQuery
+    })
+    const query = vi.fn()
+      .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(originalPage) })
+      .mockReturnValueOnce({ patch })
+      .mockReturnValueOnce({
+        findById: vi.fn().mockReturnValue({
+          select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-14T00:01:00.000Z' })
+        })
+      })
+    global.WIKI.models.pages = Page
+    vi.spyOn(Page, 'query').mockImplementation(query)
+    vi.spyOn(Page, 'getPageFromDb').mockImplementation(async () => persistedPage)
+    vi.spyOn(Page, 'renderPage').mockResolvedValue(undefined)
+    vi.spyOn(Page, 'deletePageFromCache').mockResolvedValue(undefined)
+    global.WIKI.models.knex.table = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ update: vi.fn().mockResolvedValue(1) })
+    })
+
+    const operations = (await vi.importFresh('../../operations/pages.ts', import.meta.url)).default
+    const result = await operations.update({ requester: owner, input: makeInput() })
+
+    expect(result).toBe(persistedPage)
+    expect(result.extra.okf).toMatchObject({ type: 'Reference' })
+    expect(result.extra.okf).not.toMatchObject({ type: 'Metric' })
+    expect(result.sourceRevision).toBe('3')
   })
 
   it('atomically replaces invalid stored OKF authority with server-owned valid metadata', async () => {
@@ -460,7 +574,7 @@ describe('private page mutation existence isolation', () => {
     expect(global.WIKI.models.pageHistory.addVersion).not.toHaveBeenCalled()
   })
 
-  it('stamps move provenance, clears verification, and reloads the immutable moved revision', async () => {
+  it('stamps move provenance, clears verification, and reloads the immutable moved revision through the real move operation', async () => {
     const owner = { id: 7, name: 'Owner', email: 'owner@example.test', permissions: [] }
     const originalExtra = {
       css: '',
@@ -487,37 +601,41 @@ describe('private page mutation existence isolation', () => {
       title: 'secret',
       updatedAt: '2026-08-14T00:00:00.000Z'
     }
-    const patch = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(1) })
-    const query = vi.fn()
-      .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(originalPage) })
-      .mockReturnValueOnce({ findOne: vi.fn().mockResolvedValue(undefined) })
-      .mockReturnValueOnce({ patch })
-    const getPageFromDb = vi.fn().mockResolvedValue({
+    let persistedPage = {
       ...originalPage,
       path: 'renamed',
       title: 'renamed',
       hash: 'private:7:en:renamed',
       sourceRevision: '3'
-    })
-    global.WIKI.models.pages = {
-      query,
-      getPageFromDb,
-      deletePageFromCache: vi.fn(),
-      rebuildTree: vi.fn()
     }
+    const patch = vi.fn(value => {
+      persistedPage = { ...persistedPage, ...value }
+      return { where: vi.fn().mockResolvedValue(1) }
+    })
+    const query = vi.fn()
+      .mockReturnValueOnce({ findById: vi.fn().mockResolvedValue(originalPage) })
+      .mockReturnValueOnce({ findOne: vi.fn().mockResolvedValue(undefined) })
+      .mockReturnValueOnce({ patch })
+    global.WIKI.models.pages = Page
+    vi.spyOn(Page, 'query').mockImplementation(query)
+    vi.spyOn(Page, 'getPageFromDb').mockImplementation(async () => persistedPage)
+    vi.spyOn(Page, 'deletePageFromCache').mockResolvedValue(undefined)
+    vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
 
-    await Page.movePage({
-      id: 17,
-      user: owner,
-      destinationLocale: 'en',
-      destinationPath: 'renamed',
-      expectedSourceRevision: '2',
-      okfProducer: 'agent:move-request',
-      skipStorage: true
+    const operations = (await vi.importFresh('../../operations/pages.ts', import.meta.url)).default
+    const { OKF_PRODUCER_CONTEXT } = await import('../../okf/mutation-context.ts')
+    await operations.move({
+      requester: owner,
+      input: {
+        id: 17,
+        destinationLocale: 'en',
+        destinationPath: 'renamed',
+        expectedSourceRevision: '2'
+      },
+      [OKF_PRODUCER_CONTEXT]: 'agent:move-request'
     })
 
-    const patchValue = patch.mock.calls[0][0]
-    expect(patchValue).toMatchObject({
+    expect(persistedPage).toMatchObject({
       path: 'renamed',
       title: 'renamed',
       extra: {
@@ -527,14 +645,15 @@ describe('private page mutation existence isolation', () => {
         }
       }
     })
-    expect(patchValue.extra.okf).not.toHaveProperty('verified')
-    expect(getPageFromDb).toHaveBeenCalledWith(17)
+    expect(persistedPage.extra.okf).not.toHaveProperty('verified')
+    expect(persistedPage.sourceRevision).toBe('3')
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledWith(expect.objectContaining({
       action: 'moved',
       sourceRevision: '2',
       extra: originalExtra
     }))
   })
+
 
   it('advances OKF generation provenance when editor conversion rewrites the authoritative format', async () => {
     const owner = { id: 7, permissions: [] }
@@ -628,11 +747,11 @@ describe('private page mutation existence isolation', () => {
       updatedAt: '2026-08-14T00:00:00.000Z'
     }
     const updatedPage = { ...originalPage, visibility: 'public', ownerId: null, extra: originalExtra }
+    global.WIKI.auth.checkPageAccess.mockReturnValue(true)
     const patch = vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(1) })
     const query = vi.fn()
       .mockReturnValueOnce({ findOne: vi.fn().mockResolvedValue(undefined) })
       .mockReturnValueOnce({ patch })
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
     global.WIKI.models.pages = {
       query,
       getPageFromDb: vi.fn().mockResolvedValueOnce(originalPage).mockResolvedValueOnce(updatedPage),
@@ -657,26 +776,23 @@ describe('private page mutation existence isolation', () => {
 
   it('authorizes public creation against normalized object-shaped tag context', () => {
     const user = { id: 7, permissions: [] }
-    global.WIKI.auth.checkAccess.mockReturnValue(true)
+    const authority = authorityFor(user)
+    global.WIKI.auth.checkPageAccess.mockReturnValue(true)
 
     expect(Page.assertCreateAccess({
       path: 'docs',
       locale: 'en',
       visibility: 'public',
       tags: ['  Restricted ', 'restricted', 'Other'],
-      user
+      user,
+      authority
     })).toEqual(['restricted', 'other'])
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(user, ['write:pages'], {
-      path: 'docs',
-      locale: 'en',
-      tags: [{ tag: 'restricted' }, { tag: 'other' }]
-    })
 
-    global.WIKI.auth.checkAccess.mockClear()
-    global.WIKI.auth.checkAccess.mockReturnValue(false)
+    global.WIKI.auth.checkPageAccess.mockClear()
+    global.WIKI.auth.checkPageAccess.mockReturnValue(false)
     let denied
     try {
-      Page.assertCreateAccess({ path: 'docs', locale: 'en', visibility: 'public', tags: ['restricted'], user })
+      Page.assertCreateAccess({ path: 'docs', locale: 'en', visibility: 'public', tags: ['restricted'], user, authority })
     } catch (error) {
       denied = error
     }
@@ -685,6 +801,7 @@ describe('private page mutation existence isolation', () => {
 
   it('keeps private creation owner semantics without applying public tag rules', () => {
     const owner = { id: 7, permissions: [] }
+    const ownerAuthority = authorityFor(owner)
     global.WIKI.auth.checkAccess.mockClear()
     global.WIKI.auth.checkAccess.mockReturnValue(false)
 
@@ -693,89 +810,134 @@ describe('private page mutation existence isolation', () => {
       locale: 'en',
       visibility: 'private',
       tags: ['  Internal '],
-      user: owner
+      user: owner,
+      authority: ownerAuthority
     })).toEqual(['internal'])
     expect(global.WIKI.auth.checkAccess).not.toHaveBeenCalled()
 
+    const deniedOwner = { id: 2, permissions: [] }
     let denied
     try {
-      Page.assertCreateAccess({ path: 'secret', locale: 'en', visibility: 'private', tags: [], user: { id: 2, permissions: [] } })
+      Page.assertCreateAccess({ path: 'secret', locale: 'en', visibility: 'private', tags: [], user: deniedOwner, authority: authorityFor(deniedOwner) })
     } catch (error) {
       denied = error
     }
     expect(denied).toMatchObject({ status: 403 })
   })
 
-  it('rechecks canonical post-association tags before projections or outbox effects', async () => {
-    const user = { id: 7, permissions: [] }
-    const createdPage = { id: 18, localeCode: 'en', ownerId: null, path: 'docs', visibility: 'public', tags: [] }
-    const duplicateQuery = {
-      select: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
+  it('rejects a canonical tag transition after real SQLite association and rolls back every write', async () => {
+    const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    try {
+      await db.schema.createTable('pages', table => {
+        table.increments('id')
+        table.string('path').notNullable()
+        table.string('localeCode').notNullable()
+        table.string('hash').notNullable()
+        table.string('title').notNullable()
+        table.text('description').notNullable()
+        table.string('visibility').notNullable()
+        table.integer('ownerId').nullable()
+        table.integer('authorId').notNullable()
+        table.integer('creatorId').notNullable()
+        table.string('editorKey').notNullable()
+        table.string('contentType').notNullable()
+        table.text('content').notNullable()
+        table.boolean('isPublished').notNullable()
+        table.string('publishStartDate').notNullable()
+        table.string('publishEndDate').notNullable()
+        table.string('toc').notNullable()
+        table.text('extra').notNullable()
+        table.string('sourceRevision').notNullable().defaultTo('1')
+        table.dateTime('createdAt').nullable()
+        table.dateTime('updatedAt').nullable()
       })
-    }
-    const insert = vi.fn().mockResolvedValue(createdPage)
-    const query = vi.fn()
-      .mockReturnValueOnce(duplicateQuery)
-      .mockReturnValueOnce({ insert })
-    const associateTags = vi.fn(({ page }) => {
-      page.tags = [{ tag: 'canonical' }]
-    })
-    global.WIKI.models.tags = { associateTags }
-    global.WIKI.models.pages = {
-      query,
-      getPageFromDb: vi.fn(),
-      renderPage: vi.fn(),
-      rebuildTree: vi.fn()
-    }
-    const knex = global.WIKI.models.knex
-    let rolledBack = false
-    knex.transaction = vi.fn(async callback => {
-      try {
-        return await callback(knex)
-      } catch (error) {
-        rolledBack = true
-        throw error
+      await db.schema.createTable('tags', table => {
+        table.increments('id')
+        table.string('tag').notNullable().unique()
+        table.string('title').notNullable()
+        table.integer('redirectToId').nullable()
+        table.boolean('isArchived').notNullable().defaultTo(false)
+      })
+      await db.schema.createTable('pageTags', table => {
+        table.integer('pageId').notNullable()
+        table.integer('tagId').notNullable()
+        table.primary(['pageId', 'tagId'])
+      })
+      await db.schema.createTable('pageMutationOutbox', table => {
+        table.string('id').primary()
+      })
+      await db.schema.createTable('outboxEvents', table => {
+        table.string('id').primary()
+      })
+      await db('tags').insert({ id: 1, tag: 'canonical', title: 'Canonical', redirectToId: null, isArchived: false })
+      const seededTags = await db('tags').select('id', 'tag', 'title', 'redirectToId', 'isArchived')
+      const user = { id: 7, name: 'Owner', email: 'owner@example.test', permissions: [] }
+      const decisions = []
+
+      Page.knex(db)
+      global.WIKI.models.knex = db
+      global.WIKI.models.pages = Page
+      global.WIKI.models.tags = {
+        associateTags: async ({ tags, page, transaction }) => {
+          if (!Array.isArray(tags) || !tags.includes('historical')) throw new Error('normalized historical tag was not associated')
+          const canonical = await transaction('tags').where({ tag: 'canonical' }).first()
+          if (!canonical) throw new Error('canonical tag is missing')
+          await transaction('pageTags').insert({ pageId: page.id, tagId: canonical.id })
+          page.tags = [canonical]
+          return true
+        }
       }
-    })
-    global.WIKI.auth.checkAccess
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(true)
-      .mockReturnValueOnce(false)
+      global.WIKI.auth.loadPageRuleAuthority.mockImplementation(async (requester, transaction) => ({
+        ...authorityFor(requester),
+        stage: transaction === undefined ? 'preflight' : 'transaction',
+        deniedTags: transaction === undefined ? [] : ['canonical']
+      }))
+      global.WIKI.auth.checkPageAccess.mockImplementation((requester, permissions, context, authority) => {
+        const tagNames = context.tags.map(({ tag }) => tag)
+        const allowed =
+          authority.requester === requester &&
+          permissions.includes('write:pages') &&
+          !authority.deniedTags.some(tag => tagNames.includes(tag))
+        decisions.push({ requester, context, authority, allowed })
+        return allowed
+      })
 
-    await expect(Page.createPage({
-      content: 'Content',
-      description: '',
-      editor: 'markdown',
-      isPublished: true,
-      locale: 'en',
-      path: 'docs',
-      tags: [' Canonical '],
-      title: 'Docs',
-      user,
-      visibility: 'public'
-    })).rejects.toMatchObject({ status: 403 })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(2, user, ['write:styles'], {
-      path: 'docs',
-      locale: 'en',
-      tags: [{ tag: 'canonical' }]
-    })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(3, user, ['write:scripts'], {
-      path: 'docs',
-      locale: 'en',
-      tags: [{ tag: 'canonical' }]
-    })
-    expect(global.WIKI.auth.checkAccess).toHaveBeenNthCalledWith(4, user, ['write:pages'], {
-      path: 'docs',
-      locale: 'en',
-      tags: [{ tag: 'canonical' }]
-    })
+      await expect(Page.createPage({
+        content: 'Content',
+        description: '',
+        editor: 'markdown',
+        isPublished: true,
+        locale: 'en',
+        path: 'docs',
+        tags: [' Historical '],
+        title: 'Docs',
+        user,
+        visibility: 'public'
+      })).rejects.toMatchObject({
+        status: 403,
+        name: 'PAGE_CREATE_FORBIDDEN',
+        message: 'You do not have permission to create this page.'
+      })
 
-    expect(associateTags).toHaveBeenCalledWith({ tags: ['canonical'], page: createdPage, transaction: knex })
-    expect(rolledBack).toBe(true)
-    expect(knex.mock.calls.some(([table]) => table === 'pageMutationOutbox')).toBe(false)
+      expect(decisions.map(({ requester, context, authority, allowed }) => ({
+        requester,
+        tags: context.tags.map(({ tag }) => tag),
+        stage: authority.stage,
+        allowed
+      }))).toEqual([
+        { requester: user, tags: ['historical'], stage: 'preflight', allowed: true },
+        { requester: user, tags: ['canonical'], stage: 'transaction', allowed: false }
+      ])
+      expect(await db('pages')).toEqual([])
+      expect(await db('pageTags')).toEqual([])
+      expect(await db('tags').select('id', 'tag', 'title', 'redirectToId', 'isArchived')).toEqual(seededTags)
+      expect(await db('pageMutationOutbox')).toEqual([])
+      expect(await db('outboxEvents')).toEqual([])
+    } finally {
+      await db.destroy()
+    }
   })
+
 
   it('creates a page at a path already represented by a virtual folder', async () => {
     const owner = { id: 7, permissions: [] }

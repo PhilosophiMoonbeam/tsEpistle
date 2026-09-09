@@ -25,13 +25,25 @@ import { openApiDocument } from '../../controllers/api-v1/openapi.ts'
 
 const logger = { error: vi.fn() }
 global.WIKI = {
-  auth: { checkAccess: vi.fn().mockReturnValue(true) }
+  auth: {
+    checkAccess: vi.fn().mockReturnValue(true),
+    checkPageAccess: vi.fn((user, permissions, _context, authority) =>
+      authority?.requester === user && (permissions.some(permission => user?.permissions?.includes(permission)) || user?.permissions?.includes('manage:system'))
+    ),
+    loadPageRuleAuthority: vi.fn(async requester => ({
+      requester,
+      permissions: requester?.permissions ?? [],
+      groups: [],
+      tagAliases: {}
+    }))
+  }
 }
 configureTransportRuntime({ auth: global.WIKI.auth, logger })
 
 await import('../../controllers/api-v1/pages.ts')
 const pagesRouter = express.__routers[0]
 const listHandler = pagesRouter.get.mock.calls.find(([path]) => path === '/')[1]
+const detailHandler = pagesRouter.get.mock.calls.find(([path]) => path === '/:id')[1]
 await import('../../controllers/api-v1/index.ts')
 const apiRouter = express.__routers[1]
 const openApiHandler = apiRouter.get.mock.calls.find(([path]) => path === '/openapi.json')[1]
@@ -70,6 +82,15 @@ describe('versioned REST pages API', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     global.WIKI.auth.checkAccess.mockReturnValue(true)
+    global.WIKI.auth.checkPageAccess.mockImplementation((user, permissions, _context, authority) =>
+      authority?.requester === user && Array.isArray(authority.permissions) && permissions.some(permission => authority.permissions.includes(permission))
+    )
+    global.WIKI.auth.loadPageRuleAuthority.mockImplementation(async requester => ({
+      requester,
+      permissions: requester?.permissions ?? [],
+      groups: [],
+      tagAliases: {}
+    }))
   })
 
   it('publishes every supported external route in OpenAPI 3.1', () => {
@@ -164,17 +185,39 @@ describe('versioned REST pages API', () => {
     expect(logger.error).toHaveBeenCalledWith(internal)
   })
 
-  it('returns bounded permission-filtered pagination', async () => {
+  it('denies read-only list requests before querying pages', async () => {
+    pageOperations.list.mockResolvedValue([page(1)])
+    const res = response()
+    const next = vi.fn()
+
+    await listHandler({ query: { limit: 'not-an-integer' }, user: { id: 7, permissions: ['read:pages'] } }, res, next)
+
+    expectErrorBody(res, 403, 'Forbidden')
+    expect(pageOperations.list).not.toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('denies read-only detail requests before validating or looking up the id', async () => {
+    const res = response()
+    const next = vi.fn()
+
+    await detailHandler({ params: { id: 'not-an-id' }, user: { id: 7, permissions: ['read:pages'] }, sessionID: 'session-1' }, res, next)
+
+    expectErrorBody(res, 403, 'Forbidden')
+    expect(pageOperations.get).not.toHaveBeenCalled()
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('returns the unchanged required list schema to an admitted writer', async () => {
     pageOperations.list.mockResolvedValue([page(1), page(2), page(3)])
-    const handler = listHandler
     const req = {
       query: { limit: '2', offset: '0', tags: 'Docs' },
-      user: { id: 7, permissions: ['read:pages'] }
+      user: { id: 7, permissions: ['read:pages', 'write:pages'] }
     }
     const res = response()
     const next = vi.fn()
 
-    await handler(req, res, next)
+    await listHandler(req, res, next)
 
     expect(pageOperations.list).toHaveBeenCalledWith(expect.objectContaining({
       limit: 3,
@@ -184,16 +227,128 @@ describe('versioned REST pages API', () => {
     }))
     expect(next).not.toHaveBeenCalled()
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-      items: [expect.objectContaining({ id: 1 }), expect.objectContaining({ id: 2 })],
+      items: [expect.objectContaining({ id: 1, isPublished: true }), expect.objectContaining({ id: 2, isPublished: true })],
       pagination: { limit: 2, nextOffset: 2, offset: 0 }
     }))
   })
 
-  it('rejects unbounded page list requests', async () => {
-    const handler = listHandler
+  it('denies a mixed emitted list instead of filtering unwritable rows', async () => {
+    const writer = { id: 7, permissions: ['read:pages', 'write:pages'] }
+    const denied = { ...page(2), path: 'denied/page' }
+    pageOperations.list.mockResolvedValue([page(1), denied])
+    global.WIKI.auth.checkPageAccess.mockImplementation((user, permissions, context, authority) =>
+      authority?.requester === user &&
+      permissions.some(permission => user?.permissions?.includes(permission)) &&
+      context?.path !== 'denied/page'
+    )
     const res = response()
 
-    await handler({ query: { limit: '101' }, user: { id: 7 } }, res, vi.fn())
+    await listHandler({ query: {}, user: writer }, res, vi.fn())
+
+    expectErrorBody(res, 403, 'Forbidden')
+    expect(res.json).not.toHaveBeenCalledWith(expect.objectContaining({ items: expect.any(Array) }))
+  })
+
+  it('does not deny a writable page when only the lookahead row is unwritable', async () => {
+    const writer = { id: 7, permissions: ['read:pages', 'write:pages'] }
+    const deniedLookahead = { ...page(2), path: 'denied/lookahead' }
+    pageOperations.list.mockResolvedValue([page(1), deniedLookahead])
+    global.WIKI.auth.checkPageAccess.mockImplementation((user, permissions, context, authority) =>
+      authority?.requester === user &&
+      permissions.some(permission => user?.permissions?.includes(permission)) &&
+      context?.path !== 'denied/lookahead'
+    )
+    const res = response()
+
+    await listHandler({ query: { limit: '1' }, user: writer }, res, vi.fn())
+
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).toHaveBeenCalledWith({
+      items: [expect.objectContaining({ id: 1, isPublished: true })],
+      pagination: { limit: 1, nextOffset: 1, offset: 0 }
+    })
+  })
+
+  it('returns a complete detail to an admitted writer and denies a readable but unwritable page', async () => {
+    const writer = { id: 7, permissions: ['read:pages', 'write:pages'] }
+    pageOperations.get.mockResolvedValue({
+      ...page(1),
+      authorId: 8,
+      authorName: 'Author',
+      creatorId: 7,
+      creatorName: 'Creator',
+      editor: 'markdown',
+      publishStartDate: '2026-08-01T00:00:00.000Z',
+      publishEndDate: null,
+      tags: [{ tag: 'docs' }]
+    })
+    const writerResponse = response()
+    await detailHandler({ params: { id: '1' }, user: writer, sessionID: 'session-1' }, writerResponse, vi.fn())
+    expect(writerResponse.json.mock.calls[0][0]).toEqual(expect.objectContaining({
+      authorName: 'Author',
+      creatorName: 'Creator',
+      editor: 'markdown',
+      isPublished: true
+    }))
+
+    global.WIKI.auth.checkPageAccess.mockReturnValue(false)
+    const deniedResponse = response()
+    await detailHandler({ params: { id: '1' }, user: writer, sessionID: 'session-1' }, deniedResponse, vi.fn())
+    expectErrorBody(deniedResponse, 403, 'Forbidden')
+  })
+
+  it('uses fresh authority permissions and complete page tags for V1 admission', async () => {
+    const staleWriter = { id: 7, permissions: ['read:pages', 'write:pages'] }
+    global.WIKI.auth.loadPageRuleAuthority.mockResolvedValue({
+      requester: staleWriter,
+      permissions: ['read:pages'],
+      groups: [],
+      tagAliases: {}
+    })
+    const staleResponse = response()
+    await listHandler({ query: {}, user: staleWriter }, staleResponse, vi.fn())
+    expectErrorBody(staleResponse, 403, 'Forbidden')
+    expect(pageOperations.list).not.toHaveBeenCalled()
+
+    global.WIKI.auth.loadPageRuleAuthority.mockResolvedValue({
+      requester: staleWriter,
+      permissions: ['read:pages', 'write:pages'],
+      groups: [{
+        id: 3,
+        name: 'Writer',
+        permissions: ['read:pages', 'write:pages'],
+        pageRules: [{ match: 'TAG', path: 'secret', deny: true, roles: ['write:pages'] }]
+      }],
+      tagAliases: {}
+    })
+    global.WIKI.auth.checkPageAccess.mockImplementation((user, permissions, context, authority) =>
+      authority?.requester === user &&
+      permissions.some(permission => authority.permissions.includes(permission)) &&
+      !context?.tags?.some(tag => tag.tag === 'secret')
+    )
+    pageOperations.list.mockResolvedValue([{ ...page(1), tags: ['secret'] }])
+    const tagDeniedResponse = response()
+    await listHandler({ query: {}, user: staleWriter }, tagDeniedResponse, vi.fn())
+    expectErrorBody(tagDeniedResponse, 403, 'Forbidden')
+  })
+
+  it('keeps an admitted system manager on the V1 success path', async () => {
+    const manager = { id: 1, permissions: ['manage:system'] }
+    pageOperations.list.mockResolvedValue([page(1)])
+    const res = response()
+
+    await listHandler({ query: {}, user: manager }, res, vi.fn())
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      items: [expect.objectContaining({ id: 1, isPublished: true })]
+    }))
+  })
+
+  it('rejects unbounded page list requests after admission', async () => {
+    const writer = { id: 7, permissions: ['read:pages', 'write:pages'] }
+    const res = response()
+
+    await listHandler({ query: { limit: '101' }, user: writer }, res, vi.fn())
 
     expect(res.status).toHaveBeenCalledWith(400)
     expect(pageOperations.list).not.toHaveBeenCalled()

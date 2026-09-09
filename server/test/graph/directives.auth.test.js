@@ -9,9 +9,20 @@ describe('graph/directives/auth directive contract', () => {
   let overrideResolver
 
   beforeEach(() => {
+    global.WIKI = {
+      auth: {
+        checkAccess: vi.fn((user, permissions) => permissions.some(permission => user?.permissions?.includes(permission))),
+        checkPageAccess: vi.fn(),
+        loadPageRuleAuthority: vi.fn(async requester => ({
+          requester,
+          permissions: requester?.permissions ?? [],
+          groups: [],
+          tagAliases: {}
+        }))
+      }
+    }
     securedResolver = vi.fn().mockResolvedValue('secured-value')
     overrideResolver = vi.fn().mockResolvedValue('override-value')
-
     const rawSchema = makeExecutableSchema({
       typeDefs: `
         directive @auth(requires: [String]) on OBJECT | FIELD_DEFINITION | ARGUMENT_DEFINITION
@@ -76,6 +87,87 @@ describe('graph/directives/auth directive contract', () => {
     expect(securedResolver).toHaveBeenCalledTimes(1)
   })
 
+  it('uses one operation-local authority for page resource fields', async () => {
+    const page = {
+      path: 'guide',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null,
+      tags: []
+    }
+    const resourceSchema = authDirectiveTransformer(makeExecutableSchema({
+      typeDefs: `
+        directive @auth(requires: [String]) on OBJECT | FIELD_DEFINITION | ARGUMENT_DEFINITION
+        type Query { page: Page }
+        type Page {
+          authorName: String @auth(requires: ["write:pages"])
+          creatorName: String @auth(requires: ["write:pages"])
+        }
+      `,
+      resolvers: {
+        Query: { page: () => page },
+        Page: { authorName: () => 'Author', creatorName: () => 'Creator' }
+      }
+    }))
+    const user = { id: 7, permissions: [] }
+    global.WIKI.auth.checkPageAccess.mockReturnValue(true)
+
+    const result = await graphql({
+      schema: resourceSchema,
+      source: '{ page { authorName creatorName } }',
+      contextValue: { req: { user } }
+    })
+
+    expect(result.errors).toBeUndefined()
+    expect(result.data).toEqual({ page: { authorName: 'Author', creatorName: 'Creator' } })
+    expect(global.WIKI.auth.loadPageRuleAuthority).toHaveBeenCalledOnce()
+    expect(global.WIKI.auth.checkPageAccess).toHaveBeenCalledTimes(2)
+    expect(global.WIKI.auth.checkAccess).not.toHaveBeenCalled()
+  })
+  it('uses the shared effective-writer decision and fails closed for incomplete page context', async () => {
+    const page = {
+      path: 'guide',
+      localeCode: 'en',
+      visibility: 'public',
+      ownerId: null,
+      tags: undefined
+    }
+    const pageResolver = vi.fn(() => page)
+    const fieldResolver = vi.fn(() => true)
+    const resourceSchema = authDirectiveTransformer(makeExecutableSchema({
+      typeDefs: `
+        directive @auth(requires: [String]) on OBJECT | FIELD_DEFINITION | ARGUMENT_DEFINITION
+        type Query { page: Page }
+        type Page { isPublished: Boolean! @auth(requires: ["write:pages"]) }
+      `,
+      resolvers: {
+        Query: { page: pageResolver },
+        Page: { isPublished: fieldResolver }
+      }
+    }))
+
+    global.WIKI.auth.checkPageAccess.mockReturnValue(false)
+    const denied = await graphql({
+      schema: resourceSchema,
+      source: '{ page { isPublished } }',
+      contextValue: { req: { user: { id: 7, permissions: ['write:pages'] } } }
+    })
+    expect(denied.data).toEqual({ page: null })
+    expect(denied.errors).toHaveLength(1)
+    expect(denied.errors[0].message).toBe('Forbidden')
+    expect(fieldResolver).not.toHaveBeenCalled()
+
+    page.tags = []
+    page.visibility = 'private'
+    page.ownerId = 7
+    const owner = await graphql({
+      schema: resourceSchema,
+      source: '{ page { isPublished } }',
+      contextValue: { req: { user: { id: 7, permissions: [] } } }
+    })
+    expect(owner.errors).toBeUndefined()
+    expect(owner.data).toEqual({ page: { isPublished: true } })
+  })
   it('prefers field-level scopes over object-level scopes during schema execution', async () => {
     const result = await graphql({
       schema,

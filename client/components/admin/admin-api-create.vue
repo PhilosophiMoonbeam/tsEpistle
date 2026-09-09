@@ -9,16 +9,16 @@
             <v-alert v-if="formError" type="error" variant="tonal" class="mb-4">{{ formError }}</v-alert>
             <section v-show="step === 1" aria-label="Credential identity"><v-text-field ref="keyNameInput" v-model="name" label="Integration name" hint="Use a name that identifies the application, agent or workflow." persistent-hint variant="outlined" :rules="nameRules" :disabled="loading" maxlength="255" autocomplete="off" /><v-select ref="expirationInput" v-model="expiration" :items="expirations" label="Key lifetime" hint="Plan to replace this key before it expires." persistent-hint variant="outlined" :rules="[requiredRule]" :disabled="loading" class="mt-4" /></section>
             <section v-show="step === 2" aria-label="Credential authority">
-              <v-radio-group ref="scopeInput" v-model="scope" label="Permission source" :rules="[scopeRule]" :disabled="loading" color="primary"><v-radio value="group" label="Use a group’s permissions" /><v-radio value="full" label="System administrator permissions" /></v-radio-group>
+              <v-radio-group ref="scopeInput" v-model="scope" label="Permission source" :rules="[scopeRule]" :disabled="loading" color="primary"><v-radio value="group" label="Use a group’s permissions" :disabled="!selectableGroups.length" /><v-radio value="full" label="System administrator permissions" :disabled="!createFullAccess" /></v-radio-group>
               <v-alert v-if="scope === 'full'" type="warning" variant="tonal" class="mb-4">This key receives unrestricted system-administrator authority. Choose a scoped group when the integration needs less access.</v-alert>
-              <template v-if="scope === 'group'"><v-alert v-if="groupLoadState === 'error'" type="error" variant="tonal" class="mb-3">{{ groupLoadError }} <v-btn variant="text" @click="loadGroups(true)">Retry groups</v-btn></v-alert><v-select ref="groupInput" v-model="group" :items="selectableGroups" item-title="name" item-value="id" variant="outlined" color="primary" label="Permission group" :rules="groupRules" :loading="groupLoadState === 'loading'" :disabled="loading || groupLoadState !== 'success'" />
-                <div v-if="selectedGrant" class="grant-preview"><strong>{{ selectedGrant.name }}</strong><p>{{ selectedGrant.permissions.length }} current permissions · {{ selectedGrant.pageRuleCount }} page rules</p><div class="grant-permissions"><code v-for="permission in selectedGrant.permissions" :key="permission">{{ permission }}</code></div><details v-if="selectedGrant.pageRules.length" class="grant-rules"><summary>Review page access rules</summary><ul><li v-for="(rule, index) in selectedGrant.pageRules" :key="index"><strong>{{ rule.deny ? 'Deny' : 'Allow' }} · {{ rule.match }}</strong><code>{{ rule.path || '/' }}</code><small>{{ rule.roles.join(', ') || 'No actions' }} · {{ rule.locales.join(', ') || 'All languages' }}</small></li></ul></details><p class="key-note">This is the group’s current grant. Future group changes apply to the key.</p></div><v-alert v-else-if="group" type="info" variant="tonal" class="mb-3">Permission details are unavailable. <v-btn variant="text" @click="$emit('retry-connections')">Reload grant details</v-btn></v-alert>
+              <template v-if="scope === 'group'"><v-alert v-if="!selectableGroups.length" type="info" variant="tonal" class="mb-3">No permission groups are currently available for delegation.</v-alert><v-select ref="groupInput" v-model="group" :items="selectableGroups" item-title="name" item-value="id" variant="outlined" color="primary" label="Permission group" :rules="groupRules" :disabled="loading || !selectableGroups.length" />
+                <div v-if="selectedGrant" class="grant-preview"><strong>{{ selectedGrant.name }}</strong><p>{{ selectedGrant.permissions.length }} current permissions · {{ selectedGrant.pageRuleCount }} page rules</p><div class="grant-permissions"><code v-for="permission in selectedGrant.permissions" :key="permission">{{ permission }}</code></div><details v-if="selectedGrant.pageRules.length" class="grant-rules"><summary>Review page access rules</summary><ul><li v-for="(rule, index) in selectedGrant.pageRules" :key="index"><strong>{{ rule.deny ? 'Deny' : 'Allow' }} · {{ rule.match }}</strong><code>{{ rule.path || '/' }}</code><small>{{ rule.roles.join(', ') || 'No actions' }} · {{ rule.locales.join(', ') || 'All languages' }}</small></li></ul></details><p class="key-note">This is the group’s current grant. Future group changes apply to the key.</p></div><v-alert v-else-if="group" type="info" variant="tonal">Permission details are unavailable. Reload the API administration page.</v-alert>
               </template>
               <div class="mcp-key-choice"><v-checkbox v-model="mcpAccess" label="Allow this key to connect through MCP" color="primary" hide-details :disabled="loading || (!mcpAccess && (!connections?.mcpEnabled || connections.mcpConfigurationError))" /><p class="key-note">{{ connections?.mcpEnabled ? 'The key will be bound to the configured MCP resource below. REST and GraphQL access also remain available.' : 'MCP must be enabled in the deployment before issuing an MCP-capable key.' }}</p><p v-if="mcpAccess && scope === 'group' && selectedGrant && !selectedGrant.permissions.some(permission => ['use:mcp', 'manage:system'].includes(permission))" class="key-note">This group does not currently grant use:mcp or manage:system. The binding alone will not authorize MCP requests.</p><code v-if="mcpAccess">{{ connections?.mcpResource }}</code></div>
             </section>
-            <section v-if="step === 3" aria-label="Credential review"><dl class="key-review"><div><dt>Integration</dt><dd>{{ name.trim() }}</dd></div><div><dt>Lifetime</dt><dd>{{ expirations.find(item => item.value === expiration)?.title }}</dd></div><div><dt>Authority</dt><dd>{{ scope === 'full' ? 'System administrator' : groups.find(item => item.id === group)?.name || `Group ${group}` }}</dd></div><div><dt>Protocols</dt><dd>{{ mcpAccess ? 'REST v1 · GraphQL · MCP' : 'REST v1 · GraphQL' }}</dd></div><div v-if="mcpAccess"><dt>MCP resource</dt><dd>{{ connections?.mcpResource }}</dd></div></dl><p>After issuing, save the key in your client’s secret storage. This interface will show the complete credential only once.</p></section>
+            <section v-if="step === 3" aria-label="Credential review"><dl class="key-review"><div><dt>Integration</dt><dd>{{ name.trim() }}</dd></div><div><dt>Lifetime</dt><dd>{{ expirations.find(item => item.value === expiration)?.title }}</dd></div><div><dt>Authority</dt><dd>{{ scope === 'full' ? 'System administrator' : selectableGroups.find(item => item.id === group)?.name || `Group ${group}` }}</dd></div><div><dt>Protocols</dt><dd>{{ mcpAccess ? 'REST v1 · GraphQL · MCP' : 'REST v1 · GraphQL' }}</dd></div><div v-if="mcpAccess"><dt>MCP resource</dt><dd>{{ connections?.mcpResource }}</dd></div></dl><p>After issuing, save the key in your client’s secret storage. This interface will show the complete credential only once.</p></section>
           </v-card-text>
-          <v-card-actions class="key-dialog-actions"><v-btn variant="text" :disabled="loading" @click="isShown = false">Cancel</v-btn><v-spacer /><v-btn v-if="step > 1" variant="text" :disabled="loading" @click="step--">Back</v-btn><v-btn v-if="step < 3" color="primary" variant="flat" :disabled="loading" @click="nextStep">Continue</v-btn><v-btn v-else type="submit" color="primary" variant="flat" :loading="loading" :disabled="loading || (scope === 'group' && groupLoadState !== 'success')">Issue key</v-btn></v-card-actions>
+          <v-card-actions class="key-dialog-actions"><v-btn variant="text" :disabled="loading" @click="isShown = false">Cancel</v-btn><v-spacer /><v-btn v-if="step > 1" variant="text" :disabled="loading" @click="step--">Back</v-btn><v-btn v-if="step < 3" color="primary" variant="flat" :disabled="loading" @click="nextStep">Continue</v-btn><v-btn v-else type="submit" color="primary" variant="flat" :loading="loading" :disabled="loading || (scope === 'group' && !selectableGroups.length)">Issue key</v-btn></v-card-actions>
         </v-card>
       </v-form>
     </v-dialog>
@@ -28,18 +28,19 @@
 
 <script lang='ts'>
 import type { PropType } from 'vue'
-import type { ApiConnectionInfo } from '../../../shared/api-admin.ts'
+import type { ApiAssignableGroup, ApiConnectionInfo } from '../../../shared/api-admin.ts'
 import type { AdminApiKey } from '../../helpers/auth-api'
 import { wikiStore } from '@/store/index.ts'
 
 import { createAdminApiKey } from '../../helpers/auth-api'
-import { fetchGroupOptions, type GroupOption } from '../../helpers/groups-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 
 export default {
   emits: ['update:modelValue', 'sensitive-state', 'retry-connections'],
   props: {
+    assignableGroups: { type: Array as PropType<ApiAssignableGroup[]>, default: () => [] },
     connections: { type: Object as PropType<ApiConnectionInfo | null>, default: null },
+    createFullAccess: { type: Boolean, default: false },
     seed: { type: Object as PropType<AdminApiKey | null>, default: null },
     modelValue: {
       type: Boolean,
@@ -59,18 +60,15 @@ export default {
       name: '',
       expiration: '90d',
       scope: 'group' as 'full' | 'group' | null,
-      groups: [] as GroupOption[],
       group: null as number | null,
-      groupLoadState: 'idle' as 'idle' | 'loading' | 'success' | 'error',
-      groupLoadError: '',
       isCopyKeyDialogShown: false,
       key: '',
       copied: false
     }
   },
   computed: {
-    selectableGroups (): GroupOption[] { return this.groups.filter(group => group.id > 2) },
-    selectedGrant () { return this.connections?.groups.find(group => group.id === this.group) },
+    selectableGroups (): ApiAssignableGroup[] { return this.assignableGroups },
+    selectedGrant () { return this.assignableGroups.find(group => group.id === this.group) },
     flowProtected (): boolean { return this.loading || this.isCopyKeyDialogShown },
     isShown: {
       get() { return this.modelValue },
@@ -104,7 +102,7 @@ export default {
         (value: number | null) => {
           if (this.scope !== 'group') return true
           if (value === null) return String(this.$t('admin:api.newKeyGroupError'))
-          return (value > 2 && this.groups.some(group => group.id === value)) || String(this.$t('admin:api.newKeyGuestGroupError'))
+          return this.selectableGroups.some(group => group.id === value) || String(this.$t('admin:api.newKeyGuestGroupError'))
         }
       ]
     }
@@ -120,9 +118,7 @@ export default {
           this.expiration = '90d'
           this.scope = this.seed?.grant.groupId === 1 ? 'full' : 'group'
           this.group = this.seed?.grant.groupId && this.seed.grant.groupId > 2 ? this.seed.grant.groupId : null
-          this.groupLoadState = 'idle'
           this.mcpAccess = Boolean(this.seed?.grant.mcpResource)
-          if (this.scope === 'group') void this.loadGroups()
           this.$nextTick(() => {
             if (this.modelValue) this.focusFormControl('keyNameInput')
           })
@@ -131,9 +127,6 @@ export default {
           form?.resetValidation?.()
         }
       }
-    },
-    scope (newValue: 'full' | 'group' | null) {
-      if (newValue === 'group' && this.modelValue) void this.loadGroups()
     },
     isCopyKeyDialogShown (newValue: boolean) {
       if (newValue) this.copied = false
@@ -144,7 +137,7 @@ export default {
     nextStep () {
       this.formError = ''
       if (this.step === 1 && (this.name.trim().length < 2 || this.name.trim().length > 255 || !this.expiration)) { this.formError = 'Enter a name with 2–255 characters and choose a lifetime.'; this.focusFormControl('keyNameInput'); return }
-      if (this.step === 2 && (!this.scope || (this.scope === 'group' && (this.groupLoadState !== 'success' || !this.selectableGroups.some(group => group.id === this.group))))) { this.formError = 'Choose an available permission group or administrator access.'; return }
+      if (this.step === 2 && (!this.scope || (this.scope === 'full' && !this.createFullAccess) || (this.scope === 'group' && !this.selectableGroups.some(group => group.id === this.group)))) { this.formError = 'Choose an available permission group or administrator access.'; return }
       if (this.step === 2 && this.mcpAccess && (!this.connections?.mcpEnabled || this.connections.mcpConfigurationError)) { this.formError = 'MCP configuration is unavailable. Reload connection details or turn off MCP access.'; return }
       this.step++
     },
@@ -174,28 +167,11 @@ export default {
       }
       control?.$el?.querySelector<HTMLElement>('input:not([disabled]), [tabindex]:not([tabindex="-1"])')?.focus()
     },
-    async loadGroups(focusOnSuccess = false) {
-      if (!this.modelValue || this.scope !== 'group' || this.groupLoadState === 'loading' || this.groupLoadState === 'success') return
-      this.groupLoadState = 'loading'
-      this.groupLoadError = ''
-      wikiStore.startLoading('admin-api-groups-refresh')
-      try {
-        this.groups = await fetchGroupOptions(window.fetch.bind(window), 'Groups response is invalid')
-        this.groupLoadState = 'success'
-        if (focusOnSuccess && this.modelValue && this.scope === 'group') {
-          this.$nextTick(() => this.focusFormControl('groupInput'))
-        }
-      } catch (err) {
-        this.groups = []
-        this.groupLoadState = 'error'
-        this.groupLoadError = getErrorMessage(err)
-      } finally {
-        wikiStore.stopLoading('admin-api-groups-refresh')
-      }
-    },
     async generate () {
       if (this.loading) return
       if (this.step < 3) { this.nextStep(); return }
+      if (this.scope === 'full' && !this.createFullAccess) { this.step = 2; this.formError = 'System administrator delegation is unavailable for your current session.'; return }
+      if (this.scope === 'group' && !this.selectableGroups.some(group => group.id === this.group)) { this.step = 2; this.formError = 'Choose an available permission group or administrator access.'; return }
       if (this.mcpAccess && (!this.connections?.mcpEnabled || this.connections.mcpConfigurationError)) { this.step = 2; this.formError = 'MCP configuration is unavailable. Reload connection details or turn off MCP access.'; return }
       const form = this.$refs.createForm as {
         validate?: () => Promise<{ valid: boolean }>
@@ -207,7 +183,8 @@ export default {
         if (normalizedName.length >= 2 && normalizedName.length <= 255) {
           if (!this.expiration) firstInvalid = 'expirationInput'
           else if (!this.scope) firstInvalid = 'scopeInput'
-          else if (this.scope === 'group' && (this.group === null || this.group === 2)) firstInvalid = 'groupInput'
+          else if (this.scope === 'full' && !this.createFullAccess) firstInvalid = 'scopeInput'
+          else if (this.scope === 'group' && (this.group === null || !this.selectableGroups.some(group => group.id === this.group))) firstInvalid = 'groupInput'
         }
         this.step = ['keyNameInput', 'expirationInput'].includes(firstInvalid) ? 1 : 2
         this.$nextTick(() => this.focusFormControl(firstInvalid))

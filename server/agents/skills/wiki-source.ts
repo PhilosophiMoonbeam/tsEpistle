@@ -1,5 +1,6 @@
 import type { Knex } from 'knex'
 import { z } from 'zod'
+import type { PageRuleAuthority } from '../../helpers/group-access.ts'
 import { canReadPage } from '../../helpers/page-access.ts'
 
 import { buildApprovedSkillBundle, parseSkillMarkdown, type ApprovedSkillBundle, type SkillResourceInput, SkillValidationError } from './parser.ts'
@@ -26,6 +27,18 @@ const AssetRowSchema = z.object({
 })
 const HistoryRowSchema = z.object({ id: z.coerce.number().int().positive() })
 
+interface WikiAuth {
+  loadPageRuleAuthority(requester: Express.User, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+}
+
+const getWikiAuth = (): WikiAuth =>
+  (globalThis as typeof globalThis & { WIKI: { auth: WikiAuth } }).WIKI.auth
+
+const loadAuthority = async (db: Knex, requester: Express.User): Promise<PageRuleAuthority> =>
+  db.isTransaction
+    ? getWikiAuth().loadPageRuleAuthority(requester, db as Knex.Transaction)
+    : getWikiAuth().loadPageRuleAuthority(requester)
+
 export interface SkillSourceMapping {
   readonly rootPageId: number
   readonly rootPath: string
@@ -49,6 +62,7 @@ export const resolvePageNativeSkillSource = async (db: Knex, mapping: SkillSourc
   const rootPath = validateSkillVirtualPath(mapping.rootPath)
   const expectedName = rootPath.split('/').at(-1)
   if (!expectedName) throw new SkillValidationError('Skill root path has no name')
+  const authority = await loadAuthority(db, requester)
 
   const rootValue = await db('pages')
     .select('id', 'path', 'localeCode', 'visibility', 'ownerId', 'content', 'contentType', 'sourceRevision', 'updatedAt')
@@ -57,7 +71,7 @@ export const resolvePageNativeSkillSource = async (db: Knex, mapping: SkillSourc
     .first()
   const root = parseDbRow(PageRowSchema, rootValue, 'Skill root page')
   const rootTags = await db('pageTags').innerJoin('tags', 'tags.id', 'pageTags.tagId').select('tags.tag').where({ 'pageTags.pageId': root.id })
-  if (!canReadPage(requester, { ...root, tags: rootTags })) throw new SkillValidationError('Skill source page is unavailable')
+  if (!canReadPage(requester, { ...root, tags: rootTags }, authority)) throw new SkillValidationError('Skill source page is unavailable')
   if (root.path !== rootPath || root.contentType !== 'markdown') throw new SkillValidationError('Skill root mapping no longer resolves to a Markdown page')
   const parsedEntry = parseSkillMarkdown(Buffer.from(root.content, 'utf8'), expectedName)
 
@@ -72,7 +86,7 @@ export const resolvePageNativeSkillSource = async (db: Knex, mapping: SkillSourc
         .first()
       const page = parseDbRow(PageRowSchema, pageValue, `Skill page resource ${reference}`)
       const pageTags = await db('pageTags').innerJoin('tags', 'tags.id', 'pageTags.tagId').select('tags.tag').where({ 'pageTags.pageId': page.id })
-      if (!canReadPage(requester, { ...page, tags: pageTags })) throw new SkillValidationError(`Skill page resource ${reference} is unavailable`)
+      if (!canReadPage(requester, { ...page, tags: pageTags }, authority)) throw new SkillValidationError(`Skill page resource ${reference} is unavailable`)
       if (page.contentType !== 'markdown') throw new SkillValidationError(`Skill page resource ${reference} must be Markdown`)
       resources.push({
         path: reference,

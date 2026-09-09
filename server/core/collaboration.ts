@@ -8,6 +8,7 @@ import type { Knex } from 'knex'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
 
 import { canWritePage } from '../helpers/page-access.ts'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import errors from '../operations/errors.ts'
 import {
   COLLABORATION_DRAFT_DISCARDED_CLOSE_CODE,
@@ -87,7 +88,10 @@ interface CollaborationMount {
 
 interface CollaborationWiki {
   INSTANCE_ID: string
-  auth: { checkAccess(user: Express.User | undefined, permissions: readonly string[], context?: unknown): boolean }
+  auth: {
+    checkAccess(user: Express.User | undefined, permissions: readonly string[]): boolean
+    loadPageRuleAuthority(requester: Express.User | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+  }
   config: {
     auth: { audience: string }
     certs: { private: string | Buffer, public: string | Buffer }
@@ -229,7 +233,9 @@ class CollaborationServiceImpl implements CollaborationService {
   private async authorized(pageId: number, userId: number, expectedAuthVersion?: number): Promise<{ page: CollaborationPage, principal: CollaborationPrincipal } | null> {
     if (!this.enabled()) return null
     const [page, principal] = await Promise.all([this.loadPage(pageId), this.loadPrincipal(userId)])
-    if (!page || !principal || page.editorKey !== COLLABORATION_FORMAT || !canWritePage(principal, page)) return null
+    if (!page || !principal || page.editorKey !== COLLABORATION_FORMAT) return null
+    const authority = await getWiki().auth.loadPageRuleAuthority(principal)
+    if (!canWritePage(principal, page, authority)) return null
     if (expectedAuthVersion !== undefined && expectedAuthVersion !== sessionVersion(principal.authVersion)) return null
     return { page, principal }
   }
@@ -524,9 +530,25 @@ class CollaborationServiceImpl implements CollaborationService {
     if (!roomClients || roomClients.size === 0) return
     const room = await this.roomStore().get(pageId)
     if (!room) return
+    if (!this.enabled()) {
+      for (const client of [...roomClients]) this.conflict(client, 'disabled')
+      return
+    }
+    const page = await this.loadPage(pageId)
+    if (!page || page.editorKey !== COLLABORATION_FORMAT) {
+      for (const client of [...roomClients]) this.conflict(client, 'page-changed')
+      return
+    }
     for (const client of [...roomClients]) {
       if (client.generation !== room.generation) {
         this.conflict(client, 'draft-discarded')
+        continue
+      }
+      const principal = await this.loadPrincipal(client.userId)
+      const authority = principal ? await getWiki().auth.loadPageRuleAuthority(principal) : null
+      if (!principal || sessionVersion(client.authVersion) !== sessionVersion(principal.authVersion) ||
+        !authority || !canWritePage(principal, page, authority)) {
+        this.conflict(client, 'permission-revoked')
         continue
       }
       send(client.socket, {
@@ -557,7 +579,8 @@ class CollaborationServiceImpl implements CollaborationService {
     }
     for (const client of [...roomClients]) {
       const principal = await this.loadPrincipal(client.userId)
-      if (!principal || sessionVersion(client.authVersion) !== sessionVersion(principal.authVersion) || !canWritePage(principal, page)) this.conflict(client, 'permission-revoked')
+      const authority = principal ? await getWiki().auth.loadPageRuleAuthority(principal) : null
+      if (!principal || !authority || sessionVersion(client.authVersion) !== sessionVersion(principal.authVersion) || !canWritePage(principal, page, authority)) this.conflict(client, 'permission-revoked')
     }
   }
 

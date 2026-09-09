@@ -1,6 +1,6 @@
 import type { Knex } from 'knex'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { canReadPage, canWritePage, scopePageQuery, type PagePrincipal, type PageVisibility } from '../helpers/page-access.ts'
-
 interface TreePage {
   id: number
   pageId: number
@@ -23,7 +23,7 @@ export const treeAncestorIds = (value: unknown): number[] => {
 }
 
 /** Evaluate current page rules against lightweight, bounded batches; never fetch page content. */
-export const pageTreeAccess = async (db: Knex, requester: PagePrincipal, locale: string) => {
+export const pageTreeAccess = async (db: Knex, requester: PagePrincipal, locale: string, authority: PageRuleAuthority) => {
   const readable = new Set<number>(), editable = new Set<number>(), reachable = new Set<number>()
   const now = Date.now(), batchSize = 1000
   let cursor = 0
@@ -53,8 +53,8 @@ export const pageTreeAccess = async (db: Knex, requester: PagePrincipal, locale:
     }
     for (const row of rows) {
       const page = { ...row, tags: tags.get(row.pageId) ?? [] }
-      if (!canReadPage(requester, page)) continue
-      const canEdit = canWritePage(requester, page)
+      if (!canReadPage(requester, page, authority)) continue
+      const canEdit = canWritePage(requester, page, authority)
       const published = page.isPublished &&
         (!page.publishStartDate || new Date(page.publishStartDate).valueOf() <= now) &&
         (!page.publishEndDate || new Date(page.publishEndDate).valueOf() >= now)

@@ -55,6 +55,7 @@ export const openApiDocument = Object.freeze({
           '500': errorResponse
         },
         summary: 'List readable pages',
+        description: 'Successful responses include complete page metadata and require fresh read plus effective page-write authority (or manage:system); otherwise the endpoint returns the closed 403 error.',
         tags: ['Pages']
       }
     },
@@ -74,6 +75,7 @@ export const openApiDocument = Object.freeze({
           '500': errorResponse
         },
         summary: 'Get readable page metadata',
+        description: 'Successful responses include complete page metadata and require fresh read plus effective page-write authority (or manage:system); otherwise the endpoint returns the closed 403 error.',
         tags: ['Pages']
       }
     }

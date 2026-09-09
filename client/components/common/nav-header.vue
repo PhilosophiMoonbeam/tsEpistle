@@ -310,9 +310,10 @@
                 h2#account-preferences-title.account-menu__preferences-title Appearance preferences
                 appearance-selector
               v-divider
-              v-list-item(role='button', link, @click='logout')
-                template(v-slot:append): v-icon(color='error') mdi-logout
-                v-list-item-title.text-error {{$t('common:header.logout')}}
+              form(action='/logout', method='post')
+                v-list-item(tag='button', type='submit', link)
+                  template(v-slot:append): v-icon(color='error') mdi-logout
+                  v-list-item-title.text-error {{$t('common:header.logout')}}
 
           v-tooltip(v-else, location="left")
             template(v-slot:activator='{ props }')
@@ -718,9 +719,6 @@ export default defineComponent({
       }
       const scope = destinationVisibility === 'private' ? '/_private' : ''
       window.location.assign(`${scope}/${locale.code}/${destinationPath}`)
-    },
-    logout () {
-      window.location.assign('/logout')
     }
   }
 })

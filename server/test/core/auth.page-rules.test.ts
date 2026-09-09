@@ -1,7 +1,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
-
 import auth from '../../core/auth.ts'
+import type { PageRuleAuthority } from '../../helpers/group-access.ts'
 
 type PageRule = {
   deny: boolean
@@ -17,7 +17,13 @@ const page = {
   tags: [{ tag: 'published' }]
 }
 
-const user = (groups: Array<number | { id: number }> = [1], permissions = ['read:pages']) => ({
+type TestUser = {
+  id: number
+  groups: Array<number | { id: number }>
+  permissions: string[]
+}
+
+const user = (groups: Array<number | { id: number }> = [1], permissions = ['read:pages']): TestUser => ({
   id: 7,
   groups,
   permissions
@@ -38,98 +44,113 @@ const rule = (overrides: Partial<PageRule> = {}): PageRule => ({
 })
 
 describe('page-rule authorization contract', () => {
-  beforeEach(() => {
-    auth.groups = {}
-    auth.tagAliases = {}
+  const authorityFor = (
+    requester: TestUser,
+    groups: PageRuleAuthority['groups'] = [],
+    tagAliases: Readonly<Record<string, string | null>> = {}
+  ): PageRuleAuthority => Object.freeze({
+    requester,
+    permissions: Object.freeze([...requester.permissions]),
+    groups: Object.freeze(groups),
+    tagAliases: Object.freeze({ ...tagAliases })
   })
 
+
   it('denies missing principals, absent global permissions, and pages without a matching rule', () => {
-    auth.groups = { '1': group(1, []) }
+    const noPermissions = user([1], [])
+    const requester = user()
 
     expect(auth.checkAccess(undefined, ['read:pages'])).toBe(false)
-    expect(auth.checkAccess(user([1], []), ['read:pages'])).toBe(false)
-    expect(auth.checkAccess(user(), ['read:pages'])).toBe(true)
-    expect(auth.checkAccess(user(), ['read:pages'], page)).toBe(false)
+    expect(auth.checkAccess(noPermissions, ['read:pages'])).toBe(false)
+    expect(auth.checkAccess(requester, ['read:pages'])).toBe(true)
+    expect(auth.checkPageAccess(requester, ['read:pages'], page, authorityFor(requester, [group(1, [])]))).toBe(false)
   })
 
   it('lets manage:system bypass global and page-scoped rules', () => {
-    expect(auth.checkAccess(user([], ['manage:system']), ['delete:pages'], page)).toBe(true)
+    const requester = user([], ['manage:system'])
+    expect(auth.checkPageAccess(requester, ['delete:pages'], page, authorityFor(requester))).toBe(true)
   })
 
   it('resolves old tag names in access rules and cached page labels, while archived names fail closed', () => {
-    auth.groups = { '1': group(1, [rule({ match: 'TAG', path: 'old-label' })]) }
-    auth.tagAliases = { 'old-label': 'published', published: 'published', retired: null }
-    expect(auth.checkAccess(user(), ['read:pages'], page)).toBe(true)
-    expect(auth.checkAccess(user(), ['read:pages'], { ...page, tags: [{ tag: 'old-label' }] })).toBe(true)
-    auth.tagAliases['old-label'] = null
-    expect(auth.checkAccess(user(), ['read:pages'], page)).toBe(false)
-    expect(auth.checkAccess(user(), ['read:pages'], { ...page, tags: [{ tag: 'old-label' }] })).toBe(false)
-    auth.groups = { '1': group(1, [rule({ match: 'TAG', path: 'retired' })]) }
-    expect(auth.checkAccess(user(), ['read:pages'], { ...page, tags: [{ tag: 'retired' }] })).toBe(false)
+    const requester = user()
+    const accessGroup = group(1, [rule({ match: 'TAG', path: 'old-label' })])
+    const aliases = { 'old-label': 'published', published: 'published', retired: null }
+    const activeAuthority = authorityFor(requester, [accessGroup], aliases)
+
+    expect(auth.checkPageAccess(requester, ['read:pages'], page, activeAuthority)).toBe(true)
+    expect(auth.checkPageAccess(requester, ['read:pages'], { ...page, tags: [{ tag: 'old-label' }] }, activeAuthority)).toBe(true)
+
+    const archivedAuthority = authorityFor(requester, [accessGroup], { ...aliases, 'old-label': null })
+    expect(auth.checkPageAccess(requester, ['read:pages'], page, archivedAuthority)).toBe(false)
+    expect(auth.checkPageAccess(requester, ['read:pages'], { ...page, tags: [{ tag: 'old-label' }] }, archivedAuthority)).toBe(false)
+
+    const retiredAuthority = authorityFor(requester, [group(1, [rule({ match: 'TAG', path: 'retired' })])], aliases)
+    expect(auth.checkPageAccess(requester, ['read:pages'], { ...page, tags: [{ tag: 'retired' }] }, retiredAuthority)).toBe(false)
   })
 
   it('uses the most specific matching path across groups regardless of group order', () => {
-    auth.groups = {
-      '1': group(1, [rule({ deny: true, path: 'docs' })]),
-      '2': group(2, [rule({ path: 'docs/public' })])
-    }
+    const groups = [
+      group(1, [rule({ deny: true, path: 'docs' })]),
+      group(2, [rule({ path: 'docs/public' })])
+    ]
+    const firstRequester = user([1, 2])
+    const secondRequester = user([2, 1])
 
-    expect(auth.checkAccess(user([1, 2]), ['read:pages'], page)).toBe(true)
-    expect(auth.checkAccess(user([2, 1]), ['read:pages'], page)).toBe(true)
+    expect(auth.checkPageAccess(firstRequester, ['read:pages'], page, authorityFor(firstRequester, groups))).toBe(true)
+    expect(auth.checkPageAccess(secondRequester, ['read:pages'], page, authorityFor(secondRequester, [...groups].reverse()))).toBe(true)
   })
 
   it('makes deny win an otherwise identical rule regardless of rule order', () => {
     const allow = rule({ match: 'EXACT', path: page.path })
     const deny = rule({ deny: true, match: 'EXACT', path: page.path })
+    const requester = user()
 
-    auth.groups = { '1': group(1, [allow, deny]) }
-    expect(auth.checkAccess(user(), ['read:pages'], page)).toBe(false)
-
-    auth.groups = { '1': group(1, [deny, allow]) }
-    expect(auth.checkAccess(user(), ['read:pages'], page)).toBe(false)
+    expect(auth.checkPageAccess(requester, ['read:pages'], page, authorityFor(requester, [group(1, [allow, deny])]))).toBe(false)
+    expect(auth.checkPageAccess(requester, ['read:pages'], page, authorityFor(requester, [group(1, [deny, allow])]))).toBe(false)
   })
 
   it('makes an exact match outrank a prefix rule at equal specificity', () => {
     const allowExact = rule({ match: 'EXACT', path: page.path })
     const denyPrefix = rule({ deny: true, match: 'START', path: page.path })
+    const requester = user()
 
-    auth.groups = { '1': group(1, [denyPrefix, allowExact]) }
-    expect(auth.checkAccess(user(), ['read:pages'], page)).toBe(true)
-
-    auth.groups = { '1': group(1, [allowExact, denyPrefix]) }
-    expect(auth.checkAccess(user(), ['read:pages'], page)).toBe(true)
+    expect(auth.checkPageAccess(requester, ['read:pages'], page, authorityFor(requester, [group(1, [denyPrefix, allowExact])]))).toBe(true)
+    expect(auth.checkPageAccess(requester, ['read:pages'], page, authorityFor(requester, [group(1, [allowExact, denyPrefix])]))).toBe(true)
   })
 
   it('applies locale, tag, role, and group-id constraints', () => {
-    auth.groups = {
-      '1': group(1, [
+    const groups = {
+      first: group(1, [
         rule({ locales: ['fr'] }),
         rule({ match: 'TAG', path: 'published', roles: ['write:pages'] })
       ]),
-      '2': group(2, [rule({ match: 'TAG', path: 'published' })])
+      second: group(2, [rule({ match: 'TAG', path: 'published' })])
     }
+    const firstRequester = user([{ id: 1 }])
+    const secondRequester = user([{ id: 2 }])
+    const wrongRoleRequester = user([{ id: 2 }], ['write:pages'])
+    const unknownGroupRequester = user([{ id: 99 }])
 
-    expect(auth.checkAccess(user([{ id: 1 }]), ['read:pages'], page)).toBe(false)
-    expect(auth.checkAccess(user([{ id: 2 }]), ['read:pages'], page)).toBe(true)
-    expect(auth.checkAccess(user([{ id: 2 }]), ['write:pages'], page)).toBe(false)
-    expect(auth.checkAccess(user([{ id: 99 }]), ['read:pages'], page)).toBe(false)
+    expect(auth.checkPageAccess(firstRequester, ['read:pages'], page, authorityFor(firstRequester, [groups.first]))).toBe(false)
+    expect(auth.checkPageAccess(secondRequester, ['read:pages'], page, authorityFor(secondRequester, [groups.second]))).toBe(true)
+    expect(auth.checkPageAccess(wrongRoleRequester, ['write:pages'], page, authorityFor(wrongRoleRequester, [groups.second]))).toBe(false)
+    expect(auth.checkPageAccess(unknownGroupRequester, ['read:pages'], page, authorityFor(unknownGroupRequester))).toBe(false)
   })
 
   it('treats an invalid regular expression as non-matching instead of breaking access', () => {
-    auth.groups = {
-      '1': group(1, [
-        rule({ match: 'REGEX', path: '[invalid' }),
-        rule({ match: 'EXACT', path: page.path })
-      ])
-    }
+    const requester = user()
+    const matchingAuthority = authorityFor(requester, [group(1, [
+      rule({ match: 'REGEX', path: '[invalid' }),
+      rule({ match: 'EXACT', path: page.path })
+    ])])
 
-    expect(() => auth.checkAccess(user(), ['read:pages'], page)).not.toThrow()
-    expect(auth.checkAccess(user(), ['read:pages'], page)).toBe(true)
+    expect(auth.checkPageAccess(requester, ['read:pages'], page, matchingAuthority)).toBe(true)
 
-    auth.groups = { '1': group(1, [rule({ match: 'REGEX', path: '[invalid' })]) }
-    expect(auth.checkAccess(user(), ['read:pages'], page)).toBe(false)
+    const invalidOnlyAuthority = authorityFor(requester, [group(1, [rule({ match: 'REGEX', path: '[invalid' })])])
+    expect(auth.checkPageAccess(requester, ['read:pages'], page, invalidOnlyAuthority)).toBe(false)
   })
 })
+
 
 describe('group assignment authorization contract', () => {
   const originalWiki = Reflect.get(globalThis, 'WIKI')

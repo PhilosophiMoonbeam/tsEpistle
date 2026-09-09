@@ -32,7 +32,7 @@ export default defineComponent({
   },
   methods: {
     state: publicationState,
-    date(value: string | null): string { return value ? new Date(value).toLocaleString() : 'No boundary' },
+    date(value: string | null | undefined): string { return value === undefined || value === null || value === '' ? 'No boundary' : new Date(value).toLocaleString() },
     protect(event: BeforeUnloadEvent) { if (this.busy) { event.preventDefault(); event.returnValue = '' } },
     async inspect(rows: PublicationReview[]) {
       this.busy = true; this.inspecting = true

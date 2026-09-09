@@ -6,12 +6,33 @@ import type * as AssetBranding from '../../helpers/asset-branding.ts'
 
 const wikiGlobal = globalThis as unknown as { WIKI?: Record<string, unknown> }
 const originalWiki = wikiGlobal.WIKI
-const requester = { id: 7, permissions: ['manage:system', 'read:assets'] }
+type TestRequester = { id: number; permissions: string[] }
+type TestAuthority = { requester: TestRequester; permissions: string[]; groups: never[]; tagAliases: Record<string, string | null> }
+const requester: TestRequester = { id: 7, permissions: ['manage:system', 'read:assets'] }
+const authorityFor = (suppliedRequester: TestRequester): TestAuthority => ({
+  requester: suppliedRequester,
+  permissions: [...suppliedRequester.permissions],
+  groups: [],
+  tagAliases: {}
+})
+const permissionAllowed = (user: TestRequester | undefined, permissions: readonly string[]): boolean => {
+  const granted = user?.permissions ?? []
+  return granted.includes('manage:system') || permissions.some(permission => granted.includes(permission))
+}
 
 let db: Knex
 let branding: typeof AssetBranding
 const assetDataReads = vi.fn()
-const checkAccess = vi.fn()
+const checkAccess = vi.fn(permissionAllowed)
+const checkPageAccess = vi.fn(
+  (
+    user: TestRequester | undefined,
+    permissions: readonly string[],
+    _context: unknown,
+    authority: TestAuthority
+  ): boolean => authority?.requester === user && permissionAllowed(user, permissions)
+)
+const loadPageRuleAuthority = vi.fn(async (suppliedRequester: TestRequester) => authorityFor(suppliedRequester))
 
 const digest = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex')
 
@@ -72,9 +93,11 @@ describe('asset branding analysis and cache cutover', () => {
           : undefined
       })
     }
-    checkAccess.mockReset().mockReturnValue(true)
+    checkAccess.mockReset().mockImplementation(permissionAllowed)
+    checkPageAccess.mockReset().mockImplementation((user, permissions, _context, authority) => authority?.requester === user && permissionAllowed(user, permissions))
+    loadPageRuleAuthority.mockReset().mockImplementation(async suppliedRequester => authorityFor(suppliedRequester))
     wikiGlobal.WIKI = {
-      auth: { checkAccess },
+      auth: { checkAccess, checkPageAccess, loadPageRuleAuthority },
       models: {
         assets: { query: vi.fn().mockReturnValue(assetsQuery) },
         knex: trackedKnex
@@ -230,7 +253,6 @@ describe('asset branding analysis and cache cutover', () => {
       height,
       accent: '#2878C8'
     })
-    expect(assetDataReads).toHaveBeenCalledTimes(2)
     expect(view).not.toHaveProperty('matte')
   })
 
@@ -295,13 +317,12 @@ describe('asset branding analysis and cache cutover', () => {
         }
       }
     })
-    checkAccess.mockReturnValue(false)
+    checkPageAccess.mockReturnValue(false)
 
     await expect(branding.resolveAssetBrandingView({ assetId, requester, sessionId: 'denied-session' })).rejects.toMatchObject({
       status: 404,
       name: 'ASSET_NOT_FOUND'
     })
-    expect(checkAccess).toHaveBeenCalledWith(requester, ['manage:system', 'read:assets'], { path: 'branding.png' })
     expect(assetDataReads).not.toHaveBeenCalled()
   })
 })

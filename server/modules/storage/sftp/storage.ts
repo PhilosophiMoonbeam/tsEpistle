@@ -1,4 +1,4 @@
-import type { StorageConfig, StorageContext, WikiAsset, WikiPage } from '../../types.ts'
+import type { StorageConfig, StorageContext, StorageLocalLocation, WikiAsset, WikiPage } from '../../types.ts'
 import { wiki } from '../../types.ts'
 import SSH2Promise from 'ssh2-promise'
 import type SFTP from 'ssh2-promise/lib/sftp.js'
@@ -53,7 +53,7 @@ interface SftpStoragePlugin {
   assetUploaded(this: SftpStorageContext, asset: WikiAsset): Promise<void>
   assetDeleted(this: SftpStorageContext, asset: WikiAsset): Promise<void>
   assetRenamed(this: SftpStorageContext, asset: WikiAsset): Promise<void>
-  getLocalLocation(this: SftpStorageContext): Promise<void>
+  getLocalLocation(this: SftpStorageContext): Promise<StorageLocalLocation | void>
   exportAll(this: SftpStorageContext): Promise<void>
   ensureDirectory(this: SftpStorageContext, filePath: string): Promise<void>
 }

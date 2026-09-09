@@ -1,14 +1,17 @@
+import type { Response } from 'express'
 import _ from 'lodash'
 
 import errors from './errors.ts'
 import { accountAdministration } from './account-administration.ts'
+import commonHelper from '../helpers/common.ts'
 import { ProfilePreferencesInputSchema } from '../../shared/user-presentation.ts'
+import { principalId } from '../helpers/page-access.ts'
 
 const { ApplicationError } = errors
-
 interface GroupRecord extends Record<string, unknown> {
   id: number
   name: string
+  permissions?: string[]
 }
 interface UserRecord extends Record<string, unknown> {
   id: number
@@ -21,6 +24,14 @@ interface UserRecord extends Record<string, unknown> {
   location?: string
   jobTitle?: string
   timezone?: string
+  dateFormat?: string
+  appearance?: string
+  pictureUrl?: string | null
+  localeCode?: string
+  defaultEditor?: unknown
+  fontFamily?: string
+  permissions?: string[]
+  groups?: GroupRecord[]
   isSystem?: boolean | number
   isActive: boolean | number
   isVerified: boolean | number
@@ -90,6 +101,7 @@ interface UpdateUserInput extends Record<string, unknown> {
 interface UserRequest {
   requester: Express.User | undefined
   input: unknown
+  response?: Response
 }
 type WikiErrorName = 'AuthRequired' | 'AuthAccountBanned' | 'AuthAccountNotVerified' | 'AuthProviderInvalid' | 'AuthPasswordInvalid' | 'InputInvalid'
 interface WikiUsers {
@@ -358,14 +370,29 @@ const setTfa = async (value: unknown): Promise<void> => {
   revoke(id)
 }
 const requireProfileUser = async (requester: Express.User | undefined): Promise<UserRecord> => {
-  if (typeof requester?.id !== 'number' || requester.id < 1 || requester.id === 2) throw new wiki.Error.AuthRequired()
-  const user = await wiki.models.users.query().findById(requester.id)
+  const userId = principalId(requester)
+  const hasOwnershipIdentity = isRecord(requester) && Object.hasOwn(requester, 'ownershipUserId')
+  const ownershipUserId = hasOwnershipIdentity ? requester.ownershipUserId : undefined
+  const requesterId = requester?.id
+  if (
+    userId === null ||
+    userId === 2 ||
+    requesterId !== userId ||
+    requester?.ownershipUserId === null ||
+    (hasOwnershipIdentity && ownershipUserId !== userId)
+  ) {
+    throw new wiki.Error.AuthRequired()
+  }
+  const user = await wiki.models.users.query().findById(userId)
   if (!user) throw new wiki.Error.AuthRequired()
   if (!user.isActive) throw new wiki.Error.AuthAccountBanned()
   return user
 }
 const getProfile = async (requester: Express.User | undefined): Promise<UserRecord> => {
   const user = await requireProfileUser(requester)
+  const groups = await user.$relatedQuery('groups').select('groups.id', 'name', 'permissions')
+  user.groups = groups
+  user.permissions = _.uniq(groups.flatMap(group => Array.isArray(group.permissions) ? group.permissions.filter((permission): permission is string => typeof permission === 'string') : []))
   user.providerName = strategyFor(user.providerKey)?.displayName ?? 'Unknown'
   user.lastLoginAt = user.lastLoginAt || user.updatedAt
   user.password = ''
@@ -373,7 +400,12 @@ const getProfile = async (requester: Express.User | undefined): Promise<UserReco
   user.tfaSecret = ''
   return user
 }
-const updateProfile = async ({ requester, input: value }: UserRequest): Promise<string> => {
+const issueReplacementCookie = (response: Response | undefined, token: string): void => {
+  if (!response) throw new Error('Authentication response is unavailable')
+  response.cookie('jwt', token, commonHelper.getCookieOpts())
+  response.set('Cache-Control', 'no-store')
+}
+const updateProfile = async ({ requester, input: value, response }: UserRequest): Promise<void> => {
   const user = await requireProfileUser(requester)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   const input = recordValue(value)
@@ -394,18 +426,18 @@ const updateProfile = async ({ requester, input: value }: UserRequest): Promise<
     dateFormat,
     appearance
   })
-  return (await wiki.models.users.refreshToken(user.id)).token
+  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id)).token)
 }
-const updateProfilePreferences = async ({ requester, input: value }: UserRequest): Promise<string> => {
+const updateProfilePreferences = async ({ requester, input: value, response }: UserRequest): Promise<void> => {
   const user = await requireProfileUser(requester)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
   const result = ProfilePreferencesInputSchema.safeParse(value)
   if (!result.success) throw new wiki.Error.InputInvalid()
   await wiki.models.users.updateUser({ id: user.id, ...result.data })
-  return (await wiki.models.users.refreshToken(user.id)).token
+  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id)).token)
 }
 
-const changePassword = async (value: unknown): Promise<string> => {
+const changePassword = async (value: unknown): Promise<void> => {
   const input = recordValue(value)
   const user = await requireProfileUser(isRecord(input.requester) ? input.requester : undefined)
   if (!user.isVerified) throw new wiki.Error.AuthAccountNotVerified()
@@ -418,7 +450,8 @@ const changePassword = async (value: unknown): Promise<string> => {
     throw new wiki.Error.AuthPasswordInvalid()
   }
   if (await wiki.models.users.updateUser({ id: user.id, newPassword })) revoke(user.id)
-  return (await wiki.models.users.refreshToken(user.id)).token
+  const response = input.response as Response | undefined
+  issueReplacementCookie(response, (await wiki.models.users.refreshToken(user.id)).token)
 }
 const listUserGroups = (user: UserRecord): GroupQuery => user.$relatedQuery('groups')
 const listProfileGroups = async (user: UserRecord): Promise<string[]> => (await user.$relatedQuery('groups')).map(group => group.name)

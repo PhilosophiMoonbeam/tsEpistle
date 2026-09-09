@@ -12,19 +12,20 @@
 import { defineComponent, type PropType } from 'vue'
 import type { PageDetails } from '../../helpers/pages-api'
 import { publicationState, savePublication } from '../../helpers/admin-pages'
-const localDate = (value: string | null): string => { if (!value) return ''; const date = new Date(value); if (!Number.isFinite(date.valueOf())) return ''; return new Date(date.valueOf() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) }
+const localDate = (value: string | null | undefined): string => { if (!value) return ''; const date = new Date(value); if (!Number.isFinite(date.valueOf())) return ''; return new Date(date.valueOf() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) }
 export default defineComponent({
   props: { now: { type: Number, default: () => Date.now() }, page: { type: Object as PropType<PageDetails>, required: true } }, emits: ['dirty', 'busy', 'saved'],
   data: () => ({ enabled: false, start: '', end: '', error: '', busy: false }),
   computed: {
     timezone(): string { return Intl.DateTimeFormat().resolvedOptions().timeZone },
-    dirty(): boolean { return this.enabled !== this.page.isPublished || this.start !== localDate(this.page.publishStartDate) || this.end !== localDate(this.page.publishEndDate) },
-    validation(): string { if ((this.start && !Number.isFinite(Date.parse(this.start))) || (this.end && !Number.isFinite(Date.parse(this.end)))) return 'Enter valid publication dates.'; return this.start && this.end && Date.parse(this.end) <= Date.parse(this.start) ? 'The end must be after the start.' : '' },
-    preview(): string { return this.validation ? 'Resolve the schedule before saving' : publicationState({ isPublished: this.enabled, publishStartDate: this.start, publishEndDate: this.end }, this.now) }
+    available(): boolean { return this.page.capabilities?.viewStewardContacts === true && this.page.isPublished !== undefined && this.page.publishStartDate !== undefined && this.page.publishEndDate !== undefined },
+    dirty(): boolean { return this.available && (this.enabled !== this.page.isPublished || this.start !== localDate(this.page.publishStartDate) || this.end !== localDate(this.page.publishEndDate)) },
+    validation(): string { if (!this.available) return ''; if ((this.start && !Number.isFinite(Date.parse(this.start))) || (this.end && !Number.isFinite(Date.parse(this.end)))) return 'Enter valid publication dates.'; return this.start && this.end && Date.parse(this.end) <= Date.parse(this.start) ? 'The end must be after the start.' : '' },
+    preview(): string { if (!this.available) return 'Unavailable'; return this.validation ? 'Resolve the schedule before saving' : publicationState({ isPublished: this.enabled, publishStartDate: this.start, publishEndDate: this.end }, this.now) }
   },
   methods: {
-    reset() { this.enabled = this.page.isPublished; this.start = localDate(this.page.publishStartDate); this.end = localDate(this.page.publishEndDate); this.error = '' },
-    async save() { if (this.busy || !this.dirty || this.validation) return; this.busy = true; this.error = ''; try { await savePublication(this.page.id, this.page.sourceRevision, { isPublished: this.enabled, publishStartDate: this.start === localDate(this.page.publishStartDate) ? this.page.publishStartDate : this.start ? new Date(this.start).toISOString() : '', publishEndDate: this.end === localDate(this.page.publishEndDate) ? this.page.publishEndDate : this.end ? new Date(this.end).toISOString() : '' }); this.$emit('saved') } catch (error) { this.error = error instanceof Error ? error.message : 'Publication could not be saved.' } finally { this.busy = false } }
+    reset() { if (!this.available) { this.error = ''; return }; this.enabled = this.page.isPublished!; this.start = localDate(this.page.publishStartDate); this.end = localDate(this.page.publishEndDate); this.error = '' },
+    async save() { if (this.busy || !this.available || !this.dirty || this.validation) return; this.busy = true; this.error = ''; try { await savePublication(this.page.id, this.page.sourceRevision, { isPublished: this.enabled, publishStartDate: this.start === localDate(this.page.publishStartDate) ? this.page.publishStartDate : this.start ? new Date(this.start).toISOString() : '', publishEndDate: this.end === localDate(this.page.publishEndDate) ? this.page.publishEndDate : this.end ? new Date(this.end).toISOString() : '' }); this.$emit('saved') } catch (error) { this.error = error instanceof Error ? error.message : 'Publication could not be saved.' } finally { this.busy = false } }
   },
   watch: { page: { handler() { this.reset() }, immediate: true }, dirty(value: boolean) { this.$emit('dirty', value) }, busy(value: boolean) { this.$emit('busy', value) } },
   beforeUnmount() { this.$emit('dirty', false); this.$emit('busy', false) }

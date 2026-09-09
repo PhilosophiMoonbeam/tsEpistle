@@ -20,7 +20,9 @@ import {
   type StorageActionSummary,
   type StorageActionOutcome,
   type StorageActionItemOutcome,
-  type StorageLastOperation
+  type StorageLastOperation,
+  type StorageAssetIdentity,
+  type StorageLocalLocation
 } from '../modules/types.ts'
 import {
   errorMessage,
@@ -118,7 +120,6 @@ type StorageAssetEvent =
   | { event: 'uploaded'; asset: UploadedStorageAsset }
   | { event: 'deleted'; asset: DeletedStorageAsset }
   | { event: 'renamed'; asset: RenamedStorageAsset }
-
 interface StoragePlugin extends Record<string, unknown> {
   init(): Promise<unknown>
   created(page: WrittenStoragePage): Promise<unknown>
@@ -128,7 +129,7 @@ interface StoragePlugin extends Record<string, unknown> {
   assetUploaded(asset: UploadedStorageAsset): Promise<unknown>
   assetDeleted(asset: DeletedStorageAsset): Promise<unknown>
   assetRenamed(asset: RenamedStorageAsset): Promise<unknown>
-  getLocalLocation(asset: { path: string }): Promise<string | void>
+  getLocalLocation(asset: StorageAssetIdentity): Promise<StorageLocalLocation | void>
 }
 
 interface RuntimeStoragePlugin extends StoragePlugin {
@@ -634,22 +635,18 @@ export default class Storage extends Model {
     }
   }
 
-  static async getLocalLocations(input: { asset: { path: string } }): Promise<Array<{ path: string | void; key: string }>> {
+  static async getLocalLocations(input: { asset: StorageAssetIdentity }): Promise<Array<{ location: StorageLocalLocation; key: string }>> {
     return this.runtimeQueue.run(() => this.resolveLocalLocations(input))
   }
 
-  private static async resolveLocalLocations({ asset }: { asset: { path: string } }): Promise<Array<{ path: string | void; key: string }>> {
-    const wiki = getWiki()
-    const locations: Array<{ path: string | void; key: string }> = []
+  private static async resolveLocalLocations({ asset }: { asset: StorageAssetIdentity }): Promise<Array<{ location: StorageLocalLocation; key: string }>> {
+    const locations: Array<{ location: StorageLocalLocation; key: string }> = []
     const promises = this.activeTargets.map(async target => {
       try {
-        const localPath = await target.fn.getLocalLocation(asset)
-        locations.push({
-          path: localPath,
-          key: target.key
-        })
+        const location = await target.fn.getLocalLocation(asset)
+        if (location) locations.push({ location, key: target.key })
       } catch (err) {
-        wiki.logger.warn(err)
+        getWiki().logger.warn(err)
       }
     })
     await Promise.all(promises)

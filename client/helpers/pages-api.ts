@@ -366,20 +366,23 @@ export type PageDetails = {
   description: string | null
   visibility: 'public' | 'private'
   ownerId: number | null
-  isPublished: boolean
-  publishStartDate: string | null
-  publishEndDate: string | null
+  isPublished?: boolean
+  publishStartDate?: string | null
+  publishEndDate?: string | null
   contentType: string
   createdAt: string
   updatedAt: string
   sourceRevision: string
-  editor: string
-  authorId: number
-  authorName: string
-  authorEmail: string
-  creatorId: number
-  creatorName: string
-  creatorEmail: string
+  editor?: string
+  authorId?: number
+  authorName?: string
+  authorEmail?: string
+  creatorId?: number
+  creatorName?: string
+  creatorEmail?: string
+  capabilities: {
+    viewStewardContacts: boolean
+  }
   okf: PageOkfView
   branding?: PageBrandingView | null
   brandingAssignment?: PageBrandingAssignment | null
@@ -503,6 +506,31 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
   const sourceRevision: unknown = page.sourceRevision
   const normalizedSourceRevision = String(sourceRevision)
   const validOwner = ownerId === null || (typeof ownerId === 'number' && Number.isSafeInteger(ownerId))
+  const capabilities = rawRow.capabilities
+  const rawViewStewardContacts = isRecord(capabilities) ? capabilities.viewStewardContacts : undefined
+  const validCapabilities = typeof rawViewStewardContacts === 'boolean'
+  const viewStewardContacts = typeof rawViewStewardContacts === 'boolean' ? rawViewStewardContacts : false
+  const hasIsPublished = Object.hasOwn(rawRow, 'isPublished')
+  const hasPublishStartDate = Object.hasOwn(rawRow, 'publishStartDate')
+  const hasPublishEndDate = Object.hasOwn(rawRow, 'publishEndDate')
+  const hasEditor = Object.hasOwn(rawRow, 'editor')
+  const hasAuthorId = Object.hasOwn(rawRow, 'authorId')
+  const hasAuthorName = Object.hasOwn(rawRow, 'authorName')
+  const hasAuthorEmail = Object.hasOwn(rawRow, 'authorEmail')
+  const hasCreatorId = Object.hasOwn(rawRow, 'creatorId')
+  const hasCreatorName = Object.hasOwn(rawRow, 'creatorName')
+  const hasCreatorEmail = Object.hasOwn(rawRow, 'creatorEmail')
+  const hasRestrictedField =
+    hasIsPublished ||
+    hasPublishStartDate ||
+    hasPublishEndDate ||
+    hasEditor ||
+    hasAuthorId ||
+    hasAuthorName ||
+    hasAuthorEmail ||
+    hasCreatorId ||
+    hasCreatorName ||
+    hasCreatorEmail
   if (
     !Number.isInteger(page.id) ||
     typeof page.locale !== 'string' ||
@@ -513,9 +541,9 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     (page.description !== null && typeof page.description !== 'string') ||
     (page.visibility !== 'public' && page.visibility !== 'private') ||
     !validOwner ||
-    typeof page.isPublished !== 'boolean' ||
-    (page.publishStartDate !== null && typeof page.publishStartDate !== 'string') ||
-    (page.publishEndDate !== null && typeof page.publishEndDate !== 'string') ||
+    (hasIsPublished && typeof rawRow.isPublished !== 'boolean') ||
+    (hasPublishStartDate && rawRow.publishStartDate !== null && typeof rawRow.publishStartDate !== 'string') ||
+    (hasPublishEndDate && rawRow.publishEndDate !== null && typeof rawRow.publishEndDate !== 'string') ||
     typeof page.contentType !== 'string' ||
     typeof page.createdAt !== 'string' ||
     page.createdAt.length < 1 ||
@@ -523,13 +551,15 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     page.updatedAt.length < 1 ||
     (typeof sourceRevision !== 'string' && typeof sourceRevision !== 'number') ||
     !/^[1-9][0-9]*$/u.test(normalizedSourceRevision) ||
-    typeof page.editor !== 'string' ||
-    !Number.isInteger(page.authorId) ||
-    typeof page.authorName !== 'string' ||
-    typeof page.authorEmail !== 'string' ||
-    !Number.isInteger(page.creatorId) ||
-    typeof page.creatorName !== 'string' ||
-    typeof page.creatorEmail !== 'string'
+    (hasEditor && typeof rawRow.editor !== 'string') ||
+    (hasAuthorId && !Number.isInteger(rawRow.authorId)) ||
+    (hasAuthorName && typeof rawRow.authorName !== 'string') ||
+    (hasAuthorEmail && typeof rawRow.authorEmail !== 'string') ||
+    (hasCreatorId && !Number.isInteger(rawRow.creatorId)) ||
+    (hasCreatorName && typeof rawRow.creatorName !== 'string') ||
+    (hasCreatorEmail && typeof rawRow.creatorEmail !== 'string') ||
+    !validCapabilities ||
+    (!viewStewardContacts && hasRestrictedField)
   ) {
     throw new Error(fallbackMessage)
   }
@@ -560,20 +590,21 @@ function normalizePageDetails(row: unknown, fallbackMessage: string): PageDetail
     description: page.description,
     visibility: page.visibility,
     ownerId,
-    isPublished: page.isPublished,
-    publishStartDate: page.publishStartDate,
-    publishEndDate: page.publishEndDate,
+    ...(hasIsPublished ? { isPublished: rawRow.isPublished as boolean } : {}),
+    ...(hasPublishStartDate ? { publishStartDate: rawRow.publishStartDate as string | null } : {}),
+    ...(hasPublishEndDate ? { publishEndDate: rawRow.publishEndDate as string | null } : {}),
     contentType: page.contentType,
     createdAt: page.createdAt,
     updatedAt: page.updatedAt,
     sourceRevision: normalizedSourceRevision,
-    editor: page.editor,
-    authorId: page.authorId!,
-    authorName: page.authorName,
-    authorEmail: page.authorEmail,
-    creatorId: page.creatorId!,
-    creatorName: page.creatorName,
-    creatorEmail: page.creatorEmail,
+    ...(hasEditor ? { editor: rawRow.editor as string } : {}),
+    ...(hasAuthorId ? { authorId: rawRow.authorId as number } : {}),
+    ...(hasAuthorName ? { authorName: rawRow.authorName as string } : {}),
+    ...(hasAuthorEmail ? { authorEmail: rawRow.authorEmail as string } : {}),
+    ...(hasCreatorId ? { creatorId: rawRow.creatorId as number } : {}),
+    ...(hasCreatorName ? { creatorName: rawRow.creatorName as string } : {}),
+    ...(hasCreatorEmail ? { creatorEmail: rawRow.creatorEmail as string } : {}),
+    capabilities: { viewStewardContacts },
     okf,
     ...(hasBranding ? { branding } : {}),
     ...(hasBrandingAssignment ? { brandingAssignment } : {})

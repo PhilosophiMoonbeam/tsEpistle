@@ -101,12 +101,12 @@ type UserMutation {
     timezone: String!
     dateFormat: String!
     appearance: String!
-  ): UserTokenResponse
+  ): DefaultResponse
 
   changePassword(
     current: String!
     new: String!
-  ): UserTokenResponse
+  ): DefaultResponse
 }
 
 # -----------------------------------------------
@@ -183,7 +183,3 @@ type UserProfile {
   pagesTotal: Int!
 }
 
-type UserTokenResponse {
-  responseResult: ResponseStatus!
-  jwt: String
-}

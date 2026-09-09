@@ -61,7 +61,7 @@ export const groupPermissions: GroupPermission[] = [
   global('write:groups', 'Manage content groups', 'Manage groups without administrative or system authority.', 'People & access'),
   global('manage:groups', 'Manage administrative groups', 'Manage groups and permissions except system authority and page scripts.', 'People & access'),
   global('manage:navigation', 'Manage navigation', 'Edit workspace navigation.', 'Workspace'),
-  global('manage:theme', 'Manage appearance', 'Change workspace themes and styles.', 'Workspace'),
+  global('manage:theme', 'Manage appearance', 'Change declarative workspace appearance. Custom CSS and HTML require full system administration.', 'Workspace'),
   global('manage:api', 'Manage API credentials', 'Issue and revoke credentials within the API permission policy.', 'Workspace'),
   global(
     'manage:system',

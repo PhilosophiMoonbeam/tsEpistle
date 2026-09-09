@@ -1,4 +1,5 @@
 import { asError, wiki, type AuthenticationPlugin } from '../../types.ts'
+import { oauth2StateOptions } from '../oauth-state.ts'
 import type { Request } from 'express'
 import type { Profile as PassportProfile } from 'passport'
 
@@ -21,6 +22,7 @@ const plugin: AuthenticationPlugin = {
       clientID: conf.clientId,
       clientSecret: conf.clientSecret,
       callbackURL: conf.callbackURL,
+      ...oauth2StateOptions(conf),
       scope: '',
       passReqToCallback: true
     }

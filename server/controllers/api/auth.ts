@@ -33,17 +33,24 @@ const getBruteforce = (): AuthRateLimiter => {
 const bruteforceMiddleware: express.RequestHandler = (req, res, next) => {
   getBruteforce().middleware(req, res, next)
 }
-
-const toAuthResponse = (result: unknown = {}) => ({
-  jwt: _.get(result, 'jwt', null),
-  mustChangePwd: _.get(result, 'mustChangePwd', false),
-  mustProvideTFA: _.get(result, 'mustProvideTFA', false),
-  mustSetupTFA: _.get(result, 'mustSetupTFA', false),
-  continuationToken: _.get(result, 'continuationToken', null),
-  redirect: _.get(result, 'redirect', null),
-  tfaQRImage: _.get(result, 'tfaQRImage', null),
-  tfaSecret: _.get(result, 'tfaSecret', null)
-})
+const toAuthResponse = (result: unknown = {}, res: Response) => {
+  res.set('Cache-Control', 'no-store')
+  const authenticated = objectValue(result, 'authenticated')
+  if (typeof authenticated !== 'boolean') throw new Error('Authentication result is invalid')
+  return {
+    authenticated,
+    mustChangePwd: _.get(result, 'mustChangePwd', false),
+    mustProvideTFA: _.get(result, 'mustProvideTFA', false),
+    mustSetupTFA: _.get(result, 'mustSetupTFA', false),
+    continuationToken: _.get(result, 'continuationToken', null),
+    redirect: _.get(result, 'redirect', null),
+    tfaQRImage: _.get(result, 'tfaQRImage', null),
+    tfaSecret: _.get(result, 'tfaSecret', null)
+  }
+}
+const resetAfterTerminalAuthentication = async (req: Request, result: unknown): Promise<void> => {
+  if (objectValue(result, 'authenticated') === true) await getBruteforce().reset(req)
+}
 
 const authErrorStatus = (value: unknown): number | null => {
   const status = errorStatus(value)
@@ -198,7 +205,7 @@ router.use('/api', (_req, res, next) => {
 router.get('/api', async (req, res, next) => {
   if (!requireAdminApiAccess(req, res)) return
   try {
-    res.json(await apiOperations.getConfig())
+    res.json(await apiOperations.getConfig(systemRequester(req)))
   } catch (err) {
     next(err)
   }
@@ -229,7 +236,7 @@ router.post('/api/state', async (req, res) => {
 router.post('/api/keys', async (req, res) => {
   if (!requireAdminApiAccess(req, res)) return
   try {
-    const key = await apiOperations.createKey({
+    const key = await apiOperations.createKey(systemRequester(req), {
       name: objectValue(req.body, 'name'),
       expiration: objectValue(req.body, 'expiration'),
       fullAccess: objectValue(req.body, 'fullAccess'),
@@ -246,7 +253,7 @@ router.post('/api/keys', async (req, res) => {
 router.post('/api/keys/:id/revoke', async (req, res) => {
   if (!requireAdminApiAccess(req, res)) return
   try {
-    await apiOperations.revokeKey(Number(req.params.id))
+    await apiOperations.revokeKey(systemRequester(req), Number(req.params.id))
     res.json({ message: 'API Key revoked successfully' })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -335,8 +342,8 @@ router.post('/login', bruteforceMiddleware, async (req, res, next) => {
       },
       { req, res }
     )
-    await getBruteforce().reset(req)
-    res.json(toAuthResponse(result))
+    await resetAfterTerminalAuthentication(req, result)
+    res.json(toAuthResponse(result, res))
   } catch (err) {
     if (!handleExpectedAuthError(err, res)) next(err)
   }
@@ -357,8 +364,8 @@ router.post('/login/tfa', bruteforceMiddleware, async (req, res, next) => {
       },
       { req, res }
     )
-    await getBruteforce().reset(req)
-    res.json(toAuthResponse(result))
+    await resetAfterTerminalAuthentication(req, result)
+    res.json(toAuthResponse(result, res))
   } catch (err) {
     if (!handleExpectedAuthError(err, res)) next(err)
   }
@@ -372,8 +379,8 @@ router.post('/login/change-password', bruteforceMiddleware, async (req, res, nex
     return res.status(400).json({ error: 'continuationToken and newPassword must be strings' })
   try {
     const result = await authenticationOperations.loginChangePassword({ continuationToken, newPassword }, { req, res })
-    await getBruteforce().reset(req)
-    res.json(toAuthResponse(result))
+    await resetAfterTerminalAuthentication(req, result)
+    res.json(toAuthResponse(result, res))
   } catch (err) {
     if (!handleExpectedAuthError(err, res)) next(err)
   }

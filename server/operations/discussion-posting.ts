@@ -1,22 +1,32 @@
 import type { Knex } from 'knex'
 import { canReadPage, managesSystem, principalId, type PagePrincipal } from '../helpers/page-access.ts'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { DISCUSSION_SETTINGS_LOCK } from './discussion-settings.ts'
 import { DISCUSSION_PAGE_LOCK } from './discussion-moderation.ts'
 import errors from './errors.ts'
+import { rejectApiPrincipalMutation } from '../helpers/api-principal.ts'
 const { ApplicationError } = errors
 const POST_IDENTITY_LOCK = 72401642
 export interface DiscussionPostInput { pageId: number; replyTo: number; content: string; render: string; user: { id: number; name: string; email: string; ip: string }; requester: PagePrincipal; sessionId: string }
-interface Dependencies { db: Knex; fallbackFeatures(): Record<string, unknown>; canPost(requester: PagePrincipal, page: Record<string, unknown>): boolean; checkSpam(input: { page: Record<string, unknown>; comment: DiscussionPostInput; providerConfig: Record<string, unknown> }): Promise<void> }
+interface Dependencies {
+  db: Knex
+  fallbackFeatures(): Record<string, unknown>
+  loadPageRuleAuthority(requester: PagePrincipal, transaction: Knex.Transaction): Promise<PageRuleAuthority>
+  canPost(requester: PagePrincipal, page: Record<string, unknown>, authority: PageRuleAuthority): boolean
+  checkSpam(input: { page: Record<string, unknown>; comment: DiscussionPostInput; providerConfig: Record<string, unknown> }): Promise<void>
+}
 export const createDiscussionPostingStore = (deps: Dependencies) => ({
   async post(input: DiscussionPostInput): Promise<number> {
+    rejectApiPrincipalMutation(input.requester)
     if (!Number.isSafeInteger(input.pageId) || input.pageId < 1 || input.pageId > 2147483647 || !Number.isSafeInteger(input.replyTo) || input.replyTo < 0 || input.replyTo > 2147483647 || typeof input.content !== 'string' || input.content.trim().length < 2 || input.content.length > 50000) throw new ApplicationError('Choose a page and enter a comment of 2 to 50,000 characters.', { status: 400 })
     return deps.db.transaction(async tx => {
       const page = await tx('pages').where('id', input.pageId).forShare().first()
       if (!page) throw new ApplicationError('Page not found.', { status: 404 })
       const tags = await tx('pageTags').join('tags', 'tags.id', 'pageTags.tagId').where('pageTags.pageId', page.id).select('tags.tag')
-      page.tags = tags.map(row => row.tag)
-      if (!canReadPage(input.requester, page)) throw new ApplicationError('Page not found.', { status: 404 })
-      if (!deps.canPost(input.requester, page)) throw new ApplicationError('You cannot post comments on this page.', { status: 403 })
+      page.tags = tags.map(row => ({ tag: row.tag }))
+      const authority = await deps.loadPageRuleAuthority(input.requester, tx)
+      if (!canReadPage(input.requester, page, authority)) throw new ApplicationError('Page not found.', { status: 404 })
+      if (!deps.canPost(input.requester, page, authority)) throw new ApplicationError('You cannot post comments on this page.', { status: 403 })
       const protection = await tx('pageAccessPasswords').where('pageId', page.id).first()
       if (protection && !managesSystem(input.requester)) {
         const grant = input.sessionId && await tx('pageUnlockGrants').where({ pageId: page.id, sessionId: input.sessionId, userId: principalId(input.requester), passwordVersion: protection.version }).where('expiresAt', '>', new Date()).first('id')

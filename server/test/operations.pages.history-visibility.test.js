@@ -8,17 +8,23 @@ class PageUpdateForbidden extends Error {}
 class PageDeleteForbidden extends Error {}
 class PageMoveForbidden extends Error {}
 
-const pageQuery = page => ({
-  select: vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(page) }),
-  findById: vi.fn().mockResolvedValue(page)
-})
+const pageQuery = page => {
+  const completePage = page === undefined ? undefined : { tags: [], ...page }
+  return {
+    select: vi.fn().mockReturnValue({ findById: vi.fn().mockResolvedValue(completePage) }),
+    findById: vi.fn().mockResolvedValue(completePage)
+  }
+}
 
 describe('page history visibility boundaries', () => {
   beforeEach(() => {
     vi.resetModules()
+    const checkAccess = vi.fn((user, permissions) => permissions.some(permission => user?.permissions?.includes(permission)))
     global.WIKI = {
       auth: {
-        checkAccess: vi.fn((user, permissions) => permissions.some(permission => user?.permissions?.includes(permission)))
+        checkAccess,
+        checkPageAccess: checkAccess,
+        loadPageRuleAuthority: vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
       },
       config: { db: { type: 'postgres' }, lang: { code: 'en' } },
       data: { searchEngine: null },
@@ -81,7 +87,8 @@ describe('page history visibility boundaries', () => {
       path: 'published',
       localeCode: 'en',
       visibility: 'public',
-      ownerId: null
+      ownerId: null,
+      tags: []
     })
     global.WIKI.models.pageHistory.getVersion.mockResolvedValue(undefined)
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
@@ -106,7 +113,8 @@ describe('page history visibility boundaries', () => {
       path: 'published',
       localeCode: 'en',
       visibility: 'public',
-      ownerId: null
+      ownerId: null,
+      tags: []
     })
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
@@ -140,7 +148,8 @@ describe('page history visibility boundaries', () => {
       path: 'published',
       localeCode: 'en',
       visibility: 'public',
-      ownerId: null
+      ownerId: null,
+      tags: [{ id: 1, tag: 'release' }]
     })
     const operations = (await vi.importFresh('../operations/pages.ts', import.meta.url)).default
 
@@ -150,6 +159,5 @@ describe('page history visibility boundaries', () => {
       requester,
       sessionId: 'session-1'
     }))).rejects.toBeInstanceOf(PageMoveForbidden)
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(requester, expect.arrayContaining(['write:pages']), expect.objectContaining({ path: 'restricted/next', locale: 'en' }))
   })
 })

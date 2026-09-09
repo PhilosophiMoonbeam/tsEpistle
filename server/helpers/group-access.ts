@@ -1,29 +1,72 @@
-import { resolveTagName } from './tag-aliases.ts'
 import type { GroupRuleMatch } from '../../shared/group-policy.ts'
+import { isApiPrincipal } from './api-principal.ts'
+import { resolveTagName } from './tag-aliases.ts'
+
 export interface AccessRule {
-  id?: string
-  match: GroupRuleMatch
-  path: string
-  deny: boolean
-  roles: string[]
-  locales?: string[]
+  readonly id?: string
+  readonly match: GroupRuleMatch
+  readonly path: string
+  readonly deny: boolean
+  readonly roles: readonly string[]
+  readonly locales?: readonly string[]
 }
+
 export interface AccessGroup {
-  id: number
-  name?: string
-  pageRules: AccessRule[]
+  readonly id: number
+  readonly name?: string
+  readonly permissions?: readonly string[]
+  readonly pageRules: readonly AccessRule[]
 }
+
 export interface AccessPage {
-  path: string
-  locale?: string
-  tags?: Array<{ tag: string }>
+  readonly path: string
+  readonly locale?: string
+  readonly tags?: readonly { readonly tag: string }[]
 }
+
+export type PageRuleRequesterBinding =
+  | { readonly kind: 'anonymous' }
+  | { readonly kind: 'guest'; readonly userId: 2 }
+  | { readonly kind: 'user'; readonly userId: number }
+  | { readonly kind: 'apiKey'; readonly apiKeyId: number; readonly groupId: number }
+
+export interface PageRuleAuthority {
+  readonly requester: unknown
+  readonly permissions: readonly string[]
+  readonly groups: readonly AccessGroup[]
+  readonly tagAliases: Readonly<Record<string, string | null>>
+}
+
+const positiveInteger = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+
+/**
+ * Convert an authenticated principal to the stable identity used to select
+ * groups. API principals intentionally select their assigned group because
+ * they do not have a user-owned page namespace.
+ */
+export const pageRuleRequesterBinding = (requester: unknown): PageRuleRequesterBinding => {
+  if (isApiPrincipal(requester)) return { kind: 'apiKey', apiKeyId: requester.api, groupId: requester.grp }
+  if (typeof requester !== 'object' || requester === null) return { kind: 'anonymous' }
+  const record = requester as Record<string, unknown>,
+    id = positiveInteger(record.id),
+    hasOwnership = Object.hasOwn(record, 'ownershipUserId'),
+    ownership = record.ownershipUserId
+  if (id === 2 && (!hasOwnership || ownership === null)) return { kind: 'guest', userId: 2 }
+  if (id !== null && id !== 2 && (!hasOwnership || ownership === id)) return { kind: 'user', userId: id }
+  return { kind: 'anonymous' }
+}
+
+export const pageRuleAuthorityMatchesRequester = (requester: unknown, authority: PageRuleAuthority): boolean =>
+  Boolean(authority && typeof authority === 'object' && authority.requester === requester)
+
+const rank: Record<GroupRuleMatch, number> = { START: 0, END: 1, REGEX: 2, TAG: 3, EXACT: 4 }
+
 export interface RuleState {
   deny: boolean
   match: GroupRuleMatch | false
   specificity: string
 }
-const rank: Record<GroupRuleMatch, number> = { START: 0, END: 1, REGEX: 2, TAG: 3, EXACT: 4 }
 export const applyPageRule = (rule: AccessRule, state: RuleState): RuleState => {
   if (rule.path.length < state.specificity.length) return state
   if (rule.path.length === state.specificity.length && state.match !== false) {
@@ -32,13 +75,25 @@ export const applyPageRule = (rule: AccessRule, state: RuleState): RuleState => 
   return { deny: rule.deny, match: rule.match, specificity: rule.path }
 }
 export const evaluateGroupAccess = (
-  permissions: string[],
-  requested: string[],
-  groups: AccessGroup[],
+  permissions: readonly string[],
+  requested: readonly string[],
+  groups: readonly AccessGroup[],
   page?: AccessPage | false,
-  aliases: Record<string, string | null> = {},
+  aliases: Readonly<Record<string, string | null>> = {},
   collectTrace = true
-) => {
+): {
+  allowed: boolean
+  reason: string
+  rules: Array<{
+    groupId: number
+    groupName: string
+    ruleId: string
+    match: GroupRuleMatch
+    path: string
+    deny: boolean
+    outcome: 'winner' | 'overridden' | 'no-match' | 'locale' | 'permission'
+  }>
+} => {
   const bypass = permissions.includes('manage:system'),
     hasPermission = requested.some(p => permissions.includes(p))
   let state: RuleState = { deny: false, match: false, specificity: '' }
@@ -70,8 +125,8 @@ export const evaluateGroupAccess = (
             }
           }
           if (rule.match === 'TAG') {
-            const resolved = resolveTagName(aliases, rule.path)
-            matches = resolved !== null && (page.tags ?? []).some(tag => resolveTagName(aliases, tag.tag) === resolved)
+            const resolved = resolveTagName(aliases as Record<string, string | null>, rule.path)
+            matches = resolved !== null && (page.tags ?? []).some(tag => resolveTagName(aliases as Record<string, string | null>, tag.tag) === resolved)
           }
           if (matches) {
             outcome = 'overridden'

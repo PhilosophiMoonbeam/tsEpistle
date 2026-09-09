@@ -5,6 +5,7 @@ import jsdomModule from 'jsdom'
 import createDOMPurify from 'dompurify'
 import _ from 'lodash'
 import type { Knex } from 'knex'
+import type { PageRuleAuthority } from '../../../helpers/group-access.ts'
 import type { PagePrincipal } from '../../../helpers/page-access.ts'
 import { createDiscussionPostingStore } from '../../../operations/discussion-posting.ts'
 
@@ -258,11 +259,33 @@ const plugin = {
    */
   getAntiSpamStatus() { return { state: antiSpamState, checkedAt: antiSpamCheckedAt } },
   async create({ page, replyTo, content, user, requester, sessionId }: CreateCommentInput) {
-    const context = WIKI as unknown as { models: { knex: Knex }; config: { features: Record<string, unknown> }; auth: { checkAccess(user: PagePrincipal, permissions: string[], context: unknown): boolean } }
+    const context = WIKI as unknown as {
+      models: { knex: Knex }
+      config: { features: Record<string, unknown> }
+      auth: {
+        checkPageAccess(
+          user: PagePrincipal,
+          permissions: readonly string[],
+          page: { path: string; locale?: string; tags?: readonly { tag: string }[] },
+          authority: PageRuleAuthority
+        ): boolean
+        loadPageRuleAuthority(requester: PagePrincipal, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+      }
+    }
     return createDiscussionPostingStore({
       db: context.models.knex,
       fallbackFeatures: () => context.config.features,
-      canPost: (principal, currentPage) => context.auth.checkAccess(principal, ['write:comments'], { path: currentPage.path, locale: currentPage.localeCode, tags: currentPage.tags }),
+      loadPageRuleAuthority: (principal, transaction) => context.auth.loadPageRuleAuthority(principal, transaction),
+      canPost: (principal, currentPage, authority) => context.auth.checkPageAccess(
+        principal,
+        ['write:comments'],
+        {
+          path: String(currentPage.path ?? ''),
+          locale: String(currentPage.localeCode ?? ''),
+          tags: (Array.isArray(currentPage.tags) ? currentPage.tags : []) as Array<{ tag: string }>
+        },
+        authority
+      ),
       async checkSpam({ page: currentPage, providerConfig }) {
         const client = akismetClient
         if (!client || client.key !== providerConfig.akismet) return

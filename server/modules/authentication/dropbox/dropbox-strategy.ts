@@ -2,6 +2,7 @@ import passportOauth2Module from 'passport-oauth2'
 import type { Profile } from 'passport'
 import type { Request } from 'express'
 import { z } from 'zod'
+import type { OAuthStateStore } from '../oauth-state.ts'
 
 const OAuth2Strategy = passportOauth2Module.Strategy
 
@@ -23,6 +24,9 @@ type DropboxStrategyOptions = {
   clientSecret: string
   callbackURL: string
   passReqToCallback: true
+  state: true
+  pkce: true
+  store: OAuthStateStore
 }
 
 const DropboxAccountSchema = z
@@ -67,8 +71,7 @@ class DropboxStrategy extends OAuth2Strategy {
       {
         ...options,
         authorizationURL,
-        tokenURL,
-        state: true
+        tokenURL
       },
       verify as never
     )

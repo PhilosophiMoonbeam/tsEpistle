@@ -1,25 +1,9 @@
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import type * as WikiStoreModule from './index.ts'
 
-const cookies = new Map<string, string>()
-const cookieApi = {
-  get: vi.fn((name: string) => cookies.get(name)),
-  set: vi.fn((name: string, value: string) => {
-    cookies.set(name, value)
-  }),
-  remove: vi.fn((name: string) => {
-    cookies.delete(name)
-  })
-}
-
-const encodeToken = (payload: Record<string, unknown>): string => {
-  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
-  return `header.${encoded}.signature`
-}
-
-const installWindow = (): void => {
+const installWindow = (fetch: unknown = vi.fn()): void => {
   vi.stubGlobal('window', {
-    atob: (value: string) => Buffer.from(value, 'base64').toString('binary'),
+    fetch,
     location: { protocol: 'https:', pathname: '/' },
     siteConfig: {
       company: '',
@@ -37,31 +21,33 @@ const installWindow = (): void => {
 
 describe('root authentication and loading ownership', () => {
   afterEach(() => {
-    cookies.clear()
     vi.clearAllMocks()
     vi.unstubAllGlobals()
   })
 
-  it('hydrates an expired cookie as a guest and clears stale authority', async () => {
-    installWindow()
-    vi.mockModule('js-cookie', import.meta.url, () => ({ default: cookieApi }))
-    cookies.set('jwt', encodeToken({ id: 7, permissions: ['manage:system'], exp: Math.floor(Date.now() / 1000) - 1 }))
+  it('hydrates an anonymous session from an uncached cookie-backed whoami response', async () => {
+    const fetch = vi.fn(async () =>
+      new Response(JSON.stringify({ authenticated: false, user: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      })
+    )
+    installWindow(fetch)
     const { useWikiStore, pinia } = await vi.importFresh<typeof WikiStoreModule>('./index.ts', import.meta.url)
     const store = useWikiStore(pinia)
     store.user.authenticated = true
     store.user.permissions = ['manage:system']
 
-    store.refreshAuth()
+    await store.refreshAuth()
 
+    expect(fetch).toHaveBeenCalledWith('/_api/users/whoami', { credentials: 'same-origin', cache: 'no-store' })
     expect(store.user.authenticated).toBe(false)
     expect(store.user.permissions).toEqual([])
     expect(store.user.id).toBe(0)
-    expect(cookieApi.remove).toHaveBeenCalledWith('jwt')
   })
 
   it('keeps a same-key load active until every owner releases it', async () => {
     installWindow()
-    vi.mockModule('js-cookie', import.meta.url, () => ({ default: cookieApi }))
     const { useWikiStore, pinia } = await vi.importFresh<typeof WikiStoreModule>('./index.ts', import.meta.url)
     const store = useWikiStore(pinia)
 
@@ -77,3 +63,4 @@ describe('root authentication and loading ownership', () => {
     expect(store.loadingCounts.profile).toBeUndefined()
   })
 })
+

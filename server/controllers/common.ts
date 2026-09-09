@@ -1,10 +1,11 @@
 import express from 'express'
 import { PageBrandingAssignmentSchema, type PageBrandingAssignment, type PageBrandingView } from '../../shared/page-branding.ts'
 import type { Knex } from 'knex'
+import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import { type Request, type Response } from './_types.ts'
 import pageHelper from '../helpers/page.ts'
 import { prepareReaderAnalytics } from '../helpers/reader-analytics.ts'
-import { canReadPage, canWritePage, managesSystem, pageRoute, principalId, type PageVisibility } from '../helpers/page-access.ts'
+import { canReadPage, canWritePage, managesSystem, pageAuthorizationContext, pageRoute, principalId, type PageVisibility } from '../helpers/page-access.ts'
 import _ from 'lodash'
 import CleanCSS from 'clean-css'
 import moment from 'moment'
@@ -26,7 +27,7 @@ interface ParsedPageArgs {
   visibility: PageVisibility
   ownerId: number | null
   explicitLocale: boolean
-  tags?: unknown
+  tags?: NonNullable<AccessPage['tags']>
 }
 
 interface PageExtraRecord extends Record<string, unknown> {
@@ -97,9 +98,11 @@ interface EditorPage {
 }
 
 interface EffectivePermissions {
-  pages: { read: boolean; write: boolean; manage: boolean }
+  comments: { read: boolean; write: boolean; manage: boolean }
+  pages: { read: boolean; write: boolean; manage: boolean; delete: boolean; script: boolean; style: boolean }
   history: { read: boolean }
   source: { read: boolean }
+  system: { manage: boolean }
 }
 
 interface NavigationItem {
@@ -112,8 +115,10 @@ interface NavigationItem {
 
 export interface CommonWiki {
   auth: {
-    checkAccess(user: Express.User | undefined, permissions: string[], context?: unknown): boolean
-    getEffectivePermissions(request: Request, context: unknown): EffectivePermissions
+    checkAccess(user: Express.User | undefined, permissions: readonly string[]): boolean
+    checkPageAccess(user: Express.User | undefined, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
+    loadPageRuleAuthority(requester: Express.User | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+    getEffectivePermissions(request: Request, context: AccessPage, authority: PageRuleAuthority): EffectivePermissions
   }
   config: {
     seo: { robots: string }
@@ -260,11 +265,11 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     }
   }
 
-  const applyPrivatePermissions = (req: Request, page: PageRecord, permissions: EffectivePermissions): boolean => {
+  const applyPrivatePermissions = (req: Request, page: PageRecord, permissions: EffectivePermissions, authority: PageRuleAuthority): boolean => {
     if (page.visibility !== 'private') return true
-    if (!canReadPage(req.user, page)) return false
+    if (!canReadPage(req.user, page, authority)) return false
     permissions.pages.read = true
-    permissions.pages.write = canWritePage(req.user, page)
+    permissions.pages.write = canWritePage(req.user, page, authority)
     permissions.pages.manage = permissions.pages.write
     permissions.history.read = true
     permissions.source.read = true
@@ -405,10 +410,11 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       return res.redirect(303, returnTo)
     } catch {
       const page = pageId > 0 ? await wiki.models.pages.getPageFromDb(pageId).catch(() => null) : null
+      const authority = await wiki.auth.loadPageRuleAuthority(req.user)
       protectedResponseHeaders(res)
       return res.status(403).render('page-unlock', {
         pageId,
-        pageTitle: page && canReadPage(req.user, page) ? page.title : 'Protected page',
+        pageTitle: page && canReadPage(req.user, page, authority) ? page.title : 'Protected page',
         returnTo,
         error: 'Access denied'
       })
@@ -491,16 +497,22 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'view' })
     }
+    const authorization = pageAuthorizationContext(page)
+    if (authorization === null) {
+      _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+      return res.status(404).render('notfound', { action: 'view' })
+    }
+    const authority = await wiki.auth.loadPageRuleAuthority(req.user)
     const pageArgs: ParsedPageArgs = {
       locale: page.localeCode,
       path: page.path,
       visibility: 'private',
       ownerId: page.ownerId,
       explicitLocale: true,
-      tags: page.tags
+      tags: authorization.tags
     }
-    const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
-    if (!applyPrivatePermissions(req, page, effectivePermissions)) {
+    const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs, authority)
+    if (!applyPrivatePermissions(req, page, effectivePermissions, authority)) {
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'view' })
     }
@@ -522,18 +534,27 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       ownerId: pageArgs.ownerId
     })
 
-    if (!page || (page.visibility === 'private' && !canReadPage(req.user, page))) {
+    if (!page) {
       return res.status(404).end()
     }
 
-    pageArgs.tags = _.get(page, 'tags', [])
+    const authorization = pageAuthorizationContext(page)
+    if (authorization === null) {
+      return res.status(404).end()
+    }
+    pageArgs.tags = authorization.tags
+    const authority = await wiki.auth.loadPageRuleAuthority(req.user)
+    const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs, authority)
+    if (!applyPrivatePermissions(req, page, effectivePermissions, authority)) {
+      return res.status(404).end()
+    }
 
     if (versionId > 0) {
-      if (page.visibility === 'public' && !wiki.auth.checkAccess(req.user, ['read:history'], pageArgs)) {
+      if (!effectivePermissions.history.read) {
         _.set(res.locals, 'pageMeta.title', 'Unauthorized')
         return res.status(403).render('unauthorized', { action: 'downloadVersion' })
       }
-    } else if (page.visibility === 'public' && !wiki.auth.checkAccess(req.user, ['read:source'], pageArgs)) {
+    } else if (!effectivePermissions.source.read) {
       _.set(res.locals, 'pageMeta.title', 'Unauthorized')
       return res.status(403).render('unauthorized', { action: 'download' })
     }
@@ -596,11 +617,20 @@ export default function createCommonController(wiki: CommonWiki): express.Router
     let branding: PageBrandingView | null = null
     if (page) page.extra ??= { css: '', js: '' }
 
-    pageArgs.tags = _.get(page, 'tags', [])
-
+    if (storedPage) {
+      const authorization = pageAuthorizationContext(storedPage)
+      if (authorization === null) {
+        _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+        return res.status(404).render('notfound', { action: 'edit' })
+      }
+      pageArgs.tags = authorization.tags
+    } else {
+      pageArgs.tags = []
+    }
     // -> Effective Permissions
-    const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
-    if (storedPage && !applyPrivatePermissions(req, storedPage, effectivePermissions)) {
+    const authority = await wiki.auth.loadPageRuleAuthority(req.user)
+    const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs, authority)
+    if (storedPage && !applyPrivatePermissions(req, storedPage, effectivePermissions, authority)) {
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'edit' })
     }
@@ -693,6 +723,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
             const pageVersion = await pageOperations.getVersion({
               requester,
               sessionId: req.sessionID,
+              authority,
               pageId: tmplPageId,
               versionId: tmplVersionId
             })
@@ -712,6 +743,7 @@ export default function createCommonController(wiki: CommonWiki): express.Router
             const pageOriginal = await pageOperations.getSource({
               requester,
               sessionId: req.sessionID,
+              authority,
               id: tmplPageId
             })
             brandingAssignment = pageBrandingAssignmentFrom(pageOriginal)
@@ -775,10 +807,16 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       return res.status(404).render('notfound', { action: 'history' })
     }
 
-    pageArgs.tags = _.get(page, 'tags', [])
+    const authorization = pageAuthorizationContext(page)
+    if (authorization === null) {
+      _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+      return res.status(404).render('notfound', { action: 'history' })
+    }
+    pageArgs.tags = authorization.tags
 
-    const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
-    if (!applyPrivatePermissions(req, page, effectivePermissions)) {
+    const authority = await wiki.auth.loadPageRuleAuthority(req.user)
+    const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs, authority)
+    if (!applyPrivatePermissions(req, page, effectivePermissions, authority)) {
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'history' })
     }
@@ -813,13 +851,14 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'view' })
     }
+    const authority = await wiki.auth.loadPageRuleAuthority(req.user)
     if (page.visibility === 'private') {
       if (principalId(req.user) === page.ownerId) return res.redirect(pageRoute(page))
       if (managesSystem(req.user)) return res.redirect(`/_admin/private/${page.id}`)
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'view' })
     }
-    if (!canReadPage(req.user, page)) {
+    if (!canReadPage(req.user, page, authority)) {
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'view' })
     }
@@ -856,20 +895,27 @@ export default function createCommonController(wiki: CommonWiki): express.Router
       visibility: pageArgs.visibility,
       ownerId: pageArgs.ownerId
     })
-
-    pageArgs.tags = _.get(page, 'tags', [])
+    if (page) {
+      const authorization = pageAuthorizationContext(page)
+      if (authorization === null) {
+        _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+        return res.status(404).render('notfound', { action: 'source' })
+      }
+      pageArgs.tags = authorization.tags
+    }
 
     if (wiki.config.lang.namespacing && !pageArgs.explicitLocale) {
       return res.redirect(`/s/${pageArgs.locale}/${pageArgs.path}`)
     }
 
     // -> Effective Permissions
-    const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
     if (!page) {
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'source' })
     }
-    if (!applyPrivatePermissions(req, page, effectivePermissions)) {
+    const authority = await wiki.auth.loadPageRuleAuthority(req.user)
+    const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs, authority)
+    if (!applyPrivatePermissions(req, page, effectivePermissions, authority)) {
       _.set(res.locals, 'pageMeta.title', 'Page Not Found')
       return res.status(404).render('notfound', { action: 'source' })
     }
@@ -967,11 +1013,21 @@ export default function createCommonController(wiki: CommonWiki): express.Router
           visibility: pageArgs.visibility,
           ownerId: pageArgs.ownerId
         })
-        pageArgs.tags = _.get(page, 'tags', [])
+        if (page) {
+          const authorization = pageAuthorizationContext(page)
+          if (authorization === null) {
+            _.set(res.locals, 'pageMeta.title', 'Page Not Found')
+            return res.status(404).render('notfound', { action: 'view' })
+          }
+          pageArgs.tags = authorization.tags
+        } else {
+          pageArgs.tags = []
+        }
 
         // -> Effective Permissions
-        const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs)
-        if (page && !applyPrivatePermissions(req, page, effectivePermissions)) {
+        const authority = await wiki.auth.loadPageRuleAuthority(req.user)
+        const effectivePermissions = wiki.auth.getEffectivePermissions(req, pageArgs, authority)
+        if (page && !applyPrivatePermissions(req, page, effectivePermissions, authority)) {
           _.set(res.locals, 'pageMeta.title', 'Page Not Found')
           return res.status(404).render('notfound', { action: 'view' })
         }
@@ -1017,7 +1073,8 @@ export default function createCommonController(wiki: CommonWiki): express.Router
         next(err)
       }
     } else {
-      if (!wiki.auth.checkAccess(req.user, ['read:assets'], pageArgs)) {
+      const authority = await wiki.auth.loadPageRuleAuthority(req.user)
+      if (!wiki.auth.checkPageAccess(req.user, ['read:assets'], pageArgs, authority)) {
         return res.sendStatus(403)
       }
       if (await protectedAssetRequiresUnlock({ requester: req.user, assetPath: pageArgs.path, sessionId: req.sessionID })) {

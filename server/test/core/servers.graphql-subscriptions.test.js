@@ -82,7 +82,8 @@ describe('core/servers GraphQL transports', () => {
         },
         auth: {
           audience: 'urn:test-audience'
-        }
+        },
+        host: 'https://wiki.example.test'
       }
     }
 
@@ -220,14 +221,17 @@ describe('core/servers GraphQL transports', () => {
     upgrade({ url: '/collaboration' }, {}, Buffer.alloc(0))
     expect(wsServer.handleUpgrade).not.toHaveBeenCalled()
 
-    const request = { url: '/graphql-subscriptions?transport=ws' }
+    const request = { url: '/graphql-subscriptions?transport=ws', headers: { origin: 'https://wiki.example.test' } }
     upgrade(request, {}, Buffer.alloc(0))
     expect(wsServer.handleUpgrade).toHaveBeenCalledWith(request, {}, expect.any(Buffer), expect.any(Function))
     expect(wsServer.emit).toHaveBeenCalledWith('connection', { id: 'client' }, request)
+    const rejectedSocket = { destroy: vi.fn() }
+    upgrade({ url: '/graphql-subscriptions', headers: { origin: 'https://foreign.example.test' } }, rejectedSocket, Buffer.alloc(0))
+    expect(wsServer.handleUpgrade).toHaveBeenCalledTimes(1)
+    expect(rejectedSocket.destroy).toHaveBeenCalledTimes(1)
   })
 
-
-  it('accepts a valid connection token for manage:system users', async () => {
+  it('accepts the HttpOnly cookie for manage:system users', async () => {
     const { servers, useServer, authenticateUserToken, checkAccess, createHttpServer } = await setupModule()
     const user = { id: 7, permissions: ['manage:system'] }
     authenticateUserToken.mockResolvedValue(user)
@@ -236,13 +240,13 @@ describe('core/servers GraphQL transports', () => {
     servers.installGraphQLSubscriptions(createHttpServer())
     const protocol = useServer.mock.calls[0][0]
     const context = {
-      connectionParams: { token: 'direct-token' },
-      extra: { request: { headers: {} } }
+      connectionParams: { token: 'ignored-client-token' },
+      extra: { request: { headers: { cookie: 'jwt=cookie-token' } } }
     }
     await protocol.onConnect(context)
 
-    expect(context.extra).toMatchObject({ token: 'direct-token', user })
-    expect(authenticateUserToken).toHaveBeenCalledWith('direct-token')
+    expect(context.extra).toMatchObject({ token: 'cookie-token', user })
+    expect(authenticateUserToken).toHaveBeenCalledWith('cookie-token')
     expect(checkAccess).toHaveBeenCalledWith(user, ['manage:system'])
   })
 
@@ -263,9 +267,9 @@ describe('core/servers GraphQL transports', () => {
 
     await expect(servers.authenticateGraphQLSubscription({}, request)).rejects.toThrow('Unauthorized')
     authenticateUserToken.mockRejectedValueOnce(new Error('invalid token'))
-    await expect(servers.authenticateGraphQLSubscription({ token: 'invalid-token' }, request)).rejects.toThrow('Unauthorized')
+    await expect(servers.authenticateGraphQLSubscription({}, { headers: { cookie: 'jwt=invalid-token' } })).rejects.toThrow('Unauthorized')
     authenticateUserToken.mockResolvedValueOnce({ id: 8, permissions: ['read:pages'] })
-    await expect(servers.authenticateGraphQLSubscription({ token: 'underprivileged-token' }, request)).rejects.toThrow('Unauthorized')
+    await expect(servers.authenticateGraphQLSubscription({}, { headers: { cookie: 'jwt=underprivileged-token' } })).rejects.toThrow('Unauthorized')
   })
 
   it('revalidates an active authorized principal before subscribing and before each event delivery', async () => {
@@ -285,8 +289,8 @@ describe('core/servers GraphQL transports', () => {
     servers.installGraphQLSubscriptions(createHttpServer())
     const protocol = useServer.mock.calls[0][0]
     const context = {
-      connectionParams: { token: 'direct-token' },
-      extra: { request: { headers: {}, socket: {} } }
+      connectionParams: { token: 'ignored-client-token' },
+      extra: { request: { headers: { cookie: 'jwt=direct-token' }, socket: {} } }
     }
     await protocol.onConnect(context)
     await expect(protocol.onSubscribe(context, 'operation-1', { query: 'subscription { loggingLiveTrail { level } }' })).resolves.toMatchObject({
@@ -310,7 +314,7 @@ describe('core/servers GraphQL transports', () => {
     const protocol = useServer.mock.calls[0][0]
     const context = {
       connectionParams: { token: 'stale-token' },
-      extra: { request: { headers: {} } }
+      extra: { request: { headers: { cookie: 'jwt=stale-token' } } }
     }
 
     await expect(protocol.onConnect(context)).rejects.toThrow('Unauthorized')
@@ -326,7 +330,7 @@ describe('core/servers GraphQL transports', () => {
     const protocol = useServer.mock.calls[0][0]
     const context = {
       connectionParams: { token: 'revoked-token' },
-      extra: { request: { headers: {} } }
+      extra: { request: { headers: { cookie: 'jwt=revoked-token' } } }
     }
     await protocol.onConnect(context)
 
@@ -351,7 +355,7 @@ describe('core/servers GraphQL transports', () => {
     const protocol = useServer.mock.calls[0][0]
     const context = {
       connectionParams: { token: 'stale-token' },
-      extra: { request: { headers: {}, socket: {} } }
+      extra: { request: { headers: { cookie: 'jwt=stale-token' }, socket: {} } }
     }
     await protocol.onConnect(context)
     await protocol.onSubscribe(context, 'operation-1', { query: 'subscription { loggingLiveTrail { level } }' })
@@ -378,7 +382,7 @@ describe('core/servers GraphQL transports', () => {
     const protocol = useServer.mock.calls[0][0]
     const context = {
       connectionParams: { token: 'demoted-token' },
-      extra: { request: { headers: {}, socket: {} } }
+      extra: { request: { headers: { cookie: 'jwt=demoted-token' }, socket: {} } }
     }
     await protocol.onConnect(context)
     await protocol.onSubscribe(context, 'operation-1', { query: 'subscription { loggingLiveTrail { level } }' })

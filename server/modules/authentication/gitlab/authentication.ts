@@ -1,4 +1,5 @@
 import { asError, wiki, type AuthenticationPlugin } from '../../types.ts'
+import { oauth2StateOptions } from '../oauth-state.ts'
 
 // ------------------------------------
 // GitLab Account
@@ -15,6 +16,7 @@ const plugin: AuthenticationPlugin = {
         clientID: conf.clientId,
         clientSecret: conf.clientSecret,
         callbackURL: conf.callbackURL,
+        ...oauth2StateOptions(conf),
         baseURL: conf.baseUrl,
         authorizationURL: conf.authorizationURL || (conf.baseUrl + '/oauth/authorize'),
         tokenURL: conf.tokenURL || (conf.baseUrl + '/oauth/token'),

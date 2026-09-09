@@ -1,4 +1,4 @@
-import { ApiKeyGrantSchema, ApiConnectionInfoSchema, type ApiKeyGrant, type ApiConnectionInfo } from '../../shared/api-admin.ts'
+import { ApiAssignableGroupSchema, ApiKeyGrantSchema, ApiConnectionInfoSchema, type ApiAssignableGroup, type ApiKeyGrant, type ApiConnectionInfo } from '../../shared/api-admin.ts'
 import { sameOriginJsonFetch } from './json-transport.ts'
 import { isRecord } from './type-guards'
 
@@ -20,14 +20,14 @@ function getErrorMessage(payload: unknown, fallbackMessage: string): string {
 }
 
 export type AuthResponse = {
-  continuationToken?: string
+  authenticated: boolean
+  continuationToken?: string | null
   mustChangePwd?: boolean
   mustProvideTFA?: boolean
   mustSetupTFA?: boolean
   tfaQRImage?: string
   tfaSecret?: string
-  jwt?: string
-  redirect?: string
+  redirect?: string | null
 }
 
 export type AuthStrategy = {
@@ -44,18 +44,23 @@ export type AuthStrategy = {
 }
 
 function isValidAuthResponse(payload: unknown): payload is AuthResponse {
-  if (!isRecord(payload)) {
+  if (!isRecord(payload) || (payload.authenticated !== true && payload.authenticated !== false) || 'jwt' in payload) {
     return false
   }
 
-  if (payload.mustChangePwd === true || payload.mustProvideTFA === true) {
-    return typeof payload.continuationToken === 'string' && payload.continuationToken.length > 0
-  }
+  const mustChangePwd = payload.mustChangePwd === true
+  const mustProvideTFA = payload.mustProvideTFA === true
+  const mustSetupTFA = payload.mustSetupTFA === true
+  const continuation = mustChangePwd || mustProvideTFA || mustSetupTFA
+  const continuationToken = payload.continuationToken
+  if (payload.authenticated === true && continuation) return false
+  if (payload.authenticated === false && (!continuation || typeof continuationToken !== 'string' || continuationToken.length === 0)) return false
+  if (payload.authenticated === true && typeof continuationToken === 'string' && continuationToken.length > 0) return false
 
-  if (payload.mustSetupTFA === true) {
+  if (mustSetupTFA) {
     return (
-      typeof payload.continuationToken === 'string' &&
-      payload.continuationToken.length > 0 &&
+      typeof continuationToken === 'string' &&
+      continuationToken.length > 0 &&
       typeof payload.tfaQRImage === 'string' &&
       payload.tfaQRImage.length > 0 &&
       typeof payload.tfaSecret === 'string' &&
@@ -63,7 +68,7 @@ function isValidAuthResponse(payload: unknown): payload is AuthResponse {
     )
   }
 
-  return typeof payload.jwt === 'string' && payload.jwt.length > 0
+  return continuation || payload.authenticated === true
 }
 
 async function parseJsonResponse(response: JsonResponse, fallbackMessage: string): Promise<unknown> {
@@ -380,6 +385,7 @@ export type AdminApiKey = {
   id: number
   name: string
   keyShort: string
+  canRevoke: boolean
   isRevoked: boolean
   expiration: string
   createdAt: string
@@ -388,6 +394,8 @@ export type AdminApiKey = {
 
 export type AdminApiBootstrap = {
   enabled: boolean
+  createFullAccess: boolean
+  assignableGroups: ApiAssignableGroup[]
   keys: AdminApiKey[]
 }
 
@@ -403,6 +411,7 @@ function normalizeAdminApiKey(value: unknown, fallbackMessage: string): AdminApi
     value.name.length < 1 ||
     typeof value.keyShort !== 'string' ||
     !isValidAdminApiKeyShort(value.keyShort) ||
+    typeof value.canRevoke !== 'boolean' ||
     typeof value.isRevoked !== 'boolean' ||
     typeof value.expiration !== 'string' ||
     value.expiration.length < 1 ||
@@ -418,6 +427,7 @@ function normalizeAdminApiKey(value: unknown, fallbackMessage: string): AdminApi
     id: value.id,
     name: value.name,
     keyShort: value.keyShort,
+    canRevoke: value.canRevoke,
     grant: ApiKeyGrantSchema.parse(value.grant ?? { groupId: null, mcpResource: null, mcpResourceVersion: null }),
     isRevoked: value.isRevoked,
     expiration: value.expiration,
@@ -435,12 +445,21 @@ export async function fetchAdminApiBootstrap(fetchImpl: FetchImpl, fallbackMessa
   })
 
   const payload = await parseJsonResponse(response, fallbackMessage)
-  if (!isRecord(payload) || typeof payload.enabled !== 'boolean' || !Array.isArray(payload.keys)) {
+  if (!isRecord(payload) || typeof payload.enabled !== 'boolean' || typeof payload.createFullAccess !== 'boolean' || !Array.isArray(payload.assignableGroups) || !Array.isArray(payload.keys)) {
+    throw new Error(fallbackMessage)
+  }
+
+  let assignableGroups: ApiAssignableGroup[]
+  try {
+    assignableGroups = payload.assignableGroups.map(group => ApiAssignableGroupSchema.parse(group))
+  } catch {
     throw new Error(fallbackMessage)
   }
 
   return {
     enabled: payload.enabled,
+    createFullAccess: payload.createFullAccess,
+    assignableGroups,
     keys: payload.keys.map((key: unknown) => normalizeAdminApiKey(key, fallbackMessage))
   }
 }

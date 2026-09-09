@@ -18,6 +18,8 @@ const fail = (message: string, status = 400): never => {
   throw new errors.ApplicationError(message, { status })
 }
 const settingKeys = ['theming', 'themeAdministration']
+const customCodeFields = ['injectCSS', 'injectHead', 'injectBody'] as const
+type CustomCodeField = typeof customCodeFields[number]
 const themeConfigurationPatch = (policy: ThemePolicy, configuration: Record<string, unknown>) => ({
   theming: { ...record(configuration.theming), ...policy, colors: policy.palettes.find(palette => palette.id === policy.activePaletteId)!.colors }
 })
@@ -67,8 +69,8 @@ export const createThemeAdministrationStore = (deps: Dependencies) => {
         return fail('An administrator principal is required.', 403)
       ids = requester.groups as number[]
     }
-    if (!groups.some(group => ids.includes(group.id) && group.permissions.some(permission => ['manage:system', 'manage:theme'].includes(permission))))
-      return fail('Theme administration is required.', 403)
+    const authorizedGroups = groups.filter(group => ids.includes(group.id) && Array.isArray(group.permissions) && group.permissions.some(permission => ['manage:system', 'manage:theme'].includes(permission)))
+    if (!authorizedGroups.length) return fail('Theme administration is required.', 403)
     const query = tx<Setting>('settings').whereIn('key', settingKeys).orderBy('key'),
       rows = await (lock ? query.forUpdate() : query)
     const configuration = {
@@ -80,7 +82,14 @@ export const createThemeAdministrationStore = (deps: Dependencies) => {
     const fingerprint = createHmac('sha256', deps.reviewKey)
       .update(stable([rows, policy, groups, actorId, ids]))
       .digest('hex')
-    return { policy, configuration, metadata, fingerprint, actorId }
+    return {
+      policy,
+      configuration,
+      metadata,
+      fingerprint,
+      actorId,
+      editCustomCode: authorizedGroups.some(group => group.permissions.includes('manage:system'))
+    }
   }
   const inspect = async (requester: PagePrincipal): Promise<ThemeWorkspace> => {
     const tx = await deps.db.transaction({ isolationLevel: 'repeatable read', readOnly: true })
@@ -91,7 +100,8 @@ export const createThemeAdministrationStore = (deps: Dependencies) => {
         policy: saved.policy,
         fingerprint: saved.fingerprint,
         history: Array.isArray(saved.metadata.history) ? (saved.metadata.history.slice(0, 50) as ThemePolicyEvent[]) : [],
-        runtime: { state: stable(saved.policy) === stable(deps.runtime()) && deps.runtimeReady?.() !== false ? 'applied' : 'needs-attention', observedAt: new Date().toISOString() }
+        runtime: { state: stable(saved.policy) === stable(deps.runtime()) && deps.runtimeReady?.() !== false ? 'applied' : 'needs-attention', observedAt: new Date().toISOString() },
+        capabilities: { editCustomCode: saved.editCustomCode }
       }
     } catch (error) {
       await tx.rollback()
@@ -110,10 +120,6 @@ export const createThemeAdministrationStore = (deps: Dependencies) => {
     async save(requester: PagePrincipal, input: { policy: unknown; fingerprint: unknown; reason: unknown }): Promise<ThemeWriteResult> {
       const validation = ThemePolicySchema.safeParse(input.policy)
       if (!validation.success) return fail(validation.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join(' '))
-      try { parseCSS(validation.data.injectCSS, { from: undefined }) }
-      catch (error) {
-        return fail(error instanceof CssSyntaxError ? `Custom CSS syntax error at line ${error.line}, column ${error.column}: ${error.reason}` : 'Custom CSS could not be parsed. Correct the stylesheet before publishing.')
-      }
       if (typeof input.reason !== 'string' || input.reason.trim().length < 3 || input.reason.length > 1000)
         return fail('Provide an administrative reason of 3–1000 characters.')
       const reason = input.reason.trim()
@@ -123,6 +129,14 @@ export const createThemeAdministrationStore = (deps: Dependencies) => {
           return fail('Workspace settings changed. Reload the saved settings before reviewing again.', 409)
         const fields = themeChangedFields(current.policy, validation.data)
         if (!fields.length) return fail('There are no workspace changes to save.')
+        if (fields.some(field => customCodeFields.includes(field as CustomCodeField)) && !current.editCustomCode)
+          return fail('Full system administration is required to change custom theme code.', 403)
+        if (fields.includes('injectCSS')) {
+          try { parseCSS(validation.data.injectCSS, { from: undefined }) }
+          catch (error) {
+            return fail(error instanceof CssSyntaxError ? `Custom CSS syntax error at line ${error.line}, column ${error.column}: ${error.reason}` : 'Custom CSS could not be parsed. Correct the stylesheet before publishing.')
+          }
+        }
         const event: ThemePolicyEvent = { id: randomUUID(), actorId: current.actorId, reason, fields, createdAt: new Date().toISOString() }
         const patch: Record<string, unknown> = themeConfigurationPatch(validation.data, current.configuration)
         patch.themeAdministration = {

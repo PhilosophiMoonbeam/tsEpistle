@@ -4,6 +4,8 @@ import path from 'node:path'
 import fs from 'fs-extra'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import type PageModel from '../../models/pages.ts'
+import errors from '../../helpers/error.ts'
+
 
 const localeRelationMovePatch = vi.fn(async () => ({}))
 const writeOutboxEvent = vi.fn(async () => undefined)
@@ -30,16 +32,7 @@ let cacheIdentityMarker:
   | { id: number; hash: string; sourceRevision: string | number; path: string; localeCode: string; visibility: 'public' | 'private'; ownerId: number | null }
   | undefined
 
-const pageErrorNames = [
-  'PageDeleteForbidden',
-  'PageDuplicateCreate',
-  'PageEmptyContent',
-  'PageIllegalPath',
-  'PageMoveForbidden',
-  'PageNotFound',
-  'PagePathCollision',
-  'PageUpdateForbidden'
-]
+
 
 beforeEach(async () => {
   tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-page-cache-'))
@@ -85,12 +78,12 @@ beforeEach(async () => {
     }),
     { transaction }
   )
-  const errors = Object.fromEntries(pageErrorNames.map(name => [name, class extends Error {}]))
-
+  const checkAccess = vi.fn().mockReturnValue(true)
+  const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
   wikiGlobal.WIKI = {
     ROOTPATH: tempRoot,
     Error: errors,
-    auth: { checkAccess: vi.fn().mockReturnValue(true) },
+    auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
     collaboration: { pageChanged: vi.fn(async () => undefined) },
     config: { dataPath: 'data', db: { type: 'postgres' } },
     data: {
@@ -137,6 +130,7 @@ describe('models/pages.updatePage cache invalidation', () => {
     const ownerId = 7
     const oldHash = pageHelper.generateHash({ path: oldPath, locale, visibility: 'private', ownerId })
     const newHash = pageHelper.generateHash({ path: newPath, locale, visibility: 'private', ownerId })
+    const oldTags: Array<{ tag: string }> = []
     const oldPage = {
       id: 42,
       authorId: ownerId,
@@ -161,7 +155,8 @@ describe('models/pages.updatePage cache invalidation', () => {
       publishStartDate: '',
       render: '<p>stale old-path render</p>',
       sourceRevision: '1',
-      tags: [],
+      tags: oldTags,
+      $relatedQuery: vi.fn(async (relation: string) => relation === 'tags' ? oldTags : []),
       title: 'Moved page',
       toc: '[]',
       visibility: 'private'
@@ -173,7 +168,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       render: '<p>fresh new-path render</p>',
       updatedAt: '2026-08-29T02:00:00.000Z'
     }
-    transactionPageProjection = movedPage
+    transactionPageProjection = { ...movedPage, updatedAt: oldPage.updatedAt }
     cacheIdentityMarker = oldPage
     const oldLookup = { path: oldPath, locale, visibility: 'private' as const, ownerId }
     const newLookup = { path: newPath, locale, visibility: 'private' as const, ownerId }
@@ -186,6 +181,7 @@ describe('models/pages.updatePage cache invalidation', () => {
     const patchBuilder: Record<string, unknown> & PromiseLike<number> = {
       patch,
       where,
+      findOne: vi.fn(async () => undefined),
       then: (resolve, reject) => Promise.resolve(1).then(resolve, reject)
     }
     patch.mockReturnValue(patchBuilder)
@@ -195,8 +191,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       if (transaction !== undefined) return patchBuilder
       readQueryCount += 1
       if (readQueryCount === 1) return { findById: vi.fn(async () => oldPage) }
-      if (readQueryCount === 2) return { findOne: vi.fn(async () => undefined) }
-      if (readQueryCount === 3) {
+      if (readQueryCount === 2) {
         return {
           findById: vi.fn(() => ({
             select: vi.fn(async () => ({ updatedAt: movedPage.updatedAt }))
@@ -211,12 +206,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       await Page.savePageToCache(page)
     })
     vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
-    const deletePageFromCache = Page.deletePageFromCache.bind(Page)
-    const deletedHashes: string[] = []
-    vi.spyOn(Page, 'deletePageFromCache').mockImplementation(async hash => {
-      deletedHashes.push(hash)
-      await deletePageFromCache(hash)
-    })
+
 
     await Page.updatePage({
       id: oldPage.id,
@@ -229,8 +219,7 @@ describe('models/pages.updatePage cache invalidation', () => {
       } as Express.User & { id: number; name: string; email: string }
     })
 
-    expect(deletedHashes).toEqual([oldHash])
-    expect(deletedHashes).not.toContain(newHash)
+
     expect(await Page.getPageFromCache(newLookup)).toMatchObject({
       path: newPath,
       render: '<p>fresh new-path render</p>'

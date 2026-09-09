@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { canReadPage, canWritePage, type PagePrincipal, type PageVisibility } from '../helpers/page-access.ts'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import errors from './errors.ts'
 
 const { ApplicationError } = errors
@@ -13,7 +14,10 @@ interface LocaleRelationPage {
   path: string
   title: string
   visibility: PageVisibility
+  tags: Array<{ tag: string }>
 }
+
+type LocaleRelationPageRow = Omit<LocaleRelationPage, 'tags'>
 
 export interface PageLocaleRelation {
   id: number
@@ -24,11 +28,34 @@ export interface PageLocaleRelation {
 }
 
 interface WikiLocaleRelationRuntime {
+  auth: {
+    loadPageRuleAuthority(requester: PagePrincipal | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+  }
   models: { knex: Knex }
 }
 
 const runtime = (): WikiLocaleRelationRuntime => Reflect.get(globalThis, 'WIKI') as unknown as WikiLocaleRelationRuntime
 const pageColumns = ['id', 'localeCode', 'localeGroupId', 'ownerId', 'path', 'title', 'visibility'] as const
+
+const hydratePageTags = async (
+  knex: Knex | Knex.Transaction,
+  pages: LocaleRelationPageRow[]
+): Promise<LocaleRelationPage[]> => {
+  if (pages.length === 0) return []
+  const tagRows = await knex<{ pageId: number; tag: string }>('pageTags')
+    .select('pageTags.pageId', 'tags.tag')
+    .innerJoin('tags', 'tags.id', 'pageTags.tagId')
+    .whereIn('pageTags.pageId', pages.map(page => page.id))
+    .orderBy('pageTags.pageId', 'asc')
+    .orderBy('tags.tag', 'asc')
+  const tagsByPage = new Map<number, Array<{ tag: string }>>()
+  for (const row of tagRows) {
+    const tags = tagsByPage.get(row.pageId) ?? []
+    tags.push({ tag: row.tag })
+    tagsByPage.set(row.pageId, tags)
+  }
+  return pages.map(page => ({ ...page, tags: tagsByPage.get(page.id) ?? [] }))
+}
 
 const positiveInteger = (value: unknown, label: string): number => {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
@@ -57,7 +84,7 @@ const toRelation = (page: LocaleRelationPage): PageLocaleRelation => ({
   visibility: page.visibility
 })
 
-const selectPages = (knex: Knex | Knex.Transaction) => knex<LocaleRelationPage>('pages').select(...pageColumns)
+const selectPages = (knex: Knex | Knex.Transaction) => knex<LocaleRelationPageRow>('pages').select(...pageColumns)
 
 const isUniqueViolation = (error: unknown): boolean => {
   if (!error || typeof error !== 'object') return false
@@ -66,21 +93,33 @@ const isUniqueViolation = (error: unknown): boolean => {
   return code === '23505' || code === 'SQLITE_CONSTRAINT_UNIQUE' || /unique constraint/i.test(message)
 }
 
+const listPageLocaleRelationsWithAuthority = async (input: {
+  pageId: number
+  requester?: PagePrincipal
+  authority?: PageRuleAuthority
+}): Promise<PageLocaleRelation[]> => {
+  const pageRow = await selectPages(runtime().models.knex).where({ id: input.pageId }).first()
+  const [page] = await hydratePageTags(runtime().models.knex, pageRow ? [pageRow] : [])
+  const authority = input.authority ?? await runtime().auth.loadPageRuleAuthority(input.requester)
+  if (!page || !canReadPage(input.requester, page, authority)) return notFound()
+  if (!page.localeGroupId) return [toRelation(page)]
+
+  const pages = await hydratePageTags(
+    runtime().models.knex,
+    await selectPages(runtime().models.knex)
+      .where({ localeGroupId: page.localeGroupId })
+      .orderBy('localeCode')
+      .orderBy('id')
+  )
+  return pages.filter(candidate => canReadPage(input.requester, candidate, authority)).map(toRelation)
+}
+
 export const listPageLocaleRelations = async (input: {
   pageId: number
   requester?: PagePrincipal
 }): Promise<PageLocaleRelation[]> => {
   const pageId = positiveInteger(input.pageId, 'pageId')
-  const page = await selectPages(runtime().models.knex).where({ id: pageId }).first()
-  if (!page || !canReadPage(input.requester, page)) return notFound()
-  if (!page.localeGroupId) return [toRelation(page)]
-
-  const pages = await selectPages(runtime().models.knex)
-    .where({ localeGroupId: page.localeGroupId })
-    .orderBy('localeCode')
-    .orderBy('id')
-
-  return pages.filter(candidate => canReadPage(input.requester, candidate)).map(toRelation)
+  return listPageLocaleRelationsWithAuthority({ pageId, requester: input.requester })
 }
 
 export const linkPageLocaleRelation = async (input: {
@@ -92,22 +131,30 @@ export const linkPageLocaleRelation = async (input: {
   const relatedPageId = positiveInteger(input.relatedPageId, 'relatedPageId')
   if (pageId === relatedPageId) relationConflict('A page cannot be linked to itself as a translation.')
 
+  let authority: PageRuleAuthority | undefined
   try {
     await runtime().models.knex.transaction(async transaction => {
-      const selected = await selectPages(transaction)
+      const selectedRows = await selectPages(transaction)
         .whereIn('id', [pageId, relatedPageId].sort((left, right) => left - right))
         .forUpdate()
+      const selected = await hydratePageTags(transaction, selectedRows)
       const page = selected.find(candidate => candidate.id === pageId)
       const relatedPage = selected.find(candidate => candidate.id === relatedPageId)
-      if (!page || !relatedPage || !canReadPage(input.requester, page) || !canReadPage(input.requester, relatedPage)) return notFound()
-      if (page.localeCode === relatedPage.localeCode) relationConflict(`The translation set already has a ${page.localeCode} page.`)
+      if (!page || !relatedPage) return notFound()
 
       const groupIds = [...new Set([page.localeGroupId, relatedPage.localeGroupId].filter((value): value is string => Boolean(value)))].sort()
       const members = groupIds.length === 0
         ? selected
-        : await selectPages(transaction).whereIn('localeGroupId', groupIds).forUpdate()
+        : await hydratePageTags(
+            transaction,
+            await selectPages(transaction).whereIn('localeGroupId', groupIds).forUpdate()
+          )
       const affected = [...new Map([...members, page, relatedPage].map(candidate => [candidate.id, candidate])).values()]
-      if (affected.some(candidate => !canWritePage(input.requester, candidate))) return forbidden()
+      const loadedAuthority = await runtime().auth.loadPageRuleAuthority(input.requester, transaction)
+      authority = loadedAuthority
+      if (!canReadPage(input.requester, page, loadedAuthority) || !canReadPage(input.requester, relatedPage, loadedAuthority)) return notFound()
+      if (page.localeCode === relatedPage.localeCode) relationConflict(`The translation set already has a ${page.localeCode} page.`)
+      if (affected.some(candidate => !canWritePage(input.requester, candidate, loadedAuthority))) return forbidden()
 
       const localeOwners = new Map<string, number>()
       for (const candidate of affected) {
@@ -128,8 +175,9 @@ export const linkPageLocaleRelation = async (input: {
     if (isUniqueViolation(error)) relationConflict('That translation locale is already represented in this set.')
     throw error
   }
+  if (!authority) throw new Error('Page-rule authority was not loaded')
 
-  return listPageLocaleRelations({ pageId, ...(input.requester === undefined ? {} : { requester: input.requester }) })
+  return listPageLocaleRelationsWithAuthority({ pageId, requester: input.requester, authority })
 }
 
 export const unlinkPageLocaleRelation = async (input: {
@@ -141,17 +189,22 @@ export const unlinkPageLocaleRelation = async (input: {
   const relatedPageId = positiveInteger(input.relatedPageId, 'relatedPageId')
   if (pageId === relatedPageId) relationConflict('Select a different translation to unlink.')
 
+  let authority: PageRuleAuthority | undefined
   await runtime().models.knex.transaction(async transaction => {
-    const selected = await selectPages(transaction)
+    const selectedRows = await selectPages(transaction)
       .whereIn('id', [pageId, relatedPageId].sort((left, right) => left - right))
       .forUpdate()
+    const selected = await hydratePageTags(transaction, selectedRows)
     const page = selected.find(candidate => candidate.id === pageId)
     const relatedPage = selected.find(candidate => candidate.id === relatedPageId)
-    if (!page || !relatedPage || !canReadPage(input.requester, page) || !canReadPage(input.requester, relatedPage)) return notFound()
+    if (!page || !relatedPage) return notFound()
+    const loadedAuthority = await runtime().auth.loadPageRuleAuthority(input.requester, transaction)
+    authority = loadedAuthority
+    if (!canReadPage(input.requester, page, loadedAuthority) || !canReadPage(input.requester, relatedPage, loadedAuthority)) return notFound()
     if (!page.localeGroupId || page.localeGroupId !== relatedPage.localeGroupId) {
       relationConflict('These pages are not in the same translation set.')
     }
-    if (!canWritePage(input.requester, page) || !canWritePage(input.requester, relatedPage)) return forbidden()
+    if (!canWritePage(input.requester, page, loadedAuthority) || !canWritePage(input.requester, relatedPage, loadedAuthority)) return forbidden()
 
     await transaction('pages').where({ id: relatedPage.id }).update({ localeGroupId: null })
     const remaining = await transaction('pages')
@@ -162,6 +215,6 @@ export const unlinkPageLocaleRelation = async (input: {
       await transaction('pages').where({ id: remaining[0]!.id }).update({ localeGroupId: null })
     }
   })
-
-  return listPageLocaleRelations({ pageId, ...(input.requester === undefined ? {} : { requester: input.requester }) })
+  if (!authority) throw new Error('Page-rule authority was not loaded')
+  return listPageLocaleRelationsWithAuthority({ pageId, requester: input.requester, authority })
 }

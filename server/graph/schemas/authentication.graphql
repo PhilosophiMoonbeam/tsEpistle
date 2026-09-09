@@ -94,7 +94,7 @@ type AuthenticationActiveStrategy {
 
 type AuthenticationLoginResponse {
   responseResult: ResponseStatus
-  jwt: String
+  authenticated: Boolean!
   mustChangePwd: Boolean
   mustProvideTFA: Boolean
   mustSetupTFA: Boolean
@@ -106,5 +106,4 @@ type AuthenticationLoginResponse {
 
 type AuthenticationRegisterResponse {
   responseResult: ResponseStatus
-  jwt: String
 }

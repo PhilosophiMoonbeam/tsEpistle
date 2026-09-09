@@ -1,6 +1,8 @@
 import express from 'express'
 import _ from 'lodash'
 import multer from 'multer'
+import type { Knex } from 'knex'
+import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import path from 'node:path'
 import sanitize from 'sanitize-filename'
 import { unlink } from 'node:fs/promises'
@@ -12,7 +14,14 @@ interface UploadFolder {
 export interface UploadWiki {
   ROOTPATH: string
   auth: {
-    checkAccess(user: Express.User | undefined, permissions: string[], context?: unknown): boolean
+    checkAccess(user: Express.User | undefined, permissions: readonly string[]): boolean
+    checkPageAccess(
+      user: Express.User | undefined,
+      permissions: readonly string[],
+      context: AccessPage,
+      authority: PageRuleAuthority
+    ): boolean
+    loadPageRuleAuthority(user: Express.User | undefined, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
   }
   config: {
     dataPath: string
@@ -21,6 +30,49 @@ export interface UploadWiki {
   models: {
     assetFolders: { getHierarchy(folderId: number): Promise<UploadFolder[]> }
     assets: { upload(input: Record<string, unknown>): Promise<unknown> }
+  }
+}
+
+type UploadMulterLimits = NonNullable<NonNullable<Parameters<typeof multer>[0]>['limits']> & {
+  fieldArrayIndexLimit: number
+}
+
+type UploadParserResponse = {
+  status: 400 | 413
+  message: string
+}
+
+const mapUploadParserError = (err: unknown): UploadParserResponse | undefined => {
+  if (!(typeof multer.MulterError === 'function' && err instanceof multer.MulterError)) {
+    return undefined
+  }
+
+  switch (err.code as string) {
+    case 'LIMIT_FILE_SIZE':
+      return {
+        status: 413,
+        message: 'This file exceeds the workspace upload limit.'
+      }
+    case 'LIMIT_FIELD_VALUE':
+      return {
+        status: 413,
+        message: 'Upload metadata exceeds the allowed size.'
+      }
+    case 'LIMIT_PART_COUNT':
+    case 'LIMIT_FILE_COUNT':
+    case 'LIMIT_FIELD_COUNT':
+    case 'LIMIT_FIELD_KEY':
+    case 'LIMIT_FIELD_NESTING':
+    case 'LIMIT_FIELD_ARRAY_INDEX':
+    case 'LIMIT_UNEXPECTED_FILE':
+    case 'MISSING_FIELD_NAME':
+    case 'INVALID_FIELD_NAME':
+      return {
+        status: 400,
+        message: 'Invalid multipart upload. Submit one mediaUpload metadata field and one file.'
+      }
+    default:
+      return undefined
   }
 }
 
@@ -51,15 +103,24 @@ export default function createUploadController(wiki: UploadWiki): express.Router
   /**
    * Upload files
    */
-  const persistUpload = () =>
-    multer({
+  const persistUpload = () => {
+    const limits: UploadMulterLimits = {
+      fileSize: wiki.config.uploads.maxFileSize,
+      files: 1,
+      fields: 1,
+      parts: 3,
+      fieldSize: 1024,
+      fieldNameSize: 11,
+      fieldNestingDepth: 0,
+      fieldArrayIndexLimit: 0
+    }
+
+    return multer({
       dest: path.resolve(wiki.ROOTPATH, wiki.config.dataPath, 'uploads'),
-      limits: {
-        fileSize: wiki.config.uploads.maxFileSize,
-        files: wiki.config.uploads.maxFiles
-      },
+      limits,
       defParamCharset: 'utf8'
     }).array('mediaUpload')
+  }
 
   router.post(
     '/u',
@@ -71,7 +132,13 @@ export default function createUploadController(wiki: UploadWiki): express.Router
         })
       }
 
-      if (!Number.isSafeInteger(wiki.config.uploads.maxFileSize) || wiki.config.uploads.maxFileSize <= 0) {
+      const { maxFileSize, maxFiles } = wiki.config.uploads
+      if (
+        !Number.isSafeInteger(maxFileSize) ||
+        maxFileSize <= 0 ||
+        !Number.isSafeInteger(maxFiles) ||
+        maxFiles <= 0
+      ) {
         return res.status(403).json({ succeeded: false, message: 'File uploads are disabled by workspace policy.' })
       }
       // Capture current limits for each new request, rather than at server startup.
@@ -81,8 +148,14 @@ export default function createUploadController(wiki: UploadWiki): express.Router
         }
 
         cleanupUploadedFiles(req).then(() => {
-          if (err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ succeeded: false, message: 'This file exceeds the workspace upload limit.' })
-          next(err)
+          const response = mapUploadParserError(err)
+          if (response) {
+            return res.status(response.status).json({
+              succeeded: false,
+              message: response.message
+            })
+          }
+          return next(err)
         }, next)
       })
     },
@@ -137,9 +210,9 @@ export default function createUploadController(wiki: UploadWiki): express.Router
         // Sanitize filename
         fileMeta.originalname = sanitize(fileMeta.originalname.toLowerCase().replace(/[\s,;#]+/g, '_'))
 
-        // Check if user can upload at path
         const assetPath = folderId ? hierarchy.map(h => h.slug).join('/') + `/${fileMeta.originalname}` : fileMeta.originalname
-        if (!wiki.auth.checkAccess(req.user, ['write:assets', 'manage:system'], { path: assetPath })) {
+        const authority = await wiki.auth.loadPageRuleAuthority(req.user)
+        if (!wiki.auth.checkPageAccess(req.user, ['write:assets', 'manage:system'], { path: assetPath }, authority)) {
           return await rejectUpload(403, 'You are not authorized to upload files to this folder.')
         }
 

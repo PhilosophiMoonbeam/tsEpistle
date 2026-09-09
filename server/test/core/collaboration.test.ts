@@ -24,7 +24,7 @@ const originalWiki = globalWithWiki.WIKI
 let knex: Knex
 let server: http.Server
 let socket: WebSocket | null
-
+let authorityAllowed: boolean
 const waitForMessage = (client: WebSocket, type: CollaborationServerMessage['type']): Promise<CollaborationServerMessage> =>
   new Promise((resolve, reject) => {
     const cleanup = (): void => {
@@ -46,6 +46,7 @@ const waitForMessage = (client: WebSocket, type: CollaborationServerMessage['typ
   })
 
 beforeEach(async () => {
+  authorityAllowed = true
   knex = createKnex({
     client: 'better-sqlite3',
     connection: { filename: ':memory:' },
@@ -80,7 +81,17 @@ beforeEach(async () => {
   const events = new (await import('node:events')).EventEmitter()
   globalWithWiki.WIKI = {
     INSTANCE_ID: 'primary',
-    auth: { checkAccess: () => true },
+    auth: {
+      checkAccess: () => true,
+      checkPageAccess: (_user: Express.User | undefined, _permissions: readonly string[], _context: unknown, authority: { permissions: readonly string[] }) =>
+        authorityAllowed && authority.permissions.includes('manage:system'),
+      loadPageRuleAuthority: async (requester: Express.User | undefined) => ({
+        requester,
+        permissions: authorityAllowed ? ['manage:system'] : [],
+        groups: [],
+        tagAliases: {}
+      })
+    },
     config: {
       auth: { audience: 'urn:wiki.js' },
       certs: {
@@ -142,6 +153,38 @@ describe('collaboration service multi-instance transport', () => {
     await expect(collaboration.issueSession({ pageId: 42, expectedUpdatedAt: '2026-08-15T12:00:00.000Z', requester: { id: 1, authVersion: 0 } as Express.User })).rejects.toMatchObject({ status: 404 })
     const fresh = await collaboration.issueSession({ pageId: 42, expectedUpdatedAt: '2026-08-15T12:00:00.000Z', requester: { id: 1, authVersion: 1 } as Express.User })
     expect(JSON.parse(Buffer.from(fresh.token.split('.')[1]!, 'base64url').toString()).authVersion).toBe(1)
+  })
+  it('rechecks fresh page authority for the next message without a reload event', async () => {
+    collaboration.init()
+    collaboration.install(server)
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Expected an HTTP server address')
+    const session = await collaboration.issueSession({
+      pageId: 42,
+      expectedUpdatedAt: '2026-08-15T12:00:00.000Z',
+      requester: { id: 1 } as Express.User
+    })
+    socket = new WebSocket(`ws://127.0.0.1:${address.port}/collaboration`, [
+      COLLABORATION_WEBSOCKET_PROTOCOL,
+      session.token
+    ], { headers: { Origin: `http://127.0.0.1:${address.port}` } })
+    const sync = waitForMessage(socket, 'sync')
+    await once(socket, 'open')
+    await sync
+
+    authorityAllowed = false
+    const conflict = waitForMessage(socket, 'conflict')
+    const closed = once(socket, 'close')
+    socket.send(JSON.stringify({
+      type: 'update',
+      protocolVersion: session.protocolVersion,
+      updateVersion: session.updateVersion,
+      generation: session.generation,
+      update: 'AAA='
+    }))
+    expect(await conflict).toMatchObject({ reason: 'permission-revoked' })
+    await closed
   })
 
   it('broadcasts durable updates written by an independent instance without sticky sessions', async () => {

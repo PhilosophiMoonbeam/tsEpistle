@@ -8,6 +8,7 @@ import { up as createKnowledgeProjectionStore } from '../db/migrations/2.5.152.t
 import { up as createKnowledgeSearchStore } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
 import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
 import { knowledgeSearchText, projectPageKnowledge } from '../knowledge/projection.ts'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 
 interface TestRequester {
   readonly id: number
@@ -26,6 +27,13 @@ interface PageFixture {
   readonly publishStartDate?: string | null
   readonly publishEndDate?: string | null
 }
+
+const pageRuleAuthority = (requester: unknown): PageRuleAuthority => ({
+  requester,
+  permissions: ['read:pages'],
+  groups: [],
+  tagAliases: {}
+})
 
 const databaseName = process.env.WIKI_TEST_POSTGRES_DATABASE ?? ''
 const passwordFile = process.env.WIKI_TEST_POSTGRES_PASSWORD_FILE
@@ -191,6 +199,10 @@ suite('PostgreSQL knowledge projection search', () => {
         checkAccess: (requester: TestRequester | undefined, permissions: readonly string[], context?: { path?: string }) => {
           if (permissions.includes('manage:system')) return requester?.permissions?.includes('manage:system') ?? false
           return requester?.canReadPublic === true && context?.path !== 'knowledge/denied'
+        },
+        checkPageAccess: (requester: TestRequester | undefined, permissions: readonly string[], context?: { path?: string }) => {
+          if (permissions.includes('manage:system')) return requester?.permissions?.includes('manage:system') ?? false
+          return requester?.canReadPublic === true && context?.path !== 'knowledge/denied'
         }
       },
       data: { searchEngine: { config: { dictLanguage: 'english' } } }
@@ -214,9 +226,12 @@ suite('PostgreSQL knowledge projection search', () => {
       await insertPage(fixture({ id, sourceRevision: id, path: `knowledge/selected-${id}`, title: `Signal Candidate ${id}` }))
     }
 
+    const requester = { id: 9, canReadPublic: true } as never
+    const authority = pageRuleAuthority(requester)
     const candidates = await new PageKnowledgeRepository(db).searchVisible({
       query: 'signal',
-      requester: { id: 9, canReadPublic: true } as never,
+      requester,
+      authority,
       pageIds: [11],
       authorizedPageIds: [11],
       limit: 1
@@ -240,30 +255,36 @@ suite('PostgreSQL knowledge projection search', () => {
 
     const repository = new PageKnowledgeRepository(db)
     const reader = { id: 9, canReadPublic: true } as never
+    const readerAuthority = pageRuleAuthority(reader)
     const publicCandidates = await repository.searchVisible({
       query: 'boundary',
       requester: reader,
+      authority: readerAuthority,
       authorizedPageIds: [1, 2, 3, 4, 5, 7],
       limit: 20
     })
     expect(publicCandidates.map(candidate => candidate.id)).toEqual([1])
 
-    const ownerCandidates = await repository.searchVisible({ query: 'boundary', requester: { id: 7, canReadPublic: false } as never, limit: 20 })
+    const owner = { id: 7, canReadPublic: false } as never
+    const ownerCandidates = await repository.searchVisible({ query: 'boundary', requester: owner, authority: pageRuleAuthority(owner), limit: 20 })
     expect(ownerCandidates).toContainEqual(expect.objectContaining({ id: 6, sourceRevision: '6' }))
+    const manager = { id: 8, permissions: ['manage:system'], canReadPublic: false } as never
     const managerCandidates = await repository.searchVisible({
       query: 'boundary',
-      requester: { id: 8, permissions: ['manage:system'], canReadPublic: false } as never,
+      requester: manager,
+      authority: pageRuleAuthority(manager),
       limit: 20
     })
     expect(managerCandidates).toContainEqual(expect.objectContaining({ id: 6, sourceRevision: '6' }))
     expect(
       await repository.filterVisibleCurrentIds({
         requester: reader,
+        authority: readerAuthority,
         pageIds: [1, 2, 3, 4, 5, 6, 7],
         authorizedPageIds: [1, 2, 3, 4, 5, 7]
       })
     ).toEqual([1])
-    expect(await repository.filterVisibleCurrentIds({ requester: { id: 7, canReadPublic: false } as never })).toEqual([6])
+    expect(await repository.filterVisibleCurrentIds({ requester: owner, authority: pageRuleAuthority(owner) })).toEqual([6])
   })
 
   it('filters empty, offset, and invalid publication windows beyond 500 excluded matches before result caps', async () => {
@@ -311,10 +332,12 @@ suite('PostgreSQL knowledge projection search', () => {
 
     const repository = new PageKnowledgeRepository(db)
     const requester = { id: 9, canReadPublic: true } as never
-    expect((await repository.searchVisible({ query: 'signal', requester, limit: 2 })).map(candidate => candidate.id)).toEqual([502, 503])
+    const authority = pageRuleAuthority(requester)
+    expect((await repository.searchVisible({ query: 'signal', requester, authority, limit: 2 })).map(candidate => candidate.id)).toEqual([502, 503])
     expect(
       await repository.filterVisibleCurrentIds({
         requester,
+        authority,
         pageIds: Array.from({ length: 504 }, (_, index) => index + 1),
         authorizedPageIds: Array.from({ length: 504 }, (_, index) => index + 1)
       })
@@ -325,8 +348,9 @@ suite('PostgreSQL knowledge projection search', () => {
     await insertPage(fixture({ id: 42, sourceRevision: 42, path: 'knowledge/amber-falcon', title: 'Amber Falcon Runbook' }))
     const repository = new PageKnowledgeRepository(db)
     const requester = { id: 9, canReadPublic: true } as never
+    const authority = pageRuleAuthority(requester)
 
-    expect(await repository.searchVisible({ query: 'AFR', requester, limit: 5 })).toEqual([expect.objectContaining({ id: 42, sourceRevision: '42' })])
-    expect(await repository.searchVisible({ query: '"AFR"', requester, limit: 5 })).toEqual([])
+    expect(await repository.searchVisible({ query: 'AFR', requester, authority, limit: 5 })).toEqual([expect.objectContaining({ id: 42, sourceRevision: '42' })])
+    expect(await repository.searchVisible({ query: '"AFR"', requester, authority, limit: 5 })).toEqual([])
   })
 })

@@ -1,6 +1,11 @@
 import express from 'express'
 import type { Request, Response } from 'express'
 import _ from 'lodash'
+import {
+  clearFederatedLoginCookie,
+  hasFederatedCallbackCorrelation,
+  persistFederatedLoginSession
+} from '../helpers/federated-login.ts'
 import commonHelper from '../helpers/common.ts'
 
 interface AuthenticationStrategy {
@@ -95,6 +100,7 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
    */
   router.get('/login/:strategy', async (req, res, next) => {
     try {
+      if (req.sessionID && req.session && typeof req.session.save === 'function') await persistFederatedLoginSession(req)
       await wiki.models.users.login(
         {
           strategy: req.params.strategy
@@ -110,17 +116,26 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
    * Social Strategies Callback
    */
   router.all('/login/:strategy/callback', async (req, res, next) => {
+    const providerKey = req.params.strategy
     if (req.method !== 'GET' && req.method !== 'POST') {
+      clearFederatedLoginCookie(res, providerKey)
       return next()
+    }
+
+    if (!hasFederatedCallbackCorrelation(req)) {
+      clearFederatedLoginCookie(res, providerKey)
+      next(new Error('Federated login callback correlation is missing.'))
+      return
     }
 
     try {
       const authResult = await wiki.models.users.login(
         {
-          strategy: req.params.strategy
+          strategy: providerKey
         },
         { req, res }
       )
+      res.set('Cache-Control', 'no-store')
       res.cookie('jwt', authResult.jwt, commonHelper.getCookieOpts())
 
       const loginRedirectValue: unknown = req.cookies['loginRedirect']
@@ -144,19 +159,42 @@ export default function createAuthController(wiki: AuthWiki): express.Router {
       }
     } catch (err) {
       next(err)
+    } finally {
+      clearFederatedLoginCookie(res, providerKey)
     }
   })
 
   /**
    * Logout
+   *
+   * Logout is intentionally a state-changing POST. GET and HEAD remain inert and
+   * explicit so links, crawlers, and prefetchers cannot clear a session.
    */
-  router.get('/logout', async (req, res, next) => {
-    const redirURL = await wiki.models.users.logout({ req, res })
-    req.logout(err => {
-      if (err) return next(err)
-      res.clearCookie('jwt')
-      res.redirect(redirURL)
-    })
+  const logoutMethodNotAllowed = (_req: Request, res: Response): void => {
+    res.set('Cache-Control', 'no-store')
+    res.set('Allow', 'POST')
+    res.status(405).end()
+  }
+  router.head('/logout', logoutMethodNotAllowed)
+  router.get('/logout', logoutMethodNotAllowed)
+  router.post('/logout', async (req, res, next) => {
+    res.set('Cache-Control', 'no-store')
+    try {
+      const redirURL = await wiki.models.users.logout({ req, res })
+      await new Promise<void>((resolve, reject) => {
+        req.logout(err => {
+          if (err) {
+            reject(err)
+            return
+          }
+          resolve()
+        })
+      })
+      res.clearCookie('jwt', commonHelper.getCookieOpts())
+      res.redirect(303, redirURL)
+    } catch (err) {
+      next(err)
+    }
   })
 
   /**

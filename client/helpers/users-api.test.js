@@ -606,9 +606,9 @@ describe('users api helper', () => {
   test.each([{ appearance: 'dark' }, { fontFamily: 'roboto-flex' }, { appearance: 'system', fontFamily: 'newsreader' }])(
     'updates profile preferences with the exact REST payload: %o',
     async input => {
-      const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ token: 'replacement-jwt' }))
+      const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ message: 'Profile preferences updated successfully.' }))
 
-      await expect(updateProfilePreferences(fetchImpl, input)).resolves.toBe('replacement-jwt')
+      await expect(updateProfilePreferences(fetchImpl, input)).resolves.toBe('Profile preferences updated successfully.')
 
       expect(fetchImpl).toHaveBeenCalledWith('/_api/users/profile/preferences', {
         method: 'PATCH',

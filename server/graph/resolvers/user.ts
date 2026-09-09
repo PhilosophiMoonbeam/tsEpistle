@@ -1,8 +1,13 @@
+import type { Response } from 'express'
+
 import graphHelper from '../../helpers/graph.ts'
 import userOperations from '../../operations/users.ts'
 
 type ResolverArgs = Record<string, unknown>
-interface ResolverContext { req: { user: Express.User } }
+interface ResolverContext {
+  req: { user: Express.User }
+  res: Response
+}
 
 export default {
   Query: { async users () { return {} } },
@@ -66,14 +71,14 @@ export default {
     resetPassword () { return false },
     async updateProfile (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
-        const jwt = await userOperations.updateProfile({ requester: context.req.user, input: args })
-        return { responseResult: graphHelper.generateSuccess('User profile updated successfully'), jwt }
+        await userOperations.updateProfile({ requester: context.req.user, input: args, response: context.res })
+        return { responseResult: graphHelper.generateSuccess('User profile updated successfully') }
       } catch (err: unknown) { return graphHelper.generateError(err) }
     },
     async changePassword (_obj: unknown, args: ResolverArgs, context: ResolverContext) {
       try {
-        const jwt = await userOperations.changePassword({ requester: context.req.user, current: args.current, newPassword: args.new })
-        return { responseResult: graphHelper.generateSuccess('Password changed successfully'), jwt }
+        await userOperations.changePassword({ requester: context.req.user, current: args.current, newPassword: args.new, response: context.res })
+        return { responseResult: graphHelper.generateSuccess('Password changed successfully') }
       } catch (err: unknown) { return graphHelper.generateError(err) }
     }
   },

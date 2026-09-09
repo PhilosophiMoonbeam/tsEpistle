@@ -4,7 +4,7 @@ Status: historical record — superseded; not an active product roadmap
 
 Current authority: [`scarlett-upstream-ledger.json`](./scarlett-upstream-ledger.json) is the sole current authority for Scarlett candidate identity, upstream revision, workstream, disposition, state, and acceptance contract.
 
-This document preserves the assessment and decisions recorded on 2026-08-15. All roadmap language below—including implementation-readiness, editor-engine, upgrade-source, artifact, and framework statements—is historical context, not a current product or support promise. Current public support contracts are `README.md` and `SECURITY.md`; current implementation contracts are the package metadata and code.
+This document preserves the assessment and decisions recorded on 2026-08-15. All roadmap language below—including implementation-readiness, editor-engine, upgrade-source, artifact, framework, and release statements—is historical context, not a current product or support promise. Current public support contracts are `README.md` and `SECURITY.md`; current implementation contracts are the package metadata and code. Current release authority is the maintainer-owned schema-2 threat-model contract in [`docs/security/threat-model.md`](../security/threat-model.md) and [`docs/security/review-attestations.json`](../security/review-attestations.json), with `policyVersion: 1` and `modelVersion: 1`; this historical roadmap does not define a second release policy or an external-review prerequisite.
 
 Last assessed: 2026-08-15T21:39:55Z
 
@@ -687,7 +687,7 @@ Exit gate: journeys pass at narrow phone, tablet, standard desktop, and wide des
 - all supported PostgreSQL source-product and server-version upgrade matrices pass from the declared minimum versions;
 - clean-install, upgrade, backup/restore, multi-instance, worker recovery, and Docker/Helm smoke pass;
 - dependency and license inventory is reproducible;
-- threat model and external security review findings are resolved or explicitly release-blocking;
+- threat model and maintainer/agent source-review findings are resolved or explicitly release-blocking; any older external-review wording in this historical roadmap is superseded;
 - performance budgets pass on representative datasets;
 - translations fall back safely with no raw keys in core journeys.
 
@@ -831,7 +831,7 @@ Start in this order:
 12. **Visual Markdown table/admonition improvements** — only with round-trip fixtures.
 13. **Page history overlay and navigation improvements** — bounded UX completion.
 14. **Live collaboration design proof** — only after policy, events, and canonical editor gates.
-15. **Release-candidate matrix and external review** — turns feature completion into product completion.
+15. **Release-candidate matrix and maintainer/agent source review** — final historical completion step under the current release-integrity boundary; the former external-review wording is superseded.
 
 Do not start by migrating frameworks, copying Scarlett directories, or adding the most visible block. The immediate queue deliberately builds the shared correctness layers that let later features be superior rather than merely present.
 
@@ -853,5 +853,5 @@ When this roadmap changes, append an entry here.
 | 2026-08-15T17:36:13Z | Scarlett static, media, diagram, and map block concepts | `dd75f033` plus the fork-native extension host | Completed the visible extension handoff as ten additive versioned extensions: semantic tabs/spoiler/infobox, same-origin PDF/media, consent-gated YouTube/Kroki/PlantUML/OpenStreetMap, and locally sanitized Mermaid; added migration `2.5.138`, editor configuration, browser hydration/styles, 74 focused assertions, production gates, and durable Chromium authoring/accessibility coverage without Lit, Tailwind, arbitrary embeds, or pre-consent egress |
 | 2026-08-15T21:39:55Z | `d0c5a8bf` (`feat: add unlock aspect ratio option to block-gallery`) | `5a250b1f` | Re-fetched upstream with zero new commits and established the machine-readable 32-candidate intake ledger, deterministic Git comparison report, and scheduled alert workflow. Final reconciliation records 25 completed adaptations, 6 closed/rejected experiments, and 1 active deployment-specific authentication canary obligation. |
 | 2026-08-15T22:30:00Z | Scarlett PostgreSQL-only and migration-reset concepts | `9e4009f6` plus the tracked Wiki.js 2.5.314 upgrade fixture | Completed the PostgreSQL-only continuity cutover: enforced current PostgreSQL 15–18 lines, retained the exact Knex ledger, removed four unused database families, added pinned fixture/backup identities and peak resource metrics, and locally proved upgrade, authenticated candidate writes, snapshot restoration, discarded post-snapshot writes, and previous-image authentication on PostgreSQL 15.19, 16.15, 17.11, and 18.6. |
-| 2026-08-15T23:45:00Z | Complete assessed Scarlett candidate set through `d0c5a8bf` | Final fork-native synthesis commit | Closed the internal adaptation program: enforced architecture and dependency boundaries; PostgreSQL 15–18 continuity; durable extension and collaboration lifecycles; responsive/accessibility/performance contracts; OpenAPI, placeholder, threat-model, provenance, and operator gates; and exact-once process-death recovery. External release remains explicitly blocked on independent review `SEC-EXT-001`, with deployment-specific adapter canaries retained under `SEC-ADAPTER-001`. |
+| 2026-08-15T23:45:00Z | Complete assessed Scarlett candidate set through `d0c5a8bf` | Final fork-native synthesis commit | Closed the internal adaptation program: enforced architecture and dependency boundaries; PostgreSQL 15–18 continuity; durable extension and collaboration lifecycles; responsive/accessibility/performance contracts; OpenAPI, placeholder, threat-model, provenance, and operator gates; and exact-once process-death recovery. At this historical cutoff, external release remained blocked by the then-current independent-review requirement (`SEC-EXT-001`); this entry is historical and superseded by maintainer/agent self-review under the current schema-2 threat-model contract. Deployment-specific adapter canaries were retained under `SEC-ADAPTER-001`. |
 | 2026-08-16T00:34:53Z | Complete assessed Scarlett candidate set through `d0c5a8bf` | `2acb93b8` | Proved the frozen synthesis revision through the complete release-candidate matrix: PostgreSQL 15–18 benchmarks, upgrades, browser journeys, and migration continuity; PostgreSQL 15/18 process-loss recovery; Helm lifecycle; architecture, dependency, OpenAPI, placeholder, accessibility, performance, and production-build gates; AMD64/ARM64 images; and Linux/Windows bundles. |

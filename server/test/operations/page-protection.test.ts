@@ -11,6 +11,12 @@ const protectedAssetPath = 'uploads/private-plan.png'
 const protectedAssetHash = createHash('sha1').update(protectedAssetPath).digest('hex')
 
 const user = (id: number, permissions: string[]) => ({ id, email: `user-${id}@example.test`, permissions })
+const authorityFor = (requester: { permissions?: string[] } | undefined) => ({
+  requester,
+  permissions: requester?.permissions ?? [],
+  groups: [],
+  tagAliases: {}
+})
 
 beforeEach(async () => {
   vi.resetModules()
@@ -31,6 +37,14 @@ beforeEach(async () => {
     table.text('content').notNullable()
     table.text('render').notNullable()
     table.text('extra').notNullable().defaultTo('{}')
+  })
+  await knex.schema.createTable('tags', table => {
+    table.integer('id').primary()
+    table.string('tag').notNullable()
+  })
+  await knex.schema.createTable('pageTags', table => {
+    table.integer('pageId').notNullable()
+    table.integer('tagId').notNullable()
   })
   await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
   await knex('pages').insert({
@@ -55,7 +69,10 @@ beforeEach(async () => {
   otherPage = undefined
   Reflect.set(global, 'WIKI', {
     auth: {
-      checkAccess: (principal: { permissions?: string[] }, permissions: string[]) => permissions.some(permission => principal.permissions?.includes(permission))
+      checkAccess: (principal: { permissions?: string[] }, permissions: string[]) => permissions.some(permission => principal.permissions?.includes(permission)),
+      checkPageAccess: (principal: { permissions?: string[] }, permissions: string[], _context: unknown, authority: { requester: unknown; permissions: string[] }) =>
+        authority.requester === principal && permissions.some(permission => authority.permissions.includes(permission)),
+      loadPageRuleAuthority: async (requester: { permissions?: string[] } | undefined) => authorityFor(requester)
     },
     data: { searchEngine: { updated: searchUpdated } },
     models: {

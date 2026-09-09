@@ -1,4 +1,5 @@
 import { asError, wiki, type AuthenticationPlugin } from '../../types.ts'
+import { oauth2StateOptions } from '../oauth-state.ts'
 
 // ------------------------------------
 // Okta Account
@@ -21,6 +22,7 @@ const plugin: AuthenticationPlugin = {
         clientSecret: conf.clientSecret,
         idp: conf.idp,
         callbackURL: conf.callbackURL,
+        ...oauth2StateOptions(conf),
         response_type: 'code',
         passReqToCallback: true
       }, async (req, accessToken, refreshToken, profile, cb) => {

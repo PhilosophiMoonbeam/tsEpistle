@@ -196,10 +196,10 @@ type Page {
   scriptJs: String
   authorId: Int! @auth(requires: ["write:pages", "manage:system"])
   authorName: String! @auth(requires: ["write:pages", "manage:system"])
-  authorEmail: String! @auth(requires: ["write:pages", "manage:system"])
+  authorEmail: String
   creatorId: Int! @auth(requires: ["write:pages", "manage:system"])
   creatorName: String! @auth(requires: ["write:pages", "manage:system"])
-  creatorEmail: String! @auth(requires: ["write:pages", "manage:system"])
+  creatorEmail: String
 }
 
 type PageTag {

@@ -13,6 +13,7 @@ import type { Knex } from 'knex'
 import { up as createKnowledgeProjectionSchema } from '../db/migrations/2.5.152.ts'
 import { up as createKnowledgeSearchIndex } from '../db/migrations/tsepistle-000027-knowledge-search.ts'
 import { PageKnowledgeRepository } from '../knowledge/lifecycle.ts'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { knowledgeSearchText, mergeKnowledgeUtilityResult, projectPageKnowledge } from '../knowledge/projection.ts'
 
 export const POSTGRES_SEARCH_CORPUS = Object.freeze({
@@ -656,11 +657,18 @@ interface BenchmarkKnowledgeRepository {
   searchVisible(input: {
     query: string
     requester: undefined
+    authority: PageRuleAuthority
     locale?: string
     path?: string
     pageIds?: number[]
     limit: number
   }): Promise<readonly BenchmarkKnowledgeCandidate[]>
+}
+const benchmarkPageRuleAuthority: PageRuleAuthority = {
+  requester: undefined,
+  permissions: ['read:pages'],
+  groups: [],
+  tagAliases: {}
 }
 interface BenchmarkProjectionSource {
   sourceRevision: string | number
@@ -757,6 +765,7 @@ const searchWithAugmentedFixture = async (
   const knowledgeCandidates = await knowledge.searchVisible({
     query,
     requester: undefined,
+    authority: benchmarkPageRuleAuthority,
     ...(options.locale === undefined ? {} : { locale: options.locale }),
     ...(options.path === undefined ? {} : { path: options.path }),
     ...(options.pageIds === undefined ? {} : { pageIds: options.pageIds }),
@@ -815,7 +824,7 @@ const representativeChecks = async (engine: BenchmarkEngine): Promise<Representa
 
 const installBenchmarkWiki = (knex: Knex): void => {
   Reflect.set(globalThis, 'WIKI', {
-    auth: { checkAccess: () => true },
+    auth: { checkAccess: () => true, checkPageAccess: () => true },
     config: { db: { type: 'postgres' }, search: { maxHits: POSTGRES_SEARCH_CAPS.maxHits } },
     data: { searchEngine: { config: { dictLanguage: POSTGRES_SEARCH_DICTIONARY } } },
     Error: { SearchActivationFailed: class SearchActivationFailed extends Error {} },

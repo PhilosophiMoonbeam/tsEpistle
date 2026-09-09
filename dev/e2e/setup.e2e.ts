@@ -162,6 +162,20 @@ async function authenticateAsAdmin(page: Page) {
   await openClientPage(page, '/')
   await expectAuthenticatedAdmin(page)
 }
+async function logoutFromAccountMenu(page: Page): Promise<void> {
+  const logoutRequest = page.waitForRequest(request => {
+    try {
+      return new URL(request.url()).pathname === '/logout'
+    } catch {
+      return false
+    }
+  })
+  await page.getByRole('button', { name: 'Account' }).click()
+  await expect(page.locator('form[action="/logout"][method="post"]')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Logout', exact: true }).click()
+  expect((await logoutRequest).method()).toBe('POST')
+}
+
 
 async function expectNoHorizontalOverflow(page: Page) {
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
@@ -730,8 +744,7 @@ test.describe('critical post-install workflows', () => {
     })
 
     await authenticateAsAdmin(page)
-    await page.getByRole('button', { name: 'Account' }).click()
-    await page.getByText('Logout', { exact: true }).click()
+    await logoutFromAccountMenu(page)
     await expect(page).toHaveURL('/')
     await expect
       .poll(async () =>
@@ -1070,8 +1083,7 @@ test.describe('critical post-install workflows', () => {
       }, enabled)
     await setEnforce2FA(true)
 
-    await page.getByRole('button', { name: 'Account' }).click()
-    await page.getByText('Logout', { exact: true }).click()
+    await logoutFromAccountMenu(page)
     await page.goto('/login')
     await page.getByLabel('Email Address', { exact: true }).fill(adminEmail)
     await page.getByLabel('Password', { exact: true }).fill(adminPassword)
@@ -1088,8 +1100,7 @@ test.describe('critical post-install workflows', () => {
     await setupDialog.getByRole('button', { name: 'Verify' }).click()
     await expect(page).toHaveURL('/', { timeout: 30_000 })
 
-    await page.getByRole('button', { name: 'Account' }).click()
-    await page.getByText('Logout', { exact: true }).click()
+    await logoutFromAccountMenu(page)
     await page.goto('/login')
     await page.getByLabel('Email Address', { exact: true }).fill(adminEmail)
     await page.getByLabel('Password', { exact: true }).fill(adminPassword)
@@ -1114,8 +1125,7 @@ test.describe('critical post-install workflows', () => {
       if (!response.ok) throw new Error(`TFA recovery reset failed: ${response.status}`)
     })
 
-    await page.getByRole('button', { name: 'Account' }).click()
-    await page.getByText('Logout', { exact: true }).click()
+    await logoutFromAccountMenu(page)
     await loginAsAdmin(page)
   })
 

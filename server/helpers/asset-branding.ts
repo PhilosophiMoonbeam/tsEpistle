@@ -15,6 +15,7 @@ import {
 import { deriveAuraColor, type RgbaRaster } from './site-logo-processing.ts'
 import { protectedAssetRequiresUnlock } from '../operations/page-protection.ts'
 import errors from '../operations/errors.ts'
+import type { AccessPage, PageRuleAuthority } from './group-access.ts'
 import type { PagePrincipal } from './page-access.ts'
 
 declare const WIKI: Record<string, unknown>
@@ -39,7 +40,15 @@ type AssetQuery = {
   first(...columns: string[]): Promise<AssetRow | undefined>
 }
 type BrandingWiki = {
-  auth: { checkAccess(requester: PageRequester, permissions: readonly string[], context?: unknown): boolean }
+  auth: {
+    checkPageAccess(
+      requester: PageRequester,
+      permissions: readonly string[],
+      context: AccessPage,
+      authority: PageRuleAuthority
+    ): boolean
+    loadPageRuleAuthority(requester: PageRequester, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+  }
   models: {
     assets: { query(transaction?: Knex | Knex.Transaction): AssetQuery }
     knex: Knex
@@ -384,7 +393,8 @@ const assetPathForAuthorization = async (assetId: number): Promise<{ asset: Asse
 
 const authorizeAssetPath = async (input: { assetPath: string; requester: PageRequester; sessionId: string }): Promise<void> => {
   const wiki = runtime()
-  if (!wiki.auth.checkAccess(input.requester, ['manage:system', 'read:assets'], { path: input.assetPath }))
+  const authority = await wiki.auth.loadPageRuleAuthority(input.requester)
+  if (!wiki.auth.checkPageAccess(input.requester, ['manage:system', 'read:assets'], { path: input.assetPath }, authority))
     throw new ApplicationError('Asset not found', { status: 404, code: 'ASSET_NOT_FOUND' })
   if (await protectedAssetRequiresUnlock({ requester: input.requester, assetPath: input.assetPath, sessionId: input.sessionId }))
     throw new ApplicationError('Access denied', { status: 403, code: 'ASSET_LOCKED' })

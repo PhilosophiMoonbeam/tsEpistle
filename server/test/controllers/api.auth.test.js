@@ -42,9 +42,60 @@ class BruteTooManyAttempts extends Error {
 }
 
 
+const apiTestDatabase = () => {
+  const tables = {
+    groups: [
+      { id: 1, name: 'API administrators', permissions: ['manage:api'], pageRules: [], isSystem: true, adminRevision: 'api-manager' }
+    ],
+    users: [{ id: 1, isActive: true, authVersion: 0 }],
+    userGroups: [{ userId: 1, groupId: 1 }],
+    settings: [],
+    apiKeys: []
+  }
+  const queryFor = tableName => {
+    let rows = tables[tableName] || []
+    let firstOnly = false
+    const query = {
+      select: vi.fn(() => query),
+      orderBy: vi.fn(() => query),
+      where: vi.fn((column, value) => {
+        rows = rows.filter(row => row[column] === value)
+        return query
+      }),
+      forUpdate: vi.fn(() => query),
+      first: vi.fn(() => {
+        firstOnly = true
+        return query
+      }),
+      insert: vi.fn(value => ({
+        onConflict: vi.fn(() => ({
+          merge: vi.fn(async () => {
+            const existing = tables[tableName].find(row => row.key === value.key)
+            if (existing) Object.assign(existing, value)
+            else tables[tableName].push(value)
+            return 1
+          })
+        }))
+      })),
+      update: vi.fn(async value => {
+        for (const row of rows) Object.assign(row, value)
+        return rows.length
+      })
+    }
+    query.then = (resolve, reject) => Promise.resolve(firstOnly ? rows[0] : rows).then(resolve, reject)
+    return query
+  }
+  const transaction = vi.fn(callback => callback(tableName => queryFor(tableName)))
+  return { tables, transaction }
+}
+
+const adminUser = (permissions = ['manage:api']) => ({ id: 1, authVersion: 0, permissions })
+const apiScopedGroup = { id: 7, name: 'Integrations', permissions: ['read:pages'], pageRules: [], isSystem: false, adminRevision: 'group-manager' }
+
 describe('controllers/api auth endpoints', () => {
   beforeEach(() => {
     vi.resetModules()
+    const database = apiTestDatabase()
     administrationStore.save.mockReset().mockResolvedValue({ sessionsEnded: 0, currentSessionEnded: false, activation: 'applied' })
     administrationStore.inspect.mockReset().mockImplementation(async () => ({ fingerprint: 'review', providers: [{ key: 'local', description: 'Local recovery' }, { key: 'github', description: 'Organization sign-in' }], definitions: global.WIKI.data.authentication.map(definition => ({ key: definition.key, fields: Object.entries(definition.props).map(([key, value]) => ({ key, sensitive: value.sensitive === true })) })) }))
     express.__router.get.mockClear()
@@ -58,7 +109,8 @@ describe('controllers/api auth endpoints', () => {
       config: {
         api: {
           isEnabled: true
-        }
+        },
+        host: 'https://wiki.example.test'
       },
       data: {
         authentication: [
@@ -114,8 +166,7 @@ describe('controllers/api auth endpoints', () => {
         }
       },
       models: {
-        knex: {},
-        groups: { query: vi.fn(() => ({ findById: vi.fn().mockResolvedValue({ id: 7, name: 'Integrations' }) })) },
+        knex: database,
         authentication: {
           query: vi.fn(() => ({
             patch: vi.fn(() => ({ where: vi.fn().mockResolvedValue(1) })),
@@ -156,10 +207,7 @@ describe('controllers/api auth endpoints', () => {
         apiKeys: {
           createNewKey: vi.fn().mockResolvedValue('generated-api-key'),
           query: vi.fn(() => ({
-            orderBy: vi.fn().mockResolvedValue([]),
-            findById: vi.fn(() => ({
-              patch: vi.fn().mockResolvedValue(1)
-            }))
+            orderBy: vi.fn().mockResolvedValue([])
           }))
         },
         users: {
@@ -597,22 +645,25 @@ describe('controllers/api auth endpoints', () => {
     ])
     global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
     const { api } = await loadHandlers()
-    const req = { user: { permissions: ['manage:api'] } }
+    const req = { user: adminUser() }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await api(req, res, vi.fn())
 
-    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith({ permissions: ['manage:api'] }, ['manage:system', 'manage:api'])
-    expect(global.WIKI.models.apiKeys.query).toHaveBeenCalledTimes(1)
+    expect(global.WIKI.auth.checkAccess).toHaveBeenCalledWith(req.user, ['manage:system', 'manage:api'])
+    expect(global.WIKI.models.apiKeys.query).toHaveBeenCalledWith(expect.any(Function))
     expect(orderBy).toHaveBeenCalledWith(['isRevoked', 'name'])
     expect(res.json).toHaveBeenCalledWith({
       enabled: true,
+      createFullAccess: false,
+      assignableGroups: [],
       keys: [
         {
           id: 7,
           name: 'Deploy',
           keyShort: '...' + fullKey.substring(fullKey.length - 20),
           grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
+          canRevoke: false,
           isRevoked: false,
           expiration: '2026-01-01T00:00:00.000Z',
           createdAt: '2025-01-01T00:00:00.000Z',
@@ -660,7 +711,7 @@ describe('controllers/api auth endpoints', () => {
     ])
     global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
     const { api } = await loadHandlers()
-    const req = { user: { permissions: ['manage:api'] } }
+    const req = { user: adminUser() }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await api(req, res, vi.fn())
@@ -676,13 +727,15 @@ describe('controllers/api auth endpoints', () => {
   it('normalizes admin api enabled state with strict true semantics', async () => {
     global.WIKI.config.api.isEnabled = 'true'
     const { api } = await loadHandlers()
-    const req = { user: { permissions: ['manage:api'] } }
+    const req = { user: adminUser() }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await api(req, res, vi.fn())
 
     expect(res.json).toHaveBeenCalledWith({
       enabled: false,
+      createFullAccess: false,
+      assignableGroups: [],
       keys: []
     })
   })
@@ -697,13 +750,13 @@ describe('controllers/api auth endpoints', () => {
 
     expect(res.status).toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({ error: 'manage:system or manage:api is required' })
-    expect(global.WIKI.models.apiKeys.query).not.toHaveBeenCalled()
+    expect(global.WIKI.models.knex.transaction).not.toHaveBeenCalled()
   })
 
   it('allows manage:api users to request admin api bootstrap', async () => {
     global.WIKI.auth.checkAccess.mockImplementationOnce((user, permissions) => user.permissions.includes('manage:api') && permissions.includes('manage:api'))
     const { api } = await loadHandlers()
-    const req = { user: { permissions: ['manage:api'] } }
+    const req = { user: adminUser() }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await api(req, res, vi.fn())
@@ -711,6 +764,8 @@ describe('controllers/api auth endpoints', () => {
     expect(res.status).not.toHaveBeenCalledWith(403)
     expect(res.json).toHaveBeenCalledWith({
       enabled: true,
+      createFullAccess: false,
+      assignableGroups: [],
       keys: []
     })
   })
@@ -719,7 +774,7 @@ describe('controllers/api auth endpoints', () => {
     const orderBy = vi.fn().mockRejectedValueOnce(new Error('db failed'))
     global.WIKI.models.apiKeys.query.mockReturnValueOnce({ orderBy })
     const { api } = await loadHandlers()
-    const req = { user: { permissions: ['manage:api'] } }
+    const req = { user: adminUser() }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
     const next = vi.fn()
 
@@ -777,11 +832,12 @@ describe('controllers/api auth endpoints', () => {
 
   it('creates admin API keys after runtime auth initializes and reloads the active-key cache', async () => {
     const runtimeAuth = global.WIKI.auth
+    global.WIKI.models.knex.tables.groups.push({ ...apiScopedGroup })
     delete global.WIKI.auth
     const { createApiKey } = await loadHandlers()
     global.WIKI.auth = runtimeAuth
     const req = {
-      user: { permissions: ['manage:api'] },
+      user: adminUser(),
       body: {
         name: 'Deploy',
         expiration: '1y',
@@ -798,7 +854,7 @@ describe('controllers/api auth endpoints', () => {
       expiration: '1y',
       fullAccess: false,
       group: 7
-    })
+    }, expect.any(Function))
     expect(global.WIKI.auth.reloadApiKeys).toHaveBeenCalled()
     expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('reloadApiKeys')
     expect(res.json).toHaveBeenCalledWith({
@@ -828,10 +884,10 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('returns JSON errors when admin API key creation fails', async () => {
-    global.WIKI.models.apiKeys.createNewKey.mockRejectedValueOnce(new Error('key backend failed'))
+    global.WIKI.models.knex.transaction.mockRejectedValueOnce(new Error('key backend failed'))
     const { createApiKey } = await loadHandlers()
     const req = {
-      user: { permissions: ['manage:api'] },
+      user: adminUser(),
       body: {
         name: 'Deploy',
         expiration: '1y',
@@ -855,21 +911,21 @@ describe('controllers/api auth endpoints', () => {
       { mcpAccess: 'yes' }, { mcpAccess: true }
     ]) {
       const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-      await createApiKey({ user: {}, body: { name: 'Indexer', expiration: '90d', fullAccess: true, group: null, ...input } }, res)
+      await createApiKey({ user: adminUser(), body: { name: 'Indexer', expiration: '90d', fullAccess: true, group: null, ...input } }, res)
       expect(res.status).toHaveBeenCalledWith(400)
     }
-    global.WIKI.models.groups.query.mockReturnValue({ findById: vi.fn().mockResolvedValue(undefined) })
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-    await createApiKey({ user: {}, body: { name: 'Indexer', expiration: '1h', fullAccess: false, group: 99 } }, res)
+    await createApiKey({ user: adminUser(), body: { name: 'Indexer', expiration: '1h', fullAccess: false, group: 99 } }, res)
     expect(res.status).toHaveBeenCalledWith(400)
     expect(global.WIKI.models.apiKeys.createNewKey).not.toHaveBeenCalled()
   })
 
   it('preserves explicit MCP opt-out and useful short lifetimes', async () => {
+    global.WIKI.models.knex.tables.groups.push({ ...apiScopedGroup })
     const { createApiKey } = await loadHandlers()
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
-    await createApiKey({ user: {}, body: { name: '  Indexer  ', expiration: '1h', fullAccess: false, group: 7, mcpAccess: false } }, res)
-    expect(global.WIKI.models.apiKeys.createNewKey).toHaveBeenCalledWith({ name: 'Indexer', expiration: '1h', fullAccess: false, group: 7, mcpAccess: false })
+    await createApiKey({ user: adminUser(), body: { name: '  Indexer  ', expiration: '1h', fullAccess: false, group: 7, mcpAccess: false } }, res)
+    expect(global.WIKI.models.apiKeys.createNewKey).toHaveBeenCalledWith({ name: 'Indexer', expiration: '1h', fullAccess: false, group: 7, mcpAccess: false }, expect.any(Function))
   })
 
   it('requires API administration permissions before inspecting connections', async () => {
@@ -881,17 +937,24 @@ describe('controllers/api auth endpoints', () => {
   })
 
   it('revokes admin API keys through REST and reloads runtime keys', async () => {
-    const patch = vi.fn().mockResolvedValue(1)
-    const findById = vi.fn(() => ({ patch }))
-    global.WIKI.models.apiKeys.query.mockReturnValueOnce({ findById })
+    const database = global.WIKI.models.knex
+    database.tables.groups.push({ ...apiScopedGroup })
+    const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url')
+    const payload = Buffer.from(JSON.stringify({ grp: 7 })).toString('base64url')
+    database.tables.apiKeys.push({
+      id: 42,
+      key: `${header}.${payload}.fixture-signature`,
+      isRevoked: false,
+      expiration: '2099-01-01T00:00:00.000Z'
+    })
     const { revokeApiKey } = await loadHandlers()
-    const req = { user: { permissions: ['manage:api'] }, params: { id: '42' } }
+    const req = { user: adminUser(), params: { id: '42' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await revokeApiKey(req, res)
 
-    expect(findById).toHaveBeenCalledWith(42)
-    expect(patch).toHaveBeenCalledWith({ isRevoked: true })
+    expect(database.transaction).toHaveBeenCalledWith(expect.any(Function))
+    expect(database.tables.apiKeys[0].isRevoked).toBe(true)
     expect(global.WIKI.auth.reloadApiKeys).toHaveBeenCalled()
     expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('reloadApiKeys')
     expect(res.json).toHaveBeenCalledWith({ message: 'API Key revoked successfully' })
@@ -904,17 +967,15 @@ describe('controllers/api auth endpoints', () => {
 
     await revokeApiKey(req, res)
 
-    expect(global.WIKI.models.apiKeys.query).not.toHaveBeenCalled()
+    expect(global.WIKI.models.knex.transaction).not.toHaveBeenCalled()
     expect(res.status).toHaveBeenCalledWith(400)
     expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
   })
 
   it('returns JSON errors when admin API key revoke fails', async () => {
-    const patch = vi.fn().mockRejectedValue(new Error('revoke backend failed'))
-    const findById = vi.fn(() => ({ patch }))
-    global.WIKI.models.apiKeys.query.mockReturnValueOnce({ findById })
+    global.WIKI.models.knex.transaction.mockRejectedValueOnce(new Error('revoke backend failed'))
     const { revokeApiKey } = await loadHandlers()
-    const req = { user: { permissions: ['manage:api'] }, params: { id: '42' } }
+    const req = { user: adminUser(), params: { id: '42' } }
     const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
 
     await revokeApiKey(req, res)
@@ -1142,7 +1203,7 @@ describe('controllers/api auth endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Authentication strategy is disabled' })
   })
 
-  it('returns the login continuation payload for successful REST login and resets brute-force state', async () => {
+  it('returns the login continuation payload for a REST challenge without resetting brute-force state', async () => {
     global.WIKI.models.users.login.mockResolvedValueOnce({
       mustProvideTFA: true,
       continuationToken: 'tfa-token',
@@ -1154,7 +1215,7 @@ describe('controllers/api auth endpoints', () => {
       login: vi.fn(),
       logIn: vi.fn(),
     }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), set: vi.fn(), cookie: vi.fn() }
 
     await login(req, res, vi.fn())
 
@@ -1163,9 +1224,8 @@ describe('controllers/api auth endpoints', () => {
       username: 'alice@example.com',
       password: 'secret'
     }, { req, res })
-    expect(authRateLimiter.reset).toHaveBeenCalledWith(req)
     expect(res.json).toHaveBeenCalledWith({
-      jwt: null,
+      authenticated: false,
       mustChangePwd: false,
       mustProvideTFA: true,
       mustSetupTFA: false,
@@ -1174,6 +1234,26 @@ describe('controllers/api auth endpoints', () => {
       tfaQRImage: null,
       tfaSecret: null
     })
+    expect(res.cookie).not.toHaveBeenCalled()
+  })
+  it.each([
+    ['setup TFA', { mustSetupTFA: true, continuationToken: 'setup-token', tfaQRImage: 'data:image/png;base64,setup', tfaSecret: 'JBSWY3DPEHPK3PXP' }],
+    ['mandatory password change', { mustChangePwd: true, continuationToken: 'password-token', redirect: '/admin' }]
+  ])('returns authenticated false without a cookie for %s continuations', async (_label, result) => {
+    global.WIKI.models.users.login.mockResolvedValueOnce(result)
+    const { login } = await loadHandlers()
+    const req = {
+      body: { strategy: 'local', username: 'alice@example.com', password: 'secret' }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), set: vi.fn(), cookie: vi.fn() }
+
+    await login(req, res, vi.fn())
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      authenticated: false,
+      continuationToken: result.continuationToken
+    }))
+    expect(res.cookie).not.toHaveBeenCalled()
   })
 
   it('rejects malformed form-auth input with 400', async () => {
@@ -1231,7 +1311,7 @@ describe('controllers/api auth endpoints', () => {
       login: vi.fn(),
       logIn: vi.fn(),
     }
-    const res = { json: vi.fn() }
+    const res = { json: vi.fn(), set: vi.fn(), cookie: vi.fn() }
 
     await loginTFA(req, res, vi.fn())
 
@@ -1242,7 +1322,7 @@ describe('controllers/api auth endpoints', () => {
     }, { req, res })
     expect(authRateLimiter.reset).toHaveBeenCalledWith(req)
     expect(res.json).toHaveBeenCalledWith({
-      jwt: 'jwt-token',
+      authenticated: true,
       mustChangePwd: false,
       mustProvideTFA: false,
       mustSetupTFA: false,
@@ -1251,6 +1331,28 @@ describe('controllers/api auth endpoints', () => {
       tfaQRImage: null,
       tfaSecret: null
     })
+    expect(res.cookie).toHaveBeenCalledWith('jwt', 'jwt-token', expect.any(Object))
+  })
+  it('returns authenticated false without a cookie for a TFA continuation', async () => {
+    global.WIKI.models.users.loginTFA.mockResolvedValueOnce({
+      mustChangePwd: true,
+      continuationToken: 'password-token',
+      redirect: '/'
+    })
+    const { loginTFA } = await loadHandlers()
+    const req = {
+      body: { securityCode: '123456', continuationToken: 'tfa-token', setup: false }
+    }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), set: vi.fn(), cookie: vi.fn() }
+
+    await loginTFA(req, res, vi.fn())
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      authenticated: false,
+      mustChangePwd: true,
+      continuationToken: 'password-token'
+    }))
+    expect(res.cookie).not.toHaveBeenCalled()
   })
 
   it('rejects malformed TFA input with 400', async () => {
@@ -1290,7 +1392,7 @@ describe('controllers/api auth endpoints', () => {
       login: vi.fn(),
       logIn: vi.fn(),
     }
-    const res = { json: vi.fn() }
+    const res = { json: vi.fn(), set: vi.fn(), cookie: vi.fn() }
 
     await loginChangePassword(req, res, vi.fn())
 
@@ -1302,7 +1404,7 @@ describe('controllers/api auth endpoints', () => {
     expect(global.WIKI.events.outbound.emit).toHaveBeenCalledWith('addAuthRevoke', { id: 10, kind: 'u' })
     expect(authRateLimiter.reset).toHaveBeenCalledWith(req)
     expect(res.json).toHaveBeenCalledWith({
-      jwt: 'jwt-token',
+      authenticated: true,
       mustChangePwd: false,
       mustProvideTFA: false,
       mustSetupTFA: false,
@@ -1311,6 +1413,7 @@ describe('controllers/api auth endpoints', () => {
       tfaQRImage: null,
       tfaSecret: null
     })
+    expect(res.cookie).toHaveBeenCalledWith('jwt', 'jwt-token', expect.any(Object))
   })
 
   it('rejects malformed change-password input with 400', async () => {

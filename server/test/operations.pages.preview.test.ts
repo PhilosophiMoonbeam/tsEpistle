@@ -28,7 +28,12 @@ beforeEach(() => {
   unlock.mockReset().mockResolvedValue(undefined)
   getPage.mockReset().mockResolvedValue(page)
   checkAccess.mockReset().mockReturnValue(true)
-  global.WIKI = { Error: { PageNotFound }, auth: { checkAccess }, models: { pages: { getPageFromDb: getPage } } } as unknown as typeof WIKI
+  const loadPageRuleAuthority = vi.fn(async (requester: unknown) => ({ requester, permissions: [], groups: [], tagAliases: {} }))
+  global.WIKI = {
+    Error: { PageNotFound },
+    auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
+    models: { pages: { getPageFromDb: getPage } }
+  } as unknown as typeof WIKI
 })
 describe('source preview access', () => {
   it('projects only safe source fields after checking current page access and password unlock', async () => {

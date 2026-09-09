@@ -99,12 +99,13 @@ describe('API-key authentication boundary', () => {
 
     const next = await authenticate(req)
 
-    expect(next).toHaveBeenCalledWith()
     expect(req.user).toMatchObject({
-      id: 1,
+      api: 7,
+      grp: 3,
       permissions: ['read:pages'],
       groups: [3]
     })
+    expect(req.user).not.toHaveProperty('id')
     expect(req.authContext).toEqual({
       kind: 'apiKey',
       apiKeyId: 7,

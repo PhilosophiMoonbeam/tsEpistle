@@ -1,9 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from '../bun-test.mts'
+import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 const listPageIndexCandidates = vi.hoisted(() => vi.fn())
 vi.mockModule('../../repositories/page-index.ts', import.meta.url, () => ({
   PAGE_INDEX_CANDIDATE_LIMIT: 5_001,
   listPageIndexCandidates
 }))
+const knex = vi.fn()
+const originalWiki = Reflect.get(globalThis, 'WIKI')
+afterEach(() => {
+  if (originalWiki === undefined) Reflect.deleteProperty(globalThis, 'WIKI')
+  else Reflect.set(globalThis, 'WIKI', originalWiki)
+})
 
 
 const rows = [
@@ -64,18 +70,11 @@ const rows = [
   }
 ]
 
-const queryBuilder = () => {
-  const builder: Record<string, ReturnType<typeof vi.fn>> = {}
-  builder.where = vi.fn((...args: unknown[]) => {
-    if (typeof args[0] === 'function') args[0](builder)
-    return builder
-  })
-  builder.whereRaw = vi.fn().mockReturnValue(builder)
-  builder.orWhere = vi.fn().mockReturnValue(builder)
-  builder.orderBy = vi.fn().mockReturnValue(builder)
-  builder.limit = vi.fn().mockReturnValue(builder)
-  return builder
-}
+const pageAuth = <T extends (...args: never[]) => unknown>(checkAccess: T) => ({
+  checkAccess,
+  checkPageAccess: checkAccess,
+  loadPageRuleAuthority: async requester => ({ requester, permissions: [], groups: [], tagAliases: {} })
+})
 
 
 describe('page index operation', () => {
@@ -84,20 +83,13 @@ describe('page index operation', () => {
   })
 
   it('filters ownership, page rules, path, and depth before applying the result limit', async () => {
-    const builder = queryBuilder()
-    const knex = vi.fn()
-    listPageIndexCandidates.mockImplementation(async (_knex, input) => {
-      input.scope(builder)
-      return rows
-    })
+    listPageIndexCandidates.mockResolvedValue([rows[2], rows[0], rows[1], rows[3], rows[4]])
     Reflect.set(globalThis, 'WIKI', {
-      auth: {
-        checkAccess: vi.fn((user: { permissions?: string[] } | undefined, permissions: string[], context?: { path?: string }) =>
-          permissions.includes('manage:system')
-            ? Boolean(user?.permissions?.includes('manage:system'))
-            : context?.path !== 'guide/secret'
-        )
-      },
+      auth: pageAuth(vi.fn((user: { permissions?: string[] } | undefined, permissions: string[], context?: { path?: string }) =>
+        permissions.includes('manage:system')
+          ? Boolean(user?.permissions?.includes('manage:system'))
+          : context?.path !== 'guide/secret'
+      )),
       models: { knex }
     })
     const operations = (await import('../../operations/pages.ts')).default
@@ -108,27 +100,19 @@ describe('page index operation', () => {
       locale: 'en',
       depth: 0,
       order: 'title',
-      limit: 20
+      limit: 2
     })
 
     expect(result).toEqual([
       expect.objectContaining({ id: 1, title: 'Introduction', href: '/en/guide/intro' }),
       expect.objectContaining({ id: 2, title: 'Private notes', href: '/_private/en/guide/private' })
     ])
-    expect(listPageIndexCandidates).toHaveBeenCalledWith(knex, expect.objectContaining({
-      locale: 'en',
-      path: 'guide',
-      limit: 5_001
-    }))
-    expect(builder.where).toHaveBeenCalledWith(expect.any(Function))
-    expect(builder.where).toHaveBeenCalledWith('pages.visibility', 'public')
-    expect(builder.orWhere).toHaveBeenCalledWith({ 'pages.visibility': 'private', 'pages.ownerId': 7 })
   })
 
   it('includes bounded descendants and never exposes another owner’s private page', async () => {
     listPageIndexCandidates.mockResolvedValue(rows)
     Reflect.set(globalThis, 'WIKI', {
-      auth: { checkAccess: vi.fn((_user, permissions: string[]) => !permissions.includes('manage:system')) },
+      auth: pageAuth(vi.fn((_user, permissions: string[]) => !permissions.includes('manage:system'))),
       models: { knex: vi.fn() }
     })
     const operations = (await import('../../operations/pages.ts')).default
@@ -155,7 +139,7 @@ describe('page index operation', () => {
     }))
     listPageIndexCandidates.mockResolvedValue(candidates)
     Reflect.set(globalThis, 'WIKI', {
-      auth: { checkAccess: vi.fn(() => true) },
+      auth: pageAuth(vi.fn(() => true)),
       models: { knex: vi.fn() }
     })
     const operations = (await import('../../operations/pages.ts')).default
@@ -177,7 +161,7 @@ describe('page index operation', () => {
   ])('rejects unbounded query controls', async (input, diagnostic) => {
     listPageIndexCandidates.mockResolvedValue(rows)
     Reflect.set(globalThis, 'WIKI', {
-      auth: { checkAccess: vi.fn(() => true) },
+      auth: pageAuth(vi.fn(() => true)),
       models: { knex: vi.fn() }
     })
     const operations = (await import('../../operations/pages.ts')).default

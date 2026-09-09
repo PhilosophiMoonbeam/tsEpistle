@@ -295,6 +295,15 @@
               >Custom HTML can run scripts on reader pages. Review it as trusted
               workspace code. This studio does not execute your draft.</v-alert
             >
+            <v-alert
+              v-if="!saved.capabilities.editCustomCode"
+              type="warning"
+              variant="tonal"
+              class="mb-5"
+              >Custom CSS and HTML are managed by full system administrators.
+              Existing source is preserved while you edit declarative
+              appearance settings.</v-alert
+            >
             <div
               v-for="field in codeFields"
               :key="field.key"
@@ -311,7 +320,7 @@
                 v-model="draft[field.key]"
                 :language="field.language"
                 :label="field.title"
-                :disabled="locked"
+                :disabled="codeLocked"
               />
             </div>
           </template>
@@ -671,6 +680,8 @@ const loadError = ref(""),
   reviewFingerprint = ref(""),
   selectedId = ref(""),
   replacementId = ref("");
+const customCodeFields = ["injectCSS", "injectHead", "injectBody"] as const;
+type CustomCodeField = (typeof customCodeFields)[number];
 const mode = ref<"light" | "dark">("light"),
   previewFont = ref(wikiStore.user.fontFamily);
 const modes = ["light", "dark"] as const,
@@ -720,6 +731,9 @@ const locked = computed(
     initializing.value ||
     stale.value ||
     !saved.value,
+);
+const codeLocked = computed(
+  () => locked.value || !saved.value?.capabilities.editCustomCode,
 );
 const reviewFields = computed(() =>
   saved.value && reviewed.value
@@ -801,6 +815,17 @@ const codeFields = [
       "Markup inserted into the reader page body. Use only code you trust.",
   },
 ] as const;
+const preserveCustomCode = (
+  policy: ThemePolicy,
+  savedPolicy: ThemePolicy,
+  editCustomCode: boolean,
+): ThemePolicy => {
+  if (editCustomCode) return policy;
+  const next = copy(policy);
+  for (const field of customCodeFields)
+    next[field as CustomCodeField] = savedPolicy[field as CustomCodeField];
+  return next;
+};
 let sequence = 0,
   disposed = false;
 async function load() {
@@ -907,11 +932,16 @@ function review() {
     window.scrollTo({ top: 0 });
     return;
   }
-  if (!themeChangedFields(saved.value.policy, validation.data).length) {
+  const candidate = preserveCustomCode(
+    validation.data,
+    saved.value.policy,
+    saved.value.capabilities.editCustomCode,
+  );
+  if (!themeChangedFields(saved.value.policy, candidate).length) {
     draft.value = copy(saved.value.policy);
     return;
   }
-  reviewed.value = copy(validation.data);
+  reviewed.value = copy(candidate);
   reviewFingerprint.value = saved.value.fingerprint;
   reason.value = "";
   saveError.value = "";
@@ -930,27 +960,32 @@ async function confirm() {
   busy.value = true;
   saveError.value = "";
   try {
-    const result = await saveThemeWorkspace(
+    const published = preserveCustomCode(
       copy(reviewed.value),
+      saved.value.policy,
+      saved.value.capabilities.editCustomCode,
+    );
+    const result = await saveThemeWorkspace(
+      published,
       reviewFingerprint.value,
       reason.value.trim(),
     );
     if (disposed) return;
     saved.value = {
       ...saved.value,
-      policy: copy(reviewed.value),
+      policy: copy(published),
       runtime: { ...saved.value.runtime, state: "needs-attention" },
     };
-    draft.value = copy(reviewed.value);
+    draft.value = copy(published);
     if (result.activation === "applied") {
-      const colors = reviewed.value.palettes.find(
-        (item) => item.id === reviewed.value!.activePaletteId,
+      const colors = published.palettes.find(
+        (item) => item.id === published.activePaletteId,
       )!.colors;
       applyWikiThemeColors(theme, colors);
-      applyReaderLayout(reviewed.value.reading);
+      applyReaderLayout(published.reading);
       siteConfig.themeColors = copy(colors);
-      siteConfig.readerLayout = copy(reviewed.value.reading);
-      siteConfig.tocPosition = reviewed.value.tocPosition;
+      siteConfig.readerLayout = copy(published.reading);
+      siteConfig.tocPosition = published.tocPosition;
     }
     reviewing.value = false;
     reviewed.value = null;

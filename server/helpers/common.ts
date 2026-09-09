@@ -5,7 +5,13 @@ import { DateTime } from 'luxon'
 interface CommonHelper {
   getTypeDefaultValue: (type: string) => string | number | boolean | undefined
   parseModuleProps: (props: Record<string, ModulePropInput>) => Record<string, ParsedModuleProp>
-  getCookieOpts: () => { expires: Date, secure?: true }
+  getCookieOpts: () => {
+    expires: Date
+    httpOnly: true
+    path: '/'
+    sameSite: 'lax'
+    secure?: true
+  }
 }
 
 const commonHelper: CommonHelper = {
@@ -32,7 +38,13 @@ const commonHelper: CommonHelper = {
   },
   getCookieOpts () {
     const wiki = WIKI as unknown as { config: { host: string } }
-    return { expires: DateTime.utc().plus({ days: 365 }).toJSDate(), ...(wiki.config.host.startsWith('https://') ? { secure: true as const } : {}) }
+    return {
+      expires: DateTime.utc().plus({ days: 365 }).toJSDate(),
+      httpOnly: true as const,
+      path: '/' as const,
+      sameSite: 'lax' as const,
+      ...(wiki.config.host.startsWith('https://') ? { secure: true as const } : {})
+    }
   }
 }
 

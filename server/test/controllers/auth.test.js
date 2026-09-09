@@ -18,6 +18,7 @@ vi.mockModule('express', import.meta.url, () => {
   const router = {
     all: vi.fn(),
     get: vi.fn(),
+    head: vi.fn(),
     post: vi.fn()
   }
   const express = {
@@ -34,6 +35,7 @@ describe('HTML auth controller', () => {
     vi.resetModules()
     express.__router.all.mockClear()
     express.__router.get.mockClear()
+    express.__router.head.mockClear()
     express.__router.post.mockClear()
     rateLimiter.create.mockClear()
 
@@ -43,7 +45,8 @@ describe('HTML auth controller', () => {
           getStrategy: vi.fn().mockResolvedValue({ selfRegistration: true })
         },
         users: {
-          login: vi.fn().mockResolvedValue({ jwt: 'login-jwt' })
+          login: vi.fn().mockResolvedValue({ jwt: 'login-jwt' }),
+          logout: vi.fn().mockResolvedValue('/')
         },
         userKeys: {
           validateToken: vi.fn().mockResolvedValue({ id: 7 })
@@ -68,6 +71,122 @@ describe('HTML auth controller', () => {
     const { default: createAuthController } = await vi.importFresh('../../controllers/auth.ts', import.meta.url)
     createAuthController(global.WIKI)
   }
+  it('only permits logout through POST and keeps GET and HEAD inert', async () => {
+    await loadController()
+
+    const getRoute = express.__router.get.mock.calls.find(([path]) => path === '/logout')
+    const headRoute = express.__router.head.mock.calls.find(([path]) => path === '/logout')
+    expect(getRoute).toHaveLength(2)
+    expect(headRoute).toHaveLength(2)
+
+    for (const route of [getRoute, headRoute]) {
+      const response = {
+        set: vi.fn(),
+        status: vi.fn().mockReturnThis(),
+        end: vi.fn()
+      }
+      await route[1]({}, response, vi.fn())
+      expect(response.set).toHaveBeenCalledWith('Allow', 'POST')
+      expect(response.status).toHaveBeenCalledWith(405)
+      expect(response.end).toHaveBeenCalledTimes(1)
+    }
+
+    expect(global.WIKI.models.users.logout).not.toHaveBeenCalled()
+  })
+
+  it('clears the JWT and redirects after a successful POST logout', async () => {
+    const redirect = 'https://provider.example.test/logout'
+    global.WIKI.models.users.logout.mockResolvedValueOnce(redirect)
+    await loadController()
+
+    const postRoute = express.__router.post.mock.calls.find(([path]) => path === '/logout')
+    const req = { logout: vi.fn(callback => callback()) }
+    const response = {
+      set: vi.fn(),
+      clearCookie: vi.fn(),
+      redirect: vi.fn()
+    }
+    const next = vi.fn()
+
+    await postRoute[1](req, response, next)
+
+    expect(global.WIKI.models.users.logout).toHaveBeenCalledWith({ req, res: response })
+    expect(req.logout).toHaveBeenCalledTimes(1)
+    expect(response.clearCookie).toHaveBeenCalledWith('jwt', { httpOnly: true })
+    expect(response.redirect).toHaveBeenCalledWith(303, redirect)
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('forwards provider and session logout errors without clearing the JWT', async () => {
+    const providerError = new Error('provider logout failed')
+    global.WIKI.models.users.logout.mockRejectedValueOnce(providerError)
+    await loadController()
+    const postRoute = express.__router.post.mock.calls.find(([path]) => path === '/logout')
+    const providerRequest = { logout: vi.fn() }
+    const providerResponse = { set: vi.fn(), clearCookie: vi.fn(), redirect: vi.fn() }
+    const providerNext = vi.fn()
+
+    await postRoute[1](providerRequest, providerResponse, providerNext)
+
+    expect(providerNext).toHaveBeenCalledWith(providerError)
+    expect(providerRequest.logout).not.toHaveBeenCalled()
+    expect(providerResponse.clearCookie).not.toHaveBeenCalled()
+    expect(providerResponse.redirect).not.toHaveBeenCalled()
+
+    const sessionError = new Error('session logout failed')
+    global.WIKI.models.users.logout.mockResolvedValueOnce('/')
+    const sessionRequest = { logout: vi.fn(callback => callback(sessionError)) }
+    const sessionResponse = { set: vi.fn(), clearCookie: vi.fn(), redirect: vi.fn() }
+    const sessionNext = vi.fn()
+
+    await postRoute[1](sessionRequest, sessionResponse, sessionNext)
+
+    expect(sessionNext).toHaveBeenCalledWith(sessionError)
+    expect(sessionResponse.clearCookie).not.toHaveBeenCalled()
+    expect(sessionResponse.redirect).not.toHaveBeenCalled()
+  })
+  it('does not invoke a provider login for an unsolicited callback and clears its federation cookie', async () => {
+    await loadController()
+    const callbackRoute = express.__router.all.mock.calls.find(([path]) => path === '/login/:strategy/callback')
+    const request = { method: 'GET', params: { strategy: 'google' }, query: {}, cookies: {} }
+    const response = { clearCookie: vi.fn() }
+    const next = vi.fn()
+
+    await callbackRoute[1](request, response, next)
+
+    expect(global.WIKI.models.users.login).not.toHaveBeenCalled()
+    expect(response.clearCookie).toHaveBeenCalledTimes(1)
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+  })
+
+  it('does not invoke a provider login for a state-only callback', async () => {
+    await loadController()
+    const callbackRoute = express.__router.all.mock.calls.find(([path]) => path === '/login/:strategy/callback')
+    const request = { method: 'GET', params: { strategy: 'google' }, query: { state: 'state-only' }, cookies: {} }
+    const response = { clearCookie: vi.fn() }
+    const next = vi.fn()
+
+    await callbackRoute[1](request, response, next)
+
+    expect(global.WIKI.models.users.login).not.toHaveBeenCalled()
+    expect(response.clearCookie).toHaveBeenCalledTimes(1)
+    expect(next).toHaveBeenCalledWith(expect.any(Error))
+  })
+
+  it('clears the federation cookie after a correlated callback terminal outcome', async () => {
+    await loadController()
+    const callbackRoute = express.__router.all.mock.calls.find(([path]) => path === '/login/:strategy/callback')
+    const request = { method: 'GET', params: { strategy: 'google' }, query: { state: 'state-a', code: 'code-a' }, cookies: {} }
+    const response = { set: vi.fn(), cookie: vi.fn(), clearCookie: vi.fn(), redirect: vi.fn() }
+    const next = vi.fn()
+
+    await callbackRoute[1](request, response, next)
+
+    expect(global.WIKI.models.users.login).toHaveBeenCalledWith({ strategy: 'google' }, { req: request, res: response })
+    expect(response.clearCookie).toHaveBeenCalledTimes(1)
+    expect(next).not.toHaveBeenCalled()
+  })
+
 
   it('does not spend rate-limit attempts on invalid token landing GETs', async () => {
     await loadController()

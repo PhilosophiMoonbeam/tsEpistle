@@ -3,13 +3,14 @@ import moment from 'moment'
 import ms from 'ms'
 import { Model } from 'objection'
 import type { ModelOptions, QueryContext } from 'objection'
+import type { Knex } from 'knex'
 import { canonicalMcpResource } from '../agents/origins.ts'
 
 interface CreateKeyOptions {
   name: string
   expiration: string
   fullAccess: boolean
-  group: number
+  group: number | null
   mcpAccess?: boolean
 }
 type WikiRuntime = {
@@ -65,9 +66,13 @@ export default class ApiKey extends Model {
     this.updatedAt = moment.utc().toISOString()
   }
 
-  static async createNewKey ({ name, expiration, fullAccess, group, mcpAccess }: CreateKeyOptions): Promise<string> {
+  static async createNewKey (
+    { name, expiration, fullAccess, group, mcpAccess }: CreateKeyOptions,
+    transaction?: Knex.Transaction
+  ): Promise<string> {
     const wiki = getWiki()
-    const entry = await wiki.models.apiKeys.query().insert({
+    const query = () => transaction === undefined ? wiki.models.apiKeys.query() : wiki.models.apiKeys.query(transaction)
+    const entry = await query().insert({
       name,
       key: 'pending',
       expiration: moment.utc().add(ms(expiration), 'ms').toISOString(),
@@ -89,7 +94,7 @@ export default class ApiKey extends Model {
       audience: wiki.config.auth.audience,
       issuer: 'urn:wiki.js'
     })
-    await wiki.models.apiKeys.query().findById(entry.id).patch({ key, isRevoked: false })
+    await query().findById(entry.id).patch({ key, isRevoked: false })
     return key
   }
 }

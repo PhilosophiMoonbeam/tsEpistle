@@ -49,6 +49,11 @@ export async function inspectPublication(row: PublicationReview): Promise<void> 
 }
 export async function applyPublication(row: PublicationReview, enabled: boolean): Promise<void> {
   if (row.status !== 'ready' || !row.page) return
+  if (!row.page.capabilities?.viewStewardContacts || row.page.isPublished === undefined || row.page.publishStartDate === undefined || row.page.publishEndDate === undefined) {
+    row.status = 'error'
+    row.error = 'Publication controls are unavailable for this page.'
+    return
+  }
   if (row.page.isPublished === enabled) {
     row.status = 'unchanged'
     return

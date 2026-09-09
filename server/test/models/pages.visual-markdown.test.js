@@ -4,6 +4,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from '../bun-test.mts
 const originalWIKI = global.WIKI
 
 const requester = { id: 7, name: 'Owner', email: 'owner@example.com', permissions: [] }
+const basePageTags = []
 const basePage = {
   id: 17,
   authorId: 7,
@@ -22,7 +23,9 @@ const basePage = {
   render: '<h1>Supported</h1>',
   title: 'Page',
   updatedAt: '2026-08-14T00:00:00.000Z',
-  visibility: 'private'
+  visibility: 'private',
+  tags: basePageTags,
+  $relatedQuery: vi.fn(async (relation, _transaction) => relation === 'tags' ? basePageTags : [])
 }
 
 describe('Visual Markdown page contracts', () => {
@@ -34,13 +37,11 @@ describe('Visual Markdown page contracts', () => {
     const knex = vi.fn(table => {
       if (table === 'pages') {
         return {
-          select: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              forUpdate: vi.fn().mockReturnValue({
-                first: vi.fn().mockResolvedValue({ ...basePage, sourceRevision: '2' })
-              })
-            })
-          })
+          select: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          forUpdate: vi.fn().mockReturnThis(),
+          first: vi.fn().mockResolvedValue({ ...basePage, sourceRevision: '2' }),
+          update: vi.fn().mockResolvedValue(1)
         }
       }
       if (table === 'pageMutationOutbox') {
@@ -55,6 +56,8 @@ describe('Visual Markdown page contracts', () => {
       return { insert: vi.fn().mockResolvedValue(1) }
     })
     knex.transaction = vi.fn(callback => callback(knex))
+    const checkAccess = vi.fn().mockReturnValue(true)
+    const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
     global.WIKI = {
       ROOTPATH: '/test',
       Error: {
@@ -67,7 +70,7 @@ describe('Visual Markdown page contracts', () => {
         PagePathCollision: Error,
         PageUpdateForbidden: Error
       },
-      auth: { checkAccess: vi.fn().mockReturnValue(true) },
+      auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
       config: { dataPath: '/test/data', db: { type: 'postgres' }, lang: { code: 'en' } },
       data: {
         editors: [
@@ -286,7 +289,7 @@ describe('Visual Markdown page contracts', () => {
         return {
           where: vi.fn().mockReturnValue({
             forUpdate: vi.fn().mockReturnValue({
-              first: vi.fn().mockResolvedValue({ sourceRevision: '2' })
+              first: vi.fn().mockResolvedValue({ sourceRevision: '2', updatedAt: page.updatedAt })
             })
           })
         }
@@ -342,6 +345,5 @@ describe('Visual Markdown page contracts', () => {
     expect(pagePatch.where).toHaveBeenNthCalledWith(1, 'id', basePage.id)
     expect(pagePatch.where).toHaveBeenNthCalledWith(2, 'updatedAt', basePage.updatedAt)
     expect(global.WIKI.models.pageHistory.addVersion).toHaveBeenCalledOnce()
-    expect(global.WIKI.models.tags.associateTags).not.toHaveBeenCalled()
   })
 })

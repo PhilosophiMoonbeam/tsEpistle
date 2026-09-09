@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import bcrypt from 'bcryptjs-then'
 import type { Knex } from 'knex'
 import { canReadPage, canWritePage, managesSystem, principalId, type PagePrincipal, type PageVisibilityRecord } from '../helpers/page-access.ts'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import errors from './errors.ts'
 import assetHelper from '../helpers/asset.ts'
 
@@ -26,7 +27,10 @@ interface ProtectionRow {
 }
 
 interface WikiContext {
-  auth: { checkAccess(user: PagePrincipal, permissions: readonly string[], context?: unknown): boolean }
+  auth: {
+    checkAccess(user: PagePrincipal, permissions: readonly string[]): boolean
+    loadPageRuleAuthority(requester: PagePrincipal, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+  }
   data: { searchEngine: { updated(page: unknown): Promise<void> } }
   models: {
     knex: Knex
@@ -49,10 +53,20 @@ const authenticatedId = (requester: PagePrincipal): number => {
   return id
 }
 
-const manageablePage = async (requester: PagePrincipal, pageId: number): Promise<ProtectedPage> => {
+const manageablePage = async (requester: PagePrincipal, pageId: number, suppliedAuthority?: PageRuleAuthority): Promise<ProtectedPage> => {
   const page = await wiki.models.pages.getPageFromDb(pageId)
-  if (!page || !canWritePage(requester, page)) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
+  const authority = suppliedAuthority ?? await wiki.auth.loadPageRuleAuthority(requester)
+  if (!page || !canWritePage(requester, page, authority)) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
   return page
+}
+
+const loadPageTags = async (transaction: Knex | Knex.Transaction, pageId: number): Promise<Array<{ tag: string }>> => {
+  const rows = await transaction<{ tag: string }>('pageTags')
+    .innerJoin('tags', 'tags.id', 'pageTags.tagId')
+    .where('pageTags.pageId', pageId)
+    .orderBy('tags.tag', 'asc')
+    .select('tags.tag')
+  return rows.map(row => ({ tag: row.tag }))
 }
 
 const normalizedAssetPath = (value: string): string | null => {
@@ -97,7 +111,8 @@ export const redactProtectedPageForSearch = async <T extends { id: number; safeC
 }
 
 export const getPageProtection = async (requester: PagePrincipal, pageId: number): Promise<Record<string, unknown>> => {
-  await manageablePage(requester, pageId)
+  const authority = await wiki.auth.loadPageRuleAuthority(requester)
+  await manageablePage(requester, pageId, authority)
   const protection = await wiki.models.knex<ProtectionRow>('pageAccessPasswords').where({ pageId }).first()
   return protection
     ? { protected: true, version: protection.version, updatedBy: protection.updatedBy, updatedAt: protection.updatedAt }
@@ -114,7 +129,6 @@ export const setPageProtection = async (input: {
   sessionId: string
 }): Promise<Record<string, unknown>> => {
   const userId = authenticatedId(input.requester)
-  const page = await manageablePage(input.requester, input.pageId)
   if (input.password.length < 12 || input.password.length > 1024) {
     throw new ApplicationError('Page passwords must contain between 12 and 1024 characters', { status: 400, code: 'INVALID_PASSWORD' })
   }
@@ -122,8 +136,15 @@ export const setPageProtection = async (input: {
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST)
   const now = new Date()
   let version = 0
+  let page: ProtectedPage | undefined
+  const loadedPage = await wiki.models.pages.getPageFromDb(input.pageId)
   await wiki.models.knex.transaction(async transaction => {
-    const pageContents = await transaction('pages').where({ id: page.id }).select('content', 'render').forUpdate().first()
+    const currentPage = await transaction<ProtectedPage>('pages').where({ id: input.pageId }).forUpdate().first()
+    if (!currentPage) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
+    page = (loadedPage ? { ...loadedPage, ...currentPage } : currentPage) as ProtectedPage
+    page.tags = await loadPageTags(transaction, page.id)
+    const authority = await wiki.auth.loadPageRuleAuthority(input.requester, transaction)
+    if (!canWritePage(input.requester, page, authority)) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
     const existing = await transaction<ProtectionRow>('pageAccessPasswords').where({ pageId: page.id }).forUpdate().first()
     version = (existing?.version ?? 0) + 1
     if (existing) {
@@ -132,7 +153,7 @@ export const setPageProtection = async (input: {
     } else {
       await transaction('pageAccessPasswords').insert({ pageId: page.id, passwordHash, version, updatedBy: userId, updatedAt: now })
     }
-    await syncProtectedPageAssets(transaction, page.id, String(pageContents?.content ?? ''), String(pageContents?.render ?? ''))
+    await syncProtectedPageAssets(transaction, page.id, String(page.content ?? ''), String(page.render ?? ''))
     await transaction('pageUnlockGrants').insert({
       id: randomUUID(),
       pageId: page.id,
@@ -143,28 +164,37 @@ export const setPageProtection = async (input: {
       expiresAt: new Date(now.valueOf() + GRANT_LIFETIME_MS)
     })
   })
+  if (!page) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
   Reflect.set(page, 'safeContent', '')
   await wiki.data.searchEngine.updated(page)
   return { protected: true, version, updatedBy: userId, updatedAt: now }
 }
-
 export const removePageProtection = async (input: { requester: PagePrincipal; pageId: number }): Promise<{ protected: false }> => {
-  const page = await manageablePage(input.requester, input.pageId)
-  await wiki.models.knex('pageAccessPasswords').where({ pageId: page.id }).delete()
-  const contents = await wiki.models.pages.query().findById(page.id).select('render')
-  Reflect.set(page, 'safeContent', wiki.models.pages.cleanHTML(String(contents?.render ?? '')))
+  const loadedPage = await wiki.models.pages.getPageFromDb(input.pageId)
+  const page = await wiki.models.knex.transaction(async transaction => {
+    const current = await transaction<ProtectedPage>('pages').where({ id: input.pageId }).forUpdate().first()
+    if (!current) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
+    const page = (loadedPage ? { ...loadedPage, ...current } : current) as ProtectedPage
+    page.tags = await loadPageTags(transaction, page.id)
+    const authority = await wiki.auth.loadPageRuleAuthority(input.requester, transaction)
+    if (!canWritePage(input.requester, page, authority)) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
+    await transaction('pageAccessPasswords').where({ pageId: page.id }).delete()
+    return page
+  })
+  Reflect.set(page, 'safeContent', wiki.models.pages.cleanHTML(String(page.render ?? '')))
   await wiki.data.searchEngine.updated(page)
   return { protected: false }
 }
 
 export const unlockPage = async (input: { requester: PagePrincipal; pageId: number; password: string; sessionId: string }): Promise<void> => {
   if (!input.sessionId || typeof input.password !== 'string') throw new ApplicationError('Access denied', { status: 403, code: 'PAGE_LOCKED' })
-  const [protection, page] = await Promise.all([
+  const [protection, page, authority] = await Promise.all([
     wiki.models.knex<ProtectionRow>('pageAccessPasswords').where({ pageId: input.pageId }).first(),
-    wiki.models.pages.getPageFromDb(input.pageId)
+    wiki.models.pages.getPageFromDb(input.pageId),
+    wiki.auth.loadPageRuleAuthority(input.requester)
   ])
   const valid = await bcrypt.compare(input.password, protection?.passwordHash ?? FAKE_PASSWORD_HASH)
-  if (!protection || !valid || !page || !canReadPage(input.requester, page)) {
+  if (!protection || !valid || !page || !canReadPage(input.requester, page, authority)) {
     throw new ApplicationError('Access denied', { status: 403, code: 'PAGE_LOCKED' })
   }
   const now = new Date()
@@ -195,9 +225,16 @@ export const pageRequiresUnlock = async (input: { requester: PagePrincipal; page
   return !grant
 }
 
-export const assertPageUnlocked = async (input: { requester: PagePrincipal; pageId: number; sessionId: string }): Promise<void> => {
+export const assertPageUnlocked = async (input: {
+  requester: PagePrincipal
+  pageId: number
+  sessionId: string
+  authority?: PageRuleAuthority
+}): Promise<void> => {
   const page = await wiki.models.pages.getPageFromDb(input.pageId)
-  if (!page || !canReadPage(input.requester, page)) {
+  if (!page) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
+  const authority = input.authority ?? await wiki.auth.loadPageRuleAuthority(input.requester)
+  if (!canReadPage(input.requester, page, authority)) {
     throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
   }
   if (await pageRequiresUnlock(input)) throw new ApplicationError('Access denied', { status: 403, code: 'PAGE_LOCKED' })
@@ -254,5 +291,6 @@ export const protectedAssetRequiresUnlock = async (input: { requester: PagePrinc
     .where('pageUnlockGrants.expiresAt', '>', now)
     .select('pageUnlockGrants.pageId')
   const pages = await Promise.all(grants.map(grant => wiki.models.pages.getPageFromDb(grant.pageId)))
-  return !pages.some(page => page && canReadPage(input.requester, page))
+  const authority = await wiki.auth.loadPageRuleAuthority(input.requester)
+  return !pages.some(page => page && canReadPage(input.requester, page, authority))
 }

@@ -38,6 +38,9 @@ describe('controllers/api users endpoints', () => {
 
     global.WIKI = {
       Error: {},
+      config: {
+        host: 'https://wiki.example.test'
+      },
       auth: {
         checkAccess: vi.fn().mockReturnValue(true),
         checkAssignUserToGroupAccess: vi.fn().mockResolvedValue(true),
@@ -384,16 +387,16 @@ describe('controllers/api users endpoints', () => {
       { appearance: 'light', fontFamily: 'newsreader' },
       { id: 42, appearance: 'light', fontFamily: 'newsreader' }
     ]
-  ])('persists profile preferences and returns a refreshed token for %o', async (body, expectedUpdate) => {
+  ])('persists profile preferences and returns a success response', async (body, expectedUpdate) => {
     const { preferences } = await loadHandler()
     const req = { user: { id: 42 }, body }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), status: vi.fn().mockReturnThis(), cookie: vi.fn(), set: vi.fn() }
 
     await preferences(req, res, vi.fn())
 
     expect(global.WIKI.models.users.updateUser).toHaveBeenCalledWith(expectedUpdate)
     expect(global.WIKI.models.users.refreshToken).toHaveBeenCalledWith(42)
-    expect(res.json).toHaveBeenCalledWith({ token: 'replacement-jwt' })
+    expect(res.json).toHaveBeenCalledWith({ message: 'Profile preferences updated successfully.' })
   })
 
   it.each([
@@ -894,9 +897,10 @@ describe('controllers/api users endpoints', () => {
   it('returns anonymous state when no authenticated user is present', async () => {
     const { whoami } = await loadHandler()
     const req = {}
-    const res = { json: vi.fn() }
+    const res = { json: vi.fn(), set: vi.fn() }
 
     await whoami(req, res)
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
 
     expect(res.json).toHaveBeenCalledWith({ authenticated: false, user: null })
   })
@@ -915,9 +919,10 @@ describe('controllers/api users endpoints', () => {
         providerId: 'provider-42'
       }
     }
-    const res = { json: vi.fn() }
+    const res = { json: vi.fn(), set: vi.fn() }
 
     await whoami(req, res)
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
 
     expect(res.json).toHaveBeenCalledWith({
       authenticated: true,
@@ -926,7 +931,8 @@ describe('controllers/api users endpoints', () => {
         name: 'Alice',
         email: 'alice@example.com',
         providerKey: 'local',
-        permissions: ['manage:system']
+        timezone: 'Europe/Tallinn',
+        permissions: []
       }
     })
   })
@@ -946,9 +952,10 @@ describe('controllers/api users endpoints', () => {
         continuationToken: 'token-123'
       }
     }
-    const res = { json: vi.fn() }
+    const res = { json: vi.fn(), set: vi.fn() }
 
     await whoami(req, res)
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'no-store')
 
     const payload = res.json.mock.calls[0][0]
     expect(payload.user.password).toBeUndefined()

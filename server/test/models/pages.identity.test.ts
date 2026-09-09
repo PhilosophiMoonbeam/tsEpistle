@@ -221,10 +221,12 @@ beforeEach(async () => {
       'PageUpdateForbidden'
     ].map(name => [name, class extends Error {}])
   )
+  const checkAccess = vi.fn().mockReturnValue(true)
+  const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
   wikiGlobal.WIKI = {
     ROOTPATH: tempRoot,
     Error: errors,
-    auth: { checkAccess: vi.fn().mockReturnValue(true) },
+    auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
     collaboration: { pageChanged: vi.fn(async () => undefined) },
     config: { dataPath: 'data', db: { type: 'postgres' } },
     data: {

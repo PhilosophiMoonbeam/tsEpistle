@@ -57,6 +57,15 @@ describe('common page routing', () => {
     global.WIKI = {
       auth: {
         checkAccess: vi.fn().mockImplementation((user, permissions) => permissions.some(permission => user?.permissions?.includes(permission))),
+        checkPageAccess: vi.fn((user, permissions, _page, authority) =>
+          authority?.requester === user && permissions.some(permission => user?.permissions?.includes(permission))
+        ),
+        loadPageRuleAuthority: vi.fn(async requester => ({
+          requester,
+          permissions: requester?.permissions ?? [],
+          groups: [],
+          tagAliases: {}
+        })),
         getEffectivePermissions: vi.fn().mockReturnValue({
           pages: { read: false, write: false, manage: false },
           history: { read: false },
@@ -76,7 +85,8 @@ describe('common page routing', () => {
       models: {
         knex: Object.assign(vi.fn().mockImplementation(() => ({
           where: vi.fn().mockReturnValue({
-            first: vi.fn().mockResolvedValue(undefined)
+            first: vi.fn().mockResolvedValue(undefined),
+            select: vi.fn().mockResolvedValue([])
           })
         })), { client: { pool: { numFree: () => 1, numUsed: () => 0 } } }),
         pages: {
@@ -127,6 +137,17 @@ describe('common page routing', () => {
     await byId(request({ id: 9, permissions: ['read:pages'] }), res)
     expect(res.status).toHaveBeenCalledWith(404)
     expect(res.render).toHaveBeenCalledWith('notfound', { action: 'view' })
+  })
+
+  it('uses the real public asset route before delegating internal paths to delivery', async () => {
+    const { view } = await handlers()
+    const assetResponse = response()
+    const req = request({ permissions: ['read:assets'] })
+    req.path = '/.git/config'
+
+    await view(req, assetResponse)
+
+    expect(global.WIKI.models.assets.getAsset).toHaveBeenCalledWith('.git/config', assetResponse)
   })
 
   it('renders the by-ID inspection route only for system administrators', async () => {

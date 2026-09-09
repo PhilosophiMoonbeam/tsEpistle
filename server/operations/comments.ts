@@ -1,5 +1,6 @@
 import _ from 'lodash'
-import { canReadPage, principalId, type PagePrincipal } from '../helpers/page-access.ts'
+import { canReadPage, pageAuthorizationContext, principalId, type PagePrincipal } from '../helpers/page-access.ts'
+import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 
 import { assertPageUnlocked } from './page-protection.ts'
 import { writeLegacyDiscussionProviders } from './discussion-settings.ts'
@@ -68,7 +69,11 @@ const getWiki = () =>
   WIKI as unknown as {
     models: CommentModels
     data: { commentProviders: Array<Record<string, unknown> & { key: string }>; commentProvider: { getCommentById(id: number): Promise<Comment | undefined> } }
-    auth: { checkAccess(requester: Requester, permissions: string[], context?: Record<string, unknown>): boolean }
+    auth: {
+      checkAccess(requester: Requester, permissions: readonly string[]): boolean
+      checkPageAccess(requester: Requester, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
+      loadPageRuleAuthority(requester: Requester): Promise<PageRuleAuthority>
+    }
     Error: CommentErrors
     logger: { warn(message: string): void }
   }
@@ -146,18 +151,17 @@ const list = async ({ requester, pageId, sessionId = '' }: { requester: Requeste
     .findById(pageId)
     .withGraphJoined('tags')
     .modifyGraph('tags', builder => builder.select('tag'))
-  if (!page || (page.visibility === 'private' && !canReadPage(requester, page))) throw Object.assign(new errors.CommentNotFound(), { status: 404 })
+  const authority = await auth.loadPageRuleAuthority(requester)
+  const pageContext = page ? pageAuthorizationContext(page) : null
+  if (!page || (page.visibility === 'private' && !canReadPage(requester, page, authority))) throw Object.assign(new errors.CommentNotFound(), { status: 404 })
   if (
-    !canReadPage(requester, page) ||
-    !auth.checkAccess(requester, ['read:comments'], {
-      locale: page.localeCode,
-      path: page.path,
-      tags: page.tags
-    })
+    !canReadPage(requester, page, authority) ||
+    pageContext === null ||
+    !auth.checkPageAccess(requester, ['read:comments'], pageContext, authority)
   ) {
     throw Object.assign(new errors.CommentViewForbidden(), { status: 403 })
   }
-  await assertPageUnlocked({ requester, pageId, sessionId })
+  await assertPageUnlocked({ requester, pageId, sessionId, authority })
   const includeAuditFields = auth.checkAccess(requester, ['manage:system'])
   return (await models.comments.query().where('pageId', page.id).orderBy('createdAt')).filter(comment => !comment.isHidden).map(comment => commentReadDto(comment, includeAuditFields))
 }
@@ -176,18 +180,17 @@ const get = async ({ requester, id, sessionId = '' }: { requester: Requester; id
     logger.warn(`Comment #${comment.id} is linked to a page #${comment.pageId} that doesn't exist! [ERROR]`)
     throw Object.assign(new errors.CommentNotFound(), { status: 404 })
   }
-  if (page.visibility === 'private' && !canReadPage(requester, page)) throw Object.assign(new errors.CommentNotFound(), { status: 404 })
+  const authority = await auth.loadPageRuleAuthority(requester)
+  const pageContext = pageAuthorizationContext(page)
+  if (page.visibility === 'private' && !canReadPage(requester, page, authority)) throw Object.assign(new errors.CommentNotFound(), { status: 404 })
   if (
-    !canReadPage(requester, page) ||
-    !auth.checkAccess(requester, ['read:comments'], {
-      path: page.path,
-      locale: page.localeCode,
-      tags: page.tags
-    })
+    !canReadPage(requester, page, authority) ||
+    pageContext === null ||
+    !auth.checkPageAccess(requester, ['read:comments'], pageContext, authority)
   ) {
     throw Object.assign(new errors.CommentViewForbidden(), { status: 403 })
   }
-  await assertPageUnlocked({ requester, pageId: comment.pageId, sessionId })
+  await assertPageUnlocked({ requester, pageId: comment.pageId, sessionId, authority })
   return commentReadDto(comment, auth.checkAccess(requester, ['manage:system']))
 }
 

@@ -80,6 +80,7 @@ const pagePayload = (okf = missingOkf) => ({
   creatorId: 1,
   creatorName: 'Creator',
   creatorEmail: 'creator@example.com',
+  capabilities: { viewStewardContacts: true },
   okf
 })
 
@@ -152,6 +153,7 @@ describe('pages api helper', () => {
         creatorId: 1,
         creatorName: 'Creator',
         creatorEmail: 'creator@example.com',
+        capabilities: { viewStewardContacts: true },
         okf: missingOkf,
         extra: 'ignored'
       })
@@ -180,6 +182,7 @@ describe('pages api helper', () => {
       creatorId: 1,
       creatorName: 'Creator',
       creatorEmail: 'creator@example.com',
+      capabilities: { viewStewardContacts: true },
       okf: missingOkf
     })
 
@@ -189,6 +192,33 @@ describe('pages api helper', () => {
         Accept: 'application/json'
       }
     })
+  })
+  test('accepts read-only page details without synthesizing restricted fields', async () => {
+    const payload = pagePayload()
+    payload.capabilities = { viewStewardContacts: false }
+    for (const field of [
+      'isPublished',
+      'publishStartDate',
+      'publishEndDate',
+      'editor',
+      'authorId',
+      'authorName',
+      'authorEmail',
+      'creatorId',
+      'creatorName',
+      'creatorEmail'
+    ]) {
+      delete payload[field]
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
+
+    const page = await fetchPage(fetchImpl, 7)
+
+    expect(page.capabilities).toEqual({ viewStewardContacts: false })
+    expect(page).not.toHaveProperty('isPublished')
+    expect(page).not.toHaveProperty('publishStartDate')
+    expect(page).not.toHaveProperty('authorEmail')
+    expect(page).not.toHaveProperty('creatorEmail')
   })
   test('treats a successful page response with missing OKF as invalid', async () => {
     const payload = pagePayload()

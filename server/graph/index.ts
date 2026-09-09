@@ -9,6 +9,7 @@ import { LEVEL } from 'triple-beam'
 import Transport from 'winston-transport'
 
 import { authDirectiveTransformer } from './directives/auth.ts'
+import { apiKeyMutationTransformer } from './api-key-mutations.ts'
 import { createRateLimitDirective } from './directives/rate-limit.ts'
 import { LoggingLiveTrailBroker } from '../operations/logging-live-trail.ts'
 import { redactLoggingLiveOutput } from '../operations/logging.ts'
@@ -77,6 +78,7 @@ export async function createGraphQLArtifacts(runtime: GraphRuntime) {
   let schema = makeExecutableSchema({ typeDefs, resolvers })
   schema = authDirectiveTransformer(schema)
   schema = rateLimitDirectiveTransformer(schema)
+  schema = apiKeyMutationTransformer(schema)
 
   class LiveTrailLogger extends Transport {
     name = 'liveTrailLogger'

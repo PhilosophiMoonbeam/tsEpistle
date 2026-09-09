@@ -258,12 +258,25 @@ describe('page-native skill source authorization', () => {
 
   it('fails closed when the reviewing administrator cannot read the mapped page', async () => {
     const checkAccess = vi.fn().mockReturnValue(false)
-    Reflect.set(globalThis, 'WIKI', { auth: { checkAccess } })
+    const checkPageAccess = vi.fn().mockReturnValue(false)
+    const loadPageRuleAuthority = vi.fn(async requester => ({
+      requester,
+      permissions: ['read:pages'],
+      groups: [],
+      tagAliases: {}
+    }))
+    Reflect.set(globalThis, 'WIKI', { auth: { checkAccess, checkPageAccess, loadPageRuleAuthority } })
     await expect(Promise.resolve(resolvePageNativeSkillSource(db, {
       rootPageId: 42,
       rootPath: 'system/agent-skills/release-notes',
       assetFolderId: null
     }, { id: 7 } as Express.User))).rejects.toThrow('Skill source page is unavailable')
-    expect(checkAccess).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }), ['read:pages'], expect.objectContaining({ path: 'system/agent-skills/release-notes', locale: 'en' }))
+    expect(loadPageRuleAuthority).toHaveBeenCalledWith(expect.objectContaining({ id: 7 }))
+    expect(checkPageAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7 }),
+      ['read:pages'],
+      expect.objectContaining({ path: 'system/agent-skills/release-notes', locale: 'en' }),
+      expect.objectContaining({ requester: expect.objectContaining({ id: 7 }) })
+    )
   })
 })

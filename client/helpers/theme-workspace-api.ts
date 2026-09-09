@@ -13,9 +13,9 @@ const request = async (method: string, suffix = '', body?: unknown) => {
 export const fetchThemeWorkspace = async (): Promise<ThemeWorkspace> => {
   const payload = await request('GET')
   if (typeof Reflect.get(payload, 'fingerprint') !== 'string' || !Reflect.get(payload, 'policy') || !Reflect.get(payload, 'runtime') || !Array.isArray(Reflect.get(payload, 'history'))) throw new Error('The Theme workspace could not be read.')
-  const policy = ThemePolicySchema.safeParse(Reflect.get(payload, 'policy')), runtime = Reflect.get(payload, 'runtime')
-  if (!policy.success || !runtime || !['applied', 'needs-attention'].includes(runtime.state) || typeof runtime.observedAt !== 'string') throw new Error('The Theme workspace contains invalid settings. Review server diagnostics.')
-  return { ...payload, policy: policy.data } as ThemeWorkspace
+  const policy = ThemePolicySchema.safeParse(Reflect.get(payload, 'policy')), runtime = Reflect.get(payload, 'runtime'), capabilities = Reflect.get(payload, 'capabilities')
+  if (!policy.success || !runtime || !['applied', 'needs-attention'].includes(runtime.state) || typeof runtime.observedAt !== 'string' || !capabilities || typeof Reflect.get(capabilities, 'editCustomCode') !== 'boolean') throw new Error('The Theme workspace contains invalid settings. Review server diagnostics.')
+  return { ...payload, policy: policy.data, capabilities: { editCustomCode: Reflect.get(capabilities, 'editCustomCode') } } as ThemeWorkspace
 }
 const write = async (method: string, suffix: string, body: unknown): Promise<ThemeWriteResult> => {
   const payload = await request(method, suffix, body)

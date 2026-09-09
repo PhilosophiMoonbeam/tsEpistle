@@ -649,6 +649,228 @@ describe('User aggregate transactions', () => {
   })
 })
 
+interface TfaState {
+  users: Row[]
+  userKeys: Row[]
+}
+
+interface TfaTransaction {
+  state: TfaState
+}
+
+interface TfaDatabase {
+  state: TfaState
+  commits: number
+  expectedCode: string
+  failEnable: boolean
+  afterLoginResult: Row
+  afterLoginCalls: number
+  afterLoginCommits: number[]
+  tokenValidationTransactions: TfaTransaction[]
+  enableTransactions: TfaTransaction[]
+  generatedTokens: Array<{ userId: number; kind: string; commits: number }>
+}
+
+const tfaErrors = {
+  AuthTFAFailed: class extends Error {},
+  AuthTFAInvalid: class extends Error {},
+  AuthValidationTokenInvalid: class extends Error {}
+}
+
+const createTfaDatabase = (userValues: Row = {}): TfaDatabase => ({
+  state: {
+    users: [{
+      id: 10,
+      isActive: true,
+      tfaIsActive: false,
+      tfaSecret: 'test-secret',
+      authVersion: 0,
+      mustChangePwd: false,
+      groups: [],
+      ...userValues
+    }],
+    userKeys: [{
+      id: 1,
+      userId: 10,
+      kind: 'tfaSetup',
+      token: 'setup-token',
+      authVersion: 0,
+      validUntil: '2999-01-01T00:00:00.000Z'
+    }]
+  },
+  commits: 0,
+  expectedCode: '123456',
+  failEnable: false,
+  afterLoginResult: { jwt: 'signed-jwt', redirect: '/' },
+  afterLoginCalls: 0,
+  afterLoginCommits: [],
+  tokenValidationTransactions: [],
+  enableTransactions: [],
+  generatedTokens: []
+})
+
+const installTfaDatabase = (database: TfaDatabase): void => {
+  const userRecord = (row: Row): User =>
+    Object.assign(new User(), row, {
+      verifyTFA: (code: string) => code === database.expectedCode,
+      $relatedQuery: () => ({ select: async () => [] })
+    })
+  const query = (transaction?: TfaTransaction) => {
+    if (!transaction) throw new Error('TFA query was not bound to the transaction')
+    database.enableTransactions.push(transaction)
+    return {
+      findById: (id: number) => ({
+        patch: async (values: Row): Promise<number> => {
+          const row = transaction.state.users.find(candidate => candidate.id === id)
+          if (!row) return 0
+          Object.assign(row, values)
+          if (database.failEnable) throw new Error('forced TFA activation failure')
+          return 1
+        }
+      })
+    }
+  }
+  const validateToken = async (
+    { kind, token }: { kind: string; token: string },
+    transaction?: TfaTransaction
+  ): Promise<User> => {
+    if (!transaction) throw new Error('TFA token validation was not bound to the transaction')
+    database.tokenValidationTransactions.push(transaction)
+    const tokenIndex = transaction.state.userKeys.findIndex(candidate => candidate.kind === kind && candidate.token === token)
+    if (tokenIndex < 0) throw new tfaErrors.AuthValidationTokenInvalid()
+    const [candidate] = transaction.state.userKeys.splice(tokenIndex, 1)
+    const row = transaction.state.users.find(user => user.id === candidate?.userId)
+    if (!row) throw new tfaErrors.AuthValidationTokenInvalid()
+    return userRecord(row)
+  }
+  const afterLoginChecks = async (): Promise<Row> => {
+    database.afterLoginCalls += 1
+    database.afterLoginCommits.push(database.commits)
+    return structuredClone(database.afterLoginResult)
+  }
+  const generateToken = async ({ userId, kind }: { userId: number; kind: string }): Promise<string> => {
+    database.generatedTokens.push({ userId, kind, commits: database.commits })
+    return `${kind}-token`
+  }
+  const transaction = async <T>(operation: (trx: TfaTransaction) => Promise<T>): Promise<T> => {
+    const trx = { state: structuredClone(database.state) }
+    const result = await operation(trx)
+    database.state = trx.state
+    database.commits += 1
+    return result
+  }
+
+  Object.assign(wiki.Error, tfaErrors)
+  Object.assign(wiki, { config: { auth: { enforce2FA: false } } })
+  wiki.models = {
+    knex: { transaction },
+    userKeys: { validateToken, generateToken },
+    users: { query, afterLoginChecks }
+  }
+}
+
+describe('User.loginTFA setup transactions', () => {
+  const context = {
+    req: { login: () => {}, logIn: () => {}, body: {}, params: {} },
+    res: {}
+  } as never
+
+  test('rolls back an invalid setup code so a valid retry can consume and enable', async () => {
+    const database = createTfaDatabase()
+    installTfaDatabase(database)
+
+    await expect(User.loginTFA({ securityCode: '000000', continuationToken: 'setup-token', setup: true }, context))
+      .rejects.toBeInstanceOf(tfaErrors.AuthTFAFailed)
+
+    expect(database.state.userKeys).toHaveLength(1)
+    expect(database.state.users[0]).toMatchObject({ tfaIsActive: false })
+    expect(database.commits).toBe(0)
+    expect(database.afterLoginCalls).toBe(0)
+
+    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context))
+      .resolves.toEqual(database.afterLoginResult)
+
+    expect(database.state.userKeys).toEqual([])
+    expect(database.state.users[0]).toMatchObject({ tfaIsActive: true })
+    expect(database.commits).toBe(1)
+    expect(database.afterLoginCommits).toEqual([1])
+    expect(database.enableTransactions).toHaveLength(1)
+    expect(database.enableTransactions[0]).toBe(database.tokenValidationTransactions[1])
+  })
+
+  test('consumes a valid setup token exactly once and rejects its replay', async () => {
+    const database = createTfaDatabase()
+    installTfaDatabase(database)
+
+    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context))
+      .resolves.toEqual(database.afterLoginResult)
+    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context))
+      .rejects.toBeInstanceOf(tfaErrors.AuthValidationTokenInvalid)
+
+    expect(database.state.userKeys).toEqual([])
+    expect(database.state.users[0]).toMatchObject({ tfaIsActive: true })
+    expect(database.commits).toBe(1)
+    expect(database.afterLoginCalls).toBe(1)
+  })
+
+  test('rejects setup for an already-active account without consuming its token', async () => {
+    const database = createTfaDatabase({ tfaIsActive: true })
+    installTfaDatabase(database)
+
+    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context))
+      .rejects.toBeInstanceOf(tfaErrors.AuthValidationTokenInvalid)
+
+    expect(database.state.userKeys).toHaveLength(1)
+    expect(database.state.users[0]).toMatchObject({ tfaIsActive: true })
+    expect(database.commits).toBe(0)
+    expect(database.afterLoginCalls).toBe(0)
+  })
+
+  test('rolls back setup token consumption when TFA activation fails', async () => {
+    const database = createTfaDatabase()
+    database.failEnable = true
+    installTfaDatabase(database)
+
+    await expect(User.loginTFA({ securityCode: '123456', continuationToken: 'setup-token', setup: true }, context))
+      .rejects.toThrow('forced TFA activation failure')
+
+    expect(database.state.userKeys).toHaveLength(1)
+    expect(database.state.users[0]).toMatchObject({ tfaIsActive: false })
+    expect(database.commits).toBe(0)
+    expect(database.afterLoginCalls).toBe(0)
+  })
+
+  test('returns the mandatory-password continuation after setup without starting a session', async () => {
+    const database = createTfaDatabase({ mustChangePwd: true })
+    database.afterLoginResult = { mustChangePwd: true, continuationToken: 'changePwd-token', redirect: '/' }
+    installTfaDatabase(database)
+    const usersModel = wiki.models.users as { afterLoginChecks: typeof User.afterLoginChecks }
+    const originalAfterLoginChecks = User.afterLoginChecks
+    usersModel.afterLoginChecks = async (...args: Parameters<typeof User.afterLoginChecks>) => {
+      database.afterLoginCalls += 1
+      database.afterLoginCommits.push(database.commits)
+      return originalAfterLoginChecks(...args)
+    }
+    let loginCalls = 0
+    let cookieCalls = 0
+    const result = await User.loginTFA(
+      { securityCode: '123456', continuationToken: 'setup-token', setup: true },
+      {
+        req: { login: () => { loginCalls += 1 }, logIn: () => { loginCalls += 1 }, body: {}, params: {} },
+        res: { cookie: () => { cookieCalls += 1 } }
+      } as never
+    )
+
+    expect(result).toEqual(database.afterLoginResult)
+    expect(database.state.userKeys).toEqual([])
+    expect(database.state.users[0]).toMatchObject({ tfaIsActive: true, mustChangePwd: true })
+    expect(database.afterLoginCommits).toEqual([1])
+    expect(database.generatedTokens).toEqual([{ userId: 10, kind: 'changePwd', commits: 1 }])
+    expect(loginCalls).toBe(0)
+    expect(cookieCalls).toBe(0)
+  })
+})
+
 describe('User.refreshToken', () => {
   test('does not issue a fresh token after the sign-in provider has been disabled', async () => {
     wiki.models = { authentication: { getStrategy: async () => ({ isEnabled: false }) } }

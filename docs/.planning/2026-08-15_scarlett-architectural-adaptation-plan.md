@@ -9,7 +9,7 @@
 
 This report reopens every Scarlett architectural choice previously classified as “not inherited.” Implementation size and merge friction are deliberately excluded from the decision criteria. A large change is accepted when it produces a stronger product contract; a small change is rejected when it creates a second architecture, loses compatibility, or has no measurable user or maintainer benefit.
 
-This report supplements the authoritative [Scarlett design-synthesis roadmap](./2026-08-14_scarlett-design-synthesis-roadmap.md). It does not replace that roadmap’s security, data-continuity, API, or release invariants.
+This report supplements the authoritative [Scarlett design-synthesis roadmap](./2026-08-14_scarlett-design-synthesis-roadmap.md). It does not replace that roadmap’s security, data-continuity, API, or release invariants. Those invariants and the release statements below are historical context; current release authority is the maintainer-owned schema-2 threat-model contract in [`docs/security/threat-model.md`](../security/threat-model.md) and [`docs/security/review-attestations.json`](../security/review-attestations.json), with `policyVersion: 1` and `modelVersion: 1`. This report does not define a second release policy or an external-review prerequisite.
 
 ## Executive decision
 
@@ -558,7 +558,7 @@ The fork-native adaptation program is implemented through the release-candidate 
 - PostgreSQL 15–18 is the sole supported database target; retained Wiki.js 2.5.314 upgrades, exact Knex-ledger continuity, bounded migration resources, backup/restore, previous-image rollback, fresh install, multi-instance failover, expired-lease recovery, and rejoin behavior are exercised;
 - durable extension rerenders, canonical byte-preserving extension lifecycle behavior, lazy browser modules, bounded page-index queries, measured page-index and runtime budgets, and the native-Vue-over-Lit decision are recorded and enforced;
 - exact dependency versions, reproducible production-license inventory, license compatibility policy, OpenAPI v1 compatibility, aggregate release identity, placeholder rejection, responsive keyboard journeys, asynchronous states, and operator continuity are release gates;
-- the current threat model records deterministic TFA/recovery and process-death lease proofs. External publication remains blocked by `SEC-EXT-001` until an independent reviewer retests a frozen revision; deployment-specific adapters remain operator-canary obligations under `SEC-ADAPTER-001`.
+- the threat-model snapshot assessed for this historical report recorded deterministic TFA/recovery and process-death lease proofs. At the historical 2026-08-15 closeout, external publication remained blocked by the then-current independent-review requirement (`SEC-EXT-001`); that status is historical and superseded, not a current prerequisite. Current qualification uses the maintainer/agent schema-2 source-review contract, while deployment-specific adapters remain operator-canary obligations under `SEC-ADAPTER-001`.
 
 No Scarlett runtime tree, reset migration history, Quasar/Tailwind/Lit application shell, Drizzle authority, or second content source was imported. The useful upstream behavior was reimplemented against the fork’s existing policy, persistence, editor, Vue/Vuetify, and release contracts.
 

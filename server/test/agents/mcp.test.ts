@@ -11,6 +11,8 @@ import { up as createKnowledgeProjectionStore } from '../../db/migrations/2.5.15
 import { up as createKnowledgeSearchStore } from '../../db/migrations/tsepistle-000027-knowledge-search.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import { knowledgeSearchText, projectPageKnowledge } from '../../knowledge/projection.ts'
+import { createApiPrincipal } from '../../helpers/api-principal.ts'
+import { OKF_PRODUCER_CONTEXT } from '../../okf/mutation-context.ts'
 
 const key = Buffer.alloc(32, 7)
 const validOkfMetadata = {
@@ -23,12 +25,8 @@ const validOkfMetadata = {
 }
 const validOkfExtra = { okf: validOkfMetadata }
 
-const apiPrincipal = (): Express.User => ({
-  id: 90,
-  permissions: ['use:mcp', 'read:pages', 'read:history', 'write:pages', 'delete:pages'],
-  groups: [3],
-  ownershipUserId: null
-})
+const apiPrincipal = (apiKeyId = 9, groupId = 3): Express.User =>
+  createApiPrincipal(apiKeyId, groupId, ['use:mcp', 'read:pages', 'read:history', 'write:pages', 'delete:pages'])
 const humanPrincipal = (): Express.User => ({
   id: 7,
   permissions: ['read:pages', 'read:history', 'write:pages', 'delete:pages'],
@@ -146,15 +144,21 @@ const createProposalTables = async (db: Knex): Promise<void> => {
 }
 
 describe('Wiki MCP transport', () => {
+  type ActiveApiKey = {
+    readonly apiKeyId: number
+    readonly groupId: number
+    readonly bearerToken: string
+  }
+
   let db: Knex
   let server: ReturnType<express.Express['listen']>
   let client: Client | undefined
   let movePage: ReturnType<typeof vi.fn>
   let authorizeMutation: ReturnType<typeof vi.fn>
   let listRelated: ReturnType<typeof vi.fn>
-  let resolvedPrincipal: Express.User
+  let activeApiKey: ActiveApiKey | null
+  let approver: Express.User | null
   let authenticate: RequestHandler
-
   beforeEach(async () => {
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     await createProposalTables(db)
@@ -198,7 +202,8 @@ describe('Wiki MCP transport', () => {
       projection: canonicalJson(projection)
     })
     movePage = vi.fn(async () => ({}))
-    resolvedPrincipal = apiPrincipal()
+    activeApiKey = { apiKeyId: 9, groupId: 3, bearerToken: 'test-api-token' }
+    approver = humanPrincipal()
     authorizeMutation = vi.fn(async () => {})
     listRelated = vi.fn(async input => {
       const pages = [
@@ -239,15 +244,26 @@ describe('Wiki MCP transport', () => {
     })
     const app = express()
     authenticate = vi.fn((req, _res, next) => {
-      const user = apiPrincipal()
+      if (activeApiKey === null) {
+        Reflect.set(req, 'authContext', { kind: 'guest', userId: 2, ownershipUserId: null, principal: null })
+        next()
+        return
+      }
+      const user = apiPrincipal(activeApiKey.apiKeyId, activeApiKey.groupId)
       Reflect.set(req, 'user', user)
-      Reflect.set(req, 'authContext', { kind: 'apiKey', apiKeyId: 9, groupId: 3, ownershipUserId: null, principal: user })
+      Reflect.set(req, 'authContext', {
+        kind: 'apiKey',
+        apiKeyId: activeApiKey.apiKeyId,
+        groupId: activeApiKey.groupId,
+        ownershipUserId: null,
+        principal: user
+      })
       Reflect.set(req, 'apiKeyAuth', {
-        apiKeyId: 9,
-        groupId: 3,
+        apiKeyId: activeApiKey.apiKeyId,
+        groupId: activeApiKey.groupId,
         mcpResource: 'http://127.0.0.1/mcp',
         mcpResourceVersion: 1,
-        bearerToken: 'test-api-token'
+        bearerToken: activeApiKey.bearerToken
       })
       next()
     })
@@ -319,9 +335,8 @@ describe('Wiki MCP transport', () => {
         remove: vi.fn(),
         authorizeMutation
       },
-      authenticate,
-      resolvePrincipal: async () => resolvedPrincipal,
-      resolveUser: async () => humanPrincipal(),
+      resolvePrincipal: async (apiKeyId, groupId) => apiPrincipal(apiKeyId, groupId),
+      resolveUser: async () => approver as Express.User,
       config: {
         enabled: true,
         wikiPublicOrigin: 'http://127.0.0.1',
@@ -613,10 +628,230 @@ describe('Wiki MCP transport', () => {
     expect(movePage).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({ id: 42, destinationPath: 'docs/next' }),
-        requester: expect.objectContaining({ id: 7 })
+        [OKF_PRODUCER_CONTEXT]: expect.stringMatching(/^mcp:/u)
       })
     )
-    expect(authorizeMutation.mock.calls.map(call => call[0].requester.id)).toEqual([90, 7, 90, 7])
+    expect(await db('agentProposals').where({ id: proposalResult.proposalId }).first(
+      'sourceKind',
+      'requesterUserId',
+      'requesterApiKeyId',
+      'requesterRequestId',
+      'status'
+    )).toMatchObject({
+      sourceKind: 'mcp',
+      requesterUserId: null,
+      requesterApiKeyId: 9,
+      requesterRequestId: '00000000-0000-4000-8000-000000000099',
+      status: 'applied'
+    })
+    expect(await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first(
+      'requesterUserId',
+      'requesterApiKeyId',
+      'status',
+      'approvedByUserId'
+    )).toMatchObject({
+      requesterUserId: null,
+      requesterApiKeyId: 9,
+      status: 'approved',
+      approvedByUserId: 7
+    })
+    expect(await db('agentActionExecutions').where({ proposalId: proposalResult.proposalId }).first(
+      'requesterUserId',
+      'requesterApiKeyId',
+      'approvedByUserId',
+      'status'
+    )).toMatchObject({
+      requesterUserId: null,
+      requesterApiKeyId: 9,
+      approvedByUserId: 7,
+      status: 'committed'
+    })
+  })
+
+  it('keeps MCP proposals bound to their API-key/group authority', async () => {
+    const port = (server.address() as AddressInfo).port
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      authProvider: { token: async () => 'test-api-token' }
+    })
+    client = new Client(
+      { name: 'wiki-mcp-key-scope-test', version: '1.0.0' },
+      {
+        capabilities: {},
+        versionNegotiation: { mode: 'auto' }
+      }
+    )
+    await client.connect(transport)
+    const prepared = await client.callTool({
+      name: 'wiki_prepare_page_move',
+      arguments: {
+        requestId: '00000000-0000-4000-8000-000000000100',
+        pageId: 42,
+        sourceRevision: '8',
+        destinationPath: 'docs/next',
+        destinationLocale: 'en'
+      }
+    })
+    const proposalResult = JSON.parse(String(Reflect.get(prepared.content[0] ?? {}, 'text'))) as { proposalId: string; approvalId: string }
+    const before = {
+      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first(
+        'sourceKind',
+        'requesterUserId',
+        'requesterApiKeyId',
+        'requesterRequestId',
+        'status',
+        'inputHash',
+        'operationSha256'
+      ),
+      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first(
+        'requesterUserId',
+        'requesterApiKeyId',
+        'status',
+        'inputHash',
+        'operationSha256',
+        'approvedByUserId'
+      )
+    }
+
+    await client.close()
+    activeApiKey = { apiKeyId: 10, groupId: 4, bearerToken: 'other-api-token' }
+    const otherTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      authProvider: { token: async () => 'other-api-token' }
+    })
+    client = new Client(
+      { name: 'wiki-mcp-other-key-test', version: '1.0.0' },
+      {
+        capabilities: {},
+        versionNegotiation: { mode: 'auto' }
+      }
+    )
+    await client.connect(otherTransport)
+    const denied = await client.callTool({
+      name: 'wiki_apply_page_proposal',
+      arguments: {
+        proposalId: proposalResult.proposalId,
+        approvalId: proposalResult.approvalId
+      }
+    })
+    expect(denied).toMatchObject({ isError: true })
+    expect({
+      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first(
+        'sourceKind',
+        'requesterUserId',
+        'requesterApiKeyId',
+        'requesterRequestId',
+        'status',
+        'inputHash',
+        'operationSha256'
+      ),
+      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first(
+        'requesterUserId',
+        'requesterApiKeyId',
+        'status',
+        'inputHash',
+        'operationSha256',
+        'approvedByUserId'
+      )
+    }).toEqual(before)
+    expect(movePage).not.toHaveBeenCalled()
+  })
+
+  it('denies a revoked API key without changing pending proposal persistence', async () => {
+    const port = (server.address() as AddressInfo).port
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      authProvider: { token: async () => 'test-api-token' }
+    })
+    client = new Client(
+      { name: 'wiki-mcp-revoked-key-test', version: '1.0.0' },
+      {
+        capabilities: {},
+        versionNegotiation: { mode: 'auto' }
+      }
+    )
+    await client.connect(transport)
+    const prepared = await client.callTool({
+      name: 'wiki_prepare_page_move',
+      arguments: {
+        requestId: '00000000-0000-4000-8000-000000000101',
+        pageId: 42,
+        sourceRevision: '8',
+        destinationPath: 'docs/next',
+        destinationLocale: 'en'
+      }
+    })
+    const proposalResult = JSON.parse(String(Reflect.get(prepared.content[0] ?? {}, 'text'))) as { proposalId: string; approvalId: string }
+    const before = {
+      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
+      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
+    }
+
+    activeApiKey = null
+    const denied = await client.callTool({
+      name: 'wiki_apply_page_proposal',
+      arguments: {
+        proposalId: proposalResult.proposalId,
+        approvalId: proposalResult.approvalId
+      }
+    }).catch(error => error)
+    expect(denied).toBeInstanceOf(Error)
+    activeApiKey = { apiKeyId: 9, groupId: 3, bearerToken: 'test-api-token' }
+    expect({
+      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
+      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
+    }).toEqual(before)
+    expect(movePage).not.toHaveBeenCalled()
+  })
+
+  it('denies a revoked human approver without changing approved proposal persistence', async () => {
+    const port = (server.address() as AddressInfo).port
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+      authProvider: { token: async () => 'test-api-token' }
+    })
+    client = new Client(
+      { name: 'wiki-mcp-revoked-approver-test', version: '1.0.0' },
+      {
+        capabilities: {},
+        versionNegotiation: { mode: 'auto' }
+      }
+    )
+    await client.connect(transport)
+    const prepared = await client.callTool({
+      name: 'wiki_prepare_page_move',
+      arguments: {
+        requestId: '00000000-0000-4000-8000-000000000102',
+        pageId: 42,
+        sourceRevision: '8',
+        destinationPath: 'docs/next',
+        destinationLocale: 'en'
+      }
+    })
+    const proposalResult = JSON.parse(String(Reflect.get(prepared.content[0] ?? {}, 'text'))) as { proposalId: string; approvalId: string }
+    await decideProposal(db, {
+      proposalId: proposalResult.proposalId,
+      approvalId: proposalResult.approvalId,
+      userId: 7,
+      decision: 'approved',
+      authorize: async () => undefined
+    })
+    const before = {
+      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
+      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
+    }
+
+    approver = null
+    const denied = await client.callTool({
+      name: 'wiki_apply_page_proposal',
+      arguments: {
+        proposalId: proposalResult.proposalId,
+        approvalId: proposalResult.approvalId
+      }
+    })
+    expect(denied).toMatchObject({ isError: true })
+    expect(JSON.parse(String(Reflect.get(denied.content[0] ?? {}, 'text')))).toMatchObject({ code: 'APPROVER_UNAVAILABLE' })
+    expect({
+      proposal: await db('agentProposals').where({ id: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256'),
+      approval: await db('agentApprovals').where({ proposalId: proposalResult.proposalId }).first('status', 'requesterUserId', 'requesterApiKeyId', 'inputHash', 'operationSha256', 'approvedByUserId')
+    }).toEqual(before)
+    expect(movePage).not.toHaveBeenCalled()
   })
 
   it('rejects wrong Host and Origin values after route-boundary authentication', async () => {

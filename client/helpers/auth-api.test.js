@@ -366,6 +366,8 @@ describe('auth api helper', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       createJsonResponse({
         enabled: true,
+        createFullAccess: false,
+        assignableGroups: [],
         extraRoot: 'ignored',
         keys: [
           {
@@ -373,6 +375,7 @@ describe('auth api helper', () => {
             name: 'Deploy',
             keyShort: '...12345678901234567890',
             grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
+            canRevoke: false,
             key: '[REDACTED]',
             isRevoked: false,
             expiration: '2026-01-01T00:00:00.000Z',
@@ -386,11 +389,14 @@ describe('auth api helper', () => {
 
     expect(await fetchAdminApiBootstrap(fetchImpl)).toEqual({
       enabled: true,
+      createFullAccess: false,
+      assignableGroups: [],
       keys: [
         {
           id: 7,
           name: 'Deploy',
           keyShort: '...12345678901234567890',
+          canRevoke: false,
           grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
           isRevoked: false,
           expiration: '2026-01-01T00:00:00.000Z',
@@ -409,7 +415,7 @@ describe('auth api helper', () => {
   })
 
   test('rejects malformed admin API bootstrap root payloads', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ enabled: 'true', keys: [] }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ enabled: 'true', createFullAccess: false, assignableGroups: [], keys: [] }))
 
     await expect(Promise.resolve(fetchAdminApiBootstrap(fetchImpl, 'Bad API bootstrap payload'))).rejects.toThrow('Bad API bootstrap payload')
   })
@@ -418,11 +424,14 @@ describe('auth api helper', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       createJsonResponse({
         enabled: false,
+        createFullAccess: false,
+        assignableGroups: [],
         keys: [
           {
             id: 7,
             name: 'Deploy',
             keyShort: '',
+            canRevoke: false,
             isRevoked: false,
             expiration: '2026-01-01T00:00:00.000Z',
             createdAt: '2025-01-01T00:00:00.000Z',
@@ -439,11 +448,14 @@ describe('auth api helper', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       createJsonResponse({
         enabled: false,
+        createFullAccess: false,
+        assignableGroups: [],
         keys: [
           {
             id: 7,
             name: 'Deploy',
             keyShort: 'visible-key-material',
+            canRevoke: false,
             isRevoked: false,
             expiration: '2026-01-01T00:00:00.000Z',
             createdAt: '2025-01-01T00:00:00.000Z',
@@ -460,12 +472,15 @@ describe('auth api helper', () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       createJsonResponse({
         enabled: false,
+        createFullAccess: false,
+        assignableGroups: [],
         keys: [
           {
             id: 7,
             name: 'Legacy',
             keyShort: '...[redacted]',
             grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
+            canRevoke: false,
             isRevoked: false,
             expiration: '2026-01-01T00:00:00.000Z',
             createdAt: '2025-01-01T00:00:00.000Z',
@@ -477,11 +492,14 @@ describe('auth api helper', () => {
 
     expect(await fetchAdminApiBootstrap(fetchImpl)).toEqual({
       enabled: false,
+      createFullAccess: false,
+      assignableGroups: [],
       keys: [
         {
           id: 7,
           name: 'Legacy',
           keyShort: '...[redacted]',
+          canRevoke: false,
           grant: { groupId: null, mcpResource: null, mcpResourceVersion: null },
           isRevoked: false,
           expiration: '2026-01-01T00:00:00.000Z',
@@ -626,7 +644,7 @@ describe('auth api helper', () => {
   })
 
   test('submits auth request as JSON and returns parsed body', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ jwt: 'token', redirect: '/' }))
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ authenticated: true, redirect: '/' }))
 
     expect(
       await submitAuthRequest(fetchImpl, '/_api/auth/login', {
@@ -634,7 +652,7 @@ describe('auth api helper', () => {
         username: 'alice@example.com',
         password: 'secret'
       })
-    ).toEqual({ jwt: 'token', redirect: '/' })
+    ).toEqual({ authenticated: true, redirect: '/' })
 
     expect(fetchImpl).toHaveBeenCalledWith('/_api/auth/login', {
       method: 'POST',
@@ -649,6 +667,31 @@ describe('auth api helper', () => {
         password: 'secret'
       })
     })
+  })
+  test('accepts unauthenticated TFA continuations while reserving completion for authenticated responses', async () => {
+    const payload = {
+      authenticated: false,
+      mustProvideTFA: true,
+      continuationToken: 'tfa-token',
+      redirect: '/admin'
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse(payload))
+
+    await expect(
+      submitAuthRequest(fetchImpl, '/_api/auth/login', { strategy: 'local' })
+    ).resolves.toEqual(payload)
+  })
+
+  test('rejects authenticated challenge payloads', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({
+      authenticated: true,
+      mustChangePwd: true,
+      continuationToken: 'password-token'
+    }))
+
+    await expect(
+      submitAuthRequest(fetchImpl, '/_api/auth/login', { strategy: 'local' })
+    ).rejects.toThrow('Authentication request failed')
   })
 
   test('throws API JSON error messages for expected auth failures', async () => {
@@ -706,8 +749,7 @@ describe('auth api helper', () => {
   })
 
   test('rejects TFA continuation responses without a continuation token', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ mustProvideTFA: true }))
-
+    const fetchImpl = vi.fn().mockResolvedValue(createJsonResponse({ authenticated: false, mustProvideTFA: true }))
     await expect(
       Promise.resolve(
         submitAuthRequest(
@@ -725,6 +767,7 @@ describe('auth api helper', () => {
   test('rejects setup-TFA responses without required setup data', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(
       createJsonResponse({
+        authenticated: false,
         mustSetupTFA: true,
         continuationToken: 'continuation-only'
       })
@@ -746,6 +789,7 @@ describe('auth api helper', () => {
 
   test('accepts setup-TFA responses with QR and manual setup data', async () => {
     const payload = {
+      authenticated: false,
       mustSetupTFA: true,
       continuationToken: 'setup-token',
       tfaQRImage: '<svg></svg>',

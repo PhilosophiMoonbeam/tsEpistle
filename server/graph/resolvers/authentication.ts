@@ -1,4 +1,4 @@
-import type { Request } from 'express'
+import type { Request, Response } from 'express'
 
 import path from 'node:path'
 
@@ -17,6 +17,7 @@ interface MetricsStateArgs {
 }
 interface ResolverContext {
   req: Request
+  res: Response
 }
 interface AuthenticationConfig {
   flags: { ldapdebug: boolean }

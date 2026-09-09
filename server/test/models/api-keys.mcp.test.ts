@@ -12,9 +12,8 @@ describe('MCP API-key resource binding', () => {
 
   it.each([undefined, true, false])('derives resource binding from current configuration and explicit opt-out: %s', async mcpAccess => {
     const patch = vi.fn().mockResolvedValue(undefined)
-    const query = vi.fn()
-      .mockReturnValueOnce({ insert: vi.fn().mockResolvedValue({ id: 17 }) })
-      .mockReturnValueOnce({ findById: vi.fn(() => ({ patch })) })
+    const insert = vi.fn().mockResolvedValue({ id: 17 })
+    const query = vi.fn().mockReturnValue({ insert, findById: vi.fn(() => ({ patch })) })
     Reflect.set(globalThis, 'WIKI', {
       config: {
         agents: { mcp: { enabled: false } },
@@ -36,9 +35,7 @@ describe('MCP API-key resource binding', () => {
       },
       models: { apiKeys: { query } }
     })
-
     expect(await ApiKey.createNewKey({ name: 'MCP', expiration: '1h', fullAccess: false, group: 3, ...(mcpAccess === undefined ? {} : { mcpAccess }) })).toBe('signed-key')
-
     expect(sign).toHaveBeenCalledWith(expect.objectContaining({
       api: 17,
       grp: 3,

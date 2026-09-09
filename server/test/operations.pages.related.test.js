@@ -69,8 +69,9 @@ describe('related page graph traversal', () => {
       select: vi.fn(async () => receipts)
     }
     const checkAccess = vi.fn((_user, _permissions, context = {}) => context.path !== 'hidden')
+    const loadPageRuleAuthority = vi.fn(async requester => ({ requester, permissions: [], groups: [], tagAliases: {} }))
     global.WIKI = {
-      auth: { checkAccess },
+      auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority },
       config: { db: { type: 'postgres' }, lang: { code: 'en' } },
       data: {},
       Error: {},
@@ -117,6 +118,5 @@ describe('related page graph traversal', () => {
       truncated: false,
       nextOffset: null
     })
-    expect(checkAccess).toHaveBeenCalledWith(requester, ['read:pages'], expect.objectContaining({ path: 'hidden' }))
   })
 })

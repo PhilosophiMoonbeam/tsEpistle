@@ -415,7 +415,6 @@ import { wikiStore } from '@/store/index.ts'
 import { changeProfilePassword, fetchProfile, updateProfile, type Profile } from '../../helpers/users-api'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import _ from 'lodash'
-import Cookies from 'js-cookie'
 import validateValues from '../../../shared/validation'
 import type moment from 'moment'
 import PasswordStrength from '../common/password-strength.vue'
@@ -820,7 +819,7 @@ export default {
       wikiStore.startLoading('profile-save')
 
       try {
-        const token = await updateProfile(window.fetch.bind(window), {
+        await updateProfile(window.fetch.bind(window), {
           name: profile.name,
           location: profile.location,
           jobTitle: profile.jobTitle,
@@ -828,7 +827,7 @@ export default {
           dateFormat: profile.dateFormat,
           appearance: profile.appearance
         })
-        Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
+        await wikiStore.refreshAuth()
         wikiStore.user.name = profile.name
         wikiStore.user.appearance = profile.appearance
         wikiStore.showNotification({
@@ -921,7 +920,7 @@ export default {
         wikiStore.startLoading('profile-changepassword')
 
         try {
-          const token = await changeProfilePassword(
+          await changeProfilePassword(
             window.fetch.bind(window),
             this.currentPass,
             this.newPass
@@ -929,7 +928,7 @@ export default {
           this.currentPass = ''
           this.newPass = ''
           this.verifyPass = ''
-          Cookies.set('jwt', token, { expires: 365, secure: window.location.protocol === 'https:' })
+          await wikiStore.refreshAuth()
           wikiStore.showNotification({
             message: this.$t('profile:auth.changePassSuccess'),
             style: 'success',

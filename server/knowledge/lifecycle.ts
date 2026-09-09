@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
 import { canonicalJson } from '../helpers/canonical-json.ts'
 import { canReadPage, scopePageQuery, type PagePrincipal } from '../helpers/page-access.ts'
+import type { PageRuleAuthority } from '../helpers/group-access.ts'
 import { isStructuredSearchQuery } from '../helpers/search-query.ts'
 import {
   claimPageMutationEffects,
@@ -598,6 +599,7 @@ export class PageKnowledgeRepository {
 
   async filterVisibleCurrentIds(input: {
     readonly requester: PagePrincipal
+    readonly authority: PageRuleAuthority
     readonly pageIds?: readonly number[]
     readonly authorizedPageIds?: readonly number[]
     readonly filter?: KnowledgeDiscoveryFilter
@@ -678,7 +680,7 @@ export class PageKnowledgeRepository {
     for (const row of rows) {
       const pageId = Number(row.id)
       if (row.visibility === 'public' && ((row.isPublished !== true && row.isPublished !== 1) || !publicationWindowOpen(row, now.valueOf()))) continue
-      if (!canReadPage(input.requester, { ...row, tags: tagsByPage.get(pageId) ?? [] })) continue
+      if (!canReadPage(input.requester, { ...row, tags: tagsByPage.get(pageId) ?? [] }, input.authority)) continue
       const knowledge = projectionView(row, pageId, revision(row.sourceRevision), dictionary)
       if (knowledge && matchesKnowledgeFilter(knowledge, input.filter)) visibleIds.add(pageId)
     }
@@ -688,6 +690,7 @@ export class PageKnowledgeRepository {
   async searchVisible(input: {
     readonly query: string
     readonly requester: PagePrincipal
+    readonly authority: PageRuleAuthority
     readonly locale?: string
     readonly path?: string
     readonly limit: number
@@ -780,7 +783,7 @@ export class PageKnowledgeRepository {
       for (const row of rows) {
         const pageId = Number(row.id)
         if (row.visibility === 'public' && ((row.isPublished !== true && row.isPublished !== 1) || !publicationWindowOpen(row, now.valueOf()))) continue
-        if (!canReadPage(input.requester, { ...row, tags: tagsByPage.get(pageId) ?? [] })) continue
+        if (!canReadPage(input.requester, { ...row, tags: tagsByPage.get(pageId) ?? [] }, input.authority)) continue
         const sourceRevision = revision(row.sourceRevision)
         const knowledge = projectionView(row, pageId, sourceRevision, dictionary)
         if (!knowledge || !matchesKnowledgeFilter(knowledge, input.filter)) continue

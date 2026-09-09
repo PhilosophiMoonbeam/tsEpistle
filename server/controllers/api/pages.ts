@@ -5,12 +5,13 @@ import _ from 'lodash'
 import pageOperations from '../../operations/pages.ts'
 import { linkPageLocaleRelation, listPageLocaleRelations, unlinkPageLocaleRelation } from '../../operations/page-locale-relations.ts'
 import { canReadPage, canWritePage, managesSystem, principalId, type PageVisibility } from '../../helpers/page-access.ts'
+import { canViewRestrictedPageFields, projectPageFields } from '../../helpers/page-field-projection.ts'
+import type { PageRuleAuthority } from '../../helpers/group-access.ts'
 import { getPageWatchState, listPageWatchNotifications, markPageWatchNotificationRead, unwatchPage, watchPage } from '../../operations/page-watching.ts'
 import { getPageApproval, listApprovalInbox, submitPageApproval, transitionApproval } from '../../operations/approvals.ts'
 import {
   assertPageUnlocked,
   getPageProtection,
-  isPageProtected,
   removePageProtection,
   setPageProtection,
   unlockPage
@@ -139,13 +140,11 @@ const pageOperationContext = (req: Request): { requester?: Express.User; session
   ...requesterInput(req),
   sessionId: req.sessionID
 })
-const hasRestrictedPageFieldAccess = (req: Request): boolean =>
-  Array.isArray(req.user?.permissions) && req.user.permissions.some(permission => permission === 'write:pages' || permission === 'manage:system')
-
 const pageBrandingAssignment = (page: Record<string, unknown>): PageBrandingAssignment | null => {
   const parsed = PageBrandingAssignmentSchema.safeParse(page.brandingAssignment)
   return parsed.success ? parsed.data : null
 }
+
 
 const pageBrandingAssignmentFromExtra = (page: Record<string, unknown>): PageBrandingAssignment | null => {
   const extra = page.extra
@@ -159,7 +158,7 @@ const pageBrandingView = (page: Record<string, unknown>): PageBrandingView | nul
   return parsed.success ? parsed.data : null
 }
 
-const canWritePageBranding = (req: Request, page: unknown): boolean => {
+const canWritePageBranding = (req: Request, page: unknown, authority: PageRuleAuthority): boolean => {
   if (typeof page !== 'object' || page === null || Array.isArray(page)) return false
   const record = page as Record<string, unknown>
   const visibility = record.visibility
@@ -176,10 +175,10 @@ const canWritePageBranding = (req: Request, page: unknown): boolean => {
       ownerId,
       ...(localeCode === undefined ? {} : { localeCode }),
       tags: record.tags
-    }) || managesSystem(req.user)
+    }, authority) || managesSystem(req.user)
   )
 }
-const pageResponse = (req: Request, page: unknown): unknown => {
+const pageResponse = (req: Request, page: unknown, authority: PageRuleAuthority): unknown => {
   if (typeof page !== 'object' || page === null) return page
   const record = page as Record<string, unknown>
   const response: Record<string, unknown> = { ...record }
@@ -192,25 +191,14 @@ const pageResponse = (req: Request, page: unknown): unknown => {
   const canonicalAssignment = Object.hasOwn(record, 'brandingAssignment') ? pageBrandingAssignment(record) : pageBrandingAssignmentFromExtra(record)
   delete response.branding
   delete response.brandingAssignment
-  if (canWritePageBranding(req, record)) {
+  if (canWritePageBranding(req, record, authority)) {
     response.brandingAssignment = canonicalAssignment
   }
   const resolvedBranding = pageBrandingView(record)
   if (resolvedBranding !== null) response.branding = resolvedBranding
-  if (hasRestrictedPageFieldAccess(req)) return response
-  return _.omit(response, [
-    'isPublished',
-    'publishStartDate',
-    'publishEndDate',
-    'editor',
-    'editorKey',
-    'authorId',
-    'authorName',
-    'authorEmail',
-    'creatorId',
-    'creatorName',
-    'creatorEmail'
-  ])
+  const canViewRestricted = canViewRestrictedPageFields({ requester: req.user, page: record, authority })
+  response.capabilities = { viewStewardContacts: canViewRestricted }
+  return projectPageFields({ requester: req.user, page: record, authority, value: response })
 }
 
 const requireSystemAccess = (req: Request, res: Response): boolean => {
@@ -221,19 +209,6 @@ const requireSystemAccess = (req: Request, res: Response): boolean => {
   return true
 }
 
-const requireUnlockedPage = async (req: Request, res: Response, pageId: number): Promise<boolean> => {
-  try {
-    if (await isPageProtected(pageId)) {
-      res.set('Cache-Control', 'private, no-store')
-      res.vary('Cookie')
-    }
-    await assertPageUnlocked({ requester: req.user, pageId, sessionId: req.sessionID })
-    return true
-  } catch {
-    res.status(403).json({ error: 'Access denied' })
-    return false
-  }
-}
 
 const requirePageDeleteAccess = (req: Request, res: Response): boolean => {
   if (principalId(req.user) === null && !getWikiAuth().checkAccess(req.user, ['delete:pages', 'manage:system'])) {
@@ -338,8 +313,10 @@ router.get('/', async (req, res, next) => {
   const orderByDirection = optionalStringQuery(_.get(req, 'query.orderByDirection'))
 
   try {
+    const authority = await getWikiAuth().loadPageRuleAuthority(req.user)
     const pages = await pageOperations.list({
       ...requesterInput(req),
+      authority,
       tags,
       ...(limit === null ? {} : { limit }),
       ...(creatorId === null ? {} : { creatorId }),
@@ -354,15 +331,15 @@ router.get('/', async (req, res, next) => {
         if (!isPageListItem(page)) {
           throw new TypeError('Page list query returned an invalid selected row')
         }
-        const restricted = hasRestrictedPageFieldAccess(req)
-        return {
+        const value = {
           id: page.id,
           path: page.path,
           locale: page.locale,
           title: page.title ?? null,
           description: page.description ?? null,
-          ...(restricted && Object.hasOwn(page, 'isPublished') ? { isPublished: Boolean(page.isPublished) } : {}),
-          ...(restricted ? { publishStartDate: page.publishStartDate ?? null, publishEndDate: page.publishEndDate ?? null } : {}),
+          ...(Object.hasOwn(page, 'isPublished') ? { isPublished: Boolean(page.isPublished) } : {}),
+          ...(Object.hasOwn(page, 'publishStartDate') ? { publishStartDate: page.publishStartDate ?? null } : {}),
+          ...(Object.hasOwn(page, 'publishEndDate') ? { publishEndDate: page.publishEndDate ?? null } : {}),
           visibility: page.visibility,
           ownerId: page.ownerId,
           contentType: page.contentType,
@@ -370,6 +347,7 @@ router.get('/', async (req, res, next) => {
           updatedAt: page.updatedAt,
           tags: page.tags
         }
+        return projectPageFields({ requester: req.user, page, authority, value })
       })
     )
   } catch (err) {
@@ -537,7 +515,7 @@ router.get('/tree', async (req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const page = await pageOperations.create({ ...pageOperationContext(req), input: requestBody(req) })
-    res.status(201).json({ page: pageResponse(req, page) })
+    res.status(201).json({ page: pageResponse(req, page, await getWikiAuth().loadPageRuleAuthority(req.user)) })
   } catch (err) {
     sendOperationError(res, next, err, 'Page creation failed')
   }
@@ -558,7 +536,7 @@ router.patch('/:id/publication', async (req, res, next) => {
       ...(Object.hasOwn(body, 'publishStartDate') ? { publishStartDate: body.publishStartDate } : {}),
       ...(Object.hasOwn(body, 'publishEndDate') ? { publishEndDate: body.publishEndDate } : {})
     })
-    res.set('Cache-Control', 'private, no-store').json({ page: pageResponse(req, page) })
+    res.set('Cache-Control', 'private, no-store').json({ page: pageResponse(req, page, await getWikiAuth().loadPageRuleAuthority(req.user)) })
   } catch (err) {
     sendOperationError(res, next, err, 'Page publication update failed')
   }
@@ -581,7 +559,7 @@ router.put('/:id', async (req, res, next) => {
         ...(expectedCollaborationGeneration === undefined ? {} : { expectedCollaborationGeneration })
       }
     })
-    res.json({ page: pageResponse(req, page) })
+    res.json({ page: pageResponse(req, page, await getWikiAuth().loadPageRuleAuthority(req.user)) })
   } catch (err) {
     sendOperationError(res, next, err, 'Page update failed')
   }
@@ -604,7 +582,7 @@ router.patch('/:id/visibility', async (req, res, next) => {
       confirmPublication: _.get(req, 'body.confirmPublication') === true,
       expectedSourceRevision
     })
-    return res.json({ page: pageResponse(req, page) })
+    return res.json({ page: pageResponse(req, page, await getWikiAuth().loadPageRuleAuthority(req.user)) })
   } catch (err) {
     return sendOperationError(res, next, err, 'Page visibility update failed')
   }
@@ -626,7 +604,7 @@ router.patch('/:id/owner', async (req, res, next) => {
       ownerId,
       expectedSourceRevision
     })
-    return res.json({ page: pageResponse(req, page) })
+    return res.json({ page: pageResponse(req, page, await getWikiAuth().loadPageRuleAuthority(req.user)) })
   } catch (err) {
     return sendOperationError(res, next, err, 'Page ownership transfer failed')
   }
@@ -897,14 +875,16 @@ router.get('/:id/conflict-latest', async (req, res, next) => {
   }
 })
 router.post('/:id/collaboration/session', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
-  if (!(await requireUnlockedPage(req, res, pageId))) return
   const expectedUpdatedAt = requestBody(req).expectedUpdatedAt
   if (typeof expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(expectedUpdatedAt))) {
     return res.status(400).json({ error: 'expectedUpdatedAt must be a valid date' })
   }
   try {
+    await assertPageUnlocked({ requester: req.user, pageId, sessionId: req.sessionID })
     const collaboration = getTransportRuntime<PagesApiRuntime>().collaboration
     res.json(await collaboration.issueSession({ pageId, expectedUpdatedAt, requester: req.user }))
   } catch (err) {
@@ -912,9 +892,10 @@ router.post('/:id/collaboration/session', async (req, res, next) => {
   }
 })
 router.delete('/:id/collaboration/draft', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
   const pageId = parsePositiveIntegerParam(req, res)
   if (pageId === null) return
-  if (!(await requireUnlockedPage(req, res, pageId))) return
   const expectedUpdatedAt = requestBody(req).expectedUpdatedAt
   if (typeof expectedUpdatedAt !== 'string' || Number.isNaN(Date.parse(expectedUpdatedAt))) {
     return res.status(400).json({ error: 'expectedUpdatedAt must be a valid date' })
@@ -922,6 +903,7 @@ router.delete('/:id/collaboration/draft', async (req, res, next) => {
   const expectedSourceRevision = requiredSourceRevision(req, res)
   if (expectedSourceRevision === null) return
   try {
+    await assertPageUnlocked({ requester: req.user, pageId, sessionId: req.sessionID })
     const collaboration = getTransportRuntime<PagesApiRuntime>().collaboration
     await collaboration.discardDraft({ pageId, expectedUpdatedAt, expectedSourceRevision, requester: req.user })
     res.json({ discarded: true })
@@ -988,12 +970,10 @@ router.get('/:id', async (req, res, next) => {
   }
 
   try {
-    if (await isPageProtected(id)) {
-      res.set('Cache-Control', 'private, no-store')
-      res.vary('Cookie')
-    }
-    const projectedPage = await pageOperations.get({ ...pageOperationContext(req), id })
-    if (!canReadPage(req.user, projectedPage)) {
+    const authority = await getWikiAuth().loadPageRuleAuthority(req.user)
+    const projectedPage = await pageOperations.get({ ...pageOperationContext(req), authority, id })
+    if (!projectedPage) return res.status(404).json({ error: 'This page does not exist.' })
+    if (!canReadPage(req.user, projectedPage, authority)) {
       return res.status(404).json({ error: 'This page does not exist.' })
     }
     const pageResult: Record<string, unknown> = projectedPage
@@ -1007,8 +987,8 @@ router.get('/:id', async (req, res, next) => {
       sourceRevision: String(pageResult.sourceRevision),
       extra: pageResult.extra
     })
-    const canReadRestrictedFields = hasRestrictedPageFieldAccess(req)
-    return res.json({
+    const canReadRestrictedFields = canViewRestrictedPageFields({ requester: req.user, page: pageResult, authority })
+    const value = {
       id: pageResult.id,
       path: pageResult.path,
       hash: pageResult.hash,
@@ -1023,22 +1003,20 @@ router.get('/:id', async (req, res, next) => {
       locale: pageResult.locale,
       branding: pageBrandingView(pageResult),
       okf,
-      ...(canReadRestrictedFields
-        ? {
-            isPublished: Boolean(pageResult.isPublished),
-            publishStartDate: pageResult.publishStartDate || null,
-            publishEndDate: pageResult.publishEndDate || null,
-            editor: pageResult.editor,
-            authorId: pageResult.authorId,
-            authorName: pageResult.authorName,
-            authorEmail: pageResult.authorEmail,
-            creatorId: pageResult.creatorId,
-            creatorName: pageResult.creatorName,
-            creatorEmail: pageResult.creatorEmail
-          }
-        : {}),
+      capabilities: { viewStewardContacts: canReadRestrictedFields },
+      ...(Object.hasOwn(pageResult, 'isPublished') ? { isPublished: Boolean(pageResult.isPublished) } : {}),
+      ...(Object.hasOwn(pageResult, 'publishStartDate') ? { publishStartDate: pageResult.publishStartDate || null } : {}),
+      ...(Object.hasOwn(pageResult, 'publishEndDate') ? { publishEndDate: pageResult.publishEndDate || null } : {}),
+      ...(Object.hasOwn(pageResult, 'editor') ? { editor: pageResult.editor } : {}),
+      ...(Object.hasOwn(pageResult, 'authorId') ? { authorId: pageResult.authorId } : {}),
+      ...(Object.hasOwn(pageResult, 'authorName') ? { authorName: pageResult.authorName } : {}),
+      ...(Object.hasOwn(pageResult, 'authorEmail') ? { authorEmail: pageResult.authorEmail } : {}),
+      ...(Object.hasOwn(pageResult, 'creatorId') ? { creatorId: pageResult.creatorId } : {}),
+      ...(Object.hasOwn(pageResult, 'creatorName') ? { creatorName: pageResult.creatorName } : {}),
+      ...(Object.hasOwn(pageResult, 'creatorEmail') ? { creatorEmail: pageResult.creatorEmail } : {}),
       ...(Object.hasOwn(projectedPage, 'brandingAssignment') ? { brandingAssignment: pageBrandingAssignment(pageResult) } : {})
-    })
+    }
+    return res.json(projectPageFields({ requester: req.user, page: pageResult, authority, value }))
   } catch (err) {
     sendOperationError(res, next, err, 'Page fetch failed')
   }

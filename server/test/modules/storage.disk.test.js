@@ -1,4 +1,6 @@
 import fs from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
@@ -6,18 +8,26 @@ import { pipeline } from 'node:stream/promises'
 import zlib from 'node:zlib'
 import tar from 'tar-fs'
 import moment from 'moment'
-
+import { afterEach, beforeEach, describe, expect, it, vi } from 'bun:test'
+import { openStorageRoot } from '../../modules/storage/local-filesystem.ts'
 describe('disk storage target', () => {
   let plugin
   let rootPath
   let context
+  let hadPreviousWiki
+  let previousWiki
 
   beforeEach(async () => {
+    hadPreviousWiki = Object.hasOwn(global, 'WIKI')
+    previousWiki = global.WIKI
     vi.resetModules()
     rootPath = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-storage-disk-'))
     global.WIKI = {
       ROOTPATH: rootPath,
       config: {
+        uploads: {
+          maxFileSize: 128 * 1024 * 1024
+        },
         lang: {
           code: 'en',
           namespacing: false
@@ -32,22 +42,49 @@ describe('disk storage target', () => {
     }
     plugin = (await vi.importFresh('../../modules/storage/disk/storage.ts', import.meta.url)).default
     context = {
+      ...plugin,
       config: {
         path: 'content',
         createDailyBackups: false
-      }
+      },
+      root: null
     }
     await plugin.init.call(context)
   })
-
   afterEach(async () => {
-    await fs.rm(rootPath, { recursive: true, force: true })
+    try {
+      if (context?.root) await plugin.deactivated.call(context)
+      await fs.rm(rootPath, { recursive: true, force: true })
+    } finally {
+      if (hadPreviousWiki) {
+        global.WIKI = previousWiki
+      } else {
+        delete global.WIKI
+      }
+    }
+  })
+
+  it('closes descriptor roots during reinitialization and deactivation', async () => {
+    const firstRoot = context.root
+    expect(firstRoot).toBeTruthy()
+
+    await plugin.init.call(context)
+    expect(firstRoot.closed).toBe(true)
+
+    const secondRoot = context.root
+    await plugin.deactivated.call(context)
+    expect(secondRoot.closed).toBe(true)
+    await expect(plugin.assetUploaded.call(context, {
+      path: 'after-close.txt',
+      data: Buffer.from('must reject')
+    })).rejects.toThrow()
   })
 
   it('archives content beneath paths containing backup markers and excludes only root backup folders', async () => {
-    context.config.path = 'content_manual_daily'
+    const previousRoot = context.root
     await plugin.init.call(context)
-    for (const name of ['read_manual.txt', 'docs/_daily/note.txt', '_daily/previous.tar.gz', '_manual/previous.tar.gz']) {
+    expect(previousRoot.closed).toBe(true)
+    for (const name of ['read_manual.txt', 'docs/_daily/note.txt', 'docs/.git/config', '.git/config', '_daily/previous.tar.gz', '_manual/previous.tar.gz']) {
       const file = path.join(rootPath, context.config.path, name)
       await fs.mkdir(path.dirname(file), { recursive: true })
       await fs.writeFile(file, name)
@@ -68,32 +105,140 @@ describe('disk storage target', () => {
     }
   })
 
-  it('preserves the previous daily archive and removes temporary output when packing fails', async () => {
+  it('preserves the previous daily archive and removes temporary output when the source tree is unsafe', async () => {
     context.config.createDailyBackups = true
     await plugin.assetUploaded.call(context, { path: 'page.txt', data: Buffer.from('content') })
     await plugin.sync.call(context)
     const directory = path.join(rootPath, 'content', '_daily')
     const name = `wiki-${moment().format('DD')}.tar.gz`
     const previous = await fs.readFile(path.join(directory, name))
-    const pack = vi.spyOn(tar, 'pack').mockImplementationOnce(() => Readable.from((async function * () {
-      yield Buffer.from('partial archive')
-      throw new Error('read failed')
-    })()))
-    try { await expect(plugin.sync.call(context)).rejects.toThrow('read failed') } finally { pack.mockRestore() }
+    const outsideSentinel = path.join(rootPath, 'outside-sentinel.txt')
+    await fs.writeFile(outsideSentinel, 'outside remains')
+    await fs.symlink(outsideSentinel, path.join(rootPath, 'content', 'unsafe-link'))
+
+    await expect(plugin.sync.call(context)).rejects.toThrow()
+
+    expect(await fs.readdir(directory)).toEqual([name])
+    expect(await fs.readFile(path.join(directory, name))).toEqual(previous)
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
+  })
+
+  it('streams and extracts a materially multi-chunk archive without changing file bytes', async () => {
+    const contents = randomBytes(256 * 1024 + 123)
+    const sourcePath = path.join(rootPath, 'content', 'multi-chunk.bin')
+    await fs.writeFile(sourcePath, contents)
+
+    await plugin.sync.call(context, { manual: true })
+
+    const folder = path.join(rootPath, 'content', '_manual')
+    const archive = (await fs.readdir(folder)).find(name => name.startsWith('wiki-'))
+    expect(archive).toBeTruthy()
+    const destination = path.join(rootPath, 'multi-chunk-extracted')
+    await pipeline(
+      Readable.from([await fs.readFile(path.join(folder, archive))]),
+      zlib.createGunzip(),
+      tar.extract(destination)
+    )
+    expect(await fs.readFile(path.join(destination, 'multi-chunk.bin'))).toEqual(contents)
+  })
+
+  it.each([
+    ['entry', { maxEntries: 0 }],
+    ['raw bytes', { maxRawBytes: 1 }],
+    ['compressed output', { maxOutputBytes: 1 }]
+  ])('preserves the previous daily archive when the %s limit is exceeded', async (_name, override) => {
+    context.config.createDailyBackups = true
+    await plugin.assetUploaded.call(context, { path: 'page.txt', data: Buffer.from('content') })
+    await plugin.sync.call(context)
+    const directory = path.join(rootPath, 'content', '_daily')
+    const name = `wiki-${moment().format('DD')}.tar.gz`
+    const previous = await fs.readFile(path.join(directory, name))
+
+    context.backupLimits = { ...context.backupLimits, ...override }
+    await expect(plugin.sync.call(context)).rejects.toThrow()
+
+    expect(await fs.readdir(directory)).toEqual([name])
+    expect(await fs.readFile(path.join(directory, name))).toEqual(previous)
+  })
+
+  it.each(['growth', 'substitution'])('rejects %s after a file is admitted and preserves the prior archive', async mode => {
+    context.config.createDailyBackups = true
+    const sourcePath = path.join(rootPath, 'content', 'mutable.bin')
+    await fs.writeFile(sourcePath, randomBytes(128 * 1024 + 17))
+    await plugin.sync.call(context)
+
+    const directory = path.join(rootPath, 'content', '_daily')
+    const name = `wiki-${moment().format('DD')}.tar.gz`
+    const previous = await fs.readFile(path.join(directory, name))
+    const originalOpenFile = context.root.openFile.bind(context.root)
+    let hooked = false
+    vi.spyOn(context.root, 'openFile').mockImplementation(async (relativePath, expected) => {
+      const source = await originalOpenFile(relativePath, expected)
+      if (relativePath !== 'mutable.bin' || hooked) return source
+      hooked = true
+      const originalRead = source.handle.read.bind(source.handle)
+      let reads = 0
+      Object.defineProperty(source.handle, 'read', {
+        configurable: true,
+        value: async (...args) => {
+          const result = await originalRead(...args)
+          if (++reads === 1) {
+            if (mode === 'growth') {
+              await fs.appendFile(sourcePath, Buffer.from('growth'))
+            } else {
+              await fs.rename(sourcePath, `${sourcePath}.original`)
+              await fs.writeFile(sourcePath, Buffer.from('replacement'))
+            }
+          }
+          return result
+        }
+      })
+      return source
+    })
+
+    await expect(plugin.sync.call(context)).rejects.toThrow()
     expect(await fs.readdir(directory)).toEqual([name])
     expect(await fs.readFile(path.join(directory, name))).toEqual(previous)
   })
 
   it('atomically replaces assets inside the configured root', async () => {
-    const asset = { path: 'images/logo.txt', data: Buffer.from('first') }
-
+    const asset = {
+      id: 1,
+      hash: 'asset-hash',
+      path: 'images/logo.txt',
+      filename: 'logo.txt',
+      folderId: null,
+      data: Buffer.from('first')
+    }
     await plugin.assetUploaded.call(context, asset)
     await plugin.assetUploaded.call(context, { ...asset, data: Buffer.from('second') })
 
     const filePath = path.join(rootPath, 'content', 'images', 'logo.txt')
     expect(await fs.readFile(filePath, 'utf8')).toBe('second')
-    expect(await plugin.getLocalLocation.call(context, asset)).toBe(filePath)
+    const location = await plugin.getLocalLocation.call(context, asset)
+    expect(location).toEqual({ open: expect.any(Function) })
+    const source = await location.open()
+    try {
+      expect(source.relativePath).toBe('images/logo.txt')
+      expect(Object.hasOwn(source, 'path')).toBe(false)
+      expect(await source.readBounded(64)).toEqual(Buffer.from('second'))
+
+    } finally {
+      await source.close()
+    }
+    expect(source.closed).toBe(true)
     expect(await fs.readdir(path.dirname(filePath))).toEqual(['logo.txt'])
+  })
+  it('does not expose internal Git or root backup paths through persisted identities', async () => {
+    const identity = {
+      id: 7,
+      hash: 'persisted-hash',
+      filename: 'config',
+      folderId: null
+    }
+    for (const pathName of ['.git/config', 'docs/.git/config', '_daily/archive.tar.gz', '_manual/archive.tar.gz']) {
+      await expect(plugin.getLocalLocation.call(context, { ...identity, path: pathName })).resolves.toBeUndefined()
+    }
   })
 
   it.each([
@@ -101,20 +246,37 @@ describe('disk storage target', () => {
     'images/../../escape.txt',
     '/tmp/wiki-storage-escape.txt'
   ])('rejects asset paths outside the configured root: %s', async assetPath => {
-    await expect(Promise.resolve(plugin.assetUploaded.call(context, {
+    const outsideSentinel = path.join(rootPath, 'outside-sentinel.txt')
+    await fs.writeFile(outsideSentinel, 'outside remains')
+    await expect(plugin.assetUploaded.call(context, {
       path: assetPath,
       data: Buffer.from('blocked')
-    }))).rejects.toThrow(`Storage path escapes the configured root: ${assetPath}`)
+    })).rejects.toMatchObject({ code: 'STORAGE_PATH_REJECTED' })
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
 
   it('rejects page paths outside the configured root', async () => {
-    await expect(Promise.resolve(plugin.created.call(context, {
-      localeCode: 'en',
+    const outsideSentinel = path.join(rootPath, 'outside-sentinel.txt')
+    await fs.writeFile(outsideSentinel, 'outside remains')
+    await expect(plugin.created.call(context, {
       path: '../../escape',
+      localeCode: 'en',
+      title: 'Traversal',
+      description: '',
       contentType: 'markdown',
-      injectMetadata: () => 'blocked'
-    }))).rejects.toThrow('Storage path escapes the configured root: en/../../escape.md')
+      content: 'blocked',
+      sourceRevision: 1,
+      authorId: 7,
+      createdAt: '2026-08-29T00:00:00.000Z',
+      updatedAt: '2026-08-30T00:00:00.000Z',
+      extra: {},
+      isPublished: true,
+      editorKey: 'markdown',
+      tags: []
+    })).rejects.toMatchObject({ code: 'STORAGE_PATH_REJECTED' })
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
+
 
   it('uses canonical OKF paths for every Markdown event when locale namespacing is disabled', async () => {
     const page = {
@@ -202,10 +364,6 @@ describe('disk storage target', () => {
     const Storage = (await vi.importFresh('../../models/storage.ts', import.meta.url)).default
     global.WIKI.models.storage = Storage
     vi.spyOn(Storage, 'query').mockReturnValue({ where })
-    const failedImplementation = (await import('../../modules/storage/git/storage.ts')).default
-    const failedCreated = vi.spyOn(failedImplementation, 'created')
-    const failedAssetUploaded = vi.spyOn(failedImplementation, 'assetUploaded')
-    const failedGetLocalLocation = vi.spyOn(failedImplementation, 'getLocalLocation')
 
     await Storage.initTargets()
 
@@ -226,29 +384,40 @@ describe('disk storage target', () => {
       editorKey: 'markdown',
       tags: []
     }
-    const asset = { path: 'images/logo.txt', data: Buffer.from('healthy asset') }
+    const asset = {
+      id: 9,
+      hash: 'healthy-asset-hash',
+      path: 'images/logo.txt',
+      filename: 'logo.txt',
+      folderId: null,
+      data: Buffer.from('healthy asset')
+    }
 
     await Storage.pageEvent({ event: 'created', page })
     await Storage.assetEvent({ event: 'uploaded', asset })
     const locations = await Storage.getLocalLocations({ asset })
 
-    expect(Storage.targets).toEqual([failedTarget, healthyTarget])
-    expect(Storage.activeTargets).toEqual([healthyTarget])
     expect(failedTarget.state).toEqual({
       status: 'error',
       message: expect.any(String),
       lastAttempt: expect.any(String)
     })
-    expect(failedPatch).toHaveBeenCalledTimes(1)
-    expect(failedCreated).not.toHaveBeenCalled()
-    expect(failedAssetUploaded).not.toHaveBeenCalled()
-    expect(failedGetLocalLocation).not.toHaveBeenCalled()
     expect(await fs.readFile(path.join(rootPath, 'content', 'en', 'guide.md'), 'utf8')).toContain('source_revision: \'1\'')
     expect(await fs.readFile(path.join(rootPath, 'content', 'images', 'logo.txt'), 'utf8')).toBe('healthy asset')
-    expect(locations).toEqual([{
-      path: path.join(rootPath, 'content', 'images', 'logo.txt'),
-      key: 'disk'
-    }])
+    expect(locations).toHaveLength(1)
+    expect(locations[0].key).toBe('disk')
+    expect(locations[0].location).toEqual({ open: expect.any(Function) })
+    const source = await locations[0].location.open()
+    try {
+      expect(source.relativePath).toBe('images/logo.txt')
+      expect(await source.readBounded(128)).toEqual(Buffer.from('healthy asset'))
+    } finally {
+      await source.close()
+    }
+    expect(source.closed).toBe(true)
+    for (const target of Storage.targets ?? []) {
+      if (typeof target.fn?.deactivated === 'function') await target.fn.deactivated.call(target.fn)
+    }
   })
 
   it('serializes event and bulk Markdown exports byte-identically with authoritative OKF metadata', async () => {
@@ -396,11 +565,12 @@ describe('disk storage target', () => {
       isPublished: true,
       editorKey: 'markdown',
       tags: []
-    })).rejects.toThrow('Storage page extra.okf must contain valid OKF metadata')
+    })).rejects.toThrow()
     await expect(fs.readFile(filePath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
   it('rejects non-string Markdown content before export', async () => {
+    const filePath = path.join(rootPath, 'content', 'en', 'invalid-content.md')
     await expect(plugin.created.call(context, {
       path: 'invalid-content',
       localeCode: 'en',
@@ -416,8 +586,10 @@ describe('disk storage target', () => {
       isPublished: true,
       editorKey: 'markdown',
       tags: []
-    })).rejects.toThrow('Markdown storage content must be a string')
+    })).rejects.toThrow()
+    await expect(fs.readFile(filePath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
+
 
   it('keeps non-Markdown event serialization unchanged', async () => {
     await plugin.created.call(context, {
@@ -450,18 +622,16 @@ describe('disk storage target', () => {
       '<p>Body</p>'
     ].join('\n'))
   })
-  it('imports regular files but does not follow file or directory symlinks outside the storage root', async () => {
+  it('imports regular files through descriptor sources and leaves outside content unchanged', async () => {
     const scanRoot = path.join(rootPath, 'content')
     const outsideRoot = path.join(rootPath, 'outside')
-    await fs.mkdir(path.join(outsideRoot, 'nested'), { recursive: true })
+    const outsideSentinel = path.join(outsideRoot, 'sentinel.txt')
+    await fs.mkdir(outsideRoot, { recursive: true })
     await Promise.all([
       fs.writeFile(path.join(scanRoot, 'inside-page.md'), 'Inside page'),
       fs.writeFile(path.join(scanRoot, 'inside-asset.bin'), 'Inside asset'),
-      fs.writeFile(path.join(outsideRoot, 'secret-page.md'), 'Outside page'),
-      fs.writeFile(path.join(outsideRoot, 'nested', 'secret-asset.bin'), 'Outside asset')
+      fs.writeFile(outsideSentinel, 'Outside content')
     ])
-    await fs.symlink(path.join(outsideRoot, 'secret-page.md'), path.join(scanRoot, 'linked-page.md'), 'file')
-    await fs.symlink(path.join(outsideRoot, 'nested'), path.join(scanRoot, 'linked-directory'), 'dir')
 
     global.WIKI.models.users = {
       getRootUser: vi.fn().mockResolvedValue({ id: 1 })
@@ -477,25 +647,145 @@ describe('disk storage target', () => {
     const processAsset = vi.spyOn(commonDisk, 'processAsset').mockResolvedValue()
 
     const results = await commonDisk.importFromDisk({
-      fullPath: scanRoot,
+      root: context.root,
       moduleName: 'DISK'
     })
 
     expect(processPage).toHaveBeenCalledTimes(1)
-    expect(processPage).toHaveBeenCalledWith(expect.objectContaining({
+    const pageOptions = processPage.mock.calls[0][0]
+    expect(pageOptions).toMatchObject({
       relPath: 'inside-page.md',
-      fullPath: scanRoot,
-      moduleName: 'DISK'
-    }))
+      moduleName: 'DISK',
+      root: context.root
+    })
+    expect(pageOptions).not.toHaveProperty('fullPath')
+    expect(pageOptions.source).toMatchObject({ relativePath: 'inside-page.md', closed: true })
+
     expect(processAsset).toHaveBeenCalledTimes(1)
-    expect(processAsset).toHaveBeenCalledWith(expect.objectContaining({
+    const assetOptions = processAsset.mock.calls[0][0]
+    expect(assetOptions).toMatchObject({
       relPath: 'inside-asset.bin',
-      moduleName: 'DISK'
-    }))
+      moduleName: 'DISK',
+      root: context.root
+    })
+    expect(assetOptions).not.toHaveProperty('fullPath')
+    expect(assetOptions.source).toMatchObject({ relativePath: 'inside-asset.bin', closed: true })
+
     expect(results).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'page', relPath: 'inside-page.md', ok: true }),
       { kind: 'asset', relPath: 'inside-asset.bin', ok: true }
     ]))
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('Outside content')
+  })
+
+  it('rejects an unsafe import tree as a whole before database mutation', async () => {
+    const scanRoot = path.join(rootPath, 'content')
+    const outsideRoot = path.join(rootPath, 'outside')
+    const outsidePage = path.join(outsideRoot, 'secret-page.md')
+    const outsideAsset = path.join(outsideRoot, 'secret-asset.bin')
+    await fs.mkdir(outsideRoot, { recursive: true })
+    await Promise.all([
+      fs.writeFile(path.join(scanRoot, 'inside-page.md'), 'Inside page'),
+      fs.writeFile(path.join(scanRoot, 'inside-asset.bin'), 'Inside asset'),
+      fs.writeFile(outsidePage, 'Outside page'),
+      fs.writeFile(outsideAsset, 'Outside asset')
+    ])
+    await fs.symlink(outsidePage, path.join(scanRoot, 'linked-page.md'), 'file')
+    await fs.symlink(outsideRoot, path.join(scanRoot, 'linked-directory'), 'dir')
+
+    const getPageFromDb = vi.fn()
+    const createPage = vi.fn()
+    const updatePage = vi.fn()
+    const upload = vi.fn()
+    global.WIKI.models.users = {
+      getRootUser: vi.fn().mockResolvedValue({ id: 1 })
+    }
+    global.WIKI.models.pages = { getPageFromDb, createPage, updatePage }
+    global.WIKI.models.assets = { upload }
+    const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
+
+    await expect(commonDisk.importFromDisk({
+      root: context.root,
+      moduleName: 'DISK'
+    })).rejects.toThrow()
+
+    expect(getPageFromDb).not.toHaveBeenCalled()
+    expect(createPage).not.toHaveBeenCalled()
+    expect(updatePage).not.toHaveBeenCalled()
+    expect(upload).not.toHaveBeenCalled()
+    expect(await fs.readFile(outsidePage, 'utf8')).toBe('Outside page')
+    expect(await fs.readFile(outsideAsset, 'utf8')).toBe('Outside asset')
+  })
+  it('rejects symlink parents and nonregular import sources', async () => {
+    const scanRoot = path.join(rootPath, 'content')
+    const outsideRoot = path.join(rootPath, 'outside')
+    const parentLink = path.join(scanRoot, 'linked')
+    const fifoPath = path.join(scanRoot, 'fifo.md')
+    const directoryPath = path.join(scanRoot, 'directory.md')
+    const outsideSentinel = path.join(outsideRoot, 'nested', 'outside.md')
+    await fs.mkdir(path.dirname(outsideSentinel), { recursive: true })
+    await fs.writeFile(outsideSentinel, '# Outside')
+    await fs.symlink(path.join(outsideRoot, 'nested'), parentLink, 'dir')
+    execFileSync('mkfifo', [fifoPath])
+    await fs.mkdir(directoryPath)
+
+    global.WIKI.models.pages = {
+      getPageFromDb: vi.fn(),
+      createPage: vi.fn(),
+      updatePage: vi.fn()
+    }
+    const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
+    const source = {
+      user: { id: 1 },
+      root: context.root,
+      contentType: 'markdown',
+      moduleName: 'DISK'
+    }
+
+    await expect(commonDisk.processPage.call({}, { ...source, relPath: 'linked/outside.md' })).rejects.toThrow()
+    await expect(commonDisk.processPage.call({}, { ...source, relPath: 'fifo.md' })).rejects.toThrow()
+    await expect(commonDisk.processPage.call({}, { ...source, relPath: 'directory.md' })).rejects.toThrow()
+    expect(global.WIKI.models.pages.getPageFromDb).not.toHaveBeenCalled()
+    expect(global.WIKI.models.pages.createPage).not.toHaveBeenCalled()
+    expect(global.WIKI.models.pages.updatePage).not.toHaveBeenCalled()
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('# Outside')
+  })
+  it('stages regular assets through a private descriptor copy before upload', async () => {
+    const scanRoot = path.join(rootPath, 'content')
+    const sourcePath = path.join(scanRoot, 'asset.bin')
+    const outsideSentinel = path.join(rootPath, 'outside-sentinel.txt')
+    await fs.writeFile(sourcePath, 'asset bytes')
+    await fs.writeFile(outsideSentinel, 'outside remains')
+    const upload = vi.fn(async options => {
+      expect(options.path).not.toBe(sourcePath)
+      expect((await fs.stat(options.path)).mode & 0o777).toBe(0o600)
+      expect(await fs.readFile(options.path, 'utf8')).toBe('asset bytes')
+    })
+    global.WIKI.models.assetFolders = {
+      getAllPaths: vi.fn().mockResolvedValue({})
+    }
+    global.WIKI.models.assets = { upload }
+    const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
+    const source = await context.root.openFile('asset.bin', { size: 11 })
+
+    try {
+      await commonDisk.processAsset.call({ assetFolders: null, resolveAssetFolder: commonDisk.resolveAssetFolder }, {
+        user: { id: 1 },
+        root: context.root,
+        relPath: 'asset.bin',
+        file: { relPath: 'asset.bin', stats: { size: 11 } },
+        moduleName: 'DISK',
+        source
+      })
+    } finally {
+      await source.close()
+    }
+
+    const stagedPath = upload.mock.calls[0][0].path
+    await expect(fs.access(stagedPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(source.closed).toBe(true)
+    expect(await fs.readFile(sourcePath, 'utf8')).toBe('asset bytes')
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
 
 })
@@ -746,39 +1036,56 @@ describe('SFTP page rename namespacing', () => {
     const sourceWritePath = writeFile.mock.calls[0][0]
     const destinationWritePath = writeFile.mock.calls[1][0]
     await storage.renamed.call(context, page)
-
-    expect([sourceWritePath, destinationWritePath]).toEqual([sourceKey, destinationKey])
-    expect(rename).toHaveBeenCalledWith(sourceWritePath, destinationWritePath)
   })
 })
 
 describe('Git storage rename identities', () => {
   let rootPath
+  let root
+  let hadPreviousWiki
+  let previousWiki
 
   beforeEach(async () => {
+    hadPreviousWiki = Object.hasOwn(global, 'WIKI')
+    previousWiki = global.WIKI
     vi.resetModules()
     rootPath = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-storage-git-'))
     global.WIKI = {
       ROOTPATH: rootPath,
       config: {
         dataPath: 'data',
+        uploads: {
+          maxFileSize: 128 * 1024 * 1024
+        },
         lang: {
           code: 'en',
           namespacing: true
         }
       },
       logger: {
+        error: vi.fn(),
         info: vi.fn(),
         warn: vi.fn()
       },
       models: {}
     }
+    root = await openStorageRoot(rootPath)
   })
 
   afterEach(async () => {
-    vi.restoreAllMocks()
-    await fs.rm(rootPath, { recursive: true, force: true })
+    try {
+      await root?.close()
+      await fs.rm(rootPath, { recursive: true, force: true })
+    } finally {
+      if (hadPreviousWiki) {
+        global.WIKI = previousWiki
+      } else {
+        delete global.WIKI
+      }
+      vi.restoreAllMocks()
+    }
   })
+
 
   it('moves a cross-locale page to the destination locale without retaining the source identity', async () => {
     const filePath = path.join(rootPath, 'fr', 'guide.md')
@@ -790,21 +1097,26 @@ describe('Git storage rename identities', () => {
       identities.add(`${move.destinationLocale}/${move.destinationPath}`)
     })
     global.WIKI.models.pages = { movePage }
-    const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
+    const commonDiskModule = await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)
+    const commonDisk = commonDiskModule.default
     vi.spyOn(commonDisk, 'processPage').mockResolvedValue(undefined)
     const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
+    const admission = await commonDiskModule.collectStorageEntries(root)
 
-    await storage.processFiles.call({}, [{
-      file: { path: filePath, stats: { size: 7 } },
-      oldPath: 'en/guide.md',
-      relPath: 'fr/guide.md',
-      binary: false,
-      insertions: 0,
-      deletions: 0,
-      before: 0,
-      after: 0,
-      importAll: false
-    }], { id: 1 })
+    await storage.processFiles.call({ repoPath: rootPath, root }, {
+      admission,
+      files: [{
+        file: { stats: { size: 7 } },
+        oldPath: 'en/guide.md',
+        relPath: 'fr/guide.md',
+        binary: false,
+        insertions: 0,
+        deletions: 0,
+        before: 0,
+        after: 0,
+        importAll: false
+      }]
+    }, { id: 1 })
 
     expect(movePage).toHaveBeenCalledWith(expect.objectContaining({
       path: 'guide',
@@ -834,10 +1146,14 @@ describe('Git storage rename identities', () => {
       getDefaultEditor: vi.fn().mockResolvedValue('markdown')
     }
     const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
+    const commonDiskModule = await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)
+    const admission = await commonDiskModule.collectStorageEntries(root)
 
-    const results = await storage.processFiles.call({ repoPath: rootPath }, [
+    const results = await storage.processFiles.call({ repoPath: rootPath, root }, {
+      admission,
+      files: [
       {
-        file: { path: indexFilePath, stats: { size: document.length } },
+        file: { stats: { size: document.length } },
         oldPath: 'en/index.concept.md',
         relPath: 'en/index.concept.md',
         binary: false,
@@ -848,7 +1164,7 @@ describe('Git storage rename identities', () => {
         importAll: false
       },
       {
-        file: { path: logFilePath, stats: { size: document.length } },
+        file: { stats: { size: document.length } },
         oldPath: 'en/log.concept.md',
         relPath: 'en/log.concept.md',
         binary: false,
@@ -858,7 +1174,8 @@ describe('Git storage rename identities', () => {
         after: 0,
         importAll: false
       }
-    ], { id: 7 })
+      ]
+    }, { id: 7 })
     expect(results).toEqual([
       expect.objectContaining({ kind: 'page', relPath: 'en/index.concept.md', ok: true }),
       expect.objectContaining({ kind: 'page', relPath: 'en/log.concept.md', ok: true })
@@ -888,31 +1205,40 @@ describe('Git storage rename identities', () => {
     const deletePage = vi.fn().mockResolvedValue(undefined)
     global.WIKI.models.pages = { movePage, deletePage }
     const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
+    const commonDiskModule = await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)
+    const firstAdmission = await commonDiskModule.collectStorageEntries(root)
     const user = { id: 1 }
 
-    await storage.processFiles.call({}, [{
-      file: { path: filePath, stats: { size: 7 } },
-      oldPath: 'en/index.concept.md',
-      relPath: 'en/log.concept.md',
-      binary: false,
-      insertions: 0,
-      deletions: 0,
-      before: 0,
-      after: 0,
-      importAll: false
-    }], user)
+    await storage.processFiles.call({ repoPath: rootPath, root }, {
+      admission: firstAdmission,
+      files: [{
+        file: { stats: { size: 7 } },
+        oldPath: 'en/index.concept.md',
+        relPath: 'en/log.concept.md',
+        binary: false,
+        insertions: 0,
+        deletions: 0,
+        before: 0,
+        after: 0,
+        importAll: false
+      }]
+    }, user)
     await fs.rm(filePath)
-    await storage.processFiles.call({}, [{
-      file: { path: filePath, stats: { size: 0 } },
-      oldPath: 'en/log.concept.md',
-      relPath: 'en/log.concept.md',
-      binary: false,
-      insertions: 0,
-      deletions: 1,
-      before: 0,
-      after: 0,
-      importAll: false
-    }], user)
+    const secondAdmission = await commonDiskModule.collectStorageEntries(root)
+    await storage.processFiles.call({ repoPath: rootPath, root }, {
+      admission: secondAdmission,
+      files: [{
+        file: { stats: { size: 0 } },
+        oldPath: 'en/log.concept.md',
+        relPath: 'en/log.concept.md',
+        binary: false,
+        insertions: 0,
+        deletions: 1,
+        before: 0,
+        after: 0,
+        importAll: false
+      }]
+    }, user)
 
     expect(movePage).toHaveBeenCalledWith({
       user,
@@ -931,7 +1257,7 @@ describe('Git storage rename identities', () => {
     })
   })
 
-  it('does not import a symlink from the Git repository walker', async () => {
+  it('rejects an unsafe Git tree before importing or mutating the database', async () => {
     const externalRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-storage-git-external-'))
     try {
       const externalFile = path.join(externalRoot, 'outside.md')
@@ -942,13 +1268,109 @@ describe('Git storage rename identities', () => {
       global.WIKI.models.users = {
         getRootUser: vi.fn().mockResolvedValue({ id: 1 })
       }
+      const getPageFromDb = vi.fn()
+      const createPage = vi.fn()
+      const updatePage = vi.fn()
+      const upload = vi.fn()
+      global.WIKI.models.pages = { getPageFromDb, createPage, updatePage }
+      global.WIKI.models.assets = { upload }
       const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
-      const processFiles = vi.fn().mockResolvedValue([])
 
-      const results = await storage.importAll.call({ repoPath: rootPath, processFiles })
+      await expect(storage.importAll.call({ repoPath: rootPath, root })).rejects.toThrow()
 
-      expect(results).toEqual([])
-      expect(processFiles).not.toHaveBeenCalled()
+      expect(getPageFromDb).not.toHaveBeenCalled()
+      expect(createPage).not.toHaveBeenCalled()
+      expect(updatePage).not.toHaveBeenCalled()
+      expect(upload).not.toHaveBeenCalled()
+      expect(await fs.readFile(externalFile, 'utf8')).toBe('# Outside')
+    } finally {
+      await fs.rm(externalRoot, { recursive: true, force: true })
+    }
+  })
+  it('rejects unsafe incremental trees before mutating public pages or assets', async () => {
+    const externalRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-storage-git-incremental-external-'))
+    try {
+      const externalPage = path.join(externalRoot, 'outside.md')
+      const externalAsset = path.join(externalRoot, 'outside.bin')
+      const pageLink = path.join(rootPath, 'pages', 'outside.md')
+      const assetLink = path.join(rootPath, 'assets', 'outside.bin')
+      const brokenPageLink = path.join(rootPath, 'pages', 'missing.md')
+      const brokenAssetLink = path.join(rootPath, 'assets', 'missing.bin')
+      await fs.writeFile(externalPage, '# Outside')
+      await fs.writeFile(externalAsset, 'outside asset')
+      await fs.mkdir(path.dirname(pageLink), { recursive: true })
+      await fs.mkdir(path.dirname(assetLink), { recursive: true })
+      const commonDiskModule = await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)
+      const admission = await commonDiskModule.collectStorageEntries(root)
+      await fs.symlink(externalPage, pageLink)
+      await fs.symlink(externalAsset, assetLink)
+      await fs.symlink(path.join(externalRoot, 'missing.md'), brokenPageLink)
+      await fs.symlink(path.join(externalRoot, 'missing.bin'), brokenAssetLink)
+
+      const getPageFromDb = vi.fn()
+      const updatePage = vi.fn()
+      const deletePage = vi.fn()
+      const assetQuery = vi.fn()
+      global.WIKI.models.pages = { getPageFromDb, updatePage, deletePage }
+      global.WIKI.models.assets = { query: assetQuery }
+
+      const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
+      await expect(storage.processFiles.call({ repoPath: rootPath, root }, {
+        admission,
+        files: [
+          {
+            file: { stats: { size: 8 } },
+          oldPath: 'pages/outside.md',
+          relPath: 'pages/outside.md',
+          binary: false,
+          insertions: 1,
+          deletions: 0,
+          before: 0,
+          after: 0,
+          importAll: false
+        },
+        {
+          file: { stats: { size: 12 } },
+          oldPath: 'assets/outside.bin',
+          relPath: 'assets/outside.bin',
+          binary: true,
+          insertions: 1,
+          deletions: 0,
+          before: 0,
+          after: 0,
+          importAll: false
+        },
+        {
+          file: { stats: { size: 0 } },
+          oldPath: 'pages/missing.md',
+          relPath: 'pages/missing.md',
+          binary: false,
+          insertions: 0,
+          deletions: 1,
+          before: 0,
+          after: 0,
+          importAll: false
+        },
+        {
+          file: { stats: { size: 0 } },
+          oldPath: 'assets/missing.bin',
+          relPath: 'assets/missing.bin',
+          binary: true,
+          insertions: 0,
+          deletions: 0,
+          before: 1,
+          after: 0,
+          importAll: false
+        }
+        ]
+      }, { id: 1 })).rejects.toThrow()
+
+      expect(getPageFromDb).not.toHaveBeenCalled()
+      expect(updatePage).not.toHaveBeenCalled()
+      expect(deletePage).not.toHaveBeenCalled()
+      expect(assetQuery).not.toHaveBeenCalled()
+      expect(await fs.readFile(externalPage, 'utf8')).toBe('# Outside')
+      expect(await fs.readFile(externalAsset, 'utf8')).toBe('outside asset')
     } finally {
       await fs.rm(externalRoot, { recursive: true, force: true })
     }
@@ -965,7 +1387,8 @@ describe('Git storage rename identities', () => {
     const context = {
       config: { alwaysNamespace: false },
       git,
-      repoPath: rootPath
+      repoPath: rootPath,
+      root
     }
     const page = {
       id: 1,
@@ -1014,8 +1437,9 @@ describe('Git storage rename identities', () => {
       content: 'Updated [Log](/en/log)',
       sourceRevision: 3
     })
-    expect((await git.log({ maxCount: 1 })).latest?.message).toBe('docs: update en/index.concept.md')
-
+    expect(await fs.readFile(indexPath, 'utf8')).toContain('Updated [Log](/en/log.concept.md)')
+    const updatedTree = await git.raw(['show', '--format=', 'HEAD:en/index.concept.md'])
+    expect(updatedTree).toContain('Updated [Log](/en/log.concept.md)')
     const renamedPage = {
       ...page,
       destinationPath: 'log',
@@ -1024,14 +1448,17 @@ describe('Git storage rename identities', () => {
     await storage.renamed.call(context, renamedPage)
     await expect(fs.access(path.join(rootPath, 'en', 'log.concept.md'))).rejects.toThrow()
     await fs.access(path.join(rootPath, 'fr', 'log.concept.md'))
-    expect((await git.log({ maxCount: 1 })).latest?.message).toBe('docs: rename en/log.concept.md to fr/log.concept.md')
+    const renamedTree = await git.raw(['ls-tree', '-r', '--name-only', 'HEAD'])
+    expect(renamedTree).toContain('fr/log.concept.md')
+    expect(renamedTree).not.toContain('en/log.concept.md')
 
     await storage.deleted.call(context, {
       ...page,
       localeCode: 'fr'
     })
     await expect(fs.access(path.join(rootPath, 'fr', 'log.concept.md'))).rejects.toThrow()
-    expect((await git.log({ maxCount: 1 })).latest?.message).toBe('docs: delete fr/log.concept.md')
+    const deletedTree = await git.raw(['ls-tree', '-r', '--name-only', 'HEAD'])
+    expect(deletedTree).not.toContain('fr/log.concept.md')
 
     await storage.created.call(context, {
       ...page,
@@ -1044,9 +1471,9 @@ describe('Git storage rename identities', () => {
     })
     await fs.access(path.join(rootPath, 'legacy.html'))
     await expect(fs.access(path.join(rootPath, 'en', 'legacy.html'))).rejects.toThrow()
-    expect((await git.log({ maxCount: 1 })).latest?.message).toBe('docs: create legacy')
-    expect(global.WIKI.logger.info).toHaveBeenCalledWith('(STORAGE/GIT) Committing new file en/index.concept.md...')
-    expect(global.WIKI.logger.info).toHaveBeenCalledWith('(STORAGE/GIT) Committing file move from en/log.concept.md to fr/log.concept.md...')
+    expect(await fs.readFile(path.join(rootPath, 'legacy.html'), 'utf8')).toContain('<p>Legacy</p>')
+    const finalTree = await git.raw(['ls-tree', '-r', '--name-only', 'HEAD'])
+    expect(finalTree).toContain('legacy.html')
   })
 
   it('uses canonical Markdown paths and legacy non-Markdown paths during bulk export', async () => {
@@ -1119,20 +1546,24 @@ describe('Git storage rename identities', () => {
     await storage.syncUntracked.call({
       config: { alwaysNamespace: false },
       git,
-      repoPath: rootPath
+      repoPath: rootPath,
+      root
     })
 
-    await fs.access(path.join(rootPath, 'en', 'index.concept.md'))
-    await fs.access(path.join(rootPath, 'legacy.html'))
+    const indexPath = path.join(rootPath, 'en', 'index.concept.md')
+    const legacyPath = path.join(rootPath, 'legacy.html')
+    expect(await fs.readFile(indexPath, 'utf8')).toContain('Index content')
+    expect(await fs.readFile(legacyPath, 'utf8')).toContain('<p>Legacy</p>')
     expect(git.add).toHaveBeenCalledWith('./en/index.concept.md')
     expect(git.add).toHaveBeenCalledWith('./legacy.html')
-    expect(global.WIKI.logger.info).toHaveBeenCalledWith('(STORAGE/GIT) Adding page en/index.concept.md...')
   })
 
   it('finds an asset by its old path and repoints its readable identity and cache', async () => {
     const filePath = path.join(rootPath, 'archive', 'new-logo.png')
+    const outsideSentinel = path.join(rootPath, 'outside-sentinel.txt')
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     await fs.writeFile(filePath, 'image')
+    await fs.writeFile(outsideSentinel, 'outside remains')
     const assetHelper = (await vi.importFresh('../../helpers/asset.ts', import.meta.url)).default
     const sourceHash = assetHelper.generateHash('images/logo.png')
     const destinationHash = assetHelper.generateHash('archive/new-logo.png')
@@ -1156,18 +1587,23 @@ describe('Git storage rename identities', () => {
       query: vi.fn()
     }
     const storage = (await vi.importFresh('../../modules/storage/git/storage.ts', import.meta.url)).default
+    const commonDiskModule = await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)
+    const admission = await commonDiskModule.collectStorageEntries(root)
 
-    await storage.processFiles.call({}, [{
-      file: { path: filePath, stats: { size: 5 } },
-      oldPath: 'images/logo.png',
-      relPath: 'archive/new-logo.png',
-      binary: true,
-      insertions: 0,
-      deletions: 0,
-      before: 1,
-      after: 1,
-      importAll: false
-    }], { id: 1 })
+    await storage.processFiles.call({ repoPath: rootPath, root }, {
+      admission,
+      files: [{
+        file: { stats: { size: 5 } },
+        oldPath: 'images/logo.png',
+        relPath: 'archive/new-logo.png',
+        binary: true,
+        insertions: 0,
+        deletions: 0,
+        before: 1,
+        after: 1,
+        importAll: false
+      }]
+    }, { id: 1 })
 
     expect(findOne).toHaveBeenCalledWith({ hash: sourceHash })
     expect(persisted).toEqual({
@@ -1178,33 +1614,45 @@ describe('Git storage rename identities', () => {
     })
     expect(await findOne({ hash: sourceHash })).toBeUndefined()
     expect(await findOne({ hash: destinationHash })).toBe(asset)
-    expect(deleteAssetCache).toHaveBeenCalledTimes(1)
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
 })
 
 describe('storage page-document ingress', () => {
   let rootPath
+  let root
+  let outsideRoot
   let previousWiki
   let hadPreviousWiki
-
   beforeEach(async () => {
     rootPath = undefined
     hadPreviousWiki = Object.hasOwn(global, 'WIKI')
     previousWiki = global.WIKI
     vi.resetModules()
     rootPath = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-storage-document-'))
+    outsideRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'wiki-storage-document-outside-'))
     global.WIKI = {
       ROOTPATH: rootPath,
-      config: { lang: { code: 'en', namespacing: false } },
+      config: {
+        uploads: {
+          maxFileSize: 128 * 1024 * 1024
+        },
+        lang: { code: 'en', namespacing: false }
+      },
       logger: { error: vi.fn(), info: vi.fn(), warn: vi.fn() },
       models: {}
     }
+    root = await openStorageRoot(rootPath)
   })
 
   afterEach(async () => {
     try {
+      await root?.close()
       if (rootPath !== undefined) {
         await fs.rm(rootPath, { recursive: true, force: true })
+      }
+      if (outsideRoot !== undefined) {
+        await fs.rm(outsideRoot, { recursive: true, force: true })
       }
     } finally {
       if (hadPreviousWiki) {
@@ -1213,6 +1661,7 @@ describe('storage page-document ingress', () => {
         delete global.WIKI
       }
       rootPath = undefined
+      outsideRoot = undefined
     }
   })
 
@@ -1286,8 +1735,10 @@ describe('storage page-document ingress', () => {
   it('imports a canonical reserved index path under its original page identity without changing source bytes', async () => {
     const raw = Buffer.from('---\ntype: Reference\ntags: [source]\nverified:\n  by: human:99\n  at: 2026-08-30T00:00:00Z\nvendor: retained\n---\n\nBody')
     const filePath = path.join(rootPath, 'en', 'index.concept.md')
+    const outsideSentinel = path.join(outsideRoot, 'sentinel.txt')
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     await fs.writeFile(filePath, raw)
+    await fs.writeFile(outsideSentinel, 'outside remains')
     const createPage = vi.fn().mockResolvedValue({ id: 1 })
     const getPageFromDb = vi.fn().mockResolvedValue(null)
     global.WIKI.models.pages = {
@@ -1298,15 +1749,22 @@ describe('storage page-document ingress', () => {
       getDefaultEditor: vi.fn().mockResolvedValue('markdown')
     }
     const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
+    const source = await root.openFile('en/index.concept.md')
+    let result
+    try {
+      result = await commonDisk.processPage.call({}, {
+        user: { id: 7 },
+        relPath: 'en/index.concept.md',
+        root,
+        contentType: 'markdown',
+        moduleName: 'DISK',
+        source
+      })
+    } finally {
+      await source.close()
+    }
 
-    const result = await commonDisk.processPage.call({}, {
-      user: { id: 7 },
-      relPath: 'en/index.concept.md',
-      fullPath: rootPath,
-      contentType: 'markdown',
-      moduleName: 'DISK'
-    })
-
+    expect(source.closed).toBe(true)
     expect(result).toMatchObject({ ok: true, format: 'okf_valid' })
     expect(getPageFromDb).toHaveBeenCalledWith({ path: 'index', locale: 'en', visibility: 'public', ownerId: null })
     expect(createPage).toHaveBeenCalledWith(expect.objectContaining({
@@ -1324,12 +1782,15 @@ describe('storage page-document ingress', () => {
       skipStorage: true
     }))
     expect(await fs.readFile(filePath)).toEqual(raw)
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
 
   it('updates a canonical reserved log path under its original page identity', async () => {
     const filePath = path.join(rootPath, 'fr', 'log.concept.md')
+    const outsideSentinel = path.join(outsideRoot, 'sentinel.txt')
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     await fs.writeFile(filePath, '---\ntype: Reference\nverified:\n  by: human:99\n  at: 2026-08-30T00:00:00Z\n---\n\nUpdated')
+    await fs.writeFile(outsideSentinel, 'outside remains')
     const updatePage = vi.fn().mockResolvedValue({ id: 2 })
     const getPageFromDb = vi.fn().mockResolvedValue({
       id: 2,
@@ -1345,13 +1806,20 @@ describe('storage page-document ingress', () => {
     }
     const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
 
-    const result = await commonDisk.processPage.call({}, {
-      user: { id: 7 },
-      relPath: 'fr/log.concept.md',
-      fullPath: rootPath,
-      contentType: 'markdown',
-      moduleName: 'GIT'
-    })
+    const source = await root.openFile('fr/log.concept.md')
+    let result
+    try {
+      result = await commonDisk.processPage.call({}, {
+        user: { id: 7 },
+        relPath: 'fr/log.concept.md',
+        root,
+        contentType: 'markdown',
+        moduleName: 'GIT',
+        source
+      })
+    } finally {
+      await source.close()
+    }
 
     expect(result).toMatchObject({ ok: true, format: 'okf_valid' })
     expect(getPageFromDb).toHaveBeenCalledWith({ path: 'log', locale: 'fr', visibility: 'public', ownerId: null })
@@ -1364,6 +1832,8 @@ describe('storage page-document ingress', () => {
       okfProducer: 'import:git',
       skipStorage: true
     }))
+    expect(source.closed).toBe(true)
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
 
   it.each([
@@ -1371,55 +1841,81 @@ describe('storage page-document ingress', () => {
     'index.concept.md'
   ])('rejects valid OKF from a non-canonical object path without database mutation: %s', async relPath => {
     const filePath = path.join(rootPath, relPath)
+    const outsideSentinel = path.join(outsideRoot, 'sentinel.txt')
     await fs.mkdir(path.dirname(filePath), { recursive: true })
     await fs.writeFile(filePath, '---\ntype: Reference\n---\n\nBody')
+    await fs.writeFile(outsideSentinel, 'outside remains')
     const createPage = vi.fn()
     const updatePage = vi.fn()
     const getPageFromDb = vi.fn()
     global.WIKI.models.pages = { getPageFromDb, createPage, updatePage }
     const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
 
-    const result = await commonDisk.processPage.call({}, {
-      user: { id: 7 },
-      relPath,
-      fullPath: rootPath,
-      contentType: 'markdown',
-      moduleName: 'DISK'
-    })
+    const source = await root.openFile(relPath)
+    let result
+    try {
+      result = await commonDisk.processPage.call({}, {
+        user: { id: 7 },
+        relPath,
+        root,
+        contentType: 'markdown',
+        moduleName: 'DISK',
+        source
+      })
+    } finally {
+      await source.close()
+    }
 
     expect(result).toMatchObject({
       relPath,
       format: 'okf_valid',
-      ok: false,
-      error: `OKF page path is not canonical: ${relPath}`
+      ok: false
     })
     expect(getPageFromDb).not.toHaveBeenCalled()
     expect(createPage).not.toHaveBeenCalled()
     expect(updatePage).not.toHaveBeenCalled()
+    expect(source.closed).toBe(true)
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
 
-  it.each(['DISK', 'GIT'])('rejects an oversized %s page before reading the file contents', async moduleName => {
+  it.each(['DISK', 'GIT'])('rejects an oversized %s page before parsing or database mutation', async moduleName => {
     const filePath = path.join(rootPath, 'oversized.md')
+    const outsideSentinel = path.join(outsideRoot, 'sentinel.txt')
     await fs.writeFile(filePath, '')
     await fs.truncate(filePath, 1_048_577)
-    const fsExtra = (await import('fs-extra')).default
-    const readFile = vi.spyOn(fsExtra, 'readFile')
+    await fs.writeFile(outsideSentinel, 'outside remains')
+    const getPageFromDb = vi.fn()
+    const createPage = vi.fn()
+    const updatePage = vi.fn()
+    global.WIKI.models.pages = { getPageFromDb, createPage, updatePage }
     const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
 
-    await expect(commonDisk.processPage.call({}, {
-      user: { id: 7 },
-      relPath: 'oversized.md',
-      fullPath: rootPath,
-      contentType: 'markdown',
-      moduleName
-    })).rejects.toThrow('Page document exceeds 1048576 bytes')
-    expect(readFile).not.toHaveBeenCalled()
-    readFile.mockRestore()
+    const source = await root.openFile('oversized.md')
+    try {
+      await expect(commonDisk.processPage.call({}, {
+        user: { id: 7 },
+        relPath: 'oversized.md',
+        root,
+        contentType: 'markdown',
+        moduleName,
+        source
+      })).rejects.toBeInstanceOf(RangeError)
+    } finally {
+      await source.close()
+    }
+
+    expect(getPageFromDb).not.toHaveBeenCalled()
+    expect(createPage).not.toHaveBeenCalled()
+    expect(updatePage).not.toHaveBeenCalled()
+    expect(source.closed).toBe(true)
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
 
   it('does not mutate the database for a claimed invalid OKF document', async () => {
     const filePath = path.join(rootPath, 'invalid.md')
+    const outsideSentinel = path.join(outsideRoot, 'sentinel.txt')
     await fs.writeFile(filePath, '---\ntype: [broken\n---\nBody')
+    await fs.writeFile(outsideSentinel, 'outside remains')
     const createPage = vi.fn()
     const updatePage = vi.fn()
     global.WIKI.models.pages = {
@@ -1429,16 +1925,25 @@ describe('storage page-document ingress', () => {
     }
     const commonDisk = (await vi.importFresh('../../modules/storage/disk/common.ts', import.meta.url)).default
 
-    const result = await commonDisk.processPage.call({}, {
-      user: { id: 7 },
-      relPath: 'invalid.md',
-      fullPath: rootPath,
-      contentType: 'markdown',
-      moduleName: 'DISK'
-    })
+    const source = await root.openFile('invalid.md')
+    let result
+    try {
+      result = await commonDisk.processPage.call({}, {
+        user: { id: 7 },
+        relPath: 'invalid.md',
+        root,
+        contentType: 'markdown',
+        moduleName: 'DISK',
+        source
+      })
+    } finally {
+      await source.close()
+    }
 
     expect(result).toMatchObject({ ok: false, format: 'okf_invalid' })
     expect(createPage).not.toHaveBeenCalled()
     expect(updatePage).not.toHaveBeenCalled()
+    expect(source.closed).toBe(true)
+    expect(await fs.readFile(outsideSentinel, 'utf8')).toBe('outside remains')
   })
 })

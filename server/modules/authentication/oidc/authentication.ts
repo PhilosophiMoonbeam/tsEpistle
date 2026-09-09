@@ -1,4 +1,5 @@
 import { synchronizeProviderGroups } from '../../../helpers/authentication-provisioning.ts'
+import { oidcStateOptions } from '../oauth-state.ts'
 import { asError, wiki, type AuthenticationConfig, type AuthenticationPlugin } from '../../types.ts'
 import _ from 'lodash'
 
@@ -26,6 +27,9 @@ const plugin: OidcPlugin = {
           issuer: conf.issuer,
           userInfoURL: conf.userInfoURL,
           callbackURL: conf.callbackURL,
+          ...oidcStateOptions(conf),
+          nonce: true,
+          ...(typeof conf.maxAge === 'number' ? { maxAge: conf.maxAge } : {}),
           passReqToCallback: true,
           skipUserProfile: conf.skipUserProfile,
           acrValues: conf.acrValues

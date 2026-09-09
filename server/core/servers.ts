@@ -11,17 +11,18 @@ import type { Disposable } from 'graphql-ws'
 import { WebSocketServer } from 'ws'
 import { execute as graphqlExecute, subscribe as graphqlSubscribe } from 'graphql'
 
+import { requestOriginMatches } from '../agents/origins.ts'
 import { createGraphQLArtifacts, type GraphRuntime } from '../graph/index.ts'
 import { isPublicGraphError } from '../helpers/graph.ts'
 import letsencrypt from './letsencrypt.ts'
 import { tlsCertificateAt, type TlsMaterial, type TlsMaterialConfiguration } from '../repositories/tls-material.ts'
 import { prepareTlsMaterial } from '../repositories/tls-preflight.ts'
 import type { TlsAppliedMaterial } from '../../shared/tls-workspace.ts'
-
 interface ServerConfig {
   auth: { audience: string }
   bindIP: string
   certs: { public: string }
+  host: string
   port: number
   ssl: {
     cert: string
@@ -408,10 +409,14 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
         throw new Error('GraphQL must be initialized before HTTP servers.')
       }
 
-      const yoga = graph.yoga
       const wsServer = new WebSocketServer({ noServer: true })
       const upgradeListener = (request: http.IncomingMessage, socket: Socket, head: Buffer): void => {
         if (request.url?.split('?', 1)[0] !== '/graphql-subscriptions') return
+        const origin = request.headers.origin
+        if (typeof origin !== 'string' || !requestOriginMatches(origin, wiki.config.host)) {
+          socket.destroy()
+          return
+        }
         wsServer.handleUpgrade(request, socket, head, client => {
           wsServer.emit('connection', client, request)
         })
@@ -449,7 +454,7 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
               contextFactory,
               parse,
               validate
-            } = yoga.getEnveloped({
+            } = graph.yoga.getEnveloped({
               ...context,
               req,
               params
@@ -476,15 +481,9 @@ export default function createServersCore(wiki: ServerWiki): ServersCore {
       graph.subscriptions.push({ cleanup, server, upgradeListener })
     },
 
-    async authenticateGraphQLSubscription(connectionParams: unknown, request: http.IncomingMessage): Promise<SubscriptionAuthentication> {
-      let token =
-        typeof connectionParams === 'object' && connectionParams !== null && 'token' in connectionParams && typeof connectionParams.token === 'string'
-          ? connectionParams.token
-          : null
-      if (!token) {
-        const cookieHeader = request.headers.cookie || ''
-        token = cookieHeader ? parseCookie(cookieHeader).jwt || null : null
-      }
+    async authenticateGraphQLSubscription(_connectionParams: unknown, request: http.IncomingMessage): Promise<SubscriptionAuthentication> {
+      const cookieHeader = request.headers.cookie || ''
+      const token = cookieHeader ? parseCookie(cookieHeader).jwt || null : null
       if (!token) throw new Error('Unauthorized')
 
       try {

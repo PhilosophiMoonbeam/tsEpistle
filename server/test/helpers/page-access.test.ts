@@ -12,11 +12,16 @@ import {
   scopePageQuery,
   scopePageQueryForOwner
 } from '../../helpers/page-access.ts'
+import type { PagePrincipal } from '../../helpers/page-access.ts'
+import type { PageRuleAuthority } from '../../helpers/group-access.ts'
 
 beforeEach(() => {
   global.WIKI = {
     auth: {
-      checkAccess: (user, permissions) => permissions.some(permission => user?.permissions?.includes(permission))
+      checkAccess: (user, permissions) => permissions.some(permission => user?.permissions?.includes(permission)),
+      checkPageAccess: (user, permissions, _context, authority: PageRuleAuthority) =>
+        authority.requester === user &&
+        (authority.permissions.includes('manage:system') || permissions.some(permission => authority.permissions.includes(permission)))
     }
   }
 })
@@ -24,8 +29,15 @@ beforeEach(() => {
 const owner = { id: 7, permissions: [] }
 const otherUser = { id: 8, permissions: ['read:pages', 'write:pages', 'delete:pages'] }
 const administrator = { id: 9, permissions: ['manage:system'] }
-const publicPage = { visibility: 'public' as const, ownerId: null, localeCode: 'en', path: 'same/path' }
+const publicPage = { visibility: 'public' as const, ownerId: null, localeCode: 'en', path: 'same/path', tags: [] }
 const privatePage = { visibility: 'private' as const, ownerId: 7, localeCode: 'en', path: 'same/path' }
+
+const authorityFor = (requester: PagePrincipal): PageRuleAuthority => Object.freeze({
+  requester,
+  permissions: Object.freeze(Array.isArray(requester?.permissions) ? [...requester.permissions] : []),
+  groups: Object.freeze([]),
+  tagAliases: Object.freeze({})
+})
 
 describe('owner-scoped page access', () => {
   it('keeps public and private pages with the same locale/path independently addressable', () => {
@@ -34,18 +46,20 @@ describe('owner-scoped page access', () => {
   })
 
   it('allows only the owner or a system administrator to read a private page', () => {
-    expect(canReadPage(owner, privatePage)).toBe(true)
-    expect(canReadPage(otherUser, privatePage)).toBe(false)
-    expect(canReadPage(undefined, privatePage)).toBe(false)
-    expect(canReadPage({ id: 2, permissions: [] }, privatePage)).toBe(false)
-    expect(canReadPage(administrator, privatePage)).toBe(true)
+    const anonymous = undefined
+    const unrelatedUser = { id: 2, permissions: [] }
+    expect(canReadPage(owner, privatePage, authorityFor(owner))).toBe(true)
+    expect(canReadPage(otherUser, privatePage, authorityFor(otherUser))).toBe(false)
+    expect(canReadPage(anonymous, privatePage, authorityFor(anonymous))).toBe(false)
+    expect(canReadPage(unrelatedUser, privatePage, authorityFor(unrelatedUser))).toBe(false)
+    expect(canReadPage(administrator, privatePage, authorityFor(administrator))).toBe(true)
   })
 
   it('does not let ordinary page permissions cross a private ownership boundary', () => {
-    expect(canWritePage(otherUser, privatePage)).toBe(false)
-    expect(canDeletePage(otherUser, privatePage)).toBe(false)
-    expect(canWritePage(owner, privatePage)).toBe(true)
-    expect(canDeletePage(owner, privatePage)).toBe(true)
+    expect(canWritePage(otherUser, privatePage, authorityFor(otherUser))).toBe(false)
+    expect(canDeletePage(otherUser, privatePage, authorityFor(otherUser))).toBe(false)
+    expect(canWritePage(owner, privatePage, authorityFor(owner))).toBe(true)
+    expect(canDeletePage(owner, privatePage, authorityFor(owner))).toBe(true)
   })
 
   it('never treats a synthetic API principal as private-page owner', () => {
@@ -56,17 +70,19 @@ describe('owner-scoped page access', () => {
     }
     const userOnePrivatePage = { ...privatePage, ownerId: 1 }
     expect(principalId(apiPrincipal)).toBeNull()
-    expect(canReadPage(apiPrincipal, userOnePrivatePage)).toBe(false)
-    expect(canWritePage(apiPrincipal, userOnePrivatePage)).toBe(false)
-    expect(canDeletePage(apiPrincipal, userOnePrivatePage)).toBe(false)
+    expect(canReadPage(apiPrincipal, userOnePrivatePage, authorityFor(apiPrincipal))).toBe(false)
+    expect(canWritePage(apiPrincipal, userOnePrivatePage, authorityFor(apiPrincipal))).toBe(false)
+    expect(canDeletePage(apiPrincipal, userOnePrivatePage, authorityFor(apiPrincipal))).toBe(false)
   })
 
   it('preserves normal permission checks for public pages', () => {
-    expect(canReadPage({ id: 2, permissions: ['read:pages'] }, publicPage)).toBe(true)
-    expect(canWritePage(owner, publicPage)).toBe(false)
-    expect(canWritePage(otherUser, publicPage)).toBe(true)
-    expect(canDeletePage(otherUser, publicPage)).toBe(true)
+    const reader = { id: 2, permissions: ['read:pages'] }
+    expect(canReadPage(reader, publicPage, authorityFor(reader))).toBe(true)
+    expect(canWritePage(owner, publicPage, authorityFor(owner))).toBe(false)
+    expect(canWritePage(otherUser, publicPage, authorityFor(otherUser))).toBe(true)
+    expect(canDeletePage(otherUser, publicPage, authorityFor(otherUser))).toBe(true)
   })
+
 
   it('recognizes only valid principals and explicit system managers', () => {
     expect(principalId(owner)).toBe(7)

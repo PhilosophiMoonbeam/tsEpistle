@@ -1,3 +1,4 @@
+import type { StorageFileHandle } from './storage/local-filesystem.ts'
 import type { Readable, Writable } from 'node:stream'
 
 export type UnknownRecord = Record<string, unknown>
@@ -169,6 +170,11 @@ export interface WikiRuntime {
       namespacing: boolean
     }
     search: { maxHits: number }
+    uploads: {
+      maxFileSize: number
+      scanSVG: boolean
+      forceDownload: boolean
+    }
   }
   data: {
     commentProvider: {
@@ -188,6 +194,7 @@ export const asError = (value: unknown): Error => (value instanceof Error ? valu
 
 export interface AuthenticationConfig {
   [key: string]: unknown
+  adminRevision?: string
   acceptedClockSkewMs: number
   acrValues: string
   authnContext: string
@@ -211,7 +218,6 @@ export interface AuthenticationConfig {
   domain: string
   emailAttribute: string
   emailClaim: string
-  enableCSRFProtection: boolean
   enterpriseDomain: string
   enterpriseUserEndpoint: string
   entryPoint: string
@@ -419,6 +425,18 @@ export interface StorageContext<C extends StorageConfig = StorageConfig> {
   mode?: string
 }
 
+export interface StorageAssetIdentity {
+  readonly id: number
+  readonly hash: string
+  readonly path: string
+  readonly filename: string
+  readonly folderId: number | null
+}
+
+export interface StorageLocalLocation {
+  open(): Promise<StorageFileHandle>
+}
+
 export interface StoragePlugin<C extends StorageConfig = StorageConfig, Context extends StorageContext<C> = StorageContext<C>> {
   activated(this: Context): Promise<void>
   deactivated(this: Context): Promise<void>
@@ -430,7 +448,7 @@ export interface StoragePlugin<C extends StorageConfig = StorageConfig, Context 
   assetUploaded?(this: Context, asset: WikiAsset): Promise<void>
   assetDeleted?(this: Context, asset: WikiAsset): Promise<void>
   assetRenamed?(this: Context, asset: WikiAsset): Promise<void>
-  getLocalLocation?(this: Context, asset: WikiAsset): Promise<string | void>
+  getLocalLocation?(this: Context, asset: StorageAssetIdentity): Promise<StorageLocalLocation | void>
   sync?(this: Context, options?: { manual: boolean }): Promise<StoragePluginActionResult>
   dump?(this: Context): Promise<StoragePluginActionResult>
   backup?(this: Context): Promise<StoragePluginActionResult>

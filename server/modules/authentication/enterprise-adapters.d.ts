@@ -16,6 +16,10 @@ declare module '@exlinc/keycloak-passport' {
       clientID: string
       clientSecret: string
       callbackURL: string
+      state?: boolean
+      pkce?: boolean
+      store?: import('./oauth-state.ts').OAuthStateStore
+      sessionKey?: string
       passReqToCallback: true
     }
     interface TokenResults extends Record<string, unknown> {
@@ -78,6 +82,9 @@ declare module 'passport-oauth2' {
       passReqToCallback: true
       scope?: string[]
       state?: boolean
+      pkce?: boolean
+      store?: import('./oauth-state.ts').OAuthStateStore
+      sessionKey?: string
     }
     interface AuthenticateOptions {
       callbackURL?: string
@@ -121,6 +128,9 @@ declare module 'passport-openidconnect' {
       passReqToCallback: true
       skipUserProfile: boolean
       acrValues: string
+      nonce?: boolean
+      maxAge?: number
+      store: import('./oauth-state.ts').OAuthStateStore
     }
     type Profile = Record<string, unknown>
     type Done = (error: Error | null, user?: Record<string, unknown> | false) => void

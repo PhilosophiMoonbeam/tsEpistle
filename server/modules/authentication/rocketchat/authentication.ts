@@ -1,4 +1,5 @@
 import { asError, wiki, type AuthenticationConfig, type AuthenticationPlugin } from '../../types.ts'
+import { oauth2StateOptions } from '../oauth-state.ts'
 import _ from 'lodash'
 
 
@@ -36,13 +37,13 @@ const isRocketChatProfile = (value: unknown): value is RocketChatProfileResponse
 const plugin: RocketChatPlugin = {
   init (passport, conf) {
     const siteURL = conf.siteURL.slice(-1) === '/' ? conf.siteURL.slice(0, -1) : conf.siteURL
-
     const strategyInstance = new OAuth2Strategy({
       authorizationURL: `${siteURL}/oauth/authorize`,
       tokenURL: `${siteURL}/oauth/token`,
       clientID: conf.clientId,
       clientSecret: conf.clientSecret,
       callbackURL: conf.callbackURL,
+      ...oauth2StateOptions(conf),
       passReqToCallback: true
     }, async (req, accessToken, refreshToken, profile, cb) => {
       try {

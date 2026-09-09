@@ -1,4 +1,5 @@
 import { asError, wiki, type AuthenticationConfig, type AuthenticationPlugin, type WikiUser } from '../../types.ts'
+import { oauth2StateOptions } from '../oauth-state.ts'
 import _ from 'lodash'
 
 
@@ -47,9 +48,9 @@ const plugin: OAuth2Plugin = {
       clientSecret: conf.clientSecret,
       userInfoURL: conf.userInfoURL,
       callbackURL: conf.callbackURL,
+      ...oauth2StateOptions(conf),
       passReqToCallback: true,
-      scope: conf.scope,
-      state: conf.enableCSRFProtection
+      scope: conf.scope
     }, async (req, accessToken, refreshToken, profile, cb) => {
       try {
         const picture = _.get(profile, conf.pictureClaim, '')

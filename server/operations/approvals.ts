@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Knex } from 'knex'
-import { canReadPage, canWritePage, managesSystem, principalId, type PagePrincipal, type PageVisibilityRecord } from '../helpers/page-access.ts'
+import { canReadPage, canWritePage, managesSystem, pageAuthorizationContext, principalId, type PagePrincipal, type PageVisibilityRecord } from '../helpers/page-access.ts'
+import type { AccessPage, PageRuleAuthority } from '../helpers/group-access.ts'
 import { writeOutboxEvent } from '../core/outbox.ts'
 import { enqueuePageMutationEffects } from '../core/page-mutation-outbox.ts'
 import errors from './errors.ts'
@@ -39,7 +40,11 @@ interface ApprovalRequestRow extends Record<string, unknown> {
 }
 
 interface WikiContext {
-  auth: { checkAccess(user: PagePrincipal, permissions: readonly string[], context: Record<string, unknown>): boolean }
+  auth: {
+    checkAccess(user: PagePrincipal, permissions: readonly string[]): boolean
+    checkPageAccess(user: PagePrincipal, permissions: readonly string[], context: AccessPage, authority: PageRuleAuthority): boolean
+    loadPageRuleAuthority(requester: PagePrincipal, transaction?: Knex.Transaction): Promise<PageRuleAuthority>
+  }
   models: {
     knex: Knex
     pages: {
@@ -52,6 +57,14 @@ interface WikiContext {
       addVersion(input: Record<string, unknown>): Promise<{ id: number }>
     }
   }
+}
+const loadPageTags = async (transaction: Knex.Transaction, pageId: number): Promise<Array<{ tag: string }>> => {
+  const rows = await transaction<{ tag: string }>('pageTags')
+    .innerJoin('tags', 'tags.id', 'pageTags.tagId')
+    .where('pageTags.pageId', pageId)
+    .orderBy('tags.tag', 'asc')
+    .select('tags.tag')
+  return rows.map(row => ({ tag: row.tag }))
 }
 
 const wiki = (global as typeof globalThis & { WIKI: unknown }).WIKI as unknown as WikiContext
@@ -70,8 +83,11 @@ const requiredSourceRevision = (value: unknown): string => {
   return value
 }
 
-const reviewerEligible = (requester: PagePrincipal, page: ApprovalPage): boolean =>
-  managesSystem(requester) || wiki.auth.checkAccess(requester, ['manage:pages'], { path: page.path, locale: page.localeCode, tags: page.tags })
+const reviewerEligible = (requester: PagePrincipal, page: ApprovalPage, authority: PageRuleAuthority): boolean => {
+  if (managesSystem(requester)) return true
+  const context = pageAuthorizationContext(page)
+  return context !== null && wiki.auth.checkPageAccess(requester, ['manage:pages'], context, authority)
+}
 
 const staleRevision = (request: ApprovalRequestRow, page: ApprovalPage): boolean =>
   !['published', 'rejected', 'cancelled'].includes(request.status) && new Date(request.revisionUpdatedAt).valueOf() !== new Date(page.updatedAt).valueOf()
@@ -145,30 +161,23 @@ const publishPage = async (transaction: Knex.Transaction, page: ApprovalPage, ac
   })
 }
 
-const loadRequestPage = async (id: string): Promise<{ request: ApprovalRequestRow; page: ApprovalPage }> => {
-  const request = await wiki.models.knex<ApprovalRequestRow>('pageApprovalRequests').where({ id }).first()
-  if (!request) throw new ApplicationError('Approval request not found', { status: 404, code: 'APPROVAL_NOT_FOUND' })
-  const page = await wiki.models.pages.getPageFromDb(request.pageId)
-  if (!page) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
-  return { request, page }
-}
-
-const canViewRequest = (requester: PagePrincipal, request: ApprovalRequestRow, page: ApprovalPage): boolean => {
+const canViewRequest = (requester: PagePrincipal, request: ApprovalRequestRow, page: ApprovalPage, authority: PageRuleAuthority): boolean => {
   const id = principalId(requester)
-  return canReadPage(requester, page) && (id === request.submitterId || id === request.assigneeId || reviewerEligible(requester, page))
+  return canReadPage(requester, page, authority) && (id === request.submitterId || id === request.assigneeId || reviewerEligible(requester, page, authority))
 }
 
 export const getPageApproval = async (requester: PagePrincipal, pageId: number): Promise<Record<string, unknown> | null> => {
   actorId(requester)
   const page = await wiki.models.pages.getPageFromDb(pageId)
-  if (!page || !canReadPage(requester, page)) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
+  const authority = await wiki.auth.loadPageRuleAuthority(requester)
+  if (!page || !canReadPage(requester, page, authority)) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
   const request = await wiki.models.knex<ApprovalRequestRow>('pageApprovalRequests').where({ pageId }).orderBy('createdAt', 'desc').first()
-  if (!request || !canViewRequest(requester, request, page)) return null
+  if (!request || !canViewRequest(requester, request, page, authority)) return null
   const transitions = await wiki.models.knex('pageApprovalTransitions').where({ requestId: request.id }).orderBy('createdAt', 'asc')
   return {
     ...request,
     stale: staleRevision(request, page),
-    canReview: reviewerEligible(requester, page) && (request.assigneeId === null || request.assigneeId === principalId(requester) || managesSystem(requester)),
+    canReview: reviewerEligible(requester, page, authority) && (request.assigneeId === null || request.assigneeId === principalId(requester) || managesSystem(requester)),
     canSubmitter: request.submitterId === principalId(requester),
     transitions
   }
@@ -190,8 +199,10 @@ export const submitPageApproval = async (input: {
   return wiki.models.knex.transaction(async transaction => {
     const currentPage = await transaction('pages').where({ id: input.pageId }).forUpdate().first()
     if (!currentPage) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
-    const page = loadedPage ? ({ ...loadedPage, ...currentPage } as ApprovalPage) : undefined
-    if (!page || !canWritePage(input.requester, page)) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
+    const page = (loadedPage ? { ...loadedPage, ...currentPage } : currentPage) as ApprovalPage
+    page.tags = await loadPageTags(transaction, page.id)
+    const authority = await wiki.auth.loadPageRuleAuthority(input.requester, transaction)
+    if (!canWritePage(input.requester, page, authority)) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
     if (String(currentPage.sourceRevision) !== expectedSourceRevision) {
       throw new ApplicationError('The page changed before approval submission', { status: 409, code: 'APPROVAL_STALE' })
     }
@@ -237,10 +248,11 @@ export const listApprovalInbox = async (requester: PagePrincipal): Promise<{ ite
     .whereIn('status', ['submitted', 'approved', 'changes-requested'])
     .orderBy('updatedAt', 'desc')
     .limit(100)
+  const authority = await wiki.auth.loadPageRuleAuthority(requester)
   const items: Array<Record<string, unknown>> = []
   for (const request of rows) {
     const page = await wiki.models.pages.getPageFromDb(request.pageId)
-    if (!page || !canViewRequest(requester, request, page)) continue
+    if (!page || !canViewRequest(requester, request, page, authority)) continue
     if (request.assigneeId !== null && request.assigneeId !== id && request.submitterId !== id && !managesSystem(requester)) continue
     items.push({
       ...request,
@@ -249,7 +261,7 @@ export const listApprovalInbox = async (requester: PagePrincipal): Promise<{ ite
       path: page.path,
       localeCode: page.localeCode,
       visibility: page.visibility,
-      canReview: reviewerEligible(requester, page) && (request.assigneeId === null || request.assigneeId === id || managesSystem(requester))
+      canReview: reviewerEligible(requester, page, authority) && (request.assigneeId === null || request.assigneeId === id || managesSystem(requester))
     })
   }
   return { items }
@@ -262,24 +274,24 @@ export const transitionApproval = async (input: {
   comment?: string
   assigneeId?: number
 }): Promise<ApprovalRequestRow> => {
-  const actor = actorId(input.requester)
-  const loaded = await loadRequestPage(input.requestId)
-  if (!canViewRequest(input.requester, loaded.request, loaded.page))
-    throw new ApplicationError('Approval request not found', { status: 404, code: 'APPROVAL_NOT_FOUND' })
   const comment = input.comment?.trim() || ''
   if ((input.action === 'request-changes' || input.action === 'reject') && !comment) {
     throw new ApplicationError('A review comment is required', { status: 400, code: 'COMMENT_REQUIRED' })
   }
-
+  const actor = actorId(input.requester)
   let published = false
   const result = await wiki.models.knex.transaction(async transaction => {
     const request = await transaction<ApprovalRequestRow>('pageApprovalRequests').where({ id: input.requestId }).forUpdate().first()
     if (!request) throw new ApplicationError('Approval request not found', { status: 404, code: 'APPROVAL_NOT_FOUND' })
     const currentPage = await transaction('pages').where({ id: request.pageId }).forUpdate().first()
     if (!currentPage) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
-    const page = { ...loaded.page, ...currentPage } as ApprovalPage
+    const page = currentPage as ApprovalPage
+    page.tags = await loadPageTags(transaction, page.id)
+    const authority = await wiki.auth.loadPageRuleAuthority(input.requester, transaction)
+    if (!canViewRequest(input.requester, request, page, authority))
+      throw new ApplicationError('Approval request not found', { status: 404, code: 'APPROVAL_NOT_FOUND' })
     const admin = managesSystem(input.requester)
-    const reviewer = reviewerEligible(input.requester, page) && (request.assigneeId === null || request.assigneeId === actor || admin)
+    const reviewer = reviewerEligible(input.requester, page, authority) && (request.assigneeId === null || request.assigneeId === actor || admin)
     const submitter = request.submitterId === actor
     let nextStatus = request.status
     let revisionId = request.revisionId

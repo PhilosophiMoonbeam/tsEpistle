@@ -19,6 +19,12 @@ const row = (id: number, localeCode: string, localeGroupId: string | null = null
   title: `${localeCode.toUpperCase()} ${id}`,
   visibility: 'public'
 })
+const authorityFor = (requester: { id?: number } | undefined) => ({
+  requester,
+  permissions: requester?.id === editor.id ? ['read:pages', 'write:pages'] : [],
+  groups: [],
+  tagAliases: {}
+})
 
 describe('page locale relations', () => {
   let db: Knex
@@ -35,10 +41,21 @@ describe('page locale relations', () => {
       table.string('visibility').notNullable()
       table.unique(['localeGroupId', 'localeCode'])
     })
+    await db.schema.createTable('tags', table => {
+      table.integer('id').primary()
+      table.string('tag').notNullable()
+    })
+    await db.schema.createTable('pageTags', table => {
+      table.integer('pageId').notNullable()
+      table.integer('tagId').notNullable()
+    })
     Reflect.set(globalThis, 'WIKI', {
       auth: {
         checkAccess: (requester: { id?: number } | undefined, permissions: readonly string[]) =>
-          requester?.id === editor.id && permissions.some(permission => permission === 'read:pages' || permission === 'write:pages')
+          requester?.id === editor.id && permissions.some(permission => permission === 'read:pages' || permission === 'write:pages'),
+        checkPageAccess: (requester: { id?: number } | undefined, permissions: readonly string[], _context: unknown, authority: { requester: unknown; permissions: readonly string[] }) =>
+          authority.requester === requester && permissions.some(permission => authority.permissions.includes(permission)),
+        loadPageRuleAuthority: async (requester: { id?: number } | undefined) => authorityFor(requester)
       },
       models: { knex: db }
     })
