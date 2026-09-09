@@ -1829,7 +1829,7 @@ const getTreeSnapshot = async (input: OperationInput, db: Knex.Transaction, auth
 
 // Tree IDs are rebuilt on page moves; authorization and returned rows must share a snapshot.
 const getTree = async (input: OperationInput) => {
-  const tx = await wiki.models.knex.transaction({ isolationLevel: 'repeatable read', readOnly: true })
+  const tx = await wiki.models.knex.transaction({ isolationLevel: 'repeatable read' })
   try {
     const authority = await authorityFor(input, tx)
     const result = await getTreeSnapshot(input, tx, authority)

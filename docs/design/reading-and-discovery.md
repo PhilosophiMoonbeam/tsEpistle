@@ -11,7 +11,8 @@ The September 2026 review focused on the shared reading shell, site navigation, 
 - Tablet contents and page tools appear before the article in a compact row. Both tablet and phone contents start collapsed. The configured left/right/off outline placement remains supported.
 - Section jumps take 250 ms and account for the fixed app bar. Reduced-motion preferences are respected. A skip link transfers keyboard focus to the article.
 - Custom (mixed) navigation keeps Main Menu and Browse visible as two selectable views, even when the custom menu is empty or filtered by permissions. The saved view is respected; without a preference it starts with Main Menu. An empty menu explains how to browse available pages. Static and site-tree navigation remain administrator-controlled.
-- Ctrl/Command+K opens and focuses search, including on phones. The desktop field shows the platform shortcut. Authorized users get a direct Wiki Agent button on larger screens, with the existing Search/Ask controls available at smaller widths.
+- Ctrl/Command+K opens and focuses search, including on phones. The desktop field shows the platform shortcut. When permitted, Wiki Agent is the first action after search at every supported width; Browse remains icon-only with a tooltip and accessible button name. Search/Ask controls remain available at smaller widths.
+- The selected desktop tag rail presents its index in one readable column; the broad `/t` index remains multi-column, and mobile retains its existing responsive stacking and column behavior.
 
 ## Verification
 

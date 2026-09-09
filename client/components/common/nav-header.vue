@@ -81,6 +81,7 @@
               template(v-slot:activator='{ props }')
                 v-btn.nav-header-browse(
                   v-bind='props'
+                  icon
                   href='/t'
                   data-search-modal-action
                   variant='outlined'
@@ -88,7 +89,6 @@
                   :aria-label='$t(`common:header.browseTags`)'
                 )
                   v-icon(size='18') mdi-tag-outline
-                  span.nav-header-browse-label {{$t('common:header.browseTags')}}
               span {{$t('common:header.browseTags')}}
       v-col.nav-header-actions-col(cols='7', md='4')
         .nav-header-inner.nav-header-actions
@@ -110,18 +110,6 @@
             :aria-label='searchIsShown ? `Close search` : `Open search`'
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
-          v-tooltip.nav-header-mobile-browse(v-if='$vuetify.display.smAndDown', location='bottom')
-            template(v-slot:activator='{ props }')
-              v-btn.nav-header-browse(
-                v-bind='props'
-                icon
-                href='/t'
-                data-search-modal-action
-                :aria-current='mode === `tags` ? `page` : undefined'
-                :aria-label='$t(`common:header.browseTags`)'
-              )
-                v-icon mdi-tag-outline
-            span {{$t('common:header.browseTags')}}
           v-btn.nav-header-agent(
             v-if='canUseAgent && !hideSearch && mode !== `edit` && $vuetify.display.smAndDown'
             icon
@@ -134,6 +122,18 @@
             @click='openAgent'
           )
             v-icon(icon='mdi-book-open-page-variant-outline')
+          v-tooltip.nav-header-mobile-browse(v-if='$vuetify.display.smAndDown', location='bottom')
+            template(v-slot:activator='{ props }')
+              v-btn.nav-header-browse(
+                v-bind='props'
+                icon
+                href='/t'
+                data-search-modal-action
+                :aria-current='mode === `tags` ? `page` : undefined'
+                :aria-label='$t(`common:header.browseTags`)'
+              )
+                v-icon mdi-tag-outline
+            span {{$t('common:header.browseTags')}}
           .nav-header-slot-actions(v-if='$vuetify.display.mdAndUp || mobileActions')
             slot(name='actions')
           //- LANGUAGES
@@ -944,27 +944,6 @@ export default defineComponent({
   }
 
 
-  .nav-header-browse-label {
-    display: none;
-  }
-
-
-  @media (min-width: 1280px) {
-    .nav-header-command .nav-header-browse-label {
-      display: inline;
-    }
-
-    .nav-header-command .nav-header-browse {
-      padding-inline: var(--wiki-space-3);
-    }
-  }
-  @media (min-width: 960px) and (max-width: 1279.98px) {
-    .nav-header-command .nav-header-browse {
-      width: var(--wiki-control-height);
-      min-width: var(--wiki-control-height);
-      padding-inline: var(--wiki-space-2);
-    }
-  }
 
   @media (max-width: 959.98px) {
     .nav-header-mobile-browse {
@@ -1040,6 +1019,10 @@ export default defineComponent({
   .nav-header-browse {
     flex: 0 0 auto;
     margin-inline-start: var(--wiki-space-1);
+  }
+  .nav-header-inner .nav-header-browse {
+    width: var(--wiki-control-height);
+    min-width: var(--wiki-control-height);
   }
 
   .nav-header-inner .v-divider {
@@ -1351,6 +1334,10 @@ export default defineComponent({
       min-width: calc(var(--wiki-control-height) - var(--wiki-space-1));
       height: calc(var(--wiki-control-height) - var(--wiki-space-1)) !important;
     }
+    .nav-header-inner .nav-header-browse {
+      width: calc(var(--wiki-control-height) - var(--wiki-space-1));
+      min-width: calc(var(--wiki-control-height) - var(--wiki-space-1));
+    }
 
     .navHeaderLoading {
       margin-inline-end: var(--wiki-space-1) !important;
@@ -1361,6 +1348,11 @@ export default defineComponent({
     width: min(calc(100vw - (var(--wiki-space-4) * 2)), 20rem);
     max-height: min(70dvh, 34rem);
     overflow-y: auto;
+  }
+}
+@media (pointer: coarse) {
+  .nav-header .nav-header-inner .nav-header-browse {
+    min-width: 2.75rem;
   }
 }
 

@@ -1,17 +1,33 @@
 import knexModule, { type Knex } from 'knex'
+import auth, { loadPageRuleAuthority } from '../../core/auth.ts'
+import type pagesOperations from '../../operations/pages.ts'
 import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from '../bun-test.mts'
 
 const database = process.env.WIKI_TEST_POSTGRES_DATABASE ?? '', password = process.env.WIKI_TEST_POSTGRES_PASSWORD
-const connection = database.endsWith('_navigation_test') && password
+const connection = database.endsWith('_page_tree_test') && password
   ? { host: '127.0.0.1', port: Number(process.env.WIKI_TEST_POSTGRES_PORT ?? 5432), user: 'wiki', database, password } : null
 const suite = connection ? describe : describe.skip
 suite('PostgreSQL Browse page access', () => {
-  let db: Knex, operations: typeof import('../../operations/pages.ts').default
+  let db: Knex, operations: typeof pagesOperations
   const originalWiki = globalThis.WIKI
   const requester = { id: 3 } as Express.User
   let readPaths: Set<string>, writePaths: Set<string>, readTags: Set<string>
-  const tables = ['pageTags', 'tags', 'pageTree', 'pages']
-  const tree = (extra = {}) => operations.getTree({ requester, locale: 'en', mode: 'ALL', parent: 0, ...extra })
+  const tables = ['pageTags', 'tags', 'pageTree', 'pages', 'userGroups', 'groups']
+  const syncAuthority = async () => {
+    const pageRules = [
+      ...[...readPaths].map(path => ({ match: 'EXACT', path, deny: false, roles: ['read:pages'], locales: ['en'] })),
+      ...[...writePaths].map(path => ({ match: 'EXACT', path, deny: false, roles: ['write:pages'], locales: ['en'] })),
+      ...[...readTags].map(path => ({ match: 'TAG', path, deny: false, roles: ['read:pages'], locales: ['en'] }))
+    ]
+    await db('groups').where('id', 1).update({
+      permissions: JSON.stringify(['read:pages', 'write:pages']),
+      pageRules: JSON.stringify(pageRules)
+    })
+  }
+  const tree = async (extra = {}) => {
+    await syncAuthority()
+    return operations.getTree({ requester, locale: 'en', mode: 'ALL', parent: 0, ...extra })
+  }
   const seed = async (id: number, path: string, options: Record<string, unknown> = {}) => {
     const { parent = null, ancestors = [], folder = false, page = true, tag, ...pageOptions } = options
     const identity = { path, localeCode: 'en', visibility: 'public', ownerId: null, ...pageOptions }
@@ -32,19 +48,32 @@ suite('PostgreSQL Browse page access', () => {
       t.integer('id').primary(); t.string('path'); t.string('title'); t.string('localeCode'); t.string('visibility'); t.integer('ownerId')
       t.integer('parent'); t.integer('pageId'); t.boolean('isFolder'); t.json('ancestors')
     })
-    await db.schema.createTable('tags', t => { t.integer('id').primary(); t.string('tag') })
+    await db.schema.createTable('groups', t => {
+      t.integer('id').primary(); t.string('name'); t.jsonb('permissions'); t.jsonb('pageRules')
+    })
+    await db.schema.createTable('userGroups', t => {
+      t.integer('userId'); t.integer('groupId')
+    })
+    await db.schema.createTable('tags', t => {
+      t.integer('id').primary(); t.string('tag'); t.integer('redirectToId'); t.boolean('isArchived').notNullable().defaultTo(false)
+    })
     await db.schema.createTable('pageTags', t => { t.integer('pageId'); t.integer('tagId') })
-    const checkAccess = (_user: unknown, permissions: string[], page?: { path: string; tags?: unknown[] }) => {
-      if (!page) return false
-      if (permissions.includes('read:pages')) {
-        return readPaths.has(page.path) || (page.tags ?? []).some(tag => readTags.has(typeof tag === 'string' ? tag : tag !== null && typeof tag === 'object' ? Reflect.get(tag, 'tag') : undefined))
-      }
-      return permissions.includes('write:pages') && writePaths.has(page.path)
-    }
-    const loadPageRuleAuthority = async (requester: unknown) => ({ requester, permissions: [], groups: [], tagAliases: {} })
+    await db('groups').insert({
+      id: 1,
+      name: 'Navigation readers',
+      permissions: JSON.stringify(['read:pages', 'write:pages']),
+      pageRules: JSON.stringify([])
+    })
+    await db('userGroups').insert({ userId: 3, groupId: 1 })
     globalThis.WIKI = {
-      config: { db: { type: 'postgres' }, models: { knex: db } },
-      auth: { checkAccess, checkPageAccess: checkAccess, loadPageRuleAuthority }
+      config: { db: { type: 'postgres' } },
+      configSvc: {},
+      events: {},
+      lang: {},
+      logger: {},
+      startedAt: {},
+      models: { knex: db },
+      auth: { checkAccess: auth.checkAccess, checkPageAccess: auth.checkPageAccess, loadPageRuleAuthority }
     } as never
     operations = (await vi.importFresh('../../operations/pages.ts', import.meta.url)).default
   })
@@ -53,7 +82,7 @@ suite('PostgreSQL Browse page access', () => {
     if (db) { for (const table of tables) await db.schema.dropTableIfExists(table); await db.destroy() }
   })
   beforeEach(async () => {
-    for (const table of tables) await db(table).delete()
+    for (const table of ['pageTags', 'tags', 'pageTree', 'pages']) await db(table).delete()
     readPaths = new Set(); writePaths = new Set(); readTags = new Set()
   })
   it('omits denied page metadata and only includes the current principal’s private pages', async () => {
@@ -67,6 +96,25 @@ suite('PostgreSQL Browse page access', () => {
     expect(rows.find(row => row.path === 'allowed')?.canEdit).toBe(false)
     expect(JSON.stringify(rows)).not.toContain('Private title 2')
     expect(await tree({ path: 'denied', parent: undefined })).toEqual([])
+  })
+  it('uses persisted page rules for authorized roots and ancestors without leaking denied metadata', async () => {
+    await seed(1, 'authorized', { folder: true })
+    await seed(2, 'authorized/hidden', { folder: true, parent: 1, ancestors: [1] })
+    await seed(3, 'authorized/hidden/guide', { parent: 2, ancestors: [1, 2] })
+    await seed(4, 'denied')
+    readPaths.add('authorized'); readPaths.add('authorized/hidden/guide')
+    const root = await tree()
+    expect(root.map(row => row.path)).toEqual(['authorized'])
+    expect(root[0]).toMatchObject({ id: 1, title: 'Private title 1', pageId: 1, isFolder: true })
+    expect(JSON.stringify(root)).not.toContain('Private title 4')
+    const expanded = await tree({ path: 'authorized/hidden/guide', parent: undefined, includeAncestors: true })
+    expect(expanded.map(row => row.id).sort()).toEqual([1, 2, 3])
+    expect(expanded.find(row => row.id === 1)).toMatchObject({ title: 'Private title 1', pageId: 1 })
+    expect(expanded.find(row => row.id === 2)).toMatchObject({
+      path: 'authorized/hidden', title: 'hidden', pageId: null, canEdit: false, isFolder: true
+    })
+    expect(expanded.find(row => row.id === 3)).toMatchObject({ title: 'Private title 3', pageId: 3 })
+    expect(JSON.stringify(expanded)).not.toContain('Private title 2')
   })
   it('keeps folders for exact-path and tag-only grants without leaking denied hybrid page details', async () => {
     await seed(1, 'restricted', { folder: true })

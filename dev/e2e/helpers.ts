@@ -4,26 +4,32 @@ import type { Locator, Page } from '@playwright/test'
 export const adminEmail = 'test@example.com'
 export const adminPassword = 'TestPassword123!'
 
-export async function authenticateAsAdmin(page: Page) {
+export function sameOriginHeaders(): { Origin: string } {
+  const baseUrl = base.info().project.use.baseURL
+  if (typeof baseUrl !== 'string') throw new Error('Playwright base URL is unavailable.')
+  return { Origin: new URL(baseUrl).origin }
+}
+
+export async function authenticateAsAdmin(page: Page): Promise<void> {
   const response = await page.request.post('/_api/auth/login', {
+    headers: sameOriginHeaders(),
     data: {
       strategy: 'local',
       username: adminEmail,
       password: adminPassword
     }
   })
-  expect(response.ok()).toBe(true)
-  const payload = (await response.json()) as { jwt?: string }
-  if (!payload.jwt) throw new Error('Administrator login did not return a JWT')
-  const baseUrl = base.info().project.use.baseURL
-  if (typeof baseUrl !== 'string') throw new Error('Playwright base URL is unavailable.')
-  await page.context().addCookies([
-    {
-      name: 'jwt',
-      value: payload.jwt,
-      url: new URL(response.url(), baseUrl).origin
-    }
-  ])
+  const payload = (await response.json()) as {
+    authenticated?: unknown
+    error?: unknown
+    jwt?: unknown
+  }
+  const apiError = typeof payload.error === 'string' ? payload.error : 'Unknown API error'
+  expect(response.ok(), `Administrator login failed: HTTP ${response.status()} ${apiError}`).toBe(true)
+  if (Object.hasOwn(payload, 'jwt')) {
+    throw new Error('Administrator login returned a JWT instead of setting an HttpOnly cookie.')
+  }
+  expect(payload.authenticated, `Administrator login failed: HTTP ${response.status()} ${apiError}`).toBe(true)
 }
 
 export async function openAuthenticatedPage(page: Page, path: string, readySelector: string) {

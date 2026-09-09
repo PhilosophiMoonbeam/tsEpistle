@@ -5,7 +5,8 @@ import {
   expectResponsiveLayout,
   openAuthenticatedPage,
   openSearch,
-  responsiveTest as test
+  responsiveTest as test,
+  sameOriginHeaders
 } from './helpers.ts'
 
 test.describe('responsive UI quality matrix', () => {
@@ -869,7 +870,7 @@ test.describe('responsive UI quality matrix', () => {
     const accessAcknowledgement = 'I understand that these tag-based access rules will match different pages.'
 
     const createTag = async (tag: string, title: string): Promise<number> => {
-      const response = await page.request.post('/_api/taxonomy', { data: { tag, title } })
+      const response = await page.request.post('/_api/taxonomy', { data: { tag, title }, headers: sameOriginHeaders() })
       expect(response.ok(), `Creating disposable taxonomy tag ${tag}`).toBe(true)
       const payload = (await response.json()) as { id?: unknown }
       expect(typeof payload.id, `Creating disposable taxonomy tag ${tag} returns an id`).toBe('number')
@@ -1091,6 +1092,79 @@ test.describe('responsive UI quality matrix', () => {
     const entrance = page.locator('.nav-header-agent')
     await expectLocatorWithinViewport(entrance, 'Wiki Agent entrance')
     await expect(entrance.locator('.v-icon')).toBeVisible()
+    const viewport = page.viewportSize()
+    expect(viewport).not.toBeNull()
+    if (!viewport) return
+
+    const browse = page.locator('.nav-header-browse:visible').first()
+    await expectLocatorWithinViewport(browse, 'Browse by Tags link')
+    await expect(browse).toHaveAttribute('href', '/t')
+    await expect(browse).toHaveAttribute('aria-label', 'Browse by Tags')
+    await expect(browse.locator('.nav-header-browse-label')).toHaveCount(0)
+    await expect(browse).not.toContainText('Browse by Tags')
+
+    const searchControl = viewport.width < 960
+      ? page.locator('.nav-header-search-toggle:visible').first()
+      : page.locator('.nav-header-search-control input:visible').first()
+    await expect(searchControl).toBeVisible()
+    const actionOrder = await page.locator('.nav-header').evaluate(header => {
+      const isVisible = (element: HTMLElement): boolean => {
+        const style = window.getComputedStyle(element)
+        const bounds = element.getBoundingClientRect()
+        return style.display !== 'none' && style.visibility !== 'hidden' && bounds.width > 0 && bounds.height > 0
+      }
+      return Array.from(
+        header.querySelectorAll<HTMLElement>('.nav-header-search-control input, .nav-header-search-toggle, .nav-header-agent, .nav-header-browse')
+      )
+        .filter(isVisible)
+        .map(element => {
+          if (element.matches('.nav-header-agent')) return 'agent'
+          if (element.matches('.nav-header-browse')) return 'browse'
+          return 'search'
+        })
+    })
+    expect(actionOrder, 'Header actions stay in search, Agent, Browse DOM order').toEqual(['search', 'agent', 'browse'])
+
+    const [searchBounds, agentBounds, browseBounds] = await Promise.all([
+      searchControl.boundingBox(),
+      entrance.boundingBox(),
+      browse.boundingBox()
+    ])
+    expect(searchBounds).not.toBeNull()
+    expect(agentBounds).not.toBeNull()
+    expect(browseBounds).not.toBeNull()
+    if (browseBounds) {
+      expect(Math.abs(browseBounds.width - browseBounds.height), 'Browse tag link remains square').toBeLessThanOrEqual(1)
+    }
+    if (searchBounds && agentBounds && browseBounds) {
+      const actionBounds = [
+        { name: 'search', bounds: searchBounds },
+        { name: 'Agent', bounds: agentBounds },
+        { name: 'Browse', bounds: browseBounds }
+      ]
+      for (let firstIndex = 0; firstIndex < actionBounds.length; firstIndex += 1) {
+        for (let secondIndex = firstIndex + 1; secondIndex < actionBounds.length; secondIndex += 1) {
+          const first = actionBounds[firstIndex]!.bounds
+          const second = actionBounds[secondIndex]!.bounds
+          const overlaps = first.x < second.x + second.width &&
+            second.x < first.x + first.width &&
+            first.y < second.y + second.height &&
+            second.y < first.y + first.height
+          expect(overlaps, `${actionBounds[firstIndex]!.name} and ${actionBounds[secondIndex]!.name} must not overlap`).toBe(false)
+        }
+      }
+    }
+
+    await searchControl.focus()
+    await expect(searchControl).toBeFocused()
+    await searchControl.press('Tab')
+    await expect(entrance).toBeFocused()
+    await entrance.press('Tab')
+    await expect(browse).toBeFocused()
+    if (viewport.width >= 960) {
+      await page.keyboard.press('ControlOrMeta+K')
+      await expect(page.locator('.nav-header-search-control input:visible').first()).toBeVisible()
+    }
     await expect
       .poll(() =>
         page.locator('.nav-header').evaluate(
@@ -1112,9 +1186,6 @@ test.describe('responsive UI quality matrix', () => {
     await expect(agent.getByRole('textbox', { name: 'Message Wiki Agent' })).toBeVisible()
     const historyButton = agent.getByRole('button', { name: 'Open agent conversation history' })
     const mobilePanelButton = agent.getByRole('button', { name: 'Open Agent panels: conversation history and memory' })
-    const viewport = page.viewportSize()
-    expect(viewport).not.toBeNull()
-    if (!viewport) return
     const usesMobilePanelMenu = await mobilePanelButton.isVisible()
     const panelFocusTarget = usesMobilePanelMenu ? mobilePanelButton : historyButton
     const openHistory = async (): Promise<void> => {
@@ -1222,6 +1293,19 @@ test.describe('responsive UI quality matrix', () => {
     await expect(agent).toBeVisible()
     await expectLocatorWithinViewport(agent, 'Wiki Agent panel')
     await expectResponsiveLayout(page, 'Wiki Agent panel')
+    await page.context().clearCookies()
+    await page.goto('/en/home', { waitUntil: 'networkidle' })
+    await expect(page.locator('.page-header-section')).toBeVisible()
+    await expect(page.locator('.nav-header-agent:visible')).toHaveCount(0)
+    const browseWithoutAgent = page.locator('.nav-header-browse:visible').first()
+    await expectLocatorWithinViewport(browseWithoutAgent, 'Browse by Tags link without Wiki Agent')
+    await expect(browseWithoutAgent).toHaveAttribute('href', '/t')
+    await expect(browseWithoutAgent).toHaveAttribute('aria-label', 'Browse by Tags')
+    await browseWithoutAgent.focus()
+    await expect(browseWithoutAgent).toBeFocused()
+    await browseWithoutAgent.press('Enter')
+    await expect(page).toHaveURL('/t')
+    await expect(page.locator('.nav-header-browse:visible').first()).toHaveAttribute('aria-current', 'page')
   })
 
   test('keeps login and not-found surfaces responsive', async ({ page }) => {

@@ -28,11 +28,17 @@ type TagApiOptions = {
   pageResponse?: (selection: string[], locale?: string) => PageApiRow[] | Promise<PageApiRow[]>
 }
 
+const ordinaryTagLabel = 'Ordinary topic'
+const longTagLabel = 'Long editorial vocabulary label for containment geometry'
+const longTagCanonical = 'long-editorial-vocabulary-label-for-containment-geometry'
+
 const tagRows = [
   { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-09-01T12:00:00.000Z', updatedAt: '2026-09-01T12:00:00.000Z' },
   { id: 2, tag: 'beta', title: 'Beta', createdAt: '2026-09-02T12:00:00.000Z', updatedAt: '2026-09-02T12:00:00.000Z' },
   { id: 3, tag: 'untitled-topic', title: null, createdAt: '2026-09-03T12:00:00.000Z', updatedAt: '2026-09-03T12:00:00.000Z' },
-  { id: 4, tag: 'unicode-topic', title: '東京の知識', createdAt: '2026-09-04T12:00:00.000Z', updatedAt: '2026-09-04T12:00:00.000Z' }
+  { id: 4, tag: 'unicode-topic', title: '東京の知識', createdAt: '2026-09-04T12:00:00.000Z', updatedAt: '2026-09-04T12:00:00.000Z' },
+  { id: 5, tag: 'ordinary-topic', title: ordinaryTagLabel, createdAt: '2026-09-05T12:00:00.000Z', updatedAt: '2026-09-05T12:00:00.000Z' },
+  { id: 6, tag: longTagCanonical, title: longTagLabel, createdAt: '2026-09-06T12:00:00.000Z', updatedAt: '2026-09-06T12:00:00.000Z' }
 ]
 
 function pageRow(overrides: Partial<PageApiRow> = {}): PageApiRow {
@@ -122,6 +128,56 @@ async function revealTagButton(page: Page, label: string) {
   }
   await expect(button).toBeVisible()
   return button
+}
+
+async function expectTagIndexGeometry(page: Page, expectedTreeColumns: number, expectedIndexWidth: number | undefined, surface: string) {
+  const geometry = await page.evaluate(({ shortLabel, longLabel }) => {
+    const index = document.querySelector<HTMLElement>('.tags-index')
+    const tree = document.querySelector<HTMLElement>('.tags-index-tree')
+    const items = [...document.querySelectorAll<HTMLElement>('.tags-index-item')]
+    const shortItem = items.find(item => item.getAttribute('aria-label')?.startsWith(shortLabel))
+    const longItem = items.find(item => item.getAttribute('aria-label')?.startsWith(longLabel))
+    const shortLabelElement = shortItem?.querySelector<HTMLElement>('.tags-index-item-label')
+    const longCopy = longItem?.querySelector<HTMLElement>('.tags-index-item-copy')
+    if (!index || !tree || !shortItem || !longItem || !shortLabelElement || !longCopy) return null
+
+    const shortLabelRect = shortLabelElement.getBoundingClientRect()
+    const longItemRect = longItem.getBoundingClientRect()
+    const treeColumns = window.getComputedStyle(tree).gridTemplateColumns.trim().split(/\s+/).filter(Boolean)
+
+    return {
+      treeColumns: treeColumns.length,
+      indexWidth: index.getBoundingClientRect().width,
+      indexRight: index.getBoundingClientRect().right,
+      longItemRight: longItemRect.right,
+      longCopyClientWidth: longCopy.clientWidth,
+      longCopyScrollWidth: longCopy.scrollWidth,
+      shortLabelHeight: shortLabelRect.height,
+      shortLabelLineHeight: Number.parseFloat(window.getComputedStyle(shortLabelElement).lineHeight),
+      shortLabelWidth: shortLabelRect.width,
+      documentWidth: document.documentElement.scrollWidth,
+      viewportWidth: window.innerWidth
+    }
+  }, { shortLabel: ordinaryTagLabel, longLabel: longTagLabel })
+
+  expect(geometry, `${surface} must expose ordinary and long tag item geometry`).not.toBeNull()
+  if (!geometry) throw new Error(`${surface} did not expose ordinary and long tag item geometry.`)
+
+  expect(geometry.treeColumns, `${surface} must use the expected tag index column count`).toBe(expectedTreeColumns)
+  expect(geometry.shortLabelLineHeight, `${surface} must expose a measurable short tag line height`).toBeGreaterThan(0)
+  expect(geometry.shortLabelHeight, `${surface} short labels must not stack glyph-by-glyph`).toBeLessThanOrEqual(
+    geometry.shortLabelLineHeight * 1.5
+  )
+  expect(geometry.longCopyScrollWidth, `${surface} long labels must remain contained in their item`).toBeLessThanOrEqual(
+    geometry.longCopyClientWidth + 1
+  )
+  expect(geometry.longItemRight, `${surface} long labels must remain inside the tag index rail`).toBeLessThanOrEqual(geometry.indexRight + 1)
+  expect(geometry.documentWidth, `${surface} must not overflow its viewport`).toBeLessThanOrEqual(geometry.viewportWidth + 1)
+
+  if (expectedIndexWidth !== undefined) {
+    expect(geometry.indexWidth, `${surface} must preserve the 280px tag index rail`).toBeGreaterThanOrEqual(expectedIndexWidth - 1)
+    expect(geometry.indexWidth, `${surface} must preserve the 280px tag index rail`).toBeLessThanOrEqual(expectedIndexWidth + 1)
+  }
 }
 
 async function openTags(page: Page, path = '/t', options: TagApiOptions = {}) {
@@ -350,6 +406,37 @@ test('public tag library supports local filtering, AND selection, and mobile res
   await page.getByRole('button', { name: /^clear selection$/i }).click()
   await expect(page).toHaveURL(/\/t(?:\?|$)/)
   await expectResponsiveLayout(page, 'public tag library')
+})
+
+test('public tag index keeps selected desktop labels readable and contained', async ({ page }) => {
+  await openTags(page)
+
+  await page.setViewportSize({ width: 1024, height: 900 })
+  await expect(await revealTagButton(page, ordinaryTagLabel)).toBeVisible()
+  await expectTagIndexGeometry(page, 2, undefined, 'unselected tag index at 1024px')
+
+  const ordinary = tagButton(page, ordinaryTagLabel)
+  await ordinary.click()
+  await expect(ordinary).toHaveAttribute('aria-pressed', 'true')
+  await expect(page).toHaveURL(/\/t\/ordinary-topic(?:$|[?#])/)
+  await expectTagIndexGeometry(page, 1, 280, 'selected tag index at 1024px')
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.getByRole('heading', { name: /tags/i }).first()).toBeVisible()
+  const reloadedOrdinary = await revealTagButton(page, ordinaryTagLabel)
+  await expect(reloadedOrdinary).toHaveAttribute('aria-pressed', 'true')
+  await expectTagIndexGeometry(page, 1, 280, 'reloaded selected tag index at 1024px')
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await expectTagIndexGeometry(page, 1, 280, 'selected tag index at 1440px')
+
+  await page.locator('.tags-clear-selection').click()
+  await expect(page).toHaveURL(/\/t(?:\?|$)/)
+  await expect(await revealTagButton(page, ordinaryTagLabel)).toBeVisible()
+  await expectTagIndexGeometry(page, 3, undefined, 'cleared tag index at 1440px')
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expectResponsiveLayout(page, 'mobile tag label containment')
 })
 
 test('public tag library omits locale filtering when locale namespacing is disabled', async ({ page }) => {

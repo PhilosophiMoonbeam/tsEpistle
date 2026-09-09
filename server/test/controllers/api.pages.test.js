@@ -761,13 +761,15 @@ describe('controllers/api pages endpoints', () => {
     pageTreeAccess.mockResolvedValue({ readable: new Set([1]), editable: new Set([1]), reachable: new Set() })
     const { tree } = await loadHandler()
     const req = { query: { locale: 'en', mode: 'ALL', parent: '0' }, user: { id: 1 } }
-    const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
     const next = vi.fn()
 
     await tree(req, res, next)
 
     expect(next).not.toHaveBeenCalled()
     expect(res.status).not.toHaveBeenCalled()
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
     expect(res.json).toHaveBeenCalledWith([{
       ...rows[0],
       isFolder: false,
@@ -782,12 +784,30 @@ describe('controllers/api pages endpoints', () => {
   it('rejects invalid Browse scope before running a tree query', async () => {
     const { tree } = await loadHandler()
     for (const query of [{ locale: 'en', parent: '-1' }, { locale: 'en', mode: 'SECRET' }, { locale: 'en', visibility: 'everyone' }]) {
-      const res = { json: vi.fn(), status: vi.fn().mockReturnThis() }, next = vi.fn()
+      const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }, next = vi.fn()
       await tree({ query, user: { id: 1 } }, res, next)
       expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+      expect(res.vary).toHaveBeenCalledWith('Cookie')
       expect(next).not.toHaveBeenCalled()
     }
     expect(pageTreeAccess).not.toHaveBeenCalled()
+  })
+  it('keeps private tree headers when the Browse operation fails', async () => {
+    const failure = new Error('Browse backend unavailable')
+    const transaction = Object.assign(vi.fn(), { commit: vi.fn(), rollback: vi.fn() })
+    global.WIKI.models.knex.transaction = vi.fn().mockResolvedValue(transaction)
+    pageTreeAccess.mockReset().mockRejectedValueOnce(failure)
+    const { tree } = await loadHandler()
+    const req = { query: { locale: 'en', mode: 'ALL', parent: '0' }, user: { id: 1 } }
+    const res = { json: vi.fn(), set: vi.fn().mockReturnThis(), status: vi.fn().mockReturnThis(), vary: vi.fn().mockReturnThis() }
+    const next = vi.fn()
+
+    await tree(req, res, next)
+
+    expect(next).toHaveBeenCalledWith(failure)
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
   })
 
 

@@ -483,6 +483,8 @@ router.get('/search', async (req, res, next) => {
 })
 
 router.get('/tree', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
   const visibility = req.query.visibility
   if (visibility !== undefined && visibility !== 'public' && visibility !== 'private')
     return res.status(400).json({ error: 'visibility must be public or private' })

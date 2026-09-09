@@ -1180,6 +1180,12 @@ export default {
   }
 }
 
+@media (min-width: 960px) {
+  .tags-workspace--selected .tags-index-tree {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 959.98px) {
   .tags-shell {
     padding: var(--wiki-space-6) var(--wiki-space-4) var(--wiki-space-8) !important;
