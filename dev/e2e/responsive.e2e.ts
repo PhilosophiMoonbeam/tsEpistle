@@ -1600,6 +1600,144 @@ test.describe('responsive UI quality matrix', () => {
   })
 })
 
+test.describe('reader metadata rendering', () => {
+  test.use({ locale: 'en-US', timezoneId: 'UTC' })
+  test('renders deterministic dates and literal authors on initial and SPA reader loads', async ({ page }) => {
+    test.setTimeout(60_000)
+    const updatedAt = '2000-02-03T12:00:00.000Z'
+    const expectedDateText = 'Updated 02/03/2000'
+    const expectedDateTitle = 'Thursday, February 3, 2000 12:00 PM'
+    const authorName = '<strong data-e2e-author-markup="true">Ada</strong> & "quoted"'
+    const encoded = (value: unknown): string => Buffer.from(JSON.stringify(value), 'utf8').toString('base64')
+    const fixturePayload = {
+      version: 1,
+      spaNavigation: true,
+      props: {
+        pageId: 9001,
+        locale: 'en',
+        path: 'reader-metadata-fixture',
+        title: 'Reader metadata fixture',
+        description: 'A deterministic reader metadata fixture.',
+        createdAt: updatedAt,
+        updatedAt,
+        sourceRevision: 'reader-metadata-fixture',
+        tags: [],
+        authorName,
+        authorId: 42,
+        editor: 'markdown',
+        isPublished: true,
+        visibility: 'public',
+        toc: encoded([]),
+        sidebar: encoded([]),
+        navMode: 'NONE',
+        navExpandParent: true,
+        commentsEnabled: false,
+        effectivePermissions: encoded({
+          comments: { read: false, write: false, manage: false },
+          history: { read: true },
+          source: { read: false },
+          pages: { write: false, manage: false, delete: false, script: false, style: false },
+          system: { manage: false }
+        }),
+        commentsExternal: false,
+        editShortcuts: encoded({
+          editFab: false,
+          editMenuBar: false,
+          editMenuBtn: false,
+          editMenuExternalBtn: false,
+          editMenuExternalName: '',
+          editMenuExternalIcon: '',
+          editMenuExternalUrl: ''
+        }),
+        filename: 'en/reader-metadata-fixture.md',
+        branding: null
+      }
+    }
+
+    await page.route('**/*', async route => {
+      const request = route.request()
+      const isDocumentNavigation = request.resourceType() === 'document' && request.isNavigationRequest()
+      const isSpaNavigation = request.method() === 'GET' && request.headers()['x-wiki-navigation'] === '1'
+      if (!isDocumentNavigation && !isSpaNavigation) {
+        await route.continue()
+        return
+      }
+
+      const response = await route.fetch()
+      const document = await response.text()
+      const payloadAttribute = /(<wiki-page\b[^>]*\bpayload=)(["'])([^"']+)\2/u
+      const match = payloadAttribute.exec(document)
+      if (!match) {
+        await route.fulfill({ response, body: document })
+        return
+      }
+
+      const fixture = Buffer.from(JSON.stringify(fixturePayload), 'utf8').toString('base64')
+      const patchedDocument =
+        document.slice(0, match.index) +
+        `${match[1]}${match[2]}${fixture}${match[2]}` +
+        document.slice(match.index + match[0].length)
+      await route.fulfill({ response, body: patchedDocument })
+    })
+
+    const expectReaderMetadata = async (): Promise<void> => {
+      const date = page.locator('.page-document-row--date time')
+      await expect(date).toHaveText(new RegExp(`^${expectedDateText}$`))
+      await expect(date).toHaveAttribute('datetime', updatedAt)
+      await expect(date).toHaveAttribute('title', expectedDateTitle)
+
+      const author = page.locator('bdi.page-provenance-author')
+      await expect(author).toHaveText(new RegExp(`^${authorName}$`))
+      await expect(author.locator('*')).toHaveCount(0)
+    }
+
+    await page.goto('/home', { waitUntil: 'networkidle' })
+    await page.locator('.page-header-section').waitFor({ state: 'visible', timeout: 15_000 })
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+    await expectReaderMetadata()
+
+    const logo = page.locator('.nav-header-logo:visible').first()
+    await expect(logo).toBeVisible()
+    const logoHref = await logo.getAttribute('href')
+    expect(logoHref).not.toBeNull()
+    if (!logoHref) throw new Error('Reader home logo does not expose a destination.')
+    const currentUrl = new URL(page.url())
+    const destination = new URL(logoHref, currentUrl)
+    expect(destination.pathname).not.toBe(currentUrl.pathname)
+
+    const spaNavigationResponse = page.waitForResponse(response => {
+      const request = response.request()
+      return (
+        request.method() === 'GET' &&
+        request.headers()['x-wiki-navigation'] === '1' &&
+        response.url() === destination.href &&
+        response.headers()['x-wiki-page'] === '1' &&
+        response.ok()
+      )
+    })
+    const navigationEvent = page.evaluate(
+      () =>
+        new Promise<string>(resolve => {
+          window.addEventListener(
+            'wiki:navigation',
+            event => {
+              const detail = (event as CustomEvent<{ url?: unknown }>).detail
+              resolve(typeof detail?.url === 'string' ? detail.url : '')
+            },
+            { once: true }
+          )
+        })
+    )
+    await logo.click()
+    const navigationResponse = await spaNavigationResponse
+    await navigationResponse.finished()
+    const navigationUrl = await navigationEvent
+    expect(navigationUrl).toBe(destination.href)
+    await expect(page).toHaveURL(destination.href)
+    await expectReaderMetadata()
+  })
+})
+
 test.describe('focused reading', () => {
   test('keeps the document and search reachable while returning keyboard focus to the reader control', async ({ page }) => {
     await page.goto('/', { waitUntil: 'networkidle' })

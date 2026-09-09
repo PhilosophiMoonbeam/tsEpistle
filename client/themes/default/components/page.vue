@@ -116,7 +116,7 @@
                           density='compact'
                         )
                       span {{ $t('common:page.viewHistory') }}
-                    time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt }) }}
+                    time(:datetime='updatedAt', :title='accessibleUpdatedAt') {{ $t('common:page.updatedAt', { date: formattedUpdatedAt, interpolation: { escapeValue: false } }) }}
                   .page-document-row.page-document-row--author(v-if='hasAuthor')
                     span.page-document-author
                       | {{ $t('common:page.byAuthor', { author: '' }) }}
