@@ -36,8 +36,8 @@
           //-   span {{$t('profile:viewPublicProfile')}}
       v-col(lg='6' cols='12')
         v-card.animated.fadeInUp
-          v-toolbar(color='blue-grey', density="compact", flat)
-            v-toolbar-title.text-body-large(tag='h2') {{$t('profile:myInfo')}}
+          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
+            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:myInfo')}}
           v-list(lines="two", density="compact")
             v-list-item
               template(v-slot:prepend)
@@ -130,8 +130,8 @@
                     )
 
         v-card.mt-3.animated.fadeInUp.wait-p2s
-          v-toolbar(color='blue-grey', density="compact", flat)
-            v-toolbar-title.text-body-large(tag='h2') {{$t('profile:auth.title')}}
+          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
+            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:auth.title')}}
           v-card-text.pt-0
             v-list-subheader.pl-0: span.text-label-large {{$t('profile:auth.provider')}}
             v-toolbar.profile-auth-provider(
@@ -235,7 +235,7 @@
               span {{$t('profile:auth.changePassword')}}
       v-col(lg='6' cols='12')
         //- v-card
-        //-   v-toolbar.text-white(color='blue-grey', density='compact', flat)
+        //-   v-toolbar(color='surface-variant', density='compact', flat, class='border-b')
         //-     v-toolbar-title
         //-       .text-body-large Picture
         //-   v-card-title
@@ -246,8 +246,8 @@
         //-     v-btn.mx-4(variant='outlined') Upload Picture
         //-     v-btn(variant='outlined', disabled) Remove Picture
         v-card.animated.fadeInUp.wait-p2s
-          v-toolbar(color='blue-grey', density="compact", flat)
-            v-toolbar-title.text-body-large(tag='h2') {{$t('profile:preferences')}}
+          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
+            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:preferences')}}
           v-list(lines="two", density="compact")
             v-list-item
               template(v-slot:prepend)
@@ -394,8 +394,8 @@
               v-list-item-title.text-body-medium.text-medium-emphasis {{ $t('profile:groups.empty', { defaultValue: 'No groups assigned' }) }}
 
         v-card.mt-3.animated.fadeInUp.wait-p4s
-          v-toolbar(color='teal', density="compact", flat)
-            v-toolbar-title.text-body-large(tag='h2') {{$t('profile:activity.title')}}
+          v-toolbar(color='surface-variant', density="compact", flat, class='border-b')
+            v-toolbar-title.text-title-medium(tag='h2') {{$t('profile:activity.title')}}
           v-card-text.text-grey-darken-2
             .text-body-small.text-grey {{$t('profile:activity.joinedOn')}}
             .text-body-medium: strong {{ $helpers.formatMoment(user.createdAt, 'LLLL') }}

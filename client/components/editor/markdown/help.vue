@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-markdown-help.animated.fadeInLeft(flat, rounded='0', role='region', aria-labelledby='markdown-help-title', tabindex='0')
+  v-card.editor-markdown-help.animated.fadeInLeft(flat, rounded='xl', role='region', aria-labelledby='markdown-help-title', tabindex='0')
     v-container.pa-3(fluid)
       v-row
         v-col(cols='12', lg='6', xl='4')
@@ -418,24 +418,21 @@ export default {
   .editor-markdown-help {
     left: 0;
     width: 100%;
-  }
-}
 
-@media (max-width: 599.98px) {
-  .editor-markdown-help .v-card .v-card-text > .v-row {
-    flex-direction: column;
-    margin: 0;
+    .v-card .v-card-text > .v-row {
+      flex-direction: column;
+      gap: var(--wiki-space-2, 8px);
 
-    > .v-col {
-      flex: 0 0 100%;
-      max-width: 100%;
-      padding: 4px 0;
-    }
+      > .v-col {
+        flex: 0 0 100%;
+        max-width: 100%;
+      }
 
-    > .v-icon {
-      align-self: center;
-      transform: rotate(90deg);
-      margin: 2px 0;
+      > .v-icon {
+        align-self: center;
+        transform: rotate(90deg);
+        margin: 2px 0;
+      }
     }
   }
 }

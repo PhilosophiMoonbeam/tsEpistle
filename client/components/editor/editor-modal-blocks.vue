@@ -1,7 +1,7 @@
 <template lang='pug'>
-v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='content-extension-title', @update:model-value='close'): v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='0')
+v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='content-extension-title', @update:model-value='close'): v-card.editor-modal-blocks.animated.fadeInLeft(flat, rounded='xl')
   v-toolbar(color="grey-darken-4", flat)
-    v-icon.mr-3(color="teal-lighten-2") {{activeStatus?.icon || 'mdi-shape-outline'}}
+    v-icon.mr-3(color="secondary") {{activeStatus?.icon || 'mdi-shape-outline'}}
     v-toolbar-title#content-extension-title Insert content extension
     v-spacer
     v-btn(icon, aria-label='Close content extension dialog', @click='close')
@@ -12,7 +12,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
         v-skeleton-loader(v-if='isLoading', type='heading, paragraph, paragraph, actions')
         template(v-else-if='loadError')
           v-alert.mb-4(type='error', variant='tonal') {{loadError}}
-          v-btn(color='teal', @click='loadExtensions') Retry
+          v-btn(color='primary', @click='loadExtensions') Retry
         template(v-else)
           v-select.mb-5(
             v-model='selectedKey'
@@ -29,7 +29,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
             v-card-title.d-flex.align-center
               span {{activeStatus.title}}
               v-spacer
-              v-chip(color='teal', variant='outlined', size='small') Version {{activeStatus.version}}
+              v-chip(color='primary', variant='tonal', size='small') Version {{activeStatus.version}}
             v-card-subtitle {{activeStatus.description}}
             v-card-text
               v-form(@submit.prevent='insertExtension')
@@ -410,7 +410,7 @@ v-dialog.editor-modal-blocks-dialog(:model-value='true', fullscreen, scrollable,
                 v-alert.mt-4(v-if='submitError', type='error', variant='tonal', density='compact') {{submitError}}
                 .editor-modal-blocks-actions
                   v-btn.mr-3(variant="text", @click='close') Cancel
-                  v-btn(color='teal', type='submit', :disabled='!canSubmit || !canInsertActive')
+                  v-btn(color='primary', type='submit', :disabled='!canSubmit || !canInsertActive')
                     v-icon(start) mdi-plus
                     | Insert {{activeStatus.title}}
 

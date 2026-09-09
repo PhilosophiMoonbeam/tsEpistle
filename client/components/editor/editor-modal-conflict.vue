@@ -1,13 +1,13 @@
 <template lang='pug'>
   v-dialog.editor-modal-conflict-dialog(:model-value='true', fullscreen, scrollable, aria-labelledby='editor-conflict-title', @update:model-value='onDialogModelUpdate')
-    v-card.editor-modal-conflict.animated.fadeIn(flat, rounded='0', :aria-busy='isLoading')
+    v-card.editor-modal-conflict.animated.fadeIn(flat, rounded='xl', :aria-busy='isLoading')
       .editor-modal-conflict-header
-        v-toolbar.radius-7(flat, color='indigo', style='border-bottom-left-radius: 0; border-bottom-right-radius: 0;')
-          v-icon.mr-3 mdi-merge
+        v-toolbar(flat, color='surface', class='border-b')
+          v-icon.mr-3(color='primary') mdi-merge
           .text-body-large#editor-conflict-title {{$t('editor:conflict.title')}}
           v-spacer
-          v-progress-circular(v-if='isLoading', indeterminate, size='20', width='2', color='white', aria-label='Loading latest version')
-          v-btn(variant="outlined", color="indigo-lighten-4", @click='requestClose')
+          v-progress-circular(v-if='isLoading', indeterminate, size='20', width='2', color='primary', aria-label='Loading latest version')
+          v-btn(variant="outlined", color="primary", @click='requestClose')
             v-icon(start) mdi-close
             span {{$t('common:actions.cancel')}}
       template(v-if='isLoading')
@@ -17,7 +17,7 @@
         v-alert.ma-6(type='error', variant='tonal', role='alert') {{loadError}}
         .editor-modal-conflict-actions
           v-btn(variant='text', @click='requestClose') {{$t('common:actions.cancel')}}
-          v-btn(color='indigo', @click='loadConflict') Retry
+          v-btn(color='primary', @click='loadConflict') Retry
       template(v-else)
         .editor-modal-conflict-legend
           .editor-modal-conflict-legend-current
@@ -40,7 +40,7 @@
           div(ref='cm')
         .editor-modal-conflict-actions
           v-btn(variant="text", @click='requestClose') {{$t('common:actions.cancel')}}
-          v-btn(variant="outlined", color='indigo', :disabled='!cm || !latestLoaded', @click='useLocal')
+          v-btn(variant="outlined", color='primary', :disabled='!cm || !latestLoaded', @click='useLocal')
             v-icon(start) mdi-check
             span {{$t('editor:conflict.useLocal')}}
           v-dialog(
@@ -52,8 +52,8 @@
           )
             template(v-slot:activator='{ props }')
               v-btn(
-                variant="flat"
-                color='indigo'
+                variant="tonal"
+                color='warning'
                 v-bind='props'
                 :disabled='!cm || !latestLoaded'
                 :title='$t(`editor:conflict.useRemoteHint`)'
@@ -61,7 +61,7 @@
                 v-icon(start) mdi-check
                 span {{$t('editor:conflict.useRemote')}}
             v-card
-              .dialog-header.is-short.is-indigo
+              .dialog-header.is-short.is-orange
                 v-icon.mr-3(color='white') mdi-alpha-r-box
                 span#editor-conflict-overwrite-title {{$t('editor:conflict.overwrite.title')}}
               v-card-text.pa-4#editor-conflict-overwrite-description
@@ -69,10 +69,10 @@
                   strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
               v-card-chin
                 v-spacer
-                v-btn(variant="outlined", color='indigo', @click='isRemoteConfirmDiagShown = false')
+                v-btn(variant="outlined", color='primary', @click='isRemoteConfirmDiagShown = false')
                   v-icon(start) mdi-close
                   span {{$t('common:actions.cancel')}}
-                v-btn(@click='useRemote', color='indigo')
+                v-btn(@click='useRemote', color='warning', variant='flat')
                   v-icon(start) mdi-check
                   span {{$t('common:actions.confirm')}}
           v-dialog(
@@ -91,7 +91,7 @@
                 | Your editable merge has changed. Closing now will discard those edits.
               v-card-chin
                 v-spacer
-                v-btn(variant='outlined', color='indigo', @click='keepEditing') Keep editing
+                v-btn(variant='outlined', color='primary', @click='keepEditing') Keep editing
                 v-btn(color='red', @click='discardMergeEdits') Discard merge edits
 </template>
 <script lang='ts'>
@@ -353,18 +353,22 @@ export default defineComponent({
     color: rgb(var(--v-theme-on-secondary));
   }
 
-  &-meta-local,
+  &-meta-local {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 16px;
+    color: rgb(var(--v-theme-on-surface));
+    background: rgba(var(--v-theme-surface-variant), .35);
+  }
+
   &-meta-remote {
     display: flex;
     flex-direction: column;
     gap: 4px;
     padding: 12px 16px;
-    color: mc('grey', '800');
-    background: mc('grey', '200');
-  }
-
-  &-meta-remote {
-    background: mc('grey', '300');
+    color: rgb(var(--v-theme-on-surface));
+    background: rgba(var(--v-theme-surface-variant), .6);
   }
 
   &-editor {
@@ -372,7 +376,7 @@ export default defineComponent({
     min-height: 0;
     overflow: hidden;
     padding: 0 16px;
-    background: mc('grey', '900');
+    background: rgb(var(--v-theme-surface));
     > div {
       height: 100%;
     }
@@ -385,7 +389,8 @@ export default defineComponent({
     gap: 12px;
     padding: 12px 16px;
     flex: 0 0 auto;
-    background: mc('grey', '900');
+    background: rgb(var(--v-theme-surface));
+    border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   }
 
   @include until($tablet) {

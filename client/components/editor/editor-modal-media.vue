@@ -1,5 +1,5 @@
 <template lang='pug'>
-  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='0', :class='[`is-editor-${editorKey}`, { "is-editor-embedded": embedded, "is-page-branding": isBranding }]', :role='embedded ? undefined : `dialog`', :aria-modal='embedded ? undefined : `true`', aria-labelledby='editor-media-title', tabindex='-1')
+  v-card.editor-modal-media.animated.fadeInLeft(flat, rounded='xl', :class='[`is-editor-${editorKey}`, { "is-editor-embedded": embedded, "is-page-branding": isBranding }]', :role='embedded ? undefined : `dialog`', :aria-modal='embedded ? undefined : `true`', aria-labelledby='editor-media-title', tabindex='-1')
     .editor-media-layout
       section.editor-media-browser(aria-labelledby='editor-media-title')
         v-card.editor-media-panel.radius-7.animated.fadeInLeft.wait-p1s
@@ -50,7 +50,7 @@
             .editor-media-folders(v-if='folders.length > 0 || currentFolderId > 0')
               v-btn.editor-media-icon-button(variant="outlined", icon, aria-label='Open parent folder', @click='upFolder()', :disabled='currentFolderId === 0')
                 v-icon mdi-folder-upload
-              v-btn.editor-media-folder.btn-normalcase(v-for='folder of folders', :key='folder.id', variant="tonal", color="primary", @click='downFolder(folder)')
+              v-btn.editor-media-folder(v-for='folder of folders', :key='folder.id', variant="tonal", color="primary", @click='downFolder(folder)')
                 v-icon(start) mdi-folder
                 span.text-body-small {{ folder.name }}
             v-alert.editor-media-branding-notice.mb-3(v-if='isBranding', type='info', variant='tonal', density='compact')
@@ -98,7 +98,7 @@
                       @update:model-value='setActionMenu(props.item.id, $event)'
                     )
                       template(v-slot:activator='{ props: menuProps }')
-                        v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='0', size="small", :aria-label='`Asset actions for ${props.item.filename}`', :data-editor-media-asset-actions='props.item.id')
+                        v-btn.editor-media-icon-button(icon, v-bind='menuProps', rounded='lg', size="small", :aria-label='`Asset actions for ${props.item.filename}`', :data-editor-media-asset-actions='props.item.id')
                           v-icon mdi-dots-horizontal
                       v-list(nav)
                         //- v-list-item(@click='', disabled)
@@ -125,7 +125,7 @@
                         v-list-item(@click='openRenameDialog(props.item.id)')
                           template(v-slot:prepend)
                             v-avatar(size='24')
-                              v-icon(color='orange') mdi-keyboard-outline
+                              v-icon(color='warning') mdi-keyboard-outline
                           v-list-item-title {{$t('common:actions.rename')}}
                         //- v-list-item(@click='', disabled)
                         //-   template(v-slot:prepend)
@@ -138,7 +138,7 @@
                               v-icon(color='red') mdi-file-hidden
                           v-list-item-title {{$t('common:actions.delete')}}
               template(v-slot:no-data)
-                v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='teal') {{$t('editor:assets.folderEmpty')}}
+                v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='primary') {{$t('editor:assets.folderEmpty')}}
             v-alert.mt-3(v-if='isBranding && currentFileId !== null && brandingLoading', type='info', variant='tonal', density='compact')
               .text-body-small Validating the selected image…
             v-alert.mt-3(v-else-if='isBranding && brandingLoadError', type='warning', variant='tonal', density='compact', role='alert')
@@ -232,7 +232,7 @@
         v-card-chin
           v-spacer
           v-btn(variant="text", @click='renameDialog = false', :disabled='renameAssetLoading') {{$t('common:actions.cancel')}}
-          v-btn.px-3(color="orange-darken-3", @click='renameAsset', :loading='renameAssetLoading', :disabled='renameAssetLoading || !isRenameValid').text-white {{$t('common:actions.rename')}}
+          v-btn.px-3(color="warning", variant="flat", @click='renameAsset', :loading='renameAssetLoading', :disabled='renameAssetLoading || !isRenameValid') {{$t('common:actions.rename')}}
 
     //- DELETE DIALOG
 

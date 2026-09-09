@@ -143,7 +143,7 @@
           <section class="skill-form-section">
             <div class="skill-form-section__heading"><span><v-icon size="19">mdi-file-search-outline</v-icon></span><div><h3>Choose a source page</h3><p>Search unmapped Markdown pages directly inside the skill namespace.</p></div></div>
             <v-autocomplete v-model="selectedSource" v-model:search="sourceQuery" :items="sourcePages" item-title="title" item-value="id" return-object no-filter clearable label="Root page" :loading="sourcesLoading" :error-messages="sourcesError" :hint="sourceNamespace ? `Create source pages inside ${sourceNamespace}/` : 'Select a page to fill its name and source references.'" persistent-hint @update:model-value="selectSource">
-              <template #item="{ props: itemProps, item }"><v-list-item v-bind="itemProps" :title="item.title" :subtitle="`${item.locale}/${item.path}`" /></template>
+              <template #item="{ props: itemProps, internalItem }"><v-list-item v-bind="itemProps" :title="internalItem.raw.title" :subtitle="`${internalItem.raw.locale}/${internalItem.raw.path}`" /></template>
               <template #no-data><v-list-item :title="sourcesLoading ? 'Finding source pages…' : 'No unmapped sources found'" subtitle="Create a Markdown page in the skill namespace, or search by its title or path." /></template>
             </v-autocomplete>
             <p v-if="sourcesHaveMore" class="skill-source-note">Showing the first 20 matches. Refine your search to find another page.</p>

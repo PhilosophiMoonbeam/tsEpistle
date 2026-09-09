@@ -36,20 +36,22 @@
 import { computed } from 'vue'
 import type { LoggingSecretChange } from '../../../shared/logging-workspace.ts'
 
-const props = withDefaults(
-  defineProps<{
-    stored: boolean
-    label: string
-    hint?: string | null
-    disabled?: boolean
-  }>(),
-  { hint: null, disabled: false }
-)
+const {
+  stored,
+  label,
+  hint = null,
+  disabled = false
+} = defineProps<{
+  stored: boolean
+  label: string
+  hint?: string | null
+  disabled?: boolean
+}>()
 const model = defineModel<LoggingSecretChange>({ required: true })
 const actions = computed(() => [
-  { title: props.stored ? 'Keep stored value' : 'Keep empty', value: 'keep' },
+  { title: stored ? 'Keep stored value' : 'Keep empty', value: 'keep' },
   { title: 'Replace', value: 'replace' },
-  ...(props.stored ? [{ title: 'Clear stored value', value: 'clear' }] : [])
+  ...(stored ? [{ title: 'Clear stored value', value: 'clear' }] : [])
 ])
 const setAction = (value: unknown) => {
   if (value === 'replace') {

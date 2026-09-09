@@ -81,8 +81,7 @@ const vuetify = createVuetify({
       variant: 'flat'
     },
     VBtn: {
-      elevation: 0,
-      class: 'text-none'
+      elevation: 0
     },
     VTextField: {
       baseColor: 'on-surface',

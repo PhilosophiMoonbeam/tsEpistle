@@ -147,8 +147,7 @@
                       icon
                       v-bind='mergeProps(menuProps, tooltipProps)'
                       :class='$vuetify.locale.isRtl ? `ml-3` : ``'
-                      rounded='0'
-                      height='64'
+                      rounded='lg'
                       :aria-label='$t(`common:header.language`)'
                       )
                       v-icon mdi-web
@@ -158,7 +157,6 @@
                   v-list-item(role='button', link, :aria-current='lc.code === locale ? `true` : undefined', @click='changeLocale(lc)')
                     template(v-slot:append): v-chip(:color='lc.code === locale ? `primary` : `grey`', size="small", label) {{lc.code.toUpperCase()}}
                     v-list-item-title {{lc.name}}
-            v-divider(vertical)
 
           //- PAGE ACTIONS
 
@@ -170,8 +168,7 @@
                     v-btn(
                       icon
                       v-bind='mergeProps(menuProps, tooltipProps)'
-                      rounded='0'
-                      height='64'
+                      rounded='lg'
                       :aria-label='$t(`common:header.pageActions`)'
                       )
                       v-icon mdi-file-document-edit-outline
@@ -179,58 +176,48 @@
               v-list.nav-header-menu.page-actions-menu(ref='pageActionsMenu' nav)
                 .text-label-small.pa-4.text-grey {{$t('common:header.currentPage')}}
                 v-list-item.pl-4(role='button', link, @click='pageView', v-if='mode !== `view`')
-                  template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-file-document-outline
+                  template(v-slot:prepend): v-icon(color='primary') mdi-file-document-outline
                   v-list-item-title.text-body-medium {{$t('common:header.view')}}
                 v-list-item.pl-4(role='button', link, @click='pageEdit', v-if='mode !== `edit` && hasWritePagesPermission')
-                  template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-file-document-edit-outline
+                  template(v-slot:prepend): v-icon(color='primary') mdi-file-document-edit-outline
                   v-list-item-title.text-body-medium {{$t('common:header.edit')}}
                 v-list-item.pl-4(role='button', link, @click='pageHistory', v-if='mode !== `history` && hasReadHistoryPermission')
-                  template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-history
+                  template(v-slot:prepend): v-icon(color='primary') mdi-history
                   v-list-item-title.text-body-medium {{$t('common:header.history')}}
                 v-list-item.pl-4(role='button', link, @click='pageSource', v-if='mode !== `source` && hasReadSourcePermission')
-                  template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-code-tags
+                  template(v-slot:prepend): v-icon(color='primary') mdi-code-tags
                   v-list-item-title.text-body-medium {{$t('common:header.viewSource')}}
                 v-list-item.pl-4(role='button', link, @click='pageConvert', v-if='hasWritePagesPermission')
-                  template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-lightning-bolt
+                  template(v-slot:prepend): v-icon(color='primary') mdi-lightning-bolt
                   v-list-item-title.text-body-medium {{$t('common:header.convert')}}
                 v-list-item.pl-4(role='button', link, @click='pageDuplicate', v-if='hasWritePagesPermission')
-                  template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-content-duplicate
+                  template(v-slot:prepend): v-icon(color='primary') mdi-content-duplicate
                   v-list-item-title.text-body-medium {{$t('common:header.duplicate')}}
                 v-list-item.pl-4(role='button', link, @click='pageMove', v-if='hasManagePagesPermission')
-                  template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='primary') mdi-content-save-move-outline
+                  template(v-slot:prepend): v-icon(color='primary') mdi-content-save-move-outline
                   v-list-item-title.text-body-medium {{$t('common:header.move')}}
                 v-list-item.pl-4(role='button', link, @click='pageDelete', v-if='hasDeletePagesPermission')
-                  template(v-slot:prepend)
-                    v-avatar(size='24', rounded='0'): v-icon(color='error') mdi-trash-can-outline
+                  template(v-slot:prepend): v-icon(color='error') mdi-trash-can-outline
                   v-list-item-title.text-body-medium {{$t('common:header.delete')}}
-            v-divider(vertical)
 
           //- NEW PAGE
 
           template(v-if='hasNewPagePermission && path && mode !== `edit` && $vuetify.display.mdAndUp')
             v-tooltip(location="bottom")
               template(v-slot:activator='{ props }')
-                v-btn(icon, rounded='0', height='64', v-bind='props', @click='pageNew', :aria-label='$t(`common:header.newPage`)')
+                v-btn(icon, rounded='lg', v-bind='props', @click='pageNew', :aria-label='$t(`common:header.newPage`)')
                   v-icon mdi-text-box-plus-outline
               span {{$t('common:header.newPage')}}
-            v-divider(vertical)
 
           //- ADMIN
 
           template(v-if='isAuthenticated && isAdmin && $vuetify.display.mdAndUp')
             v-tooltip(location="bottom", v-if='mode !== `admin`')
               template(v-slot:activator='{ props }')
-                v-btn(icon, rounded='0', height='64', v-bind='props', href='/a', :aria-label='$t(`common:header.admin`)')
+                v-btn(icon, rounded='lg', v-bind='props', href='/a', :aria-label='$t(`common:header.admin`)')
                   v-icon mdi-cog
               span {{$t('common:header.admin')}}
-            v-btn(v-else, variant="text", rounded='0', height='64', href='/', :aria-label='$t(`common:actions.exit`)')
+            v-btn(v-else, variant="text", rounded='lg', href='/', :aria-label='$t(`common:actions.exit`)')
               v-icon(start) mdi-exit-to-app
           v-menu(v-if='hasMobilePageActions && $vuetify.display.smAndDown', location='bottom end', min-width='240')
             template(v-slot:activator='{ props }')
@@ -271,7 +258,6 @@
                 v-list-subheader {{$t('common:header.language')}}
                 v-list-item(role='button', link, v-for='lc of locales', :key='`mobile-locale-${lc.code}`', :aria-current='lc.code === locale ? `true` : undefined', prepend-icon='mdi-web', @click='changeLocale(lc)')
                   v-list-item-title {{lc.name}}
-          v-divider(vertical)
 
           //- ACCOUNT
 
@@ -283,8 +269,7 @@
                     icon
                     v-bind='mergeProps(menuProps, tooltipProps)'
                     :class='$vuetify.locale.isRtl ? `ml-0` : ``'
-                    rounded='0'
-                    height='64'
+                    rounded='lg'
                     :aria-label='$t(`common:header.account`)'
                     )
                     v-icon(v-if='picture.kind === `initials`') mdi-account-circle
@@ -335,7 +320,8 @@
 </template>
 
 <script lang='ts'>
-import { defineAsyncComponent, defineComponent, markRaw, mergeProps } from 'vue'
+import { defineAsyncComponent, defineComponent, getCurrentInstance, markRaw, mergeProps } from 'vue'
+import { useHotkey } from 'vuetify'
 import { wikiStore } from '@/store/index.ts'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 
@@ -377,6 +363,31 @@ const ADMIN_PERMISSION_NAMES = new Set([
 /* global siteConfig, siteLangs */
 
 export default defineComponent({
+  setup () {
+    const instance = getCurrentInstance()
+
+    useHotkey('cmd+k', (e) => {
+      const vm = instance?.proxy as any
+      if (!vm || vm.hideSearch) return
+      e.preventDefault()
+      vm.searchMode = 'search'
+      void vm.focusSearchField()
+    })
+
+    useHotkey('cmd+shift+a', (e) => {
+      const vm = instance?.proxy as any
+      if (!vm || vm.hideSearch || !vm.canUseAgent) return
+      e.preventDefault()
+      if (vm.searchMode === 'ask') {
+        vm.searchMode = 'search'
+        void vm.focusSearchField()
+        return
+      }
+      vm.searchIsShown = true
+      vm.searchMode = 'ask'
+      void vm.focusSearchField()
+    })
+  },
   components: {
     AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
@@ -529,7 +540,6 @@ export default defineComponent({
     onPageDuplicate(this.pageDuplicate)
     onPageDelete(this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
-    window.addEventListener('keydown', this.handleSearchShortcut)
   },
   beforeUnmount () {
     offPageEdit(this.pageEdit)
@@ -539,7 +549,6 @@ export default defineComponent({
     offPageConvert(this.pageConvert)
     offPageDuplicate(this.pageDuplicate)
     offPageDelete(this.pageDelete)
-    window.removeEventListener('keydown', this.handleSearchShortcut)
     this.pageActionsAreOpen = false
     if (this.pageActionsFocusFrame !== null) {
       window.cancelAnimationFrame(this.pageActionsFocusFrame)
@@ -614,29 +623,9 @@ export default defineComponent({
       this.searchMode = 'ask'
       void this.focusSearchField()
     },
-    handleSearchShortcut(event: KeyboardEvent): void {
-      if (this.hideSearch || event.defaultPrevented || event.repeat || event.isComposing) return
-      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        this.searchMode = 'search'
-        void this.focusSearchField()
-        return
-      }
-      if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'a') return
-      if (!siteConfig.agentsEnabled || !this.isAuthenticated || !this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) return
-      event.preventDefault()
-      if (this.searchMode === 'ask') {
-        this.searchMode = 'search'
-        void this.focusSearchField()
-        return
-      }
-      this.searchIsShown = true
-      this.searchMode = 'ask'
-      void this.focusSearchField()
-    },
     searchEnter (event: KeyboardEvent) {
       if (event.isComposing) return
-      if ((event.ctrlKey || event.metaKey) && siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) {
+      if ((event.ctrlKey || event.metaKey) && this.canUseAgent) {
         event.preventDefault()
         this.searchMode = 'ask'
       }
@@ -953,7 +942,7 @@ export default defineComponent({
   }
 
   .nav-header-actions {
-    gap: var(--wiki-space-1);
+    gap: var(--wiki-space-2, 8px);
     padding-inline: var(--wiki-space-3) var(--wiki-space-4);
   }
 

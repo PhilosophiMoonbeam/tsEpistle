@@ -238,7 +238,7 @@
 </template>
 
 <script lang='ts'>
-import { markRaw } from 'vue'
+import { markRaw, onWatcherCleanup } from 'vue'
 import * as Diff2Html from 'diff2html'
 import { createPatch } from 'diff'
 import AsyncState from '@/components/common/async-state.vue'
@@ -415,9 +415,7 @@ export default {
       this.preserveTrailScroll()
     },
     async diffSource (
-      newValue: number,
-      _oldValue: number,
-      onCleanup: (cleanup: () => void) => void
+      newValue: number
     ) {
       if (newValue === this.source.versionId) return
 
@@ -431,7 +429,7 @@ export default {
       }
 
       let cancelled = false
-      onCleanup(() => {
+      onWatcherCleanup(() => {
         cancelled = true
       })
       const page = this.cache.find(page => page.versionId === newValue) ?? await this.loadVersion(newValue)
@@ -441,14 +439,12 @@ export default {
       }
     },
     async diffTarget (
-      newValue: number,
-      _oldValue: number,
-      onCleanup: (cleanup: () => void) => void
+      newValue: number
     ) {
       if (newValue === this.target.versionId) return
 
       let cancelled = false
-      onCleanup(() => {
+      onWatcherCleanup(() => {
         cancelled = true
       })
       const page = this.cache.find(page => page.versionId === newValue) ?? await this.loadVersion(newValue)

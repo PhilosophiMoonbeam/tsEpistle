@@ -337,13 +337,13 @@
                 v-spacer
                 //- v-tooltip(bottom)
                 //-   template(v-slot:activator='{ props }')
-                //-     v-btn(icon, rounded='0', v-bind='props', :aria-label='$t(`common:page.bookmark`)'): v-icon(color='grey') mdi-bookmark
+                //-     v-btn(icon, rounded='lg', v-bind='props', :aria-label='$t(`common:page.bookmark`)'): v-icon(color='grey') mdi-bookmark
                 //-   span {{$t('common:page.bookmark')}}
                 v-menu(location="bottom", min-width='300')
                   template(v-slot:activator='{ props: menuProps }')
                     v-tooltip(location="bottom")
                       template(v-slot:activator='{ props: tooltipProps }')
-                        v-btn(icon, rounded='0', v-bind='mergeProps(menuProps, tooltipProps)', :aria-label='$t(`common:page.share`)'): v-icon(color='grey') mdi-share-variant
+                        v-btn(icon, rounded='lg', v-bind='mergeProps(menuProps, tooltipProps)', :aria-label='$t(`common:page.share`)'): v-icon(color='grey') mdi-share-variant
                       span {{$t('common:page.share')}}
                   social-sharing(
                     :url='pageUrl'
@@ -361,7 +361,7 @@
                         )
                           v-btn(
                             icon
-                            rounded='0'
+                            rounded='lg'
                             v-bind='mergeProps(menuProps, tooltipProps)'
                             @click='loadPageWatchNotifications'
                             :aria-label='$t(`common:page.pageNotifications`)'
@@ -402,7 +402,7 @@
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
-                      rounded='0'
+                      rounded='lg'
                       v-bind='props'
                       :loading='pageWatchLoading'
                       :disabled='pageWatchLoading'
@@ -417,7 +417,7 @@
                       template(v-slot:activator='{ props: tooltipProps }')
                         v-btn(
                           icon
-                          rounded='0'
+                          rounded='lg'
                           v-bind='mergeProps(menuProps, tooltipProps)'
                           :aria-label='$t(`common:page.watchSettings`)'
                         )
@@ -426,7 +426,7 @@
                   v-card
                     v-card-title.text-body-large {{$t('common:page.watchSettings')}}
                     v-card-text
-                      v-switch(
+                    v-switch(
                         v-model='pageWatchEmailEnabled'
                         :label='$t(`common:page.emailNotifications`)'
                         color='primary'
@@ -455,7 +455,7 @@
                         )
                           v-btn(
                             icon
-                            rounded='0'
+                            rounded='lg'
                             v-bind='mergeProps(menuProps, tooltipProps)'
                             @click='loadApprovalInbox'
                             :aria-label='$t(`common:page.approvalInbox`)'
@@ -496,7 +496,7 @@
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
-                      rounded='0'
+                      rounded='lg'
                       v-bind='props'
                       @click='openApprovalWorkflow'
                       :aria-label='$t(`common:page.approvalWorkflow`)'
@@ -507,7 +507,7 @@
                   template(v-slot:activator='{ props }')
                     v-btn(
                       icon
-                      rounded='0'
+                      rounded='lg'
                       v-bind='props'
                       @click='openPageProtection'
                       :aria-label='$t(`common:page.pagePasswordProtection`)'
@@ -516,7 +516,7 @@
                   span {{$t('common:page.pagePasswordProtection')}}
                 v-tooltip(location="bottom")
                   template(v-slot:activator='{ props }')
-                    v-btn(icon, rounded='0', v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
+                    v-btn(icon, rounded='lg', v-bind='props', @click='print', :aria-label='$t(`common:page.printFormat`)')
                       v-icon(:color='printView ? `primary` : `grey`') mdi-printer
                   span {{$t('common:page.printFormat')}}
                 v-spacer
@@ -637,8 +637,8 @@
       aria-labelledby='page-protection-title'
     )
       v-card
-        v-toolbar(color='primary', flat)
-          v-toolbar-title#page-protection-title(tag='h2') {{$t('common:page.pagePasswordProtection')}}
+        v-toolbar(color='surface', class='border-b', flat)
+          v-toolbar-title.text-title-medium#page-protection-title(tag='h2') {{$t('common:page.pagePasswordProtection')}}
           v-spacer
           v-btn(icon, @click='protectionDialog = false', :aria-label='$t(`common:page.closePagePasswordProtection`)')
             v-icon mdi-close
@@ -701,8 +701,8 @@
       aria-labelledby='page-approval-title'
     )
       v-card
-        v-toolbar(color='primary', flat)
-          v-toolbar-title#page-approval-title(tag='h2') {{$t('common:page.approvalWorkflow')}}
+        v-toolbar(color='surface', class='border-b', flat)
+          v-toolbar-title.text-title-medium#page-approval-title(tag='h2') {{$t('common:page.approvalWorkflow')}}
           v-spacer
           v-btn(icon, @click='approvalDialog = false', :aria-label='$t(`common:page.closeApprovalWorkflow`)')
             v-icon mdi-close

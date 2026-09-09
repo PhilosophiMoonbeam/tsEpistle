@@ -5,18 +5,18 @@
         <strong>{{ label }}</strong>
         <p>
           {{
-            modelValue.action === 'keep'
+            model.action === 'keep'
               ? stored
                 ? 'Saved securely. Its value is never returned to this page.'
                 : 'No credential saved.'
-              : modelValue.action === 'clear'
+              : model.action === 'clear'
                 ? 'This credential will be removed when you save.'
                 : 'The replacement stays in this draft until you save.'
           }}
         </p>
       </div>
       <v-select
-        :model-value="modelValue.action"
+        :model-value="model.action"
         :items="actions"
         :label="label + ' action'"
         variant="outlined"
@@ -27,8 +27,8 @@
       />
     </div>
     <v-textarea
-      v-if="multiline && modelValue.action === 'replace'"
-      :model-value="modelValue.value"
+      v-if="multiline && model.action === 'replace'"
+      :model-value="model.value"
       :label="'Replacement ' + label.toLowerCase()"
       variant="outlined"
       rows="5"
@@ -41,8 +41,8 @@
       @update:model-value="replace"
     />
     <v-text-field
-      v-else-if="modelValue.action === 'replace'"
-      :model-value="modelValue.value"
+      v-else-if="model.action === 'replace'"
+      :model-value="model.value"
       :label="'Replacement ' + label.toLowerCase()"
       variant="outlined"
       type="password"
@@ -57,19 +57,27 @@
 <script setup lang="ts">
 import type { MailDraft } from '../../../shared/mail-workspace.ts'
 type Secret = MailDraft['secrets']['pass']
-defineProps<{
-  modelValue: Secret
+const model = defineModel<Secret>({ required: true })
+const {
+  stored,
+  label,
+  multiline = false,
+  disabled = false
+} = defineProps<{
   stored: boolean
   label: string
   multiline?: boolean
   disabled?: boolean
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: Secret] }>()
 const actions = [
   { title: 'Keep saved', value: 'keep' },
   { title: 'Replace', value: 'replace' },
   { title: 'Clear on save', value: 'clear' }
 ]
-const changeAction = (action: Secret['action']) => emit('update:modelValue', action === 'replace' ? { action, value: '' } : { action })
-const replace = (value: string) => emit('update:modelValue', { action: 'replace', value })
+const changeAction = (action: Secret['action']) => {
+  model.value = action === 'replace' ? { action, value: '' } : { action }
+}
+const replace = (value: string) => {
+  model.value = { action: 'replace', value }
+}
 </script>

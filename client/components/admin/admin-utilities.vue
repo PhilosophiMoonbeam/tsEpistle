@@ -86,7 +86,7 @@ v-container.admin-utilities(fluid)
                 v-list-item-title {{ operationTitle(operation.kind) }}
                 v-list-item-subtitle {{ operation.summary }}
                 template(#append)
-                  .text-caption.text-medium-emphasis {{ operation.state }}
+                  .text-body-small.text-medium-emphasis {{ operation.state }}
             v-card.mt-3(v-if='receiptId' variant='tonal')
               v-card-text
                 async-state(v-if='receiptLoading' state='loading' title='Loading operation receipt')

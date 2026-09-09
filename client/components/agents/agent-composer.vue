@@ -220,7 +220,13 @@
         aria-atomic="true"
         :title="statusLabel"
       >
-        <span class="agent-composer__state-dot" aria-hidden="true" />
+        <StatusIndicator
+          :positive="statusTone === 'ready'"
+          :negative="statusTone === 'error'"
+          :intermediary="statusTone === 'busy'"
+          :pulse="statusTone === 'busy'"
+          :label="statusLabel"
+        />
         <span>{{ statusLabel }}</span>
       </div>
 
@@ -253,6 +259,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import StatusIndicator from '../common/status-indicator.vue'
 import type { AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import type { VisibleAgentSkill } from '../../helpers/agents-api.ts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'

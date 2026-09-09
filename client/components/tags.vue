@@ -98,16 +98,20 @@
                 :title='$t(`tags:empty`, { defaultValue: `No tags available` })'
                 :message='$t(`tags:emptyMessage`, { defaultValue: `There are no tags to browse yet.` })'
               )
-              .tags-index-empty(v-else-if='filteredTags.length === 0')
-                v-icon(size='38' color='primary' aria-hidden='true') mdi-text-search
-                h3 {{$t('tags:noMatchingTags', { defaultValue: 'No matching tags' })}}
-                p {{$t('tags:noMatchingTagsMessage', { defaultValue: 'Try a different search or clear the tag filter.' })}}
-                v-btn(
-                  color='primary'
-                  variant='tonal'
-                  prepend-icon='mdi-close'
-                  @click='clearTagSearch'
-                ) {{$t('tags:clearSearch', { defaultValue: 'Clear search' })}}
+              v-empty-state.tags-index-empty(
+                v-else-if='filteredTags.length === 0'
+                icon='mdi-text-search'
+                color='primary'
+                :title='$t(`tags:noMatchingTags`, { defaultValue: `No matching tags` })'
+                :text='$t(`tags:noMatchingTagsMessage`, { defaultValue: `Try a different search or clear the tag filter.` })'
+              )
+                template(#actions)
+                  v-btn(
+                    color='primary'
+                    variant='tonal'
+                    prepend-icon='mdi-close'
+                    @click='clearTagSearch'
+                  ) {{$t('tags:clearSearch', { defaultValue: 'Clear search' })}}
               nav.tags-index-tree(
                 v-else
                 :aria-label='$t(`tags:indexTitle`, { defaultValue: `Tag index` })'
@@ -971,7 +975,11 @@ export default {
   line-height: 1.3;
 }
 
-.tags-index-empty,
+.tags-index-empty {
+  margin: 0;
+  border-radius: var(--wiki-control-radius);
+}
+
 .tags-state {
   display: grid;
   min-height: 13rem;
@@ -986,7 +994,6 @@ export default {
   text-align: center;
 }
 
-.tags-index-empty h3,
 .tags-state h3 {
   margin: 0;
   font-family: var(--wiki-font-heading);
@@ -994,7 +1001,6 @@ export default {
   font-weight: 700;
 }
 
-.tags-index-empty p,
 .tags-state p {
   max-width: 34rem;
   margin: 0 0 var(--wiki-space-2);

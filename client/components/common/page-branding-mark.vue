@@ -24,18 +24,19 @@ import {
   pageBrandingIdentity
 } from '../../helpers/page-branding.ts'
 
-const props = withDefaults(defineProps<{
+const {
+  branding,
+  failed = false
+} = defineProps<{
   branding: PageBrandingView | null
   failed?: boolean
-}>(), {
-  failed: false
-})
+}>()
 
 const emit = defineEmits<{
   (event: 'error', identity: string): void
 }>()
 
-const safeBranding = computed(() => normalizePageBrandingView(props.branding))
+const safeBranding = computed(() => normalizePageBrandingView(branding))
 const identity = computed(() => pageBrandingIdentity(safeBranding.value))
 
 let mounted = true
@@ -50,12 +51,12 @@ const imageFailed = (event: Event): void => {
   void nextTick(() => {
     if (!mounted) return
 
-    const branding = safeBranding.value
+    const currentBranding = safeBranding.value
     const currentIdentity = identity.value
-    if (!branding || !currentIdentity) return
+    if (!currentBranding || !currentIdentity) return
     if (image.dataset.brandingSource !== currentIdentity) return
 
-    const expectedUrl = new URL(branding.imageUrl, window.location.href).href
+    const expectedUrl = new URL(currentBranding.imageUrl, window.location.href).href
     const actualUrl = new URL(image.currentSrc || image.src, window.location.href).href
     if (actualUrl !== expectedUrl) return
     emit('error', currentIdentity)

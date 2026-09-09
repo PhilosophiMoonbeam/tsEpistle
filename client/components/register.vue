@@ -2,7 +2,7 @@
   v-app
     main.register(:style='registerStyle', aria-labelledby='register-site-title')
       v-container
-        v-row
+        v-row(no-gutters)
           v-col(
             cols='12'
             sm='10'
@@ -484,12 +484,6 @@ export default {
     );
 
     > .v-container {
-      padding: 0;
-    }
-
-    .v-row,
-    .v-col {
-      margin: 0;
       padding: 0;
     }
   }

@@ -22,7 +22,7 @@ describe('history REST migration guard', () => {
   })
 
   test('preserves latest-request cleanup, loading, cache, errors, and restore feedback', () => {
-    const watcherCleanups = source.match(/onCleanup\s*\(\s*\(\)\s*=>\s*\{\s*cancelled = true\s*\}\s*\)/g) || []
+    const watcherCleanups = source.match(/onWatcherCleanup\s*\(\s*\(\)\s*=>\s*\{\s*cancelled = true\s*\}\s*\)/g) || []
 
     expect(watcherCleanups).toHaveLength(2)
     expect(source).toContain('if (!cancelled && this.diffSource === newValue) {')
@@ -50,6 +50,7 @@ describe('history sticky timeline and comparison behavior', () => {
   const createHistoryInstance = (overrides = {}) => {
     const component = new Function(
       'markRaw',
+      'onWatcherCleanup',
       'Diff2Html',
       'createPatch',
       'AsyncState',
@@ -68,6 +69,7 @@ describe('history sticky timeline and comparison behavior', () => {
       executable
     )(
       v => v,
+      () => {},
       {},
       () => '',
       {},

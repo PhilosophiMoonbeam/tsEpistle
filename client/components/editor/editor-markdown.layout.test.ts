@@ -211,4 +211,26 @@ describe('Markdown editor layout', () => {
     expect(template).toContain("aria-live='polite'")
     expect(template).toContain("ref='editorPreviewContainer'")
   })
+
+  it('eliminates square rounded=0 formatting controls in favor of refined control radii and semantic tokens', () => {
+    const toolbar = template.slice(
+      template.indexOf('v-toolbar.editor-markdown-toolbar'),
+      template.indexOf('.editor-markdown-main')
+    )
+    const sidebar = template.slice(
+      template.indexOf('.editor-markdown-sidebar'),
+      template.indexOf('.editor-markdown-editor')
+    )
+
+    expect(toolbar).not.toContain("rounded='0'")
+    expect(toolbar).not.toContain('rounded="0"')
+    expect(sidebar).not.toContain("rounded='0'")
+    expect(sidebar).not.toContain('rounded="0"')
+    expect(sidebar).not.toContain("color='teal'")
+    expect(sidebar).not.toContain('color="teal"')
+
+    expect(style).toMatch(/&-toolbar\s*\{[\s\S]*?\.v-toolbar__content\s*\{[\s\S]*?gap:\s*2px;/)
+    expect(style).toMatch(/&-toolbar\s*\{[\s\S]*?\.v-btn\s*\{[\s\S]*?border-radius:\s*var\(--wiki-control-radius/)
+    expect(style).toMatch(/&-sidebar\s*\{[\s\S]*?\.v-btn\s*\{[\s\S]*?border-radius:\s*var\(--wiki-control-radius/)
+  })
 })

@@ -32,7 +32,13 @@
             class="agent-message__status"
             :class="`agent-message__status--${entry.message.status}`"
           >
-            <span class="agent-message__status-dot" aria-hidden="true" />
+            <StatusIndicator
+              :active="entry.message.status === 'streaming'"
+              :intermediary="entry.message.status === 'pending'"
+              :negative="entry.message.status === 'failed'"
+              :pulse="entry.message.status === 'pending' || entry.message.status === 'streaming'"
+              :label="entry.statusLabel"
+            />
             {{ entry.statusLabel }}
           </span>
         </header>
@@ -49,7 +55,13 @@
               class="agent-message__status"
               :class="`agent-message__status--${entry.message.status}`"
             >
-              <span class="agent-message__status-dot" aria-hidden="true" />
+              <StatusIndicator
+                :active="entry.message.status === 'streaming'"
+                :intermediary="entry.message.status === 'pending'"
+                :negative="entry.message.status === 'failed'"
+                :pulse="entry.message.status === 'pending' || entry.message.status === 'streaming'"
+                :label="entry.statusLabel"
+              />
               {{ entry.statusLabel }}
             </span>
           </header>
@@ -244,6 +256,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import StatusIndicator from '../common/status-indicator.vue'
 import type { AgentToolState, AgentThreadState } from '../../../shared/agents/contracts.ts'
 import AgentMarkdown from './agent-markdown.vue'
 import AgentAnswerActions from './agent-answer-actions.vue'

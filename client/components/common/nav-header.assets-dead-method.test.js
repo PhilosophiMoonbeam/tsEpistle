@@ -19,7 +19,7 @@ const stripPugLineComments = template =>
 
 const extractDesktopPageActions = template => {
   const blockStart = template.indexOf("{{$t('common:header.currentPage')}}")
-  const blockEnd = template.indexOf('            v-divider(vertical)', blockStart)
+  const blockEnd = template.indexOf("template(v-if='hasNewPagePermission", blockStart)
 
   return blockStart === -1 || blockEnd === -1 ? null : template.slice(blockStart, blockEnd)
 }

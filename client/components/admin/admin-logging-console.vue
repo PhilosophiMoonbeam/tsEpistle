@@ -76,7 +76,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef, triggerRef, useTemplateRef, watch } from 'vue'
 
 interface LiveTrailLimits {
   enabled: true
@@ -95,14 +95,14 @@ interface LiveLine {
   bytes: number
 }
 const props = defineProps<{ active: boolean; limits: LiveTrailLimits }>()
-const lines = ref<LiveLine[]>([])
+const lines = shallowRef<LiveLine[]>([])
 const filters = ref(['error', 'warn', 'info', 'verbose', 'debug', 'silly'])
 const paused = ref(false)
 const dropped = ref(0)
 const connection = ref<'closed' | 'connecting' | 'live' | 'reconnecting' | 'error' | 'limited' | 'revoked'>('closed')
 const limitReached = ref(false)
 const limitMessage = ref('')
-const terminal = ref<HTMLElement | null>(null)
+const terminal = useTemplateRef<HTMLElement>('terminal')
 const isPinned = ref(true)
 let source: EventSource | null = null
 let generation = 0
@@ -145,11 +145,12 @@ const disconnect = () => {
   if (connection.value !== 'limited' && connection.value !== 'revoked') connection.value = 'closed'
 }
 const clear = () => {
-  lines.value.splice(0)
+  lines.value = []
   retainedBytes = 0
   dropped.value = 0
   limitReached.value = false
   limitMessage.value = ''
+  triggerRef(lines)
 }
 const trackScroll = () => {
   const element = terminal.value
@@ -174,6 +175,7 @@ const append = (timestamp: string, level: string, output: string) => {
     const oldest = lines.value.shift()
     if (oldest) retainedBytes -= oldest.bytes
   }
+  triggerRef(lines)
   scrollToNewest()
 }
 const receive = (raw: string) => {
@@ -367,7 +369,7 @@ onBeforeUnmount(disconnect)
   font-size: 13px;
   line-height: 1.75;
 }
-@media (max-width: 640px) {
+@include until($tablet) {
   .logging-trail-panel {
     padding: 20px;
   }

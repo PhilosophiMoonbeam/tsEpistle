@@ -15,7 +15,14 @@ import { computed } from 'vue'
 
 type Status = 'neutral' | 'active' | 'positive' | 'intermediary' | 'negative'
 
-const props = defineProps<{
+const {
+  active = false,
+  positive = false,
+  intermediary = false,
+  negative = false,
+  pulse = false,
+  label
+} = defineProps<{
   active?: boolean
   positive?: boolean
   intermediary?: boolean
@@ -25,15 +32,15 @@ const props = defineProps<{
 }>()
 
 const status = computed<Status>(() => {
-  if (props.negative) return 'negative'
-  if (props.intermediary) return 'intermediary'
-  if (props.positive) return 'positive'
-  if (props.active) return 'active'
+  if (negative) return 'negative'
+  if (intermediary) return 'intermediary'
+  if (positive) return 'positive'
+  if (active) return 'active'
   return 'neutral'
 })
 
 const statusLabel = computed(() => {
-  if (props.label) return props.label
+  if (label) return label
 
   switch (status.value) {
     case 'active': return 'Active'

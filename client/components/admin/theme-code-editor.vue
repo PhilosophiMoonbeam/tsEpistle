@@ -7,43 +7,46 @@ import { EditorState, Compartment } from "@codemirror/state";
 import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { basicSetup } from "codemirror";
-const props = defineProps<{
-  modelValue: string;
+const modelValue = defineModel<string>({ required: true });
+const {
+  language,
+  label,
+  disabled = false,
+} = defineProps<{
   language: "css" | "html";
   label: string;
-  disabled: boolean;
+  disabled?: boolean;
 }>();
-const emit = defineEmits<{ "update:modelValue": [value: string] }>();
 const host = useTemplateRef<HTMLElement>("host"),
   theme = useTheme(),
   editable = new Compartment(),
   dark = new Compartment();
 let editor: EditorView | undefined;
 const readonly = () => [
-  EditorState.readOnly.of(props.disabled),
-  EditorView.editable.of(!props.disabled),
+  EditorState.readOnly.of(disabled),
+  EditorView.editable.of(!disabled),
 ];
 onMounted(() => {
   if (!host.value) return;
   editor = new EditorView({
     parent: host.value,
-    doc: props.modelValue,
+    doc: modelValue.value,
     extensions: [
       basicSetup,
-      props.language === "css" ? css() : html(),
+      language === "css" ? css() : html(),
       EditorView.lineWrapping,
       editable.of(readonly()),
       dark.of(EditorView.darkTheme.of(theme.current.value.dark)),
       EditorView.contentAttributes.of({
-        "aria-label": props.label,
+        "aria-label": label,
         spellcheck: "false",
       }),
       EditorView.updateListener.of((update) => {
         if (
           update.docChanged &&
-          update.state.doc.toString() !== props.modelValue
+          update.state.doc.toString() !== modelValue.value
         )
-          emit("update:modelValue", update.state.doc.toString());
+          modelValue.value = update.state.doc.toString();
       }),
       EditorView.theme({
         "&": {
@@ -71,7 +74,7 @@ onMounted(() => {
   });
 });
 watch(
-  () => props.modelValue,
+  () => modelValue.value,
   (value) => {
     if (editor && value !== editor.state.doc.toString())
       editor.dispatch({
@@ -80,7 +83,7 @@ watch(
   },
 );
 watch(
-  () => props.disabled,
+  () => disabled,
   () => editor?.dispatch({ effects: editable.reconfigure(readonly()) }),
 );
 watch(
