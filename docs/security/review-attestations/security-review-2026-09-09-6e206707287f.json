@@ -1,0 +1,103 @@
+{
+  "schemaVersion": 2,
+  "id": "security-review-2026-09-09-6e206707287f",
+  "kind": "source-review",
+  "repository": "PhilosophiMoonbeam/tsEpistle",
+  "policyVersion": 1,
+  "threatModelDigest": "1e373b88b5dcfbd4843961762bf187788594734d684d7b8b74452648668e86ee",
+  "reviewer": {
+    "identity": "tsEpistle maintainers (Main; delegated source reviews: IntegratedRemediationReview, ReleaseRemediationReview, AuthRemediationReview, PageResidualReview, StorageResidualReview)",
+    "reviewedAt": "2026-09-09"
+  },
+  "releaseEligible": true,
+  "source": {
+    "revision": "6e206707287f9f9a9e9d188a78e092a3c15f8c9d",
+    "baseRevision": "b8ce84f21739f1cf3c371d26d1da8251b4e206cc",
+    "coveredTreeDigest": "ec982adf890168fd73c33816c3459a100d625fcb7a5d9df68f516633e958f9e0"
+  },
+  "findings": [
+    {
+      "id": "AUTH-APIKEY-HUMAN-IMPERSONATION",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/core/auth.api-access.test.ts",
+        "server/test/graph/api-key-mutations.test.ts"
+      ]
+    },
+    {
+      "id": "AUTH-CALLBACK-INITIATION-BINDING",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/authentication/cas/cas-strategy.test.ts",
+        "server/modules/authentication/saml/authentication.test.ts",
+        "server/test/controllers/auth.test.js"
+      ]
+    },
+    {
+      "id": "AUTH-OAUTH-STATE-LIFECYCLE",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/authentication/oauth-state.test.ts",
+        "server/test/repositories/federated-login.postgres.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-ASSET-001",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/models/assets.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-IMPORT-002",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/storage/git/admission.test.ts",
+        "server/modules/storage/git/bounded-process.test.ts",
+        "server/modules/storage/git/repository.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-BACKUP-003",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/modules/storage.disk.test.js"
+      ]
+    },
+    {
+      "id": "SEC-STORAGE-NATIVE-BOUND-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "docs/security/threat-model.md",
+        "server/modules/storage/git/bounded-process.test.ts"
+      ]
+    },
+    {
+      "id": "SEC-ADAPTER-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "docs/security/threat-model.md"
+      ]
+    }
+  ],
+  "evidencePaths": [
+    "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+    "docs/security/threat-model.md"
+  ]
+}
