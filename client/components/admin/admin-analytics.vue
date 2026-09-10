@@ -57,12 +57,12 @@
             <div class="analytics-metrics">
               <div>
                 <span>Recorded reader responses</span>
-                <strong>{{ number(saved.insights.totalResponses) }}</strong>
+                <strong><animated-number :value="saved.insights.totalResponses" :duration="700" :format-value="number" /></strong>
                 <small>{{ saved.insights.from }} — {{ saved.insights.through }} · UTC</small>
               </div>
               <div>
                 <span>Shared pages reached</span>
-                <strong>{{ number(saved.insights.pages) }}</strong>
+                <strong><animated-number :value="saved.insights.pages" :duration="700" :format-value="number" /></strong>
                 <small>Current published, unprotected pages</small>
               </div>
             </div>
@@ -95,16 +95,75 @@
             </div>
             <figure v-else class="analytics-chart">
               <svg
+                class="analytics-chart-svg"
                 viewBox="0 0 720 180"
                 role="img"
                 aria-label="Daily recorded reader responses. Exact counts are available in the table below."
                 preserveAspectRatio="none"
+                @pointermove="handleChartPointer"
+                @pointerleave="clearChartPointer"
               >
+                <defs>
+                  <linearGradient :id="barGradId" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="rgb(var(--v-theme-primary))" stop-opacity="1" />
+                    <stop offset="50%" stop-color="color-mix(in srgb, rgb(var(--v-theme-primary)) 85%, white 15%)" stop-opacity="0.9" />
+                    <stop offset="100%" stop-color="rgb(var(--v-theme-primary))" stop-opacity="0.4" />
+                  </linearGradient>
+                  <filter :id="barGlowId" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="rgb(var(--v-theme-primary))" flood-opacity="0.45" />
+                  </filter>
+                </defs>
                 <line x1="0" y1="169" x2="720" y2="169" class="chart-baseline" />
-                <rect v-for="bar in bars" :key="bar.day" :x="bar.x" :y="169 - bar.height" :width="bar.width" :height="bar.height">
+                <rect
+                  v-for="bar in bars"
+                  :key="bar.day"
+                  class="analytics-bar"
+                  :class="{ 'is-active': activeBar?.day === bar.day }"
+                  :x="bar.x"
+                  :y="169 - bar.height"
+                  :width="bar.width"
+                  :height="bar.height"
+                  rx="3"
+                  ry="3"
+                  :fill="`url(#${barGradId})`"
+                  :filter="`url(#${barGlowId})`"
+                  tabindex="0"
+                  role="graphics-symbol"
+                  :aria-label="`${bar.day}: ${number(bar.responses)} responses`"
+                  @focus="activeBar = bar"
+                  @blur="clearChartPointer"
+                >
                   <title>{{ bar.day }}: {{ number(bar.responses) }} responses</title>
                 </rect>
+                <line
+                  v-if="activeBar"
+                  class="chart-laser-line"
+                  :x1="activeBar.x + activeBar.width / 2"
+                  y1="8"
+                  :x2="activeBar.x + activeBar.width / 2"
+                  y2="169"
+                />
+                <circle
+                  v-if="activeBar"
+                  class="chart-datum-point"
+                  :cx="activeBar.x + activeBar.width / 2"
+                  :cy="169 - activeBar.height"
+                  r="4.5"
+                />
               </svg>
+              <div
+                v-if="activeBar"
+                class="chart-hud-tooltip analytics-chart-tooltip"
+                :style="tooltipStyle"
+                role="tooltip"
+                aria-live="polite"
+              >
+                <span class="chart-hud-tooltip__day tooltip-day">{{ activeBar.day }}</span>
+                <span class="chart-hud-tooltip__count tooltip-responses">
+                  <strong>{{ number(activeBar.responses) }}</strong> responses
+                </span>
+                <span class="chart-hud-tooltip__pct tooltip-pct">{{ activeBar.pct }}% of max</span>
+              </div>
               <figcaption>
                 <span>{{ saved.insights.from }}</span>
                 <span>{{ saved.insights.through }}</span>
@@ -546,8 +605,9 @@
   </v-container>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, onWatcherCleanup, ref, shallowRef, useId, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
+import AnimatedNumber from '@/components/common/animated-number.vue'
 import AsyncState from '@/components/common/async-state.vue'
 import {
   AnalyticsPolicySchema,
@@ -560,6 +620,19 @@ import {
 import { analyticsProviderIssues, analyticsDestinations } from '../../../shared/analytics-providers.ts'
 import { fetchAnalyticsWorkspace, saveAnalyticsWorkspace, eraseAnalyticsInsights } from '../../helpers/analytics-workspace-api.ts'
 import './analytics-workspace.scss'
+
+const barGradId = useId()
+const barGlowId = useId()
+
+interface BarDatum {
+  day: string
+  responses: number
+  pct: number
+  x: number
+  width: number
+  height: number
+}
+const activeBar = ref<BarDatum | null>(null)
 const sections = [
     { key: 'overview', title: 'Overview' },
     { key: 'collection', title: 'Collection' },
@@ -727,7 +800,7 @@ const changedProviderFields = (row: AnalyticsProviderDraft) => {
       .map((field) => ({ key: field.key, title: field.title, before: original.config[field.key], after: row.config[field.key] })) || []
   )
 }
-const bars = computed(() => {
+const bars = computed<BarDatum[]>(() => {
   if (!saved.value) return []
   const from = Date.parse(saved.value.insights.from),
     through = Date.parse(saved.value.insights.through),
@@ -735,10 +808,41 @@ const bars = computed(() => {
     max = Math.max(1, ...saved.value.insights.daily.map((row) => row.responses))
   return saved.value.insights.daily.map((row) => ({
     ...row,
+    pct: Math.round((row.responses / max) * 100),
     x: (((Date.parse(row.day) - from) / 86400000) * 720) / days,
     width: Math.max(0.8, 720 / days - 1),
     height: Math.max(1, (row.responses / max) * 150)
   }))
+})
+function handleChartPointer(event: PointerEvent) {
+  const svg = event.currentTarget as SVGSVGElement | null
+  if (!svg || !bars.value.length) return
+  const rect = svg.getBoundingClientRect()
+  if (rect.width <= 0) return
+  const svgX = ((event.clientX - rect.left) / rect.width) * 720
+  let closest: BarDatum | null = null
+  let minDistance = Infinity
+  for (const bar of bars.value) {
+    const barMid = bar.x + bar.width / 2
+    const distance = Math.abs(svgX - barMid)
+    if (distance < minDistance) {
+      minDistance = distance
+      closest = bar
+    }
+  }
+  activeBar.value = closest
+}
+function clearChartPointer() {
+  activeBar.value = null
+}
+const tooltipStyle = computed(() => {
+  if (!activeBar.value) return { display: 'none' }
+  const percentX = Math.min(95, Math.max(5, ((activeBar.value.x + activeBar.value.width / 2) / 720) * 100))
+  const percentY = Math.max(0, ((169 - activeBar.value.height) / 180) * 100)
+  return {
+    left: `${percentX}%`,
+    top: `${percentY}%`
+  }
 })
 function reset() {
   if (saved.value) {
@@ -768,27 +872,34 @@ async function load() {
     if (id === sequence && !disposed) loading.value = false
   }
 }
-async function selectWindow(days: number) {
+function selectWindow(days: number) {
   if (locked.value || !saved.value || days === reportDays.value) return
+  reportDays.value = days
+}
+watch(reportDays, async (days) => {
+  if (locked.value || !saved.value) return
+  const controller = new AbortController()
+  onWatcherCleanup(() => controller.abort())
   const id = ++sequence
   loading.value = true
   error.value = ''
   try {
     const value = await fetchAnalyticsWorkspace(days)
-    if (disposed || id !== sequence) return
+    if (disposed || id !== sequence || controller.signal.aborted) return
     if (value.fingerprint !== saved.value.fingerprint) {
       stale.value = true
       error.value = 'Analytics settings changed. Reload before changing the reporting window.'
       return
     }
     saved.value = { ...saved.value, insights: value.insights, observedAt: value.observedAt }
-    reportDays.value = days
   } catch (err) {
-    if (!disposed && id === sequence) error.value = err instanceof Error ? err.message : 'The reporting window could not be loaded.'
+    if (!disposed && id === sequence && !controller.signal.aborted) {
+      error.value = err instanceof Error ? err.message : 'The reporting window could not be loaded.'
+    }
   } finally {
     if (!disposed && id === sequence) loading.value = false
   }
-}
+})
 function guarded(action: () => void) {
   if (dirty.value) {
     pendingAction.value = action

@@ -1,10 +1,10 @@
 <template>
-  <span aria-hidden="true">{{ displayValue }}</span>
+  <span class="animated-number" aria-hidden="true">{{ displayValue }}</span>
   <span class="animated-number__announcement" role="status" aria-live="polite" aria-atomic="true">{{ announcementValue }}</span>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, onWatcherCleanup, ref, watch } from 'vue'
 
 const {
   value,
@@ -76,7 +76,10 @@ function animateTo (target: number): void {
   frame = requestAnimationFrame(render)
 }
 
-watch(() => value, animateTo, { immediate: true })
+watch(() => value, target => {
+  onWatcherCleanup(() => cancelFrame())
+  animateTo(target)
+}, { immediate: true })
 
 watch(() => formatValue, currentFormat => {
   displayValue.value = currentFormat(renderedValue)
@@ -103,6 +106,10 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.animated-number {
+  font-variant-numeric: tabular-nums;
+}
+
 .animated-number__announcement {
   position: absolute;
   width: 1px;

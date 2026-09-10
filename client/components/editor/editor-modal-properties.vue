@@ -156,26 +156,26 @@
               :return-object='false'
               @keydown.capture='handleTagSearchKeydown'
               )
-              template(v-slot:item='{ props, item, internalItem }')
+              template(v-slot:item='{ props, item }')
                 v-list-item(
                   v-bind='props'
                   role='option'
-                  :data-tag-value='internalItem.value'
+                  :data-tag-value='item.raw'
                 )
                   template(v-slot:prepend)
-                    v-icon(:icon='item === candidateTag ? `mdi-plus` : `mdi-tag-outline`', size='18')
+                    v-icon(:icon='item.raw === candidateTag ? `mdi-plus` : `mdi-tag-outline`', size='18')
                   template(v-slot:title)
-                    span(v-if='item === candidateTag') Add “{{item}}” to page
-                    span(v-else) {{item}}
-                  template(v-slot:subtitle v-if='item === candidateTag')
+                    span(v-if='item.raw === candidateTag') Add “{{ item.raw }}” to page
+                    span(v-else) {{ item.raw }}
+                  template(v-slot:subtitle v-if='item.raw === candidateTag')
                     | New names are created when the page is saved.
               template(v-slot:chip='{ props, item }')
                 v-chip(
                   v-bind='props'
                   closable
                   size='small'
-                  :close-label='`Remove tag ${item}`'
-                ) {{item}}
+                  :close-label='`Remove tag ${item.raw || item.title || item}`'
+                ) {{ item.raw || item.title || item }}
               template(v-slot:no-data)
                 v-list-item(title='Type to search for suggestions or enter a name.')
               template(v-slot:menu-footer)
@@ -1131,9 +1131,10 @@ export default defineComponent({
   align-items: center;
   gap: 14px;
   min-height: 72px;
-  border: 1px solid rgba(var(--v-theme-on-surface), .1);
+  border: 1px solid color-mix(in srgb, var(--wiki-accent-ink) 25%, var(--wiki-surface-border));
   border-radius: var(--wiki-radius-xs, 6px);
-  background: rgb(var(--v-theme-surface));
+  background: var(--wiki-surface-raised);
+  box-shadow: var(--wiki-shadow-xs), 0 0 12px color-mix(in srgb, var(--wiki-ambient-accent) 8%, transparent), var(--wiki-shadow-inset);
   padding: 10px 12px;
 }
 

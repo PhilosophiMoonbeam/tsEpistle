@@ -10,12 +10,22 @@
         v-btn(href='/' variant='flat' color='primary' prepend-icon='mdi-arrow-top-right') Open wiki
 
     .dashboard-inventory(v-if='dashboardStats.length' aria-label='Workspace inventory' :aria-busy='summaryLoading')
-      router-link.admin-stat(v-for='stat in dashboardStats' :key='stat.key' :to='stat.to' :aria-label='stat.ariaLabel')
+      router-link.admin-stat(
+        v-for='stat in dashboardStats'
+        :key='stat.key'
+        :to='stat.to'
+        :aria-label='stat.ariaLabel'
+        :style='tiltStyles[stat.key]'
+        @pointermove='handleCardPointerMove($event, stat.key)'
+        @pointerleave='handleCardPointerLeave(stat.key)'
+      )
         .admin-stat__top
           v-icon(size='19') {{ stat.icon }}
           span {{ stat.label }}
           v-icon.admin-stat__arrow(size='16') mdi-arrow-top-right
-        strong.admin-stat__value {{ summaryLoading ? '—' : summaryError ? '—' : stat.value }}
+        strong.admin-stat__value
+          template(v-if='summaryLoading || summaryError') —
+          animated-number(v-else :value='Number(stat.value) || 0' :duration='600' :format-value='(v) => $helpers.formatNumber(v)')
         span.admin-stat__hint {{ stat.hint }}
     v-alert.mt-3(v-if='summaryError' type='warning' variant='tonal' density='compact')
       span Workspace inventory is unavailable.
@@ -28,7 +38,14 @@
           h2#dashboard-connections-title Discovery & intelligence
         .dashboard-section-heading__rule
       .dashboard-connections__grid
-        router-link.dashboard-connection(v-for='item in connections' :key='item.key' :to='item.to')
+        router-link.dashboard-connection(
+          v-for='item in connections'
+          :key='item.key'
+          :to='item.to'
+          :style='tiltStyles[item.key]'
+          @pointermove='handleCardPointerMove($event, item.key)'
+          @pointerleave='handleCardPointerLeave(item.key)'
+        )
           .dashboard-connection__top
             v-icon(size='24') {{ item.icon }}
             span.dashboard-connection__kind {{ item.kind }}
@@ -133,11 +150,11 @@
 </template>
 
 <script lang="ts">
-import { markRaw } from 'vue'
+import { markRaw, inject } from 'vue'
 import { buildAdminNavigation, filterAdminNavigation } from '../../helpers/admin-navigation'
-import { inject } from 'vue'
 import { adminSummaryKey } from '../../helpers/admin-summary'
 import AsyncState from '@/components/common/async-state.vue'
+import AnimatedNumber from '@/components/common/animated-number.vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchRecentPages, type RecentPageRow } from '../../helpers/pages-api'
 import { fetchLastLogins, type LastLoginRow } from '../../helpers/users-api'
@@ -154,8 +171,43 @@ const LAST_LOGINS_HEADERS = markRaw([
   { title: 'Last Login', value: 'lastLoginAt', width: 250 }
 ])
 
+export function computeTilt(
+  rect: { left: number; top: number; width: number; height: number },
+  clientX: number,
+  clientY: number
+): Record<string, string> {
+  const x = clientX - rect.left
+  const y = clientY - rect.top
+  const halfWidth = rect.width / 2
+  const halfHeight = rect.height / 2
+  const normX = halfWidth > 0 ? Math.max(-1, Math.min(1, (x - halfWidth) / halfWidth)) : 0
+  const normY = halfHeight > 0 ? Math.max(-1, Math.min(1, (y - halfHeight) / halfHeight)) : 0
+  const yaw = (normX * 8) || 0
+  const pitch = (-normY * 8) || 0
+  const mouseX = rect.width > 0 ? `${((x / rect.width) * 100).toFixed(2)}%` : '50%'
+  const mouseY = rect.height > 0 ? `${((y / rect.height) * 100).toFixed(2)}%` : '50%'
+
+  return {
+    '--tilt-x': `${yaw.toFixed(2)}deg`,
+    '--tilt-y': `${pitch.toFixed(2)}deg`,
+    '--mouse-x': mouseX,
+    '--mouse-y': mouseY,
+    '--card-z': '12px'
+  }
+}
+
+export function resetTilt(): Record<string, string> {
+  return {
+    '--tilt-x': '0deg',
+    '--tilt-y': '0deg',
+    '--mouse-x': '50%',
+    '--mouse-y': '50%',
+    '--card-z': '0px'
+  }
+}
+
 export default {
-  components: { AsyncState },
+  components: { AsyncState, AnimatedNumber },
   setup() {
     const summary = inject(adminSummaryKey)
     return { summaryLoading: summary?.loading, summaryError: summary?.error, refreshSummary: () => summary?.refresh() }
@@ -163,15 +215,18 @@ export default {
   data() {
     return {
       settingsSearch: '',
+      tiltStyles: {} as Record<string, Record<string, string>>,
       recentPages: [] as RecentPageRow[],
       recentPagesLoading: false,
       recentPagesError: '',
       recentPagesRequestId: 0,
+      recentPagesAbortController: null as AbortController | null,
       recentPagesHeaders: RECENT_PAGES_HEADERS,
       lastLogins: [] as LastLoginRow[],
       lastLoginsLoading: false,
       lastLoginsError: '',
       lastLoginsRequestId: 0,
+      lastLoginsAbortController: null as AbortController | null,
       lastLoginsHeaders: LAST_LOGINS_HEADERS
     }
   },
@@ -283,6 +338,8 @@ export default {
     canViewRecentPages(newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) this.loadRecentPages()
       else if (!newValue) {
+        this.recentPagesAbortController?.abort()
+        this.recentPagesAbortController = null
         this.recentPagesRequestId++
         this.recentPages = []
         this.recentPagesError = ''
@@ -292,6 +349,8 @@ export default {
     canViewLastLogins(newValue: boolean, oldValue: boolean) {
       if (newValue && !oldValue) this.loadLastLogins()
       else if (!newValue) {
+        this.lastLoginsAbortController?.abort()
+        this.lastLoginsAbortController = null
         this.lastLoginsRequestId++
         this.lastLogins = []
         this.lastLoginsError = ''
@@ -307,48 +366,105 @@ export default {
     hasPermission(prm: string | string[]) {
       return Array.isArray(prm) ? prm.some((permission) => this.permissions.includes(permission)) : this.permissions.includes(prm)
     },
+    computeTilt(rect: { left: number; top: number; width: number; height: number }, clientX: number, clientY: number) {
+      return computeTilt(rect, clientX, clientY)
+    },
+    resetTilt() {
+      return resetTilt()
+    },
+    handleCardPointerMove(event: PointerEvent, key: string) {
+      if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
+        return
+      }
+      const card = event.currentTarget as HTMLElement | null
+      if (!card) return
+      const rect = card.getBoundingClientRect()
+      if (!rect.width || !rect.height) return
+      this.tiltStyles = {
+        ...this.tiltStyles,
+        [key]: computeTilt(rect, event.clientX, event.clientY)
+      }
+    },
+    handlePointerMove(event: PointerEvent, key: string) {
+      this.handleCardPointerMove(event, key)
+    },
+    handleCardPointerLeave(key: string) {
+      this.tiltStyles = {
+        ...this.tiltStyles,
+        [key]: resetTilt()
+      }
+    },
+    handlePointerLeave(key: string) {
+      this.handleCardPointerLeave(key)
+    },
     async loadRecentPages() {
+      this.recentPagesAbortController?.abort()
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
+      this.recentPagesAbortController = controller
       const requestId = ++this.recentPagesRequestId
       this.recentPagesLoading = true
       this.recentPagesError = ''
       loadingStart(wikiStore, 'admin-dashboard-recentpages')
       try {
-        const pages = await fetchRecentPages(window.fetch.bind(window), 'Recent pages response is invalid')
+        const fetchImpl = (url: string, init: any) =>
+          window.fetch(url, controller ? { ...init, signal: controller.signal } : init)
+        const pages = await fetchRecentPages(fetchImpl as any, 'Recent pages response is invalid')
         if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false
         this.recentPages = markRaw(pages)
         return true
       } catch (err) {
+        if (controller?.signal.aborted || (err as { name?: string })?.name === 'AbortError') {
+          return false
+        }
         if (requestId !== this.recentPagesRequestId || !this.canViewRecentPages) return false
         this.recentPagesError = getErrorMessage(err)
         showNotification(wikiStore, { message: this.recentPagesError, style: 'error', icon: 'alert' })
         return false
       } finally {
+        if (this.recentPagesAbortController === controller) {
+          this.recentPagesAbortController = null
+        }
         loadingStop(wikiStore, 'admin-dashboard-recentpages')
         if (requestId === this.recentPagesRequestId) this.recentPagesLoading = false
       }
     },
     async loadLastLogins() {
+      this.lastLoginsAbortController?.abort()
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
+      this.lastLoginsAbortController = controller
       const requestId = ++this.lastLoginsRequestId
       this.lastLoginsLoading = true
       this.lastLoginsError = ''
       loadingStart(wikiStore, 'admin-dashboard-lastlogins')
       try {
-        const users = await fetchLastLogins(window.fetch.bind(window), 'Last logins response is invalid')
+        const fetchImpl = (url: string, init: any) =>
+          window.fetch(url, controller ? { ...init, signal: controller.signal } : init)
+        const users = await fetchLastLogins(fetchImpl as any, 'Last logins response is invalid')
         if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false
         this.lastLogins = markRaw(users)
         return true
       } catch (err) {
+        if (controller?.signal.aborted || (err as { name?: string })?.name === 'AbortError') {
+          return false
+        }
         if (requestId !== this.lastLoginsRequestId || !this.canViewLastLogins) return false
         this.lastLoginsError = getErrorMessage(err)
         showNotification(wikiStore, { message: this.lastLoginsError, style: 'error', icon: 'alert' })
         return false
       } finally {
+        if (this.lastLoginsAbortController === controller) {
+          this.lastLoginsAbortController = null
+        }
         loadingStop(wikiStore, 'admin-dashboard-lastlogins')
         if (requestId === this.lastLoginsRequestId) this.lastLoginsLoading = false
       }
     }
   },
   beforeUnmount() {
+    this.recentPagesAbortController?.abort()
+    this.recentPagesAbortController = null
+    this.lastLoginsAbortController?.abort()
+    this.lastLoginsAbortController = null
     this.recentPagesRequestId++
     this.lastLoginsRequestId++
   }
@@ -377,32 +493,106 @@ export default {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   border-block: 1px solid var(--wiki-surface-border);
+  perspective: 1000px;
 }
 .admin-stat {
+  position: relative;
   display: flex;
   min-width: 0;
   flex-direction: column;
   padding: 1rem 1.5rem;
   color: rgb(var(--v-theme-on-surface));
   text-decoration: none;
-  transition: background-color 0.15s;
+  transform: perspective(1000px) rotateX(var(--tilt-y, 0deg)) rotateY(var(--tilt-x, 0deg)) translateZ(var(--card-z, 0px));
+  transform-style: preserve-3d;
+  will-change: transform;
+  border: 1px solid transparent;
+  border-radius: var(--admin-radius);
+  background:
+    linear-gradient(var(--wiki-surface-card, transparent), var(--wiki-surface-card, transparent)) padding-box,
+    radial-gradient(
+      circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+      color-mix(in srgb, var(--wiki-accent-ink) 45%, var(--wiki-surface-border)) 0%,
+      var(--wiki-surface-border) 70%
+    ) border-box;
+  transition:
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background 0.15s,
+    border-color 0.15s,
+    box-shadow 0.15s;
+
   + .admin-stat {
     border-inline-start: 1px solid var(--wiki-surface-border);
   }
-  &:hover {
-    background: color-mix(in srgb, var(--wiki-ambient-accent) 6%, transparent);
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: radial-gradient(
+      circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+      color-mix(in srgb, var(--wiki-ambient-accent) 12%, transparent) 0%,
+      transparent 65%
+    );
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    z-index: 0;
   }
+
+  &:hover {
+    border-color: transparent;
+    background:
+      linear-gradient(
+        color-mix(in srgb, var(--wiki-ambient-accent) 6%, transparent),
+        color-mix(in srgb, var(--wiki-ambient-accent) 6%, transparent)
+      ) padding-box,
+      radial-gradient(
+        circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+        color-mix(in srgb, var(--wiki-accent-ink) 75%, var(--wiki-surface-border)) 0%,
+        var(--wiki-surface-border) 70%
+      ) border-box;
+
+    &::before {
+      opacity: 1;
+    }
+
+    .admin-stat__top > .v-icon:first-child {
+      transform: translateZ(14px) scale(1.08);
+    }
+    .admin-stat__arrow {
+      transform: translate(3px, -3px);
+    }
+  }
+
+  &:active {
+    transform: perspective(1000px) rotateX(var(--tilt-y, 0deg)) rotateY(var(--tilt-x, 0deg)) translateZ(var(--card-z, 0px)) scale(0.985);
+  }
+
   &__top {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
     gap: 0.5rem;
     color: var(--admin-muted);
     font-size: 0.8rem;
+    > .v-icon:first-child {
+      transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+      will-change: transform;
+    }
   }
   &__arrow {
+    position: relative;
+    z-index: 1;
     margin-inline-start: auto;
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+    will-change: transform;
   }
   &__value {
+    position: relative;
+    z-index: 1;
     margin-top: 0.8rem;
     font-size: 2.5rem;
     font-weight: 550;
@@ -411,6 +601,8 @@ export default {
     font-variant-numeric: tabular-nums;
   }
   &__hint {
+    position: relative;
+    z-index: 1;
     margin-top: 0.4rem;
     font-size: 0.75rem;
     color: var(--admin-muted);
@@ -445,31 +637,94 @@ export default {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
+  perspective: 1000px;
 }
 .dashboard-connection {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
   padding: 1.15rem;
-  border: 1px solid var(--wiki-surface-border);
+  border: 1px solid transparent;
   border-radius: var(--admin-radius);
-  background: var(--wiki-surface-raised);
   color: rgb(var(--v-theme-on-surface));
   text-decoration: none;
+  transform: perspective(1000px) rotateX(var(--tilt-y, 0deg)) rotateY(var(--tilt-x, 0deg)) translateZ(var(--card-z, 0px));
+  transform-style: preserve-3d;
+  will-change: transform;
+  background:
+    linear-gradient(var(--wiki-surface-raised), var(--wiki-surface-raised)) padding-box,
+    radial-gradient(
+      circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+      color-mix(in srgb, var(--wiki-accent-ink) 50%, var(--wiki-surface-border)) 0%,
+      var(--wiki-surface-border) 70%
+    ) border-box;
   transition:
+    transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
     border-color 0.15s,
-    background-color 0.15s;
-  &:hover {
-    border-color: var(--wiki-accent-ink);
-    background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised));
+    background 0.15s,
+    box-shadow 0.15s;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: radial-gradient(
+      circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+      color-mix(in srgb, var(--wiki-ambient-accent) 14%, transparent) 0%,
+      transparent 65%
+    );
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    z-index: 0;
   }
+
+  &:hover {
+    border-color: transparent;
+    background:
+      linear-gradient(
+        color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised)),
+        color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised))
+      ) padding-box,
+      radial-gradient(
+        circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+        color-mix(in srgb, var(--wiki-accent-ink) 90%, var(--wiki-surface-border)) 0%,
+        var(--wiki-surface-border) 70%
+      ) border-box;
+
+    &::before {
+      opacity: 1;
+    }
+
+    .dashboard-connection__top > .v-icon:first-child {
+      transform: translateZ(14px) scale(1.08);
+    }
+    .dashboard-connection__top > .v-icon:last-child {
+      transform: translate(3px, -3px);
+    }
+  }
+
+  &:active {
+    transform: perspective(1000px) rotateX(var(--tilt-y, 0deg)) rotateY(var(--tilt-x, 0deg)) translateZ(var(--card-z, 0px)) scale(0.985);
+  }
+
   &__top {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
     gap: 0.65rem;
     color: var(--wiki-accent-ink);
+    > .v-icon:first-child {
+      transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+      will-change: transform;
+    }
     > .v-icon:last-child {
       margin-inline-start: auto;
+      transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+      will-change: transform;
     }
   }
   &__kind {
@@ -479,6 +734,8 @@ export default {
     text-transform: uppercase;
   }
   h3 {
+    position: relative;
+    z-index: 1;
     margin-block: 1rem 0.5rem;
     font-size: 1.15rem;
     font-weight: 600;
@@ -486,6 +743,8 @@ export default {
     line-height: 1.3;
   }
   p {
+    position: relative;
+    z-index: 1;
     flex: 1;
     margin: 0 0 1rem;
     color: var(--admin-muted);
@@ -493,6 +752,8 @@ export default {
     line-height: 1.55;
   }
   &__link {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -664,7 +925,21 @@ export default {
 @media (prefers-reduced-motion: reduce) {
   .admin-stat,
   .dashboard-connection {
-    transition: none;
+    transition: none !important;
+    transform: none !important;
+    &::before {
+      display: none !important;
+    }
+    &:active {
+      transform: none !important;
+    }
+  }
+  .admin-stat:hover .admin-stat__top > .v-icon:first-child,
+  .admin-stat:hover .admin-stat__arrow,
+  .dashboard-connection:hover .dashboard-connection__top > .v-icon:first-child,
+  .dashboard-connection:hover .dashboard-connection__top > .v-icon:last-child {
+    transform: none !important;
+    transition: none !important;
   }
 }
 @container (max-width: 760px) {
