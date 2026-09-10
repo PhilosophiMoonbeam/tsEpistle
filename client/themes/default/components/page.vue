@@ -426,7 +426,7 @@
                   v-card
                     v-card-title.text-body-large {{$t('common:page.watchSettings')}}
                     v-card-text
-                    v-switch(
+                      v-switch(
                         v-model='pageWatchEmailEnabled'
                         :label='$t(`common:page.emailNotifications`)'
                         color='primary'

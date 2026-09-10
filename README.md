@@ -84,6 +84,29 @@ bun run ci
 ```
 
 `bun run dev` starts the watched server and Vite client together. `bun run ci` is the repository's local quality contract, including checks, tests, and the production build.
+### OMP language intelligence
+
+OMP uses a standalone language-server path for editor features. The project pins `@vue/language-server` to `2.2.12` because `3.3.9` requires a custom tsserver bridge that OMP does not provide. This editor pin remains separate from the production `vue` `3.5.41`, `vue-tsc` `3.3.9`, and `typescript` `6.0.2` versions.
+
+`client/tsconfig.json`, `server/tsconfig.json`, and `shared/tsconfig.json` are editor-discovery entry points only. They inherit the authoritative root `tsconfig.client.json`, `tsconfig.server.json`, and `tsconfig.shared.json`, respectively. The client wrapper additionally activates Pug semantics through `@vue/language-plugin-pug`; production typecheck CLI commands continue to use the authoritative root configs. The Vue language server owns `.vue`; the TypeScript language server owns `.ts` and `.js`.
+
+After changing the Vue language-server dependency or its initialization options, restart the supervised `omp.lsp.mux` before reloading workspace LSP. The shared mux can retain a child or cache keyed by command, arguments, and working directory, so a workspace reload alone can leave stale state.
+
+Before upgrading the Vue language server, require semantic symbols, definition, and diagnostics to pass within 30 seconds.
+
+### Scheduler worker troubleshooting
+
+The Bun master may run with `--watch` or `--hot`; master reload remains enabled. The scheduler strips exactly those two reload flags from the `execArgv` inherited by forked scheduled workers. Every other inherited `execArgv` flag and its value is preserved. Scheduled workers are finite, one-shot processes.
+
+Worker stderr is drained through stream closure; only the first 65,536 bytes plus a single `[truncated]` marker are retained when excess output arrives.
+
+Stopping a worker sends `SIGTERM`, escalates to `SIGKILL` after 1 second if it remains live, and waits up to 5 seconds for confirmed worker completion, including stdio closure.
+
+Selected system operations retain their existing 120-second policy; there is no new universal execution deadline. In-process jobs remain cooperatively unbounded.
+
+Do not describe the scheduler as providing global admission protection or universally bounded shutdown.
+
+If confirmation does not arrive within 5 seconds, a live worker reports `SCHEDULER_WORKER_TERMINATION_UNCONFIRMED`; an exited worker whose stdio remains open reports `SCHEDULER_WORKER_COMPLETION_UNCONFIRMED`. Neither outcome is silently successful, and tracking remains until late cleanup. If a scheduled child completes its work but never exits, and a request remains awaiting `job.finished`, treat that as a scheduler worker-lifecycle regression: the child was retained instead of reaching its normal exit and settlement path. Inspect `server/test/core/scheduler-worker-lifecycle.test.ts`, the scheduler observation state, and warning/error output when diagnosing it.
 
 ## Deployment and recovery
 

@@ -150,7 +150,6 @@ const clear = () => {
   dropped.value = 0
   limitReached.value = false
   limitMessage.value = ''
-  triggerRef(lines)
 }
 const trackScroll = () => {
   const element = terminal.value

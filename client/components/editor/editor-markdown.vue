@@ -1147,7 +1147,6 @@ export default defineComponent({
 
       .v-btn {
         border-radius: var(--wiki-control-radius, 6px);
-        transition: background-color .15s ease, color .15s ease, border-radius .15s ease;
       }
     }
   }
@@ -1165,7 +1164,6 @@ export default defineComponent({
 
     .v-btn {
       border-radius: var(--wiki-control-radius, 6px);
-      transition: background-color .15s ease, color .15s ease, border-radius .15s ease;
     }
 
     @include until($tablet) {

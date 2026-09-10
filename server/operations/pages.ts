@@ -10,7 +10,17 @@ import type { KnowledgeProjectionView } from '../knowledge/projection.ts'
 import type { WikiSource } from '../../shared/wiki-source.ts'
 import type { Knex } from 'knex'
 import type { SearchResult as ProviderSearchResult } from '../modules/types.ts'
-import { canDeletePage, canReadPage, canWritePage, managesSystem, pageAuthorizationContext, pageRoute, principalId, scopePageQuery, type PageVisibility } from '../helpers/page-access.ts'
+import {
+  canDeletePage,
+  canReadPage,
+  canWritePage,
+  managesSystem,
+  pageAuthorizationContext,
+  pageRoute,
+  principalId,
+  scopePageQuery,
+  type PageVisibility
+} from '../helpers/page-access.ts'
 import { listPageIndexCandidates, PAGE_INDEX_CANDIDATE_LIMIT } from '../repositories/page-index.ts'
 import { pageTreeAccess, treeAncestorIds } from '../repositories/page-tree-access.ts'
 import { isPageEditorKey, normalizeAvailableEditors } from '../../shared/page-editors.ts'
@@ -212,7 +222,14 @@ interface WikiPageOperations {
     knex: Knex
     pages: {
       query(): PageQuery
-      assertCreateAccess(input: { path: string; locale: string; visibility: PageVisibility; tags?: unknown; user: Express.User; authority: PageRuleAuthority }): string[]
+      assertCreateAccess(input: {
+        path: string
+        locale: string
+        visibility: PageVisibility
+        tags?: unknown
+        user: Express.User
+        authority: PageRuleAuthority
+      }): string[]
       relatedQuery(relation: 'tags'): RelatedTagQuery
       getPageFromDb(input: number | { path: string; locale: string; visibility: PageVisibility; ownerId: number | null }): Promise<PageSourceRecord | undefined>
       deletePage(input: { id: number; expectedSourceRevision?: string; user?: Express.User }): unknown
@@ -298,6 +315,7 @@ const mutationPayload = (input: OperationInput, omitted: readonly string[] = [])
     'okfProducer',
     'okfRestoreRevision',
     'replaceOkfMetadata',
+    'skipStorage',
     'user',
     'requester',
     'sessionId',
@@ -656,7 +674,9 @@ const publicationWindowOpen = (page: Record<string, unknown>, now = Date.now()):
   return (!start || new Date(String(start)).valueOf() <= now) && (!end || new Date(String(end)).valueOf() >= now)
 }
 const canAccessCurrentPageSource = (requester: Express.User | undefined, page: PageRecord, authority: PageRuleAuthority): boolean =>
-  page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page)) ? canReadPage(requester, page, authority) : canWritePage(requester, page, authority)
+  page.visibility !== 'public' || (page.isPublished && publicationWindowOpen(page))
+    ? canReadPage(requester, page, authority)
+    : canWritePage(requester, page, authority)
 
 const preview = async (input: OperationInput): Promise<WikiSource> => {
   // Both readers enforce current ownership, page rules, publication, and password unlock.
@@ -700,10 +720,7 @@ const getSource = async (
     ...(brandingAssignment === undefined ? {} : { brandingAssignment })
   }
 }
-const graphEligiblePages = async (
-  requester: Express.User | undefined,
-  suppliedAuthority?: PageRuleAuthority
-): Promise<Map<number, PageRecord>> => {
+const graphEligiblePages = async (requester: Express.User | undefined, suppliedAuthority?: PageRuleAuthority): Promise<Map<number, PageRecord>> => {
   const authorityInput: OperationInput = {
     ...(requester === undefined ? {} : { requester }),
     ...(suppliedAuthority === undefined ? {} : { authority: suppliedAuthority })
@@ -737,7 +754,9 @@ const graphEligiblePages = async (
     protectedPageIds()
   ])
   return new Map<number, PageRecord>(
-    pages.filter(page => publicationWindowOpen(page) && canReadPage(requester, page, authority) && !protectedIds.has(page.id)).map(page => [page.id, page] as const)
+    pages
+      .filter(page => publicationWindowOpen(page) && canReadPage(requester, page, authority) && !protectedIds.has(page.id))
+      .map(page => [page.id, page] as const)
   )
 }
 
@@ -990,11 +1009,16 @@ const getHistory = async (input: OperationInput) => {
   await assertUnlocked(input, id)
   if (
     page.visibility === 'public' &&
-    !wiki.auth.checkPageAccess(requester, ['read:history'], {
-      path: page.path,
-      locale: page.localeCode,
-      tags: page.tags
-    }, authority)
+    !wiki.auth.checkPageAccess(
+      requester,
+      ['read:history'],
+      {
+        path: page.path,
+        locale: page.localeCode,
+        tags: page.tags
+      },
+      authority
+    )
   ) {
     throw new wiki.Error.PageHistoryForbidden()
   }
@@ -1018,11 +1042,16 @@ const getVersion = async (input: OperationInput): Promise<PageVersionProjection 
   await assertUnlocked(input, pageId)
   if (
     page.visibility === 'public' &&
-    !wiki.auth.checkPageAccess(requester, ['read:history'], {
-      path: page.path,
-      locale: page.localeCode,
-      tags: page.tags
-    }, authority)
+    !wiki.auth.checkPageAccess(
+      requester,
+      ['read:history'],
+      {
+        path: page.path,
+        locale: page.localeCode,
+        tags: page.tags
+      },
+      authority
+    )
   ) {
     throw new wiki.Error.PageHistoryForbidden()
   }
@@ -1744,7 +1773,8 @@ const getByPath = async (input: OperationInput, suppliedAuthority?: PageRuleAuth
       })
       .limit(2)
     const [candidate] = candidates
-    if (candidates.length === 1 && candidate !== undefined && canReadPage(requester, candidate, authority)) page = await wiki.models.pages.getPageFromDb(candidate.id)
+    if (candidates.length === 1 && candidate !== undefined && canReadPage(requester, candidate, authority))
+      page = await wiki.models.pages.getPageFromDb(candidate.id)
   } else {
     const ownerId = visibility === 'private' ? principalId(requester) : null
     page = await wiki.models.pages.getPageFromDb({ path, locale, visibility, ownerId })
@@ -2013,8 +2043,7 @@ const authorizeMutation = async (input: OperationInput): Promise<void> => {
     })
     if (proposed === null) throw new wiki.Error.PageMoveForbidden()
     if (!canWritePage(requester, proposed, authority)) throw new wiki.Error.PageMoveForbidden()
-    if (page.visibility === 'public' && !wiki.auth.checkPageAccess(requester, ['write:pages'], proposed, authority))
-      throw new wiki.Error.PageMoveForbidden()
+    if (page.visibility === 'public' && !wiki.auth.checkPageAccess(requester, ['write:pages'], proposed, authority)) throw new wiki.Error.PageMoveForbidden()
   } else if (kind === 'restore' || kind === 'update') {
     const proposed = { ...page, tags: proposedTags }
     if (!canWritePage(requester, proposed, authority)) {

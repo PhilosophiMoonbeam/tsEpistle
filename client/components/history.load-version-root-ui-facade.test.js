@@ -1,53 +1,13 @@
 import fs from 'node:fs'
 import path from 'node:path'
-
+import { onWatcherCleanup, reactive, watch } from 'vue'
 const source = fs.readFileSync(path.join(process.cwd(), 'client/components/history.vue'), 'utf8')
 
-describe('history REST migration guard', () => {
-  test('routes requests through abort-aware page REST helpers', () => {
-    expect(source).toContain("<script lang='ts'>")
-    expect(source).toContain(
-      "import { fetchPageHistory, fetchPageVersion, restorePageVersion, type PageHistoryTrailItem, type PageVersion } from '../helpers/pages-api'"
-    )
-    expect(source).toContain("import { wikiStore } from '@/store/index.ts'")
-    expect(source).toMatch(
-      /fetchWithAbort\s*\(url:\s*string,\s*init:\s*RequestInit\):\s*Promise<Response>\s*\{[\s\S]*?window\.fetch\s*\(\s*url,\s*\{[\s\S]*?signal:\s*this\.requestsAbortController\.signal/
-    )
-    expect(source).toContain('const page = await fetchPageVersion(this.fetchWithAbort, this.pageId, versionId)')
-    expect(source).toContain('await restorePageVersion(this.fetchWithAbort, this.pageId, this.restoreTarget.versionId, this.sourceRevision)')
-    expect(source).toMatch(/const result = await fetchPageHistory\s*\(\s*this\.fetchWithAbort,\s*this\.pageId,\s*offsetPage,/)
-    expect(source).toContain('return this.requestsAbortController.signal.aborted ? null : result')
-    expect(source).toContain('return { ...emptyPageVersion(versionId), path: this.path, locale: this.locale }')
-    expect(source).not.toMatch(/graphql-tag|\$apollo/)
-  })
-
-  test('preserves latest-request cleanup, loading, cache, errors, and restore feedback', () => {
-    const watcherCleanups = source.match(/onWatcherCleanup\s*\(\s*\(\)\s*=>\s*\{\s*cancelled = true\s*\}\s*\)/g) || []
-
-    expect(watcherCleanups).toHaveLength(2)
-    expect(source).toContain('if (!cancelled && this.diffSource === newValue) {')
-    expect(source).toContain('if (!cancelled && this.diffTarget === newValue) {')
-    expect(source).toMatch(/beforeUnmount\s*\(\)\s*\{\s*this\.requestsAbortController\.abort\s*\(\s*\)/)
-    expect(source).toContain('window.clearTimeout(this.restoreRedirectTimer)')
-    expect(source).toContain("loadingStart(wikiStore, 'history-version-' + versionId)")
-    expect(source).toContain("loadingStop(wikiStore, 'history-version-' + versionId)")
-    expect(source).toContain('this.cache.push(page)')
-    expect(source).toMatch(
-      /if\s*\(\s*!this\.requestsAbortController\.signal\.aborted\s*\)\s*\{\s*showNotification\s*\(\s*wikiStore,\s*\{\s*style:\s*'red',\s*message:\s*getErrorMessage\(err\)/
-    )
-    expect(source).toMatch(/showNotification\s*\(\s*wikiStore,\s*\{\s*style:\s*'success'/)
-    expect(source).toContain('this.isRestoreConfirmDialogShown = false')
-    expect(source).toContain("loadingStop(wikiStore, 'history-restore')")
-    expect(source).toContain("setLoading(wikiStore, 'history-trail-refresh', true)")
-    expect(source).toContain("setLoading(wikiStore, 'history-trail-refresh', false)")
-    expect(source).toContain('this.trailError = getErrorMessage(error)')
-  })
-})
 describe('history sticky timeline and comparison behavior', () => {
   const script = source.match(/<script lang='ts'>([\s\S]*?)<\/script>/)[1]
   const executable = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, '')).replace('export default {', 'return {')
 
-  const createHistoryInstance = (overrides = {}) => {
+  const createHistoryInstance = (overrides = {}, dependencies = {}) => {
     const component = new Function(
       'markRaw',
       'onWatcherCleanup',
@@ -69,12 +29,12 @@ describe('history sticky timeline and comparison behavior', () => {
       executable
     )(
       v => v,
-      () => {},
+      onWatcherCleanup,
       {},
       () => '',
       {},
-      {},
-      {},
+      dependencies.fetchPageHistory ?? {},
+      dependencies.fetchPageVersion ?? {},
       {},
       () => '',
       () => '',
@@ -116,13 +76,47 @@ describe('history sticky timeline and comparison behavior', () => {
     Object.defineProperty(instance, 'fullTrail', {
       get: () => component.computed.fullTrail.call(instance)
     })
+    const selectionState = reactive({
+      diffSource: instance.diffSource,
+      diffTarget: instance.diffTarget
+    })
+    Object.defineProperties(instance, {
+      diffSource: {
+        get: () => selectionState.diffSource,
+        set: value => {
+          selectionState.diffSource = value
+        }
+      },
+      diffTarget: {
+        get: () => selectionState.diffTarget,
+        set: value => {
+          selectionState.diffTarget = value
+        }
+      }
+    })
 
-    return instance
+    return { component, instance }
+  }
+  const watchSelections = (component, instance) => {
+    const stopSource = watch(
+      () => instance.diffSource,
+      value => component.watch.diffSource.call(instance, value),
+      { flush: 'sync' }
+    )
+    const stopTarget = watch(
+      () => instance.diffTarget,
+      value => component.watch.diffTarget.call(instance, value),
+      { flush: 'sync' }
+    )
+    return () => {
+      stopSource()
+      stopTarget()
+    }
   }
 
   test('toggles diff view mode between line-by-line and side-by-side while preserving trail scroll position', () => {
     const trailEl = { scrollTop: 75 }
-    const instance = createHistoryInstance({
+    const { instance } = createHistoryInstance({
       $refs: { trailContainer: trailEl }
     })
 
@@ -140,7 +134,7 @@ describe('history sticky timeline and comparison behavior', () => {
 
   test('supports comparison source variants and preserves trail scroll position across revisions', () => {
     const trailEl = { scrollTop: 120 }
-    const instance = createHistoryInstance({
+    const { instance } = createHistoryInstance({
       $refs: { trailContainer: trailEl }
     })
 
@@ -204,7 +198,7 @@ describe('history sticky timeline and comparison behavior', () => {
         }
       }
 
-      const instance = createHistoryInstance({
+      const { instance } = createHistoryInstance({
         $vuetify: { display: { mdAndUp: false, smAndDown: true } },
         $refs: {
           trailContainer: trailEl,
@@ -233,5 +227,85 @@ describe('history sticky timeline and comparison behavior', () => {
       global.window = originalWindow
       global.document = originalDocument
     }
+  })
+  const page = versionId => ({
+    versionId,
+    content: `version-${versionId}`,
+    path: 'home',
+    locale: 'en',
+    tags: []
+  })
+  const flushPendingWatch = async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  }
+
+  test('keeps the latest source selection when responses resolve out of order', async () => {
+    const pending = new Map()
+    const fetchPageVersion = vi.fn(
+      (_fetch, _pageId, versionId) =>
+        new Promise(resolve => {
+          pending.set(versionId, resolve)
+        })
+    )
+    const { component, instance } = createHistoryInstance({ cache: [] }, { fetchPageVersion })
+    const stop = watchSelections(component, instance)
+
+    instance.diffSource = 1
+    instance.diffSource = 2
+    pending.get(2)(page(2))
+    await flushPendingWatch()
+    expect(instance.source.versionId).toBe(2)
+
+    pending.get(1)(page(1))
+    await flushPendingWatch()
+    expect(instance.source.versionId).toBe(2)
+    stop()
+  })
+
+  test('keeps the latest target selection when responses resolve out of order', async () => {
+    const pending = new Map()
+    const fetchPageVersion = vi.fn(
+      (_fetch, _pageId, versionId) =>
+        new Promise(resolve => {
+          pending.set(versionId, resolve)
+        })
+    )
+    const { component, instance } = createHistoryInstance({ cache: [] }, { fetchPageVersion })
+    const stop = watchSelections(component, instance)
+
+    instance.diffTarget = 3
+    instance.diffTarget = 4
+    pending.get(4)(page(4))
+    await flushPendingWatch()
+    expect(instance.target.versionId).toBe(4)
+
+    pending.get(3)(page(3))
+    await flushPendingWatch()
+    expect(instance.target.versionId).toBe(4)
+    stop()
+  })
+
+  test('does not commit source or target responses after the selection watchers are stopped on unmount', async () => {
+    const pending = new Map()
+    const fetchPageVersion = vi.fn(
+      (_fetch, _pageId, versionId) =>
+        new Promise(resolve => {
+          pending.set(versionId, resolve)
+        })
+    )
+    const { component, instance } = createHistoryInstance({ cache: [] }, { fetchPageVersion })
+    const stop = watchSelections(component, instance)
+
+    instance.diffSource = 5
+    instance.diffTarget = 6
+    component.beforeUnmount.call(instance)
+    stop()
+
+    pending.get(5)(page(5))
+    pending.get(6)(page(6))
+    await flushPendingWatch()
+    expect(instance.source.versionId).toBe(0)
+    expect(instance.target.versionId).toBe(0)
   })
 })

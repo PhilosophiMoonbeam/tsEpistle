@@ -825,6 +825,70 @@ describe('private page mutation existence isolation', () => {
     expect(denied).toMatchObject({ status: 403 })
   })
 
+  it('ignores untrusted storage suppression while preserving direct importer suppression', async () => {
+    const user = { id: 7, name: 'Owner', email: 'owner@example.test', permissions: [] }
+    const createdPage = {
+      id: 18,
+      content: 'Content',
+      localeCode: 'en',
+      ownerId: null,
+      path: 'docs',
+      sourceRevision: '1',
+      title: 'Docs',
+      updatedAt: null,
+      visibility: 'public'
+    }
+    const duplicateQuery = {
+      select: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({ first: vi.fn().mockResolvedValue(undefined) })
+      })
+    }
+    const latestQuery = {
+      findById: vi.fn().mockReturnValue({
+        select: vi.fn().mockResolvedValue({ updatedAt: '2026-08-15T00:00:00.000Z' })
+      })
+    }
+    const insert = vi.fn().mockResolvedValue(createdPage)
+    const pageQuery = vi.spyOn(Page, 'query')
+    const arrangeCreateQueries = () => {
+      pageQuery
+        .mockReset()
+        .mockReturnValueOnce(duplicateQuery)
+        .mockReturnValueOnce({ insert })
+        .mockReturnValueOnce(latestQuery)
+    }
+    arrangeCreateQueries()
+    vi.spyOn(Page, 'getPageFromDb').mockResolvedValue(createdPage)
+    vi.spyOn(Page, 'renderPage').mockResolvedValue(undefined)
+    vi.spyOn(Page, 'rebuildTree').mockResolvedValue(undefined)
+    vi.spyOn(Page, 'reconnectLinks').mockResolvedValue(undefined)
+    global.WIKI.config.editors = { available: ['markdown'] }
+    global.WIKI.auth.checkPageAccess.mockReturnValue(true)
+    const storageFailure = new Error('controlled storage failure')
+    global.WIKI.models.storage.pageEvent.mockRejectedValue(storageFailure)
+    const operations = (await vi.importFresh('../../operations/pages.ts', import.meta.url)).default
+    const input = {
+      content: 'Content',
+      description: '',
+      editor: 'markdown',
+      isPublished: true,
+      locale: 'en',
+      path: 'docs',
+      tags: [],
+      title: 'Docs',
+      visibility: 'public',
+      skipStorage: true
+    }
+
+    await expect(operations.create({ requester: user, input })).rejects.toBe(storageFailure)
+    expect(global.WIKI.models.storage.pageEvent).toHaveBeenCalledTimes(1)
+
+    arrangeCreateQueries()
+    global.WIKI.models.storage.pageEvent.mockClear()
+    await expect(Page.createPage({ ...input, user })).resolves.toMatchObject({ id: 18, path: 'docs', visibility: 'public' })
+    expect(global.WIKI.models.storage.pageEvent).not.toHaveBeenCalled()
+  })
+
   it('rejects a canonical tag transition after real SQLite association and rolls back every write', async () => {
     const db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
     try {

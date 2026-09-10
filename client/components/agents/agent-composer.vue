@@ -221,6 +221,7 @@
         :title="statusLabel"
       >
         <StatusIndicator
+          aria-hidden="true"
           :positive="statusTone === 'ready'"
           :negative="statusTone === 'error'"
           :intermediary="statusTone === 'busy'"
@@ -934,23 +935,11 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
-.agent-composer__state-dot {
-  width: var(--wiki-space-2);
-  height: var(--wiki-space-2);
-  flex: 0 0 auto;
-  border: 1px solid currentColor;
-  border-radius: var(--wiki-radius-pill);
-  background: color-mix(in srgb, currentColor 18%, transparent);
-}
 
 .agent-composer__state--ready {
   color: rgb(var(--v-theme-success));
 }
 
-.agent-composer__state--ready .agent-composer__state-dot,
-.agent-composer__state--error .agent-composer__state-dot {
-  background: currentColor;
-}
 
 .agent-composer__state--error {
   color: rgb(var(--v-theme-error));
@@ -1134,13 +1123,9 @@ onBeforeUnmount(() => {
     border: 1px solid CanvasText;
   }
 
-  .agent-composer__state-dot {
-    background: Highlight;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .agent-composer,
-  .agent-composer__state-dot {
+  .agent-composer {
     transition: none;
     animation: none;
   }

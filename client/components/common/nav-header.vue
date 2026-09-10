@@ -320,8 +320,7 @@
 </template>
 
 <script lang='ts'>
-import { defineAsyncComponent, defineComponent, getCurrentInstance, markRaw, mergeProps } from 'vue'
-import { useHotkey } from 'vuetify'
+import { defineAsyncComponent, defineComponent, markRaw, mergeProps } from 'vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 
@@ -363,31 +362,6 @@ const ADMIN_PERMISSION_NAMES = new Set([
 /* global siteConfig, siteLangs */
 
 export default defineComponent({
-  setup () {
-    const instance = getCurrentInstance()
-
-    useHotkey('cmd+k', (e) => {
-      const vm = instance?.proxy as any
-      if (!vm || vm.hideSearch) return
-      e.preventDefault()
-      vm.searchMode = 'search'
-      void vm.focusSearchField()
-    })
-
-    useHotkey('cmd+shift+a', (e) => {
-      const vm = instance?.proxy as any
-      if (!vm || vm.hideSearch || !vm.canUseAgent) return
-      e.preventDefault()
-      if (vm.searchMode === 'ask') {
-        vm.searchMode = 'search'
-        void vm.focusSearchField()
-        return
-      }
-      vm.searchIsShown = true
-      vm.searchMode = 'ask'
-      void vm.focusSearchField()
-    })
-  },
   components: {
     AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
@@ -540,6 +514,7 @@ export default defineComponent({
     onPageDuplicate(this.pageDuplicate)
     onPageDelete(this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
+    window.addEventListener('keydown', this.handleSearchShortcut)
   },
   beforeUnmount () {
     offPageEdit(this.pageEdit)
@@ -549,6 +524,7 @@ export default defineComponent({
     offPageConvert(this.pageConvert)
     offPageDuplicate(this.pageDuplicate)
     offPageDelete(this.pageDelete)
+    window.removeEventListener('keydown', this.handleSearchShortcut)
     this.pageActionsAreOpen = false
     if (this.pageActionsFocusFrame !== null) {
       window.cancelAnimationFrame(this.pageActionsFocusFrame)
@@ -620,6 +596,26 @@ export default defineComponent({
       else this.searchClose()
     },
     openAgent(): void {
+      this.searchMode = 'ask'
+      void this.focusSearchField()
+    },
+    handleSearchShortcut(event: KeyboardEvent): void {
+      if (this.hideSearch || event.defaultPrevented || event.repeat || event.isComposing) return
+      if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        this.searchMode = 'search'
+        void this.focusSearchField()
+        return
+      }
+      if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'a') return
+      if (!siteConfig.agentsEnabled || !this.isAuthenticated || !this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) return
+      event.preventDefault()
+      if (this.searchMode === 'ask') {
+        this.searchMode = 'search'
+        void this.focusSearchField()
+        return
+      }
+      this.searchIsShown = true
       this.searchMode = 'ask'
       void this.focusSearchField()
     },

@@ -227,6 +227,26 @@ test.describe('release accessibility profiles', () => {
       )
       .toEqual({ ariaHidden: null, inert: false })
   })
+  test('leaves the denied agent shortcut unconsumed', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    await page.goto('/en/home', { waitUntil: 'networkidle' })
+
+    const search = await openSearch(page)
+    const dispatchResult = await search.evaluate(element => {
+      const event = new KeyboardEvent('keydown', {
+        key: 'a',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true
+      })
+      return { dispatched: element.dispatchEvent(event), defaultPrevented: event.defaultPrevented }
+    })
+
+    expect(dispatchResult).toEqual({ dispatched: true, defaultPrevented: false })
+    await expect(search).toBeFocused()
+    await expect(page.getByRole('dialog', { name: 'Wiki Agent workspace' })).toHaveCount(0)
+  })
 
   test('keeps page navigation and return-to-top controls reachable below desktop width', async ({ page }, testInfo) => {
     requireProject(testInfo, 'accessibility-mobile')

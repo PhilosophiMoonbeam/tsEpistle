@@ -102,9 +102,10 @@
                 v-else-if='filteredTags.length === 0'
                 icon='mdi-text-search'
                 color='primary'
-                :title='$t(`tags:noMatchingTags`, { defaultValue: `No matching tags` })'
                 :text='$t(`tags:noMatchingTagsMessage`, { defaultValue: `Try a different search or clear the tag filter.` })'
               )
+                template(#title)
+                  h3.v-empty-state__title {{$t(`tags:noMatchingTags`, { defaultValue: `No matching tags` })}}
                 template(#actions)
                   v-btn(
                     color='primary'

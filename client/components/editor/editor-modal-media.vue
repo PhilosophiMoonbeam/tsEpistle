@@ -138,7 +138,7 @@
                               v-icon(color='red') mdi-file-hidden
                           v-list-item-title {{$t('common:actions.delete')}}
               template(v-slot:no-data)
-                v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined", color='primary') {{$t('editor:assets.folderEmpty')}}
+                v-alert.mt-3.radius-7(v-if='!mediaLoadError', icon='mdi-folder-open-outline', :model-value='true', variant="outlined") {{$t('editor:assets.folderEmpty')}}
             v-alert.mt-3(v-if='isBranding && currentFileId !== null && brandingLoading', type='info', variant='tonal', density='compact')
               .text-body-small Validating the selected image…
             v-alert.mt-3(v-else-if='isBranding && brandingLoadError', type='warning', variant='tonal', density='compact', role='alert')

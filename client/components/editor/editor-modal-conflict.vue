@@ -7,7 +7,7 @@
           .text-body-large#editor-conflict-title {{$t('editor:conflict.title')}}
           v-spacer
           v-progress-circular(v-if='isLoading', indeterminate, size='20', width='2', color='primary', aria-label='Loading latest version')
-          v-btn(variant="outlined", color="primary", @click='requestClose')
+          v-btn(variant="outlined", @click='requestClose')
             v-icon(start) mdi-close
             span {{$t('common:actions.cancel')}}
       template(v-if='isLoading')
@@ -40,7 +40,7 @@
           div(ref='cm')
         .editor-modal-conflict-actions
           v-btn(variant="text", @click='requestClose') {{$t('common:actions.cancel')}}
-          v-btn(variant="outlined", color='primary', :disabled='!cm || !latestLoaded', @click='useLocal')
+          v-btn(variant="outlined", :disabled='!cm || !latestLoaded', @click='useLocal')
             v-icon(start) mdi-check
             span {{$t('editor:conflict.useLocal')}}
           v-dialog(
@@ -69,7 +69,7 @@
                   strong(place='refEditsLost') {{$t('editor:conflict.overwrite.editsLost')}}
               v-card-chin
                 v-spacer
-                v-btn(variant="outlined", color='primary', @click='isRemoteConfirmDiagShown = false')
+                v-btn(variant="outlined", @click='isRemoteConfirmDiagShown = false')
                   v-icon(start) mdi-close
                   span {{$t('common:actions.cancel')}}
                 v-btn(@click='useRemote', color='warning', variant='flat')
@@ -91,7 +91,7 @@
                 | Your editable merge has changed. Closing now will discard those edits.
               v-card-chin
                 v-spacer
-                v-btn(variant='outlined', color='primary', @click='keepEditing') Keep editing
+                v-btn(variant='outlined', @click='keepEditing') Keep editing
                 v-btn(color='red', @click='discardMergeEdits') Discard merge edits
 </template>
 <script lang='ts'>
@@ -325,7 +325,8 @@ export default defineComponent({
   width: 100%;
   height: 100%;
   min-height: 0;
-  background-color: rgba(0, 0, 0, .9) !important;
+  background-color: rgb(var(--v-theme-surface));
+  color: rgb(var(--v-theme-on-surface));
 
   &-header {
     flex: 0 0 auto;
@@ -358,8 +359,8 @@ export default defineComponent({
     flex-direction: column;
     gap: 4px;
     padding: 12px 16px;
-    color: rgb(var(--v-theme-on-surface));
-    background: rgba(var(--v-theme-surface-variant), .35);
+    color: rgb(var(--v-theme-on-surface-variant));
+    background: rgb(var(--v-theme-surface-variant));
   }
 
   &-meta-remote {
@@ -367,8 +368,8 @@ export default defineComponent({
     flex-direction: column;
     gap: 4px;
     padding: 12px 16px;
-    color: rgb(var(--v-theme-on-surface));
-    background: rgba(var(--v-theme-surface-variant), .6);
+    color: rgb(var(--v-theme-on-surface-variant));
+    background: rgb(var(--v-theme-surface-variant));
   }
 
   &-editor {

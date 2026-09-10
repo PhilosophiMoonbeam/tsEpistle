@@ -154,10 +154,12 @@ async function logoutFromAccountMenu(page: Page): Promise<void> {
   })
   await page.getByRole('button', { name: 'Account' }).click()
   await expect(page.locator('form[action="/logout"][method="post"]')).toHaveCount(1)
-  await page.getByRole('listitem').filter({ hasText: /^Logout$/ }).click()
+  await page
+    .getByRole('listitem')
+    .filter({ hasText: /^Logout$/ })
+    .click()
   expect((await logoutRequest).method()).toBe('POST')
 }
-
 
 async function expectNoHorizontalOverflow(page: Page) {
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1)
@@ -206,44 +208,6 @@ test.describe('critical post-install workflows', () => {
     await page.reload()
     await expectWelcomePage(page)
   })
-  test('persists the personal appearance selector independently of the device scheme', async ({ page }) => {
-    test.setTimeout(60_000)
-    await openAuthenticatedHome(page)
-    await openClientPage(page, '/a/theme', '.theme-tabs')
-
-    await page.emulateMedia({ colorScheme: 'light' })
-    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
-    await page.getByRole('button', { name: 'Account' }).click()
-    const appearanceSelector = page.locator('.v-overlay--active').getByRole('group', { name: 'Appearance' })
-    await expect(appearanceSelector.getByRole('button', { name: 'System', exact: true })).toHaveAttribute('aria-pressed', 'true')
-
-    await appearanceSelector.getByRole('button', { name: 'Light', exact: true }).click()
-    await expect
-      .poll(async () =>
-        page.evaluate(async () => {
-          const response = await fetch('/_api/users/profile', { credentials: 'same-origin' })
-          return response.json()
-        })
-      )
-      .toMatchObject({ appearance: 'light' })
-    await openClientPage(page, '/a/')
-    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
-    await page.emulateMedia({ colorScheme: 'dark' })
-    await page.reload()
-    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
-
-    await page.getByRole('button', { name: 'Account' }).click()
-    await appearanceSelector.getByRole('button', { name: 'System', exact: true }).click()
-    await expect
-      .poll(async () =>
-        page.evaluate(async () => {
-          const response = await fetch('/_api/users/profile', { credentials: 'same-origin' })
-          return response.json()
-        })
-      )
-      .toMatchObject({ appearance: 'system' })
-    await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
-  })
 
   test('navigates from the homepage to the authenticated administration dashboard', async ({ page }) => {
     await openAuthenticatedHome(page)
@@ -260,15 +224,29 @@ test.describe('critical post-install workflows', () => {
     await page.getByRole('link', { name: 'Create Home Page' }).click()
     await expect(page).toHaveURL('/e/en/home')
     await openClientPage(page, '/e/en/home', '.editor-select')
-    await page.getByRole('button', { name: /^Markdown Source editing with live preview/ }).click()
-    await page.getByRole('textbox', { name: 'Title' }).fill('Home')
-    await page.getByRole('textbox', { name: 'Short Description' }).fill('Welcome home')
-    await page.getByRole('button', { name: 'OK' }).click()
+    const editorChooser = page.getByRole('dialog', { name: 'How would you like to write?', exact: true })
+    await expect(editorChooser).toBeVisible()
+    await editorChooser.getByRole('button', { name: /^Markdown Source editing with live preview/ }).click()
+    await expect(editorChooser).not.toBeVisible()
+    const properties = page.getByRole('dialog', { name: 'Page Properties', exact: true })
+    await expect(properties).toBeVisible()
+    await properties.getByRole('textbox', { name: 'Title', exact: true }).fill('Home')
+    await properties.getByRole('textbox', { name: 'Short Description', exact: true }).fill('Welcome home')
+    await properties.getByRole('button', { name: 'OK', exact: true }).click()
 
     const editor = page.locator('.cm-content')
     await expect(editor).toBeVisible({ timeout: 30_000 })
     await editor.fill('# Browser Workflow\n\nPublished through the modern editor.')
+
+    const createResponsePromise = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return response.request().method() === 'POST' && url.pathname === '/_api/pages'
+    })
     await page.getByRole('button', { name: 'Create' }).click()
+    const createResponse = await createResponsePromise
+
+    const createStatus = createResponse.status()
+    expect(createResponse.ok(), `Home page creation returned HTTP ${createStatus} ${createResponse.statusText()}`).toBe(true)
 
     await expect(page).toHaveURL('/en/home', { timeout: 30_000 })
     await expect(page.getByRole('heading', { name: 'Browser Workflow' })).toBeVisible()
@@ -276,6 +254,51 @@ test.describe('critical post-install workflows', () => {
 
     await page.reload()
     await expect(page.getByRole('heading', { name: 'Browser Workflow' })).toBeVisible()
+  })
+  test('persists the personal appearance selector independently of the device scheme', async ({ page }) => {
+    test.setTimeout(60_000)
+    await authenticateAsAdmin(page)
+    await openClientPage(page, '/en/home', '.page-header-section')
+
+    await page.emulateMedia({ colorScheme: 'light' })
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+    await page.getByRole('button', { name: 'Account' }).click()
+    const appearanceSelector = page.locator('.v-overlay--active').getByRole('group', { name: 'Appearance' })
+    await expect(appearanceSelector.getByRole('button', { name: 'System', exact: true })).toHaveAttribute('aria-pressed', 'true')
+
+    await appearanceSelector.getByRole('button', { name: 'Light', exact: true }).click()
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const response = await fetch('/_api/users/profile', { credentials: 'same-origin' })
+          return response.json()
+        })
+      )
+      .toMatchObject({ appearance: 'light' })
+
+    await openClientPage(page, '/a/theme', '.theme-tabs')
+    await expect(page.locator('.theme-tabs')).toBeVisible()
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+    await openClientPage(page, '/a/', '.admin-main')
+    await expect(page.locator('.admin-main')).toBeVisible()
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.reload()
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--light/)
+
+    await openClientPage(page, '/en/home', '.page-header-section')
+    await page.getByRole('button', { name: 'Account' }).click()
+    const restoredAppearanceSelector = page.locator('.v-overlay--active').getByRole('group', { name: 'Appearance' })
+    await restoredAppearanceSelector.getByRole('button', { name: 'System', exact: true }).click()
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const response = await fetch('/_api/users/profile', { credentials: 'same-origin' })
+          return response.json()
+        })
+      )
+      .toMatchObject({ appearance: 'system' })
+    await expect(page.locator('.v-application')).toHaveClass(/v-theme--dark/)
   })
   test('creates, publishes, and reopens a Visual Markdown page', async ({ page }) => {
     test.setTimeout(90_000)
@@ -335,13 +358,17 @@ test.describe('critical post-install workflows', () => {
     await editor.click()
     await page.keyboard.press('Control+s')
 
-    await expect(editor).toContainText('Saved with the keyboard.')
+    await expect(page.locator('#root').getByRole('button', { name: 'Saved', exact: true })).toBeVisible({ timeout: 30_000 })
 
     await setVisualEditorData(page, `${await getVisualEditorData(page)}\n\nUnsaved draft.`)
+    await expect(editor).toContainText('Unsaved draft.')
+    await expect(page.locator('#root').getByRole('button', { name: 'Save', exact: true })).toBeVisible()
+
     await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Discard Changes' })).toBeVisible()
     await page.getByRole('button', { name: 'Cancel' }).click()
     await expect(page).toHaveURL('/e/en/visual-markdown-browser')
+    await expect(editor).toContainText('Unsaved draft.')
     await page.locator('#root').getByRole('button', { name: 'Close', exact: true }).click()
     await page.getByRole('button', { name: 'Discard Changes' }).click()
 

@@ -75,22 +75,25 @@ function defaultPageResponse(selection: string[]): PageApiRow[] {
 async function installTagApi(page: Page, options: TagApiOptions = {}) {
   let tagFailures = options.failTagLoads ?? 0
   let pageFailures = options.failPageLoads ?? 0
-  await page.route('**/*', async route => {
+
+  if (options.siteLangs !== undefined) {
+    await page.addInitScript(siteLangs => {
+      let currentSiteLangs: unknown
+      Object.defineProperty(window, 'siteLangs', {
+        configurable: true,
+        get: () => currentSiteLangs,
+        set: () => {
+          currentSiteLangs = siteLangs
+        }
+      })
+    }, options.siteLangs)
+  }
+
+  await page.route(/\/_api\/pages(?:\/tags)?(?:\?.*)?$/, async route => {
     const request = route.request()
+    if (request.method() !== 'GET') return route.continue()
+
     const url = new URL(request.url())
-
-    if (options.siteLangs && request.resourceType() === 'document' && request.isNavigationRequest()) {
-      const response = await route.fetch()
-      const document = await response.text()
-      const replacement = `var siteLangs = ${JSON.stringify(options.siteLangs)}`
-      const siteLangsBootstrap = /var siteLangs = [^\n]*/
-      if (!siteLangsBootstrap.test(document)) throw new Error('Tag locale fixture could not find the site language bootstrap.')
-      const patched = document.replace(siteLangsBootstrap, replacement)
-      return route.fulfill({ response, body: patched })
-    }
-
-    if (request.method() !== 'GET' || !url.pathname.startsWith('/_api/pages')) return route.continue()
-
     if (url.pathname === '/_api/pages/tags') {
       if (tagFailures > 0) {
         tagFailures -= 1
@@ -131,46 +134,45 @@ async function revealTagButton(page: Page, label: string) {
 }
 
 async function expectTagIndexGeometry(page: Page, expectedTreeColumns: number, expectedIndexWidth: number | undefined, surface: string) {
-  const geometry = await page.evaluate(({ shortLabel, longLabel }) => {
-    const index = document.querySelector<HTMLElement>('.tags-index')
-    const tree = document.querySelector<HTMLElement>('.tags-index-tree')
-    const items = [...document.querySelectorAll<HTMLElement>('.tags-index-item')]
-    const shortItem = items.find(item => item.getAttribute('aria-label')?.startsWith(shortLabel))
-    const longItem = items.find(item => item.getAttribute('aria-label')?.startsWith(longLabel))
-    const shortLabelElement = shortItem?.querySelector<HTMLElement>('.tags-index-item-label')
-    const longCopy = longItem?.querySelector<HTMLElement>('.tags-index-item-copy')
-    if (!index || !tree || !shortItem || !longItem || !shortLabelElement || !longCopy) return null
+  const geometry = await page.evaluate(
+    ({ shortLabel, longLabel }) => {
+      const index = document.querySelector<HTMLElement>('.tags-index')
+      const tree = document.querySelector<HTMLElement>('.tags-index-tree')
+      const items = [...document.querySelectorAll<HTMLElement>('.tags-index-item')]
+      const shortItem = items.find(item => item.getAttribute('aria-label')?.startsWith(shortLabel))
+      const longItem = items.find(item => item.getAttribute('aria-label')?.startsWith(longLabel))
+      const shortLabelElement = shortItem?.querySelector<HTMLElement>('.tags-index-item-label')
+      const longCopy = longItem?.querySelector<HTMLElement>('.tags-index-item-copy')
+      if (!index || !tree || !shortItem || !longItem || !shortLabelElement || !longCopy) return null
 
-    const shortLabelRect = shortLabelElement.getBoundingClientRect()
-    const longItemRect = longItem.getBoundingClientRect()
-    const treeColumns = window.getComputedStyle(tree).gridTemplateColumns.trim().split(/\s+/).filter(Boolean)
+      const shortLabelRect = shortLabelElement.getBoundingClientRect()
+      const longItemRect = longItem.getBoundingClientRect()
+      const treeColumns = window.getComputedStyle(tree).gridTemplateColumns.trim().split(/\s+/).filter(Boolean)
 
-    return {
-      treeColumns: treeColumns.length,
-      indexWidth: index.getBoundingClientRect().width,
-      indexRight: index.getBoundingClientRect().right,
-      longItemRight: longItemRect.right,
-      longCopyClientWidth: longCopy.clientWidth,
-      longCopyScrollWidth: longCopy.scrollWidth,
-      shortLabelHeight: shortLabelRect.height,
-      shortLabelLineHeight: Number.parseFloat(window.getComputedStyle(shortLabelElement).lineHeight),
-      shortLabelWidth: shortLabelRect.width,
-      documentWidth: document.documentElement.scrollWidth,
-      viewportWidth: window.innerWidth
-    }
-  }, { shortLabel: ordinaryTagLabel, longLabel: longTagLabel })
+      return {
+        treeColumns: treeColumns.length,
+        indexWidth: index.getBoundingClientRect().width,
+        indexRight: index.getBoundingClientRect().right,
+        longItemRight: longItemRect.right,
+        longCopyClientWidth: longCopy.clientWidth,
+        longCopyScrollWidth: longCopy.scrollWidth,
+        shortLabelHeight: shortLabelRect.height,
+        shortLabelLineHeight: Number.parseFloat(window.getComputedStyle(shortLabelElement).lineHeight),
+        shortLabelWidth: shortLabelRect.width,
+        documentWidth: document.documentElement.scrollWidth,
+        viewportWidth: window.innerWidth
+      }
+    },
+    { shortLabel: ordinaryTagLabel, longLabel: longTagLabel }
+  )
 
   expect(geometry, `${surface} must expose ordinary and long tag item geometry`).not.toBeNull()
   if (!geometry) throw new Error(`${surface} did not expose ordinary and long tag item geometry.`)
 
   expect(geometry.treeColumns, `${surface} must use the expected tag index column count`).toBe(expectedTreeColumns)
   expect(geometry.shortLabelLineHeight, `${surface} must expose a measurable short tag line height`).toBeGreaterThan(0)
-  expect(geometry.shortLabelHeight, `${surface} short labels must not stack glyph-by-glyph`).toBeLessThanOrEqual(
-    geometry.shortLabelLineHeight * 1.5
-  )
-  expect(geometry.longCopyScrollWidth, `${surface} long labels must remain contained in their item`).toBeLessThanOrEqual(
-    geometry.longCopyClientWidth + 1
-  )
+  expect(geometry.shortLabelHeight, `${surface} short labels must not stack glyph-by-glyph`).toBeLessThanOrEqual(geometry.shortLabelLineHeight * 1.5)
+  expect(geometry.longCopyScrollWidth, `${surface} long labels must remain contained in their item`).toBeLessThanOrEqual(geometry.longCopyClientWidth + 1)
   expect(geometry.longItemRight, `${surface} long labels must remain inside the tag index rail`).toBeLessThanOrEqual(geometry.indexRight + 1)
   expect(geometry.documentWidth, `${surface} must not overflow its viewport`).toBeLessThanOrEqual(geometry.viewportWidth + 1)
 
@@ -296,6 +298,9 @@ test('public tag library supports local filtering, AND selection, and mobile res
   await expect(indexSearch).toBeVisible()
   await indexSearch.fill('does-not-exist')
   await expect(page.getByText(/no .*tags|no matching/i).first()).toBeVisible()
+  const noMatchingTagsHeading = page.getByRole('heading', { name: 'No matching tags', exact: true, level: 3 })
+  await expect(noMatchingTagsHeading).toBeVisible()
+
   await expect(tagButton(page, 'Alpha')).toHaveCount(0)
   const clearIndexSearch = page.locator('.tags-index-empty').getByRole('button', { name: 'Clear search', exact: true })
   await expect(clearIndexSearch).toBeVisible()

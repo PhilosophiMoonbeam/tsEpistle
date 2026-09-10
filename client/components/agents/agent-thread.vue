@@ -33,6 +33,7 @@
             :class="`agent-message__status--${entry.message.status}`"
           >
             <StatusIndicator
+              aria-hidden="true"
               :active="entry.message.status === 'streaming'"
               :intermediary="entry.message.status === 'pending'"
               :negative="entry.message.status === 'failed'"
@@ -56,6 +57,7 @@
               :class="`agent-message__status--${entry.message.status}`"
             >
               <StatusIndicator
+                aria-hidden="true"
                 :active="entry.message.status === 'streaming'"
                 :intermediary="entry.message.status === 'pending'"
                 :negative="entry.message.status === 'failed'"
@@ -465,30 +467,13 @@ watch(
   white-space: nowrap;
 }
 
-.agent-message__status-dot {
-  background: var(--wiki-accent-warm);
-  border-radius: var(--wiki-radius-pill);
-  flex: 0 0 auto;
-  height: var(--wiki-space-1);
-  width: var(--wiki-space-1);
-}
 
-.agent-message__status--pending .agent-message__status-dot,
-.agent-message__status--streaming .agent-message__status-dot {
-  animation: agentStatusPulse 1.6s var(--wiki-motion-ease) infinite;
-}
 
 .agent-message__status--failed {
   color: rgb(var(--v-theme-error));
 }
 
-.agent-message__status--failed .agent-message__status-dot {
-  background: currentColor;
-}
 
-.agent-message__status--cancelled .agent-message__status-dot {
-  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 48%, transparent);
-}
 
 .agent-message--assistant {
   align-items: start;
@@ -958,18 +943,6 @@ watch(
   text-transform: none;
 }
 
-@keyframes agentStatusPulse {
-  0%,
-  100% {
-    opacity: .4;
-    transform: scale(.75);
-  }
-
-  50% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
 
 @keyframes agentWaitingDot {
   0%,
@@ -1070,7 +1043,6 @@ watch(
     transition: none;
   }
 
-  .agent-message__status-dot,
   .agent-message__waiting-dots > span {
     animation: none !important;
   }
@@ -1093,7 +1065,6 @@ watch(
     border-width: 2px;
   }
 
-  .agent-message__status-dot,
   .agent-message__waiting-dots > span,
   .agent-sources__number {
     background: CanvasText;
