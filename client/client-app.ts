@@ -118,7 +118,7 @@ const vuetify = createVuetify({
       variant: 'tonal'
     },
     VDialog: {
-      scrim: 'on-surface',
+      scrim: 'black',
       transition: 'dialog-transition'
     },
     VMenu: {

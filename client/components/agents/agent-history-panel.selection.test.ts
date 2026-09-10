@@ -12,17 +12,18 @@ interface Ref<T> {
 interface PanelAgents {
   error?: string
   openSession: (sessionId: string) => Promise<boolean>
-  cancelSessionTransition: () => void
+  cancelSessionReadTransition: () => void
+  reloadSessions?: () => Promise<unknown>
+  reloadFolders?: () => Promise<unknown>
   moveSessionToFolder?: (sessionId: string, folderId: string | null) => Promise<unknown>
   renameSession?: (sessionId: string, title: string) => Promise<unknown>
   removeSession?: (sessionId: string) => Promise<boolean>
   deleteFolder?: (folderId: string) => Promise<unknown>
 }
 
-type PanelEmit = (event: 'close' | 'clear') => void
-
 interface PanelHarness {
   activeDropTarget: Ref<string | null>
+  beginRenameFolder: (folder: AgentConversationFolderView) => void
   beginRenameSession: (session: AgentSessionSummary, restoreTarget: HTMLElement | null) => void
   beginDeleteSession: (session: AgentSessionSummary, restoreTarget: HTMLElement | null) => void
   beginRemoveFolder: (folder: AgentConversationFolderView) => void
@@ -38,8 +39,16 @@ interface PanelHarness {
   deletingSession: Ref<AgentSessionSummary | null>
   emit: PanelEmit
   finishSessionDrag: () => void
+  folderEditorOpen: Ref<boolean>
+  foldersRefreshError: Ref<string>
+  initialRefreshPending: Ref<boolean>
+  loading: Ref<boolean>
   localError: Ref<string>
   moveSession: (session: AgentSessionSummary, folderId: string | null) => Promise<boolean>
+  refreshFolders: () => Promise<boolean>
+  refreshHistory: () => Promise<boolean>
+  refreshSessions: () => Promise<boolean>
+  refreshingHistory: Ref<boolean>
   sessionMutationBusy: Ref<boolean>
   saveSessionTitle: () => Promise<void>
   searchQuery: Ref<string | null>
@@ -48,6 +57,7 @@ interface PanelHarness {
   removingFolder: Ref<AgentConversationFolderView | null>
   requestClear: () => void
   openSession: (sessionId: string) => Promise<void>
+  sessionsRefreshError: Ref<string>
   setDropTarget: (event: DragEvent, folderId: string | null) => void
   unmount: () => void
 }
@@ -92,13 +102,22 @@ const script = source.match(/<script setup lang=["']ts["']>\s*([\s\S]*?)\s*<\/sc
 if (!script) throw new Error('agent-history-panel.vue script block was not found')
 
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
+interface FocusControls {
+  searchRoot?: HarnessElement
+  close?: HarnessElement
+  folderActivator?: HarnessElement
+  activeElement?: HarnessElement
+  mount?: boolean
+  initialLoading?: boolean
+  initialMutationBusy?: boolean
+}
 
 const loadPanel = (
   agents: PanelAgents,
   compact = true,
   sessionFixtures: AgentSessionSummary[] = [],
   folderFixtures: AgentConversationFolderView[] = [],
-  focusControls: { searchRoot?: HarnessElement; close?: HarnessElement } = {}
+  focusControls: FocusControls = {}
 ): PanelHarness => {
   const emit = vi.fn()
   const unmountCallbacks: Array<() => void> = []
@@ -139,17 +158,32 @@ const loadPanel = (
     historySearchField: focusControls.searchRoot ?? null
   }
   const useTemplateRef = <T>(name: string): ReactiveRef<T | null> => ref((templateRefs[name] ?? null) as T | null)
+  const folders = ref(folderFixtures)
+  const loading = ref(focusControls.initialLoading ?? false)
+  const sessionMutationBusy = ref(focusControls.initialMutationBusy ?? false)
+  const sessions = ref(sessionFixtures)
+  const sessionsLoadMoreError = ref('')
+  const sessionsLoadingMore = ref(false)
+  const sessionsNextCursor = ref<string | null>(null)
+  const sessionsReloading = ref(false)
   const thread = ref({ session: { id: '00000000-0000-4000-8000-000000000001' } })
+  const store = {
+    reloadSessions: vi.fn().mockResolvedValue(undefined),
+    reloadFolders: vi.fn().mockResolvedValue(undefined),
+    ...agents
+  }
   const evaluate = new Function(
     'computed',
     'nextTick',
     'onBeforeUnmount',
+    'onMounted',
     'onWatcherCleanup',
     'ref',
     'shallowRef',
     'useTemplateRef',
     'watch',
     'storeToRefs',
+    'defineProps',
     'defineEmits',
     'useAgentsStore',
     'createModalFocusScope',
@@ -160,6 +194,7 @@ const loadPanel = (
       activeDropTarget,
       beginDeleteSession,
       beginRemoveFolder,
+      beginRenameFolder,
       beginSessionDrag,
       canDropTo,
       clearHistoryDisabled,
@@ -172,9 +207,17 @@ const loadPanel = (
       deleteFolder,
       deleteSession,
       deletingSession,
+      folderEditorOpen,
+      foldersRefreshError,
+      initialRefreshPending,
+      loading,
       localError,
       moveSession,
       openSession,
+      refreshFolders,
+      refreshHistory,
+      refreshSessions,
+      refreshingHistory,
       sessionMutationBusy,
       saveSessionTitle,
       searchQuery,
@@ -182,6 +225,7 @@ const loadPanel = (
       sessionRenameTitle,
       removingFolder,
       requestClear,
+      sessionsRefreshError,
       setDropTarget
     }`
   ) as (...dependencies: unknown[]) => Omit<PanelHarness, 'emit' | 'unmount'>
@@ -193,32 +237,51 @@ const loadPanel = (
     }),
     () => Promise.resolve(),
     (callback: () => void) => unmountCallbacks.push(callback),
+    (callback: () => void) => {
+      if (focusControls.mount) callback()
+    },
     onWatcherCleanup,
     ref,
     ref,
     useTemplateRef,
     (source: unknown, callback: WatchCallback, options?: { immediate?: boolean }) => {
-      if (source && typeof (source as ReactiveRef<unknown>).subscribe === 'function') {
-        ;(source as ReactiveRef<unknown>).subscribe(callback)
+      const isArraySource = Array.isArray(source)
+      const sources = isArraySource ? source : [source]
+      const notify = (): void => {
+        const value = isArraySource ? sources.map(candidate => (candidate as Ref<unknown>).value) : (sources[0] as Ref<unknown>)?.value
+        callback(value, undefined, () => {})
       }
-      if (options?.immediate) callback((source as Ref<unknown>)?.value, undefined, () => {})
+      for (const candidate of sources) {
+        if (candidate && typeof (candidate as ReactiveRef<unknown>).subscribe === 'function') {
+          ;(candidate as ReactiveRef<unknown>).subscribe(() => notify())
+        }
+      }
+      if (options?.immediate) notify()
     },
     () => ({
-      folders: ref(folderFixtures),
-      loading: ref(false),
-      sessionMutationBusy: ref(false),
-      sessions: ref(sessionFixtures),
-      sessionsLoadMoreError: ref(''),
-      sessionsLoadingMore: ref(false),
-      sessionsNextCursor: ref<string | null>(null),
-      sessionsReloading: ref(false),
+      folders,
+      loading,
+      sessionMutationBusy,
+      sessions,
+      sessionsLoadMoreError,
+      sessionsLoadingMore,
+      sessionsNextCursor,
+      sessionsReloading,
       thread
     }),
+    () => ({
+      headingId: 'agent-history-title',
+      descriptionId: 'agent-history-description'
+    }),
     () => emit,
-    () => agents,
+    () => store,
     vi.fn(),
     { matchMedia: () => ({ matches: compact }) },
-    { activeElement: null, querySelector: () => null },
+    {
+      activeElement: focusControls.activeElement ?? null,
+      querySelector: (selector: string) =>
+        selector === '.agent-history__folder-actions[aria-expanded="true"]' ? (focusControls.folderActivator ?? null) : null
+    },
     HarnessElement
   )
   return {
@@ -274,10 +337,10 @@ describe('Agent history session selection', () => {
     vi.restoreAllMocks()
   })
 
-  it('closes the compact history panel only after an applied transition', async () => {
+  it('leaves compact panel closing to its parent after a transition is applied', async () => {
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true),
-      cancelSessionTransition: vi.fn()
+      cancelSessionReadTransition: vi.fn()
     }
     const panel = loadPanel(agents)
 
@@ -285,28 +348,26 @@ describe('Agent history session selection', () => {
     expect(panel.emit).not.toHaveBeenCalled()
 
     await panel.openSession('00000000-0000-4000-8000-000000000003')
-    expect(panel.emit).toHaveBeenCalledTimes(1)
-    expect(panel.emit).toHaveBeenCalledWith('close')
+    expect(panel.emit).not.toHaveBeenCalled()
   })
 
-  it('treats choosing the displayed session as the latest selection', async () => {
+  it('does nothing when choosing the displayed session', async () => {
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(true),
-      cancelSessionTransition: vi.fn()
+      cancelSessionReadTransition: vi.fn()
     }
     const panel = loadPanel(agents)
 
     await panel.openSession('00000000-0000-4000-8000-000000000001')
 
-    expect(agents.cancelSessionTransition).toHaveBeenCalledTimes(1)
+    expect(agents.cancelSessionReadTransition).not.toHaveBeenCalled()
     expect(agents.openSession).not.toHaveBeenCalled()
     expect(panel.emit).not.toHaveBeenCalled()
   })
-
   it('keeps the panel open with an error when the newest transition fails', async () => {
     const agents: PanelAgents = {
       openSession: vi.fn().mockRejectedValue(new Error('Session unavailable')),
-      cancelSessionTransition: vi.fn()
+      cancelSessionReadTransition: vi.fn()
     }
     const panel = loadPanel(agents)
 
@@ -316,20 +377,30 @@ describe('Agent history session selection', () => {
     expect(panel.localError.value).toBe('Session unavailable')
   })
 
-  it('cancels a pending transition before closing the history workspace', () => {
+  it('cancels only its pending read before closing the history workspace', async () => {
+    let resolveOpen!: (value: boolean) => void
     const agents: PanelAgents = {
-      openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn()
+      openSession: vi.fn().mockImplementation(
+        () =>
+          new Promise<boolean>(resolve => {
+            resolveOpen = resolve
+          })
+      ),
+      cancelSessionReadTransition: vi.fn()
     }
     const panel = loadPanel(agents)
 
+    const opening = panel.openSession('00000000-0000-4000-8000-000000000002')
     panel.closeHistory()
 
-    expect(agents.cancelSessionTransition).toHaveBeenCalledTimes(1)
+    expect(agents.cancelSessionReadTransition).toHaveBeenCalledTimes(1)
     expect(panel.emit).toHaveBeenCalledWith('close')
+
+    resolveOpen(false)
+    await opening
   })
 
-  it('serializes transitions and closes only after the subsequent selection is committed', async () => {
+  it('serializes reads and leaves closing to the parent after a later selection commits', async () => {
     let resolveFirst!: (value: boolean) => void
     let resolveSecond!: (value: boolean) => void
     const agents: PanelAgents = {
@@ -347,7 +418,7 @@ describe('Agent history session selection', () => {
               resolveSecond = resolve
             })
         ),
-      cancelSessionTransition: vi.fn()
+      cancelSessionReadTransition: vi.fn()
     }
     const panel = loadPanel(agents)
 
@@ -368,26 +439,33 @@ describe('Agent history session selection', () => {
     resolveSecond(true)
     await subsequentSelection
 
-    expect(panel.emit).toHaveBeenCalledTimes(1)
-    expect(panel.emit).toHaveBeenCalledWith('close')
+    expect(panel.emit).not.toHaveBeenCalled()
   })
 
-  it('also cancels a pending transition when its parent removes the workspace', () => {
+  it('cancels a pending read when its parent removes the workspace', async () => {
+    let resolveOpen!: (value: boolean) => void
     const agents: PanelAgents = {
-      openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn()
+      openSession: vi.fn().mockImplementation(
+        () =>
+          new Promise<boolean>(resolve => {
+            resolveOpen = resolve
+          })
+      ),
+      cancelSessionReadTransition: vi.fn()
     }
     const panel = loadPanel(agents)
 
+    const opening = panel.openSession('00000000-0000-4000-8000-000000000002')
     panel.unmount()
 
-    expect(agents.cancelSessionTransition).toHaveBeenCalledTimes(1)
+    expect(agents.cancelSessionReadTransition).toHaveBeenCalledTimes(1)
+    resolveOpen(false)
+    await opening
   })
-
   it('clears only when at least one unfiled conversation is available', () => {
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn()
+      cancelSessionReadTransition: vi.fn()
     }
     const folder = makeFolder()
     const filedSession = makeSession({ folderId: folder.id, retention: 'saved' })
@@ -412,7 +490,7 @@ describe('Agent history session selection', () => {
     const agents: PanelAgents = {
       error: '',
       openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn(),
+      cancelSessionReadTransition: vi.fn(),
       removeSession,
       deleteFolder
     }
@@ -450,7 +528,7 @@ describe('Agent history session selection', () => {
     searchRoot.focusTarget = searchInput
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn()
+      cancelSessionReadTransition: vi.fn()
     }
     const panel = loadPanel(agents, true, [makeSession()], [], { searchRoot })
 
@@ -475,7 +553,7 @@ describe('Agent history session selection', () => {
     })
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn(),
+      cancelSessionReadTransition: vi.fn(),
       renameSession
     }
     const panel = loadPanel(agents, true, sessions, [], { searchRoot })
@@ -501,7 +579,7 @@ describe('Agent history session selection', () => {
     const close = new HarnessElement()
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn()
+      cancelSessionReadTransition: vi.fn()
     }
     const panel = loadPanel(agents, true, [makeSession()], [], { searchRoot, close })
 
@@ -520,7 +598,7 @@ describe('Agent history session selection', () => {
     const agents: PanelAgents = {
       error: '',
       openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn(),
+      cancelSessionReadTransition: vi.fn(),
       moveSessionToFolder
     }
     const panel = loadPanel(agents, true, [session], [folder])
@@ -555,7 +633,7 @@ describe('Agent history session selection', () => {
     const agents: PanelAgents = {
       error: '',
       openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn(),
+      cancelSessionReadTransition: vi.fn(),
       moveSessionToFolder
     }
     const panel = loadPanel(agents, true, [session], [folder])
@@ -578,7 +656,7 @@ describe('Agent history session selection', () => {
     const agents: PanelAgents = {
       error: '',
       openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn(),
+      cancelSessionReadTransition: vi.fn(),
       moveSessionToFolder
     }
     const panel = loadPanel(agents, true, [session], [folder])
@@ -600,7 +678,7 @@ describe('Agent history session selection', () => {
     const folder = makeFolder()
     const agents: PanelAgents = {
       openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn()
+      cancelSessionReadTransition: vi.fn()
     }
     const panel = loadPanel(agents, true, [session], [folder])
     const drag = makeDragEvent()
@@ -622,7 +700,7 @@ describe('Agent history session selection', () => {
     const agents: PanelAgents = {
       error: '',
       openSession: vi.fn().mockResolvedValue(false),
-      cancelSessionTransition: vi.fn(),
+      cancelSessionReadTransition: vi.fn(),
       renameSession,
       moveSessionToFolder
     }
@@ -651,5 +729,140 @@ describe('Agent history session selection', () => {
 
     expect(renameSession).toHaveBeenCalledWith(session.id, 'Renamed after retention')
     expect(moveSessionToFolder).toHaveBeenCalledWith(session.id, folder.id)
+  })
+  it('restores folder action focus to the exact activator after a rename closes', async () => {
+    const folder = makeFolder()
+    const activator = new HarnessElement()
+    const agents: PanelAgents = {
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn()
+    }
+    const panel = loadPanel(agents, true, [], [folder], { folderActivator: activator })
+
+    panel.beginRenameFolder(folder)
+    expect(panel.folderEditorOpen.value).toBe(true)
+    panel.folderEditorOpen.value = false
+    await Promise.resolve()
+
+    expect(activator.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('defers one initial archive refresh until workspace loading settles', () => {
+    const reloadSessions = vi.fn().mockResolvedValue(undefined)
+    const reloadFolders = vi.fn().mockResolvedValue(undefined)
+    const agents: PanelAgents = {
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      reloadSessions,
+      reloadFolders
+    }
+    const panel = loadPanel(agents, true, [], [], { mount: true, initialLoading: true })
+
+    expect(panel.initialRefreshPending.value).toBe(true)
+    expect(reloadSessions).not.toHaveBeenCalled()
+    expect(reloadFolders).not.toHaveBeenCalled()
+
+    panel.loading.value = false
+
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
+    expect(reloadFolders).toHaveBeenCalledTimes(1)
+    expect(panel.initialRefreshPending.value).toBe(false)
+
+    panel.loading.value = true
+    panel.loading.value = false
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
+    expect(reloadFolders).toHaveBeenCalledTimes(1)
+  })
+
+  it('defers one initial archive refresh until the session mutation lock clears', () => {
+    const reloadSessions = vi.fn().mockResolvedValue(undefined)
+    const reloadFolders = vi.fn().mockResolvedValue(undefined)
+    const agents: PanelAgents = {
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      reloadSessions,
+      reloadFolders
+    }
+    const panel = loadPanel(agents, true, [], [], { mount: true, initialMutationBusy: true })
+
+    expect(reloadSessions).not.toHaveBeenCalled()
+    expect(reloadFolders).not.toHaveBeenCalled()
+
+    panel.sessionMutationBusy.value = false
+
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
+    expect(reloadFolders).toHaveBeenCalledTimes(1)
+    panel.sessionMutationBusy.value = true
+    panel.sessionMutationBusy.value = false
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
+    expect(reloadFolders).toHaveBeenCalledTimes(1)
+  })
+
+  it('discards a deferred initial refresh when history unmounts first', () => {
+    const reloadSessions = vi.fn().mockResolvedValue(undefined)
+    const reloadFolders = vi.fn().mockResolvedValue(undefined)
+    const agents: PanelAgents = {
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      reloadSessions,
+      reloadFolders
+    }
+    const panel = loadPanel(agents, true, [], [], { mount: true, initialLoading: true })
+
+    panel.unmount()
+    panel.loading.value = false
+
+    expect(panel.initialRefreshPending.value).toBe(false)
+    expect(reloadSessions).not.toHaveBeenCalled()
+    expect(reloadFolders).not.toHaveBeenCalled()
+  })
+
+  it('does not loop a failed initial refresh and preserves unrelated workspace errors', async () => {
+    const reloadSessions = vi.fn().mockRejectedValue(new Error('Sessions unavailable'))
+    const reloadFolders = vi.fn().mockRejectedValue(new Error('Folders unavailable'))
+    const agents: PanelAgents = {
+      error: 'Proposal failed',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      reloadSessions,
+      reloadFolders
+    }
+    const panel = loadPanel(agents, true, [], [], { mount: true, initialLoading: true })
+
+    panel.loading.value = false
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
+    expect(reloadFolders).toHaveBeenCalledTimes(1)
+    expect(agents.error).toBe('Proposal failed')
+    expect(panel.sessionsRefreshError.value).toContain('Sessions unavailable')
+    expect(panel.foldersRefreshError.value).toContain('Folders unavailable')
+
+    panel.loading.value = true
+    panel.loading.value = false
+    expect(reloadSessions).toHaveBeenCalledTimes(1)
+    expect(reloadFolders).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps workspace errors through an explicit archive retry', async () => {
+    const reloadSessions = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('Retry unavailable'))
+    const reloadFolders = vi.fn().mockResolvedValue(undefined)
+    const agents: PanelAgents = {
+      error: 'Send failed',
+      openSession: vi.fn().mockResolvedValue(false),
+      cancelSessionReadTransition: vi.fn(),
+      reloadSessions,
+      reloadFolders
+    }
+    const panel = loadPanel(agents, true, [], [], { mount: true, initialLoading: true })
+
+    panel.loading.value = false
+    await Promise.resolve()
+    await panel.refreshSessions()
+
+    expect(reloadSessions).toHaveBeenCalledTimes(2)
+    expect(agents.error).toBe('Send failed')
+    expect(panel.sessionsRefreshError.value).toContain('Retry unavailable')
   })
 })

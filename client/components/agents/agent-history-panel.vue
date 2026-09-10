@@ -5,8 +5,8 @@
     rounded="xl"
     :aria-busy="loading || refreshingHistory || sessionsReloading || sessionsLoadingMore || savingFolder || deleting || sessionMutationBusy || openingSessionIds.size > 0 || movingSessionIds.size > 0"
   >
-    <AgentPanelHeader ref="historyCloseButton" title="Conversations" icon="mdi-history" close-label="Close chat history" @close="closeHistory">
-      {{ displaySessions.length }} {{ sessionsNextCursor ? 'loaded' : 'saved' }} {{ displaySessions.length === 1 ? 'conversation' : 'conversations' }}
+    <AgentPanelHeader ref="historyCloseButton" title="Conversations" icon="mdi-history" close-label="Close chat history" :heading-id="headingId" :description-id="descriptionId" @close="closeHistory">
+      {{ archiveCountDescription }}
     </AgentPanelHeader>
 
     <div class="agent-history__search">
@@ -31,10 +31,16 @@
     <v-alert v-if="localError" class="mx-3 mb-3" density="compact" type="error" variant="tonal" closable @click:close="localError = ''">
       {{ localError }}
     </v-alert>
-    <v-alert v-if="refreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
+    <v-alert v-if="sessionsRefreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
       <div class="agent-history__refresh-error">
-        <span>{{ refreshError }}</span>
-        <v-btn size="small" variant="text" :loading="refreshingHistory" :disabled="refreshingHistory" @click="refreshHistory">Retry refresh</v-btn>
+        <span>{{ sessionsRefreshError }}</span>
+        <v-btn size="small" variant="text" :loading="refreshingSessions" :disabled="refreshingSessions" @click="refreshSessions">Retry conversations</v-btn>
+      </div>
+    </v-alert>
+    <v-alert v-if="foldersRefreshError" class="mx-3 mb-3" density="compact" type="warning" variant="tonal">
+      <div class="agent-history__refresh-error">
+        <span>{{ foldersRefreshError }}</span>
+        <v-btn size="small" variant="text" :loading="refreshingFolders" :disabled="refreshingFolders" @click="refreshFolders">Retry folders</v-btn>
       </div>
     </v-alert>
 
@@ -74,7 +80,6 @@
             <span class="agent-history__count" :aria-label="`${filteredRecentSessions.length} recent conversations`">{{ filteredRecentSessions.length }}</span>
           </div>
 
-          <div class="agent-history__recent-scroll">
           <template v-if="recentSessionGroups.length">
             <div v-for="group in recentSessionGroups" :key="group.label" class="agent-history__time-group">
               <div class="agent-history__time-label">{{ group.label }}</div>
@@ -147,7 +152,6 @@
                 Load more
               </v-btn>
             </div>
-          </div>
         </section>
 
         <section class="agent-history__folders" aria-labelledby="agent-history-folders-title">
@@ -159,7 +163,6 @@
             <v-btn class="agent-history__new-folder" prepend-icon="mdi-folder-plus-outline" size="small" variant="text" aria-label="Create a conversation folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting" @click="beginCreateFolder">New folder</v-btn>
           </div>
 
-          <div class="agent-history__folders-scroll">
           <v-expansion-panels v-if="visibleFolderGroups.length" v-model="openFolderIds" class="agent-history__folder-panels" multiple variant="accordion">
             <v-expansion-panel
               v-for="group in visibleFolderGroups"
@@ -176,23 +179,21 @@
               @dragleave="leaveDropTarget($event, group.folder.id)"
               @drop="dropSession($event, group.folder.id)"
             >
-              <div class="agent-history__folder-row">
-                <v-expansion-panel-title class="agent-history__folder-title">
-                  <v-icon class="me-2 agent-history__folder-icon" icon="mdi-folder-outline" size="19" />
-                  <span class="agent-history__folder-name">{{ group.folder.name }}</span>
-                  <span class="agent-history__folder-count" :aria-label="`${group.sessions.length} conversations`">{{ group.sessions.length }}</span>
-                </v-expansion-panel-title>
-                <v-menu content-class="agent-owned-overlay" location="bottom end">
-                  <template #activator="{ props: menuProps }">
-                    <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" />
-                  </template>
-                  <v-list density="compact" :aria-label="`Folder actions for ${group.folder.name}`">
-                    <v-list-item link prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" @click="beginRenameFolder(group.folder)" />
-                    <v-divider />
-                    <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" @click="beginRemoveFolder(group.folder)" />
-                  </v-list>
-                </v-menu>
-              </div>
+              <v-expansion-panel-title class="agent-history__folder-title">
+                <v-icon class="me-2 agent-history__folder-icon" icon="mdi-folder-outline" size="19" />
+                <span class="agent-history__folder-name">{{ group.folder.name }}</span>
+                <span class="agent-history__folder-count" :aria-label="`${group.sessions.length} conversations`">{{ group.sessions.length }}</span>
+              </v-expansion-panel-title>
+              <v-menu content-class="agent-owned-overlay" location="bottom end">
+                <template #activator="{ props: menuProps }">
+                  <v-btn v-bind="menuProps" class="agent-history__folder-actions" icon="mdi-dots-horizontal" size="x-small" variant="text" :aria-label="`Actions for ${group.folder.name}`" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" />
+                </template>
+                <v-list density="compact" :aria-label="`Folder actions for ${group.folder.name}`">
+                  <v-list-item link prepend-icon="mdi-pencil-outline" title="Rename folder" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" @click="beginRenameFolder(group.folder)" />
+                  <v-divider />
+                  <v-list-item link class="text-error" prepend-icon="mdi-folder-remove-outline" title="Remove folder" subtitle="Conversations return to Recent" :disabled="loading || refreshingHistory || sessionsReloading || savingFolder || deleting || sessionMutationBusy" @click="beginRemoveFolder(group.folder)" />
+                </v-list>
+              </v-menu>
               <v-expansion-panel-text>
                 <v-list v-if="group.sessions.length" class="agent-history__list agent-history__list--folder" density="compact" nav :aria-label="`${group.folder.name} conversations`">
                   <v-list-item
@@ -237,7 +238,6 @@
           <div v-else class="agent-history__empty agent-history__empty--folders">
             <v-icon icon="mdi-folder-heart-outline" size="22" />
             <span>Create a folder for conversations worth keeping.</span>
-          </div>
           </div>
         </section>
       </template>
@@ -333,13 +333,14 @@
 
 <script setup lang="ts">
 import AgentPanelHeader from './agent-panel-header.vue'
-import { computed, nextTick, onBeforeUnmount, onWatcherCleanup, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onWatcherCleanup, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentConversationFolderView } from '../../../shared/agents/contracts.ts'
 import type { AgentSessionSummary } from '../../helpers/agents-api.ts'
 import { useAgentsStore } from '../../store/agents.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 import AgentHistorySessionActions from './agent-history-session-actions.vue'
+const { headingId, descriptionId } = defineProps<{ headingId: string; descriptionId: string }>()
 const emit = defineEmits<{ close: []; clear: [] }>()
 const agents = useAgentsStore()
 const { folders, loading, sessionMutationBusy, sessions, sessionsLoadMoreError, sessionsLoadingMore, sessionsNextCursor, sessionsReloading, thread } = storeToRefs(agents)
@@ -364,8 +365,12 @@ const openingSessionIds = shallowRef(new Set<string>())
 const movingSessionIds = shallowRef(new Set<string>())
 const committedDeletedSessionIds = shallowRef(new Set<string>())
 const projectedFolderIds = shallowRef(new Map<string, string | null>())
-const refreshError = ref('')
-const refreshingHistory = ref(false)
+const sessionsRefreshError = ref('')
+const foldersRefreshError = ref('')
+const refreshingSessions = ref(false)
+const refreshingFolders = ref(false)
+const refreshingHistory = computed(() => refreshingSessions.value || refreshingFolders.value)
+const initialRefreshPending = ref(false)
 const draggedSessionId = ref<string | null>(null)
 const activeDropTarget = ref<string | null>(null)
 const dragStatus = ref('')
@@ -496,6 +501,10 @@ const historyPartition = computed<HistoryPartition>(() => {
   }
 })
 const displaySessions = computed(() => historyPartition.value.displaySessions)
+const draggedSession = computed<AgentSessionSummary | null>(() => {
+  const sessionId = draggedSessionId.value
+  return sessionId ? historyPartition.value.sessionsById.get(sessionId) ?? null : null
+})
 const filteredRecentSessions = computed(() => historyPartition.value.recentSessions)
 const hasUnfiledSessions = computed(() => displaySessions.value.some(session => session.folderId === null))
 const clearHistoryDisabled = computed(() =>
@@ -511,11 +520,15 @@ const clearHistoryDisabled = computed(() =>
   movingSessionIds.value.size > 0)
 const recentSessionGroups = computed(() => historyPartition.value.recentGroups)
 const visibleFolderGroups = computed(() => historyPartition.value.visibleFolderGroups)
-const draggedSession = computed(() =>
-  draggedSessionId.value ? historyPartition.value.sessionsById.get(draggedSessionId.value) ?? null : null)
-const hasSearchResults = computed(() =>
-  filteredRecentSessions.value.length > 0 || visibleFolderGroups.value.length > 0)
 const matchingConversationCount = computed(() => historyPartition.value.matchingConversationCount)
+const hasSearchResults = computed(() => matchingConversationCount.value > 0)
+const archiveCountDescription = computed(() => {
+  const count = matchingConversationCount.value
+  const noun = count === 1 ? 'conversation' : 'conversations'
+  const queryQualifier = normalizedSearch.value ? ' matching' : ''
+  const paginationQualifier = sessionsNextCursor.value ? ' loaded so far' : ''
+  return `${count}${queryQualifier} ${noun}${paginationQualifier}`
+})
 const searchStatus = computed(() => normalizedSearch.value
   ? `${matchingConversationCount.value} matching ${matchingConversationCount.value === 1 ? 'conversation' : 'conversations'}`
   : '')
@@ -589,24 +602,58 @@ const sessionLocationName = (session: AgentSessionSummary): string =>
   session.folderId === null ? 'Recent' : folders.value.find(folder => folder.id === session.folderId)?.name ?? 'its current folder'
 const showCommittedRefreshFailure = (): boolean => {
   if (!agents.error) return false
-  refreshError.value = `Showing last-loaded conversation history. ${agents.error}`
+  sessionsRefreshError.value = `Showing last-loaded conversations. ${agents.error}`
   return true
 }
-const refreshHistory = async (): Promise<void> => {
-  if (refreshingHistory.value || savingFolder.value || deleting.value || deletingSession.value || removingFolder.value) return
-  refreshingHistory.value = true
-  agents.error = ''
+const refreshHistoryBlocked = (): boolean =>
+  loading.value ||
+  refreshingHistory.value ||
+  sessionMutationBusy.value ||
+  savingFolder.value ||
+  deleting.value ||
+  Boolean(deletingSession.value) ||
+  Boolean(removingFolder.value)
+const refreshSessions = async (): Promise<boolean> => {
+  if (loading.value || refreshingSessions.value || sessionMutationBusy.value) return false
+  refreshingSessions.value = true
+  sessionsRefreshError.value = ''
   try {
-    await Promise.all([agents.reloadSessions(), agents.reloadFolders()])
-    committedDeletedSessionIds.value = new Set()
-    projectedFolderIds.value = new Map()
+    await agents.reloadSessions()
+    if (!sessionMutationBusy.value) {
+      committedDeletedSessionIds.value = new Set()
+      projectedFolderIds.value = new Map()
+    }
     localError.value = ''
-    refreshError.value = ''
+    return true
   } catch (value) {
-    refreshError.value = `Showing last-loaded conversation history. ${message(value, 'Conversation history could not be refreshed.')}`
+    sessionsRefreshError.value = `Showing last-loaded conversations. ${message(value, 'Conversations could not be refreshed.')}`
+    return false
   } finally {
-    refreshingHistory.value = false
+    refreshingSessions.value = false
   }
+}
+const refreshFolders = async (): Promise<boolean> => {
+  if (loading.value || refreshingFolders.value || sessionMutationBusy.value) return false
+  refreshingFolders.value = true
+  foldersRefreshError.value = ''
+  try {
+    await agents.reloadFolders()
+    localError.value = ''
+    return true
+  } catch (value) {
+    foldersRefreshError.value = `Showing last-loaded folders. ${message(value, 'Folders could not be refreshed.')}`
+    return false
+  } finally {
+    refreshingFolders.value = false
+  }
+}
+const refreshHistory = async (): Promise<boolean> => {
+  if (refreshHistoryBlocked()) return false
+  initialRefreshPending.value = false
+  const sessionsRefresh = refreshSessions()
+  const foldersRefresh = refreshFolders()
+  await Promise.allSettled([sessionsRefresh, foldersRefresh])
+  return true
 }
 const loadMoreSessions = async (): Promise<void> => {
   if (refreshingHistory.value || sessionsReloading.value || sessionsLoadingMore.value) return
@@ -644,8 +691,11 @@ const restoreSessionEditorFocus = (): void => {
 }
 
 
+const cancelPendingSessionRead = (): void => {
+  if (openingSessionIds.value.size > 0) agents.cancelSessionReadTransition()
+}
 const closeHistory = (): void => {
-  agents.cancelSessionTransition()
+  cancelPendingSessionRead()
   emit('close')
 }
 const requestClear = (): void => {
@@ -654,17 +704,13 @@ const requestClear = (): void => {
 }
 
 const openSession = async (sessionId: string): Promise<void> => {
-  if (loading.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0) return
-  if (sessionId === thread.value?.session.id) {
-    agents.cancelSessionTransition()
-    return
-  }
+  if (loading.value || sessionMutationBusy.value || refreshingHistory.value || sessionsReloading.value || openingSessionIds.value.size > 0) return
+  if (sessionId === thread.value?.session.id) return
   if (openingSessionIds.value.has(sessionId)) return
   localError.value = ''
   updatePendingSet(openingSessionIds, sessionId, true)
   try {
-    const opened = await agents.openSession(sessionId)
-    if (opened && window.matchMedia('(max-width: 1199.98px)').matches) emit('close')
+    await agents.openSession(sessionId)
   } catch (value) {
     localError.value = message(value, 'The conversation could not be opened.')
   } finally {
@@ -678,7 +724,7 @@ const moveSession = async (session: AgentSessionSummary, folderId: string | null
   const destination = dropDestinationName(folderId)
   const originalLocation = sessionLocationName(session)
   localError.value = ''
-  refreshError.value = ''
+  sessionsRefreshError.value = ''
   agents.error = ''
   dragStatus.value = `Moving ${title} to ${destination}.`
   updatePendingSet(movingSessionIds, session.id, true)
@@ -799,7 +845,7 @@ watch(folderEditorOpen, async open => {
 const deleteSession = async (): Promise<void> => {
   const session = deletingSession.value
   if (!session || deleting.value || savingFolder.value || sessionMutationBusy.value) return
-  deleting.value = true; dialogError.value = ''; refreshError.value = ''; agents.error = ''
+  deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; agents.error = ''
   try {
     const committed = await agents.removeSession(session.id)
     if (!committed) return
@@ -817,7 +863,7 @@ const deleteFolder = async (): Promise<void> => {
   const folder = removingFolder.value
   if (!folder || loading.value || deleting.value || savingFolder.value || sessionMutationBusy.value) return
   const affectedSessionIds = displaySessions.value.filter(session => session.folderId === folder.id).map(session => session.id)
-  deleting.value = true; dialogError.value = ''; refreshError.value = ''; agents.error = ''
+  deleting.value = true; dialogError.value = ''; sessionsRefreshError.value = ''; agents.error = ''
   try {
     await agents.deleteFolder(folder.id)
     for (const sessionId of affectedSessionIds) setProjectedFolder(sessionId, null)
@@ -871,9 +917,19 @@ watch(normalizedSearch, query => {
   const visibleIds = visibleFolderGroups.value.map(group => group.folder.id)
   openFolderIds.value = [...new Set([...openFolderIds.value, ...visibleIds])]
 })
+const startPendingInitialRefresh = (): void => {
+  if (!initialRefreshPending.value || refreshHistoryBlocked()) return
+  void refreshHistory()
+}
+watch([loading, sessionMutationBusy, savingFolder, deleting, deletingSession, removingFolder, refreshingHistory], startPendingInitialRefresh)
+onMounted(() => {
+  initialRefreshPending.value = true
+  startPendingInitialRefresh()
+})
 onBeforeUnmount(() => {
+  initialRefreshPending.value = false
   destructiveFocusScope?.deactivate({ restoreFocus: false })
-  agents.cancelSessionTransition()
+  cancelPendingSessionRead()
 })
 
 
@@ -926,8 +982,11 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0 var(--wiki-space-3) var(--wiki-space-4);
+  scrollbar-gutter: stable;
 }
 .agent-history__pagination {
   padding: var(--wiki-space-4) var(--wiki-space-1) 0;
@@ -944,37 +1003,10 @@ onBeforeUnmount(() => {
 .agent-history__recent {
   border-bottom: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-height: 0;
-}
-.agent-history__recent-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
   padding-bottom: var(--wiki-space-3);
-  scrollbar-gutter: stable;
 }
 .agent-history__folders {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
   padding-top: var(--wiki-space-4);
-}
-.agent-history__folders-scroll {
-  flex: 1 1 auto;
-  max-height: calc(
-    var(--wiki-control-height) + var(--wiki-control-height) + var(--wiki-control-height) +
-    var(--wiki-space-2) + var(--wiki-space-2) + 6px
-  );
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
 }
 .agent-history__section-heading {
   align-items: center;
@@ -1070,7 +1102,11 @@ onBeforeUnmount(() => {
   border: 1px solid var(--wiki-surface-border);
   box-shadow: none;
 }
-.agent-history__folder-title { font-size: .78rem; min-height: var(--wiki-control-height) !important; padding: var(--wiki-space-2) var(--wiki-space-2) var(--wiki-space-2) var(--wiki-space-3) !important; }
+.agent-history__folder-title {
+  font-size: .78rem;
+  min-height: var(--wiki-control-height) !important;
+  padding: var(--wiki-space-2) calc(var(--wiki-control-height) + var(--wiki-space-3)) var(--wiki-space-2) var(--wiki-space-3) !important;
+}
 .agent-history__folder-title :deep(.v-expansion-panel-title__overlay) { opacity: 0; }
 .agent-history__folder-name { flex: 1; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-history__folder-count {
@@ -1087,9 +1123,12 @@ onBeforeUnmount(() => {
 }
 .agent-history__folder-panels :deep(.v-expansion-panel-text__wrapper) { padding: 0 var(--wiki-space-2) var(--wiki-space-2); }
 .agent-history__list--folder { padding-inline: 0; }
-.agent-history__folder-row { align-items: stretch; display: flex; }
-.agent-history__folder-row .agent-history__folder-title { flex: 1; min-width: 0; }
-.agent-history__folder-actions { align-self: center; flex: 0 0 auto; margin-inline-end: var(--wiki-space-1); }
+.agent-history__folder-actions {
+  inset-block-start: 0;
+  inset-inline-end: var(--wiki-space-1);
+  position: absolute;
+  z-index: 2;
+}
 .agent-history__drop-target--available {
   outline: 1px dashed color-mix(in srgb, rgb(var(--v-theme-primary)) 48%, transparent);
   outline-offset: -2px;

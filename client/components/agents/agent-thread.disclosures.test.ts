@@ -15,7 +15,7 @@ const source = readFileSync(componentPath, 'utf8')
 const { descriptor, errors } = parse(source, { filename: componentPath })
 const template = descriptor.template?.content ?? ''
 const script = descriptor.scriptSetup?.content ?? ''
-const helperScript = script.match(/const navigableHrefCache[\s\S]*?(?=const temporalMetadataFor)/)?.[0]
+const helperScript = script.match(/const safeNavigableHref[\s\S]*?(?=interface LinkPresentationMetadata)/)?.[0]
 if (!helperScript) throw new Error('agent-thread.vue source helpers were not found')
 const executableHelperScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(helperScript)
 const loadThreadHelpers = (): {
@@ -82,25 +82,50 @@ const renderDuplicateSources = async (): Promise<string> => {
   const messages = [makeMessage('message one/α', 1), makeMessage('message two/β', 2)]
   const thread = { messages, artifacts: [], suggestions: [] }
   const { safeNavigableHref, sourceDomId } = loadThreadHelpers()
+  const threadPresentation = buildAgentThreadPresentation(messages, [], [], [])
+  const threadProjection = {
+    orderedMessages: threadPresentation.orderedMessages.map(entry => ({
+      ...entry,
+      temporal: { time: '', timestamp: '' },
+      citationGroups: entry.citationGroups.map(group => ({
+        ...group,
+        safeHref: safeNavigableHref(group.pageHref),
+        previewSelector: null,
+        sections: group.sections.map(citationEntry => ({
+          ...citationEntry,
+          safeHref: safeNavigableHref(citationEntry.citation.href),
+          previewSelector: null
+        }))
+      })),
+      run: entry.run
+        ? {
+            ...entry.run,
+            pageLinks: entry.run.pageLinks.map(link => ({
+              ...link,
+              safeHref: safeNavigableHref(link.href),
+              previewSelector: null
+            }))
+          }
+        : null
+    }))
+  }
   const component = Object.assign(
     defineComponent({
       setup: () => ({
         thread,
-        threadPresentation: buildAgentThreadPresentation(messages, [], [], []),
+        threadPresentation,
+        threadProjection,
         decidingApprovalId: null,
         canSubmit: true,
-        safeNavigableHref,
-        sourceSelector: () => null,
-        previewSelector: null,
         sourceDomId,
-        messageTime: () => '',
-        messageTimestamp: () => '',
+        previewSelector: null,
+        liveSummary: '',
+        liveSummaryRevision: 0,
         toolStateIcon: () => '',
         toolStateColor: () => undefined,
         toolStateLabel: () => '',
         forwardDecision: () => undefined,
-        emit: () => undefined,
-        liveSummary: ''
+        emit: () => undefined
       }),
       render: renderThreadTemplate
     }),
@@ -136,14 +161,15 @@ describe('Agent thread disclosures', () => {
     expect(sourceDetails).toMatch(/v-for="group in entry\.citationGroups"[\s\S]*v-for="citationEntry in group\.sections"/)
     expect(sourceDetails).toContain('{{ group.pageCitation.number }}')
     expect(sourceDetails).toContain('{{ citationEntry.number }}')
-    expect(sourceDetails).toContain(":is=\"safeNavigableHref(group.pageHref) ? 'a' : 'div'\"")
-    expect(sourceDetails).toContain(':href="safeNavigableHref(group.pageHref)"')
-    expect(sourceDetails).toContain(':target="safeNavigableHref(group.pageHref) ? \'_blank\' : undefined"')
-    expect(sourceDetails).toContain(':rel="safeNavigableHref(group.pageHref) ? \'noopener noreferrer\' : undefined"')
-    expect(sourceDetails).toContain(":is=\"safeNavigableHref(citationEntry.citation.href) ? 'a' : 'span'\"")
-    expect(sourceDetails).toContain(':href="safeNavigableHref(citationEntry.citation.href)"')
-    expect(sourceDetails).toContain(':target="safeNavigableHref(citationEntry.citation.href) ? \'_blank\' : undefined"')
-    expect(sourceDetails).toContain(':rel="safeNavigableHref(citationEntry.citation.href) ? \'noopener noreferrer\' : undefined"')
+    expect(sourceDetails).toContain(":is=\"group.safeHref ? 'a' : 'div'\"")
+    expect(sourceDetails).toContain(':href="group.safeHref"')
+    expect(sourceDetails).toContain(':target="group.safeHref ? \'_blank\' : undefined"')
+    expect(sourceDetails).toContain(':rel="group.safeHref ? \'noopener noreferrer\' : undefined"')
+    expect(sourceDetails).toContain(":is=\"citationEntry.safeHref ? 'a' : 'span'\"")
+    expect(sourceDetails).toContain(':href="citationEntry.safeHref"')
+    expect(sourceDetails).toContain(':target="citationEntry.safeHref ? \'_blank\' : undefined"')
+    expect(sourceDetails).toContain(':rel="citationEntry.safeHref ? \'noopener noreferrer\' : undefined"')
+    expect(sourceDetails).toContain('v-if="group.previewSelector"')
   })
 
   test('renders unique encoded page and section identifiers when messages repeat evidence', async () => {

@@ -11,20 +11,22 @@
   >
     <v-card
       v-if="skillCommandOpen"
+      :id="composerIds.commandMenu"
       class="agent-composer__command-menu"
-      aria-label="Invoke a skill"
+      :aria-labelledby="composerIds.commandHeading"
+      :aria-describedby="composerIds.commandDescription"
       elevation="5"
     >
-      <v-card-title class="agent-composer__command-heading">
+      <v-card-title :id="composerIds.commandHeading" class="agent-composer__command-heading">
         <span>
           <v-icon icon="mdi-puzzle-outline" size="18" aria-hidden="true" />
           Invoke a skill
         </span>
-        <span class="agent-composer__command-help">Type to filter · Esc to close</span>
+        <span :id="composerIds.commandDescription" class="agent-composer__command-help">Type to filter · Esc to close</span>
       </v-card-title>
       <v-divider />
       <v-list
-        id="agent-skill-command-results"
+        :id="composerIds.commandResults"
         role="listbox"
         aria-multiselectable="true"
         aria-label="Matching skills"
@@ -33,17 +35,18 @@
         class="overflow-y-auto"
       >
         <v-list-item
-          v-for="(skill, index) in skillCommandResults"
-          :id="`agent-skill-command-${skill.versionId}`"
+          v-for="skill in skillCommandResults"
+          :id="commandOptionId(skill.versionId)"
           :key="skill.versionId"
           role="option"
-          :active="index === activeCommandIndex"
+          :active="activeCommandSkill?.versionId === skill.versionId"
           :aria-selected="isSelected(skill.versionId)"
+          :aria-disabled="isCommandSkillDisabled(skill.versionId) || undefined"
           :disabled="isCommandSkillDisabled(skill.versionId)"
           :prepend-icon="isSelected(skill.versionId) ? 'mdi-check-circle' : 'mdi-puzzle-outline'"
           :title="skill.name"
           :subtitle="isPreferred(skill.versionId) ? 'Always loaded in conversations' : skill.description"
-          @mouseenter="activeCommandIndex = index"
+          @mouseenter="setActiveCommandSkill(skill.versionId)"
           @click="invokeCommandSkill(skill)"
         >
           <template #append>
@@ -53,9 +56,9 @@
             </div>
           </template>
         </v-list-item>
-        <v-list-item v-if="skillCommandResults.length === 0 && skillsLoading" role="option" aria-disabled="true" title="Loading skill catalog" subtitle="Wait for the available skills to finish loading." disabled />
-        <v-list-item v-else-if="skillCommandResults.length === 0 && skillsPartial" role="option" aria-disabled="true" :title="skillLoadTitle" :subtitle="skillLoadMessage" disabled />
-        <v-list-item v-else-if="skillCommandResults.length === 0" role="option" aria-disabled="true" title="No matching skills" subtitle="Try another name or description." disabled />
+        <v-list-item v-if="skillCommandResults.length === 0 && skillsLoading" :id="composerIds.commandLoading" role="option" aria-disabled="true" title="Loading skill catalog" subtitle="Wait for the available skills to finish loading." disabled />
+        <v-list-item v-else-if="skillCommandResults.length === 0 && skillsPartial" :id="composerIds.commandPartial" role="option" aria-disabled="true" :title="skillLoadTitle" :subtitle="skillLoadMessage" disabled />
+        <v-list-item v-else-if="skillCommandResults.length === 0" :id="composerIds.commandEmpty" role="option" aria-disabled="true" title="No matching skills" subtitle="Try another name or description." disabled />
       </v-list>
       <div class="agent-composer__command-status sr-only" role="status" aria-live="polite">{{ skillCommandStatus }}</div>
       <v-card-actions v-if="skillsLoadError" class="agent-composer__command-retry">
@@ -79,8 +82,8 @@
         flat
         hide-details
         :disabled="disabled || sendInProgress"
-        :aria-controls="skillsEnabled && skillCommandOpen ? 'agent-skill-command-results' : undefined"
-        :aria-activedescendant="skillsEnabled && skillCommandOpen && activeCommandSkill ? `agent-skill-command-${activeCommandSkill.versionId}` : undefined"
+        :aria-controls="skillsEnabled && skillCommandOpen ? composerIds.commandResults : undefined"
+        :aria-activedescendant="activeCommandOptionId"
         @select="handleSelectionChange"
         @keydown="handleKeydown"
       />
@@ -113,7 +116,7 @@
         <v-menu content-class="agent-owned-overlay" v-if="skillsEnabled" v-model="skillMenuOpen" :close-on-content-click="false">
           <template #activator="{ props: activatorProps }">
             <v-btn
-              id="agent-composer-skills-trigger"
+              :id="composerIds.skillsTrigger"
               ref="skillsTrigger"
               v-bind="activatorProps"
               class="agent-composer__skill-button"
@@ -123,15 +126,15 @@
               :disabled="disabled || sendInProgress"
               :aria-label="skillsLoadError ? `Choose skills; the skill catalog is ${skills.length > 0 ? 'incomplete' : 'unavailable'}` : 'Choose skills for the next message'"
               aria-haspopup="dialog"
-              aria-controls="agent-composer-skills-menu"
+              :aria-controls="composerIds.skillsDialog"
               :aria-expanded="skillMenuOpen"
             >
-              <span class="d-none d-sm-inline">{{ selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : skillsLoadError ? skills.length > 0 ? 'Skills incomplete' : 'Skills unavailable' : 'Skills' }}</span>
+              <span>{{ selectedSkills.length > 0 ? `Skills (${selectedSkills.length})` : skillsLoadError ? skills.length > 0 ? 'Skills incomplete' : 'Skills unavailable' : 'Skills' }}</span>
             </v-btn>
           </template>
-          <v-card id="agent-composer-skills-menu" class="agent-composer__skill-menu" min-width="300" max-width="420" role="dialog" aria-labelledby="agent-composer-skills-title">
-            <v-card-title id="agent-composer-skills-title" class="text-body-large">Skills</v-card-title>
-            <v-card-subtitle>Select for the next message or always load in conversations.</v-card-subtitle>
+          <v-card :id="composerIds.skillsDialog" class="agent-composer__skill-menu" min-width="300" max-width="420" role="dialog" :aria-labelledby="composerIds.skillsHeading" :aria-describedby="composerIds.skillsDescription">
+            <v-card-title :id="composerIds.skillsHeading" class="text-body-large">Skills</v-card-title>
+            <v-card-subtitle :id="composerIds.skillsDescription">Select for the next message or always load in conversations.</v-card-subtitle>
             <div
               v-if="skillsPartial"
               class="agent-composer__skill-load-state"
@@ -207,12 +210,12 @@
           :disabled="disabled || sendInProgress"
           @click="goalMode = !goalMode"
         >
-          <span class="d-none d-sm-inline">Goal</span>
+          <span>Goal</span>
         </v-btn>
       </div>
 
       <div
-        id="agent-composer-status"
+        :id="composerIds.status"
         class="agent-composer__state"
         :class="`agent-composer__state--${statusTone}`"
         role="status"
@@ -252,14 +255,15 @@
       </div>
     </div>
 
-    <span id="agent-composer-keyboard-hint" class="agent-composer__hint">
-      Enter to send; Shift+Enter for a new line
+    <span :id="composerIds.keyboardHint" class="agent-composer__hint">
+      Enter to send · Shift+Enter for a new line
     </span>
   </v-form>
-</template>
 
+
+</template>
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import StatusIndicator from '../common/status-indicator.vue'
 import type { AgentSessionSkillView } from '../../../shared/agents/contracts.ts'
 import type { VisibleAgentSkill } from '../../helpers/agents-api.ts'
@@ -318,6 +322,23 @@ const submissionPending = ref(false)
 const sendInProgress = computed(() => props.sending || submissionPending.value)
 let restoreInputWhenReady = false
 let mounted = false
+const composerId = useId()
+const composerIds = {
+  commandMenu: `${composerId}-command-menu`,
+  commandHeading: `${composerId}-command-heading`,
+  commandDescription: `${composerId}-command-description`,
+  commandResults: `${composerId}-command-results`,
+  commandLoading: `${composerId}-command-loading`,
+  commandPartial: `${composerId}-command-partial`,
+  commandEmpty: `${composerId}-command-empty`,
+  skillsTrigger: `${composerId}-skills-trigger`,
+  skillsDialog: `${composerId}-skills-dialog`,
+  skillsHeading: `${composerId}-skills-heading`,
+  skillsDescription: `${composerId}-skills-description`,
+  status: `${composerId}-status`,
+  keyboardHint: `${composerId}-keyboard-hint`
+} as const
+const commandOptionId = (versionId: string): string => `${composerIds.commandResults}-${versionId}`
 const preferredSkillIds = computed(() => new Set(props.preferredSkills.map(skill => skill.skillId)))
 const preferredSkillIdByVersionId = computed(() => new Map(props.preferredSkills.map(skill => [skill.versionId, skill.skillId])))
 const selectedSkillIdSet = computed(() => new Set(selectedSkillIds.value))
@@ -349,8 +370,8 @@ const composerInputLabel = computed(() =>
 )
 const composerInputDescriptionIds = computed(() => [
   props.externalDescriptionId?.trim(),
-  'agent-composer-status',
-  'agent-composer-keyboard-hint'
+  composerIds.status,
+  composerIds.keyboardHint
 ].filter(Boolean).join(' '))
 const composerInputPlaceholder = computed(() => {
   if (goalMode.value) return 'Describe a bounded outcome for Wiki Agent'
@@ -544,7 +565,6 @@ const skillLoadMessage = computed(() => props.skillsLoadError
     ? `Showing the last-loaded catalog. ${props.skillsLoadError}`
     : props.skillsLoadError
   : 'Available skills are still being loaded.')
-const activeCommandSkill = computed(() => skillCommandResults.value[activeCommandIndex.value] ?? null)
 const skillCommandStatus = computed(() => skillCommandResults.value.length
   ? `${skillCommandResults.value.length} matching skills`
   : props.skillsLoading
@@ -554,6 +574,16 @@ const skillCommandStatus = computed(() => skillCommandResults.value.length
       : 'No matching skills')
 const isCommandSkillDisabled = (versionId: string): boolean =>
   props.disabled || sendInProgress.value || isPreferred(versionId) || (!isSelected(versionId) && selectedSkillIds.value.length >= props.invocationLimit)
+const usableSkillCommandResults = computed(() => skillCommandResults.value.filter(skill => !isCommandSkillDisabled(skill.versionId)))
+const activeCommandSkill = computed(() => usableSkillCommandResults.value[activeCommandIndex.value] ?? null)
+const activeCommandOptionId = computed(() => {
+  const skill = activeCommandSkill.value
+  return skill ? commandOptionId(skill.versionId) : undefined
+})
+const setActiveCommandSkill = (versionId: string): void => {
+  const index = usableSkillCommandResults.value.findIndex(skill => skill.versionId === versionId)
+  if (index >= 0) activeCommandIndex.value = index
+}
 const invokeCommandSkill = (skill: VisibleAgentSkill): void => {
   const command = skillCommandMatch.value
   if (!command || isCommandSkillDisabled(skill.versionId)) return
@@ -577,15 +607,19 @@ const handleKeydown = (event: KeyboardEvent): void => {
       if (command) dismissedCommandToken.value = { start: command.start, prefix: draft.value.slice(0, command.start) }
       return
     }
-    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && skillCommandResults.value.length > 0) {
+    if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && usableSkillCommandResults.value.length > 0) {
       event.preventDefault()
       const direction = event.key === 'ArrowDown' ? 1 : -1
-      activeCommandIndex.value = (activeCommandIndex.value + direction + skillCommandResults.value.length) % skillCommandResults.value.length
+      const resultCount = usableSkillCommandResults.value.length
+      activeCommandIndex.value = (activeCommandIndex.value + direction + resultCount) % resultCount
       return
     }
-    if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+    const active = activeCommandSkill.value
+    const acceptsWithTab = event.key === 'Tab' && !event.shiftKey && active !== null
+    const acceptsWithEnter = event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.metaKey && active !== null
+    if (acceptsWithTab || acceptsWithEnter) {
       event.preventDefault()
-      if (activeCommandSkill.value) invokeCommandSkill(activeCommandSkill.value)
+      invokeCommandSkill(active)
       return
     }
   }
@@ -627,6 +661,11 @@ watch(draft, value => {
 watch(skillCommandResults, () => {
   activeCommandIndex.value = 0
 })
+watch(usableSkillCommandResults, results => {
+  activeCommandIndex.value = results.length > 0
+    ? Math.min(activeCommandIndex.value, results.length - 1)
+    : 0
+})
 watch(
   () => [props.disabled, props.sending, props.canStop, submissionPending.value] as const,
   ([disabled, sending, canStop, pending]) => {
@@ -665,7 +704,7 @@ const resetInput = (): void => {
   if (textarea) textarea.scrollTop = 0
 }
 const submit = (): void => {
-  if (props.disabled || sendInProgress.value || skillCommandOpen.value || !draft.value.trim()) return
+  if (props.disabled || sendInProgress.value || !draft.value.trim()) return
   const content = draft.value
   const invokedSkillVersionIds = [...selectedSkillIds.value]
   const mode = goalMode.value ? 'goal' : 'message'
@@ -829,7 +868,7 @@ onBeforeUnmount(() => {
 .agent-composer__actions {
   display: grid;
   min-width: 0;
-  min-height: var(--wiki-control-height);
+  min-height: max(44px, var(--wiki-control-height));
   flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
@@ -860,7 +899,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__actions :deep(.v-btn) {
-  min-height: var(--wiki-control-height);
+  min-height: max(44px, var(--wiki-control-height));
 }
 
 .agent-composer__skill-button,
@@ -877,8 +916,8 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__pin {
-  min-width: var(--wiki-control-height);
-  min-height: var(--wiki-control-height);
+  min-width: max(44px, var(--wiki-control-height));
+  min-height: max(44px, var(--wiki-control-height));
 }
 
 .agent-composer__pin--active {
@@ -969,13 +1008,11 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer__hint {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
+  display: block;
+  margin: var(--wiki-space-1) var(--wiki-space-1) 0;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  font-size: var(--wiki-label-size);
+  line-height: 1.35;
 }
 
 .agent-composer__command-menu {
@@ -1039,14 +1076,29 @@ onBeforeUnmount(() => {
   }
 
   .agent-composer__actions {
-    grid-template-columns: minmax(var(--wiki-control-height), 1fr) minmax(0, auto) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "context context"
+      "state primary";
+    row-gap: var(--wiki-space-1);
   }
 
   .agent-composer__context-controls {
+    grid-area: context;
     overflow-x: auto;
     overscroll-behavior-inline: contain;
     scrollbar-width: none;
   }
+
+  .agent-composer__state {
+    grid-area: state;
+    justify-content: flex-start;
+  }
+
+  .agent-composer__primary-actions {
+    grid-area: primary;
+  }
+
 
   .agent-composer__context-controls::-webkit-scrollbar {
     display: none;
@@ -1057,6 +1109,25 @@ onBeforeUnmount(() => {
     max-height: min(calc(var(--wiki-space-12) * 2), 24dvh);
   }
 
+}
+@media (max-width: 740px) and (hover: none) {
+  .agent-composer__hint {
+    max-height: 0;
+    margin-block-start: 0;
+    overflow: hidden;
+    opacity: 0;
+    transform: translateY(-.25rem);
+    pointer-events: none;
+    transition: max-height var(--wiki-motion-fast) var(--wiki-motion-ease), margin var(--wiki-motion-fast) var(--wiki-motion-ease), opacity var(--wiki-motion-fast) var(--wiki-motion-ease), transform var(--wiki-motion-fast) var(--wiki-motion-ease);
+  }
+
+  .agent-composer:focus-within .agent-composer__hint {
+    max-height: 2rem;
+    margin-block-start: var(--wiki-space-1);
+    opacity: 1;
+    transform: none;
+    pointer-events: auto;
+  }
 }
 
 @media (max-width: 740px) and (max-height: 500px) {
@@ -1083,7 +1154,7 @@ onBeforeUnmount(() => {
 @media (max-width: 599.98px) {
   .agent-composer__skill-button,
   .agent-composer__goal-button {
-    min-width: var(--wiki-control-height);
+    min-width: max(44px, var(--wiki-control-height));
     padding-inline: var(--wiki-space-2);
   }
 

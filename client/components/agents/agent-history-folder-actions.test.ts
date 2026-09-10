@@ -60,9 +60,14 @@ const makeFolder = (id = '10000000-0000-4000-8000-000000000001', name = 'Roadmap
 })
 
 const loadActions = (session: AgentSessionSummary, folders: AgentConversationFolderView[]): ActionsHarness => {
-  const evaluate = new Function('computed', 'ref', 'useTemplateRef', 'defineProps', 'defineEmits', `${executableActionsScript}\nreturn { availableFolders, canMove }`) as (
-    ...dependencies: unknown[]
-  ) => ActionsHarness
+  const evaluate = new Function(
+    'computed',
+    'ref',
+    'useTemplateRef',
+    'defineProps',
+    'defineEmits',
+    `${executableActionsScript}\nreturn { availableFolders, canMove }`
+  ) as (...dependencies: unknown[]) => ActionsHarness
   return evaluate(
     (getter: () => unknown) => ({
       get value() {
@@ -164,7 +169,7 @@ describe('Agent history folder actions', () => {
     expect(panelTemplate).toContain('title="Clear Recent history"')
     expect(panelTemplate).toContain('subtitle="Saved folders are preserved"')
     expect(panelTemplate.indexOf('class="agent-history__new-folder"')).toBeLessThan(panelTemplate.indexOf('title="Clear Recent history"'))
-    expect(panelScript).toContain("defineEmits<{ close: []; clear: [] }>()")
+    expect(panelScript).toContain('defineEmits<{ close: []; clear: [] }>()')
     expect(panelScript).not.toContain('reset')
     expect(panelTemplate).toContain('Your recent, unfiled conversations')
     expect(panelTemplate).toContain('Kept without expiry')
@@ -172,23 +177,13 @@ describe('Agent history folder actions', () => {
     expect(panelTemplate).toContain('each starts a fresh history retention window. No conversations are deleted.')
   })
 
-  it('keeps Recent and Saved folders in independently scrolling regions', () => {
-    expect(panelTemplate.indexOf('class="agent-history__section-heading"')).toBeLessThan(
-      panelTemplate.indexOf('class="agent-history__recent-scroll"')
-    )
-    expect(panelTemplate.indexOf('agent-history__section-heading--folders')).toBeLessThan(
-      panelTemplate.indexOf('class="agent-history__folders-scroll"')
-    )
-    expect(panelTemplate.indexOf('class="agent-history__pagination"')).toBeLessThan(
-      panelTemplate.indexOf('class="agent-history__folders"')
-    )
-    expect(panelSource).toContain('.agent-history__body {\n  display: flex;')
-    expect(panelSource).toContain('overflow: hidden;\n  padding: 0 var(--wiki-space-3) var(--wiki-space-4);')
-    expect(panelSource).toContain('.agent-history__recent-scroll {')
-    expect(panelSource).toContain('.agent-history__folders-scroll {')
-    expect(panelSource).toContain('.agent-history__folders {\n  display: flex;\n  flex: 0 0 auto;')
-    expect(panelSource).toContain('max-height: calc(')
-    expect(panelSource.match(/overflow-y: auto;/g)).toHaveLength(2)
+  it('keeps Recent and Saved reachable through one archive body scroller', () => {
+    expect(panelComponent.errors).toEqual([])
+    expect(panelTemplate).toContain('<div v-else class="agent-history__body">')
+    expect(panelSource.match(/overflow-y: auto;/g)).toHaveLength(1)
+    expect(panelSource).not.toContain('agent-history__recent-scroll')
+    expect(panelSource).not.toContain('agent-history__folders-scroll')
+    expect(panelSource).not.toContain('max-height: calc(')
     expect(panelTemplate).toContain('v-model="searchQuery"')
     expect(panelTemplate.match(/@move="folderId => moveSession\(session, folderId\)"/g)).toHaveLength(2)
     expect(panelTemplate.match(/@rename="restoreTarget => beginRenameSession\(session, restoreTarget\)"/g)).toHaveLength(2)
@@ -196,8 +191,15 @@ describe('Agent history folder actions', () => {
     expect(panelTemplate).toContain('@click="beginRenameFolder(group.folder)"')
     expect(panelTemplate).toContain('@click="beginRemoveFolder(group.folder)"')
     expect(panelTemplate).toContain('@click="loadMoreSessions"')
+    const titleIndex = panelTemplate.indexOf('<v-expansion-panel-title')
+    const actionIndex = panelTemplate.indexOf('<v-btn v-bind="menuProps" class="agent-history__folder-actions"')
+    const textIndex = panelTemplate.indexOf('<v-expansion-panel-text>')
+    expect(titleIndex).toBeGreaterThan(-1)
+    expect(actionIndex).toBeGreaterThan(titleIndex)
+    expect(textIndex).toBeGreaterThan(actionIndex)
+    expect(panelTemplate).not.toContain('<v-menu class="agent-history__folder-actions"')
+    expect(panelTemplate).toContain('<v-menu content-class="agent-owned-overlay" location="bottom end">')
   })
-
   it('keeps destructive history controls disabled when the shared session mutation lock is occupied', () => {
     expect(panelTemplate).toContain(':persistent="deleting || sessionMutationBusy"')
     expect(panelTemplate).toContain(':disabled="deleting || sessionMutationBusy" @click="deleteSession"')

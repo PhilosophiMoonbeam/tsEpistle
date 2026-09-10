@@ -65,7 +65,7 @@
                   kbd.nav-header-search-key(v-if='!search && !searchIsFocused', aria-hidden='true') {{ searchShortcutLabel }}
 
             v-btn.nav-header-agent(
-              v-if='canUseAgent && !hideSearch && mode !== `edit`'
+              v-if='canEnterAgent'
               prepend-icon='mdi-book-open-page-variant-outline'
               aria-label='Open Wiki Agent'
               title='Wiki Agent · Ctrl/⌘ + Shift + A'
@@ -111,7 +111,7 @@
           )
             v-icon {{ searchIsShown ? 'mdi-close' : 'mdi-magnify' }}
           v-btn.nav-header-agent(
-            v-if='canUseAgent && !hideSearch && mode !== `edit` && $vuetify.display.smAndDown'
+            v-if='canEnterAgent && $vuetify.display.smAndDown'
             icon
             aria-label='Open Wiki Agent'
             title='Wiki Agent · Ctrl/⌘ + Shift + A'
@@ -430,7 +430,16 @@ export default defineComponent({
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
     permissions(): string[] { return wikiStore.user.permissions },
     searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.search') },
-    canUseAgent(): boolean { return Boolean(siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) },
+    canEnterAgent(): boolean {
+      return Boolean(
+        siteConfig.agentsEnabled &&
+        this.isAuthenticated &&
+        this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system') &&
+        !this.hideSearch &&
+        !this.dense &&
+        this.mode !== 'edit'
+      )
+    },
     searchShortcutLabel(): string { return /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K' },
     searchInputIcon(): string { return this.searchMode === 'ask' ? 'mdi-auto-fix' : 'mdi-magnify' },
     picture (): UserPicture {
@@ -596,6 +605,7 @@ export default defineComponent({
       else this.searchClose()
     },
     openAgent(): void {
+      if (!this.canEnterAgent) return
       this.searchMode = 'ask'
       void this.focusSearchField()
     },
@@ -608,7 +618,7 @@ export default defineComponent({
         return
       }
       if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.key.toLowerCase() !== 'a') return
-      if (!siteConfig.agentsEnabled || !this.isAuthenticated || !this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) return
+      if (!this.canEnterAgent) return
       event.preventDefault()
       if (this.searchMode === 'ask') {
         this.searchMode = 'search'
@@ -621,7 +631,7 @@ export default defineComponent({
     },
     searchEnter (event: KeyboardEvent) {
       if (event.isComposing) return
-      if ((event.ctrlKey || event.metaKey) && this.canUseAgent) {
+      if ((event.ctrlKey || event.metaKey) && this.canEnterAgent) {
         event.preventDefault()
         this.searchMode = 'ask'
       }

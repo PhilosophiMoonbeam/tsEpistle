@@ -1013,9 +1013,7 @@ describe('Agent session mutations', () => {
             return request.promise
           }
           if (path === '/_api/agents/sessions' && method === 'GET')
-            return Promise.resolve(
-              Response.json({ sessions: actionName === 'clearUnfiledHistory' ? [] : [summaryForThread(current)], nextCursor: null })
-            )
+            return Promise.resolve(Response.json({ sessions: actionName === 'clearUnfiledHistory' ? [] : [summaryForThread(current)], nextCursor: null }))
           return Promise.reject(new Error(`Unexpected request: ${method} ${path}`))
         })
 
@@ -1362,7 +1360,7 @@ describe('Agent session mutation transitions', () => {
     vi.restoreAllMocks()
   })
 
-  it('lets a session creation commit after a newer selection and reconciles it without replacing the selection', async () => {
+  it('lets mutation transitions win over an attempted history selection', async () => {
     setActivePinia(createPinia())
     const store = useAgentsStore()
     store.csrfToken = 'csrf-token'
@@ -1391,13 +1389,18 @@ describe('Agent session mutation transitions', () => {
     const creating = store.newSession('saved')
     const createCall = fetcher.mock.calls.find(call => call[0] === '/_api/agents/sessions' && call[1]?.method === 'POST')
     expect(createCall?.[1]?.signal).toBeUndefined()
+    expect(store.sessionMutationBusy).toBe(true)
 
-    expect(await store.openSession(selected.session.id)).toBe(true)
+    expect(await store.openSession(selected.session.id)).toBe(false)
+    expect(fetcher.mock.calls.filter(call => call[0] === `/_api/agents/sessions/${selected.session.id}`)).toHaveLength(0)
+
     pendingCreation.resolve(new Response(JSON.stringify(created), { status: 201, ...json }))
     await creating
 
-    expect(store.thread?.session.id).toBe(selected.session.id)
+    expect(store.thread?.session.id).toBe(created.session.id)
     expect(store.sessions.map(session => session.id)).toEqual([created.session.id, selected.session.id])
+    expect(await store.openSession(selected.session.id)).toBe(true)
+    expect(store.thread?.session.id).toBe(selected.session.id)
   })
 
   it('allows a deletion to commit after workspace close without mutating the disposed client', async () => {
@@ -1475,7 +1478,6 @@ describe('Agent session mutation transitions', () => {
     store.connectCurrentRun = vi.fn()
     const pending = deferred<Response>()
     let accepted = false
-    let threadReads = 0
     vi.spyOn(window, 'fetch').mockImplementation((input, init) => {
       const path = String(input)
       if (init?.method === 'POST') return pending.promise
@@ -1483,10 +1485,7 @@ describe('Agent session mutation transitions', () => {
       if (path === '/_api/agents/profiles') return Promise.resolve(Response.json({ profiles: [] }))
       if (path === '/_api/agents/skills') return Promise.resolve(Response.json({ skills: [] }))
       if (path === '/_api/agents/conversation-folders') return Promise.resolve(Response.json({ folders: [] }))
-      if (path === `/_api/agents/sessions/${active.session.id}`) {
-        threadReads += 1
-        return Promise.resolve(Response.json(accepted ? active : empty))
-      }
+      if (path === `/_api/agents/sessions/${active.session.id}`) return Promise.resolve(Response.json(accepted ? active : empty))
       return Promise.reject(new Error(`Unexpected request: ${path}`))
     })
 
@@ -1497,9 +1496,10 @@ describe('Agent session mutation transitions', () => {
     accepted = true
     pending.resolve(Response.json({ run: active.session.currentRun, replayed: false }))
     expect(await sending).toBe(true)
-    expect(threadReads).toBe(2)
-    expect(store.thread?.session.currentRun?.id).toBe(active.session.currentRun?.id)
     expect(store.drafts[active.session.id]?.text).toBe('')
+    expect(store.drafts[active.session.id]?.mode).toBe('message')
+    expect(store.drafts[active.session.id]?.skillVersionIds).toEqual([])
+    expect(store.sending).toBe(false)
     expect(store.sessionMutationBusy).toBe(false)
     store.closeWorkspace()
   })
@@ -1511,15 +1511,32 @@ describe('Agent session mutation transitions', () => {
     const active = activeThread()
     store.thread = { ...active, session: { ...active.session, currentRun: null } }
     store.contextPage = { id: 99, locale: 'en', path: 'unrelated', observedUpdatedAt: '2026-09-01T00:00:00Z' }
-    const source = { id: 42, locale: 'en', path: 'docs/start', title: 'Start', description: '', sourceRevision: '8', updatedAt: '2026-09-01T00:00:00Z', visibility: 'public' as const, excerpt: '', excerptTruncated: false }
+    const source = {
+      id: 42,
+      locale: 'en',
+      path: 'docs/start',
+      title: 'Start',
+      description: '',
+      sourceRevision: '8',
+      updatedAt: '2026-09-01T00:00:00Z',
+      visibility: 'public' as const,
+      excerpt: '',
+      excerptTruncated: false
+    }
     store.updateDraft(active.session.id, { text: 'Read this source', includeCurrentPage: false, scope: { kind: 'selected' }, sources: [source] })
     const pending = deferred<Response>()
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementationOnce(() => pending.promise).mockResolvedValueOnce(Response.json({ message: 'Refresh unavailable' }, { status: 503 }))
+    const fetcher = vi
+      .spyOn(window, 'fetch')
+      .mockImplementationOnce(() => pending.promise)
+      .mockResolvedValueOnce(Response.json({ message: 'Refresh unavailable' }, { status: 503 }))
     const sending = store.send('Read this source')
     store.updateDraft(active.session.id, { text: 'My next question', mode: 'goal', sources: [{ ...source, sourceRevision: '9' }] })
     const payload = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))
     expect(payload).not.toHaveProperty('currentPage')
-    expect(payload.knowledgeContext).toEqual({ scope: { kind: 'selected' }, sources: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', visibility: 'public', sourceRevision: '8' }] })
+    expect(payload.knowledgeContext).toEqual({
+      scope: { kind: 'selected' },
+      sources: [{ id: 42, locale: 'en', path: 'docs/start', title: 'Start', visibility: 'public', sourceRevision: '8' }]
+    })
     pending.resolve(Response.json({ run: active.session.currentRun, replayed: false }))
     expect(await sending).toBe(true)
     expect(store.drafts[active.session.id]?.text).toBe('My next question')
@@ -1652,7 +1669,6 @@ describe('Agent empty conversation lifecycle', () => {
     expect(fetcher.mock.calls[0]?.[1]?.method).toBe('POST')
     expect(store.sessionMutationBusy).toBe(false)
   })
-
 })
 
 describe('Agent unfiled history clearing', () => {
@@ -1684,11 +1700,11 @@ describe('Agent unfiled history clearing', () => {
       }
     ]
     store.error = 'No default provider profile is configured for your groups.'
-    const fetcher = vi.spyOn(window, 'fetch').mockImplementation((_input, init) =>
-      init?.method === 'DELETE'
-        ? Promise.resolve(new Response(null, { status: 204 }))
-        : Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
-    )
+    const fetcher = vi
+      .spyOn(window, 'fetch')
+      .mockImplementation((_input, init) =>
+        init?.method === 'DELETE' ? Promise.resolve(new Response(null, { status: 204 })) : Promise.resolve(Response.json({ sessions: [], nextCursor: null }))
+      )
 
     expect(await store.clearUnfiledHistory()).toBeUndefined()
 

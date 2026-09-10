@@ -1,4 +1,4 @@
-import { expect, type Dialog, type Locator } from '@playwright/test'
+import { expect, type Dialog, type Locator, type Page } from '@playwright/test'
 import {
   authenticateAsAdmin,
   expectLocatorWithinViewport,
@@ -8,6 +8,20 @@ import {
   responsiveTest as test,
   sameOriginHeaders
 } from './helpers.ts'
+import { installEnabledAgentFixture } from './agent-fixture.ts'
+
+async function openFixtureAgentFromSearch(page: Page): Promise<Locator> {
+  await openAuthenticatedPage(page, '/', '.page-header-section')
+  const search = await openSearch(page)
+  await expect(search).toBeFocused()
+  await expect(page.getByRole('dialog', { name: 'Wiki search' })).toBeVisible()
+  const entry = page.locator('.search-results-agent-entry')
+  await expect(entry).toBeVisible()
+  await entry.click()
+  const agent = page.getByRole('region', { name: 'Wiki Agent' })
+  await expect(agent).toBeVisible()
+  return agent
+}
 
 test.describe('responsive UI quality matrix', () => {
   test.beforeEach(() => {
@@ -1103,9 +1117,8 @@ test.describe('responsive UI quality matrix', () => {
     await expect(browse.locator('.nav-header-browse-label')).toHaveCount(0)
     await expect(browse).not.toContainText('Browse by Tags')
 
-    const searchControl = viewport.width < 960
-      ? page.locator('.nav-header-search-toggle:visible').first()
-      : page.locator('.nav-header-search-control input:visible').first()
+    const searchControl =
+      viewport.width < 960 ? page.locator('.nav-header-search-toggle:visible').first() : page.locator('.nav-header-search-control input:visible').first()
     await expect(searchControl).toBeVisible()
     const actionOrder = await page.locator('.nav-header').evaluate(header => {
       const isVisible = (element: HTMLElement): boolean => {
@@ -1125,11 +1138,7 @@ test.describe('responsive UI quality matrix', () => {
     })
     expect(actionOrder, 'Header actions stay in search, Agent, Browse DOM order').toEqual(['search', 'agent', 'browse'])
 
-    const [searchBounds, agentBounds, browseBounds] = await Promise.all([
-      searchControl.boundingBox(),
-      entrance.boundingBox(),
-      browse.boundingBox()
-    ])
+    const [searchBounds, agentBounds, browseBounds] = await Promise.all([searchControl.boundingBox(), entrance.boundingBox(), browse.boundingBox()])
     expect(searchBounds).not.toBeNull()
     expect(agentBounds).not.toBeNull()
     expect(browseBounds).not.toBeNull()
@@ -1146,10 +1155,8 @@ test.describe('responsive UI quality matrix', () => {
         for (let secondIndex = firstIndex + 1; secondIndex < actionBounds.length; secondIndex += 1) {
           const first = actionBounds[firstIndex]!.bounds
           const second = actionBounds[secondIndex]!.bounds
-          const overlaps = first.x < second.x + second.width &&
-            second.x < first.x + first.width &&
-            first.y < second.y + second.height &&
-            second.y < first.y + first.height
+          const overlaps =
+            first.x < second.x + second.width && second.x < first.x + first.width && first.y < second.y + second.height && second.y < first.y + first.height
           expect(overlaps, `${actionBounds[firstIndex]!.name} and ${actionBounds[secondIndex]!.name} must not overlap`).toBe(false)
         }
       }
@@ -1306,6 +1313,261 @@ test.describe('responsive UI quality matrix', () => {
     await browseWithoutAgent.press('Enter')
     await expect(page).toHaveURL('/t')
     await expect(page.locator('.nav-header-browse:visible').first()).toHaveAttribute('aria-current', 'page')
+  })
+  test('exercises enabled Agent streaming, trusted citations, and runtime Mermaid', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Enabled Agent runtime coverage is owned by Chromium desktop.')
+    const fixture = await installEnabledAgentFixture(page, { mode: 'focus' })
+    try {
+      const agent = await openFixtureAgentFromSearch(page)
+      const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
+      await composer.fill('Explain the release evidence and show the verification flow.')
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(agent.getByText('The release is ready for a deliberate review.', { exact: true })).toBeVisible()
+      const repeatedLinks = agent.locator('a[href="/en/release-guide#title-only"]').filter({ hasText: 'Follow-up reading' })
+      await expect(repeatedLinks).toHaveCount(2)
+      await repeatedLinks.nth(1).focus()
+      await expect(repeatedLinks.nth(1)).toBeFocused()
+      await expect(agent.getByText('The streamed review context is still current.', { exact: true })).toBeVisible()
+      await expect(repeatedLinks).toHaveCount(2)
+      await expect(repeatedLinks.nth(1)).toBeFocused()
+      await expect(agent.getByText('The streamed review context gained another link.', { exact: true })).toBeVisible()
+      await expect(repeatedLinks).toHaveCount(3)
+      await expect(repeatedLinks.nth(0)).not.toBeFocused()
+      await expect(agent.locator('[data-agent-citation]')).not.toHaveCount(0)
+      await expect(agent.locator('.agent-markdown svg')).not.toHaveCount(0)
+      await expect(agent.locator('[data-copy-code]')).toBeVisible()
+      expect(fixture.requests.some(request => request.includes('/messages'))).toBe(true)
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+  test('keeps hostile Agent Mermaid local with truthful source fallback', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Enabled Mermaid security coverage is owned by Chromium desktop.')
+    const fixture = await installEnabledAgentFixture(page, { mode: 'security' })
+    const hostileRequests: string[] = []
+    page.on('request', request => {
+      if (request.url().startsWith('https://mermaid-hostile.invalid/')) hostileRequests.push(request.url())
+    })
+    try {
+      const agent = await openFixtureAgentFromSearch(page)
+      const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
+      await composer.fill('Render the hostile Mermaid theme safely.')
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(agent.locator('pre').filter({ hasText: 'mermaid-hostile.invalid' }).first()).toBeVisible()
+      const output = agent.locator('.agent-markdown__diagram-output').first()
+      await expect(output).toBeVisible()
+      await expect(output).not.toHaveAttribute('aria-busy', 'true')
+      await expect(agent.getByText('Mermaid source', { exact: true }).first()).toBeVisible()
+      const fallback = output.getByRole('alert')
+      if (await fallback.count()) {
+        await expect(fallback).toHaveText('Diagram could not be rendered safely. Mermaid source remains available below.')
+      } else {
+        await expect(output.getByRole('img', { name: 'Mermaid diagram', exact: true })).toBeVisible()
+      }
+      expect(hostileRequests).toEqual([])
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
+  test('caps mixed Agent Mermaid roots while preserving excess source', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Enabled Mermaid cap coverage is owned by Chromium desktop.')
+    const fixture = await installEnabledAgentFixture(page, { mode: 'cap' })
+    try {
+      const agent = await openFixtureAgentFromSearch(page)
+      const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
+      await composer.fill('Render the complete Mermaid review set.')
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(agent.getByRole('img', { name: 'Mermaid diagram', exact: true })).toHaveCount(8)
+      await expect(agent.getByText('Mermaid source', { exact: true })).toHaveCount(9)
+      await expect(
+        agent.getByText(/Additional diagrams remain available as source because only 8 diagrams are rendered automatically per message\./)
+      ).toBeVisible()
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+  test('shares one eight-diagram allowance across reader Mermaid host kinds', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Reader Mermaid root coverage is owned by Chromium desktop.')
+    await authenticateAsAdmin(page)
+    const path = `mermaid-reader-cap-${Date.now()}`
+    const legacyBlocks = Array.from(
+      { length: 5 },
+      (_, index) => `<div class="mermaid">graph TD; L${index}[Legacy ${index + 1}] --> M${index}[Ready]</div>`
+    ).join('\n\n')
+    const extensionFences = Array.from({ length: 5 }, (_, index) =>
+      [
+        '```wiki-extension',
+        JSON.stringify({
+          key: 'diagram',
+          version: 1,
+          props: {
+            source: `graph TD\n  E${index}[Extension ${index + 1}] --> F${index}[Ready]`,
+            caption: `Extension Mermaid ${index + 1}`,
+            theme: 'default',
+            align: 'center'
+          }
+        }),
+        '```'
+      ].join('\n')
+    ).join('\n\n')
+    const content = `# Mixed Mermaid reader\n\n${legacyBlocks}\n\n${extensionFences}\n`
+    let pageId: number | undefined
+    let sourceRevision: string | undefined
+    try {
+      const created = await page.request.post('/_api/pages', {
+        headers: { ...sameOriginHeaders(), Accept: 'application/json' },
+        data: {
+          content,
+          description: 'Reader Mermaid cap fixture',
+          editor: 'markdown',
+          visibility: 'public',
+          isPublished: true,
+          locale: 'en',
+          path,
+          publishEndDate: '',
+          publishStartDate: '',
+          scriptCss: '',
+          scriptJs: '',
+          tags: [],
+          title: 'Mixed Mermaid reader'
+        }
+      })
+      expect(created.ok(), `Reader Mermaid fixture creation returned HTTP ${created.status()}`).toBe(true)
+      const payload = (await created.json()) as { page?: { id?: number; sourceRevision?: string } }
+      pageId = payload.page?.id
+      sourceRevision = payload.page?.sourceRevision
+      expect(pageId).toEqual(expect.any(Number))
+      expect(sourceRevision).toEqual(expect.any(String))
+      if (pageId === undefined || sourceRevision === undefined) throw new Error('Reader Mermaid fixture response omitted page identity.')
+
+      await openAuthenticatedPage(page, `/en/${path}`, '.page-header-section')
+      const reader = page.locator('article.contents')
+      await expect(reader).toBeVisible()
+      const legacyHosts = reader.locator('.mermaid')
+      const extensionHosts = reader.locator('.content-extension--diagram')
+      await expect(legacyHosts).toHaveCount(5)
+      await expect(extensionHosts).toHaveCount(5)
+      await expect(reader.locator('[aria-busy="true"]')).toHaveCount(0, { timeout: 30_000 })
+      await expect(reader.locator('.mermaid svg')).toHaveCount(5)
+      await expect(reader.locator('.content-extension--diagram svg')).toHaveCount(3)
+      await expect(reader.locator('.mermaid svg, .content-extension--diagram svg')).toHaveCount(8)
+      const renderOrder = await reader.locator('.mermaid, .content-extension--diagram').evaluateAll(hosts =>
+        hosts.map(host => ({
+          kind: host.classList.contains('mermaid') ? 'legacy' : 'extension',
+          rendered: host.querySelector('svg') !== null
+        }))
+      )
+      expect(renderOrder).toEqual([
+        ...Array.from({ length: 5 }, () => ({ kind: 'legacy', rendered: true })),
+        ...Array.from({ length: 3 }, () => ({ kind: 'extension', rendered: true })),
+        ...Array.from({ length: 2 }, () => ({ kind: 'extension', rendered: false }))
+      ])
+      await expect(reader.locator('.content-extension--diagram .content-extension-diagram__source code')).toHaveCount(2)
+      await expect(reader.locator('.content-extension--diagram .content-extension-diagram__source code').nth(0)).toContainText('Extension 4')
+      await expect(reader.locator('.content-extension--diagram .content-extension-diagram__source code').nth(1)).toContainText('Extension 5')
+      await expect(reader.getByText('Additional diagrams remain available as source because automatic rendering is limited.', { exact: true })).toBeVisible()
+    } finally {
+      if (pageId !== undefined && sourceRevision !== undefined) {
+        const removal = await page.request.delete(`/_api/pages/${pageId}`, {
+          headers: sameOriginHeaders(),
+          data: { expectedSourceRevision: sourceRevision }
+        })
+        expect(removal.ok(), `Reader Mermaid fixture removal returned HTTP ${removal.status()}`).toBe(true)
+      }
+    }
+  })
+
+  test('keeps enabled Agent panels modal, docked, and wide with nested focus', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Enabled Agent panel geometry is owned by Chromium desktop.')
+    const fixture = await installEnabledAgentFixture(page)
+    const agent = await openFixtureAgentFromSearch(page)
+    const widths: readonly [number, 'modal' | 'docked' | 'wide'][] = [
+      [320, 'modal'],
+      [390, 'modal'],
+      [430, 'modal'],
+      [639, 'modal'],
+      [640, 'modal'],
+      [1023, 'modal'],
+      [1024, 'docked'],
+      [1759, 'docked'],
+      [1760, 'wide']
+    ]
+    for (const [width, expectedMode] of widths) {
+      await page.setViewportSize({ width, height: 420 })
+      await expect(agent).toHaveAttribute('data-panel-mode', expectedMode)
+      await expectResponsiveLayout(page, `enabled Agent at ${width}px`)
+      const directHistory = agent.getByRole('button', { name: /open agent conversation history/i })
+      const panels = agent.getByRole('button', { name: /open Agent panels: conversation history and memory/i })
+      const trigger = (await panels.isVisible()) ? panels : directHistory
+      await trigger.click()
+      if (trigger === panels) await page.getByText('Conversation history', { exact: true }).click()
+      const panel =
+        expectedMode === 'modal' ? agent.getByRole('dialog', { name: 'Conversations' }) : agent.getByRole('complementary', { name: 'Conversations' })
+      await expect(panel).toBeVisible()
+      const bounds = await panel.boundingBox()
+      expect(bounds).not.toBeNull()
+      if (bounds) {
+        expect(bounds.x).toBeGreaterThanOrEqual(-1)
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width + 1)
+        expect(bounds.y).toBeGreaterThanOrEqual(-1)
+        expect(bounds.y + bounds.height).toBeLessThanOrEqual(421)
+      }
+      if (expectedMode === 'modal') {
+        await page.keyboard.press('Tab')
+        await expect.poll(() => panel.evaluate(root => root.contains(document.activeElement))).toBe(true)
+        await page.keyboard.press('Shift+Tab')
+        await expect.poll(() => panel.evaluate(root => root.contains(document.activeElement))).toBe(true)
+        await page.keyboard.press('Escape')
+      } else {
+        await panel.getByRole('button', { name: 'Close chat history' }).click()
+      }
+      await expect(panel).toBeHidden()
+    }
+
+    await page.setViewportSize({ width: 640, height: 420 })
+    const panels = agent.getByRole('button', { name: /open Agent panels: conversation history and memory/i })
+    await panels.click()
+    const memoryMenuItem = page.locator('.v-overlay--active').getByRole('listitem').filter({ hasText: 'Agent memory' })
+    await expect(memoryMenuItem).toHaveCount(1)
+    await memoryMenuItem.click()
+    const memoryPanel = agent.getByRole('dialog', { name: 'Agent memory' })
+    await expect(memoryPanel).toBeVisible()
+    await memoryPanel.getByRole('button', { name: /Remove memory:/i }).click()
+    const removeDialog = page.getByRole('dialog').filter({ hasText: 'Remove this memory?' })
+    await expect(removeDialog).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(removeDialog).toBeHidden()
+    await memoryPanel.getByRole('button', { name: 'Close agent memory' }).click()
+    fixture.assertNoUnexpectedRequests()
+    await fixture.dispose()
+  })
+
+  test('surfaces a partial archive failure with a focused retry', async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== 'responsive-chromium-desktop', 'Enabled archive failure coverage is owned by Chromium desktop.')
+    const fixture = await installEnabledAgentFixture(page, { archivePartialFailure: true })
+    const agent = await openFixtureAgentFromSearch(page)
+    await agent.getByRole('button', { name: /open agent conversation history/i }).click()
+    const history = agent.getByRole('complementary', { name: 'Conversations' })
+    await expect(history).toBeVisible()
+    await expect(history.getByText('Recent', { exact: true })).toBeVisible()
+    await expect(history).toContainText('Fixture archive folder failure')
+    const sessionsBeforeRetry = fixture.requests.filter(request => request === 'GET /_api/agents/sessions').length
+    const foldersBeforeRetry = fixture.requests.filter(request => request === 'GET /_api/agents/conversation-folders').length
+    await history.getByRole('button', { name: 'Retry folders' }).click()
+    await expect(history.getByText('Release reviews', { exact: true })).toBeVisible()
+    expect(fixture.requests.filter(request => request === 'GET /_api/agents/sessions').length, 'retrying folders must not refetch conversations').toBe(
+      sessionsBeforeRetry
+    )
+    expect(
+      fixture.requests.filter(request => request === 'GET /_api/agents/conversation-folders').length,
+      'retrying folders must issue one folder request'
+    ).toBe(foldersBeforeRetry + 1)
+    fixture.assertNoUnexpectedRequests()
+    await fixture.dispose()
   })
 
   test('keeps login and not-found surfaces responsive', async ({ page }) => {
@@ -1673,10 +1935,7 @@ test.describe('reader metadata rendering', () => {
       }
 
       const fixture = Buffer.from(JSON.stringify(fixturePayload), 'utf8').toString('base64')
-      const patchedDocument =
-        document.slice(0, match.index) +
-        `${match[1]}${match[2]}${fixture}${match[2]}` +
-        document.slice(match.index + match[0].length)
+      const patchedDocument = document.slice(0, match.index) + `${match[1]}${match[2]}${fixture}${match[2]}` + document.slice(match.index + match[0].length)
       await route.fulfill({ response, body: patchedDocument })
     })
 

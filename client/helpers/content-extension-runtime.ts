@@ -1,23 +1,65 @@
+import { MERMAID_MAX_TEXT_SIZE, selectMermaidRenderHosts } from './content-extension-runtimes/mermaid.ts'
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 type Cleanup = () => void
 let tabsInstance = 0
 
+const idElements = (tabs: HTMLElement): readonly Element[] => {
+  const elements = new Set<Element>()
+  for (const element of tabs.ownerDocument.querySelectorAll<HTMLElement>('[id]')) elements.add(element)
+  const rootNode = tabs.getRootNode()
+  if (rootNode instanceof Element || rootNode instanceof DocumentFragment) {
+    if (rootNode instanceof Element && rootNode.id) elements.add(rootNode)
+    for (const element of rootNode.querySelectorAll<HTMLElement>('[id]')) elements.add(element)
+  }
+  elements.add(tabs)
+  for (const element of tabs.querySelectorAll<HTMLElement>('[id]')) elements.add(element)
+  return [...elements]
+}
 
+const hasUniqueId = (tabs: HTMLElement, element: Element, id: string): boolean =>
+  idElements(tabs).filter(candidate => candidate.id === id).length === 1 && idElements(tabs).some(candidate => candidate === element)
 
+const allocateTabId = (tabs: HTMLElement, kind: 'tab' | 'panel', index: number, element: HTMLElement, reserved: Set<string>): string => {
+  const existing = element.id
+  if (existing && hasUniqueId(tabs, element, existing) && !reserved.has(existing)) {
+    reserved.add(existing)
+    return existing
+  }
+  const instance = tabs.dataset.tabsInstance ?? String(tabsInstance)
+  const base = `content-extension-tabs-${instance}-${kind}-${index}`
+  let suffix = 0
+  while (true) {
+    const candidate = suffix === 0 ? base : `${base}-${suffix}`
+    const occupied = idElements(tabs).some(existingElement => existingElement.id === candidate && existingElement !== element)
+    if (!occupied && !reserved.has(candidate)) {
+      reserved.add(candidate)
+      return candidate
+    }
+    suffix += 1
+  }
+}
 
+const findElementById = (root: ParentNode, id: string): HTMLElement | null => {
+  if (root instanceof HTMLElement && root.id === id) return root
+  for (const element of root.querySelectorAll<HTMLElement>('[id]')) {
+    if (element.id === id) return element
+  }
+  return null
+}
 
 const tabsCleanup = (tabs: HTMLElement): Cleanup => {
   const buttons = [...tabs.querySelectorAll<HTMLButtonElement>('.content-extension-tabs__tab')]
   const panels = [...tabs.querySelectorAll<HTMLElement>('.content-extension-tabs__panel')]
   if (buttons.length < 2 || buttons.length !== panels.length) return () => {}
   const instance = ++tabsInstance
+  tabs.dataset.tabsInstance = tabs.dataset.tabsInstance ?? String(instance)
   let active = Number(tabs.dataset.tabsActive)
   if (!Number.isInteger(active) || active < 0 || active >= buttons.length) active = 0
   const applyScrollMargin = (): void => {
     const activePanel = panels[active]
     const above = activePanel
       ? Math.round(activePanel.getBoundingClientRect().top - tabs.getBoundingClientRect().top)
-      : tabs.querySelector<HTMLElement>('.content-extension-tabs__list')?.offsetHeight ?? 0
+      : (tabs.querySelector<HTMLElement>('.content-extension-tabs__list')?.offsetHeight ?? 0)
     const margin = `${above + 20}px`
     for (const panel of panels) {
       panel.style.scrollMarginTop = margin
@@ -27,7 +69,6 @@ const tabsCleanup = (tabs: HTMLElement): Cleanup => {
     }
   }
 
-
   const select = (index: number, focus: boolean): void => {
     active = index
     buttons.forEach((button, buttonIndex) => {
@@ -35,17 +76,27 @@ const tabsCleanup = (tabs: HTMLElement): Cleanup => {
       button.setAttribute('aria-selected', String(selected))
       button.tabIndex = selected ? 0 : -1
     })
-    panels.forEach((panel, panelIndex) => { panel.hidden = panelIndex !== index })
+    panels.forEach((panel, panelIndex) => {
+      panel.hidden = panelIndex !== index
+    })
     if (focus) buttons[index]?.focus()
     applyScrollMargin()
   }
+
+  const reservedIds = new Set<string>()
   const clickHandlers = buttons.map((button, index) => {
-    const buttonId = `content-extension-tabs-${instance}-tab-${index}`
     const panel = panels[index]!
     const fallbackLabel = panel.querySelector<HTMLElement>('.content-extension-tabs__fallback-label')
     const headingId = fallbackLabel?.matches('h1, h2, h3, h4, h5, h6') ? fallbackLabel.id : ''
-    const panelId = headingId || `content-extension-tabs-${instance}-panel-${index}`
-    if (headingId) fallbackLabel?.removeAttribute('id')
+    const buttonId = allocateTabId(tabs, 'tab', index, button, reservedIds)
+    let panelId = ''
+    if (headingId && hasUniqueId(tabs, fallbackLabel!, headingId) && !reservedIds.has(headingId)) {
+      panelId = headingId
+      reservedIds.add(panelId)
+      fallbackLabel?.removeAttribute('id')
+    } else {
+      panelId = allocateTabId(tabs, 'panel', index, panel, reservedIds)
+    }
     button.id = buttonId
     button.hidden = false
     button.setAttribute('aria-controls', panelId)
@@ -69,9 +120,11 @@ const tabsCleanup = (tabs: HTMLElement): Cleanup => {
   const tablist = tabs.querySelector<HTMLElement>('.content-extension-tabs__list')
   tablist?.addEventListener('keydown', onKeydown)
   let hashTarget: HTMLElement | null = null
-  if (window.location.hash.length > 1) {
+  const view = tabs.ownerDocument.defaultView
+  const hash = view?.location.hash ?? ''
+  if (hash.length > 1) {
     try {
-      hashTarget = document.getElementById(decodeURIComponent(window.location.hash.slice(1)))
+      hashTarget = findElementById(tabs, decodeURIComponent(hash.slice(1)))
     } catch {
       hashTarget = null
     }
@@ -79,7 +132,14 @@ const tabsCleanup = (tabs: HTMLElement): Cleanup => {
   const hashPanel = hashTarget?.closest<HTMLElement>('.content-extension-tabs__panel')
   const hashIndex = hashPanel && tabs.contains(hashPanel) ? panels.indexOf(hashPanel) : -1
   select(hashIndex >= 0 ? hashIndex : active, false)
-  if (hashIndex >= 0) requestAnimationFrame(() => hashTarget?.scrollIntoView())
+  if (hashIndex >= 0) {
+    const reveal = (): void => {
+      if (typeof hashTarget?.scrollIntoView === 'function') hashTarget.scrollIntoView()
+    }
+    const frame = view?.requestAnimationFrame
+    if (frame) frame.call(view, reveal)
+    else reveal()
+  }
 
   return () => {
     for (const { button, handler } of clickHandlers) button.removeEventListener('click', handler)
@@ -89,12 +149,14 @@ const tabsCleanup = (tabs: HTMLElement): Cleanup => {
 
 export const revealContentExtensionTarget = (root: ParentNode, anchor: string): boolean => {
   if (!anchor.startsWith('#') || anchor.length < 2) return false
-  const target = document.getElementById(anchor.slice(1))
-  if (!target || (root instanceof Node && !root.contains(target))) return false
+  const target = findElementById(root, anchor.slice(1))
+  if (!target) return false
   const panel = target.closest<HTMLElement>('.content-extension-tabs__panel')
   const tabs = panel?.closest<HTMLElement>('.content-extension--tabs')
   const index = panel?.dataset.tabIndex
-  const button = tabs?.querySelector<HTMLButtonElement>(`.content-extension-tabs__tab[data-tab-index="${index}"]`)
+  const button = tabs
+    ? [...tabs.querySelectorAll<HTMLButtonElement>('.content-extension-tabs__tab')].find(candidate => candidate.dataset.tabIndex === index)
+    : null
   if (!button) return false
   button.click()
   return true
@@ -119,73 +181,171 @@ const spoilerCleanup = (spoiler: HTMLElement): Cleanup => {
   return () => button.removeEventListener('click', toggle)
 }
 
+const MERMAID_ERROR_CLASS = 'content-extension-diagram__error'
+const MERMAID_ERROR_MESSAGE = 'Diagram could not be rendered locally. Its source remains available below.'
+const MERMAID_LIMIT_NOTICE_CLASS = 'content-extension-diagram__limit-notice'
+const MERMAID_LIMIT_NOTICE_MESSAGE = 'Additional diagrams remain available as source because automatic rendering is limited.'
 
+type HydrateContentExtensionsOptions = {
+  mermaidHosts?: ReadonlySet<HTMLElement>
+}
 
+const mermaidSourceElement = (figure: HTMLElement): HTMLElement | null =>
+  figure.querySelector<HTMLElement>('.content-extension-diagram__output .content-extension-diagram__source code')
 
+const hasMermaidRenderError = (figure: HTMLElement): boolean => Boolean(figure.querySelector(`.${MERMAID_ERROR_CLASS}`))
 
+const isWithinRoot = (root: ParentNode, element: HTMLElement): boolean => element.isConnected && (!(root instanceof Node) || root.contains(element))
 
+const showMermaidLimitNotice = (root: ParentNode): void => {
+  if (root.querySelector(`.${MERMAID_LIMIT_NOTICE_CLASS}`)) return
+  if (!(root instanceof HTMLElement) && !(root instanceof DocumentFragment)) return
+  const notice = root.ownerDocument.createElement('p')
+  notice.className = MERMAID_LIMIT_NOTICE_CLASS
+  notice.textContent = MERMAID_LIMIT_NOTICE_MESSAGE
+  root.append(notice)
+}
 
+const prepareMermaidFigure = (figure: HTMLElement): Cleanup => {
+  const output = figure.querySelector<HTMLElement>('.content-extension-diagram__output')
+  const source = mermaidSourceElement(figure)
+  if (!output || !source || !figure.isConnected) return () => {}
+  output.setAttribute('aria-busy', 'true')
+  return () => {
+    if (output.getAttribute('aria-busy') === 'true') output.setAttribute('aria-busy', 'false')
+  }
+}
 
+const keepMermaidSource = (figure: HTMLElement): void => {
+  const output = figure.querySelector<HTMLElement>('.content-extension-diagram__output')
+  if (!output) return
+  output.setAttribute('aria-busy', 'false')
+}
 
+const showMermaidLoadError = (figure: HTMLElement): void => {
+  const output = figure.querySelector<HTMLElement>('.content-extension-diagram__output')
+  if (!output || !figure.isConnected) return
+  if (!output.querySelector(`.${MERMAID_ERROR_CLASS}`)) {
+    const status = figure.ownerDocument.createElement('p')
+    status.className = MERMAID_ERROR_CLASS
+    status.setAttribute('role', 'alert')
+    status.textContent = MERMAID_ERROR_MESSAGE
+    output.prepend(status)
+  }
+  output.setAttribute('aria-busy', 'false')
+}
 
-
-
-
-export const hydrateContentExtensions = (
-  root: ParentNode,
-  fetchImpl: FetchLike = fetch
-): Cleanup => {
+export const hydrateContentExtensions = (root: ParentNode, fetchImpl: FetchLike = fetch, options?: HydrateContentExtensionsOptions): Cleanup => {
   const controller = new AbortController()
   const cleanups: Cleanup[] = []
   for (const tabs of root.querySelectorAll<HTMLElement>('.content-extension--tabs')) cleanups.push(tabsCleanup(tabs))
   for (const spoiler of root.querySelectorAll<HTMLElement>('.content-extension--spoiler')) cleanups.push(spoilerCleanup(spoiler))
 
   const galleries = [...root.querySelectorAll<HTMLElement>('.content-extension--gallery')]
-  if (galleries.length > 0) void import('./content-extension-runtimes/gallery.ts').then(({ hydrateGallery }) => {
-    if (controller.signal.aborted) return
-    for (const gallery of galleries) cleanups.push(hydrateGallery(gallery))
-  }, () => {})
+  if (galleries.length > 0)
+    void import('./content-extension-runtimes/gallery.ts').then(
+      ({ hydrateGallery }) => {
+        if (controller.signal.aborted) return
+        for (const gallery of galleries) cleanups.push(hydrateGallery(gallery))
+      },
+      () => {}
+    )
   const indexes = [...root.querySelectorAll<HTMLElement>('.content-extension--index')]
-  if (indexes.length > 0) void import('./content-extension-runtimes/index.ts').then(({ hydratePageIndex }) => {
-    if (controller.signal.aborted) return
-    for (const index of indexes) void hydratePageIndex(index, fetchImpl, controller.signal)
-  }, () => {
-    for (const index of indexes) {
-      index.setAttribute('aria-busy', 'false')
-      const status = index.querySelector<HTMLElement>('.content-extension-index__status')
-      if (status) status.textContent = 'Page index is temporarily unavailable.'
-    }
-  })
+  if (indexes.length > 0)
+    void import('./content-extension-runtimes/index.ts').then(
+      ({ hydratePageIndex }) => {
+        if (controller.signal.aborted) return
+        for (const index of indexes) void hydratePageIndex(index, fetchImpl, controller.signal)
+      },
+      () => {
+        for (const index of indexes) {
+          index.setAttribute('aria-busy', 'false')
+          const status = index.querySelector<HTMLElement>('.content-extension-index__status')
+          if (status) status.textContent = 'Page index is temporarily unavailable.'
+        }
+      }
+    )
   const pdfs = [...root.querySelectorAll<HTMLElement>('.content-extension--pdf')]
-  if (pdfs.length > 0) void import('./content-extension-runtimes/pdf.ts').then(({ hydratePdf }) => {
-    if (controller.signal.aborted) return
-    for (const pdf of pdfs) cleanups.push(hydratePdf(pdf))
-  }, () => {})
+  if (pdfs.length > 0)
+    void import('./content-extension-runtimes/pdf.ts').then(
+      ({ hydratePdf }) => {
+        if (controller.signal.aborted) return
+        for (const pdf of pdfs) cleanups.push(hydratePdf(pdf))
+      },
+      () => {}
+    )
   const youtubeFigures = [...root.querySelectorAll<HTMLElement>('.content-extension--youtube')]
-  if (youtubeFigures.length > 0) void import('./content-extension-runtimes/youtube.ts').then(({ hydrateYoutube }) => {
-    if (controller.signal.aborted) return
-    for (const figure of youtubeFigures) cleanups.push(hydrateYoutube(figure))
-  }, () => {})
+  if (youtubeFigures.length > 0)
+    void import('./content-extension-runtimes/youtube.ts').then(
+      ({ hydrateYoutube }) => {
+        if (controller.signal.aborted) return
+        for (const figure of youtubeFigures) cleanups.push(hydrateYoutube(figure))
+      },
+      () => {}
+    )
   const maps = [...root.querySelectorAll<HTMLElement>('.content-extension--map')]
-  if (maps.length > 0) void import('./content-extension-runtimes/map.ts').then(({ hydrateMap }) => {
-    if (controller.signal.aborted) return
-    for (const map of maps) cleanups.push(hydrateMap(map))
-  }, () => {})
+  if (maps.length > 0)
+    void import('./content-extension-runtimes/map.ts').then(
+      ({ hydrateMap }) => {
+        if (controller.signal.aborted) return
+        for (const map of maps) cleanups.push(hydrateMap(map))
+      },
+      () => {}
+    )
   const krokiFigures = [...root.querySelectorAll<HTMLElement>('.content-extension--kroki')]
-  if (krokiFigures.length > 0) void import('./content-extension-runtimes/kroki.ts').then(({ hydrateKroki }) => {
-    if (controller.signal.aborted) return
-    for (const figure of krokiFigures) cleanups.push(hydrateKroki(figure, controller.signal))
-  }, () => {})
+  if (krokiFigures.length > 0)
+    void import('./content-extension-runtimes/kroki.ts').then(
+      ({ hydrateKroki }) => {
+        if (controller.signal.aborted) return
+        for (const figure of krokiFigures) cleanups.push(hydrateKroki(figure, controller.signal))
+      },
+      () => {}
+    )
   const plantUmlFigures = [...root.querySelectorAll<HTMLElement>('.content-extension--plantuml')]
-  if (plantUmlFigures.length > 0) void import('./content-extension-runtimes/plantuml.ts').then(({ hydratePlantUml }) => {
-    if (controller.signal.aborted) return
-    for (const figure of plantUmlFigures) cleanups.push(hydratePlantUml(figure, controller.signal))
-  }, () => {})
-  const mermaidFigures = [...root.querySelectorAll<HTMLElement>('.content-extension--diagram')]
-  if (mermaidFigures.length > 0) void import('./content-extension-runtimes/mermaid.ts').then(({ hydrateMermaid }) => {
-    if (controller.signal.aborted) return
-    for (const figure of mermaidFigures) void hydrateMermaid(figure, controller.signal)
-  }, () => {})
+  if (plantUmlFigures.length > 0)
+    void import('./content-extension-runtimes/plantuml.ts').then(
+      ({ hydratePlantUml }) => {
+        if (controller.signal.aborted) return
+        for (const figure of plantUmlFigures) cleanups.push(hydratePlantUml(figure, controller.signal))
+      },
+      () => {}
+    )
+
+  const mermaidFigures = [...root.querySelectorAll<HTMLElement>('.content-extension--diagram')].filter(figure => isWithinRoot(root, figure))
+  const eligibleMermaidHosts = mermaidFigures.filter(figure => {
+    const source = mermaidSourceElement(figure)
+    return !source || source.textContent!.length <= MERMAID_MAX_TEXT_SIZE
+  })
+  const mermaidHosts = options?.mermaidHosts ?? selectMermaidRenderHosts(eligibleMermaidHosts)
+  const excessFigures = mermaidFigures.filter(figure => {
+    const source = mermaidSourceElement(figure)
+    return source && !mermaidHosts.has(figure)
+  })
+  for (const figure of excessFigures) keepMermaidSource(figure)
+  if (excessFigures.length > 0) showMermaidLimitNotice(root)
+  for (const figure of mermaidFigures) {
+    if (mermaidHosts.has(figure)) cleanups.push(prepareMermaidFigure(figure))
+  }
+  const renderableMermaidFigures = mermaidFigures.filter(figure => {
+    if (!mermaidHosts.has(figure) || hasMermaidRenderError(figure)) return false
+    const source = mermaidSourceElement(figure)
+    return source !== null && source.textContent!.length <= MERMAID_MAX_TEXT_SIZE
+  })
+  if (renderableMermaidFigures.length > 0)
+    void import('./content-extension-runtimes/mermaid.ts').then(
+      ({ hydrateMermaid }) => {
+        if (controller.signal.aborted) return
+        for (const figure of renderableMermaidFigures) {
+          if (isWithinRoot(root, figure)) void hydrateMermaid(figure, controller.signal)
+        }
+      },
+      () => {
+        if (controller.signal.aborted) return
+        for (const figure of renderableMermaidFigures) {
+          if (isWithinRoot(root, figure)) showMermaidLoadError(figure)
+        }
+      }
+    )
 
   return () => {
     controller.abort()

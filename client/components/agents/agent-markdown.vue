@@ -3,10 +3,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import type { AgentCitation } from '../../../shared/agents/contracts.ts'
+import {
+  MERMAID_MAX_DIAGRAMS_PER_ROOT,
+  MERMAID_MAX_TEXT_SIZE,
+  renderMermaidSvg,
+  selectMermaidRenderHosts
+} from '../../helpers/content-extension-runtimes/mermaid.ts'
 import { renderSafeMarkdown } from '../../helpers/safe-markdown.ts'
-import { formatAgentCitationMarkers } from './agent-citations.ts'
+import { createAgentCitationResolver } from './agent-citations.ts'
 import { wikiSourceSelectorFromHref, type WikiSourceSelector } from '../../../shared/wiki-source.ts'
 
 const {
@@ -28,11 +34,20 @@ interface CopyReset {
   readonly expiresAt: number
 }
 
+interface FocusTarget {
+  readonly kind: 'copy' | 'pre' | 'table' | 'anchor'
+  readonly blockId?: string
+  readonly href?: string
+  readonly text?: string
+  readonly occurrence?: number
+  readonly matchingCount?: number
+}
+
 interface RenderedDomState {
-  readonly focusIndex: number
-  readonly scrollPositions: readonly { readonly left: number; readonly top: number }[]
+  readonly focusTarget: FocusTarget | null
+  readonly scrollPositions: readonly { readonly blockId: string; readonly left: number; readonly top: number }[]
   readonly copyFeedback: readonly {
-    readonly index: number
+    readonly blockId: string
     readonly label: string
     readonly ariaLabel: string
     readonly state: 'success' | 'error'
@@ -63,77 +78,63 @@ const showCopyResult = (button: HTMLButtonElement, label: string, state: 'succes
   scheduleCopyReset(button, 2_000)
 }
 
-const renderMarkdown = (): string => {
-  const html = renderSafeMarkdown(
-  formatAgentCitationMarkers(content, citations, streaming)
-)
-  .replace(
-    /<pre(?=>|\s)/g,
-    '<div class="agent-markdown__code-shell"><div class="agent-markdown__code-toolbar"><span>Code</span><button type="button" class="agent-markdown__copy" data-copy-code aria-label="Copy code to clipboard" aria-live="polite">Copy</button></div><pre tabindex="0" aria-label="Scrollable code block"'
-  )
-  .replace(/<\/pre>/g, '</pre></div>')
-  .replace(
-    /<table(?=>|\s)/g,
-    '<div class="agent-markdown__table-shell" tabindex="0" role="region" aria-label="Scrollable table"><table'
-  )
-  .replace(/<\/table>/g, '</table></div>')
-  .replace(
-    /<a(?=[^>]*\btarget=["']_blank["'])([^>]*)>([\s\S]*?)<\/a>/g,
-    (_match, attributes: string, content: string) => {
-      const citationTitle = attributes.match(/\btitle=(["'])(Citation [^"']+)\1/)
-      const ariaLabel = citationTitle && !/\baria-label=/i.test(attributes)
-        ? ` aria-label=${citationTitle[1]}${citationTitle[2]} (opens in a new tab)${citationTitle[1]}`
-        : ''
-      return `<a${attributes}${ariaLabel}>${content}<span class="agent-markdown__new-window"> (opens in a new tab)</span></a>`
-    }
-  )
-  if (!sourcePreviews || typeof document === 'undefined') return html
-  const template = document.createElement('template')
-  template.innerHTML = html
-  for (const anchor of template.content.querySelectorAll<HTMLAnchorElement>('a[title^="Citation "]')) {
-    if (!wikiSourceSelectorFromHref(anchor.getAttribute('href') ?? '', window.location.origin)) continue
-    anchor.dataset.sourcePreview = 'true'
-    anchor.removeAttribute('target')
-    anchor.setAttribute('aria-label', `${anchor.title} (preview source)`)
-    anchor.querySelector('.agent-markdown__new-window')?.remove()
+const stableHash = (value: string): string => {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
   }
-  return template.innerHTML
+  return (hash >>> 0).toString(36)
 }
-const citationSemanticSignature = computed(() => JSON.stringify(
-  citations.map(citation => [
-    citation.evidenceId,
-    citation.kind,
-    citation.label,
-    citation.href
-  ])
-))
 
-const focusableElements = (root: HTMLElement): readonly HTMLElement[] => [
-  ...root.querySelectorAll<HTMLElement>('a[href], button, pre[tabindex], [role="region"][tabindex]')
-]
+const blockIdentity = (element: Element): string | null =>
+  element.closest<HTMLElement>('[data-agent-block-id]')?.dataset.agentBlockId ?? null
+
+const focusIdentity = (element: HTMLElement, root: HTMLElement): FocusTarget => {
+  const blockId = blockIdentity(element)
+  if (element.matches('[data-copy-code]')) return { kind: 'copy', blockId: blockId ?? undefined }
+  if (element.matches('pre')) return { kind: 'pre', blockId: blockId ?? undefined }
+  if (element.matches('[role="region"]')) return { kind: 'table', blockId: blockId ?? undefined }
+  const anchor = element instanceof HTMLAnchorElement ? element : null
+  const href = anchor?.getAttribute('href') ?? ''
+  const text = anchor?.textContent ?? ''
+  if (!anchor) return { kind: 'anchor', href, text }
+  const matchingAnchors = [...root.querySelectorAll<HTMLAnchorElement>('a[href]')]
+    .filter(candidate => candidate.getAttribute('href') === href && (candidate.textContent ?? '') === text)
+  return {
+    kind: 'anchor',
+    href,
+    text,
+    occurrence: matchingAnchors.indexOf(anchor),
+    matchingCount: matchingAnchors.length
+  }
+}
+
 const scrollableElements = (root: HTMLElement): readonly HTMLElement[] => [
-  ...root.querySelectorAll<HTMLElement>('pre[tabindex], .agent-markdown__table-shell')
+  ...root.querySelectorAll<HTMLElement>('[data-agent-block-id] > pre[tabindex], [data-agent-block-id] > [role="region"][tabindex], [data-agent-block-id] pre[tabindex], [data-agent-block-id][role="region"][tabindex]')
 ]
+
 const captureRenderedDomState = (): RenderedDomState | null => {
   const root = markdownRoot.value
   if (!root || typeof document === 'undefined') return null
-  const focusables = focusableElements(root)
   const activeElement = document.activeElement
   const copyButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-copy-code]')]
+  const focusTarget = activeElement instanceof HTMLElement && root.contains(activeElement)
+    ? focusIdentity(activeElement, root)
+    : null
   return {
-    focusIndex: activeElement instanceof HTMLElement && root.contains(activeElement)
-      ? focusables.indexOf(activeElement)
-      : -1,
-    scrollPositions: scrollableElements(root).map(element => ({
-      left: element.scrollLeft,
-      top: element.scrollTop
-    })),
-    copyFeedback: copyButtons.flatMap((button, index) => {
+    focusTarget,
+    scrollPositions: scrollableElements(root).flatMap(element => {
+      const blockId = blockIdentity(element)
+      return blockId ? [{ blockId, left: element.scrollLeft, top: element.scrollTop }] : []
+    }),
+    copyFeedback: copyButtons.flatMap(button => {
+      const blockId = blockIdentity(button)
       const state = button.dataset.copyState
       const reset = resetTimers.get(button)
-      if ((state !== 'success' && state !== 'error') || !reset) return []
+      if (!blockId || (state !== 'success' && state !== 'error') || !reset) return []
       return [{
-        index,
+        blockId,
         label: button.textContent ?? '',
         ariaLabel: button.getAttribute('aria-label') ?? '',
         state,
@@ -142,12 +143,24 @@ const captureRenderedDomState = (): RenderedDomState | null => {
     })
   }
 }
+
+const findFocusedElement = (root: HTMLElement, target: FocusTarget): HTMLElement | null => {
+  if (target.kind !== 'anchor') {
+    return [...root.querySelectorAll<HTMLElement>('button, pre[tabindex], [role="region"][tabindex]')]
+      .find(element => blockIdentity(element) === target.blockId && focusIdentity(element, root).kind === target.kind) ?? null
+  }
+  if (target.href == null || target.text == null || target.occurrence == null || target.matchingCount == null) return null
+  const matchingAnchors = [...root.querySelectorAll<HTMLAnchorElement>('a[href]')]
+    .filter(anchor => anchor.getAttribute('href') === target.href && (anchor.textContent ?? '') === target.text)
+  if (matchingAnchors.length !== target.matchingCount) return null
+  return matchingAnchors[target.occurrence] ?? null
+}
+
 const restoreRenderedDomState = (state: RenderedDomState | null): void => {
   const root = markdownRoot.value
   if (!root || !state) return
-  const scrollables = scrollableElements(root)
-  for (const [index, position] of state.scrollPositions.entries()) {
-    const element = scrollables[index]
+  for (const position of state.scrollPositions) {
+    const element = [...scrollableElements(root)].find(candidate => blockIdentity(candidate) === position.blockId)
     if (!element) continue
     element.scrollLeft = position.left
     element.scrollTop = position.top
@@ -158,41 +171,244 @@ const restoreRenderedDomState = (state: RenderedDomState | null): void => {
     window.clearTimeout(reset.timer)
     resetTimers.delete(button)
   }
-  const copyButtons = [...root.querySelectorAll<HTMLButtonElement>('[data-copy-code]')]
   for (const feedback of state.copyFeedback) {
-    const button = copyButtons[feedback.index]
+    const button = [...root.querySelectorAll<HTMLButtonElement>('[data-copy-code]')]
+      .find(candidate => blockIdentity(candidate) === feedback.blockId)
     if (!button) continue
     button.textContent = feedback.label
     button.setAttribute('aria-label', feedback.ariaLabel)
     button.dataset.copyState = feedback.state
     scheduleCopyReset(button, feedback.remaining)
   }
-  if (state.focusIndex >= 0) focusableElements(root)[state.focusIndex]?.focus({ preventScroll: true })
+  if (state.focusTarget) findFocusedElement(root, state.focusTarget)?.focus({ preventScroll: true })
 }
+
+const currentTheme = (root: HTMLElement): 'dark' | 'default' => {
+  const documentElement = root.ownerDocument.documentElement
+  return root.closest('.v-theme--dark') || documentElement.classList.contains('v-theme--dark')
+    ? 'dark'
+    : 'default'
+}
+
+const decorateRenderedHtml = (html: string): string => {
+  if (typeof document === 'undefined') return html
+  const template = document.createElement('template')
+  template.innerHTML = html
+  const origin = window.location.origin
+  for (const anchor of template.content.querySelectorAll<HTMLAnchorElement>('a[data-agent-citation]')) {
+    if (!sourcePreviews) continue
+    const href = anchor.getAttribute('href') ?? ''
+    let url: URL
+    const selector = wikiSourceSelectorFromHref(href, origin)
+    try {
+      url = new URL(href, origin)
+    } catch {
+      continue
+    }
+    if (!selector || url.hash) continue
+    anchor.dataset.sourcePreview = 'true'
+    anchor.removeAttribute('target')
+    anchor.setAttribute('aria-label', `${anchor.getAttribute('aria-label') ?? 'Citation'} (preview source)`)
+    anchor.querySelector('.agent-markdown__new-window')?.remove()
+  }
+
+  const occurrences = new Map<string, number>()
+  for (const shell of template.content.querySelectorAll<HTMLElement>('.agent-markdown__code-shell, .agent-markdown__table-shell')) {
+    const code = shell.classList.contains('agent-markdown__code-shell')
+    const element = code ? shell.querySelector('pre') : shell.querySelector('table')
+    if (!element) continue
+    const language = code ? element instanceof HTMLElement ? element.dataset.language ?? 'text' : 'text' : 'table'
+    const signature = `${code ? 'code' : 'table'}\u0000${language}\u0000${element.textContent ?? ''}\u0000${code ? '' : element.innerHTML}`
+    const occurrence = occurrences.get(signature) ?? 0
+    occurrences.set(signature, occurrence + 1)
+    shell.dataset.agentBlockId = `${code ? 'code' : 'table'}-${stableHash(signature)}-${occurrence}`
+    if (!code) continue
+
+    const toolbarLabel = shell.querySelector<HTMLElement>('.agent-markdown__code-toolbar span')
+    if (toolbarLabel) toolbarLabel.textContent = language
+    if (language !== 'mermaid') continue
+    shell.dataset.agentDiagram = 'true'
+    const pre = shell.querySelector<HTMLPreElement>('pre')
+    if (!pre || shell.querySelector('.agent-markdown__diagram-source')) continue
+    const sourceDisclosure = document.createElement('details')
+    sourceDisclosure.className = 'agent-markdown__diagram-source'
+    sourceDisclosure.open = true
+    const summary = document.createElement('summary')
+    summary.textContent = 'Mermaid source'
+    sourceDisclosure.append(summary, pre)
+    shell.append(sourceDisclosure)
+    const output = document.createElement('div')
+    output.className = 'agent-markdown__diagram-output'
+    output.setAttribute('aria-busy', 'true')
+    output.setAttribute('aria-label', 'Rendering Mermaid diagram')
+    shell.insertBefore(output, sourceDisclosure)
+  }
+  return template.innerHTML
+}
+
+const renderMarkdown = (): string => {
+  const html = renderSafeMarkdown(content, {
+    resolveCitation: createAgentCitationResolver(citations),
+    streaming,
+    fenceMetadata: metadata => ({ 'data-language': metadata.language })
+  })
+    .replace(
+      /<pre(?=[\s>])([^>]*)>/g,
+      (_match, attributes: string) => {
+        const language = attributes.match(/\bdata-language="([a-z0-9][a-z0-9_+.-]{0,31})"/i)?.[1] ?? 'text'
+        return `<div class="agent-markdown__code-shell"><div class="agent-markdown__code-toolbar"><span>${language}</span><button type="button" class="agent-markdown__copy" data-copy-code aria-label="Copy code to clipboard" aria-live="polite">Copy</button></div><pre${attributes} tabindex="0" aria-label="Scrollable ${language} code block"`
+      }
+    )
+    .replace(/<\/pre>/g, '</pre></div>')
+    .replace(
+      /<table(?=[\s>])/g,
+      '<div class="agent-markdown__table-shell" tabindex="0" role="region" aria-label="Scrollable table"><table'
+    )
+    .replace(/<\/table>/g, '</table></div>')
+    .replace(
+      /<a(?=[^>]*\btarget=["']_blank["'])([^>]*)>([\s\S]*?)<\/a>/g,
+      (_match, attributes: string, anchorContent: string) => `<a${attributes}>${anchorContent}<span class="agent-markdown__new-window"> (opens in a new tab)</span></a>`
+    )
+  return decorateRenderedHtml(html)
+}
+
+const citationSemanticSignature = computed(() => JSON.stringify([
+  sourcePreviews,
+  ...citations.map(citation => [
+    citation.evidenceId,
+    citation.kind,
+    citation.label,
+    citation.href
+  ])
+]))
 
 const rendered = ref(renderMarkdown())
 let renderedContent = content
 let renderedCitationSignature = citationSemanticSignature.value
 let renderedStreaming = streaming
+let renderedSourcePreviews = sourcePreviews
 let scheduledFrame: number | null = null
 let renderVersion = 0
+const diagramControllers = new Set<AbortController>()
+const cancelDiagramJobs = (): void => {
+  for (const controller of diagramControllers) controller.abort()
+  diagramControllers.clear()
+}
+
+const MERMAID_LIMIT_NOTICE_CLASS = 'content-extension-diagram__limit-notice'
+const MERMAID_LIMIT_NOTICE_MESSAGE = `Additional diagrams remain available as source because only ${MERMAID_MAX_DIAGRAMS_PER_ROOT} diagrams are rendered automatically per message.`
+
+const showMermaidLimitNotice = (root: HTMLElement): void => {
+  if (root.querySelector(`.${MERMAID_LIMIT_NOTICE_CLASS}`)) return
+  const notice = root.ownerDocument.createElement('p')
+  notice.className = MERMAID_LIMIT_NOTICE_CLASS
+  notice.textContent = MERMAID_LIMIT_NOTICE_MESSAGE
+  root.append(notice)
+}
+
+const enhanceMermaidDiagrams = (version: number): void => {
+  if (streaming) return
+  const root = markdownRoot.value
+  if (!root || version !== renderVersion) return
+  const shells = [...root.querySelectorAll<HTMLElement>('.agent-markdown__code-shell[data-agent-diagram="true"]')]
+  const candidates = shells.filter(shell => {
+    if (!shell.isConnected || !root.contains(shell)) return false
+    const source = shell.querySelector<HTMLPreElement>('pre')?.textContent ?? ''
+    return source.length <= MERMAID_MAX_TEXT_SIZE
+  })
+  const mermaidHosts = selectMermaidRenderHosts(candidates)
+  const excess = shells.filter(shell => !mermaidHosts.has(shell))
+  for (const shell of excess) {
+    const output = shell.querySelector<HTMLElement>('.agent-markdown__diagram-output')
+    shell.dataset.diagramState = 'source-only'
+    shell.setAttribute('aria-busy', 'false')
+    output?.setAttribute('aria-busy', 'false')
+    output?.removeAttribute('aria-label')
+  }
+  if (excess.length > 0) showMermaidLimitNotice(root)
+  for (const shell of shells) {
+    if (!mermaidHosts.has(shell) || shell.dataset.diagramState) continue
+    const pre = shell.querySelector<HTMLPreElement>('pre')
+    const output = shell.querySelector<HTMLElement>('.agent-markdown__diagram-output')
+    if (!pre || !output) continue
+    const source = pre.textContent ?? ''
+    if (source.length > MERMAID_MAX_TEXT_SIZE) {
+      shell.dataset.diagramState = 'source-only'
+      shell.setAttribute('aria-busy', 'false')
+      output.setAttribute('aria-busy', 'false')
+      output.removeAttribute('aria-label')
+      continue
+    }
+    const controller = new AbortController()
+    diagramControllers.add(controller)
+    const blockId = shell.dataset.agentBlockId ?? ''
+    shell.dataset.diagramState = 'pending'
+    shell.setAttribute('aria-busy', 'true')
+    output.setAttribute('aria-busy', 'true')
+    output.setAttribute('aria-label', 'Rendering Mermaid diagram')
+    const isCurrent = (): boolean =>
+      !controller.signal.aborted &&
+      renderVersion === version &&
+      root.isConnected &&
+      root.contains(shell) &&
+      shell.dataset.agentBlockId === blockId
+    void renderMermaidSvg(source, {
+      ownerDocument: root.ownerDocument,
+      theme: currentTheme(root),
+      signal: controller.signal,
+      isCurrent
+    }).then(svg => {
+      if (!isCurrent() || !svg) return
+      svg.setAttribute('role', 'img')
+      if (!svg.getAttribute('aria-label')) svg.setAttribute('aria-label', 'Mermaid diagram')
+      output.replaceChildren(svg)
+      output.removeAttribute('aria-busy')
+      output.removeAttribute('aria-label')
+      shell.removeAttribute('aria-busy')
+      shell.dataset.diagramState = 'rendered'
+    }).catch(() => {
+      if (!isCurrent()) return
+      const status = root.ownerDocument.createElement('p')
+      status.className = 'agent-markdown__diagram-error'
+      status.setAttribute('role', 'alert')
+      status.textContent = 'Diagram could not be rendered safely. Mermaid source remains available below.'
+      output.replaceChildren(status)
+      output.removeAttribute('aria-busy')
+      output.removeAttribute('aria-label')
+      shell.removeAttribute('aria-busy')
+      shell.dataset.diagramState = 'failed'
+    }).finally(() => {
+      diagramControllers.delete(controller)
+    })
+  }
+}
+
 const commitRender = (): void => {
   scheduledFrame = null
+  const citationSignature = citationSemanticSignature.value
   if (
     content === renderedContent &&
     streaming === renderedStreaming &&
-    citationSemanticSignature.value === renderedCitationSignature
+    citationSignature === renderedCitationSignature &&
+    sourcePreviews === renderedSourcePreviews
   ) return
   const nextRendered = renderMarkdown()
   renderedContent = content
-  renderedCitationSignature = citationSemanticSignature.value
+  renderedCitationSignature = citationSignature
   renderedStreaming = streaming
-  if (nextRendered === rendered.value) return
+  renderedSourcePreviews = sourcePreviews
+  if (nextRendered === rendered.value) {
+    if (!streaming) void nextTick(() => enhanceMermaidDiagrams(renderVersion))
+    return
+  }
   const domState = captureRenderedDomState()
+  cancelDiagramJobs()
   const version = ++renderVersion
   rendered.value = nextRendered
   void nextTick(() => {
-    if (version === renderVersion) restoreRenderedDomState(domState)
+    if (version !== renderVersion) return
+    restoreRenderedDomState(domState)
+    enhanceMermaidDiagrams(version)
   })
 }
 const scheduleRender = (): void => {
@@ -204,7 +420,7 @@ const scheduleRender = (): void => {
   scheduledFrame = window.requestAnimationFrame(commitRender)
 }
 watch(
-  [() => content, citationSemanticSignature, () => streaming],
+  [() => content, citationSemanticSignature, () => streaming, () => sourcePreviews],
   () => {
     if (streaming) {
       scheduleRender()
@@ -226,24 +442,31 @@ const copyCode = async (event: MouseEvent): Promise<void> => {
   }
   const button = target.closest<HTMLButtonElement>('[data-copy-code]')
   if (!button) return
-  const copyIndex = [...(markdownRoot.value?.querySelectorAll<HTMLButtonElement>('[data-copy-code]') ?? [])].indexOf(button)
-  const code = button.closest('.agent-markdown__code-shell')?.querySelector('pre')?.textContent
-  if (code == null) return
+  const shell = button.closest<HTMLElement>('[data-agent-block-id]')
+  const blockId = shell?.dataset.agentBlockId
+  const code = shell?.querySelector('pre')?.textContent
+  if (!blockId || code == null) return
+  const currentButton = (): HTMLButtonElement | null => {
+    if (button.isConnected) return button
+    return [...(markdownRoot.value?.querySelectorAll<HTMLButtonElement>('[data-copy-code]') ?? [])]
+      .find(candidate => blockIdentity(candidate) === blockId) ?? null
+  }
   try {
     await navigator.clipboard.writeText(code)
-    const currentButton = button.isConnected
-      ? button
-      : [...(markdownRoot.value?.querySelectorAll<HTMLButtonElement>('[data-copy-code]') ?? [])][copyIndex]
-    if (currentButton) showCopyResult(currentButton, 'Copied', 'success')
+    const activeButton = currentButton()
+    if (activeButton) showCopyResult(activeButton, 'Copied', 'success')
   } catch {
-    const currentButton = button.isConnected
-      ? button
-      : [...(markdownRoot.value?.querySelectorAll<HTMLButtonElement>('[data-copy-code]') ?? [])][copyIndex]
-    if (currentButton) showCopyResult(currentButton, 'Copy unavailable', 'error')
+    const activeButton = currentButton()
+    if (activeButton) showCopyResult(activeButton, 'Copy unavailable', 'error')
   }
 }
+
+onMounted(() => {
+  void nextTick(() => enhanceMermaidDiagrams(renderVersion))
+})
 onBeforeUnmount(() => {
   if (scheduledFrame !== null) window.cancelAnimationFrame(scheduledFrame)
+  cancelDiagramJobs()
   for (const reset of resetTimers.values()) window.clearTimeout(reset.timer)
   resetTimers.clear()
 })
@@ -360,7 +583,7 @@ onBeforeUnmount(() => {
 }
 
 .agent-markdown :deep(a) {
-  color: rgb(var(--v-theme-primary));
+  color: var(--wiki-accent-ink);
   font-weight: 560;
   overflow-wrap: anywhere;
   text-decoration-thickness: .08em;
@@ -371,8 +594,12 @@ onBeforeUnmount(() => {
 }
 
 .agent-markdown :deep(a:hover) {
-  color: color-mix(in srgb, rgb(var(--v-theme-primary)) 72%, rgb(var(--v-theme-on-surface)));
+  color: rgb(var(--v-theme-on-surface));
   text-decoration-thickness: .12em;
+}
+
+.agent-markdown :deep(a:focus-visible) {
+  color: rgb(var(--v-theme-on-surface));
 }
 
 .agent-markdown :deep(a:focus-visible),
@@ -390,11 +617,12 @@ onBeforeUnmount(() => {
   outline-offset: calc(-1 * var(--wiki-focus-offset));
 }
 
-.agent-markdown :deep(a[target='_blank']:not([title^='Citation ']))::after {
+.agent-markdown :deep(a[target='_blank']:not([data-agent-citation='true']))::after {
   content: ' ↗';
   font-size: .78em;
   text-decoration: none;
 }
+
 
 .agent-markdown :deep(.agent-markdown__new-window) {
   block-size: 1px;
@@ -499,6 +727,43 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 
+.agent-markdown :deep(.agent-markdown__diagram-output) {
+  align-items: center;
+  display: flex;
+  justify-content: center;
+  min-height: var(--wiki-space-12);
+  padding: var(--wiki-space-4);
+}
+
+.agent-markdown :deep(.agent-markdown__diagram-output[aria-busy='true']) {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent);
+  font-size: var(--wiki-label-size);
+}
+
+.agent-markdown :deep(.agent-markdown__diagram-output svg) {
+  block-size: auto;
+  max-block-size: min(60vh, 32rem);
+  max-inline-size: 100%;
+}
+
+.agent-markdown :deep(.agent-markdown__diagram-source) {
+  border-block-start: 1px solid var(--wiki-surface-border);
+}
+
+.agent-markdown :deep(.agent-markdown__diagram-source summary) {
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
+  cursor: pointer;
+  font-family: var(--wiki-font-mono);
+  font-size: var(--wiki-label-size);
+  padding: var(--wiki-space-2) var(--wiki-space-3);
+}
+
+.agent-markdown :deep(.agent-markdown__diagram-error) {
+  color: rgb(var(--v-theme-error));
+  margin: 0;
+  text-align: center;
+}
+
 .agent-markdown :deep(.agent-markdown__table-shell) {
   border: 1px solid var(--wiki-surface-border-strong);
   border-radius: var(--wiki-control-radius);
@@ -545,8 +810,8 @@ onBeforeUnmount(() => {
 .agent-markdown :deep(tbody tr:nth-child(even)) {
   background: color-mix(in srgb, var(--wiki-surface-sunken) 58%, transparent);
 }
-
-.agent-markdown :deep(a[title^='Citation ']) {
+.agent-markdown :deep(a[data-agent-citation='true']),
+.agent-markdown :deep(strong[data-agent-citation='true']) {
   align-items: center;
   background: color-mix(in srgb, var(--wiki-accent-warm) 11%, var(--wiki-surface-raised));
   border: 1px solid color-mix(in srgb, var(--wiki-accent-warm) 20%, var(--wiki-surface-border));
@@ -566,7 +831,8 @@ onBeforeUnmount(() => {
   vertical-align: .12em;
 }
 
-.agent-markdown :deep(a[title^='Citation ']:hover) {
+.agent-markdown :deep(a[data-agent-citation='true']:hover),
+.agent-markdown :deep(strong[data-agent-citation='true']:hover) {
   background: color-mix(in srgb, var(--wiki-accent-warm) 17%, var(--wiki-surface-raised));
   border-color: color-mix(in srgb, var(--wiki-accent-warm) 42%, var(--wiki-surface-border));
 }
@@ -601,7 +867,8 @@ onBeforeUnmount(() => {
     min-height: var(--wiki-control-height);
   }
 
-  .agent-markdown :deep(a[title^='Citation ']) {
+  .agent-markdown :deep(a[data-agent-citation='true']),
+  .agent-markdown :deep(strong[data-agent-citation='true']) {
     min-width: 28px;
     min-height: 28px;
     margin-inline: var(--wiki-space-2);
@@ -620,7 +887,8 @@ onBeforeUnmount(() => {
   .agent-markdown :deep(code),
   .agent-markdown :deep(.agent-markdown__code-shell),
   .agent-markdown :deep(.agent-markdown__table-shell),
-  .agent-markdown :deep(a[title^='Citation ']) {
+  .agent-markdown :deep(a[data-agent-citation='true']),
+  .agent-markdown :deep(strong[data-agent-citation='true']) {
     background: Canvas;
     border-color: CanvasText;
     color: CanvasText;

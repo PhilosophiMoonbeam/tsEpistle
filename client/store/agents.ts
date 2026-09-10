@@ -92,6 +92,7 @@ export const useAgentsStore = defineStore('agents', {
     stoppingRunId: null as string | null,
     sessionTransitionVersion: 0,
     sessionTransitionController: null as AbortController | null,
+    sessionTransitionKind: null as 'read' | 'mutation' | null,
     sessionListVersion: 0,
     workspaceVersion: 0,
     folderReloadGeneration: 0,
@@ -167,6 +168,7 @@ export const useAgentsStore = defineStore('agents', {
     beginSessionMutation() {
       if (this.sessionMutationBusy) return false
       this.sessionMutationBusy = true
+      this.beginSessionTransition('mutation')
       return true
     },
     endSessionMutation() {
@@ -177,15 +179,16 @@ export const useAgentsStore = defineStore('agents', {
       document.addEventListener('visibilitychange', this.handleVisibilityChange)
       this.visibilityListening = true
     },
-    beginSessionTransition() {
+    beginSessionTransition(kind: 'read' | 'mutation' = 'mutation') {
       const version = this.sessionTransitionVersion + 1
       this.sessionTransitionVersion = version
       this.sessionTransitionController?.abort()
       this.sessionTransitionController = null
+      this.sessionTransitionKind = kind
       return version
     },
     beginSessionReadTransition() {
-      const version = this.beginSessionTransition()
+      const version = this.beginSessionTransition('read')
       const controller = markRaw(new AbortController())
       this.sessionTransitionController = controller
       return { version, controller }
@@ -194,7 +197,17 @@ export const useAgentsStore = defineStore('agents', {
       return this.sessionTransitionVersion === version
     },
     cancelSessionTransition() {
-      this.beginSessionTransition()
+      this.sessionTransitionVersion += 1
+      this.sessionTransitionController?.abort()
+      this.sessionTransitionController = null
+      this.sessionTransitionKind = null
+    },
+    cancelSessionReadTransition() {
+      if (this.sessionTransitionKind !== 'read' || !this.sessionTransitionController) return
+      this.sessionTransitionVersion += 1
+      this.sessionTransitionController.abort()
+      this.sessionTransitionController = null
+      this.sessionTransitionKind = null
     },
     closeWorkspace() {
       this.workspaceVersion += 1
@@ -236,9 +249,10 @@ export const useAgentsStore = defineStore('agents', {
         const workspaceVersion = this.workspaceVersion
         const version = this.beginSessionTransition()
         const previous = this.thread
-        const disposableSessionId = previous && previous.messages.length === 0 && !previous.session.currentRun && !previous.goal && !previous.session.folderId
-          ? previous.session.id
-          : null
+        const disposableSessionId =
+          previous && previous.messages.length === 0 && !previous.session.currentRun && !previous.goal && !previous.session.folderId
+            ? previous.session.id
+            : null
         // Keep the current conversation and its draft intact until creation succeeds.
         const created = await createAgentThread(fetchFromWindow, this.csrfToken, { retention, providerProfileId: null })
         const selectsCreated = this.isWorkspaceCurrent(workspaceVersion) && this.isSessionTransitionCurrent(version)
@@ -279,12 +293,14 @@ export const useAgentsStore = defineStore('agents', {
       this.connectCurrentRun()
     },
     async openSession(sessionId: string): Promise<boolean> {
+      if (this.sessionMutationBusy) return false
       const workspaceVersion = this.workspaceVersion
       const { version, controller } = this.beginSessionReadTransition()
       try {
         const candidate = await getAgentThread(fetchFromWindow, this.csrfToken, sessionId, controller.signal)
         if (!this.isWorkspaceCurrent(workspaceVersion) || !this.isSessionTransitionCurrent(version)) return false
         this.sessionTransitionController = null
+        this.sessionTransitionKind = null
         this.closeStream()
         this.invalidateRefresh()
         this.thread = markRaw(candidate)
@@ -295,6 +311,7 @@ export const useAgentsStore = defineStore('agents', {
       } catch (error) {
         if (!this.isWorkspaceCurrent(workspaceVersion) || !this.isSessionTransitionCurrent(version)) return false
         this.sessionTransitionController = null
+        this.sessionTransitionKind = null
         throw error
       }
     },
@@ -563,7 +580,7 @@ export const useAgentsStore = defineStore('agents', {
       const thread = this.thread
       const trimmed = content.trim()
       const draftSnapshot = JSON.parse(JSON.stringify(this.drafts[thread?.session.id ?? ''] ?? emptyAgentDraft())) as AgentDraft
-      const currentPage = draftSnapshot.includeCurrentPage ? this.contextPage ?? this.launchPage : null
+      const currentPage = draftSnapshot.includeCurrentPage ? (this.contextPage ?? this.launchPage) : null
       if (
         !thread ||
         !trimmed ||
@@ -585,7 +602,17 @@ export const useAgentsStore = defineStore('agents', {
             profileResolutionToken: thread.session.profileResolutionToken,
             ...(invokedSkillVersionIds.length > 0 ? { invokedSkillVersionIds } : {}),
             ...(currentPage ? { currentPage } : {}),
-            knowledgeContext: AgentKnowledgeContextSchema.parse({ scope: draftSnapshot.scope, sources: draftSnapshot.sources.map(({ id, locale, path, title, visibility, sourceRevision }) => ({ id, locale, path, title, visibility, sourceRevision })) })
+            knowledgeContext: AgentKnowledgeContextSchema.parse({
+              scope: draftSnapshot.scope,
+              sources: draftSnapshot.sources.map(({ id, locale, path, title, visibility, sourceRevision }) => ({
+                id,
+                locale,
+                path,
+                title,
+                visibility,
+                sourceRevision
+              }))
+            })
           }
           if (mode === 'goal') {
             await createAgentGoal(fetchFromWindow, this.csrfToken, sessionId, {
@@ -603,7 +630,11 @@ export const useAgentsStore = defineStore('agents', {
           if (this.isSessionContextCurrent(this.workspaceVersion, sessionId)) this.error = error instanceof Error ? error.message : 'Message could not be sent.'
           return false
         }
-        if (this.drafts[sessionId]?.text.trim() === trimmed && this.drafts[sessionId]?.mode === draftSnapshot.mode && JSON.stringify(this.drafts[sessionId]?.skillVersionIds) === JSON.stringify(draftSnapshot.skillVersionIds))
+        if (
+          this.drafts[sessionId]?.text.trim() === trimmed &&
+          this.drafts[sessionId]?.mode === draftSnapshot.mode &&
+          JSON.stringify(this.drafts[sessionId]?.skillVersionIds) === JSON.stringify(draftSnapshot.skillVersionIds)
+        )
           this.updateDraft(sessionId, { text: '', mode: 'message', skillVersionIds: [] })
         // Reopening the same conversation while POST is pending must discover its accepted run.
         // Refresh authoritative state in the current workspace; never replay an old thread response.

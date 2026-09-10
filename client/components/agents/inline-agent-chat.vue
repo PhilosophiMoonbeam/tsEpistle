@@ -3,7 +3,8 @@
     ref="inlineAgentRoot"
     class="inline-agent"
     :class="{ 'inline-agent--history': historyOpen, 'inline-agent--memory': memoryOpen }"
-    aria-labelledby="inline-agent-title"
+    :data-panel-mode="panelMode"
+    :aria-labelledby="workspaceTitleId"
     :aria-busy="loading || Boolean(creatingRetention)"
   >
     <button
@@ -22,46 +23,35 @@
       ref="historyPanel"
       class="inline-agent__side inline-agent__side--history"
       :role="panelMode === 'modal' ? 'dialog' : 'complementary'"
-      aria-label="Chat history panel"
+      :aria-labelledby="historyHeadingId"
+      :aria-describedby="historyDescriptionId"
       :aria-modal="panelMode === 'modal' ? 'true' : undefined"
       :tabindex="panelMode === 'modal' ? -1 : undefined"
     >
-      <v-card v-if="historyLoadError" class="inline-agent__panel-load-error" elevation="0" rounded="xl" role="alert">
-        <header class="inline-agent__panel-load-error-header">
-          <div>
-            <p class="inline-agent__eyebrow">Conversation archive</p>
-            <h2>History unavailable</h2>
-          </div>
-          <v-btn icon="mdi-close" size="small" variant="text" aria-label="Close chat history" @click="closeHistory" />
-        </header>
-        <div class="inline-agent__panel-load-error-body">
-          <v-icon color="error" icon="mdi-archive-alert-outline" size="28" aria-hidden="true" />
-          <p>{{ historyLoadError }}</p>
-          <v-btn color="primary" prepend-icon="mdi-refresh" variant="tonal" :loading="historyLoading" @click="reloadHistory">
-            Retry archive
-          </v-btn>
-        </div>
-      </v-card>
-      <AgentHistoryPanel v-else @close="closeHistory" @clear="openClearUnfiledHistory" />
+      <AgentHistoryPanel
+        :heading-id="historyHeadingId"
+        :description-id="historyDescriptionId"
+        @close="closeHistory"
+        @clear="openClearUnfiledHistory"
+      />
     </div>
 
     <v-card class="inline-agent__card" elevation="0">
       <v-toolbar class="inline-agent__toolbar" color="transparent" density="comfortable" tag="header">
-        <div class="inline-agent__mobile-navigation">
-          <v-btn class="inline-agent__mobile-return" icon="mdi-magnify" variant="text" aria-label="Return to Wiki Search" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('return-search')" />
-
-        </div>
-        <div class="inline-agent__identity">
-          <v-avatar class="inline-agent__avatar" color="primary" size="38" variant="tonal">
-            <v-icon icon="mdi-book-open-page-variant-outline" size="20" aria-hidden="true" />
-          </v-avatar>
-          <div class="inline-agent__heading">
-            <h2 id="inline-agent-title">Wiki Agent</h2>
-            <p class="inline-agent__session-title" :title="sessionTitle">{{ sessionTitle }}</p>
+        <div class="inline-agent__toolbar-main">
+          <div class="inline-agent__mobile-navigation">
+            <v-btn class="inline-agent__mobile-return" icon="mdi-magnify" variant="text" aria-label="Return to Wiki Search" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('return-search')" />
+          </div>
+          <div class="inline-agent__identity">
+            <v-avatar class="inline-agent__avatar" color="primary" size="38" variant="tonal">
+              <v-icon icon="mdi-book-open-page-variant-outline" size="20" aria-hidden="true" />
+            </v-avatar>
+            <div class="inline-agent__heading">
+              <h2 :id="workspaceTitleId">Wiki Agent</h2>
+              <p class="inline-agent__session-title" :title="sessionTitle">{{ sessionTitle }}</p>
+            </div>
           </div>
         </div>
-
-        <v-spacer />
 
         <div class="inline-agent__panel-actions" role="group" aria-label="Agent workspace actions">
           <v-btn
@@ -88,14 +78,20 @@
             :disabled="memoryMutationBusy"
             @click="toggleMemory"
           >Memory</v-btn>
-          <v-menu content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
+          <v-menu ref="panelMenu" content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
             <template #activator="{ props: menuProps }">
-              <v-btn v-bind="menuProps" class="inline-agent__mobile-panel-menu" icon="mdi-view-dashboard-outline" variant="text" size="small" aria-label="Open Agent panels: conversation history and memory" />
+              <v-btn
+                v-bind="menuProps"
+                ref="panelMenuTrigger"
+                class="inline-agent__mobile-panel-menu"
+                prepend-icon="mdi-view-dashboard-outline"
+                variant="text"
+                aria-label="Open Agent panels: conversation history and memory"
+              >Panels</v-btn>
             </template>
-            <v-list density="compact" role="menu">
+            <v-list density="compact">
               <v-list-item
                 class="inline-agent__panel-menu-item"
-                role="menuitem"
                 link
                 prepend-icon="mdi-history"
                 title="Conversation history"
@@ -104,17 +100,39 @@
               />
               <v-list-item
                 class="inline-agent__panel-menu-item"
-                role="menuitem"
                 link
                 prepend-icon="mdi-brain"
                 title="Agent memory"
                 :disabled="memoryMutationBusy"
                 @click="toggleMemory"
               />
-              <v-divider class="my-1" />
+            </v-list>
+          </v-menu>
+          <v-menu content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
+            <template #activator="{ props: menuProps }">
+              <v-btn
+                v-bind="menuProps"
+                ref="newSessionTrigger"
+                class="inline-agent__session-action inline-agent__new-session"
+                prepend-icon="mdi-plus"
+                variant="tonal"
+                :loading="Boolean(creatingRetention)"
+                aria-label="New conversation"
+                :disabled="loading || sending || sessionMutationBusy"
+              >New</v-btn>
+            </template>
+            <v-list density="compact">
               <v-list-item
                 class="inline-agent__panel-menu-item"
-                role="menuitem"
+                link
+                prepend-icon="mdi-bookmark-outline"
+                title="Saved conversation"
+                subtitle="Keep this conversation in history"
+                :disabled="loading || sending || sessionMutationBusy"
+                @click="newSession"
+              />
+              <v-list-item
+                class="inline-agent__panel-menu-item"
                 link
                 prepend-icon="mdi-clock-outline"
                 title="Temporary conversation"
@@ -124,29 +142,10 @@
               />
             </v-list>
           </v-menu>
-          <v-btn
-            class="inline-agent__session-action inline-agent__temporary-session"
-            prepend-icon="mdi-clock-outline"
-            :variant="isTemporary ? 'tonal' : 'text'"
-            :color="isTemporary ? 'primary' : undefined"
-            :loading="creatingRetention === 'temporary'"
-            aria-label="Start a temporary agent conversation"
-            title="Start a fresh conversation that stays out of history and expires automatically"
-            :disabled="loading || sending || sessionMutationBusy"
-            @click="newTemporarySession"
-          ><span class="inline-agent__session-action-label">Temporary</span></v-btn>
-          <v-btn
-            class="inline-agent__session-action inline-agent__new-session"
-            prepend-icon="mdi-plus"
-            variant="tonal"
-            :loading="creatingRetention === 'saved'"
-            aria-label="Start a new saved agent conversation"
-            :disabled="loading || sending || sessionMutationBusy"
-            @click="newSession"
-          ><span class="inline-agent__session-action-label">New</span></v-btn>
           <v-btn class="inline-agent__mobile-close" icon="mdi-close" variant="text" aria-label="Close Wiki Agent" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
         </div>
       </v-toolbar>
+
 
       <v-progress-linear
         v-if="loading"
@@ -177,7 +176,19 @@
             {{ providerUnavailableMessage }}
           </v-alert>
           <v-alert
-            v-if="error"
+            v-if="!loading && !thread && initializationError"
+            class="inline-agent__alert inline-agent__initialization-error"
+            type="error"
+            variant="tonal"
+            role="alert"
+          >
+            <div class="inline-agent__initialization-error-content">
+              <span>{{ initializationError }}</span>
+              <v-btn color="primary" prepend-icon="mdi-refresh" variant="text" :disabled="loading" @click="retryInitialization">Retry opening conversation</v-btn>
+            </div>
+          </v-alert>
+          <v-alert
+            v-if="error && (thread || !initializationError)"
             class="inline-agent__alert"
             type="error"
             variant="tonal"
@@ -337,11 +348,19 @@
       ref="memoryPanel"
       class="inline-agent__side inline-agent__side--memory"
       :role="panelMode === 'modal' ? 'dialog' : 'complementary'"
-      aria-label="Agent memory panel"
+      :aria-labelledby="memoryHeadingId"
+      :aria-describedby="memoryDescriptionId"
       :aria-modal="panelMode === 'modal' ? 'true' : undefined"
       :tabindex="panelMode === 'modal' ? -1 : undefined"
     >
-      <AgentMemoryManager :model-value="memoryOpen" :csrf-token="csrfToken" @update:model-value="updateMemoryOpen" @update:busy="memoryMutationBusy = $event" />
+      <AgentMemoryManager
+        :model-value="memoryOpen"
+        :csrf-token="csrfToken"
+        :heading-id="memoryHeadingId"
+        :description-id="memoryDescriptionId"
+        @update:model-value="updateMemoryOpen"
+        @update:busy="memoryMutationBusy = $event"
+      />
     </div>
   </section>
 
@@ -402,7 +421,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { useAgentsStore } from '../../store/agents.ts'
@@ -443,9 +462,16 @@ const composer = useTemplateRef<{ focusInput: () => Promise<void>; focusSkillsTr
 type ComponentRoot = { $el?: unknown }
 const historyTrigger = useTemplateRef<ComponentRoot | HTMLElement>('historyTrigger')
 const memoryTrigger = useTemplateRef<ComponentRoot | HTMLElement>('memoryTrigger')
+const panelMenuTrigger = useTemplateRef<ComponentRoot | HTMLElement>('panelMenuTrigger')
 const historyPanel = useTemplateRef<HTMLElement>('historyPanel')
 const memoryPanel = useTemplateRef<HTMLElement>('memoryPanel')
 const panelScrim = useTemplateRef<HTMLElement>('panelScrim')
+const panelIdPrefix = useId()
+const workspaceTitleId = `${panelIdPrefix}-workspace-title`
+const historyHeadingId = `${panelIdPrefix}-history-title`
+const historyDescriptionId = `${panelIdPrefix}-history-description`
+const memoryHeadingId = `${panelIdPrefix}-memory-title`
+const memoryDescriptionId = `${panelIdPrefix}-memory-description`
 const goalExpanded = ref(false)
 const approvalJumpVisible = ref(false)
 const skillManagerOpen = ref(false)
@@ -457,10 +483,9 @@ const creatingRetention = ref<'saved' | 'temporary' | null>(null)
 const keepingConversation = ref(false)
 const sessionNotice = ref('')
 const historyOpen = ref(false)
-const historyLoadError = ref('')
-const historyLoading = ref(false)
 const memoryOpen = ref(false)
 const memoryMutationBusy = ref(false)
+const initializationError = ref('')
 const transcriptFollowing = ref(true)
 let transcriptObserver: MutationObserver | null = null
 let transcriptFrame: number | null = null
@@ -559,19 +584,38 @@ const preparePrompt = async (prompt: string, source?: WikiSource, scope?: AgentS
   await composer.value?.setDraft(existing.trim() && existing.trim() !== prompt.trim() ? source ? existing : `${existing}\n\n${prompt}` : prompt)
 }
 
+const initializationFailureMessage = (value: unknown): string =>
+  value instanceof Error && value.message
+    ? value.message
+    : typeof value === 'string' && value
+      ? value
+      : 'The conversation could not be opened.'
 const ensureInitialized = (): Promise<void> => {
   if (initialization) return initialization
+  initializationError.value = ''
   const pending = agents.initialize(props.csrfToken, { routeSync: false, currentPage: currentPage.value, reuseLatest: true })
-  initialization = pending
-  void pending.then(
+  const tracked = pending.then(
     () => {
-      if (initialization === pending && !agents.thread) initialization = null
+      if (thread.value) {
+        initializationError.value = ''
+        return
+      }
+      initializationError.value = error.value || 'The conversation could not be opened. Retry to try again.'
+      if (initialization === tracked) initialization = null
     },
-    () => {
-      if (initialization === pending) initialization = null
+    value => {
+      if (!thread.value) initializationError.value = initializationFailureMessage(value)
+      if (initialization === tracked) initialization = null
     }
   )
-  return pending
+  initialization = tracked
+  return tracked
+}
+const retryInitialization = async (): Promise<void> => {
+  if (loading.value || thread.value) return
+  initializationError.value = ''
+  agents.error = ''
+  await ensureInitialized()
 }
 const focusComposer = async (): Promise<void> => {
   await ensureInitialized()
@@ -662,12 +706,10 @@ const componentElement = (component: ComponentRoot | HTMLElement | null): HTMLEl
   return component?.$el instanceof HTMLElement ? component.$el : null
 }
 const triggerForPanel = (kind: 'history' | 'memory'): HTMLElement | null => {
-  const root = inlineAgentRoot.value
-  if (!root) return null
   const direct = componentElement(kind === 'history' ? historyTrigger.value : memoryTrigger.value)
-  const mobile = root.querySelector<HTMLElement>('[aria-label="Open Agent panels: conversation history and memory"]')
-  const useMobileTrigger = window.matchMedia(mobilePanelQuery).matches
-  return (useMobileTrigger ? [mobile, direct] : [direct, mobile]).find(isVisibleTrigger) ?? null
+  const panels = componentElement(panelMenuTrigger.value)
+  const usePanelMenu = window.matchMedia(mobilePanelQuery).matches
+  return (usePanelMenu ? [panels, direct] : [direct, panels]).find(isVisibleTrigger) ?? null
 }
 const openSkillManager = (): void => { skillManagerOpen.value = true }
 const preparePanelTriggerRestore = (kind: 'history' | 'memory'): void => {
@@ -688,20 +730,6 @@ const updateMemoryOpen = (open: boolean): void => {
   if (open) memoryOpen.value = true
   else closeMemory()
 }
-const reloadHistory = async (): Promise<void> => {
-  if (historyLoading.value) return
-  historyLoading.value = true
-  try {
-    const results = await Promise.allSettled([agents.reloadSessions(), agents.reloadFolders()])
-    const failed = results.find(result => result.status === 'rejected')
-    if (failed?.status === 'rejected') throw failed.reason
-    historyLoadError.value = ''
-  } catch (value) {
-    historyLoadError.value = value instanceof Error ? value.message : 'Conversation history could not be loaded.'
-  } finally {
-    historyLoading.value = false
-  }
-}
 const toggleHistory = (): void => {
   if (memoryMutationBusy.value && memoryOpen.value && panelMode.value !== 'wide') return
   if (historyOpen.value) {
@@ -710,7 +738,6 @@ const toggleHistory = (): void => {
   }
   historyOpen.value = true
   if (panelMode.value !== 'wide') memoryOpen.value = false
-  void reloadHistory()
 }
 const toggleMemory = (): void => {
   if (memoryOpen.value) {
@@ -1029,15 +1056,32 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__toolbar {
+  display: flex;
   min-height: calc(var(--wiki-control-height) + var(--wiki-space-6));
   flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-content: center;
+  align-items: center;
+  gap: 0;
   padding-block-start: 0;
   padding-inline: var(--wiki-space-4);
   border-bottom: 1px solid var(--wiki-surface-border);
   background: rgb(var(--v-theme-background)) !important;
   box-shadow: none;
 }
+.inline-agent__toolbar :deep(.v-toolbar__content) {
+  flex-wrap: inherit;
+  align-content: inherit;
+  align-items: inherit;
+  min-height: inherit;
+}
 
+.inline-agent__toolbar-main {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+}
 
 .inline-agent__identity {
   display: flex;
@@ -1092,7 +1136,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   line-height: 1.2;
 }
 
-
 .inline-agent__panel-actions {
   display: flex;
   flex: 0 0 auto;
@@ -1117,15 +1160,11 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   text-transform: none;
 }
 
-
 .inline-agent__session-action {
-  min-height: 2.25rem;
+  min-width: var(--wiki-control-height);
+  min-height: var(--wiki-control-height);
   padding-inline: var(--wiki-space-3);
   text-transform: none;
-}
-
-.inline-agent__temporary-session {
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
 }
 
 .inline-agent__new-session {
@@ -1469,50 +1508,6 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   box-shadow: var(--wiki-focus-ring);
 }
 
-.inline-agent__panel-load-error {
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--wiki-surface-border);
-  background: var(--wiki-surface-raised);
-}
-
-.inline-agent__panel-load-error-header {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  gap: var(--wiki-space-3);
-  justify-content: space-between;
-  padding: var(--wiki-space-4);
-  border-bottom: 1px solid var(--wiki-surface-border);
-}
-
-.inline-agent__panel-load-error-header h2 {
-  margin: var(--wiki-space-1) 0 0;
-  font-family: var(--wiki-font-heading);
-  font-size: 1rem;
-}
-
-.inline-agent__panel-load-error-body {
-  display: flex;
-  min-height: 0;
-  flex: 1 1 auto;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--wiki-space-3);
-  padding: var(--wiki-space-6);
-  text-align: center;
-}
-
-.inline-agent__panel-load-error-body p {
-  margin: 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
-  font-size: .8125rem;
-  line-height: 1.5;
-}
 
 .inline-agent__side--history {
   width: min(19rem, 100%);
@@ -1535,77 +1530,122 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 }
 
-/* Panels occupy their own columns so reading and writing remain unobstructed. */
-@media (min-width: 1024px) {
-  .inline-agent { grid-template-columns: minmax(0, 1fr); }
-  .inline-agent--history { grid-template-columns: 20rem minmax(0, 1fr); }
-  .inline-agent--memory { grid-template-columns: minmax(0, 1fr) 22rem; }
-  .inline-agent__card { grid-column: 1; grid-row: 1; }
-  .inline-agent--history .inline-agent__card { grid-column: 2; }
-  .inline-agent__side {
-    position: relative;
-    z-index: auto;
-    border-radius: 0;
-    width: 100%;
-    max-width: none;
-    grid-row: 1;
-    justify-self: stretch;
-    filter: none;
-  }
-  .inline-agent__side--history { grid-column: 1; border-inline-end: 1px solid var(--wiki-surface-border); }
-  .inline-agent__side--memory { grid-column: 2; border-inline-start: 1px solid var(--wiki-surface-border); }
-  .inline-agent__side :deep(.agent-history),
-  .inline-agent__side :deep(.agent-memory) { border: 0; border-radius: 0 !important; box-shadow: none; }
-}
-@media (min-width: 1760px) {
-  .inline-agent--history.inline-agent--memory { grid-template-columns: 20rem minmax(0, 1fr) 22rem; }
-  .inline-agent--history .inline-agent__side--memory { grid-column: 3; }
+/* Panel geometry follows the mode computed at the fixed 1024px and 1760px fit thresholds. */
+.inline-agent[data-panel-mode="docked"],
+.inline-agent[data-panel-mode="wide"] {
+  grid-template-columns: minmax(0, 1fr);
 }
 
-@media (max-width: 1023.98px) {
-  .inline-agent {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-  }
+.inline-agent[data-panel-mode="docked"].inline-agent--history {
+  grid-template-columns: 20rem minmax(0, 1fr);
+}
 
-  .inline-agent__card {
-    grid-column: 1;
-    grid-row: 1;
-  }
+.inline-agent[data-panel-mode="docked"].inline-agent--memory {
+  grid-template-columns: minmax(0, 1fr) 22rem;
+}
 
-  .inline-agent__side {
-    position: absolute;
-    z-index: 5;
-    inset-block: 0;
-    width: 22rem;
-    max-width: calc(100% - var(--wiki-space-10));
-    grid-column: 1 / -1;
-    grid-row: 1;
-    box-sizing: border-box;
-    filter: drop-shadow(var(--wiki-shadow-md));
-  }
+.inline-agent[data-panel-mode="wide"].inline-agent--history {
+  grid-template-columns: 20rem minmax(0, 1fr);
+}
 
-  .inline-agent__side--history {
-    inset-inline-start: 0;
-    inset-inline-end: auto;
-    justify-self: start;
-  }
+.inline-agent[data-panel-mode="wide"].inline-agent--memory {
+  grid-template-columns: minmax(0, 1fr) 22rem;
+}
 
-  .inline-agent__side--memory {
-    inset-inline-start: auto;
-    inset-inline-end: 0;
-    justify-self: end;
-  }
+.inline-agent[data-panel-mode="wide"].inline-agent--history.inline-agent--memory {
+  grid-template-columns: 20rem minmax(0, 1fr) 22rem;
+}
 
-  .inline-agent__scrim {
-    position: absolute;
-    z-index: 4;
-    display: block;
-    inset: 0;
-    padding: 0;
-    border: 0;
-    background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 40%, transparent);
-  }
+.inline-agent[data-panel-mode="docked"] .inline-agent__card,
+.inline-agent[data-panel-mode="wide"] .inline-agent__card {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.inline-agent[data-panel-mode="docked"].inline-agent--history .inline-agent__card,
+.inline-agent[data-panel-mode="wide"].inline-agent--history .inline-agent__card {
+  grid-column: 2;
+}
+
+.inline-agent[data-panel-mode="wide"].inline-agent--history .inline-agent__side--memory {
+  grid-column: 3;
+}
+
+.inline-agent[data-panel-mode="docked"] .inline-agent__side,
+.inline-agent[data-panel-mode="wide"] .inline-agent__side {
+  position: relative;
+  z-index: auto;
+  width: 100%;
+  max-width: none;
+  grid-row: 1;
+  justify-self: stretch;
+  border-radius: 0;
+  filter: none;
+}
+
+.inline-agent[data-panel-mode="docked"] .inline-agent__side--history,
+.inline-agent[data-panel-mode="wide"] .inline-agent__side--history {
+  grid-column: 1;
+  border-inline-end: 1px solid var(--wiki-surface-border);
+}
+
+.inline-agent[data-panel-mode="docked"] .inline-agent__side--memory,
+.inline-agent[data-panel-mode="wide"] .inline-agent__side--memory {
+  grid-column: 2;
+  border-inline-start: 1px solid var(--wiki-surface-border);
+}
+
+.inline-agent[data-panel-mode="docked"] .inline-agent__side :deep(.agent-history),
+.inline-agent[data-panel-mode="docked"] .inline-agent__side :deep(.agent-memory),
+.inline-agent[data-panel-mode="wide"] .inline-agent__side :deep(.agent-history),
+.inline-agent[data-panel-mode="wide"] .inline-agent__side :deep(.agent-memory) {
+  border: 0;
+  border-radius: 0 !important;
+  box-shadow: none;
+}
+
+.inline-agent[data-panel-mode="modal"] {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.inline-agent[data-panel-mode="modal"] .inline-agent__card {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.inline-agent[data-panel-mode="modal"] .inline-agent__side {
+  position: absolute;
+  z-index: 5;
+  inset-block: 0;
+  width: 22rem;
+  max-width: calc(100% - var(--wiki-space-10));
+  grid-column: 1 / -1;
+  grid-row: 1;
+  box-sizing: border-box;
+  filter: drop-shadow(var(--wiki-shadow-md));
+}
+
+.inline-agent[data-panel-mode="modal"] .inline-agent__side--history {
+  inset-inline-start: 0;
+  inset-inline-end: auto;
+  justify-self: start;
+}
+
+.inline-agent[data-panel-mode="modal"] .inline-agent__side--memory {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  justify-self: end;
+}
+
+.inline-agent[data-panel-mode="modal"] .inline-agent__scrim {
+  position: absolute;
+  z-index: 4;
+  display: block;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 40%, transparent);
 }
 
 @media (max-width: 900px) {
@@ -1623,10 +1663,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 @container agent-workspace (max-width: 780px) {
   .inline-agent__desktop-panel-btn { display: none; }
   .inline-agent__mobile-panel-menu { display: inline-flex !important; }
-  .inline-agent__session-action-label { display: none; }
   .inline-agent__session-action { min-width: var(--wiki-control-height); padding-inline: var(--wiki-space-2); }
   .inline-agent__session-action :deep(.v-btn__prepend) { margin: 0; }
-  .inline-agent__temporary-session { display: none; }
   .inline-agent__notice { display: none; }
   .inline-agent__starters { grid-template-columns: 1fr; }
   .inline-agent__starter { min-height: 3.5rem; padding: .75rem; }
@@ -1652,17 +1690,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__panel-actions {
-    gap: 0;
+    gap: var(--wiki-space-1);
   }
 }
 @media (max-width: 1023.98px) {
   .inline-agent__session-action {
     min-width: var(--wiki-control-height);
     padding-inline: var(--wiki-space-2);
-  }
-
-  .inline-agent__session-action-label {
-    display: none;
   }
 
   .inline-agent__session-action :deep(.v-btn__prepend) {
@@ -1711,12 +1745,21 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__toolbar {
-    min-height: calc(var(--wiki-control-height) + var(--wiki-space-4));
+    min-height: calc((var(--wiki-control-height) * 2) + var(--wiki-space-5) + env(safe-area-inset-top));
     padding-block-start: max(0px, env(safe-area-inset-top));
     padding-inline: var(--wiki-space-2);
   }
+  .inline-agent__toolbar :deep(.v-toolbar__content) {
+    flex-wrap: wrap;
+    align-content: center;
+    min-height: inherit;
+  }
+  .inline-agent__toolbar-main {
+    flex: 1 0 100%;
+    min-height: var(--wiki-control-height);
+  }
   .inline-agent__progress {
-    inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-4) + env(safe-area-inset-top) - var(--wiki-space-1));
+    inset-block-start: calc((var(--wiki-control-height) * 2) + var(--wiki-space-5) + env(safe-area-inset-top) - var(--wiki-space-1));
   }
 
   .inline-agent__eyebrow {
@@ -1749,9 +1792,13 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   }
 
   .inline-agent__panel-actions {
-    gap: 0;
+    flex: 1 0 100%;
+    min-height: var(--wiki-control-height);
+    justify-content: flex-end;
+    gap: var(--wiki-space-1);
+    padding-block-start: var(--wiki-space-1);
+    border-top: 1px solid var(--wiki-surface-border);
   }
-  .inline-agent__temporary-session { display: none; }
 
   .inline-agent__toolbar :deep(.v-btn) {
     min-width: var(--wiki-control-height);
@@ -1850,8 +1897,12 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 @media (max-width: 639.98px) and (max-height: 500px) {
+  .inline-agent__toolbar {
+    min-height: calc((var(--wiki-control-height) * 2) + var(--wiki-space-5) + env(safe-area-inset-top));
+  }
+
   .inline-agent__progress {
-    inset-block-start: calc(var(--wiki-control-height) + var(--wiki-space-2) + env(safe-area-inset-top) - var(--wiki-space-1));
+    inset-block-start: calc((var(--wiki-control-height) * 2) + var(--wiki-space-5) + env(safe-area-inset-top) - var(--wiki-space-1));
   }
 }
 

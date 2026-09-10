@@ -46,6 +46,7 @@
         "cookie": "2.0.1",
         "cookie-parser": "1.4.7",
         "cors": "2.8.6",
+        "css-tree": "3.2.1",
         "cuint": "0.2.2",
         "custom-error-instance": "2.1.2",
         "dependency-graph": "1.0.0",

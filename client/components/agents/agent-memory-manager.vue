@@ -1,6 +1,6 @@
 <template>
   <v-card class="agent-memory" elevation="0" rounded="xl" :aria-busy="loading || Boolean(actionBusy)">
-    <AgentPanelHeader ref="memoryHeading" title="Agent memory" icon="mdi-brain" close-label="Close agent memory" :busy="Boolean(actionBusy)" @close="requestClose">
+    <AgentPanelHeader ref="memoryHeading" title="Agent memory" icon="mdi-brain" close-label="Close agent memory" :heading-id="headingId" :description-id="descriptionId" :busy="Boolean(actionBusy)" @close="requestClose">
       <p class="agent-memory__intro">Preferences and facts carried into your conversations.</p>
       <span v-if="loaded" class="agent-memory__count" role="status" aria-live="polite" aria-atomic="true">{{ memoryCountLabel }}</span>
     </AgentPanelHeader>
@@ -138,13 +138,13 @@
     </v-card-actions>
   </v-card>
 
-  <v-dialog content-class="agent-owned-overlay" :model-value="open && Boolean(removing)" max-width="30rem" :persistent="open && actionBusy === 'remove'" @update:model-value="value => { if (open && !value && actionBusy !== 'remove') cancelRemove() }">
+  <v-dialog content-class="agent-owned-overlay" :model-value="open && Boolean(removing)" max-width="30rem" :persistent="open && actionBusy === 'remove'" :aria-labelledby="removeDialogTitleId" :aria-describedby="removeDialogDescriptionId" @update:model-value="value => { if (open && !value && actionBusy !== 'remove') cancelRemove() }">
     <v-card ref="removeDialogCard" class="agent-memory__dialog" rounded="xl">
-      <v-card-title class="agent-memory__dialog-title">
+      <v-card-title :id="removeDialogTitleId" class="agent-memory__dialog-title">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-archive-remove-outline" aria-hidden="true" /></v-avatar>
         <span>Remove this memory?</span>
       </v-card-title>
-      <v-card-text>
+      <v-card-text :id="removeDialogDescriptionId">
         <v-alert v-if="dialogError" class="agent-memory__dialog-error" type="error" variant="tonal" density="compact">{{ dialogError }}</v-alert>
         <p>This record will be omitted from conversations started after removal. Existing conversation snapshots are unchanged.</p>
         <blockquote v-if="removing" class="agent-memory__dialog-record">{{ removing.content }}</blockquote>
@@ -157,13 +157,13 @@
     </v-card>
   </v-dialog>
 
-  <v-dialog content-class="agent-owned-overlay" :model-value="open && clearing" max-width="30rem" :persistent="open && actionBusy === 'clear'" @update:model-value="value => { if (open && !value && actionBusy !== 'clear') cancelClear() }">
+  <v-dialog content-class="agent-owned-overlay" :model-value="open && clearing" max-width="30rem" :persistent="open && actionBusy === 'clear'" :aria-labelledby="clearDialogTitleId" :aria-describedby="clearDialogDescriptionId" @update:model-value="value => { if (open && !value && actionBusy !== 'clear') cancelClear() }">
     <v-card ref="clearDialogCard" class="agent-memory__dialog" rounded="xl">
-      <v-card-title class="agent-memory__dialog-title">
+      <v-card-title :id="clearDialogTitleId" class="agent-memory__dialog-title">
         <v-avatar color="error" size="38" variant="tonal"><v-icon icon="mdi-delete-sweep-outline" aria-hidden="true" /></v-avatar>
         <span>Clear all memory?</span>
       </v-card-title>
-      <v-card-text>
+      <v-card-text :id="clearDialogDescriptionId">
         <v-alert v-if="clearError" class="agent-memory__dialog-error" type="error" variant="tonal" density="compact">{{ clearError }}</v-alert>
         Every saved preference and Agent note will be removed from future conversations. Conversation history and existing memory snapshots are not affected.
       </v-card-text>
@@ -178,12 +178,17 @@
 
 <script setup lang="ts">
 import AgentPanelHeader from './agent-panel-header.vue'
-import { computed, nextTick, onBeforeUnmount, onWatcherCleanup, ref, shallowRef, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onWatcherCleanup, ref, shallowRef, useId, useTemplateRef, watch, type ComponentPublicInstance } from 'vue'
 import { clearAgentMemories, createAgentMemory, getAgentMemories, removeAgentMemory, updateAgentMemory, type AgentMemoryEntry, type AgentMemoryTarget, type AgentMemoryView } from '../../helpers/agents-api.ts'
 import { createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
-const { csrfToken } = defineProps<{ csrfToken: string }>()
+const { csrfToken, headingId, descriptionId } = defineProps<{ csrfToken: string; headingId: string; descriptionId: string }>()
 const open = defineModel<boolean>({ required: true })
+const instanceId = useId()
+const removeDialogTitleId = `${instanceId}-remove-title`
+const removeDialogDescriptionId = `${instanceId}-remove-description`
+const clearDialogTitleId = `${instanceId}-clear-title`
+const clearDialogDescriptionId = `${instanceId}-clear-description`
 const emit = defineEmits<{ 'update:busy': [busy: boolean] }>()
 const emptyStore = (limit: number) => ({ entries: [] as AgentMemoryEntry[], characters: 0, limit })
 const loading = ref(false)

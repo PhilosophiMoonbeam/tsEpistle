@@ -1,14 +1,7 @@
 <template>
   <section class="agent-thread" aria-label="Agent conversation">
-    <div class="sr-status" aria-live="polite" aria-atomic="true">{{ liveSummary }}</div>
-    <div v-if="!thread.messages.length" class="agent-thread__empty">
-      <v-icon icon="mdi-bookshelf" size="24" aria-hidden="true" />
-      <div>
-        <strong>Begin a grounded conversation</strong>
-        <p>Ask a question to search and read Wiki pages you are allowed to access.</p>
-      </div>
-    </div>
-    <template v-for="entry in threadPresentation.orderedMessages" :key="entry.message.id">
+    <div :key="liveSummaryRevision" class="sr-status" aria-live="polite" aria-atomic="true">{{ liveSummary }}</div>
+    <template v-for="entry in threadProjection.orderedMessages" :key="entry.message.id">
       <article
         class="agent-message"
         :class="[`agent-message--${entry.message.role}`, `agent-message--${entry.message.status}`]"
@@ -25,8 +18,8 @@
           <time
             class="agent-message__time"
             :datetime="entry.message.createdAt"
-            :title="messageTimestamp(entry.message.createdAt)"
-          >{{ messageTime(entry.message.createdAt) }}</time>
+            :title="entry.temporal.timestamp"
+          >{{ entry.temporal.time }}</time>
           <span
             v-if="entry.statusLabel"
             class="agent-message__status"
@@ -49,8 +42,8 @@
             <time
               class="agent-message__time"
               :datetime="entry.message.createdAt"
-              :title="messageTimestamp(entry.message.createdAt)"
-            >{{ messageTime(entry.message.createdAt) }}</time>
+              :title="entry.temporal.timestamp"
+            >{{ entry.temporal.time }}</time>
             <span
               v-if="entry.statusLabel"
               class="agent-message__status"
@@ -137,19 +130,19 @@
                   class="agent-sources__group"
                 >
                   <component
-                    :is="safeNavigableHref(group.pageHref) ? 'a' : 'div'"
+                    :is="group.safeHref ? 'a' : 'div'"
                     class="agent-sources__page"
-                    :href="safeNavigableHref(group.pageHref)"
-                    :target="safeNavigableHref(group.pageHref) ? '_blank' : undefined"
-                    :rel="safeNavigableHref(group.pageHref) ? 'noopener noreferrer' : undefined"
+                    :href="group.safeHref"
+                    :target="group.safeHref ? '_blank' : undefined"
+                    :rel="group.safeHref ? 'noopener noreferrer' : undefined"
                   >
                     <span v-if="group.pageCitation" class="agent-sources__number">{{ group.pageCitation.number }}</span>
                     <v-icon v-else icon="mdi-file-document-outline" size="18" aria-hidden="true" />
                     <strong>{{ group.pageLabel }}</strong>
-                    <v-icon v-if="safeNavigableHref(group.pageHref)" icon="mdi-open-in-new" size="15" aria-hidden="true" />
-                    <span v-if="safeNavigableHref(group.pageHref)" class="agent-sources__new-window"> (opens in a new tab)</span>
+                    <v-icon v-if="group.safeHref" icon="mdi-open-in-new" size="15" aria-hidden="true" />
+                    <span v-if="group.safeHref" class="agent-sources__new-window"> (opens in a new tab)</span>
                   </component>
-                  <v-btn v-if="sourceSelector(group.pageHref)" class="agent-sources__preview" size="small" variant="text" prepend-icon="mdi-text-box-search-outline" :aria-label="`Preview ${group.pageLabel}`" @click="previewSelector = sourceSelector(group.pageHref)">Preview source</v-btn>
+                  <v-btn v-if="group.previewSelector" class="agent-sources__preview" size="small" variant="text" prepend-icon="mdi-text-box-search-outline" :aria-label="`Preview ${group.pageLabel}`" @click="previewSelector = group.previewSelector">Preview source</v-btn>
                   <ol v-if="group.sections.length" class="agent-sources__sections">
                     <li
                       v-for="citationEntry in group.sections"
@@ -157,15 +150,15 @@
                       :key="citationEntry.citation.evidenceId"
                     >
                       <component
-                        :is="safeNavigableHref(citationEntry.citation.href) ? 'a' : 'span'"
-                        :href="safeNavigableHref(citationEntry.citation.href)"
-                        :target="safeNavigableHref(citationEntry.citation.href) ? '_blank' : undefined"
-                        :rel="safeNavigableHref(citationEntry.citation.href) ? 'noopener noreferrer' : undefined"
-                        :aria-label="`Citation ${citationEntry.number}: ${citationEntry.citation.label}${safeNavigableHref(citationEntry.citation.href) ? ' (opens in a new tab)' : ''}`"
+                        :is="citationEntry.safeHref ? 'a' : 'span'"
+                        :href="citationEntry.safeHref"
+                        :target="citationEntry.safeHref ? '_blank' : undefined"
+                        :rel="citationEntry.safeHref ? 'noopener noreferrer' : undefined"
+                        :aria-label="`Citation ${citationEntry.number}: ${citationEntry.citation.label}${citationEntry.safeHref ? ' (opens in a new tab)' : ''}`"
                       >
                         <span class="agent-sources__number">{{ citationEntry.number }}</span>
                         <span class="agent-sources__label">{{ citationEntry.sectionLabel }}</span>
-                        <v-icon v-if="safeNavigableHref(citationEntry.citation.href)" icon="mdi-open-in-new" size="14" aria-hidden="true" />
+                        <v-icon v-if="citationEntry.safeHref" icon="mdi-open-in-new" size="14" aria-hidden="true" />
                       </component>
                     </li>
                   </ol>
@@ -178,11 +171,11 @@
               aria-label="Changed pages"
             >
               <component
-                :is="safeNavigableHref(link.href) ? 'a' : 'span'"
+                :is="link.safeHref ? 'a' : 'span'"
                 v-for="link in entry.run?.pageLinks"
                 :key="link.href"
-                :href="safeNavigableHref(link.href)"
-                :title="safeNavigableHref(link.href) ? `Open ${link.label}` : undefined"
+                :href="link.safeHref"
+                :title="link.safeHref ? `Open ${link.label}` : undefined"
               >
                 <v-icon icon="mdi-file-link-outline" size="18" aria-hidden="true" />
                 <span>{{ link.label }}</span>
@@ -269,6 +262,10 @@ import AgentToolCard from './agent-tool-card.vue'
 import {
   agentLiveAnnouncement,
   buildAgentThreadPresentation,
+  type AgentCitationEntry,
+  type AgentCitationGroup,
+  type AgentMessagePresentation,
+  type AgentRunPresentation,
   type AgentThreadPresentation
 } from './agent-thread-presentation.ts'
 
@@ -286,45 +283,41 @@ const forwardDecision = (
 ): void => emit('decision', proposalId, approvalId, decision, confirmationPath)
 
 const previewSelector = ref<WikiSourceSelector | null>(null)
-const sourceSelector = (href: string | null): WikiSourceSelector | null => href ? wikiSourceSelectorFromHref(href, window.location.origin) : null
+const sourceSelector = (href: string | null): WikiSourceSelector | null => {
+  if (!href) return null
+  const origin = typeof window === 'undefined' ? 'https://wiki.invalid' : window.location.origin
+  return wikiSourceSelectorFromHref(href, origin)
+}
 const messageTimeFormat = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const messageTimestampFormat = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 interface MessageTemporalMetadata {
   readonly time: string
   readonly timestamp: string
 }
-const messageTemporalMetadata = new Map<string, MessageTemporalMetadata>()
-const navigableHrefCache = new Map<string, string | undefined>()
 const safeNavigableHref = (href: string | null): string | undefined => {
   if (!href) return undefined
-  if (navigableHrefCache.has(href)) return navigableHrefCache.get(href)
-  let safeHref: string | undefined
   try {
     const url = new URL(href, 'https://wiki.invalid')
-    if (url.protocol === 'http:' || url.protocol === 'https:') safeHref = href
+    return url.protocol === 'http:' || url.protocol === 'https:' ? href : undefined
   } catch {
-    navigableHrefCache.set(href, undefined)
     return undefined
   }
-  navigableHrefCache.set(href, safeHref)
-  return safeHref
 }
 const normalizeSourceIdSegment = (segment: string): string =>
   encodeURIComponent(segment.normalize('NFC').replace(/[\uD800-\uDFFF]/gu, '\uFFFD'))
 const sourceDomId = (messageId: string, evidenceId: string, sourceKind: 'page' | 'section'): string =>
   `agent-source-${sourceKind}-${normalizeSourceIdSegment(messageId)}-${normalizeSourceIdSegment(evidenceId)}`
 const temporalMetadataFor = (createdAt: string): MessageTemporalMetadata => {
-  const cached = messageTemporalMetadata.get(createdAt)
-  if (cached) return cached
   const date = new Date(createdAt)
-  const metadata = Number.isNaN(date.valueOf())
+  return Number.isNaN(date.valueOf())
     ? { time: '', timestamp: createdAt }
     : { time: messageTimeFormat.format(date), timestamp: messageTimestampFormat.format(date) }
-  messageTemporalMetadata.set(createdAt, metadata)
-  return metadata
 }
-const messageTime = (createdAt: string): string => temporalMetadataFor(createdAt).time
-const messageTimestamp = (createdAt: string): string => temporalMetadataFor(createdAt).timestamp
+interface LinkPresentationMetadata {
+  readonly safeHref: string | undefined
+  readonly previewSelector: WikiSourceSelector | null
+}
+const emptyLinkPresentationMetadata: LinkPresentationMetadata = { safeHref: undefined, previewSelector: null }
 interface CachedThreadPresentation {
   readonly sessionId: string
   readonly presentation: AgentThreadPresentation
@@ -343,6 +336,64 @@ const threadPresentationCache = computed<CachedThreadPresentation>(previous => {
   }
 })
 const threadPresentation = computed(() => threadPresentationCache.value.presentation)
+type ProjectedCitationEntry = AgentCitationEntry & LinkPresentationMetadata
+type ProjectedCitationGroup = Omit<AgentCitationGroup, 'sections'> & LinkPresentationMetadata & {
+  readonly sections: readonly ProjectedCitationEntry[]
+}
+type ProjectedRun = Omit<AgentRunPresentation, 'pageLinks'> & {
+  readonly pageLinks: readonly (AgentRunPresentation['pageLinks'][number] & LinkPresentationMetadata)[]
+}
+type ProjectedMessage = Omit<AgentMessagePresentation, 'run' | 'citationGroups'> & {
+  readonly run: ProjectedRun | null
+  readonly citationGroups: readonly ProjectedCitationGroup[]
+  readonly temporal: MessageTemporalMetadata
+}
+interface ThreadProjection {
+  readonly orderedMessages: readonly ProjectedMessage[]
+}
+const threadProjection = computed<ThreadProjection>(() => {
+  const hrefMetadataCache = new Map<string, LinkPresentationMetadata>()
+  const temporalMetadataCache = new Map<string, MessageTemporalMetadata>()
+  const metadataForHref = (href: string | null): LinkPresentationMetadata => {
+    if (!href) return emptyLinkPresentationMetadata
+    const cached = hrefMetadataCache.get(href)
+    if (cached) return cached
+    const safeHref = safeNavigableHref(href)
+    const metadata: LinkPresentationMetadata = {
+      safeHref,
+      previewSelector: safeHref ? sourceSelector(safeHref) : null
+    }
+    hrefMetadataCache.set(href, metadata)
+    return metadata
+  }
+  const metadataForTime = (createdAt: string): MessageTemporalMetadata => {
+    const cached = temporalMetadataCache.get(createdAt)
+    if (cached) return cached
+    const metadata = temporalMetadataFor(createdAt)
+    temporalMetadataCache.set(createdAt, metadata)
+    return metadata
+  }
+  return {
+    orderedMessages: threadPresentation.value.orderedMessages.map(entry => ({
+      ...entry,
+      temporal: metadataForTime(entry.message.createdAt),
+      citationGroups: entry.citationGroups.map(group => ({
+        ...group,
+        ...metadataForHref(group.pageHref),
+        sections: group.sections.map(citationEntry => ({
+          ...citationEntry,
+          ...metadataForHref(citationEntry.citation.href)
+        }))
+      })),
+      run: entry.run
+        ? {
+            ...entry.run,
+            pageLinks: entry.run.pageLinks.map(link => ({ ...link, ...metadataForHref(link.href) }))
+          }
+        : null
+    }))
+  }
+})
 const stateLabels: Record<AgentToolState, string> = { preparing: 'Preparing', running: 'Running', awaitingApproval: 'Awaiting approval', complete: 'Complete', failed: 'Failed', denied: 'Denied', cancelled: 'Cancelled' }
 const stateIcons: Record<AgentToolState, string> = { preparing: 'mdi-dots-horizontal', running: 'mdi-progress-clock', awaitingApproval: 'mdi-shield-alert-outline', complete: 'mdi-check-circle-outline', failed: 'mdi-alert-circle-outline', denied: 'mdi-cancel', cancelled: 'mdi-stop-circle-outline' }
 const toolStateLabel = (state: AgentToolState): string => stateLabels[state]
@@ -360,18 +411,18 @@ const currentLiveAnnouncement = computed(() => {
   return agentLiveAnnouncement(props.thread.messages, props.thread.tools)
 })
 const liveSummary = ref('')
+const liveSummaryRevision = ref(0)
 watch(
   [() => props.thread.session.id, currentLiveAnnouncement],
-  ([sessionId, announcement], [previousSessionId, previousAnnouncement]) => {
-    if (sessionId !== previousSessionId) {
-      messageTemporalMetadata.clear()
-      navigableHrefCache.clear()
-      liveSummary.value = ''
-      return
-    }
-    if (announcement?.key === previousAnnouncement?.key) return
+  ([sessionId, announcement], previous) => {
+    const previousSessionId = previous?.[0]
+    const previousAnnouncement = previous?.[1]
+    if (sessionId !== previousSessionId) previewSelector.value = null
+    if (sessionId === previousSessionId && announcement?.key === previousAnnouncement?.key) return
     liveSummary.value = announcement?.message ?? ''
-  }
+    liveSummaryRevision.value += 1
+  },
+  { immediate: true }
 )
 </script>
 
@@ -385,34 +436,6 @@ watch(
   width: 100%;
 }
 
-.agent-thread__empty {
-  align-items: start;
-  background: var(--wiki-surface-sunken);
-  border: 1px dashed var(--wiki-surface-border-strong);
-  border-radius: var(--wiki-panel-radius);
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
-  display: grid;
-  gap: var(--wiki-space-3);
-  grid-template-columns: auto minmax(0, 1fr);
-  padding: var(--wiki-space-5);
-}
-
-.agent-thread__empty > .v-icon {
-  color: var(--wiki-accent-warm);
-  margin-block-start: var(--wiki-space-1);
-}
-
-.agent-thread__empty strong {
-  color: rgb(var(--v-theme-on-surface));
-  display: block;
-  font-family: var(--wiki-font-heading);
-  font-size: .95rem;
-  font-weight: 700;
-}
-
-.agent-thread__empty p {
-  margin: var(--wiki-space-1) 0 0;
-}
 
 .agent-message {
   color: rgb(var(--v-theme-on-surface));
@@ -1049,7 +1072,6 @@ watch(
 }
 
 @media (forced-colors: active) {
-  .agent-thread__empty,
   .agent-message__identity :deep(.v-avatar),
   .agent-message__surface,
   .agent-message__recovery,

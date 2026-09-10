@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 import type { Locator, Page, TestInfo } from '@playwright/test'
 import { authenticateAsAdmin, expectResponsiveLayout, openAuthenticatedPage, openSearch } from './helpers.ts'
+import { installEnabledAgentFixture } from './agent-fixture.ts'
 
 async function expectNoBlockingAccessibilityViolations(page: Page, surface: string) {
   await page.locator('.animated').evaluateAll(elements => {
@@ -28,6 +29,15 @@ async function tabToControl(page: Page, control: Locator, maximumPresses = 60) {
     if (await control.evaluate(element => element === document.activeElement)) return true
   }
   return false
+}
+async function openEnabledAgent(page: Page) {
+  await openAuthenticatedPage(page, '/', '.page-header-section')
+  await openSearch(page)
+  await expect(page.locator('.search-results-agent-entry')).toBeVisible()
+  await page.locator('.search-results-agent-entry').click()
+  const agent = page.getByRole('region', { name: 'Wiki Agent' })
+  await expect(agent).toBeVisible()
+  return agent
 }
 
 test.describe('release accessibility profiles', () => {
@@ -143,6 +153,78 @@ test.describe('release accessibility profiles', () => {
     if (testInfo.project.name === 'accessibility-keyboard') {
       const history = page.getByRole('button', { name: 'Open agent conversation history' })
       expect(await tabToControl(page, history), 'Agent history must be reachable in the tab order').toBe(true)
+    }
+  })
+  test('runs enabled Agent failure, retry, and header activation through a real workspace', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    const fixture = await installEnabledAgentFixture(page, { mode: 'retry' })
+    test.setTimeout(60_000)
+    try {
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      await openAuthenticatedPage(page, '/', '.page-header-section')
+      await page.getByRole('button', { name: 'Open Wiki Agent' }).click()
+      const agent = page.getByRole('region', { name: 'Wiki Agent' })
+      await expect(agent).toBeVisible()
+      const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
+      await composer.fill('Please retry this release evidence request.')
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      const failedResponse = agent.locator('article.agent-message--assistant.agent-message--failed')
+      await expect(failedResponse.getByText('Response could not be completed', { exact: true })).toBeVisible()
+      await agent.getByRole('button', { name: 'Try again', exact: true }).click()
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(agent.getByText('The release is ready for a deliberate review.', { exact: true })).toBeVisible()
+      await expect(agent.locator('[data-agent-citation]')).not.toHaveCount(0)
+      await expect(agent.getByRole('img', { name: 'Mermaid diagram', exact: true })).toBeVisible()
+      await expectResponsiveLayout(page, 'enabled Agent retry')
+      await expectNoBlockingAccessibilityViolations(page, 'enabled Agent retry')
+      expect(fixture.requests.some(request => request.includes('/events'))).toBe(true)
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
+  test('exposes Stop response while an enabled Agent stream is active', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    const fixture = await installEnabledAgentFixture(page, { mode: 'stop' })
+    try {
+      const agent = await openEnabledAgent(page)
+      const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
+      await composer.fill('Stop this response after streaming begins.')
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      const stop = agent.getByRole('button', { name: 'Stop response', exact: true })
+      await expect(stop).toBeVisible()
+      await stop.click()
+      const stoppedResponse = agent.locator('article.agent-message--assistant.agent-message--cancelled')
+      await expect(stoppedResponse.getByText('You can continue by retrying the request.', { exact: true })).toBeVisible()
+      await expect(stop).toBeHidden()
+      const followUpComposer = agent.getByRole('textbox', { name: 'Follow up with Wiki Agent' })
+      await expect(followUpComposer).toBeEnabled()
+      await expect(agent.getByRole('status', { name: 'Ready', exact: true })).toBeVisible()
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
+    }
+  })
+
+  test('renders pending approval and resolves it without leaving the Agent surface', async ({ page }, testInfo) => {
+    requireProject(testInfo, 'accessibility-keyboard')
+    const fixture = await installEnabledAgentFixture(page, { mode: 'approval' })
+    try {
+      const agent = await openEnabledAgent(page)
+      const composer = agent.getByRole('textbox', { name: 'Message Wiki Agent' })
+      await composer.fill('Prepare the reviewed release note and ask for approval.')
+      await agent.getByRole('button', { name: 'Send', exact: true }).click()
+      await expect(agent.getByText('Awaiting approval', { exact: true })).toBeVisible()
+      const deny = agent.getByRole('button', { name: 'Deny', exact: true })
+      await expect(deny).toBeVisible()
+      await deny.click()
+      const deniedHeading = agent.locator('strong').filter({ hasText: /^Change denied$/u })
+      await expect(deniedHeading).toBeVisible()
+      await expect(deny).toBeHidden()
+      fixture.assertNoUnexpectedRequests()
+    } finally {
+      await fixture.dispose()
     }
   })
 

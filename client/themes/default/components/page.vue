@@ -813,7 +813,11 @@ import SiteBanner from '@/components/common/site-banner.vue'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
 import type { Environment as PrismEnvironment } from 'prismjs'
 import Prism from '../../../libs/prism/setup'
-import mermaid from 'mermaid'
+import {
+  MERMAID_MAX_TEXT_SIZE,
+  renderMermaidSvg,
+  selectMermaidRenderHosts
+} from '../../../helpers/content-extension-runtimes/mermaid.ts'
 import { wikiStore } from '@/store/index.ts'
 import _ from 'lodash'
 import {
@@ -940,6 +944,91 @@ Prism.plugins.toolbar.registerButton('copy-to-clipboard', (env: PrismEnvironment
     }, 5000)
   }
 })
+
+const PAGE_MERMAID_ERROR_CLASS = 'content-extension-diagram__error'
+const PAGE_MERMAID_ERROR_MESSAGE = 'Diagram could not be rendered locally. Its source remains available below.'
+const PAGE_MERMAID_LIMIT_NOTICE_CLASS = 'content-extension-diagram__limit-notice'
+const PAGE_MERMAID_LIMIT_NOTICE_MESSAGE = 'Additional diagrams remain available as source because automatic rendering is limited.'
+
+const pageMermaidSource = (host: HTMLElement): string | null => {
+  if (host.matches('.mermaid')) return host.textContent ?? ''
+  return host.querySelector<HTMLElement>('.content-extension-diagram__source code')?.textContent ?? null
+}
+
+const showPageMermaidLimitNotice = (container: HTMLElement): void => {
+  if (container.querySelector(`.${PAGE_MERMAID_LIMIT_NOTICE_CLASS}`)) return
+  const notice = container.ownerDocument.createElement('p')
+  notice.className = PAGE_MERMAID_LIMIT_NOTICE_CLASS
+  notice.textContent = PAGE_MERMAID_LIMIT_NOTICE_MESSAGE
+  container.append(notice)
+}
+
+const renderPageMermaidDiagrams = async (
+  container: HTMLElement,
+  theme: 'default' | 'dark',
+  signal: AbortSignal,
+  isCurrent: () => boolean,
+  mermaidHosts: ReadonlySet<HTMLElement>
+): Promise<void> => {
+  const diagrams = [...container.querySelectorAll<HTMLElement>('.mermaid')]
+  const allHosts = [...container.querySelectorAll<HTMLElement>('.mermaid, .content-extension--diagram')]
+  const excessHosts = allHosts.filter(host => {
+    const source = pageMermaidSource(host)
+    return source !== null && !mermaidHosts.has(host)
+  })
+  for (const host of excessHosts) host.setAttribute('aria-busy', 'false')
+  if (excessHosts.length > 0) showPageMermaidLimitNotice(container)
+  const jobs = diagrams.flatMap(diagram => {
+    const source = pageMermaidSource(diagram) ?? ''
+    const state = diagram.dataset.pageMermaidState
+    const hasRenderedSvg = diagram.querySelector('svg') !== null
+    if (
+      !mermaidHosts.has(diagram) ||
+      hasRenderedSvg ||
+      state === 'rendered' ||
+      state === 'source-only' ||
+      state === 'failed' ||
+      source.length > MERMAID_MAX_TEXT_SIZE
+    ) {
+      if (!mermaidHosts.has(diagram) || source.length > MERMAID_MAX_TEXT_SIZE) {
+        diagram.setAttribute('aria-busy', 'false')
+        if (source.length > MERMAID_MAX_TEXT_SIZE) diagram.dataset.pageMermaidState = 'source-only'
+      }
+      return []
+    }
+    diagram.dataset.pageMermaidState = 'pending'
+    return [async (): Promise<void> => {
+      const current = (): boolean => isCurrent() && diagram.isConnected && container.contains(diagram)
+      diagram.setAttribute('aria-busy', 'true')
+      try {
+        const safeSvg = await renderMermaidSvg(source, {
+          ownerDocument: container.ownerDocument,
+          theme,
+          signal,
+          isCurrent: current
+        })
+        if (!safeSvg || !current()) return
+        safeSvg.setAttribute('role', 'img')
+        safeSvg.setAttribute('aria-label', 'Mermaid diagram')
+        diagram.replaceChildren(safeSvg)
+        diagram.dataset.pageMermaidState = 'rendered'
+      } catch {
+        if (!current()) return
+        if (!diagram.querySelector(`.${PAGE_MERMAID_ERROR_CLASS}`)) {
+          const status = container.ownerDocument.createElement('p')
+          status.className = PAGE_MERMAID_ERROR_CLASS
+          status.setAttribute('role', 'alert')
+          status.textContent = PAGE_MERMAID_ERROR_MESSAGE
+          diagram.prepend(status)
+        }
+        diagram.dataset.pageMermaidState = 'failed'
+      } finally {
+        if (current()) diagram.setAttribute('aria-busy', 'false')
+      }
+    }]
+  })
+  await Promise.all(jobs.map(job => job()))
+}
 
 const PageTocTree = defineComponent({
   name: 'PageTocTree',
@@ -1255,6 +1344,7 @@ export default defineComponent({
       printViewBeforePrint: null as boolean | null,
       printDetailsState: null as Map<HTMLDetailsElement, boolean> | null,
       contentExtensionCleanup: null as (() => void) | null,
+      mermaidAbortController: null as AbortController | null,
       routeAnimationAbortController: null as AbortController | null,
       scrollAnimationFrame: null as number | null,
       railScrollHandler: null as (() => void) | null,
@@ -1569,6 +1659,8 @@ export default defineComponent({
     this.restorePrintView()
     this.routeAnimationAbortController?.abort()
     this.routeAnimationAbortController = null
+    this.mermaidAbortController?.abort()
+    this.mermaidAbortController = null
     this.cancelScheduledScroll()
     this.contentExtensionCleanup?.()
     this.contentExtensionCleanup = null
@@ -1658,14 +1750,27 @@ export default defineComponent({
     },
     refreshPageContent(): void {
       const container = this.$refs.container as HTMLElement
+      this.mermaidAbortController?.abort()
+      const mermaidController = markRaw(new AbortController())
+      this.mermaidAbortController = mermaidController
+      for (const diagram of container.querySelectorAll<HTMLElement>('.mermaid')) {
+        if (diagram.dataset.pageMermaidState === 'pending') delete diagram.dataset.pageMermaidState
+      }
+      const mermaidCandidates = [...container.querySelectorAll<HTMLElement>('.mermaid, .content-extension--diagram')]
+        .filter(host => {
+          if (!host.isConnected || !container.contains(host)) return false
+          const source = pageMermaidSource(host)
+          return source === null || source.length <= MERMAID_MAX_TEXT_SIZE
+        })
+      const mermaidHosts = selectMermaidRenderHosts(mermaidCandidates)
       Prism.highlightAllUnder(container)
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: 'strict',
-        theme: this.$vuetify.theme.current.dark ? 'dark' : 'default'
-      })
-      const diagrams = container.querySelectorAll<HTMLElement>('.mermaid')
-      void mermaid.run({ nodes: diagrams, suppressErrors: true })
+      void renderPageMermaidDiagrams(
+        container,
+        this.$vuetify.theme.current.dark ? 'dark' : 'default',
+        mermaidController.signal,
+        () => this.mermaidAbortController === mermaidController,
+        mermaidHosts
+      )
 
       const currentPageUrl = window.location.href.replace(window.location.hash, '')
       container.querySelectorAll<HTMLAnchorElement>(`a[href^="#"], a[href^="${currentPageUrl}#"]`).forEach(anchor => {
@@ -1676,7 +1781,7 @@ export default defineComponent({
         }
       })
       this.contentExtensionCleanup?.()
-      this.contentExtensionCleanup = hydrateContentExtensions(container)
+      this.contentExtensionCleanup = hydrateContentExtensions(container, undefined, { mermaidHosts })
       this.outlineCleanup?.()
       this.outlineCleanup = trackPageOutline(container, this.tocFlattened, anchor => {
         this.activeAnchor = anchor
@@ -1746,31 +1851,29 @@ export default defineComponent({
         } else {
           this.expandedAnchors.add(anchor)
           this.collapsedByUser.delete(anchor)
-        }
       }
-    },
-    tocLinkClicked (event: MouseEvent, anchor: string) {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-      if (this.isTocCompact) {
-        this.tocExpanded = false
       }
-      event.preventDefault()
-      this.scrollToPageAnchor(anchor)
     },
     scrollToPageAnchor(anchor: string, focusDestination = true) {
       const container = this.$refs.container as HTMLElement
       const decodedAnchor = decodePageAnchor(anchor)
-      const destination = document.getElementById(decodedAnchor.replace(/^#/, ''))
+      const id = decodedAnchor.replace(/^#/, '')
+      const destination = container.id === id
+        ? container
+        : [...container.querySelectorAll<HTMLElement>('[id]')].find(element => element.id === id) ?? null
       revealContentExtensionTarget(container, decodedAnchor)
       this.cancelScheduledScroll()
-      this.scrollAnimationFrame = requestAnimationFrame(() => {
+      const view = container.ownerDocument.defaultView
+      const reveal = (): void => {
         this.scrollAnimationFrame = null
         void this.goTo(destination ?? 0, this.scrollOpts)
         if (focusDestination) {
           destination?.setAttribute('tabindex', '-1')
           destination?.focus({ preventScroll: true })
         }
-      })
+      }
+      if (view) this.scrollAnimationFrame = view.requestAnimationFrame(reveal)
+      else reveal()
     },
     cancelScheduledScroll () {
       if (this.scrollAnimationFrame === null) return

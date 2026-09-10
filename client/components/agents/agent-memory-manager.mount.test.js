@@ -10,6 +10,7 @@ if (!script) throw new Error('agent-memory-manager.vue script block was not foun
 
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
 
+let nextMemoryId = 0
 const loadManager = (view, overrides = {}) => {
   let mounted = true
   const subscriptions = new WeakMap()
@@ -37,6 +38,14 @@ const loadManager = (view, overrides = {}) => {
     removeDialogCard: ref(new TestHTMLElement())
   }
   const useTemplateRef = name => templateRefs[name] ?? ref(null)
+  const props = {
+    csrfToken: 'csrf-token',
+    headingId: 'agent-memory-title',
+    descriptionId: 'agent-memory-description'
+  }
+  const model = ref(true)
+  const useId = () => `v-test-memory-${++nextMemoryId}`
+
   const getAgentMemories = overrides.getAgentMemories ?? vi.fn().mockResolvedValue(view)
   const clearAgentMemories = overrides.clearAgentMemories ?? vi.fn()
   const removeAgentMemory = overrides.removeAgentMemory ?? vi.fn()
@@ -86,6 +95,7 @@ const loadManager = (view, overrides = {}) => {
     'ref',
     'shallowRef',
     'useTemplateRef',
+    'useId',
     'watch',
     'defineProps',
     'defineModel',
@@ -112,9 +122,10 @@ const loadManager = (view, overrides = {}) => {
     ref,
     ref,
     useTemplateRef,
+    useId,
     watch,
-    () => ({ csrfToken: 'csrf-token' }),
-    () => ref(true),
+    () => props,
+    () => model,
     clearAgentMemories,
     vi.fn(),
     getAgentMemories,
@@ -347,7 +358,6 @@ describe('Agent memory manager destructive dialog lifetime', () => {
     expect(clearHarness.emittedBusy).toEqual([false, true])
   })
 })
-
 
 describe('Agent memory filtering', () => {
   it('finds notes across both stores without changing stored entries or capacity', async () => {

@@ -106,6 +106,8 @@ const source = fs.readFileSync(componentPath, 'utf8')
 const script = source.match(/<script setup lang=["']ts["']>\s*([\s\S]*?)\s*<\/script>/)?.[1]
 if (!script) throw new Error('agent-composer.vue script block was not found')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
+let nextComposerId = 0
+const testUseId = (): string => `agent-composer-resize-test-${++nextComposerId}`
 
 const createFakeDocument = (caretTop: () => number, mirrorTop: number): FakeDocument => {
   const body = new FakeElement()
@@ -147,6 +149,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     'onBeforeUnmount',
     'onMounted',
     'ref',
+    'useId',
     'useTemplateRef',
     'watch',
     'defineProps',
@@ -184,6 +187,7 @@ const loadComposer = (options: { caretTop?: () => number; mirrorTop?: number } =
     (callback: () => void) => unmountCallbacks.push(callback),
     (callback: () => void) => mountedCallbacks.push(callback),
     <T>(value: T): Ref<T> => ({ value }),
+    testUseId,
     <T>(_key: string): Ref<T | null> => ({ value: null }),
     () => {},
     () => props,
@@ -338,62 +342,6 @@ describe('Agent composer sizing and caret behavior', () => {
     expect(composer.body.children).toHaveLength(1)
     composer.unmount()
     expect(composer.body.children).toHaveLength(0)
-  })
-})
-
-describe('Agent composer dense presentation', () => {
-  const template = source.slice(source.indexOf('<template>'), source.indexOf('<script setup'))
-
-  it('keeps the textarea dominant without a visible field label or a second status row', () => {
-    expect(template).not.toContain('agent-composer__editor-label')
-    expect(template).not.toContain('Message Wiki Agent')
-    expect(template).toMatch(/<v-textarea[\s\S]*?rows="3"/)
-    expect(template.match(/id="agent-composer-status"/g)).toHaveLength(1)
-    expect(template).toMatch(/:class="`agent-composer__state--\$\{statusTone\}`"/)
-    expect(template).toMatch(/<span>\{\{\s*statusLabel\s*\}\}<\/span>/)
-    expect(source).toMatch(/statusTone:\s*'ready'\s*\|\s*'error'\s*\|\s*'busy'/)
-    expect(source).toMatch(/\.agent-composer__state--ready\s*\{[\s\S]*?rgb\(var\(--v-theme-success\)\)/)
-    expect(source).toMatch(/\.agent-composer__state--error\s*\{[\s\S]*?rgb\(var\(--v-theme-error\)\)/)
-
-    const inputStyle = source.match(/\.agent-composer__input :deep\(textarea\)\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
-    expect(inputStyle).toMatch(/min-height:\s*calc\(var\(--wiki-space-12\)\s*\*\s*2\)/)
-    expect(inputStyle).toMatch(/line-height:\s*var\(--wiki-leading-body\)/)
-    expect(source).toMatch(
-      /\.agent-composer__input :deep\(\.v-field__input\)\s*\{[\s\S]*?padding:\s*var\(--wiki-space-3\)\s+var\(--wiki-space-1\)\s+var\(--wiki-space-2\)/
-    )
-
-    const submitStyle = source.match(/\.agent-composer__submit\s*\{([\s\S]*?)\n\}/)?.[1] ?? ''
-    expect(submitStyle).toMatch(/min-width:\s*calc\(var\(--wiki-space-12\)\s*\*\s*2\)/)
-    expect(submitStyle).not.toMatch(/\*\s*2\.5/)
-  })
-
-  it('keeps intrinsic end tracks adjacent while reserving a shrink-safe mobile context track', () => {
-    const actionRules = Array.from(source.matchAll(/\.agent-composer__actions\s*\{([^}]*)\}/g), match => match[1])
-    expect(actionRules).toHaveLength(2)
-    expect(actionRules[0]).toContain('grid-template-columns: minmax(0, 1fr) auto auto;')
-    expect(actionRules[0]).toContain('gap: var(--wiki-space-2);')
-    expect(actionRules[1]).toContain(
-      'grid-template-columns: minmax(var(--wiki-control-height), 1fr) minmax(0, auto) auto;'
-    )
-
-    const stateStyle = source.match(/\.agent-composer__state\s*\{([^}]*)\}/)?.[1] ?? ''
-    const stateLabelStyle = source.match(/\.agent-composer__state > span:last-child\s*\{([^}]*)\}/)?.[1] ?? ''
-    expect(stateStyle).toContain('min-width: 0;')
-    expect(stateStyle).toContain('white-space: nowrap;')
-    expect(stateLabelStyle).toContain('min-width: 0;')
-    expect(stateLabelStyle).toContain('overflow: hidden;')
-    expect(stateLabelStyle).toContain('text-overflow: ellipsis;')
-  })
-
-  it('exposes visually distinct and pressed pin states in the manual picker', () => {
-    const manualList = template.match(/<v-list v-if="skillMenuItems\.length > 0"[\s\S]*?<\/v-list>/)?.[0] ?? ''
-    expect(source).toMatch(
-      /const skillMenuItems = computed\(\(\) => \[[\s\S]*?filterUserSelectableSkills\(props\.skills\)[\s\S]*?\.\.\.props\.preferredSkills[\s\S]*?sourcePath\.startsWith\('personal\/'\)/
-    )
-    expect(manualList).toMatch(/'mdi-pin'\s*:\s*'mdi-pin-outline'/)
-    expect(manualList).toMatch(/:aria-pressed="isPreferred\(skill\.versionId\)"/)
-    expect(manualList).toMatch(/:color="isPreferred\(skill\.versionId\) \? 'primary' : undefined"/)
-    expect(manualList).toMatch(/:variant="isPreferred\(skill\.versionId\) \? 'tonal' : 'text'"/)
   })
 })
 

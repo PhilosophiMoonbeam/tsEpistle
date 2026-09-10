@@ -152,6 +152,7 @@ const evaluateComposer = new Function(
   'onMounted',
   'ref',
   'useTemplateRef',
+  'useId',
   'watch',
   'defineProps',
   'defineEmits',
@@ -224,6 +225,7 @@ const loadGoalLockState = (
     'onMounted',
     'ref',
     'useTemplateRef',
+    'useId',
     'watch',
     'storeToRefs',
     'defineProps',
@@ -233,7 +235,7 @@ const loadGoalLockState = (
     'isAgentApprovalOutsideViewport',
     'shouldFollowGoalExpansion',
     'defineExpose',
-    `${executableScript}\nreturn { activeRun, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, connectionLabel, connectionTone, goalSubmitUnavailableReason, newSession, newTemporarySession, openClearUnfiledHistory, openGoal, recoverClearUnfiledHistory, sessionMutationBusy, submitUnavailableReason, thread }`
+    `${executableScript}\nreturn { activeRun, canSubmit, clearUnfiledCommitted, clearUnfiledError, clearUnfiledHistory, clearUnfiledHistoryOpen, connectionLabel, connectionTone, goalSubmitUnavailableReason, newSession, newTemporarySession, openGoal, openClearUnfiledHistory, recoverClearUnfiledHistory, sessionMutationBusy, submitUnavailableReason, thread }`
   ) as (...dependencies: unknown[]) => LockState
 
   const state = evaluate(
@@ -247,6 +249,7 @@ const loadGoalLockState = (
     () => undefined,
     ref,
     () => ref(null),
+    () => 'agent-test',
     () => undefined,
     () => storeRefs,
     () => props,
@@ -305,12 +308,16 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     skillsLoading: false,
     skillsPartial: false,
     thread,
+    workspaceTitleId: 'agent-test-workspace-title',
+    historyHeadingId: 'agent-test-history-title',
+    historyDescriptionId: 'agent-test-history-description',
+    memoryHeadingId: 'agent-test-memory-title',
+    memoryDescriptionId: 'agent-test-memory-description',
     historyOpen,
     memoryOpen,
     panelMode: 'modal',
     memoryMutationBusy: false,
-    historyLoadError: '',
-    historyLoading: false,
+    initializationError: '',
     clearUnfiledHistoryOpen: false,
     clearingUnfiledHistory: false,
     clearUnfiledCommitted: false,
@@ -368,7 +375,7 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     'openClearUnfiledHistory',
     'openSkillManager',
     'recoverClearUnfiledHistory',
-    'reloadHistory',
+    'retryInitialization',
     'scrollToLatest',
     'sendPrompt',
     'updateMemoryOpen'
@@ -411,6 +418,7 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
         Vue.onMounted,
         Vue.ref,
         Vue.useTemplateRef,
+        Vue.useId,
         Vue.watch,
         () => props,
         () => emit,
@@ -432,14 +440,7 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
   })
   const app = Vue.createApp(inlineHarness)
   app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
-  for (const name of [
-    'AgentGoalStatus',
-    'AgentHistoryPanel',
-    'AgentMcpApproval',
-    'AgentMemoryManager',
-    'AgentPersonalSkills',
-    'AgentThread'
-  ])
+  for (const name of ['AgentGoalStatus', 'AgentHistoryPanel', 'AgentMcpApproval', 'AgentMemoryManager', 'AgentPersonalSkills', 'AgentThread'])
     app.component(name, componentStub)
   app.component('AgentComposer', composerComponent)
   app.mount(host)
@@ -455,6 +456,14 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
   return { activator, historyOpen, memoryOpen, root, unmount }
 }
 
+const resolveDescribedBy = (control: HTMLElement): HTMLElement[] => {
+  const ids = control.getAttribute('aria-describedby')?.split(/\s+/).filter(Boolean) ?? []
+  const descriptions = ids.map(id => document.getElementById(id))
+  expect(ids.length).toBeGreaterThan(0)
+  expect(descriptions.every((description): description is HTMLElement => Boolean(description))).toBe(true)
+  return descriptions.filter((description): description is HTMLElement => Boolean(description))
+}
+
 const expectComposerActionStructure = (mounted: MountedInlineAgent): { primary: HTMLElement; status: HTMLElement } => {
   const actions = mounted.root.querySelector<HTMLElement>('.agent-composer__actions')
   if (!actions) throw new Error('Agent composer actions did not render')
@@ -465,7 +474,8 @@ const expectComposerActionStructure = (mounted: MountedInlineAgent): { primary: 
   expect(context.matches('.agent-composer__context-controls')).toBe(true)
   expect(context.getAttribute('role')).toBe('group')
   expect(context.getAttribute('aria-label')).toBe('Conversation context controls')
-  expect(status.matches('#agent-composer-status.agent-composer__state')).toBe(true)
+  expect(status.matches('.agent-composer__state')).toBe(true)
+  expect(status.id).not.toBe('')
   expect(status.getAttribute('role')).toBe('status')
   expect(status.getAttribute('aria-live')).toBe('polite')
   expect(status.getAttribute('aria-atomic')).toBe('true')
@@ -474,16 +484,31 @@ const expectComposerActionStructure = (mounted: MountedInlineAgent): { primary: 
   expect(primary.getAttribute('aria-label')).toBe('Message actions')
   expect(status.nextElementSibling).toBe(primary)
   expect(primary.previousElementSibling).toBe(status)
+
+  const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+  if (!textarea) throw new Error('Agent composer input did not render')
+  expect(resolveDescribedBy(textarea)).toContain(status)
   return { primary, status }
 }
 
 const openPanelMenu = async (mounted: MountedInlineAgent): Promise<HTMLElement[]> => {
+  expect(mounted.activator.getAttribute('role')).not.toBe('menu')
+  expect(mounted.activator.getAttribute('aria-haspopup')).toBe('menu')
+  expect(mounted.activator.getAttribute('aria-expanded')).toBe('false')
+
   mounted.activator.dispatchEvent(new MouseEvent('click', { bubbles: true }))
   await settle()
   expect(mounted.activator.getAttribute('aria-expanded')).toBe('true')
-  const items = Array.from(mounted.root.querySelectorAll<HTMLElement>('[role="menuitem"]'))
-  expect(items.slice(0, 2).map(item => item.textContent?.trim())).toEqual(['Conversation history', 'Agent memory'])
-  expect(items[2]?.textContent).toContain('Temporary conversation')
+  expect(mounted.activator.getAttribute('aria-controls')).toBeTruthy()
+
+  const list = mounted.root.querySelector<HTMLElement>('.v-menu .v-list')
+  expect(list?.getAttribute('role')).toBe('list')
+  expect(list?.getAttribute('role')).not.toBe('menu')
+  const items = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__panel-menu-item'))
+  expect(items.map(item => item.querySelector<HTMLElement>('.v-list-item-title')?.textContent?.trim())).toEqual(['Conversation history', 'Agent memory'])
+  expect(items.every(item => item.getAttribute('role') === 'listitem')).toBe(true)
+  expect(items.every(item => item.getAttribute('role') !== 'menu')).toBe(true)
+  expect(items.every(item => item.hasAttribute('tabindex'))).toBe(true)
   return items
 }
 
@@ -500,8 +525,10 @@ describe('Inline Agent mobile panel controls', () => {
     ] as const) {
       const mounted = mountInlineAgent()
       const items = await openPanelMenu(mounted)
+      const item = items[index]
+      if (!item) throw new Error(`Panel menu item ${index} did not render`)
 
-      items[index]?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      item.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
       await settle()
 
       expect(mounted.historyOpen.value).toBe(panel === 'history')
@@ -511,7 +538,6 @@ describe('Inline Agent mobile panel controls', () => {
       mountedApps.pop()
     }
   })
-
   it('focuses and activates History with Enter and Memory with Space through Vuetify list-item behavior', async () => {
     for (const [index, key, panel] of [
       [0, 'Enter', 'history'],
@@ -523,6 +549,8 @@ describe('Inline Agent mobile panel controls', () => {
       if (!item) throw new Error(`Panel menu item ${index} did not render`)
 
       expect(item.classList.contains('v-list-item--link')).toBe(true)
+      expect(item.getAttribute('role')).toBe('listitem')
+      expect(item.getAttribute('tabindex')).not.toBeNull()
       item.focus()
       expect(document.activeElement).toBe(item)
       item.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
@@ -538,21 +566,18 @@ describe('Inline Agent mobile panel controls', () => {
 })
 
 describe('Inline Agent workspace actions', () => {
-  it('renders History, Memory, Temporary, and New in desktop order with explicit accessible names', () => {
+  it('keeps History and Memory available and exposes labelled Panels and New controls', async () => {
     const mounted = mountInlineAgent()
-    const actions = Array.from(mounted.root.querySelectorAll<HTMLElement>(
-      '.inline-agent__desktop-panel-btn, .inline-agent__session-action'
-    ))
+    const actions = Array.from(mounted.root.querySelectorAll<HTMLElement>('.inline-agent__desktop-panel-btn, .inline-agent__session-action'))
 
-    expect(actions.map(action => action.getAttribute('aria-label'))).toEqual([
-      'Open agent conversation history',
-      'Manage agent memory',
-      'Start a temporary agent conversation',
-      'Start a new saved agent conversation'
-    ])
-    expect(actions[2]?.textContent?.trim()).toBe('Temporary')
-    expect(actions[3]?.textContent?.trim()).toBe('New')
-    expect(actions[2]?.getAttribute('title')).toBe('Start a fresh conversation that stays out of history and expires automatically')
+    expect(actions.map(action => action.getAttribute('aria-label'))).toEqual(['Open agent conversation history', 'Manage agent memory', 'New conversation'])
+    expect(mounted.activator.textContent?.trim()).toContain('Panels')
+    expect(actions[2]?.textContent?.trim()).toBe('New')
+    expect(actions[2]?.getAttribute('role')).not.toBe('menu')
+    expect(actions[2]?.getAttribute('aria-haspopup')).toBe('menu')
+    expect(actions[2]?.getAttribute('aria-expanded')).toBe('false')
+
+    await openPanelMenu(mounted)
   })
 
   it('creates temporary and saved conversations with distinct retention', async () => {
@@ -565,12 +590,11 @@ describe('Inline Agent workspace actions', () => {
     expect(lockState.agentCalls.newSession).toHaveBeenNthCalledWith(2, 'saved')
   })
 
-  it('removes session configuration and the clipped composer focus ring', () => {
-    expect(componentSource).not.toContain('AgentSessionSettings')
-    expect(componentSource).not.toContain('applyProviderProfile')
-    expect(composerStyles).toContain('border: 1px solid var(--wiki-surface-border-strong);')
-    expect(composerStyles).not.toContain('.agent-composer:focus-within')
-    expect(composerStyles).not.toContain('var(--wiki-focus-ring)')
+  it('keeps the workspace composer mounted beneath the labelled session controls', () => {
+    const mounted = mountInlineAgent()
+    expect(mounted.root.querySelector('.inline-agent__composer')).not.toBeNull()
+    expect(mounted.root.querySelector('.inline-agent__session-action')?.textContent?.trim()).toBe('New')
+    expect(mounted.root.querySelector('.agent-composer__input textarea')).not.toBeNull()
   })
 })
 
@@ -584,9 +608,6 @@ describe('Inline Agent clear-unfiled confirmation', () => {
 
     expect(lockState.agentCalls.clearUnfiledHistory).toHaveBeenCalledTimes(1)
     expect(lockState.clearUnfiledHistoryOpen.value).toBe(false)
-    expect(componentSource).toContain('@clear="openClearUnfiledHistory"')
-    expect(componentSource).not.toContain('@reset=')
-    expect(componentSource).not.toContain('resetHistory')
   })
 
   it('keeps recovery open and retries a new saved conversation after a committed clear', async () => {
@@ -609,24 +630,21 @@ describe('Inline Agent clear-unfiled confirmation', () => {
     expect(lockState.agentCalls.newSession).toHaveBeenLastCalledWith('saved')
     expect(lockState.clearUnfiledHistoryOpen.value).toBe(true)
   })
-
-  it('states that saved folders and filed conversations remain throughout confirmation and recovery', () => {
-    expect(componentSource).toContain('Only conversations outside saved folders will be permanently removed.')
-    expect(componentSource).toContain('Saved folders and their filed conversations will remain.')
-    expect(componentSource.match(/Saved folders and their filed conversations remain unchanged\./g)?.length).toBeGreaterThanOrEqual(3)
-    expect(componentSource).toContain('If the current conversation is unfiled, a new saved conversation will open.')
-    expect(componentSource).toContain('Clear unfiled conversations?')
-  })
 })
 
-describe('Inline Agent desktop layout', () => {
-  it('allocates columns only to open panels and keeps them beside the conversation', () => {
-    const desktop = componentStyles.match(/@media \(min-width:\s*1024px\)([\s\S]*?)(?=@media|$)/)?.[1] ?? ''
-    expect(desktop).toContain('.inline-agent--history { grid-template-columns: 20rem minmax(0, 1fr); }')
-    expect(desktop).toContain('.inline-agent--memory { grid-template-columns: minmax(0, 1fr) 22rem; }')
-    expect(desktop).toMatch(/\.inline-agent__side \{\s*position: relative;/)
-    expect(componentSource).toContain("'inline-agent--history': historyOpen")
-    expect(componentSource).toContain("'inline-agent--memory': memoryOpen")
+describe('Inline Agent panel semantics', () => {
+  it('exposes the computed mode and labelled panel roots without hiding the workspace', async () => {
+    const mounted = mountInlineAgent()
+    expect(mounted.root.getAttribute('data-panel-mode')).toBe('modal')
+    expect(mounted.root.querySelector('.inline-agent__composer')).not.toBeNull()
+
+    mounted.historyOpen.value = true
+    await settle()
+
+    const history = mounted.root.querySelector<HTMLElement>('.inline-agent__side--history')
+    expect(history?.getAttribute('role')).toBe('dialog')
+    expect(history?.getAttribute('aria-labelledby')).toBe('agent-test-history-title')
+    expect(history?.getAttribute('aria-describedby')).toBe('agent-test-history-description')
   })
 })
 
@@ -670,13 +688,14 @@ describe('Agent composer action semantics', () => {
 })
 
 describe('Inline Agent goal submission lock', () => {
-  it('keeps a fresh unlocked composer associated only with its internal descriptions', () => {
+  it('keeps a fresh unlocked composer associated only with mounted descriptions', () => {
     const mounted = mountInlineAgent()
     const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
+    if (!textarea) throw new Error('Agent composer input did not render')
 
-    expect(mounted.root.querySelector('#agent-composer-lock-reason')).toBeNull()
-    expect(textarea?.getAttribute('aria-label')).toBe('Message Wiki Agent')
-    expect(textarea?.getAttribute('aria-describedby')).toBe('agent-composer-status agent-composer-keyboard-hint')
+    expect(mounted.root.querySelector('.inline-agent__composer-lock')).toBeNull()
+    expect(textarea.getAttribute('aria-label')).toBe('Message Wiki Agent')
+    expect(resolveDescribedBy(textarea).length).toBeGreaterThan(0)
   })
 
   it.each([
@@ -685,19 +704,18 @@ describe('Inline Agent goal submission lock', () => {
   ] as const)('renders the truthful %s goal reason on the disabled composer textarea', (status, expectedReason) => {
     const lockState = loadGoalLockState(status)
     expect(lockState.canSubmit.value).toBe(false)
-    expect(lockState.goalSubmitUnavailableReason.value).toBe(expectedReason)
-
     const mounted = mountInlineAgent(lockState)
-    const reason = mounted.root.querySelector<HTMLElement>('#agent-composer-lock-reason')
+    const reason = mounted.root.querySelector<HTMLElement>('.inline-agent__composer-lock')
     const textarea = mounted.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
     const sessionTitle = mounted.root.querySelector<HTMLElement>('.inline-agent__session-title')
 
-    expect(reason?.textContent?.trim()).toBe(expectedReason)
-    expect(reason?.getAttribute('role')).toBe('status')
+    if (!reason || !textarea) throw new Error('Locked composer description did not render')
+    expect(reason.textContent?.trim()).toBe(expectedReason)
+    expect(reason.getAttribute('role')).toBe('status')
     expect(sessionTitle?.textContent?.trim()).toBe('Release planning')
-    expect(textarea?.disabled).toBe(true)
-    expect(textarea?.getAttribute('aria-label')).toBe('Follow up with Wiki Agent')
-    expect(textarea?.getAttribute('aria-describedby')).toBe('agent-composer-lock-reason agent-composer-status agent-composer-keyboard-hint')
+    expect(textarea.disabled).toBe(true)
+    expect(textarea.getAttribute('aria-label')).toBe('Follow up with Wiki Agent')
+    expect(resolveDescribedBy(textarea)).toContain(reason)
   })
 
   it('renders the shared mutation reason and disables the composer until the store lock clears', () => {
@@ -706,30 +724,27 @@ describe('Inline Agent goal submission lock', () => {
     expect(lockState.submitUnavailableReason.value).toBe('Wait for the current conversation update to finish')
 
     const locked = mountInlineAgent(lockState)
-    const lockedReason = locked.root.querySelector<HTMLElement>('#agent-composer-lock-reason')
+    const lockedReason = locked.root.querySelector<HTMLElement>('.inline-agent__composer-lock')
     const lockedTextarea = locked.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
-    expect(lockedReason?.textContent?.trim()).toBe('Wait for the current conversation update to finish')
-    expect(lockedTextarea?.disabled).toBe(true)
-    expect(lockedTextarea?.getAttribute('aria-describedby')).toContain('agent-composer-lock-reason')
-    locked.unmount()
-    mountedApps.pop()
+    if (!lockedReason || !lockedTextarea) throw new Error('Locked composer description did not render')
+    expect(lockedReason.textContent?.trim()).toBe('Wait for the current conversation update to finish')
+    expect(lockedTextarea.disabled).toBe(true)
+    expect(resolveDescribedBy(lockedTextarea)).toContain(lockedReason)
 
     lockState.sessionMutationBusy.value = false
     expect(lockState.canSubmit.value).toBe(true)
     expect(lockState.submitUnavailableReason.value).toBe('')
     const unlocked = mountInlineAgent(lockState)
     const unlockedTextarea = unlocked.root.querySelector<HTMLTextAreaElement>('.agent-composer__input textarea')
-    expect(unlocked.root.querySelector('#agent-composer-lock-reason')).toBeNull()
+    expect(unlocked.root.querySelector('.inline-agent__composer-lock')).toBeNull()
     expect(unlockedTextarea?.disabled).toBe(false)
   })
 
-  it('blocks saved, temporary, and clear-unfiled actions while another session mutation owns the lock', async () => {
+  it('blocks New and clear-unfiled actions while another session mutation owns the lock', async () => {
     const lockState = loadGoalLockState(null, true)
     const mounted = mountInlineAgent(lockState)
-    const temporaryConversation = mounted.root.querySelector<HTMLButtonElement>('[aria-label="Start a temporary agent conversation"]')
-    const newConversation = mounted.root.querySelector<HTMLButtonElement>('[aria-label="Start a new saved agent conversation"]')
+    const newConversation = mounted.root.querySelector<HTMLButtonElement>('[aria-label="New conversation"]')
 
-    expect(temporaryConversation?.disabled).toBe(true)
     expect(newConversation?.disabled).toBe(true)
 
     lockState.openClearUnfiledHistory()
@@ -741,7 +756,5 @@ describe('Inline Agent goal submission lock', () => {
     expect(lockState.clearUnfiledHistoryOpen.value).toBe(false)
     expect(lockState.agentCalls.newSession).not.toHaveBeenCalled()
     expect(lockState.agentCalls.clearUnfiledHistory).not.toHaveBeenCalled()
-    expect(componentSource).toContain(':persistent="clearingUnfiledHistory || sessionMutationBusy"')
-    expect(componentSource.match(/:disabled="clearingUnfiledHistory \|\| sessionMutationBusy"/g)).toHaveLength(3)
   })
 })

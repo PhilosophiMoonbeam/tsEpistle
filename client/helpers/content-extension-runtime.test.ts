@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
 import { hydrateContentExtensions, revealContentExtensionTarget } from './content-extension-runtime.ts'
+import { MERMAID_MAX_DIAGRAMS_PER_ROOT, selectMermaidRenderHosts } from './content-extension-runtimes/mermaid.ts'
 import { encodeKrokiSource, encodePlantUmlSource } from './content-extension-runtimes/remote-diagram.ts'
 
 const indexElement = (): HTMLElement => {
@@ -23,14 +24,16 @@ describe('content extension browser runtime', () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        items: [{
-          id: 7,
-          title: '<img src=x onerror=alert(1)>',
-          description: 'Reader-visible description',
-          path: 'guide/visible',
-          href: '/en/guide/visible',
-          updatedAt: '2026-08-15T00:00:00.000Z'
-        }]
+        items: [
+          {
+            id: 7,
+            title: '<img src=x onerror=alert(1)>',
+            description: 'Reader-visible description',
+            path: 'guide/visible',
+            href: '/en/guide/visible',
+            updatedAt: '2026-08-15T00:00:00.000Z'
+          }
+        ]
       })
     })
 
@@ -61,10 +64,13 @@ describe('content extension browser runtime', () => {
 
   it('fails closed on malformed or failed index responses', async () => {
     const root = indexElement()
-    const cleanup = hydrateContentExtensions(root, vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ items: [{ id: 1, title: 'Unsafe', description: null, path: 'x', href: 'https://evil.test', updatedAt: 'now' }] })
-    }))
+    const cleanup = hydrateContentExtensions(
+      root,
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ items: [{ id: 1, title: 'Unsafe', description: null, path: 'x', href: 'https://evil.test', updatedAt: 'now' }] })
+      })
+    )
 
     await vi.waitFor(() => expect(root.querySelector('.content-extension-index__status')?.textContent).toBe('Page index is temporarily unavailable.'))
     expect(root.querySelector('a')).toBeNull()
@@ -148,13 +154,13 @@ describe('content extension browser runtime', () => {
 
     await vi.waitFor(() => {
       root.querySelector<HTMLButtonElement>('.content-extension--youtube button')!.click()
-      expect(root.querySelector<HTMLIFrameElement>('.content-extension--youtube iframe')?.src)
-        .toBe('https://www.youtube-nocookie.com/embed/abc123_DEF?start=12')
+      expect(root.querySelector<HTMLIFrameElement>('.content-extension--youtube iframe')?.src).toBe(
+        'https://www.youtube-nocookie.com/embed/abc123_DEF?start=12'
+      )
     })
     await vi.waitFor(() => {
       root.querySelector<HTMLButtonElement>('.content-extension--map button')!.click()
-      expect(root.querySelector<HTMLIFrameElement>('.content-extension--map iframe')?.src)
-        .toMatch(/^https:\/\/www\.openstreetmap\.org\/export\/embed\.html\?/)
+      expect(root.querySelector<HTMLIFrameElement>('.content-extension--map iframe')?.src).toMatch(/^https:\/\/www\.openstreetmap\.org\/export\/embed\.html\?/)
     })
     cleanup()
   })
@@ -182,27 +188,93 @@ describe('content extension browser runtime', () => {
     cleanup()
   })
 
-  it('renders Mermaid locally without leaving active SVG elements', async () => {
-    vi.mockModule('mermaid', import.meta.url, () => ({
-      default: {
-        initialize: vi.fn(),
-        render: vi.fn().mockResolvedValue({
-          svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 40"><text>Flow</text></svg>'
-        })
-      }
-    }))
+  it('respects a supplied empty Mermaid allowance without reparsing or duplicating its notice', async () => {
     const root = document.createElement('div')
     root.innerHTML = `
-      <figure class="content-extension--diagram" data-diagram-theme="default">
-        <div class="content-extension-diagram__output"><pre class="content-extension-diagram__source"><code>flowchart LR
-A--&gt;B</code></pre></div>
-        <figcaption>Flow</figcaption>
+      <figure class="content-extension--diagram">
+        <div class="content-extension-diagram__output">
+          <pre class="content-extension-diagram__source"><code>flowchart LR
+A--&gt;B</code></pre>
+        </div>
       </figure>`
     document.body.append(root)
-    const cleanup = hydrateContentExtensions(root, vi.fn())
-    await vi.waitFor(() => expect(root.querySelector('.content-extension-diagram__output svg')).not.toBeNull(), { timeout: 5000 })
-    expect(root.querySelector('script, foreignObject, iframe, image, use, a')).toBeNull()
-    expect(root.querySelector('svg')?.getAttribute('aria-label')).toBe('Flow')
+    const emptyHosts = new Set<HTMLElement>()
+    const cleanup = hydrateContentExtensions(root, vi.fn(), { mermaidHosts: emptyHosts })
+    const output = root.querySelector<HTMLElement>('.content-extension-diagram__output')!
+    expect(output.getAttribute('aria-busy')).toBe('false')
+    expect(output.querySelector('code')?.textContent).toContain('flowchart LR')
+    expect(root.querySelectorAll('.content-extension-diagram__limit-notice')).toHaveLength(1)
+    const rehydration = hydrateContentExtensions(root, vi.fn(), { mermaidHosts: emptyHosts })
+    expect(root.querySelectorAll('.content-extension-diagram__limit-notice')).toHaveLength(1)
+    expect(output.querySelector('code')?.textContent).toContain('flowchart LR')
     cleanup()
+    rehydration()
+  })
+
+  it('keeps tab IDs paired and scoped when authored and generated IDs collide', () => {
+    const outside = document.createElement('div')
+    outside.innerHTML = '<span id="inside-target"></span><span id="content-extension-tabs-77-tab-0"></span><span id="content-extension-tabs-77-panel-0"></span>'
+    document.body.append(outside)
+    const root = document.createElement('div')
+    root.innerHTML = `
+      <section class="content-extension--tabs" data-tabs-instance="77" data-tabs-active="0">
+        <div class="content-extension-tabs__list" role="tablist">
+          <button class="content-extension-tabs__tab" data-tab-index="0" type="button" role="tab" hidden>A</button>
+          <button class="content-extension-tabs__tab" data-tab-index="1" type="button" role="tab" hidden>B</button>
+        </div>
+        <section class="content-extension-tabs__panel" data-tab-index="0" role="tabpanel">
+          <h2 id="inside-target" class="content-extension-tabs__fallback-label">A</h2><p>Alpha</p>
+        </section>
+        <section class="content-extension-tabs__panel" data-tab-index="1" role="tabpanel">
+          <h2 id="owned-target" class="content-extension-tabs__fallback-label">B</h2><p>Beta</p>
+        </section>
+      </section>
+      <section class="content-extension--tabs" data-tabs-instance="77" data-tabs-active="0">
+        <div class="content-extension-tabs__list" role="tablist">
+          <button class="content-extension-tabs__tab" data-tab-index="0" type="button" role="tab" hidden>C</button>
+          <button class="content-extension-tabs__tab" data-tab-index="1" type="button" role="tab" hidden>D</button>
+        </div>
+        <section class="content-extension-tabs__panel" data-tab-index="0" role="tabpanel"><p class="content-extension-tabs__fallback-label">C</p></section>
+        <section class="content-extension-tabs__panel" data-tab-index="1" role="tabpanel"><p class="content-extension-tabs__fallback-label">D</p></section>
+      </section>`
+    window.location.hash = '#owned-target'
+    const cleanup = hydrateContentExtensions(root, vi.fn())
+    const tabs = [...root.querySelectorAll<HTMLElement>('.content-extension--tabs')]
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>('.content-extension-tabs__tab')]
+    const panels = [...root.querySelectorAll<HTMLElement>('.content-extension-tabs__panel')]
+    const ids = [...buttons, ...panels].map(element => element.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    for (const button of buttons) {
+      const panel = panels.find(candidate => candidate.id === button.getAttribute('aria-controls'))
+      expect(panel).not.toBeUndefined()
+      expect(panel?.getAttribute('aria-labelledby')).toBe(button.id)
+    }
+    expect(panels[0]?.id).not.toBe('inside-target')
+    expect(root.querySelector<HTMLElement>('#inside-target')).not.toBeNull()
+    expect(panels[1]?.id).toBe('owned-target')
+    expect(revealContentExtensionTarget(root, '#inside-target')).toBe(true)
+    expect(panels[0]?.hidden).toBe(false)
+    expect(tabs).toHaveLength(2)
+    document.body.append(root)
+    const secondSetButtons = buttons.slice(2)
+    secondSetButtons[0]!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'End' }))
+    expect(document.activeElement).toBe(secondSetButtons[1])
+    cleanup()
+    secondSetButtons[0]!.click()
+    expect(secondSetButtons[1]?.getAttribute('aria-selected')).toBe('true')
+    window.location.hash = ''
+  })
+  it('selects a bounded distinct Mermaid host allowance in input order', () => {
+    const root = document.createElement('div')
+    const hosts = Array.from({ length: MERMAID_MAX_DIAGRAMS_PER_ROOT + 1 }, () => {
+      const host = document.createElement('figure')
+      host.className = 'content-extension--diagram'
+      root.append(host)
+      return host
+    })
+    const selected = selectMermaidRenderHosts([hosts[0]!, hosts[0]!, ...hosts.slice(1)])
+    expect(selected.size).toBe(MERMAID_MAX_DIAGRAMS_PER_ROOT)
+    expect([...selected]).toEqual(hosts.slice(0, MERMAID_MAX_DIAGRAMS_PER_ROOT))
+    expect(root.querySelectorAll('.content-extension--diagram')).toHaveLength(MERMAID_MAX_DIAGRAMS_PER_ROOT + 1)
   })
 })
