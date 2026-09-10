@@ -2,7 +2,12 @@
   v-list(nav, density="compact", :aria-label='$t(`common:page.share`)')
     v-list-item(tag='button', type='button', role='button', @click='copyUrl')
       template(v-slot:prepend)
-        v-icon(color='grey', size="small") mdi-content-copy
+        v-icon(
+          :key='copied ? "check" : "copy"'
+          :class='{ "icon-tactile-bounce": copied }'
+          :color='copied ? "#10b981" : "grey"'
+          size="small"
+        ) {{ copied ? 'mdi-check-bold' : 'mdi-content-copy' }}
       v-list-item-title.px-3 {{$t('common:actions.copy')}} URL
     v-list-item(:href='shareUrls.email')
       template(v-slot:prepend)
@@ -79,6 +84,18 @@ export default defineComponent({
       default: ''
     }
   },
+  data () {
+    return {
+      copied: false,
+      copiedTimer: null as ReturnType<typeof setTimeout> | null
+    }
+  },
+  beforeUnmount () {
+    if (this.copiedTimer) {
+      clearTimeout(this.copiedTimer)
+      this.copiedTimer = null
+    }
+  },
   computed: {
     shareUrls() {
       const url = encodeURIComponent(this.url)
@@ -112,6 +129,14 @@ export default defineComponent({
         }
         if (!copied) copied = copyWithLegacyFallback(this.url)
         if (!copied) throw new Error('Clipboard copy was rejected')
+        this.copied = true
+        if (this.copiedTimer) {
+          clearTimeout(this.copiedTimer)
+        }
+        this.copiedTimer = setTimeout(() => {
+          this.copied = false
+          this.copiedTimer = null
+        }, 2000)
         wikiStore.showNotification({
           style: 'success',
           message: `URL copied successfully`,
@@ -156,3 +181,29 @@ export default defineComponent({
   }
 })
 </script>
+
+<style scoped>
+.icon-tactile-bounce {
+  color: #10b981 !important;
+  animation: tactile-bounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform-origin: center;
+}
+
+@keyframes tactile-bounce {
+  0% {
+    transform: scale(0.92);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-tactile-bounce {
+    animation: none !important;
+  }
+}
+</style>

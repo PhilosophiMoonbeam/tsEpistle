@@ -62,7 +62,7 @@
                 aria-keyshortcuts='Control+k Meta+k'
               )
                 template(v-slot:append-inner)
-                  kbd.nav-header-search-key(v-if='!search && !searchIsFocused', aria-hidden='true') {{ searchShortcutLabel }}
+                  nav-search-hotkey(v-if='!search', :label='searchShortcutLabel', :active='searchIsActive', @trigger='openSearch')
 
             v-btn.nav-header-agent(
               v-if='canUseAgent && !hideSearch && mode !== `edit`'
@@ -321,6 +321,7 @@
 
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent, markRaw, mergeProps } from 'vue'
+import NavSearchHotkey from './nav-search-hotkey.vue'
 import { wikiStore } from '@/store/index.ts'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 
@@ -365,7 +366,8 @@ export default defineComponent({
   components: {
     AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
-    PageConvert: defineAsyncComponent(() => import('./page-convert.vue'))
+    PageConvert: defineAsyncComponent(() => import('./page-convert.vue')),
+    NavSearchHotkey
   },
   props: {
     dense: {
@@ -431,7 +433,8 @@ export default defineComponent({
     permissions(): string[] { return wikiStore.user.permissions },
     searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.search') },
     canUseAgent(): boolean { return Boolean(siteConfig.agentsEnabled && this.isAuthenticated && this.permissions.some(permission => permission === 'use:agents' || permission === 'manage:system')) },
-    searchShortcutLabel(): string { return /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K' },
+    searchShortcutLabel(): string { return /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl+K' },
+    searchIsActive(): boolean { return this.searchIsFocused },
     searchInputIcon(): string { return this.searchMode === 'ask' ? 'mdi-auto-fix' : 'mdi-magnify' },
     picture (): UserPicture {
       const pictureUrl = typeof this.pictureUrl === 'string' ? this.pictureUrl : ''
@@ -594,6 +597,10 @@ export default defineComponent({
       this.searchIsShown = !this.searchIsShown
       if (this.searchIsShown) void this.focusSearchField()
       else this.searchClose()
+    },
+    openSearch(): void {
+      this.searchMode = 'search'
+      void this.focusSearchField()
     },
     openAgent(): void {
       this.searchMode = 'ask'
@@ -873,7 +880,7 @@ export default defineComponent({
       transition:
         border-color var(--wiki-motion-normal) var(--wiki-motion-ease),
         background-color var(--wiki-motion-normal) var(--wiki-motion-ease),
-        box-shadow var(--wiki-motion-normal) var(--wiki-motion-ease);
+        box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     .v-field__input {
@@ -898,7 +905,7 @@ export default defineComponent({
     .v-field--focused {
       border-color: color-mix(in srgb, var(--wiki-ambient-accent) 62%, transparent);
       background: var(--wiki-surface-raised) !important;
-      box-shadow: var(--wiki-focus-ring), var(--wiki-shadow-inset);
+      box-shadow: 0 0 20px -2px rgba(6, 182, 212, 0.45), 0 0 40px -8px rgba(99, 102, 241, 0.25);
 
       .v-field__prepend-inner {
         color: var(--wiki-accent-warm);

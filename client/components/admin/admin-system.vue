@@ -65,11 +65,46 @@
                 </a>
               </div>
               <div>
-                <span>Process uptime</span>
+                <span class="system-uptime-label">
+                  Process uptime
+                  <radar-pulse-beacon state="success" :size="8" class="ms-1" />
+                </span>
                 <strong>{{ duration(snapshot.runtime.uptimeSeconds) }}</strong>
                 <small>Since this process started</small>
               </div>
             </div>
+            <hardware-telemetry-card
+              title="Hardware Memory Telemetry"
+              icon="mdi-chip"
+              accent-color="#06b6d4"
+              class="my-6"
+            >
+              <template #actions>
+                <v-btn size="small" variant="text" append-icon="mdi-arrow-right" @click="selectSection('runtime')">
+                  Runtime details
+                </v-btn>
+              </template>
+              <div class="system-telemetry-row">
+                <cybernetic-hardware-gauge
+                  :heap-used="snapshot.runtime.heapUsedBytes"
+                  :heap-total="snapshot.runtime.heapTotalBytes"
+                  :process-rss="snapshot.runtime.processRssBytes"
+                  :os-total="snapshot.runtime.systemMemoryBytes"
+                />
+                <div class="system-metrics system-metrics--telemetry">
+                  <div>
+                    <span>Process resident memory</span>
+                    <strong>{{ bytes(snapshot.runtime.processRssBytes) }}</strong>
+                    <small>RSS at observation time</small>
+                  </div>
+                  <div>
+                    <span>JavaScript heap in use</span>
+                    <strong>{{ bytes(snapshot.runtime.heapUsedBytes) }}</strong>
+                    <small>{{ bytes(snapshot.runtime.heapTotalBytes) }} heap allocated</small>
+                  </div>
+                </div>
+              </div>
+            </hardware-telemetry-card>
             <h3 class="system-section-title">Operational signals</h3>
             <div class="system-signals">
               <article v-for="signal in signals" :key="signal.title">
@@ -98,18 +133,39 @@
               <h2>Know the boundaries</h2>
               <p>Separate the process you are observing from its operating system and the infrastructure around it.</p>
             </div>
-            <div class="system-metrics">
-              <div>
-                <span>Process resident memory</span>
-                <strong>{{ bytes(snapshot.runtime.processRssBytes) }}</strong>
-                <small>RSS at observation time</small>
+            <hardware-telemetry-card
+              title="Execution Memory & Capacity"
+              icon="mdi-memory"
+              accent-color="#06b6d4"
+              class="mb-6"
+            >
+              <template #actions>
+                <div class="system-telemetry-status">
+                  <radar-pulse-beacon state="applied" :size="7" />
+                  <span>Telemetry active</span>
+                </div>
+              </template>
+              <div class="system-telemetry-row">
+                <cybernetic-hardware-gauge
+                  :heap-used="snapshot.runtime.heapUsedBytes"
+                  :heap-total="snapshot.runtime.heapTotalBytes"
+                  :process-rss="snapshot.runtime.processRssBytes"
+                  :os-total="snapshot.runtime.systemMemoryBytes"
+                />
+                <div class="system-metrics system-metrics--telemetry">
+                  <div>
+                    <span>Process resident memory</span>
+                    <strong>{{ bytes(snapshot.runtime.processRssBytes) }}</strong>
+                    <small>RSS at observation time</small>
+                  </div>
+                  <div>
+                    <span>JavaScript heap in use</span>
+                    <strong>{{ bytes(snapshot.runtime.heapUsedBytes) }}</strong>
+                    <small>{{ bytes(snapshot.runtime.heapTotalBytes) }} heap allocated</small>
+                  </div>
+                </div>
               </div>
-              <div>
-                <span>JavaScript heap in use</span>
-                <strong>{{ bytes(snapshot.runtime.heapUsedBytes) }}</strong>
-                <small>{{ bytes(snapshot.runtime.heapTotalBytes) }} heap allocated</small>
-              </div>
-            </div>
+            </hardware-telemetry-card>
             <h3 class="system-section-title">Execution environment</h3>
             <dl class="system-facts">
               <template v-for="fact in runtimeFacts" :key="fact.label">
@@ -182,7 +238,7 @@
                     <td>
                       <span :class="{ 'system-warning': job.lastOutcome === 'failed' }">{{ job.lastOutcome || 'Not observed' }}</span>
                       <small>
-                        {{ job.runs }} runs · {{ job.failures }} failures
+                        <animated-counter :target-value="job.runs" /> runs · <animated-counter :target-value="job.failures" /> failures
                         <span v-if="job.lastDurationMs !== null">· {{ job.lastDurationMs }} ms last run</span>
                       </small>
                     </td>
@@ -211,18 +267,18 @@
             <h3 class="system-section-title">Durable queue</h3>
             <div class="system-queue-counts">
               <div v-for="(value, state) in snapshot.queue.counts" :key="state">
-                <strong>{{ number(value) }}</strong>
+                <strong><animated-counter :target-value="value" /></strong>
                 <span>{{ state }}</span>
               </div>
             </div>
             <p class="system-note">
-              {{ number(snapshot.queue.due) }} pending jobs are due. Terminal records are normally retained for 30 days after completion; totals
+              <animated-counter :target-value="snapshot.queue.due" /> pending jobs are due. Terminal records are normally retained for 30 days after completion; totals
               describe retained jobs, not all-time activity.
             </p>
             <div class="system-section-head">
               <h3>
                 Needs attention
-                <span>{{ number(snapshot.queue.totalAttention) }}</span>
+                <span><animated-counter :target-value="snapshot.queue.totalAttention" /></span>
               </h3>
               <v-text-field
                 v-if="snapshot.queue.attention.length"
@@ -237,7 +293,7 @@
             </div>
             <p class="system-note">
               Failed jobs, expired running leases and pending/running job versions unsupported by this process. Showing the latest
-              {{ snapshot.queue.attention.length }} of {{ number(snapshot.queue.totalAttention) }} records; categories may overlap.
+              {{ snapshot.queue.attention.length }} of <animated-counter :target-value="snapshot.queue.totalAttention" /> records; categories may overlap.
             </p>
             <div v-if="!attentionRows.length" class="system-empty">
               <v-icon :icon="jobQuery ? 'mdi-filter-outline' : 'mdi-check-circle-outline'" size="32" />
@@ -284,9 +340,9 @@
               migration inventory; this is not a schema integrity or backup verification.
             </p>
             <div class="system-migration-summary">
-              <span>{{ snapshot.database.migrations.applied.length }} applied</span>
-              <span>{{ snapshot.database.migrations.pending.length }} pending</span>
-              <span>{{ snapshot.database.migrations.unknown.length }} absent from build</span>
+              <span><animated-counter :target-value="snapshot.database.migrations.applied.length" /> applied</span>
+              <span><animated-counter :target-value="snapshot.database.migrations.pending.length" /> pending</span>
+              <span><animated-counter :target-value="snapshot.database.migrations.unknown.length" /> absent from build</span>
             </div>
             <details class="system-details">
               <summary>Inspect migration inventory</summary>
@@ -338,9 +394,9 @@
             <dt>Offline mode</dt>
             <dd>{{ snapshot.runtime.offline ? 'Enabled' : 'Disabled' }}</dd>
             <dt>Pending work</dt>
-            <dd>{{ number(snapshot.queue.counts.pending) }}</dd>
+            <dd><animated-counter :target-value="snapshot.queue.counts.pending" /></dd>
             <dt>Attention records</dt>
-            <dd>{{ number(snapshot.queue.totalAttention) }}</dd>
+            <dd><animated-counter :target-value="snapshot.queue.totalAttention" /></dd>
           </dl>
           <div>
             <h3>One process, one moment</h3>
@@ -375,9 +431,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AsyncState from '../common/async-state.vue'
+import CyberneticHardwareGauge from './system/cybernetic-hardware-gauge.vue'
+import HardwareTelemetryCard from './system/hardware-telemetry-card.vue'
+import RadarPulseBeacon from '@/components/admin/security/radar-pulse-beacon.vue'
+import AnimatedCounter from '@/components/admin/security/animated-counter.vue'
 import { fetchSystemWorkspace } from '../../helpers/system-workspace-api.ts'
 import { systemJobDestination, systemSupportReport, type SystemWorkspace } from '../../../shared/system-workspace.ts'
 const sections = [
@@ -389,7 +449,7 @@ const sections = [
 type Section = (typeof sections)[number]['key']
 const route = useRoute(),
   router = useRouter(),
-  snapshot = ref<SystemWorkspace | null>(null),
+  snapshot = shallowRef<SystemWorkspace | null>(null),
   loading = ref(false),
   error = ref(''),
   notice = ref(''),
@@ -641,6 +701,31 @@ onBeforeUnmount(() => controller?.abort())
     small {
       font-size: 0.8rem;
     }
+  }
+  .system-uptime-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+  .system-telemetry-row {
+    display: flex;
+    align-items: center;
+    gap: 2.5rem;
+    flex-wrap: wrap;
+
+    .system-metrics--telemetry {
+      flex: 1;
+      min-width: 260px;
+      border-block: 0;
+      padding: 0;
+    }
+  }
+  .system-telemetry-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.72rem;
+    color: rgba(var(--v-theme-on-surface), 0.7);
   }
   .system-section-title {
     font-size: 1rem;
@@ -1010,6 +1095,14 @@ onBeforeUnmount(() => controller?.abort())
     }
     .system-metrics {
       gap: 1rem;
+    }
+    .system-telemetry-row {
+      flex-direction: column;
+      align-items: center;
+      gap: 1.5rem;
+      .system-metrics--telemetry {
+        width: 100%;
+      }
     }
     .system-facts {
       grid-template-columns: 1fr;
