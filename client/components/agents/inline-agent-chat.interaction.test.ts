@@ -282,6 +282,7 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
   document.body.append(host)
   const historyOpen = Vue.ref(false)
   const memoryOpen = Vue.ref(false)
+  const panelMenuOpen = Vue.ref(false)
   const goal = lockState?.openGoal.value ?? null
   const thread = lockState?.thread.value ?? null
   const context: Record<string, unknown> = {
@@ -315,8 +316,9 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
     memoryDescriptionId: 'agent-test-memory-description',
     historyOpen,
     memoryOpen,
-    panelMode: 'modal',
+    panelMenuOpen,
     memoryMutationBusy: false,
+    panelMode: 'modal',
     initializationError: '',
     clearUnfiledHistoryOpen: false,
     clearingUnfiledHistory: false,
@@ -356,10 +358,12 @@ const mountInlineAgent = (lockState?: LockState): MountedInlineAgent => {
       historyOpen.value = false
     },
     toggleHistory: () => {
+      panelMenuOpen.value = false
       historyOpen.value = !historyOpen.value
       memoryOpen.value = false
     },
     toggleMemory: () => {
+      panelMenuOpen.value = false
       memoryOpen.value = !memoryOpen.value
       historyOpen.value = false
     }
@@ -529,31 +533,6 @@ describe('Inline Agent mobile panel controls', () => {
       if (!item) throw new Error(`Panel menu item ${index} did not render`)
 
       item.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-      await settle()
-
-      expect(mounted.historyOpen.value).toBe(panel === 'history')
-      expect(mounted.memoryOpen.value).toBe(panel === 'memory')
-      expect(mounted.activator.getAttribute('aria-expanded')).toBe('false')
-      mounted.unmount()
-      mountedApps.pop()
-    }
-  })
-  it('focuses and activates History with Enter and Memory with Space through Vuetify list-item behavior', async () => {
-    for (const [index, key, panel] of [
-      [0, 'Enter', 'history'],
-      [1, ' ', 'memory']
-    ] as const) {
-      const mounted = mountInlineAgent()
-      const items = await openPanelMenu(mounted)
-      const item = items[index]
-      if (!item) throw new Error(`Panel menu item ${index} did not render`)
-
-      expect(item.classList.contains('v-list-item--link')).toBe(true)
-      expect(item.getAttribute('role')).toBe('listitem')
-      expect(item.getAttribute('tabindex')).not.toBeNull()
-      item.focus()
-      expect(document.activeElement).toBe(item)
-      item.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
       await settle()
 
       expect(mounted.historyOpen.value).toBe(panel === 'history')

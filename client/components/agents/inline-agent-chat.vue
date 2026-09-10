@@ -78,7 +78,7 @@
             :disabled="memoryMutationBusy"
             @click="toggleMemory"
           >Memory</v-btn>
-          <v-menu ref="panelMenu" content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
+          <v-menu v-model="panelMenuOpen" ref="panelMenu" content-class="agent-owned-overlay" location="bottom end" attach=".inline-agent">
             <template #activator="{ props: menuProps }">
               <v-btn
                 v-bind="menuProps"
@@ -484,6 +484,7 @@ const keepingConversation = ref(false)
 const sessionNotice = ref('')
 const historyOpen = ref(false)
 const memoryOpen = ref(false)
+const panelMenuOpen = ref(false)
 const memoryMutationBusy = ref(false)
 const initializationError = ref('')
 const transcriptFollowing = ref(true)
@@ -732,6 +733,7 @@ const updateMemoryOpen = (open: boolean): void => {
 }
 const toggleHistory = (): void => {
   if (memoryMutationBusy.value && memoryOpen.value && panelMode.value !== 'wide') return
+  panelMenuOpen.value = false
   if (historyOpen.value) {
     closeHistory()
     return
@@ -740,11 +742,12 @@ const toggleHistory = (): void => {
   if (panelMode.value !== 'wide') memoryOpen.value = false
 }
 const toggleMemory = (): void => {
+  if (memoryMutationBusy.value) return
+  panelMenuOpen.value = false
   if (memoryOpen.value) {
     closeMemory()
     return
   }
-  if (memoryMutationBusy.value) return
   memoryOpen.value = true
   if (panelMode.value !== 'wide') historyOpen.value = false
 }

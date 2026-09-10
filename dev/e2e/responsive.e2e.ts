@@ -1530,18 +1530,46 @@ test.describe('responsive UI quality matrix', () => {
 
     await page.setViewportSize({ width: 640, height: 420 })
     const panels = agent.getByRole('button', { name: /open Agent panels: conversation history and memory/i })
-    await panels.click()
-    const memoryMenuItem = page.locator('.v-overlay--active').getByRole('listitem').filter({ hasText: 'Agent memory' })
-    await expect(memoryMenuItem).toHaveCount(1)
-    await memoryMenuItem.click()
+    const selectFromPanelsMenu = async (title: string, activation: 'pointer' | 'keyboard'): Promise<void> => {
+      if (activation === 'pointer') {
+        await panels.click()
+      } else {
+        await panels.focus()
+        await panels.press('Enter')
+      }
+      const panelMenu = page.locator('.v-overlay--active').filter({ hasText: title }).first()
+      const menuItem = panelMenu.getByRole('listitem').filter({ hasText: title })
+      await expect(menuItem).toHaveCount(1)
+      if (activation === 'pointer') {
+        await menuItem.click()
+      } else {
+        await menuItem.focus()
+        await menuItem.press('Enter')
+      }
+      await expect(panels).toHaveAttribute('aria-expanded', 'false')
+      await expect(panelMenu).toBeHidden()
+    }
+
+    await selectFromPanelsMenu('Conversation history', 'pointer')
+    const historyPanel = agent.getByRole('dialog', { name: 'Conversations' })
+    await expect(historyPanel).toBeVisible()
+    await expect.poll(() => historyPanel.evaluate(root => root.contains(document.activeElement))).toBe(true)
+    await page.keyboard.press('Escape')
+    await expect(historyPanel).toBeHidden()
+    await expect(panels).toBeFocused()
+
+    await selectFromPanelsMenu('Agent memory', 'keyboard')
     const memoryPanel = agent.getByRole('dialog', { name: 'Agent memory' })
     await expect(memoryPanel).toBeVisible()
+    await expect.poll(() => memoryPanel.evaluate(root => root.contains(document.activeElement))).toBe(true)
     await memoryPanel.getByRole('button', { name: /Remove memory:/i }).click()
     const removeDialog = page.getByRole('dialog').filter({ hasText: 'Remove this memory?' })
     await expect(removeDialog).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(removeDialog).toBeHidden()
-    await memoryPanel.getByRole('button', { name: 'Close agent memory' }).click()
+    await page.keyboard.press('Escape')
+    await expect(memoryPanel).toBeHidden()
+    await expect(panels).toBeFocused()
     fixture.assertNoUnexpectedRequests()
     await fixture.dispose()
   })
