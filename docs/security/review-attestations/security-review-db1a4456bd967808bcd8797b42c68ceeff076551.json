@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 2,
+  "id": "security-review-db1a4456bd967808bcd8797b42c68ceeff076551",
+  "kind": "source-review",
+  "repository": "PhilosophiMoonbeam/tsEpistle",
+  "policyVersion": 1,
+  "threatModelDigest": "2b2baa8c523bbbb2b3ffa89e2cad954ba63e3af372529dc76e931291bbd3b748",
+  "reviewer": {
+    "identity": "tsEpistle maintainers (Main; FrontendReleaseSecurityReview)",
+    "reviewedAt": "2026-09-10"
+  },
+  "releaseEligible": true,
+  "source": {
+    "revision": "db1a4456bd967808bcd8797b42c68ceeff076551",
+    "baseRevision": "594fe5c109f6cdc04545712fdac677dd0fc00691",
+    "coveredTreeDigest": "1b217f7ef208e0703f0acf95dace55a854552176ddaabd681367566a2c1575af"
+  },
+  "findings": [
+    {
+      "id": "AUTH-APIKEY-HUMAN-IMPERSONATION",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/core/auth.api-access.test.ts",
+        "server/test/graph/api-key-mutations.test.ts"
+      ]
+    },
+    {
+      "id": "AUTH-CALLBACK-INITIATION-BINDING",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/authentication/cas/cas-strategy.test.ts",
+        "server/modules/authentication/saml/authentication.test.ts",
+        "server/test/controllers/auth.test.js"
+      ]
+    },
+    {
+      "id": "AUTH-OAUTH-STATE-LIFECYCLE",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/authentication/oauth-state.test.ts",
+        "server/test/repositories/federated-login.postgres.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-ASSET-001",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/models/assets.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-IMPORT-002",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/storage/git/admission.test.ts",
+        "server/modules/storage/git/bounded-process.test.ts",
+        "server/modules/storage/git/repository.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-BACKUP-003",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/modules/storage.disk.test.js"
+      ]
+    },
+    {
+      "id": "SEC-STORAGE-NATIVE-BOUND-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "docs/security/threat-model.md",
+        "server/modules/storage/git/bounded-process.test.ts"
+      ]
+    },
+    {
+      "id": "SEC-ADAPTER-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "docs/security/threat-model.md"
+      ]
+    },
+    {
+      "id": "SEC-CACHE-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-54949bf6d081-evidence.md",
+        "docs/security/threat-model.md",
+        "server/controllers/api/pages.ts",
+        "server/test/controllers/api.pages.test.js",
+        "server/test/operations/pages-tree.postgres.test.ts"
+      ]
+    }
+  ],
+  "evidencePaths": [
+    "docs/security/security-review-db1a4456bd967808bcd8797b42c68ceeff076551-evidence.md",
+    "docs/security/security-review-594fe5c109f6cdc04545712fdac677dd0fc00691-evidence.md",
+    "docs/security/security-review-dd783e3aad6d8ecc6800797ad76dcc63d2ed1156-evidence.md",
+    "docs/security/security-review-871003fab75a1e2f55d5ec768d74e9643ead862e-evidence.md",
+    "docs/security/security-review-2026-09-09-b5924c6ae9fa-evidence.md",
+    "docs/security/security-review-2026-09-09-bd5c06096186-evidence.md",
+    "docs/security/security-review-2026-09-09-54949bf6d081-evidence.md",
+    "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+    "docs/security/threat-model.md"
+  ]
+}
