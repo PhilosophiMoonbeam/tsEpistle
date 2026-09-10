@@ -26,7 +26,7 @@ RUN --mount=type=cache,id=wiki-bun,target=/root/.bun/install/cache \
 COPY client ./client
 COPY shared ./shared
 COPY server ./server
-COPY vite.config.mts ./
+COPY vite.config.mts tsconfig.client.json tsconfig.server.json tsconfig.shared.json ./
 RUN bun run build
 
 FROM oven/bun:1.4.0-alpine@sha256:07235578f79ef8c6f97d94aee7938e76f5cdba5f21ae5dbfdd3d3d38058437eb AS dependencies
@@ -73,6 +73,7 @@ COPY --chown=bun:bun --from=build /wiki/assets ./assets
 COPY --chown=bun:bun --from=dependencies /wiki/node_modules ./node_modules
 COPY --chown=bun:bun shared ./shared
 COPY --chown=bun:bun --from=build /wiki/server ./server
+COPY --chown=bun:bun tsconfig.server.json tsconfig.shared.json ./
 COPY --chown=bun:bun dev/build/config.yml ./config.yml
 COPY --chown=bun:bun package.json ./
 COPY --chown=bun:bun LICENSE ./
