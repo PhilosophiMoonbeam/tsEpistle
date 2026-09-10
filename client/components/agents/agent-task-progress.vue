@@ -131,10 +131,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onWatcherCleanup, ref, watchEffect } from 'vue'
 import type { AgentTaskKind, AgentTaskView } from '../../../shared/agents/contracts.ts'
 
-const props = defineProps<{ tasks: readonly AgentTaskView[] }>()
+const { tasks = [] } = defineProps<{ tasks: readonly AgentTaskView[] }>()
 type DisplayTaskStatus = AgentTaskView['status'] | 'partial'
 type PlanState = 'idle' | 'running' | 'attention' | 'success'
 const planIcons: Readonly<Record<PlanState, string>> = {
@@ -156,7 +156,7 @@ const handleToggle = (event: Event): void => {
   manualTogglePending = false
   userExpanded.value = target.open
 }
-let durationTimer: number | null = null
+
 const statusFor = (task: AgentTaskView): DisplayTaskStatus => task.status === 'completed' && task.outcome === 'partial' ? 'partial' : task.status
 const terminalStatuses: ReadonlySet<AgentTaskView['status']> = new Set(['blocked', 'completed', 'failed', 'cancelled'])
 const planCounts = computed(() => {
@@ -166,7 +166,7 @@ const planCounts = computed(() => {
   let queued = 0
   let attention = 0
 
-  for (const task of props.tasks) {
+  for (const task of tasks) {
     const status = statusFor(task)
     if (terminalStatuses.has(task.status)) terminal++
     if (status === 'completed') successful++
@@ -182,20 +182,20 @@ const successfulCount = computed(() => planCounts.value.successful)
 const runningCount = computed(() => planCounts.value.running)
 const queuedCount = computed(() => planCounts.value.queued)
 const attentionCount = computed(() => planCounts.value.attention)
-const allTerminal = computed(() => props.tasks.length > 0 && terminalCount.value === props.tasks.length)
+const allTerminal = computed(() => tasks.length > 0 && terminalCount.value === tasks.length)
 const cleanCompletion = computed(() => allTerminal.value && attentionCount.value === 0)
-const detailsOpen = computed(() => userExpanded.value ?? (props.tasks.length > 0 && !cleanCompletion.value))
-const successfulPercent = computed(() => props.tasks.length === 0 ? 0 : (successfulCount.value / props.tasks.length) * 100)
-const attentionPercent = computed(() => props.tasks.length === 0 ? 0 : (attentionCount.value / props.tasks.length) * 100)
+const detailsOpen = computed(() => userExpanded.value ?? (tasks.length > 0 && !cleanCompletion.value))
+const successfulPercent = computed(() => tasks.length === 0 ? 0 : (successfulCount.value / tasks.length) * 100)
+const attentionPercent = computed(() => tasks.length === 0 ? 0 : (attentionCount.value / tasks.length) * 100)
 const planState = computed<PlanState>(() => {
-  if (!props.tasks.length) return 'idle'
+  if (!tasks.length) return 'idle'
   if (runningCount.value || queuedCount.value) return attentionCount.value ? 'attention' : 'running'
   return attentionCount.value ? 'attention' : 'success'
 })
 const planIcon = computed(() => planIcons[planState.value])
 const planTitle = computed(() => allTerminal.value ? 'Research plan resolved' : 'Research plan')
 const progressLabel = computed(() => {
-  if (!props.tasks.length) return 'No tasks recorded'
+  if (!tasks.length) return 'No tasks recorded'
   if (allTerminal.value) {
     return `${successfulCount.value} successful${attentionCount.value ? ` · ${attentionCount.value} need attention` : ''}`
   }
@@ -276,17 +276,17 @@ const durationLabel = (task: AgentTaskView): string => {
   const duration = formatDuration(task.startedAt ?? task.createdAt, task.completedAt)
   return task.status === 'running' ? `Running ${duration}` : `Duration ${duration}`
 }
-const stopDurationTimer = (): void => {
-  if (durationTimer !== null) window.clearInterval(durationTimer)
-  durationTimer = null
-}
-const syncDurationTimer = (): void => {
-  stopDurationTimer()
-  if (runningCount.value || queuedCount.value) durationTimer = window.setInterval(() => { tick.value++ }, 30_000)
-}
-watch([runningCount, queuedCount], syncDurationTimer)
-onMounted(syncDurationTimer)
-onBeforeUnmount(stopDurationTimer)
+
+watchEffect(() => {
+  if (runningCount.value || queuedCount.value) {
+    const timer = (typeof window !== 'undefined' ? window : globalThis).setInterval(() => {
+      tick.value++
+    }, 30_000)
+    onWatcherCleanup(() => {
+      (typeof window !== 'undefined' ? window : globalThis).clearInterval(timer)
+    })
+  }
+})
 </script>
 
 <style scoped>
@@ -300,10 +300,12 @@ onBeforeUnmount(stopDurationTimer)
     linear-gradient(135deg, color-mix(in srgb, var(--tasks-accent) 7%, transparent), transparent 48%),
     var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
 .agent-tasks--running {
   --tasks-accent: rgb(var(--v-theme-primary));
+  box-shadow: 0 0 16px -4px rgba(6, 182, 212, 0.25), var(--wiki-shadow-inset);
 }
 
 .agent-tasks--attention {
@@ -364,6 +366,11 @@ onBeforeUnmount(stopDurationTimer)
   width: calc(var(--wiki-control-height) - var(--wiki-space-1));
   height: calc(var(--wiki-control-height) - var(--wiki-space-1));
   border-radius: var(--wiki-control-radius);
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.agent-tasks--running .agent-tasks__mark {
+  animation: laser-pulse 2s infinite ease-in-out;
 }
 
 .agent-tasks__heading {
@@ -410,6 +417,7 @@ onBeforeUnmount(stopDurationTimer)
   height: var(--wiki-space-1);
   overflow: hidden;
   background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 9%, transparent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .agent-tasks__progress-fill {
@@ -419,11 +427,13 @@ onBeforeUnmount(stopDurationTimer)
 }
 
 .agent-tasks__progress-fill--success {
-  background: rgb(var(--v-theme-success));
+  background: linear-gradient(90deg, #10b981 0%, #06b6d4 100%);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
 }
 
 .agent-tasks__progress-fill--attention {
-  background: rgb(var(--v-theme-warning));
+  background: linear-gradient(90deg, #f59e0b 0%, #ef4444 100%);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
 }
 
 .agent-tasks__list {
@@ -440,6 +450,7 @@ onBeforeUnmount(stopDurationTimer)
   align-items: start;
   padding: var(--wiki-space-3) var(--wiki-space-4);
   border-block-start: 1px solid var(--wiki-surface-border);
+  position: relative;
 }
 
 .agent-tasks__item--running {
@@ -468,6 +479,15 @@ onBeforeUnmount(stopDurationTimer)
   height: calc(var(--wiki-control-height) - var(--wiki-space-4));
   border-radius: var(--wiki-radius-xs);
   color: var(--task-accent);
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.agent-tasks__item--running .agent-tasks__state-mark {
+  animation: laser-pulse 1.8s infinite ease-in-out;
+}
+
+.agent-tasks__item--completed .agent-tasks__state-mark {
+  animation: synaptic-burst 1.6s cubic-bezier(0.16, 1, 0.3, 1) 1;
 }
 
 .agent-tasks__body {
@@ -645,6 +665,36 @@ onBeforeUnmount(stopDurationTimer)
   clip: rect(0, 0, 0, 0);
 }
 
+@keyframes synaptic-burst {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7), inset 0 0 0 0 rgba(16, 185, 129, 0.4);
+    transform: scale(0.96);
+  }
+  40% {
+    box-shadow: 0 0 16px 3px rgba(16, 185, 129, 0.5), inset 0 0 10px rgba(16, 185, 129, 0.3);
+    transform: scale(1.04);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0), inset 0 0 0 0 rgba(16, 185, 129, 0);
+    transform: scale(1);
+  }
+}
+
+@keyframes laser-pulse {
+  0% {
+    box-shadow: 0 0 4px rgba(6, 182, 212, 0.4), inset 0 0 2px rgba(6, 182, 212, 0.2);
+    border-color: rgba(6, 182, 212, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(6, 182, 212, 0.8), inset 0 0 6px rgba(6, 182, 212, 0.4);
+    border-color: rgba(6, 182, 212, 0.9);
+  }
+  100% {
+    box-shadow: 0 0 4px rgba(6, 182, 212, 0.4), inset 0 0 2px rgba(6, 182, 212, 0.2);
+    border-color: rgba(6, 182, 212, 0.4);
+  }
+}
+
 @media (max-width: 599.98px) {
   .agent-tasks__header,
   .agent-tasks__item {
@@ -684,7 +734,11 @@ onBeforeUnmount(stopDurationTimer)
 @media (prefers-reduced-motion: reduce) {
   .agent-tasks__header::after,
   .agent-task-record summary::after,
-  .agent-tasks__progress-fill {
+  .agent-tasks__progress-fill,
+  .agent-tasks__item--completed .agent-tasks__state-mark,
+  .agent-tasks__item--running .agent-tasks__state-mark,
+  .agent-tasks--running .agent-tasks__mark {
+    animation: none;
     transition: none;
   }
 }

@@ -66,7 +66,10 @@
           </div>
           <div
             class="agent-goal__meter"
-            :class="{ 'agent-goal__meter--warning': budgetPercent >= 80 }"
+            :class="{
+              'agent-goal__meter--warning': budgetPercent >= 80 && budgetPercent < 95,
+              'agent-goal__meter--critical': budgetPercent >= 95
+            }"
             role="progressbar"
             :aria-valuenow="Math.round(budgetPercent)"
             aria-valuemin="0"
@@ -74,7 +77,9 @@
             :aria-valuetext="budgetAriaLabel"
             aria-label="Peak goal resource use"
           >
-            <span :style="{ width: `${budgetPercent}%` }" />
+            <span class="agent-goal__meter-fill" :style="{ width: `${budgetPercent}%` }">
+              <span class="agent-goal__meter-head" />
+            </span>
           </div>
         </div>
 
@@ -174,40 +179,40 @@
 import { computed, ref, watch } from 'vue'
 import type { AgentGoalView } from '../../../shared/agents/contracts.ts'
 
-const props = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean }>()
+const { goal, busy = false, runActive = false } = defineProps<{ goal: AgentGoalView; busy?: boolean; runActive?: boolean }>()
 const expanded = defineModel<boolean>('expanded', { required: true })
 const emit = defineEmits<{ pause: []; resume: []; cancel: [] }>()
 const pendingAction = ref<'pause' | 'resume' | 'cancel' | null>(null)
 const cancelDialogOpen = ref(false)
-const goalTitleId = computed(() => `agent-goal-${props.goal.id}-title`)
-const goalCollapsedObjectiveId = computed(() => `agent-goal-${props.goal.id}-collapsed-objective`)
-const goalStatusId = computed(() => `agent-goal-${props.goal.id}-status`)
-const goalToggleId = computed(() => `agent-goal-${props.goal.id}-toggle`)
-const goalDetailsId = computed(() => `agent-goal-${props.goal.id}-details`)
-const goalBlockersTitleId = computed(() => `agent-goal-${props.goal.id}-blockers-title`)
-const cancelGoalTitleId = computed(() => `agent-goal-${props.goal.id}-cancel-title`)
-const toggleAriaLabel = computed(() => `${expanded.value ? 'Hide' : 'Show'} durable goal details: ${props.goal.objective}`)
+const goalTitleId = computed(() => `agent-goal-${goal.id}-title`)
+const goalCollapsedObjectiveId = computed(() => `agent-goal-${goal.id}-collapsed-objective`)
+const goalStatusId = computed(() => `agent-goal-${goal.id}-status`)
+const goalToggleId = computed(() => `agent-goal-${goal.id}-toggle`)
+const goalDetailsId = computed(() => `agent-goal-${goal.id}-details`)
+const goalBlockersTitleId = computed(() => `agent-goal-${goal.id}-blockers-title`)
+const cancelGoalTitleId = computed(() => `agent-goal-${goal.id}-cancel-title`)
+const toggleAriaLabel = computed(() => `${expanded.value ? 'Hide' : 'Show'} durable goal details: ${goal.objective}`)
 const goalToggleTargetStyle = {
   minHeight: 'max(44px, var(--wiki-control-height, 44px))',
   minWidth: 'max(44px, var(--wiki-control-height, 44px))'
 } as const
 const toggleExpanded = (): void => { expanded.value = !expanded.value }
-watch(() => props.busy, busy => { if (!busy) pendingAction.value = null })
-watch(() => props.goal.id, () => {
+watch(() => busy, isBusy => { if (!isBusy) pendingAction.value = null })
+watch(() => goal.id, () => {
   pendingAction.value = null
   cancelDialogOpen.value = false
 })
-watch(() => props.goal.status, status => {
+watch(() => goal.status, status => {
   if (!['active', 'paused', 'blocked'].includes(status)) cancelDialogOpen.value = false
 })
 const runAction = (action: 'pause' | 'resume') => {
-  if (props.busy) return
+  if (busy) return
   pendingAction.value = action
   if (action === 'pause') emit('pause')
   else emit('resume')
 }
 const confirmCancel = () => {
-  if (props.busy) return
+  if (busy) return
   pendingAction.value = 'cancel'
   cancelDialogOpen.value = false
   emit('cancel')
@@ -223,49 +228,49 @@ const statusPresentation = {
   failed: { label: 'Failed', icon: 'mdi-alert-octagon-outline', color: 'error' }
 } as const
 
-const presentation = computed(() => statusPresentation[props.goal.status])
+const presentation = computed(() => statusPresentation[goal.status])
 const statusLabel = computed(() => presentation.value.label)
 const statusIcon = computed(() => presentation.value.icon)
 const statusColor = computed(() => presentation.value.color)
-const canPause = computed(() => props.goal.status === 'active')
-const canResume = computed(() => !props.runActive && (props.goal.status === 'paused' || props.goal.status === 'blocked'))
-const canCancel = computed(() => props.goal.status === 'active' || props.goal.status === 'paused' || props.goal.status === 'blocked')
-const tokenPercent = computed(() => props.goal.maxTokens > 0 ? (props.goal.consumedTokens / props.goal.maxTokens) * 100 : 0)
-const toolPercent = computed(() => props.goal.maxToolCalls > 0 ? (props.goal.consumedToolCalls / props.goal.maxToolCalls) * 100 : 0)
-const continuationPercent = computed(() => props.goal.maxContinuations > 0 ? (props.goal.continuationCount / props.goal.maxContinuations) * 100 : 0)
+const canPause = computed(() => goal.status === 'active')
+const canResume = computed(() => !runActive && (goal.status === 'paused' || goal.status === 'blocked'))
+const canCancel = computed(() => goal.status === 'active' || goal.status === 'paused' || goal.status === 'blocked')
+const tokenPercent = computed(() => goal.maxTokens > 0 ? (goal.consumedTokens / goal.maxTokens) * 100 : 0)
+const toolPercent = computed(() => goal.maxToolCalls > 0 ? (goal.consumedToolCalls / goal.maxToolCalls) * 100 : 0)
+const continuationPercent = computed(() => goal.maxContinuations > 0 ? (goal.continuationCount / goal.maxContinuations) * 100 : 0)
 const budgetPercent = computed(() => Math.min(100, Math.max(0, Math.max(tokenPercent.value, toolPercent.value, continuationPercent.value))))
 const formatBudgetValue = (value: number): string => value.toLocaleString()
 const budgetMetrics = computed(() => [
   {
     label: 'Tokens',
-    value: formatBudgetValue(props.goal.consumedTokens),
-    limit: formatBudgetValue(props.goal.maxTokens),
+    value: formatBudgetValue(goal.consumedTokens),
+    limit: formatBudgetValue(goal.maxTokens),
     percent: Math.min(100, Math.max(0, tokenPercent.value))
   },
   {
     label: 'Tool calls',
-    value: formatBudgetValue(props.goal.consumedToolCalls),
-    limit: formatBudgetValue(props.goal.maxToolCalls),
+    value: formatBudgetValue(goal.consumedToolCalls),
+    limit: formatBudgetValue(goal.maxToolCalls),
     percent: Math.min(100, Math.max(0, toolPercent.value))
   },
   {
     label: 'Continuations',
-    value: formatBudgetValue(props.goal.continuationCount),
-    limit: formatBudgetValue(props.goal.maxContinuations),
+    value: formatBudgetValue(goal.continuationCount),
+    limit: formatBudgetValue(goal.maxContinuations),
     percent: Math.min(100, Math.max(0, continuationPercent.value))
   }
 ])
 const blockerMessages = computed(() => {
-  const issues = [...(props.goal.completion?.issues ?? [])]
-  const errorMessage = props.goal.errorMessage
+  const issues = [...(goal.completion?.issues ?? [])]
+  const errorMessage = goal.errorMessage
   if (errorMessage && !issues.some(issue => issue.message === errorMessage)) {
     issues.unshift({
-      code: props.goal.errorCode ?? 'GOAL_ATTENTION',
+      code: goal.errorCode ?? 'GOAL_ATTENTION',
       message: errorMessage,
-      retryable: props.goal.status === 'blocked'
+      retryable: goal.status === 'blocked'
     })
   }
-  if (props.goal.status === 'blocked' && issues.length === 0) {
+  if (goal.status === 'blocked' && issues.length === 0) {
     issues.push({
       code: 'GOAL_BLOCKED',
       message: 'The goal cannot continue until its blocking condition is reviewed.',
@@ -297,8 +302,8 @@ const datedTimelineFormatter = new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit'
 })
-const timelineAt = computed(() => props.goal.completedAt ?? props.goal.deadlineAt)
-const timelinePrefix = computed(() => props.goal.completedAt ? 'Finished' : 'Due')
+const timelineAt = computed(() => goal.completedAt ?? goal.deadlineAt)
+const timelinePrefix = computed(() => goal.completedAt ? 'Finished' : 'Due')
 const timelineLabel = computed(() => {
   const date = new Date(timelineAt.value)
   return (date.getFullYear() === currentYear ? timelineFormatter : datedTimelineFormatter).format(date)
@@ -319,12 +324,12 @@ const budgetLabel = computed(() => {
 })
 const budgetAriaLabel = computed(() => `${budgetLabel.value} is ${Math.round(budgetPercent.value)}% used`)
 const progressLabel = computed(() => {
-  if (props.goal.status === 'completed') return `Completed in ${props.goal.continuationCount + 1} run${props.goal.continuationCount === 0 ? '' : 's'}.`
-  if (props.goal.status === 'budget_limited') return 'A host-owned time, token, tool, or continuation limit stopped further work.'
-  if (props.goal.status === 'cancelled') return 'No further work will run for this goal.'
-  if (props.goal.status === 'failed') return 'The goal stopped after a non-recoverable failure.'
-  if (props.goal.status === 'paused') return 'Future continuations are paused. Resume when you are ready for the agent to continue.'
-  if (props.goal.status === 'blocked') return 'Automatic work is paused until the blocking condition is resolved.'
+  if (goal.status === 'completed') return `Completed in ${goal.continuationCount + 1} run${goal.continuationCount === 0 ? '' : 's'}.`
+  if (goal.status === 'budget_limited') return 'A host-owned time, token, tool, or continuation limit stopped further work.'
+  if (goal.status === 'cancelled') return 'No further work will run for this goal.'
+  if (goal.status === 'failed') return 'The goal stopped after a non-recoverable failure.'
+  if (goal.status === 'paused') return 'Future continuations are paused. Resume when you are ready for the agent to continue.'
+  if (goal.status === 'blocked') return 'Automatic work is paused until the blocking condition is resolved.'
   return 'The agent will continue across runs until the objective is complete, needs review, or reaches a host-owned limit.'
 })
 </script>
@@ -344,16 +349,19 @@ const progressLabel = computed(() => {
       - var(--wiki-space-3)
     )
   );
-  background: color-mix(in srgb, var(--goal-accent) 8%, var(--wiki-surface-raised));
-  border: 1px solid color-mix(in srgb, var(--goal-accent) 30%, var(--wiki-surface-border));
+  background:
+    radial-gradient(ellipse at 85% 0%, color-mix(in srgb, var(--goal-accent) 12%, transparent), transparent 70%),
+    color-mix(in srgb, var(--goal-accent) 6%, var(--wiki-surface-raised));
+  border: 1px solid color-mix(in srgb, var(--goal-accent) 35%, var(--wiki-surface-border));
   border-radius: var(--wiki-control-radius);
-  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
+  box-shadow: var(--wiki-shadow-xs), 0 0 16px -4px color-mix(in srgb, var(--goal-accent) 25%, transparent), var(--wiki-shadow-inset);
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
   width: 100%;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 .agent-goal--active,
 .agent-goal--completed { --goal-accent: rgb(var(--v-theme-success)); }
@@ -374,14 +382,15 @@ const progressLabel = computed(() => {
 }
 .agent-goal__mark {
   align-items: center;
-  background: color-mix(in srgb, var(--goal-accent) 13%, transparent);
-  border: 1px solid color-mix(in srgb, var(--goal-accent) 28%, transparent);
+  background: color-mix(in srgb, var(--goal-accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--goal-accent) 36%, transparent);
   border-radius: var(--wiki-control-radius);
   color: var(--goal-ink);
   display: flex;
   height: 1.75rem;
   justify-content: center;
   width: 1.75rem;
+  box-shadow: 0 0 10px -2px color-mix(in srgb, var(--goal-accent) 40%, transparent);
 }
 .agent-goal__status-label {
   color: var(--goal-ink);
@@ -422,10 +431,13 @@ const progressLabel = computed(() => {
   font: inherit;
   gap: var(--wiki-space-1);
   justify-content: center;
+  min-height: max(44px, var(--wiki-control-height, 44px));
+  min-width: max(44px, var(--wiki-control-height, 44px));
   padding: 0 var(--wiki-space-2);
   white-space: nowrap;
+  transition: background 0.2s ease, transform 0.2s ease;
 }
-.agent-goal__toggle:hover { background: color-mix(in srgb, var(--goal-accent) 10%, transparent); }
+.agent-goal__toggle:hover { background: color-mix(in srgb, var(--goal-accent) 12%, transparent); }
 .agent-goal__toggle:focus-visible {
   outline: 2px solid rgb(var(--v-theme-primary));
   outline-offset: 2px;
@@ -461,7 +473,7 @@ const progressLabel = computed(() => {
   color: var(--goal-ink);
   font-size: var(--wiki-label-size);
   font-weight: 750;
-  letter-spacing: .1em;
+  letter-spacing: .12em;
   margin: 0 0 var(--wiki-space-1);
   text-transform: uppercase;
 }
@@ -500,19 +512,50 @@ const progressLabel = computed(() => {
 .agent-goal__progress-heading span { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-weight: 650; }
 .agent-goal__progress-heading strong { color: var(--goal-ink); font-variant-numeric: tabular-nums; }
 .agent-goal__meter {
-  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
-  border-radius: var(--wiki-radius-pill);
-  height: var(--wiki-space-1);
+  background: rgba(var(--v-theme-surface-variant, 148, 163, 184), 0.25);
+  border-radius: var(--wiki-radius-pill, 999px);
+  height: 8px;
   overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
 }
+.agent-goal__meter-fill,
 .agent-goal__meter > span {
-  background: var(--goal-accent);
+  background: linear-gradient(90deg, #06b6d4 0%, #3b82f6 50%, #8b5cf6 100%);
   border-radius: inherit;
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.6);
   display: block;
   height: 100%;
-  transition: width var(--wiki-motion-normal) var(--wiki-motion-ease-out);
+  position: relative;
+  transition: width var(--wiki-motion-normal, 0.4s) cubic-bezier(0.16, 1, 0.3, 1);
 }
-.agent-goal__meter--warning > span { background: rgb(var(--v-theme-warning)); }
+.agent-goal__meter-head {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  background: #ffffff;
+  border-radius: 999px;
+  box-shadow: 0 0 8px #ffffff, 0 0 16px #06b6d4;
+  animation: pulse-head 1.2s infinite alternate ease-in-out;
+}
+.agent-goal__meter--warning .agent-goal__meter-fill,
+.agent-goal__meter--warning > span {
+  background: linear-gradient(90deg, #f59e0b 0%, #f97316 100%);
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.65);
+}
+.agent-goal__meter--warning .agent-goal__meter-head {
+  box-shadow: 0 0 8px #ffffff, 0 0 16px #f59e0b;
+}
+.agent-goal__meter--critical .agent-goal__meter-fill,
+.agent-goal__meter--critical > span {
+  background: linear-gradient(90deg, #f43f5e 0%, #ef4444 100%);
+  box-shadow: 0 0 14px rgba(244, 63, 94, 0.8);
+}
+.agent-goal__meter--critical .agent-goal__meter-head {
+  box-shadow: 0 0 8px #ffffff, 0 0 16px #ef4444;
+}
 .agent-goal__budgets {
   display: grid;
   gap: var(--wiki-space-2);
@@ -551,7 +594,13 @@ const progressLabel = computed(() => {
   height: 2px;
   overflow: hidden;
 }
-.agent-goal__budget-track > span { background: var(--goal-accent); display: block; height: 100%; }
+.agent-goal__budget-track > span {
+  background: linear-gradient(90deg, #06b6d4 0%, #6366f1 100%);
+  box-shadow: 0 0 6px rgba(6, 182, 212, 0.4);
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
 .agent-goal__summary {
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
   font-size: .74rem;
@@ -588,6 +637,12 @@ const progressLabel = computed(() => {
 .agent-goal__dialog-title { align-items: center; display: flex; gap: var(--wiki-space-3); overflow-wrap: anywhere; padding: var(--wiki-space-5) var(--wiki-space-5) var(--wiki-space-3); }
 .agent-goal__dialog-actions { flex-wrap: wrap; padding: 0 var(--wiki-space-5) var(--wiki-space-4); }
 .agent-goal__dialog-actions :deep(.v-spacer) { min-width: 0; }
+
+@keyframes pulse-head {
+  0% { opacity: 0.7; transform: scaleX(0.8); }
+  100% { opacity: 1; transform: scaleX(1.3); }
+}
+
 @media (max-width: 600px) {
   .agent-goal__summary-row {
     grid-template-columns: auto auto minmax(0, 1fr) auto;
@@ -633,8 +688,10 @@ const progressLabel = computed(() => {
   .agent-goal__details { padding-block: var(--wiki-space-2); }
 }
 @media (prefers-reduced-motion: reduce) {
+  .agent-goal__meter-fill,
   .agent-goal__meter > span,
   .agent-goal__toggle-icon { transition: none; }
+  .agent-goal__meter-head { animation: none; }
 }
 @media (forced-colors: active) {
   .agent-goal,
