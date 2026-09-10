@@ -179,7 +179,6 @@
 }
 .analytics-chart {
   margin: 12px 0 24px;
-  position: relative;
 
   svg,
   .analytics-chart-svg {
@@ -195,8 +194,7 @@
     transition: height 0.35s cubic-bezier(0.16, 1, 0.3, 1), y 0.35s cubic-bezier(0.16, 1, 0.3, 1), filter 0.2s ease, opacity 0.2s ease;
 
     &:hover,
-    &.is-active,
-    &:focus-visible {
+    &.is-active {
       opacity: 1;
       filter: brightness(1.2) drop-shadow(0 0 6px rgba(var(--v-theme-primary), 0.7));
     }
@@ -222,49 +220,29 @@
     pointer-events: none;
   }
 
-  .chart-hud-tooltip,
-  .analytics-chart-tooltip {
-    position: absolute;
-    z-index: 10;
-    pointer-events: none;
-    transform: translate(-50%, -100%) translateY(-10px);
+  .analytics-chart-readout {
     display: flex;
-    flex-direction: column;
-    gap: 3px;
-    padding: 8px 12px;
-    border-radius: 8px;
-    font-size: 0.75rem;
-    line-height: 1.35;
-    white-space: nowrap;
-    background: rgba(var(--v-theme-surface), 0.75);
-    backdrop-filter: blur(14px) saturate(180%);
-    -webkit-backdrop-filter: blur(14px) saturate(180%);
-    border: 1px solid rgba(var(--v-theme-primary), 0.35);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18), 0 0 12px rgba(var(--v-theme-primary), 0.25);
-    color: rgb(var(--v-theme-on-surface));
-    transition: opacity 0.15s ease, transform 0.15s ease;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px;
+    margin-top: 10px;
+    font-size: 0.76rem;
+    line-height: 1.4;
+    color: var(--analytics-muted);
+    overflow-wrap: anywhere;
 
-    .tooltip-day,
     &__day {
-      font-size: 0.68rem;
-      color: var(--analytics-muted);
       font-weight: 500;
     }
 
-    .tooltip-responses,
     &__count {
-      font-size: 0.82rem;
-      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+
       strong {
         font-family: var(--wiki-font-display);
         color: rgb(var(--v-theme-primary));
+        font-weight: 600;
       }
-    }
-
-    .tooltip-pct,
-    &__pct {
-      font-size: 0.68rem;
-      color: var(--analytics-muted);
     }
   }
 
@@ -795,11 +773,5 @@
     .analytics-bar {
       transition: none !important;
     }
-
-    .chart-hud-tooltip,
-    .analytics-chart-tooltip {
-      transition: none !important;
-    }
   }
 }
-

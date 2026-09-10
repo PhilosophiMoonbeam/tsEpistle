@@ -5,7 +5,7 @@
         v-icon(
           :key='copied ? "check" : "copy"'
           :class='{ "icon-tactile-bounce": copied }'
-          :color='copied ? "#10b981" : "grey"'
+          :color='copied ? "success" : "grey"'
           size="small"
         ) {{ copied ? 'mdi-check-bold' : 'mdi-content-copy' }}
       v-list-item-title.px-3 {{$t('common:actions.copy')}} URL
@@ -87,13 +87,16 @@ export default defineComponent({
   data () {
     return {
       copied: false,
-      copiedTimer: null as ReturnType<typeof setTimeout> | null
+      copiedTimer: null as ReturnType<typeof setTimeout> | null,
+      copyOperationId: 0
     }
   },
   beforeUnmount () {
-    if (this.copiedTimer) {
-      clearTimeout(this.copiedTimer)
-      this.copiedTimer = null
+    this.invalidateCopyFeedback()
+  },
+  watch: {
+    url (): void {
+      this.invalidateCopyFeedback()
     }
   },
   computed: {
@@ -116,24 +119,43 @@ export default defineComponent({
     }
   },
   methods: {
+    clearCopiedTimer (): void {
+      if (this.copiedTimer !== null) {
+        clearTimeout(this.copiedTimer)
+        this.copiedTimer = null
+      }
+    },
+    invalidateCopyFeedback (): void {
+      this.copyOperationId += 1
+      this.copied = false
+      this.clearCopiedTimer()
+    },
+    isCurrentCopyOperation (operationId: number): boolean {
+      return this.copyOperationId === operationId
+    },
     async copyUrl (): Promise<void> {
+      this.invalidateCopyFeedback()
+      const operationId = this.copyOperationId
+      const text = this.url
       try {
         let copied = false
         if (navigator.clipboard?.writeText) {
           try {
-            await navigator.clipboard.writeText(this.url)
+            await navigator.clipboard.writeText(text)
             copied = true
           } catch {
-            copied = false
+            if (!this.isCurrentCopyOperation(operationId)) return
           }
         }
-        if (!copied) copied = copyWithLegacyFallback(this.url)
-        if (!copied) throw new Error('Clipboard copy was rejected')
-        this.copied = true
-        if (this.copiedTimer) {
-          clearTimeout(this.copiedTimer)
+        if (!copied) {
+          if (!this.isCurrentCopyOperation(operationId)) return
+          copied = copyWithLegacyFallback(text)
         }
+        if (!copied) throw new Error('Clipboard copy was rejected')
+        if (!this.isCurrentCopyOperation(operationId)) return
+        this.copied = true
         this.copiedTimer = setTimeout(() => {
+          if (!this.isCurrentCopyOperation(operationId)) return
           this.copied = false
           this.copiedTimer = null
         }, 2000)
@@ -143,6 +165,7 @@ export default defineComponent({
           icon: 'content-copy'
         })
       } catch {
+        if (!this.isCurrentCopyOperation(operationId)) return
         wikiStore.showNotification({
           style: 'red',
           message: `Failed to copy to clipboard`,
@@ -184,7 +207,6 @@ export default defineComponent({
 
 <style scoped>
 .icon-tactile-bounce {
-  color: #10b981 !important;
   animation: tactile-bounce 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
   transform-origin: center;
 }

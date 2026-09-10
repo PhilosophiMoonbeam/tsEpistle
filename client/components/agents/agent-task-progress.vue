@@ -296,16 +296,15 @@ watchEffect(() => {
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--tasks-accent) 32%, var(--wiki-surface-border));
   border-radius: var(--wiki-panel-radius);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--tasks-accent) 7%, transparent), transparent 48%),
-    var(--wiki-surface-raised);
+  background: color-mix(in srgb, var(--tasks-accent) 7%, var(--wiki-surface-raised));
   box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
-  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
 .agent-tasks--running {
   --tasks-accent: rgb(var(--v-theme-primary));
-  box-shadow: 0 0 16px -4px rgba(6, 182, 212, 0.25), var(--wiki-shadow-inset);
 }
 
 .agent-tasks--attention {
@@ -366,11 +365,6 @@ watchEffect(() => {
   width: calc(var(--wiki-control-height) - var(--wiki-space-1));
   height: calc(var(--wiki-control-height) - var(--wiki-space-1));
   border-radius: var(--wiki-control-radius);
-  transition: box-shadow 0.3s ease, border-color 0.3s ease;
-}
-
-.agent-tasks--running .agent-tasks__mark {
-  animation: laser-pulse 2s infinite ease-in-out;
 }
 
 .agent-tasks__heading {
@@ -417,7 +411,6 @@ watchEffect(() => {
   height: var(--wiki-space-1);
   overflow: hidden;
   background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 9%, transparent);
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
 .agent-tasks__progress-fill {
@@ -427,13 +420,11 @@ watchEffect(() => {
 }
 
 .agent-tasks__progress-fill--success {
-  background: linear-gradient(90deg, #10b981 0%, #06b6d4 100%);
-  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+  background: rgb(var(--v-theme-success));
 }
 
 .agent-tasks__progress-fill--attention {
-  background: linear-gradient(90deg, #f59e0b 0%, #ef4444 100%);
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+  background: rgb(var(--v-theme-warning));
 }
 
 .agent-tasks__list {
@@ -450,7 +441,6 @@ watchEffect(() => {
   align-items: start;
   padding: var(--wiki-space-3) var(--wiki-space-4);
   border-block-start: 1px solid var(--wiki-surface-border);
-  position: relative;
 }
 
 .agent-tasks__item--running {
@@ -479,15 +469,6 @@ watchEffect(() => {
   height: calc(var(--wiki-control-height) - var(--wiki-space-4));
   border-radius: var(--wiki-radius-xs);
   color: var(--task-accent);
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
-}
-
-.agent-tasks__item--running .agent-tasks__state-mark {
-  animation: laser-pulse 1.8s infinite ease-in-out;
-}
-
-.agent-tasks__item--completed .agent-tasks__state-mark {
-  animation: synaptic-burst 1.6s cubic-bezier(0.16, 1, 0.3, 1) 1;
 }
 
 .agent-tasks__body {
@@ -665,42 +646,12 @@ watchEffect(() => {
   clip: rect(0, 0, 0, 0);
 }
 
-@keyframes synaptic-burst {
-  0% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7), inset 0 0 0 0 rgba(16, 185, 129, 0.4);
-    transform: scale(0.96);
-  }
-  40% {
-    box-shadow: 0 0 16px 3px rgba(16, 185, 129, 0.5), inset 0 0 10px rgba(16, 185, 129, 0.3);
-    transform: scale(1.04);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0), inset 0 0 0 0 rgba(16, 185, 129, 0);
-    transform: scale(1);
-  }
-}
-
-@keyframes laser-pulse {
-  0% {
-    box-shadow: 0 0 4px rgba(6, 182, 212, 0.4), inset 0 0 2px rgba(6, 182, 212, 0.2);
-    border-color: rgba(6, 182, 212, 0.4);
-  }
-  50% {
-    box-shadow: 0 0 14px rgba(6, 182, 212, 0.8), inset 0 0 6px rgba(6, 182, 212, 0.4);
-    border-color: rgba(6, 182, 212, 0.9);
-  }
-  100% {
-    box-shadow: 0 0 4px rgba(6, 182, 212, 0.4), inset 0 0 2px rgba(6, 182, 212, 0.2);
-    border-color: rgba(6, 182, 212, 0.4);
-  }
-}
 
 @media (max-width: 599.98px) {
   .agent-tasks__header,
   .agent-tasks__item {
     padding-inline: var(--wiki-space-3);
   }
-
   .agent-tasks__item {
     grid-template-columns: calc(var(--wiki-control-height) - var(--wiki-space-5)) minmax(0, 1fr);
     gap: var(--wiki-space-2);
@@ -734,11 +685,7 @@ watchEffect(() => {
 @media (prefers-reduced-motion: reduce) {
   .agent-tasks__header::after,
   .agent-task-record summary::after,
-  .agent-tasks__progress-fill,
-  .agent-tasks__item--completed .agent-tasks__state-mark,
-  .agent-tasks__item--running .agent-tasks__state-mark,
-  .agent-tasks--running .agent-tasks__mark {
-    animation: none;
+  .agent-tasks__progress-fill {
     transition: none;
   }
 }

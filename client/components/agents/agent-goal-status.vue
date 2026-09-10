@@ -77,9 +77,7 @@
             :aria-valuetext="budgetAriaLabel"
             aria-label="Peak goal resource use"
           >
-            <span class="agent-goal__meter-fill" :style="{ width: `${budgetPercent}%` }">
-              <span class="agent-goal__meter-head" />
-            </span>
+            <span :style="{ width: `${budgetPercent}%` }" />
           </div>
         </div>
 
@@ -179,7 +177,7 @@
 import { computed, ref, watch } from 'vue'
 import type { AgentGoalView } from '../../../shared/agents/contracts.ts'
 
-const { goal, busy = false, runActive = false } = defineProps<{ goal: AgentGoalView; busy?: boolean; runActive?: boolean }>()
+const { goal, busy, runActive } = defineProps<{ goal: AgentGoalView; busy: boolean; runActive: boolean }>()
 const expanded = defineModel<boolean>('expanded', { required: true })
 const emit = defineEmits<{ pause: []; resume: []; cancel: [] }>()
 const pendingAction = ref<'pause' | 'resume' | 'cancel' | null>(null)
@@ -349,19 +347,19 @@ const progressLabel = computed(() => {
       - var(--wiki-space-3)
     )
   );
-  background:
-    radial-gradient(ellipse at 85% 0%, color-mix(in srgb, var(--goal-accent) 12%, transparent), transparent 70%),
-    color-mix(in srgb, var(--goal-accent) 6%, var(--wiki-surface-raised));
-  border: 1px solid color-mix(in srgb, var(--goal-accent) 35%, var(--wiki-surface-border));
+  background: color-mix(in srgb, var(--goal-accent) 8%, var(--wiki-surface-raised));
+  border: 1px solid color-mix(in srgb, var(--goal-accent) 30%, var(--wiki-surface-border));
   border-radius: var(--wiki-control-radius);
-  box-shadow: var(--wiki-shadow-xs), 0 0 16px -4px color-mix(in srgb, var(--goal-accent) 25%, transparent), var(--wiki-shadow-inset);
+  box-shadow: var(--wiki-shadow-xs), var(--wiki-shadow-inset);
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   position: relative;
   width: 100%;
-  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  transition:
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 .agent-goal--active,
 .agent-goal--completed { --goal-accent: rgb(var(--v-theme-success)); }
@@ -390,7 +388,6 @@ const progressLabel = computed(() => {
   height: 1.75rem;
   justify-content: center;
   width: 1.75rem;
-  box-shadow: 0 0 10px -2px color-mix(in srgb, var(--goal-accent) 40%, transparent);
 }
 .agent-goal__status-label {
   color: var(--goal-ink);
@@ -512,50 +509,20 @@ const progressLabel = computed(() => {
 .agent-goal__progress-heading span { color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 62%, transparent); font-weight: 650; }
 .agent-goal__progress-heading strong { color: var(--goal-ink); font-variant-numeric: tabular-nums; }
 .agent-goal__meter {
-  background: rgba(var(--v-theme-surface-variant, 148, 163, 184), 0.25);
-  border-radius: var(--wiki-radius-pill, 999px);
-  height: 8px;
+  background: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 10%, transparent);
+  border-radius: var(--wiki-radius-pill);
+  height: var(--wiki-space-1);
   overflow: hidden;
-  position: relative;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.3);
 }
-.agent-goal__meter-fill,
 .agent-goal__meter > span {
-  background: linear-gradient(90deg, #06b6d4 0%, #3b82f6 50%, #8b5cf6 100%);
+  background: var(--goal-accent);
   border-radius: inherit;
-  box-shadow: 0 0 10px rgba(6, 182, 212, 0.6);
   display: block;
   height: 100%;
-  position: relative;
-  transition: width var(--wiki-motion-normal, 0.4s) cubic-bezier(0.16, 1, 0.3, 1);
+  transition: width var(--wiki-motion-normal) var(--wiki-motion-ease-out);
 }
-.agent-goal__meter-head {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 14px;
-  background: #ffffff;
-  border-radius: 999px;
-  box-shadow: 0 0 8px #ffffff, 0 0 16px #06b6d4;
-  animation: pulse-head 1.2s infinite alternate ease-in-out;
-}
-.agent-goal__meter--warning .agent-goal__meter-fill,
-.agent-goal__meter--warning > span {
-  background: linear-gradient(90deg, #f59e0b 0%, #f97316 100%);
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.65);
-}
-.agent-goal__meter--warning .agent-goal__meter-head {
-  box-shadow: 0 0 8px #ffffff, 0 0 16px #f59e0b;
-}
-.agent-goal__meter--critical .agent-goal__meter-fill,
-.agent-goal__meter--critical > span {
-  background: linear-gradient(90deg, #f43f5e 0%, #ef4444 100%);
-  box-shadow: 0 0 14px rgba(244, 63, 94, 0.8);
-}
-.agent-goal__meter--critical .agent-goal__meter-head {
-  box-shadow: 0 0 8px #ffffff, 0 0 16px #ef4444;
-}
+.agent-goal__meter--warning > span { background: rgb(var(--v-theme-warning)); }
+.agent-goal__meter--critical > span { background: rgb(var(--v-theme-error)); }
 .agent-goal__budgets {
   display: grid;
   gap: var(--wiki-space-2);
@@ -594,13 +561,7 @@ const progressLabel = computed(() => {
   height: 2px;
   overflow: hidden;
 }
-.agent-goal__budget-track > span {
-  background: linear-gradient(90deg, #06b6d4 0%, #6366f1 100%);
-  box-shadow: 0 0 6px rgba(6, 182, 212, 0.4);
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-}
+.agent-goal__budget-track > span { background: var(--goal-accent); display: block; height: 100%; }
 .agent-goal__summary {
   color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent);
   font-size: .74rem;
@@ -638,10 +599,6 @@ const progressLabel = computed(() => {
 .agent-goal__dialog-actions { flex-wrap: wrap; padding: 0 var(--wiki-space-5) var(--wiki-space-4); }
 .agent-goal__dialog-actions :deep(.v-spacer) { min-width: 0; }
 
-@keyframes pulse-head {
-  0% { opacity: 0.7; transform: scaleX(0.8); }
-  100% { opacity: 1; transform: scaleX(1.3); }
-}
 
 @media (max-width: 600px) {
   .agent-goal__summary-row {
@@ -688,10 +645,8 @@ const progressLabel = computed(() => {
   .agent-goal__details { padding-block: var(--wiki-space-2); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .agent-goal__meter-fill,
   .agent-goal__meter > span,
   .agent-goal__toggle-icon { transition: none; }
-  .agent-goal__meter-head { animation: none; }
 }
 @media (forced-colors: active) {
   .agent-goal,

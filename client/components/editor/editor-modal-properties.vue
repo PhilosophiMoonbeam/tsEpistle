@@ -156,26 +156,26 @@
               :return-object='false'
               @keydown.capture='handleTagSearchKeydown'
               )
-              template(v-slot:item='{ props, item }')
+              template(v-slot:item='{ props, item, internalItem }')
                 v-list-item(
                   v-bind='props'
                   role='option'
-                  :data-tag-value='item.raw'
+                  :data-tag-value='internalItem.value'
                 )
                   template(v-slot:prepend)
-                    v-icon(:icon='item.raw === candidateTag ? `mdi-plus` : `mdi-tag-outline`', size='18')
+                    v-icon(:icon='item === candidateTag ? `mdi-plus` : `mdi-tag-outline`', size='18')
                   template(v-slot:title)
-                    span(v-if='item.raw === candidateTag') Add “{{ item.raw }}” to page
-                    span(v-else) {{ item.raw }}
-                  template(v-slot:subtitle v-if='item.raw === candidateTag')
+                    span(v-if='item === candidateTag') Add “{{ item }}” to page
+                    span(v-else) {{ item }}
+                  template(v-slot:subtitle v-if='item === candidateTag')
                     | New names are created when the page is saved.
               template(v-slot:chip='{ props, item }')
                 v-chip(
                   v-bind='props'
                   closable
                   size='small'
-                  :close-label='`Remove tag ${item.raw || item.title || item}`'
-                ) {{ item.raw || item.title || item }}
+                  :close-label='`Remove tag ${item}`'
+                ) {{ item }}
               template(v-slot:no-data)
                 v-list-item(title='Type to search for suggestions or enter a name.')
               template(v-slot:menu-footer)

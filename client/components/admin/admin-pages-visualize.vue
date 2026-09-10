@@ -4,30 +4,7 @@
     <section class="atlas-intro"><div><span class="atlas-kicker">Structure &amp; relationships</span><h2>Follow the shape of your knowledge.</h2><p>Folders reveal organization. Page links reveal connections. Explore a diagram or use the searchable connection directory.</p></div><dl><div><dt>Pages in {{ currentLocale }}</dt><dd>{{ pages.length }}</dd></div><div><dt>Links within this view</dt><dd>{{ internalLinkCount }}</dd></div></dl></section>
     <div class="atlas-controls"><v-select v-model="currentLocale" :items="locales" item-value="code" item-title="name" label="Language" variant="outlined" density="compact" hide-details /><v-btn-toggle v-model="directory" mandatory color="primary" aria-label="Atlas view"><v-btn :value="false">Diagram</v-btn><v-btn :value="true">Connection directory</v-btn></v-btn-toggle><v-select v-if="!directory" v-model="graphMode" :items="[{ title: 'Folder tree', value: 'htree' }, { title: 'Radial folders', value: 'hradial' }, { title: 'Page relationships', value: 'rradial' }]" label="Diagram structure" variant="outlined" density="compact" hide-details /><v-btn v-if="!directory" variant="text" :disabled="loading" @click="redraw">Reset view</v-btn></div>
     <async-state v-if="loading" state="loading" title="Loading the atlas" message="Fetching accessible page connections." /><async-state v-else-if="errorMessage" state="error" title="The atlas could not be loaded" :message="errorMessage" retry-label="Try again" @retry="loadPages" /><async-state v-else-if="!pages.length" state="empty" :title="`No pages for ${currentLocale}`" message="Choose another language or return to the page register." />
-    <template v-else>
-      <div v-show="!directory" class="atlas-diagram">
-        <p>{{ graphMode === 'rradial' ? 'Focus a page label to highlight its incoming and outgoing links. Drag to pan and scroll to zoom.' : 'Page labels open their administration details. Folder nodes organize paths and do not represent pages.' }} Use Tab to focus a page, then Enter to open it.</p>
-        <div class="atlas-diagram-viewport">
-          <div ref="svgContainer" class="admin-pages-visualize-svg" />
-          <constellation-hud
-            v-if="activeHudNode"
-            :visible="!!activeHudNode"
-            :title="activeHudNode.title"
-            :path="activeHudNode.path"
-            :id="activeHudNode.id"
-            :locale="currentLocale"
-            :incoming-count="activeHudNode.incomingCount"
-            :outgoing-count="activeHudNode.outgoingCount"
-            :x="activeHudNode.x"
-            :y="activeHudNode.y"
-            @mouseenter="onHudMouseEnter"
-            @mouseleave="onHudMouseLeave"
-            @jump="onHudJump"
-          />
-        </div>
-      </div>
-      <section v-show="directory" class="atlas-directory" aria-label="Page connection directory"><v-text-field v-model="search" label="Find a page or linked path" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable /><p role="status">{{ directoryPages.length }} pages</p><article v-for="page in directoryPages" :key="page.id"><div><router-link :to="`/pages/${page.id}`">{{ page.title }}</router-link><code>{{ page.path }}</code></div><div><span>{{ page.links.length }} {{ page.links.length === 1 ? 'outgoing link' : 'outgoing links' }}</span><ul v-if="page.links.length"><li v-for="link in page.links" :key="link"><router-link v-if="pages.some(item => item.path === link)" :to="`/pages/${pages.find(item => item.path === link)?.id}`">{{ link }}</router-link><code v-else>{{ link }}</code></li></ul><small v-else>No outgoing page links recorded.</small></div></article></section>
-    </template>
+    <template v-else><div v-show="!directory" class="atlas-diagram"><p>{{ graphMode === 'rradial' ? 'Focus a page label to highlight its incoming and outgoing links. Drag to pan and scroll to zoom.' : 'Page labels open their administration details. Folder nodes organize paths and do not represent pages.' }} Use Tab to focus a page, then Enter to open it.</p><div ref="svgContainer" class="admin-pages-visualize-svg" /></div><section v-show="directory" class="atlas-directory" aria-label="Page connection directory"><v-text-field v-model="search" label="Find a page or linked path" prepend-inner-icon="mdi-magnify" variant="outlined" hide-details clearable /><p role="status">{{ directoryPages.length }} pages</p><article v-for="page in directoryPages" :key="page.id"><div><router-link :to="`/pages/${page.id}`">{{ page.title }}</router-link><code>{{ page.path }}</code></div><div><span>{{ page.links.length }} {{ page.links.length === 1 ? 'outgoing link' : 'outgoing links' }}</span><ul v-if="page.links.length"><li v-for="link in page.links" :key="link"><router-link v-if="pages.some(item => item.path === link)" :to="`/pages/${pages.find(item => item.path === link)?.id}`">{{ link }}</router-link><code v-else>{{ link }}</code></li></ul><small v-else>No outgoing page links recorded.</small></div></article></section></template>
     <p class="atlas-footnote">Only pages and links visible to your account are included. A linked path outside this view may belong to another language or a page you cannot access; this view does not infer whether it exists.</p>
   </v-container>
 </template>
@@ -36,7 +13,6 @@ import { defineComponent, markRaw } from 'vue'
 import _ from 'lodash'
 import * as d3 from 'd3'
 import AsyncState from '@/components/common/async-state.vue'
-import ConstellationHud from './visualize/constellation-hud.vue'
 import { getErrorMessage } from '../../helpers/root-ui-store'
 import { fetchPageLinks, type PageLinkRow } from '../../helpers/pages-api'
 import { wikiStore } from '@/store/index.ts'
@@ -83,16 +59,6 @@ type TreeRootMetadata = {
 type TreeHierarchyRoot = d3.HierarchyNode<PageGraphNode> & TreeRootMetadata
 type TreePointRoot = d3.HierarchyPointNode<PageGraphNode> & TreeRootMetadata
 
-type ActiveHudNode = {
-  title: string
-  path: string
-  id?: number
-  incomingCount: number
-  outgoingCount: number
-  x: number
-  y: number
-}
-
 type AdminPagesVisualizeState = {
   graphMode: GraphMode
   directory: boolean
@@ -106,69 +72,13 @@ type AdminPagesVisualizeState = {
   currentLocale: string
   loading: boolean
   errorMessage: string
-  activeHudNode: ActiveHudNode | null
-  isHudHovered: boolean
-  hudHideTimeout: number | null
-}
-
-function injectConstellationDefs (svg: d3.Selection<SVGSVGElement, undefined, null, undefined>): void {
-  const defs = svg.append('defs')
-
-  const filter = defs.append('filter')
-    .attr('id', 'constellation-glow')
-    .attr('x', '-50%')
-    .attr('y', '-50%')
-    .attr('width', '200%')
-    .attr('height', '200%')
-
-  filter.append('feGaussianBlur')
-    .attr('in', 'SourceGraphic')
-    .attr('stdDeviation', '2')
-    .attr('result', 'coloredBlur1')
-
-  filter.append('feGaussianBlur')
-    .attr('in', 'SourceGraphic')
-    .attr('stdDeviation', '6')
-    .attr('result', 'coloredBlur2')
-
-  const merge = filter.append('feMerge')
-  merge.append('feMergeNode').attr('in', 'coloredBlur2')
-  merge.append('feMergeNode').attr('in', 'coloredBlur1')
-  merge.append('feMergeNode').attr('in', 'SourceGraphic')
-
-  const gradIncoming = defs.append('linearGradient')
-    .attr('id', 'link-gradient-incoming')
-    .attr('x1', '0%').attr('y1', '0%')
-    .attr('x2', '100%').attr('y2', '100%')
-  gradIncoming.append('stop').attr('offset', '0%').attr('stop-color', '#06b6d4').attr('stop-opacity', '0.95')
-  gradIncoming.append('stop').attr('offset', '100%').attr('stop-color', '#3b82f6').attr('stop-opacity', '0.35')
-
-  const gradOutgoing = defs.append('linearGradient')
-    .attr('id', 'link-gradient-outgoing')
-    .attr('x1', '0%').attr('y1', '0%')
-    .attr('x2', '100%').attr('y2', '100%')
-  gradOutgoing.append('stop').attr('offset', '0%').attr('stop-color', '#c084fc').attr('stop-opacity', '0.95')
-  gradOutgoing.append('stop').attr('offset', '100%').attr('stop-color', '#ec4899').attr('stop-opacity', '0.35')
-
-  const gradCyan = defs.append('radialGradient')
-    .attr('id', 'node-gradient-cyan')
-  gradCyan.append('stop').attr('offset', '0%').attr('stop-color', '#67e8f9')
-  gradCyan.append('stop').attr('offset', '70%').attr('stop-color', '#06b6d4')
-  gradCyan.append('stop').attr('offset', '100%').attr('stop-color', '#0891b2')
-
-  const gradOrchid = defs.append('radialGradient')
-    .attr('id', 'node-gradient-orchid')
-  gradOrchid.append('stop').attr('offset', '0%').attr('stop-color', '#f0abfc')
-  gradOrchid.append('stop').attr('offset', '70%').attr('stop-color', '#c084fc')
-  gradOrchid.append('stop').attr('offset', '100%').attr('stop-color', '#9333ea')
 }
 
 /* global siteConfig, siteLangs */
 
 export default defineComponent({
   components: {
-    AsyncState,
-    ConstellationHud
+    AsyncState
   },
   data (): AdminPagesVisualizeState {
     return {
@@ -183,37 +93,12 @@ export default defineComponent({
       locales: markRaw(siteLangs),
       currentLocale: siteConfig.lang,
       loading: false,
-      errorMessage: '',
-      activeHudNode: null,
-      isHudHovered: false,
-      hudHideTimeout: null
+      errorMessage: ''
     }
   },
   computed: {
     directoryPages(): PageLinkRow[] { const term = (this.search || '').trim().toLocaleLowerCase(); return this.pages.filter(page => !term || [page.title, page.path, ...page.links].some(value => value.toLocaleLowerCase().includes(term))) },
-    internalLinkCount(): number { const paths = new Set(this.pages.map(page => page.path)); return this.pages.reduce((count, page) => count + page.links.filter(path => paths.has(path)).length, 0) },
-    nodeDegreeMap (): Map<string, { incoming: number, outgoing: number }> {
-      const map = new Map<string, { incoming: number, outgoing: number }>()
-      for (const page of this.pages) {
-        if (!map.has(page.path)) {
-          map.set(page.path, { incoming: 0, outgoing: page.links?.length || 0 })
-        } else {
-          map.get(page.path)!.outgoing = page.links?.length || 0
-        }
-      }
-      for (const page of this.pages) {
-        if (page.links) {
-          for (const target of page.links) {
-            if (!map.has(target)) {
-              map.set(target, { incoming: 1, outgoing: 0 })
-            } else {
-              map.get(target)!.incoming++
-            }
-          }
-        }
-      }
-      return map
-    }
+    internalLinkCount(): number { const paths = new Set(this.pages.map(page => page.path)); return this.pages.reduce((count, page) => count + page.links.filter(path => paths.has(path)).length, 0) }
   },
   watch: {
     loading: {
@@ -350,7 +235,6 @@ export default defineComponent({
      * Relational Radial
      */
     drawRelations (container: HTMLDivElement): void {
-      const self = this
       const data = this.hierarchy(this.pages)
 
       const line = d3.lineRadial<RelationPointNode>()
@@ -370,8 +254,6 @@ export default defineComponent({
       svg.append('title').text('Interactive page relationship diagram')
       svg.append('desc').text('Focus a page label to highlight incoming and outgoing links. Press Enter or Space to open the page.')
 
-      injectConstellationDefs(svg)
-
       const g = svg.append('g')
 
       const zoom = d3.zoom<SVGSVGElement, undefined>()
@@ -380,15 +262,8 @@ export default defineComponent({
         })
       svg.call(zoom)
 
-      const getNodeRadius = (node: RelationPointNode): number => {
-        const inCount = node.incoming ? node.incoming.length : 0
-        const outCount = node.outgoing ? node.outgoing.length : 0
-        return 4 + Math.min(14, Math.sqrt(inCount + outCount) * 2.5)
-      }
-
       const link = g.append('g')
-        .attr('stroke', 'rgba(148, 163, 184, 0.18)')
-        .attr('stroke-width', 1.2)
+        .attr('stroke', 'rgba(var(--v-theme-on-background), .24)')
         .attr('fill', 'none')
         .selectAll<SVGPathElement, RelationLink>('path')
         .data(root.descendants().flatMap(leaf => leaf.outgoing))
@@ -398,40 +273,16 @@ export default defineComponent({
           relationship.path = this
         })
 
-      const nodeGroup = g.append('g')
+      g.append('g')
         .attr('font-family', 'inherit')
         .attr('font-size', 'var(--wiki-font-size-label, 12px)')
         .selectAll<SVGGElement, RelationPointNode>('g')
         .data(root.descendants())
         .join('g')
         .attr('transform', node => `rotate(${node.x * 180 / Math.PI - 90}) translate(${node.y},0)`)
-
-      // Glowing orbital halos around active/connected nodes
-      const halos = nodeGroup.append('circle')
-        .attr('class', 'constellation-halo')
-        .attr('r', node => getNodeRadius(node) + 6)
-        .attr('fill', 'none')
-        .attr('stroke', node => (node.incoming?.length || 0) >= (node.outgoing?.length || 0) ? '#06b6d4' : '#c084fc')
-        .attr('stroke-width', 2)
-        .attr('stroke-opacity', 0)
-        .attr('filter', 'url(#constellation-glow)')
-
-      // Luminous node circles with connectivity-based radius
-      nodeGroup.append('circle')
-        .attr('class', 'constellation-node')
-        .attr('r', node => getNodeRadius(node))
-        .attr('fill', node => {
-          const inCount = node.incoming ? node.incoming.length : 0
-          const outCount = node.outgoing ? node.outgoing.length : 0
-          if (inCount === 0 && outCount === 0) return 'rgba(148, 163, 184, 0.45)'
-          return inCount >= outCount ? 'url(#node-gradient-cyan)' : 'url(#node-gradient-orchid)'
-        })
-        .attr('stroke', 'rgba(255, 255, 255, 0.4)')
-        .attr('stroke-width', 1)
-
-      nodeGroup.append('text')
+        .append('text')
         .attr('dy', '0.31em')
-        .attr('x', node => node.x < Math.PI ? getNodeRadius(node) + 6 : -(getNodeRadius(node) + 6))
+        .attr('x', node => node.x < Math.PI ? 6 : -6)
         .attr('text-anchor', node => node.x < Math.PI ? 'start' : 'end')
         .attr('transform', node => node.x >= Math.PI ? 'rotate(180)' : null)
         .attr('fill', 'rgb(var(--v-theme-on-background))')
@@ -460,94 +311,37 @@ export default defineComponent({
         .attr('pointer-events', 'none')
         .attr('stroke', 'rgb(var(--v-theme-background))')
 
-      function overed (this: SVGTextElement, event: Event, node: RelationPointNode): void {
+      function overed (this: SVGTextElement, _event: Event, node: RelationPointNode): void {
         link.style('mix-blend-mode', null)
         d3.select<SVGTextElement, RelationPointNode>(this).attr('font-weight', 'bold')
-
         d3.selectAll<SVGPathElement, RelationLink>(
           node.incoming.flatMap(relationship => relationship.path ? [relationship.path] : [])
-        )
-          .attr('stroke', 'url(#link-gradient-incoming)')
-          .attr('stroke-width', 2.5)
-          .attr('filter', 'url(#constellation-glow)')
-          .raise()
-
+        ).attr('stroke', 'rgb(var(--v-theme-primary))').raise()
         d3.selectAll<SVGTextElement, RelationPointNode>(
           node.incoming.flatMap(([source]) => source.text ? [source.text] : [])
-        ).attr('fill', '#06b6d4').attr('font-weight', 'bold')
-
+        ).attr('fill', 'rgb(var(--v-theme-primary))').attr('font-weight', 'bold')
         d3.selectAll<SVGPathElement, RelationLink>(
           node.outgoing.flatMap(relationship => relationship.path ? [relationship.path] : [])
-        )
-          .attr('stroke', 'url(#link-gradient-outgoing)')
-          .attr('stroke-width', 2.5)
-          .attr('filter', 'url(#constellation-glow)')
-          .raise()
-
+        ).attr('stroke', 'rgb(var(--v-theme-accent))').raise()
         d3.selectAll<SVGTextElement, RelationPointNode>(
           node.outgoing.flatMap(([, target]) => target.text ? [target.text] : [])
-        ).attr('fill', '#c084fc').attr('font-weight', 'bold')
-
-        const activeSet = new Set<RelationPointNode>([
-          node,
-          ...node.incoming.map(([source]) => source),
-          ...node.outgoing.map(([, target]) => target)
-        ])
-        halos.filter(d => activeSet.has(d))
-          .attr('stroke-opacity', d => d === node ? 0.95 : 0.6)
-          .attr('r', d => getNodeRadius(d) + (d === node ? 8 : 5))
-
-        const containerRect = container.getBoundingClientRect()
-        let clientX = 0
-        let clientY = 0
-        if ('clientX' in event && typeof (event as MouseEvent).clientX === 'number') {
-          clientX = (event as MouseEvent).clientX - containerRect.left
-          clientY = (event as MouseEvent).clientY - containerRect.top
-        } else {
-          const textRect = this.getBoundingClientRect()
-          clientX = textRect.left - containerRect.left + textRect.width / 2
-          clientY = textRect.top - containerRect.top
-        }
-
-        self.showHud({
-          title: node.data.title,
-          path: node.data.path,
-          id: node.data.id,
-          incomingCount: node.incoming ? node.incoming.length : 0,
-          outgoingCount: node.outgoing ? node.outgoing.length : 0,
-          x: clientX,
-          y: clientY
-        })
+        ).attr('fill', 'rgb(var(--v-theme-accent))').attr('font-weight', 'bold')
       }
 
       function outed (this: SVGTextElement, _event: Event, node: RelationPointNode): void {
         d3.select<SVGTextElement, RelationPointNode>(this).attr('font-weight', null)
-
         d3.selectAll<SVGPathElement, RelationLink>(
           node.incoming.flatMap(relationship => relationship.path ? [relationship.path] : [])
-        )
-          .attr('stroke', 'rgba(148, 163, 184, 0.18)')
-          .attr('stroke-width', 1.2)
-          .attr('filter', null)
-
+        ).attr('stroke', null)
         d3.selectAll<SVGTextElement, RelationPointNode>(
           node.incoming.flatMap(([source]) => source.text ? [source.text] : [])
         ).attr('fill', null).attr('font-weight', null)
-
         d3.selectAll<SVGPathElement, RelationLink>(
           node.outgoing.flatMap(relationship => relationship.path ? [relationship.path] : [])
-        )
-          .attr('stroke', 'rgba(148, 163, 184, 0.18)')
-          .attr('stroke-width', 1.2)
-          .attr('filter', null)
-
+        ).attr('stroke', null)
         d3.selectAll<SVGTextElement, RelationPointNode>(
           node.outgoing.flatMap(([, target]) => target.text ? [target.text] : [])
         ).attr('fill', null).attr('font-weight', null)
-
-        halos.attr('stroke-opacity', 0).attr('r', d => getNodeRadius(d) + 6)
-
-        self.scheduleHideHud()
       }
 
       const svgNode = svg.node()
@@ -559,11 +353,10 @@ export default defineComponent({
      * Hierarchical Tree
      */
     drawTree (container: HTMLDivElement): void {
-      const self = this
       const data = this.hierarchy(this.pages)
 
       const treeRoot = d3.hierarchy<PageGraphNode>(data) as TreeHierarchyRoot
-      treeRoot.dx = 14
+      treeRoot.dx = 10
       treeRoot.dy = this.width / (treeRoot.height + 1)
       const root = d3.tree<PageGraphNode>()
         .nodeSize([treeRoot.dx, treeRoot.dy])(treeRoot) as TreePointRoot
@@ -580,8 +373,9 @@ export default defineComponent({
       svg.append('title').text('Interactive page hierarchy')
       svg.append('desc').text('Focus a page label to highlight related links. Press Enter or Space to open the page.')
 
-      injectConstellationDefs(svg)
-
+      // this extra level is necessary because the element that we
+      // apply the zoom tranform to must be above the element where
+      // we apply the translation (`g`), or else zoom is wonky
       const gZoom = svg.append('g')
       const zoom = d3.zoom<SVGSVGElement, undefined>()
         .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, undefined>) => {
@@ -596,8 +390,8 @@ export default defineComponent({
 
       g.append('g')
         .attr('fill', 'none')
-        .attr('stroke', 'rgba(148, 163, 184, 0.28)')
-        .attr('stroke-opacity', 0.6)
+        .attr('stroke', 'rgb(var(--v-theme-border))')
+        .attr('stroke-opacity', 0.4)
         .attr('stroke-width', 1.5)
         .selectAll<SVGPathElement, d3.HierarchyPointLink<PageGraphNode>>('path')
         .data(root.links())
@@ -609,13 +403,6 @@ export default defineComponent({
           .x(node => node.y)
           .y(node => node.x))
 
-      const getNodeRadius = (node: d3.HierarchyPointNode<PageGraphNode>): number => {
-        const info = self.nodeDegreeMap.get(node.data.path)
-        const inCount = info ? info.incoming : 0
-        const outCount = info ? info.outgoing : (node.data.links?.length || 0)
-        return 4 + Math.min(14, Math.sqrt(inCount + outCount) * 2.5)
-      }
-
       const node = g.append('g')
         .attr('stroke-linejoin', 'round')
         .attr('stroke-width', 3)
@@ -623,17 +410,9 @@ export default defineComponent({
         .data(root.descendants())
         .join('g')
         .attr('transform', descendant => `translate(${descendant.y},${descendant.x})`)
-
-      node.append('circle')
-        .attr('class', 'constellation-node')
-        .attr('r', descendant => getNodeRadius(descendant))
-        .attr('fill', descendant => descendant.children ? 'url(#node-gradient-cyan)' : 'url(#node-gradient-orchid)')
-        .attr('stroke', 'rgba(255, 255, 255, 0.35)')
-        .attr('stroke-width', 1)
-
       node.append('text')
         .attr('dy', '0.31em')
-        .attr('x', descendant => descendant.children ? -(getNodeRadius(descendant) + 6) : (getNodeRadius(descendant) + 6))
+        .attr('x', descendant => descendant.children ? -6 : 6)
         .attr('text-anchor', descendant => descendant.children ? 'end' : 'start')
         .attr('fill', 'rgb(var(--v-theme-on-background))')
         .attr('cursor', descendant => descendant.data.id === undefined ? null : 'pointer')
@@ -643,39 +422,6 @@ export default defineComponent({
           ? null
           : `Open ${descendant.data.title}, ${descendant.data.path}`)
         .text(descendant => descendant.data.title)
-        .on('mouseover', function (this: SVGTextElement, event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) {
-          const containerRect = container.getBoundingClientRect()
-          const info = self.nodeDegreeMap.get(descendant.data.path)
-          const inCount = info ? info.incoming : 0
-          const outCount = info ? info.outgoing : (descendant.data.links?.length || 0)
-          self.showHud({
-            title: descendant.data.title,
-            path: descendant.data.path,
-            id: descendant.data.id,
-            incomingCount: inCount,
-            outgoingCount: outCount,
-            x: event.clientX - containerRect.left,
-            y: event.clientY - containerRect.top
-          })
-        })
-        .on('focus', function (this: SVGTextElement, _event: FocusEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) {
-          const containerRect = container.getBoundingClientRect()
-          const textRect = this.getBoundingClientRect()
-          const info = self.nodeDegreeMap.get(descendant.data.path)
-          const inCount = info ? info.incoming : 0
-          const outCount = info ? info.outgoing : (descendant.data.links?.length || 0)
-          self.showHud({
-            title: descendant.data.title,
-            path: descendant.data.path,
-            id: descendant.data.id,
-            incomingCount: inCount,
-            outgoingCount: outCount,
-            x: textRect.left - containerRect.left + textRect.width / 2,
-            y: textRect.top - containerRect.top
-          })
-        })
-        .on('mouseout', () => self.scheduleHideHud())
-        .on('blur', () => self.scheduleHideHud())
         .on('click', (event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
           this.goToPage(event, descendant))
         .on('keydown', (event: KeyboardEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
@@ -696,7 +442,6 @@ export default defineComponent({
      * Hierarchical Radial
      */
     drawRadialTree (container: HTMLDivElement): void {
-      const self = this
       const data = this.hierarchy(this.pages)
 
       const tree = d3.tree<PageGraphNode>()
@@ -712,8 +457,6 @@ export default defineComponent({
       svg.append('title').text('Interactive radial page hierarchy')
       svg.append('desc').text('Focus a page label to highlight related links. Press Enter or Space to open the page.')
 
-      injectConstellationDefs(svg)
-
       const g = svg.append('g')
       const zoom = d3.zoom<SVGSVGElement, undefined>()
         .on('zoom', (event: d3.D3ZoomEvent<SVGSVGElement, undefined>) => {
@@ -723,8 +466,8 @@ export default defineComponent({
 
       g.append('g')
         .attr('fill', 'none')
-        .attr('stroke', 'rgba(148, 163, 184, 0.28)')
-        .attr('stroke-opacity', 0.6)
+        .attr('stroke', 'rgb(var(--v-theme-border))')
+        .attr('stroke-opacity', 0.4)
         .attr('stroke-width', 1.5)
         .selectAll<SVGPathElement, d3.HierarchyPointLink<PageGraphNode>>('path')
         .data(root.links())
@@ -735,13 +478,6 @@ export default defineComponent({
         >()
           .angle(node => node.x)
           .radius(node => node.y))
-
-      const getNodeRadius = (node: d3.HierarchyPointNode<PageGraphNode>): number => {
-        const info = self.nodeDegreeMap.get(node.data.path)
-        const inCount = info ? info.incoming : 0
-        const outCount = info ? info.outgoing : (node.data.links?.length || 0)
-        return 4 + Math.min(14, Math.sqrt(inCount + outCount) * 2.5)
-      }
 
       const node = g.append('g')
         .attr('stroke-linejoin', 'round')
@@ -755,15 +491,12 @@ export default defineComponent({
         `)
 
       node.append('circle')
-        .attr('class', 'constellation-node')
-        .attr('fill', descendant => descendant.children ? 'url(#node-gradient-cyan)' : 'url(#node-gradient-orchid)')
-        .attr('r', descendant => getNodeRadius(descendant))
-        .attr('stroke', 'rgba(255, 255, 255, 0.35)')
-        .attr('stroke-width', 1)
+        .attr('fill', descendant => descendant.children ? 'rgb(var(--v-theme-primary))' : 'rgb(var(--v-theme-accent))')
+        .attr('r', 2.5)
 
       node.append('text')
         .attr('dy', '0.31em')
-        .attr('x', descendant => descendant.x < Math.PI === !descendant.children ? (getNodeRadius(descendant) + 5) : -(getNodeRadius(descendant) + 5))
+        .attr('x', descendant => descendant.x < Math.PI === !descendant.children ? 6 : -6)
         .attr('text-anchor', descendant => descendant.x < Math.PI === !descendant.children ? 'start' : 'end')
         .attr('transform', descendant => descendant.x >= Math.PI ? 'rotate(180)' : null)
         .attr('fill', 'rgb(var(--v-theme-on-background))')
@@ -774,39 +507,6 @@ export default defineComponent({
           ? null
           : `Open ${descendant.data.title}, ${descendant.data.path}`)
         .text(descendant => descendant.data.title)
-        .on('mouseover', function (this: SVGTextElement, event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) {
-          const containerRect = container.getBoundingClientRect()
-          const info = self.nodeDegreeMap.get(descendant.data.path)
-          const inCount = info ? info.incoming : 0
-          const outCount = info ? info.outgoing : (descendant.data.links?.length || 0)
-          self.showHud({
-            title: descendant.data.title,
-            path: descendant.data.path,
-            id: descendant.data.id,
-            incomingCount: inCount,
-            outgoingCount: outCount,
-            x: event.clientX - containerRect.left,
-            y: event.clientY - containerRect.top
-          })
-        })
-        .on('focus', function (this: SVGTextElement, _event: FocusEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) {
-          const containerRect = container.getBoundingClientRect()
-          const textRect = this.getBoundingClientRect()
-          const info = self.nodeDegreeMap.get(descendant.data.path)
-          const inCount = info ? info.incoming : 0
-          const outCount = info ? info.outgoing : (descendant.data.links?.length || 0)
-          self.showHud({
-            title: descendant.data.title,
-            path: descendant.data.path,
-            id: descendant.data.id,
-            incomingCount: inCount,
-            outgoingCount: outCount,
-            x: textRect.left - containerRect.left + textRect.width / 2,
-            y: textRect.top - containerRect.top
-          })
-        })
-        .on('mouseout', () => self.scheduleHideHud())
-        .on('blur', () => self.scheduleHideHud())
         .on('click', (event: MouseEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
           this.goToPage(event, descendant))
         .on('keydown', (event: KeyboardEvent, descendant: d3.HierarchyPointNode<PageGraphNode>) =>
@@ -849,38 +549,6 @@ export default defineComponent({
             break
         }
       }
-    },
-    showHud (data: ActiveHudNode): void {
-      if (this.hudHideTimeout !== null) {
-        clearTimeout(this.hudHideTimeout)
-        this.hudHideTimeout = null
-      }
-      this.activeHudNode = data
-    },
-    scheduleHideHud (): void {
-      if (this.hudHideTimeout !== null) {
-        clearTimeout(this.hudHideTimeout)
-      }
-      this.hudHideTimeout = window.setTimeout(() => {
-        if (!this.isHudHovered) {
-          this.activeHudNode = null
-        }
-        this.hudHideTimeout = null
-      }, 160)
-    },
-    onHudMouseEnter (): void {
-      this.isHudHovered = true
-      if (this.hudHideTimeout !== null) {
-        clearTimeout(this.hudHideTimeout)
-        this.hudHideTimeout = null
-      }
-    },
-    onHudMouseLeave (): void {
-      this.isHudHovered = false
-      this.activeHudNode = null
-    },
-    onHudJump (id: number): void {
-      this.$router.push(`/pages/${id}`)
     }
   },
   mounted () {
@@ -890,10 +558,6 @@ export default defineComponent({
     this.pageLoadRequestId++
     this.pageLoadController?.abort()
     this.pageLoadController = null
-    if (this.hudHideTimeout !== null) {
-      clearTimeout(this.hudHideTimeout)
-      this.hudHideTimeout = null
-    }
   }
 })
 </script>
@@ -911,21 +575,6 @@ export default defineComponent({
   min-width: 10rem;
 }
 
-.atlas-diagram-viewport {
-  position: relative;
-  width: 100%;
-  border-radius: 12px;
-  background:
-    radial-gradient(1px 1px at 25px 35px, rgba(255, 255, 255, 0.15), transparent),
-    radial-gradient(1px 1px at 85px 120px, rgba(6, 182, 212, 0.25), transparent),
-    radial-gradient(1.5px 1.5px at 160px 70px, rgba(192, 132, 252, 0.2), transparent),
-    linear-gradient(180deg, rgba(8, 12, 24, 0.7) 0%, rgba(4, 7, 15, 0.9) 100%);
-  background-size: 200px 200px, 300px 300px, 250px 250px, 100% 100%;
-  border: 1px solid rgba(6, 182, 212, 0.2);
-  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.6);
-  overflow: hidden;
-}
-
 .admin-pages-visualize-svg {
   display: flex;
   min-height: min(65dvh, 48rem);
@@ -936,21 +585,6 @@ export default defineComponent({
     height: 100%;
     min-height: inherit;
     width: 100%;
-  }
-
-  .constellation-node {
-    transition: r 0.2s cubic-bezier(0.16, 1, 0.3, 1), stroke-width 0.2s ease, stroke 0.2s ease;
-    cursor: pointer;
-
-    &:hover {
-      stroke: #ffffff;
-      stroke-width: 2.5px;
-    }
-  }
-
-  .constellation-halo {
-    transition: stroke-opacity 0.25s ease, r 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    pointer-events: none;
   }
 }
 
@@ -976,5 +610,5 @@ export default defineComponent({
 }
 </style>
 <style scoped lang="scss">
-.pages-atlas { max-width:1600px; padding-bottom:4rem !important; }.atlas-intro { display:flex; align-items:center; justify-content:space-between; gap:3rem; padding:2rem .5rem; }.atlas-kicker { font-size:.7rem; text-transform:uppercase; letter-spacing:.13em; }h2 { font:500 clamp(1.7rem,2.5vw,2.5rem)/1.15 var(--font-family-serif,Georgia,serif); margin:.7rem 0 1rem; }.atlas-intro p { line-height:1.7; max-width:45rem; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-intro dl { display:flex; flex-shrink:0; gap:2rem; }.atlas-intro dt { font-size:.75rem; }.atlas-intro dd { font:500 2.2rem Georgia,serif; margin:.4rem 0 0; }.atlas-controls { display:flex; flex-wrap:wrap; align-items:center; gap:1rem; padding:1rem 0; }.atlas-controls .v-select { flex:1 1 12rem; max-width:20rem; }.atlas-diagram,.atlas-directory { border:1px solid rgba(6, 182, 212, 0.22); border-radius:16px; background:radial-gradient(ellipse at 15% 15%, rgba(6, 182, 212, 0.1) 0%, transparent 45%), radial-gradient(ellipse at 85% 85%, rgba(192, 132, 252, 0.08) 0%, transparent 45%), radial-gradient(circle at 50% 50%, rgba(15, 23, 42, 0.95) 0%, rgba(3, 7, 18, 0.98) 100%); padding:1.5rem; box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08); backdrop-filter: blur(12px); overflow: hidden; }.atlas-diagram>p,.atlas-footnote { font-size:.8rem; line-height:1.7; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-directory>p { padding:1rem 0; font-size:.8rem; }.atlas-directory article { display:grid; grid-template-columns:1fr 1fr; gap:2rem; border-top:1px solid rgba(var(--v-border-color),.18); padding:1.4rem 0; }.atlas-directory article>div { min-width:0; }.atlas-directory code { display:block; font-size:.8rem; overflow-wrap:anywhere; margin-top:.4rem; }.atlas-directory a { color:rgb(var(--v-theme-on-surface)); text-decoration:underline; overflow-wrap:anywhere; }.atlas-directory ul { padding-left:1.1rem; margin-top:.6rem; font-size:.8rem; line-height:1.8; }.atlas-directory small { display:block; margin-top:.5rem; }.atlas-footnote { margin:1.5rem 0; }.atlas-directory a:focus-visible { outline:2px solid rgb(var(--v-theme-primary)); outline-offset:3px; }@media(max-width:900px) { .atlas-intro { align-items:start; flex-direction:column; gap:1.5rem; } }@media(max-width:600px) { .atlas-directory article { grid-template-columns:1fr; gap:1rem; }.atlas-controls .v-select { max-width:none; }.atlas-diagram,.atlas-directory { padding:1rem; } }
+.pages-atlas { max-width:1600px; padding-bottom:4rem !important; }.atlas-intro { display:flex; align-items:center; justify-content:space-between; gap:3rem; padding:2rem .5rem; }.atlas-kicker { font-size:.7rem; text-transform:uppercase; letter-spacing:.13em; }h2 { font:500 clamp(1.7rem,2.5vw,2.5rem)/1.15 var(--font-family-serif,Georgia,serif); margin:.7rem 0 1rem; }.atlas-intro p { line-height:1.7; max-width:45rem; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-intro dl { display:flex; flex-shrink:0; gap:2rem; }.atlas-intro dt { font-size:.75rem; }.atlas-intro dd { font:500 2.2rem Georgia,serif; margin:.4rem 0 0; }.atlas-controls { display:flex; flex-wrap:wrap; align-items:center; gap:1rem; padding:1rem 0; }.atlas-controls .v-select { flex:1 1 12rem; max-width:20rem; }.atlas-diagram,.atlas-directory { border:1px solid rgba(var(--v-border-color),.18); border-radius:12px; background:rgb(var(--v-theme-surface)); padding:1.5rem; }.atlas-diagram>p,.atlas-footnote { font-size:.8rem; line-height:1.7; color:rgb(var(--v-theme-on-surface-variant)); }.atlas-directory>p { padding:1rem 0; font-size:.8rem; }.atlas-directory article { display:grid; grid-template-columns:1fr 1fr; gap:2rem; border-top:1px solid rgba(var(--v-border-color),.18); padding:1.4rem 0; }.atlas-directory article>div { min-width:0; }.atlas-directory code { display:block; font-size:.8rem; overflow-wrap:anywhere; margin-top:.4rem; }.atlas-directory a { color:rgb(var(--v-theme-on-surface)); text-decoration:underline; overflow-wrap:anywhere; }.atlas-directory ul { padding-left:1.1rem; margin-top:.6rem; font-size:.8rem; line-height:1.8; }.atlas-directory small { display:block; margin-top:.5rem; }.atlas-footnote { margin:1.5rem 0; }.atlas-directory a:focus-visible { outline:2px solid rgb(var(--v-theme-primary)); outline-offset:3px; }@media(max-width:900px) { .atlas-intro { align-items:start; flex-direction:column; gap:1.5rem; } }@media(max-width:600px) { .atlas-directory article { grid-template-columns:1fr; gap:1rem; }.atlas-controls .v-select { max-width:none; }.atlas-diagram,.atlas-directory { padding:1rem; } }
 </style>

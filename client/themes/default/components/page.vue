@@ -2,7 +2,8 @@
   v-app.wiki-page(v-scroll='upBtnScroll', :class='[$vuetify.locale.isRtl ? `is-rtl` : `is-ltr`, { "wiki-page--reading": readerFocus }]')
     a.page-skip-link(:href='`#${pageArticleId}`', @click.prevent='focusArticle') Skip to content
     nav-header(v-if='!printView')
-    photon-reading-beam(:progress='readingProgress', :visible='!printView', :title='title', @milestone='handleReadingMilestone')
+    .page-position(v-if='!printView', role='progressbar', :aria-label='$t(`common:page.pagePosition`)', :aria-valuenow='readingProgress', aria-valuemin='0', aria-valuemax='100')
+      .page-position-fill(:style='{ transform: `scaleX(${readingProgress / 100})` }')
     .page-reading-dock(v-if='readerFocus && !printView', role='region', :aria-label='$t(`common:page.focusReading`)')
       v-icon(icon='mdi-book-open-page-variant-outline', size='18', aria-hidden='true')
       span.page-reading-dock-title {{ title }}
@@ -810,7 +811,6 @@ import {
 } from '../../../helpers/page-branding'
 import SiteBanner from '@/components/common/site-banner.vue'
 import NavSidebar, { type SidebarItem } from './nav-sidebar.vue'
-import PhotonReadingBeam from './photon-reading-beam.vue'
 import type { Environment as PrismEnvironment } from 'prismjs'
 import Prism from '../../../libs/prism/setup'
 import mermaid from 'mermaid'
@@ -1081,7 +1081,6 @@ export default defineComponent({
     SiteBanner,
     PageBrandingMark,
     PageTocTree,
-    PhotonReadingBeam,
   },
   setup () {
     return {
@@ -1576,9 +1575,6 @@ export default defineComponent({
   },
   methods: {
     mergeProps,
-    handleReadingMilestone(): void {
-      this.$emit('milestone')
-    },
     pageBrandingImageError (identity: string): void {
       if (identity === this.pageBrandingIdentity) this.brandingFailureIdentity = identity
     },

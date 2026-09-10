@@ -61,8 +61,7 @@
               ? 'Unsaved policy draft'
               : 'Showing saved policy'
           }}</span
-        ><span class="security-status__runtime"
-          ><radar-pulse-beacon :state="runtimeState" />{{
+        ><span>{{
           saved.runtime.state === 'applied'
             ? 'Runtime configuration current'
             : 'Runtime configuration needs attention'
@@ -93,31 +92,19 @@
             </div>
             <div class="security-coverage">
               <div>
-                <strong
-                  ><animated-counter
-                    :target-value="saved.coverage.activeAccounts || 0"
-                /></strong>
+                <strong>{{ saved.coverage.activeAccounts }}</strong>
                 <span>active accounts</span>
               </div>
               <div>
                 <strong>
-                  <animated-counter
-                    :target-value="saved.coverage.twoFactorEnrolled || 0"
-                  />
-                  <small>
-                    /
-                    <animated-counter
-                      :target-value="saved.coverage.formAccounts || 0"
-                    />
-                  </small>
-                </strong>
+                  {{ saved.coverage.twoFactorEnrolled }}<small>
+                    / {{ saved.coverage.formAccounts }}</small
+                  ></strong
+                >
                 <span>workspace two-factor enrolled</span>
               </div>
               <div>
-                <strong
-                  ><animated-counter
-                    :target-value="saved.coverage.providerManagedAccounts || 0"
-                /></strong>
+                <strong>{{ saved.coverage.providerManagedAccounts }}</strong>
                 <span>provider-managed factors</span>
               </div>
             </div>
@@ -554,65 +541,52 @@
           </template>
         </section>
         <aside class="security-aside">
-          <tactile-tilt-card class="security-tilt-wrapper">
-            <div class="security-panel security-panel--posture">
-              <security-posture-gauge :score="securityPostureScore" />
-              <div class="security-posture-meta">
-                <span class="security-kicker">Defensive Posture</span>
-                <p>Calculated across active authentication, cryptographic transport, and session defenses.</p>
+          <div class="security-panel">
+            <span class="security-kicker">Saved policy</span>
+            <h3>
+              {{
+                saved.runtime.state === 'applied'
+                  ? 'Configuration current'
+                  : 'Activation pending'
+              }}
+            </h3>
+            <p>
+              The observed application configuration
+              {{
+                saved.runtime.state === 'applied' ? 'matches' : 'differs from'
+              }}
+              the saved policy. Review response headers for the browser-facing behavior.
+            </p>
+            <dl>
+              <div>
+                <dt>Last observed</dt>
+                <dd>{{ date(saved.runtime.observedAt) }}</dd>
               </div>
-            </div>
-          </tactile-tilt-card>
-          <tactile-tilt-card class="security-tilt-wrapper">
-            <div class="security-panel">
-              <span class="security-kicker">Saved policy</span>
-              <h3>
-                {{
-                  saved.runtime.state === 'applied'
-                    ? 'Configuration current'
-                    : 'Activation pending'
-                }}
-              </h3>
-              <p>
-                The observed application configuration
-                {{
-                  saved.runtime.state === 'applied' ? 'matches' : 'differs from'
-                }}
-                the saved policy. Review response headers for the browser-facing behavior.
-              </p>
-              <dl>
-                <div>
-                  <dt>Last observed</dt>
-                  <dd>{{ date(saved.runtime.observedAt) }}</dd>
-                </div>
-                <div>
-                  <dt>Public address</dt>
-                  <dd>{{ origin || 'Not configured' }}</dd>
-                </div>
-              </dl>
-              <v-btn
-                variant="text"
-                :disabled="locked || dirty || endSessions"
-                :loading="initializing"
-                @click="initialize"
-                >Retry runtime activation</v-btn
-              >
-            </div>
-          </tactile-tilt-card>
-          <tactile-tilt-card class="security-tilt-wrapper">
-            <div class="security-panel">
-              <h3>Related controls</h3>
-              <router-link to="/auth"
-                >Identity providers
-                <v-icon icon="mdi-arrow-top-right" size="16" /></router-link
-              ><router-link to="/users"
-                >Account access
-                <v-icon icon="mdi-arrow-top-right" size="16" /></router-link
-              ><router-link to="/api"
-                >API credentials <v-icon icon="mdi-arrow-top-right" size="16"
-              /></router-link>
-            </div>
-          </tactile-tilt-card>
+              <div>
+                <dt>Public address</dt>
+                <dd>{{ origin || 'Not configured' }}</dd>
+              </div>
+            </dl>
+            <v-btn
+              variant="text"
+              :disabled="locked || dirty || endSessions"
+              :loading="initializing"
+              @click="initialize"
+              >Retry runtime activation</v-btn
+            >
+          </div>
+          <div class="security-panel">
+            <h3>Related controls</h3>
+            <router-link to="/auth"
+              >Identity providers
+              <v-icon icon="mdi-arrow-top-right" size="16" /></router-link
+            ><router-link to="/users"
+              >Account access
+              <v-icon icon="mdi-arrow-top-right" size="16" /></router-link
+            ><router-link to="/api"
+              >API credentials <v-icon icon="mdi-arrow-top-right" size="16"
+            /></router-link>
+          </div>
         </aside>
       </div>
     </template>
@@ -624,19 +598,12 @@
       aria-labelledby="security-review-title"
       ><v-card v-if="reviewed && saved" class="security-review"
         ><div class="security-review-heading">
-          <div class="security-review-header-flex">
-            <div>
-              <span class="security-kicker">A deliberate change</span>
-              <h2 id="security-review-title">Review security policy</h2>
-              <p>
-                These values are fixed for this review. Confirm their effect before
-                applying the policy.
-              </p>
-            </div>
-            <div class="security-review-gauge-wrap">
-              <security-posture-gauge :score="securityPostureScore" :size="120" :stroke-width="10" />
-            </div>
-          </div>
+          <span class="security-kicker">A deliberate change</span>
+          <h2 id="security-review-title">Review security policy</h2>
+          <p>
+            These values are fixed for this review. Confirm their effect before
+            applying the policy.
+          </p>
         </div>
         <v-card-text
           ><dl v-if="changes.length" class="security-differences">
@@ -724,10 +691,6 @@ export default {
     AsyncState,
     SecurityDuration,
     editorModalMedia: defineAsyncComponent(() => import('../editor/editor-modal-media.vue')),
-    SecurityPostureGauge: defineAsyncComponent(() => import('./security/security-posture-gauge.vue')),
-    TactileTiltCard: defineAsyncComponent(() => import('./security/tactile-tilt-card.vue')),
-    AnimatedCounter: defineAsyncComponent(() => import('./security/animated-counter.vue')),
-    RadarPulseBeacon: defineAsyncComponent(() => import('./security/radar-pulse-beacon.vue'))
   },
   data() {
     return {
@@ -791,33 +754,6 @@ export default {
         return ''
       }
     },
-    securityPostureScore(): number {
-      if (!this.draft) return 0
-      let score = 0
-      if (this.draft.authEnforce2FA) score += 25
-      if (this.draft.authPasswordMinLength >= 14) {
-        score += 15
-      } else if (this.draft.authPasswordMinLength >= 10) {
-        score += 8
-      }
-      const csp = (this.draft as any).securityCSP ?? this.draft.securityCSPMode
-      if (csp === 'enforce') {
-        score += 20
-      } else if (csp === 'report-only') {
-        score += 10
-      }
-      if (this.draft.securityHSTS) score += 15
-      if (this.draft.uploadScanSVG) score += 10
-      const sessionHardened = Boolean(
-        (this.draft as any).authSessionIP ||
-        (this.draft as any).authSessionTimeout
-      )
-      score += sessionHardened ? 15 : 5
-      return Math.min(100, Math.max(0, score))
-    },
-    runtimeState(): string {
-      return this.saved?.runtime?.state || 'unknown'
-    }
   },
   watch: {
     '$route.hash': {
@@ -1094,48 +1030,3 @@ export default {
 }
 </script>
 <style lang="scss" src="./security-workspace.scss"></style>
-<style scoped lang="scss">
-.security-status__runtime {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.security-tilt-wrapper {
-  margin-bottom: 19px;
-
-  .security-panel {
-    margin-bottom: 0;
-  }
-}
-.security-panel--posture {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 24px 16px;
-  background: radial-gradient(circle at 50% 0%, rgba(6, 182, 212, 0.08) 0%, transparent 70%);
-}
-.security-posture-meta {
-  margin-top: 14px;
-  text-align: center;
-
-  p {
-    margin-top: 4px;
-    font-size: 0.76rem;
-    color: var(--security-muted);
-    line-height: 1.5;
-  }
-}
-.security-review-header-flex {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 20px;
-}
-@media (max-width: 600px) {
-  .security-review-header-flex {
-    flex-direction: column-reverse;
-    align-items: flex-start;
-  }
-}
-</style>

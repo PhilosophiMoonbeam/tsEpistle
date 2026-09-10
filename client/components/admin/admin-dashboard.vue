@@ -10,22 +10,14 @@
         v-btn(href='/' variant='flat' color='primary' prepend-icon='mdi-arrow-top-right') Open wiki
 
     .dashboard-inventory(v-if='dashboardStats.length' aria-label='Workspace inventory' :aria-busy='summaryLoading')
-      router-link.admin-stat(
-        v-for='stat in dashboardStats'
-        :key='stat.key'
-        :to='stat.to'
-        :aria-label='stat.ariaLabel'
-        :style='tiltStyles[stat.key]'
-        @pointermove='handleCardPointerMove($event, stat.key)'
-        @pointerleave='handleCardPointerLeave(stat.key)'
-      )
+      router-link.admin-stat(v-for='stat in dashboardStats' :key='stat.key' :to='stat.to' :aria-label='stat.ariaLabel')
         .admin-stat__top
           v-icon(size='19') {{ stat.icon }}
           span {{ stat.label }}
           v-icon.admin-stat__arrow(size='16') mdi-arrow-top-right
         strong.admin-stat__value
           template(v-if='summaryLoading || summaryError') —
-          animated-number(v-else :value='Number(stat.value) || 0' :duration='600' :format-value='(v) => $helpers.formatNumber(v)')
+          animated-number(v-else :value='Number(stat.value) || 0' :duration='600' :format-value='formatInteger')
         span.admin-stat__hint {{ stat.hint }}
     v-alert.mt-3(v-if='summaryError' type='warning' variant='tonal' density='compact')
       span Workspace inventory is unavailable.
@@ -38,14 +30,7 @@
           h2#dashboard-connections-title Discovery & intelligence
         .dashboard-section-heading__rule
       .dashboard-connections__grid
-        router-link.dashboard-connection(
-          v-for='item in connections'
-          :key='item.key'
-          :to='item.to'
-          :style='tiltStyles[item.key]'
-          @pointermove='handleCardPointerMove($event, item.key)'
-          @pointerleave='handleCardPointerLeave(item.key)'
-        )
+        router-link.dashboard-connection(v-for='item in connections' :key='item.key' :to='item.to')
           .dashboard-connection__top
             v-icon(size='24') {{ item.icon }}
             span.dashboard-connection__kind {{ item.kind }}
@@ -170,52 +155,24 @@ const LAST_LOGINS_HEADERS = markRaw([
   { title: 'User', value: 'name' },
   { title: 'Last Login', value: 'lastLoginAt', width: 250 }
 ])
+const integerFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 })
+const formatInteger = (value: number): string => integerFormatter.format(Math.round(value))
 
-export function computeTilt(
-  rect: { left: number; top: number; width: number; height: number },
-  clientX: number,
-  clientY: number
-): Record<string, string> {
-  const x = clientX - rect.left
-  const y = clientY - rect.top
-  const halfWidth = rect.width / 2
-  const halfHeight = rect.height / 2
-  const normX = halfWidth > 0 ? Math.max(-1, Math.min(1, (x - halfWidth) / halfWidth)) : 0
-  const normY = halfHeight > 0 ? Math.max(-1, Math.min(1, (y - halfHeight) / halfHeight)) : 0
-  const yaw = (normX * 8) || 0
-  const pitch = (-normY * 8) || 0
-  const mouseX = rect.width > 0 ? `${((x / rect.width) * 100).toFixed(2)}%` : '50%'
-  const mouseY = rect.height > 0 ? `${((y / rect.height) * 100).toFixed(2)}%` : '50%'
-
-  return {
-    '--tilt-x': `${yaw.toFixed(2)}deg`,
-    '--tilt-y': `${pitch.toFixed(2)}deg`,
-    '--mouse-x': mouseX,
-    '--mouse-y': mouseY,
-    '--card-z': '12px'
-  }
-}
-
-export function resetTilt(): Record<string, string> {
-  return {
-    '--tilt-x': '0deg',
-    '--tilt-y': '0deg',
-    '--mouse-x': '50%',
-    '--mouse-y': '50%',
-    '--card-z': '0px'
-  }
-}
 
 export default {
   components: { AsyncState, AnimatedNumber },
   setup() {
     const summary = inject(adminSummaryKey)
-    return { summaryLoading: summary?.loading, summaryError: summary?.error, refreshSummary: () => summary?.refresh() }
+    return {
+      summaryLoading: summary?.loading,
+      summaryError: summary?.error,
+      refreshSummary: () => summary?.refresh(),
+      formatInteger
+    }
   },
   data() {
     return {
       settingsSearch: '',
-      tiltStyles: {} as Record<string, Record<string, string>>,
       recentPages: [] as RecentPageRow[],
       recentPagesLoading: false,
       recentPagesError: '',
@@ -366,37 +323,6 @@ export default {
     hasPermission(prm: string | string[]) {
       return Array.isArray(prm) ? prm.some((permission) => this.permissions.includes(permission)) : this.permissions.includes(prm)
     },
-    computeTilt(rect: { left: number; top: number; width: number; height: number }, clientX: number, clientY: number) {
-      return computeTilt(rect, clientX, clientY)
-    },
-    resetTilt() {
-      return resetTilt()
-    },
-    handleCardPointerMove(event: PointerEvent, key: string) {
-      if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches) {
-        return
-      }
-      const card = event.currentTarget as HTMLElement | null
-      if (!card) return
-      const rect = card.getBoundingClientRect()
-      if (!rect.width || !rect.height) return
-      this.tiltStyles = {
-        ...this.tiltStyles,
-        [key]: computeTilt(rect, event.clientX, event.clientY)
-      }
-    },
-    handlePointerMove(event: PointerEvent, key: string) {
-      this.handleCardPointerMove(event, key)
-    },
-    handleCardPointerLeave(key: string) {
-      this.tiltStyles = {
-        ...this.tiltStyles,
-        [key]: resetTilt()
-      }
-    },
-    handlePointerLeave(key: string) {
-      this.handleCardPointerLeave(key)
-    },
     async loadRecentPages() {
       this.recentPagesAbortController?.abort()
       const controller = typeof AbortController !== 'undefined' ? new AbortController() : null
@@ -493,7 +419,6 @@ export default {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   border-block: 1px solid var(--wiki-surface-border);
-  perspective: 1000px;
 }
 .admin-stat {
   position: relative;
@@ -503,26 +428,16 @@ export default {
   padding: 1rem 1.5rem;
   color: rgb(var(--v-theme-on-surface));
   text-decoration: none;
-  transform: perspective(1000px) rotateX(var(--tilt-y, 0deg)) rotateY(var(--tilt-x, 0deg)) translateZ(var(--card-z, 0px));
-  transform-style: preserve-3d;
-  will-change: transform;
   border: 1px solid transparent;
   border-radius: var(--admin-radius);
-  background:
-    linear-gradient(var(--wiki-surface-card, transparent), var(--wiki-surface-card, transparent)) padding-box,
-    radial-gradient(
-      circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-      color-mix(in srgb, var(--wiki-accent-ink) 45%, var(--wiki-surface-border)) 0%,
-      var(--wiki-surface-border) 70%
-    ) border-box;
+  background: var(--wiki-surface-raised);
   transition:
-    transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
-    background 0.15s,
-    border-color 0.15s,
-    box-shadow 0.15s;
+    background var(--wiki-motion-fast) var(--wiki-motion-ease),
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
 
   + .admin-stat {
-    border-inline-start: 1px solid var(--wiki-surface-border);
+    border-inline-start-color: var(--wiki-surface-border);
   }
 
   &::before {
@@ -531,35 +446,26 @@ export default {
     inset: 0;
     border-radius: inherit;
     pointer-events: none;
-    background: radial-gradient(
-      circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-      color-mix(in srgb, var(--wiki-ambient-accent) 12%, transparent) 0%,
-      transparent 65%
+    background: linear-gradient(
+      115deg,
+      color-mix(in srgb, var(--wiki-accent-ink) 16%, transparent),
+      transparent 58%
     );
     opacity: 0;
-    transition: opacity 0.25s ease;
-    z-index: 0;
+    transition: opacity var(--wiki-motion-normal) var(--wiki-motion-ease);
   }
 
-  &:hover {
-    border-color: transparent;
-    background:
-      linear-gradient(
-        color-mix(in srgb, var(--wiki-ambient-accent) 6%, transparent),
-        color-mix(in srgb, var(--wiki-ambient-accent) 6%, transparent)
-      ) padding-box,
-      radial-gradient(
-        circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-        color-mix(in srgb, var(--wiki-accent-ink) 75%, var(--wiki-surface-border)) 0%,
-        var(--wiki-surface-border) 70%
-      ) border-box;
+  &:is(:hover, :focus-visible) {
+    border-color: var(--wiki-surface-border-strong);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 6%, var(--wiki-surface-raised));
+    box-shadow: var(--wiki-shadow-xs);
 
     &::before {
       opacity: 1;
     }
 
     .admin-stat__top > .v-icon:first-child {
-      transform: translateZ(14px) scale(1.08);
+      transform: scale(1.05);
     }
     .admin-stat__arrow {
       transform: translate(3px, -3px);
@@ -567,7 +473,13 @@ export default {
   }
 
   &:active {
-    transform: perspective(1000px) rotateX(var(--tilt-y, 0deg)) rotateY(var(--tilt-x, 0deg)) translateZ(var(--card-z, 0px)) scale(0.985);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, var(--wiki-surface-raised));
+    box-shadow: var(--wiki-shadow-inset);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--wiki-focus-color);
+    outline-offset: var(--wiki-focus-offset);
   }
 
   &__top {
@@ -579,16 +491,14 @@ export default {
     color: var(--admin-muted);
     font-size: 0.8rem;
     > .v-icon:first-child {
-      transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-      will-change: transform;
+      transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease);
     }
   }
   &__arrow {
     position: relative;
     z-index: 1;
     margin-inline-start: auto;
-    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-    will-change: transform;
+    transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease);
   }
   &__value {
     position: relative;
@@ -606,6 +516,12 @@ export default {
     margin-top: 0.4rem;
     font-size: 0.75rem;
     color: var(--admin-muted);
+  }
+}
+@media (forced-colors: active) {
+  .admin-stat:focus-visible,
+  .dashboard-connection:focus-visible {
+    outline-color: Highlight;
   }
 }
 .dashboard-section-heading {
@@ -637,7 +553,6 @@ export default {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
-  perspective: 1000px;
 }
 .dashboard-connection {
   position: relative;
@@ -645,25 +560,15 @@ export default {
   flex-direction: column;
   min-width: 0;
   padding: 1.15rem;
-  border: 1px solid transparent;
+  border: 1px solid var(--wiki-surface-border);
   border-radius: var(--admin-radius);
+  background: var(--wiki-surface-raised);
   color: rgb(var(--v-theme-on-surface));
   text-decoration: none;
-  transform: perspective(1000px) rotateX(var(--tilt-y, 0deg)) rotateY(var(--tilt-x, 0deg)) translateZ(var(--card-z, 0px));
-  transform-style: preserve-3d;
-  will-change: transform;
-  background:
-    linear-gradient(var(--wiki-surface-raised), var(--wiki-surface-raised)) padding-box,
-    radial-gradient(
-      circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-      color-mix(in srgb, var(--wiki-accent-ink) 50%, var(--wiki-surface-border)) 0%,
-      var(--wiki-surface-border) 70%
-    ) border-box;
   transition:
-    transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1),
-    border-color 0.15s,
-    background 0.15s,
-    box-shadow 0.15s;
+    background var(--wiki-motion-fast) var(--wiki-motion-ease),
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
 
   &::before {
     content: '';
@@ -671,35 +576,26 @@ export default {
     inset: 0;
     border-radius: inherit;
     pointer-events: none;
-    background: radial-gradient(
-      circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-      color-mix(in srgb, var(--wiki-ambient-accent) 14%, transparent) 0%,
-      transparent 65%
+    background: linear-gradient(
+      115deg,
+      color-mix(in srgb, var(--wiki-accent-ink) 16%, transparent),
+      transparent 58%
     );
     opacity: 0;
-    transition: opacity 0.25s ease;
-    z-index: 0;
+    transition: opacity var(--wiki-motion-normal) var(--wiki-motion-ease);
   }
 
-  &:hover {
-    border-color: transparent;
-    background:
-      linear-gradient(
-        color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised)),
-        color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised))
-      ) padding-box,
-      radial-gradient(
-        circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
-        color-mix(in srgb, var(--wiki-accent-ink) 90%, var(--wiki-surface-border)) 0%,
-        var(--wiki-surface-border) 70%
-      ) border-box;
+  &:is(:hover, :focus-visible) {
+    border-color: var(--wiki-accent-ink);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 5%, var(--wiki-surface-raised));
+    box-shadow: var(--wiki-shadow-xs);
 
     &::before {
       opacity: 1;
     }
 
     .dashboard-connection__top > .v-icon:first-child {
-      transform: translateZ(14px) scale(1.08);
+      transform: scale(1.05);
     }
     .dashboard-connection__top > .v-icon:last-child {
       transform: translate(3px, -3px);
@@ -707,7 +603,13 @@ export default {
   }
 
   &:active {
-    transform: perspective(1000px) rotateX(var(--tilt-y, 0deg)) rotateY(var(--tilt-x, 0deg)) translateZ(var(--card-z, 0px)) scale(0.985);
+    background: color-mix(in srgb, var(--wiki-ambient-accent) 9%, var(--wiki-surface-raised));
+    box-shadow: var(--wiki-shadow-inset);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--wiki-focus-color);
+    outline-offset: var(--wiki-focus-offset);
   }
 
   &__top {
@@ -718,13 +620,11 @@ export default {
     gap: 0.65rem;
     color: var(--wiki-accent-ink);
     > .v-icon:first-child {
-      transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-      will-change: transform;
+      transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease);
     }
     > .v-icon:last-child {
       margin-inline-start: auto;
-      transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
-      will-change: transform;
+      transition: transform var(--wiki-motion-normal) var(--wiki-motion-ease);
     }
   }
   &__kind {
@@ -926,18 +826,18 @@ export default {
   .admin-stat,
   .dashboard-connection {
     transition: none !important;
-    transform: none !important;
     &::before {
-      display: none !important;
-    }
-    &:active {
-      transform: none !important;
+      transition: none !important;
     }
   }
   .admin-stat:hover .admin-stat__top > .v-icon:first-child,
+  .admin-stat:focus-visible .admin-stat__top > .v-icon:first-child,
   .admin-stat:hover .admin-stat__arrow,
+  .admin-stat:focus-visible .admin-stat__arrow,
   .dashboard-connection:hover .dashboard-connection__top > .v-icon:first-child,
-  .dashboard-connection:hover .dashboard-connection__top > .v-icon:last-child {
+  .dashboard-connection:focus-visible .dashboard-connection__top > .v-icon:first-child,
+  .dashboard-connection:hover .dashboard-connection__top > .v-icon:last-child,
+  .dashboard-connection:focus-visible .dashboard-connection__top > .v-icon:last-child {
     transform: none !important;
     transition: none !important;
   }

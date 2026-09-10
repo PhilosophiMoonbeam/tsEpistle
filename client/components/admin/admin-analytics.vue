@@ -127,11 +127,6 @@
                   ry="3"
                   :fill="`url(#${barGradId})`"
                   :filter="`url(#${barGlowId})`"
-                  tabindex="0"
-                  role="graphics-symbol"
-                  :aria-label="`${bar.day}: ${number(bar.responses)} responses`"
-                  @focus="activeBar = bar"
-                  @blur="clearChartPointer"
                 >
                   <title>{{ bar.day }}: {{ number(bar.responses) }} responses</title>
                 </rect>
@@ -151,18 +146,9 @@
                   r="4.5"
                 />
               </svg>
-              <div
-                v-if="activeBar"
-                class="chart-hud-tooltip analytics-chart-tooltip"
-                :style="tooltipStyle"
-                role="tooltip"
-                aria-live="polite"
-              >
-                <span class="chart-hud-tooltip__day tooltip-day">{{ activeBar.day }}</span>
-                <span class="chart-hud-tooltip__count tooltip-responses">
-                  <strong>{{ number(activeBar.responses) }}</strong> responses
-                </span>
-                <span class="chart-hud-tooltip__pct tooltip-pct">{{ activeBar.pct }}% of max</span>
+              <div v-if="activeBar" class="analytics-chart-readout">
+                <span class="analytics-chart-readout__day">{{ activeBar.day }}</span>
+                <span class="analytics-chart-readout__count"><strong>{{ number(activeBar.responses) }}</strong> responses</span>
               </div>
               <figcaption>
                 <span>{{ saved.insights.from }}</span>
@@ -605,7 +591,7 @@
   </v-container>
 </template>
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, onWatcherCleanup, ref, shallowRef, useId, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import AnimatedNumber from '@/components/common/animated-number.vue'
 import AsyncState from '@/components/common/async-state.vue'
@@ -627,12 +613,11 @@ const barGlowId = useId()
 interface BarDatum {
   day: string
   responses: number
-  pct: number
   x: number
   width: number
   height: number
 }
-const activeBar = ref<BarDatum | null>(null)
+const activeDay = ref<string | null>(null)
 const sections = [
     { key: 'overview', title: 'Overview' },
     { key: 'collection', title: 'Collection' },
@@ -754,7 +739,8 @@ const simulationResult = computed(() =>
     offline: saved.value?.offline || false
   })
 )
-const number = (value: number) => new Intl.NumberFormat().format(value),
+const numberFormat = new Intl.NumberFormat(),
+  number = (value: number) => numberFormat.format(value),
   dateTime = (value: string) => new Date(value).toLocaleString()
 const fieldLabel = (key: string) =>
   ({
@@ -808,11 +794,14 @@ const bars = computed<BarDatum[]>(() => {
     max = Math.max(1, ...saved.value.insights.daily.map((row) => row.responses))
   return saved.value.insights.daily.map((row) => ({
     ...row,
-    pct: Math.round((row.responses / max) * 100),
     x: (((Date.parse(row.day) - from) / 86400000) * 720) / days,
     width: Math.max(0.8, 720 / days - 1),
     height: Math.max(1, (row.responses / max) * 150)
   }))
+})
+const activeBar = computed<BarDatum | null>(() => {
+  if (!activeDay.value) return null
+  return bars.value.find((bar) => bar.day === activeDay.value) || null
 })
 function handleChartPointer(event: PointerEvent) {
   const svg = event.currentTarget as SVGSVGElement | null
@@ -830,20 +819,11 @@ function handleChartPointer(event: PointerEvent) {
       closest = bar
     }
   }
-  activeBar.value = closest
+  activeDay.value = closest?.day || null
 }
 function clearChartPointer() {
-  activeBar.value = null
+  activeDay.value = null
 }
-const tooltipStyle = computed(() => {
-  if (!activeBar.value) return { display: 'none' }
-  const percentX = Math.min(95, Math.max(5, ((activeBar.value.x + activeBar.value.width / 2) / 720) * 100))
-  const percentY = Math.max(0, ((169 - activeBar.value.height) / 180) * 100)
-  return {
-    left: `${percentX}%`,
-    top: `${percentY}%`
-  }
-})
 function reset() {
   if (saved.value) {
     policy.value = clone(saved.value.policy)
@@ -853,11 +833,13 @@ function reset() {
 }
 async function load() {
   const id = ++sequence
+  clearChartPointer()
   loading.value = true
   error.value = ''
   try {
     const value = await fetchAnalyticsWorkspace(reportDays.value)
     if (disposed || id !== sequence) return
+    clearChartPointer()
     saved.value = value
     stale.value = false
     reset()
@@ -872,34 +854,29 @@ async function load() {
     if (id === sequence && !disposed) loading.value = false
   }
 }
-function selectWindow(days: number) {
+async function selectWindow(days: number) {
   if (locked.value || !saved.value || days === reportDays.value) return
-  reportDays.value = days
-}
-watch(reportDays, async (days) => {
-  if (locked.value || !saved.value) return
-  const controller = new AbortController()
-  onWatcherCleanup(() => controller.abort())
-  const id = ++sequence
+  const id = ++sequence,
+    current = saved.value
   loading.value = true
   error.value = ''
   try {
     const value = await fetchAnalyticsWorkspace(days)
-    if (disposed || id !== sequence || controller.signal.aborted) return
-    if (value.fingerprint !== saved.value.fingerprint) {
+    if (disposed || id !== sequence) return
+    if (value.fingerprint !== current.fingerprint) {
       stale.value = true
       error.value = 'Analytics settings changed. Reload before changing the reporting window.'
       return
     }
-    saved.value = { ...saved.value, insights: value.insights, observedAt: value.observedAt }
+    clearChartPointer()
+    saved.value = { ...current, insights: value.insights, observedAt: value.observedAt }
+    reportDays.value = days
   } catch (err) {
-    if (!disposed && id === sequence && !controller.signal.aborted) {
-      error.value = err instanceof Error ? err.message : 'The reporting window could not be loaded.'
-    }
+    if (!disposed && id === sequence) error.value = err instanceof Error ? err.message : 'The reporting window could not be loaded.'
   } finally {
     if (!disposed && id === sequence) loading.value = false
   }
-})
+}
 function guarded(action: () => void) {
   if (dirty.value) {
     pendingAction.value = action
@@ -923,9 +900,11 @@ function discard() {
   action?.()
 }
 function selectSection(key: string) {
+  clearChartPointer()
   void router.replace({ query: { ...route.query, section: key } })
 }
 function selectProvider(key: string) {
+  clearChartPointer()
   selected.value = key
   void router.replace({ query: { ...route.query, section: 'providers', provider: key } })
 }
@@ -961,6 +940,7 @@ async function completeWrite(action: () => Promise<unknown>, message: string, af
     try {
       const value = await fetchAnalyticsWorkspace(reportDays.value)
       if (disposed) return
+      clearChartPointer()
       saved.value = value
       reset()
       notice.value = message
@@ -1005,6 +985,7 @@ function openErase() {
   eraseOpen.value = true
 }
 function erase() {
+  clearChartPointer()
   void completeWrite(
     () => eraseAnalyticsInsights(eraseFingerprint.value, reason.value.trim(), eraseConfirmation.value),
     'Local response history erased. Collection settings remain in effect.',
@@ -1021,6 +1002,7 @@ function exportCounts() {
   link.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
+watch(section, clearChartPointer)
 watch(
   () => route.query.provider,
   (key) => {
