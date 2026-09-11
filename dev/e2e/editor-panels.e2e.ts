@@ -131,6 +131,15 @@ async function selectLine(page: Page, line: number) {
     editor.setSelection({ line: target, ch: 0 })
   }, line)
 }
+async function selectText(page: Page, line: number, from: number, to: number) {
+  await page.locator('.editor-markdown').evaluate(
+    (root, selection) => {
+      const editor = (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor
+      editor.setSelection({ line: selection.line, ch: selection.from }, { line: selection.line, ch: selection.to })
+    },
+    { line, from, to }
+  )
+}
 
 async function assertControlsContained(page: Page) {
   await expect
@@ -241,6 +250,31 @@ test('preview follows the cursor by default and stops when toggled off', async (
     await page.keyboard.press('ControlOrMeta+End')
     await expect.poll(() => preview.evaluate(element => element.scrollTop)).toBeGreaterThan(1000)
   }
+})
+
+test('applies formatting from the toolbar or its mobile overflow', async ({ page }) => {
+  await openEditor(page)
+  const editorRoot = page.locator('.editor-markdown')
+  await selectText(page, 2, 0, 11)
+
+  const bold = page.getByRole('button', { name: 'Bold', exact: true })
+  if (await bold.isVisible()) {
+    await bold.click()
+    await expect
+      .poll(() => editorRoot.evaluate(root => (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getLine(2)))
+      .toMatch(/^\*\*A paragraph\*\*/)
+    return
+  }
+
+  const more = page.getByRole('button', { name: 'More formatting tools', exact: true })
+  await expect(more).toBeVisible()
+  await more.click()
+  const strike = page.locator('.v-overlay--active .v-list-item').filter({ hasText: 'Strikethrough' }).first()
+  await expect(strike).toBeVisible()
+  await strike.click()
+  await expect
+    .poll(() => editorRoot.evaluate(root => (root as HTMLElement & { __wikiSourceEditor: TextEditorHandle }).__wikiSourceEditor.getLine(2)))
+    .toMatch(/^~~A paragraph~~/)
 })
 test('page properties keeps tag drafts honest across suggestion, failure, removal, and cancel', async ({ page }) => {
   const searchRequests: string[] = []

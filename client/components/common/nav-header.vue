@@ -48,7 +48,8 @@
             data-search-modal-action
             @click='openAgent'
           )
-            span Wiki Agent
+            span Agent
+            ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
 
           slot(name='mid')
             transition(name='navHeaderSearch', v-if='searchIsShown')
@@ -109,6 +110,7 @@
             @click='openAgent'
           )
             v-icon(icon='mdi-book-open-page-variant-outline')
+            ControlBorderBeam(:enabled='canEnterAgent' :phase-offset-ms='0')
 
           //- (mobile) SEARCH TOGGLE
 
@@ -263,20 +265,25 @@
 
           //- ACCOUNT
 
-          v-menu(v-if='isAuthenticated', location="bottom end", transition='slide-y-transition', :close-on-content-click='false')
+          v-menu(v-if='isAuthenticated', location="bottom end", transition='slide-y-transition', :close-on-content-click='false', @update:model-value='accountMenuVisibilityChanged')
             template(v-slot:activator='{ props: menuProps }')
               v-tooltip(location="bottom")
                 template(v-slot:activator='{ props: tooltipProps }')
-                  v-btn(
+                  v-btn.account-menu__trigger(
                     icon
                     v-bind='mergeProps(menuProps, tooltipProps)'
                     :class='$vuetify.locale.isRtl ? `ml-0` : ``'
                     rounded='lg'
-                    :aria-label='$t(`common:header.account`)'
+                    :aria-label='accountButtonLabel'
                     )
                     v-icon(v-if='picture.kind === `initials`') mdi-account-circle
                     v-avatar(v-else-if='picture.kind === `image`', :size='34')
                       v-img(:src='picture.url', alt='')
+                    span.account-menu__notification-indicator(
+                      v-if='notificationState !== `clear`'
+                      :class='`account-menu__notification-indicator--${notificationState}`'
+                      aria-hidden='true'
+                    )
                 span {{$t('common:header.account')}}
             v-list.nav-header-menu.account-menu(aria-label='Account menu')
               v-list-item.py-3.bg-surface-variant(
@@ -289,9 +296,13 @@
                       span.text-on-primary.text-body-large {{picture.initials}}
                     v-avatar(v-else-if='picture.kind === `image`', :size='40')
                       v-img(:src='picture.url', alt='')
-                v-list-item-title {{name}}
+                v-list-item-title
+                  span.account-menu__profile-label Profile
+                  | {{name}}
                 v-list-item-subtitle {{email}}
                 template(v-slot:append): v-icon(color='secondary') mdi-face-profile
+              v-divider
+              AccountNotifications.account-menu__notifications(v-if='!siteNotifications.identityStale')
               v-divider
               section.account-menu__preferences(role='region' aria-labelledby='account-preferences-title')
                 h2#account-preferences-title.account-menu__preferences-title Appearance preferences
@@ -324,6 +335,9 @@
 <script lang='ts'>
 import { defineAsyncComponent, defineComponent, markRaw, mergeProps } from 'vue'
 import { wikiStore } from '@/store/index.ts'
+import { useSiteNotificationsStore } from '../../store/site-notifications.ts'
+import AccountNotifications from './account-notifications.vue'
+import ControlBorderBeam from './control-border-beam.vue'
 import { fetchPageLocaleRelations, movePage } from '../../helpers/pages-api'
 import { clearAgentChatPin } from '../../helpers/agent-chat-pin'
 import {
@@ -360,14 +374,17 @@ const ADMIN_PERMISSION_NAMES = new Set([
   'manage:theme',
   'manage:api'
 ])
-
-/* global siteConfig, siteLangs */
-
 export default defineComponent({
   components: {
+    AccountNotifications,
+    ControlBorderBeam,
     AppearanceSelector: defineAsyncComponent(() => import('./appearance-selector.vue')),
     PageDelete: defineAsyncComponent(() => import('./page-delete.vue')),
     PageConvert: defineAsyncComponent(() => import('./page-convert.vue'))
+  },
+  setup() {
+    const siteNotifications = useSiteNotificationsStore()
+    return { siteNotifications }
   },
   props: {
     dense: {
@@ -398,6 +415,8 @@ export default defineComponent({
       isDevMode: false,
       pageActionsAreOpen: false,
       pageActionsFocusFrame: null as number | null,
+      notificationIdentityRecovery: null as Promise<void> | null,
+      notificationIdentityRecoveryGeneration: 0,
       duplicateOpts: {
         locale: 'en',
         path: 'new-page',
@@ -430,6 +449,19 @@ export default defineComponent({
     email(): string { return wikiStore.user.email },
     pictureUrl(): string { return wikiStore.user.pictureUrl },
     isAuthenticated(): boolean { return wikiStore.user.authenticated },
+    notificationOwnerId(): number { return this.isAuthenticated ? wikiStore.user.id : 0 },
+    notificationState(): 'available' | 'unknown' | 'clear' { return this.siteNotifications.notificationState },
+    hasNotifications(): boolean { return this.notificationState === 'available' },
+    accountButtonLabel(): string {
+      const account = this.$t('common:header.account')
+      if (this.notificationState === 'available') {
+        return this.$t('common:header.accountNotificationsAvailable', { account })
+      }
+      if (this.notificationState === 'unknown') {
+        return this.$t('common:header.accountNotificationsUnknown', { account })
+      }
+      return account
+    },
     permissions(): string[] { return wikiStore.user.permissions },
     searchInputLabel(): string { return this.searchMode === 'ask' ? this.$t('common:header.askPlaceholder') : this.$t('common:header.search') },
     canEnterAgent(): boolean {
@@ -509,6 +541,15 @@ export default defineComponent({
         if (dense && this.searchIsFocused) this.searchClose()
         this.searchIsShown = !dense && !this.hideSearch
       }
+    },
+    notificationOwnerId(ownerId: number, previousOwnerId: number | undefined): void {
+      if (ownerId === previousOwnerId) return
+      if (this.siteNotifications.identityStale || this.notificationIdentityRecovery) return
+      this.siteNotifications.reset()
+      if (ownerId > 0) void this.siteNotifications.initialize(ownerId)
+    },
+    'siteNotifications.identityStale'(stale: boolean): void {
+      if (stale) void this.recoverSiteNotificationsIdentity()
     }
   },
   created () {
@@ -526,6 +567,9 @@ export default defineComponent({
     onPageDelete(this.pageDelete)
     this.isDevMode = siteConfig.devMode === true
     window.addEventListener('keydown', this.handleSearchShortcut)
+    document.addEventListener('visibilitychange', this.handleNotificationVisibility)
+    window.addEventListener('focus', this.handleNotificationFocus)
+    this.syncSiteNotifications()
   },
   beforeUnmount () {
     offPageEdit(this.pageEdit)
@@ -536,6 +580,8 @@ export default defineComponent({
     offPageDuplicate(this.pageDuplicate)
     offPageDelete(this.pageDelete)
     window.removeEventListener('keydown', this.handleSearchShortcut)
+    document.removeEventListener('visibilitychange', this.handleNotificationVisibility)
+    window.removeEventListener('focus', this.handleNotificationFocus)
     this.pageActionsAreOpen = false
     if (this.pageActionsFocusFrame !== null) {
       window.cancelAnimationFrame(this.pageActionsFocusFrame)
@@ -545,7 +591,89 @@ export default defineComponent({
   methods: {
     mergeProps,
     clearAgentChatPinOnLogout (): void {
+      this.notificationIdentityRecoveryGeneration += 1
       clearAgentChatPin()
+      this.siteNotifications.reset()
+    },
+    clearNotificationData (): void {
+      this.siteNotifications.watches = []
+      this.siteNotifications.approvals = []
+      this.siteNotifications.watchesLoading = false
+      this.siteNotifications.approvalsLoading = false
+      this.siteNotifications.watchesError = ''
+      this.siteNotifications.approvalsError = ''
+      this.siteNotifications.approvalsNextCursor = null
+    },
+    syncSiteNotifications(refresh = false): void {
+      if (this.siteNotifications.identityStale) {
+        void this.recoverSiteNotificationsIdentity()
+        return
+      }
+      if (this.notificationIdentityRecovery) return
+      const ownerId = this.notificationOwnerId
+      if (ownerId <= 0) {
+        this.siteNotifications.reset()
+        return
+      }
+      if (refresh) void this.siteNotifications.refresh()
+      else void this.siteNotifications.initialize(ownerId)
+    },
+    recoverSiteNotificationsIdentity(): Promise<void> {
+      const pending = this.notificationIdentityRecovery
+      if (pending) return pending
+      if (!this.siteNotifications.identityStale) return Promise.resolve()
+      const recoveryGeneration = this.notificationIdentityRecoveryGeneration
+
+      const recovery = (async () => {
+        try {
+          const outcome = await wikiStore.refreshAuth()
+          if (
+            recoveryGeneration !== this.notificationIdentityRecoveryGeneration ||
+            !this.siteNotifications.identityStale
+          ) return
+          if (outcome === 'authenticated') {
+            const ownerId = this.notificationOwnerId
+            if (ownerId <= 0 || !this.isAuthenticated) {
+              this.clearNotificationData()
+              this.siteNotifications.identityStale = true
+              return
+            }
+            this.siteNotifications.reset()
+            await this.siteNotifications.initialize(ownerId)
+            return
+          }
+          if (outcome === 'anonymous') {
+            this.siteNotifications.reset()
+            return
+          }
+          this.clearNotificationData()
+          this.siteNotifications.identityStale = true
+        } catch {
+          if (
+            recoveryGeneration !== this.notificationIdentityRecoveryGeneration ||
+            !this.siteNotifications.identityStale
+          ) return
+          this.clearNotificationData()
+          this.siteNotifications.identityStale = true
+        }
+      })()
+      const serialized = recovery.finally(() => {
+        this.notificationIdentityRecovery = null
+      })
+      this.notificationIdentityRecovery = markRaw(serialized)
+      return serialized
+    },
+    refreshSiteNotifications(): void {
+      this.syncSiteNotifications(true)
+    },
+    handleNotificationFocus(): void {
+      this.refreshSiteNotifications()
+    },
+    handleNotificationVisibility(): void {
+      if (document.visibilityState === 'visible') this.refreshSiteNotifications()
+    },
+    accountMenuVisibilityChanged(open: boolean): void {
+      if (open) this.refreshSiteNotifications()
     },
     async pageActionsVisibilityChanged(open: boolean): Promise<void> {
       this.pageActionsAreOpen = open
@@ -734,7 +862,18 @@ export default defineComponent({
   font-size: .6875rem;
   white-space: nowrap;
 }
-.nav-header-agent { flex: 0 0 auto; margin-inline: .375rem; }
+.nav-header-agent {
+  position: relative;
+  isolation: isolate;
+  flex: 0 0 auto;
+  margin-inline: .375rem;
+}
+.nav-header-agent .v-btn__prepend,
+.nav-header-agent .v-btn__content,
+.nav-header-agent .v-btn__append {
+  position: relative;
+  z-index: 1;
+}
 
 .nav-header {
   --nav-header-accent-direction: 90deg;
@@ -1024,6 +1163,19 @@ export default defineComponent({
     width: var(--wiki-control-height);
     min-width: var(--wiki-control-height);
   }
+  @media (min-width: 960px) {
+    .nav-header-inner .nav-header-agent,
+    .nav-header-inner .nav-header-browse {
+      min-height: 36px;
+      height: 36px !important;
+      border-radius: var(--wiki-radius-pill) !important;
+    }
+
+    .nav-header-inner .nav-header-browse {
+      width: 36px;
+      min-width: 36px;
+    }
+  }
 
   .nav-header-inner .v-divider {
     align-self: center;
@@ -1111,17 +1263,6 @@ export default defineComponent({
     }
   }
 
-  .nav-header-menu-danger {
-    color: rgb(var(--v-theme-error));
-
-    &:hover,
-    &:focus-visible {
-      border-color: color-mix(in srgb, rgb(var(--v-theme-error)) 24%, transparent);
-      background: color-mix(in srgb, rgb(var(--v-theme-error)) 8%, transparent);
-      color: rgb(var(--v-theme-error));
-    }
-  }
-
   .v-list-item.bg-grey-darken-4,
   .v-list-item.bg-grey-lighten-5 {
     border-color: var(--wiki-surface-border);
@@ -1136,17 +1277,62 @@ export default defineComponent({
 }
 
 .nav-header-menu.account-menu {
-  width: min(calc(100vw - (var(--wiki-space-4) * 2)), 34rem);
+  width: min(calc(100vw - (var(--wiki-space-4) * 2)), 26rem);
   max-height: min(82dvh, 44rem);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
 
+.account-menu__trigger {
+  position: relative;
+}
+
+.account-menu__notification-indicator {
+  position: absolute;
+  top: .3rem;
+  inset-inline-end: .3rem;
+  width: .5rem;
+  height: .5rem;
+  border: 2px solid rgb(var(--v-theme-surface));
+  border-radius: 50%;
+}
+
+.account-menu__notification-indicator--available {
+  background: rgb(var(--v-theme-primary));
+  box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-primary)) 24%, transparent);
+}
+
+.account-menu__notification-indicator--unknown {
+  width: .6rem;
+  height: .6rem;
+  border: 1.5px solid color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
+  background: transparent;
+  box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-on-surface)) 12%, transparent);
+}
+
+.account-menu__profile-label {
+  display: block;
+  margin-block-end: .1rem;
+  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 60%, transparent);
+  font-size: .6875rem;
+  font-weight: 700;
+  letter-spacing: .07em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.account-menu__notifications {
+  min-height: 0;
+  scrollbar-gutter: stable;
+}
+
 .account-menu__preferences {
   display: grid;
+  width: min(100%, 18rem);
   min-width: 0;
-  gap: var(--wiki-space-4);
+  gap: var(--wiki-space-3);
+  margin-inline: auto;
   padding: var(--wiki-space-2) var(--wiki-space-3);
 }
 

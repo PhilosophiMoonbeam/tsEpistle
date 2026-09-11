@@ -32,17 +32,29 @@ const administrator = { id: 9, permissions: ['manage:system'] }
 const publicPage = { visibility: 'public' as const, ownerId: null, localeCode: 'en', path: 'same/path', tags: [] }
 const privatePage = { visibility: 'private' as const, ownerId: 7, localeCode: 'en', path: 'same/path' }
 
-const authorityFor = (requester: PagePrincipal): PageRuleAuthority => Object.freeze({
-  requester,
-  permissions: Object.freeze(Array.isArray(requester?.permissions) ? [...requester.permissions] : []),
-  groups: Object.freeze([]),
-  tagAliases: Object.freeze({})
-})
+const authorityFor = (requester: PagePrincipal): PageRuleAuthority =>
+  Object.freeze({
+    requester,
+    permissions: Object.freeze(Array.isArray(requester?.permissions) ? [...requester.permissions] : []),
+    groups: Object.freeze([]),
+    tagAliases: Object.freeze({})
+  })
 
 describe('owner-scoped page access', () => {
   it('keeps public and private pages with the same locale/path independently addressable', () => {
     expect(pageRoute(publicPage)).toBe('/en/same/path')
     expect(pageRoute(privatePage)).toBe('/_private/en/same/path')
+  })
+  it('encodes locale and each path segment without decoding reserved content or structural slashes', () => {
+    const specialPage = {
+      visibility: 'public' as const,
+      ownerId: null,
+      localeCode: 'français locale',
+      path: 'docs/space path/hash#fragment/percent%value/question?query/encoded%2Fslash/日本語'
+    }
+    const expected = '/fran%C3%A7ais%20locale/docs/space%20path/hash%23fragment/percent%25value/question%3Fquery/encoded%252Fslash/%E6%97%A5%E6%9C%AC%E8%AA%9E'
+    expect(pageRoute(specialPage)).toBe(expected)
+    expect(pageRoute({ ...specialPage, visibility: 'private' })).toBe(`/_private${expected}`)
   })
 
   it('allows only the owner or a system administrator to read a private page', () => {
@@ -82,7 +94,6 @@ describe('owner-scoped page access', () => {
     expect(canWritePage(otherUser, publicPage, authorityFor(otherUser))).toBe(true)
     expect(canDeletePage(otherUser, publicPage, authorityFor(otherUser))).toBe(true)
   })
-
 
   it('recognizes only valid principals and explicit system managers', () => {
     expect(principalId(owner)).toBe(7)

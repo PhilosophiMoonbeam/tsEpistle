@@ -9,13 +9,7 @@ import { canViewRestrictedPageFields, projectPageFields } from '../../helpers/pa
 import type { PageRuleAuthority } from '../../helpers/group-access.ts'
 import { getPageWatchState, listPageWatchNotifications, markPageWatchNotificationRead, unwatchPage, watchPage } from '../../operations/page-watching.ts'
 import { getPageApproval, listApprovalInbox, submitPageApproval, transitionApproval } from '../../operations/approvals.ts'
-import {
-  assertPageUnlocked,
-  getPageProtection,
-  removePageProtection,
-  setPageProtection,
-  unlockPage
-} from '../../operations/page-protection.ts'
+import { assertPageUnlocked, getPageProtection, removePageProtection, setPageProtection, unlockPage } from '../../operations/page-protection.ts'
 import { createAuthRateLimiter, setAuthRateLimitHeaders, type AuthRateLimiter } from '../../helpers/auth-rate-limiter.ts'
 import type { Knex } from 'knex'
 import { OkfDocumentError } from '../../okf/format.ts'
@@ -145,7 +139,6 @@ const pageBrandingAssignment = (page: Record<string, unknown>): PageBrandingAssi
   return parsed.success ? parsed.data : null
 }
 
-
 const pageBrandingAssignmentFromExtra = (page: Record<string, unknown>): PageBrandingAssignment | null => {
   const extra = page.extra
   if (typeof extra !== 'object' || extra === null || Array.isArray(extra)) return null
@@ -169,13 +162,17 @@ const canWritePageBranding = (req: Request, page: unknown, authority: PageRuleAu
   }
   const localeCode = typeof record.localeCode === 'string' ? record.localeCode : undefined
   return (
-    canWritePage(req.user, {
-      visibility,
-      path,
-      ownerId,
-      ...(localeCode === undefined ? {} : { localeCode }),
-      tags: record.tags
-    }, authority) || managesSystem(req.user)
+    canWritePage(
+      req.user,
+      {
+        visibility,
+        path,
+        ownerId,
+        ...(localeCode === undefined ? {} : { localeCode }),
+        tags: record.tags
+      },
+      authority
+    ) || managesSystem(req.user)
   )
 }
 const pageResponse = (req: Request, page: unknown, authority: PageRuleAuthority): unknown => {
@@ -208,7 +205,6 @@ const requireSystemAccess = (req: Request, res: Response): boolean => {
   }
   return true
 }
-
 
 const requirePageDeleteAccess = (req: Request, res: Response): boolean => {
   if (principalId(req.user) === null && !getWikiAuth().checkAccess(req.user, ['delete:pages', 'manage:system'])) {
@@ -266,6 +262,70 @@ const parsePositiveIntegerQuery = (value: unknown): number | null => {
   return null
 }
 
+const NOTIFICATION_OWNER_HEADER = 'X-Notification-Owner'
+const NOTIFICATION_OWNER_PATTERN = /^[1-9][0-9]*$/u
+const APPROVAL_CURSOR_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+const WATCH_CURSOR_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+
+const requestHeader = (req: Request, name: string): unknown => {
+  const getter = Reflect.get(req, 'get')
+  if (typeof getter === 'function') {
+    const value = getter.call(req, name)
+    if (value !== undefined) return value
+  }
+  const headers = Reflect.get(req, 'headers')
+  if (typeof headers !== 'object' || headers === null) return undefined
+  for (const [headerName, value] of Object.entries(headers as Record<string, unknown>)) {
+    if (headerName.toLowerCase() === name.toLowerCase()) return value
+  }
+  return undefined
+}
+
+const requireNotificationOwner = (req: Request, res: Response): number | null => {
+  const ownerId = principalId(req.user)
+  const email = req.user && typeof req.user === 'object' ? Reflect.get(req.user, 'email') : undefined
+  if (ownerId === null || ownerId === 2 || email === 'api@localhost') {
+    res.status(401).json({ error: 'Authentication is required' })
+    return null
+  }
+
+  const rawOwnerId = requestHeader(req, NOTIFICATION_OWNER_HEADER)
+  if (typeof rawOwnerId !== 'string' || !NOTIFICATION_OWNER_PATTERN.test(rawOwnerId)) {
+    res.status(400).json({ error: 'X-Notification-Owner must be a canonical positive decimal string' })
+    return null
+  }
+  const headerOwnerId = Number(rawOwnerId)
+  if (!Number.isSafeInteger(headerOwnerId) || headerOwnerId < 1) {
+    res.status(400).json({ error: 'X-Notification-Owner must be a canonical positive decimal string' })
+    return null
+  }
+  if (headerOwnerId !== ownerId) {
+    res.status(409).json({ error: 'Account changed. Refresh your account.', code: 'NOTIFICATION_OWNER_CHANGED' })
+    return null
+  }
+  return ownerId
+}
+
+const approvalCursor = (req: Request, res: Response): string | undefined | null => {
+  const value = _.get(req, 'query.cursor')
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !APPROVAL_CURSOR_PATTERN.test(value)) {
+    res.status(409).json({ error: 'Approval cursor expired', code: 'APPROVAL_CURSOR_EXPIRED' })
+    return null
+  }
+  return value
+}
+
+const watchCursor = (req: Request, res: Response): string | undefined | null => {
+  const value = _.get(req, 'query.cursor')
+  if (value === undefined) return undefined
+  if (typeof value !== 'string' || !WATCH_CURSOR_PATTERN.test(value)) {
+    res.status(409).json({ error: 'Page watch notification cursor expired', code: 'WATCH_CURSOR_EXPIRED' })
+    return null
+  }
+  return value
+}
+
 const parseTagsQuery = (value: unknown): string[] => {
   if (_.isArray(value)) {
     return value.flatMap(tag => parseTagsQuery(tag))
@@ -292,6 +352,39 @@ const sendOperationError = (res: Response, next: express.NextFunction, value: un
     const rawMessage = errorMessage(value, fallback)
     const message = isOkfDocumentError(value) && rawMessage.length > 500 ? `${rawMessage.slice(0, 497)}...` : rawMessage
     res.status(status).json({ error: message })
+    return
+  }
+  next(value)
+}
+
+const notificationErrorCode = (value: unknown): string | undefined => {
+  if (typeof value === 'object' && value !== null) {
+    const code = Reflect.get(value, 'code')
+    if (typeof code === 'string') return code
+    const name = Reflect.get(value, 'name')
+    if (name === 'APPROVAL_CURSOR_EXPIRED' || name === 'WATCH_CURSOR_EXPIRED' || name === 'NOTIFICATION_OWNER_CHANGED') return name
+  }
+  if (
+    value instanceof Error &&
+    (value.name === 'APPROVAL_CURSOR_EXPIRED' || value.name === 'WATCH_CURSOR_EXPIRED' || value.name === 'NOTIFICATION_OWNER_CHANGED')
+  )
+    return value.name
+  return undefined
+}
+
+const sendNotificationOperationError = (res: Response, next: express.NextFunction, value: unknown, fallback: string): void => {
+  const status = errorStatus(value, 0)
+  if (status >= 400 && status < 500) {
+    const rawMessage = errorMessage(value, fallback)
+    const message = isOkfDocumentError(value) && rawMessage.length > 500 ? `${rawMessage.slice(0, 497)}...` : rawMessage
+    const code = notificationErrorCode(value)
+    res
+      .status(status)
+      .json(
+        code === 'APPROVAL_CURSOR_EXPIRED' || code === 'WATCH_CURSOR_EXPIRED' || code === 'NOTIFICATION_OWNER_CHANGED'
+          ? { error: message, code }
+          : { error: message }
+      )
     return
   }
   next(value)
@@ -663,10 +756,15 @@ router.post('/:id/unlock', pageUnlockMiddleware, async (req, res) => {
 })
 
 router.get('/approvals/inbox', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
+  if (requireNotificationOwner(req, res) === null) return
+  const cursor = approvalCursor(req, res)
+  if (cursor === null) return
   try {
-    res.json(await listApprovalInbox(req.user))
+    res.json(cursor === undefined ? await listApprovalInbox(req.user) : await listApprovalInbox(req.user, cursor))
   } catch (err) {
-    next(err)
+    sendNotificationOperationError(res, next, err, 'Approval inbox unavailable')
   }
 })
 
@@ -675,12 +773,20 @@ router.post('/approvals/:requestId/transition', async (req, res, next) => {
   if (!['approve', 'request-changes', 'reject', 'cancel', 'resubmit', 'publish', 'reassign'].includes(action)) {
     return res.status(400).json({ error: 'A valid approval action is required' })
   }
+  let expectedSourceRevision: string | undefined
+  if (action === 'resubmit') {
+    const parsedSourceRevision = requiredSourceRevision(req, res)
+    if (parsedSourceRevision === null) return
+    expectedSourceRevision = parsedSourceRevision
+  }
   try {
     res.json(
       await transitionApproval({
         requester: req.user,
         requestId: String(req.params.requestId || ''),
         action: action as 'approve' | 'request-changes' | 'reject' | 'cancel' | 'resubmit' | 'publish' | 'reassign',
+        sessionId: req.sessionID,
+        ...(expectedSourceRevision === undefined ? {} : { expectedSourceRevision }),
         comment: typeof _.get(req, 'body.comment') === 'string' ? _.get(req, 'body.comment') : undefined,
         assigneeId: typeof _.get(req, 'body.assigneeId') === 'number' ? _.get(req, 'body.assigneeId') : undefined
       })
@@ -689,12 +795,13 @@ router.post('/approvals/:requestId/transition', async (req, res, next) => {
     next(err)
   }
 })
-
 router.get('/:id/approval', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   try {
-    res.json({ approval: await getPageApproval(req.user, id) })
+    res.json({ approval: await getPageApproval({ requester: req.user, pageId: id, sessionId: req.sessionID }) })
   } catch (err) {
     next(err)
   }
@@ -710,6 +817,7 @@ router.post('/:id/approval', async (req, res, next) => {
       await submitPageApproval({
         requester: req.user,
         pageId: id,
+        sessionId: req.sessionID,
         expectedSourceRevision,
         assigneeId: _.get(req, 'body.assigneeId'),
         comment: _.get(req, 'body.comment')
@@ -721,14 +829,22 @@ router.post('/:id/approval', async (req, res, next) => {
 })
 
 router.get('/watches/notifications', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
+  if (requireNotificationOwner(req, res) === null) return
+  const cursor = watchCursor(req, res)
+  if (cursor === null) return
   try {
-    res.json(await listPageWatchNotifications(req.user))
+    res.json(cursor === undefined ? await listPageWatchNotifications(req.user) : await listPageWatchNotifications(req.user, cursor))
   } catch (err) {
-    next(err)
+    sendNotificationOperationError(res, next, err, 'Watch notifications unavailable')
   }
 })
 
 router.patch('/watches/notifications/:notificationId/read', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
+  if (requireNotificationOwner(req, res) === null) return
   try {
     await markPageWatchNotificationRead(req.user, String(req.params.notificationId || ''))
     res.sendStatus(204)
@@ -736,8 +852,9 @@ router.patch('/watches/notifications/:notificationId/read', async (req, res, nex
     next(err)
   }
 })
-
 router.get('/:id/watch', async (req, res, next) => {
+  res.set('Cache-Control', 'private, no-store')
+  res.vary('Cookie')
   const id = parsePositiveIntegerParam(req, res)
   if (id === null) return
   try {
@@ -754,12 +871,17 @@ router.put('/:id/watch', async (req, res, next) => {
   if (emailEnabled !== undefined && typeof emailEnabled !== 'boolean') {
     return res.status(400).json({ error: 'emailEnabled must be a boolean' })
   }
+  const inAppEnabled = _.get(req, 'body.inAppEnabled')
+  if (inAppEnabled !== undefined && typeof inAppEnabled !== 'boolean') {
+    return res.status(400).json({ error: 'inAppEnabled must be a boolean' })
+  }
   try {
     res.json(
       await watchPage({
         ...requesterInput(req),
         id,
-        emailEnabled: emailEnabled === true
+        ...(emailEnabled === undefined ? {} : { emailEnabled }),
+        ...(inAppEnabled === undefined ? {} : { inAppEnabled })
       })
     )
   } catch (err) {

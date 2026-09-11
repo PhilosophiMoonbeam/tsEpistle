@@ -1,4 +1,3 @@
-
 import createKnex, { type Knex } from 'knex'
 import { afterEach, beforeEach, describe, expect, it, vi } from '../bun-test.mts'
 import type { DurableJob } from '../../core/durable-jobs.ts'
@@ -23,7 +22,9 @@ beforeEach(async () => {
     isActive: true,
     groups: [{ id: 3, permissions: ['read:pages'] }],
     permissions: ['read:pages'],
-    getGlobalPermissions () { return ['read:pages'] }
+    getGlobalPermissions() {
+      return ['read:pages']
+    }
   }
   send.mockReset()
   Reflect.set(global, 'WIKI', {
@@ -32,15 +33,12 @@ beforeEach(async () => {
         const permissions = principal && Reflect.get(principal, 'permissions')
         return Array.isArray(permissions) && permissions.includes('read:pages')
       }),
-      checkPageAccess: vi.fn((
-        principal: Express.User | undefined,
-        _permissions: readonly string[],
-        _context: unknown,
-        authority: { permissions: readonly string[] }
-      ) => {
-        const permissions = principal && Reflect.get(principal, 'permissions')
-        return Array.isArray(permissions) && permissions.includes('read:pages') && authority.permissions.includes('read:pages')
-      })
+      checkPageAccess: vi.fn(
+        (principal: Express.User | undefined, _permissions: readonly string[], _context: unknown, authority: { permissions: readonly string[] }) => {
+          const permissions = principal && Reflect.get(principal, 'permissions')
+          return Array.isArray(permissions) && permissions.includes('read:pages') && authority.permissions.includes('read:pages')
+        }
+      )
     }
   })
   knex = createKnex({
@@ -156,15 +154,34 @@ describe('page watch notification handler', () => {
     await handler(job, { knex, signal: new AbortController().signal })
 
     expect(send).toHaveBeenCalledOnce()
-    expect(send).toHaveBeenCalledWith(expect.objectContaining({
-      to: 'reader@example.test',
-      messageId: '<page-watch-delivery-1@wiki.local>',
-      data: expect.objectContaining({ url: 'https://wiki.example.test/en/docs/start' })
-    }))
-    expect(await knex('pageWatchNotifications')).toEqual([
-      expect.objectContaining({ eventId: 'event-1', userId: 7, title: 'Getting Started' })
-    ])
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'reader@example.test',
+        messageId: '<page-watch-delivery-1@wiki.local>',
+        data: expect.objectContaining({ url: 'https://wiki.example.test/en/docs/start' })
+      })
+    )
+    expect(await knex('pageWatchNotifications')).toEqual([expect.objectContaining({ eventId: 'event-1', userId: 7, title: 'Getting Started' })])
     expect(await knex('pageWatchDeliveries').where('id', 'delivery-1').first()).toMatchObject({ deliveredAt: expect.anything(), lastError: null })
+  })
+  it('uses the encoded destination in both email href data and plain-text content', async () => {
+    const specialPage = {
+      ...page,
+      visibility: 'private',
+      ownerId: 7,
+      localeCode: 'français locale',
+      path: 'docs/space path/hash#fragment/percent%value/question?query/encoded%2Fslash/日本語'
+    }
+    const expectedUrl =
+      'https://wiki.example.test/_private/fran%C3%A7ais%20locale/docs/space%20path/hash%23fragment/percent%25value/question%3Fquery/encoded%252Fslash/%E6%97%A5%E6%9C%AC%E8%AA%9E'
+
+    await createPageWatchNotificationHandler(wiki(specialPage))(job, { knex, signal: new AbortController().signal })
+
+    const message = send.mock.calls[0]?.[0] as { text?: string; data?: { url?: string } }
+    expect(message.data?.url).toBe(expectedUrl)
+    expect(message.text).toBe(`Editor updated “Getting Started”.\n\n${expectedUrl}`)
+    expect(message.data?.url).not.toContain('#')
+    expect(message.data?.url).not.toContain('?')
   })
   it('uses the recipient authority snapshot before dispatching a notification', async () => {
     const deniedWiki = wiki(page)
@@ -458,9 +475,7 @@ describe('page watch notification handler', () => {
     const controller = new AbortController()
     controller.abort()
 
-    await expect(
-      createPageWatchNotificationHandler(wiki(page))(job, { knex, signal: controller.signal })
-    ).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(createPageWatchNotificationHandler(wiki(page))(job, { knex, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
 
     expect(send).not.toHaveBeenCalled()
     expect(await knex('pageWatchers')).toEqual([{ pageId: 42, userId: 7 }])

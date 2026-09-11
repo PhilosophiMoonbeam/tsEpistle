@@ -35,15 +35,6 @@ const particleLogoComponent = readComponentSource('client/components/login-logo/
 const particleSceneComponent = readComponentSource('client/components/login-logo/LogoParticleScene.vue')
 const pointerControllerPath = path.join(process.cwd(), 'client/components/login-logo/useLogoPointer.ts')
 const pointerControllerSource = fs.readFileSync(pointerControllerPath, 'utf8')
-const loginSuccessAnimationPath = path.join(process.cwd(), 'client/components/login-success-animation.vue')
-const loginSuccessAnimationSource = fs.readFileSync(loginSuccessAnimationPath, 'utf8')
-const loginSuccessAnimation = parse(loginSuccessAnimationSource, { filename: loginSuccessAnimationPath })
-if (loginSuccessAnimation.errors.length > 0) {
-  throw new Error(`Could not parse login-success-animation.vue: ${loginSuccessAnimation.errors.join(', ')}`)
-}
-if (!loginSuccessAnimation.descriptor.template || !loginSuccessAnimation.descriptor.styles.length) {
-  throw new Error('login-success-animation.vue template or style was not found')
-}
 const loaderPath = path.join(process.cwd(), 'client/components/common/loader.vue')
 const loaderSource = fs.readFileSync(loaderPath, 'utf8')
 
@@ -134,23 +125,58 @@ const LoginParticleLogoStub = Vue.defineComponent({
         : null
   }
 })
+let animationInstanceSequence = 0
+let mountedAnimationCount = 0
+let unmountedAnimationCount = 0
+
+const resetAnimationLifecycle = (): void => {
+  animationInstanceSequence = 0
+  mountedAnimationCount = 0
+  unmountedAnimationCount = 0
+}
+
 const LoginSuccessAnimationStub = Vue.defineComponent({
   name: 'LoginSuccessAnimation',
-  setup: () => () =>
-    Vue.h('svg', {
-      class: 'login-success-animation',
-      width: '72',
-      height: '72',
-      role: 'presentation',
-      'aria-hidden': 'true',
-      focusable: 'false'
+  setup: () => {
+    const instanceId = String(++animationInstanceSequence)
+    Vue.onMounted(() => {
+      mountedAnimationCount += 1
     })
+    Vue.onUnmounted(() => {
+      unmountedAnimationCount += 1
+    })
+    return () =>
+      Vue.h('svg', {
+        class: 'login-success-animation',
+        width: '72',
+        height: '72',
+        role: 'presentation',
+        'aria-hidden': 'true',
+        focusable: 'false',
+        'data-instance-id': instanceId
+      })
+  }
+})
+
+const LoginLoaderStub = Vue.defineComponent({
+  name: 'LoginLoaderStub',
+  inheritAttrs: false,
+  props: {
+    modelValue: { type: Boolean, default: false },
+    title: { type: String, default: '' }
+  },
+  setup(props, { slots }) {
+    return () => {
+      if (!props.modelValue) return null
+      return Vue.h('div', { class: 'loader-dialog' }, [Vue.h('span', { class: 'loader-dialog-title' }, props.title), ...(slots.illustration?.() ?? [])])
+    }
+  }
 })
 
 const components: Record<string, Vue.Component> = {
   LoginParticleLogo: LoginParticleLogoStub,
   LoginSuccessAnimation: LoginSuccessAnimationStub,
-  Loader: Vue.defineComponent({ setup: () => () => null }),
+  Loader: LoginLoaderStub,
   Notify: Vue.defineComponent({ setup: () => () => null }),
   PasswordStrength: Vue.defineComponent({ setup: () => () => null }),
   VAlert: Vue.defineComponent({ setup: () => () => null }),
@@ -169,6 +195,105 @@ const components: Record<string, Vue.Component> = {
       return () => Vue.h('input', attrs)
     }
   })
+}
+
+type TestHostNode = {
+  kind: 'element' | 'text' | 'comment'
+  type: string
+  props: Record<string, unknown>
+  children: TestHostNode[]
+  parent: TestHostNode | null
+  text: string
+}
+
+const createTestHostNode = (kind: TestHostNode['kind'], type = ''): TestHostNode => ({
+  kind,
+  type,
+  props: {},
+  children: [],
+  parent: null,
+  text: ''
+})
+
+const testRenderer = Vue.createRenderer<TestHostNode, TestHostNode>({
+  patchProp(element, key, _previousValue, nextValue) {
+    if (nextValue === null || nextValue === undefined) delete element.props[key]
+    else element.props[key] = nextValue
+  },
+  insert(element, parent, anchor = null) {
+    if (element.parent) {
+      const previousIndex = element.parent.children.indexOf(element)
+      if (previousIndex >= 0) element.parent.children.splice(previousIndex, 1)
+    }
+    element.parent = parent
+    const anchorIndex = anchor ? parent.children.indexOf(anchor) : -1
+    if (anchorIndex < 0) parent.children.push(element)
+    else parent.children.splice(anchorIndex, 0, element)
+  },
+  remove(element) {
+    if (!element.parent) return
+    const index = element.parent.children.indexOf(element)
+    if (index >= 0) element.parent.children.splice(index, 1)
+    element.parent = null
+  },
+  createElement(type) {
+    return createTestHostNode('element', type)
+  },
+  createText(text) {
+    const node = createTestHostNode('text')
+    node.text = text
+    return node
+  },
+  createComment(text) {
+    const node = createTestHostNode('comment')
+    node.text = text
+    return node
+  },
+  setText(node, text) {
+    node.text = text
+  },
+  setElementText(element, text) {
+    for (const child of element.children) child.parent = null
+    const textNode = createTestHostNode('text')
+    textNode.text = text
+    textNode.parent = element
+    element.children = [textNode]
+  },
+  parentNode(node) {
+    return node.parent
+  },
+  nextSibling(node) {
+    if (!node.parent) return null
+    return node.parent.children[node.parent.children.indexOf(node) + 1] ?? null
+  },
+  querySelector() {
+    return null
+  },
+  setScopeId() {},
+  cloneNode(node) {
+    const clone = createTestHostNode(node.kind, node.type)
+    clone.props = { ...node.props }
+    clone.text = node.text
+    return clone
+  },
+  insertStaticContent(text, parent, anchor) {
+    const node = createTestHostNode('text')
+    node.text = text
+    node.parent = parent
+    const anchorIndex = anchor ? parent.children.indexOf(anchor) : -1
+    if (anchorIndex < 0) parent.children.push(node)
+    else parent.children.splice(anchorIndex, 0, node)
+    return [node, node]
+  }
+})
+
+const findTestHostNode = (root: TestHostNode, predicate: (node: TestHostNode) => boolean): TestHostNode | null => {
+  if (predicate(root)) return root
+  for (const child of root.children) {
+    const match = findTestHostNode(child, predicate)
+    if (match) return match
+  }
+  return null
 }
 
 const compiledLoginComponent = `${compiledScript.content}
@@ -264,8 +389,8 @@ const Login = compiledLoginModule.exports.default
 if (!Login) throw new Error('login.vue did not export a component')
 Object.assign(Login, { render: renderLogin })
 
-const renderLoginDom = async (effect: LogoEffectDescriptor | null): Promise<JSDOM> => {
-  const component = Vue.defineComponent({
+const createLoginHarness = (effect: LogoEffectDescriptor | null, initialLoading = false, initialLoaderTitle = 'Working...') =>
+  Vue.defineComponent({
     name: 'LoginLayoutBehaviorHarness',
     components,
     data: () => ({
@@ -283,12 +408,12 @@ const renderLoginDom = async (effect: LogoEffectDescriptor | null): Promise<JSDO
       hideNewPassword: true,
       hideNewPasswordVerify: true,
       hidePassword: true,
-      isLoading: false,
+      isLoading: initialLoading,
       isTFASetupShown: false,
       isTFAShown: false,
       isUsernameEmail: true,
       loaderColor: 'grey-darken-4',
-      loaderTitle: 'Working...',
+      loaderTitle: initialLoaderTitle,
       loginStyle: {},
       logoEffect: effect,
       logoUrl: managedEffect.logoUrl,
@@ -318,10 +443,27 @@ const renderLoginDom = async (effect: LogoEffectDescriptor | null): Promise<JSDO
     },
     render: renderLogin
   })
-  const app = Vue.createSSRApp(component)
+
+const renderLoginDom = async (effect: LogoEffectDescriptor | null): Promise<JSDOM> => {
+  const app = Vue.createSSRApp(createLoginHarness(effect))
   app.config.globalProperties.$t = (key: string): string => key
   const html = await renderToString(app)
   return new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { url: 'http://localhost/login' })
+}
+
+type LoginLifecycleHarness = {
+  isLoading: boolean
+  loaderTitle: string
+}
+
+const mountLoginLifecycle = async () => {
+  resetAnimationLifecycle()
+  const host = createTestHostNode('element', 'root')
+  const app = testRenderer.createApp(createLoginHarness(null))
+  app.config.globalProperties.$t = (key: string): string => key
+  const vm = app.mount(host) as unknown as LoginLifecycleHarness
+  await Vue.nextTick()
+  return { app, host, vm }
 }
 
 const resolveConfiguredLogoEffect = (logoUrl: string, logoEffect: LogoEffectDescriptor): LogoEffectDescriptor | null => {
@@ -424,36 +566,44 @@ describe('login personalized static-logo integration', () => {
   })
 })
 describe('login success illustration contract', () => {
-  it('keeps the success artwork decorative and stages an open-book page sequence', () => {
-    const animationTemplate = loginSuccessAnimation.descriptor.template?.content ?? ''
-    const animationStyle = loginSuccessAnimation.descriptor.styles[0]?.content ?? ''
-
-    expect(animationTemplate).toMatch(/svg\.login-success-animation/)
-    expect(animationTemplate).toMatch(/\bwidth='72'/)
-    expect(animationTemplate).toMatch(/\bheight='72'/)
-    expect(animationTemplate).toMatch(/\baria-hidden='true'/)
-    expect(animationTemplate.match(/data-page-turn='[123]'/g) ?? []).toHaveLength(3)
-    expect(animationStyle).toMatch(/--login-book-duration:\s*900ms/)
-    expect(animationStyle).toMatch(/@keyframes\s+loginBookCoverLeft/)
-    expect(animationStyle).toMatch(/@keyframes\s+loginBookPageTurnOne/)
-    expect(animationStyle).toMatch(/@keyframes\s+loginBookPageTurnTwo/)
-    expect(animationStyle).toMatch(/@keyframes\s+loginBookPageTurnThree/)
-    expect(animationStyle).toMatch(/@media\s+\(prefers-reduced-motion:\s*reduce\)[\s\S]*animation:\s*none/)
-    expect(animationStyle).toMatch(/@media\s+\(forced-colors:\s*active\)[\s\S]*CanvasText/)
-  })
-
   it('provides an optional Loader illustration slot without replacing fallback indicators', () => {
     expect(loaderSource).toMatch(/slot\(name='illustration'\)/)
     expect(loaderSource).toMatch(/atom-spinner\.is-inline\([\s\S]*v-else-if='mode === `loading`'/)
     expect(loaderSource).toMatch(/img\(v-else-if='mode === `icon`'/)
   })
 
-  it('routes only an explicit authenticated API response to the success illustration', () => {
-    expect(loginSource).toMatch(/showLoginSuccessAnimation:\s*false/)
-    expect(loginSource).toMatch(/template\(v-if='showLoginSuccessAnimation',\s*v-slot:illustration\)/)
-    expect(loginSource).toMatch(/this\.showLoginSuccessAnimation\s*=\s*false[\s\S]*this\.continuationToken/)
-    expect(loginSource).toMatch(/respObj\.authenticated\s*===\s*true[\s\S]*this\.showLoginSuccessAnimation\s*=\s*true/)
-    expect(loginSource).not.toMatch(/loaderTitle\s*===|successMessage\s*===/)
+  it('mounts one inline book on the first loading render and keeps it through the success title transition', async () => {
+    const lifecycle = await mountLoginLifecycle()
+    expect(findTestHostNode(lifecycle.host, node => node.props.class === 'login-success-animation')).toBeNull()
+    expect(mountedAnimationCount).toBe(0)
+
+    lifecycle.vm.loaderTitle = 'Signing in'
+    lifecycle.vm.isLoading = true
+    await Vue.nextTick()
+
+    const firstBook = findTestHostNode(lifecycle.host, node => node.props.class === 'login-success-animation')
+    const loadingTitle = findTestHostNode(lifecycle.host, node => node.props.class === 'loader-dialog-title')
+    if (!firstBook || !loadingTitle) throw new Error('Login loading illustration was not rendered')
+    expect(loadingTitle.children[0]?.text).toBe('Signing in')
+    expect(mountedAnimationCount).toBe(1)
+    expect(unmountedAnimationCount).toBe(0)
+
+    lifecycle.vm.loaderTitle = 'Sign in successful'
+    await Vue.nextTick()
+
+    const successBook = findTestHostNode(lifecycle.host, node => node.props.class === 'login-success-animation')
+    const successTitle = findTestHostNode(lifecycle.host, node => node.props.class === 'loader-dialog-title')
+    expect(successBook).toBe(firstBook)
+    expect(successBook?.props['data-instance-id']).toBe(firstBook.props['data-instance-id'])
+    expect(successTitle?.children[0]?.text).toBe('Sign in successful')
+    expect(mountedAnimationCount).toBe(1)
+    expect(unmountedAnimationCount).toBe(0)
+
+    lifecycle.vm.isLoading = false
+    await Vue.nextTick()
+    expect(findTestHostNode(lifecycle.host, node => node.props.class === 'login-success-animation')).toBeNull()
+    expect(unmountedAnimationCount).toBe(1)
+    lifecycle.app.unmount()
   })
 })
 

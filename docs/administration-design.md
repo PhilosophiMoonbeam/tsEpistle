@@ -32,6 +32,6 @@ These surfaces use existing semantic theme variables, typography, focus treatmen
 
 - Unit/contract coverage: administration components, shared hero, navigation catalog, taxonomy lifecycle, and editor draft behavior.
 - Responsive browser coverage: `dev/e2e/tags.e2e.ts` exercises public index filtering, multi-selection, removable unmatched bookmarks, retry/error states, latest-response-wins behavior, responsive disclosure, and result-heading focus. `dev/e2e/editor-panels.e2e.ts` exercises categorization suggestions, candidate addition, failure recovery, chip removal, Cancel versus OK, and the absence of taxonomy requests.
-- Browser assertions use consumer-visible roles, names, focus, URLs, links, and state. Mutation proof belongs on disposable development or clone data; this source description is not a deployment claim.
+- Browser assertions use consumer-visible roles, names, focus, URLs, links, and state. This source description documents the interface contract and is not a deployment claim.
 
 The tag experience preserves existing route, bookmark, authorization, taxonomy, page-save, history, and API contracts. It does not add a second taxonomy model or alter persisted configuration schemas.

@@ -59,6 +59,29 @@
   --wiki-focus-color: rgb(var(--v-theme-focus));
   --wiki-focus-ring: 0 0 0 .1875rem color-mix(in srgb, rgb(var(--v-theme-focus)) 24%, transparent);
   --wiki-focus-offset: .1875rem;
+  --wiki-purpose-primary-ink: rgb(var(--v-theme-purpose-primary-ink, var(--v-theme-on-surface)));
+  --wiki-purpose-primary-fill: rgb(var(--v-theme-purpose-primary-fill, var(--v-theme-surface)));
+  --wiki-purpose-primary-edge: rgb(var(--v-theme-purpose-primary-edge, var(--v-theme-primary)));
+  --wiki-purpose-secondary-ink: rgb(var(--v-theme-purpose-secondary-ink, var(--v-theme-on-surface)));
+  --wiki-purpose-secondary-fill: rgb(var(--v-theme-purpose-secondary-fill, var(--v-theme-surface)));
+  --wiki-purpose-secondary-edge: rgb(var(--v-theme-purpose-secondary-edge, var(--v-theme-secondary)));
+  --wiki-purpose-success-ink: rgb(var(--v-theme-purpose-success-ink, var(--v-theme-on-surface)));
+  --wiki-purpose-success-fill: rgb(var(--v-theme-purpose-success-fill, var(--v-theme-surface)));
+  --wiki-purpose-success-edge: rgb(var(--v-theme-purpose-success-edge, var(--v-theme-success)));
+  --wiki-purpose-info-ink: rgb(var(--v-theme-purpose-info-ink, var(--v-theme-on-surface)));
+  --wiki-purpose-info-fill: rgb(var(--v-theme-purpose-info-fill, var(--v-theme-surface)));
+  --wiki-purpose-info-edge: rgb(var(--v-theme-purpose-info-edge, var(--v-theme-info)));
+  --wiki-purpose-warning-ink: rgb(var(--v-theme-purpose-warning-ink, var(--v-theme-on-surface)));
+  --wiki-purpose-warning-fill: rgb(var(--v-theme-purpose-warning-fill, var(--v-theme-surface)));
+  --wiki-purpose-warning-edge: rgb(var(--v-theme-purpose-warning-edge, var(--v-theme-warning)));
+  --wiki-purpose-error-ink: rgb(var(--v-theme-purpose-error-ink, var(--v-theme-on-surface)));
+  --wiki-purpose-error-fill: rgb(var(--v-theme-purpose-error-fill, var(--v-theme-surface)));
+  --wiki-purpose-error-edge: rgb(var(--v-theme-purpose-error-edge, var(--v-theme-error)));
+  --wiki-purpose-neutral-ink: rgb(var(--v-theme-purpose-neutral-ink, var(--v-theme-on-surface)));
+  --wiki-purpose-neutral-fill: rgb(var(--v-theme-purpose-neutral-fill, var(--v-theme-surface)));
+  --wiki-purpose-neutral-edge: rgb(var(--v-theme-purpose-neutral-edge, var(--v-theme-on-surface)));
+  --wiki-beam-violet: color-mix(in srgb, rgb(var(--v-theme-secondary)) 72%, rgb(var(--v-theme-primary)) 28%);
+  --wiki-beam-cool: color-mix(in srgb, rgb(var(--v-theme-info)) 82%, rgb(var(--v-theme-secondary)) 18%);
   --v-font-body: var(--wiki-font-body);
   --v-font-heading: var(--wiki-font-heading);
 }
@@ -144,6 +167,228 @@ body {
 .v-field__input textarea:focus-visible {
   outline: none;
   box-shadow: none;
+}
+
+.wiki-purpose-control {
+  --wiki-purpose-control-ink: var(--wiki-purpose-neutral-ink);
+  --wiki-purpose-control-fill: var(--wiki-purpose-neutral-fill);
+  --wiki-purpose-control-edge: var(--wiki-purpose-neutral-edge);
+  border: 1px solid var(--wiki-purpose-control-edge);
+  color: var(--wiki-purpose-control-ink);
+  background-color: var(--wiki-purpose-control-fill);
+  transition:
+    color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    border-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease),
+    transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+}
+
+.wiki-purpose-control[data-purpose='primary'] {
+  --wiki-purpose-control-ink: var(--wiki-purpose-primary-ink);
+  --wiki-purpose-control-fill: var(--wiki-purpose-primary-fill);
+  --wiki-purpose-control-edge: var(--wiki-purpose-primary-edge);
+}
+
+.wiki-purpose-control[data-purpose='secondary'] {
+  --wiki-purpose-control-ink: var(--wiki-purpose-secondary-ink);
+  --wiki-purpose-control-fill: var(--wiki-purpose-secondary-fill);
+  --wiki-purpose-control-edge: var(--wiki-purpose-secondary-edge);
+}
+
+.wiki-purpose-control[data-purpose='success'] {
+  --wiki-purpose-control-ink: var(--wiki-purpose-success-ink);
+  --wiki-purpose-control-fill: var(--wiki-purpose-success-fill);
+  --wiki-purpose-control-edge: var(--wiki-purpose-success-edge);
+}
+
+.wiki-purpose-control[data-purpose='info'] {
+  --wiki-purpose-control-ink: var(--wiki-purpose-info-ink);
+  --wiki-purpose-control-fill: var(--wiki-purpose-info-fill);
+  --wiki-purpose-control-edge: var(--wiki-purpose-info-edge);
+}
+
+.wiki-purpose-control[data-purpose='warning'] {
+  --wiki-purpose-control-ink: var(--wiki-purpose-warning-ink);
+  --wiki-purpose-control-fill: var(--wiki-purpose-warning-fill);
+  --wiki-purpose-control-edge: var(--wiki-purpose-warning-edge);
+}
+
+.wiki-purpose-control[data-purpose='error'] {
+  --wiki-purpose-control-ink: var(--wiki-purpose-error-ink);
+  --wiki-purpose-control-fill: var(--wiki-purpose-error-fill);
+  --wiki-purpose-control-edge: var(--wiki-purpose-error-edge);
+}
+
+.wiki-purpose-control[data-purpose='neutral'] {
+  --wiki-purpose-control-ink: var(--wiki-purpose-neutral-ink);
+  --wiki-purpose-control-fill: var(--wiki-purpose-neutral-fill);
+  --wiki-purpose-control-edge: var(--wiki-purpose-neutral-edge);
+}
+
+.wiki-purpose-control:is(
+  [aria-pressed='true'],
+  [aria-selected='true'],
+  [aria-current='true'],
+  [data-state='active'],
+  [data-state='selected'],
+  .is-active,
+  .is-selected,
+  .v-btn--active
+) {
+  border-color: var(--wiki-purpose-control-edge);
+  background-color: var(--wiki-purpose-control-fill);
+  box-shadow: inset 0 0 0 .0625rem var(--wiki-purpose-control-edge);
+}
+
+@media (hover: hover) {
+  .wiki-purpose-control:hover:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled) {
+    border-color: var(--wiki-purpose-control-edge);
+    background-color: var(--wiki-purpose-control-fill);
+    color: var(--wiki-purpose-control-ink);
+    box-shadow: 0 0 0 .1875rem color-mix(in srgb, var(--wiki-purpose-control-edge) 18%, transparent);
+  }
+
+  .wiki-purpose-control:is(
+    [aria-pressed='true'],
+    [aria-selected='true'],
+    [aria-current='true'],
+    [data-state='active'],
+    [data-state='selected'],
+    .is-active,
+    .is-selected,
+    .v-btn--active
+  ):hover {
+    box-shadow:
+      inset 0 0 0 .0625rem var(--wiki-purpose-control-edge),
+      0 0 0 .1875rem color-mix(in srgb, var(--wiki-purpose-control-edge) 18%, transparent);
+  }
+}
+
+.wiki-purpose-control:active:not(:disabled):not([aria-disabled='true']):not(.v-btn--disabled) {
+  transform: translateY(1px);
+}
+
+.wiki-purpose-control:focus-visible {
+  outline: .125rem solid var(--wiki-focus-color);
+  outline-offset: var(--wiki-focus-offset);
+  box-shadow:
+    var(--wiki-focus-ring),
+    inset 0 0 0 .0625rem var(--wiki-purpose-control-edge);
+}
+
+.wiki-purpose-control:disabled,
+.wiki-purpose-control[aria-disabled='true'],
+.wiki-purpose-control.v-btn--disabled {
+  transform: none;
+  cursor: default;
+  opacity: .62;
+}
+
+.wiki-close-control {
+  border-radius: 50%;
+  color: var(--wiki-purpose-neutral-ink);
+  transition:
+    color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    background-color var(--wiki-motion-fast) var(--wiki-motion-ease),
+    box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease),
+    transform var(--wiki-motion-fast) var(--wiki-motion-ease-out);
+}
+
+.wiki-close-control :where(.v-icon, .v-btn__content, svg) {
+  color: inherit;
+}
+
+.wiki-close-control:is(:hover, :active) {
+  color: var(--wiki-purpose-error-ink);
+  background-color: var(--wiki-purpose-error-fill);
+  transform: scale(1.04);
+}
+
+.wiki-close-control:focus-visible {
+  outline: .125rem solid var(--wiki-focus-color);
+  outline-offset: var(--wiki-focus-offset);
+  box-shadow: var(--wiki-focus-ring);
+}
+
+.wiki-tag-color {
+  --wiki-tag-color-ink: var(--wiki-purpose-neutral-ink);
+  --wiki-tag-color-fill: var(--wiki-purpose-neutral-fill);
+  --wiki-tag-color-edge: var(--wiki-purpose-neutral-edge);
+  border: 1px solid var(--wiki-tag-color-edge);
+  color: var(--wiki-tag-color-ink);
+  background-color: var(--wiki-tag-color-fill);
+}
+
+.wiki-tag-color[data-tag-color='primary'] {
+  --wiki-tag-color-ink: var(--wiki-purpose-primary-ink);
+  --wiki-tag-color-fill: var(--wiki-purpose-primary-fill);
+  --wiki-tag-color-edge: var(--wiki-purpose-primary-edge);
+}
+
+.wiki-tag-color[data-tag-color='secondary'] {
+  --wiki-tag-color-ink: var(--wiki-purpose-secondary-ink);
+  --wiki-tag-color-fill: var(--wiki-purpose-secondary-fill);
+  --wiki-tag-color-edge: var(--wiki-purpose-secondary-edge);
+}
+
+.wiki-tag-color[data-tag-color='success'] {
+  --wiki-tag-color-ink: var(--wiki-purpose-success-ink);
+  --wiki-tag-color-fill: var(--wiki-purpose-success-fill);
+  --wiki-tag-color-edge: var(--wiki-purpose-success-edge);
+}
+
+.wiki-tag-color[data-tag-color='info'] {
+  --wiki-tag-color-ink: var(--wiki-purpose-info-ink);
+  --wiki-tag-color-fill: var(--wiki-purpose-info-fill);
+  --wiki-tag-color-edge: var(--wiki-purpose-info-edge);
+}
+
+.wiki-tag-color[data-tag-color='warning'] {
+  --wiki-tag-color-ink: var(--wiki-purpose-warning-ink);
+  --wiki-tag-color-fill: var(--wiki-purpose-warning-fill);
+  --wiki-tag-color-edge: var(--wiki-purpose-warning-edge);
+}
+
+.wiki-tag-color[data-tag-color='error'] {
+  --wiki-tag-color-ink: var(--wiki-purpose-error-ink);
+  --wiki-tag-color-fill: var(--wiki-purpose-error-fill);
+  --wiki-tag-color-edge: var(--wiki-purpose-error-edge);
+}
+
+.wiki-tag-color[data-tag-color='neutral'] {
+  --wiki-tag-color-ink: var(--wiki-purpose-neutral-ink);
+  --wiki-tag-color-fill: var(--wiki-purpose-neutral-fill);
+  --wiki-tag-color-edge: var(--wiki-purpose-neutral-edge);
+}
+
+.wiki-tag-color :where(.v-icon, svg) {
+  color: inherit;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wiki-purpose-control,
+  .wiki-close-control {
+    transition: none !important;
+    transform: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .wiki-purpose-control,
+  .wiki-close-control,
+  .wiki-tag-color {
+    border-color: ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  .wiki-purpose-control:focus-visible,
+  .wiki-close-control:focus-visible {
+    outline: .125rem solid Highlight;
+    box-shadow: none;
+  }
 }
 
 :where(h1, h2, h3, h4, h5, h6) {

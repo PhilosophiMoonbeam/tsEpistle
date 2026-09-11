@@ -32,6 +32,7 @@ vi.mockModule('../../operations/page-protection.ts', import.meta.url, () => ({
   assertPageUnlocked: vi.fn().mockResolvedValue(undefined),
   getPageProtection: vi.fn().mockResolvedValue(undefined),
   isPageProtected: vi.fn().mockResolvedValue(false),
+  pageRequiresUnlock: vi.fn().mockResolvedValue(false),
   redactProtectedPageForSearch: vi.fn(async page => page),
   removePageProtection: vi.fn().mockResolvedValue(undefined),
   setPageProtection: vi.fn().mockResolvedValue(undefined),

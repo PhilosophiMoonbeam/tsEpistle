@@ -3,137 +3,137 @@
     v-toolbar.editor-markdown-toolbar(density="compact", color='primary', flat, role='toolbar', aria-label='Formatting tools')
       template(v-if='isModalShown')
         v-spacer
-        v-btn.animated.fadeInRight(variant="text", @click='closeAllModal')
+        v-btn.animated.fadeInRight.wiki-purpose-control(variant="text", data-purpose='info', @click='closeAllModal')
           v-icon(start) mdi-arrow-left-circle
           span {{$t('editor:backToEditor')}}
       template(v-else)
         v-tooltip(location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.bold`)', @click='toggleMarkup({ start: `**` })').mx-0
+            v-btn.animated.fadeIn.wiki-purpose-control(icon, rounded='md', data-purpose='primary', v-bind='props', :aria-label='$t(`editor:markup.bold`)', @click='toggleMarkup({ start: `**` })').mx-0
               v-icon mdi-format-bold
           span {{$t('editor:markup.bold')}}
         v-tooltip(location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p1s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.italic`)', @click='toggleMarkup({ start: `*` })').mx-0
+            v-btn.animated.fadeIn.wait-p1s.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.italic`)', @click='toggleMarkup({ start: `*` })').mx-0
               v-icon mdi-format-italic
           span {{$t('editor:markup.italic')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p2s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.strikethrough`)', @click='toggleMarkup({ start: `~~` })').mx-0
+            v-btn.animated.fadeIn.wait-p2s.wiki-purpose-control(icon, rounded='md', data-purpose='secondary', v-bind='props', :aria-label='$t(`editor:markup.strikethrough`)', @click='toggleMarkup({ start: `~~` })').mx-0
               v-icon mdi-format-strikethrough
           span {{$t('editor:markup.strikethrough')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p3s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.highlight`)', @click='toggleMarkup({ start: `==` })').mx-0
+            v-btn.animated.fadeIn.wait-p3s.wiki-purpose-control(icon, rounded='md', data-purpose='warning', v-bind='props', :aria-label='$t(`editor:markup.highlight`)', @click='toggleMarkup({ start: `==` })').mx-0
               v-icon mdi-format-color-highlight
           span {{$t('editor:markup.highlight')}}
         v-menu(:open-on-hover='$vuetify.display.mdAndUp')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p3s(icon, rounded='md', v-bind='props', aria-label='Heading level').mx-0
+            v-btn.animated.fadeIn.wait-p3s.wiki-purpose-control(icon, rounded='md', data-purpose='primary', v-bind='props', aria-label='Heading level').mx-0
               v-icon mdi-format-header-pound
           v-list.py-0
             template(v-for='(n, idx) in 6', :key='idx')
-              v-list-item(@click='setHeaderLine(n)')
+              v-list-item.wiki-purpose-control(data-purpose='primary', @click='setHeaderLine(n)')
                 template(v-slot:append)
                   v-icon(:size='24 - (idx - 1) * 2') mdi-format-header-{{n}}
                 v-list-item-title {{$t('editor:markup.heading', { level: n })}}
               v-divider(v-if='idx < 5')
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p4s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.subscript`)', @click='toggleMarkup({ start: `~` })').mx-0
+            v-btn.animated.fadeIn.wait-p4s.wiki-purpose-control(icon, rounded='md', data-purpose='primary', v-bind='props', :aria-label='$t(`editor:markup.subscript`)', @click='toggleMarkup({ start: `~` })').mx-0
               v-icon mdi-format-subscript
           span {{$t('editor:markup.subscript')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p5s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.superscript`)', @click='toggleMarkup({ start: `^` })').mx-0
+            v-btn.animated.fadeIn.wait-p5s.wiki-purpose-control(icon, rounded='md', data-purpose='primary', v-bind='props', :aria-label='$t(`editor:markup.superscript`)', @click='toggleMarkup({ start: `^` })').mx-0
               v-icon mdi-format-superscript
           span {{$t('editor:markup.superscript')}}
         v-menu(v-if='$vuetify.display.mdAndUp', open-on-hover)
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p6s(icon, rounded='md', v-bind='props', aria-label='Admonition type').mx-0
+            v-btn.animated.fadeIn.wait-p6s.wiki-purpose-control(icon, rounded='md', data-purpose='primary', v-bind='props', aria-label='Admonition type').mx-0
               v-icon mdi-alpha-t-box-outline
           v-list.py-0
-            v-list-item(@click='insertBeforeEachLine({ content: `> `})')
+            v-list-item.wiki-purpose-control(data-purpose='primary', @click='insertBeforeEachLine({ content: `> `})')
               template(v-slot:append)
                 v-icon mdi-alpha-t-box-outline
               v-list-item-title {{$t('editor:markup.blockquote')}}
             v-divider
-            v-list-item(@click='insertBeforeEachLine({ content: `> `, after: `{.is-info}`})')
+            v-list-item.wiki-purpose-control(data-purpose='info', @click='insertBeforeEachLine({ content: `> `, after: `{.is-info}`})')
               template(v-slot:append)
-                v-icon(color='blue') mdi-alpha-i-box-outline
+                v-icon mdi-alpha-i-box-outline
               v-list-item-title {{$t('editor:markup.blockquoteInfo')}}
             v-divider
-            v-list-item(@click='insertBeforeEachLine({ content: `> `, after: `{.is-success}`})')
+            v-list-item.wiki-purpose-control(data-purpose='success', @click='insertBeforeEachLine({ content: `> `, after: `{.is-success}`})')
               template(v-slot:append)
-                v-icon(color='success') mdi-alpha-s-box-outline
+                v-icon mdi-alpha-s-box-outline
               v-list-item-title {{$t('editor:markup.blockquoteSuccess')}}
             v-divider
-            v-list-item(@click='insertBeforeEachLine({ content: `> `, after: `{.is-warning}`})')
+            v-list-item.wiki-purpose-control(data-purpose='warning', @click='insertBeforeEachLine({ content: `> `, after: `{.is-warning}`})')
               template(v-slot:append)
-                v-icon(color='warning') mdi-alpha-w-box-outline
+                v-icon mdi-alpha-w-box-outline
               v-list-item-title {{$t('editor:markup.blockquoteWarning')}}
             v-divider
-            v-list-item(@click='insertBeforeEachLine({ content: `> `, after: `{.is-danger}`})')
+            v-list-item.wiki-purpose-control(data-purpose='error', @click='insertBeforeEachLine({ content: `> `, after: `{.is-danger}`})')
               template(v-slot:append)
-                v-icon(color='error') mdi-alpha-e-box-outline
+                v-icon mdi-alpha-e-box-outline
               v-list-item-title {{$t('editor:markup.blockquoteError')}}
             v-divider
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p7s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.unorderedList`)', @click='insertBeforeEachLine({ content: `- `})').mx-0
+            v-btn.animated.fadeIn.wait-p7s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.unorderedList`)', @click='insertBeforeEachLine({ content: `- `})').mx-0
               v-icon mdi-format-list-bulleted
           span {{$t('editor:markup.unorderedList')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p8s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.orderedList`)', @click='insertBeforeEachLine({ content: `1. `})').mx-0
+            v-btn.animated.fadeIn.wait-p8s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.orderedList`)', @click='insertBeforeEachLine({ content: `1. `})').mx-0
               v-icon mdi-format-list-numbered
           span {{$t('editor:markup.orderedList')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p9s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.inlineCode`)', @click='toggleMarkup({ start: "`" })').mx-0
+            v-btn.animated.fadeIn.wait-p9s.wiki-purpose-control(icon, rounded='md', data-purpose='secondary', v-bind='props', :aria-label='$t(`editor:markup.inlineCode`)', @click='toggleMarkup({ start: "`" })').mx-0
               v-icon mdi-code-tags
           span {{$t('editor:markup.inlineCode')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p10s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.keyboardKey`)', @click='toggleMarkup({ start: `<kbd>`, end: `</kbd>` })').mx-0
+            v-btn.animated.fadeIn.wait-p10s.wiki-purpose-control(icon, rounded='md', data-purpose='secondary', v-bind='props', :aria-label='$t(`editor:markup.keyboardKey`)', @click='toggleMarkup({ start: `<kbd>`, end: `</kbd>` })').mx-0
               v-icon mdi-keyboard-variant
           span {{$t('editor:markup.keyboardKey')}}
         v-tooltip(v-if='$vuetify.display.mdAndUp', location="bottom", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeIn.wait-p11s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.horizontalBar`)', @click='insertAfter({ content: `---`, newLine: true })').mx-0
+            v-btn.animated.fadeIn.wait-p11s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.horizontalBar`)', @click='insertAfter({ content: `---`, newLine: true })').mx-0
               v-icon mdi-minus
           span {{$t('editor:markup.horizontalBar')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(v-if='previewShown', location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn(icon, rounded='md', v-bind='props', aria-label='Align preview to cursor', :aria-pressed='previewAlignmentEnabled', :variant='previewAlignmentEnabled ? `tonal` : `text`', @click='togglePreviewAlignment').mx-0
+              v-btn.animated.fadeIn.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', aria-label='Align preview to cursor', :aria-pressed='previewAlignmentEnabled', :variant='previewAlignmentEnabled ? `tonal` : `text`', @click='togglePreviewAlignment').mx-0
                 v-icon mdi-crosshairs-gps
             span {{ previewAlignmentEnabled ? 'Preview follows cursor' : 'Preview alignment off' }}
           v-tooltip(location="bottom", color='primary', v-if='previewShown')
             template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn.wait-p1s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.toggleSpellcheck`)', :aria-pressed='spellModeActive', @click='spellModeActive = !spellModeActive').mx-0
-                v-icon(:color='spellModeActive ? `amber` : `white`') mdi-spellcheck
+              v-btn.animated.fadeIn.wait-p1s.wiki-purpose-control(icon, rounded='md', data-purpose='warning', v-bind='props', :aria-label='$t(`editor:markup.toggleSpellcheck`)', :aria-pressed='spellModeActive', @click='spellModeActive = !spellModeActive').mx-0
+                v-icon mdi-spellcheck
             span {{$t('editor:markup.toggleSpellcheck')}}
           v-tooltip(location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.animated.fadeIn.wait-p2s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='previewShown = !previewShown').mx-0
+              v-btn.animated.fadeIn.wait-p2s.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.togglePreviewPane`)', :aria-pressed='previewShown', @click='previewShown = !previewShown').mx-0
                 v-icon mdi-book-open-outline
             span {{$t('editor:markup.togglePreviewPane')}}
         template(v-else)
           v-spacer
           v-tooltip(v-if='previewShown', location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.mx-0(icon, rounded='md', v-bind='props', aria-label='Align preview to cursor', :aria-pressed='previewAlignmentEnabled', :variant='previewAlignmentEnabled ? `tonal` : `text`', @click='togglePreviewAlignment')
+              v-btn.mx-0.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', aria-label='Align preview to cursor', :aria-pressed='previewAlignmentEnabled', :variant='previewAlignmentEnabled ? `tonal` : `text`', @click='togglePreviewAlignment')
                 v-icon mdi-crosshairs-gps
             span {{ previewAlignmentEnabled ? 'Preview follows cursor' : 'Preview alignment off' }}
           v-tooltip(location="bottom", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.mx-0(
+              v-btn.mx-0.wiki-purpose-control(
                 icon
                 rounded='md'
                 v-bind='props'
-                :aria-pressed='previewShown'
+                data-purpose='info'
                 @click='previewShown = !previewShown'
                 :aria-label='previewShown ? `Show editor` : `Show preview`'
               )
@@ -141,57 +141,57 @@
             span {{ previewShown ? 'Show editor' : $t('editor:markup.togglePreviewPane') }}
           v-menu(location="left", min-width='260')
             template(v-slot:activator='{ props }')
-              v-btn.mx-0(
+              v-btn.mx-0.wiki-purpose-control(
                 icon
                 rounded='md'
                 v-bind='props'
-                aria-label='More formatting tools'
+                data-purpose='info'
               )
                 v-icon mdi-dots-horizontal
             v-list(nav)
-              v-list-item(@click='insertLink')
+              v-list-item.wiki-purpose-control(data-purpose='info', @click='insertLink')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-link-plus
                 v-list-item-title {{$t('editor:markup.insertLink')}}
-              v-list-item(@click='toggleModal(`editorModalMedia`)')
+              v-list-item.wiki-purpose-control(data-purpose='success', @click='toggleModal(`editorModalMedia`)')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-folder-multiple-image
                 v-list-item-title {{$t('editor:markup.insertAssets')}}
-              v-list-item(@click='toggleModal(`editorModalDrawio`)')
+              v-list-item.wiki-purpose-control(data-purpose='success', @click='toggleModal(`editorModalDrawio`)')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-chart-multiline
                 v-list-item-title {{$t('editor:markup.insertDiagram')}}
-              v-list-item(@click='toggleModal(`editorModalBlocks`)')
+              v-list-item.wiki-purpose-control(data-purpose='success', @click='toggleModal(`editorModalBlocks`)')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-qrcode
                 v-list-item-title Insert content extension
-              v-list-item(@click='insertDefinitionList')
+              v-list-item.wiki-purpose-control(data-purpose='success', @click='insertDefinitionList')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-format-list-group-plus
                 v-list-item-title {{$t('editor:markup.insertDefinitionList')}}
-              v-list-item(@click='insertAbbreviation')
+              v-list-item.wiki-purpose-control(data-purpose='success', @click='insertAbbreviation')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-tooltip-plus-outline
                 v-list-item-title {{$t('editor:markup.insertAbbreviation')}}
               v-divider
-              v-list-item(@click='toggleMarkup({ start: `~~` })')
+              v-list-item.wiki-purpose-control(data-purpose='secondary', @click='toggleMarkup({ start: `~~` })')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-format-strikethrough
                 v-list-item-title {{$t('editor:markup.strikethrough')}}
-              v-list-item(@click='insertBeforeEachLine({ content: `> `})')
+              v-list-item.wiki-purpose-control(data-purpose='primary', @click='insertBeforeEachLine({ content: `> `})')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-format-quote-open
                 v-list-item-title {{$t('editor:markup.blockquote')}}
-              v-list-item(@click='toggleMarkup({ start: "`" })')
+              v-list-item.wiki-purpose-control(data-purpose='secondary', @click='toggleMarkup({ start: "`" })')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-code-tags
                 v-list-item-title {{$t('editor:markup.inlineCode')}}
-              v-list-item(@click='toggleMarkup({ start: `==` })')
+              v-list-item.wiki-purpose-control(data-purpose='warning', @click='toggleMarkup({ start: `==` })')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-format-color-highlight
                 v-list-item-title {{$t('editor:markup.highlight')}}
               v-divider
-              v-list-item(@click='toggleHelp')
+              v-list-item.wiki-purpose-control(data-purpose='info', @click='toggleHelp')
                 template(v-slot:prepend)
                   v-icon.mr-3 mdi-help-circle
                 v-list-item-title {{$t('editor:markup.markdownFormattingHelp')}}
@@ -199,45 +199,45 @@
       .editor-markdown-sidebar
         v-tooltip(location="right", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.animated.fadeInLeft(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.insertLink`)', @click='insertLink').mx-0
+            v-btn.animated.fadeInLeft.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.insertLink`)', @click='insertLink').mx-0
               v-icon mdi-link-plus
           span {{$t('editor:markup.insertLink')}}
         v-tooltip(location="right", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p1s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
-              v-icon(:color='activeModal === `editorModalMedia` ? `primary` : ``') mdi-folder-multiple-image
+            v-btn.mt-3.animated.fadeInLeft.wait-p1s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.insertAssets`)', :aria-pressed='activeModal === `editorModalMedia`', @click='toggleModal(`editorModalMedia`)').mx-0
+              v-icon mdi-folder-multiple-image
           span {{$t('editor:markup.insertAssets')}}
         v-tooltip(location="right", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p2s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.insertDiagram`)', :aria-pressed='activeModal === `editorModalDrawio`', @click='toggleModal(`editorModalDrawio`)').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p2s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.insertDiagram`)', :aria-pressed='activeModal === `editorModalDrawio`', @click='toggleModal(`editorModalDrawio`)').mx-0
               v-icon mdi-chart-multiline
           span {{$t('editor:markup.insertDiagram')}}
         v-tooltip(location="right", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, rounded='md', v-bind='props', aria-label='Insert content extension', :aria-pressed='activeModal === `editorModalBlocks`', @click='toggleModal(`editorModalBlocks`)').mx-0
-              v-icon(:color='activeModal === `editorModalBlocks` ? `primary` : ``') mdi-qrcode
+            v-btn.mt-3.animated.fadeInLeft.wait-p3s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', aria-label='Insert content extension', :aria-pressed='activeModal === `editorModalBlocks`', @click='toggleModal(`editorModalBlocks`)').mx-0
+              v-icon mdi-qrcode
           span Insert content extension
         v-tooltip(location="right", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.insertDefinitionList`)', @click='insertDefinitionList').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p4s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.insertDefinitionList`)', @click='insertDefinitionList').mx-0
               v-icon mdi-format-list-group-plus
           span {{$t('editor:markup.insertDefinitionList')}}
         v-tooltip(location="right", color='primary')
           template(v-slot:activator='{ props }')
-            v-btn.mt-3.animated.fadeInLeft.wait-p5s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.insertAbbreviation`)', @click='insertAbbreviation').mx-0
+            v-btn.mt-3.animated.fadeInLeft.wait-p5s.wiki-purpose-control(icon, rounded='md', data-purpose='success', v-bind='props', :aria-label='$t(`editor:markup.insertAbbreviation`)', @click='insertAbbreviation').mx-0
               v-icon mdi-tooltip-plus-outline
           span {{$t('editor:markup.insertAbbreviation')}}
         template(v-if='$vuetify.display.mdAndUp')
           v-spacer
           v-tooltip(location="right", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.mt-3.animated.fadeInLeft.wait-p3s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
+              v-btn.mt-3.animated.fadeInLeft.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.distractionFreeMode`)', @click='toggleFullscreen').mx-0
                 v-icon mdi-arrow-expand-all
             span {{$t('editor:markup.distractionFreeMode')}}
           v-tooltip(location="right", color='primary')
             template(v-slot:activator='{ props }')
-              v-btn.mt-3.animated.fadeInLeft.wait-p4s(icon, rounded='md', v-bind='props', :aria-label='$t(`editor:markup.markdownFormattingHelp`)', :aria-pressed='helpShown', @click='toggleHelp').mx-0
-                v-icon(:color='helpShown ? `primary` : ``') mdi-help-circle
+              v-btn.mt-3.animated.fadeInLeft.wiki-purpose-control(icon, rounded='md', data-purpose='info', v-bind='props', :aria-label='$t(`editor:markup.markdownFormattingHelp`)', :aria-pressed='helpShown', @click='toggleHelp').mx-0
+                v-icon mdi-help-circle
             span {{$t('editor:markup.markdownFormattingHelp')}}
       .editor-markdown-editor(:class='{ "is-mobile-hidden": previewShown && $vuetify.display.smAndDown }')
         div(ref='cm')

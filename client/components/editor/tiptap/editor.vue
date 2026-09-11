@@ -3,116 +3,116 @@
     v-toolbar.editor-tiptap-toolbar(flat, density='compact')
       .editor-tiptap-toolbar-inner(role='toolbar', aria-label='Formatting toolbar')
         .editor-tiptap-toolbar-group(role='group', aria-label='History')
-          v-btn.editor-tiptap-tool(icon, size='small', title='Undo', aria-label='Undo', :disabled='!canUndo', @click='editor?.chain().focus().undo().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='secondary', title='Undo', aria-label='Undo', :disabled='!canUndo', @click='editor?.chain().focus().undo().run()')
             v-icon mdi-undo
-          v-btn.editor-tiptap-tool(icon, size='small', title='Redo', aria-label='Redo', :disabled='!canRedo', @click='editor?.chain().focus().redo().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='secondary', title='Redo', aria-label='Redo', :disabled='!canRedo', @click='editor?.chain().focus().redo().run()')
             v-icon mdi-redo
         .editor-tiptap-toolbar-group(role='group', aria-label='Text formatting')
           v-menu
             template(v-slot:activator='{ props }')
-              v-btn.editor-tiptap-style-trigger(v-bind='props', size='small', title='Text style', aria-label='Text style')
+              v-btn.editor-tiptap-style-trigger.wiki-purpose-control(v-bind='props', data-purpose='primary', size='small', title='Text style', aria-label='Text style')
                 v-icon(start) mdi-format-header-pound
                 | Style
                 v-icon(end, size='16') mdi-chevron-down
             v-list.editor-tiptap-menu-list(density='compact')
-              v-list-item(@click='setParagraph')
+              v-list-item.wiki-purpose-control(data-purpose='primary', @click='setParagraph')
                 template(v-slot:prepend)
                   v-icon mdi-format-paragraph
                 v-list-item-title Paragraph
-              v-list-item(v-for='level in 6', :key='level', @click='setHeading(level)')
+              v-list-item.wiki-purpose-control(data-purpose='primary', v-for='level in 6', :key='level', @click='setHeading(level)')
                 template(v-slot:prepend)
                   v-icon mdi-format-header-{{level}}
                 v-list-item-title Heading {{level}}
-          v-btn.editor-tiptap-tool(icon, size='small', title='Bold', aria-label='Bold', :aria-pressed='isActive(`bold`)', :color='activeColor(`bold`)', @click='editor?.chain().focus().toggleBold().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='primary', title='Bold', aria-label='Bold', :aria-pressed='isActive(`bold`)', @click='editor?.chain().focus().toggleBold().run()')
             v-icon mdi-format-bold
-          v-btn.editor-tiptap-tool(icon, size='small', title='Italic', aria-label='Italic', :aria-pressed='isActive(`italic`)', :color='activeColor(`italic`)', @click='editor?.chain().focus().toggleItalic().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='info', title='Italic', aria-label='Italic', :aria-pressed='isActive(`italic`)', @click='editor?.chain().focus().toggleItalic().run()')
             v-icon mdi-format-italic
-          v-btn.editor-tiptap-tool(v-if='format === `html`', icon, size='small', title='Underline', aria-label='Underline', :aria-pressed='isActive(`underline`)', :color='activeColor(`underline`)', @click='editor?.chain().focus().toggleUnderline().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(v-if='format === `html`', icon, size='small', data-purpose='primary', title='Underline', aria-label='Underline', :aria-pressed='isActive(`underline`)', @click='editor?.chain().focus().toggleUnderline().run()')
             v-icon mdi-format-underline
-          v-btn.editor-tiptap-tool(icon, size='small', title='Strikethrough', aria-label='Strikethrough', :aria-pressed='isActive(`strike`)', :color='activeColor(`strike`)', @click='editor?.chain().focus().toggleStrike().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='secondary', title='Strikethrough', aria-label='Strikethrough', :aria-pressed='isActive(`strike`)', @click='editor?.chain().focus().toggleStrike().run()')
             v-icon mdi-format-strikethrough
           template(v-if='format === `markdown`')
-            v-btn.editor-tiptap-tool(icon, size='small', title='Highlight', aria-label='Highlight', :aria-pressed='isActive(`highlight`)', :color='activeColor(`highlight`)', @click='editor?.chain().focus().toggleHighlight().run()')
+            v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='warning', title='Highlight', aria-label='Highlight', :aria-pressed='isActive(`highlight`)', @click='editor?.chain().focus().toggleHighlight().run()')
               v-icon mdi-format-color-highlight
-            v-btn.editor-tiptap-tool(icon, size='small', title='Subscript', aria-label='Subscript', :aria-pressed='isActive(`subscript`)', :color='activeColor(`subscript`)', @click='editor?.chain().focus().toggleSubscript().run()')
+            v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='primary', title='Subscript', aria-label='Subscript', :aria-pressed='isActive(`subscript`)', @click='editor?.chain().focus().toggleSubscript().run()')
               v-icon mdi-format-subscript
-            v-btn.editor-tiptap-tool(icon, size='small', title='Superscript', aria-label='Superscript', :aria-pressed='isActive(`superscript`)', :color='activeColor(`superscript`)', @click='editor?.chain().focus().toggleSuperscript().run()')
+            v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='primary', title='Superscript', aria-label='Superscript', :aria-pressed='isActive(`superscript`)', @click='editor?.chain().focus().toggleSuperscript().run()')
               v-icon mdi-format-superscript
-            v-btn.editor-tiptap-tool(icon, size='small', title='Keyboard key', aria-label='Keyboard key', :aria-pressed='isActive(`keyboard`)', :color='activeColor(`keyboard`)', @click='editor?.chain().focus().toggleMark(`keyboard`).run()')
+            v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='secondary', title='Keyboard key', aria-label='Keyboard key', :aria-pressed='isActive(`keyboard`)', @click='editor?.chain().focus().toggleMark(`keyboard`).run()')
               v-icon mdi-keyboard-outline
-            v-btn.editor-tiptap-tool(icon, size='small', title='Inline code', aria-label='Inline code', :aria-pressed='isActive(`code`)', :color='activeColor(`code`)', @click='editor?.chain().focus().toggleCode().run()')
+            v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='secondary', title='Inline code', aria-label='Inline code', :aria-pressed='isActive(`code`)', @click='editor?.chain().focus().toggleCode().run()')
               v-icon mdi-code-tags
-          v-btn.editor-tiptap-tool(icon, size='small', title='Link to page', aria-label='Link to page', :color='activeColor(`link`)', @click='insertLink')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='info', title='Link to page', aria-label='Link to page', :aria-pressed='isActive(`link`)', @click='insertLink')
             v-icon mdi-link-variant
         .editor-tiptap-toolbar-group(role='group', aria-label='Lists and indentation')
-          v-btn.editor-tiptap-tool(icon, size='small', title='Bulleted list', aria-label='Bulleted list', :aria-pressed='isActive(`bulletList`)', :color='activeColor(`bulletList`)', @click='editor?.chain().focus().toggleBulletList().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='success', title='Bulleted list', aria-label='Bulleted list', :aria-pressed='isActive(`bulletList`)', @click='editor?.chain().focus().toggleBulletList().run()')
             v-icon mdi-format-list-bulleted
-          v-btn.editor-tiptap-tool(icon, size='small', title='Numbered list', aria-label='Numbered list', :aria-pressed='isActive(`orderedList`)', :color='activeColor(`orderedList`)', @click='editor?.chain().focus().toggleOrderedList().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='success', title='Numbered list', aria-label='Numbered list', :aria-pressed='isActive(`orderedList`)', @click='editor?.chain().focus().toggleOrderedList().run()')
             v-icon mdi-format-list-numbered
-          v-btn.editor-tiptap-tool(v-if='format === `markdown`', icon, size='small', title='Task list', aria-label='Task list', :aria-pressed='isActive(`taskList`)', :color='activeColor(`taskList`)', @click='editor?.chain().focus().toggleTaskList().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(v-if='format === `markdown`', icon, size='small', data-purpose='success', title='Task list', aria-label='Task list', :aria-pressed='isActive(`taskList`)', @click='editor?.chain().focus().toggleTaskList().run()')
             v-icon mdi-format-list-checks
-          v-btn.editor-tiptap-tool(icon, size='small', title='Decrease indent', aria-label='Decrease indent', @click='liftListItem')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='success', title='Decrease indent', aria-label='Decrease indent', @click='liftListItem')
             v-icon mdi-format-indent-decrease
-          v-btn.editor-tiptap-tool(icon, size='small', title='Increase indent', aria-label='Increase indent', @click='sinkListItem')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='success', title='Increase indent', aria-label='Increase indent', @click='sinkListItem')
             v-icon mdi-format-indent-increase
         .editor-tiptap-toolbar-group(role='group', aria-label='Blocks and structure')
-          v-btn.editor-tiptap-tool(icon, size='small', title='Block quote', aria-label='Block quote', :aria-pressed='isActive(`blockquote`)', :color='activeColor(`blockquote`)', @click='editor?.chain().focus().toggleBlockquote().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='primary', title='Block quote', aria-label='Block quote', :aria-pressed='isActive(`blockquote`)', @click='editor?.chain().focus().toggleBlockquote().run()')
             v-icon mdi-format-quote-open
           v-menu
             template(v-slot:activator='{ props }')
-              v-btn.editor-tiptap-tool(icon, size='small', v-bind='props', title='Code block', aria-label='Code block', :aria-pressed='isActive(`codeBlock`)', :color='activeColor(`codeBlock`)')
+              v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='secondary', v-bind='props', title='Code block', aria-label='Code block', :aria-pressed='isActive(`codeBlock`)')
                 v-icon mdi-code-braces
             v-list.editor-tiptap-menu-list(density='compact')
-              v-list-item(v-for='language in codeBlockLanguages', :key='language.value', @click='setCodeBlock(language.value)')
+              v-list-item.wiki-purpose-control(data-purpose='secondary', v-for='language in codeBlockLanguages', :key='language.value', @click='setCodeBlock(language.value)')
                 template(v-slot:prepend)
                   v-icon mdi-code-tags
                 v-list-item-title {{language.label}}
-          v-btn.editor-tiptap-tool(icon, size='small', title='Horizontal rule', aria-label='Horizontal rule', @click='editor?.chain().focus().setHorizontalRule().run()')
+          v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='success', title='Horizontal rule', aria-label='Horizontal rule', @click='editor?.chain().focus().setHorizontalRule().run()')
             v-icon mdi-minus
           v-menu
             template(v-slot:activator='{ props }')
-              v-btn.editor-tiptap-tool(icon, size='small', v-bind='props', title='Table', aria-label='Table', :aria-pressed='isActive(`table`)', :color='activeColor(`table`)')
+              v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='success', v-bind='props', title='Table', aria-label='Table', :aria-pressed='isActive(`table`)')
                 v-icon mdi-table
             v-list.editor-tiptap-menu-list(density='compact')
-              v-list-item(@click='insertTable')
+              v-list-item.wiki-purpose-control(data-purpose='success', @click='insertTable')
                 template(v-slot:prepend)
                   v-icon mdi-table-plus
                 v-list-item-title Insert table
               template(v-if='isActive(`table`)')
-                v-list-item(@click='editor?.chain().focus().addColumnAfter().run()')
+                v-list-item.wiki-purpose-control(data-purpose='success', @click='editor?.chain().focus().addColumnAfter().run()')
                   v-list-item-title Add column
-                v-list-item(@click='editor?.chain().focus().addRowAfter().run()')
+                v-list-item.wiki-purpose-control(data-purpose='success', @click='editor?.chain().focus().addRowAfter().run()')
                   v-list-item-title Add row
-                v-list-item(@click='editor?.chain().focus().mergeOrSplit().run()')
+                v-list-item.wiki-purpose-control(data-purpose='success', @click='editor?.chain().focus().mergeOrSplit().run()')
                   v-list-item-title Merge or split cells
-                v-list-item(@click='editor?.chain().focus().deleteTable().run()')
+                v-list-item.wiki-purpose-control(data-purpose='error', @click='editor?.chain().focus().deleteTable().run()')
                   v-list-item-title Delete table
           template(v-if='format === `html`')
-            v-btn.editor-tiptap-tool(icon, size='small', title='Align left', aria-label='Align left', :aria-pressed='isTextAligned(`left`)', :color='isTextAligned(`left`) ? `primary` : undefined', @click='editor?.chain().focus().setTextAlign(`left`).run()')
+            v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='info', title='Align left', aria-label='Align left', :aria-pressed='isTextAligned(`left`)', @click='editor?.chain().focus().setTextAlign(`left`).run()')
               v-icon mdi-format-align-left
-            v-btn.editor-tiptap-tool(icon, size='small', title='Align center', aria-label='Align center', :aria-pressed='isTextAligned(`center`)', :color='isTextAligned(`center`) ? `primary` : undefined', @click='editor?.chain().focus().setTextAlign(`center`).run()')
+            v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='info', title='Align center', aria-label='Align center', :aria-pressed='isTextAligned(`center`)', @click='editor?.chain().focus().setTextAlign(`center`).run()')
               v-icon mdi-format-align-center
-            v-btn.editor-tiptap-tool(icon, size='small', title='Align right', aria-label='Align right', :aria-pressed='isTextAligned(`right`)', :color='isTextAligned(`right`) ? `primary` : undefined', @click='editor?.chain().focus().setTextAlign(`right`).run()')
+            v-btn.editor-tiptap-tool.wiki-purpose-control(icon, size='small', data-purpose='info', title='Align right', aria-label='Align right', :aria-pressed='isTextAligned(`right`)', @click='editor?.chain().focus().setTextAlign(`right`).run()')
               v-icon mdi-format-align-right
-        v-btn.editor-tiptap-source-trigger(v-if='hasSourceSelection', color='warning', variant='tonal', size='small', title='Edit preserved source', aria-label='Edit preserved source', @click='openSourceDialog')
+        v-btn.editor-tiptap-source-trigger.wiki-purpose-control(v-if='hasSourceSelection', data-purpose='secondary', variant='tonal', size='small', title='Edit preserved source', aria-label='Edit preserved source', @click='openSourceDialog')
           v-icon(start) mdi-code-block-tags
           | Edit source
     .editor-tiptap-markdown-tools(v-if='format === `markdown`', role='toolbar', aria-label='Insert content')
       .editor-tiptap-insert-label
         v-icon(size='18') mdi-plus-circle-outline
         span Insert
-      v-btn.editor-tiptap-insert-button.editor-tiptap-extension-trigger(variant='tonal', size='small', @click='toggleExtensionDialog', aria-label='Insert content extension')
+      v-btn.editor-tiptap-insert-button.editor-tiptap-extension-trigger.wiki-purpose-control(variant='tonal', data-purpose='success', size='small', @click='toggleExtensionDialog', aria-label='Insert content extension')
         v-icon(start) mdi-qrcode
         | Content
-      v-btn.editor-tiptap-insert-button(variant='tonal', size='small', aria-label='Insert admonition', @click='openAdmonitionDialog')
+      v-btn.editor-tiptap-insert-button.wiki-purpose-control(variant='tonal', data-purpose='primary', size='small', aria-label='Insert admonition', @click='openAdmonitionDialog')
         v-icon(start) mdi-alert-box-outline
         | Admonition
-      v-btn.editor-tiptap-insert-button(variant='tonal', size='small', aria-label='Insert definition list', @click='insertDefinitionList')
+      v-btn.editor-tiptap-insert-button.wiki-purpose-control(variant='tonal', data-purpose='success', size='small', aria-label='Insert definition list', @click='insertDefinitionList')
         v-icon(start) mdi-format-list-group-plus
         | Definition list
       v-menu(v-model='glyphMenuOpen', :close-on-content-click='false', location='bottom end', :offset='8', :activator-props='glyphMenuActivatorProps', :content-props='glyphMenuContentProps')
         template(v-slot:activator='{ props }')
-          v-btn.editor-tiptap-insert-button(v-bind='props', variant='tonal', size='small', aria-label='Insert icon or emoji')
+          v-btn.editor-tiptap-insert-button.wiki-purpose-control(v-bind='props', variant='tonal', data-purpose='success', size='small', aria-label='Insert icon or emoji')
             v-icon(start) mdi-emoticon-outline
             | Icon & emoji
             v-icon(end, size='16') mdi-chevron-down
@@ -121,7 +121,7 @@
             div
               #editor-tiptap-glyph-title.text-body-large.font-weight-bold Icons & emoji
               .text-body-small Search by name, meaning, or a close spelling
-            v-btn(icon, size='small', variant='text', aria-label='Close icon and emoji picker', @click='glyphMenuOpen = false')
+            v-btn.wiki-close-control.wiki-purpose-control(icon, size='small', data-purpose='error', variant='text', aria-label='Close icon and emoji picker', @click='glyphMenuOpen = false')
               v-icon mdi-close
           v-card-text.editor-tiptap-glyph-body
             v-text-field.editor-tiptap-glyph-search(
@@ -137,22 +137,21 @@
             )
             v-btn-toggle.editor-tiptap-glyph-filters.mt-3(
               v-model='glyphCategory'
-              color='primary'
               density='compact'
               divided
               mandatory
               variant='outlined'
               aria-label='Icon or emoji category'
             )
-              v-btn(value='all') All
-              v-btn(value='icon')
+              v-btn.wiki-purpose-control(data-purpose='success', value='all') All
+              v-btn.wiki-purpose-control(data-purpose='success', value='icon')
                 v-icon(start) mdi-shape-outline
                 | Icons
-              v-btn(value='emoji')
+              v-btn.wiki-purpose-control(data-purpose='success', value='emoji')
                 v-icon(start) mdi-emoticon-outline
                 | Emoji
             .editor-tiptap-glyph-grid.mt-3(v-if='filteredGlyphs.length > 0')
-              v-btn.editor-tiptap-glyph-button(
+              v-btn.editor-tiptap-glyph-button.wiki-purpose-control(
                 v-for='glyph in filteredGlyphs'
                 :key='`${glyph.category}:${glyph.label}`'
                 icon
@@ -160,6 +159,7 @@
                 :aria-label='`Insert ${glyph.label}`'
                 :title='glyph.label'
                 @click='insertGlyph(glyph)'
+                data-purpose='success'
               )
                 span {{glyph.value}}
             .editor-tiptap-glyph-empty(v-else)
@@ -192,8 +192,8 @@
             v-alert.mt-3(v-if='admonitionError', type='error', variant='tonal') {{admonitionError}}
         v-card-actions
           v-spacer
-          v-btn(variant='text', @click='admonitionDialog = false') Cancel
-          v-btn(color='teal', :disabled='!isAdmonitionValid', @click='insertAdmonition') Insert
+          v-btn.wiki-purpose-control(data-purpose='info', variant='text', @click='admonitionDialog = false') Cancel
+          v-btn.wiki-purpose-control(data-purpose='success', :disabled='!isAdmonitionValid', @click='insertAdmonition') Insert
     v-dialog(v-model='sourceDialog', max-width='760', persistent, aria-labelledby='editor-tiptap-source-title')
       v-card
         v-card-title#editor-tiptap-source-title Edit preserved {{sourceKind}} source
@@ -202,8 +202,8 @@
           v-textarea(v-model='sourceValue', rows='12', auto-grow, spellcheck='false', label='Source')
         v-card-actions
           v-spacer
-          v-btn(variant='text', @click='sourceDialog = false') Cancel
-          v-btn(color='teal', @click='saveSourceNode') Apply
+          v-btn.wiki-purpose-control(data-purpose='info', variant='text', @click='sourceDialog = false') Cancel
+          v-btn.wiki-purpose-control(data-purpose='success', @click='saveSourceNode') Apply
 </template>
 
 <script lang='ts'>
@@ -374,9 +374,6 @@ export default defineComponent({
     isActive (name: string, attributes?: Record<string, unknown>): boolean {
       void this.toolbarVersion
       return this.editor?.isActive(name, attributes) ?? false
-    },
-    activeColor (name: string): string | undefined {
-      return this.isActive(name) ? 'primary' : undefined
     },
     isTextAligned (alignment: 'left' | 'center' | 'right'): boolean {
       void this.toolbarVersion
@@ -681,13 +678,8 @@ export default defineComponent({
     height: calc(var(--wiki-control-height) - var(--wiki-space-3)) !important;
     margin: 0;
     border-radius: var(--wiki-radius-xs) !important;
-    color: rgba(var(--v-theme-on-surface), .82);
     letter-spacing: 0;
 
-    &:hover {
-      background: rgba(var(--v-theme-primary), .1);
-      color: var(--editor-primary);
-    }
 
     &:focus-visible {
       outline: 2px solid rgba(var(--v-theme-primary), .7);
@@ -748,15 +740,11 @@ export default defineComponent({
   &-insert-button {
     flex: 0 0 auto;
     border-radius: var(--wiki-control-radius) !important;
-    color: rgba(var(--v-theme-on-surface), .84);
     letter-spacing: 0;
     text-transform: none;
 
-    &:hover {
-      color: var(--editor-primary);
-    }
-  }
 
+  }
   &-sysbar {
     align-items: center;
     display: flex;

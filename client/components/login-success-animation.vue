@@ -53,10 +53,11 @@ svg.login-success-animation(
 .login-success-animation {
   --login-book-duration: 900ms;
   --login-book-ease: cubic-bezier(.2, .8, .2, 1);
-  --login-book-ink: var(--wiki-accent-ink, currentColor);
-  --login-book-warm: var(--wiki-accent-warm, currentColor);
-  --login-book-spectral: var(--wiki-accent-spectral, currentColor);
-  --login-book-paper: color-mix(in srgb, var(--wiki-surface-raised, currentColor) 88%, var(--login-book-spectral));
+  --login-book-ink: var(--wiki-accent-ink, rgb(var(--v-theme-on-surface, 0 0 0)));
+  --login-book-warm: var(--wiki-accent-warm, rgb(var(--v-theme-primary, 99 102 241)));
+  --login-book-spectral: var(--wiki-accent-spectral, rgb(var(--v-theme-secondary, 56 189 248)));
+  --login-book-paper-base: var(--wiki-surface-raised, rgb(var(--v-theme-surface, 255 255 255)));
+  --login-book-paper: color-mix(in srgb, var(--login-book-paper-base) 88%, var(--login-book-spectral));
 
   display: block;
   width: 72px;
@@ -76,6 +77,7 @@ svg.login-success-animation(
   stroke: color-mix(in srgb, var(--login-book-ink) 76%, transparent);
   stroke-linejoin: round;
   stroke-width: 1;
+  opacity: 1;
   animation-name: loginBookClosedCover;
   animation-duration: var(--login-book-duration);
   animation-fill-mode: both;
@@ -87,6 +89,7 @@ svg.login-success-animation(
   stroke: color-mix(in srgb, var(--login-book-ink) 76%, transparent);
   stroke-linecap: round;
   stroke-width: 1;
+  opacity: 1;
   animation-name: loginBookClosedCover;
   animation-duration: var(--login-book-duration);
   animation-fill-mode: both;
@@ -102,7 +105,7 @@ svg.login-success-animation(
 }
 
 .login-success-animation__spread {
-  opacity: .86;
+  opacity: 0;
   animation-name: loginBookSpread;
   animation-duration: var(--login-book-duration);
   animation-fill-mode: both;
@@ -112,6 +115,8 @@ svg.login-success-animation(
 .login-success-animation__cover {
   transform-box: fill-box;
   transform-origin: center;
+  opacity: .96;
+  transform: scaleX(.08);
   animation-duration: var(--login-book-duration);
   animation-fill-mode: both;
   animation-timing-function: var(--login-book-ease);
@@ -137,6 +142,8 @@ svg.login-success-animation(
 .login-success-animation__page {
   transform-box: fill-box;
   transform-origin: 50% 50%;
+  opacity: 0;
+  transform: scaleX(.05);
   animation-duration: var(--login-book-duration);
   animation-fill-mode: both;
   animation-timing-function: var(--login-book-ease);

@@ -92,7 +92,7 @@ interface ScopeOptions {
   includeAllForSystemManager?: boolean
 }
 
-const column = (table: string | undefined, name: string): string => table ? `${table}.${name}` : name
+const column = (table: string | undefined, name: string): string => (table ? `${table}.${name}` : name)
 const compilePageRuleRegex = (pattern: string): RegExp | null => {
   try {
     return new RegExp(pattern)
@@ -103,22 +103,18 @@ const compilePageRuleRegex = (pattern: string): RegExp | null => {
 
 export const isValidPageRuleRegex = (pattern: string): boolean => compilePageRuleRegex(pattern) !== null
 
-export const pageRuleRegexMatches = (pattern: string, path: string): boolean =>
-  compilePageRuleRegex(pattern)?.test(path) ?? false
+export const pageRuleRegexMatches = (pattern: string, path: string): boolean => compilePageRuleRegex(pattern)?.test(path) ?? false
 
 export const principalId = (user: PagePrincipal): number | null => {
   if (user && Object.hasOwn(user, 'ownershipUserId')) {
     const ownershipUserId = user.ownershipUserId
-    return typeof ownershipUserId === 'number' && Number.isSafeInteger(ownershipUserId) && ownershipUserId > 0
-      ? ownershipUserId
-      : null
+    return typeof ownershipUserId === 'number' && Number.isSafeInteger(ownershipUserId) && ownershipUserId > 0 ? ownershipUserId : null
   }
   const id = user && typeof user.id === 'number' && Number.isSafeInteger(user.id) ? user.id : null
   return id !== null && id > 0 && id !== 2 ? id : null
 }
 
-export const managesSystem = (user: PagePrincipal): boolean =>
-  getWikiAuth().checkAccess(user, ['manage:system'])
+export const managesSystem = (user: PagePrincipal): boolean => getWikiAuth().checkAccess(user, ['manage:system'])
 
 export const ownsPrivatePage = (user: PagePrincipal, page: Pick<PageVisibilityRecord, 'visibility' | 'ownerId'>): boolean =>
   page.visibility === 'private' && principalId(user) === page.ownerId
@@ -153,11 +149,7 @@ export const canDeletePage = (user: PagePrincipal, page: PageVisibilityRecord, a
   return context !== null && getWikiAuth().checkPageAccess(user, ['delete:pages', 'manage:system'], context, authority)
 }
 
-export const scopePageQueryForOwner = <T extends VisibilityQuery>(
-  query: T,
-  ownerId: number | null,
-  options: Pick<ScopeOptions, 'table'> = {}
-): T => {
+export const scopePageQueryForOwner = <T extends VisibilityQuery>(query: T, ownerId: number | null, options: Pick<ScopeOptions, 'table'> = {}): T => {
   query.where(builder => {
     builder.where(column(options.table, 'visibility'), 'public')
     if (ownerId !== null) {
@@ -176,6 +168,4 @@ export const scopePageQuery = <T extends VisibilityQuery>(query: T, user: PagePr
 }
 
 export const pageRoute = (page: Pick<PageVisibilityRecord, 'visibility' | 'path' | 'localeCode'>): string =>
-  page.visibility === 'private'
-    ? `/_private/${page.localeCode ?? 'en'}/${page.path}`
-    : `/${page.localeCode ?? 'en'}/${page.path}`
+  `${page.visibility === 'private' ? '/_private' : ''}/${encodeURIComponent(page.localeCode ?? 'en')}/${page.path.split('/').map(encodeURIComponent).join('/')}`

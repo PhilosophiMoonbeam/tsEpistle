@@ -1,7 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { describe, expect, it } from '../../../server/test/bun-test.mts'
+import { compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
+import { JSDOM } from 'jsdom'
+import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
 import { filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills } from './agent-skill-command.ts'
 import { caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret } from './agent-composer-sizing.ts'
 
@@ -54,23 +56,111 @@ const source = fs.readFileSync(componentPath, 'utf8')
 const script = source.match(/<script setup lang=["']ts["']>\s*([\s\S]*?)\s*<\/script>/)?.[1]
 if (!script) throw new Error('agent-composer.vue script block was not found')
 const executableScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(script.replace(/^import .*$/gm, ''))
-const bindingNames = [
-  'draft',
-  'goalMode',
-  'selectedSkillIds',
-  'activeCommandSkill',
-  'activeCommandOptionId',
-  'skillCommandOpen',
-  'handleKeydown',
-  'submit',
-  'toggleChatPinned'
-]
+const bindingNames = Array.from(script.matchAll(/^(?:const|let|function)\s+([A-Za-z_$][\w$]*)/gm), match => match[1])
 const evaluateComposer = new Function(
   '{ computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplateRef, watch, defineProps, defineEmits, defineExpose, filterPreferredBuiltInSkills, filterSkillsForCommand, filterUserSelectableSkills, caretBoundsFromMirror, calculateComposerSizing, scrollTopForCaret, window, document, HTMLElement, HTMLTextAreaElement }',
   `${executableScript}\nreturn { ${bindingNames.join(', ')} }`
 ) as (dependencies: Record<string, unknown>) => Record<string, unknown>
 let nextComposerId = 0
 const testUseId = (): string => `agent-composer-test-${++nextComposerId}`
+const descriptor = parse(source, { filename: componentPath }).descriptor
+if (!descriptor.template || descriptor.styles.length === 0) throw new Error('agent-composer.vue template and styles are required')
+
+const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', {
+  pretendToBeVisual: true,
+  url: 'http://localhost/'
+})
+const browserWindow = dom.window
+const css = { escape: (value: string) => value, supports: () => false }
+class ObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+const visualViewport = {
+  width: 1024,
+  height: 768,
+  offsetLeft: 0,
+  offsetTop: 0,
+  pageLeft: 0,
+  pageTop: 0,
+  scale: 1,
+  addEventListener: () => undefined,
+  removeEventListener: () => undefined
+}
+Object.defineProperties(browserWindow, {
+  CSS: { configurable: true, value: css },
+  IntersectionObserver: { configurable: true, value: ObserverStub },
+  ResizeObserver: { configurable: true, value: ObserverStub },
+  devicePixelRatio: { configurable: true, value: 1 },
+  matchMedia: {
+    configurable: true,
+    value: (query: string) => ({
+      matches: query.includes('max-width: 639.98px'),
+      media: query,
+      onchange: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      addListener: () => undefined,
+      removeListener: () => undefined,
+      dispatchEvent: () => true
+    })
+  },
+  visualViewport: { configurable: true, value: visualViewport }
+})
+const globalValues: Record<string, unknown> = {
+  CSS: css,
+  Element: browserWindow.Element,
+  Event: browserWindow.Event,
+  HTMLElement: browserWindow.HTMLElement,
+  HTMLButtonElement: browserWindow.HTMLButtonElement,
+  HTMLInputElement: browserWindow.HTMLInputElement,
+  HTMLTextAreaElement: browserWindow.HTMLTextAreaElement,
+  IntersectionObserver: ObserverStub,
+  KeyboardEvent: browserWindow.KeyboardEvent,
+  MouseEvent: browserWindow.MouseEvent,
+  MutationObserver: browserWindow.MutationObserver,
+  Node: browserWindow.Node,
+  ResizeObserver: ObserverStub,
+  SVGElement: browserWindow.SVGElement,
+  Text: browserWindow.Text,
+  cancelAnimationFrame: browserWindow.cancelAnimationFrame.bind(browserWindow),
+  devicePixelRatio: 1,
+  document: browserWindow.document,
+  getComputedStyle: browserWindow.getComputedStyle.bind(browserWindow),
+  navigator: browserWindow.navigator,
+  requestAnimationFrame: browserWindow.requestAnimationFrame.bind(browserWindow),
+  visualViewport,
+  window: browserWindow
+}
+for (const [name, value] of Object.entries(globalValues)) {
+  Object.defineProperty(globalThis, name, { configurable: true, value, writable: true })
+}
+
+// These test-only imports must wait for the browser globals above; Vuetify snapshots them during module evaluation.
+const Vue = await import('vue')
+const { createVuetify } = await import('vuetify')
+const vuetifyComponents = await import('vuetify/components')
+const vuetifyDirectives = await import('vuetify/directives')
+const compiledTemplate = compileTemplate({
+  source: descriptor.template.content,
+  filename: componentPath,
+  id: 'agent-composer-interaction-test',
+  compilerOptions: { mode: 'function' }
+})
+if (compiledTemplate.errors.length > 0) throw compiledTemplate.errors[0]
+const renderAgentComposer = new Function('Vue', compiledTemplate.code)(Vue) as () => unknown
+const compiledStyle = compileStyle({
+  source: descriptor.styles.map(style => style.content).join('\n'),
+  filename: componentPath,
+  id: 'data-v-agent-composer-interaction-test',
+  scoped: true
+})
+if (compiledStyle.errors.length > 0) throw compiledStyle.errors[0]
+const styleElement = document.createElement('style')
+styleElement.textContent = compiledStyle.code
+document.head.append(styleElement)
+const composerScopeAttribute = 'data-v-agent-composer-interaction-test'
 
 const makeSkill = (name: string, versionId = `${name}-version`): TestSkill => ({
   id: name,
@@ -176,12 +266,151 @@ const loadComposer = (
   }) as unknown as ComposerHarness
   return { ...composer, sent, pinnedEvents }
 }
+interface MountedComposer {
+  readonly root: HTMLElement
+  readonly unmount: () => void
+}
+
+interface MountedComposerOptions {
+  readonly disabled?: boolean
+  readonly sending?: boolean
+  readonly initialDraft?: string
+}
+
+const mountedComposers: Array<() => void> = []
+const mountComposer = (options: MountedComposerOptions = {}): MountedComposer => {
+  const host = document.createElement('div')
+  document.body.append(host)
+  const componentProps = {
+    disabled: options.disabled ?? false,
+    sending: options.sending ?? false,
+    canStop: false,
+    skillsEnabled: false,
+    goalsEnabled: true,
+    skills: [],
+    skillsLoading: false,
+    skillsLoadError: '',
+    skillsPartial: false,
+    preferredSkills: [],
+    invocationLimit: 3,
+    statusLabel: 'Ready',
+    statusTone: 'ready' as const,
+    initialDraft: options.initialDraft ?? 'draft',
+    initialMode: undefined,
+    initialSkillVersionIds: undefined,
+    hasMessages: false,
+    chatPinned: false,
+    chatPinDisabled: false
+  }
+  const composerComponent = Vue.defineComponent({
+    name: 'AgentComposerInteractionHarness',
+    props: {
+      disabled: Boolean,
+      sending: Boolean,
+      canStop: Boolean,
+      skillsEnabled: Boolean,
+      goalsEnabled: Boolean,
+      skills: Array,
+      skillsLoading: Boolean,
+      skillsLoadError: String,
+      skillsPartial: Boolean,
+      preferredSkills: Array,
+      invocationLimit: Number,
+      statusLabel: String,
+      statusTone: String,
+      initialDraft: String,
+      initialMode: String,
+      initialSkillVersionIds: Array,
+      hasMessages: Boolean,
+      chatPinned: Boolean,
+      chatPinDisabled: Boolean
+    },
+    emits: ['draftChange', 'compositionChange', 'send', 'stop', 'manageSkills', 'retrySkills', 'updateSkillPreferences', 'update:chatPinned'],
+    setup(props, { emit, expose }) {
+      return evaluateComposer({
+        computed: Vue.computed,
+        nextTick: Vue.nextTick,
+        onBeforeUnmount: Vue.onBeforeUnmount,
+        onMounted: Vue.onMounted,
+        ref: Vue.ref,
+        useId: Vue.useId,
+        useTemplateRef: Vue.useTemplateRef,
+        watch: Vue.watch,
+        defineProps: () => props,
+        defineEmits: () => emit,
+        defineExpose: expose,
+        filterPreferredBuiltInSkills,
+        filterSkillsForCommand,
+        filterUserSelectableSkills,
+        caretBoundsFromMirror,
+        calculateComposerSizing,
+        scrollTopForCaret,
+        window: browserWindow,
+        document: browserWindow.document,
+        HTMLElement: browserWindow.HTMLElement,
+        HTMLTextAreaElement: browserWindow.HTMLTextAreaElement
+      })
+    },
+    render: renderAgentComposer
+  })
+  const statusIndicator = Vue.defineComponent({
+    props: {
+      label: String
+    },
+    setup(props) {
+      return () => Vue.h('span', { 'aria-label': props.label })
+    }
+  })
+  const app = Vue.createApp(composerComponent, componentProps)
+  app.use(createVuetify({ components: vuetifyComponents, directives: vuetifyDirectives }))
+  app.component('StatusIndicator', statusIndicator)
+  app.mount(host)
+  for (const element of host.querySelectorAll<HTMLElement>('*')) element.setAttribute(composerScopeAttribute, '')
+  const root = host.querySelector<HTMLElement>('.agent-composer')
+  if (!root) throw new Error('Agent composer did not render')
+  const unmount = (): void => {
+    app.unmount()
+    host.remove()
+  }
+  mountedComposers.push(unmount)
+  return { root, unmount }
+}
 
 const press = (composer: ComposerHarness, key: string, options?: KeyOptions): KeyboardEvent & { wasPrevented: () => boolean } => {
   const event = makeEvent(key, options)
   composer.handleKeydown(event)
   return event
 }
+afterEach(() => {
+  for (const unmount of mountedComposers.splice(0)) unmount()
+  document.body.replaceChildren()
+})
+
+describe('Agent composer submit loading presentation', () => {
+  it('keeps idle-disabled Send opaque while hiding loading content behind its loader', () => {
+    const idle = mountComposer({ disabled: true })
+    const idleButton = idle.root.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    if (!idleButton) throw new Error('Idle-disabled Send action did not render')
+    const idleContent = idleButton.querySelector<HTMLElement>('.v-btn__content')
+    if (!idleContent) throw new Error('Idle-disabled Send content did not render')
+    expect(idleButton.disabled).toBe(true)
+    expect(browserWindow.getComputedStyle(idle.root).opacity).toBe('1')
+    expect(browserWindow.getComputedStyle(idleButton).opacity).toBe('1')
+    expect(browserWindow.getComputedStyle(idleContent).opacity).toBe('1')
+
+    const loading = mountComposer({ sending: true })
+    const loadingButton = loading.root.querySelector<HTMLButtonElement>('.agent-composer__submit')
+    if (!loadingButton) throw new Error('Loading Send action did not render')
+    const loadingContent = loadingButton.querySelector<HTMLElement>('.v-btn__content')
+    const loadingPrepend = loadingButton.querySelector<HTMLElement>('.v-btn__prepend')
+    if (!loadingContent || !loadingPrepend) throw new Error('Loading Send content did not render')
+    expect(loadingButton.classList.contains('v-btn--loading')).toBe(true)
+    expect(loadingButton.querySelector('.v-btn__loader')).not.toBeNull()
+    expect(browserWindow.getComputedStyle(loading.root).opacity).toBe('1')
+    expect(browserWindow.getComputedStyle(loadingContent).opacity).toBe('0')
+    expect(browserWindow.getComputedStyle(loadingPrepend).opacity).toBe('0')
+  })
+})
 
 describe('Agent composer slash-command keyboard gates', () => {
   it('submits a no-match command literally and keeps Tab native', () => {
@@ -290,6 +519,18 @@ describe('Agent composer slash-command keyboard gates', () => {
     expect(escapeEvent.wasPrevented()).toBe(true)
     expect(dismissed.draft.value).toBe('Keep this /docs')
     expect(dismissed.skillCommandOpen.value).toBe(false)
+  })
+})
+
+describe('Agent composer send admission', () => {
+  it('does not submit a non-empty draft while the composer is disabled', () => {
+    const disabled = loadComposer({ disabled: true })
+    disabled.draft.value = 'keep this draft'
+
+    disabled.submit()
+
+    expect(disabled.sent).toHaveLength(0)
+    expect(disabled.draft.value).toBe('keep this draft')
   })
 })
 

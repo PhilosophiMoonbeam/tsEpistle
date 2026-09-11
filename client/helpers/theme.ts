@@ -54,16 +54,73 @@ const mixHex = (base: string, mix: string, amount: number): string => {
   return `#${channels.join('')}`.toUpperCase()
 }
 
+export const WIKI_PURPOSE_KEYS = ['primary', 'secondary', 'success', 'info', 'warning', 'error', 'neutral'] as const
+export type WikiPurposeKey = (typeof WIKI_PURPOSE_KEYS)[number]
+
+const chooseReadableColor = (candidates: readonly string[], surfaces: readonly string[], minimumContrast: number): string => {
+  const score = (candidate: string): number => Math.min(...surfaces.map(surface => contrastRatio(candidate, surface)))
+  const readable = candidates.find(candidate => score(candidate) >= minimumContrast)
+  if (readable) return readable
+  return candidates.reduce((best, candidate) => (score(candidate) > score(best) ? candidate : best))
+}
+
+const createPurposeColorMap = (colors: ThemeModeColors, raisedSurface: string): Record<string, string> => {
+  const onSurface = contrastForeground(colors.surface)
+  const seeds: Record<WikiPurposeKey, string> = {
+    primary: colors.primary,
+    secondary: colors.secondary,
+    success: colors.success,
+    info: colors.info,
+    warning: colors.warning,
+    error: colors.error,
+    neutral: onSurface
+  }
+  const purposeColors: Record<string, string> = {}
+
+  for (const key of WIKI_PURPOSE_KEYS) {
+    const seed = seeds[key]
+    const fill = mixHex(colors.surface, seed, 0.08)
+    const edge = mixHex(colors.surface, seed, 0.22)
+    const initialInk = mixHex(seed, onSurface, 0.62)
+    const foreground = chooseReadableColor(['#000000', '#FFFFFF'], [colors.surface, raisedSurface, fill], 4.5)
+    const ink = chooseReadableColor(
+      [
+        initialInk,
+        mixHex(initialInk, foreground, 0.2),
+        mixHex(initialInk, foreground, 0.4),
+        mixHex(initialInk, foreground, 0.6),
+        mixHex(initialInk, foreground, 0.8),
+        foreground
+      ],
+      [colors.surface, raisedSurface, fill],
+      4.5
+    )
+    purposeColors[`purpose-${key}-ink`] = ink
+    purposeColors[`purpose-${key}-fill`] = fill
+    purposeColors[`purpose-${key}-edge`] = edge
+  }
+
+  return purposeColors
+}
+
 const createThemeColorMap = (colors: ThemeModeColors, dark: boolean): Record<string, string> => {
+  const surfaceBright = mixHex(colors.surface, '#FFFFFF', dark ? 0.12 : 0.04)
+  const surfaceLight = mixHex(colors.surface, dark ? '#FFFFFF' : '#000000', dark ? 0.06 : 0.03)
   const surfaceVariant = mixHex(colors.background, colors.surface, 0.5)
+  const surfaceRaised = mixHex(colors.surface, surfaceBright, 0.06)
+  const disabledPrimaryRaised = mixHex(surfaceRaised, colors.primary, 0.8)
+  const disabledPrimarySunken = mixHex(mixHex(colors.background, colors.surface, 0.28), colors.primary, 0.8)
   const colorMap: Record<string, string> = {
     ...colors,
-    'surface-bright': mixHex(colors.surface, '#FFFFFF', dark ? 0.12 : 0.04),
-    'surface-light': mixHex(colors.surface, dark ? '#FFFFFF' : '#000000', dark ? 0.06 : 0.03),
+    'surface-bright': surfaceBright,
+    'surface-light': surfaceLight,
     'surface-variant': surfaceVariant,
     'on-surface-variant': contrastForeground(surfaceVariant),
+    'on-primary-disabled-raised': contrastForeground(disabledPrimaryRaised),
+    'on-primary-disabled-sunken': contrastForeground(disabledPrimarySunken),
     // A neutral focus role is selected against both root surfaces, not the site accent.
-    focus: contrastForegroundForSurfaces(colors.background, colors.surface)
+    focus: contrastForegroundForSurfaces(colors.background, colors.surface),
+    ...createPurposeColorMap(colors, surfaceRaised)
   }
   for (const key of THEME_COLOR_KEYS) colorMap[`on-${key}`] = contrastForeground(colors[key])
   return colorMap

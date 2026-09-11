@@ -22,7 +22,6 @@ interface DragHarness {
 const actionsPath = join(process.cwd(), 'client/components/agents/agent-history-session-actions.vue')
 const actionsScript = readFileSync(actionsPath, 'utf8').match(/<script setup lang=["']ts["']>([\s\S]*?)<\/script>/)?.[1] ?? ''
 const executableActionsScript = new Bun.Transpiler({ loader: 'ts' }).transformSync(actionsScript.replace(/^import .*$/gm, ''))
-
 const panelPath = join(process.cwd(), 'client/components/agents/agent-history-panel.vue')
 const panelScript = readFileSync(panelPath, 'utf8').match(/<script setup lang=["']ts["']>([\s\S]*?)<\/script>/)?.[1] ?? ''
 const dragHelpersScript = panelScript.match(/const hasRenderedDropDestination[\s\S]*?(?=const dropTargetKey)/)?.[0] ?? ''

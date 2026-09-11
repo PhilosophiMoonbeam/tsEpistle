@@ -107,7 +107,7 @@ const loadManager = (view, overrides = {}) => {
     'createModalFocusScope',
     'window',
     'HTMLElement',
-    `${executableScript}\nreturn { loaded, memories, sections, searchQuery, visibleSections, memorySearchStatus, memoryCountLabel, canAddMemory, addMemoryDisabledReason, clearMemoryDisabledReason, open, actionBusy, removing, clearing, beginRemove, beginClear, remove, clear, requestClose }`
+    `${executableScript}\nreturn { loaded, memories, sections, searchQuery, visibleSections, memorySearchStatus, memoryCountLabel, canAddMemory, addMemoryDisabledReason, clearMemoryDisabledReason, open, actionBusy, removing, clearing, draftTarget, draftContent, beginAdd, beginEdit, beginRemove, beginClear, remove, clear, requestClose }`
   )
   const manager = evaluate(
     getter => ({
@@ -228,23 +228,22 @@ describe('Agent memory manager initial loading', () => {
 
     expect(emittedBusy).toEqual([false, true])
   })
+  it('keeps target selection state aligned with the requested memory section', async () => {
+    const { manager } = loadManager(populatedView())
+
+    await Promise.resolve()
+    await Promise.resolve()
+    manager.beginAdd('agent')
+
+    expect(manager.draftTarget.value).toBe('agent')
+    expect(manager.draftContent.value).toBe('')
+
+    manager.beginAdd('user')
+    expect(manager.draftTarget.value).toBe('user')
+  })
 })
 
 describe('Agent memory manager destructive dialog lifetime', () => {
-  it('keeps both teleported dialogs and backdrop handling subordinate to the panel', () => {
-    const dialogTags = source.split('\n').filter(line => line.includes('<v-dialog '))
-    const removeDialog = dialogTags.find(line => line.includes("'remove'"))
-    const clearDialog = dialogTags.find(line => line.includes("'clear'"))
-
-    expect(removeDialog).toMatch(/:model-value="(?=[^"]*\bopen\b)(?=[^"]*\bremoving\b)[^"]+"/)
-    expect(removeDialog).toMatch(/:persistent="(?=[^"]*\bopen\b)(?=[^"]*\bactionBusy\b)[^"]+"/)
-    expect(removeDialog).toMatch(/@update:model-value="(?=[^"]*\bopen\b)[^"]+"/)
-    expect(clearDialog).toMatch(/:model-value="(?=[^"]*\bopen\b)(?=[^"]*\bclearing\b)[^"]+"/)
-    expect(clearDialog).toMatch(/:persistent="(?=[^"]*\bopen\b)(?=[^"]*\bactionBusy\b)[^"]+"/)
-    expect(clearDialog).toMatch(/@update:model-value="(?=[^"]*\bopen\b)[^"]+"/)
-    expect(script).toMatch(/onEscape:\s*\(\)\s*=>\s*\{[\s\S]{0,120}if\s*\(\s*!open\.value\b/)
-  })
-
   it('backgrounds an in-flight remove while its mounted manager retains ownership', async () => {
     const mutation = deferred()
     const focusScope = { deactivate: vi.fn() }

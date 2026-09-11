@@ -47,7 +47,9 @@ type WhoAmIResponse = {
   json(): Promise<unknown>
 }
 
-let authRefresh: Promise<void> | undefined
+export type AuthRefreshOutcome = 'authenticated' | 'anonymous' | 'unavailable'
+
+let authRefresh: Promise<AuthRefreshOutcome> | undefined
 export const useWikiStore = defineStore('wiki', {
   state: () => ({
     loadingCounts: {} as Record<string, number>,
@@ -183,31 +185,47 @@ export const useWikiStore = defineStore('wiki', {
       }
       this.showNotification({ style: 'red', message, icon: 'alert' })
     },
-    async refreshAuth(): Promise<void> {
+    refreshAuth(): Promise<AuthRefreshOutcome> {
       if (authRefresh) return authRefresh
 
-      const refresh = (async () => {
+      const refresh = (async (): Promise<AuthRefreshOutcome> => {
         try {
-          const response = await sameOriginJsonFetch(
-            window.fetch.bind(window),
-            '/_api/users/whoami',
-            { credentials: 'same-origin', cache: 'no-store' }
-          ) as WhoAmIResponse
-          const payload = await response.json()
-          if (!response.ok || !payload || typeof payload !== 'object') {
+          const response = (await sameOriginJsonFetch(window.fetch.bind(window), '/_api/users/whoami', {
+            credentials: 'same-origin',
+            cache: 'no-store'
+          })) as WhoAmIResponse
+          if (!response.ok) {
             this.user = defaultUser()
-            return
+            return 'unavailable'
+          }
+          const payload = await response.json()
+          if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+            this.user = defaultUser()
+            return 'unavailable'
           }
           const record = payload as Record<string, unknown>
-          const user = record.user
-          if (record.authenticated !== true || !user || typeof user !== 'object') {
+          if (record.authenticated === false) {
             this.user = defaultUser()
-            return
+            return 'anonymous'
+          }
+          if (record.authenticated !== true) {
+            this.user = defaultUser()
+            return 'unavailable'
+          }
+          const user = record.user
+          if (!user || typeof user !== 'object' || Array.isArray(user)) {
+            this.user = defaultUser()
+            return 'unavailable'
           }
           const profile = user as Record<string, unknown>
+          const id = profile.id
+          if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+            this.user = defaultUser()
+            return 'unavailable'
+          }
           this.user = {
             ...defaultUser(),
-            id: typeof profile.id === 'number' ? profile.id : 0,
+            id,
             email: typeof profile.email === 'string' ? profile.email : '',
             name: typeof profile.name === 'string' ? profile.name : '',
             pictureUrl: typeof profile.pictureUrl === 'string' ? profile.pictureUrl : '',
@@ -222,8 +240,10 @@ export const useWikiStore = defineStore('wiki', {
               : [],
             authenticated: true
           }
+          return 'authenticated'
         } catch {
           this.user = defaultUser()
+          return 'unavailable'
         }
       })()
 

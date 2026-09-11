@@ -3,7 +3,7 @@
     <div class="agent-panel-header__title-row">
       <v-icon :icon="icon" size="20" class="agent-panel-header__icon" aria-hidden="true" />
       <h2 :id="headingId">{{ title }}</h2>
-      <v-btn :icon="'mdi-close'" size="small" variant="text" :aria-label="closeLabel" :disabled="busy" @click="emit('close')" />
+      <v-btn class="wiki-close-control" :icon="'mdi-close'" size="small" variant="text" :aria-label="closeLabel" :disabled="busy" @click="emit('close')" />
     </div>
     <div :id="descriptionId" class="agent-panel-header__description"><slot /></div>
   </header>

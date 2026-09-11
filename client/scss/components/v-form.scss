@@ -113,6 +113,63 @@
     }
   }
 }
+// Vuetify renders outlined labels with separate start, notch and end edges.
+// This opt-in class removes the continuous field shadow so the native
+// segmented outline remains the only edge that can meet a floating label.
+.wiki-notched-field {
+  // Keep the native segmented outline as the only edge around a floating label.
+  // The shared focus rule targets the field container, so clear it explicitly.
+  .v-field--variant-outlined {
+    border: 0;
+    box-shadow: none;
+    outline: none;
+    outline-offset: 0;
+
+    .v-field__outline {
+      border: 0;
+    }
+  }
+
+  .v-field--variant-outlined:has(:focus-visible) {
+    box-shadow: none;
+    outline: none;
+    outline-offset: 0;
+  }
+
+  .v-field--variant-outlined.v-field--focused .v-field__outline,
+  .v-field--variant-outlined:has(:focus-visible) .v-field__outline {
+    color: var(--wiki-focus-color, rgb(var(--v-theme-focus)));
+    --v-field-border-width: 2px;
+    --v-field-border-opacity: 1;
+  }
+
+  &:not(.v-input--error).v-input--focused .v-field--variant-outlined,
+  &.v-input--error:not(.v-input--disabled) .v-field--variant-outlined,
+  &.is-success:not(.v-input--error, .v-input--disabled) .v-field--variant-outlined,
+  &.is-success:not(.v-input--error, .v-input--disabled).v-input--focused .v-field--variant-outlined {
+    box-shadow: none;
+    outline: none;
+    outline-offset: 0;
+  }
+
+  &.v-input--error:not(.v-input--disabled) .v-field--variant-outlined .v-field__outline {
+    color: rgb(var(--v-theme-error));
+    --v-field-border-opacity: 1;
+  }
+
+  &.is-success:not(.v-input--error, .v-input--disabled) .v-field--variant-outlined .v-field__outline {
+    color: rgb(var(--v-theme-success));
+    --v-field-border-opacity: 1;
+  }
+}
+
+@media (forced-colors: active) {
+  .wiki-notched-field .v-field--variant-outlined:has(:focus-visible) .v-field__outline {
+    color: Highlight;
+    --v-field-border-width: 2px;
+    --v-field-border-opacity: 1;
+  }
+}
 
 .v-field--loading .v-field__loader {
   color: var(--wiki-accent-spectral, rgb(var(--v-theme-primary)));

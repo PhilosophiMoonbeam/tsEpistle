@@ -345,7 +345,7 @@
             :disabled='isLoading'
             ) {{ $t('auth:tfa.verifyToken') }}
     loader(v-model='isLoading', :color='loaderColor', :title='loaderTitle', :subtitle='$t(`auth:pleaseWait`)')
-      template(v-if='showLoginSuccessAnimation', v-slot:illustration)
+      template(v-slot:illustration)
         login-success-animation
     notify.login-notify
 </template>
@@ -420,7 +420,6 @@ export default defineComponent({
       securityCodeError: '',
       continuationToken: '',
       isLoading: false,
-      showLoginSuccessAnimation: false,
       loaderColor: 'grey-darken-4',
       loaderTitle: 'Working...',
       newPassword: '',
@@ -519,7 +518,6 @@ export default defineComponent({
   },
   methods: {
     showError (error: unknown) {
-      this.showLoginSuccessAnimation = false
       this.errorMessage = typeof error === 'string' ? error : getErrorMessage(error)
       this.errorShown = true
     },
@@ -535,7 +533,6 @@ export default defineComponent({
     },
     showSuccess (message: string) {
       this.clearError()
-      this.showLoginSuccessAnimation = false
       this.successMessage = message
       this.screen = 'success'
     },
@@ -743,7 +740,6 @@ export default defineComponent({
       this.isLoading = false
     },
     handleLoginResponse (respObj: AuthResponse) {
-      this.showLoginSuccessAnimation = false
       this.continuationToken = respObj.continuationToken || ''
       if (respObj.mustChangePwd === true) {
         this.screen = 'changePwd'
@@ -782,7 +778,6 @@ export default defineComponent({
         }, 500)
         this.isLoading = false
       } else if (respObj.authenticated === true) {
-        this.showLoginSuccessAnimation = true
         this.loaderColor = 'green-darken-1'
         this.loaderTitle = this.$t('auth:loginSuccess')
         if (this.redirectTimer !== null) window.clearTimeout(this.redirectTimer)

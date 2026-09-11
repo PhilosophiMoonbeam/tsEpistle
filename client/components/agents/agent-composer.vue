@@ -113,13 +113,20 @@
 
     <div class="agent-composer__actions">
       <div class="agent-composer__context-controls" role="group" aria-label="Conversation context controls">
-        <v-menu content-class="agent-owned-overlay" v-if="skillsEnabled" v-model="skillMenuOpen" :close-on-content-click="false">
+        <v-menu content-class="agent-owned-overlay agent-composer__skill-menu-content" v-if="skillsEnabled" v-model="skillMenuOpen" :close-on-content-click="false">
           <template #activator="{ props: activatorProps }">
             <v-btn
               :id="composerIds.skillsTrigger"
               ref="skillsTrigger"
               v-bind="activatorProps"
-              class="agent-composer__skill-button"
+              class="agent-composer__skill-button wiki-purpose-control"
+              :class="{
+                'wiki-purpose-control--open': skillMenuOpen,
+                'wiki-purpose-control--selected': selectedSkills.length > 0,
+                'agent-composer__skill-button--error': Boolean(skillsLoadError)
+              }"
+              data-purpose="success"
+              :data-state="skillMenuOpen ? 'active' : selectedSkills.length > 0 ? 'selected' : undefined"
               variant="text"
               :prepend-icon="skillsLoadError ? 'mdi-puzzle-remove-outline' : 'mdi-puzzle-outline'"
               :color="skillsLoadError ? 'error' : undefined"
@@ -200,7 +207,13 @@
         </v-menu>
         <v-btn
           v-if="goalsEnabled"
-          class="agent-composer__goal-button"
+          class="agent-composer__goal-button wiki-purpose-control"
+          :class="{
+            'wiki-purpose-control--active': goalMode,
+            'agent-composer__goal-button--active': goalMode
+          }"
+          data-purpose="info"
+          :data-state="goalMode ? 'active' : undefined"
           :color="goalMode ? 'primary' : undefined"
           :variant="goalMode ? 'tonal' : 'text'"
           prepend-icon="mdi-target"
@@ -213,17 +226,23 @@
           <span>Goal</span>
         </v-btn>
         <v-btn
-          class="agent-composer__chat-pin"
+          class="agent-composer__chat-pin wiki-purpose-control"
+          :class="{
+            'wiki-purpose-control--active': chatPinned,
+            'agent-composer__chat-pin--active': chatPinned
+          }"
+          data-purpose="warning"
+          :data-state="chatPinned ? 'active' : undefined"
           :color="chatPinned ? 'primary' : undefined"
           :variant="chatPinned ? 'tonal' : 'text'"
           :prepend-icon="chatPinned ? 'mdi-pin' : 'mdi-pin-outline'"
-          aria-label="Pin chat"
+          :aria-label="chatPinned ? 'Unpin conversation' : 'Pin conversation'"
           :aria-pressed="chatPinned"
-          :title="chatPinned ? 'Unpin chat' : 'Pin chat'"
+          :title="chatPinned ? 'Unpin conversation' : 'Pin conversation'"
           :disabled="chatPinDisabled"
           @click="toggleChatPinned"
         >
-          <span>Pin chat</span>
+          <span>Pin</span>
         </v-btn>
       </div>
 
@@ -268,9 +287,6 @@
       </div>
     </div>
 
-    <span :id="composerIds.keyboardHint" class="agent-composer__hint">
-      Enter to send · Shift+Enter for a new line
-    </span>
   </v-form>
 
 
@@ -350,8 +366,7 @@ const composerIds = {
   skillsDialog: `${composerId}-skills-dialog`,
   skillsHeading: `${composerId}-skills-heading`,
   skillsDescription: `${composerId}-skills-description`,
-  status: `${composerId}-status`,
-  keyboardHint: `${composerId}-keyboard-hint`
+  status: `${composerId}-status`
 } as const
 const commandOptionId = (versionId: string): string => `${composerIds.commandResults}-${versionId}`
 const preferredSkillIds = computed(() => new Set(props.preferredSkills.map(skill => skill.skillId)))
@@ -385,8 +400,7 @@ const composerInputLabel = computed(() =>
 )
 const composerInputDescriptionIds = computed(() => [
   props.externalDescriptionId?.trim(),
-  composerIds.status,
-  composerIds.keyboardHint
+  composerIds.status
 ].filter(Boolean).join(' '))
 const composerInputPlaceholder = computed(() => {
   if (goalMode.value) return 'Describe a bounded outcome for Wiki Agent'
@@ -806,8 +820,14 @@ onBeforeUnmount(() => {
 }
 
 .agent-composer--disabled:not(.agent-composer--sending) {
+  opacity: 1;
   background: var(--wiki-surface-sunken);
   box-shadow: var(--wiki-shadow-inset);
+}
+
+.agent-composer--disabled:not(.agent-composer--sending) .agent-composer__submit.v-btn--disabled:not(.v-btn--loading),
+.agent-composer--disabled:not(.agent-composer--sending) .agent-composer__submit:disabled:not(.v-btn--loading) {
+  color: rgb(var(--v-theme-on-primary-disabled-sunken)) !important;
 }
 
 .agent-composer__editor {
@@ -928,12 +948,13 @@ onBeforeUnmount(() => {
   padding-inline: var(--wiki-space-3);
   font-weight: 500;
   letter-spacing: .01em;
-  transition: background var(--wiki-motion-fast) var(--wiki-motion-ease), color var(--wiki-motion-fast) var(--wiki-motion-ease);
+  transition: background var(--wiki-motion-fast) var(--wiki-motion-ease), color var(--wiki-motion-fast) var(--wiki-motion-ease), border-color var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
 .agent-composer__skill-button {
   max-width: 100%;
 }
+
 
 .agent-composer__pin {
   min-width: max(44px, var(--wiki-control-height));
@@ -1012,6 +1033,32 @@ onBeforeUnmount(() => {
   transition: transform var(--wiki-motion-fast) var(--wiki-motion-ease), box-shadow var(--wiki-motion-fast) var(--wiki-motion-ease);
 }
 
+.agent-composer__submit.v-btn--disabled:not(.v-btn--loading),
+.agent-composer__submit:disabled:not(.v-btn--loading) {
+  opacity: 1;
+  background-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 80%, transparent) !important;
+  color: rgb(var(--v-theme-on-primary-disabled-raised)) !important;
+}
+
+.agent-composer__submit.v-btn--disabled:not(.v-btn--loading) :deep(.v-btn__content),
+.agent-composer__submit.v-btn--disabled:not(.v-btn--loading) :deep(.v-btn__prepend),
+.agent-composer__submit.v-btn--disabled:not(.v-btn--loading) :deep(.v-icon),
+.agent-composer__submit:disabled:not(.v-btn--loading) :deep(.v-btn__content),
+.agent-composer__submit:disabled:not(.v-btn--loading) :deep(.v-btn__prepend),
+.agent-composer__submit:disabled:not(.v-btn--loading) :deep(.v-icon) {
+  opacity: 1;
+}
+
+.agent-composer__submit.v-btn--loading :deep(.v-btn__content),
+.agent-composer__submit.v-btn--loading :deep(.v-btn__prepend) {
+  opacity: 0;
+}
+
+.agent-composer__submit.v-btn--disabled :deep(.v-btn__overlay),
+.agent-composer__submit:disabled :deep(.v-btn__overlay) {
+  opacity: 0;
+}
+
 .agent-composer__submit:hover:not(:disabled) {
   box-shadow: var(--wiki-shadow-sm);
   transform: translateY(-1px);
@@ -1027,13 +1074,6 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.agent-composer__hint {
-  display: block;
-  margin: var(--wiki-space-1) var(--wiki-space-1) 0;
-  color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 58%, transparent);
-  font-size: var(--wiki-label-size);
-  line-height: 1.35;
-}
 
 .agent-composer__command-menu {
   position: absolute;
@@ -1047,6 +1087,12 @@ onBeforeUnmount(() => {
   border-radius: var(--wiki-panel-radius);
   background: var(--wiki-surface-raised);
   box-shadow: var(--wiki-shadow-lg);
+}
+
+:global(.agent-composer__skill-menu-content) {
+  border: 1px solid color-mix(in srgb, rgb(var(--v-theme-success)) 24%, var(--wiki-surface-border)) !important;
+  border-radius: var(--wiki-panel-radius);
+  box-shadow: 0 0 0 1px color-mix(in srgb, rgb(var(--v-theme-success)) 8%, transparent);
 }
 .agent-composer__command-menu :deep(.v-list) {
   max-height: min(20rem, 42dvh) !important;
@@ -1129,25 +1175,6 @@ onBeforeUnmount(() => {
     max-height: min(calc(var(--wiki-space-12) * 2), 24dvh);
   }
 
-}
-@media (max-width: 740px) and (hover: none) {
-  .agent-composer__hint {
-    max-height: 0;
-    margin-block-start: 0;
-    overflow: hidden;
-    opacity: 0;
-    transform: translateY(-.25rem);
-    pointer-events: none;
-    transition: max-height var(--wiki-motion-fast) var(--wiki-motion-ease), margin var(--wiki-motion-fast) var(--wiki-motion-ease), opacity var(--wiki-motion-fast) var(--wiki-motion-ease), transform var(--wiki-motion-fast) var(--wiki-motion-ease);
-  }
-
-  .agent-composer:focus-within .agent-composer__hint {
-    max-height: 2rem;
-    margin-block-start: var(--wiki-space-1);
-    opacity: 1;
-    transform: none;
-    pointer-events: auto;
-  }
 }
 
 @media (max-width: 740px) and (max-height: 500px) {

@@ -55,7 +55,7 @@ const authenticatedId = (requester: PagePrincipal): number => {
 
 const manageablePage = async (requester: PagePrincipal, pageId: number, suppliedAuthority?: PageRuleAuthority): Promise<ProtectedPage> => {
   const page = await wiki.models.pages.getPageFromDb(pageId)
-  const authority = suppliedAuthority ?? await wiki.auth.loadPageRuleAuthority(requester)
+  const authority = suppliedAuthority ?? (await wiki.auth.loadPageRuleAuthority(requester))
   if (!page || !canWritePage(requester, page, authority)) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
   return page
 }
@@ -210,15 +210,21 @@ export const unlockPage = async (input: { requester: PagePrincipal; pageId: numb
   })
 }
 
-export const pageRequiresUnlock = async (input: { requester: PagePrincipal; pageId: number; sessionId: string; now?: Date }): Promise<boolean> => {
+export const pageRequiresUnlock = async (input: {
+  requester: PagePrincipal
+  pageId: number
+  sessionId: string
+  now?: Date
+  transaction?: Knex.Transaction
+}): Promise<boolean> => {
   if (managesSystem(input.requester)) return false
-  const protection = await wiki.models.knex<ProtectionRow>('pageAccessPasswords').where({ pageId: input.pageId }).first()
+  const knex = input.transaction ?? wiki.models.knex
+  const protection = await knex<ProtectionRow>('pageAccessPasswords').where({ pageId: input.pageId }).first()
   if (!protection) return false
   const now = input.now ?? new Date()
-  await wiki.models.knex('pageUnlockGrants').where('expiresAt', '<=', now).delete()
+  await knex('pageUnlockGrants').where({ pageId: input.pageId, sessionId: input.sessionId }).where('expiresAt', '<=', now).delete()
   if (!input.sessionId) return true
-  const grant = await wiki.models
-    .knex('pageUnlockGrants')
+  const grant = await knex('pageUnlockGrants')
     .where({ pageId: input.pageId, sessionId: input.sessionId, userId: principalId(input.requester), passwordVersion: protection.version })
     .where('expiresAt', '>', now)
     .first()
@@ -233,7 +239,7 @@ export const assertPageUnlocked = async (input: {
 }): Promise<void> => {
   const page = await wiki.models.pages.getPageFromDb(input.pageId)
   if (!page) throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
-  const authority = input.authority ?? await wiki.auth.loadPageRuleAuthority(input.requester)
+  const authority = input.authority ?? (await wiki.auth.loadPageRuleAuthority(input.requester))
   if (!canReadPage(input.requester, page, authority)) {
     throw new ApplicationError('Page not found', { status: 404, code: 'PAGE_NOT_FOUND' })
   }

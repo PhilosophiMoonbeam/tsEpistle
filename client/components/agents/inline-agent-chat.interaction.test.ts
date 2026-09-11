@@ -740,7 +740,7 @@ describe('Inline Agent latest response dock', () => {
 })
 
 describe('Agent composer action semantics', () => {
-  it('renders Ready immediately before the accessible Send action and exposes Pin chat', () => {
+  it('renders Ready immediately before the accessible Send action and exposes Pin', () => {
     const mounted = mountInlineAgent()
     const { primary, status } = expectComposerActionStructure(mounted)
     const submit = primary.querySelector<HTMLButtonElement>('.agent-composer__submit')
@@ -752,12 +752,13 @@ describe('Agent composer action semantics', () => {
     expect(submit?.tagName).toBe('BUTTON')
     expect(submit?.textContent?.trim()).toBe('Send')
     expect(primary.querySelector('.agent-composer__stop')).toBeNull()
-    expect(pin?.getAttribute('aria-label')).toBe('Pin chat')
-    expect(pin?.getAttribute('aria-pressed')).toBe('false')
+    expect(pin?.textContent?.trim()).toBe('Pin')
+    expect(pin?.getAttribute('aria-label')).toBe('Pin conversation')
     expect(pin?.hasAttribute('disabled')).toBe(false)
+    expect(mounted.root.querySelector('.agent-composer__hint')).toBeNull()
   })
 
-  it('keeps Working immediately before the accessible Stop action for cancellable runs while Pin chat stays enabled', () => {
+  it('keeps Working immediately before the accessible Stop action while Pin stays enabled', () => {
     const mounted = mountInlineAgent(loadGoalLockState('active'))
     const { primary, status } = expectComposerActionStructure(mounted)
     const stop = primary.querySelector<HTMLButtonElement>('.agent-composer__stop')
@@ -772,7 +773,7 @@ describe('Agent composer action semantics', () => {
     expect(pin?.getAttribute('aria-pressed')).toBe('false')
     expect(pin?.hasAttribute('disabled')).toBe(false)
   })
-  it('disables Pin chat only while workspace selection is unsettled', () => {
+  it('disables Pin only while workspace selection is unsettled', () => {
     const unsettled = mountInlineAgent(loadGoalLockState(null, false, null, false))
     const unsettledPin = unsettled.root.querySelector<HTMLButtonElement>('.agent-composer__chat-pin')
     expect(unsettledPin?.disabled).toBe(true)

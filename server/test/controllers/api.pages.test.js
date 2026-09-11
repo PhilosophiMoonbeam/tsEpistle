@@ -2,6 +2,28 @@ const pageTreeAccess = vi.fn()
 vi.mockModule('../../repositories/page-tree-access.ts', import.meta.url, () => ({ pageTreeAccess, treeAncestorIds: () => [] }))
 const taxonomyLegacyChange = vi.fn()
 vi.mockModule('../../operations/taxonomy.ts', import.meta.url, () => ({ default: () => ({ legacyChange: taxonomyLegacyChange }) }))
+const pageWatchState = vi.fn()
+const listPageWatchNotifications = vi.fn()
+const markPageWatchNotificationRead = vi.fn()
+const unwatchPage = vi.fn()
+const watchPage = vi.fn()
+vi.mockModule('../../operations/page-watching.ts', import.meta.url, () => ({
+  getPageWatchState: pageWatchState,
+  listPageWatchNotifications,
+  markPageWatchNotificationRead,
+  unwatchPage,
+  watchPage
+}))
+const listApprovalInbox = vi.fn()
+const getPageApproval = vi.fn()
+const submitPageApproval = vi.fn()
+const transitionApproval = vi.fn()
+vi.mockModule('../../operations/approvals.ts', import.meta.url, () => ({
+  getPageApproval,
+  listApprovalInbox,
+  submitPageApproval,
+  transitionApproval
+}))
 vi.mockModule('express', import.meta.url, () => {
   const router = {
     delete: vi.fn(),
@@ -159,7 +181,18 @@ const linksKnex = ({ rows, protectedPageIds = [], receipts = [] }) =>
 describe('controllers/api pages endpoints', () => {
   beforeEach(() => {
     vi.resetModules()
-    taxonomyLegacyChange.mockReset().mockResolvedValue({ tagId: 7, pageCount: 0, refreshWarnings: [] })
+    for (const operation of [pageWatchState, listPageWatchNotifications, markPageWatchNotificationRead, unwatchPage, watchPage, listApprovalInbox, getPageApproval, submitPageApproval, transitionApproval]) {
+      operation.mockReset()
+    }
+    pageWatchState.mockResolvedValue({ watched: false, emailEnabled: false, inAppEnabled: false })
+    listPageWatchNotifications.mockResolvedValue({ ownerId: 7, items: [], unreadCount: 0, nextCursor: null, unreadComplete: true })
+    markPageWatchNotificationRead.mockResolvedValue(undefined)
+    unwatchPage.mockResolvedValue({ watched: false })
+    watchPage.mockResolvedValue({ watched: true, emailEnabled: true, inAppEnabled: true })
+    listApprovalInbox.mockResolvedValue({ ownerId: 7, items: [], nextCursor: null })
+    getPageApproval.mockResolvedValue(null)
+    submitPageApproval.mockResolvedValue({})
+    transitionApproval.mockResolvedValue({})
     express.__router.delete.mockClear()
     express.__router.get.mockClear()
     express.__router.patch.mockClear()
@@ -325,6 +358,13 @@ describe('controllers/api pages endpoints', () => {
       visibility: express.__router.patch.mock.calls.find(([path]) => path === '/:id/visibility')[1],
       restore: express.__router.post.mock.calls.find(([path]) => path === '/:id/history/:versionId/restore')[1],
       submitApproval: express.__router.post.mock.calls.find(([path]) => path === '/:id/approval')[1],
+      transitionApproval: express.__router.post.mock.calls.find(([path]) => path === '/approvals/:requestId/transition')[1],
+      getApproval: express.__router.get.mock.calls.find(([path]) => path === '/:id/approval')[1],
+      approvalInbox: express.__router.get.mock.calls.find(([path]) => path === '/approvals/inbox')[1],
+      watchList: express.__router.get.mock.calls.find(([path]) => path === '/watches/notifications')[1],
+      watchState: express.__router.get.mock.calls.find(([path]) => path === '/:id/watch')[1],
+      watchRead: express.__router.patch.mock.calls.find(([path]) => path === '/watches/notifications/:notificationId/read')[1],
+      watchPut: express.__router.put.mock.calls.find(([path]) => path === '/:id/watch')[1],
       collaborationSession: express.__router.post.mock.calls.find(([path]) => path === '/:id/collaboration/session')[1],
       collaborationDiscard: express.__router.delete.mock.calls.find(([path]) => path === '/:id/collaboration/draft')[1],
       tree: express.__router.get.mock.calls.find(([path]) => path === '/tree')[1]
@@ -437,6 +477,347 @@ describe('controllers/api pages endpoints', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a canonical positive decimal string' })
   })
 
+  it('forwards the page approval submission snapshot and session id', async () => {
+    const { submitApproval } = await loadHandler()
+    const user = { id: 1, permissions: ['read:pages', 'write:pages'] }
+    const req = {
+      body: { expectedSourceRevision: '8', assigneeId: 3, comment: ' Please review this revision ' },
+      params: { id: '7' },
+      user,
+      sessionID: 'approval-session'
+    }
+    const res = notificationResponse()
+
+    await submitApproval(req, res, vi.fn())
+
+    expect(submitPageApproval).toHaveBeenCalledWith({
+      requester: user,
+      pageId: 7,
+      sessionId: 'approval-session',
+      expectedSourceRevision: '8',
+      assigneeId: 3,
+      comment: ' Please review this revision '
+    })
+  })
+
+  it('requires a source revision only for resubmission transitions', async () => {
+    const { transitionApproval: transition } = await loadHandler()
+    const user = { id: 1, permissions: ['read:pages', 'write:pages'] }
+    const resubmitResponse = notificationResponse()
+
+    await transition(
+      {
+        body: { action: 'resubmit' },
+        params: { requestId: 'approval-1' },
+        user,
+        sessionID: 'transition-session'
+      },
+      resubmitResponse,
+      vi.fn()
+    )
+
+    expect(resubmitResponse.status).toHaveBeenCalledWith(400)
+    expect(resubmitResponse.json).toHaveBeenCalledWith({ error: 'expectedSourceRevision must be a canonical positive decimal string' })
+    expect(transitionApproval).not.toHaveBeenCalled()
+  })
+
+  it('forwards resubmission source revision and session while omitting revision for other transitions', async () => {
+    const { transitionApproval: transition } = await loadHandler()
+    const user = { id: 1, permissions: ['read:pages', 'write:pages'] }
+    const resubmitResponse = notificationResponse()
+
+    await transition(
+      {
+        body: { action: 'resubmit', expectedSourceRevision: '8', comment: 'Updated after review' },
+        params: { requestId: 'approval-1' },
+        user,
+        sessionID: 'transition-session'
+      },
+      resubmitResponse,
+      vi.fn()
+    )
+
+    expect(transitionApproval).toHaveBeenCalledWith({
+      requester: user,
+      requestId: 'approval-1',
+      action: 'resubmit',
+      sessionId: 'transition-session',
+      expectedSourceRevision: '8',
+      comment: 'Updated after review',
+      assigneeId: undefined
+    })
+
+    transitionApproval.mockClear()
+    const approveResponse = notificationResponse()
+    await transition(
+      {
+        body: { action: 'approve', expectedSourceRevision: 'not-a-revision' },
+        params: { requestId: 'approval-1' },
+        user,
+        sessionID: 'transition-session'
+      },
+      approveResponse,
+      vi.fn()
+    )
+
+    expect(transitionApproval).toHaveBeenCalledWith({
+      requester: user,
+      requestId: 'approval-1',
+      action: 'approve',
+      sessionId: 'transition-session',
+      comment: undefined,
+      assigneeId: undefined
+    })
+  })
+
+
+  it('returns page approval details with private cache headers', async () => {
+    const { getApproval } = await loadHandler()
+    const approval = { pageId: 7, status: 'pending', sourceRevision: '8' }
+    getPageApproval.mockResolvedValueOnce(approval)
+    const user = { id: 7, permissions: ['read:pages'] }
+    const res = notificationResponse()
+
+    await getApproval({ user, sessionID: 'approval-session', params: { id: '7' } }, res, vi.fn())
+
+    expect(getPageApproval).toHaveBeenCalledWith({ requester: user, pageId: 7, sessionId: 'approval-session' })
+    expect(res.json).toHaveBeenCalledWith({ approval })
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
+  })
+
+  it('sets private cache headers before forwarding page approval failures', async () => {
+    const { getApproval } = await loadHandler()
+    const failure = new Error('approval db down')
+    getPageApproval.mockRejectedValueOnce(failure)
+    const next = vi.fn()
+    const res = notificationResponse()
+
+    await getApproval({ user: notificationUser, params: { id: '7' } }, res, next)
+
+    expect(next).toHaveBeenCalledWith(failure)
+    expect(res.json).not.toHaveBeenCalled()
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
+  })
+
+  it('sets private cache headers before rejecting an invalid page approval id', async () => {
+    const { getApproval } = await loadHandler()
+    const res = notificationResponse()
+
+    await getApproval({ user: notificationUser, params: { id: 'not-an-id' } }, res, vi.fn())
+
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(res.json).toHaveBeenCalledWith({ error: 'id must be a positive integer' })
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
+    expect(getPageApproval).not.toHaveBeenCalled()
+  })
+
+  const notificationUser = { id: 7, permissions: ['read:pages'] }
+  const notificationRequest = (extra = {}) => ({
+    user: notificationUser,
+    headers: { 'x-notification-owner': '7' },
+    ...extra
+  })
+  const notificationResponse = () => ({
+    json: vi.fn(),
+    sendStatus: vi.fn(),
+    set: vi.fn().mockReturnThis(),
+    status: vi.fn().mockReturnThis(),
+    vary: vi.fn().mockReturnThis()
+  })
+
+  it('requires the current notification owner before reading or mutating notification state', async () => {
+    const handlers = await loadHandler()
+    for (const [handler, extra] of [
+      [handlers.watchList, { query: { cursor: 'not-a-cursor' } }],
+      [handlers.approvalInbox, { query: { cursor: undefined } }],
+      [handlers.watchRead, { params: { notificationId: 'notification-1' } }]
+    ]) {
+      const res = notificationResponse()
+      await handler(notificationRequest({ headers: { 'x-notification-owner': '8' }, ...extra }), res, vi.fn())
+      expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+      expect(res.vary).toHaveBeenCalledWith('Cookie')
+      expect(res.status).toHaveBeenCalledWith(409)
+      expect(res.json).toHaveBeenCalledWith({ error: 'Account changed. Refresh your account.', code: 'NOTIFICATION_OWNER_CHANGED' })
+    }
+    expect(listPageWatchNotifications).not.toHaveBeenCalled()
+    expect(listApprovalInbox).not.toHaveBeenCalled()
+    expect(markPageWatchNotificationRead).not.toHaveBeenCalled()
+  })
+
+  it('authenticates before validating the notification owner header', async () => {
+    const { watchList } = await loadHandler()
+    const res = notificationResponse()
+    await watchList({ headers: { 'x-notification-owner': 'not-an-id' }, query: { cursor: 'not-a-cursor' } }, res, vi.fn())
+    expect(res.status).toHaveBeenCalledWith(401)
+    expect(res.json).toHaveBeenCalledWith({ error: 'Authentication is required' })
+    expect(listPageWatchNotifications).not.toHaveBeenCalled()
+  })
+
+  it('rejects missing and malformed notification owner headers', async () => {
+    const { watchList } = await loadHandler()
+    for (const headers of [{}, { 'x-notification-owner': '07' }, { 'x-notification-owner': ['7'] }, { 'x-notification-owner': '7,8' }]) {
+      const res = notificationResponse()
+      await watchList({ user: notificationUser, headers }, res, vi.fn())
+      expect(res.status).toHaveBeenCalledWith(400)
+      expect(res.json).toHaveBeenCalledWith({ error: 'X-Notification-Owner must be a canonical positive decimal string' })
+    }
+    expect(listPageWatchNotifications).not.toHaveBeenCalled()
+  })
+
+  it('lists watch notifications without a cursor using the bounded response envelope', async () => {
+    const { watchList } = await loadHandler()
+    const res = notificationResponse()
+
+    await watchList(notificationRequest({ query: {} }), res, vi.fn())
+
+    expect(listPageWatchNotifications).toHaveBeenCalledWith(notificationUser)
+    expect(res.json).toHaveBeenCalledWith({
+      ownerId: 7,
+      items: [],
+      unreadCount: 0,
+      nextCursor: null,
+      unreadComplete: true
+    })
+  })
+
+  it('forwards one valid watch cursor and preserves cursor expiry errors', async () => {
+    const { watchList } = await loadHandler()
+    const cursor = '123e4567-e89b-42d3-a456-426614174000'
+    const forwarded = notificationResponse()
+
+    await watchList(notificationRequest({ query: { cursor } }), forwarded, vi.fn())
+
+    expect(listPageWatchNotifications).toHaveBeenCalledWith(notificationUser, cursor)
+    expect(forwarded.json).toHaveBeenCalledWith({
+      ownerId: 7,
+      items: [],
+      unreadCount: 0,
+      nextCursor: null,
+      unreadComplete: true
+    })
+
+    const expiredError = Object.assign(new Error('Page watch notification cursor expired'), {
+      name: 'WATCH_CURSOR_EXPIRED',
+      status: 409
+    })
+    listPageWatchNotifications.mockRejectedValueOnce(expiredError)
+    const expired = notificationResponse()
+    await watchList(notificationRequest({ query: { cursor } }), expired, vi.fn())
+
+    expect(expired.status).toHaveBeenCalledWith(409)
+    expect(expired.json).toHaveBeenCalledWith({
+      error: 'Page watch notification cursor expired',
+      code: 'WATCH_CURSOR_EXPIRED'
+    })
+  })
+
+  it('rejects malformed or repeated watch cursors with the expiry contract', async () => {
+    const { watchList } = await loadHandler()
+    for (const cursor of ['bad-cursor', ['123e4567-e89b-42d3-a456-426614174000']]) {
+      const res = notificationResponse()
+
+      await watchList(notificationRequest({ query: { cursor } }), res, vi.fn())
+
+      expect(res.status).toHaveBeenCalledWith(409)
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'Page watch notification cursor expired',
+        code: 'WATCH_CURSOR_EXPIRED'
+      })
+    }
+    expect(listPageWatchNotifications).not.toHaveBeenCalled()
+  })
+
+  it('passes watch cursor capacity failures to the API error boundary', async () => {
+    const { watchList } = await loadHandler()
+    const capacityError = Object.assign(new Error('Page watch notification cursor capacity exhausted'), {
+      name: 'NOTIFICATION_CURSOR_CAPACITY',
+      status: 503
+    })
+    listPageWatchNotifications.mockRejectedValueOnce(capacityError)
+    const res = notificationResponse()
+    const next = vi.fn()
+
+    await watchList(notificationRequest({ query: { cursor: '123e4567-e89b-42d3-a456-426614174000' } }), res, next)
+
+    expect(next).toHaveBeenCalledWith(capacityError)
+    expect(res.status).not.toHaveBeenCalled()
+    expect(res.json).not.toHaveBeenCalled()
+  })
+
+  it('forwards only a valid watch cursor before invoking the private operation', async () => {
+    const { watchList } = await loadHandler()
+    const cursor = '123e4567-e89b-42d3-a456-426614174000'
+    const res = notificationResponse()
+
+    await watchList(notificationRequest({ query: { cursor } }), res, vi.fn())
+
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
+    expect(listPageWatchNotifications).toHaveBeenCalledWith(notificationUser, cursor)
+  })
+
+
+  it('forwards a single approval cursor and preserves cursor expiry errors', async () => {
+    const { approvalInbox } = await loadHandler()
+    const cursor = '123e4567-e89b-42d3-a456-426614174000'
+    const forwarded = notificationResponse()
+    await approvalInbox(notificationRequest({ query: { cursor } }), forwarded, vi.fn())
+    expect(listApprovalInbox).toHaveBeenCalledWith(notificationUser, cursor)
+    expect(forwarded.json).toHaveBeenCalledWith({ ownerId: 7, items: [], nextCursor: null })
+
+    listApprovalInbox.mockRejectedValueOnce(Object.assign(new Error('Approval cursor expired'), { name: 'APPROVAL_CURSOR_EXPIRED', status: 409 }))
+    const expired = notificationResponse()
+    await approvalInbox(notificationRequest({ query: { cursor } }), expired, vi.fn())
+    expect(expired.status).toHaveBeenCalledWith(409)
+    expect(expired.json).toHaveBeenCalledWith({ error: 'Approval cursor expired', code: 'APPROVAL_CURSOR_EXPIRED' })
+  })
+
+  it('rejects malformed or repeated approval cursors with the expiry contract', async () => {
+    const { approvalInbox } = await loadHandler()
+    for (const cursor of ['bad-cursor', ['123e4567-e89b-42d3-a456-426614174000']]) {
+      const res = notificationResponse()
+      await approvalInbox(notificationRequest({ query: { cursor } }), res, vi.fn())
+      expect(res.status).toHaveBeenCalledWith(409)
+      expect(res.json).toHaveBeenCalledWith({ error: 'Approval cursor expired', code: 'APPROVAL_CURSOR_EXPIRED' })
+    }
+    expect(listApprovalInbox).not.toHaveBeenCalled()
+  })
+
+  it('forwards only present watch flags and validates each channel', async () => {
+    const { watchPut } = await loadHandler()
+    const noBody = notificationResponse()
+    await watchPut(notificationRequest({ params: { id: '7' } }), noBody, vi.fn())
+    expect(watchPage).toHaveBeenCalledWith({ requester: notificationUser, id: 7 })
+
+    const emailOnly = notificationResponse()
+    await watchPut(notificationRequest({ params: { id: '7' }, body: { emailEnabled: false } }), emailOnly, vi.fn())
+    expect(watchPage).toHaveBeenCalledWith({ requester: notificationUser, id: 7, emailEnabled: false })
+
+    const inAppOnly = notificationResponse()
+    await watchPut(notificationRequest({ params: { id: '7' }, body: { inAppEnabled: false } }), inAppOnly, vi.fn())
+    expect(watchPage).toHaveBeenCalledWith({ requester: notificationUser, id: 7, inAppEnabled: false })
+
+    for (const body of [{ emailEnabled: 'false' }, { inAppEnabled: 0 }]) {
+      const res = notificationResponse()
+      await watchPut(notificationRequest({ params: { id: '7' }, body }), res, vi.fn())
+      expect(res.status).toHaveBeenCalledWith(400)
+    }
+    expect(watchPage).toHaveBeenCalledTimes(3)
+  })
+
+  it('sets private watch-state cache headers before validating the page id', async () => {
+    const { watchState } = await loadHandler()
+    const res = notificationResponse()
+    await watchState(notificationRequest({ params: { id: 'not-an-id' } }), res, vi.fn())
+    expect(res.set).toHaveBeenCalledWith('Cache-Control', 'private, no-store')
+    expect(res.vary).toHaveBeenCalledWith('Cookie')
+    expect(res.status).toHaveBeenCalledWith(400)
+    expect(pageWatchState).not.toHaveBeenCalled()
+  })
+
   it('rejects locked GraphQL updates and permits REST and GraphQL updates with a current-session grant', async () => {
     global.WIKI.auth.checkAccess.mockImplementation((user, permissions) =>
       permissions.some(permission => user?.permissions?.includes(permission))
@@ -452,16 +833,16 @@ describe('controllers/api pages endpoints', () => {
         }
       }
       if (table === 'pageUnlockGrants') {
-        return {
+        const query = {
           where: vi.fn().mockImplementation((column, operator) => {
             if (column === 'expiresAt' && operator === '<=') return { delete: deleteExpired }
-            return {
-              where: vi.fn().mockReturnValue({
-                first: vi.fn().mockImplementation(async () => grantActive ? { id: 'grant-1' } : undefined)
-              })
+            if (column === 'expiresAt' && operator === '>') {
+              return { first: vi.fn().mockImplementation(async () => grantActive ? { id: 'grant-1' } : undefined) }
             }
+            return query
           })
         }
+        return query
       }
       throw new Error(`Unexpected table ${table}`)
     })

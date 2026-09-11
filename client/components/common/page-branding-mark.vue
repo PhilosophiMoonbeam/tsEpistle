@@ -76,7 +76,7 @@ const imageFailed = (event: Event): void => {
   pointer-events: none;
   position: relative;
   user-select: none;
-  z-index: 1;
+  z-index: 2;
 }
 
 .page-branding-mark__image {

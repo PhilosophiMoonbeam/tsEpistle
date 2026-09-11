@@ -27,9 +27,10 @@
               @click='clearSelection'
             ) {{$t('tags:clearSelection', { defaultValue: 'Clear selection' })}}
           .tags-selection-chips
-            .tags-selected-token(
+            .tags-selected-token.wiki-tag-color(
               v-for='(selected, index) of tagsSelected'
               :key='`tagSelected-` + selected.tag'
+              :data-tag-color='tagColor(selected.tag)'
             )
               span.tags-selected-label
                 bdi {{selected.label}}
@@ -121,14 +122,19 @@
                   h3 {{group.name}}
                   ul.tags-index-list
                     li(v-for='tag of group.tags' :key='`tag-` + tag.tag')
-                      button.tags-index-item(
+                      button.tags-index-item.wiki-tag-color(
                         type='button'
                         :aria-pressed='isSelected(tag.tag)'
                         :aria-label='tagButtonLabel(tag)'
+                        :data-tag-color='tagColor(tag.tag)'
                         :class='{ "tags-index-item--selected": isSelected(tag.tag) }'
                         @click='toggleTag(tag.tag)'
                       )
-                        v-icon.tags-index-item-icon(size='18' aria-hidden='true') {{isSelected(tag.tag) ? 'mdi-check' : 'mdi-tag-outline'}}
+                        v-icon.tags-index-item-icon.wiki-tag-color(
+                          size='18'
+                          aria-hidden='true'
+                          :data-tag-color='tagColor(tag.tag)'
+                        ) {{isSelected(tag.tag) ? 'mdi-check' : 'mdi-tag-outline'}}
                         span.tags-index-item-copy
                           span.tags-index-item-label
                             bdi {{tagLabel(tag)}}
@@ -269,6 +275,7 @@ import { pageHref as buildPageHref } from '../helpers/admin-pages'
 import { setLoading } from '../helpers/root-ui-store'
 import AsyncState from '@/components/common/async-state.vue'
 import { pathFromTagSelection, tagSelectionFromPath } from '../helpers/tag-navigation'
+import { tagColorBucket } from '../../shared/tag-colors.ts'
 import { wikiStore } from '@/store/index.ts'
 
 /* global siteLangs */
@@ -508,6 +515,9 @@ export default {
     tagLabel (tag: PageTagRow): string {
       const title = typeof tag.title === 'string' ? tag.title.trim() : ''
       return title || tag.tag || 'Unnamed tag'
+    },
+    tagColor (canonicalTag: string) {
+      return tagColorBucket(canonicalTag)
     },
     tagGroupName (tag: PageTagRow): string {
       const first = this.tagLabel(tag).trim().charAt(0).toLocaleUpperCase()
@@ -946,9 +956,13 @@ export default {
   background: color-mix(in srgb, var(--wiki-accent-ink) 7%, var(--wiki-surface-raised));
 }
 
-.tags-index-item--selected {
+.tags-index-item.wiki-tag-color.tags-index-item--selected {
   border-color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, var(--wiki-surface-border));
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 10%, var(--wiki-surface-raised));
+  color: var(--wiki-accent-ink);
+}
+
+.tags-index-item--selected .tags-index-item-icon.wiki-tag-color {
   color: var(--wiki-accent-ink);
 }
 

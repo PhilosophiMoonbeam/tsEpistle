@@ -1,5 +1,6 @@
 import { expect, type Page } from '@playwright/test'
 
+import { tagColorBucket } from '../../shared/tag-colors.ts'
 import { expectResponsiveLayout, responsiveTest as test } from './helpers'
 
 type PageApiRow = {
@@ -21,10 +22,19 @@ type TagSiteLang = {
   name: string
 }
 
+type TagIndexRow = {
+  id: number
+  tag: string
+  title: string | null
+  createdAt: string
+  updatedAt: string
+}
+
 type TagApiOptions = {
   failTagLoads?: number
   failPageLoads?: number
   siteLangs?: TagSiteLang[]
+  tagRows?: TagIndexRow[]
   pageResponse?: (selection: string[], locale?: string) => PageApiRow[] | Promise<PageApiRow[]>
 }
 
@@ -32,13 +42,25 @@ const ordinaryTagLabel = 'Ordinary topic'
 const longTagLabel = 'Long editorial vocabulary label for containment geometry'
 const longTagCanonical = 'long-editorial-vocabulary-label-for-containment-geometry'
 
-const tagRows = [
+const tagRows: TagIndexRow[] = [
   { id: 1, tag: 'alpha', title: 'Alpha', createdAt: '2026-09-01T12:00:00.000Z', updatedAt: '2026-09-01T12:00:00.000Z' },
   { id: 2, tag: 'beta', title: 'Beta', createdAt: '2026-09-02T12:00:00.000Z', updatedAt: '2026-09-02T12:00:00.000Z' },
   { id: 3, tag: 'untitled-topic', title: null, createdAt: '2026-09-03T12:00:00.000Z', updatedAt: '2026-09-03T12:00:00.000Z' },
   { id: 4, tag: 'unicode-topic', title: '東京の知識', createdAt: '2026-09-04T12:00:00.000Z', updatedAt: '2026-09-04T12:00:00.000Z' },
   { id: 5, tag: 'ordinary-topic', title: ordinaryTagLabel, createdAt: '2026-09-05T12:00:00.000Z', updatedAt: '2026-09-05T12:00:00.000Z' },
   { id: 6, tag: longTagCanonical, title: longTagLabel, createdAt: '2026-09-06T12:00:00.000Z', updatedAt: '2026-09-06T12:00:00.000Z' }
+]
+
+const identityTagRows: TagIndexRow[] = [
+  { id: 101, tag: 'alpha', title: 'Alpha concept', createdAt: '2026-09-07T12:00:00.000Z', updatedAt: '2026-09-07T12:00:00.000Z' },
+  { id: 102, tag: 'ALPHA', title: 'Uppercase concept', createdAt: '2026-09-08T12:00:00.000Z', updatedAt: '2026-09-08T12:00:00.000Z' },
+  { id: 103, tag: '--alpha', title: 'Punctuated concept', createdAt: '2026-09-09T12:00:00.000Z', updatedAt: '2026-09-09T12:00:00.000Z' },
+  { id: 104, tag: '東京', title: 'Unicode concept', createdAt: '2026-09-10T12:00:00.000Z', updatedAt: '2026-09-10T12:00:00.000Z' },
+  { id: 105, tag: '—東京', title: 'Punctuated Unicode concept', createdAt: '2026-09-11T12:00:00.000Z', updatedAt: '2026-09-11T12:00:00.000Z' },
+  { id: 106, tag: '123', title: 'Numeric concept', createdAt: '2026-09-12T12:00:00.000Z', updatedAt: '2026-09-12T12:00:00.000Z' },
+  { id: 107, tag: '１２３', title: 'Full-width numeric concept', createdAt: '2026-09-13T12:00:00.000Z', updatedAt: '2026-09-13T12:00:00.000Z' },
+  { id: 108, tag: '!!!', title: 'Punctuation concept', createdAt: '2026-09-14T12:00:00.000Z', updatedAt: '2026-09-14T12:00:00.000Z' },
+  { id: 109, tag: '???', title: 'Other punctuation concept', createdAt: '2026-09-15T12:00:00.000Z', updatedAt: '2026-09-15T12:00:00.000Z' }
 ]
 
 function pageRow(overrides: Partial<PageApiRow> = {}): PageApiRow {
@@ -99,7 +121,7 @@ async function installTagApi(page: Page, options: TagApiOptions = {}) {
         tagFailures -= 1
         return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Temporary tag index failure' }) })
       }
-      return route.fulfill({ json: tagRows })
+      return route.fulfill({ json: options.tagRows ?? tagRows })
     }
 
     if (url.pathname !== '/_api/pages') return route.continue()
@@ -442,6 +464,62 @@ test('public tag index keeps selected desktop labels readable and contained', as
 
   await page.setViewportSize({ width: 390, height: 844 })
   await expectResponsiveLayout(page, 'mobile tag label containment')
+})
+test('public tag colors follow canonical identity across browse states', async ({ page }) => {
+  await openTags(page, '/t', { tagRows: identityTagRows })
+
+  const initialColors = await page.locator('.tags-index-item').evaluateAll(items => {
+    return items.map(item => {
+      const label = item.querySelector<HTMLElement>('.tags-index-item-label')?.textContent?.trim() ?? ''
+      const canonical = item.querySelector<HTMLElement>('.tags-index-item-canonical')?.textContent?.trim() || label
+      const icon = item.querySelector<HTMLElement>('.tags-index-item-icon')
+      return {
+        canonical,
+        bucket: item.getAttribute('data-tag-color'),
+        itemClass: item.classList.contains('wiki-tag-color'),
+        iconBucket: icon?.getAttribute('data-tag-color'),
+        iconClass: icon?.classList.contains('wiki-tag-color')
+      }
+    })
+  })
+  expect(initialColors).toHaveLength(identityTagRows.length)
+  const bucketByTag = new Map<string, string | null>()
+  for (const row of initialColors) {
+    const fixture = identityTagRows.find(candidate => candidate.tag === row.canonical)
+    expect(fixture, `tag row ${row.canonical} must expose its canonical identity`).toBeDefined()
+    if (!fixture) continue
+    expect(row.itemClass).toBe(true)
+    expect(row.iconClass).toBe(true)
+    expect(row.iconBucket).toBe(row.bucket)
+    expect(row.bucket).toBe(tagColorBucket(fixture.tag))
+    bucketByTag.set(fixture.tag, row.bucket)
+  }
+
+  expect(bucketByTag.get('alpha')).toBe(bucketByTag.get('ALPHA'))
+  expect(bucketByTag.get('alpha')).toBe(bucketByTag.get('--alpha'))
+  expect(bucketByTag.get('東京')).toBe(bucketByTag.get('—東京'))
+  expect(bucketByTag.get('123')).toBe(bucketByTag.get('１２３'))
+  expect(bucketByTag.get('!!!')).toBe(bucketByTag.get('???'))
+  expect(bucketByTag.get('!!!')).toBe('neutral')
+
+  const alpha = tagButton(page, 'Alpha concept')
+  await alpha.click()
+  await expect(alpha).toHaveAttribute('aria-pressed', 'true')
+  await expect(alpha.locator('.tags-index-item-icon')).toHaveClass(/mdi-check/)
+  const alphaBucket = bucketByTag.get('alpha')
+  expect(alphaBucket).not.toBeNull()
+
+  const selectedToken = page.locator('.tags-selected-token').filter({ hasText: 'alpha' }).first()
+  await expect(selectedToken).toHaveClass(/wiki-tag-color/)
+  await expect(selectedToken).toHaveAttribute('data-tag-color', alphaBucket!)
+  await expect(alpha).toHaveAttribute('data-tag-color', alphaBucket!)
+  await expect(alpha.locator('.tags-index-item-icon')).toHaveAttribute('data-tag-color', alphaBucket!)
+
+  await page.getByRole('button', { name: /^clear selection$/i }).click()
+  await expect(page).toHaveURL('/t')
+  await expect(alpha).toHaveAttribute('aria-pressed', 'false')
+  await expect(alpha).toHaveAttribute('data-tag-color', alphaBucket!)
+  await expectResponsiveLayout(page, 'canonical tag color identity')
 })
 
 test('public tag library omits locale filtering when locale namespacing is disabled', async ({ page }) => {

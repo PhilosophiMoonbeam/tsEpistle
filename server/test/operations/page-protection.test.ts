@@ -69,9 +69,14 @@ beforeEach(async () => {
   otherPage = undefined
   Reflect.set(global, 'WIKI', {
     auth: {
-      checkAccess: (principal: { permissions?: string[] }, permissions: string[]) => permissions.some(permission => principal.permissions?.includes(permission)),
-      checkPageAccess: (principal: { permissions?: string[] }, permissions: string[], _context: unknown, authority: { requester: unknown; permissions: string[] }) =>
-        authority.requester === principal && permissions.some(permission => authority.permissions.includes(permission)),
+      checkAccess: (principal: { permissions?: string[] }, permissions: string[]) =>
+        permissions.some(permission => principal.permissions?.includes(permission)),
+      checkPageAccess: (
+        principal: { permissions?: string[] },
+        permissions: string[],
+        _context: unknown,
+        authority: { requester: unknown; permissions: string[] }
+      ) => authority.requester === principal && permissions.some(permission => authority.permissions.includes(permission)),
       loadPageRuleAuthority: async (requester: { permissions?: string[] } | undefined) => authorityFor(requester)
     },
     data: { searchEngine: { updated: searchUpdated } },
@@ -176,6 +181,66 @@ describe('password-protected pages', () => {
         now: new Date('2026-08-15T00:00:00.000Z')
       })
     ).toBe(true)
+  })
+
+  it('scopes expired grant cleanup to the current page and session transactionally', async () => {
+    const protection = await vi.importFresh('../../operations/page-protection.ts', import.meta.url)
+    await protection.setPageProtection({
+      requester: user(7, ['write:pages']),
+      pageId: 42,
+      password: 'correct horse battery staple',
+      sessionId: 'manager-session'
+    })
+    const expiredAt = new Date('2026-08-14T00:00:00.000Z')
+    await knex('pageUnlockGrants').insert([
+      {
+        id: '00000000-0000-4000-8000-000000000001',
+        pageId: 42,
+        sessionId: 'reader-session',
+        userId: 8,
+        passwordVersion: 1,
+        createdAt: expiredAt,
+        expiresAt: expiredAt
+      },
+      {
+        id: '00000000-0000-4000-8000-000000000002',
+        pageId: 42,
+        sessionId: 'other-session',
+        userId: 9,
+        passwordVersion: 1,
+        createdAt: expiredAt,
+        expiresAt: expiredAt
+      }
+    ])
+
+    await expect(
+      Promise.resolve(
+        knex.transaction(async transaction => {
+          expect(
+            await protection.pageRequiresUnlock({
+              requester: user(8, ['read:pages']),
+              pageId: 42,
+              sessionId: 'reader-session',
+              now: new Date('2026-08-15T00:00:00.000Z'),
+              transaction
+            })
+          ).toBe(true)
+          throw new Error('rollback')
+        })
+      )
+    ).rejects.toThrow('rollback')
+    expect(await knex('pageUnlockGrants')).toHaveLength(3)
+
+    expect(
+      await protection.pageRequiresUnlock({
+        requester: user(8, ['read:pages']),
+        pageId: 42,
+        sessionId: 'reader-session',
+        now: new Date('2026-08-15T00:00:00.000Z')
+      })
+    ).toBe(true)
+    expect(await knex('pageUnlockGrants').where({ sessionId: 'reader-session' })).toHaveLength(0)
+    expect(await knex('pageUnlockGrants').where({ sessionId: 'other-session' })).toHaveLength(1)
   })
 
   it('requires current page authorization after an asset unlock grant is issued', async () => {

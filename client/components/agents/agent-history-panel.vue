@@ -287,7 +287,7 @@
         <v-text-field
           ref="folderInput"
           v-model="folderName"
-          class="agent-history__folder-input"
+          class="agent-history__folder-input wiki-notched-field"
           autofocus
           counter="64"
           label="Folder name"
@@ -1222,8 +1222,14 @@ onBeforeUnmount(() => {
 .agent-history__footer p { flex: 1; margin: 0; font-size: .7rem; line-height: 1.5; color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 72%, transparent); }
 .agent-history__folder-icon { color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); }
 .agent-history__new-folder { flex: 0 0 auto; color: color-mix(in srgb, rgb(var(--v-theme-primary)) 35%, rgb(var(--v-theme-on-surface))); }
-.agent-history__folder-input :deep(.v-field--variant-outlined .v-field__outline__notch) {
-  background-color: var(--wiki-surface-raised);
+.agent-history__folder-input :deep(.v-field__input) {
+  display: flex;
+  min-width: 0;
+}
+.agent-history__folder-input :deep(.v-field__input > input) {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
 }
 .agent-history__body {
   display: flex;

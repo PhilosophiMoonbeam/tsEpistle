@@ -116,10 +116,13 @@
             aria-label="New conversation"
             :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention)"
             @click="newSession"
-          >New</v-btn>
+          >
+            New
+            <ControlBorderBeam :enabled="!loading && !sending && !sessionMutationBusy && !creatingRetention" :phase-offset-ms="3000" />
+          </v-btn>
           <v-btn
             class="inline-agent__session-action inline-agent__temporary-session"
-            icon="mdi-clock-outline"
+            icon="mdi-timer-sand-complete"
             variant="text"
             :loading="creatingRetention === 'temporary'"
             aria-label="Temporary conversation"
@@ -127,7 +130,7 @@
             :disabled="loading || sending || sessionMutationBusy || Boolean(creatingRetention)"
             @click="newTemporarySession"
           />
-          <v-btn class="inline-agent__mobile-close" icon="mdi-close" variant="text" aria-label="Close Wiki Agent" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
+          <v-btn class="inline-agent__mobile-close wiki-close-control" icon="mdi-close" variant="text" aria-label="Close Wiki Agent" :disabled="memoryMutationBusy" :title="memoryMutationBusy ? 'Wait for the memory change to finish' : undefined" @click="emit('close')" />
         </div>
       </v-toolbar>
 
@@ -143,7 +146,7 @@
       <AgentMcpApproval v-if="approvalId" :csrf-token="csrfToken" :proposal-id="approvalId" />
       <template v-else>
         <div v-if="isTemporary" class="inline-agent__retention" aria-label="Temporary conversation" role="status">
-          <v-icon icon="mdi-clock-outline" size="22" aria-hidden="true" />
+          <v-icon icon="mdi-timer-sand-complete" size="22" aria-hidden="true" />
           <div class="inline-agent__retention-copy">
             <strong>Temporary conversation</strong>
             <p>Hidden from history<span v-if="temporaryExpiry"> · Expires {{ temporaryExpiry }}</span>. Personal memory still applies.</p>
@@ -217,9 +220,12 @@
                     :title="!canSubmit ? submitUnavailableReason : undefined"
                     @click="sendPrompt(starter.prompt)"
                   >
-                    <v-icon start :icon="starter.icon" />
-                    <span class="inline-agent__starter-copy"><strong>{{ starter.label }}</strong><small>{{ starter.description }}</small></span>
-                    <v-icon class="inline-agent__starter-arrow" end icon="mdi-arrow-right" size="16" />
+                    <span class="inline-agent__starter-heading">
+                      <v-icon :icon="starter.icon" size="20" aria-hidden="true" />
+                      <strong>{{ starter.label }}</strong>
+                      <v-icon class="inline-agent__starter-arrow" icon="mdi-arrow-right" size="16" aria-hidden="true" />
+                    </span>
+                    <span class="inline-agent__starter-copy"><small>{{ starter.description }}</small></span>
                   </v-btn>
                 </div>
               </section>
@@ -425,7 +431,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, useTemplate
 import { storeToRefs } from 'pinia'
 import type { AgentCurrentPageHint } from '../../../shared/agents/contracts.ts'
 import { useAgentsStore } from '../../store/agents.ts'
-import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
+import ControlBorderBeam from '../common/control-border-beam.vue'
 import AgentComposer from './agent-composer.vue'
 import AgentHistoryPanel from './agent-history-panel.vue'
 import AgentMemoryManager from './agent-memory-manager.vue'
@@ -437,6 +443,7 @@ import AgentContextPicker from './agent-context-picker.vue'
 import { emptyAgentDraft, type AgentDraft, type AgentSearchScope } from '../../helpers/agent-draft.ts'
 import type { WikiSource } from '../../../shared/wiki-source.ts'
 import { isAgentApprovalOutsideViewport, shouldFollowGoalExpansion } from './agent-thread-presentation.ts'
+import { activeOwnedOverlayRoots, createModalFocusScope, type ModalFocusScope } from '../common/modal-focus-scope'
 
 const props = defineProps<{
   csrfToken: string
@@ -564,10 +571,10 @@ const connectionTone = computed<'ready' | 'error' | 'busy'>(() => loading.value 
       : 'ready')
 const starters = computed(() => [
   ...(currentPage.value
-    ? [{ label: 'Understand this page', description: 'Key ideas, with sources', prompt: 'Summarize the current Wiki page and cite the key sections.', icon: 'mdi-text-box-search-outline' }]
+    ? [{ label: 'Understand This Page', description: 'Key ideas, with sources', prompt: 'Summarize the current Wiki page and cite the key sections.', icon: 'mdi-text-box-search-outline' }]
     : [{ label: 'Explore the Wiki', description: 'Find a place to begin', prompt: 'Give me an overview of the main topics in the Wiki, with links to useful starting pages.', icon: 'mdi-compass-outline' }]),
-  { label: 'Connect the dots', description: 'Discover related knowledge', prompt: currentPage.value ? 'Find Wiki pages related to the current page and explain how they connect.' : 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.', icon: 'mdi-vector-link' },
-  { label: 'Catch up', description: 'See what changed recently', prompt: 'Summarize the most recently updated Wiki pages I can access.', icon: 'mdi-history' }
+  { label: 'Connect the Dots', description: 'Discover related knowledge', prompt: currentPage.value ? 'Find Wiki pages related to the current page and explain how they connect.' : 'Help me explore connections between topics in the Wiki. Ask me which topic I want to start with.', icon: 'mdi-vector-link' },
+  { label: 'Catch Up', description: 'See what changed recently', prompt: 'Summarize the most recently updated Wiki pages I can access.', icon: 'mdi-history' }
 ])
 
 const activeDraft = computed(() => thread.value ? agents.drafts[thread.value.session.id] ?? emptyAgentDraft() : emptyAgentDraft())
@@ -1189,7 +1196,17 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 
 .inline-agent__new-session {
+  position: relative;
+  min-height: calc(var(--wiki-control-height) - var(--wiki-space-1));
+  isolation: isolate;
+  overflow: hidden;
   margin-inline-start: var(--wiki-space-1);
+}
+
+.inline-agent__new-session :deep(.v-btn__prepend),
+.inline-agent__new-session :deep(.v-btn__content),
+.inline-agent__new-session :deep(.v-btn__append) {
+  z-index: 1;
 }
 .inline-agent__temporary-session {
   width: var(--wiki-control-height);
@@ -1476,8 +1493,8 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 .inline-agent__starter {
   height: auto !important;
-  min-height: 6.5rem;
-  padding: 1rem;
+  min-height: 5rem;
+  padding: .8rem;
   border: 1px solid var(--wiki-surface-border);
   border-radius: var(--wiki-control-radius);
   background: var(--wiki-surface-raised);
@@ -1494,16 +1511,50 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 }
 .inline-agent__starter :deep(.v-btn__content) {
   display: grid;
-  grid-template-columns: 1fr auto;
-  justify-items: start;
-  gap: .75rem;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  justify-items: stretch;
+  gap: .25rem;
+}
+.inline-agent__starter-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: .5rem;
   width: 100%;
 }
-.inline-agent__starter :deep(.v-icon--start) { margin: 0; font-size: 1.25rem; }
-.inline-agent__starter-copy { grid-column: 1 / -1; grid-row: 2; display: grid; gap: .25rem; }
-.inline-agent__starter-copy strong { font-size: .83rem; font-weight: 600; }
-.inline-agent__starter-copy small { font-size: .73rem; font-weight: 400; opacity: .7; }
-.inline-agent__starter-arrow { grid-column: 2; grid-row: 1; opacity: .5; }
+.inline-agent__starter-heading > :deep(.v-icon:first-child) {
+  flex: 0 0 auto;
+  font-size: 1.25rem;
+}
+.inline-agent__starter-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: .83rem;
+  font-weight: 700;
+}
+.inline-agent__starter-copy {
+  display: block;
+  min-width: 0;
+  grid-column: 1;
+  grid-row: 2;
+}
+.inline-agent__starter-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: .73rem;
+  font-weight: 400;
+  opacity: .7;
+}
+.inline-agent__starter-arrow {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  opacity: .5;
+}
 
 .inline-agent__composer {
   position: relative;
@@ -1757,9 +1808,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
 @media (max-width: 900px) {
   .inline-agent__starters { grid-template-columns: 1fr; }
-  .inline-agent__starter { min-height: 3.5rem; padding: .75rem; }
-  .inline-agent__starter :deep(.v-btn__content) { display: flex; gap: .75rem; }
-  .inline-agent__starter-copy { flex: 1; }
+  .inline-agent__starter { min-height: 4rem; padding: .75rem; }
 
   .inline-agent__welcome {
     max-width: 40rem;
@@ -1774,9 +1823,7 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
   .inline-agent__session-action :deep(.v-btn__prepend) { margin: 0; }
   .inline-agent__notice { display: none; }
   .inline-agent__starters { grid-template-columns: 1fr; }
-  .inline-agent__starter { min-height: 3.5rem; padding: .75rem; }
-  .inline-agent__starter :deep(.v-btn__content) { display: flex; gap: .75rem; }
-  .inline-agent__starter-copy { flex: 1; }
+  .inline-agent__starter { min-height: 4rem; padding: .75rem; }
 }
 
 @media (min-width: 640px) and (max-width: 1023.98px) {
@@ -2045,6 +2092,9 @@ defineExpose({ sendPrompt, preparePrompt, focusComposer, focusConversation, scro
 
   .inline-agent__loading-mark {
     animation: none;
+  }
+  .inline-agent__starter {
+    transition: none;
   }
 }
 </style>

@@ -37,20 +37,25 @@
                 <p class="agent-memory__eyebrow">{{ editing.id ? 'Revise record' : 'New record' }}</p>
                 <h3 id="agent-memory-editor-title" class="text-title-medium">{{ editing.id ? 'Edit memory' : 'Add to memory' }}</h3>
               </div>
-              <v-btn icon="mdi-close" size="small" variant="text" aria-label="Cancel memory edit" :disabled="saving" @click="cancelEdit" />
+              <v-btn class="wiki-close-control" icon="mdi-close" size="small" variant="text" aria-label="Cancel memory edit" :disabled="saving" @click="cancelEdit" />
             </header>
 
             <fieldset class="agent-memory__target" :disabled="saving">
               <legend>Save under</legend>
-              <v-btn-toggle v-model="draftTarget" class="agent-memory__target-toggle" divided mandatory variant="outlined">
-                <v-btn value="user" prepend-icon="mdi-account-outline">You</v-btn>
-                <v-btn value="agent" prepend-icon="mdi-notebook-outline">Agent</v-btn>
+              <v-btn-toggle v-model="draftTarget" class="agent-memory__target-toggle" mandatory variant="outlined">
+                <div class="agent-memory__target-hit-area">
+                  <v-btn value="user" prepend-icon="mdi-account-outline">You</v-btn>
+                </div>
+                <div class="agent-memory__target-hit-area">
+                  <v-btn value="agent" prepend-icon="mdi-notebook-outline">Agent</v-btn>
+                </div>
               </v-btn-toggle>
             </fieldset>
 
             <v-textarea
               ref="memoryEditor"
               v-model="draftContent"
+              class="wiki-notched-field"
               :counter="targetLimit"
               :maxlength="targetLimit"
               :label="draftTarget === 'user' ? 'Personal detail' : 'Project or workflow fact'"
@@ -609,15 +614,44 @@ onBeforeUnmount(() => {
   font-weight: 650;
 }
 
-.agent-memory__target .v-btn-toggle {
+.agent-memory__target-toggle {
+  display: grid !important;
   width: 100%;
+  height: auto !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--wiki-space-2);
+  align-items: stretch;
+  overflow: visible !important;
+}
+
+.agent-memory__target-hit-area {
+  --agent-memory-target-hit-height: max(44px, var(--wiki-control-height, 44px));
+  --agent-memory-target-face-height: calc(var(--wiki-control-height, 44px) * .9);
+  --agent-memory-target-hit-inset: calc((var(--agent-memory-target-hit-height) - var(--agent-memory-target-face-height)) / -2);
+  display: grid;
+  min-width: 0;
+  min-height: var(--agent-memory-target-hit-height);
+  place-items: center;
 }
 
 .agent-memory__target .v-btn {
-  min-height: var(--wiki-control-height);
-  flex: 1 1 50%;
-  border-radius: var(--wiki-control-radius);
+  min-width: max(44px, var(--agent-memory-target-face-height));
+  width: 80%;
+  min-height: var(--agent-memory-target-face-height) !important;
+  height: var(--agent-memory-target-face-height) !important;
+  justify-self: center;
+  flex: 0 0 auto;
+  border-radius: var(--wiki-control-radius) !important;
   text-transform: none;
+}
+
+.agent-memory__target .v-btn::before {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset-inline: 0;
+  inset-block: var(--agent-memory-target-hit-inset);
+  pointer-events: auto;
 }
 
 .agent-memory__editor :deep(.v-field) {

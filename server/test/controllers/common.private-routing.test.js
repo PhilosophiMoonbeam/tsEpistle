@@ -259,16 +259,16 @@ describe('common page routing', () => {
         }
       }
       if (table === 'pageUnlockGrants') {
-        return {
+        const query = {
           where: vi.fn().mockImplementation((column, operator) => {
             if (column === 'expiresAt' && operator === '<=') return { delete: vi.fn().mockResolvedValue(0) }
-            return {
-              where: vi.fn().mockReturnValue({
-                first: vi.fn().mockImplementation(async () => grantActive ? { id: 'grant-1' } : undefined)
-              })
+            if (column === 'expiresAt' && operator === '>') {
+              return { first: vi.fn().mockImplementation(async () => grantActive ? { id: 'grant-1' } : undefined) }
             }
+            return query
           })
         }
+        return query
       }
       throw new Error(`Unexpected table ${table}`)
     })

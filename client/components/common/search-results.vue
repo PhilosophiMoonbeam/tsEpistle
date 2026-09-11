@@ -22,7 +22,7 @@
           data-modal-focus-key='search-ask-mode'
           @click='openAsk'
         ) Open Wiki Agent
-        v-btn.search-results-close(
+      v-btn.search-results-close.wiki-close-control(
           icon='mdi-close'
           variant='text'
           :aria-label='$t(`common:header.searchClose`)'

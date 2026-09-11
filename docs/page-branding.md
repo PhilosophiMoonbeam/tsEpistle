@@ -82,7 +82,7 @@ The reader header reserves a transparent, non-cropping mark box whose responsive
 - `96px` from `600px`,
 - `128px` from `1280px`.
 
-The source image is contained inside that box with its original aspect ratio and alpha. In left-to-right layout the mark occupies the physical right branding cell; in right-to-left layout it occupies the physical left cell. When an accent is present, a pseudo-element in that same cell paints a low-opacity gradient from physical upper-right to lower-left. The header creates an isolated stacking context and keeps this gradient confined to the branding cell, so it cannot wash over the title or description. The title and description stay on the ordinary theme surface and use the ordinary theme text palette.
+The source image is contained inside that box with its original aspect ratio and alpha. In both left-to-right and right-to-left layouts, the mark remains in the physical right branding cell; text and navigation continue to follow the active direction. When an accent is present, the header container paints a low-opacity gradient across its physical rightmost third, strongest in the upper-right and fading toward the lower-left. The source-faithful mark is layered above that gradient, which never expands the header height or washes over the title and description. The title and description stay on the ordinary theme surface and use the ordinary theme text palette.
 
 Accent presentation is blending, not a contrast veto: light themes use accent alpha `0.28`, dark themes use `0.24`, with the fade tapering to transparent. A neutral or `null` accent still renders the source-faithful image but renders no gradient. There is no opaque accent panel, flat tint, or divider replacing the standard theme surface.
 

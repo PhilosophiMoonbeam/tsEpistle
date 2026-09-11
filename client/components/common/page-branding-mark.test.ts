@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc'
+import { compileScript, compileStyle, compileTemplate, parse } from '@vue/compiler-sfc'
 import { JSDOM } from 'jsdom'
 import type { Component } from 'vue'
 import { afterEach, describe, expect, it } from '../../../server/test/bun-test.mts'
@@ -28,6 +28,22 @@ const browserGlobals: Record<string, unknown> = {
 for (const [name, value] of Object.entries(browserGlobals)) {
   Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
 }
+const pagePath = path.join(process.cwd(), 'client/themes/default/components/page.vue')
+const pageSource = fs.readFileSync(pagePath, 'utf8')
+const pageParsed = parse(pageSource, { filename: pagePath })
+if (pageParsed.errors.length > 0) throw new Error(`Could not parse page.vue: ${pageParsed.errors.join(', ')}`)
+const compiledPageStyle = compileStyle({
+  source: pageParsed.descriptor.styles.map(style => style.content).join('\n'),
+  filename: pagePath,
+  id: 'page-branding-mark-layout-test',
+  preprocessLang: 'scss'
+})
+if (compiledPageStyle.errors.length > 0) {
+  throw new Error(`Could not compile page.vue styles: ${compiledPageStyle.errors.join(', ')}`)
+}
+const pageStyleElement = browserWindow.document.createElement('style')
+pageStyleElement.textContent = compiledPageStyle.code
+browserWindow.document.head.append(pageStyleElement)
 
 // Vue's runtime-dom captures the document at module evaluation, so import it only after JSDOM globals exist.
 const VueRuntime = await import('vue')
@@ -131,16 +147,67 @@ const makeBranding = (assetId: number, digest: string): PageBrandingView => ({
 })
 
 const identityOf = (branding: PageBrandingView | null): string | null => (branding === null ? null : `${branding.assetId}:${branding.sourceSha256}`)
+type TextDirection = 'ltr' | 'rtl'
+
+interface BrandingHeaderFixture {
+  root: HTMLElement
+  headings: HTMLElement
+  label: HTMLElement
+  title: HTMLElement
+  description: HTMLElement
+  mark: HTMLElement
+}
+
+const mountBrandingHeader = (direction: TextDirection): BrandingHeaderFixture => {
+  const root = browserWindow.document.createElement('div')
+  root.className = `wiki-page is-${direction}`
+  root.setAttribute('dir', direction)
+
+  const section = browserWindow.document.createElement('div')
+  section.className = 'page-header-section'
+  const pageHeader = browserWindow.document.createElement('div')
+  pageHeader.className = 'is-page-header'
+  const headings = browserWindow.document.createElement('div')
+  headings.className = 'page-header-headings page-header-headings--branded'
+  headings.style.setProperty('--page-branding-mark-size', '80px')
+
+  const label = browserWindow.document.createElement('div')
+  label.className = 'page-document-label'
+  const title = browserWindow.document.createElement('div')
+  title.className = 'page-title-row'
+  const description = browserWindow.document.createElement('p')
+  description.className = 'page-description'
+  const mark = browserWindow.document.createElement('span')
+  mark.className = 'page-branding-mark'
+
+  headings.append(label, title, description, mark)
+  pageHeader.append(headings)
+  section.append(pageHeader)
+  root.append(section)
+  browserWindow.document.body.append(root)
+
+  return { root, headings, label, title, description, mark }
+}
+
+const physicalInlineSide = (container: HTMLElement, item: HTMLElement): 'left' | 'right' => {
+  const direction = browserWindow.getComputedStyle(container).direction
+  const column = Number.parseInt(browserWindow.getComputedStyle(item).gridColumn, 10)
+  if (!Number.isInteger(column) || (column !== 1 && column !== 2)) {
+    throw new Error(`Expected an explicit two-column grid placement, got ${column}`)
+  }
+  if (direction === 'rtl') return column === 1 ? 'right' : 'left'
+  return column === 2 ? 'right' : 'left'
+}
 
 interface MountedMark {
   host: HTMLElement
   events: string[]
   root: () => HTMLElement | null
   image: () => HTMLImageElement | null
-  setBranding: (branding: PageBrandingView) => Promise<void>
+  setBranding: (branding: PageBrandingView | null) => Promise<void>
 }
 
-const mountMark = async (initialBranding: PageBrandingView): Promise<MountedMark> => {
+const mountMark = async (initialBranding: PageBrandingView | null): Promise<MountedMark> => {
   const branding = VueRuntime.shallowRef<PageBrandingView | null>(initialBranding)
   const failedIdentity = VueRuntime.ref<string | null>(null)
   const events: string[] = []
@@ -173,7 +240,7 @@ const mountMark = async (initialBranding: PageBrandingView): Promise<MountedMark
     events,
     root: () => host.querySelector<HTMLElement>('.page-branding-mark'),
     image: () => host.querySelector<HTMLImageElement>('.page-branding-mark__image'),
-    setBranding: async (value: PageBrandingView) => {
+    setBranding: async (value: PageBrandingView | null) => {
       branding.value = value
       await settle()
     }
@@ -186,6 +253,40 @@ afterEach(() => {
 })
 
 describe('page branding mark', () => {
+  it('does not render a reserved mark when branding is unavailable', async () => {
+    const mounted = await mountMark(null)
+
+    expect(mounted.root()).toBeNull()
+    expect(mounted.image()).toBeNull()
+    expect(mounted.events).toEqual([])
+  })
+
+  it('keeps the mark on the physical right while RTL text keeps its direction', () => {
+    for (const direction of ['ltr', 'rtl'] as const) {
+      const fixture = mountBrandingHeader(direction)
+      const headingsStyle = browserWindow.getComputedStyle(fixture.headings)
+      const markStyle = browserWindow.getComputedStyle(fixture.mark)
+      const expectedTextColumn = direction === 'rtl' ? '2' : '1'
+      const expectedMarkColumn = direction === 'rtl' ? '1' : '2'
+
+      expect(headingsStyle.direction).toBe(direction)
+      expect(headingsStyle.display).toBe('grid')
+      expect(headingsStyle.gridTemplateColumns).toBe(
+        direction === 'rtl' ? 'var(--page-branding-mark-size) minmax(0, 1fr)' : 'minmax(0, 1fr) var(--page-branding-mark-size)'
+      )
+      expect(markStyle.position).toBe('absolute')
+      expect(markStyle.right).toBe('0px')
+      expect(markStyle.gridColumn).toBe(expectedMarkColumn)
+      expect(physicalInlineSide(fixture.headings, fixture.mark)).toBe('right')
+
+      for (const textElement of [fixture.label, fixture.title, fixture.description]) {
+        const textStyle = browserWindow.getComputedStyle(textElement)
+        expect(textStyle.gridColumn).toBe(expectedTextColumn)
+        expect(physicalInlineSide(fixture.headings, textElement)).toBe('left')
+      }
+    }
+  })
+
   it('renders an accessible mark for valid branding', async () => {
     const mounted = await mountMark(makeBranding(7, 'a'.repeat(64)))
     const mark = mounted.root()

@@ -677,6 +677,56 @@ export default defineComponent({
     min-width: var(--wiki-control-height);
     padding: 0;
   }
+  .nav-sidebar-home:not(.nav-sidebar-home--static) {
+    position: relative;
+    border-color: transparent !important;
+    background: transparent !important;
+    color: color-mix(in srgb, rgb(var(--v-theme-on-surface)) 80%, transparent);
+    box-shadow: none;
+
+    .v-btn__overlay,
+    .v-btn__underlay {
+      display: none;
+    }
+
+    &::before {
+      position: absolute;
+      inset: 4px;
+      border: 1px solid var(--wiki-surface-border);
+      border-radius: calc(var(--wiki-control-radius) - 3px);
+      background: color-mix(in srgb, var(--wiki-surface-raised) 70%, transparent);
+      box-shadow: none;
+      content: '';
+    }
+
+    .v-btn__content {
+      position: relative;
+      z-index: 1;
+    }
+
+    .v-icon {
+      color: currentColor;
+    }
+
+    &:hover {
+      border-color: transparent !important;
+      background: transparent !important;
+      color: rgb(var(--v-theme-on-surface));
+      box-shadow: none;
+
+      &::before {
+        border-color: color-mix(in srgb, var(--wiki-ambient-accent) 36%, var(--wiki-surface-border-strong));
+        background: color-mix(in srgb, var(--wiki-ambient-accent) 10%, var(--wiki-surface-raised));
+        box-shadow: var(--wiki-shadow-xs);
+      }
+    }
+
+    &:focus-visible {
+      outline: 2px solid var(--wiki-focus-color);
+      outline-offset: 1px;
+    }
+  }
+
 
   &.nav-sidebar-switcher--static {
     justify-content: center;
