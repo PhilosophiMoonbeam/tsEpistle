@@ -1,0 +1,181 @@
+{
+  "schemaVersion": 2,
+  "id": "security-review-99e94b9e98c6f693b49f03396d3904354f059e3e",
+  "kind": "source-review",
+  "repository": "PhilosophiMoonbeam/tsEpistle",
+  "policyVersion": 1,
+  "threatModelDigest": "f643fcea653b67bf10c98cdae0744586857f4c47635d62fb6cdf905288002a07",
+  "reviewer": {
+    "identity": "tsEpistle delegated immutable reviewers (ImmutableSecurityReview; ImmutableCorrectnessReview)",
+    "reviewedAt": "2026-09-11"
+  },
+  "releaseEligible": true,
+  "source": {
+    "revision": "99e94b9e98c6f693b49f03396d3904354f059e3e",
+    "baseRevision": "907831b89576e4876e51a471f8a16859fbb71575",
+    "coveredTreeDigest": "8942b526392c24466ae0ea9a44e06593d202e817252c20bb08462304660d3f03"
+  },
+  "findings": [
+    {
+      "id": "AUTH-APIKEY-HUMAN-IMPERSONATION",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/core/auth.api-access.test.ts",
+        "server/test/graph/api-key-mutations.test.ts"
+      ]
+    },
+    {
+      "id": "AUTH-CALLBACK-INITIATION-BINDING",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/authentication/cas/cas-strategy.test.ts",
+        "server/modules/authentication/saml/authentication.test.ts",
+        "server/test/controllers/auth.test.js"
+      ]
+    },
+    {
+      "id": "AUTH-OAUTH-STATE-LIFECYCLE",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/authentication/oauth-state.test.ts",
+        "server/test/repositories/federated-login.postgres.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-ASSET-001",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/models/assets.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-IMPORT-002",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/modules/storage/git/admission.test.ts",
+        "server/modules/storage/git/bounded-process.test.ts",
+        "server/modules/storage/git/repository.test.ts"
+      ]
+    },
+    {
+      "id": "STORAGE-BACKUP-003",
+      "severity": "High",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "server/test/modules/storage.disk.test.js"
+      ]
+    },
+    {
+      "id": "SEC-STORAGE-NATIVE-BOUND-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "docs/security/threat-model.md",
+        "server/modules/storage/git/bounded-process.test.ts"
+      ]
+    },
+    {
+      "id": "SEC-ADAPTER-001",
+      "severity": "Medium",
+      "disposition": "accepted",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+        "docs/security/threat-model.md"
+      ]
+    },
+    {
+      "id": "SEC-CACHE-001",
+      "severity": "Medium",
+      "disposition": "resolved",
+      "evidencePaths": [
+        "docs/security/security-review-2026-09-09-54949bf6d081-evidence.md",
+        "docs/security/threat-model.md",
+        "server/controllers/api/pages.ts",
+        "server/test/controllers/api.pages.test.js",
+        "server/test/operations/pages-tree.postgres.test.ts"
+      ]
+    }
+  ],
+  "evidencePaths": [
+    "docs/security/security-review-99e94b9e98c6f693b49f03396d3904354f059e3e-evidence.md",
+    "docs/security/review-attestations/security-review-99e94b9e98c6f693b49f03396d3904354f059e3e.json",
+    "docs/security/review-attestations.json",
+    "docs/security/security-review-907831b89576e4876e51a471f8a16859fbb71575-evidence.md",
+    "docs/security/review-attestations/security-review-907831b89576e4876e51a471f8a16859fbb71575.json",
+    "docs/security/security-review-314d78bf12ce610906f54a50f19839543272d70e-evidence.md",
+    "docs/security/security-review-db1a4456bd967808bcd8797b42c68ceeff076551-evidence.md",
+    "docs/security/security-review-594fe5c109f6cdc04545712fdac677dd0fc00691-evidence.md",
+    "docs/security/security-review-dd783e3aad6d8ecc6800797ad76dcc63d2ed1156-evidence.md",
+    "docs/security/security-review-871003fab75a1e2f55d5ec768d74e9643ead862e-evidence.md",
+    "docs/security/security-review-2026-09-09-b5924c6ae9fa-evidence.md",
+    "docs/security/security-review-2026-09-09-bd5c06096186-evidence.md",
+    "docs/security/security-review-2026-09-09-54949bf6d081-evidence.md",
+    "docs/security/security-review-2026-09-09-6e206707287f-evidence.md",
+    "docs/security/threat-model.md",
+    ".github/CONTRIBUTING.md",
+    ".github/workflows/build.yml",
+    "package.json",
+    "bun.lock",
+    "server/scripts/check-threat-model.ts",
+    "docs/.planning/2026-08-16_first-class-agent-architecture-plan.md",
+    "docs/agent-workspace.md",
+    "docs/agents-deployment.md",
+    "server/agents/actions/catalog.ts",
+    "server/agents/actions/kernel.ts",
+    "server/agents/actions/page-proposals.ts",
+    "server/agents/providers/action-sessions.ts",
+    "server/agents/providers/engine.ts",
+    "server/agents/providers/execution-failure.ts",
+    "server/agents/providers/factory.ts",
+    "server/agents/providers/gemini-interactions.ts",
+    "server/agents/providers/openresponses.ts",
+    "server/agents/providers/prompt-tools.ts",
+    "server/agents/providers/registry.ts",
+    "server/agents/providers/session-harness.ts",
+    "server/agents/providers/tool-discovery.ts",
+    "server/agents/providers/usage.ts",
+    "server/agents/runtime.ts",
+    "server/agents/skills/runtime.ts",
+    "server/agents/coordinator.ts",
+    "server/agents/maintenance.ts",
+    "server/agents/projection.ts",
+    "server/agents/repository.ts",
+    "server/agents/diagnostics.ts",
+    "server/agents/proposals/execution.ts",
+    "server/agents/proposals/repository.ts",
+    "server/controllers/agents-host.ts",
+    "server/master.ts",
+    "shared/agents/contracts.ts",
+    "client/helpers/agents-api.ts",
+    "client/helpers/agents-api.test.ts",
+    "client/store/agents.ts",
+    "client/components/agents/agent-thread-presentation.ts",
+    "client/components/agents/agent-thread.vue",
+    "client/components/agents/agent-tool-card.vue",
+    "client/components/agents/agent-mcp-approval.vue",
+    "client/components/agents/inline-agent-chat.vue",
+    "server/test/agents/agent-engine-orchestration.test.ts",
+    "server/test/agents/agent-engine.test.ts",
+    "server/test/agents/contracts.test.ts",
+    "server/test/agents/provider-factory.test.ts",
+    "server/test/agents/provider-registry.test.ts",
+    "server/test/agents/provider-transports.test.ts",
+    "server/test/agents/repository.postgres.test.ts",
+    "server/test/agents/repository.test.ts",
+    "server/test/agents/skill-runtime.test.ts",
+    "server/test/agents/tool-discovery.test.ts",
+    "server/test/controllers/agents-host-sessions.test.ts"
+  ]
+}
