@@ -161,7 +161,7 @@ describe('agent provider profile registry', () => {
     })
 
     const token = await registry.issueResolutionToken(7, 'session-1')
-    const resolved = await registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })
+    const resolved = await knex.transaction(transaction => registry.resolve(transaction, { ownerId: 7, sessionId: 'session-1', profileResolutionToken: token }))
     expect(resolved).toMatchObject({
       providerProfileVersionId: settingsId,
       transportKind: 'openai-responses',
@@ -190,7 +190,10 @@ describe('agent provider profile registry', () => {
       status: 409
     })
     await expect(Promise.resolve(registry.setEnabled(created.id, true, 1, settingsId))).rejects.toMatchObject({ code: 'PROFILE_VERSION_CHANGED', status: 409 })
-    await expect(Promise.resolve(registry.resolve({ ownerId: 7, sessionId: 'session-1', profileResolutionToken: token }))).rejects.toMatchObject({
+    await expect(
+      (async () =>
+        await knex.transaction(transaction => registry.resolve(transaction, { ownerId: 7, sessionId: 'session-1', profileResolutionToken: token })))()
+    ).rejects.toMatchObject({
       code: 'PROFILE_RESOLUTION_CHANGED',
       status: 409
     })
@@ -489,7 +492,12 @@ describe('agent provider profile registry', () => {
       isGlobalDefault: 0,
       deletedAt: expect.anything()
     })
-    await expect(Promise.resolve(managedRegistry.resolve({ ownerId: 7, sessionId: 'session-remove', profileResolutionToken: token }))).rejects.toMatchObject({
+    await expect(
+      (async () =>
+        await knex.transaction(transaction =>
+          managedRegistry.resolve(transaction, { ownerId: 7, sessionId: 'session-remove', profileResolutionToken: token })
+        ))()
+    ).rejects.toMatchObject({
       code: 'PROFILE_RESOLUTION_CHANGED',
       status: 409
     })
@@ -567,6 +575,8 @@ describe('agent provider profile registry', () => {
     expect(await registry.getAdmin(grouped.id)).toMatchObject({ exposureMode: 'groups', groupIds: [4] })
     await knex('agentSessions').where({ id: 'session-2' }).update({ providerProfileId: null, version: 3 })
     const token = await registry.issueResolutionToken(7, 'session-2')
-    expect(await registry.resolve({ ownerId: 7, sessionId: 'session-2', profileResolutionToken: token })).toMatchObject({ executionMode: 'agent' })
+    expect(
+      await knex.transaction(transaction => registry.resolve(transaction, { ownerId: 7, sessionId: 'session-2', profileResolutionToken: token }))
+    ).toMatchObject({ executionMode: 'agent' })
   })
 })

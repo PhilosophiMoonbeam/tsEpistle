@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import cookieParser from 'cookie-parser'
@@ -6,9 +6,9 @@ import express from 'express'
 import session from 'express-session'
 import createKnex, { type Knex } from 'knex'
 import { z } from 'zod'
-import { afterAll, beforeAll, describe, expect, it } from '../bun-test.mts'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '../bun-test.mts'
 import createAgentsHostController from '../../controllers/agents-host.ts'
-import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
+import { AgentProductRuntime, type AgentEngine, type AgentEngineRequest, type AgentEngineResult } from '../../agents/runtime.ts'
 import { AgentExecutionFailure, classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { AgentProviderAttemptError } from '../../agents/providers/factory.ts'
 import { AgentRunCoordinator, admitAgentRun, requestAgentRunCancellation, terminalizeAgentRun, transitionAgentRun } from '../../agents/coordinator.ts'
@@ -22,6 +22,8 @@ interface TestSessionState {
 const createTables = async (db: Knex): Promise<void> => {
   await db.schema.createTable('users', table => table.integer('id').primary())
   await db('users').insert([{ id: 7 }, { id: 8 }])
+  await db.schema.createTable('groups', table => table.integer('id').primary())
+  await db('groups').insert([{ id: 1 }])
   await db.schema.createTable('agentConversationFolders', table => {
     table.uuid('id').primary()
     table.integer('ownerId').notNullable()
@@ -176,6 +178,10 @@ const createTables = async (db: Knex): Promise<void> => {
     table.integer('userId')
     table.integer('groupId')
   })
+  await db('userGroups').insert([
+    { userId: 7, groupId: 1 },
+    { userId: 8, groupId: 1 }
+  ])
   await db.schema.createTable('agentRunSkills', table => {
     table.uuid('runId')
     table.uuid('skillVersionId')
@@ -278,17 +284,31 @@ const createTables = async (db: Knex): Promise<void> => {
 describe('ordinary-origin agent session API', () => {
   let db: Knex
   let server: Server
+  let runtime: AgentProductRuntime
   let baseUrl: string
   let cookie: string
   let ownerId = 7
   let authContextOwnerId: number | null = null
   let administrator = false
   const csrf = 'csrf-token'
-  let runtime: AgentProductRuntime
   let engineCurrentPage: unknown
+  let engineMessages: readonly { readonly role: string; readonly content: string; readonly providerState?: unknown }[] = []
   let engineSkills: readonly { readonly id: string; readonly name: string }[] = []
-  let engineMemory: unknown
+  let engineMemory: AgentEngineRequest['memory'] | undefined
+  let engineRunId: string | undefined
   let engineFailure: unknown = null
+  let engineContextLimit: AgentEngineResult['contextLimit']
+  const runtimeLogs: unknown[] = []
+  const auxiliaryRuntimes = new Set<AgentProductRuntime>()
+  const auxiliaryCoordinators = new Set<AgentRunCoordinator>()
+  const trackAuxiliaryRuntime = <T extends AgentProductRuntime>(candidate: T): T => {
+    auxiliaryRuntimes.add(candidate)
+    return candidate
+  }
+  const trackAuxiliaryCoordinator = <T extends AgentRunCoordinator>(candidate: T): T => {
+    auxiliaryCoordinators.add(candidate)
+    return candidate
+  }
   const makeAccountingRuntime = (engine: AgentEngine, maxTokens: number): AgentProductRuntime => {
     const resolved = {
       profileResolutionSha256: 'a'.repeat(64),
@@ -305,23 +325,25 @@ describe('ordinary-origin agent session API', () => {
       quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
       reservationMilliseconds: 60_000
     }
-    return new AgentProductRuntime(
-      db,
-      {
-        async resolve() {
-          return resolved
+    return trackAuxiliaryRuntime(
+      new AgentProductRuntime(
+        db,
+        {
+          async resolve() {
+            return resolved
+          },
+          async resolveCurrent() {
+            return resolved
+          }
         },
-        async resolveCurrent() {
-          return resolved
+        engine,
+        {
+          workerId: `goal-accounting-${maxTokens}`,
+          globalConcurrency: 1,
+          perUserConcurrency: 1,
+          goals: { enabled: true, maxContinuations: 3, maxTokens, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }
         }
-      },
-      engine,
-      {
-        workerId: `goal-accounting-${maxTokens}`,
-        globalConcurrency: 1,
-        perUserConcurrency: 1,
-        goals: { enabled: true, maxContinuations: 3, maxTokens, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }
-      }
+      )
     )
   }
   const insertAccountingSession = async (sessionId: string): Promise<void> => {
@@ -369,12 +391,15 @@ describe('ordinary-origin agent session API', () => {
       | undefined
     if (!daily) throw new Error('accounting fixture daily quota is missing')
     const now = new Date()
+    const releaseReservation = reservation !== 'reserved'
     await db('agentQuotaDaily')
       .where({ ownerId: quotaReservation.ownerId, day: quotaReservation.day })
       .update({
-        reservedTokens: Number(daily.reservedTokens) - Number(quotaReservation.reservedTokens),
+        reservedTokens: releaseReservation ? Number(daily.reservedTokens) - Number(quotaReservation.reservedTokens) : Number(daily.reservedTokens),
         consumedTokens: Number(daily.consumedTokens) + (reservation === 'consumed' ? reservationTokens : 0),
-        reservedCostMicros: Number(daily.reservedCostMicros) - Number(quotaReservation.reservedCostMicros),
+        reservedCostMicros: releaseReservation
+          ? Number(daily.reservedCostMicros) - Number(quotaReservation.reservedCostMicros)
+          : Number(daily.reservedCostMicros),
         consumedCostMicros: Number(daily.consumedCostMicros),
         updatedAt: now
       })
@@ -409,14 +434,27 @@ describe('ordinary-origin agent session API', () => {
     return 2
   }
 
-  beforeAll(async () => {
+  beforeEach(async () => {
+    ownerId = 7
+    authContextOwnerId = null
+    administrator = false
+    engineCurrentPage = undefined
+    engineMessages = []
+    engineSkills = []
+    engineMemory = undefined
+    engineRunId = undefined
+    engineFailure = null
+    engineContextLimit = undefined
+    runtimeLogs.length = 0
     db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
     await createTables(db)
     const fakeEngine: AgentEngine = {
       async execute(request, sink) {
         engineCurrentPage = request.currentPage
+        engineMessages = request.messages.map(message => ({ ...message }))
         engineSkills = request.skills.map(skill => ({ id: skill.id, name: skill.name }))
         engineMemory = request.memory
+        engineRunId = request.run.id
         if (engineFailure !== null) throw engineFailure
         await sink.text('Hello ')
         await sink.text('from the deterministic engine.')
@@ -425,29 +463,34 @@ describe('ordinary-origin agent session API', () => {
           outputTokens: 5,
           totalTokens: 8,
           costMicros: 8,
-          suggestions: [{ id: 'continue', label: 'Continue', prompt: 'Continue' }]
+          suggestions: [{ id: 'continue', label: 'Continue', prompt: 'Continue' }],
+          ...(engineContextLimit === undefined ? {} : { contextLimit: engineContextLimit })
         }
       }
+    }
+    const resolvedAdmission = {
+      profileResolutionSha256: 'a'.repeat(64),
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
+      transportKind: 'test',
+      model: 'deterministic',
+      executionMode: 'agent' as const,
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: 'test-v1',
+      pricingRevision: 'test-v1',
+      promptVersion: 1,
+      quota: { tokens: 100, costMicros: 100 },
+      quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      reservationMilliseconds: 60_000
     }
     runtime = new AgentProductRuntime(
       db,
       {
         async resolve() {
-          return {
-            profileResolutionSha256: 'a'.repeat(64),
-            providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
-            transportKind: 'test',
-            model: 'deterministic',
-            executionMode: 'agent',
-            profilePolicyVersion: 1,
-            defaultGeneration: 1,
-            capabilityRevision: 'test-v1',
-            pricingRevision: 'test-v1',
-            promptVersion: 1,
-            quota: { tokens: 100, costMicros: 100 },
-            quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
-            reservationMilliseconds: 60_000
-          }
+          return resolvedAdmission
+        },
+        async resolveCurrent() {
+          return resolvedAdmission
         }
       },
       fakeEngine,
@@ -455,7 +498,12 @@ describe('ordinary-origin agent session API', () => {
         workerId: 'test-worker',
         globalConcurrency: 1,
         perUserConcurrency: 1,
-        goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 }
+        goals: { enabled: true, maxContinuations: 3, maxTokens: 48_000, maxToolCalls: 96, maxDurationMilliseconds: 3_600_000 },
+        logger: {
+          error(value: unknown): void {
+            runtimeLogs.push(value)
+          }
+        }
       }
     )
     const app = express()
@@ -515,12 +563,33 @@ describe('ordinary-origin agent session API', () => {
     cookie = seeded.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
   })
 
-  afterAll(async () => {
-    const closed = Promise.withResolvers<void>()
-    server.close(error => (error ? closed.reject(error) : closed.resolve()))
-    await closed.promise
-    await runtime.shutdown()
-    await db.destroy()
+  afterEach(async () => {
+    try {
+      const closed = Promise.withResolvers<void>()
+      server.close(error => (error ? closed.reject(error) : closed.resolve()))
+      await closed.promise
+    } finally {
+      const runtimes = [runtime, ...auxiliaryRuntimes]
+      const coordinators = [...auxiliaryCoordinators]
+      await Promise.allSettled([...runtimes, ...coordinators].map(candidate => candidate.shutdown()))
+      auxiliaryRuntimes.clear()
+      auxiliaryCoordinators.clear()
+      try {
+        await db.destroy()
+      } finally {
+        ownerId = 7
+        authContextOwnerId = null
+        administrator = false
+        engineCurrentPage = undefined
+        engineMessages = []
+        engineSkills = []
+        engineMemory = undefined
+        engineRunId = undefined
+        engineFailure = null
+        engineContextLimit = undefined
+        runtimeLogs.length = 0
+      }
+    }
   })
 
   it('requires same-origin metadata and CSRF for session mutations', async () => {
@@ -1033,6 +1102,7 @@ describe('ordinary-origin agent session API', () => {
     expect((await retry.json()) as { run: { id: string }; replayed: boolean }).toMatchObject({ run: { id: admission.run.id }, replayed: true })
 
     expect(await runtime.runOnce()).toBe(true)
+    expect(engineRunId).toBe(admission.run.id)
     expect(engineCurrentPage).toEqual(request.currentPage)
     expect(engineMemory).toEqual({ user: [], agent: [] })
     const reconnected = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
@@ -1071,6 +1141,388 @@ describe('ordinary-origin agent session API', () => {
     expect(replay).toContain('"orchestration":{"costMicros":0,"inputTokens":0,"outputTokens":0,"taskCount":0,"totalTokens":0}')
     expect(replay).toContain('"utility":{"costMicros":0,"inputTokens":0,"outputTokens":0,"purpose":"conversation_title","totalTokens":0}')
   })
+  it('forwards retained provider state only across an exact origin at the engine boundary', async () => {
+    type Origin = Readonly<{
+      providerProfileVersionId: string
+      transportKind: string
+      model: string
+      capabilityRevision: string
+    }>
+    const currentOrigin: Origin = {
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
+      transportKind: 'openai-responses',
+      model: 'provider-b',
+      capabilityRevision: 'capability-b'
+    }
+    const otherProfileOrigin = { ...currentOrigin, providerProfileVersionId: '00000000-0000-4000-8000-000000000071' } as const
+    const otherTransportOrigin = { ...currentOrigin, transportKind: 'openresponses' } as const
+    const otherModelOrigin = { ...currentOrigin, model: 'provider-a' } as const
+    const otherCapabilityOrigin = { ...currentOrigin, capabilityRevision: 'capability-a' } as const
+    const currentBlock = { data: 'wiki.openai.reasoning.v1:["rs_current","opaque-provider-a-state"]', encrypted: true }
+    const legacyGeminiBlock = {
+      data: 'wiki.gemini.interactions.v1:[{"type":"model_output","content":[{"type":"text","text":"legacy"}]}]',
+      encrypted: true
+    }
+    const envelope = (thoughtBlocks: readonly unknown[], continuationDialect = 'openai-responses-reasoning-v1') => ({
+      schemaVersion: 1,
+      continuationDialect,
+      thoughtBlocks
+    })
+    const encode = (value: unknown): Buffer => Buffer.from(JSON.stringify(value), 'utf8')
+    const hash = (value: Buffer): string => createHash('sha256').update(value).digest('hex')
+    const resolved = {
+      profileResolutionSha256: 'c'.repeat(64),
+      providerProfileVersionId: currentOrigin.providerProfileVersionId,
+      transportKind: currentOrigin.transportKind,
+      model: currentOrigin.model,
+      executionMode: 'agent' as const,
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: currentOrigin.capabilityRevision,
+      pricingRevision: 'price-b',
+      promptVersion: 1,
+      quota: { tokens: 100, costMicros: 100 },
+      quotaLimits: { dailyTokens: 1_000_000, dailyCostMicros: 1_000_000 },
+      reservationMilliseconds: 60_000
+    }
+    let engineCalls = 0
+    let originEngineRunId: string | undefined
+    const originRuntime = trackAuxiliaryRuntime(
+      new AgentProductRuntime(
+        db,
+        {
+          async resolve() {
+            return resolved
+          },
+          async resolveCurrent() {
+            return resolved
+          }
+        },
+        {
+          async execute(request, sink) {
+            engineCalls += 1
+            engineMessages = request.messages.map(message => ({ ...message }))
+            originEngineRunId = request.run.id
+            return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
+          }
+        },
+        {
+          workerId: `origin-boundary-${randomUUID()}`,
+          globalConcurrency: 1,
+          perUserConcurrency: 1,
+          goals: { enabled: false, maxContinuations: 1, maxTokens: 1_000_000, maxToolCalls: 1_000, maxDurationMilliseconds: 60_000 }
+        }
+      )
+    )
+    type StateCase = {
+      readonly name: string
+      readonly origin: typeof currentOrigin
+      readonly relation?: 'null' | 'missing' | 'wrong-session' | 'wrong-owner'
+      readonly state: unknown
+      readonly stateSha256?: string | null
+      readonly expectedState?: unknown
+      readonly corrupt?: boolean
+    }
+    const cases: readonly StateCase[] = [
+      {
+        name: 'same profile version, transport, model, and capability',
+        origin: currentOrigin,
+        state: envelope([currentBlock]),
+        expectedState: { thoughtBlocks: [currentBlock] }
+      },
+      { name: 'different profile version', origin: otherProfileOrigin, state: envelope([currentBlock]) },
+      { name: 'different transport', origin: otherTransportOrigin, state: envelope([currentBlock]) },
+      { name: 'different model', origin: otherModelOrigin, state: envelope([currentBlock]) },
+      { name: 'different capability revision', origin: otherCapabilityOrigin, state: envelope([currentBlock]) },
+      { name: 'null origin run id', origin: currentOrigin, relation: 'null', state: envelope([currentBlock]) },
+      {
+        name: 'missing origin run',
+        origin: currentOrigin,
+        relation: 'missing',
+        state: 'not-json',
+        stateSha256: 'not-a-sha256'
+      },
+      { name: 'wrong origin session', origin: currentOrigin, relation: 'wrong-session', state: envelope([currentBlock]) },
+      { name: 'wrong origin owner', origin: currentOrigin, relation: 'wrong-owner', state: envelope([currentBlock]) },
+      {
+        name: 'bad state hash at an exact origin',
+        origin: currentOrigin,
+        state: envelope([currentBlock]),
+        stateSha256: '0'.repeat(64),
+        corrupt: true
+      },
+      {
+        name: 'incompatible dialect',
+        origin: currentOrigin,
+        state: envelope([legacyGeminiBlock], 'gemini-interactions-v1')
+      },
+      {
+        name: 'recognized legacy wrapper',
+        origin: currentOrigin,
+        state: { thoughtBlocks: [currentBlock] },
+        expectedState: { thoughtBlocks: [currentBlock] }
+      },
+      {
+        name: 'recognized legacy wrapper without an integrity hash',
+        origin: currentOrigin,
+        state: { thoughtBlocks: [currentBlock] },
+        stateSha256: null,
+        expectedState: { thoughtBlocks: [currentBlock] }
+      },
+      { name: 'generic encrypted legacy wrapper', origin: currentOrigin, state: { thoughtBlocks: [{ data: 'opaque', encrypted: true }] } },
+      {
+        name: 'malformed compatible envelope',
+        origin: currentOrigin,
+        state: envelope([{ data: 'opaque', encrypted: true }]),
+        corrupt: true
+      },
+      {
+        name: 'compatible envelope without an integrity hash',
+        origin: currentOrigin,
+        state: envelope([currentBlock]),
+        stateSha256: null,
+        corrupt: true
+      }
+    ]
+    try {
+      for (const [index, testCase] of cases.entries()) {
+        const sessionId = randomUUID()
+        const now = new Date(Date.now() + index)
+        await db('agentSessions').insert({
+          id: sessionId,
+          ownerId: 7,
+          title: `Origin boundary ${testCase.name}`,
+          titleSource: 'none',
+          retention: 'saved',
+          folderId: null,
+          providerProfileId: null,
+          executionMode: 'agent',
+          version: 1,
+          summary: null,
+          summaryThroughOrdinal: null,
+          memorySnapshot: '{"agent":[],"user":[]}',
+          createdAt: now,
+          updatedAt: now,
+          lastActivityAt: now,
+          expiresAt: null,
+          deletedAt: null
+        })
+        const historicalSessionId = testCase.relation === 'wrong-session' ? randomUUID() : sessionId
+        if (historicalSessionId !== sessionId)
+          await db('agentSessions').insert({
+            id: historicalSessionId,
+            ownerId: 7,
+            title: 'Foreign origin session',
+            titleSource: 'none',
+            retention: 'saved',
+            folderId: null,
+            providerProfileId: null,
+            executionMode: 'agent',
+            version: 1,
+            summary: null,
+            summaryThroughOrdinal: null,
+            memorySnapshot: '{"agent":[],"user":[]}',
+            createdAt: now,
+            updatedAt: now,
+            lastActivityAt: now,
+            deletedAt: null
+          })
+        const historical = await admitAgentRun(db, {
+          id: randomUUID(),
+          ownerId: 7,
+          sessionId: historicalSessionId,
+          clientRequestId: randomUUID(),
+          expectedSessionVersion: 1,
+          profileResolutionSha256: 'b'.repeat(64),
+          content: 'Provider A request',
+          providerProfileVersionId: testCase.origin.providerProfileVersionId,
+          transportKind: testCase.origin.transportKind,
+          model: testCase.origin.model,
+          executionMode: 'agent',
+          profilePolicyVersion: 1,
+          defaultGeneration: 1,
+          capabilityRevision: testCase.origin.capabilityRevision,
+          pricingRevision: 'price-a',
+          promptVersion: 1,
+          skillVersionIds: [],
+          quota: { tokens: 0, costMicros: 0 },
+          quotaLimits: { dailyTokens: 1_000_000, dailyCostMicros: 1_000_000 },
+          reservationExpiresAt: new Date(now.valueOf() + 60_000),
+          now
+        })
+        await db('agentRuns').where({ id: historical.run.id }).update({ status: 'succeeded', completedAt: now })
+        const stateBytes = encode(testCase.state)
+        const stateMessageId = randomUUID()
+        if (testCase.relation === 'null' || testCase.relation === 'missing' || testCase.relation === 'wrong-session') {
+          await db('agentMessages').insert({
+            id: stateMessageId,
+            sessionId,
+            runId: testCase.relation === 'null' ? null : testCase.relation === 'missing' ? randomUUID() : historical.run.id,
+            ordinal: 1,
+            role: 'assistant',
+            status: 'complete',
+            content: 'Provider A answer',
+            citations: null,
+            providerStateCiphertext: stateBytes,
+            providerStateSha256: testCase.stateSha256 === undefined ? hash(stateBytes) : testCase.stateSha256,
+            createdAt: now,
+            updatedAt: now
+          })
+        } else {
+          await db('agentMessages')
+            .where({ id: historical.run.assistantMessageId })
+            .update({
+              status: 'complete',
+              content: 'Provider A answer',
+              providerStateCiphertext: stateBytes,
+              providerStateSha256: testCase.stateSha256 === undefined ? hash(stateBytes) : testCase.stateSha256,
+              updatedAt: now
+            })
+          if (testCase.relation === 'wrong-owner') await db('agentRuns').where({ id: historical.run.id }).update({ ownerId: 8 })
+        }
+        engineCalls = 0
+        engineMessages = []
+        originEngineRunId = undefined
+        const current = await originRuntime.submit({
+          ownerId: 7,
+          sessionId,
+          profileResolutionToken: 'ignored-by-fixture-resolver',
+          clientRequestId: randomUUID(),
+          expectedSessionVersion: 1,
+          content: 'Provider B request'
+        })
+        expect(await originRuntime.runOnce()).toBe(true)
+        const currentRun = await db('agentRuns').where({ id: current.run.id }).first('status', 'errorCode')
+        expect(originEngineRunId).toBe(testCase.corrupt ? undefined : current.run.id)
+        if (testCase.corrupt) {
+          expect(engineCalls).toBe(0)
+          expect(currentRun).toEqual({ status: 'failed', errorCode: 'AGENT_PROVIDER_STATE_CORRUPT' })
+          continue
+        }
+        expect(currentRun).toEqual({ status: 'succeeded', errorCode: null })
+        expect(engineCalls).toBe(1)
+        const priorAnswer = engineMessages.find(message => message.content === 'Provider A answer')
+        expect(priorAnswer).toMatchObject({ role: 'assistant', content: 'Provider A answer' })
+        if (testCase.expectedState === undefined) expect(priorAnswer).not.toHaveProperty('providerState')
+        else expect(priorAnswer).toMatchObject({ providerState: testCase.expectedState })
+      }
+    } finally {
+      await originRuntime.shutdown()
+    }
+  })
+
+  it('blocks a goal continuation after a pinned skill is revoked before quota mutation', async () => {
+    const sessionId = randomUUID()
+    const goalId = randomUUID()
+    const skillId = randomUUID()
+    const skillVersionId = randomUUID()
+    const now = new Date()
+    await db('agentSessions').insert({
+      id: sessionId,
+      ownerId: 7,
+      title: 'Pinned skill revocation',
+      titleSource: 'none',
+      retention: 'saved',
+      folderId: null,
+      providerProfileId: null,
+      executionMode: 'agent',
+      version: 1,
+      summary: null,
+      summaryThroughOrdinal: null,
+      memorySnapshot: '{"agent":[],"user":[]}',
+      createdAt: now,
+      updatedAt: now,
+      lastActivityAt: now,
+      expiresAt: null,
+      deletedAt: null
+    })
+    await db('agentSkills').insert({
+      id: skillId,
+      name: `pinned-${skillId.slice(0, 8)}`,
+      rootPageId: null,
+      rootPath: 'pinned-revocation',
+      assetFolderId: null,
+      status: 'enabled',
+      exposureMode: 'owner',
+      currentVersionId: skillVersionId,
+      isAgentDiscoverable: false,
+      ownerUserId: 7,
+      deletedAt: null,
+      createdBy: 7,
+      updatedBy: 7,
+      createdAt: now,
+      updatedAt: now
+    })
+    await db('agentSkillVersions').insert({
+      id: skillVersionId,
+      skillId,
+      sourceRevision: 1,
+      sourceUpdatedAt: now,
+      sourceHistoryId: null,
+      frontmatter: '{}',
+      skillMarkdown: '# Pinned skill',
+      resourceBundle: Buffer.alloc(0),
+      resourceManifest: '{}',
+      contentHash: createHash('sha256').update('pinned-skill').digest('hex'),
+      approvalStatus: 'approved',
+      approvedBy: 7,
+      approvedAt: now,
+      createdAt: now
+    })
+    const accountingRuntime = makeAccountingRuntime(
+      {
+        async execute(_request, sink) {
+          await sink.text('initial goal answer')
+          return { inputTokens: 1, outputTokens: 1, totalTokens: 2, costMicros: 2 }
+        }
+      },
+      48_000
+    )
+    try {
+      const admitted = await accountingRuntime.createGoal({
+        goalId,
+        ownerId: 7,
+        sessionId,
+        profileResolutionToken: 'accounting-test',
+        clientRequestId: randomUUID(),
+        expectedSessionVersion: 1,
+        objective: 'Complete the pinned skill task.',
+        invokedSkillVersionIds: [skillVersionId]
+      })
+      expect(await db('agentRunSkills').where({ runId: admitted.run.id }).select('skillVersionId', 'ordinal')).toEqual([{ skillVersionId, ordinal: 0 }])
+      expect(await accountingRuntime.runOnce()).toBe(true)
+      const expectedVersion = await pauseAccountingGoal(goalId)
+      const quotaBefore = await db('agentQuotaReservations')
+        .where({ runId: admitted.run.id })
+        .first('status', 'consumedTokens', 'consumedCostMicros', 'reconciledAt')
+      const dailyBefore = await db('agentQuotaDaily')
+        .where({ ownerId: 7 })
+        .first('reservedTokens', 'consumedTokens', 'reservedCostMicros', 'consumedCostMicros')
+      const runCountBefore = await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first()
+      await db('agentSkills').where({ id: skillId }).update({ status: 'disabled', updatedAt: new Date() })
+      const resumed = await accountingRuntime.resumeGoal({
+        goalId,
+        ownerId: 7,
+        expectedVersion,
+        runId: randomUUID(),
+        clientRequestId: randomUUID()
+      })
+      expect(resumed).toMatchObject({
+        run: null,
+        goal: { status: 'blocked', errorCode: 'GOAL_CONFIGURATION_CHANGED', consumedTokens: expect.any(Number) }
+      })
+      expect(await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first()).toEqual(runCountBefore)
+      expect(await db('agentRunSkills').where({ runId: admitted.run.id }).select('skillVersionId', 'ordinal')).toEqual([{ skillVersionId, ordinal: 0 }])
+      expect(
+        await db('agentQuotaReservations').where({ runId: admitted.run.id }).first('status', 'consumedTokens', 'consumedCostMicros', 'reconciledAt')
+      ).toEqual(quotaBefore)
+      expect(await db('agentQuotaDaily').where({ ownerId: 7 }).first('reservedTokens', 'consumedTokens', 'reservedCostMicros', 'consumedCostMicros')).toEqual(
+        dailyBefore
+      )
+    } finally {
+      await accountingRuntime.shutdown()
+    }
+  })
   it('persists normalized failures as a durable safe projection without provider details', async () => {
     const headers = { cookie, 'content-type': 'application/json', origin: 'https://wiki.example.test', 'sec-fetch-site': 'same-origin', 'x-wiki-csrf': csrf }
     const created = await fetch(`${baseUrl}/_api/agents/sessions`, {
@@ -1090,6 +1542,7 @@ describe('ordinary-origin agent session API', () => {
       })
     })
     const admission = (await admitted.json()) as { run: { id: string } }
+    runtimeLogs.length = 0
     const wrapped = Object.assign(new Error('provider response body secret'), {
       cause: new AgentProviderAttemptError('provider-secret-code', 429, null, 'secret-parameter'),
       body: 'secret body',
@@ -1099,11 +1552,24 @@ describe('ordinary-origin agent session API', () => {
     expect(engineFailure).toBeInstanceOf(AgentExecutionFailure)
     try {
       expect(await runtime.runOnce()).toBe(true)
+      expect(engineRunId).toBe(admission.run.id)
     } finally {
       engineFailure = null
     }
     const runRow = await db('agentRuns').where({ id: admission.run.id }).first('status', 'errorCode', 'errorMessage')
     expect(runRow).toEqual({ status: 'failed', errorCode: 'PROVIDER_RATE_LIMITED', errorMessage: 'Agent inference failed' })
+    expect(runtimeLogs).toHaveLength(1)
+    expect(runtimeLogs[0]).toEqual({
+      event: 'agent.run.failed',
+      runId: admission.run.id,
+      attempt: 1,
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
+      errorCode: 'PROVIDER_RATE_LIMITED',
+      failureStage: 'provider_request',
+      status: 502,
+      providerStatus: 429,
+      unsettledExposure: { tokens: 0, costMicros: 0 }
+    })
     const eventRow = await db('agentEvents').where({ runId: admission.run.id, type: 'run.failed' }).first('data')
     const failureEvent = JSON.parse(String(eventRow?.data)) as Record<string, unknown>
     expect(failureEvent).toMatchObject({
@@ -1140,12 +1606,14 @@ describe('ordinary-origin agent session API', () => {
       })
     })
     expect(admitted.status).toBe(202)
-    expect(await admitted.json()).toMatchObject({
+    const admission = (await admitted.json()) as { run: { id: string } }
+    expect(admission).toMatchObject({
       goal: { id: goalId, status: 'active', continuationCount: 0, objective: 'Produce the deterministic answer.' },
       run: { status: 'queued' },
       replayed: false
     })
     expect(await runtime.runOnce()).toBe(true)
+    expect(engineRunId).toBe(admission.run.id)
 
     const projected = await fetch(`${baseUrl}/_api/agents/sessions/${state.session.id}`, { headers: { cookie } })
     expect(await projected.json()).toMatchObject({
@@ -1162,6 +1630,40 @@ describe('ordinary-origin agent session API', () => {
     expect(
       await db('agentEvents').join('agentRuns', 'agentRuns.id', 'agentEvents.runId').where({ 'agentRuns.goalId': goalId }).pluck('agentEvents.type')
     ).toEqual(expect.arrayContaining(['goal.created', 'run.completionAssessed', 'goal.status']))
+  })
+  it('marks tool-result capacity as a blocked partial and does not retry the durable goal', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000081'
+    const goalId = '00000000-0000-4000-8000-000000000082'
+    await insertAccountingSession(sessionId)
+    engineContextLimit = { reason: 'tool_result_capacity', omittedActionCallIds: ['action-call-1'] }
+    try {
+      const admitted = await runtime.createGoal({
+        goalId,
+        ownerId: 7,
+        sessionId,
+        profileResolutionToken: 'context-limit-test',
+        clientRequestId: '00000000-0000-4000-8000-000000000083',
+        objective: 'Summarize every requested source without repeating exhausted work.'
+      })
+      expect(await runtime.runOnce()).toBe(true)
+      expect(engineRunId).toBe(admitted.run.id)
+      const run = await db('agentRuns').where({ id: admitted.run.id }).first('status', 'errorCode', 'completionOutcome', 'completionAssessment')
+      expect(run).toMatchObject({ status: 'partial', errorCode: null, completionOutcome: 'blocked' })
+      expect(JSON.parse(String(run?.completionAssessment))).toMatchObject({
+        outcome: 'blocked',
+        issues: expect.arrayContaining([
+          {
+            code: 'AGENT_CONTEXT_TOO_LARGE',
+            message: 'The provider context capacity prevented delivery of all requested source evidence.',
+            retryable: false
+          }
+        ])
+      })
+      expect(await db('agentGoals').where({ id: goalId }).first('status', 'errorCode')).toEqual({ status: 'blocked', errorCode: 'GOAL_BLOCKED' })
+      expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
+    } finally {
+      engineContextLimit = undefined
+    }
   })
   it('charges conservative terminal goal reservations across runtime recreation before continuation', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000301'
@@ -1318,15 +1820,17 @@ describe('ordinary-origin agent session API', () => {
     await accountingRuntime.shutdown()
   })
 
-  it('rejects a continuation before provider dispatch when only a partial goal budget remains', async () => {
+  it('fences a continuation at the engine boundary when only a partial goal budget remains', async () => {
     const sessionId = '00000000-0000-4000-8000-000000000321'
     const goalId = '00000000-0000-4000-8000-000000000322'
-    let providerDispatches = 0
+    let executionRunId: string | undefined
+    let executionMaxTokens: number | undefined
     await insertAccountingSession(sessionId)
     const accountingRuntime = makeAccountingRuntime(
       {
         async execute(request) {
-          if (request.limits?.maxTokens !== 1) providerDispatches += 1
+          executionRunId = request.run.id
+          executionMaxTokens = request.limits?.maxTokens
           throw new AgentRepositoryError('AGENT_BUDGET_LIMITED', 'Agent goal token budget was exhausted', 409)
         }
       },
@@ -1352,7 +1856,12 @@ describe('ordinary-origin agent session API', () => {
     })
     expect(resumed.run).not.toBeNull()
     expect(await accountingRuntime.runOnce()).toBe(true)
-    expect(providerDispatches).toBe(0)
+    expect(executionRunId).toBe(resumed.run?.id)
+    expect(executionMaxTokens).toBe(1)
+    expect(await db('agentRuns').where({ id: resumed.run?.id }).first('status', 'errorCode')).toEqual({
+      status: 'failed',
+      errorCode: 'AGENT_BUDGET_LIMITED'
+    })
     expect(await db('agentGoals').where({ id: goalId }).first('status', 'consumedTokens')).toEqual({ status: 'budget_limited', consumedTokens: 4 })
     await accountingRuntime.shutdown()
   })
@@ -1415,6 +1924,8 @@ describe('ordinary-origin agent session API', () => {
       expectedSessionVersion: 1,
       objective: 'Reconcile the held terminal ledger.'
     })
+    const dailyBefore = await db('agentQuotaDaily').where({ ownerId: 7 }).first('reservedTokens', 'consumedTokens', 'reservedCostMicros', 'consumedCostMicros')
+    if (!dailyBefore) throw new Error('held accounting daily quota is missing')
     await settleAccountingRun(admitted.run.id, 0, 0, 'reserved', 0)
     expect(await accountingRuntime.runOnce()).toBe(false)
     expect(await db('agentGoals').where({ id: goalId }).first('status', 'errorCode', 'consumedTokens')).toEqual({
@@ -1423,7 +1934,14 @@ describe('ordinary-origin agent session API', () => {
       consumedTokens: 0
     })
     expect(Number((await db('agentRuns').where({ goalId }).count<{ count: number | string }[]>({ count: '*' }).first())?.count ?? 0)).toBe(1)
-    await db('agentQuotaReservations').where({ runId: admitted.run.id }).delete()
+    expect(await db('agentQuotaReservations').where({ runId: admitted.run.id }).first('reservedTokens', 'consumedTokens', 'status')).toEqual({
+      reservedTokens: 10,
+      consumedTokens: 0,
+      status: 'reserved'
+    })
+    expect(await db('agentQuotaDaily').where({ ownerId: 7 }).first('reservedTokens', 'consumedTokens', 'reservedCostMicros', 'consumedCostMicros')).toEqual(
+      dailyBefore
+    )
     await accountingRuntime.shutdown()
   })
   it('applies user skill preferences at the latest version across conversations', async () => {
@@ -1493,6 +2011,7 @@ describe('ordinary-origin agent session API', () => {
       { skillVersionId: updated.versionId, ordinal: 0 }
     ])
     expect(await runtime.runOnce()).toBe(true)
+    expect(engineRunId).toBe(admitted.run.id)
     expect(engineSkills).toEqual([{ id: updated.versionId, name: 'qa-helper' }])
     expect(await db('agentSkillVersions').where({ skillId: created.id }).orderBy('createdAt').pluck('id')).toEqual([created.versionId, updated.versionId])
 
@@ -1513,12 +2032,41 @@ describe('ordinary-origin agent session API', () => {
     expect(await (await fetch(`${baseUrl}/_api/agents/skills`, { headers: { cookie } })).json()).toEqual({ skills: [] })
   })
   it('serves intact unexpired screenshot artifacts only to their owner', async () => {
-    const artifactId = '00000000-0000-4000-8000-000000000068'
+    const artifactId = randomUUID()
+    const sessionId = randomUUID()
+    const now = new Date()
+    await insertAccountingSession(sessionId)
+    const parent = await admitAgentRun(db, {
+      id: randomUUID(),
+      userMessageId: randomUUID(),
+      assistantMessageId: randomUUID(),
+      ownerId: 7,
+      sessionId,
+      clientRequestId: randomUUID(),
+      expectedSessionVersion: 1,
+      profileResolutionSha256: 'a'.repeat(64),
+      content: 'Capture a screenshot.',
+      providerProfileVersionId: '00000000-0000-4000-8000-000000000070',
+      transportKind: 'test',
+      model: 'deterministic',
+      executionMode: 'agent',
+      profilePolicyVersion: 1,
+      defaultGeneration: 1,
+      capabilityRevision: 'test-v1',
+      pricingRevision: 'test-v1',
+      promptVersion: 1,
+      skillVersionIds: [],
+      quota: { tokens: 0, costMicros: 0 },
+      quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+      reservationExpiresAt: new Date(now.valueOf() + 60_000),
+      now
+    })
+    await db('agentRuns').where({ id: parent.run.id }).update({ status: 'succeeded', completedAt: now })
     const payload = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3])
     await db('agentArtifacts').insert({
       id: artifactId,
-      sessionId: '00000000-0000-4000-8000-000000000061',
-      runId: '00000000-0000-4000-8000-000000000062',
+      sessionId,
+      runId: parent.run.id,
       ownerId: 7,
       kind: 'browser-screenshot',
       mimeType: 'image/png',
@@ -1527,8 +2075,8 @@ describe('ordinary-origin agent session API', () => {
       sha256: createHash('sha256').update(payload).digest('hex'),
       width: 1280,
       height: 720,
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 60_000)
+      createdAt: now,
+      expiresAt: new Date(now.valueOf() + 60_000)
     })
     const own = await fetch(`${baseUrl}/_api/agents/artifacts/${artifactId}/content`, { headers: { cookie } })
     expect(own.status).toBe(200)
@@ -1953,16 +2501,20 @@ describe('ordinary-origin agent session API', () => {
       '00000000-0000-4000-8000-000000000263',
       '00000000-0000-4000-8000-000000000264'
     )
-    const localCoordinator = new AgentRunCoordinator(db, {
-      workerId: 'local-approval-worker',
-      globalConcurrency: 1,
-      perUserConcurrency: 1,
-      leaseMilliseconds: 60_000,
-      heartbeatMilliseconds: 60_000,
-      now
-    })
+    const localCoordinator = trackAuxiliaryCoordinator(
+      new AgentRunCoordinator(db, {
+        workerId: 'local-approval-worker',
+        globalConcurrency: 1,
+        perUserConcurrency: 1,
+        leaseMilliseconds: 60_000,
+        heartbeatMilliseconds: 60_000,
+        now
+      })
+    )
     const enteredApproval = Promise.withResolvers<AbortSignal>()
+    let approvalRunId: string | undefined
     const localRunOnce = localCoordinator.runOnce(async (claim, signal) => {
+      approvalRunId = claim.id
       await transitionAgentRun(db, { claim, from: 'running', to: 'awaiting_approval', now })
       enteredApproval.resolve(signal)
       await new Promise<never>((_resolve, reject) => {
@@ -1972,6 +2524,7 @@ describe('ordinary-origin agent session API', () => {
     })
     const approvalSignal = await enteredApproval.promise
     try {
+      expect(approvalRunId).toBe(localWaiter.run.id)
       const cancelled = await localCoordinator.cancel(7, localWaiter.run.id)
       expect(cancelled).toMatchObject({ id: localWaiter.run.id, status: 'cancelled', cancelRequestedAt: expect.anything() })
       expect(approvalSignal.aborted).toBe(true)

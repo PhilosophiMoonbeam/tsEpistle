@@ -1,5 +1,6 @@
 import { AgentRepositoryError } from '../repository.ts'
 import { AgentProviderAttemptError } from './factory.ts'
+import type { AgentProviderTransportKind } from './registry.ts'
 
 export const AGENT_EXECUTION_FAILURE_STAGES = [
   'setup',
@@ -41,6 +42,37 @@ export type AgentExecutionFailureCode =
   | 'PROVIDER_REQUEST_REJECTED'
   | 'PROVIDER_UNAVAILABLE'
   | 'PROVIDER_REQUEST_FAILED'
+
+export const AGENT_USAGE_ISSUES = ['missing', 'shape', 'unsafe_integer', 'directional_overflow', 'total_below_directions', 'regression'] as const
+export type AgentExecutionFailureUsageIssue = (typeof AGENT_USAGE_ISSUES)[number]
+
+export const AGENT_USAGE_FIELDS = ['inputTokens', 'outputTokens', 'totalTokens'] as const
+export type AgentExecutionFailureUsageField = (typeof AGENT_USAGE_FIELDS)[number]
+
+export interface AgentExecutionFailureUsageReceipt {
+  readonly inputTokens?: number
+  readonly outputTokens?: number
+  readonly totalTokens?: number
+}
+
+export interface AgentExecutionFailureContextDiagnostics {
+  readonly inputBytes?: number
+  readonly candidateBytes?: number
+  readonly limitBytes?: number
+  readonly visibleSchemaBytes?: number
+  readonly admittedResultCount?: number
+  readonly omittedResultCount?: number
+}
+
+export interface AgentExecutionFailureDiagnostics {
+  readonly usageIssue?: AgentExecutionFailureUsageIssue
+  readonly usageField?: AgentExecutionFailureUsageField
+  readonly prior?: AgentExecutionFailureUsageReceipt
+  readonly current?: AgentExecutionFailureUsageReceipt
+  readonly context?: AgentExecutionFailureContextDiagnostics
+  readonly providerTurn?: number
+  readonly transportKind?: AgentProviderTransportKind
+}
 const SAFE_REPOSITORY_CODES: Readonly<Record<string, true>> = {
   AGENT_CONTEXT_TOO_LARGE: true,
   INVALID_PROVIDER_REQUEST: true,
@@ -102,13 +134,82 @@ const safeStage = (stage: AgentExecutionFailureStage): AgentExecutionFailureStag
 const safeProviderStatus = (status: unknown): number | undefined =>
   typeof status === 'number' && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined
 
+const SAFE_TRANSPORT_KINDS: Readonly<Record<AgentProviderTransportKind, true>> = {
+  'openai-responses': true,
+  openresponses: true,
+  'openai-chat': true,
+  'legacy-completions': true,
+  'anthropic-messages': true,
+  'gemini-api': true
+}
+const SAFE_RECEIPT_FIELDS = ['inputTokens', 'outputTokens', 'totalTokens'] as const
+const SAFE_CONTEXT_FIELDS = ['inputBytes', 'candidateBytes', 'limitBytes', 'visibleSchemaBytes', 'admittedResultCount', 'omittedResultCount'] as const
+const safeNonNegativeInteger = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+const safeProperty = (value: object, key: PropertyKey): unknown => {
+  try {
+    return Reflect.get(value, key)
+  } catch {
+    return undefined
+  }
+}
+const safeReceipt = (value: unknown): AgentExecutionFailureUsageReceipt | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const receipt: Record<string, number> = {}
+  for (const field of SAFE_RECEIPT_FIELDS) {
+    const item = safeNonNegativeInteger(safeProperty(value, field))
+    if (item !== undefined) receipt[field] = item
+  }
+  return Object.keys(receipt).length > 0 ? receipt : undefined
+}
+const safeContext = (value: unknown): AgentExecutionFailureContextDiagnostics | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const context: Record<string, number> = {}
+  for (const field of SAFE_CONTEXT_FIELDS) {
+    const item = safeNonNegativeInteger(safeProperty(value, field))
+    if (item !== undefined) context[field] = item
+  }
+  return Object.keys(context).length > 0 ? context : undefined
+}
+const safeEnum = <T extends readonly string[]>(value: unknown, values: T): T[number] | undefined =>
+  typeof value === 'string' && (values as readonly string[]).includes(value) ? (value as T[number]) : undefined
+
+export const normalizeAgentExecutionFailureDiagnostics = (value: unknown): AgentExecutionFailureDiagnostics | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const diagnostics: {
+    usageIssue?: AgentExecutionFailureUsageIssue
+    usageField?: AgentExecutionFailureUsageField
+    prior?: AgentExecutionFailureUsageReceipt
+    current?: AgentExecutionFailureUsageReceipt
+    context?: AgentExecutionFailureContextDiagnostics
+    providerTurn?: number
+    transportKind?: AgentProviderTransportKind
+  } = {}
+  const usageIssue = safeEnum(safeProperty(value, 'usageIssue'), AGENT_USAGE_ISSUES)
+  if (usageIssue !== undefined) diagnostics.usageIssue = usageIssue
+  const usageField = safeEnum(safeProperty(value, 'usageField'), AGENT_USAGE_FIELDS)
+  if (usageField !== undefined) diagnostics.usageField = usageField
+  const prior = safeReceipt(safeProperty(value, 'prior'))
+  if (prior !== undefined) diagnostics.prior = prior
+  const current = safeReceipt(safeProperty(value, 'current'))
+  if (current !== undefined) diagnostics.current = current
+  const context = safeContext(safeProperty(value, 'context'))
+  if (context !== undefined) diagnostics.context = context
+  const providerTurn = safeNonNegativeInteger(safeProperty(value, 'providerTurn'))
+  if (providerTurn !== undefined) diagnostics.providerTurn = providerTurn
+  const transportKind = safeProperty(value, 'transportKind')
+  if (typeof transportKind === 'string' && SAFE_TRANSPORT_KINDS[transportKind as AgentProviderTransportKind] === true)
+    diagnostics.transportKind = transportKind as AgentProviderTransportKind
+  return Object.keys(diagnostics).length > 0 ? diagnostics : undefined
+}
 export class AgentExecutionFailure extends Error {
   readonly code: AgentExecutionFailureCode
   readonly stage: AgentExecutionFailureStage
   readonly status: number
   readonly providerStatus?: number
+  readonly diagnostics?: AgentExecutionFailureDiagnostics
 
-  constructor(code: AgentExecutionFailureCode, stage: AgentExecutionFailureStage, providerStatus?: number) {
+  constructor(code: AgentExecutionFailureCode, stage: AgentExecutionFailureStage, providerStatus?: number, diagnostics?: unknown) {
     const safeCode = SAFE_CODES[code] === true ? code : 'PROVIDER_REQUEST_FAILED'
     super(SAFE_MESSAGE)
     this.name = 'AgentExecutionFailure'
@@ -117,6 +218,8 @@ export class AgentExecutionFailure extends Error {
     this.status = SAFE_STATUS_BY_CODE[safeCode] ?? 502
     const normalizedProviderStatus = safeProviderStatus(providerStatus)
     if (normalizedProviderStatus !== undefined) this.providerStatus = normalizedProviderStatus
+    const normalizedDiagnostics = normalizeAgentExecutionFailureDiagnostics(diagnostics)
+    if (normalizedDiagnostics !== undefined) this.diagnostics = normalizedDiagnostics
   }
 }
 
@@ -145,6 +248,12 @@ const wrappedValues = (error: unknown): readonly unknown[] => {
   }
   return values
 }
+const attachedDiagnostics = (value: object): AgentExecutionFailureDiagnostics | undefined => {
+  const attached = safeProperty(value, 'agentDiagnostics')
+  const publicDiagnostics = attached === undefined ? safeProperty(value, 'diagnostics') : attached
+  return normalizeAgentExecutionFailureDiagnostics(publicDiagnostics)
+}
+
 export const classifyAgentExecutionFailure = (error: unknown, stage: AgentExecutionFailureStage): AgentExecutionFailure => {
   if (error instanceof AgentExecutionFailure) return error
   if (stage === 'action_cleanup') return new AgentExecutionFailure('ACTION_SESSION_CLOSE_FAILED', stage)
@@ -155,11 +264,11 @@ export const classifyAgentExecutionFailure = (error: unknown, stage: AgentExecut
     if (current.value instanceof AgentExecutionFailure) return current.value
     if (current.value instanceof AgentRepositoryError) {
       const code = SAFE_REPOSITORY_CODES[current.value.code] === true ? (current.value.code as AgentExecutionFailureCode) : 'PROVIDER_REQUEST_FAILED'
-      return new AgentExecutionFailure(code, stage)
+      return new AgentExecutionFailure(code, stage, undefined, attachedDiagnostics(current.value))
     }
     if (current.value instanceof AgentProviderAttemptError) {
       const providerStatus = safeProviderStatus(current.value.status)
-      return new AgentExecutionFailure(providerCode(current.value), stage, providerStatus)
+      return new AgentExecutionFailure(providerCode(current.value), stage, providerStatus, attachedDiagnostics(current.value))
     }
     if (typeof current.value === 'object' && current.value !== null) {
       if (seen.has(current.value)) continue

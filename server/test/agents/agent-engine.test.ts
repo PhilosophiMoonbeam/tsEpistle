@@ -6,7 +6,7 @@ import { registerMemoryAction } from '../../agents/actions/memory.ts'
 import type { ActionHandler, ActionHandlerContext, ActionKernel } from '../../agents/actions/kernel.ts'
 import type { AgentMemoryRepository } from '../../agents/memory.ts'
 import { AxAgentEngine, type AgentActionSessionProvider } from '../../agents/providers/engine.ts'
-import type { AgentProviderFactory } from '../../agents/providers/factory.ts'
+import type { AgentProviderFactory, ProviderThoughtBlock } from '../../agents/providers/factory.ts'
 import { invokingAgentRunLease, type AgentApprovalContinuationCheckpoint, type AgentRunLeaseIdentity } from '../../agents/coordinator.ts'
 import { canonicalJson } from '../../helpers/canonical-json.ts'
 import type { AgentEngineRequest } from '../../agents/runtime.ts'
@@ -123,6 +123,7 @@ describe('Ax agent engine', () => {
         results: [
           {
             index: 0,
+            id: 'rs_1',
             content: 'Let me check.',
             functionCalls: [
               { id: 'call-1', type: 'function', function: { name: 'wiki_get_page', params: '{"id":' } },
@@ -161,8 +162,13 @@ describe('Ax agent engine', () => {
         transportKind: 'openai-responses',
         model: 'gpt-test',
         capabilityRevision: 'cap-1',
+        continuationDialect: 'openai-responses-reasoning-v1',
         pricingRevision: 'price-1',
-        pricing
+        pricing,
+        preserveThoughtBlock: (resultId: string, block: ProviderThoughtBlock) => {
+          if (block.encrypted !== true || typeof block.data !== 'string' || !/^rs_[A-Za-z0-9_-]{1,256}$/u.test(resultId)) return null
+          return { data: `wiki.openai.reasoning.v1:${JSON.stringify([resultId, block.data])}`, encrypted: true }
+        }
       })
     } as unknown as AgentProviderFactory
     const invoke = vi.fn(async () => ({
@@ -248,7 +254,11 @@ describe('Ax agent engine', () => {
       outputTokens: 6,
       totalTokens: 19,
       citations: [{ evidenceId: 'page:42:revision:1:section:1', kind: 'page', label: 'Guide › Install', href: '/en/guide#install' }],
-      providerState: { thoughtBlocks: [{ data: 'encrypted-state', encrypted: true }] }
+      providerState: {
+        schemaVersion: 1,
+        continuationDialect: 'openai-responses-reasoning-v1',
+        thoughtBlocks: [{ data: 'wiki.openai.reasoning.v1:["rs_1","encrypted-state"]', encrypted: true }]
+      }
     })
     expect(JSON.stringify(result)).not.toContain('hidden thought')
     expect(close).toHaveBeenCalledOnce()
@@ -1436,11 +1446,28 @@ describe('Ax agent engine', () => {
         pricing
       })
     } as unknown as AgentProviderFactory
+    const invoke = vi.fn(async () => ({}))
+    const open = vi.fn(async () => ({
+      functions: [{ name: 'pages.get', title: 'Read page', description: 'Reads a page', parameters: { type: 'object', properties: {} }, risk: 'read' }],
+      invoke,
+      snapshot: async () => ({}),
+      close: vi.fn(),
+      authoritySha256: null
+    }))
+    const actions = { open } as unknown as AgentActionSessionProvider
     const input = request(new AbortController().signal)
     const generationOnly = { ...input, run: { ...input.run, executionMode: 'generation-only' } }
-    await expect(Promise.resolve(new AxAgentEngine(factory).execute(generationOnly, { text: async () => {}, event: async () => {} }))).rejects.toMatchObject({
+    const text = vi.fn(async () => {})
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    await expect(new AxAgentEngine(factory, actions).execute(generationOnly, { text, event })).rejects.toMatchObject({
       code: 'UNEXPECTED_PROVIDER_TOOL_CALL'
     })
+    expect(open).not.toHaveBeenCalled()
+    expect(invoke).not.toHaveBeenCalled()
+    expect(text).not.toHaveBeenCalled()
+    expect(event).not.toHaveBeenCalled()
   })
 
   it('aborts a blocked provider when the host deadline signal fires', async () => {
@@ -1675,6 +1702,709 @@ describe('Ax agent engine', () => {
       expect.objectContaining({ outcome: 'answer_accepted', content: accepted.slice(0, 32_000) })
     ])
     expect(result).toMatchObject({ inputTokens: 13, outputTokens: 6, totalTokens: 19 })
+  })
+  it.each(['native', 'prompt'] as const)('keeps core tools available and unlocks one frozen category on the next %s turn', async mode => {
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const events: Array<readonly [string, unknown]> = []
+    const responses: AxChatResponse[] =
+      mode === 'native'
+        ? [
+            {
+              results: [
+                {
+                  index: 0,
+                  functionCalls: [
+                    {
+                      id: 'enable-explore',
+                      function: { name: 'wiki_enable_tools', params: { category: 'explore' } }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              results: [
+                {
+                  index: 0,
+                  functionCalls: [
+                    {
+                      id: 'search-tags',
+                      function: { name: 'wiki_search_tags', params: { query: 'alpha', limit: 1 } }
+                    }
+                  ]
+                }
+              ]
+            },
+            { results: [{ index: 0, content: 'The category lookup is complete.' }] }
+          ]
+        : [
+            { results: [{ index: 0, content: '<wiki-tool-call>{"name":"wiki_enable_tools","arguments":{"category":"explore"}}</wiki-tool-call>' }] },
+            {
+              results: [
+                {
+                  index: 0,
+                  content: '<wiki-tool-call>{"name":"wiki_search_tags","arguments":{"query":"alpha","limit":1}}</wiki-tool-call>'
+                }
+              ]
+            },
+            { results: [{ index: 0, content: 'The category lookup is complete.' }] }
+          ]
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
+    const functions = Object.freeze([
+      Object.freeze({
+        name: 'pages.get' as const,
+        title: 'Read page',
+        description: 'Read one page',
+        parameters: { type: 'object', properties: { id: { type: 'number' } } },
+        risk: 'read',
+        group: 'core' as const
+      }),
+      Object.freeze({
+        name: 'pages.searchTags' as const,
+        title: 'Search tags',
+        description: 'Search visible tags',
+        parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } } },
+        risk: 'read',
+        group: 'explore' as const
+      })
+    ])
+    const invoke = vi.fn(async (name: string) => (name === 'pages.searchTags' ? { tags: ['alpha'] } : {}))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions,
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: mode,
+          parallelToolCalls: false,
+          structuredOutput: mode === 'native' ? 'native-json-schema' : 'prompt-only',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 1_024
+        },
+        transportKind: mode === 'native' ? 'openai-responses' : 'legacy-completions',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+
+    await new AxAgentEngine(factory, actions).execute(
+      { ...request(new AbortController().signal), limits: { maxTurns: 4, maxToolCalls: 3, maxOutputTokens: 256 } },
+      {
+        text: async () => {},
+        event: async (type: string, data: unknown) => {
+          events.push([type, data])
+        }
+      }
+    )
+
+    expect(Object.isFrozen(functions)).toBe(true)
+    expect(Object.isFrozen(functions[0])).toBe(true)
+    expect(Object.isFrozen(functions[1])).toBe(true)
+    expect(invoke).toHaveBeenCalledWith(
+      'pages.searchTags',
+      { query: 'alpha', limit: 1 },
+      expect.any(AbortSignal),
+      mode === 'native' ? 'search-tags' : expect.any(String)
+    )
+    const startedInputs = events
+      .filter(([type]) => type === 'tool.started')
+      .map(([, data]) => {
+        if (typeof data !== 'object' || data === null || !('input' in data) || typeof data.input !== 'string') return undefined
+        return data.input
+      })
+    expect(startedInputs).toEqual(['{"category":"explore"}', '{"limit":1,"query":"alpha"}'])
+    expect(calls).toHaveLength(3)
+    if (mode === 'native') {
+      expect(calls[0]?.functions?.map(functionCall => functionCall.name)).toEqual(['wiki_get_page', 'wiki_enable_tools'])
+      expect(calls[1]?.functions?.map(functionCall => functionCall.name)).toEqual(['wiki_get_page', 'wiki_search_tags', 'wiki_enable_tools'])
+    } else {
+      expect(calls[0]).not.toHaveProperty('functions')
+      expect(calls[1]).not.toHaveProperty('functions')
+      expect(calls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('wiki_enable_tools') }))
+      expect(calls[1]?.chatPrompt[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('wiki_search_tags') }))
+    }
+  })
+  it.each(['native', 'prompt'] as const)(
+    'rejects a category whose prospective schema cannot fit while keeping core synthesis available on the %s protocol',
+    async mode => {
+      const largeSchema = 'schema '.repeat(20_000)
+      const responses: AxChatResponse[] =
+        mode === 'native'
+          ? [
+              {
+                results: [
+                  {
+                    index: 0,
+                    functionCalls: [
+                      {
+                        id: 'enable-large',
+                        type: 'function',
+                        function: { name: 'wiki_enable_tools', params: { category: 'explore' } }
+                      }
+                    ]
+                  }
+                ]
+              },
+              { results: [{ index: 0, content: 'Core tools remain available.' }] }
+            ]
+          : [
+              { results: [{ index: 0, content: '<wiki-tool-call>{"name":"wiki_enable_tools","arguments":{"category":"explore"}}</wiki-tool-call>' }] },
+              { results: [{ index: 0, content: 'Core tools remain available.' }] }
+            ]
+      const calls: Readonly<AxChatRequest<unknown>>[] = []
+      const events: Array<readonly [string, unknown]> = []
+      const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+        calls.push(input)
+        return responses.shift()!
+      })
+      const functions = Object.freeze([
+        Object.freeze({
+          name: 'pages.get' as const,
+          title: 'Read page',
+          description: 'Read one page',
+          parameters: { type: 'object', properties: { id: { type: 'number' } } },
+          risk: 'read',
+          group: 'core' as const
+        }),
+        Object.freeze({
+          name: 'pages.searchTags' as const,
+          title: 'Search tags',
+          description: 'Small category description',
+          parameters: { type: 'object', properties: { schema: { type: 'string', description: largeSchema } } },
+          risk: 'read',
+          group: 'explore' as const
+        })
+      ])
+      const invoke = vi.fn(async () => ({ tags: ['unused'] }))
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions,
+          invoke,
+          snapshot: async () => ({}),
+          close: vi.fn(),
+          authoritySha256: null
+        })
+      }
+      const factory = {
+        create: async () => ({
+          service: { chat },
+          capabilities: {
+            streaming: false,
+            toolCalling: mode,
+            parallelToolCalls: false,
+            structuredOutput: mode === 'native' ? 'native-json-schema' : 'prompt-only',
+            usage: 'estimated',
+            cancellation: true,
+            maxContextTokens: 100_000,
+            maxOutputTokens: 1_024
+          },
+          transportKind: mode === 'native' ? 'openai-responses' : 'legacy-completions',
+          model: 'gpt-test',
+          capabilityRevision: 'cap-1',
+          pricingRevision: 'price-1',
+          pricing
+        })
+      } as unknown as AgentProviderFactory
+
+      const result = await new AxAgentEngine(factory, actions).execute(
+        { ...request(new AbortController().signal), limits: { maxTurns: 4, maxToolCalls: 2, maxOutputTokens: 256 } },
+        {
+          text: async () => {},
+          event: async (type: string, data: unknown) => {
+            events.push([type, data])
+          }
+        }
+      )
+
+      expect(invoke).not.toHaveBeenCalled()
+      expect(calls).toHaveLength(2)
+      const failedData = events.find(([type]) => type === 'tool.failed')?.[1]
+      let failedActionCallId: string | undefined
+      if (typeof failedData === 'object' && failedData !== null && 'actionCallId' in failedData && typeof failedData.actionCallId === 'string')
+        failedActionCallId = failedData.actionCallId
+      if (failedActionCallId === undefined) throw new Error('capacity failure did not retain the started action call identity')
+      expect(result.contextLimit).toEqual({ reason: 'tool_result_capacity', omittedActionCallIds: [failedActionCallId] })
+      expect(events.filter(([type]) => type === 'tool.completed')).toHaveLength(0)
+      expect(events.filter(([type]) => type === 'tool.failed').map(([, data]) => data)).toEqual([
+        expect.objectContaining({ actionCallId: failedActionCallId, errorCode: 'AGENT_CONTEXT_TOO_LARGE' })
+      ])
+      if (mode === 'native') expect(failedActionCallId).toBe('enable-large')
+      if (mode === 'native') {
+        expect(calls[0]?.functions?.map(functionCall => functionCall.name)).toEqual(['wiki_get_page', 'wiki_enable_tools'])
+        expect(calls[1]).not.toHaveProperty('functions')
+      } else {
+        expect(calls[1]).not.toHaveProperty('functions')
+      }
+    }
+  )
+
+  it('moves to synthesis when a later same-batch result exhausts prospective capacity', async () => {
+    const largeDescription = 'large result '.repeat(10_000)
+    const responses: AxChatResponse[] = [
+      {
+        results: [
+          {
+            index: 0,
+            functionCalls: [
+              {
+                id: 'enable-explore',
+                type: 'function',
+                function: { name: 'wiki_enable_tools', params: { category: 'explore' } }
+              },
+              {
+                id: 'large-search',
+                type: 'function',
+                function: { name: 'wiki_search_pages', params: { query: 'large' } }
+              }
+            ]
+          }
+        ]
+      },
+      { results: [{ index: 0, content: 'The search was capacity limited.' }] }
+    ]
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const events: Array<readonly [string, unknown]> = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
+    const functions = Object.freeze([
+      Object.freeze({
+        name: 'pages.search' as const,
+        title: 'Search pages',
+        description: 'Search pages',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+        risk: 'read',
+        group: 'core' as const
+      }),
+      Object.freeze({
+        name: 'pages.searchTags' as const,
+        title: 'Search tags',
+        description: 'Search visible tags',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+        risk: 'read',
+        group: 'explore' as const
+      })
+    ])
+    const invoke = vi.fn(async () => ({
+      results: [
+        {
+          id: 1,
+          locale: 'en',
+          path: 'large',
+          title: 'Large result',
+          description: largeDescription,
+          contentType: 'markdown'
+        }
+      ]
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions,
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 1_024
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+
+    const result = await new AxAgentEngine(factory, actions).execute(
+      { ...request(new AbortController().signal), limits: { maxTurns: 4, maxToolCalls: 3, maxOutputTokens: 256 } },
+      {
+        text: async () => {},
+        event: async (type: string, data: unknown) => {
+          events.push([type, data])
+        }
+      }
+    )
+
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).not.toHaveProperty('functions')
+    expect(result.contextLimit).toEqual({ reason: 'tool_result_capacity', omittedActionCallIds: ['large-search'] })
+    expect(events.filter(([type]) => type === 'tool.completed').map(([, data]) => data)).toEqual([
+      expect.objectContaining({ actionCallId: 'enable-explore', summary: 'Enabled explore tools for the next turn' }),
+      expect.objectContaining({ actionCallId: 'large-search' })
+    ])
+  })
+  it.each(['native', 'prompt'] as const)('keeps depth-one child authority read-only on the %s protocol', async mode => {
+    const taskId = '00000000-0000-4000-8000-000000000081'
+    const subagentRunId = '00000000-0000-4000-8000-000000000082'
+    const packet = JSON.stringify({
+      taskId,
+      outcome: 'completed',
+      claims: [{ text: 'Alpha is ready. [[cite:page:1]]', evidenceIds: ['page:1'], sourceRevisionIds: ['rev-1'], confidence: 'high' }],
+      conflicts: [],
+      unanswered: [],
+      recommendedFollowups: []
+    })
+    const responses: AxChatResponse[] =
+      mode === 'native'
+        ? [
+            {
+              results: [
+                {
+                  index: 0,
+                  functionCalls: [{ id: 'child-read', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }]
+                }
+              ]
+            },
+            { results: [{ index: 0, content: packet }] }
+          ]
+        : [
+            { results: [{ index: 0, content: '<wiki-tool-call>{"name":"wiki_get_page","arguments":{"id":1}}</wiki-tool-call>' }] },
+            { results: [{ index: 0, content: packet }] }
+          ]
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
+    const functions = Object.freeze([
+      Object.freeze({
+        name: 'pages.get' as const,
+        title: 'Read page',
+        description: 'Read one page',
+        parameters: { type: 'object', properties: { id: { type: 'number' } } },
+        risk: 'read',
+        group: 'core' as const
+      }),
+      Object.freeze({
+        name: 'pages.searchTags' as const,
+        title: 'Search tags',
+        description: 'Search visible tags',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+        risk: 'read',
+        group: 'explore' as const
+      }),
+      Object.freeze({
+        name: 'pages.prepareCreate' as const,
+        title: 'Prepare page',
+        description: 'Prepare a page proposal',
+        parameters: { type: 'object', properties: {} },
+        risk: 'proposal',
+        group: 'authoring' as const
+      })
+    ])
+    const invoke = vi.fn(async () => ({
+      id: 1,
+      sourceRevision: 'rev-1',
+      title: 'Alpha',
+      contentType: 'markdown',
+      content: 'Alpha is ready.',
+      citation: { evidenceId: 'page:1', label: 'Alpha', href: '/en/alpha' },
+      citationSections: []
+    }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions,
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: 'd'.repeat(64)
+      })
+    }
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: mode,
+          parallelToolCalls: false,
+          structuredOutput: mode === 'native' ? 'native-json-schema' : 'prompt-only',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 1_024
+        },
+        transportKind: mode === 'native' ? 'openai-responses' : 'legacy-completions',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const text = vi.fn(async () => {})
+    const result = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...request(new AbortController().signal),
+        purpose: 'subagent',
+        task: {
+          id: taskId,
+          kind: 'source_scout',
+          title: 'Review alpha',
+          question: 'What is alpha status?',
+          sourceScope: ['alpha'],
+          requiredEvidenceCount: 1
+        },
+        subagentRunId,
+        actionAllowlist: ['pages.get', 'pages.searchTags'],
+        limits: { maxTurns: 3, maxToolCalls: 2, maxOutputTokens: 512 }
+      },
+      { text, event: async () => {} }
+    )
+
+    expect(result.authoritySha256).toBe('d'.repeat(64))
+    expect(Object.isFrozen(functions)).toBe(true)
+    expect(invoke).toHaveBeenCalledWith(
+      'pages.get',
+      { id: 1 },
+      expect.any(AbortSignal),
+      expect.stringMatching(new RegExp(`^sa_${subagentRunId}_[a-f0-9]{24}$`, 'u'))
+    )
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(packet)
+    expect(calls).toHaveLength(2)
+    if (mode === 'native') {
+      expect(calls[0]?.functions?.map(functionCall => functionCall.name)).toEqual(['wiki_get_page', 'wiki_enable_tools'])
+      expect(calls[0]?.functions?.map(functionCall => functionCall.name)).not.toContain('wiki_prepare_page_create')
+    } else {
+      expect(calls[0]).not.toHaveProperty('functions')
+      expect(calls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ role: 'system', content: expect.stringContaining('"name":"wiki_get_page"') }))
+      expect(calls[0]?.chatPrompt[0]).toEqual(expect.objectContaining({ content: expect.not.stringContaining('wiki_prepare_page_create') }))
+    }
+  })
+  it('keeps a recent-page window and ten page reads available for one grounded completion', async () => {
+    const readCalls = Array.from({ length: 10 }, (_, index) => ({
+      id: `read-${index + 1}`,
+      type: 'function' as const,
+      function: { name: 'wiki_get_page', params: JSON.stringify({ id: index + 1 }) }
+    }))
+    const answer = Array.from({ length: 10 }, (_, index) => `Recent page ${index + 1} is documented.[[cite:page:${index + 1}]]`).join(' ')
+    const responses: AxChatResponse[] = [
+      {
+        results: [
+          {
+            index: 0,
+            functionCalls: [{ id: 'recent', type: 'function', function: { name: 'wiki_list_recent_pages', params: '{"locale":"en","limit":10}' } }]
+          }
+        ]
+      },
+      { results: [{ index: 0, functionCalls: readCalls }] },
+      { results: [{ index: 0, content: answer }] }
+    ]
+    const chat = vi.fn(async () => responses.shift()!)
+    const invoke = vi.fn(async (name: string, input: unknown) => {
+      if (name === 'pages.listRecent') {
+        return {
+          pages: Array.from({ length: 10 }, (_, index) => ({
+            id: index + 1,
+            locale: 'en',
+            path: `recent/${index + 1}`,
+            title: `Recent page ${index + 1}`,
+            description: '',
+            contentType: 'markdown',
+            sourceRevision: `rev-${index + 1}`,
+            citation: { evidenceId: `page:${index + 1}`, label: `Recent page ${index + 1}`, href: `/en/recent/${index + 1}` }
+          }))
+        }
+      }
+      const id = typeof input === 'object' && input !== null && typeof Reflect.get(input, 'id') === 'number' ? Number(Reflect.get(input, 'id')) : 0
+      return {
+        id,
+        title: `Recent page ${id}`,
+        contentType: 'markdown',
+        content: `Recent page ${id} is documented.`,
+        citation: { evidenceId: `page:${id}`, label: `Recent page ${id}`, href: `/en/recent/${id}` },
+        citationSections: []
+      }
+    })
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          {
+            name: 'pages.listRecent',
+            title: 'List recent pages',
+            description: 'List recently changed pages',
+            parameters: { type: 'object', properties: { locale: { type: 'string' }, limit: { type: 'number' } } },
+            risk: 'read',
+            group: 'core'
+          },
+          {
+            name: 'pages.get',
+            title: 'Read page',
+            description: 'Read one page',
+            parameters: { type: 'object', properties: { id: { type: 'number' } } },
+            risk: 'read',
+            group: 'core'
+          }
+        ],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 100_000,
+          maxOutputTokens: 4_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const text = vi.fn(async () => {})
+    const result = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...request(new AbortController().signal),
+        limits: { maxTurns: 3, maxToolCalls: 11, maxOutputTokens: 1_024 }
+      },
+      { text, event: async () => {} }
+    )
+
+    expect(chat).toHaveBeenCalledTimes(3)
+    expect(invoke).toHaveBeenCalledTimes(11)
+    expect(result.contextLimit).toBeUndefined()
+    expect(result.citations).toHaveLength(10)
+    expect(text.mock.calls.map(([delta]) => delta).join('')).toBe(answer)
+  })
+  it('keeps an oversized omitted source out of citations and corrects the capacity-limited synthesis', async () => {
+    const largePayload = 'Large source payload '.repeat(2_000)
+    const responses: AxChatResponse[] = [
+      {
+        results: [
+          {
+            index: 0,
+            functionCalls: [
+              { id: 'small', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } },
+              { id: 'large', type: 'function', function: { name: 'wiki_get_page', params: '{"id":2}' } }
+            ]
+          }
+        ]
+      },
+      { results: [{ index: 0, content: 'Large source is authoritative.[[cite:page:2]]' }] },
+      { results: [{ index: 0, content: 'Small source is available.[[cite:page:1]]' }] }
+    ]
+    const calls: Readonly<AxChatRequest<unknown>>[] = []
+    const chat = vi.fn(async (input: Readonly<AxChatRequest<unknown>>) => {
+      calls.push(input)
+      return responses.shift()!
+    })
+    const invoke = vi.fn(async (_name: string, input: unknown) => {
+      const id = typeof input === 'object' && input !== null && typeof Reflect.get(input, 'id') === 'number' ? Number(Reflect.get(input, 'id')) : 0
+      return {
+        id,
+        title: id === 1 ? 'Small source' : 'Large source',
+        contentType: 'markdown',
+        content: id === 1 ? 'Small source is available.' : largePayload,
+        citation: { evidenceId: `page:${id}`, label: id === 1 ? 'Small source' : 'Large source', href: `/en/source/${id}` },
+        citationSections: []
+      }
+    })
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [
+          {
+            name: 'pages.get',
+            title: 'Read page',
+            description: 'Read one page',
+            parameters: { type: 'object', properties: { id: { type: 'number' } } },
+            risk: 'read',
+            group: 'core'
+          }
+        ],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const event = vi.fn(async (...args: [string, unknown]) => {
+      void args
+    })
+    const factory = {
+      create: async () => ({
+        service: { chat },
+        capabilities: {
+          streaming: false,
+          toolCalling: 'native',
+          parallelToolCalls: true,
+          structuredOutput: 'native-json-schema',
+          usage: 'estimated',
+          cancellation: true,
+          maxContextTokens: 24_000,
+          maxOutputTokens: 1_000
+        },
+        transportKind: 'openai-responses',
+        model: 'gpt-test',
+        capabilityRevision: 'cap-1',
+        pricingRevision: 'price-1',
+        pricing
+      })
+    } as unknown as AgentProviderFactory
+    const text = vi.fn(async () => {})
+    const result = await new AxAgentEngine(factory, actions).execute(
+      {
+        ...request(new AbortController().signal),
+        limits: { maxTurns: 4, maxToolCalls: 2, maxOutputTokens: 500 }
+      },
+      { text, event }
+    )
+
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(chat).toHaveBeenCalledTimes(3)
+    expect(calls[2]?.chatPrompt).not.toContainEqual(expect.objectContaining({ content: expect.stringContaining('Large source payload') }))
+    expect(result).toMatchObject({
+      contextLimit: { reason: 'tool_result_capacity', omittedActionCallIds: ['large'] },
+      citations: [{ evidenceId: 'page:1', kind: 'page', label: 'Small source', href: '/en/source/1' }]
+    })
+    expect(text).toHaveBeenCalledOnce()
+    expect(text).toHaveBeenCalledWith('Small source is available.[[cite:page:1]]')
+    const provenance = event.mock.calls.filter(([type]) => type === 'evidence.provenance').map(([, data]) => data)
+    expect(provenance).toEqual([
+      expect.objectContaining({
+        accepted: false,
+        issues: [expect.stringContaining('page:2 was not produced by a successful page read')]
+      }),
+      expect.objectContaining({ accepted: true, finalCitationIds: ['page:1'] })
+    ])
   })
 })
 

@@ -58,7 +58,12 @@ const baseRequest = (signal: AbortSignal): AgentEngineRequest => ({
 
 const factoryFor = (
   chat: AgentProviderService['service']['chat'],
-  options: { readonly streaming?: boolean; readonly usage?: 'stream' | 'terminal' | 'estimated' } = {}
+  options: {
+    readonly streaming?: boolean
+    readonly usage?: 'stream' | 'terminal' | 'estimated'
+    readonly maxOutputTokens?: number
+    readonly preserveThoughtBlock?: AgentProviderService['preserveThoughtBlock']
+  } = {}
 ): AgentProviderFactory =>
   ({
     create: async () => ({
@@ -71,15 +76,52 @@ const factoryFor = (
         usage: options.usage ?? 'estimated',
         cancellation: true,
         maxContextTokens: 100_000,
-        maxOutputTokens: 4_000
+        maxOutputTokens: options.maxOutputTokens ?? 4_000
       },
       transportKind: 'openai-responses',
       model: 'gpt-test',
       capabilityRevision: 'cap-1',
       pricingRevision: 'price-1',
-      pricing
+      pricing,
+      preserveThoughtBlock: options.preserveThoughtBlock
     })
   }) as unknown as AgentProviderFactory
+const utf8Chunks = (value: string, maximumBytes: number): readonly string[] => {
+  const chunks: string[] = []
+  let current = ''
+  let currentBytes = 0
+  for (const character of value) {
+    const bytes = Buffer.byteLength(character, 'utf8')
+    if (current.length > 0 && currentBytes + bytes > maximumBytes) {
+      chunks.push(current)
+      current = ''
+      currentBytes = 0
+    }
+    current += character
+    currentBytes += bytes
+  }
+  if (current.length > 0 || chunks.length === 0) chunks.push(current)
+  return chunks
+}
+
+const responseStream = (responses: readonly AxChatResponse[], cancel?: (reason: unknown) => Promise<void> | void): ReadableStream<AxChatResponse> => {
+  let index = 0
+  return new ReadableStream<AxChatResponse>(
+    {
+      pull(controller) {
+        const response = responses[index]
+        if (response === undefined) {
+          controller.close()
+          return
+        }
+        index += 1
+        controller.enqueue(response)
+      },
+      cancel
+    },
+    { highWaterMark: 0 }
+  )
+}
 
 describe('Ax orchestration stages', () => {
   it('classifies wrapped request, stream, and response failures at their engine boundaries', async () => {
@@ -230,7 +272,7 @@ describe('Ax orchestration stages', () => {
     releasedReader.releaseLock()
   })
 
-  it('marks third-turn context admission after one plus ten completed tool calls without dispatching a third model turn', async () => {
+  it('switches to bounded synthesis after tool-result capacity and returns an explicit context limit', async () => {
     const calls = Array.from({ length: 10 }, (_, index) => ({
       id: `second-${index}`,
       type: 'function' as const,
@@ -238,7 +280,8 @@ describe('Ax orchestration stages', () => {
     }))
     const responses: AxChatResponse[] = [
       { results: [{ index: 0, functionCalls: [{ id: 'first', type: 'function', function: { name: 'wiki_get_page', params: '{"id":1}' } }] }] },
-      { results: [{ index: 0, functionCalls: calls }] }
+      { results: [{ index: 0, functionCalls: calls }] },
+      { results: [{ index: 0, content: 'The available evidence is incomplete.' }] }
     ]
     const chat = vi.fn(async () => responses.shift()!)
     const invoke = vi.fn(async () => ({ content: 'x'.repeat(3_000) }))
@@ -251,7 +294,7 @@ describe('Ax orchestration stages', () => {
         authoritySha256: null
       })
     }
-    const error = await new AxAgentEngine(
+    const result = await new AxAgentEngine(
       {
         create: async () => ({
           service: { chat },
@@ -273,19 +316,31 @@ describe('Ax orchestration stages', () => {
         })
       } as unknown as AgentProviderFactory,
       actions
+    ).execute(
+      {
+        ...baseRequest(new AbortController().signal),
+        limits: { maxTurns: 3, maxToolCalls: 11, maxOutputTokens: 100 }
+      },
+      { text: async () => {}, event: async () => {} }
     )
-      .execute(
-        {
-          ...baseRequest(new AbortController().signal),
-          limits: { maxTurns: 3, maxToolCalls: 11, maxOutputTokens: 100 }
-        },
-        { text: async () => {}, event: async () => {} }
-      )
-      .catch(value => value)
 
-    expect(error).toMatchObject({ code: 'AGENT_CONTEXT_TOO_LARGE', stage: 'context_admission' })
-    expect(chat).toHaveBeenCalledTimes(2)
-    expect(invoke).toHaveBeenCalledTimes(11)
+    const omittedActionCallIds = result.contextLimit?.omittedActionCallIds
+    expect(result.contextLimit?.reason).toBe('tool_result_capacity')
+    expect(Array.isArray(omittedActionCallIds)).toBe(true)
+    expect(omittedActionCallIds?.length).toBeGreaterThan(0)
+    expect(chat).toHaveBeenCalledTimes(3)
+    const synthesisRequest = chat.mock.calls[2]?.[0] as AxChatRequest<unknown> | undefined
+    expect(synthesisRequest).toBeDefined()
+    expect(synthesisRequest).not.toHaveProperty('functions')
+    const closedProviderCallIds = new Set(
+      (synthesisRequest?.chatPrompt ?? []).filter(message => message.role === 'function').map(message => message.functionId)
+    )
+    for (const callId of ['first', ...calls.map(call => call.id)]) expect(closedProviderCallIds.has(callId)).toBe(true)
+    const synthesisResults = (synthesisRequest?.chatPrompt ?? []).filter(message => message.role === 'function').map(message => message.result)
+    expect(synthesisResults.some(result => result.includes('"status":"omitted"'))).toBe(true)
+    expect(synthesisResults.some(result => result.includes('"status":"not_executed"'))).toBe(true)
+    expect(invoke.mock.calls.length).toBeGreaterThan(0)
+    expect(invoke.mock.calls.length).toBeLessThan(11)
   })
   it('runs the planner without actions, retries, or unbounded output', async () => {
     const chat = vi.fn(
@@ -777,7 +832,7 @@ describe('Ax orchestration stages', () => {
     ])
     expect(text).toHaveBeenCalledWith('Alpha requires review. [[cite:page:1]] However, beta requires audit. [[cite:page:2]]')
   })
-  it('reconciles charged provider usage before rejecting a post-response capability violation', async () => {
+  it('keeps a post-dispatch reservation unsettled when rejecting a post-response capability violation', async () => {
     const response = {
       results: [
         {
@@ -837,13 +892,13 @@ describe('Ax orchestration stages', () => {
           { text: async () => {}, event: async () => {} }
         )
       )
-    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
 
-    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, totalTokens: 12, costMicros: 17 })
+    expect(reconcile).not.toHaveBeenCalled()
     expect(release).not.toHaveBeenCalled()
     expect(invoke).not.toHaveBeenCalled()
   })
-  it('propagates reconciliation failure after a provider response validation error', async () => {
+  it('keeps a post-dispatch reservation unsettled when rejecting an invalid response', async () => {
     const response = {
       results: [{ index: 0, content: '<wiki-tool-call>not-json</wiki-tool-call>' }],
       modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 7, completionTokens: 5, totalTokens: 12 } }
@@ -895,8 +950,8 @@ describe('Ax orchestration stages', () => {
       )
       .catch(value => value)
 
-    expect(error).toMatchObject({ code: 'PROVIDER_REQUEST_FAILED', stage: 'usage_reconciliation' })
-    expect(reconcile).toHaveBeenCalledWith(reservation, { inputTokens: 7, outputTokens: 5, totalTokens: 12, costMicros: 17 })
+    expect(error).toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
+    expect(reconcile).not.toHaveBeenCalled()
     expect(release).not.toHaveBeenCalled()
   })
 
@@ -1212,6 +1267,490 @@ describe('Ax orchestration stages', () => {
     ).rejects.toMatchObject({ stage: 'dispatch_admission' })
     expect(chat).not.toHaveBeenCalled()
     expect(release).toHaveBeenCalledOnce()
+  })
+  it('accepts an exact multibyte content aggregate and rejects only its next byte', async () => {
+    const content = `${'€'.repeat(43_690)}ab`
+    expect(Buffer.byteLength(content, 'utf8')).toBe(131_072)
+    const chunks = utf8Chunks(content, 32_768)
+    expect(chunks.map(chunk => Buffer.byteLength(chunk, 'utf8'))).toEqual([32_766, 32_766, 32_766, 32_766, 8])
+    expect(chunks.join('')).toBe(content)
+    expect(chunks.every(chunk => Buffer.byteLength(chunk, 'utf8') <= 32_768)).toBe(true)
+    const usage = { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+    const exactResponses = chunks.map(chunk => ({ results: [{ index: 0, content: chunk }], modelUsage: usage }) satisfies AxChatResponse)
+    const exactText = vi.fn(async () => {})
+    const exact = await new AxAgentEngine(
+      factoryFor(async () => responseStream(exactResponses), { streaming: true, usage: 'stream', maxOutputTokens: 4_096 })
+    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: exactText, event: async () => {} })
+    expect(exact).toMatchObject({ inputTokens: 1, outputTokens: 1, totalTokens: 2 })
+    expect(exactText.mock.calls.map(([value]) => value).join('')).toBe(content)
+
+    let signal: AbortSignal | undefined
+    let cancelCalls = 0
+    const overflowStream = responseStream([...exactResponses, { results: [{ index: 0, content: 'x' }], modelUsage: usage } satisfies AxChatResponse], () => {
+      cancelCalls += 1
+      return Promise.reject(new Error('hostile stream cancellation'))
+    })
+    const chat: AgentProviderService['service']['chat'] = vi.fn(async (_request, options) => {
+      signal = options?.abortSignal
+      return overflowStream
+    })
+    const reserve = vi.fn(async () => ({ id: 1, tokens: 200_000, costMicros: 200_000 }))
+    const reconcile = vi.fn(async () => {})
+    const release = vi.fn(async () => {})
+    const event = vi.fn(async () => {})
+    const text = vi.fn(async () => {})
+    await expect(
+      new AxAgentEngine(factoryFor(chat, { streaming: true, usage: 'stream', maxOutputTokens: 4_096 })).execute(
+        {
+          ...baseRequest(new AbortController().signal),
+          purpose: 'planner',
+          dispatchBudget: { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+        },
+        { text, event }
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
+    expect(signal?.aborted).toBe(true)
+    expect(cancelCalls).toBe(1)
+    expect(text).not.toHaveBeenCalled()
+    expect(event).not.toHaveBeenCalled()
+    expect(reconcile).not.toHaveBeenCalled()
+    expect(release).not.toHaveBeenCalled()
+  })
+
+  it('retains bounded bytes when repeated argument fragments replace prior values', async () => {
+    const argumentLarge = { value: 'x'.repeat(10_000) }
+    const argumentSmall = { value: 'ok' }
+    const responses: AxChatResponse[] = [
+      {
+        results: [
+          {
+            index: 0,
+            functionCalls: [
+              { id: 'replace', type: 'function', function: { name: 'wiki_get_page', params: argumentLarge } },
+              { id: 'replace', type: 'function', function: { name: 'wiki_get_page', params: argumentSmall } }
+            ]
+          }
+        ],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+      },
+      {
+        results: [{ index: 0, content: 'replaced' }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
+      }
+    ]
+    const invoke = vi.fn(async (_name: string, input: unknown) => ({ input }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read page', parameters: { type: 'object' }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const result = await new AxAgentEngine(
+      factoryFor(async () => responses.shift()!),
+      actions
+    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'root' }, { text: async () => {}, event: async () => {} })
+    expect(result).toMatchObject({ inputTokens: 3, outputTokens: 2, totalTokens: 5 })
+    expect(invoke).toHaveBeenCalledWith('pages.get', argumentSmall, expect.any(AbortSignal), 'replace')
+  })
+  it('accepts an exact UTF-8 aggregate argument and rejects its next byte before tool execution', async () => {
+    const argumentValue = `${'€'.repeat(21_842)}ab`
+    const argument = `{"x":"${argumentValue}"}`
+    expect(Buffer.byteLength(argument, 'utf8')).toBe(65_536)
+    const chunks = utf8Chunks(argument, 32_768)
+    expect(chunks.map(chunk => Buffer.byteLength(chunk, 'utf8'))).toEqual([32_766, 32_768, 2])
+    expect(chunks.join('')).toBe(argument)
+    expect(chunks.every(chunk => Buffer.byteLength(chunk, 'utf8') <= 32_768)).toBe(true)
+    const usage = { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+    const invoke = vi.fn(async (_name: string, input: unknown) => ({ input }))
+    const actions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read page', parameters: { type: 'object' }, risk: 'read' }],
+        invoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const firstStreamResponses: AxChatResponse[] = chunks.map(chunk => ({
+      results: [{ index: 0, functionCalls: [{ id: 'exact-argument', type: 'function', function: { name: 'wiki_get_page', params: chunk } }] }],
+      modelUsage: usage
+    }))
+    const finalResponse = {
+      results: [{ index: 0, content: 'ok' }],
+      modelUsage: { ...usage, tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
+    } satisfies AxChatResponse
+    let exactDispatches = 0
+    const exactChat: AgentProviderService['service']['chat'] = vi.fn(async () => {
+      exactDispatches += 1
+      return exactDispatches === 1 ? responseStream(firstStreamResponses) : finalResponse
+    })
+    await new AxAgentEngine(
+      factoryFor(exactChat, {
+        streaming: true,
+        usage: 'stream',
+        maxOutputTokens: 4_096
+      }),
+      actions
+    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'root' }, { text: async () => {}, event: async () => {} })
+    expect(invoke).toHaveBeenCalledWith('pages.get', { x: argumentValue }, expect.any(AbortSignal), 'exact-argument')
+
+    const overflowResponses = chunks.map(chunk => ({
+      results: [{ index: 0, functionCalls: [{ id: 'overflow-argument', type: 'function', function: { name: 'wiki_get_page', params: chunk } }] }],
+      modelUsage: usage
+    }))
+    overflowResponses.push({
+      results: [{ index: 0, functionCalls: [{ id: 'overflow-argument', type: 'function', function: { name: 'wiki_get_page', params: 'x' } }] }],
+      modelUsage: usage
+    })
+    let cancelCalls = 0
+    const overflowStream = responseStream(overflowResponses, () => (cancelCalls += 1))
+    const overflowInvoke = vi.fn(async () => ({}))
+    const overflowActions: AgentActionSessionProvider = {
+      open: async () => ({
+        functions: [{ name: 'pages.get', title: 'Read page', description: 'Read page', parameters: { type: 'object' }, risk: 'read' }],
+        invoke: overflowInvoke,
+        snapshot: async () => ({}),
+        close: vi.fn(),
+        authoritySha256: null
+      })
+    }
+    const overflowText = vi.fn(async () => {})
+    const overflowEvent = vi.fn(async () => {})
+    await expect(
+      new AxAgentEngine(
+        factoryFor(async () => overflowStream, { streaming: true, usage: 'stream', maxOutputTokens: 4_096 }),
+        overflowActions
+      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'root' }, { text: overflowText, event: overflowEvent })
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
+    expect(cancelCalls).toBe(1)
+    expect(overflowInvoke).not.toHaveBeenCalled()
+    expect(overflowText).not.toHaveBeenCalled()
+    expect(overflowEvent).not.toHaveBeenCalled()
+  })
+  it('accepts exact UTF-8 call IDs and call counts but rejects the next unit', async () => {
+    const usage = { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+    const exactId = `${'€'.repeat(85)}a`
+    expect(Buffer.byteLength(exactId, 'utf8')).toBe(256)
+    type FunctionCalls = NonNullable<AxChatResponse['results'][number]['functionCalls']>
+    const run = async (functionCalls: FunctionCalls) => {
+      const response = { results: [{ index: 0, functionCalls }], modelUsage: usage } as unknown as AxChatResponse
+      return new AxAgentEngine(factoryFor(async () => response, { maxOutputTokens: 4_096 })).execute(
+        { ...baseRequest(new AbortController().signal), purpose: 'planner' },
+        { text: vi.fn(async () => {}), event: vi.fn(async () => {}) }
+      )
+    }
+    await expect(run([{ id: exactId, type: 'function', function: { name: 'wiki_get_page', params: '' } }])).rejects.toMatchObject({
+      code: 'UNEXPECTED_PROVIDER_TOOL_CALL'
+    })
+    await expect(run([{ id: `${exactId}x`, type: 'function', function: { name: 'wiki_get_page', params: '' } }])).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      stage: 'provider_response'
+    })
+    const exactCalls = Array.from({ length: 32 }, (_, index) => ({
+      id: `call-${index}`,
+      type: 'function' as const,
+      function: { name: 'wiki_get_page', params: '' }
+    }))
+    await expect(run(exactCalls)).rejects.toMatchObject({ code: 'UNEXPECTED_PROVIDER_TOOL_CALL' })
+    await expect(run([...exactCalls, { id: 'call-32', type: 'function' as const, function: { name: 'wiki_get_page', params: '' } }])).rejects.toMatchObject({
+      code: 'INVALID_PROVIDER_RESPONSE',
+      stage: 'provider_response'
+    })
+  })
+
+  it('rejects exact next-byte, depth, value, and size breaches before action or sink work', async () => {
+    const runInvalid = async (params: object, expectedCode = 'INVALID_PROVIDER_RESPONSE') => {
+      const invoke = vi.fn(async () => ({}))
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [{ name: 'pages.get', title: 'Read page', description: 'Read page', parameters: { type: 'object' }, risk: 'read' }],
+          invoke,
+          snapshot: async () => ({}),
+          close: vi.fn(),
+          authoritySha256: null
+        })
+      }
+      const response = {
+        results: [{ index: 0, functionCalls: [{ id: 'bounded', type: 'function' as const, function: { name: 'wiki_get_page', params } }] }],
+        modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+      } satisfies AxChatResponse
+      const text = vi.fn(async () => {})
+      const event = vi.fn(async () => {})
+      const reserve = vi.fn(async () => ({ id: 1, tokens: 200_000, costMicros: 200_000 }))
+      const reconcile = vi.fn(async () => {})
+      const release = vi.fn(async () => {})
+      await expect(
+        new AxAgentEngine(
+          factoryFor(async () => response, { maxOutputTokens: 4_096 }),
+          actions
+        ).execute(
+          {
+            ...baseRequest(new AbortController().signal),
+            dispatchBudget: { reserve, reconcile, release, consumeTool: vi.fn(async () => {}), unsettledExposure: { tokens: 0, costMicros: 0 } }
+          },
+          { text, event }
+        )
+      ).rejects.toMatchObject({ code: expectedCode, stage: 'provider_response' })
+      expect(invoke).not.toHaveBeenCalled()
+      expect(text).not.toHaveBeenCalled()
+      expect(event).not.toHaveBeenCalled()
+      expect(reconcile).not.toHaveBeenCalled()
+      expect(release).not.toHaveBeenCalled()
+    }
+
+    const nested = (depth: number): Record<string, unknown> => {
+      let value: Record<string, unknown> = { leaf: true }
+      for (let index = 0; index < depth; index += 1) value = { next: value }
+      return value
+    }
+    await runInvalid(nested(64))
+    await runInvalid(Array.from({ length: 16_384 }, () => ''))
+    await runInvalid({ value: 'x'.repeat(65_525) })
+    await runInvalid({ value: '"'.repeat(32_762) + 'x' })
+  })
+
+  it('keeps exact structured depth/value/size boundaries admissible', async () => {
+    const nested = (depth: number): Record<string, unknown> => {
+      let value: Record<string, unknown> = { leaf: true }
+      for (let index = 0; index < depth; index += 1) value = { next: value }
+      return value
+    }
+    const cases: readonly object[] = [nested(63), Array.from({ length: 16_383 }, () => ''), { value: 'x'.repeat(65_524) }, { value: '"'.repeat(32_762) }]
+    for (const params of cases) {
+      const responses: AxChatResponse[] = [
+        {
+          results: [{ index: 0, functionCalls: [{ id: 'exact', type: 'function', function: { name: 'wiki_get_page', params } }] }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+        },
+        {
+          results: [{ index: 0, content: 'ok' }],
+          modelUsage: { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 2, completionTokens: 1, totalTokens: 3 } }
+        }
+      ]
+      const invoke = vi.fn(async () => ({}))
+      const actions: AgentActionSessionProvider = {
+        open: async () => ({
+          functions: [{ name: 'pages.get', title: 'Read page', description: 'Read page', parameters: { type: 'object' }, risk: 'read' }],
+          invoke,
+          snapshot: async () => ({}),
+          close: vi.fn(),
+          authoritySha256: null
+        })
+      }
+      await new AxAgentEngine(
+        factoryFor(async () => responses.shift()!),
+        actions
+      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'root' }, { text: async () => {}, event: async () => {} })
+      expect(invoke).toHaveBeenCalledOnce()
+    }
+  })
+})
+
+describe('provider fragment boundaries', () => {
+  it('enforces response, result, argument, and thought fragment counts at their exact next item', async () => {
+    const usage = { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+    const lazyStream = (count: number, make: (index: number) => AxChatResponse, onCancel?: () => void): ReadableStream<AxChatResponse> => {
+      let index = 0
+      return new ReadableStream<AxChatResponse>(
+        {
+          pull(controller) {
+            if (index >= count) {
+              controller.close()
+              return
+            }
+            controller.enqueue(make(index))
+            index += 1
+          },
+          cancel() {
+            onCancel?.()
+          }
+        },
+        { highWaterMark: 0 }
+      )
+    }
+    const executeStream = async (
+      stream: ReadableStream<AxChatResponse>,
+      options: { readonly preserveThoughtBlock?: AgentProviderService['preserveThoughtBlock']; readonly maxOutputTokens?: number } = {}
+    ) =>
+      new AxAgentEngine(
+        factoryFor(async () => stream, { streaming: true, usage: 'stream', maxOutputTokens: options.maxOutputTokens ?? 4_096, ...options })
+      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: vi.fn(async () => {}), event: vi.fn(async () => {}) })
+
+    const exactResponses = lazyStream(65_536, () => ({ results: [], modelUsage: usage }) satisfies AxChatResponse)
+    await executeStream(exactResponses)
+    let responseCancelCalls = 0
+    await expect(
+      executeStream(
+        lazyStream(
+          65_537,
+          () => ({ results: [], modelUsage: usage }) satisfies AxChatResponse,
+          () => (responseCancelCalls += 1)
+        )
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
+    expect(responseCancelCalls).toBe(1)
+
+    const exactRecords = Array.from({ length: 65_536 }, () => ({ index: 0 }))
+    await executeStream(
+      responseStream([
+        { results: exactRecords, modelUsage: usage },
+        { results: [], modelUsage: usage }
+      ] satisfies AxChatResponse[])
+    )
+    let resultCancelCalls = 0
+    await expect(
+      executeStream(
+        responseStream(
+          [
+            { results: exactRecords, modelUsage: usage },
+            { results: [{ index: 0 }], modelUsage: usage }
+          ] satisfies AxChatResponse[],
+          () => (resultCancelCalls += 1)
+        )
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
+    expect(resultCancelCalls).toBe(1)
+    const exactArguments = Array.from({ length: 65_536 }, () => ({
+      id: 'argument',
+      type: 'function' as const,
+      function: { name: 'wiki_get_page', params: '' }
+    }))
+
+    let argumentCancelCalls = 0
+    await expect(executeStream(responseStream([{ results: [{ index: 0, functionCalls: exactArguments }], modelUsage: usage }]))).rejects.toMatchObject({
+      code: 'UNEXPECTED_PROVIDER_TOOL_CALL'
+    })
+    await expect(
+      executeStream(
+        responseStream(
+          [
+            {
+              results: [
+                {
+                  index: 0,
+                  functionCalls: [...exactArguments, { id: 'argument-next', type: 'function' as const, function: { name: 'wiki_get_page', params: '' } }]
+                }
+              ],
+              modelUsage: usage
+            }
+          ],
+          () => (argumentCancelCalls += 1)
+        )
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
+    expect(argumentCancelCalls).toBe(1)
+
+    const thought = { data: 'x', encrypted: true } as const
+    await executeStream(
+      responseStream([{ results: [{ id: 'thought', index: 0, thoughtBlocks: Array.from({ length: 65_536 }, () => thought) }], modelUsage: usage }]),
+      { preserveThoughtBlock: (_resultId, block) => block, maxOutputTokens: 16_384 }
+    )
+    let thoughtCancelCalls = 0
+    await expect(
+      executeStream(
+        responseStream(
+          [
+            {
+              results: [{ id: 'thought', index: 0, thoughtBlocks: Array.from({ length: 65_537 }, () => thought) }],
+              modelUsage: usage
+            }
+          ],
+          () => (thoughtCancelCalls += 1)
+        ),
+        { preserveThoughtBlock: (_resultId, block) => block, maxOutputTokens: 16_384 }
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
+    expect(thoughtCancelCalls).toBe(1)
+  })
+  it('enforces exact thought aggregate bytes, signatures, and capacity-sensitive replacement', async () => {
+    const usage = { ai: 'test', model: 'gpt-test', tokens: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }
+    const preserveThoughtBlock: AgentProviderService['preserveThoughtBlock'] = (_resultId, block) => block
+    const data = 'x'.repeat(32_700)
+    const signature = 's'.repeat(36)
+    const fullBlocks = Array.from({ length: 4 }, (_, index) => ({
+      id: `shrink_${index}`,
+      index: 0,
+      thoughtBlocks: [{ data, encrypted: true, signature }]
+    }))
+    await new AxAgentEngine(
+      factoryFor(
+        async () =>
+          responseStream([
+            { results: fullBlocks, modelUsage: usage },
+            {
+              results: [{ id: 'shrink_3', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 'small' }] }],
+              modelUsage: usage
+            },
+            {
+              results: [{ id: 'shrink_new', index: 0, thoughtBlocks: [{ data: 'x'.repeat(32_662), encrypted: true, signature }] }],
+              modelUsage: usage
+            }
+          ]),
+        { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+      )
+    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+
+    const growthBlocks = Array.from({ length: 4 }, (_, index) => ({
+      id: `growth_${index}`,
+      index: 0,
+      thoughtBlocks: [{ data, encrypted: true, signature }]
+    }))
+    let growthCancelCalls = 0
+    await expect(
+      new AxAgentEngine(
+        factoryFor(
+          async () =>
+            responseStream(
+              [
+                { results: growthBlocks, modelUsage: usage },
+                {
+                  results: [{ id: 'growth_3', index: 0, thoughtBlocks: [{ data, encrypted: true, signature: `${signature}s` }] }],
+                  modelUsage: usage
+                }
+              ],
+              () => (growthCancelCalls += 1)
+            ),
+          { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+        )
+      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
+    expect(growthCancelCalls).toBe(1)
+
+    await new AxAgentEngine(
+      factoryFor(
+        async () =>
+          responseStream([
+            {
+              results: [{ id: 'signature-exact', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(32_768) }] }],
+              modelUsage: usage
+            }
+          ]),
+        { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+      )
+    ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+
+    let signatureCancelCalls = 0
+    await expect(
+      new AxAgentEngine(
+        factoryFor(
+          async () =>
+            responseStream(
+              [
+                {
+                  results: [{ id: 'signature-next', index: 0, thoughtBlocks: [{ data: 'x', encrypted: true, signature: 's'.repeat(32_769) }] }],
+                  modelUsage: usage
+                }
+              ],
+              () => (signatureCancelCalls += 1)
+            ),
+          { streaming: true, usage: 'stream', maxOutputTokens: 4_096, preserveThoughtBlock }
+        )
+      ).execute({ ...baseRequest(new AbortController().signal), purpose: 'planner' }, { text: async () => {}, event: async () => {} })
+    ).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE', stage: 'provider_response' })
+    expect(signatureCancelCalls).toBe(1)
   })
 })
 

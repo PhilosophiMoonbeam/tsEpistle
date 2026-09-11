@@ -9,48 +9,66 @@ const MAX_EVENT_BYTES = 1 * 1_024 * 1_024
 const JsonObject = z.record(z.string(), z.unknown())
 const RequestItem = JsonObject.refine(value => typeof value.type === 'string' || typeof value.role === 'string', 'input items require a type or role')
 
-const OpenResponsesRequestSchema = z.object({
-  model: z.string().min(1).max(255),
-  input: z.union([z.string().max(1_000_000), z.array(RequestItem).max(2_000)]),
-  background: z.boolean().optional(),
-  include: z.array(z.string().min(1).max(255)).max(64).optional(),
-  instructions: z.string().max(1_000_000).nullable().optional(),
-  max_output_tokens: z.number().int().positive().optional(),
-  metadata: JsonObject.nullable().optional(),
-  parallel_tool_calls: z.boolean().optional(),
-  previous_response_id: z.string().max(255).nullable().optional(),
-  prompt: JsonObject.optional(),
-  reasoning: JsonObject.nullable().optional(),
-  safety_identifier: z.string().max(255).optional(),
-  service_tier: z.string().max(64).optional(),
-  store: z.literal(false),
-  stream: z.boolean().optional(),
-  temperature: z.number().finite().optional(),
-  text: JsonObject.optional(),
-  tool_choice: z.union([z.string(), JsonObject]).optional(),
-  tools: z.array(JsonObject).max(256).optional(),
-  top_p: z.number().finite().optional(),
-  truncation: z.string().max(64).optional(),
-  user: z.string().max(255).optional()
-}).strict()
+const OpenResponsesRequestSchema = z
+  .object({
+    model: z.string().min(1).max(255),
+    input: z.union([z.string().max(1_000_000), z.array(RequestItem).max(2_000)]),
+    background: z.boolean().optional(),
+    include: z.array(z.string().min(1).max(255)).max(64).optional(),
+    instructions: z.string().max(1_000_000).nullable().optional(),
+    max_output_tokens: z.number().int().positive().optional(),
+    metadata: JsonObject.nullable().optional(),
+    parallel_tool_calls: z.boolean().optional(),
+    previous_response_id: z.string().max(255).nullable().optional(),
+    prompt: JsonObject.optional(),
+    reasoning: JsonObject.nullable().optional(),
+    safety_identifier: z.string().max(255).optional(),
+    service_tier: z.string().max(64).optional(),
+    store: z.literal(false),
+    stream: z.boolean().optional(),
+    temperature: z.number().finite().optional(),
+    text: JsonObject.optional(),
+    tool_choice: z.union([z.string(), JsonObject]).optional(),
+    tools: z.array(JsonObject).max(256).optional(),
+    top_p: z.number().finite().optional(),
+    truncation: z.string().max(64).optional(),
+    user: z.string().max(255).optional()
+  })
+  .strict()
 
-const OutputItemSchema = z.object({
-  id: z.string().min(1).max(255),
-  type: z.enum(['message', 'function_call', 'reasoning', 'computer_call', 'file_search_call', 'web_search_call', 'code_interpreter_call', 'image_generation_call', 'local_shell_call', 'mcp_call', 'mcp_list_tools']),
-  status: z.enum(['in_progress', 'incomplete', 'completed']).optional()
-}).passthrough()
+const OutputItemSchema = z
+  .object({
+    id: z.string().min(1).max(255),
+    type: z.enum([
+      'message',
+      'function_call',
+      'reasoning',
+      'computer_call',
+      'file_search_call',
+      'web_search_call',
+      'code_interpreter_call',
+      'image_generation_call',
+      'local_shell_call',
+      'mcp_call',
+      'mcp_list_tools'
+    ]),
+    status: z.enum(['in_progress', 'incomplete', 'completed']).optional()
+  })
+  .passthrough()
 
-const OpenResponsesResponseSchema = z.object({
-  id: z.string().min(1).max(255),
-  object: z.literal('response'),
-  created_at: z.number().int().nonnegative(),
-  status: z.enum(['queued', 'in_progress', 'completed', 'incomplete', 'failed', 'cancelled']),
-  model: z.string().min(1).max(255),
-  output: z.array(OutputItemSchema).max(2_000),
-  error: JsonObject.nullable().optional(),
-  incomplete_details: JsonObject.nullable().optional(),
-  usage: JsonObject.nullable().optional()
-}).passthrough()
+const OpenResponsesResponseSchema = z
+  .object({
+    id: z.string().min(1).max(255),
+    object: z.literal('response'),
+    created_at: z.number().int().nonnegative(),
+    status: z.enum(['queued', 'in_progress', 'completed', 'incomplete', 'failed', 'cancelled']),
+    model: z.string().min(1).max(255),
+    output: z.array(OutputItemSchema).max(2_000),
+    error: JsonObject.nullable().optional(),
+    incomplete_details: JsonObject.nullable().optional(),
+    usage: JsonObject.nullable().optional()
+  })
+  .passthrough()
 
 const EVENT_TYPES = new Set([
   'error',
@@ -95,20 +113,65 @@ const invalid = (detail: string): AgentRepositoryError => new AgentRepositoryErr
 const parseRequest = (init: RequestInit | undefined): z.infer<typeof OpenResponsesRequestSchema> => {
   if (init?.method !== 'POST' || typeof init.body !== 'string') throw invalid('request is not a JSON POST')
   let value: unknown
-  try { value = JSON.parse(init.body) } catch { throw invalid('request is not valid JSON') }
+  try {
+    value = JSON.parse(init.body)
+  } catch {
+    throw invalid('request is not valid JSON')
+  }
   const parsed = OpenResponsesRequestSchema.safeParse(value)
   if (!parsed.success) throw invalid('request does not match the pinned schema')
   return parsed.data
 }
 
-const validateBufferedResponse = async (response: Response): Promise<void> => {
+const readBoundedResponseBytes = async (response: Response): Promise<Uint8Array | null> => {
+  const body = response.body
+  if (body === null) return null
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const item = await reader.read()
+      if (item.done) break
+      const value = item.value
+      if (!(value instanceof Uint8Array) || chunks.length >= 65_536 || value.byteLength > MAX_RESPONSE_BYTES || total > MAX_RESPONSE_BYTES - value.byteLength) {
+        void reader.cancel('OpenResponses response limit').catch(() => {})
+        return null
+      }
+      chunks.push(value)
+      total += value.byteLength
+    }
+  } catch {
+    return null
+  } finally {
+    try {
+      reader.releaseLock()
+    } catch {
+      // The response reader is already unusable.
+    }
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
+}
+
+const validateBufferedResponse = async (response: Response): Promise<Uint8Array> => {
   const declared = Number(response.headers.get('content-length') ?? 0)
-  if (declared > MAX_RESPONSE_BYTES) throw invalid('response exceeds the byte limit')
-  const bytes = new Uint8Array(await response.clone().arrayBuffer())
-  if (bytes.byteLength > MAX_RESPONSE_BYTES) throw invalid('response exceeds the byte limit')
+  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) throw invalid('response exceeds the byte limit')
+  const bytes = await readBoundedResponseBytes(response)
+  if (bytes === null) throw invalid('response exceeds the byte limit')
   let value: unknown
-  try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) } catch { throw invalid('response is not valid UTF-8 JSON') }
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+  } catch {
+    throw invalid('response is not valid UTF-8 JSON')
+  }
   if (!OpenResponsesResponseSchema.safeParse(value).success) throw invalid('response does not match the pinned schema')
+  return bytes
 }
 
 interface SseState {
@@ -130,7 +193,11 @@ const validateSseFrame = (frame: string, state: SseState): void => {
   const event = eventLines[0]?.slice(6).trim() ?? ''
   if (!EVENT_TYPES.has(event)) throw invalid('stream contains an unknown event type')
   let value: unknown
-  try { value = JSON.parse(dataLines.map(line => line.slice(5).trimStart()).join('\n')) } catch { throw invalid('stream event data is not valid JSON') }
+  try {
+    value = JSON.parse(dataLines.map(line => line.slice(5).trimStart()).join('\n'))
+  } catch {
+    throw invalid('stream event data is not valid JSON')
+  }
   if (typeof value !== 'object' || value === null || Reflect.get(value, 'type') !== event) throw invalid('stream event name does not match its data')
   const sequence = Reflect.get(value, 'sequence_number')
   if (!Number.isSafeInteger(sequence) || Number(sequence) <= state.sequence) throw invalid('stream sequence is not strictly increasing')
@@ -149,45 +216,63 @@ const validatedEventStream = (body: ReadableStream<Uint8Array>): ReadableStream<
   let buffer = ''
   const process = (controller: TransformStreamDefaultController<Uint8Array>, flush: boolean): void => {
     buffer = buffer.replace(/\r\n/g, '\n')
+    if (Buffer.byteLength(buffer, 'utf8') > MAX_EVENT_BYTES) throw invalid('stream event exceeds the byte limit')
     let boundary = buffer.indexOf('\n\n')
     while (boundary >= 0) {
       const frame = buffer.slice(0, boundary)
+      if (Buffer.byteLength(frame, 'utf8') > MAX_EVENT_BYTES) throw invalid('stream event exceeds the byte limit')
       buffer = buffer.slice(boundary + 2)
       if (frame.length > 0) {
         validateSseFrame(frame, state)
         controller.enqueue(encoder.encode(`${frame}\n\n`))
       }
+      if (Buffer.byteLength(buffer, 'utf8') > MAX_EVENT_BYTES) throw invalid('stream event exceeds the byte limit')
       boundary = buffer.indexOf('\n\n')
     }
-    if (new TextEncoder().encode(buffer).byteLength > MAX_EVENT_BYTES) throw invalid('stream event exceeds the byte limit')
     if (flush && buffer.trim().length > 0) {
+      if (Buffer.byteLength(buffer, 'utf8') > MAX_EVENT_BYTES) throw invalid('stream event exceeds the byte limit')
       validateSseFrame(buffer, state)
       controller.enqueue(encoder.encode(`${buffer}\n\n`))
       buffer = ''
     }
   }
-  return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
-    transform (chunk, controller) {
-      try { buffer += decoder.decode(chunk, { stream: true }) } catch { throw invalid('stream is not valid UTF-8') }
-      process(controller, false)
-    },
-    flush (controller) {
-      try { buffer += decoder.decode() } catch { throw invalid('stream is not valid UTF-8') }
-      process(controller, true)
-      if (!state.done) throw invalid('stream ended before its terminal marker')
-    }
-  }))
+  return body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        if (!(chunk instanceof Uint8Array)) throw invalid('stream chunk is invalid')
+        try {
+          buffer += decoder.decode(chunk, { stream: true })
+        } catch {
+          throw invalid('stream is not valid UTF-8')
+        }
+        process(controller, false)
+      },
+      flush(controller) {
+        try {
+          buffer += decoder.decode()
+        } catch {
+          throw invalid('stream is not valid UTF-8')
+        }
+        process(controller, true)
+        if (!state.done) throw invalid('stream ended before its terminal marker')
+      }
+    })
+  )
 }
 
-export const createOpenResponsesFetch = (delegate: AgentProviderFetch): AgentProviderFetch => Object.assign(async (input: Parameters<AgentProviderFetch>[0], init?: Parameters<AgentProviderFetch>[1]): Promise<Response> => {
-  const request = parseRequest(init)
-  const response = await delegate(input, init)
-  const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
-  if (request.stream === true) {
-    if (contentType !== 'text/event-stream' || !response.body) throw invalid('stream response has an invalid content type')
-    return new Response(validatedEventStream(response.body), { status: response.status, statusText: response.statusText, headers: response.headers })
-  }
-  if (contentType !== 'application/json') throw invalid('response has an invalid content type')
-  await validateBufferedResponse(response)
-  return response
-}, { preconnect: delegate.preconnect })
+export const createOpenResponsesFetch = (delegate: AgentProviderFetch): AgentProviderFetch =>
+  Object.assign(
+    async (input: Parameters<AgentProviderFetch>[0], init?: Parameters<AgentProviderFetch>[1]): Promise<Response> => {
+      const request = parseRequest(init)
+      const response = await delegate(input, init)
+      const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase()
+      if (request.stream === true) {
+        if (contentType !== 'text/event-stream' || !response.body) throw invalid('stream response has an invalid content type')
+        return new Response(validatedEventStream(response.body), { status: response.status, statusText: response.statusText, headers: response.headers })
+      }
+      if (contentType !== 'application/json') throw invalid('response has an invalid content type')
+      const bytes = await validateBufferedResponse(response)
+      return new Response(bytes.buffer as ArrayBuffer, { status: response.status, statusText: response.statusText, headers: response.headers })
+    },
+    { preconnect: delegate.preconnect }
+  )

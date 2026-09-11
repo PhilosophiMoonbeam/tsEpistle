@@ -1,6 +1,7 @@
 import { AxJSRuntime, type AxCodeSession } from '@ax-llm/ax'
 import { z } from 'zod'
 import type { AgentActionName } from '../../../shared/agents/contracts.ts'
+import type { ActionGroup } from '../actions/catalog.ts'
 import type { OfferedAction } from '../actions/kernel.ts'
 import { AgentRepositoryError } from '../repository.ts'
 
@@ -16,6 +17,7 @@ export interface AxHarnessFunction {
   readonly description: string
   readonly parameters: Record<string, unknown>
   readonly risk: string
+  readonly group: ActionGroup
 }
 
 export interface AxActionSession {
@@ -46,7 +48,7 @@ export class AxSessionHarness {
   readonly #runtime: AxJSRuntime
   readonly #execute: AxSessionHarnessOptions['execute']
 
-  constructor (options: AxSessionHarnessOptions) {
+  constructor(options: AxSessionHarnessOptions) {
     this.#execute = options.execute
     this.#runtime = new AxJSRuntime({
       timeout: options.timeoutMilliseconds ?? 30_000,
@@ -71,21 +73,27 @@ export class AxSessionHarness {
     let invocationSignal: AbortSignal | undefined
     let invocationActionCallId: string | undefined
     let hostResult: unknown = NO_HOST_RESULT
-    const callbacks = Object.fromEntries(actions.map(action => [action.definition.descriptor.name, async (input: unknown) => {
-      if (!invocationSignal || !invocationActionCallId) throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action callback was invoked outside an active request', 500)
-      try {
-        const output = await this.#execute(action, input, invocationSignal, invocationActionCallId)
-        boundedJson(output, MAX_ACTION_RESULT_BYTES, 'ACTION_RESULT_TOO_LARGE')
-        hostResult = output
-      } catch (error: unknown) {
-        const rawCode = typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined
-        const rawStatus = typeof error === 'object' && error !== null ? Reflect.get(error, 'status') : undefined
-        const code = typeof rawCode === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(rawCode) ? rawCode : 'ACTION_FAILED'
-        const status = Number.isInteger(rawStatus) && Number(rawStatus) >= 400 && Number(rawStatus) <= 599 ? Number(rawStatus) : 500
-        hostResult = { [ACTION_FAILURE_KEY]: { code, status } }
-      }
-      return hostResult
-    }]))
+    const callbacks = Object.fromEntries(
+      actions.map(action => [
+        action.definition.descriptor.name,
+        async (input: unknown) => {
+          if (!invocationSignal || !invocationActionCallId)
+            throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action callback was invoked outside an active request', 500)
+          try {
+            const output = await this.#execute(action, input, invocationSignal, invocationActionCallId)
+            boundedJson(output, MAX_ACTION_RESULT_BYTES, 'ACTION_RESULT_TOO_LARGE')
+            hostResult = output
+          } catch (error: unknown) {
+            const rawCode = typeof error === 'object' && error !== null ? Reflect.get(error, 'code') : undefined
+            const rawStatus = typeof error === 'object' && error !== null ? Reflect.get(error, 'status') : undefined
+            const code = typeof rawCode === 'string' && /^[A-Za-z0-9_.-]{1,128}$/.test(rawCode) ? rawCode : 'ACTION_FAILED'
+            const status = Number.isInteger(rawStatus) && Number(rawStatus) >= 400 && Number(rawStatus) <= 599 ? Number(rawStatus) : 500
+            hostResult = { [ACTION_FAILURE_KEY]: { code, status } }
+          }
+          return hostResult
+        }
+      ])
+    )
     const session: AxCodeSession = this.#runtime.createSession({ __wikiActions: Object.freeze(callbacks) })
     if (initialSnapshot) {
       const encoded = boundedJson(initialSnapshot, MAX_SNAPSHOT_BYTES, 'INVALID_RUNTIME_SNAPSHOT')
@@ -104,7 +112,8 @@ export class AxSessionHarness {
         title: action.definition.descriptor.title,
         description: action.definition.descriptor.description,
         parameters: z.toJSONSchema(action.definition.input) as Record<string, unknown>,
-        risk: action.definition.descriptor.risk
+        risk: action.definition.descriptor.risk,
+        group: action.definition.group
       })),
       invoke: async (name, input, signal, actionCallId) => {
         assertOpen()
@@ -116,7 +125,8 @@ export class AxSessionHarness {
         hostResult = NO_HOST_RESULT
         try {
           await session.execute(`await __wikiActions[${JSON.stringify(name)}](${inputJson})`, { signal, reservedNames: RESERVED_NAMES })
-          if (hostResult === NO_HOST_RESULT) throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action worker completed without invoking its host callback', 500)
+          if (hostResult === NO_HOST_RESULT)
+            throw new AgentRepositoryError('ACTION_SESSION_INVALID', 'Action worker completed without invoking its host callback', 500)
           if (typeof hostResult === 'object' && hostResult !== null && Object.hasOwn(hostResult, ACTION_FAILURE_KEY)) {
             const failure = Reflect.get(hostResult, ACTION_FAILURE_KEY)
             const code = typeof failure === 'object' && failure !== null ? Reflect.get(failure, 'code') : undefined

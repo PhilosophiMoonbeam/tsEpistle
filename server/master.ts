@@ -356,7 +356,8 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
       perUserConcurrency: agentLimits.provider.perUserConcurrency,
       utilityModel,
       orchestration: agentLimits.orchestration,
-      goals: agentLimits.goals
+      goals: agentLimits.goals,
+      logger: wiki.logger
     })
     wiki.agentRuntime = agentRuntime
   }
@@ -396,14 +397,34 @@ export default async function startMaster(wiki: HttpTransportRuntime): Promise<t
   let agentRun: Promise<unknown> | undefined
   let knowledgeRun: Promise<unknown> | undefined
   let projectionRun: Promise<unknown> | undefined
+  let agentWorkerFailureLogged = false
   let workersStarted = false
   let workersStopped = false
   let workersShutdown: Promise<void> | undefined
+  const reportAgentWorkerFailure = (): void => {
+    if (agentWorkerFailureLogged) return
+    agentWorkerFailureLogged = true
+    try {
+      wiki.logger.error({
+        event: 'agent.worker.failed',
+        errorCode: 'AGENT_WORKER_FAILED',
+        failureStage: 'worker',
+        status: 500
+      })
+    } catch {
+      /* worker diagnostics must not escape through the logger */
+    }
+  }
   const agentTick = (): void => {
     if (workersStopped || agentRun || !agentRuntime) return
     agentRun = agentRuntime
       .runOnce()
-      .catch(() => undefined)
+      .then(() => {
+        agentWorkerFailureLogged = false
+      })
+      .catch(() => {
+        reportAgentWorkerFailure()
+      })
       .finally(() => {
         agentRun = undefined
       })

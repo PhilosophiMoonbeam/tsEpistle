@@ -10,16 +10,27 @@ const skillId = '00000000-0000-4000-8000-000000000002'
 const versionId = '00000000-0000-4000-8000-000000000003'
 const runId = '00000000-0000-4000-8000-000000000004'
 const requestId = '00000000-0000-4000-8000-000000000005'
-const entry = Buffer.from('---\nname: release-notes\ndescription: Release notes\nallowed-tools:\n  - wiki_get_page\n  - wiki_prepare_page_delete\n---\nRead [guidance](references/GUIDE.md).\n')
-const bundle = buildApprovedSkillBundle(entry, 'release-notes', [{
-  path: 'references/GUIDE.md',
-  bytes: Buffer.from('# Guidance\n'),
-  mediaType: 'text/markdown',
-  sourceId: 'page:55',
-  sourceRevision: '4'
-}])
+const entry = Buffer.from(
+  '---\nname: release-notes\ndescription: Release notes\nallowed-tools:\n  - wiki_get_page\n  - wiki_prepare_page_delete\n---\nRead [guidance](references/GUIDE.md).\n'
+)
+const bundle = buildApprovedSkillBundle(entry, 'release-notes', [
+  {
+    path: 'references/GUIDE.md',
+    bytes: Buffer.from('# Guidance\n'),
+    mediaType: 'text/markdown',
+    sourceId: 'page:55',
+    sourceRevision: '4'
+  }
+])
 
 const createSchema = async (db: Knex): Promise<void> => {
+  await db.schema.createTable('users', table => {
+    table.integer('id').primary()
+  })
+  await db.schema.createTable('groups', table => {
+    table.integer('id').primary()
+  })
+
   await db.schema.createTable('agentSkills', table => {
     table.string('id').primary()
     table.string('name').notNullable()
@@ -118,6 +129,9 @@ describe('skill preferences and run version history', () => {
       }),
       resourceBundle: encodeSkillResourceBundle(bundle.resources)
     })
+    await db('users').insert({ id: 7 })
+    await db('groups').insert({ id: 3 })
+
     await db('agentSkillGrants').insert({ skillId, groupId: 3 })
     await db('userGroups').insert({ userId: 7, groupId: 3 })
     await db('agentSessions').insert({ id: sessionId, ownerId: 7, version: 1 })
@@ -152,33 +166,49 @@ describe('skill preferences and run version history', () => {
       contentHash: 'personal-content',
       sourceRevision: 1,
       skillMarkdown: '---\nname: personal-guide\ndescription: Personal guide\n---\nUse it.\n',
-      frontmatter: JSON.stringify({ name: 'personal-guide', description: 'Personal guide', license: null, compatibility: null, metadata: {}, 'allowed-tools': [] }),
+      frontmatter: JSON.stringify({
+        name: 'personal-guide',
+        description: 'Personal guide',
+        license: null,
+        compatibility: null,
+        metadata: {},
+        'allowed-tools': []
+      }),
       resourceBundle: encodeSkillResourceBundle([])
     })
 
     expect(await runtime.assertVisibleVersions([personalVersionId], { userId: 7, groupIds: [] })).toEqual([personalVersionId])
-    await expect(Promise.resolve(runtime.assertVisibleVersions([personalVersionId], { userId: 8, groupIds: [] }))).rejects.toThrow('unavailable')
+    await expect(Promise.resolve(runtime.assertVisibleVersions([personalVersionId], { userId: 8, groupIds: [] }))).rejects.toMatchObject({
+      code: 'INVALID_SKILL'
+    })
+
     expect(await runtime.listVisible({ userId: 7, groupIds: [] })).toMatchObject([{ id: personalSkillId, exposureMode: 'owner', isAgentDiscoverable: false }])
     expect(await runtime.listVisible({ userId: 8, groupIds: [] })).toEqual([])
-    expect(await runtime.listVisibleForApiKey({
-      principal: { apiKeyId: 9, groupIds: [3] },
-      transportRequestId: requestId
-    })).toMatchObject([{ id: skillId, exposureMode: 'groups' }])
+    expect(
+      await runtime.listVisibleForApiKey({
+        principal: { apiKeyId: 9, groupIds: [3] },
+        transportRequestId: requestId
+      })
+    ).toMatchObject([{ id: skillId, exposureMode: 'groups' }])
     await db('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running' })
-    expect(await runtime.listVisibleForRun({
-      runId,
-      principal: { userId: 7, groupIds: [] },
-      transportRequestId: requestId
-    })).toEqual([])
+    expect(
+      await runtime.listVisibleForRun({
+        runId,
+        principal: { userId: 7, groupIds: [] },
+        transportRequestId: requestId
+      })
+    ).toEqual([])
   })
 
   it('lets an active run discover and read visible skills with provenance', async () => {
     await db('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running' })
-    expect(await runtime.listVisibleForRun({
-      runId,
-      principal: { userId: 7, groupIds: [3] },
-      transportRequestId: requestId
-    })).toMatchObject([{ name: 'release-notes', versionId, description: 'Release notes' }])
+    expect(
+      await runtime.listVisibleForRun({
+        runId,
+        principal: { userId: 7, groupIds: [3] },
+        transportRequestId: requestId
+      })
+    ).toMatchObject([{ name: 'release-notes', versionId, description: 'Release notes' }])
 
     const resource = await runtime.readVisibleResourceForRun({
       runId,
@@ -189,31 +219,42 @@ describe('skill preferences and run version history', () => {
       transportRequestId: requestId
     })
     expect(resource.bytes.toString('utf8')).toBe(entry.toString('utf8'))
-    await expect(Promise.resolve(runtime.readVisibleResourceForRun({
-      runId,
-      skillName: 'release-notes',
-      versionId,
-      path: 'SKILL.md',
-      principal: { userId: 7, groupIds: [3] },
-      transportRequestId: requestId
-    }))).rejects.toThrow('already loaded')
-    expect(await runtime.listVisibleForRun({
-      runId,
-      principal: { userId: 7, groupIds: [3] },
-      transportRequestId: requestId
-    })).toEqual([])
+    await expect(
+      Promise.resolve(
+        runtime.readVisibleResourceForRun({
+          runId,
+          skillName: 'release-notes',
+          versionId,
+          path: 'SKILL.md',
+          principal: { userId: 7, groupIds: [3] },
+          transportRequestId: requestId
+        })
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_SKILL' })
+
+    expect(
+      await runtime.listVisibleForRun({
+        runId,
+        principal: { userId: 7, groupIds: [3] },
+        transportRequestId: requestId
+      })
+    ).toEqual([])
     expect(await db('agentSkillUses').select('runId', 'sessionId', 'requesterUserId', 'purpose', 'resourcePath')).toEqual([
       { runId, sessionId, requesterUserId: 7, purpose: 'listed', resourcePath: null },
       { runId, sessionId, requesterUserId: 7, purpose: 'read', resourcePath: 'SKILL.md' }
     ])
-    await expect(Promise.resolve(runtime.readVisibleResourceForRun({
-      runId,
-      skillName: 'release-notes',
-      versionId,
-      path: 'SKILL.md',
-      principal: { userId: 8, groupIds: [3] },
-      transportRequestId: requestId
-    }))).rejects.toThrow('run is unavailable')
+    await expect(
+      Promise.resolve(
+        runtime.readVisibleResourceForRun({
+          runId,
+          skillName: 'release-notes',
+          versionId,
+          path: 'SKILL.md',
+          principal: { userId: 8, groupIds: [3] },
+          transportRequestId: requestId
+        })
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_SKILL' })
   })
 
   it('omits loaded skill identities from discovery and blocks redundant instruction reads', async () => {
@@ -238,27 +279,36 @@ describe('skill preferences and run version history', () => {
     await db('agentRuns').insert({ id: runId, sessionId, ownerId: 7, status: 'running' })
     await db('agentRunSkills').insert({ runId, skillVersionId: priorVersionId, ordinal: 0 })
 
-    expect(await runtime.listVisibleForRun({
-      runId,
-      principal: { userId: 7, groupIds: [3] },
-      transportRequestId: requestId
-    })).toEqual([])
-    await expect(Promise.resolve(runtime.readVisibleResourceForRun({
-      runId,
-      skillName: 'release-notes',
-      versionId,
-      path: 'SKILL.md',
-      principal: { userId: 7, groupIds: [3] },
-      transportRequestId: requestId
-    }))).rejects.toThrow('already loaded')
-    expect(await runtime.readVisibleResourceForRun({
-      runId,
-      skillName: 'release-notes',
-      versionId,
-      path: 'references/GUIDE.md',
-      principal: { userId: 7, groupIds: [3] },
-      transportRequestId: requestId
-    })).toMatchObject({ contentHash: expect.any(String) })
+    expect(
+      await runtime.listVisibleForRun({
+        runId,
+        principal: { userId: 7, groupIds: [3] },
+        transportRequestId: requestId
+      })
+    ).toEqual([])
+    await expect(
+      Promise.resolve(
+        runtime.readVisibleResourceForRun({
+          runId,
+          skillName: 'release-notes',
+          versionId,
+          path: 'SKILL.md',
+          principal: { userId: 7, groupIds: [3] },
+          transportRequestId: requestId
+        })
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_SKILL' })
+
+    expect(
+      await runtime.readVisibleResourceForRun({
+        runId,
+        skillName: 'release-notes',
+        versionId,
+        path: 'references/GUIDE.md',
+        principal: { userId: 7, groupIds: [3] },
+        transportRequestId: requestId
+      })
+    ).toMatchObject({ contentHash: expect.any(String) })
   })
 
   it('stores skill identities and resolves their latest approved versions', async () => {
@@ -268,13 +318,15 @@ describe('skill preferences and run version history', () => {
       principal: { userId: 7, groupIds: [3] },
       transportRequestId: requestId
     })
-    expect(await runtime.listUserSkillPreferences({ userId: 7, groupIds: [3] })).toEqual([{
-      id: skillId,
-      name: 'release-notes',
-      versionId,
-      contentHash: bundle.contentHash,
-      ordinal: 0
-    }])
+    expect(await runtime.listUserSkillPreferences({ userId: 7, groupIds: [3] })).toEqual([
+      {
+        id: skillId,
+        name: 'release-notes',
+        versionId,
+        contentHash: bundle.contentHash,
+        ordinal: 0
+      }
+    ])
     expect(await runtime.resolvePreferredVersionIdsForUser(7)).toEqual([versionId])
 
     await db('agentSkillVersions').insert({
@@ -313,11 +365,15 @@ describe('skill preferences and run version history', () => {
     expect(await runtime.listVisible({ userId: 7, groupIds: [3] })).toEqual([])
     expect(await runtime.resolvePreferredVersionIdsForUser(7)).toEqual([])
     expect(await db('agentUserSkillPreferences').select('ownerId', 'skillId')).toEqual([{ ownerId: 7, skillId }])
-    await expect(Promise.resolve(runtime.setUserSkillPreferences({
-      skillIds: [skillId],
-      principal: { userId: 7, groupIds: [3] },
-      transportRequestId: requestId
-    }))).rejects.toThrow('unavailable')
+    await expect(
+      Promise.resolve(
+        runtime.setUserSkillPreferences({
+          skillIds: [skillId],
+          principal: { userId: 7, groupIds: [3] },
+          transportRequestId: requestId
+        })
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_SKILL' })
     await runtime.setUserSkillPreferences({ skillIds: [], principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })
     expect(await db('agentUserSkillPreferences')).toEqual([])
   })
@@ -340,10 +396,12 @@ describe('skill preferences and run version history', () => {
       availableTools: ['pages.search', 'pages.get']
     })
     expect(prompts).toMatchObject([{ name: 'release-notes', versionId, allowedTools: ['pages.get'] }])
-    expect(await db('agentSkillUses').select('purpose', 'resourcePath')).toEqual(expect.arrayContaining([
-      { purpose: 'selected', resourcePath: null },
-      { purpose: 'injected', resourcePath: 'SKILL.md' }
-    ]))
+    expect(await db('agentSkillUses').select('purpose', 'resourcePath')).toEqual(
+      expect.arrayContaining([
+        { purpose: 'selected', resourcePath: null },
+        { purpose: 'injected', resourcePath: 'SKILL.md' }
+      ])
+    )
   })
 
   it('changes future preferences without altering an active run', async () => {
@@ -357,11 +415,13 @@ describe('skill preferences and run version history', () => {
 
     await runtime.setUserSkillPreferences({ skillIds: [], principal: { userId: 7, groupIds: [3] }, transportRequestId: requestId })
     expect(await db('agentUserSkillPreferences')).toEqual([])
-    expect(await runtime.getRunPrompts({
-      runId,
-      principal: { userId: 7, groupIds: [3] },
-      transportRequestId: requestId,
-      availableTools: ['pages.get']
-    })).toMatchObject([{ versionId }])
+    expect(
+      await runtime.getRunPrompts({
+        runId,
+        principal: { userId: 7, groupIds: [3] },
+        transportRequestId: requestId,
+        availableTools: ['pages.get']
+      })
+    ).toMatchObject([{ versionId }])
   })
 })

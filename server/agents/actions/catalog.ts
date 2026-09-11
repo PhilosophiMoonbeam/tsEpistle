@@ -4,7 +4,10 @@ import { AGENT_TOOL_NAMES, type AgentActionDescriptor, type AgentActionName, typ
 import { WikiLinePatchV1Schema, WikiLineSnapshotV1Schema } from '../patch/wiki-line-patch.ts'
 import { KnowledgeProjectionViewSchema } from '../../knowledge/projection.ts'
 
+export type ActionGroup = 'core' | 'explore' | 'history' | 'canonical' | 'authoring' | 'browser'
+
 export interface ActionDefinition {
+  readonly group: ActionGroup
   readonly descriptor: AgentActionDescriptor
   readonly input: z.ZodType
   readonly output: z.ZodType
@@ -39,10 +42,7 @@ const KnowledgeFilter = strict({
   stale: z.boolean().optional(),
   conceptType: z.string().min(1).max(128).optional()
 })
-const PageSelector = z.union([
-  strict({ id: PositiveId }),
-  strict({ path: Path, locale: Locale })
-])
+const PageSelector = z.union([strict({ id: PositiveId }), strict({ path: Path, locale: Locale })])
 const AuthorityTrust = strict({
   trustTier: z.enum(['unverified', 'machine-confirmed', 'human-reviewed']),
   verification: z.enum(['unverified', 'current', 'outdated']),
@@ -57,10 +57,7 @@ const PageAuthority = z.discriminatedUnion('state', [
   strict({ state: z.literal('invalid'), metadata: z.null(), trust: z.null() })
 ])
 const OkfResourceUri = z.string().regex(/^wiki:\/\/pages\/[1-9][0-9]*\/versions\/(?:current|[1-9][0-9]*)\/revisions\/[1-9][0-9]*\/okf$/u)
-const OkfPageSelector = z.union([
-  PageSelector,
-  strict({ pageId: PositiveId, versionId: PositiveId })
-])
+const OkfPageSelector = z.union([PageSelector, strict({ pageId: PositiveId, versionId: PositiveId })])
 const OkfCitation = strict({
   evidenceId: z.string().min(1).max(128),
   kind: z.literal('page'),
@@ -173,8 +170,24 @@ const proposalFlags = ['agents.enabled', 'agents.proposals.enabled', 'agents.wri
 
 export const ACTION_CATALOG = {
   'pages.search': {
-    descriptor: descriptor('pages.search', 'Search pages', `Rank visible pages using authoritative source, deterministic knowledge projections, utility-enriched declared gaps, and the Wiki link graph. Natural-language queries are supported; use lifecycle filters to constrain trust and maintenance state. Results include match evidence and spelling suggestions; read promising pages with ${AGENT_TOOL_NAMES['pages.get']} before answering.`, 'read', ['read:pages'], both, readAnnotations),
-    input: strict({ query: z.string().min(1).max(1000), locale: Locale.optional(), path: Path.optional(), knowledge: KnowledgeFilter.optional(), limit: z.number().int().min(1).max(20).default(10), offset: z.number().int().min(0).max(500).default(0) }),
+    descriptor: descriptor(
+      'pages.search',
+      'Search pages',
+      `Rank visible pages using authoritative source, deterministic knowledge projections, utility-enriched declared gaps, and the Wiki link graph. Natural-language queries are supported; use lifecycle filters to constrain trust and maintenance state. Results include match evidence and spelling suggestions; read promising pages with ${AGENT_TOOL_NAMES['pages.get']} before answering.`,
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'core',
+    input: strict({
+      query: z.string().min(1).max(1000),
+      locale: Locale.optional(),
+      path: Path.optional(),
+      knowledge: KnowledgeFilter.optional(),
+      limit: z.number().int().min(1).max(20).default(10),
+      offset: z.number().int().min(0).max(500).default(0)
+    }),
     output: strict({
       results: z.array(SearchPageSummary).max(20),
       suggestions: z.array(z.string().min(1).max(1_000)).max(20),
@@ -186,19 +199,46 @@ export const ACTION_CATALOG = {
     requiredFlags: baseFlags
   },
   'pages.searchTags': {
-    descriptor: descriptor('pages.searchTags', 'Search tags', 'Find visible Wiki tags by partial name before using a precise tag in page discovery or authoring.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor(
+      'pages.searchTags',
+      'Search tags',
+      'Find visible Wiki tags by partial name before using a precise tag in page discovery or authoring.',
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'explore',
     input: strict({ query: z.string().min(1).max(255), limit: z.number().int().min(1).max(20).default(5) }),
     output: strict({ tags: z.array(z.string().min(1).max(255)).max(20) }),
     requiredFlags: baseFlags
   },
   'pages.listTags': {
-    descriptor: descriptor('pages.listTags', 'List tags', 'Page through the visible Wiki tag taxonomy in stable name order.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor(
+      'pages.listTags',
+      'List tags',
+      'Page through the visible Wiki tag taxonomy in stable name order.',
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'explore',
     input: strict({ limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).max(5_000).default(0) }),
     output: strict({ tags: z.array(TagSummary).max(100), nextOffset: z.number().int().nonnegative().nullable() }),
     requiredFlags: baseFlags
   },
   'pages.discover': {
-    descriptor: descriptor('pages.discover', 'Discover pages', `Browse visible pages structurally by locale, descendant path depth, exact tags, stable ordering, and projected lifecycle or trust state. Knowledge filters operate over a bounded 100-page candidate window. Narrow the path if the window is too broad, then read promising pages with ${AGENT_TOOL_NAMES['pages.get']}.`, 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor(
+      'pages.discover',
+      'Discover pages',
+      `Browse visible pages structurally by locale, descendant path depth, exact tags, stable ordering, and projected lifecycle or trust state. Knowledge filters operate over a bounded 100-page candidate window. Narrow the path if the window is too broad, then read promising pages with ${AGENT_TOOL_NAMES['pages.get']}.`,
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'explore',
     input: strict({
       locale: Locale,
       path: z.string().max(1_024).default(''),
@@ -218,71 +258,200 @@ export const ACTION_CATALOG = {
     requiredFlags: baseFlags
   },
   'pages.get': {
-    descriptor: descriptor('pages.get', 'Get page', 'Read one visible Wiki page by ID or locale and path, including the current deterministic and utility-enriched knowledge projection when ready.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor(
+      'pages.get',
+      'Get page',
+      'Read one visible Wiki page by ID or locale and path, including the current deterministic and utility-enriched knowledge projection when ready.',
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'core',
     input: PageSelector,
     output: PageResult,
     requiredFlags: baseFlags
   },
   'pages.getOkf': {
-    descriptor: descriptor('pages.getOkf', 'Get canonical OKF page', `Read a lossless, revision-bound canonical Open Knowledge Format document for one authorized Markdown page. Use ${AGENT_TOOL_NAMES['pages.getOkf']} when an immutable interoperability resource or authority metadata is needed.`, 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor(
+      'pages.getOkf',
+      'Get canonical OKF page',
+      `Read a lossless, revision-bound canonical Open Knowledge Format document for one authorized Markdown page. Use ${AGENT_TOOL_NAMES['pages.getOkf']} when an immutable interoperability resource or authority metadata is needed.`,
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'canonical',
     input: OkfPageSelector,
     output: OkfPageResult,
     requiredFlags: baseFlags
   },
   'pages.readForPatch': {
-    descriptor: descriptor('pages.readForPatch', 'Read page for patch', 'Read a bounded hashline snapshot for an exact page source revision. On the initial read, set previousSnapshotToken to null; only reuse a non-null token returned by an earlier result for the same page.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor(
+      'pages.readForPatch',
+      'Read page for patch',
+      'Read a bounded hashline snapshot for an exact page source revision. On the initial read, set previousSnapshotToken to null; only reuse a non-null token returned by an earlier result for the same page.',
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'authoring',
     input: strict({
       pageId: PositiveId,
-      ranges: z.array(strict({ startLine: PositiveId, endLine: PositiveId })).max(100).optional(),
-      previousSnapshotToken: z.string().min(1).max(16_384).nullable().optional().describe(`Set null on the initial read. Only pass a non-null token returned by an earlier ${AGENT_TOOL_NAMES['pages.readForPatch']} result for this same page; never invent a token.`)
+      ranges: z
+        .array(strict({ startLine: PositiveId, endLine: PositiveId }))
+        .max(100)
+        .optional(),
+      previousSnapshotToken: z
+        .string()
+        .min(1)
+        .max(16_384)
+        .nullable()
+        .optional()
+        .describe(
+          `Set null on the initial read. Only pass a non-null token returned by an earlier ${AGENT_TOOL_NAMES['pages.readForPatch']} result for this same page; never invent a token.`
+        )
     }),
     output: WikiLineSnapshotV1Schema,
     requiredFlags: baseFlags
   },
   'pages.listRecent': {
-    descriptor: descriptor('pages.listRecent', 'List recent pages', 'List recently changed pages visible to the current principal.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor(
+      'pages.listRecent',
+      'List recent pages',
+      'List recently changed pages visible to the current principal.',
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'core',
     input: strict({ locale: Locale.optional(), limit: z.number().int().min(1).max(20).default(10) }),
     output: strict({ pages: z.array(PageSummary).max(20) }),
     requiredFlags: baseFlags
   },
   'pages.listHistory': {
-    descriptor: descriptor('pages.listHistory', 'List page history', 'List bounded version metadata for one visible page.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor(
+      'pages.listHistory',
+      'List page history',
+      'List bounded version metadata for one visible page.',
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'history',
     input: strict({ pageId: PositiveId, limit: z.number().int().min(1).max(20).default(10) }),
-    output: strict({ versions: z.array(strict({ id: PositiveId, sourceRevision: z.string().max(64), resourceUri: OkfResourceUri, action: z.string().max(64), versionDate: z.string().max(32), authorName: BoundedTitle })).max(20) }),
+    output: strict({
+      versions: z
+        .array(
+          strict({
+            id: PositiveId,
+            sourceRevision: z.string().max(64),
+            resourceUri: OkfResourceUri,
+            action: z.string().max(64),
+            versionDate: z.string().max(32),
+            authorName: BoundedTitle
+          })
+        )
+        .max(20)
+    }),
     requiredFlags: baseFlags
   },
   'pages.getVersion': {
-    descriptor: descriptor('pages.getVersion', 'Get page version', 'Read one historical version of a visible page.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor(
+      'pages.getVersion',
+      'Get page version',
+      'Read one historical version of a visible page.',
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'history',
     input: strict({ pageId: PositiveId, versionId: PositiveId }),
     output: PageResult.extend({ versionId: PositiveId, versionDate: z.string().max(32) }),
     requiredFlags: baseFlags
   },
   'pages.listLinks': {
-    descriptor: descriptor('pages.listLinks', 'List page links', 'List bounded canonical outgoing internal Wiki page links from one visible page.', 'read', ['read:pages'], both, readAnnotations),
+    descriptor: descriptor(
+      'pages.listLinks',
+      'List page links',
+      'List bounded canonical outgoing internal Wiki page links from one visible page.',
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'explore',
     input: strict({ pageId: PositiveId, limit: z.number().int().min(1).max(100).default(50) }),
     output: strict({ links: z.array(strict({ label: BoundedPathLike, target: BoundedPathLike, kind: z.literal('page') })).max(100), truncated: z.boolean() }),
     requiredFlags: baseFlags
   },
   'pages.related': {
-    descriptor: descriptor('pages.related', 'Get related pages', `Traverse visible published pages connected by explicit internal Wiki links and backlinks. Start with cursor null, then pass each returned nextCursor unchanged until it is null. Read promising pages with ${AGENT_TOOL_NAMES['pages.get']} before relying on their content.`, 'read', ['read:pages'], both, readAnnotations),
-    input: strict({ pageId: PositiveId, limit: z.number().int().min(1).max(100).default(20), cursor: z.string().min(1).max(4_096).nullable().default(null), maxDepth: z.number().int().min(1).max(32).optional() }),
+    descriptor: descriptor(
+      'pages.related',
+      'Get related pages',
+      `Traverse visible published pages connected by explicit internal Wiki links and backlinks. Start with cursor null, then pass each returned nextCursor unchanged until it is null. Read promising pages with ${AGENT_TOOL_NAMES['pages.get']} before relying on their content.`,
+      'read',
+      ['read:pages'],
+      both,
+      readAnnotations
+    ),
+    group: 'explore',
+    input: strict({
+      pageId: PositiveId,
+      limit: z.number().int().min(1).max(100).default(20),
+      cursor: z.string().min(1).max(4_096).nullable().default(null),
+      maxDepth: z.number().int().min(1).max(32).optional()
+    }),
     output: strict({ pages: z.array(RelatedPageSummary).max(100), nextCursor: z.string().min(1).max(4_096).nullable() }),
     requiredFlags: baseFlags
   },
   'skills.list': {
     descriptor: descriptor('skills.list', 'List approved skills', 'List approved skills visible to the current principal.', 'read', [], both, readAnnotations),
+    group: 'core',
     input: EmptyInput,
-    output: strict({ skills: z.array(strict({ name: z.string().max(64), description: BoundedDescription, versionId: Uuid, contentHash: ContentHash })).max(100) }),
+    output: strict({
+      skills: z.array(strict({ name: z.string().max(64), description: BoundedDescription, versionId: Uuid, contentHash: ContentHash })).max(100)
+    }),
     requiredFlags: skillFlags
   },
   'skills.read': {
-    descriptor: descriptor('skills.read', 'Read approved skill resource', 'Read an exact resource from an immutable approved skill version.', 'read', [], both, readAnnotations),
+    descriptor: descriptor(
+      'skills.read',
+      'Read approved skill resource',
+      'Read an exact resource from an immutable approved skill version.',
+      'read',
+      [],
+      both,
+      readAnnotations
+    ),
+    group: 'core',
     input: strict({ name: z.string().min(1).max(64), versionId: Uuid, path: z.string().min(1).max(512) }),
-    output: strict({ name: z.string().max(64), versionId: Uuid, path: z.string().max(512), mediaType: z.string().max(255), contentHash: ContentHash, content: BoundedPageContent }),
+    output: strict({
+      name: z.string().max(64),
+      versionId: Uuid,
+      path: z.string().max(512),
+      mediaType: z.string().max(255),
+      contentHash: ContentHash,
+      content: BoundedPageContent
+    }),
     requiredFlags: skillFlags
   },
   'memory.manage': {
-    descriptor: descriptor('memory.manage', 'Manage personal memory', 'Curate bounded user-specific memory for future conversations. Save durable user preferences to target user and stable environment, project, or workflow facts to target agent. Skip secrets, easily rediscovered facts, raw data, and conversation-only details. Use a unique oldText substring to replace or remove an entry.', 'reversible-write', [], agentOnly, applyAnnotations),
+    descriptor: descriptor(
+      'memory.manage',
+      'Manage personal memory',
+      'Curate bounded user-specific memory for future conversations. Save durable user preferences to target user and stable environment, project, or workflow facts to target agent. Skip secrets, easily rediscovered facts, raw data, and conversation-only details. Use a unique oldText substring to replace or remove an entry.',
+      'reversible-write',
+      [],
+      agentOnly,
+      applyAnnotations
+    ),
+    group: 'core',
     input: z.discriminatedUnion('action', [
       strict({ action: z.literal('add'), target: MemoryTarget, content: MemoryContent }),
       strict({ action: z.literal('replace'), target: MemoryTarget, oldText: z.string().min(1).max(2_200), content: MemoryContent }),
@@ -292,53 +461,183 @@ export const ACTION_CATALOG = {
     requiredFlags: baseFlags
   },
   'browser.navigate': {
-    descriptor: descriptor('browser.navigate', 'Navigate browser', 'Navigate an isolated credential-free browser to an allowed public URL.', 'open-world-read', ['use:agent-browser'], agentOnly, browserAnnotations),
-    input: strict({ url: z.url() }), output: BrowserObservation, requiredFlags: browserFlags
+    descriptor: descriptor(
+      'browser.navigate',
+      'Navigate browser',
+      'Navigate an isolated credential-free browser to an allowed public URL.',
+      'open-world-read',
+      ['use:agent-browser'],
+      agentOnly,
+      browserAnnotations
+    ),
+    group: 'browser',
+    input: strict({ url: z.url() }),
+    output: BrowserObservation,
+    requiredFlags: browserFlags
   },
   'browser.observe': {
-    descriptor: descriptor('browser.observe', 'Observe browser', 'Observe the current isolated browser page with bounded accessibility references.', 'open-world-read', ['use:agent-browser'], agentOnly, browserAnnotations),
-    input: EmptyInput, output: BrowserObservation, requiredFlags: browserFlags
+    descriptor: descriptor(
+      'browser.observe',
+      'Observe browser',
+      'Observe the current isolated browser page with bounded accessibility references.',
+      'open-world-read',
+      ['use:agent-browser'],
+      agentOnly,
+      browserAnnotations
+    ),
+    group: 'browser',
+    input: EmptyInput,
+    output: BrowserObservation,
+    requiredFlags: browserFlags
   },
   'browser.act': {
-    descriptor: descriptor('browser.act', 'Act in browser', 'Perform an allowlisted interaction against an observed browser reference.', 'open-world-read', ['use:agent-browser'], agentOnly, browserAnnotations),
-    input: strict({ action: z.enum(['scrollIntoView', 'followLink']), ref: z.string().regex(/^e[1-9]\d{0,3}$/), documentEpoch: z.string().min(1).max(128) }), output: BrowserObservation, requiredFlags: browserFlags
+    descriptor: descriptor(
+      'browser.act',
+      'Act in browser',
+      'Perform an allowlisted interaction against an observed browser reference.',
+      'open-world-read',
+      ['use:agent-browser'],
+      agentOnly,
+      browserAnnotations
+    ),
+    group: 'browser',
+    input: strict({ action: z.enum(['scrollIntoView', 'followLink']), ref: z.string().regex(/^e[1-9]\d{0,3}$/), documentEpoch: z.string().min(1).max(128) }),
+    output: BrowserObservation,
+    requiredFlags: browserFlags
   },
   'browser.extract': {
-    descriptor: descriptor('browser.extract', 'Extract browser text', 'Extract bounded text from an observed browser reference.', 'open-world-read', ['use:agent-browser'], agentOnly, browserAnnotations),
-    input: strict({ maxCharacters: z.number().int().min(1).max(20_000).default(8_000) }), output: strict({ url: z.url(), text: z.string().max(20_000), truncated: z.boolean() }), requiredFlags: browserFlags
+    descriptor: descriptor(
+      'browser.extract',
+      'Extract browser text',
+      'Extract bounded text from an observed browser reference.',
+      'open-world-read',
+      ['use:agent-browser'],
+      agentOnly,
+      browserAnnotations
+    ),
+    group: 'browser',
+    input: strict({ maxCharacters: z.number().int().min(1).max(20_000).default(8_000) }),
+    output: strict({ url: z.url(), text: z.string().max(20_000), truncated: z.boolean() }),
+    requiredFlags: browserFlags
   },
   'browser.screenshot': {
-    descriptor: descriptor('browser.screenshot', 'Capture browser screenshot', 'Capture a bounded PNG artifact from the isolated browser.', 'open-world-read', ['use:agent-browser'], agentOnly, browserAnnotations),
-    input: strict({ ref: z.string().max(128).optional() }), output: strict({ artifactId: Uuid, mimeType: z.literal('image/png'), width: z.number().int().positive().max(16_384), height: z.number().int().positive().max(16_384) }), requiredFlags: browserFlags
+    descriptor: descriptor(
+      'browser.screenshot',
+      'Capture browser screenshot',
+      'Capture a bounded PNG artifact from the isolated browser.',
+      'open-world-read',
+      ['use:agent-browser'],
+      agentOnly,
+      browserAnnotations
+    ),
+    group: 'browser',
+    input: strict({ ref: z.string().max(128).optional() }),
+    output: strict({
+      artifactId: Uuid,
+      mimeType: z.literal('image/png'),
+      width: z.number().int().positive().max(16_384),
+      height: z.number().int().positive().max(16_384)
+    }),
+    requiredFlags: browserFlags
   },
   'pages.prepareCreate': {
-    descriptor: descriptor('pages.prepareCreate', 'Prepare page creation', 'Validate and prepare an immutable Markdown page-create proposal without applying it before approval. First search and read potential duplicates or related pages; include canonical internal links and precise tags only for relationships supported by the new content. Author canonical GFM unless an approved skill requires supported extended syntax. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
-    input: strict({ path: Path, locale: Locale, title: z.string().min(1).max(255), description: z.string().max(1000), content: z.string().max(1_000_000).describe('Canonical Wiki Markdown source. Prefer the Visual Markdown-safe GFM subset and avoid raw HTML so human editors can round-trip the page.'), contentType: z.literal('markdown'), isPublished: z.boolean().default(true), tags: z.array(z.string().max(255)).max(100).default([]) }),
+    descriptor: descriptor(
+      'pages.prepareCreate',
+      'Prepare page creation',
+      'Validate and prepare an immutable Markdown page-create proposal without applying it before approval. First search and read potential duplicates or related pages; include canonical internal links and precise tags only for relationships supported by the new content. Author canonical GFM unless an approved skill requires supported extended syntax. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
+      'proposal',
+      ['write:pages'],
+      both,
+      proposalAnnotations
+    ),
+    group: 'authoring',
+    input: strict({
+      path: Path,
+      locale: Locale,
+      title: z.string().min(1).max(255),
+      description: z.string().max(1000),
+      content: z
+        .string()
+        .max(1_000_000)
+        .describe('Canonical Wiki Markdown source. Prefer the Visual Markdown-safe GFM subset and avoid raw HTML so human editors can round-trip the page.'),
+      contentType: z.literal('markdown'),
+      isPublished: z.boolean().default(true),
+      tags: z.array(z.string().max(255)).max(100).default([])
+    }),
     output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.create.enabled']
   },
   'pages.preparePatch': {
-    descriptor: descriptor('pages.preparePatch', 'Prepare page patch', 'Validate a strict hashline patch against an exact Markdown page snapshot while preserving undisclosed source and human-editor compatibility. When the change affects knowledge relationships, first search and read related pages, then maintain canonical internal links and precise tags without manufacturing retrieval signals. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
-    input: strict({ patch: WikiLinePatchV1Schema }), output: ProposalResult,
+    descriptor: descriptor(
+      'pages.preparePatch',
+      'Prepare page patch',
+      'Validate a strict hashline patch against an exact Markdown page snapshot while preserving undisclosed source and human-editor compatibility. When the change affects knowledge relationships, first search and read related pages, then maintain canonical internal links and precise tags without manufacturing retrieval signals. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
+      'proposal',
+      ['write:pages'],
+      both,
+      proposalAnnotations
+    ),
+    group: 'authoring',
+    input: strict({ patch: WikiLinePatchV1Schema }),
+    output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.patch.enabled']
   },
   'pages.prepareMove': {
-    descriptor: descriptor('pages.prepareMove', 'Prepare page move', 'Prepare an immutable page move proposal against an exact revision. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
-    input: strict({ pageId: PositiveId, sourceRevision: z.string().max(64), destinationPath: Path, destinationLocale: Locale }), output: ProposalResult,
+    descriptor: descriptor(
+      'pages.prepareMove',
+      'Prepare page move',
+      'Prepare an immutable page move proposal against an exact revision. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
+      'proposal',
+      ['write:pages'],
+      both,
+      proposalAnnotations
+    ),
+    group: 'authoring',
+    input: strict({ pageId: PositiveId, sourceRevision: z.string().max(64), destinationPath: Path, destinationLocale: Locale }),
+    output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.move.enabled']
   },
   'pages.prepareRestore': {
-    descriptor: descriptor('pages.prepareRestore', 'Prepare page restore', 'Prepare an immutable restore proposal from one authorized historical version. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'proposal', ['write:pages'], both, proposalAnnotations),
-    input: strict({ pageId: PositiveId, versionId: PositiveId, sourceRevision: z.string().max(64) }), output: ProposalResult,
+    descriptor: descriptor(
+      'pages.prepareRestore',
+      'Prepare page restore',
+      'Prepare an immutable restore proposal from one authorized historical version. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
+      'proposal',
+      ['write:pages'],
+      both,
+      proposalAnnotations
+    ),
+    group: 'authoring',
+    input: strict({ pageId: PositiveId, versionId: PositiveId, sourceRevision: z.string().max(64) }),
+    output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.restore.enabled']
   },
   'pages.prepareDelete': {
-    descriptor: descriptor('pages.prepareDelete', 'Prepare page deletion', 'Prepare an immutable destructive page deletion proposal. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.', 'destructive-write', ['delete:pages'], both, proposalAnnotations),
-    input: strict({ pageId: PositiveId, sourceRevision: z.string().max(64), confirmationPath: Path }), output: ProposalResult,
+    descriptor: descriptor(
+      'pages.prepareDelete',
+      'Prepare page deletion',
+      'Prepare an immutable destructive page deletion proposal. In Agent chat this waits for the human decision and applies the exact proposal automatically when approved.',
+      'destructive-write',
+      ['delete:pages'],
+      both,
+      proposalAnnotations
+    ),
+    group: 'authoring',
+    input: strict({ pageId: PositiveId, sourceRevision: z.string().max(64), confirmationPath: Path }),
+    output: ProposalResult,
     requiredFlags: [...proposalFlags, 'agents.writes.delete.enabled']
   },
   'pages.applyProposal': {
-    descriptor: descriptor('pages.applyProposal', 'Apply approved proposal', 'Apply an approved proposal explicitly after live reauthorization. Agent chat preparation actions perform this step automatically; explicit invocation remains available for MCP and idempotent recovery.', 'reversible-write', [], both, applyAnnotations),
+    descriptor: descriptor(
+      'pages.applyProposal',
+      'Apply approved proposal',
+      'Apply an approved proposal explicitly after live reauthorization. Agent chat preparation actions perform this step automatically; explicit invocation remains available for MCP and idempotent recovery.',
+      'reversible-write',
+      [],
+      both,
+      applyAnnotations
+    ),
+    group: 'authoring',
     input: strict({ proposalId: Uuid, approvalId: Uuid }),
     output: strict({ proposalId: Uuid, status: z.literal('applied'), resultHash: ContentHash, page: AppliedPageSummary.nullable() }),
     requiredFlags: proposalFlags

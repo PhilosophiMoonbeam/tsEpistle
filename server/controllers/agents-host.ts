@@ -483,7 +483,6 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const input = SubmitMessageSchema.parse(req.body)
       const principal = requestSkillPrincipal(req)
       if ((input.invokedSkillVersionIds?.length ?? 0) > 0 && !wiki.config.agents.skills.enabled) return disabledRoute(res)
-      const invokedSkillVersionIds = await skillRuntime.assertVisibleVersions(input.invokedSkillVersionIds ?? [], principal)
       const admitted = await wiki.agentRuntime.submit({
         ownerId: principal.userId,
         sessionId,
@@ -491,7 +490,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         expectedSessionVersion: input.expectedSessionVersion,
         profileResolutionToken: input.profileResolutionToken,
         content: input.content,
-        invokedSkillVersionIds,
+        ...(input.invokedSkillVersionIds === undefined ? {} : { invokedSkillVersionIds: input.invokedSkillVersionIds }),
         ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
         ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext })
       })
@@ -506,7 +505,6 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
       const input = CreateGoalSchema.parse(req.body)
       const principal = requestSkillPrincipal(req)
       if ((input.invokedSkillVersionIds?.length ?? 0) > 0 && !wiki.config.agents.skills.enabled) return disabledRoute(res)
-      const invokedSkillVersionIds = await skillRuntime.assertVisibleVersions(input.invokedSkillVersionIds ?? [], principal)
       const created = await wiki.agentRuntime.createGoal({
         goalId: input.goalId,
         clientRequestId: input.clientRequestId,
@@ -515,7 +513,7 @@ export default function createAgentsHostController(wiki: AgentHostWiki): express
         objective: input.objective,
         ownerId: principal.userId,
         sessionId,
-        invokedSkillVersionIds,
+        ...(input.invokedSkillVersionIds === undefined ? {} : { invokedSkillVersionIds: input.invokedSkillVersionIds }),
         ...(input.currentPage === undefined ? {} : { currentPage: input.currentPage }),
         ...(input.knowledgeContext === undefined ? {} : { knowledgeContext: input.knowledgeContext })
       })

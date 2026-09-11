@@ -1,12 +1,59 @@
 import { afterEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import type { LookupAddress } from 'node:dns'
-import { AgentProviderAttemptError, AgentProviderFactory, agentProviderCostMicros, createGuardedProviderFetch } from '../../agents/providers/factory.ts'
+import {
+  AgentProviderAttemptError,
+  AgentProviderFactory,
+  agentProviderCostMicros,
+  createGuardedProviderFetch,
+  decodeAgentProviderContinuation,
+  deriveAgentProviderResourceLimits,
+  encodeAgentProviderContinuation
+} from '../../agents/providers/factory.ts'
+import { AgentExecutionFailure, classifyAgentExecutionFailure } from '../../agents/providers/execution-failure.ts'
 import { readAgentProviderUsage, readAgentUsageEvent } from '../../agents/providers/usage.ts'
 import { AgentRepositoryError } from '../../agents/repository.ts'
 
 const publicResolver = async (): Promise<LookupAddress[]> => [{ address: '93.184.216.34', family: 4 }]
 const privateResolver = async (): Promise<LookupAddress[]> => [{ address: '127.0.0.1', family: 4 }]
+const tinyProviderLimits = () => {
+  const limits = deriveAgentProviderResourceLimits(1)
+  return { ...limits, rawBodyBytes: 8, rawChunkBytes: 8 }
+}
+
+const openAIResponsesStream = (
+  responseId: string,
+  usage: { readonly input_tokens: number; readonly output_tokens: number; readonly total_tokens: number },
+  output: readonly Record<string, unknown>[] = []
+): string => {
+  const response = {
+    id: responseId,
+    object: 'response',
+    created_at: 1,
+    status: 'completed',
+    error: null,
+    incomplete_details: null,
+    instructions: null,
+    max_output_tokens: null,
+    model: 'gpt-test',
+    output,
+    parallel_tool_calls: true,
+    previous_response_id: null,
+    usage
+  }
+  const frames = [
+    `event: response.created\ndata: ${JSON.stringify({
+      type: 'response.created',
+      response: { id: responseId, object: 'response', created_at: 1, status: 'in_progress', model: 'gpt-test' }
+    })}`
+  ]
+  for (const item of output) {
+    frames.push(`event: response.output_item.added\ndata: ${JSON.stringify({ type: 'response.output_item.added', output_index: 0, item })}`)
+    frames.push(`event: response.output_item.done\ndata: ${JSON.stringify({ type: 'response.output_item.done', output_index: 0, item })}`)
+  }
+  frames.push(`event: response.completed\ndata: ${JSON.stringify({ type: 'response.completed', response })}`, 'data: [DONE]')
+  return `${frames.join('\n\n')}\n\n`
+}
 
 describe('guarded provider fetch', () => {
   it('allows only the configured HTTPS endpoint and rejects private DNS results', async () => {
@@ -106,6 +153,155 @@ describe('guarded provider fetch', () => {
       message: 'Provider request failed'
     })
   })
+  it('accepts exact UTF-8 raw limits with missing and nonnumeric content lengths', async () => {
+    const exact = new TextEncoder().encode('€€ab')
+    expect(exact.byteLength).toBe(8)
+    for (const contentLength of [undefined, 'false']) {
+      let limitCalls = 0
+      const guarded = createGuardedProviderFetch(
+        'https://provider.example.test/v1',
+        '/responses',
+        {},
+        (async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(exact)
+                controller.close()
+              }
+            }),
+            {
+              headers: {
+                'content-type': 'application/json',
+                ...(contentLength === undefined ? {} : { 'content-length': contentLength })
+              }
+            }
+          )) as typeof fetch,
+        publicResolver as never,
+        tinyProviderLimits(),
+        () => {
+          limitCalls += 1
+        }
+      )
+      const response = await guarded('https://provider.example.test/v1/responses')
+      expect(await response.text()).toBe('€€ab')
+      expect(limitCalls).toBe(0)
+    }
+  })
+
+  it('rejects the next raw byte before downstream parsing and bounds open-source cancel/release once', async () => {
+    let cancelCalls = 0
+    let limitCalls = 0
+    const cancellation = new AbortController()
+    const body = new ReadableStream<Uint8Array>(
+      {
+        start(controller) {
+          controller.enqueue(new Uint8Array(9))
+        },
+        cancel() {
+          cancelCalls += 1
+          return Promise.reject(new Error('hostile raw cancel'))
+        }
+      },
+      { highWaterMark: 0 }
+    )
+    const guarded = createGuardedProviderFetch(
+      'https://provider.example.test/v1',
+      '/responses',
+      {},
+      (async () => new Response(body, { headers: { 'content-type': 'application/json', 'content-length': 'false' } })) as typeof fetch,
+      publicResolver as never,
+      tinyProviderLimits(),
+      error => {
+        limitCalls += 1
+        cancellation.abort(error)
+      }
+    )
+    const response = await guarded('https://provider.example.test/v1/responses', { signal: cancellation.signal })
+    await expect(Promise.resolve(response.text())).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    expect(cancellation.signal.aborted).toBe(true)
+    expect(limitCalls).toBe(1)
+    expect(cancelCalls).toBe(1)
+    expect(body.locked).toBe(false)
+  })
+
+  it('cuts off an endless raw stream at the body ceiling without waiting for hostile cancel', async () => {
+    let produced = 0
+    let cancelCalls = 0
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          produced += 1
+          controller.enqueue(new Uint8Array([0x61]))
+        },
+        cancel() {
+          cancelCalls += 1
+          return new Promise<void>(() => {})
+        }
+      },
+      { highWaterMark: 0 }
+    )
+    const guarded = createGuardedProviderFetch(
+      'https://provider.example.test/v1',
+      '/responses',
+      {},
+      (async () => new Response(body, { headers: { 'content-type': 'application/json' } })) as typeof fetch,
+      publicResolver as never,
+      tinyProviderLimits()
+    )
+    const response = await guarded('https://provider.example.test/v1/responses')
+    await expect(Promise.resolve(response.text())).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    expect(produced).toBe(9)
+    expect(cancelCalls).toBe(1)
+    expect(body.locked).toBe(false)
+  })
+
+  it('rejects an already-closed raw source without invoking cancellation and releases its reader', async () => {
+    let cancelCalls = 0
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(9))
+        controller.close()
+      },
+      cancel() {
+        cancelCalls += 1
+      }
+    })
+    const guarded = createGuardedProviderFetch(
+      'https://provider.example.test/v1',
+      '/responses',
+      {},
+      (async () => new Response(body, { headers: { 'content-type': 'application/json', 'content-length': 'false' } })) as typeof fetch,
+      publicResolver as never,
+      tinyProviderLimits()
+    )
+    const response = await guarded('https://provider.example.test/v1/responses')
+    await expect(Promise.resolve(response.text())).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    expect(cancelCalls).toBe(0)
+    expect(body.locked).toBe(false)
+  })
+  it('rejects a declared over-limit body before constructing a downstream stream', async () => {
+    let cancelCalls = 0
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([0x61]))
+      },
+      cancel() {
+        cancelCalls += 1
+      }
+    })
+    const guarded = createGuardedProviderFetch(
+      'https://provider.example.test/v1',
+      '/responses',
+      {},
+      (async () => new Response(body, { headers: { 'content-length': '9' } })) as typeof fetch,
+      publicResolver as never,
+      tinyProviderLimits()
+    )
+    await expect(Promise.resolve(guarded('https://provider.example.test/v1/responses'))).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+    expect(cancelCalls).toBe(1)
+    expect(body.locked).toBe(false)
+  })
 })
 
 describe('provider usage accounting', () => {
@@ -158,6 +354,67 @@ describe('provider usage accounting', () => {
       totalTokens: 312,
       costMicros: 0
     })
+  })
+
+  it('classifies usage diagnostics without retaining malformed values', () => {
+    const missing = (() => {
+      try {
+        readAgentProviderUsage({ results: [], modelUsage: { tokens: { promptTokens: 3, completionTokens: 2 } } })
+      } catch (error) {
+        return error
+      }
+      return undefined
+    })()
+    expect(classifyAgentExecutionFailure(missing, 'provider_response').diagnostics).toEqual({
+      usageIssue: 'missing',
+      usageField: 'totalTokens'
+    })
+
+    const unsafe = (() => {
+      try {
+        readAgentProviderUsage({
+          results: [],
+          modelUsage: { tokens: { promptTokens: Number.MAX_SAFE_INTEGER + 1, completionTokens: 2, totalTokens: Number.MAX_SAFE_INTEGER + 1 } }
+        })
+      } catch (error) {
+        return error
+      }
+      return undefined
+    })()
+    expect(classifyAgentExecutionFailure(unsafe, 'provider_response').diagnostics).toEqual({
+      usageIssue: 'unsafe_integer',
+      usageField: 'inputTokens'
+    })
+
+    const sanitized = new AgentExecutionFailure('PROVIDER_USAGE_INVALID', 'provider_response', undefined, {
+      usageIssue: 'unsafe_integer',
+      usageField: 'inputTokens',
+      prior: { inputTokens: -1, outputTokens: 3, totalTokens: 4, raw: 'secret' },
+      current: { inputTokens: Number.MAX_SAFE_INTEGER + 1, outputTokens: 2, totalTokens: 3 },
+      context: { inputBytes: 10, limitBytes: Number.MAX_SAFE_INTEGER + 1, arbitrary: 'secret' },
+      providerTurn: 1.5,
+      transportKind: 'not-a-transport'
+    })
+    expect(sanitized.diagnostics).toEqual({
+      usageIssue: 'unsafe_integer',
+      usageField: 'inputTokens',
+      prior: { outputTokens: 3, totalTokens: 4 },
+      current: { outputTokens: 2, totalTokens: 3 },
+      context: { inputBytes: 10 }
+    })
+  })
+})
+
+describe('provider continuation wire', () => {
+  it('round-trips supported Responses continuation state and rejects a dialect mix-up', () => {
+    const block = {
+      data: `wiki.openai.reasoning.v1:${JSON.stringify(['rs_1', 'opaque'])}`,
+      encrypted: true
+    } as const
+    const encoded = encodeAgentProviderContinuation('openai-responses-reasoning-v1', [block])
+    expect(encoded).toMatchObject({ schemaVersion: 1, continuationDialect: 'openai-responses-reasoning-v1', thoughtBlocks: [block] })
+    expect(decodeAgentProviderContinuation(encoded, 'openai-responses-reasoning-v1')).toEqual({ thoughtBlocks: [block] })
+    expect(decodeAgentProviderContinuation(encoded, 'openresponses-reasoning-v1')).toBeUndefined()
   })
 })
 
@@ -296,6 +553,76 @@ describe('Ax provider factory', () => {
     })
     await db('agentProviderProfileVersions').where({ id: '00000000-0000-4000-8000-000000000001' }).update({ pricingRevision: 'price-2|0|2000000' })
     await expect(Promise.resolve(factory.create('00000000-0000-4000-8000-000000000001'))).rejects.toMatchObject({ code: 'PROVIDER_PRICING_INVALID' })
+  })
+
+  it('resets stateful Ax usage for each streamed factory request while retaining within-response receipts', async () => {
+    db = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true })
+    await db.schema.createTable('agentProviderProfileVersions', table => {
+      table.uuid('id').primary()
+      table.string('transportKind').notNullable()
+      table.string('model').notNullable()
+      table.string('utilityModel').nullable()
+      table.string('baseUrl').notNullable()
+      table.string('authMode').notNullable()
+      table.string('secretReference').nullable()
+      table.text('adapterConfig').notNullable()
+      table.text('capabilities').notNullable()
+      table.string('capabilityRevision').notNullable()
+      table.string('pricingRevision').notNullable()
+      table.boolean('conformed').notNullable()
+    })
+    const id = '00000000-0000-4000-8000-000000000013'
+    await db('agentProviderProfileVersions').insert({
+      id,
+      transportKind: 'openai-responses',
+      model: 'gpt-test',
+      utilityModel: null,
+      baseUrl: 'https://provider.example.test/v1',
+      authMode: 'bearer',
+      secretReference: 'env:STREAM_KEY',
+      adapterConfig: JSON.stringify({ timeoutMs: 10_000, maxRetries: 0, additionalHeaders: {}, agentReasoningEffort: 'high' }),
+      capabilities: JSON.stringify({
+        streaming: true,
+        toolCalling: 'native',
+        parallelToolCalls: true,
+        structuredOutput: 'native-json-schema',
+        usage: 'stream',
+        cancellation: true,
+        maxContextTokens: 100_000,
+        maxOutputTokens: 4_000
+      }),
+      capabilityRevision: 'cap-1',
+      pricingRevision: 'price-1|1000000|2000000',
+      conformed: true
+    })
+    const outputs = [
+      openAIResponsesStream('resp_tool', { input_tokens: 3, output_tokens: 412, total_tokens: 25_133 }, [
+        { type: 'function_call', id: 'fc_item', call_id: 'call_1', name: 'wiki_get_page', arguments: '{"id":42}', status: 'completed' }
+      ]),
+      openAIResponsesStream('resp_independent', { input_tokens: 3, output_tokens: 20, total_tokens: 43 })
+    ]
+    const implementation = async (): Promise<Response> => new Response(outputs.shift(), { headers: { 'content-type': 'text/event-stream' } })
+    const provider = await new AgentProviderFactory(db, { get: () => 'stream-key' }, implementation as typeof fetch, publicResolver as never).create(id)
+    const first = await provider.service.chat(
+      {
+        chatPrompt: [{ role: 'user', content: 'Read page 42' }],
+        model: provider.model,
+        functions: [{ name: 'wiki_get_page', description: 'Read a page', parameters: { type: 'object' } }]
+      },
+      { stream: true }
+    )
+    if (!(first instanceof ReadableStream)) throw new Error('Expected first request to stream')
+    const firstItems = []
+    for await (const item of first) firstItems.push(item)
+    expect(firstItems.some(item => item.results.some(result => result.functionCalls?.some(call => call.id === 'call_1')))).toBe(true)
+    expect(readAgentProviderUsage(firstItems.at(-1)!)).toEqual({ inputTokens: 3, outputTokens: 412, totalTokens: 25_133 })
+    const second = await provider.service.chat({ chatPrompt: [{ role: 'user', content: 'Independent request' }], model: provider.model }, { stream: true })
+    if (!(second instanceof ReadableStream)) throw new Error('Expected second request to stream')
+    const secondItems = []
+    for await (const item of second) secondItems.push(item)
+    expect(secondItems.map(readAgentProviderUsage).filter((usage): usage is NonNullable<typeof usage> => usage !== null)).toEqual([
+      { inputTokens: 3, outputTokens: 20, totalTokens: 43 }
+    ])
   })
 
   it('loads an admitted version snapshot after the profile pointer advances', async () => {

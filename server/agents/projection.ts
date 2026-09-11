@@ -4,6 +4,8 @@ import { z } from 'zod'
 import {
   AGENT_ACTION_NAMES,
   AGENT_PROPOSAL_STATUSES,
+  AGENT_TOOL_CALL_NAMES,
+  AGENT_TOOL_CONTROL_NAMES,
   type AgentActionName,
   type AgentActionRisk,
   type AgentApprovalView,
@@ -18,14 +20,19 @@ import {
   type AgentSessionSkillView,
   type AgentSessionView,
   type AgentThreadState,
+  type AgentToolCallName,
   type AgentToolCallView,
   type AgentToolState
 } from '../../shared/agents/contracts.ts'
+
 import { AgentRepositoryError, getOwnedAgentSession, listOwnedAgentProjectionEvents, listOwnedAgentMessages } from './repository.ts'
 import { listAgentTaskViews } from './tasks.ts'
 import { latestAgentGoalForSession, projectAgentGoal } from './goals.ts'
 
 const actionNames = new Set<string>(AGENT_ACTION_NAMES)
+const toolCallNames = new Set<string>(AGENT_TOOL_CALL_NAMES)
+const toolControlNames = new Set<string>(AGENT_TOOL_CONTROL_NAMES)
+
 const runStatusSchema = z.enum(['queued', 'running', 'awaiting_approval', 'succeeded', 'partial', 'failed', 'cancelled', 'recovery_required'])
 const proposalStatusSchema = z.enum(AGENT_PROPOSAL_STATUSES)
 const approvalStatusSchema = z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled'])
@@ -66,7 +73,7 @@ const citations = (value: string | null): readonly AgentCitation[] => {
 interface ToolAccumulator {
   id: string
   runId: string
-  actionName: AgentActionName
+  actionName: AgentToolCallName
   title: string
   state: AgentToolState
   risk: AgentActionRisk
@@ -133,7 +140,14 @@ export const reduceAgentEvents = (events: readonly AgentEvent[], latestRunId: st
       const actionName = stringValue(event.data.actionName, 128)
       const risk = riskSchema.safeParse(event.data.risk)
       const title = stringValue(event.data.title, 255)
-      if (actionName === null || !actionNames.has(actionName) || !risk.success || title === null)
+      const proposalId = event.data.proposalId
+      if (
+        actionName === null ||
+        !toolCallNames.has(actionName) ||
+        !risk.success ||
+        title === null ||
+        (toolControlNames.has(actionName) && (risk.data !== 'read' || (proposalId !== undefined && proposalId !== null)))
+      )
         throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool start event is invalid', 500)
       let runTools = toolsByRun.get(event.runId)
       if (!runTools) {
@@ -144,7 +158,7 @@ export const reduceAgentEvents = (events: readonly AgentEvent[], latestRunId: st
       const tool = {
         id: actionCallId,
         runId: event.runId,
-        actionName: actionName as AgentActionName,
+        actionName: actionName as AgentToolCallName,
         title,
         state: 'running',
         risk: risk.data,
@@ -160,10 +174,16 @@ export const reduceAgentEvents = (events: readonly AgentEvent[], latestRunId: st
 
     const tool = toolsByRun.get(event.runId)?.get(actionCallId)
     if (!tool) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool event has no start boundary', 500)
+    const eventActionName = event.data.actionName
+    if (eventActionName !== undefined && (typeof eventActionName !== 'string' || !toolCallNames.has(eventActionName) || eventActionName !== tool.actionName))
+      throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool event action is invalid', 500)
+    if (toolControlNames.has(tool.actionName) && event.data.proposalId !== undefined && event.data.proposalId !== null)
+      throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool control has an invalid proposal association', 500)
     if (event.type === 'tool.progress') {
       const summary = stringValue(event.data.summary)
       if (summary !== null) tool.summary = summary
     } else if (event.type === 'proposal.created') {
+      if (toolControlNames.has(tool.actionName)) throw new AgentRepositoryError('AGENT_EVENT_CORRUPT', 'Agent tool control cannot create a proposal', 500)
       tool.state = 'awaitingApproval'
       tool.proposalId = stringValue(event.data.proposalId, 64)
     } else if (event.type === 'tool.completed') {
@@ -532,7 +552,9 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
     proposalQuery,
     artifactQuery,
     listOwnedAgentProjectionEvents(knex, ownerId, runRows, THREAD_LATEST_ATTEMPT_EVENT_LIMIT),
-    knex('agentEvents').whereIn('runId', selectedRunIds).where({ type: 'run.queued' }).select('runId', 'data') as Promise<Array<{ runId: string; data: string }>>
+    knex('agentEvents').whereIn('runId', selectedRunIds).where({ type: 'run.queued' }).select('runId', 'data') as Promise<
+      Array<{ runId: string; data: string }>
+    >
   ])
   if (proposalRows.length > THREAD_RELATED_RECORD_LIMIT || artifactRows.length > THREAD_RELATED_RECORD_LIMIT)
     throw new AgentRepositoryError('AGENT_THREAD_PROJECTION_OVERFLOW', 'Agent session has too many related records to project safely', 500)
@@ -554,9 +576,13 @@ export const projectAgentThread = async (knex: Knex, ownerId: number, sessionId:
   for (const row of sourceContextRows) {
     try {
       const payload: unknown = JSON.parse(row.data)
-      const parsed = AgentKnowledgeContextSchema.safeParse(typeof payload === 'object' && payload !== null ? Reflect.get(payload, 'knowledgeContext') : undefined)
+      const parsed = AgentKnowledgeContextSchema.safeParse(
+        typeof payload === 'object' && payload !== null ? Reflect.get(payload, 'knowledgeContext') : undefined
+      )
       if (parsed.success) sourceContexts.set(row.runId, parsed.data)
-    } catch { /* The run reader handles corrupt execution context; history remains readable. */ }
+    } catch {
+      /* The run reader handles corrupt execution context; history remains readable. */
+    }
   }
   const messages: AgentMessageView[] = messageRows.map(message => ({
     id: message.id,

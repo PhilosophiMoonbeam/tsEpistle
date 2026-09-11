@@ -52,6 +52,11 @@ export const AGENT_ACTION_NAMES = [
 ] as const
 
 export type AgentActionName = (typeof AGENT_ACTION_NAMES)[number]
+export const TOOL_DISCOVERY_CONTROL_NAME = 'wiki_enable_tools' as const
+export const AGENT_TOOL_CONTROL_NAMES = [TOOL_DISCOVERY_CONTROL_NAME] as const
+export type AgentToolControlName = (typeof AGENT_TOOL_CONTROL_NAMES)[number]
+export const AGENT_TOOL_CALL_NAMES = [...AGENT_ACTION_NAMES, ...AGENT_TOOL_CONTROL_NAMES] as const
+export type AgentToolCallName = (typeof AGENT_TOOL_CALL_NAMES)[number]
 
 export const AGENT_TOOL_NAMES = {
   'pages.search': 'wiki_search_pages',
@@ -322,7 +327,7 @@ export interface AgentRunView {
 export interface AgentToolCallView {
   readonly id: string
   readonly runId: string
-  readonly actionName: AgentActionName
+  readonly actionName: AgentToolCallName
   readonly title: string
   readonly state: AgentToolState
   readonly risk: AgentActionRisk

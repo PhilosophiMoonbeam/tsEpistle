@@ -154,6 +154,15 @@ jobs:
         WIKI_TEST_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
         WIKI_TEST_POSTGRES_USER: wiki
       run: bun test server/test/db/agents-migration.postgres.integration.test.ts
+    - name: Exercise Agent Repository PostgreSQL Race Suite
+      env:
+        WIKI_TEST_POSTGRES_DATABASE: wiki_agents_test
+        WIKI_TEST_POSTGRES_HOST: 127.0.0.1
+        WIKI_TEST_POSTGRES_PASSWORD: test
+        WIKI_TEST_POSTGRES_PORT: ${{ job.services.postgres.ports['5432'] }}
+        WIKI_TEST_POSTGRES_USER: wiki
+        WIKI_TEST_POSTGRES_REQUIRED: '1'
+      run: bun test server/test/agents/repository.postgres.test.ts
 
   private-pages-postgres:
     name: Private Pages Migration (PostgreSQL 18)

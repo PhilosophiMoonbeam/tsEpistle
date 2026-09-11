@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from '../bun-test.mts'
 import createKnex, { type Knex } from 'knex'
 import type { LookupAddress } from 'node:dns'
 import type { AxChatRequest } from '@ax-llm/ax'
-import { AgentProviderFactory } from '../../agents/providers/factory.ts'
+import { AgentProviderFactory, createGuardedProviderFetch, deriveAgentProviderResourceLimits } from '../../agents/providers/factory.ts'
 import { createOpenResponsesFetch } from '../../agents/providers/openresponses.ts'
 import { createGeminiInteractionsService } from '../../agents/providers/gemini-interactions.ts'
 
@@ -16,6 +16,10 @@ const capabilities = {
   cancellation: true,
   maxContextTokens: 100_000,
   maxOutputTokens: 4_000
+}
+const tinyProviderLimits = () => {
+  const limits = deriveAgentProviderResourceLimits(1)
+  return { ...limits, rawBodyBytes: 8, rawChunkBytes: 8 }
 }
 
 describe('additional provider transports', () => {
@@ -467,6 +471,54 @@ describe('OpenResponses protocol validation', () => {
     await expect(Promise.resolve(transport('https://openresponses.example.test/v1/responses', request()))).rejects.toMatchObject({
       code: 'INVALID_OPENRESPONSES_PROTOCOL'
     })
+  })
+
+  it('rejects raw over-limit buffered JSON and SSE before protocol parsing', async () => {
+    for (const stream of [false, true]) {
+      let limitCalls = 0
+      let cancelCalls = 0
+      const body = new ReadableStream<Uint8Array>(
+        {
+          start(controller) {
+            controller.enqueue(new Uint8Array(9))
+          },
+          cancel() {
+            cancelCalls += 1
+            return Promise.reject(new Error('hostile transport cancellation'))
+          }
+        },
+        { highWaterMark: 0 }
+      )
+      const guarded = createGuardedProviderFetch(
+        'https://openresponses.example.test/v1',
+        '/responses',
+        {},
+        (async () =>
+          new Response(body, {
+            headers: {
+              'content-type': stream ? 'text/event-stream' : 'application/json',
+              'content-length': 'false'
+            }
+          })) as typeof fetch,
+        publicResolver as never,
+        tinyProviderLimits(),
+        () => {
+          limitCalls += 1
+        }
+      )
+      const transport = createOpenResponsesFetch(guarded)
+      if (stream) {
+        const response = await transport('https://openresponses.example.test/v1/responses', request({ stream: true }))
+        await expect(Promise.resolve(response.text())).rejects.toMatchObject({ code: 'INVALID_PROVIDER_RESPONSE' })
+      } else {
+        await expect(Promise.resolve(transport('https://openresponses.example.test/v1/responses', request()))).rejects.toMatchObject({
+          code: 'INVALID_OPENRESPONSES_PROTOCOL'
+        })
+      }
+      expect(limitCalls).toBe(1)
+      expect(cancelCalls).toBe(1)
+      expect(body.locked).toBe(false)
+    }
   })
 
   it('validates streaming event names, sequences, terminal response, and marker', async () => {

@@ -1,8 +1,15 @@
 import { describe, expect, expectTypeOf, it } from '../bun-test.mts'
 import {
+  AGENT_ACTION_NAMES,
   AGENT_TERMINAL_RUN_STATUSES,
+  AGENT_TOOL_CALL_NAMES,
+  AGENT_TOOL_CONTROL_NAMES,
   isTerminalAgentRunStatus,
+  TOOL_DISCOVERY_CONTROL_NAME,
+  type AgentActionName,
   type AgentRunStatus,
+  type AgentToolCallName,
+  type AgentToolControlName,
   type DecideAgentApprovalRequest
 } from '../../../shared/agents/contracts.ts'
 
@@ -12,6 +19,19 @@ describe('shared agent lifecycle contracts', () => {
 
     const statuses: readonly AgentRunStatus[] = ['queued', 'running', 'awaiting_approval', ...AGENT_TERMINAL_RUN_STATUSES]
     expect(statuses.filter(isTerminalAgentRunStatus)).toEqual(AGENT_TERMINAL_RUN_STATUSES)
+  })
+
+  it('keeps discovery controls in the shared tool-call vocabulary', () => {
+    expect(TOOL_DISCOVERY_CONTROL_NAME).toBe('wiki_enable_tools')
+    expect(AGENT_TOOL_CONTROL_NAMES).toEqual([TOOL_DISCOVERY_CONTROL_NAME])
+    expect(AGENT_TOOL_CALL_NAMES).toEqual([...AGENT_ACTION_NAMES, TOOL_DISCOVERY_CONTROL_NAME])
+
+    const controlName: AgentToolControlName = TOOL_DISCOVERY_CONTROL_NAME
+    const callNames: readonly AgentToolCallName[] = AGENT_TOOL_CALL_NAMES
+    const actionName: AgentActionName = 'pages.search'
+    expect(callNames.at(-1)).toBe(controlName)
+    expect(callNames).toContain(actionName)
+    expectTypeOf<AgentToolCallName>().toEqualTypeOf<AgentActionName | AgentToolControlName>()
   })
 
   it('matches the strict approval decision wire payload', () => {

@@ -30,7 +30,7 @@ import {
   terminalizeAgentRun,
   transitionAgentRun
 } from '../../agents/coordinator.ts'
-import { AgentProductRuntime, type AgentEngine } from '../../agents/runtime.ts'
+import { AgentProductRuntime, type AgentAdmissionResolver, type AgentEngine } from '../../agents/runtime.ts'
 import { DEFAULT_AGENT_ORCHESTRATION_LIMITS } from '../../agents/orchestration.ts'
 import { up as addAgentTaskLedger } from '../../db/migrations/2.5.156.ts'
 import type { AgentEvent } from '../../../shared/agents/contracts.ts'
@@ -40,6 +40,8 @@ const sessionId = '00000000-0000-4000-8000-000000000001'
 const runId = '00000000-0000-4000-8000-000000000002'
 const userMessageId = '00000000-0000-4000-8000-000000000003'
 const assistantMessageId = '00000000-0000-4000-8000-000000000004'
+type AdmissionResolverInput = Parameters<AgentAdmissionResolver['resolve']>[1]
+type CurrentAdmissionResolverInput = Parameters<AgentAdmissionResolver['resolveCurrent']>[1]
 
 const createTables = async (knex: Knex): Promise<void> => {
   await knex.schema.createTable('users', table => {
@@ -223,6 +225,9 @@ const createTables = async (knex: Knex): Promise<void> => {
     table.uuid('skillId').notNullable()
     table.integer('groupId').notNullable()
   })
+  await knex.schema.createTable('groups', table => {
+    table.integer('id').primary()
+  })
   await knex.schema.createTable('userGroups', table => {
     table.integer('userId').notNullable()
     table.integer('groupId').notNullable()
@@ -342,7 +347,8 @@ describe('durable agent repositories', () => {
   beforeEach(async () => {
     knex = createKnex({ client: 'better-sqlite3', connection: { filename: ':memory:' }, useNullAsDefault: true, pool: { min: 1, max: 1 } })
     await createTables(knex)
-    await knex('users').insert([{ id: 7 }, { id: 8 }])
+    await knex('users').insert([{ id: 7 }, { id: 8 }, { id: 9 }])
+    await knex('groups').insert([{ id: 1 }])
     await createAgentSession(knex, { id: sessionId, ownerId: 7, title: 'Thread', retention: 'saved', providerProfileId: null, executionMode: 'agent' })
     await appendAgentMessage(knex, { id: userMessageId, ownerId: 7, sessionId, role: 'user', status: 'complete', content: 'Question' })
     await appendAgentMessage(knex, { id: assistantMessageId, ownerId: 7, sessionId, role: 'assistant', status: 'streaming', content: '' })
@@ -726,6 +732,191 @@ describe('durable agent repositories', () => {
     ])
     expect(reduced.suggestions).toEqual([{ id: 'run-b-next', label: 'Use latest run', prompt: 'Continue from run B' }])
   })
+  it('replays visible action and discovery activity through terminal projection boundaries', () => {
+    const projectionRunId = '00000000-0000-4000-8000-000000000073'
+    let sequence = 0
+    const event = (type: AgentEvent['type'], data: AgentEvent['data']): AgentEvent => ({
+      id: `projection-${++sequence}`,
+      runId: projectionRunId,
+      sequence,
+      type,
+      attempt: 1,
+      schemaVersion: 1,
+      data,
+      createdAt: `2026-08-17T00:0${Math.floor(sequence / 10)}:${String(sequence % 60).padStart(2, '0')}.000Z`
+    })
+    const calls = [
+      {
+        id: 'enable-explore',
+        actionName: 'wiki_enable_tools',
+        title: 'Enable Wiki tool category',
+        start: event('tool.started', {
+          actionCallId: 'enable-explore',
+          actionName: 'wiki_enable_tools',
+          title: 'Enable Wiki tool category',
+          risk: 'read',
+          input: '{"category":"explore"}'
+        }),
+        terminal: event('tool.completed', {
+          actionCallId: 'enable-explore',
+          actionName: 'wiki_enable_tools',
+          result: JSON.stringify({ category: 'explore', enabled: true, tools: [{ name: 'pages.searchTags', description: 'Search visible tags' }] }),
+          summary: 'Enabled explore tools for the next turn'
+        })
+      },
+      {
+        id: 'malformed-input',
+        actionName: 'pages.searchTags',
+        title: 'Search tags',
+        start: event('tool.started', {
+          actionCallId: 'malformed-input',
+          actionName: 'pages.searchTags',
+          title: 'Search tags',
+          risk: 'read',
+          input: '{"query":'
+        }),
+        terminal: event('tool.failed', { actionCallId: 'malformed-input', actionName: 'pages.searchTags', errorCode: 'INVALID_ACTION_INPUT' })
+      },
+      {
+        id: 'budget-skipped',
+        actionName: 'pages.get',
+        title: 'Read page',
+        start: event('tool.started', {
+          actionCallId: 'budget-skipped',
+          actionName: 'pages.get',
+          title: 'Read page',
+          risk: 'read',
+          input: '{"id":42}'
+        }),
+        terminal: event('tool.failed', { actionCallId: 'budget-skipped', actionName: 'pages.get', errorCode: 'AGENT_BUDGET_LIMITED' })
+      },
+      {
+        id: 'capacity-skipped',
+        actionName: 'pages.getVersion',
+        title: 'Read page version',
+        start: event('tool.started', {
+          actionCallId: 'capacity-skipped',
+          actionName: 'pages.getVersion',
+          title: 'Read page version',
+          risk: 'read',
+          input: '{"id":42,"version":3}'
+        }),
+        terminal: event('tool.failed', { actionCallId: 'capacity-skipped', actionName: 'pages.getVersion', errorCode: 'AGENT_CONTEXT_TOO_LARGE' })
+      },
+      {
+        id: 'live-denied',
+        actionName: 'pages.search',
+        title: 'Search pages',
+        start: event('tool.started', {
+          actionCallId: 'live-denied',
+          actionName: 'pages.search',
+          title: 'Search pages',
+          risk: 'read',
+          input: '{"query":"secret"}'
+        }),
+        terminal: event('tool.failed', { actionCallId: 'live-denied', actionName: 'pages.search', errorCode: 'ACTION_NOT_OFFERED' })
+      },
+      {
+        id: 'completed-provider-omitted',
+        actionName: 'pages.get',
+        title: 'Read page',
+        start: event('tool.started', {
+          actionCallId: 'completed-provider-omitted',
+          actionName: 'pages.get',
+          title: 'Read page',
+          risk: 'read',
+          input: '{"id":99}'
+        }),
+        terminal: event('tool.completed', {
+          actionCallId: 'completed-provider-omitted',
+          actionName: 'pages.get',
+          result: JSON.stringify({ id: 99, title: 'Release notes', content: 'The provider result was omitted from synthesis capacity.' }),
+          summary: 'Release notes'
+        })
+      }
+    ]
+    const events = calls.flatMap(call => [call.start, call.terminal])
+    const reduced = reduceAgentEvents(events, projectionRunId)
+
+    expect(events.filter(event => event.type === 'tool.started')).toHaveLength(calls.length)
+    expect(events.filter(event => event.type === 'tool.completed' || event.type === 'tool.failed')).toHaveLength(calls.length)
+    expect(reduced.tools).toHaveLength(calls.length)
+    expect(reduced.tools.every(tool => tool.startedAt !== null && tool.completedAt !== null && ['complete', 'failed'].includes(tool.state))).toBe(true)
+    expect(reduced.tools.map(tool => ({ id: tool.id, actionName: tool.actionName, title: tool.title, state: tool.state, summary: tool.summary }))).toEqual([
+      {
+        id: 'enable-explore',
+        actionName: 'wiki_enable_tools',
+        title: 'Enable Wiki tool category',
+        state: 'complete',
+        summary: 'Enabled explore tools for the next turn'
+      },
+      { id: 'malformed-input', actionName: 'pages.searchTags', title: 'Search tags', state: 'failed', summary: null },
+      { id: 'budget-skipped', actionName: 'pages.get', title: 'Read page', state: 'failed', summary: null },
+      { id: 'capacity-skipped', actionName: 'pages.getVersion', title: 'Read page version', state: 'failed', summary: null },
+      { id: 'live-denied', actionName: 'pages.search', title: 'Search pages', state: 'failed', summary: null },
+      { id: 'completed-provider-omitted', actionName: 'pages.get', title: 'Read page', state: 'complete', summary: 'Release notes' }
+    ])
+  })
+
+  it('fails closed for unknown or malformed tool activity at the projection boundary', () => {
+    const projectionRunId = '00000000-0000-4000-8000-000000000074'
+    let sequence = 0
+    const event = (type: AgentEvent['type'], data: AgentEvent['data']): AgentEvent => ({
+      id: `invalid-projection-${++sequence}`,
+      runId: projectionRunId,
+      sequence,
+      type,
+      attempt: 1,
+      schemaVersion: 1,
+      data,
+      createdAt: '2026-08-17T00:00:00.000Z'
+    })
+    const start = (actionCallId: string, actionName: string, extra: AgentEvent['data'] = {}) =>
+      event('tool.started', { actionCallId, actionName, title: 'Activity', risk: 'read', ...extra })
+
+    expect(reduceAgentEvents([event('tool.started', { actionName: 'arbitrary-provider-name', title: 'Hidden', risk: 'read' })], projectionRunId)).toEqual({
+      tools: [],
+      suggestions: []
+    })
+    expect(() => reduceAgentEvents([start('unknown', 'arbitrary-provider-name')], projectionRunId)).toThrow(
+      expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 })
+    )
+    expect(() => reduceAgentEvents([start('duplicate', 'pages.get'), start('duplicate', 'pages.get')], projectionRunId)).toThrow(
+      expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 })
+    )
+    expect(() => reduceAgentEvents([event('tool.completed', { actionCallId: 'orphan', actionName: 'pages.get' })], projectionRunId)).toThrow(
+      expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 })
+    )
+    expect(() => reduceAgentEvents([start('control-risk', 'wiki_enable_tools', { risk: 'proposal' })], projectionRunId)).toThrow(
+      expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 })
+    )
+    expect(() =>
+      reduceAgentEvents([start('control-proposal', 'wiki_enable_tools', { proposalId: '00000000-0000-4000-8000-000000000075' })], projectionRunId)
+    ).toThrow(expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 }))
+    expect(() =>
+      reduceAgentEvents(
+        [
+          start('control-created', 'wiki_enable_tools'),
+          event('proposal.created', { actionCallId: 'control-created', actionName: 'wiki_enable_tools', proposalId: '00000000-0000-4000-8000-000000000076' })
+        ],
+        projectionRunId
+      )
+    ).toThrow(expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 }))
+    expect(() =>
+      reduceAgentEvents(
+        [
+          start('control-terminal-proposal', 'wiki_enable_tools'),
+          event('tool.completed', {
+            actionCallId: 'control-terminal-proposal',
+            actionName: 'wiki_enable_tools',
+            proposalId: '00000000-0000-4000-8000-000000000077',
+            result: '{}'
+          })
+        ],
+        projectionRunId
+      )
+    ).toThrow(expect.objectContaining({ code: 'AGENT_EVENT_CORRUPT', status: 500 }))
+  })
 
   it('projects recovery-required proposals and durable links for applied page destinations', async () => {
     await knex('pages').insert({ id: 42, localeCode: 'en', path: 'old-path', title: 'Old page', contentType: 'markdown' })
@@ -1067,7 +1258,10 @@ describe('durable agent repositories', () => {
     const runtime = new AgentProductRuntime(
       knex,
       {
-        async resolve() {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           throw new Error('not used')
         }
       },
@@ -1108,7 +1302,10 @@ describe('durable agent repositories', () => {
     const restarted = new AgentProductRuntime(
       knex,
       {
-        async resolve() {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           throw new Error('not used')
         }
       },
@@ -1160,7 +1357,10 @@ describe('durable agent repositories', () => {
     const runtime = new AgentProductRuntime(
       knex,
       {
-        async resolve() {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           throw new Error('not used')
         }
       },
@@ -1197,7 +1397,10 @@ describe('durable agent repositories', () => {
     const restarted = new AgentProductRuntime(
       knex,
       {
-        async resolve() {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           throw new Error('not used')
         }
       },
@@ -1294,7 +1497,10 @@ describe('durable agent repositories', () => {
     const runtime = new AgentProductRuntime(
       knex,
       {
-        async resolve() {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           throw new Error('not used')
         }
       },
@@ -1381,7 +1587,10 @@ describe('durable agent repositories', () => {
     const runtime = new AgentProductRuntime(
       knex,
       {
-        async resolve() {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           throw new Error('not used')
         }
       },
@@ -1439,7 +1648,10 @@ describe('durable agent repositories', () => {
     const runtime = new AgentProductRuntime(
       knex,
       {
-        async resolve() {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           throw new Error('not used')
         }
       },
@@ -1525,8 +1737,9 @@ describe('durable agent repositories', () => {
     expect(await knex('agentMessages').where({ sessionId: failedSessionId }).count<{ count: number }[]>({ count: '*' }).first()).toMatchObject({ count: 0 })
   })
 
-  it('deduplicates preferred and invoked versions by skill identity with preferences taking precedence', async () => {
+  it('rejects stale explicit versions before deduplicating current preferred and invoked versions by skill identity', async () => {
     const dedupeSessionId = '00000000-0000-4000-8000-000000000080'
+    const staleSessionId = '00000000-0000-4000-8000-000000000094'
     const preferredVersionId = '00000000-0000-4000-8000-000000000081'
     const alternateVersionId = '00000000-0000-4000-8000-000000000082'
     const otherVersionId = '00000000-0000-4000-8000-000000000083'
@@ -1534,6 +1747,7 @@ describe('durable agent repositories', () => {
     const secondSkillId = '00000000-0000-4000-8000-000000000085'
     const now = new Date()
     await createAgentSession(knex, { id: dedupeSessionId, ownerId: 7, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
+    await createAgentSession(knex, { id: staleSessionId, ownerId: 7, retention: 'saved', providerProfileId: null, executionMode: 'agent' })
     await knex('agentSkills').insert([
       { id: firstSkillId, name: 'preferred-skill', rootPath: 'skills/preferred', status: 'enabled', currentVersionId: preferredVersionId },
       { id: secondSkillId, name: 'other-skill', rootPath: 'skills/other', status: 'enabled', currentVersionId: otherVersionId }
@@ -1547,7 +1761,24 @@ describe('durable agent repositories', () => {
     const runtime = new AgentProductRuntime(
       knex,
       {
-        async resolve() {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          return {
+            profileResolutionSha256: 'd'.repeat(64),
+            providerProfileVersionId: '00000000-0000-4000-8000-000000000086',
+            transportKind: 'test',
+            model: 'test',
+            executionMode: 'agent',
+            profilePolicyVersion: 1,
+            defaultGeneration: 1,
+            capabilityRevision: 'v1',
+            pricingRevision: 'v1',
+            promptVersion: 1,
+            quota: { tokens: 100, costMicros: 100 },
+            quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+            reservationMilliseconds: 60_000
+          }
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           return {
             profileResolutionSha256: 'd'.repeat(64),
             providerProfileVersionId: '00000000-0000-4000-8000-000000000086',
@@ -1572,6 +1803,22 @@ describe('durable agent repositories', () => {
       },
       { workerId: 'dedupe-test', globalConcurrency: 1, perUserConcurrency: 1 }
     )
+    await expect(
+      runtime.submit({
+        ownerId: 7,
+        sessionId: staleSessionId,
+        profileResolutionToken: 'token',
+        clientRequestId: '00000000-0000-4000-8000-000000000095',
+        expectedSessionVersion: 1,
+        content: 'Reject stale explicit skill.',
+        invokedSkillVersionIds: [alternateVersionId]
+      })
+    ).rejects.toMatchObject({ code: 'INVALID_SKILL' })
+    expect(await knex('agentMessages').where({ sessionId: staleSessionId })).toEqual([])
+    expect(await knex('agentRuns').where({ sessionId: staleSessionId })).toEqual([])
+    expect(await knex('agentRunSkills')).toEqual([])
+    expect(await knex('agentQuotaReservations')).toEqual([])
+    expect(await knex('agentEvents')).toEqual([])
     const admitted = await runtime.submit({
       ownerId: 7,
       sessionId: dedupeSessionId,
@@ -1579,7 +1826,7 @@ describe('durable agent repositories', () => {
       clientRequestId: '00000000-0000-4000-8000-000000000087',
       expectedSessionVersion: 1,
       content: 'Use the available skills.',
-      invokedSkillVersionIds: [alternateVersionId, otherVersionId]
+      invokedSkillVersionIds: [preferredVersionId, otherVersionId]
     })
     expect(await knex('agentRunSkills').where({ runId: admitted.run.id }).orderBy('ordinal').pluck('skillVersionId')).toEqual([
       preferredVersionId,
@@ -1616,7 +1863,24 @@ describe('durable agent repositories', () => {
       const runtime = new AgentProductRuntime(
         knex,
         {
-          async resolve() {
+          async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+            return {
+              profileResolutionSha256: 'f'.repeat(64),
+              providerProfileVersionId: '00000000-0000-4000-8000-000000000098',
+              transportKind: 'test',
+              model: 'test',
+              executionMode: 'agent',
+              profilePolicyVersion: 1,
+              defaultGeneration: 1,
+              capabilityRevision: 'v1',
+              pricingRevision: 'v1',
+              promptVersion: 1,
+              quota: { tokens: 100, costMicros: 100 },
+              quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+              reservationMilliseconds: 60_000
+            }
+          },
+          async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
             return {
               profileResolutionSha256: 'f'.repeat(64),
               providerProfileVersionId: '00000000-0000-4000-8000-000000000098',
@@ -1691,7 +1955,24 @@ describe('durable agent repositories', () => {
     const runtime = new AgentProductRuntime(
       knex,
       {
-        async resolve() {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          return {
+            profileResolutionSha256: 'e'.repeat(64),
+            providerProfileVersionId: profileVersionId,
+            transportKind: 'test',
+            model: 'test',
+            executionMode: 'agent',
+            profilePolicyVersion: 1,
+            defaultGeneration: 1,
+            capabilityRevision: 'v1',
+            pricingRevision: 'v1',
+            promptVersion: 1,
+            quota: { tokens: 100, costMicros: 100 },
+            quotaLimits: { dailyTokens: 1_000, dailyCostMicros: 1_000 },
+            reservationMilliseconds: 60_000
+          }
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           return {
             profileResolutionSha256: 'e'.repeat(64),
             providerProfileVersionId: profileVersionId,
@@ -1893,7 +2174,10 @@ describe('durable agent repositories', () => {
     const runtime = new AgentProductRuntime(
       knex,
       {
-        async resolve() {
+        async resolve(_transaction: Knex.Transaction, _input: AdmissionResolverInput) {
+          throw new Error('not used')
+        },
+        async resolveCurrent(_transaction: Knex.Transaction, _input: CurrentAdmissionResolverInput) {
           throw new Error('not used')
         }
       },

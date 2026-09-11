@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from '../../server/test/bun-test.mts'
-import type { DecideAgentApprovalRequest } from '../../shared/agents/contracts.ts'
+import {
+  AGENT_ACTION_NAMES,
+  AGENT_TOOL_CALL_NAMES,
+  AGENT_TOOL_NAMES,
+  TOOL_DISCOVERY_CONTROL_NAME,
+  type DecideAgentApprovalRequest
+} from '../../shared/agents/contracts.ts'
 import {
   AgentApiError,
   cancelAgentRun,
@@ -38,6 +44,187 @@ describe('agents client boundary', () => {
         new Response(JSON.stringify({ session: { id: 'not-a-uuid' }, messages: '<script>' }), { status: 201, headers: { 'content-type': 'application/json' } })
     ) as unknown as typeof fetch
     await expect(Promise.resolve(createAgentThread(fetcher, 'csrf', { retention: 'saved', providerProfileId: null }))).rejects.toThrow()
+  })
+  it('accepts projected discovery and action activity for every terminal outcome', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000081'
+    const runId = '00000000-0000-4000-8000-000000000082'
+    const startedAt = '2026-08-17T00:00:00.000Z'
+    const completedAt = '2026-08-17T00:00:01.000Z'
+    const tools = [
+      {
+        id: 'enable-explore',
+        runId,
+        actionName: TOOL_DISCOVERY_CONTROL_NAME,
+        title: 'Enable Wiki tool category',
+        state: 'complete',
+        risk: 'read',
+        summary: 'Enabled explore tools for the next turn',
+        proposalId: null,
+        startedAt,
+        completedAt
+      },
+      {
+        id: 'malformed-input',
+        runId,
+        actionName: 'pages.searchTags',
+        title: 'Search tags',
+        state: 'failed',
+        risk: 'read',
+        summary: null,
+        proposalId: null,
+        startedAt,
+        completedAt
+      },
+      {
+        id: 'budget-skipped',
+        runId,
+        actionName: 'pages.get',
+        title: 'Read page',
+        state: 'failed',
+        risk: 'read',
+        summary: null,
+        proposalId: null,
+        startedAt,
+        completedAt
+      },
+      {
+        id: 'capacity-skipped',
+        runId,
+        actionName: 'pages.getVersion',
+        title: 'Read page version',
+        state: 'failed',
+        risk: 'read',
+        summary: null,
+        proposalId: null,
+        startedAt,
+        completedAt
+      },
+      {
+        id: 'live-denied',
+        runId,
+        actionName: 'pages.search',
+        title: 'Search pages',
+        state: 'failed',
+        risk: 'read',
+        summary: null,
+        proposalId: null,
+        startedAt,
+        completedAt
+      },
+      {
+        id: 'completed-provider-omitted',
+        runId,
+        actionName: 'pages.get',
+        title: 'Read page',
+        state: 'complete',
+        risk: 'read',
+        summary: 'Release notes',
+        proposalId: null,
+        startedAt,
+        completedAt
+      }
+    ]
+    const thread = {
+      session: {
+        id: sessionId,
+        title: 'Activity',
+        retention: 'saved',
+        folderId: null,
+        status: 'active',
+        executionMode: 'agent',
+        version: 1,
+        providerProfileId: null,
+        profileResolutionToken: 'profile-token',
+        skills: [],
+        currentRun: null,
+        createdAt: startedAt,
+        updatedAt: completedAt,
+        lastActivityAt: completedAt,
+        expiresAt: null
+      },
+      messages: [],
+      tools,
+      tasks: [],
+      goal: null,
+      proposals: [],
+      artifacts: [],
+      historyWindow: { messageLimit: 200, hasOlderMessages: false, runLimit: 200, hasOlderRuns: false },
+      suggestions: []
+    }
+    const fetcher = vi.fn(async () => Response.json(thread)) as unknown as typeof fetch
+
+    expect(AGENT_ACTION_NAMES).not.toContain(TOOL_DISCOVERY_CONTROL_NAME)
+    expect(Object.keys(AGENT_TOOL_NAMES)).not.toContain(TOOL_DISCOVERY_CONTROL_NAME)
+    expect(AGENT_TOOL_CALL_NAMES).toContain(TOOL_DISCOVERY_CONTROL_NAME)
+    await expect(getAgentThread(fetcher, 'csrf', sessionId)).resolves.toMatchObject({
+      tools: [
+        { id: 'enable-explore', actionName: TOOL_DISCOVERY_CONTROL_NAME, state: 'complete', title: 'Enable Wiki tool category' },
+        { id: 'malformed-input', actionName: 'pages.searchTags', state: 'failed', title: 'Search tags' },
+        { id: 'budget-skipped', actionName: 'pages.get', state: 'failed', title: 'Read page' },
+        { id: 'capacity-skipped', actionName: 'pages.getVersion', state: 'failed', title: 'Read page version' },
+        { id: 'live-denied', actionName: 'pages.search', state: 'failed', title: 'Search pages' },
+        { id: 'completed-provider-omitted', actionName: 'pages.get', state: 'complete', title: 'Read page', summary: 'Release notes' }
+      ]
+    })
+  })
+
+  it('rejects a mixed projected tool list containing a hidden or unknown action', async () => {
+    const sessionId = '00000000-0000-4000-8000-000000000083'
+    const now = '2026-08-17T00:00:00.000Z'
+    const thread = {
+      session: {
+        id: sessionId,
+        title: 'Activity',
+        retention: 'saved',
+        folderId: null,
+        status: 'active',
+        executionMode: 'agent',
+        version: 1,
+        providerProfileId: null,
+        profileResolutionToken: 'profile-token',
+        skills: [],
+        currentRun: null,
+        createdAt: now,
+        updatedAt: now,
+        lastActivityAt: now,
+        expiresAt: null
+      },
+      messages: [],
+      tools: [
+        {
+          id: 'known',
+          runId: '00000000-0000-4000-8000-000000000084',
+          actionName: TOOL_DISCOVERY_CONTROL_NAME,
+          title: 'Enable Wiki tool category',
+          state: 'complete',
+          risk: 'read',
+          summary: 'Enabled explore tools for the next turn',
+          proposalId: null,
+          startedAt: now,
+          completedAt: now
+        },
+        {
+          id: 'hidden',
+          runId: '00000000-0000-4000-8000-000000000084',
+          actionName: 'provider_hidden_action',
+          title: 'Hidden provider activity',
+          state: 'complete',
+          risk: 'read',
+          summary: null,
+          proposalId: null,
+          startedAt: now,
+          completedAt: now
+        }
+      ],
+      tasks: [],
+      goal: null,
+      proposals: [],
+      artifacts: [],
+      historyWindow: { messageLimit: 200, hasOlderMessages: false, runLimit: 200, hasOlderRuns: false },
+      suggestions: []
+    }
+    const fetcher = vi.fn(async () => Response.json(thread)) as unknown as typeof fetch
+    await expect(getAgentThread(fetcher, 'csrf', sessionId)).rejects.toThrow()
   })
 
   it('sends mutating requests with same-origin credentials and the session CSRF token', async () => {

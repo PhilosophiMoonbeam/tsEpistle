@@ -9,6 +9,7 @@ import {
   AGENT_PROPOSAL_STATUSES,
   AGENT_PROVIDER_TRANSPORTS,
   AGENT_TASK_KINDS,
+  AGENT_TOOL_CALL_NAMES,
   type AgentConversationFolderView,
   type AgentEventType,
   type AgentProviderProfileView,
@@ -92,7 +93,7 @@ const Session = z.object({
 const Tool = z.object({
   id: z.string(),
   runId: Uuid,
-  actionName: z.enum(AGENT_ACTION_NAMES),
+  actionName: z.enum(AGENT_TOOL_CALL_NAMES),
   title: z.string(),
   state: z.enum(['preparing', 'running', 'awaitingApproval', 'complete', 'failed', 'denied', 'cancelled']),
   risk: z.enum(['read', 'open-world-read', 'proposal', 'reversible-write', 'destructive-write']),

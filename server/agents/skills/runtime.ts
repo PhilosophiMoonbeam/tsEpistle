@@ -7,7 +7,11 @@ import { intersectAllowedTools, SkillValidationError } from './parser.ts'
 import { validateSkillVirtualPath } from './virtual-path.ts'
 
 const UuidSchema = z.uuid()
-const UserIdSchema = z.number().int().positive().refine(value => value !== 2)
+const UserIdSchema = z
+  .number()
+  .int()
+  .positive()
+  .refine(value => value !== 2)
 const GroupIdsSchema = z.array(z.number().int().positive()).max(256)
 const SkillSelectionSchema = z.array(UuidSchema).max(8)
 const StoredFrontmatterSchema = z.looseObject({
@@ -139,25 +143,124 @@ const applySystemSkillVisibility = (query: Knex.QueryBuilder, db: Knex, groupIds
     exposure.where('skills.exposureMode', 'all_agent_users')
     if (groupIds.length > 0) {
       exposure.orWhereExists(function groupGrant() {
-        this.select(db.raw('1'))
-          .from('agentSkillGrants as grants')
-          .whereRaw('grants."skillId" = skills.id')
-          .whereIn('grants.groupId', groupIds)
+        this.select(db.raw('1')).from('agentSkillGrants as grants').whereRaw('grants."skillId" = skills.id').whereIn('grants.groupId', groupIds)
       })
     }
   })
 }
 
-const skillVisibility = (db: Knex, principal: SkillVisibilityPrincipal) => (query: Knex.QueryBuilder): void => {
-  if (principal.userId === undefined) {
-    applySystemSkillVisibility(query, db, principal.groupIds)
-    return
+const skillVisibility =
+  (db: Knex, principal: SkillVisibilityPrincipal) =>
+  (query: Knex.QueryBuilder): void => {
+    if (principal.userId === undefined) {
+      applySystemSkillVisibility(query, db, principal.groupIds)
+      return
+    }
+    query.where('skills.ownerUserId', principal.userId).orWhere(system => applySystemSkillVisibility(system, db, principal.groupIds))
   }
-  query.where('skills.ownerUserId', principal.userId).orWhere(system => applySystemSkillVisibility(system, db, principal.groupIds))
-}
 
 const agentDiscoveryVisibility = (query: Knex.QueryBuilder): void => {
   query.whereNull('skills.ownerUserId').orWhere('skills.isAgentDiscoverable', true)
+}
+export const lockSkillAdmissionPrincipal = async (transaction: Knex.Transaction, userIdValue: number): Promise<readonly number[]> => {
+  const userId = UserIdSchema.parse(userIdValue)
+  await transaction('groups').select('id').orderBy('id').forShare()
+  const owner = await transaction('users').where({ id: userId }).forShare().first('id')
+  if (!owner) throw new SkillValidationError('Authenticated user is required')
+  const rows = (await transaction('userGroups').where({ userId }).orderBy('groupId').select('groupId')) as Array<{ groupId: number | string }>
+  const groupIds = rows.map(row => Number(row.groupId))
+  if (!groupIds.every(groupId => Number.isSafeInteger(groupId) && groupId > 0)) throw new SkillValidationError('Authenticated user groups are invalid')
+  const ownerLock = transaction('users').where({ id: userId })
+  if (transaction.client.config.client === 'pg' || transaction.client.config.client === 'postgresql') ownerLock.forNoKeyUpdate()
+  else ownerLock.forUpdate()
+  const locked = await ownerLock.first('id')
+  if (!locked) throw new SkillValidationError('Authenticated user is required')
+  return [...new Set(groupIds)].sort((left, right) => left - right)
+}
+
+const selectedSkillVersionRows = async (
+  transaction: Knex.Transaction,
+  principal: SkillPrincipal,
+  skillVersionIds: readonly string[]
+): Promise<Array<{ id: string; skillId: string }>> =>
+  visibleSkillQuery(transaction, principal).whereIn('versions.id', skillVersionIds).select('versions.id', 'skills.id as skillId') as unknown as Promise<
+    Array<{ id: string; skillId: string }>
+  >
+
+const lockSkillParents = async (transaction: Knex.Transaction, skillIds: readonly string[]): Promise<void> => {
+  const ids = [...new Set(skillIds)].sort()
+  if (ids.length > 0) await transaction('agentSkills').whereIn('id', ids).orderBy('id').forUpdate().select('id')
+}
+
+export const validateSelectedSkillVersionIdsInTransaction = async (
+  transaction: Knex.Transaction,
+  principalValue: SkillPrincipal,
+  skillVersionIdsValue: readonly string[]
+): Promise<readonly string[]> => {
+  const skillVersionIds = SkillSelectionSchema.parse([...skillVersionIdsValue])
+  if (new Set(skillVersionIds).size !== skillVersionIds.length) throw new SkillValidationError('Skill selection contains duplicates')
+  if (skillVersionIds.length === 0) return []
+  const principal = normalizePrincipal(principalValue)
+  const versionRows = (await transaction('agentSkillVersions').whereIn('id', skillVersionIds).select('id', 'skillId')) as Array<{
+    id: string
+    skillId: string
+  }>
+  if (versionRows.length !== skillVersionIds.length) throw new SkillValidationError('Selected skill is unavailable')
+  await lockSkillParents(
+    transaction,
+    versionRows.map(row => row.skillId)
+  )
+  const visible = await selectedSkillVersionRows(transaction, principal, skillVersionIds)
+  if (visible.length !== skillVersionIds.length) throw new SkillValidationError('Selected skill is unavailable')
+  const visibleIds = new Set(visible.map(row => row.id))
+  if (skillVersionIds.some(id => !visibleIds.has(id))) throw new SkillValidationError('Selected skill is unavailable')
+  return skillVersionIds
+}
+
+export const resolveSelectedSkillVersionIdsInTransaction = async (
+  transaction: Knex.Transaction,
+  principalValue: SkillPrincipal,
+  invokedSkillVersionIdsValue: readonly string[]
+): Promise<readonly string[]> => {
+  const invokedSkillVersionIds = SkillSelectionSchema.parse([...invokedSkillVersionIdsValue])
+  if (new Set(invokedSkillVersionIds).size !== invokedSkillVersionIds.length) throw new SkillValidationError('Skill selection contains duplicates')
+  const principal = normalizePrincipal(principalValue)
+  const explicitRows = (await transaction('agentSkillVersions').whereIn('id', invokedSkillVersionIds).select('id', 'skillId')) as Array<{
+    id: string
+    skillId: string
+  }>
+  if (explicitRows.length !== invokedSkillVersionIds.length) throw new SkillValidationError('Selected skill is unavailable')
+  const preferenceRows = (await transaction('agentUserSkillPreferences').where({ ownerId: principal.userId }).orderBy('ordinal').select('skillId')) as Array<{
+    skillId: string
+  }>
+  await lockSkillParents(transaction, [...explicitRows.map(row => row.skillId), ...preferenceRows.map(row => row.skillId)])
+  const visibleExplicit = await selectedSkillVersionRows(transaction, principal, invokedSkillVersionIds)
+  if (visibleExplicit.length !== invokedSkillVersionIds.length) throw new SkillValidationError('Selected skill is unavailable')
+  const visibleExplicitIds = new Set(visibleExplicit.map(row => row.id))
+  if (invokedSkillVersionIds.some(id => !visibleExplicitIds.has(id))) throw new SkillValidationError('Selected skill is unavailable')
+  const preferredRows = (await visibleSkillQuery(transaction, principal)
+    .innerJoin('agentUserSkillPreferences as preferences', 'preferences.skillId', 'skills.id')
+    .where('preferences.ownerId', principal.userId)
+    .orderBy('preferences.ordinal')
+    .select('versions.id as versionId')) as unknown as Array<{ versionId: string }>
+  const orderedVersionIds = [...new Set([...preferredRows.map(row => row.versionId), ...invokedSkillVersionIds])]
+  const selectedSkillIds = new Set<string>()
+  const skillIdByVersionId = new Map(
+    [
+      ...visibleExplicit,
+      ...(await selectedSkillVersionRows(
+        transaction,
+        principal,
+        preferredRows.map(row => row.versionId)
+      ))
+    ].map(row => [row.id, row.skillId])
+  )
+  return orderedVersionIds.filter(versionId => {
+    const skillId = skillIdByVersionId.get(versionId)
+    if (skillId === undefined || selectedSkillIds.has(skillId)) return false
+    selectedSkillIds.add(skillId)
+    return true
+  })
 }
 
 const visibleSkillQuery = (db: Knex, principal: SkillVisibilityPrincipal) =>
@@ -178,12 +281,18 @@ export class SkillRuntime {
 
   async listVisible(principalValue: SkillPrincipal): Promise<readonly VisibleSkill[]> {
     const principal = normalizePrincipal(principalValue)
-    const rows = await visibleSkillQuery(this.knex, principal)
+    const rows = (await visibleSkillQuery(this.knex, principal)
       .select(
-        'skills.id', 'skills.name', 'skills.exposureMode', 'skills.isAgentDiscoverable', 'versions.id as versionId',
-        'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
+        'skills.id',
+        'skills.name',
+        'skills.exposureMode',
+        'skills.isAgentDiscoverable',
+        'versions.id as versionId',
+        'versions.contentHash',
+        'versions.sourceRevision',
+        'versions.frontmatter'
       )
-      .orderBy('skills.name') as Array<Omit<VisibleSkill, 'description' | 'sourceRevision'> & { frontmatter: string; sourceRevision: string | number }>
+      .orderBy('skills.name')) as Array<Omit<VisibleSkill, 'description' | 'sourceRevision'> & { frontmatter: string; sourceRevision: string | number }>
     return rows.map(row => ({
       id: row.id,
       name: row.name,
@@ -201,9 +310,7 @@ export class SkillRuntime {
     if (new Set(skillVersionIds).size !== skillVersionIds.length) throw new SkillValidationError('Skill selection contains duplicates')
     if (skillVersionIds.length === 0) return []
     const principal = normalizePrincipal(principalValue)
-    const rows = await visibleSkillQuery(this.knex, principal)
-      .select('versions.id')
-      .whereIn('versions.id', skillVersionIds) as Array<{ id: string }>
+    const rows = (await visibleSkillQuery(this.knex, principal).select('versions.id').whereIn('versions.id', skillVersionIds)) as Array<{ id: string }>
     const visible = new Set(rows.map(row => row.id))
     if (skillVersionIds.some(id => !visible.has(id))) throw new SkillValidationError('Selected skill is unavailable')
     return skillVersionIds
@@ -218,12 +325,11 @@ export class SkillRuntime {
     const principal = normalizePrincipal(input.principal)
     const transportRequestId = UuidSchema.parse(input.transportRequestId)
     return this.knex.transaction(async transaction => {
-      const run = await transaction('agentRuns')
-        .select('sessionId', 'ownerId')
-        .where({ id: runId })
-        .first() as { sessionId: string; ownerId: number } | undefined
+      const run = (await transaction('agentRuns').select('sessionId', 'ownerId').where({ id: runId }).first()) as
+        | { sessionId: string; ownerId: number }
+        | undefined
       if (!run || run.ownerId !== principal.userId) throw new SkillValidationError('Agent run is unavailable')
-      const rows = await visibleSkillQuery(transaction, principal)
+      const rows = (await visibleSkillQuery(transaction, principal)
         .where(agentDiscoveryVisibility)
         .whereNotExists(function excludeLoadedSkills() {
           this.select(transaction.raw('1'))
@@ -242,24 +348,32 @@ export class SkillRuntime {
             .whereRaw('loaded_versions."skillId" = skills.id')
         })
         .select(
-          'skills.id', 'skills.name', 'skills.exposureMode', 'skills.isAgentDiscoverable', 'versions.id as versionId',
-          'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
+          'skills.id',
+          'skills.name',
+          'skills.exposureMode',
+          'skills.isAgentDiscoverable',
+          'versions.id as versionId',
+          'versions.contentHash',
+          'versions.sourceRevision',
+          'versions.frontmatter'
         )
-        .orderBy('skills.name') as Array<Omit<VisibleSkill, 'description' | 'sourceRevision'> & { frontmatter: string; sourceRevision: string | number }>
+        .orderBy('skills.name')) as Array<Omit<VisibleSkill, 'description' | 'sourceRevision'> & { frontmatter: string; sourceRevision: string | number }>
       if (rows.length > 0) {
-        await transaction('agentSkillUses').insert(rows.map(row => ({
-          id: randomUUID(),
-          skillVersionId: row.versionId,
-          runId,
-          sessionId: run.sessionId,
-          requesterUserId: principal.userId,
-          requesterApiKeyId: null,
-          transportRequestId,
-          externalSessionSha256: null,
-          resourcePath: null,
-          purpose: 'listed',
-          contentHash: row.contentHash
-        })))
+        await transaction('agentSkillUses').insert(
+          rows.map(row => ({
+            id: randomUUID(),
+            skillVersionId: row.versionId,
+            runId,
+            sessionId: run.sessionId,
+            requesterUserId: principal.userId,
+            requesterApiKeyId: null,
+            transportRequestId,
+            externalSessionSha256: null,
+            resourcePath: null,
+            purpose: 'listed',
+            contentHash: row.contentHash
+          }))
+        )
       }
       return rows.map(row => ({
         id: row.id,
@@ -274,33 +388,38 @@ export class SkillRuntime {
     })
   }
 
-  async listVisibleForApiKey(input: {
-    readonly principal: ApiKeySkillPrincipal
-    readonly transportRequestId: string
-  }): Promise<readonly VisibleSkill[]> {
+  async listVisibleForApiKey(input: { readonly principal: ApiKeySkillPrincipal; readonly transportRequestId: string }): Promise<readonly VisibleSkill[]> {
     const principal = normalizeApiKeyPrincipal(input.principal)
     const transportRequestId = UuidSchema.parse(input.transportRequestId)
     return this.knex.transaction(async transaction => {
-      const rows = await visibleSkillQuery(transaction, { groupIds: principal.groupIds })
+      const rows = (await visibleSkillQuery(transaction, { groupIds: principal.groupIds })
         .select(
-          'skills.id', 'skills.name', 'skills.exposureMode', 'skills.isAgentDiscoverable', 'versions.id as versionId',
-          'versions.contentHash', 'versions.sourceRevision', 'versions.frontmatter'
+          'skills.id',
+          'skills.name',
+          'skills.exposureMode',
+          'skills.isAgentDiscoverable',
+          'versions.id as versionId',
+          'versions.contentHash',
+          'versions.sourceRevision',
+          'versions.frontmatter'
         )
-        .orderBy('skills.name') as Array<Omit<VisibleSkill, 'description' | 'sourceRevision'> & { frontmatter: string; sourceRevision: string | number }>
+        .orderBy('skills.name')) as Array<Omit<VisibleSkill, 'description' | 'sourceRevision'> & { frontmatter: string; sourceRevision: string | number }>
       if (rows.length > 0) {
-        await transaction('agentSkillUses').insert(rows.map(row => ({
-          id: randomUUID(),
-          skillVersionId: row.versionId,
-          runId: null,
-          sessionId: null,
-          requesterUserId: null,
-          requesterApiKeyId: principal.apiKeyId,
-          transportRequestId,
-          externalSessionSha256: null,
-          resourcePath: null,
-          purpose: 'listed',
-          contentHash: row.contentHash
-        })))
+        await transaction('agentSkillUses').insert(
+          rows.map(row => ({
+            id: randomUUID(),
+            skillVersionId: row.versionId,
+            runId: null,
+            sessionId: null,
+            requesterUserId: null,
+            requesterApiKeyId: principal.apiKeyId,
+            transportRequestId,
+            externalSessionSha256: null,
+            resourcePath: null,
+            purpose: 'listed',
+            contentHash: row.contentHash
+          }))
+        )
       }
       return rows.map(row => ({
         id: row.id,
@@ -329,16 +448,21 @@ export class SkillRuntime {
     const path = validateSkillVirtualPath(input.path)
     const principal = normalizePrincipal(input.principal)
     return this.knex.transaction(async transaction => {
-      const run = await transaction('agentRuns')
-        .select('sessionId', 'ownerId')
-        .where({ id: runId })
-        .first() as { sessionId: string; ownerId: number } | undefined
+      const run = (await transaction('agentRuns').select('sessionId', 'ownerId').where({ id: runId }).first()) as
+        | { sessionId: string; ownerId: number }
+        | undefined
       if (!run || run.ownerId !== principal.userId) throw new SkillValidationError('Agent run is unavailable')
-      const row = await transaction('agentSkillVersions as versions')
+      const row = (await transaction('agentSkillVersions as versions')
         .innerJoin('agentSkills as skills', 'skills.id', 'versions.skillId')
         .select(
-          'skills.id as skillId', 'skills.name', 'skills.exposureMode', 'versions.id as versionId',
-          'versions.contentHash', 'versions.sourceRevision', 'versions.skillMarkdown', 'versions.resourceBundle'
+          'skills.id as skillId',
+          'skills.name',
+          'skills.exposureMode',
+          'versions.id as versionId',
+          'versions.contentHash',
+          'versions.sourceRevision',
+          'versions.skillMarkdown',
+          'versions.resourceBundle'
         )
         .where({
           'versions.id': versionId,
@@ -348,7 +472,7 @@ export class SkillRuntime {
         })
         .whereNull('skills.deletedAt')
         .where(skillVisibility(transaction, principal))
-        .first() as (SkillVersionRow & { skillId: string }) | undefined
+        .first()) as (SkillVersionRow & { skillId: string }) | undefined
       if (!row) throw new SkillValidationError('Approved skill resource is unavailable')
       if (path === 'SKILL.md') {
         const loaded = await transaction('agentRunSkills as loadedRunSkills')
@@ -397,11 +521,17 @@ export class SkillRuntime {
     const path = validateSkillVirtualPath(input.path)
     const principal = normalizeApiKeyPrincipal(input.principal)
     return this.knex.transaction(async transaction => {
-      const row = await transaction('agentSkillVersions as versions')
+      const row = (await transaction('agentSkillVersions as versions')
         .innerJoin('agentSkills as skills', 'skills.id', 'versions.skillId')
         .select(
-          'skills.id as skillId', 'skills.name', 'skills.exposureMode', 'versions.id as versionId',
-          'versions.contentHash', 'versions.sourceRevision', 'versions.skillMarkdown', 'versions.resourceBundle'
+          'skills.id as skillId',
+          'skills.name',
+          'skills.exposureMode',
+          'versions.id as versionId',
+          'versions.contentHash',
+          'versions.sourceRevision',
+          'versions.skillMarkdown',
+          'versions.resourceBundle'
         )
         .where({
           'versions.id': versionId,
@@ -411,7 +541,7 @@ export class SkillRuntime {
         })
         .whereNull('skills.deletedAt')
         .where(skillVisibility(transaction, { groupIds: principal.groupIds }))
-        .first() as (SkillVersionRow & { skillId: string }) | undefined
+        .first()) as (SkillVersionRow & { skillId: string }) | undefined
       if (!row) throw new SkillValidationError('Approved skill resource is unavailable')
       const result = skillResourceResult(row, path, 'Approved skill resource is unavailable')
       await transaction('agentSkillUses').insert({
@@ -422,9 +552,7 @@ export class SkillRuntime {
         requesterUserId: null,
         requesterApiKeyId: principal.apiKeyId,
         transportRequestId,
-        externalSessionSha256: input.externalSessionId
-          ? createHash('sha256').update(input.externalSessionId).digest('hex')
-          : null,
+        externalSessionSha256: input.externalSessionId ? createHash('sha256').update(input.externalSessionId).digest('hex') : null,
         resourcePath: path,
         purpose: 'read',
         contentHash: result.contentHash
@@ -444,33 +572,40 @@ export class SkillRuntime {
     const principal = normalizePrincipal(input.principal)
 
     return this.knex.transaction(async transaction => {
-      const visible = skillIds.length === 0
-        ? []
-        : await visibleSkillQuery(transaction, principal)
-          .select('skills.id', 'versions.id as versionId', 'versions.contentHash')
-          .whereIn('skills.id', skillIds) as Array<{ id: string, versionId: string, contentHash: string }>
+      const currentGroupIds = await lockSkillAdmissionPrincipal(transaction, principal.userId)
+      const currentPrincipal: SkillPrincipal = { userId: principal.userId, groupIds: currentGroupIds }
+      const visible =
+        skillIds.length === 0
+          ? []
+          : ((await visibleSkillQuery(transaction, currentPrincipal)
+              .select('skills.id', 'versions.id as versionId', 'versions.contentHash')
+              .whereIn('skills.id', skillIds)) as Array<{ id: string; versionId: string; contentHash: string }>)
       if (visible.length !== skillIds.length) throw new SkillValidationError('One or more preferred skills are unavailable')
       const versionBySkillId = new Map(visible.map(row => [row.id, row]))
       await transaction('agentUserSkillPreferences').where({ ownerId: principal.userId }).delete()
       if (skillIds.length > 0) {
-        await transaction('agentUserSkillPreferences').insert(skillIds.map((skillId, ordinal) => ({
-          ownerId: principal.userId,
-          skillId,
-          ordinal
-        })))
-        await transaction('agentSkillUses').insert(skillIds.map(skillId => ({
-          id: randomUUID(),
-          skillVersionId: versionBySkillId.get(skillId)!.versionId,
-          runId: null,
-          sessionId: null,
-          requesterUserId: principal.userId,
-          requesterApiKeyId: null,
-          transportRequestId,
-          externalSessionSha256: null,
-          resourcePath: null,
-          purpose: 'selected',
-          contentHash: versionBySkillId.get(skillId)!.contentHash
-        })))
+        await transaction('agentUserSkillPreferences').insert(
+          skillIds.map((skillId, ordinal) => ({
+            ownerId: principal.userId,
+            skillId,
+            ordinal
+          }))
+        )
+        await transaction('agentSkillUses').insert(
+          skillIds.map(skillId => ({
+            id: randomUUID(),
+            skillVersionId: versionBySkillId.get(skillId)!.versionId,
+            runId: null,
+            sessionId: null,
+            requesterUserId: principal.userId,
+            requesterApiKeyId: null,
+            transportRequestId,
+            externalSessionSha256: null,
+            resourcePath: null,
+            purpose: 'selected',
+            contentHash: versionBySkillId.get(skillId)!.contentHash
+          }))
+        )
       }
       return skillIds
     })
@@ -486,15 +621,13 @@ export class SkillRuntime {
 
   async resolvePreferredVersionIdsForUser(userIdValue: number): Promise<readonly string[]> {
     const userId = UserIdSchema.parse(userIdValue)
-    const groupIds = await this.knex('userGroups').where({ userId }).pluck('groupId') as number[]
+    const groupIds = (await this.knex('userGroups').where({ userId }).pluck('groupId')) as number[]
     return visibleSkillQuery(this.knex, { userId, groupIds })
       .innerJoin('agentUserSkillPreferences as preferences', 'preferences.skillId', 'skills.id')
       .where('preferences.ownerId', userId)
       .orderBy('preferences.ordinal')
       .pluck('versions.id') as Promise<string[]>
   }
-
-
 
   async getRunPrompts(input: {
     readonly runId: string
@@ -506,31 +639,39 @@ export class SkillRuntime {
     const transportRequestId = UuidSchema.parse(input.transportRequestId)
     const principal = normalizePrincipal(input.principal)
     return this.knex.transaction(async transaction => {
-      const run = await transaction('agentRuns').select('sessionId', 'ownerId').where({ id: runId }).first() as { sessionId: string; ownerId: number } | undefined
+      const run = (await transaction('agentRuns').select('sessionId', 'ownerId').where({ id: runId }).first()) as
+        | { sessionId: string; ownerId: number }
+        | undefined
       if (!run || run.ownerId !== principal.userId) throw new SkillValidationError('Agent run is unavailable')
-      const rows = await transaction('agentRunSkills as pins')
+      const rows = (await transaction('agentRunSkills as pins')
         .innerJoin('agentSkillVersions as versions', 'versions.id', 'pins.skillVersionId')
         .innerJoin('agentSkills as skills', 'skills.id', 'versions.skillId')
-        .select(
-          'skills.name', 'versions.id as versionId', 'versions.contentHash', 'versions.skillMarkdown',
-          'versions.frontmatter', 'pins.ordinal'
-        )
+        .select('skills.name', 'versions.id as versionId', 'versions.contentHash', 'versions.skillMarkdown', 'versions.frontmatter', 'pins.ordinal')
         .where('pins.runId', runId)
-        .orderBy('pins.ordinal') as Array<{ name: string; versionId: string; contentHash: string; skillMarkdown: string; frontmatter: string; ordinal: number }>
+        .orderBy('pins.ordinal')) as Array<{
+        name: string
+        versionId: string
+        contentHash: string
+        skillMarkdown: string
+        frontmatter: string
+        ordinal: number
+      }>
       if (rows.length > 0) {
-        await transaction('agentSkillUses').insert(rows.map(row => ({
-          id: randomUUID(),
-          skillVersionId: row.versionId,
-          runId,
-          sessionId: run.sessionId,
-          requesterUserId: principal.userId,
-          requesterApiKeyId: null,
-          transportRequestId,
-          externalSessionSha256: null,
-          resourcePath: 'SKILL.md',
-          purpose: 'injected',
-          contentHash: createHash('sha256').update(row.skillMarkdown).digest('hex')
-        })))
+        await transaction('agentSkillUses').insert(
+          rows.map(row => ({
+            id: randomUUID(),
+            skillVersionId: row.versionId,
+            runId,
+            sessionId: run.sessionId,
+            requesterUserId: principal.userId,
+            requesterApiKeyId: null,
+            transportRequestId,
+            externalSessionSha256: null,
+            resourcePath: 'SKILL.md',
+            purpose: 'injected',
+            contentHash: createHash('sha256').update(row.skillMarkdown).digest('hex')
+          }))
+        )
       }
       return rows.map(row => {
         const frontmatter = parseFrontmatter(row.frontmatter)
@@ -547,5 +688,4 @@ export class SkillRuntime {
       })
     })
   }
-
 }
